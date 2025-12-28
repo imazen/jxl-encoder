@@ -1,0 +1,19 @@
+[package]
+name = "jxl_enc_cli"
+description = "Command-line JPEG XL encoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cjxl-rs"
+path = "src/main.rs"
+
+[dependencies]
+jxl_enc = { path = "../jxl_enc", version = "0.1.0" }
+clap = { version = "4", features = ["derive"] }
+png = "0.17"
+
+[lints]
+workspace = true
