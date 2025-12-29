@@ -10,7 +10,7 @@ use crate::bit_writer::BitWriter;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::modular::channel::ModularImage;
-use crate::modular::minimal::write_minimal_modular_stream;
+use crate::modular::improved::write_simple_modular_stream;
 
 /// Options for frame encoding.
 #[derive(Debug, Clone)]
@@ -62,8 +62,9 @@ impl FrameEncoder {
         self.write_frame_header(writer)?;
 
         // Encode the image data to a temporary buffer to know its size
+        // Use improved stream with gradient prediction for better compression
         let mut section_writer = BitWriter::new();
-        write_minimal_modular_stream(image, &mut section_writer)?;
+        write_simple_modular_stream(image, &mut section_writer)?;
         let section_data = section_writer.finish();
         let section_size = section_data.len();
 
@@ -118,10 +119,13 @@ impl FrameEncoder {
         // ec_upsampling - for each extra channel (none for RGB)
         // (already handled by not writing anything)
 
-        // group_size_shift = 1 (default, 256x256 base -> 512x512 with shift=1)
-        // Actually, looking at jxl-rs, default is 1, but let's use 0 for 256x256
-        writer.write(2, 0)?; // 0 = 128, 1 = 256, 2 = 512, 3 = 1024
-        eprintln!("FRMH [bit {}]: group_size_shift = 0", writer.bits_written());
+        // group_size_shift: 0 = 128, 1 = 256, 2 = 512, 3 = 1024
+        // We use GROUP_DIM = 256, so shift must be 1
+        writer.write(2, 1)?; // selector 1 = 256 pixels
+        eprintln!(
+            "FRMH [bit {}]: group_size_shift = 1 (256)",
+            writer.bits_written()
+        );
 
         // passes (only if frame_type != ReferenceOnly)
         // num_passes = 1 (selector 0 in u2S(1,2,3,Bits(3)+4))
