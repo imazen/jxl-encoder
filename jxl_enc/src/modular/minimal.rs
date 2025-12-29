@@ -69,10 +69,10 @@ fn write_histogram(
     writer.write(1, 1)?;
 
     // HybridUint config: split_exponent, msb_in_token, lsb_in_token
-    // For prefix codes, log_alpha_size = 15 (max alphabet 2^15)
-    // When split_exponent != log_alpha_size, we must write msb_in_token and lsb_in_token
+    // IMPORTANT: When use_prefix_code = true, the JXL spec defines log_alpha_size = 15 (fixed)
+    // To avoid writing msb_in_token and lsb_in_token, we set split_exponent = 15
     let al_size = (max_symbol + 1) as usize;
-    let split_exp = ceil_log2(al_size.max(1)).min(15);
+    let split_exp = 15; // Match log_alpha_size for prefix codes
     eprintln!(
         "  TRACE [bit {}]: split_exponent = {} (4 bits)",
         writer.bits_written(),
@@ -80,25 +80,9 @@ fn write_histogram(
     );
     writer.write(4, split_exp as u64)?;
 
-    const LOG_ALPHA_SIZE: u32 = 15;
-    if split_exp as u32 != LOG_ALPHA_SIZE {
-        // msb_in_token: how many MSB bits go into the token
-        // We want all bits in token (direct encoding), so msb_in_token = split_exp
-        let msb_nbits = ceil_log2((split_exp + 1).max(1));
-        eprintln!(
-            "  TRACE [bit {}]: msb_in_token = {} ({} bits)",
-            writer.bits_written(),
-            split_exp,
-            msb_nbits
-        );
-        writer.write(msb_nbits, split_exp as u64)?;
-
-        // lsb_in_token: how many LSB bits go into the token (beyond the MSBs)
-        // With msb_in_token = split_exp, there's only 1 valid value: 0
-        // nbits = ceil_log2(split_exp - msb_in_token + 1) = ceil_log2(1) = 0
-        // So we write 0 bits for lsb_in_token
-        eprintln!("  TRACE: lsb_in_token = 0 (0 bits, implicit)");
-    }
+    // When split_exponent == log_alpha_size (both 15 for prefix codes),
+    // msb_in_token and lsb_in_token are implicit and not written
+    eprintln!("  TRACE: msb_in_token and lsb_in_token implicit (split_exp == log_alpha_size = 15)");
 
     // alphabet_size via varint16 (write max_symbol since decoder adds 1)
     eprintln!(

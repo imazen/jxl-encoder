@@ -231,8 +231,20 @@ impl FrameHeader {
             writer.write(8, byte as u64)?;
         }
 
-        // restoration_filter.all_default = true (1 bit)
-        writer.write_bit(true)?;
+        // restoration_filter
+        // For lossless modular encoding, we MUST disable Gaborish and EPF filters
+        // Default has gab=true, epf_iters=2 which would blur the image!
+        if self.encoding == Encoding::Modular {
+            // all_default = false
+            writer.write_bit(false)?;
+            // gab = false (disable Gaborish filter)
+            writer.write_bit(false)?;
+            // epf_iters = 0 (disable Edge-Preserving Filter)
+            writer.write(2, 0)?;
+        } else {
+            // For VarDCT, use defaults (gab=true, epf_iters=2)
+            writer.write_bit(true)?;
+        }
 
         // extensions (u64 selector, 0 = no extensions)
         writer.write(2, 0)?;
