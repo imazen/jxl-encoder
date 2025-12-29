@@ -10,7 +10,12 @@
 
 pub mod ans;
 pub mod huffman;
+pub mod huffman_tree;
 pub mod hybrid_uint;
 
 pub use ans::AnsEncoder;
 pub use huffman::HuffmanEncoder;
+pub use huffman_tree::{
+    HuffmanTable, build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
+    store_huffman_tree, write_huffman_tree,
+};
