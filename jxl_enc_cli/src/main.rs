@@ -41,7 +41,7 @@ struct Args {
     distance: Option<f32>,
 
     /// Be quiet (minimal output)
-    #[arg(short = 'q', long)]
+    #[arg(long)]
     quiet: bool,
 }
 

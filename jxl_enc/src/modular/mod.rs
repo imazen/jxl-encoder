@@ -10,6 +10,7 @@
 
 pub mod channel;
 pub mod encoder;
+pub mod improved;
 pub mod minimal;
 pub mod predictor;
 pub mod token;
