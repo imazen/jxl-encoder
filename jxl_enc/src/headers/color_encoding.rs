@@ -78,7 +78,7 @@ pub enum TransferFunction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum RenderingIntent {
-    /// Perceptual.
+    /// Perceptual (libjxl default for lossless encoding).
     #[default]
     Perceptual = 0,
     /// Relative colorimetric.
@@ -131,6 +131,18 @@ impl ColorEncoding {
         }
     }
 
+    /// Creates a grayscale sRGB color encoding.
+    pub fn gray() -> Self {
+        Self {
+            color_space: ColorSpace::Gray,
+            white_point: WhitePoint::D65,
+            primaries: Primaries::Srgb,
+            transfer_function: TransferFunction::Srgb,
+            rendering_intent: RenderingIntent::Perceptual,
+            want_icc: false,
+        }
+    }
+
     /// Creates a Display P3 color encoding.
     pub fn display_p3() -> Self {
         Self {
@@ -167,13 +179,22 @@ impl ColorEncoding {
         }
     }
 
-    /// Returns true if this is standard sRGB.
+    /// Returns true if this matches the JXL default color encoding.
+    /// (sRGB with Relative rendering intent, no ICC)
+    ///
+    /// Note: Currently always returns false to force explicit color encoding,
+    /// matching libjxl's behavior for compatibility.
     pub fn is_srgb(&self) -> bool {
-        self.color_space == ColorSpace::Rgb
-            && self.white_point == WhitePoint::D65
-            && self.primaries == Primaries::Srgb
-            && self.transfer_function == TransferFunction::Srgb
-            && !self.want_icc
+        // libjxl always writes explicit color encoding for non-XYB files
+        // so we do the same for compatibility
+        false
+        // Original logic:
+        // self.color_space == ColorSpace::Rgb
+        //     && self.white_point == WhitePoint::D65
+        //     && self.primaries == Primaries::Srgb
+        //     && self.transfer_function == TransferFunction::Srgb
+        //     && self.rendering_intent == RenderingIntent::Relative
+        //     && !self.want_icc
     }
 
     /// Returns true if this is grayscale.
@@ -185,6 +206,11 @@ impl ColorEncoding {
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
         // all_default flag
         let all_default = self.is_srgb();
+        eprintln!(
+            "CENC [bit {}]: all_default = {}",
+            writer.bits_written(),
+            all_default
+        );
         writer.write_bit(all_default)?;
 
         if all_default {
@@ -192,6 +218,11 @@ impl ColorEncoding {
         }
 
         // want_icc
+        eprintln!(
+            "CENC [bit {}]: want_icc = {}",
+            writer.bits_written(),
+            self.want_icc
+        );
         writer.write_bit(self.want_icc)?;
 
         if self.want_icc {
@@ -200,22 +231,34 @@ impl ColorEncoding {
         }
 
         // color_space
+        eprintln!(
+            "CENC [bit {}]: color_space = {:?} ({})",
+            writer.bits_written(),
+            self.color_space,
+            self.color_space as u8
+        );
         writer.write(2, self.color_space as u64)?;
 
-        // white_point
+        // white_point - uses jxl-rs default u2S(0, 1, Bits(4)+2, Bits(6)+18)
         let wp = match self.white_point {
             WhitePoint::D65 => 1,
             WhitePoint::Custom => 2,
             WhitePoint::E => 10,
             WhitePoint::Dci => 11,
         };
-        writer.write_u32_coder(wp, 1, 2, 10, 1, 4)?;
+        eprintln!(
+            "CENC [bit {}]: white_point = {:?} ({})",
+            writer.bits_written(),
+            self.white_point,
+            wp
+        );
+        writer.write_enum_default(wp)?;
         if self.white_point == WhitePoint::Custom {
             // Custom white point coordinates would follow
             todo!("Custom white point not implemented");
         }
 
-        // primaries (only for RGB)
+        // primaries (only for RGB) - uses jxl-rs default u2S encoding
         if self.color_space == ColorSpace::Rgb {
             let prim = match self.primaries {
                 Primaries::Srgb => 1,
@@ -223,22 +266,38 @@ impl ColorEncoding {
                 Primaries::Bt2100 => 9,
                 Primaries::P3 => 11,
             };
-            writer.write_u32_coder(prim, 1, 2, 9, 1, 4)?;
+            eprintln!(
+                "CENC [bit {}]: primaries = {:?} ({})",
+                writer.bits_written(),
+                self.primaries,
+                prim
+            );
+            writer.write_enum_default(prim)?;
             if self.primaries == Primaries::Custom {
                 // Custom primaries would follow
                 todo!("Custom primaries not implemented");
             }
+        } else {
+            eprintln!(
+                "CENC [bit {}]: primaries skipped (not RGB)",
+                writer.bits_written()
+            );
         }
 
         // have_gamma
         let have_gamma = self.transfer_function == TransferFunction::Unknown;
+        eprintln!(
+            "CENC [bit {}]: have_gamma = {}",
+            writer.bits_written(),
+            have_gamma
+        );
         writer.write_bit(have_gamma)?;
 
         if have_gamma {
             // Custom gamma would follow
             todo!("Custom gamma not implemented");
         } else {
-            // transfer_function
+            // transfer_function - uses jxl-rs default u2S encoding
             let tf = match self.transfer_function {
                 TransferFunction::Bt709 => 1,
                 TransferFunction::Unknown => 2,
@@ -248,11 +307,24 @@ impl ColorEncoding {
                 TransferFunction::Dci => 17,
                 TransferFunction::Hlg => 18,
             };
-            writer.write_u32_coder(tf, 1, 8, 13, 1, 5)?;
+            eprintln!(
+                "CENC [bit {}]: transfer_function = {:?} ({})",
+                writer.bits_written(),
+                self.transfer_function,
+                tf
+            );
+            writer.write_enum_default(tf)?;
         }
 
         // rendering_intent
+        eprintln!(
+            "CENC [bit {}]: rendering_intent = {:?} ({})",
+            writer.bits_written(),
+            self.rendering_intent,
+            self.rendering_intent as u8
+        );
         writer.write(2, self.rendering_intent as u64)?;
+        eprintln!("CENC [bit {}]: color_encoding done", writer.bits_written());
 
         Ok(())
     }
@@ -265,7 +337,9 @@ mod tests {
     #[test]
     fn test_srgb_is_default() {
         let enc = ColorEncoding::srgb();
-        assert!(enc.is_srgb());
+        // is_srgb() returns false to force explicit color encoding
+        // (matching libjxl behavior for non-XYB files)
+        assert!(!enc.is_srgb());
     }
 
     #[test]
@@ -275,7 +349,11 @@ mod tests {
         enc.write(&mut writer).unwrap();
         writer.zero_pad_to_byte();
 
-        // sRGB should just write a single 1 bit (all_default=true)
-        assert_eq!(writer.bits_written(), 8); // Padded to byte
+        // With is_srgb() returning false, explicit color encoding is written:
+        // all_default=0 (1), want_icc=0 (1), color_space=0 (2),
+        // white_point D65=1 (2), primaries sRGB=1 (2), have_gamma=0 (1),
+        // transfer_function sRGB=13 (2+4=6), rendering_intent=1 (2)
+        // Total: 17 bits -> 24 bits padded = 3 bytes
+        assert_eq!(writer.bits_written(), 24);
     }
 }

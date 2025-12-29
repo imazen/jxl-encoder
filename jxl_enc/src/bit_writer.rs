@@ -104,7 +104,8 @@ impl BitWriter {
         let required_bytes = total_bits.div_ceil(8) + 8; // Extra 8 bytes for unaligned writes
 
         if self.storage.len() < required_bytes {
-            self.storage.try_reserve(required_bytes - self.storage.len())?;
+            self.storage
+                .try_reserve(required_bytes - self.storage.len())?;
             self.storage.resize(required_bytes, 0);
         }
         Ok(())
@@ -350,6 +351,31 @@ impl BitWriter {
             );
             self.write(2, 3)?;
             self.write(u_bits, (value - d3) as u64)?;
+        }
+        Ok(())
+    }
+
+    /// Writes an enum value using the jxl-rs default u2S encoding.
+    /// This uses u2S(0, 1, Bits(4)+2, Bits(6)+18):
+    /// - selector 0 → value 0
+    /// - selector 1 → value 1
+    /// - selector 2 → 2 + Bits(4) = values 2-17
+    /// - selector 3 → 18 + Bits(6) = values 18-81
+    pub fn write_enum_default(&mut self, value: u32) -> Result<()> {
+        if value == 0 {
+            self.write(2, 0)?;
+        } else if value == 1 {
+            self.write(2, 1)?;
+        } else if value < 18 {
+            self.write(2, 2)?;
+            self.write(4, (value - 2) as u64)?;
+        } else {
+            debug_assert!(
+                value < 82,
+                "value {value} too large for default enum encoding"
+            );
+            self.write(2, 3)?;
+            self.write(6, (value - 18) as u64)?;
         }
         Ok(())
     }

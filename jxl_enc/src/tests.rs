@@ -5,6 +5,8 @@
 
 //! Test module for the JPEG XL encoder.
 
+pub mod baselines;
+
 mod bit_writer_tests {
     use crate::bit_writer::BitWriter;
 

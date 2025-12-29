@@ -7,3 +7,5 @@ Cargo.lock
 .vscode/
 *.orig
 comparison_outputs/
+test_baselines/decoded/
+test_baselines/jxl/
