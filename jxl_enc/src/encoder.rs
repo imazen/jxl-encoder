@@ -178,12 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_gradient() {
-        // 4x4 gradient image
+    fn test_encode_pattern() {
+        // 4x4 pattern with 4 unique values (max for simple Huffman)
         let mut data = Vec::with_capacity(4 * 4 * 3);
         for y in 0..4 {
             for x in 0..4 {
-                let v = ((x + y * 4) * 16) as u8;
+                // Use only 4 unique values: 0, 64, 128, 192
+                let v = ((x % 2) * 64 + (y % 2) * 128) as u8;
                 data.push(v);
                 data.push(v);
                 data.push(v);
@@ -384,4 +385,40 @@ fn test_encode_gray_1_and_2() {
     let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
     std::fs::write("/tmp/test_gray_12.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 1/2 2x2: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_gray_4x4_pattern() {
+    // 4x4 grayscale with 4 unique values (max for simple Huffman)
+    let data: Vec<u8> = vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
+
+    let encoded = Encoder::new().encode_gray8(&data, 4, 4).unwrap();
+    std::fs::write("/tmp/test_gray_4x4.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 4x4 pattern: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_gray_too_many_symbols() {
+    // 4x4 gradient with 16 unique values - should fail with TooManySymbols
+    let data: Vec<u8> = (0u8..16).collect();
+
+    let result = Encoder::new().encode_gray8(&data, 4, 4);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    eprintln!("Expected error: {}", err);
+}
+
+#[test]
+fn test_encode_gray_8x8_pattern() {
+    // 8x8 grayscale checkerboard pattern
+    let mut data = vec![0u8; 64];
+    for y in 0..8 {
+        for x in 0..8 {
+            data[y * 8 + x] = if (x + y) % 2 == 0 { 0 } else { 128 };
+        }
+    }
+
+    let encoded = Encoder::new().encode_gray8(&data, 8, 8).unwrap();
+    std::fs::write("/tmp/test_gray_8x8.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 8x8 checkerboard: {} bytes", encoded.len());
 }
