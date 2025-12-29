@@ -335,3 +335,53 @@ fn test_encode_gray_0_and_1() {
     std::fs::write("/tmp/test_gray_01.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 0/1 2x2: {} bytes", encoded.len());
 }
+
+#[test]
+fn test_encode_gray_0_and_3() {
+    // 2x2 grayscale with 0 and 3 (zigzag: 0, 6)
+    let data = vec![0u8, 3, 0, 3];
+
+    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    std::fs::write("/tmp/test_gray_03.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 0/3 2x2: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_gray_0_and_7() {
+    // 2x2 grayscale with 0 and 7 (zigzag: 0, 14)
+    let data = vec![0u8, 7, 0, 7];
+
+    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    std::fs::write("/tmp/test_gray_07.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 0/7 2x2: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_gray_0_and_15() {
+    // 2x2 grayscale with 0 and 15 (zigzag: 0, 30)
+    let data = vec![0u8, 15, 0, 15];
+
+    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    std::fs::write("/tmp/test_gray_015.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 0/15 2x2: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_gray_0_and_4() {
+    // 2x2 grayscale with 0 and 4 (zigzag: 0, 8) - boundary: al_size=9, max_bits=4
+    let data = vec![0u8, 4, 0, 4];
+
+    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    std::fs::write("/tmp/test_gray_04.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 0/4 2x2: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_gray_1_and_2() {
+    // 2x2 grayscale with 1 and 2 (zigzag: 2, 4) - al_size=5, max_bits=3
+    let data = vec![1u8, 2, 1, 2];
+
+    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    std::fs::write("/tmp/test_gray_12.jxl", &encoded).unwrap();
+    eprintln!("Encoded gray 1/2 2x2: {} bytes", encoded.len());
+}

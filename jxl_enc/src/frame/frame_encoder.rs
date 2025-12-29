@@ -157,9 +157,16 @@ impl FrameEncoder {
         writer.write(2, 0)?; // selector 0 = value 0
         eprintln!("FRMH [bit {}]: name = 0", writer.bits_written());
 
-        // restoration_filter - all_default = true
-        writer.write(1, 1)?;
-        eprintln!("FRMH [bit {}]: restoration = 1", writer.bits_written());
+        // restoration_filter - MUST disable filters for lossless modular encoding!
+        // Default has gab=true (Gaborish) and epf_iters=2 (Edge-Preserving Filter)
+        // which would blur the image. For lossless, we disable both.
+        writer.write(1, 0)?; // all_default = false
+        writer.write(1, 0)?; // gab = false (disable Gaborish)
+        writer.write(2, 0)?; // epf_iters = 0 (disable EPF)
+        eprintln!(
+            "FRMH [bit {}]: restoration = disabled (gab=false, epf=0)",
+            writer.bits_written()
+        );
 
         // extensions = 0 (no extensions)
         // u64 encoding: selector 0 (2 bits) means value 0
@@ -182,16 +189,27 @@ impl FrameEncoder {
         let num_groups = self.num_groups();
         let num_toc_entries = if num_groups == 1 { 1 } else { 2 + num_groups };
 
+        eprintln!("TOC [bit {}]: Writing permuted = 0", writer.bits_written());
         // permuted = false
         writer.write(1, 0)?;
 
+        eprintln!(
+            "TOC [bit {}]: After permuted, byte aligning",
+            writer.bits_written()
+        );
         // Byte align before TOC entries (permutation reads, then aligns)
         writer.zero_pad_to_byte();
 
+        eprintln!(
+            "TOC [bit {}]: Writing TOC entry for size={}",
+            writer.bits_written(),
+            section_size
+        );
         // Write TOC entries using u2S(Bits(10), Bits(14)+1024, Bits(22)+17408, Bits(30)+4211712)
         if num_toc_entries == 1 {
             // Single section
             self.write_toc_entry(writer, section_size as u32)?;
+            eprintln!("TOC [bit {}]: After TOC entry", writer.bits_written());
         } else {
             // Multiple sections - placeholder for now
             for _ in 0..num_toc_entries {
