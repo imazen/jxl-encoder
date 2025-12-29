@@ -268,7 +268,18 @@ mod tests {
 
     #[test]
     fn test_encode_small_image() {
-        let data: Vec<u8> = (0..48).collect();
+        // 4x4 RGB image with only 4 unique values (max for simple Huffman)
+        // Pattern: checkerboard of two colors
+        let mut data = Vec::with_capacity(4 * 4 * 3);
+        for y in 0..4 {
+            for x in 0..4 {
+                let v = if (x + y) % 2 == 0 { 0u8 } else { 128u8 };
+                data.push(v); // R
+                data.push(v); // G
+                data.push(v); // B
+            }
+        }
+
         let image = ModularImage::from_rgb8(&data, 4, 4).unwrap();
 
         let encoder = FrameEncoder::new(4, 4, FrameEncoderOptions::default());

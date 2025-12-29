@@ -304,9 +304,22 @@ fn build_simple_codes(unique: &[u32]) -> std::collections::HashMap<u32, (u32, u8
 }
 
 /// Writes a minimal valid modular stream for a small image.
+///
+/// # Limitations
+/// This minimal encoder uses simple Huffman codes (1-4 symbols only).
+/// Images with more than 4 unique pixel values will fail with an error.
+/// For full support, a complete Huffman encoder is needed.
 pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
     // Collect all residuals
     let (residuals, unique, max_residual) = collect_residuals(image);
+
+    // Validate: minimal encoder only supports 1-4 unique symbols
+    if unique.len() > 4 {
+        return Err(crate::error::Error::TooManySymbols {
+            found: unique.len(),
+            max: 4,
+        });
+    }
 
     eprintln!(
         "DEBUG: {} residuals, {} unique symbols, max={}",

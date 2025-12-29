@@ -51,6 +51,9 @@ pub enum Error {
     #[error("Invalid Huffman code lengths")]
     InvalidHuffmanCodeLengths,
 
+    #[error("Too many unique symbols: found {found}, max {max} (minimal encoder limit)")]
+    TooManySymbols { found: usize, max: usize },
+
     // Header errors
     #[error("Invalid color encoding")]
     InvalidColorEncoding,
