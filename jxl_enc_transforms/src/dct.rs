@@ -102,11 +102,7 @@ fn dct8_1d(input: &[f32], output: &mut [f32]) {
             let angle = PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32;
             sum += inp * angle.cos();
         }
-        let ck = if k == 0 {
-            1.0 / 2.0f32.sqrt()
-        } else {
-            1.0
-        };
+        let ck = if k == 0 { 1.0 / 2.0f32.sqrt() } else { 1.0 };
         *out = scale * ck * sum;
     }
 }
@@ -171,11 +167,7 @@ fn dct_1d_generic(input: &[f32], output: &mut [f32], n: usize) {
             let angle = PI * ((2 * i + 1) * k) as f32 / (2 * n) as f32;
             sum += inp * angle.cos();
         }
-        let ck = if k == 0 {
-            1.0 / 2.0f32.sqrt()
-        } else {
-            1.0
-        };
+        let ck = if k == 0 { 1.0 / 2.0f32.sqrt() } else { 1.0 };
         *out = scale * ck * sum;
     }
 }

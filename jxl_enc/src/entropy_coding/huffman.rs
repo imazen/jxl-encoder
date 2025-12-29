@@ -143,7 +143,9 @@ fn adjust_for_kraft(lengths: &mut [u8], max_bits: usize) -> Result<()> {
         } else if kraft_sum < target {
             // Under-full: decrease some lengths (make codes shorter)
             // Find the longest code and shorten it
-            if let Some(idx) = lengths.iter().enumerate()
+            if let Some(idx) = lengths
+                .iter()
+                .enumerate()
                 .filter(|&(_, &l)| l > 1)
                 .max_by_key(|&(_, &l)| l)
                 .map(|(i, _)| i)
@@ -154,7 +156,9 @@ fn adjust_for_kraft(lengths: &mut [u8], max_bits: usize) -> Result<()> {
             }
         } else {
             // Over-full: increase some lengths (make codes longer)
-            if let Some(idx) = lengths.iter().enumerate()
+            if let Some(idx) = lengths
+                .iter()
+                .enumerate()
                 .filter(|&(_, &l)| l > 0 && (l as usize) < max_bits)
                 .min_by_key(|&(_, &l)| l)
                 .map(|(i, _)| i)
@@ -221,8 +225,8 @@ mod tests {
         let lengths = vec![2, 1, 3, 3];
         let codes = compute_codes_from_lengths(&lengths).unwrap();
 
-        assert_eq!(codes[0], 0b10);  // A: 2 bits
-        assert_eq!(codes[1], 0b0);   // B: 1 bit
+        assert_eq!(codes[0], 0b10); // A: 2 bits
+        assert_eq!(codes[1], 0b0); // B: 1 bit
         assert_eq!(codes[2], 0b110); // C: 3 bits
         assert_eq!(codes[3], 0b111); // D: 3 bits
     }

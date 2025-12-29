@@ -11,10 +11,16 @@
 #![deny(unsafe_code)]
 
 pub mod bit_writer;
+pub mod encoder;
 pub mod entropy_coding;
 pub mod error;
+pub mod frame;
 pub mod headers;
 pub mod image;
+pub mod modular;
+
+// Re-export main API
+pub use encoder::{Encoder, EncoderOptions, encode_rgb8, encode_rgba8};
 
 #[cfg(test)]
 mod tests;

@@ -212,16 +212,30 @@ impl FrameHeader {
         // is_last
         writer.write_bit(self.is_last)?;
 
-        // name (if not is_last)
-        if !self.is_last || !self.name.is_empty() {
-            let name_len = self.name.len() as u32;
-            writer.write_u32_coder(name_len, 0, 0, 0, 0, 10)?;
-            for byte in self.name.bytes() {
-                writer.write_u8(byte)?;
-            }
+        // name - u2S(0, 0, Bits(4)+4, Bits(10)+20) for length, then bytes
+        // For empty name: selector 0 means length 0
+        let name_len = self.name.len() as u32;
+        if name_len == 0 {
+            writer.write(2, 0)?; // selector 0 = length 0
+        } else if name_len < 4 {
+            // This shouldn't happen with our current simple implementation
+            writer.write(2, 0)?;
+        } else if name_len < 20 {
+            writer.write(2, 2)?;
+            writer.write(4, (name_len - 4) as u64)?;
+        } else {
+            writer.write(2, 3)?;
+            writer.write(10, (name_len - 20) as u64)?;
+        }
+        for byte in self.name.bytes() {
+            writer.write(8, byte as u64)?;
         }
 
-        // TODO: More frame header fields (restoration filter, passes, etc.)
+        // restoration_filter.all_default = true (1 bit)
+        writer.write_bit(true)?;
+
+        // extensions (u64 selector, 0 = no extensions)
+        writer.write(2, 0)?;
 
         Ok(())
     }

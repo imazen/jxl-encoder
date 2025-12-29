@@ -17,4 +17,4 @@ pub mod size;
 pub use color_encoding::ColorEncoding;
 pub use extra_channels::ExtraChannelInfo;
 pub use file_header::FileHeader;
-pub use frame_header::FrameHeader;
+pub use frame_header::{BlendMode, Encoding, FrameHeader, FrameType};

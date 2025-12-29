@@ -22,14 +22,19 @@ impl<T: Clone + Default> Image<T> {
             return Err(Error::InvalidImageDimensions(width, height));
         }
 
-        let size = width.checked_mul(height)
+        let size = width
+            .checked_mul(height)
             .ok_or(Error::InvalidImageDimensions(width, height))?;
 
         let mut data = Vec::new();
         data.try_reserve_exact(size)?;
         data.resize(size, T::default());
 
-        Ok(Self { data, width, height })
+        Ok(Self {
+            data,
+            width,
+            height,
+        })
     }
 
     /// Creates a new image from existing data.
@@ -40,7 +45,11 @@ impl<T: Clone + Default> Image<T> {
         if data.len() != width * height {
             return Err(Error::InvalidImageDimensions(width, height));
         }
-        Ok(Self { data, width, height })
+        Ok(Self {
+            data,
+            width,
+            height,
+        })
     }
 }
 
@@ -211,12 +220,18 @@ impl PixelFormat {
 
     /// Returns true if this format has an alpha channel.
     pub fn has_alpha(self) -> bool {
-        matches!(self, Self::GrayA8 | Self::GrayA16 | Self::Rgba8 | Self::Rgba16 | Self::RgbaF32)
+        matches!(
+            self,
+            Self::GrayA8 | Self::GrayA16 | Self::Rgba8 | Self::Rgba16 | Self::RgbaF32
+        )
     }
 
     /// Returns true if this is a grayscale format.
     pub fn is_grayscale(self) -> bool {
-        matches!(self, Self::Gray8 | Self::Gray16 | Self::GrayA8 | Self::GrayA16)
+        matches!(
+            self,
+            Self::Gray8 | Self::Gray16 | Self::GrayA8 | Self::GrayA16
+        )
     }
 }
 
