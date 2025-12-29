@@ -3,18 +3,22 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Minimal modular encoder for lossless encoding.
+//! Modular encoder for lossless encoding.
 //!
 //! This produces valid modular streams using:
 //! - Single leaf tree with Zero predictor
-//! - Prefix (Huffman) codes
+//! - Prefix (Huffman) codes with full code length table support
 //! - No transforms
 //!
 //! The encoder properly encodes all pixel values, achieving lossless compression.
 
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::huffman_tree::{
+    build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
+};
 use crate::error::Result;
 use crate::modular::channel::ModularImage;
+use std::collections::HashMap;
 
 /// Pack a signed integer into an unsigned one (zigzag encoding).
 /// 0 -> 0, 1 -> 2, -1 -> 1, 2 -> 4, -2 -> 3, etc.
@@ -27,24 +31,26 @@ pub fn pack_signed(value: i32) -> u32 {
     }
 }
 
-/// Writes a histogram for a set of symbols.
+/// Writes the entropy coding header for a histogram.
 ///
 /// Format:
 /// - lz77.enabled = 0 (1 bit)
 /// - context_map: if num_contexts > 1, is_simple=1 (1 bit), bits_per_entry=0 (2 bits)
 /// - use_prefix_code = 1 (1 bit)
-/// - HybridUint config (split_exponent)
+/// - HybridUint config (split_exponent = 15)
 /// - alphabet_size via varint16
-/// - Huffman table
-fn write_histogram(
+/// - Huffman table (via build_and_store_huffman_tree)
+fn write_histogram_with_full_huffman(
     writer: &mut BitWriter,
     num_contexts: usize,
-    unique_symbols: &[u32],
-    max_symbol: u32,
+    histogram: &[u32],
 ) -> Result<()> {
+    let alphabet_size = histogram.len();
+    let max_symbol = alphabet_size.saturating_sub(1) as u32;
+
     eprintln!(
-        "DEBUG write_histogram: num_contexts={}, unique_symbols={:?}, max_symbol={}",
-        num_contexts, unique_symbols, max_symbol
+        "DEBUG write_histogram: num_contexts={}, alphabet_size={}, max_symbol={}",
+        num_contexts, alphabet_size, max_symbol
     );
 
     // lz77.enabled = 0
@@ -68,21 +74,16 @@ fn write_histogram(
     );
     writer.write(1, 1)?;
 
-    // HybridUint config: split_exponent, msb_in_token, lsb_in_token
-    // IMPORTANT: When use_prefix_code = true, the JXL spec defines log_alpha_size = 15 (fixed)
-    // To avoid writing msb_in_token and lsb_in_token, we set split_exponent = 15
-    let al_size = (max_symbol + 1) as usize;
-    let split_exp = 15; // Match log_alpha_size for prefix codes
+    // HybridUint config: split_exponent = 15
+    // When split_exponent == log_alpha_size (both 15 for prefix codes),
+    // msb_in_token and lsb_in_token are implicit and not written
+    let split_exp = 15;
     eprintln!(
         "  TRACE [bit {}]: split_exponent = {} (4 bits)",
         writer.bits_written(),
         split_exp
     );
     writer.write(4, split_exp as u64)?;
-
-    // When split_exponent == log_alpha_size (both 15 for prefix codes),
-    // msb_in_token and lsb_in_token are implicit and not written
-    eprintln!("  TRACE: msb_in_token and lsb_in_token implicit (split_exp == log_alpha_size = 15)");
 
     // alphabet_size via varint16 (write max_symbol since decoder adds 1)
     eprintln!(
@@ -92,89 +93,25 @@ fn write_histogram(
     );
     write_varint16(writer, max_symbol as u16)?;
 
-    // Huffman table
-    let num_unique = unique_symbols.len();
+    // Huffman table using full encoder
     eprintln!(
-        "  TRACE [bit {}]: Huffman table (num_unique={}, al_size={})",
+        "  TRACE [bit {}]: Writing Huffman table (alphabet_size={})",
         writer.bits_written(),
-        num_unique,
-        al_size
+        alphabet_size
     );
-    if al_size == 1 {
-        // Special case: alphabet_size = 1, no Huffman table needed
-        eprintln!("  TRACE: alphabet_size=1, no Huffman table needed");
-    } else if num_unique == 1 {
-        // Single unique symbol
-        eprintln!(
-            "  TRACE [bit {}]: simple_code_or_skip=1, num_symbols-1=0",
-            writer.bits_written()
-        );
-        writer.write(2, 1)?; // simple_code_or_skip = 1
-        writer.write(2, 0)?; // num_symbols - 1 = 0
-        let max_bits = ceil_log2(al_size);
-        eprintln!(
-            "  TRACE [bit {}]: symbol={} ({} bits)",
-            writer.bits_written(),
-            unique_symbols[0],
-            max_bits
-        );
-        writer.write(max_bits, unique_symbols[0] as u64)?;
-    } else if num_unique == 2 {
-        // Two unique symbols
-        eprintln!(
-            "  TRACE [bit {}]: simple_code_or_skip=1, num_symbols-1=1",
-            writer.bits_written()
-        );
-        writer.write(2, 1)?; // simple_code_or_skip = 1
-        writer.write(2, 1)?; // num_symbols - 1 = 1
-        let max_bits = ceil_log2(al_size);
-        let mut sorted = unique_symbols.to_vec();
-        sorted.sort();
-        eprintln!(
-            "  TRACE [bit {}]: 2-symbol Huffman: al_size={}, max_bits={}, sorted_symbols={:?}",
-            writer.bits_written(),
-            al_size,
-            max_bits,
-            sorted
-        );
-        writer.write(max_bits, sorted[0] as u64)?;
-        eprintln!(
-            "  TRACE [bit {}]: wrote symbol[0]={}",
-            writer.bits_written(),
-            sorted[0]
-        );
-        writer.write(max_bits, sorted[1] as u64)?;
-        eprintln!(
-            "  TRACE [bit {}]: wrote symbol[1]={}",
-            writer.bits_written(),
-            sorted[1]
-        );
-    } else if num_unique <= 4 {
-        // 3-4 unique symbols
-        writer.write(2, 1)?; // simple_code_or_skip = 1
-        writer.write(2, (num_unique - 1) as u64)?;
-        let max_bits = ceil_log2(al_size);
-        let mut sorted = unique_symbols.to_vec();
-        sorted.sort();
-        for sym in &sorted {
-            writer.write(max_bits, *sym as u64)?;
-        }
-        if num_unique == 4 {
-            writer.write(1, 0)?; // tree_select = 0 (balanced)
-        }
+
+    if alphabet_size <= 1 {
+        // Special case: alphabet_size <= 1, no Huffman table needed
+        eprintln!("  TRACE: alphabet_size<=1, no Huffman table needed");
     } else {
-        // More than 4 symbols - use the 4 most frequent
-        // This is a simplification; full implementation would use proper Huffman
-        writer.write(2, 1)?; // simple_code_or_skip = 1
-        writer.write(2, 3)?; // 4 symbols
-        let max_bits = ceil_log2(al_size);
-        let mut sorted = unique_symbols.to_vec();
-        sorted.sort();
-        for sym in sorted.iter().take(4) {
-            writer.write(max_bits, *sym as u64)?;
-        }
-        writer.write(1, 0)?; // tree_select
+        // Use the full Huffman encoder
+        build_and_store_huffman_tree(histogram, writer)?;
     }
+
+    eprintln!(
+        "  TRACE [bit {}]: After Huffman table",
+        writer.bits_written()
+    );
 
     Ok(())
 }
@@ -216,8 +153,6 @@ fn write_single_symbol_histogram(
 }
 
 /// Encodes a varint16 value to the bitstream.
-/// Decoder reads: if bit==1, nbits=read(4), if nbits==0 return 1, else return (1<<nbits)+read(nbits)
-/// If bit==0, return 0.
 fn write_varint16(writer: &mut BitWriter, value: u16) -> Result<()> {
     if value == 0 {
         writer.write(1, 0)?;
@@ -226,8 +161,6 @@ fn write_varint16(writer: &mut BitWriter, value: u16) -> Result<()> {
         writer.write(4, 0)?; // nbits = 0 means value 1
     } else {
         writer.write(1, 1)?;
-        // Find nbits such that (1 << nbits) + mantissa = value
-        // nbits = floor(log2(value)) = 15 - leading_zeros(value) for u16
         let nbits = 15 - value.leading_zeros() as usize;
         let mantissa = value - (1 << nbits);
         writer.write(4, nbits as u64)?;
@@ -244,10 +177,9 @@ fn ceil_log2(x: usize) -> usize {
     }
 }
 
-/// Collect all residuals and compute statistics.
-fn collect_residuals(image: &ModularImage) -> (Vec<u32>, Vec<u32>, u32) {
+/// Collect all residuals, build histogram, and compute statistics.
+fn collect_residuals_and_histogram(image: &ModularImage) -> (Vec<u32>, Vec<u32>, u32) {
     let mut residuals = Vec::new();
-    let mut unique_set = std::collections::BTreeSet::new();
     let mut max_residual: u32 = 0;
 
     // With Zero predictor (guess=0, multiplier=1), residual = pixel value
@@ -257,78 +189,50 @@ fn collect_residuals(image: &ModularImage) -> (Vec<u32>, Vec<u32>, u32) {
                 let pixel = channel.get(x, y);
                 let packed = pack_signed(pixel);
                 residuals.push(packed);
-                unique_set.insert(packed);
                 max_residual = max_residual.max(packed);
             }
         }
     }
 
-    let unique: Vec<u32> = unique_set.into_iter().collect();
-    (residuals, unique, max_residual)
+    // Build histogram (size = max_residual + 1)
+    let histogram_size = (max_residual + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for &r in &residuals {
+        histogram[r as usize] += 1;
+    }
+
+    (residuals, histogram, max_residual)
 }
 
-/// Build symbol-to-code mapping for simple Huffman.
-fn build_simple_codes(unique: &[u32]) -> std::collections::HashMap<u32, (u32, u8)> {
-    let mut map = std::collections::HashMap::new();
-    let n = unique.len();
-
-    if n == 0 {
-        return map;
+/// Build symbol-to-code mapping from depths.
+fn build_codes_from_depths(depths: &[u8], codes: &[u16]) -> HashMap<u32, (u16, u8)> {
+    let mut map = HashMap::new();
+    for (symbol, (&depth, &code)) in depths.iter().zip(codes.iter()).enumerate() {
+        if depth > 0 {
+            map.insert(symbol as u32, (code, depth));
+        } else if depths.iter().filter(|&&d| d > 0).count() == 0 {
+            // Single symbol case - depth 0 means implicit (0 bits)
+            map.insert(symbol as u32, (0, 0));
+        }
     }
-
-    let mut sorted = unique.to_vec();
-    sorted.sort();
-
-    if n == 1 {
-        // Single symbol - 0 bits
-        map.insert(sorted[0], (0, 0));
-    } else if n == 2 {
-        // Two symbols - 1 bit each
-        map.insert(sorted[0], (0, 1));
-        map.insert(sorted[1], (1, 1));
-    } else if n == 3 {
-        // Three symbols: 0, 10, 11
-        map.insert(sorted[0], (0, 1));
-        map.insert(sorted[1], (0b10, 2));
-        map.insert(sorted[2], (0b11, 2));
-    } else {
-        // Four symbols: decoder uses order [0,2,1,3] for table entries
-        // code 00 → symbols[0], code 01 → symbols[2], code 10 → symbols[1], code 11 → symbols[3]
-        map.insert(sorted[0], (0b00, 2));
-        map.insert(sorted[1], (0b10, 2)); // symbols[1] gets code 10
-        map.insert(sorted[2], (0b01, 2)); // symbols[2] gets code 01
-        map.insert(sorted[3], (0b11, 2));
-    }
-
     map
 }
 
-/// Writes a minimal valid modular stream for a small image.
+/// Writes a modular stream for an image.
 ///
-/// # Limitations
-/// This minimal encoder uses simple Huffman codes (1-4 symbols only).
-/// Images with more than 4 unique pixel values will fail with an error.
-/// For full support, a complete Huffman encoder is needed.
+/// Supports arbitrary images with any number of unique pixel values.
 pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
-    // Collect all residuals
-    let (residuals, unique, max_residual) = collect_residuals(image);
+    // Collect all residuals and build histogram
+    let (residuals, histogram, max_residual) = collect_residuals_and_histogram(image);
 
-    // Validate: minimal encoder only supports 1-4 unique symbols
-    if unique.len() > 4 {
-        return Err(crate::error::Error::TooManySymbols {
-            found: unique.len(),
-            max: 4,
-        });
-    }
-
+    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     eprintln!(
-        "DEBUG: {} residuals, {} unique symbols, max={}",
+        "DEBUG: {} residuals, {} unique symbols, max={}, histogram_size={}",
         residuals.len(),
-        unique.len(),
-        max_residual
+        num_symbols,
+        max_residual,
+        histogram.len()
     );
-    eprintln!("DEBUG: residuals = {:?}", residuals);
-    eprintln!("DEBUG: unique = {:?}", unique);
 
     let start_bits = writer.bits_written();
     eprintln!("TRACE [bit {}]: Starting modular stream", start_bits);
@@ -369,9 +273,9 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     eprintln!(
         "TRACE [bit {}]: Writing data histograms (1 context, {} symbols)",
         writer.bits_written(),
-        unique.len()
+        num_symbols
     );
-    write_histogram(writer, 1, &unique, max_residual)?;
+    write_histogram_with_full_huffman(writer, 1, &histogram)?;
     eprintln!(
         "TRACE [bit {}]: After data histograms",
         writer.bits_written()
@@ -388,24 +292,24 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     );
 
     // === Pixel tokens ===
-    // Encode each residual using the Huffman codes
-    let codes = build_simple_codes(&unique);
+    // Build Huffman codes from histogram
+    let depths = create_huffman_tree(&histogram, 15);
+    let codes = convert_bit_depths_to_symbols(&depths);
+    let code_map = build_codes_from_depths(&depths, &codes);
 
-    eprintln!("DEBUG: Huffman codes = {:?}", codes);
+    eprintln!("DEBUG: Built {} Huffman codes", code_map.len());
 
+    // Encode each residual
     for &r in &residuals {
-        if let Some(&(code, bits)) = codes.get(&r) {
-            if bits > 0 {
-                eprintln!(
-                    "DEBUG: Writing residual {} as code {} ({} bits)",
-                    r, code, bits
-                );
-                writer.write(bits as usize, code as u64)?;
-            } else {
-                eprintln!("DEBUG: Skipping residual {} (0 bits)", r);
+        if let Some(&(code, depth)) = code_map.get(&r) {
+            if depth > 0 {
+                writer.write(depth as usize, code as u64)?;
             }
+            // depth == 0 means single symbol, no bits needed
+        } else {
+            // This shouldn't happen if histogram was built correctly
+            eprintln!("WARNING: No code for residual {}", r);
         }
-        // If symbol not in codes (shouldn't happen), skip
     }
 
     // Byte-align
@@ -432,5 +336,33 @@ mod tests {
             print!("{:02x} ", b);
         }
         println!();
+    }
+
+    #[test]
+    fn test_many_symbols() {
+        // 4x4 gradient with 16 unique values - previously failed
+        let data: Vec<u8> = (0u8..16).collect();
+
+        let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_minimal_modular_stream(&image, &mut writer).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("Encoded 16-symbol image: {} bytes", bytes.len());
+    }
+
+    #[test]
+    fn test_256_symbols() {
+        // 16x16 gradient with 256 unique values
+        let data: Vec<u8> = (0u8..=255).collect();
+
+        let image = ModularImage::from_gray8(&data, 16, 16).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_minimal_modular_stream(&image, &mut writer).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("Encoded 256-symbol image: {} bytes", bytes.len());
     }
 }

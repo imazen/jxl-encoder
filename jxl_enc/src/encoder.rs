@@ -398,14 +398,29 @@ fn test_encode_gray_4x4_pattern() {
 }
 
 #[test]
-fn test_encode_gray_too_many_symbols() {
-    // 4x4 gradient with 16 unique values - should fail with TooManySymbols
+fn test_encode_gray_16_symbols() {
+    // 4x4 gradient with 16 unique values - now works with full Huffman
     let data: Vec<u8> = (0u8..16).collect();
 
-    let result = Encoder::new().encode_gray8(&data, 4, 4);
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    eprintln!("Expected error: {}", err);
+    let encoded = Encoder::new().encode_gray8(&data, 4, 4).unwrap();
+    std::fs::write("/tmp/test_gray_16sym.jxl", &encoded).unwrap();
+    eprintln!("Encoded 16-symbol gray 4x4: {} bytes", encoded.len());
+
+    // Check JXL signature
+    assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+}
+
+#[test]
+fn test_encode_gray_256_symbols() {
+    // 16x16 gradient with 256 unique values
+    let data: Vec<u8> = (0u8..=255).collect();
+
+    let encoded = Encoder::new().encode_gray8(&data, 16, 16).unwrap();
+    std::fs::write("/tmp/test_gray_256sym.jxl", &encoded).unwrap();
+    eprintln!("Encoded 256-symbol gray 16x16: {} bytes", encoded.len());
+
+    // Check JXL signature
+    assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 }
 
 #[test]
