@@ -4,22 +4,23 @@ This document tracks progress toward achieving encoding parity with the libjxl r
 
 ## Current Status
 
-**Date:** 2025-12-28
+**Date:** 2025-12-29
 
-The encoder produces valid JXL files with **perfect lossless round-trip** through jxl-rs for images with up to 4 unique pixel values.
+The encoder produces valid JXL files with **perfect lossless round-trip** through jxl-rs for **arbitrary grayscale and RGB images**.
 
 ## Verified Working
 
 ### Full Lossless Round-Trip (jxl-rs)
-- Grayscale images: 2x2, 4x4, 8x8 tested
-- All tested value ranges: 0/1, 0/3, 0/4, 0/7, 0/15, 1/2, 0/128, 0/255
+- Grayscale images: 2x2, 4x4, 8x8, 16x16 tested
+- Value ranges: 0/1, 0/3, 0/4, 0/7, 0/15, 1/2, 0/128, 0/255
+- **Full 256-value gradients** (16x16 with all values 0-255)
 - Uniform-value images (all-black, all-white, all-128)
 - Checkerboard patterns at various sizes
-- RGB images with ≤4 unique symbol values
+- RGB images with arbitrary values
 
 ### Bitstream Components
 - Zero predictor with zigzag-encoded residuals
-- Simple Huffman encoding (1-4 symbols)
+- **Full Huffman encoder** (arbitrary alphabet sizes, code length table with RLE)
 - Single-leaf MA tree
 - Frame header with Modular encoding (encoding=1)
 - Restoration filter properly disabled for lossless (gab=false, epf_iters=0)
@@ -27,33 +28,55 @@ The encoder produces valid JXL files with **perfect lossless round-trip** throug
 
 ## Known Limitations
 
-1. **4 unique symbol limit** - The minimal encoder uses JXL "simple Huffman codes" which support at most 4 unique symbols. Images with >4 unique residual values will fail with `TooManySymbols` error. A full Huffman encoder is needed for general images.
+1. **djxl compatibility** - libjxl's djxl decoder may produce incorrect output for our modular-encoded files, while jxl-rs decodes correctly. Investigation needed.
 
-2. **djxl compatibility** - libjxl's djxl decoder produces incorrect output for our modular-encoded files, while jxl-rs decodes correctly. This suggests our encoding triggers different code paths or has subtle differences that jxl-rs handles better.
+2. **Zero predictor only** - Uses constant prediction (guess=0), no adaptive predictors yet.
+
+3. **No transforms** - Squeeze, DCT, and other transforms not implemented.
 
 ## Implementation Progress
 
 ### Completed
 - [x] pack_signed/unpack_signed (zigzag encoding)
 - [x] Zero predictor residual computation
-- [x] Simple Huffman tables (1-4 symbols)
+- [x] **Full Huffman encoder** (ported from libjxl enc_huffman.cc)
+  - [x] create_huffman_tree (optimal tree building)
+  - [x] convert_bit_depths_to_symbols (canonical codes)
+  - [x] write_huffman_tree (RLE compression with codes 16/17)
+  - [x] store_huffman_tree (meta-Huffman encoding)
+  - [x] Simple codes (1-4 symbols) and full code length table (5+ symbols)
 - [x] HybridUint configuration (split_exponent=15)
 - [x] Frame header with explicit Modular encoding
 - [x] Restoration filter disabled for lossless (gab=false, epf_iters=0)
 - [x] Color encoding with Perceptual rendering intent
 - [x] Grayscale/RGB/RGBA support via ModularImage
-- [x] Lossless round-trip verified with jxl-rs
+- [x] Lossless round-trip verified with jxl-rs (up to 256 symbols)
 
 ### Future Work
-- [ ] Full Huffman encoder (>4 symbols via code length table)
-- [ ] ANS entropy coding
+- [ ] ANS entropy coding (better compression than Huffman)
 - [ ] Better predictors (Gradient, Weighted Average, etc.)
 - [ ] Transform support (Squeeze, DCT, etc.)
 - [ ] djxl compatibility investigation
+- [ ] Multi-group images (>256x256)
 
 ---
 
 ## Progress Log
+
+### 2025-12-29: Full Huffman Encoder
+
+**Ported complete Huffman encoder from libjxl:**
+
+Implemented `huffman_tree.rs` (1,320 lines) with C++ reference code inline:
+- `create_huffman_tree` - builds optimal tree from histogram
+- `convert_bit_depths_to_symbols` - depths to canonical codes
+- `write_huffman_tree` - RLE compression (codes 16/17)
+- `store_huffman_tree` - meta-Huffman + compressed tree
+- `build_and_store_huffman_tree` - main entry point
+
+**Verified working:**
+- 4x4 gradient with 16 unique values (0-15): perfect round-trip
+- 16x16 gradient with 256 unique values (0-255): perfect round-trip
 
 ### 2025-12-28: Lossless Encoding Fixed
 
@@ -71,15 +94,6 @@ writer.write(1, 0)?; // all_default = false
 writer.write(1, 0)?; // gab = false (disable Gaborish)
 writer.write(2, 0)?; // epf_iters = 0 (disable EPF)
 ```
-
-**Verified working:**
-- All 2x2 grayscale tests with various value pairs
-- 4x4 pattern with values 0,1,2,3
-- 8x8 checkerboard with values 0,128
-
-**Also fixed:**
-- Added `TooManySymbols` error for >4 unique symbols (simple Huffman limit)
-- Updated tests to use valid patterns within this limitation
 
 ### 2025-12-28: jxl-rs Round-trip Started
 
