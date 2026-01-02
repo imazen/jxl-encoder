@@ -9,14 +9,13 @@ This document tracks progress toward achieving encoding parity with the libjxl r
 ### Lossless (Modular) Encoding
 The encoder produces valid JXL files with **perfect lossless round-trip** through jxl-rs for **arbitrary grayscale and RGB images**.
 
-### Lossy (VarDCT) Encoding - In Progress
-VarDCT encoding produces complete JXL files with:
+### Lossy (VarDCT) Encoding - Working
+VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 - DCT8 forward transform with coefficient quantization
 - DC coefficients encoded via modular path
 - AC coefficient tokenization with context modeling
 - Histogram building and basic entropy coding
-
-Decoder validation pending (djxl compatibility issues under investigation).
+- **Decoder validation passed** with jxl-oxide 0.12
 
 ## Verified Working
 
@@ -90,7 +89,7 @@ Decoder validation pending (djxl compatibility issues under investigation).
 - [x] HF global section with histograms
 - [x] LF group encoding (AC strategy map, quant field, DC)
 - [x] Pass group encoding (AC coefficients)
-- [ ] Decoder validation (djxl has known compatibility issues)
+- [x] Decoder validation (jxl-oxide decodes correctly)
 
 ### Future Work - Lossy
 - [ ] Perceptual heuristics (adaptive quant, AC strategy selection)
@@ -102,6 +101,25 @@ Decoder validation pending (djxl compatibility issues under investigation).
 ---
 
 ## Progress Log
+
+### 2026-01-01: VarDCT Decoder Validation Fixed
+
+**Fixed VarDCT frame header causing NonZeroPadding error:**
+
+The VarDCT frame header was incorrectly including `group_size_shift` field which is
+**only for Modular frames**. This caused the decoder to misparse the bitstream.
+
+**Bug:** VarDCT frame header included `group_size_shift` (2 bits) after `upsampling`
+**Fix:** Removed `group_size_shift` - VarDCT uses fixed 256x256 groups, not configurable
+
+Frame header field order for VarDCT:
+- all_default, frame_type, encoding=0, flags, upsampling
+- x_qm_scale, b_qm_scale (only when !all_default && xyb_encoded && VarDCT)
+- passes, have_crop, blending, is_last, name, restoration_filter, extensions
+
+**Result:** VarDCT-encoded files now decode successfully with jxl-oxide 0.12.
+
+**Tests:** 183 passing
 
 ### 2026-01-01: VarDCT Full Pipeline Completion
 
