@@ -32,24 +32,6 @@ pub fn pack_signed(value: i32) -> u32 {
     ((value as u32) << 1) ^ ((value >> 31) as u32)
 }
 
-/// Clamped gradient prediction.
-/// This is the "Select" predictor used by zune-jpegxl:
-/// - Computes gradient = left + top - topleft
-/// - Selects between gradient, left, or top based on edge direction
-#[inline]
-fn predict_clamped_gradient(left: i32, top: i32, topleft: i32) -> i32 {
-    let ac = left - topleft;
-    let bc = top - topleft;
-    let grad = ac + top; // = left + top - topleft
-
-    // XOR trick to detect edge direction
-    let d = (left - top) ^ bc;
-    let s = ac ^ bc;
-
-    let clamp = if d < 0 { top } else { left };
-    if s < 0 { grad } else { clamp }
-}
-
 /// Encode a hybrid uint for LZ77 run length using config {0, 0, 0}.
 /// This matches libjxl's default length_uint_config.
 /// Returns (token, nbits, bits)
@@ -85,8 +67,26 @@ enum Token {
 fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut current_run = 0usize;
+    let mut num_decoded = 0usize; // Track how many values we've output (for LZ77 validity)
+    let mut last_value = 0u32; // Track last value output (for LZ77 copy)
+    let mut debug_count = 0;
 
     for channel in &image.channels {
+        // Flush any accumulated run at channel boundary
+        // LZ77 should not span channel boundaries because each channel is decoded separately
+        if current_run > K_LZ77_MIN_LENGTH {
+            tokens.push(Token::Lz77Run(current_run));
+            num_decoded += current_run;
+        } else {
+            for _ in 0..current_run {
+                tokens.push(Token::Raw(last_value));
+                num_decoded += 1;
+            }
+        }
+        current_run = 0;
+        // Reset last_value to an impossible value to prevent LZ77 from first pixel of new channel
+        last_value = u32::MAX;
+
         let width = channel.width();
         let height = channel.height();
 
@@ -94,36 +94,58 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
             for x in 0..width {
                 let pixel = channel.get(x, y);
 
-                // Get neighbors
+                // Get neighbors (matching JXL decoder and write_simple_modular_stream)
                 let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { 0 };
+                let top = if y > 0 { channel.get(x, y - 1) } else { left };
                 let topleft = if x > 0 && y > 0 {
                     channel.get(x - 1, y - 1)
-                } else if y > 0 {
-                    channel.get(0, y - 1)
                 } else {
-                    0
+                    left
                 };
 
-                // Predict
-                let prediction = predict_clamped_gradient(left, top, topleft);
+                // Predict using ClampedGradient (predictor 5)
+                let prediction = predict_gradient(left, top, topleft);
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
 
-                if packed == 0 {
+                if debug_count < 20 {
+                    let channel_idx = image
+                        .channels
+                        .iter()
+                        .position(|c| std::ptr::eq(c, channel))
+                        .unwrap();
+                    eprintln!(
+                        "RESIDUAL[{}]: ch={} y={} x={} pixel={}, pred={}, residual={}, packed={}",
+                        debug_count, channel_idx, y, x, pixel, prediction, residual, packed
+                    );
+                    debug_count += 1;
+                }
+
+                // LZ77 with distance=1 copies the last value.
+                // We can only use LZ77 if:
+                // 1. We have at least one value in the window (num_decoded > 0)
+                // 2. The value to repeat (packed) matches the last value
+                let can_use_lz77 = num_decoded > 0 && packed == last_value;
+
+                if can_use_lz77 {
                     current_run += 1;
                 } else {
                     // Flush any accumulated run
                     if current_run > K_LZ77_MIN_LENGTH {
                         tokens.push(Token::Lz77Run(current_run));
+                        num_decoded += current_run;
+                        // Note: after LZ77 copy, last_value stays the same
                     } else {
-                        // Output individual zeros
+                        // Output individual copies of last_value
                         for _ in 0..current_run {
-                            tokens.push(Token::Raw(0));
+                            tokens.push(Token::Raw(last_value));
+                            num_decoded += 1;
                         }
                     }
                     current_run = 0;
                     tokens.push(Token::Raw(packed));
+                    num_decoded += 1;
+                    last_value = packed;
                 }
             }
         }
@@ -134,7 +156,7 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
         tokens.push(Token::Lz77Run(current_run));
     } else {
         for _ in 0..current_run {
-            tokens.push(Token::Raw(0));
+            tokens.push(Token::Raw(last_value));
         }
     }
 
@@ -155,7 +177,7 @@ fn build_sparse_histogram(tokens: &[Token]) -> Vec<u64> {
         match token {
             Token::Raw(value) => {
                 let (tok, _, _) = encode_hybrid_uint_000(*value);
-                if (tok as usize) < K_NUM_RAW_SYMBOLS {
+                if (tok as usize) < total_symbols {
                     counts[tok as usize] += 1;
                 }
             }
@@ -167,9 +189,11 @@ fn build_sparse_histogram(tokens: &[Token]) -> Vec<u64> {
                 if symbol < total_symbols {
                     counts[symbol] += 1;
                 }
-                // Also count distance symbol (0 for RLE distance=1)
-                // Both contexts map to histogram 0, so distance uses same histogram
-                counts[0] += 1;
+                // Count distance symbol for distance=1
+                // With dist_multiplier = image_width, SPECIAL_DISTANCES[1] = (1, 0) gives distance=1
+                // Distance symbol 1 is encoded as HybridUint token 1 (no extra bits)
+                let (dist_tok, _, _) = encode_hybrid_uint_000(1);
+                counts[dist_tok as usize] += 1;
             }
         }
     }
@@ -261,12 +285,17 @@ fn write_sparse_lz77_histogram(
     // length_uint_config: HybridUintConfig for LZ77 run lengths
     // We use {0, 0, 0} which matches libjxl's default.
     // Encoding: (log_alpha_size = 8)
-    //   split_exponent: CeilLog2Nonzero(8+1) = 4 bits
+    //   split_exponent: (8+1).ceil_log2() = 4 bits
     //   For split_exponent=0 (which != 8):
-    //     msb_in_token: CeilLog2Nonzero(0+1) = 0 bits (implicitly 0)
-    //     lsb_in_token: CeilLog2Nonzero(0-0+1) = 0 bits (implicitly 0)
-    // So we just write 4 bits with value 0.
+    //     msb_in_token: (0+1).ceil_log2() = ceil_log2(1) = 0 bits (!)
+    //     lsb_in_token: (0-0+1).ceil_log2() = ceil_log2(1) = 0 bits (!)
+    // Total: 4 bits for config {0, 0, 0}
+    //
+    // IMPORTANT: ceil_log2(1) = 0, so when split_exponent=0, NO bits are written
+    // for msb_in_token and lsb_in_token. This was a bug - we were writing 1 bit each.
     writer.write(4, 0)?; // split_exponent = 0
+    // msb_in_token = 0 (0 bits, implicit)
+    // lsb_in_token = 0 (0 bits, implicit)
     eprintln!(
         "SPARSE_HIST [bit {}]: length_uint_config = {{0, 0, 0}}",
         writer.bits_written()
@@ -325,10 +354,14 @@ fn write_sparse_lz77_histogram(
         writer.bits_written()
     );
 
-    // split_exponent = 15
-    writer.write(4, 15)?;
+    // uint_config for data tokens: {split_exponent=0, msb=0, lsb=0}
+    // This MUST match encode_hybrid_uint_000 which uses config {0,0,0}
+    // When split_exponent=0, no extra bits are needed for msb/lsb (ceil_log2(1)=0)
+    writer.write(4, 0)?; // split_exponent = 0
+    // msb_in_token = 0 (0 bits, implicit since ceil_log2(1) = 0)
+    // lsb_in_token = 0 (0 bits, implicit since ceil_log2(1) = 0)
     eprintln!(
-        "SPARSE_HIST [bit {}]: split_exponent = 15",
+        "SPARSE_HIST [bit {}]: uint_config split_exponent = 0",
         writer.bits_written()
     );
 
@@ -452,13 +485,21 @@ pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWrite
                     writer.write(nbits as usize, extra as u64)?;
                 }
 
-                // Write distance symbol (always 0 for RLE, distance=1)
-                // The distance uses the same histogram (context_map[1] = 0)
-                // Distance 1 is encoded as symbol 0 with HybridUint{0,0,0}
-                let dist_depth = depths[0];
-                let dist_code = codes[0];
+                // Write distance symbol for distance=1 (RLE)
+                // With dist_multiplier = image_width, distance formula is:
+                //   distance = dist_multiplier * dist + offset
+                // SPECIAL_DISTANCES[0] = (0, 1): distance = width * 1 + 0 = width
+                // SPECIAL_DISTANCES[1] = (1, 0): distance = width * 0 + 1 = 1 ✓
+                // So for distance=1, we need distance symbol 1, not 0!
+                let dist_symbol = 1u32;
+                let (dist_tok, dist_nbits, dist_extra) = encode_hybrid_uint_000(dist_symbol);
+                let dist_depth = depths[dist_tok as usize];
+                let dist_code = codes[dist_tok as usize];
                 if dist_depth > 0 {
                     writer.write(dist_depth as usize, dist_code as u64)?;
+                }
+                if dist_nbits > 0 {
+                    writer.write(dist_nbits as usize, dist_extra as u64)?;
                 }
             }
         }
@@ -1333,12 +1374,15 @@ mod tests {
     }
 
     #[test]
-    fn test_predict_clamped_gradient() {
+    fn test_predict_gradient() {
         // Smooth gradient: should predict correctly
-        assert_eq!(predict_clamped_gradient(10, 10, 10), 10);
+        assert_eq!(predict_gradient(10, 10, 10), 10);
 
-        // Diagonal gradient
-        assert_eq!(predict_clamped_gradient(20, 10, 10), 20);
+        // Gradient clamping
+        // predict_gradient(left, top, topleft) = clamp(left + top - topleft, min, max)
+        // where min = min(left, top), max = max(left, top)
+        assert_eq!(predict_gradient(20, 10, 10), 20); // grad = 20, clamped to [10,20]
+        assert_eq!(predict_gradient(10, 20, 30), 10); // grad = 0, topleft > max, return min
     }
 
     #[test]
@@ -1437,5 +1481,37 @@ mod tests {
         let bytes = writer.finish_with_padding();
         eprintln!("RCT+Weighted stream: {} bytes", bytes.len());
         assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn test_lz77_bit_trace() {
+        // Create a 16x16 image that will trigger LZ77
+        // Wider rows = runs of 15 zeros per row (>7, so LZ77 triggers)
+        let mut data = Vec::new();
+        for _ in 0..256 {
+            // 16x16 image
+            data.push(100u8);
+            data.push(100u8);
+            data.push(100u8);
+        }
+        let image = ModularImage::from_rgb8(&data, 16, 16).unwrap();
+
+        eprintln!("\n=== LZ77 BIT TRACE TEST ===");
+
+        let mut writer = BitWriter::new();
+        write_improved_modular_stream(&image, &mut writer).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("LZ77 stream: {} bytes", bytes.len());
+        eprintln!("Raw bytes: {:02x?}", &bytes[..bytes.len().min(50)]);
+
+        // Now let's trace through what the decoder expects:
+        eprintln!("\n=== EXPECTED DECODER INTERPRETATION ===");
+        eprintln!("Bit 0: dc_quant.all_default = 1");
+        eprintln!("Bit 1: has_tree = 1");
+        eprintln!("--- TREE HISTOGRAM (6 contexts) ---");
+        eprintln!("Bit 2: lz77.enabled = 0");
+        eprintln!("Bits 3-5: context_map (is_simple=1, bits_per_entry=0)");
+        // ... etc
     }
 }
