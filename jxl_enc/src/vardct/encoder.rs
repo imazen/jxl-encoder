@@ -44,9 +44,9 @@ impl Default for VarDctOptions {
             distance: 1.0,
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
-            ac_strategy_heuristics: HeuristicLevel::Dct8Only,
-            cfl_enabled: false,    // Disabled by default for now
-            adaptive_quant: false, // Disabled by default for now
+            ac_strategy_heuristics: HeuristicLevel::VarianceBased, // Adaptive DCT sizes
+            cfl_enabled: true,    // Chroma-from-Luma for better compression
+            adaptive_quant: true, // Per-block quality for perceptual quality
             adaptive_quant_strength: 0.5,
         }
     }
