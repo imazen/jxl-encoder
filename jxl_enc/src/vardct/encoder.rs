@@ -1086,6 +1086,7 @@ impl VarDctEncoder {
 }
 
 /// Write a variable-length uint8.
+#[allow(dead_code)] // May be used in future for custom quant matrices
 fn write_var_len_uint8(writer: &mut BitWriter, n: u8) -> Result<()> {
     if n == 0 {
         writer.write(1, 0)?;

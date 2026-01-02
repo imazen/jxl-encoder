@@ -297,6 +297,55 @@ impl ModularImage {
     pub fn channel_mut(&mut self, idx: usize) -> &mut Channel {
         &mut self.channels[idx]
     }
+
+    /// Extracts a rectangular region from the image.
+    ///
+    /// Creates a new ModularImage containing only the pixels within the
+    /// specified bounds. Used for multi-group encoding.
+    pub fn extract_region(
+        &self,
+        x_start: usize,
+        y_start: usize,
+        x_end: usize,
+        y_end: usize,
+    ) -> Result<Self> {
+        let region_width = x_end.saturating_sub(x_start);
+        let region_height = y_end.saturating_sub(y_start);
+
+        if region_width == 0 || region_height == 0 {
+            return Err(Error::InvalidImageDimensions(region_width, region_height));
+        }
+
+        let mut channels = Vec::with_capacity(self.channels.len());
+        for src_channel in &self.channels {
+            let mut dst_channel = Channel::new(region_width, region_height)?;
+
+            for dy in 0..region_height {
+                let sy = y_start + dy;
+                if sy >= src_channel.height() {
+                    continue;
+                }
+
+                for dx in 0..region_width {
+                    let sx = x_start + dx;
+                    if sx >= src_channel.width() {
+                        continue;
+                    }
+
+                    dst_channel.set(dx, dy, src_channel.get(sx, sy));
+                }
+            }
+
+            channels.push(dst_channel);
+        }
+
+        Ok(Self {
+            channels,
+            bit_depth: self.bit_depth,
+            is_grayscale: self.is_grayscale,
+            has_alpha: self.has_alpha,
+        })
+    }
 }
 
 #[cfg(test)]
