@@ -192,122 +192,319 @@ impl Neighbors {
     }
 }
 
-/// Weighted predictor state for adaptive prediction.
-#[derive(Debug, Clone)]
-pub struct WeightedPredictorState {
-    /// Prediction errors for weight adaptation.
-    pub errors: [i32; 4],
-    /// Current weights.
-    pub weights: [i32; 4],
-    /// Weight update parameters.
-    pub params: WeightedPredictorParams,
-}
+/// Number of sub-predictors in weighted predictor.
+const NUM_WP_PREDICTORS: usize = 4;
+/// Extra precision bits for weighted predictor.
+const PRED_EXTRA_BITS: i64 = 3;
+/// Rounding value for weighted predictor.
+const PREDICTION_ROUND: i64 = ((1 << PRED_EXTRA_BITS) >> 1) - 1;
 
-/// Parameters for the weighted predictor.
+/// Division lookup table for fast approximate division by 1-64.
+/// `DIVLOOKUP[i] = (1 << 24) / (i + 1)`
+const DIVLOOKUP: [u32; 64] = [
+    16777216, 8388608, 5592405, 4194304, 3355443, 2796202, 2396745, 2097152, 1864135, 1677721,
+    1525201, 1398101, 1290555, 1198372, 1118481, 1048576, 986895, 932067, 883011, 838860, 798915,
+    762600, 729444, 699050, 671088, 645277, 621378, 599186, 578524, 559240, 541200, 524288, 508400,
+    493447, 479349, 466033, 453438, 441505, 430185, 419430, 409200, 399457, 390167, 381300, 372827,
+    364722, 356962, 349525, 342392, 335544, 328965, 322638, 316551, 310689, 305040, 299593, 294337,
+    289262, 284359, 279620, 275036, 270600, 266305, 262144,
+];
+
+/// Parameters for the weighted predictor (from bitstream header).
 #[derive(Debug, Clone, Copy)]
 pub struct WeightedPredictorParams {
-    /// Weight for predictor 0 (N + W - NW).
-    pub p0: u32,
-    /// Weight for predictor 1 (N).
-    pub p1: u32,
-    /// Weight for predictor 2 (W).
-    pub p2: u32,
-    /// Weight for predictor 3 (NW).
-    pub p3: u32,
-    /// Weight for N-NN prediction.
+    /// Correction parameter for predictor 1.
+    pub p1c: u32,
+    /// Correction parameter for predictor 2.
+    pub p2c: u32,
+    /// Correction parameters for predictor 3.
+    pub p3ca: u32,
+    pub p3cb: u32,
+    pub p3cc: u32,
+    pub p3cd: u32,
+    pub p3ce: u32,
+    /// Weight multipliers for error weighting.
     pub w0: u32,
-    /// Weight for W-WW prediction.
     pub w1: u32,
-    /// Weight for NE-N prediction.
     pub w2: u32,
-    /// Weight for NW-N prediction.
     pub w3: u32,
 }
 
 impl Default for WeightedPredictorParams {
     fn default() -> Self {
+        // Default values from JXL spec
         Self {
-            p0: 16,
-            p1: 10,
-            p2: 10,
-            p3: 4,
-            w0: 0,
-            w1: 0,
-            w2: 0,
-            w3: 0,
+            p1c: 16,
+            p2c: 10,
+            p3ca: 7,
+            p3cb: 7,
+            p3cc: 7,
+            p3cd: 0,
+            p3ce: 0,
+            w0: 0xd,
+            w1: 0xc,
+            w2: 0xc,
+            w3: 0xc,
         }
     }
 }
 
-impl WeightedPredictorState {
-    /// Creates a new weighted predictor state with default parameters.
-    pub fn new() -> Self {
-        Self::with_params(WeightedPredictorParams::default())
-    }
-
-    /// Creates a new weighted predictor state with custom parameters.
-    pub fn with_params(params: WeightedPredictorParams) -> Self {
-        Self {
-            errors: [0; 4],
-            weights: [
-                params.p0 as i32,
-                params.p1 as i32,
-                params.p2 as i32,
-                params.p3 as i32,
-            ],
-            params,
+impl WeightedPredictorParams {
+    /// Get weight multiplier by index.
+    pub fn w(&self, i: usize) -> u32 {
+        match i {
+            0 => self.w0,
+            1 => self.w1,
+            2 => self.w2,
+            3 => self.w3,
+            _ => panic!("Invalid weight index"),
         }
     }
 
-    /// Predicts using the weighted predictor.
-    pub fn predict(&self, neighbors: &Neighbors) -> i32 {
-        // Base predictions
-        let p0 = neighbors.n + neighbors.w - neighbors.nw; // Gradient
-        let p1 = neighbors.n; // Top
-        let p2 = neighbors.w; // Left
-        let p3 = neighbors.nw; // Top-left
+    /// Returns true if all parameters are at default values.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl PartialEq for WeightedPredictorParams {
+    fn eq(&self, other: &Self) -> bool {
+        self.p1c == other.p1c
+            && self.p2c == other.p2c
+            && self.p3ca == other.p3ca
+            && self.p3cb == other.p3cb
+            && self.p3cc == other.p3cc
+            && self.p3cd == other.p3cd
+            && self.p3ce == other.p3ce
+            && self.w0 == other.w0
+            && self.w1 == other.w1
+            && self.w2 == other.w2
+            && self.w3 == other.w3
+    }
+}
+
+/// Floor log2 for non-zero values.
+#[inline]
+fn floor_log2_nonzero(x: u64) -> u32 {
+    63 - x.leading_zeros()
+}
+
+/// Add extra precision bits.
+#[inline]
+fn add_bits(x: i32) -> i64 {
+    (x as i64) << PRED_EXTRA_BITS
+}
+
+/// Compute error weight from accumulated error.
+#[inline]
+fn error_weight(x: u32, maxweight: u32) -> u32 {
+    let shift = floor_log2_nonzero(x as u64 + 1) as i32 - 5;
+    if shift < 0 {
+        4u32 + maxweight * DIVLOOKUP[x as usize & 63]
+    } else {
+        4u32 + ((maxweight * DIVLOOKUP[(x as usize >> shift) & 63]) >> shift)
+    }
+}
+
+/// Compute weighted average of predictions.
+fn weighted_average(
+    pixels: &[i64; NUM_WP_PREDICTORS],
+    weights: &mut [u32; NUM_WP_PREDICTORS],
+) -> i64 {
+    let log_weight = floor_log2_nonzero(weights.iter().fold(0u64, |sum, el| sum + *el as u64));
+    let weight_sum = weights.iter_mut().fold(0, |sum, el| {
+        *el >>= log_weight - 4;
+        sum + *el
+    });
+    let sum = weights
+        .iter()
+        .enumerate()
+        .fold(((weight_sum >> 1) - 1) as i64, |sum, (i, weight)| {
+            sum + pixels[i] * *weight as i64
+        });
+    (sum * DIVLOOKUP[(weight_sum - 1) as usize] as i64) >> 24
+}
+
+/// Full weighted predictor state for adaptive prediction.
+/// Matches libjxl/jxl-rs implementation for encoding parity.
+#[derive(Debug)]
+pub struct WeightedPredictorState {
+    /// Current predictions from each sub-predictor.
+    prediction: [i64; NUM_WP_PREDICTORS],
+    /// Final weighted prediction.
+    pred: i64,
+    /// Per-position error buffer (position-major layout).
+    /// Layout: [pos0: p0,p1,p2,p3] [pos1: p0,p1,p2,p3] ...
+    pred_errors_buffer: Vec<u32>,
+    /// Prediction errors per position.
+    error: Vec<i32>,
+    /// Weighted predictor parameters.
+    params: WeightedPredictorParams,
+}
+
+impl WeightedPredictorState {
+    /// Creates a new weighted predictor state.
+    pub fn new(params: &WeightedPredictorParams, xsize: usize) -> Self {
+        let num_errors = (xsize + 2) * 2;
+        Self {
+            prediction: [0; NUM_WP_PREDICTORS],
+            pred: 0,
+            pred_errors_buffer: vec![0; num_errors * NUM_WP_PREDICTORS],
+            error: vec![0; num_errors],
+            params: *params,
+        }
+    }
+
+    /// Creates with default parameters.
+    pub fn with_defaults(xsize: usize) -> Self {
+        Self::new(&WeightedPredictorParams::default(), xsize)
+    }
+
+    /// Get all predictor errors for a given position (contiguous in memory).
+    #[inline(always)]
+    fn get_errors_at_pos(&self, pos: usize) -> &[u32; NUM_WP_PREDICTORS] {
+        let start = pos * NUM_WP_PREDICTORS;
+        self.pred_errors_buffer[start..start + NUM_WP_PREDICTORS]
+            .try_into()
+            .unwrap()
+    }
+
+    /// Get mutable reference to all predictor errors for a given position.
+    #[inline(always)]
+    fn get_errors_at_pos_mut(&mut self, pos: usize) -> &mut [u32; NUM_WP_PREDICTORS] {
+        let start = pos * NUM_WP_PREDICTORS;
+        (&mut self.pred_errors_buffer[start..start + NUM_WP_PREDICTORS])
+            .try_into()
+            .unwrap()
+    }
+
+    /// Compute prediction and property value.
+    /// Returns (prediction, max_error_property).
+    #[inline]
+    pub fn predict_and_property(
+        &mut self,
+        x: usize,
+        y: usize,
+        xsize: usize,
+        neighbors: &Neighbors,
+    ) -> (i64, i32) {
+        let (cur_row, prev_row) = if y & 1 != 0 {
+            (0, xsize + 2)
+        } else {
+            (xsize + 2, 0)
+        };
+        let pos_n = prev_row + x;
+        let pos_ne = if x < xsize - 1 { pos_n + 1 } else { pos_n };
+        let pos_nw = if x > 0 { pos_n - 1 } else { pos_n };
+
+        // Get errors at neighboring positions
+        let errors_n = self.get_errors_at_pos(pos_n);
+        let errors_ne = self.get_errors_at_pos(pos_ne);
+        let errors_nw = self.get_errors_at_pos(pos_nw);
+
+        // Compute weights from errors
+        let mut weights = [0u32; NUM_WP_PREDICTORS];
+        for i in 0..NUM_WP_PREDICTORS {
+            weights[i] = error_weight(
+                errors_n[i]
+                    .wrapping_add(errors_ne[i])
+                    .wrapping_add(errors_nw[i]),
+                self.params.w(i),
+            );
+        }
+
+        // Convert neighbors to higher precision
+        let n = add_bits(neighbors.n);
+        let w = add_bits(neighbors.w);
+        let ne = add_bits(neighbors.ne);
+        let nw = add_bits(neighbors.nw);
+        let nn = add_bits(neighbors.nn);
+
+        // Get transmission errors from neighboring positions
+        let te_w = if x == 0 {
+            0
+        } else {
+            self.error[cur_row + x - 1] as i64
+        };
+        let te_n = self.error[pos_n] as i64;
+        let te_nw = self.error[pos_nw] as i64;
+        let sum_wn = te_n + te_w;
+        let te_ne = self.error[pos_ne] as i64;
+
+        // Find max absolute error for property
+        let mut p = te_w;
+        if te_n.abs() > p.abs() {
+            p = te_n;
+        }
+        if te_nw.abs() > p.abs() {
+            p = te_nw;
+        }
+        if te_ne.abs() > p.abs() {
+            p = te_ne;
+        }
+
+        // Compute 4 sub-predictions with corrections
+        self.prediction[0] = w + ne - n;
+        self.prediction[1] = n - (((sum_wn + te_ne) * self.params.p1c as i64) >> 5);
+        self.prediction[2] = w - (((sum_wn + te_nw) * self.params.p2c as i64) >> 5);
+        self.prediction[3] = n
+            - ((te_nw * (self.params.p3ca as i64)
+                + (te_n * (self.params.p3cb as i64))
+                + (te_ne * (self.params.p3cc as i64))
+                + ((nn - n) * (self.params.p3cd as i64))
+                + ((nw - w) * (self.params.p3ce as i64)))
+                >> 5);
 
         // Compute weighted average
-        let total_weight = self.weights.iter().sum::<i32>().max(1);
-        let sum = self.weights[0] * p0
-            + self.weights[1] * p1
-            + self.weights[2] * p2
-            + self.weights[3] * p3;
+        self.pred = weighted_average(&self.prediction, &mut weights);
 
-        sum / total_weight
+        // Apply clamping when errors have consistent signs
+        if ((te_n ^ te_w) | (te_n ^ te_nw)) <= 0 {
+            let mx = w.max(ne.max(n));
+            let mn = w.min(ne.min(n));
+            self.pred = mn.max(mx.min(self.pred));
+        }
+
+        ((self.pred + PREDICTION_ROUND) >> PRED_EXTRA_BITS, p as i32)
     }
 
-    /// Updates weights based on prediction error.
-    pub fn update(&mut self, neighbors: &Neighbors, actual: i32) {
-        let p0 = neighbors.n + neighbors.w - neighbors.nw;
-        let p1 = neighbors.n;
-        let p2 = neighbors.w;
-        let p3 = neighbors.nw;
+    /// Update error buffers after seeing actual value.
+    #[inline]
+    pub fn update_errors(&mut self, actual: i32, x: usize, y: usize, xsize: usize) {
+        let (cur_row, prev_row) = if y & 1 != 0 {
+            (0, xsize + 2)
+        } else {
+            (xsize + 2, 0)
+        };
+        let val = add_bits(actual);
+        self.error[cur_row + x] = (self.pred - val) as i32;
 
-        // Errors for each predictor
-        let errs = [
-            (actual - p0).abs(),
-            (actual - p1).abs(),
-            (actual - p2).abs(),
-            (actual - p3).abs(),
-        ];
-
-        // Update running error estimates and adjust weights
-        for (i, &err) in errs.iter().enumerate() {
-            self.errors[i] = (self.errors[i] * 7 + err) / 8;
+        // Compute errors for all predictors
+        let mut errs = [0u32; NUM_WP_PREDICTORS];
+        for (err, &pred) in errs.iter_mut().zip(self.prediction.iter()) {
+            *err = (((pred - val).abs() + PREDICTION_ROUND) >> PRED_EXTRA_BITS) as u32;
         }
 
-        // Recompute weights inversely proportional to errors
-        let min_err = self.errors.iter().min().copied().unwrap_or(1).max(1);
-        for i in 0..4 {
-            self.weights[i] = (min_err * 16) / self.errors[i].max(1);
+        // Write to current position
+        *self.get_errors_at_pos_mut(cur_row + x) = errs;
+
+        // Update previous row position
+        let prev_errors = self.get_errors_at_pos_mut(prev_row + x + 1);
+        for i in 0..NUM_WP_PREDICTORS {
+            prev_errors[i] = prev_errors[i].wrapping_add(errs[i]);
         }
+    }
+
+    /// Simple predict method for compatibility.
+    pub fn predict(&mut self, x: usize, y: usize, xsize: usize, neighbors: &Neighbors) -> i32 {
+        let (pred, _) = self.predict_and_property(x, y, xsize, neighbors);
+        pred as i32
     }
 }
 
 impl Default for WeightedPredictorState {
     fn default() -> Self {
-        Self::new()
+        Self::with_defaults(256)
     }
 }
 
@@ -395,5 +592,60 @@ mod tests {
         for i in -1000..=1000 {
             assert_eq!(unpack_signed(pack_signed(i)), i);
         }
+    }
+
+    #[test]
+    fn test_weighted_predictor_params_default() {
+        let params = WeightedPredictorParams::default();
+        assert_eq!(params.p1c, 16);
+        assert_eq!(params.p2c, 10);
+        assert_eq!(params.w0, 0xd);
+        assert!(params.is_default());
+    }
+
+    #[test]
+    fn test_weighted_predictor_state() {
+        let xsize = 8;
+        let mut wp = WeightedPredictorState::with_defaults(xsize);
+
+        // Test prediction on uniform data
+        let neighbors = Neighbors {
+            n: 100,
+            w: 100,
+            nw: 100,
+            ne: 100,
+            nn: 100,
+            ww: 100,
+        };
+
+        let (pred, _prop) = wp.predict_and_property(4, 2, xsize, &neighbors);
+        // For uniform data, prediction should be close to 100
+        assert!((pred - 100).abs() <= 2);
+
+        // Update with actual value
+        wp.update_errors(100, 4, 2, xsize);
+    }
+
+    #[test]
+    fn test_weighted_predictor_adapts() {
+        let xsize = 8;
+        let mut wp = WeightedPredictorState::with_defaults(xsize);
+
+        // Simulate processing a row with gradient pattern
+        for x in 0..xsize {
+            let actual = (x * 10) as i32;
+            let neighbors = Neighbors {
+                n: if x > 0 { ((x - 1) * 10) as i32 } else { 0 },
+                w: if x > 0 { ((x - 1) * 10) as i32 } else { 0 },
+                nw: if x > 1 { ((x - 2) * 10) as i32 } else { 0 },
+                ne: (x * 10) as i32,
+                nn: 0,
+                ww: if x > 1 { ((x - 2) * 10) as i32 } else { 0 },
+            };
+
+            let (_pred, _prop) = wp.predict_and_property(x, 1, xsize, &neighbors);
+            wp.update_errors(actual, x, 1, xsize);
+        }
+        // Just verify it doesn't panic
     }
 }

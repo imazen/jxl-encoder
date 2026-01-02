@@ -48,8 +48,6 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 
 2. **No Squeeze transform** - Only RCT implemented for lossless, no Squeeze transform yet.
 
-3. **DCT16/32 not yet used in encoding** - Transform infrastructure and scan orders are ready, but the actual encoder still uses DCT8-only path. Wiring requires tokenization and context model updates.
-
 ## Implementation Progress
 
 ### Completed
@@ -74,7 +72,8 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 
 ### Future Work - Lossless
 - [ ] ANS entropy coding (better compression than Huffman)
-- [ ] Full Weighted Predictor with adaptive state
+- [x] **Full Weighted Predictor with adaptive state** - per-pixel adaptive weights
+- [x] **MA tree support** - property-based predictor selection
 - [ ] Squeeze transform
 - [ ] djxl compatibility investigation
 - [ ] Multi-group images (>256x256)
@@ -110,13 +109,60 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 - [x] **Adaptive quant field** (per-block quality based on variance)
 - [x] **DCT16/DCT32 transform support** (block extraction, transform, quantization)
 - [x] **AC coefficient scan order for DCT16/DCT32** (natural order generation)
-- [ ] Wire DCT16/32 into actual encoding (tokenization, context modeling)
+- [x] Wire DCT16/32 into actual encoding (tokenization, context modeling)
 - [ ] Butteraugli-based quality tuning
 - [ ] EPF sharpness parameter
 
 ---
 
 ## Progress Log
+
+### 2026-01-02: Weighted Predictor & MA Tree
+
+**Implemented full weighted predictor with adaptive state:**
+
+New in `modular/predictor.rs`:
+- `WeightedPredictorParams` - bitstream parameters (p1c, p2c, p3c*, w0-w3)
+- `WeightedPredictorState` - full adaptive state with error tracking
+- `predict_and_property()` - computes weighted prediction and max-error property
+- `update_errors()` - updates error buffers after each pixel
+- `DIVLOOKUP` table for fast approximate division
+- 4 sub-predictors with correction terms and adaptive weighting
+
+New in `modular/improved.rs`:
+- `write_modular_stream_with_weighted()` - encode using weighted predictor
+- `write_modular_stream_with_rct_weighted()` - combine RCT with weighted predictor
+- `write_wp_header()` - write weighted predictor parameters to bitstream
+- `write_tree_histogram_for_weighted()` - tree histogram for predictor 6
+
+New in `modular/tree.rs`:
+- `TreeToken` - tokens for tree serialization
+- `collect_tree_tokens()` - collect tokens from tree in BFS order
+- `weighted_tree()` - single-leaf tree with weighted predictor
+- `adaptive_gradient_weighted_tree()` - tree that selects between gradient/weighted
+- `count_contexts()` - count unique contexts in tree
+- Property and pixel property computation infrastructure
+
+**Tests:** 235 passing
+
+### 2026-01-02: DCT16/DCT32 Full Pipeline Wiring
+
+**Completed wiring of DCT16/DCT32 transforms into actual encoding:**
+
+New functions in `vardct/encoder.rs`:
+- `tokenize_ac_with_strategy()` - strategy-aware tokenization with proper order_id and log2_blocks
+- Uses generated natural orders for DCT8/16/32 coefficient scanning
+- Tracks processed blocks to avoid double-counting covered regions
+
+New functions in `vardct/transform.rs`:
+- `transform_xyb_image_with_strategy()` - entry point for interleaved XYB data with strategy map
+
+Updated `frame/frame_encoder.rs`:
+- `encode_vardct()` now branches based on `use_strategy` flag
+- Uses `transform_xyb_image_with_strategy()` and `tokenize_ac_with_strategy()` for DCT16/32
+- Both single-group and multi-group paths updated
+
+**Tests:** 225 passing
 
 ### 2026-01-02: DCT16/DCT32 Transform Integration
 

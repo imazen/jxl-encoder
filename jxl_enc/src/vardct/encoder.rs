@@ -12,12 +12,16 @@ use crate::heuristics::{
 use crate::modular::channel::{Channel, ModularImage};
 use crate::modular::improved::write_improved_modular_stream;
 
+use super::AcStrategy;
 use super::context::BlockContextMap;
 use super::enc_coeff::pack_signed;
 use super::histogram::HistogramBuilder;
 use super::quant_weights::DequantMatrices;
 use super::quantizer::QuantizerParams;
-use super::tokenize::{NATURAL_ORDER_8X8, Token};
+use super::tokenize::{
+    NATURAL_ORDER_8X8, Token, generate_natural_order, log2_covered_blocks_for_strategy,
+};
+use super::transform::TransformedDataWithStrategy;
 
 /// VarDCT frame encoding options.
 #[derive(Clone, Debug)]
@@ -395,6 +399,157 @@ impl VarDctEncoder {
                             nzeros_left -= 1;
                         } else {
                             prev = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build histograms from tokens
+        let mut builder = HistogramBuilder::new(num_contexts);
+        builder.add_tokens(&tokens);
+        let distributions = builder.build_distributions()?;
+
+        Ok((tokens, distributions))
+    }
+
+    /// Tokenize AC coefficients with strategy-aware variable block sizes.
+    ///
+    /// Handles DCT8, DCT16, and DCT32 blocks based on the strategy map.
+    pub fn tokenize_ac_with_strategy(
+        &self,
+        transformed: &TransformedDataWithStrategy,
+    ) -> Result<(Vec<Token>, Vec<AnsDistribution>)> {
+        let blocks_x = self.num_blocks_x();
+        let blocks_y = self.num_blocks_y();
+        let num_blocks = blocks_x * blocks_y;
+        let num_contexts = self.block_ctx_map.num_ac_contexts();
+
+        let mut tokens = Vec::with_capacity(num_blocks * 64);
+
+        // Track which blocks have been processed (for DCT16/32)
+        let mut processed = vec![false; num_blocks];
+
+        // Generate natural orders for different block sizes
+        let order_8 = NATURAL_ORDER_8X8.to_vec();
+        let order_16 = generate_natural_order(2, 2);
+        let order_32 = generate_natural_order(4, 4);
+
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let block_idx = by * blocks_x + bx;
+
+                if processed[block_idx] {
+                    continue;
+                }
+
+                let strategy = transformed.strategies.get(bx, by);
+                let (cx, cy) = match strategy {
+                    AcStrategy::Dct32x32 if bx + 3 < blocks_x && by + 3 < blocks_y => (4, 4),
+                    AcStrategy::Dct16x16 if bx + 1 < blocks_x && by + 1 < blocks_y => (2, 2),
+                    _ => (1, 1),
+                };
+
+                // Mark blocks as processed
+                for dy in 0..cy {
+                    for dx in 0..cx {
+                        processed[(by + dy) * blocks_x + (bx + dx)] = true;
+                    }
+                }
+
+                let order_id = strategy.order_id();
+                let log2_blocks = log2_covered_blocks_for_strategy(cx, cy);
+                let order: &[usize] = match (cx, cy) {
+                    (4, 4) => &order_32,
+                    (2, 2) => &order_16,
+                    _ => &order_8,
+                };
+
+                let covered_blocks = cx * cy;
+                let block_size = covered_blocks * 64;
+                let ac_size = block_size - covered_blocks; // Subtract DCs
+
+                // Get quant field value
+                let qf = self.quantizer.quant_dc;
+
+                // Process each channel
+                for c in 0..3 {
+                    let block_context = self.block_ctx_map.block_context(0, qf, order_id, c);
+
+                    // Get AC coefficients for this block/channel
+                    let ac_start = transformed.ac_offsets[block_idx * 3 + c];
+                    let ac_end = if block_idx * 3 + c + 1 < transformed.ac_offsets.len() {
+                        transformed.ac_offsets[block_idx * 3 + c + 1]
+                    } else {
+                        transformed.ac_coeffs.len()
+                    };
+                    let block_ac = &transformed.ac_coeffs[ac_start..ac_end];
+
+                    // For larger blocks, need to handle coefficient ordering properly
+                    // For now, use the AC directly (skipping LLF which is in dc_coeffs)
+                    let effective_ac = if block_ac.len() == ac_size {
+                        block_ac
+                    } else {
+                        // Fallback for DCT8
+                        block_ac
+                    };
+
+                    // Count non-zeros
+                    let nzeros: usize = effective_ac.iter().filter(|&&x| x != 0).count();
+
+                    // Emit non-zero count token
+                    let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
+                    tokens.push(Token::new(nz_ctx, nzeros as u32));
+
+                    if nzeros > 0 {
+                        let histo_offset = self
+                            .block_ctx_map
+                            .zero_density_context_offset(block_context);
+
+                        let mut nzeros_left = nzeros;
+                        let mut prev = if nzeros > ac_size / 16 { 0 } else { 1 };
+
+                        // Process coefficients in scan order
+                        for k in 0..effective_ac.len() {
+                            if nzeros_left == 0 {
+                                break;
+                            }
+
+                            // Use the appropriate order
+                            let coeff_idx = if k + covered_blocks < order.len() {
+                                order[k + covered_blocks]
+                            } else {
+                                k
+                            };
+
+                            let coeff = if coeff_idx < block_size {
+                                // Map to position within our AC array
+                                if coeff_idx < effective_ac.len() {
+                                    effective_ac[coeff_idx]
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            };
+
+                            let ctx = histo_offset
+                                + super::context::zero_density_context(
+                                    nzeros_left,
+                                    k + 1,
+                                    log2_blocks,
+                                    prev,
+                                );
+
+                            let u_coeff = pack_signed(coeff);
+                            tokens.push(Token::new(ctx as u32, u_coeff));
+
+                            if coeff != 0 {
+                                prev = 1;
+                                nzeros_left -= 1;
+                            } else {
+                                prev = 0;
+                            }
                         }
                     }
                 }

@@ -25,5 +25,5 @@ pub use quantizer::{Quantizer, QuantizerParams};
 pub use tokenize::{Token, TokenCollector};
 pub use transform::{
     TransformedData, TransformedDataWithStrategy, transform_and_quantize,
-    transform_and_quantize_with_strategy,
+    transform_and_quantize_with_strategy, transform_xyb_image, transform_xyb_image_with_strategy,
 };
