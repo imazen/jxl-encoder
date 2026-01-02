@@ -207,41 +207,6 @@ fn compute_code_lengths(counts: &[u64], max_len: u8) -> Vec<u8> {
     create_huffman_tree(&histogram, max_len)
 }
 
-/// Compute canonical Huffman codes from bit depths.
-fn compute_codes_from_depths(depths: &[u8]) -> Vec<u16> {
-    let max_depth = *depths.iter().max().unwrap_or(&0) as usize;
-    if max_depth == 0 {
-        return vec![0; depths.len()];
-    }
-
-    // Count symbols at each depth
-    let mut bl_count = vec![0u32; max_depth + 1];
-    for &d in depths {
-        if d > 0 {
-            bl_count[d as usize] += 1;
-        }
-    }
-
-    // Compute first code for each depth
-    let mut next_code = vec![0u16; max_depth + 1];
-    let mut code = 0u16;
-    for bits in 1..=max_depth {
-        code = (code + bl_count[bits - 1] as u16) << 1;
-        next_code[bits] = code;
-    }
-
-    // Assign codes
-    let mut codes = vec![0u16; depths.len()];
-    for (i, &d) in depths.iter().enumerate() {
-        if d > 0 {
-            codes[i] = next_code[d as usize];
-            next_code[d as usize] += 1;
-        }
-    }
-
-    codes
-}
-
 /// Writes a varint16 value to the bitstream.
 fn write_varint16(writer: &mut BitWriter, value: u16) -> Result<()> {
     if value == 0 {
@@ -352,10 +317,6 @@ fn write_sparse_lz77_histogram(
     let num_used: usize = histogram.iter().filter(|&&c| c > 0).count();
     eprintln!("SPARSE_HIST: {} used symbols", num_used);
 
-    // Compute depths for all symbols (including zeros in gaps)
-    let depths = create_huffman_tree(&histogram, 15);
-    let codes = compute_codes_from_depths(&depths);
-
     // Use the Huffman tree builder to store the prefix code
     // First write use_prefix_code = 1
     writer.write(1, 1)?;
@@ -382,16 +343,20 @@ fn write_sparse_lz77_histogram(
         alphabet_size - 1
     );
 
-    // Write Huffman table if alphabet size > 1
-    if alphabet_size > 1 {
-        // For sparse alphabets, we use build_and_store_huffman_tree
-        // which handles the complex prefix code encoding
-        build_and_store_huffman_tree(&histogram[..alphabet_size], writer)?;
+    // Write Huffman table and get the depths/codes that were actually stored
+    // IMPORTANT: We must use the codes returned by build_and_store_huffman_tree,
+    // not compute them ourselves, because the Huffman encoder uses bit-reversed
+    // canonical codes.
+    let (depths, codes) = if alphabet_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram[..alphabet_size], writer)?;
         eprintln!(
             "SPARSE_HIST [bit {}]: After Huffman table",
             writer.bits_written()
         );
-    }
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; alphabet_size], vec![0u16; alphabet_size])
+    };
 
     // Note: With context_map [0, 0], both token context and distance context
     // use histogram 0. We don't need a separate distance histogram - the
