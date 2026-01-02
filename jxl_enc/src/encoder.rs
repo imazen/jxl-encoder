@@ -1146,4 +1146,47 @@ mod decoder_validation {
             assert_eq!(image.height(), 8);
         }
     }
+
+    /// Test multi-group lossy encoding (512x512 = 4 groups)
+    #[test]
+    fn test_decode_lossy_multi_group() {
+        // 512x512 checkerboard pattern = 4 groups (2x2)
+        let mut data = vec![0u8; 512 * 512 * 3];
+        for y in 0..512 {
+            for x in 0..512 {
+                let idx = (y * 512 + x) * 3;
+                // Create a pattern that varies by position
+                data[idx] = ((x + y) % 256) as u8; // R
+                data[idx + 1] = ((x * 2) % 256) as u8; // G
+                data[idx + 2] = ((y * 2) % 256) as u8; // B
+            }
+        }
+
+        let encoded = encode_lossy_rgb8(&data, 512, 512, 2.0).unwrap();
+        eprintln!("Multi-group 512x512 encoded to {} bytes", encoded.len());
+
+        // Verify decodes correctly with jxl-oxide
+        match jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded)) {
+            Ok(image) => {
+                eprintln!(
+                    "Successfully decoded 512x512: {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                assert_eq!(image.width(), 512);
+                assert_eq!(image.height(), 512);
+            }
+            Err(e) => {
+                eprintln!("Multi-group decode failed: {:?}", e);
+                eprintln!("First 64 bytes:");
+                for (i, b) in encoded.iter().take(64).enumerate() {
+                    eprint!("{:02x} ", b);
+                    if (i + 1) % 16 == 0 {
+                        eprintln!();
+                    }
+                }
+                panic!("jxl-oxide failed to decode multi-group file: {:?}", e);
+            }
+        }
+    }
 }

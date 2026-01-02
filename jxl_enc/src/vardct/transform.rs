@@ -6,6 +6,7 @@ use crate::BLOCK_DIM;
 use jxl_enc_transforms::dct8;
 
 use super::enc_coeff::quantize_block_8x8;
+use super::quant_weights::get_dct8_inv_dequant_per_channel;
 use super::quantizer::QuantizerParams;
 
 /// Transformed and quantized image data.
@@ -52,9 +53,10 @@ pub fn transform_and_quantize(
     let global_scale_float = quantizer.global_scale as f32 / 65536.0;
     let quant_dc = quantizer.quant_dc as i32;
 
-    // Simple inverse dequant matrix (flat for now - real implementation uses the tables)
-    // Using flat 1.0 means no perceptual weighting - all coefficients treated equally
-    let inv_dequant = [1.0f32; 64];
+    // Get DCT8 inverse dequant matrices for each channel (X, Y, B)
+    // These provide perceptual weighting - higher weights = more quantization (less precision)
+    // Y channel (luma) gets finest precision, X and B (chroma) are quantized more coarsely
+    let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
 
     // Process each block
     for by in 0..num_blocks_y {
@@ -71,13 +73,13 @@ pub fn transform_and_quantize(
                 let mut dct_out = [0.0f32; 64];
                 dct8(&block_in, &mut dct_out);
 
-                // Quantize
+                // Quantize with per-channel perceptual weights
                 let mut quant_out = [0i32; 64];
                 quantize_block_8x8(
                     &dct_out,
                     quant_dc,
                     global_scale_float,
-                    &inv_dequant,
+                    &inv_dequant_per_channel[c],
                     &mut quant_out,
                 );
 

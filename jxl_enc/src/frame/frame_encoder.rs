@@ -7,10 +7,12 @@
 
 use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::ans::AnsDistribution;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::modular::channel::ModularImage;
 use crate::modular::improved::write_improved_modular_stream;
+use crate::vardct::tokenize::Token;
 use crate::vardct::transform::transform_xyb_image;
 use crate::vardct::{VarDctEncoder, VarDctOptions};
 
@@ -98,6 +100,7 @@ impl FrameEncoder {
         };
 
         let vardct_encoder = VarDctEncoder::new(self.width, self.height, options);
+        let num_groups = vardct_encoder.num_groups();
 
         // Transform XYB image data into quantized DCT coefficients
         let quantizer = vardct_encoder.quantizer();
@@ -110,35 +113,146 @@ impl FrameEncoder {
         // Write VarDCT frame header
         vardct_encoder.write_frame_header(writer)?;
 
-        // Encode the VarDCT data to temporary buffers
+        if num_groups == 1 {
+            // Single group: all sections combined into one TOC entry
+            self.encode_vardct_single_group(
+                &vardct_encoder,
+                &transformed.dc_coeffs,
+                &tokens,
+                &distributions,
+                writer,
+            )?;
+        } else {
+            // Multi-group: separate TOC entries for each section
+            // Pass ac_coeffs so we can tokenize per group
+            self.encode_vardct_multi_group(
+                &vardct_encoder,
+                &transformed.dc_coeffs,
+                &transformed.ac_coeffs,
+                &distributions,
+                writer,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Encode VarDCT for single-group images (≤256x256).
+    fn encode_vardct_single_group(
+        &self,
+        vardct_encoder: &VarDctEncoder,
+        dc_coeffs: &[i32],
+        tokens: &[Token],
+        distributions: &[AnsDistribution],
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        // Encode all sections to a single buffer
         let mut section_writer = BitWriter::new();
 
         // LF Global section
         vardct_encoder.write_lf_global(&mut section_writer)?;
-        section_writer.zero_pad_to_byte(); // Byte-align after LF global
+        section_writer.zero_pad_to_byte();
 
         // HF Global section (with histograms)
-        vardct_encoder.write_hf_global(&distributions, &mut section_writer)?;
-        section_writer.zero_pad_to_byte(); // Byte-align after HF global
-
-        // LF Group (for single-group images)
-        vardct_encoder.write_lf_group(&transformed.dc_coeffs, &mut section_writer)?;
-        section_writer.zero_pad_to_byte(); // Byte-align after LF group
-
-        // Pass Group (AC coefficients with entropy coding)
-        vardct_encoder.write_pass_group(&tokens, &distributions, &mut section_writer)?;
-
-        // Byte-align before finishing
+        vardct_encoder.write_hf_global(distributions, &mut section_writer)?;
         section_writer.zero_pad_to_byte();
+
+        // LF Group (DC coefficients)
+        vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
+        section_writer.zero_pad_to_byte();
+
+        // Pass Group (AC coefficients)
+        vardct_encoder.write_pass_group(tokens, distributions, &mut section_writer)?;
+        section_writer.zero_pad_to_byte();
+
         let section_data = section_writer.finish();
         let section_size = section_data.len();
 
-        // Write TOC
+        // Write single TOC entry
         self.write_toc(writer, section_size)?;
 
         // Append section data
         for byte in section_data {
             writer.write_u8(byte)?;
+        }
+
+        Ok(())
+    }
+
+    /// Encode VarDCT for multi-group images (>256x256).
+    fn encode_vardct_multi_group(
+        &self,
+        vardct_encoder: &VarDctEncoder,
+        dc_coeffs: &[i32],
+        ac_coeffs: &[i32],
+        distributions: &[AnsDistribution],
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let num_groups = vardct_encoder.num_groups();
+        let num_lf_groups = self.num_lf_groups();
+        let num_passes = 1; // Single pass for now
+
+        // For multi-group, we need separate sections:
+        // [0] LfGlobal
+        // [1] HfGlobal
+        // [2..2+num_lf_groups] LfGroup for each LF group
+        // [2+num_lf_groups..] PassGroup for each (group, pass)
+
+        let mut section_data: Vec<Vec<u8>> = Vec::new();
+
+        // Section 0: LF Global
+        let mut lf_global_writer = BitWriter::new();
+        vardct_encoder.write_lf_global(&mut lf_global_writer)?;
+        lf_global_writer.zero_pad_to_byte();
+        section_data.push(lf_global_writer.finish());
+
+        // Section 1: HF Global
+        let mut hf_global_writer = BitWriter::new();
+        vardct_encoder.write_hf_global(distributions, &mut hf_global_writer)?;
+        hf_global_writer.zero_pad_to_byte();
+        section_data.push(hf_global_writer.finish());
+
+        // Sections 2..2+num_lf_groups: LF Group for each LF group
+        // For images ≤2048x2048, there's only 1 LF group
+        for _lf_group_idx in 0..num_lf_groups {
+            let mut lf_group_writer = BitWriter::new();
+            vardct_encoder.write_lf_group(dc_coeffs, &mut lf_group_writer)?;
+            lf_group_writer.zero_pad_to_byte();
+            section_data.push(lf_group_writer.finish());
+        }
+
+        // Sections for PassGroup: tokenize and write AC coefficients per group
+        for group_idx in 0..num_groups {
+            for _pass in 0..num_passes {
+                let mut pass_group_writer = BitWriter::new();
+
+                // Tokenize AC coefficients for this specific group
+                let group_tokens =
+                    vardct_encoder.tokenize_ac_coefficients_for_group(ac_coeffs, group_idx);
+
+                // Write tokens for this group
+                vardct_encoder.write_pass_group(
+                    &group_tokens,
+                    distributions,
+                    &mut pass_group_writer,
+                )?;
+
+                pass_group_writer.zero_pad_to_byte();
+                section_data.push(pass_group_writer.finish());
+            }
+        }
+
+        // Collect section sizes
+        let section_sizes: Vec<usize> = section_data.iter().map(|s| s.len()).collect();
+
+        // Write TOC with all section sizes
+        self.write_toc_multi(writer, &section_sizes)?;
+
+        // Append all section data
+        for section in section_data {
+            for byte in section {
+                writer.write_u8(byte)?;
+            }
         }
 
         Ok(())
@@ -251,11 +365,13 @@ impl FrameEncoder {
         Ok(())
     }
 
-    /// Writes the table of contents.
+    /// Writes the table of contents with a single section.
     fn write_toc(&self, writer: &mut BitWriter, section_size: usize) -> Result<()> {
-        let num_groups = self.num_groups();
-        let num_toc_entries = if num_groups == 1 { 1 } else { 2 + num_groups };
+        self.write_toc_multi(writer, &[section_size])
+    }
 
+    /// Writes the table of contents with multiple sections.
+    fn write_toc_multi(&self, writer: &mut BitWriter, section_sizes: &[usize]) -> Result<()> {
         eprintln!("TOC [bit {}]: Writing permuted = 0", writer.bits_written());
         // permuted = false
         writer.write(1, 0)?;
@@ -267,22 +383,17 @@ impl FrameEncoder {
         // Byte align before TOC entries (permutation reads, then aligns)
         writer.zero_pad_to_byte();
 
-        eprintln!(
-            "TOC [bit {}]: Writing TOC entry for size={}",
-            writer.bits_written(),
-            section_size
-        );
         // Write TOC entries using u2S(Bits(10), Bits(14)+1024, Bits(22)+17408, Bits(30)+4211712)
-        if num_toc_entries == 1 {
-            // Single section
-            self.write_toc_entry(writer, section_size as u32)?;
-            eprintln!("TOC [bit {}]: After TOC entry", writer.bits_written());
-        } else {
-            // Multiple sections - placeholder for now
-            for _ in 0..num_toc_entries {
-                self.write_toc_entry(writer, 0)?;
-            }
+        for (i, &size) in section_sizes.iter().enumerate() {
+            eprintln!(
+                "TOC [bit {}]: Writing entry {} size={}",
+                writer.bits_written(),
+                i,
+                size
+            );
+            self.write_toc_entry(writer, size as u32)?;
         }
+        eprintln!("TOC [bit {}]: After TOC entries", writer.bits_written());
 
         // Byte align after TOC entries
         writer.zero_pad_to_byte();
@@ -315,6 +426,52 @@ impl FrameEncoder {
         let num_groups_y = self.height.div_ceil(GROUP_DIM);
         num_groups_x * num_groups_y
     }
+
+    /// Returns the number of groups in X direction.
+    pub fn num_groups_x(&self) -> usize {
+        self.width.div_ceil(GROUP_DIM)
+    }
+
+    /// Returns the number of groups in Y direction.
+    pub fn num_groups_y(&self) -> usize {
+        self.height.div_ceil(GROUP_DIM)
+    }
+
+    /// Returns the number of LF groups (DC groups).
+    /// LF groups are 8x the size of regular groups (2048x2048 pixels).
+    pub fn num_lf_groups(&self) -> usize {
+        let lf_group_dim = GROUP_DIM * 8; // 2048
+        let lf_groups_x = self.width.div_ceil(lf_group_dim);
+        let lf_groups_y = self.height.div_ceil(lf_group_dim);
+        lf_groups_x * lf_groups_y
+    }
+
+    /// Returns the number of TOC entries for this frame.
+    /// Single group: 1 entry
+    /// Multi-group: 2 + num_lf_groups + num_groups * num_passes
+    pub fn num_toc_entries(&self, num_passes: usize) -> usize {
+        let num_groups = self.num_groups();
+        if num_groups == 1 && num_passes == 1 {
+            1
+        } else {
+            2 + self.num_lf_groups() + num_groups * num_passes
+        }
+    }
+
+    /// Get the pixel bounds for a group.
+    /// Returns (x_start, y_start, x_end, y_end).
+    pub fn group_bounds(&self, group_idx: usize) -> (usize, usize, usize, usize) {
+        let num_groups_x = self.num_groups_x();
+        let gx = group_idx % num_groups_x;
+        let gy = group_idx / num_groups_x;
+
+        let x_start = gx * GROUP_DIM;
+        let y_start = gy * GROUP_DIM;
+        let x_end = (x_start + GROUP_DIM).min(self.width);
+        let y_end = (y_start + GROUP_DIM).min(self.height);
+
+        (x_start, y_start, x_end, y_end)
+    }
 }
 
 #[cfg(test)]
@@ -331,6 +488,57 @@ mod tests {
     fn test_frame_encoder_multi_group() {
         let encoder = FrameEncoder::new(512, 512, FrameEncoderOptions::default());
         assert_eq!(encoder.num_groups(), 4); // 2x2 groups
+        assert_eq!(encoder.num_groups_x(), 2);
+        assert_eq!(encoder.num_groups_y(), 2);
+        assert_eq!(encoder.num_lf_groups(), 1); // 512 < 2048
+    }
+
+    #[test]
+    fn test_group_bounds() {
+        let encoder = FrameEncoder::new(512, 512, FrameEncoderOptions::default());
+
+        // Group 0: top-left
+        let (x0, y0, x1, y1) = encoder.group_bounds(0);
+        assert_eq!((x0, y0, x1, y1), (0, 0, 256, 256));
+
+        // Group 1: top-right
+        let (x0, y0, x1, y1) = encoder.group_bounds(1);
+        assert_eq!((x0, y0, x1, y1), (256, 0, 512, 256));
+
+        // Group 2: bottom-left
+        let (x0, y0, x1, y1) = encoder.group_bounds(2);
+        assert_eq!((x0, y0, x1, y1), (0, 256, 256, 512));
+
+        // Group 3: bottom-right
+        let (x0, y0, x1, y1) = encoder.group_bounds(3);
+        assert_eq!((x0, y0, x1, y1), (256, 256, 512, 512));
+    }
+
+    #[test]
+    fn test_group_bounds_partial() {
+        // 300x200 image: 2x1 groups, second group is partial
+        let encoder = FrameEncoder::new(300, 200, FrameEncoderOptions::default());
+        assert_eq!(encoder.num_groups(), 2); // 2x1
+
+        let (x0, y0, x1, y1) = encoder.group_bounds(0);
+        assert_eq!((x0, y0, x1, y1), (0, 0, 256, 200));
+
+        let (x0, y0, x1, y1) = encoder.group_bounds(1);
+        assert_eq!((x0, y0, x1, y1), (256, 0, 300, 200)); // Clamped to image bounds
+    }
+
+    #[test]
+    fn test_num_toc_entries() {
+        // Single group, single pass
+        let encoder = FrameEncoder::new(256, 256, FrameEncoderOptions::default());
+        assert_eq!(encoder.num_toc_entries(1), 1);
+
+        // 4 groups, single pass: 2 + 1 + 4 = 7
+        let encoder = FrameEncoder::new(512, 512, FrameEncoderOptions::default());
+        assert_eq!(encoder.num_toc_entries(1), 7);
+
+        // 4 groups, 2 passes: 2 + 1 + 8 = 11
+        assert_eq!(encoder.num_toc_entries(2), 11);
     }
 
     #[test]
