@@ -1,14 +1,92 @@
 # JXL Encoder Investigation Notes
 
-## Current Status (2026-01-02) - RESOLVED
+## Current Status (2026-01-02) - VarDCT Investigation In Progress
 
 ### What Works
-- All 243 tests pass
-- Encoding with LZ77 compression works correctly
-- All images decode pixel-perfect with both djxl (libjxl) and jxl-oxide
+- All 335 tests pass with jxl-oxide decoder
+- Lossless modular encoding works with both djxl and jxl-oxide
+- Lossy VarDCT encoding works with jxl-oxide
 - HybridUint encoding fix for `split_exponent=0` is verified correct
 - LZ77 correctly handles channel boundaries
 - Prediction function matches the tree-signaled predictor
+
+### Current Issue: VarDCT files fail to decode with djxl (libjxl)
+
+**Symptoms:**
+- VarDCT encoded files decode successfully with jxl-oxide
+- Same files fail with djxl: "DecompressJxlToPackedPixelFile failed"
+- No detailed error message from djxl
+
+**Decoder Progress (from C API test):**
+```
+Read 40 bytes from lossy_8x8.jxl
+ProcessInput returned: 64 (JXL_DEC_BASIC_INFO)
+Basic info: 8x8, bits=8, alpha=0
+ProcessInput returned: 1024 (JXL_DEC_FRAME)
+Got frame
+ProcessInput returned: 5 (JXL_DEC_NEED_IMAGE_OUT_BUFFER)
+Set output buffer: 256 bytes
+ProcessInput returned: 1 (JXL_DEC_ERROR)
+```
+
+The decoder successfully parses:
+- File header (signature, size)
+- ImageMetadata (all_default=true for lossy)
+- CustomTransformData
+- FrameHeader (explicit fields, not all_default)
+- TOC (single entry, 29 bytes)
+
+Then fails when decoding frame data (LF Global, HF Global, LF Group, Pass Group).
+
+**Frame Data Size Comparison (8x8 gradient image):**
+- Our encoding: 29 bytes
+- libjxl reference: 62 bytes
+
+The frame data structure is significantly different.
+
+### VarDCT Frame Header Investigation
+
+**File Header Comparison (first 10 bytes):**
+```
+Our file:  ff 0a 41 06 00 13 88 02 00 74
+Reference: ff 0a 41 06 00 13 88 02 00 f8
+```
+
+Headers are now identical through byte 8. TOC entry starts at byte 9.
+
+**Frame Header Fields Written:**
+- all_default = 0 (explicit fields)
+- frame_type = 0 (Regular)
+- encoding = 0 (VarDCT)
+- flags = 0
+- upsampling = 1 (no upsampling)
+- x_qm_scale = 3
+- b_qm_scale = 2
+- num_passes = 1
+- have_crop = 0
+- blending_mode = 0 (Replace)
+- is_last = 1
+- name_len = 0
+- restoration_filter: all_default=0, gab=1, gab_custom=0, epf_iters=1
+- extensions = 0
+
+**Fixes Applied:**
+1. `is_srgb()` now properly checks color encoding values (was always returning false)
+2. Frame header uses explicit fields matching libjxl reference
+3. Added test for non-default sRGB color encoding
+
+### Frame Data Section Sizes (Our Encoding)
+- LF Global: 10-11 bytes
+- HF Global: 3 bytes
+- LF Group: 15 bytes
+- Pass Group: 0 bytes (single-symbol, skipped)
+- Total: 28-29 bytes
+
+### Next Steps for VarDCT Investigation
+1. Compare LF Global section structure with reference
+2. Check if HF Global histogram encoding matches spec
+3. Verify LF Group DC coefficient encoding
+4. Look for missing sections or fields in frame data
 
 ### What Was Fixed (This Session)
 
