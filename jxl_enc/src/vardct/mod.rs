@@ -15,8 +15,15 @@ pub mod transform;
 
 pub use ac_strategy::AcStrategy;
 pub use context::BlockContextMap;
-pub use enc_coeff::{pack_signed, quantize_block_8x8, quantize_block_ac, unpack_signed};
+pub use enc_coeff::{
+    pack_signed, quantize_block_8x8, quantize_block_16x16, quantize_block_32x32, quantize_block_ac,
+    unpack_signed,
+};
 pub use encoder::{VarDctEncoder, VarDctOptions};
 pub use quant_weights::{DequantMatrices, INV_LF_QUANT, LF_QUANT, LfQuantFactors, QuantTable};
 pub use quantizer::{Quantizer, QuantizerParams};
 pub use tokenize::{Token, TokenCollector};
+pub use transform::{
+    TransformedData, TransformedDataWithStrategy, transform_and_quantize,
+    transform_and_quantize_with_strategy,
+};

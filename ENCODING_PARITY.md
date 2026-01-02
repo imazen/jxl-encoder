@@ -4,7 +4,7 @@ This document tracks progress toward achieving encoding parity with the libjxl r
 
 ## Current Status
 
-**Date:** 2026-01-01
+**Date:** 2026-01-02
 
 ### Lossless (Modular) Encoding
 The encoder produces valid JXL files with **perfect lossless round-trip** through jxl-rs for **arbitrary grayscale and RGB images**.
@@ -39,15 +39,16 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 ### VarDCT Heuristics (Enabled by Default)
 - **Chroma-from-Luma (CfL)** - per-tile Y→X/B correlation for chroma compression
 - **Adaptive quantization** - per-block quality based on local variance
-- **Variance-based AC strategy** - DCT16/32 for smooth regions (map computed but DCT8-only encoding)
+- **Variance-based AC strategy** - DCT8/DCT16/DCT32 selection based on block variance
+- **DCT16/DCT32 transforms** - larger transforms for smooth regions (integrated into pipeline)
 
 ## Known Limitations
 
 1. **djxl compatibility** - libjxl's djxl decoder may produce incorrect output for our modular-encoded files, while jxl-rs decodes correctly. Investigation needed.
 
-2. **DCT8-only encoding** - AC strategy map computed with DCT16/32 selection, but encoding pipeline only uses DCT8. DCT16/32 transforms exist but not wired into VarDCT.
+2. **No Squeeze transform** - Only RCT implemented for lossless, no Squeeze transform yet.
 
-3. **No Squeeze transform** - Only RCT implemented for lossless, no Squeeze transform yet.
+3. **Coefficient ordering for DCT16/32** - DCT16/32 transforms integrated but may need AC coefficient scan order adjustment to match libjxl exactly.
 
 ## Implementation Progress
 
@@ -107,13 +108,39 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 - [x] **Integrate AC strategy selection** (variance-based heuristics, DCT8 encoding)
 - [x] **Chroma-from-Luma (CfL)** (per-tile correlation computation)
 - [x] **Adaptive quant field** (per-block quality based on variance)
+- [x] **DCT16/DCT32 transform support** (block extraction, transform, quantization)
 - [ ] Butteraugli-based quality tuning
 - [ ] EPF sharpness parameter
-- [ ] DCT16/DCT32 transform support (currently DCT8 only)
+- [ ] AC coefficient scan order for DCT16/DCT32
 
 ---
 
 ## Progress Log
+
+### 2026-01-02: DCT16/DCT32 Transform Integration
+
+**Integrated DCT16 and DCT32 transforms into the VarDCT encoding pipeline:**
+
+New infrastructure in `vardct/transform.rs`:
+- `extract_block_16x16()` - extract 16x16 pixel blocks from image planes
+- `extract_block_32x32()` - extract 32x32 pixel blocks from image planes
+- `transform_and_quantize_with_strategy()` - main entry point using AC strategy map
+- `process_dct8/16/32()` - per-block processing with DCT and quantization
+- `TransformedDataWithStrategy` - output structure with variable-length AC coefficients
+
+New quantization functions in `vardct/enc_coeff.rs`:
+- `quantize_block_16x16()` - quantize 256 DCT16 coefficients
+- `quantize_block_32x32()` - quantize 1024 DCT32 coefficients
+
+Key implementation details:
+- DCT16 covers 2x2 8x8 blocks (16x16 pixels, 256 coefficients)
+- DCT32 covers 4x4 8x8 blocks (32x32 pixels, 1024 coefficients)
+- DC coefficient stored at top-left block position
+- Covered blocks get zero DC to avoid double-counting
+- Variable-length AC storage with offset array for per-block access
+- Quantization matrices scaled from DCT8 weights
+
+**Tests:** 221 passing (5 new transform tests)
 
 ### 2026-01-01: VarDCT Heuristics Complete
 

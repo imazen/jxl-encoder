@@ -131,6 +131,74 @@ pub fn quantize_block_8x8(
     }
 }
 
+/// Quantize a 16x16 block (DCT16x16).
+///
+/// Uses scaled DCT8 weights for the larger block.
+pub fn quantize_block_16x16(
+    block_in: &[f32; 256],
+    quant: i32,
+    global_scale_float: f32,
+    inv_dequant_8x8: &[f32; 64],
+    block_out: &mut [i32; 256],
+) {
+    let qac = global_scale_float * quant as f32;
+    let threshold = DEFAULT_THRESHOLD;
+
+    // Scale DCT8 weights to DCT16 by interpolation
+    // For position (x, y) in 16x16, map to (x/2, y/2) in 8x8 weights
+    for y in 0..16 {
+        for x in 0..16 {
+            let pos = y * 16 + x;
+            // Map to 8x8 position with interpolation
+            let x8 = x / 2;
+            let y8 = y / 2;
+            let weight_pos = y8 * 8 + x8;
+
+            let q = inv_dequant_8x8[weight_pos] * qac;
+            let val = q * block_in[pos];
+            block_out[pos] = if val.abs() >= threshold {
+                val.round() as i32
+            } else {
+                0
+            };
+        }
+    }
+}
+
+/// Quantize a 32x32 block (DCT32x32).
+///
+/// Uses scaled DCT8 weights for the larger block.
+pub fn quantize_block_32x32(
+    block_in: &[f32; 1024],
+    quant: i32,
+    global_scale_float: f32,
+    inv_dequant_8x8: &[f32; 64],
+    block_out: &mut [i32; 1024],
+) {
+    let qac = global_scale_float * quant as f32;
+    let threshold = DEFAULT_THRESHOLD;
+
+    // Scale DCT8 weights to DCT32 by interpolation
+    // For position (x, y) in 32x32, map to (x/4, y/4) in 8x8 weights
+    for y in 0..32 {
+        for x in 0..32 {
+            let pos = y * 32 + x;
+            // Map to 8x8 position with interpolation
+            let x8 = x / 4;
+            let y8 = y / 4;
+            let weight_pos = y8 * 8 + x8;
+
+            let q = inv_dequant_8x8[weight_pos] * qac;
+            let val = q * block_in[pos];
+            block_out[pos] = if val.abs() >= threshold {
+                val.round() as i32
+            } else {
+                0
+            };
+        }
+    }
+}
+
 /// Simple quantization without dequant matrix (for testing).
 pub fn quantize_simple(block_in: &[f32], quant: f32, block_out: &mut [i32]) {
     assert_eq!(block_in.len(), block_out.len());
