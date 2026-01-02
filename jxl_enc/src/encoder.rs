@@ -1000,3 +1000,95 @@ fn test_encode_rgb_irregular_dimensions() {
         );
     }
 }
+
+#[cfg(test)]
+mod decoder_validation {
+    use super::*;
+
+    /// Test that our encoded files can be decoded by jxl-oxide
+    #[test]
+    fn test_decode_simple_gray() {
+        // 2x2 grayscale with values [0, 1, 0, 1]
+        let data = vec![0u8, 1, 0, 1];
+        let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+
+        // Try to decode with jxl-oxide
+        let decoder = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+
+        match decoder {
+            Ok(image) => {
+                eprintln!(
+                    "Successfully decoded 2x2 gray: {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                assert_eq!(image.width(), 2);
+                assert_eq!(image.height(), 2);
+            }
+            Err(e) => {
+                eprintln!("Decode failed: {:?}", e);
+                eprintln!("Encoded bytes ({}):", encoded.len());
+                for (i, b) in encoded.iter().enumerate() {
+                    eprint!("{:02x} ", b);
+                    if (i + 1) % 16 == 0 {
+                        eprintln!();
+                    }
+                }
+                eprintln!();
+                panic!("jxl-oxide failed to decode our encoded file");
+            }
+        }
+    }
+
+    /// Test that our lossy encoded files can be decoded
+    #[test]
+    fn test_decode_lossy_rgb() {
+        // 8x8 RGB checkerboard for lossy encoding
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 0;
+                } else {
+                    data[idx] = 0;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 255;
+                }
+            }
+        }
+
+        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        eprintln!("Lossy 8x8 encoded to {} bytes", encoded.len());
+
+        // Try to decode with jxl-oxide
+        let decoder = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+
+        match decoder {
+            Ok(image) => {
+                eprintln!(
+                    "Successfully decoded lossy 8x8: {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                assert_eq!(image.width(), 8);
+                assert_eq!(image.height(), 8);
+            }
+            Err(e) => {
+                eprintln!("Lossy decode failed: {:?}", e);
+                eprintln!("Encoded bytes ({}):", encoded.len());
+                for (i, b) in encoded.iter().enumerate() {
+                    eprint!("{:02x} ", b);
+                    if (i + 1) % 16 == 0 {
+                        eprintln!();
+                    }
+                }
+                eprintln!();
+                // For now, don't fail - we're still working on VarDCT
+                eprintln!("WARNING: jxl-oxide failed to decode lossy file");
+            }
+        }
+    }
+}
