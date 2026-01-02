@@ -231,7 +231,87 @@ fn compute_code_lengths(counts: &[u64], max_len: u8) -> Vec<u8> {
     create_huffman_tree(&histogram, max_len)
 }
 
+/// Writes a U8 value to the bitstream (JXL U8 encoding).
+///
+/// U8 encoding:
+/// - value=0: single bit 0
+/// - value>=2: bit 1, then 3 bits for n, then (n+1) bits for val
+///   where value = (1 << (n+1)) + val
+///
+/// NOTE: U8 encoding CANNOT represent value 1! For alphabet_size=2,
+/// we must encode max_symbol=2 instead (giving alphabet_size=3).
+/// Write VarLenUint16 encoding - matches libjxl's StoreVarLenUint16.
+/// Used for alphabet_size-1 in prefix code histograms.
+fn write_varlen_u16(writer: &mut BitWriter, value: u16) -> Result<()> {
+    if value == 0 {
+        writer.write(1, 0)?;
+    } else {
+        writer.write(1, 1)?;
+        // nbits = floor(log2(value))
+        let nbits = (16 - value.leading_zeros()) as usize - 1;
+        writer.write(4, nbits as u64)?;
+        writer.write(nbits, (value - (1u16 << nbits)) as u64)?;
+    }
+    Ok(())
+}
+
+/// Compute ceil(log2(n+1)) - number of bits needed to encode values 0..n
+/// This matches jxl-oxide's add_log2_ceil function exactly.
+#[inline]
+fn add_log2_ceil(x: u32) -> u32 {
+    if x >= 0x80000000 {
+        32
+    } else {
+        (x + 1).next_power_of_two().trailing_zeros()
+    }
+}
+
+/// Compute ceil(log2(n)) for alphabet size.
+/// Returns 0 for n <= 1.
+#[inline]
+fn ceil_log2(n: u32) -> u32 {
+    if n <= 1 {
+        0
+    } else {
+        32 - (n - 1).leading_zeros()
+    }
+}
+
+/// Write IntegerConfig to the bitstream.
+///
+/// The IntegerConfig encodes how hybrid uint values are encoded:
+/// - split_exponent: values < 2^split_exponent are raw symbols
+/// - msb_in_token/lsb_in_token: bits embedded in the token for values >= split
+///
+/// For raw symbols (no hybrid uint), use split_exponent = log_alphabet_size.
+/// This makes split >= alphabet_size, so all symbols are raw.
+///
+/// For hybrid uint with config {0, 0, 0}, use split_exponent = 0.
+fn write_integer_config(
+    writer: &mut BitWriter,
+    log_alphabet_size: u32,
+    split_exponent: u32,
+    msb_in_token: u32,
+    lsb_in_token: u32,
+) -> Result<()> {
+    // Number of bits to encode split_exponent
+    let split_exponent_bits = add_log2_ceil(log_alphabet_size) as usize;
+    writer.write(split_exponent_bits, split_exponent as u64)?;
+
+    if split_exponent != log_alphabet_size {
+        // Must write msb_in_token and lsb_in_token
+        let msb_bits = add_log2_ceil(split_exponent) as usize;
+        writer.write(msb_bits, msb_in_token as u64)?;
+        let lsb_bits = add_log2_ceil(split_exponent.saturating_sub(msb_in_token)) as usize;
+        writer.write(lsb_bits, lsb_in_token as u64)?;
+    }
+    // When split_exponent == log_alphabet_size, msb/lsb are implicitly 0
+
+    Ok(())
+}
+
 /// Writes a varint16 value to the bitstream.
+/// Note: For prefix code histograms, use write_varlen_u16 for alphabet_size-1.
 fn write_varint16(writer: &mut BitWriter, value: u16) -> Result<()> {
     if value == 0 {
         writer.write(1, 0)?;
@@ -284,18 +364,10 @@ fn write_sparse_lz77_histogram(
 
     // length_uint_config: HybridUintConfig for LZ77 run lengths
     // We use {0, 0, 0} which matches libjxl's default.
-    // Encoding: (log_alpha_size = 8)
-    //   split_exponent: (8+1).ceil_log2() = 4 bits
-    //   For split_exponent=0 (which != 8):
-    //     msb_in_token: (0+1).ceil_log2() = ceil_log2(1) = 0 bits (!)
-    //     lsb_in_token: (0-0+1).ceil_log2() = ceil_log2(1) = 0 bits (!)
-    // Total: 4 bits for config {0, 0, 0}
-    //
-    // IMPORTANT: ceil_log2(1) = 0, so when split_exponent=0, NO bits are written
-    // for msb_in_token and lsb_in_token. This was a bug - we were writing 1 bit each.
-    writer.write(4, 0)?; // split_exponent = 0
-    // msb_in_token = 0 (0 bits, implicit)
-    // lsb_in_token = 0 (0 bits, implicit)
+    // log_alphabet_size for LZ77 length is 8 (per spec).
+    // When split_exponent=0, msb_bits = ceil_log2(1) = 0 and lsb_bits = 0, so they're implicit.
+    const LZ77_LENGTH_LOG_ALPHA: u32 = 8;
+    write_integer_config(writer, LZ77_LENGTH_LOG_ALPHA, 0, 0, 0)?;
     eprintln!(
         "SPARSE_HIST [bit {}]: length_uint_config = {{0, 0, 0}}",
         writer.bits_written()
@@ -354,21 +426,24 @@ fn write_sparse_lz77_histogram(
         writer.bits_written()
     );
 
-    // uint_config for data tokens: {split_exponent=0, msb=0, lsb=0}
-    // This MUST match encode_hybrid_uint_000 which uses config {0,0,0}
-    // When split_exponent=0, no extra bits are needed for msb/lsb (ceil_log2(1)=0)
-    writer.write(4, 0)?; // split_exponent = 0
-    // msb_in_token = 0 (0 bits, implicit since ceil_log2(1) = 0)
-    // lsb_in_token = 0 (0 bits, implicit since ceil_log2(1) = 0)
-    eprintln!(
-        "SPARSE_HIST [bit {}]: uint_config split_exponent = 0",
-        writer.bits_written()
-    );
-
     // Alphabet size - for LZ77 histograms, this is max symbol + 1
     // But with sparse, we need to account for the full range up to max_lz77_symbol
     let alphabet_size = max_lz77_symbol + 1;
-    write_varint16(writer, (alphabet_size - 1) as u16)?;
+
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // uint_config for data tokens: {split_exponent=0, msb=0, lsb=0}
+    // This MUST match encode_hybrid_uint_000 which uses config {0,0,0}
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(writer, LOG_ALPHABET_SIZE_PREFIX, 0, 0, 0)?;
+    eprintln!(
+        "SPARSE_HIST [bit {}]: uint_config (log_alpha={}, split_exp=0)",
+        writer.bits_written(),
+        LOG_ALPHABET_SIZE_PREFIX
+    );
+
+    // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
+    write_varlen_u16(writer, (alphabet_size - 1) as u16)?;
     eprintln!(
         "SPARSE_HIST [bit {}]: alphabet_size = {} (max_symbol={})",
         writer.bits_written(),
@@ -400,7 +475,143 @@ fn write_sparse_lz77_histogram(
 }
 
 /// Writes an improved modular stream with gradient prediction and LZ77.
+///
+/// For VarDCT subbitstreams, set `skip_group_header = true` since the GroupHeader
+/// is written separately before calling this function.
 pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
+    write_improved_modular_stream_inner(image, writer, false)
+}
+
+/// Writes a modular substream for VarDCT (GroupHeader already written by caller).
+///
+/// This writes just: Tree + Histogram + Data
+/// Unlike standalone modular frames, this does NOT write dc_quant or has_tree.
+pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
+    // Collect residuals with gradient prediction
+    let mut residuals = Vec::new();
+    let mut max_residual: u32 = 0;
+
+    for channel in &image.channels {
+        let width = channel.width();
+        let height = channel.height();
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+
+                // Get neighbors (matching JXL decoder)
+                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
+                let top = if y > 0 { channel.get(x, y - 1) } else { left };
+                let topleft = if x > 0 && y > 0 {
+                    channel.get(x - 1, y - 1)
+                } else {
+                    left
+                };
+
+                // Predict using ClampedGradient (predictor 5)
+                let prediction = predict_gradient(left, top, topleft);
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+
+                residuals.push(packed);
+                max_residual = max_residual.max(packed);
+            }
+        }
+    }
+
+    // Build histogram
+    let histogram_size = (max_residual + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for &r in &residuals {
+        histogram[r as usize] += 1;
+    }
+
+    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    eprintln!(
+        "VARDCT_MODULAR: {} residuals, {} unique symbols, max={}",
+        residuals.len(),
+        num_symbols,
+        max_residual
+    );
+
+    // === Write Tree (local tree since GroupHeader has use_global_tree=false) ===
+    // For VarDCT modular substreams, tree uses allow_lz77=false, so we use the no-lz77 version
+    let (tree_depths, tree_codes) = write_tree_histogram_no_lz77(writer)?;
+    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+
+    // === Write Data Histogram ===
+    // For a single-leaf tree, num_contexts = 1 (all pixels use the same context).
+    // When num_contexts = 1, context_map is NOT written (implicit single histogram).
+    // Our gradient predictor uses a single-leaf tree, so num_contexts = 1.
+
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+
+    // Context map: NOT written for single-leaf tree (num_contexts = 1)
+
+    // use_prefix_code = 1
+    writer.write(1, 1)?;
+
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // VarDCT writes residuals directly as Huffman symbols (not hybrid uint).
+    // Use split_exponent = 15 for raw symbol encoding with prefix codes.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+    eprintln!(
+        "VARDCT_DATA [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
+        writer.bits_written(),
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX
+    );
+
+    // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
+    write_varlen_u16(writer, max_residual as u16)?;
+
+    // Huffman table - IMPORTANT: We must use the codes returned by build_and_store_huffman_tree
+    // because those are the actual codes written to the bitstream. The decoder will use those
+    // codes, so we must encode with the same codes.
+    let (depths, codes) = if histogram_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram, writer)?;
+        (table.depths, table.codes)
+    } else {
+        // Single symbol - no bits needed
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
+
+    // === Write Data (residuals) ===
+    let code_map: HashMap<u32, (u16, u8)> = depths
+        .iter()
+        .zip(codes.iter())
+        .enumerate()
+        .filter(|(_, (d, _))| **d > 0)
+        .map(|(i, (d, c))| (i as u32, (*c, *d)))
+        .collect();
+
+    for &r in &residuals {
+        if let Some(&(code, depth)) = code_map.get(&r)
+            && depth > 0 {
+                writer.write(depth as usize, code as u64)?;
+            }
+    }
+
+    // Note: NO byte padding here - VarDCT modular substreams are continuous
+    // (DC is followed by HF metadata without byte alignment)
+    eprintln!("VARDCT_MODULAR [bit {}]: Done", writer.bits_written());
+    Ok(())
+}
+
+fn write_improved_modular_stream_inner(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    _skip_group_header: bool,
+) -> Result<()> {
     // Collect residuals with gradient prediction
     let tokens = collect_residuals_with_prediction(image);
 
@@ -438,8 +649,8 @@ pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWrite
     writer.write(1, 1)?; // has_tree = true
 
     // Tree histogram for single-leaf tree with Gradient predictor
-    write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer)?;
+    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
+    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
     // Data histogram with LZ77 (sparse alphabet)
     let (depths, codes) = write_sparse_lz77_histogram(writer, &sparse_counts)?;
@@ -545,11 +756,20 @@ fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<()> {
     // use_prefix_code = 1
     writer.write(1, 1)?;
 
-    // split_exponent = 15
-    writer.write(4, 15)?;
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // For raw symbol encoding with only symbol 0, use split_exponent = 15.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
 
-    // alphabet_size = 1 (max_symbol = 0)
-    write_varint16(writer, 0)?;
+    // alphabet_size - 1 = 0 using VarLenUint16 encoding
+    write_varlen_u16(writer, 0)?;
 
     // No Huffman table needed for alphabet_size = 1
     eprintln!(
@@ -561,19 +781,46 @@ fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<()> {
 }
 
 /// Write a tree histogram that can encode tokens 0-5 (for Gradient predictor).
-/// Uses full Huffman encoding with histogram [3,0,0,0,0,1] for tokens [0,5,0,0].
-fn write_tree_histogram_for_gradient(writer: &mut BitWriter) -> Result<()> {
+/// Returns (depths, codes) for use in encoding tree tokens.
+fn write_tree_histogram_for_gradient(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {
+    // NOTE: This is for LfGlobal trees which use allow_lz77=true in the decoder
+    // Tree tokens are raw symbols (0-5), not hybrid uints.
+    // Use split_exponent = log_alphabet_size for raw symbol encoding.
+    write_tree_histogram_for_gradient_impl(writer, true)
+}
+
+/// Write tree histogram for VarDCT modular substreams.
+/// Returns (depths, codes) for use in encoding tree tokens.
+///
+/// Note: The decoder ALWAYS reads lz77.enabled first (even when allow_lz77=false
+/// in the decoder context - it will just error if enabled). So we must write
+/// lz77.enabled = 0.
+fn write_tree_histogram_no_lz77(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {
+    // Tree tokens are raw symbols (0-5), not hybrid uints.
+    // Use split_exponent = log_alphabet_size for raw symbol encoding.
+    write_tree_histogram_for_gradient_impl(writer, true)
+}
+
+/// Write tree histogram and return (depths, codes) for encoding tree tokens.
+fn write_tree_histogram_for_gradient_impl(
+    writer: &mut BitWriter,
+    write_lz77: bool,
+) -> Result<(Vec<u8>, Vec<u16>)> {
     eprintln!(
-        "  TREE_HIST [bit {}]: Starting tree histogram",
-        writer.bits_written()
+        "  TREE_HIST [bit {}]: Starting tree histogram (lz77={})",
+        writer.bits_written(),
+        write_lz77
     );
 
-    // lz77.enabled = 0
-    writer.write(1, 0)?;
-    eprintln!(
-        "  TREE_HIST [bit {}]: lz77.enabled = 0",
-        writer.bits_written()
-    );
+    // For LfGlobal trees, allow_lz77=true so we write lz77.enabled
+    // For modular substream trees (VarDCT), allow_lz77=false so we skip lz77.enabled
+    if write_lz77 {
+        writer.write(1, 0)?; // lz77.enabled = 0
+        eprintln!(
+            "  TREE_HIST [bit {}]: lz77.enabled = 0",
+            writer.bits_written()
+        );
+    }
 
     // Context map for 6 contexts: is_simple=1, bits_per_entry=0
     // (all contexts share same histogram)
@@ -591,13 +838,6 @@ fn write_tree_histogram_for_gradient(writer: &mut BitWriter) -> Result<()> {
         writer.bits_written()
     );
 
-    // split_exponent = 15
-    writer.write(4, 15)?;
-    eprintln!(
-        "  TREE_HIST [bit {}]: split_exponent = 15",
-        writer.bits_written()
-    );
-
     // Build full Huffman table
     // Tree tokens for leaf: property(ctx1), predictor(ctx2), offset(ctx3), mul_log(ctx4), mul_bits(ctx5)
     // For TREE_PREDICTOR=0: tokens [0,0,0,0,0] → histogram [5] (single symbol 0)
@@ -610,34 +850,60 @@ fn write_tree_histogram_for_gradient(writer: &mut BitWriter) -> Result<()> {
         &[4u32, 0, 0, 0, 0, 1] // Symbols 0 (4x) and 5 (1x)
     };
 
-    // alphabet_size via varint16
-    write_varint16(writer, max_symbol)?;
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // For raw symbols (no hybrid uint), use split_exponent = 15 (max for prefix codes).
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
     eprintln!(
-        "  TREE_HIST [bit {}]: max_symbol = {}",
+        "  TREE_HIST [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
         writer.bits_written(),
-        max_symbol
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX
+    );
+
+    // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
+    // For prefix codes, this is written AFTER IntegerConfigs, BEFORE Huffman tables
+    let alphabet_size = (max_symbol + 1) as u32;
+    write_varlen_u16(writer, max_symbol)?;
+    eprintln!(
+        "  TREE_HIST [bit {}]: alphabet_size-1 = {} (alphabet_size={})",
+        writer.bits_written(),
+        max_symbol,
+        alphabet_size
     );
 
     // Huffman table: skip if alphabet_size == 1 (only one possible symbol)
+    // IMPORTANT: Return the codes from build_and_store_huffman_tree to ensure
+    // tree tokens are encoded with the same codes that were written to the bitstream.
     let al_size = (max_symbol + 1) as usize;
-    if al_size > 1 {
-        build_and_store_huffman_tree(tree_histogram, writer)?;
+    let (depths, codes) = if al_size > 1 {
+        let table = build_and_store_huffman_tree(tree_histogram, writer)?;
         eprintln!(
             "  TREE_HIST [bit {}]: After Huffman table",
             writer.bits_written()
         );
+        (table.depths, table.codes)
     } else {
         eprintln!(
             "  TREE_HIST [bit {}]: No Huffman table (al_size=1)",
             writer.bits_written()
         );
-    }
+        (vec![0u8; al_size], vec![0u16; al_size])
+    };
 
-    Ok(())
+    Ok((depths, codes))
 }
 
 /// Write tree tokens for a single leaf with Gradient predictor.
-fn write_gradient_tree_tokens(writer: &mut BitWriter) -> Result<()> {
+/// Uses the provided (depths, codes) from write_tree_histogram_for_gradient.
+fn write_gradient_tree_tokens(writer: &mut BitWriter, depths: &[u8], codes: &[u16]) -> Result<()> {
     eprintln!(
         "  TREE_TOKENS [bit {}]: Starting tree tokens",
         writer.bits_written()
@@ -652,18 +918,6 @@ fn write_gradient_tree_tokens(writer: &mut BitWriter) -> Result<()> {
 
     // The predictor to use (0=Zero, 5=Gradient) - must match write_tree_histogram_for_gradient
     const TREE_PREDICTOR: u32 = 5;
-
-    // For single-symbol histogram, depth is 0 (no bits needed to encode)
-    // For 2+ symbols, we compute the Huffman codes
-    let (depths, codes): (Vec<u8>, Vec<u16>) = if TREE_PREDICTOR == 0 {
-        // Single symbol 0: depth 0, no bits needed
-        (vec![0u8], vec![0u16])
-    } else {
-        let tree_histogram = &[4u32, 0, 0, 0, 0, 1]; // 5 tokens: 4x symbol 0, 1x symbol 5
-        let d = create_huffman_tree(tree_histogram, 15);
-        let c = convert_bit_depths_to_symbols(&d);
-        (d, c)
-    };
 
     eprintln!("  TREE_TOKENS: depths = {:?}", depths);
     eprintln!("  TREE_TOKENS: codes = {:?}", codes);
@@ -772,9 +1026,9 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         // No tree tokens needed - all implicit zeros
     } else {
         // Tree histogram (supports symbols 0-5 for Gradient predictor)
-        write_tree_histogram_for_gradient(writer)?;
+        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
         // Tree tokens for single leaf with Gradient predictor
-        write_gradient_tree_tokens(writer)?;
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
     }
 
     eprintln!(
@@ -789,30 +1043,50 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         "IMPROVED [bit {}]: use_prefix_code = 1",
         writer.bits_written()
     );
-    writer.write(4, 15)?; // split_exponent = 15
+
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // Use raw symbols (split_exponent = 15) to encode residuals directly.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
     eprintln!(
-        "IMPROVED [bit {}]: split_exponent = 15",
-        writer.bits_written()
+        "IMPROVED [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
+        writer.bits_written(),
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX
     );
-    write_varint16(writer, max_residual as u16)?;
+
+    // alphabet_size-1 using VarLenUint16 encoding
+    write_varlen_u16(writer, max_residual as u16)?;
     eprintln!(
-        "IMPROVED [bit {}]: max_symbol = {}",
+        "IMPROVED [bit {}]: alphabet_size-1 = {}",
         writer.bits_written(),
         max_residual
     );
 
-    if histogram_size > 1 {
+    // Build and store Huffman table - IMPORTANT: use the codes returned by build_and_store_huffman_tree
+    let (depths, codes) = if histogram_size > 1 {
         eprintln!(
             "IMPROVED [bit {}]: Starting Huffman table (histogram_size={})",
             writer.bits_written(),
             histogram_size
         );
-        build_and_store_huffman_tree(&histogram, writer)?;
+        let table = build_and_store_huffman_tree(&histogram, writer)?;
         eprintln!(
             "IMPROVED [bit {}]: After Huffman table",
             writer.bits_written()
         );
-    }
+        (table.depths, table.codes)
+    } else {
+        // Single symbol - no bits needed
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
 
     // GroupHeader
     eprintln!(
@@ -827,9 +1101,7 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         writer.bits_written()
     );
 
-    // Encode residuals
-    let depths = create_huffman_tree(&histogram, 15);
-    let codes = convert_bit_depths_to_symbols(&depths);
+    // Encode residuals using the codes from the stored Huffman table
     let code_map: HashMap<u32, (u16, u8)> = depths
         .iter()
         .zip(codes.iter())
@@ -1013,18 +1285,35 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
     writer.write(1, 1)?; // has_tree = true
 
     // Tree histogram (Gradient predictor)
-    write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer)?;
+    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
+    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
     // Data histogram
     writer.write(1, 0)?; // lz77.enabled = 0
     writer.write(1, 1)?; // use_prefix_code = 1
-    writer.write(4, 15)?; // split_exponent = 15
-    write_varint16(writer, max_residual as u16)?;
 
-    if histogram_size > 1 {
-        build_and_store_huffman_tree(&histogram, writer)?;
-    }
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // RCT uses raw symbols - set split_exponent = 15.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+
+    // alphabet_size-1 using VarLenUint16 encoding
+    write_varlen_u16(writer, max_residual as u16)?;
+
+    // Build and store Huffman table - use the codes returned
+    let (depths, codes) = if histogram_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram, writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
 
     // GroupHeader with 1 transform
     writer.write(1, 1)?; // use_global_tree = true
@@ -1042,9 +1331,7 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
         writer.bits_written()
     );
 
-    // Encode residuals
-    let depths = create_huffman_tree(&histogram, 15);
-    let codes = convert_bit_depths_to_symbols(&depths);
+    // Encode residuals using stored Huffman codes
     let code_map: HashMap<u32, (u16, u8)> = depths
         .iter()
         .zip(codes.iter())
@@ -1077,16 +1364,25 @@ fn write_tree_histogram_for_weighted(writer: &mut BitWriter) -> Result<()> {
     // use_prefix_code = 1
     writer.write(1, 1)?;
 
-    // split_exponent = 15
-    writer.write(4, 15)?;
-
     // Tree tokens for predictor=6: [0,6,0,0,0] → histogram [4,0,0,0,0,0,1]
     const TREE_PREDICTOR: u32 = 6;
     let max_symbol = TREE_PREDICTOR as u16;
     let tree_histogram: &[u32] = &[4u32, 0, 0, 0, 0, 0, 1]; // 5 tokens: 4x symbol 0, 1x symbol 6
 
-    // alphabet_size via varint16
-    write_varint16(writer, max_symbol)?;
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // Tree tokens are raw symbols - set split_exponent = 15.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+
+    // alphabet_size-1 using VarLenUint16 encoding
+    write_varlen_u16(writer, max_symbol)?;
 
     // Huffman table
     let al_size = (max_symbol + 1) as usize;
@@ -1216,21 +1512,36 @@ pub fn write_modular_stream_with_weighted(
     // Data histogram
     writer.write(1, 0)?; // lz77.enabled = 0
     writer.write(1, 1)?; // use_prefix_code = 1
-    writer.write(4, 15)?; // split_exponent = 15
-    write_varint16(writer, max_residual as u16)?;
 
-    if histogram_size > 1 {
-        build_and_store_huffman_tree(&histogram, writer)?;
-    }
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // Weighted predictor uses raw symbols - set split_exponent = 15.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+
+    // alphabet_size-1 using VarLenUint16 encoding
+    write_varlen_u16(writer, max_residual as u16)?;
+
+    // Build and store Huffman table - use the codes returned
+    let (depths, codes) = if histogram_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram, writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
 
     // GroupHeader
     writer.write(1, 1)?; // use_global_tree = true
     write_wp_header(writer, &params)?; // wp_header
     writer.write(2, 0)?; // num_transforms = 0
 
-    // Encode residuals
-    let depths = create_huffman_tree(&histogram, 15);
-    let codes = convert_bit_depths_to_symbols(&depths);
+    // Encode residuals using stored Huffman codes
     let code_map: HashMap<u32, (u16, u8)> = depths
         .iter()
         .zip(codes.iter())
@@ -1323,12 +1634,29 @@ pub fn write_modular_stream_with_rct_weighted(
     // Data histogram
     writer.write(1, 0)?; // lz77.enabled = 0
     writer.write(1, 1)?; // use_prefix_code = 1
-    writer.write(4, 15)?; // split_exponent = 15
-    write_varint16(writer, max_residual as u16)?;
 
-    if histogram_size > 1 {
-        build_and_store_huffman_tree(&histogram, writer)?;
-    }
+    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
+    // for parsing IntegerConfig, regardless of actual alphabet size.
+    // RCT+Weighted uses raw symbols - set split_exponent = 15.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+
+    // alphabet_size-1 using VarLenUint16 encoding
+    write_varlen_u16(writer, max_residual as u16)?;
+
+    // Build and store Huffman table - use the codes returned
+    let (depths, codes) = if histogram_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram, writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
 
     // GroupHeader with RCT transform
     writer.write(1, 1)?; // use_global_tree = true
@@ -1337,9 +1665,7 @@ pub fn write_modular_stream_with_rct_weighted(
     writer.write(2, 1)?;
     write_rct_transform(writer, 0, rct_type)?;
 
-    // Encode residuals
-    let depths = create_huffman_tree(&histogram, 15);
-    let codes = convert_bit_depths_to_symbols(&depths);
+    // Encode residuals using stored Huffman codes
     let code_map: HashMap<u32, (u16, u8)> = depths
         .iter()
         .zip(codes.iter())

@@ -10,7 +10,7 @@ use crate::heuristics::{
     AcStrategyMap, ColorCorrelationMap, HeuristicLevel, QuantField, select_ac_strategies,
 };
 use crate::modular::channel::{Channel, ModularImage};
-use crate::modular::improved::write_improved_modular_stream;
+use crate::modular::improved::write_vardct_modular_substream;
 
 use super::AcStrategy;
 use super::context::BlockContextMap;
@@ -216,8 +216,18 @@ impl VarDctEncoder {
     /// VarDCT-specific fields like x_qm_scale and b_qm_scale.
     /// Note: group_size_shift is ONLY for Modular frames, not VarDCT!
     pub fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
-        // all_default = false (VarDCT needs specific settings)
+        eprintln!(
+            "VARDCT_FRMH [bit {}]: Starting VarDCT frame header",
+            writer.bits_written()
+        );
+
+        // Write explicit frame header (matching libjxl reference output)
+        // all_default = false (need to specify VarDCT-specific fields)
         writer.write(1, 0)?;
+        eprintln!(
+            "VARDCT_FRMH [bit {}]: all_default = 0",
+            writer.bits_written()
+        );
 
         // frame_type = RegularFrame (0)
         writer.write(2, 0)?;
@@ -231,15 +241,10 @@ impl VarDctEncoder {
         // upsampling = 1 (selector 0 in u2S(1,2,4,8))
         writer.write(2, 0)?;
 
-        // ec_upsampling - for each extra channel (none for RGB, so nothing written)
-
-        // NOTE: group_size_shift is ONLY for Modular, NOT VarDCT!
-        // VarDCT always uses 256x256 groups.
-
-        // x_qm_scale = 3 (default) - only when !all_default && xyb_encoded && VarDCT
+        // x_qm_scale = 3 (only for VarDCT with xyb_encoded)
         writer.write(3, 3)?;
 
-        // b_qm_scale = 2 (default) - only when !all_default && xyb_encoded && VarDCT
+        // b_qm_scale = 2 (only for VarDCT with xyb_encoded)
         writer.write(3, 2)?;
 
         // passes.num_passes = 1 (selector 0 in u2S(1,2,3,Bits(3)+4))
@@ -254,33 +259,88 @@ impl VarDctEncoder {
         // is_last = true (only for RegularFrame or SkipProgressive)
         writer.write(1, 1)?;
 
-        // save_as_reference - not written (is_last = true)
-
         // name_length = 0 using u2S(0, Bits(4), Bits(5)+16, Bits(10)+48)
         writer.write(2, 0)?; // selector 0 = value 0
 
-        // restoration_filter - for VarDCT we enable defaults (gab, epf)
-        writer.write(1, 1)?; // all_default = true
+        // restoration_filter - explicit settings matching reference
+        // all_default = false (we need to specify epf_iters=1)
+        writer.write(1, 0)?;
+
+        // gab = true
+        writer.write(1, 1)?;
+        // gab_custom = false
+        writer.write(1, 0)?;
+
+        // epf_iters = 1 (reference uses 1, not default 2)
+        writer.write(2, 1)?;
+        // epf_sharp_custom = false
+        writer.write(1, 0)?;
+        // epf_weight_custom = false
+        writer.write(1, 0)?;
+        // epf_sigma_custom = false
+        writer.write(1, 0)?;
 
         // extensions = 0 (no extensions)
         // U64 encoding: selector 0 (2 bits) means value 0
         writer.write(2, 0)?;
+        eprintln!(
+            "VARDCT_FRMH [bit {}]: frame header done",
+            writer.bits_written()
+        );
 
         Ok(())
     }
 
     /// Write the LF Global section.
     ///
-    /// Contains: QuantizerParams, BlockCtxMap, ColorCorrelation.
+    /// Contains: LfQuantFactors, QuantizerParams, BlockCtxMap, ColorCorrelation, Tree, ModularGlobal.
     pub fn write_lf_global(&self, writer: &mut BitWriter) -> Result<()> {
-        // Write quantizer params
+        eprintln!(
+            "LF_GLOBAL [bit {}]: Starting LF Global section",
+            writer.bits_written()
+        );
+
+        // Write LF quant factors (use defaults)
+        // Format: bit 1 = use default LF_QUANT values
+        writer.write(1, 1)?; // all_default = true
+        eprintln!(
+            "LF_GLOBAL [bit {}]: lf_quant_factors.all_default = 1",
+            writer.bits_written()
+        );
+
+        // Write quantizer params (global_scale, quant_dc)
         self.quantizer.write(writer);
+        eprintln!(
+            "LF_GLOBAL [bit {}]: quantizer_params (gs={}, qdc={})",
+            writer.bits_written(),
+            self.quantizer.global_scale,
+            self.quantizer.quant_dc
+        );
 
         // Write block context map (default = 1 bit)
         self.block_ctx_map.write(writer)?;
+        eprintln!(
+            "LF_GLOBAL [bit {}]: block_context_map (default={})",
+            writer.bits_written(),
+            self.block_ctx_map.use_default
+        );
 
         // Write color correlation (LF)
         self.write_color_correlation(writer)?;
+        eprintln!(
+            "LF_GLOBAL [bit {}]: color_correlation",
+            writer.bits_written()
+        );
+
+        // Write global tree presence (0 = no global tree for VarDCT)
+        writer.write(1, 0)?;
+        eprintln!(
+            "LF_GLOBAL [bit {}]: has_global_tree = 0, LF Global done",
+            writer.bits_written()
+        );
+
+        // ModularGlobal is empty for VarDCT without extra channels
+        // (no channels to encode, so nothing to write)
 
         Ok(())
     }
@@ -684,34 +744,27 @@ impl VarDctEncoder {
         writer.write(1, 0)?;
 
         // Context map
-        // For simplicity, use identity mapping (each context is its own cluster)
-        // But with many contexts, we need to write a proper context map
+        // For simplicity, map all contexts to cluster 0
         let num_contexts = distributions.len();
 
         if num_contexts == 1 {
-            // Trivial context map
-            writer.write(1, 1)?; // is_simple = true (single context)
+            // When num_contexts = 1, read_clusters returns immediately without reading bits
+            // (implicit single histogram, no context map written)
         } else {
-            // Write context map using simple encoding
-            writer.write(1, 0)?; // is_simple = false
-
-            // Use trivial context map (all same cluster for now)
-            // This simplifies to: use_mtf = false, flat cluster
-            writer.write(1, 0)?; // use_mtf_or_special = false
-
-            // Write as flat distribution pointing to cluster 0
-            // Actually for JXL, we need to write the context map properly
-            // For a minimal implementation, let's use a single histogram for all contexts
-            writer.write(1, 1)?; // is_flat = true
-            write_var_len_uint8(writer, 0)?; // num_clusters - 1 = 0 (1 cluster)
+            // Use simple context map encoding: is_simple=1, bits_per_entry=0
+            // This maps all contexts to cluster 0
+            writer.write(1, 1)?; // is_simple = true
+            writer.write(2, 0)?; // bits_per_entry = 0 (all contexts map to 0)
         }
 
         // Use prefix code (Huffman) instead of ANS for simplicity
         writer.write(1, 1)?; // use_prefix_code = true
 
-        // Write HybridUint config for the single histogram
-        // split_exponent, split, msb_in_token
-        writer.write(4, 4)?; // split_exponent = 4
+        // IntegerConfig: When use_prefix_code=1, decoder uses log_alphabet_size=15
+        // for parsing IntegerConfig. Use split_exponent=15 for raw symbol encoding.
+        // split_exponent_bits = add_log2_ceil(15) = 4 bits
+        // When split_exponent == log_alphabet_size, msb/lsb are implicit 0
+        writer.write(4, 15)?; // split_exponent = 15 (raw symbols)
 
         // Alphabet size
         let alphabet_size = distributions
@@ -756,45 +809,155 @@ impl VarDctEncoder {
 
     /// Write the LF Group section.
     ///
-    /// Contains: AC strategy map, quant field, DC coefficients.
+    /// VarDCT LF Group contains:
+    /// 1. extra_precision (2 bits)
+    /// 2. VarDCTLF modular stream (DC coefficients)
+    /// 3. ModularLF stream (for extra channels, empty for RGB)
+    /// 4. HF metadata (count + 4 modular channels: ytox, ytob, transform, epf)
     pub fn write_lf_group(&self, dc_coeffs: &[i32], writer: &mut BitWriter) -> Result<()> {
         let blocks_x = self.num_blocks_x();
         let blocks_y = self.num_blocks_y();
+        let _num_blocks = blocks_x * blocks_y;
 
-        // AC strategy map
-        // Note: Currently only DCT8 is supported in the transform pipeline.
-        // The strategy map is computed by heuristics, but we force DCT8 for encoding.
-        // use_acs_raw = true means we write raw strategy IDs per block.
-        writer.write(1, 1)?; // use_acs_raw = true
+        eprintln!(
+            "LF_GROUP [bit {}]: Starting, {}x{} blocks",
+            writer.bits_written(),
+            blocks_x,
+            blocks_y
+        );
 
-        // Write strategy for each block using the actual map
-        // For DCT8 (id=0), write 0 as the first bit
-        // TODO: Support DCT16/32 once transform pipeline is updated
-        for by in 0..blocks_y {
-            for bx in 0..blocks_x {
-                let strategy = self.ac_strategy_map.get(bx, by);
-                // Currently we only encode DCT8, regardless of what was selected
-                // This is because DCT16/32 require different coefficient handling
-                let _strategy_id = strategy as u8;
-                // For now, always write DCT8 (id=0)
-                writer.write(1, 0)?;
-            }
-        }
+        // 1. extra_precision (2 bits) - 0 for standard precision
+        writer.write(2, 0)?;
+        eprintln!(
+            "LF_GROUP [bit {}]: extra_precision = 0",
+            writer.bits_written()
+        );
 
-        // Quant field (uniform or adaptive)
-        // Write "use_raw_quant = true" and then the quant value per block
-        writer.write(1, 1)?; // use_raw_quant = true
-
-        // Write quant value for each block from the quant field
-        for by in 0..blocks_y {
-            for bx in 0..blocks_x {
-                let quant_val = self.quant_field.get(bx, by) as u64;
-                writer.write(8, quant_val)?;
-            }
-        }
-
-        // DC coefficients (modular encoded)
+        // 2. VarDCTLF modular stream (DC coefficients)
         self.write_dc_coeffs(dc_coeffs, writer)?;
+        eprintln!(
+            "LF_GROUP [bit {}]: After DC coefficients",
+            writer.bits_written()
+        );
+
+        // 3. ModularLF stream - for extra channels
+        // We don't have extra channels, so this is empty (nothing to write)
+
+        // 4. HF metadata
+        self.write_hf_metadata(writer)?;
+        eprintln!(
+            "LF_GROUP [bit {}]: After HF metadata, LF Group done",
+            writer.bits_written()
+        );
+
+        Ok(())
+    }
+
+    /// Write HF metadata for the LF Group.
+    ///
+    /// HF metadata contains:
+    /// - count (ceil_log2(upper_bound) bits) - number of transform blocks
+    /// - 4 modular channels: ytox_map, ytob_map, transform_image, epf_map
+    fn write_hf_metadata(&self, writer: &mut BitWriter) -> Result<()> {
+        let blocks_x = self.num_blocks_x();
+        let blocks_y = self.num_blocks_y();
+        let num_blocks = blocks_x * blocks_y;
+
+        // Color tile size (8x8 blocks per tile)
+        let tiles_x = blocks_x.div_ceil(8);
+        let tiles_y = blocks_y.div_ceil(8);
+        let num_tiles = tiles_x * tiles_y;
+
+        // Count = number of transform blocks (for DCT8, every block is distinct)
+        // The count is encoded using ceil_log2(upper_bound) bits
+        let upper_bound = num_blocks;
+        let count_bits = if upper_bound <= 1 {
+            0
+        } else {
+            (usize::BITS - (upper_bound - 1).leading_zeros()) as usize
+        };
+        let count = num_blocks; // Every block is a distinct transform
+        if count_bits > 0 {
+            writer.write(count_bits, (count - 1) as u64)?;
+        }
+        eprintln!(
+            "HF_META [bit {}]: count = {} ({} bits)",
+            writer.bits_written(),
+            count,
+            count_bits
+        );
+
+        // Build 4 modular channels for HF metadata:
+        // - ytox_map: color tiles size, i8 values
+        // - ytob_map: color tiles size, i8 values
+        // - transform_image: (count, 2) - pairs of (transform_type, raw_quant-1)
+        // - epf_map: block size, epf level values
+
+        // ytox_map: default = 0 (no YtoX correlation)
+        let ytox_data: Vec<i32> = vec![0i32; num_tiles];
+        let ytox_channel = Channel::from_vec(ytox_data, tiles_x, tiles_y)?;
+
+        // ytob_map: default = 0 (no YtoB correlation beyond default)
+        let ytob_data: Vec<i32> = vec![0i32; num_tiles];
+        let ytob_channel = Channel::from_vec(ytob_data, tiles_x, tiles_y)?;
+
+        // transform_image: (count, 2) array
+        // Row 0: transform_type (0 = DCT8)
+        // Row 1: raw_quant - 1
+        let mut transform_data = vec![0i32; count * 2];
+        for i in 0..count {
+            // Transform type (DCT8 = 0)
+            transform_data[i] = 0;
+            // Raw quant - 1 (stored in second row)
+            let bx = i % blocks_x;
+            let by = i / blocks_x;
+            let quant = self.quant_field.get(bx, by) as i32;
+            transform_data[count + i] = (quant - 1).max(0);
+        }
+        let transform_channel = Channel::from_vec(transform_data, count, 2)?;
+
+        // epf_map: block size, EPF level per block (4 = default enabled)
+        let epf_data: Vec<i32> = vec![4i32; num_blocks];
+        let epf_channel = Channel::from_vec(epf_data, blocks_x, blocks_y)?;
+
+        // Create modular image with all 4 channels
+        let hf_meta_image = ModularImage {
+            channels: vec![ytox_channel, ytob_channel, transform_channel, epf_channel],
+            bit_depth: 8, // Small values
+            is_grayscale: false,
+            has_alpha: false,
+        };
+
+        // Write GroupHeader for this subbitstream
+        self.write_group_header(writer)?;
+
+        // Write HF metadata using modular encoder (Tree + Histogram + Data only)
+        write_vardct_modular_substream(&hf_meta_image, writer)?;
+
+        Ok(())
+    }
+
+    /// Write a minimal GroupHeader for modular subbitstreams.
+    ///
+    /// GroupHeader contains:
+    /// - use_global_tree (1 bit)
+    /// - wp_header (WeightedHeader with all_default bit)
+    /// - transforms (count encoded with u2S)
+    fn write_group_header(&self, writer: &mut BitWriter) -> Result<()> {
+        // use_global_tree = false (we write our own tree)
+        writer.write(1, 0)?;
+
+        // wp_header.all_default = true (use default weighted params)
+        writer.write(1, 1)?;
+
+        // transforms count = 0 (no transforms)
+        // u2S(0, 1, Bits(4)+2, Bits(8)+18): selector 0 = value 0
+        writer.write(2, 0)?;
+
+        eprintln!(
+            "GROUP_HDR [bit {}]: use_global_tree=0, wp_header.all_default=1, transforms=0",
+            writer.bits_written()
+        );
 
         Ok(())
     }
@@ -806,8 +969,9 @@ impl VarDctEncoder {
         let num_blocks = blocks_x * blocks_y;
 
         // Deinterleave DC coefficients into 3 channels (X, Y, B)
-        let mut x_dc = vec![0i32; num_blocks];
+        // Note: jxl-rs expects order Y, X, B (channel 1, 0, 2 due to XYB ordering)
         let mut y_dc = vec![0i32; num_blocks];
+        let mut x_dc = vec![0i32; num_blocks];
         let mut b_dc = vec![0i32; num_blocks];
 
         for i in 0..num_blocks {
@@ -816,11 +980,11 @@ impl VarDctEncoder {
             b_dc[i] = dc_coeffs[i * 3 + 2];
         }
 
-        // Create ModularImage from DC channels
+        // Create ModularImage from DC channels (Y, X, B order for VarDCTLF)
         let dc_image = ModularImage {
             channels: vec![
-                Channel::from_vec(x_dc, blocks_x, blocks_y)?,
                 Channel::from_vec(y_dc, blocks_x, blocks_y)?,
+                Channel::from_vec(x_dc, blocks_x, blocks_y)?,
                 Channel::from_vec(b_dc, blocks_x, blocks_y)?,
             ],
             bit_depth: 16, // DC coefficients can be larger
@@ -828,11 +992,11 @@ impl VarDctEncoder {
             has_alpha: false,
         };
 
-        // use_global_tree = false (we write our own tree)
-        writer.write(1, 0)?;
+        // Write GroupHeader for this subbitstream
+        self.write_group_header(writer)?;
 
-        // Write DC coefficients using the modular encoder
-        write_improved_modular_stream(&dc_image, writer)?;
+        // Write DC coefficients using the modular encoder (Tree + Histogram + Data only)
+        write_vardct_modular_substream(&dc_image, writer)?;
 
         Ok(())
     }
@@ -854,8 +1018,10 @@ impl VarDctEncoder {
         // For Huffman/prefix codes with a single cluster, we can emit directly
 
         if tokens.is_empty() {
+            eprintln!("PASS_GROUP: tokens is empty, returning");
             return Ok(());
         }
+        eprintln!("PASS_GROUP: {} tokens to write", tokens.len());
 
         // Get the single distribution (we use cluster 0 for all contexts)
         let dist = distributions.first().ok_or_else(|| {
@@ -865,8 +1031,10 @@ impl VarDctEncoder {
         // For Huffman encoding, we need to emit symbols directly
         // Use a simple encoding: each token value is written with fixed bits
         let alphabet_size = dist.alphabet_size();
+        eprintln!("PASS_GROUP: alphabet_size = {}", alphabet_size);
         if alphabet_size <= 1 {
             // Single symbol - no bits needed per token
+            eprintln!("PASS_GROUP: single symbol, returning");
             return Ok(());
         }
 

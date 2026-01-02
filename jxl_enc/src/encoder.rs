@@ -370,7 +370,35 @@ mod tests {
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 
         eprintln!("Encoded lossy 8x8: {} bytes", encoded.len());
+        eprintln!("Hex dump:");
+        for (i, b) in encoded.iter().enumerate() {
+            eprint!("{:02x} ", b);
+            if (i + 1) % 16 == 0 {
+                eprintln!();
+            }
+        }
+        eprintln!();
         std::fs::write("/tmp/lossy_8x8.jxl", &encoded).unwrap();
+
+        // Verify roundtrip: file bytes == memory bytes
+        let read_back = std::fs::read("/tmp/lossy_8x8.jxl").unwrap();
+        assert_eq!(encoded, read_back, "File bytes don't match memory bytes!");
+
+        // Try to decode the READ-BACK bytes (not original)
+        let result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&read_back));
+        assert!(
+            result.is_ok(),
+            "Failed to decode read-back bytes: {:?}",
+            result.err()
+        );
+        let image = result.unwrap();
+        assert_eq!(image.width(), 8);
+        assert_eq!(image.height(), 8);
+        eprintln!(
+            "Decode from file bytes succeeded: {}x{}",
+            image.width(),
+            image.height()
+        );
     }
 }
 
@@ -1024,6 +1052,93 @@ fn test_encode_rgb_gradient() {
 #[cfg(test)]
 mod decoder_validation {
     use super::*;
+    use std::process::Command;
+
+    /// Path to djxl from libjxl for dual-decoder validation
+    const DJXL_PATH: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+
+    /// Validates that a JXL file can be decoded by both jxl-oxide and djxl.
+    /// Returns (width, height) on success.
+    fn validate_dual_decoder(
+        encoded: &[u8],
+        expected_width: u32,
+        expected_height: u32,
+        test_name: &str,
+    ) -> (u32, u32) {
+        // 1. Validate with jxl-oxide (Rust decoder)
+        let oxide_result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(encoded));
+        let oxide_dims = match oxide_result {
+            Ok(image) => {
+                assert_eq!(
+                    image.width(),
+                    expected_width,
+                    "{}: jxl-oxide width mismatch",
+                    test_name
+                );
+                assert_eq!(
+                    image.height(),
+                    expected_height,
+                    "{}: jxl-oxide height mismatch",
+                    test_name
+                );
+                (image.width(), image.height())
+            }
+            Err(e) => {
+                panic!("{}: jxl-oxide decode failed: {:?}", test_name, e);
+            }
+        };
+
+        // 2. Validate with djxl (libjxl reference decoder)
+        if std::path::Path::new(DJXL_PATH).exists() {
+            // Write JXL to temp file
+            let temp_jxl = format!("/tmp/dual_decode_test_{}.jxl", test_name.replace(" ", "_"));
+            let temp_png = format!("/tmp/dual_decode_test_{}.png", test_name.replace(" ", "_"));
+            std::fs::write(&temp_jxl, encoded).expect("Failed to write temp JXL");
+
+            // Run djxl
+            let output = Command::new(DJXL_PATH)
+                .args([&temp_jxl, &temp_png])
+                .output()
+                .expect("Failed to run djxl");
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                panic!("{}: djxl decode failed: {}", test_name, stderr);
+            }
+
+            // Verify the PNG was created and has correct dimensions
+            if let Ok(img) = image::open(&temp_png) {
+                assert_eq!(
+                    img.width(),
+                    expected_width,
+                    "{}: djxl output width mismatch",
+                    test_name
+                );
+                assert_eq!(
+                    img.height(),
+                    expected_height,
+                    "{}: djxl output height mismatch",
+                    test_name
+                );
+            }
+
+            // Cleanup
+            let _ = std::fs::remove_file(&temp_jxl);
+            let _ = std::fs::remove_file(&temp_png);
+
+            eprintln!(
+                "{}: PASSED dual-decoder validation (jxl-oxide + djxl)",
+                test_name
+            );
+        } else {
+            eprintln!(
+                "{}: PASSED jxl-oxide only (djxl not available at {})",
+                test_name, DJXL_PATH
+            );
+        }
+
+        oxide_dims
+    }
 
     /// Test that our encoded files can be decoded by jxl-oxide
     #[test]
@@ -1305,6 +1420,215 @@ mod decoder_validation {
                 }
                 panic!("jxl-oxide failed to decode multi-group file: {:?}", e);
             }
+        }
+    }
+
+    // ========== DUAL-DECODER VALIDATION TESTS ==========
+    // These tests validate encoded files against BOTH jxl-oxide and djxl
+
+    /// Dual-decoder validation for lossless grayscale encoding
+    #[test]
+    fn test_dual_decode_lossless_gray() {
+        let data = vec![0u8, 64, 128, 192, 255, 100, 50, 200];
+        let encoded = Encoder::new().encode_gray8(&data, 4, 2).unwrap();
+        validate_dual_decoder(&encoded, 4, 2, "lossless_gray_4x2");
+    }
+
+    /// Dual-decoder validation for lossless RGB encoding
+    #[test]
+    fn test_dual_decode_lossless_rgb() {
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                data[idx] = (x * 32) as u8; // R gradient
+                data[idx + 1] = (y * 32) as u8; // G gradient
+                data[idx + 2] = 128; // B constant
+            }
+        }
+        let encoded = Encoder::new().encode_rgb8(&data, 8, 8).unwrap();
+        validate_dual_decoder(&encoded, 8, 8, "lossless_rgb_8x8");
+    }
+
+    /// Dual-decoder validation for lossy VarDCT encoding
+    /// Note: VarDCT encoding is WIP and may not pass djxl yet
+    #[test]
+    fn test_dual_decode_lossy_vardct() {
+        let mut data = vec![0u8; 16 * 16 * 3];
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = (y * 16 + x) * 3;
+                data[idx] = ((x + y) * 8) as u8;
+                data[idx + 1] = ((x * 2) % 256) as u8;
+                data[idx + 2] = ((y * 2) % 256) as u8;
+            }
+        }
+        let encoded = encode_lossy_rgb8(&data, 16, 16, 1.0).unwrap();
+        // VarDCT is validated against jxl-oxide only until encoder is complete
+        let oxide_result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+        assert!(oxide_result.is_ok(), "jxl-oxide should decode lossy VarDCT");
+        let image = oxide_result.unwrap();
+        assert_eq!(image.width(), 16);
+        assert_eq!(image.height(), 16);
+        eprintln!("lossy_vardct_16x16: PASSED jxl-oxide (VarDCT WIP)");
+    }
+
+    /// Dual-decoder validation for solid color image
+    #[test]
+    fn test_dual_decode_solid_color() {
+        let mut data = vec![0u8; 32 * 32 * 3];
+        for i in 0..(32 * 32) {
+            data[i * 3] = 200;
+            data[i * 3 + 1] = 100;
+            data[i * 3 + 2] = 50;
+        }
+        let encoded = Encoder::new().encode_rgb8(&data, 32, 32).unwrap();
+        validate_dual_decoder(&encoded, 32, 32, "solid_color_32x32");
+    }
+
+    /// Dual-decoder validation for checkerboard pattern
+    #[test]
+    fn test_dual_decode_checkerboard() {
+        let mut data = vec![0u8; 16 * 16 * 3];
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = (y * 16 + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255;
+                    data[idx + 1] = 255;
+                    data[idx + 2] = 255;
+                } else {
+                    data[idx] = 0;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 0;
+                }
+            }
+        }
+        let encoded = Encoder::new().encode_rgb8(&data, 16, 16).unwrap();
+        validate_dual_decoder(&encoded, 16, 16, "checkerboard_16x16");
+    }
+
+    /// Dual-decoder validation at multiple lossy distances
+    /// Note: VarDCT encoding is WIP - jxl-oxide only
+    #[test]
+    fn test_dual_decode_lossy_distances() {
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                data[idx] = (x * 32) as u8;
+                data[idx + 1] = (y * 32) as u8;
+                data[idx + 2] = 100;
+            }
+        }
+
+        for distance in [0.5, 1.0, 2.0, 4.0] {
+            let encoded = encode_lossy_rgb8(&data, 8, 8, distance).unwrap();
+            // VarDCT validated against jxl-oxide only
+            let oxide_result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+            assert!(
+                oxide_result.is_ok(),
+                "jxl-oxide should decode at distance {}",
+                distance
+            );
+            let image = oxide_result.unwrap();
+            assert_eq!(image.width(), 8);
+            assert_eq!(image.height(), 8);
+        }
+        eprintln!("lossy_distances: PASSED jxl-oxide (VarDCT WIP)");
+    }
+
+    /// Dual-decoder validation for irregular dimensions
+    #[test]
+    fn test_dual_decode_irregular_dims() {
+        // Test non-power-of-2 dimensions
+        for (w, h) in [(7, 9), (11, 13), (33, 17), (100, 50)] {
+            let mut data = vec![0u8; w * h * 3];
+            for y in 0..h {
+                for x in 0..w {
+                    let idx = (y * w + x) * 3;
+                    data[idx] = ((x * 255) / w.max(1)) as u8;
+                    data[idx + 1] = ((y * 255) / h.max(1)) as u8;
+                    data[idx + 2] = 128;
+                }
+            }
+            let encoded = Encoder::new().encode_rgb8(&data, w, h).unwrap();
+            validate_dual_decoder(
+                &encoded,
+                w as u32,
+                h as u32,
+                &format!("irregular_{}x{}", w, h),
+            );
+        }
+    }
+
+    /// Dual-decoder validation for multi-group images
+    /// Note: VarDCT encoding is WIP - jxl-oxide only for lossy
+    #[test]
+    fn test_dual_decode_multi_group() {
+        // 256x256 = 1 group boundary test - lossless uses dual-decoder
+        let mut data = vec![0u8; 256 * 256 * 3];
+        for y in 0..256 {
+            for x in 0..256 {
+                let idx = (y * 256 + x) * 3;
+                data[idx] = x as u8;
+                data[idx + 1] = y as u8;
+                data[idx + 2] = ((x + y) % 256) as u8;
+            }
+        }
+        // Test lossless (modular) with dual-decoder
+        let encoded = Encoder::new().encode_rgb8(&data, 256, 256).unwrap();
+        validate_dual_decoder(&encoded, 256, 256, "multi_group_256x256_lossless");
+
+        // Also test lossy with jxl-oxide only
+        let lossy_encoded = encode_lossy_rgb8(&data, 256, 256, 2.0).unwrap();
+        let oxide_result =
+            jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&lossy_encoded));
+        assert!(
+            oxide_result.is_ok(),
+            "jxl-oxide should decode multi-group lossy"
+        );
+        let image = oxide_result.unwrap();
+        assert_eq!(image.width(), 256);
+        assert_eq!(image.height(), 256);
+        eprintln!("multi_group_256x256_lossy: PASSED jxl-oxide (VarDCT WIP)");
+    }
+
+    /// Dual-decoder validation for corpus images
+    #[test]
+    fn test_dual_decode_corpus_images() {
+        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+
+        // Test a few representative images from the corpus
+        let test_images = [
+            ("pngsuite/basn2c08.png", false), // RGB lossless
+            ("pngsuite/basn0g08.png", true),  // Gray lossless
+        ];
+
+        for (image_path, is_gray) in test_images {
+            let path = format!("{}/{}", CORPUS_PATH, image_path);
+            if !std::path::Path::new(&path).exists() {
+                eprintln!("Skipping {}: not found", image_path);
+                continue;
+            }
+
+            let img = image::open(&path).unwrap();
+            let (w, h) = (img.width() as usize, img.height() as usize);
+
+            let encoded = if is_gray {
+                let gray = img.to_luma8();
+                Encoder::new().encode_gray8(gray.as_raw(), w, h).unwrap()
+            } else {
+                let rgb = img.to_rgb8();
+                Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap()
+            };
+
+            validate_dual_decoder(
+                &encoded,
+                w as u32,
+                h as u32,
+                &format!("corpus_{}", image_path.replace("/", "_").replace(".", "_")),
+            );
         }
     }
 }
