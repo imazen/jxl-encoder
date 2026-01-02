@@ -100,10 +100,22 @@ impl FrameEncoder {
             ..Default::default()
         };
 
-        let vardct_encoder = VarDctEncoder::new(self.width, self.height, options);
+        let mut vardct_encoder = VarDctEncoder::new(self.width, self.height, options.clone());
         let num_groups = vardct_encoder.num_groups();
 
+        // Compute heuristics from image content
+        if options.ac_strategy_heuristics != crate::heuristics::HeuristicLevel::Dct8Only {
+            vardct_encoder.compute_ac_strategies(xyb_data);
+        }
+        if options.cfl_enabled {
+            vardct_encoder.compute_color_correlation(xyb_data);
+        }
+        if options.adaptive_quant {
+            vardct_encoder.compute_quant_field(xyb_data);
+        }
+
         // Transform XYB image data into quantized DCT coefficients
+        // TODO: Use transform_and_quantize_with_strategy for DCT16/32 support
         let quantizer = vardct_encoder.quantizer();
         let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
 
