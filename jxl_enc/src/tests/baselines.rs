@@ -4,8 +4,11 @@
 // license that can be found in the LICENSE file.
 
 //! Baseline test expectations from libjxl.
+//!
+//! These constants are for future baseline testing against libjxl output.
 
 /// Expected file sizes for lossless encoding (d=0.0) at effort 7.
+#[allow(dead_code)]
 pub const LOSSLESS_E7_BASELINES: &[(&str, usize)] = &[
     ("10.png", 390472),
     ("11.png", 417203),
@@ -15,6 +18,7 @@ pub const LOSSLESS_E7_BASELINES: &[(&str, usize)] = &[
 ];
 
 /// Expected file sizes for lossy encoding (d=1.0) at effort 7.
+#[allow(dead_code)]
 pub const LOSSY_D1_E7_BASELINES: &[(&str, usize, f64)] = &[
     // (filename, size, dssim)
     ("10.png", 77453, 0.00049502),
@@ -25,6 +29,7 @@ pub const LOSSY_D1_E7_BASELINES: &[(&str, usize, f64)] = &[
 ];
 
 /// Expected file sizes for lossy encoding (d=2.0) at effort 7.
+#[allow(dead_code)]
 pub const LOSSY_D2_E7_BASELINES: &[(&str, usize, f64)] = &[
     // (filename, size, dssim)
     ("10.png", 43487, 0.00121446),
