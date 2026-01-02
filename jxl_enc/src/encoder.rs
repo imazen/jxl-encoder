@@ -1086,9 +1086,64 @@ mod decoder_validation {
                     }
                 }
                 eprintln!();
-                // For now, don't fail - we're still working on VarDCT
-                eprintln!("WARNING: jxl-oxide failed to decode lossy file");
+                panic!("jxl-oxide failed to decode lossy file: {:?}", e);
             }
+        }
+    }
+
+    /// Test lossy encoding of a solid color image
+    #[test]
+    fn test_decode_lossy_solid_color() {
+        // 8x8 solid color image
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for i in 0..(8 * 8) {
+            data[i * 3] = 200; // R
+            data[i * 3 + 1] = 50; // G
+            data[i * 3 + 2] = 100; // B
+        }
+
+        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        eprintln!("Solid color 8x8 encoded to {} bytes", encoded.len());
+
+        // Decode with jxl-oxide
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("Failed to decode");
+
+        eprintln!(
+            "Successfully decoded solid color 8x8: {}x{}",
+            image.width(),
+            image.height()
+        );
+        assert_eq!(image.width(), 8);
+        assert_eq!(image.height(), 8);
+    }
+
+    /// Test lossy encoding at different distance levels
+    #[test]
+    fn test_decode_lossy_distances() {
+        // 8x8 gradient image
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                data[idx] = (x * 32) as u8; // R gradient
+                data[idx + 1] = (y * 32) as u8; // G gradient
+                data[idx + 2] = 128; // B constant
+            }
+        }
+
+        for distance in [0.5, 1.0, 2.0, 4.0] {
+            let encoded = encode_lossy_rgb8(&data, 8, 8, distance).unwrap();
+            eprintln!("Distance {}: {} bytes", distance, encoded.len());
+
+            // Verify decodes correctly
+            let image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&encoded))
+                .expect(&format!("Failed to decode at distance {}", distance));
+
+            assert_eq!(image.width(), 8);
+            assert_eq!(image.height(), 8);
         }
     }
 }
