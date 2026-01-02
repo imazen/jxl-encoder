@@ -178,4 +178,86 @@ mod tests {
         // Default alpha should write just d_alpha=true (1 bit)
         assert_eq!(writer.bits_written(), 8); // Padded
     }
+
+    #[test]
+    fn test_non_default_alpha() {
+        let mut alpha = ExtraChannelInfo::alpha();
+        alpha.alpha_associated = true; // Makes it non-default
+        assert!(!alpha.is_default_alpha());
+
+        let mut writer = BitWriter::new();
+        alpha.write(&mut writer).unwrap();
+        // Should write d_alpha=false, type, bit_depth, dim_shift, name_len, alpha_associated
+        assert!(writer.bits_written() > 1);
+    }
+
+    #[test]
+    fn test_alpha_with_name() {
+        let mut alpha = ExtraChannelInfo::alpha();
+        alpha.name = "MyAlpha".to_string();
+        assert!(!alpha.is_default_alpha());
+
+        let mut writer = BitWriter::new();
+        alpha.write(&mut writer).unwrap();
+        // Should include name bytes
+        assert!(writer.bits_written() > 8);
+    }
+
+    #[test]
+    fn test_depth_channel() {
+        let depth = ExtraChannelInfo::depth();
+        assert_eq!(depth.ec_type, ExtraChannelType::Depth);
+
+        let mut writer = BitWriter::new();
+        depth.write(&mut writer).unwrap();
+        // Not default alpha, so writes more data
+        assert!(writer.bits_written() > 1);
+    }
+
+    #[test]
+    fn test_spot_color_channel() {
+        let spot = ExtraChannelInfo::spot_color([1.0, 0.5, 0.25, 1.0]);
+        assert_eq!(spot.ec_type, ExtraChannelType::SpotColor);
+        assert_eq!(spot.spot_color, [1.0, 0.5, 0.25, 1.0]);
+
+        let mut writer = BitWriter::new();
+        spot.write(&mut writer).unwrap();
+        // Should include spot color values (4 x 32 bits = 128 bits)
+        assert!(writer.bits_written() >= 128);
+    }
+
+    #[test]
+    fn test_cfa_channel() {
+        let mut cfa = ExtraChannelInfo::default();
+        cfa.ec_type = ExtraChannelType::Cfa;
+        cfa.cfa_channel = 2;
+
+        let mut writer = BitWriter::new();
+        cfa.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 1);
+    }
+
+    #[test]
+    fn test_extra_channel_types() {
+        // Test that all channel types have expected values
+        assert_eq!(ExtraChannelType::Alpha as u8, 0);
+        assert_eq!(ExtraChannelType::Depth as u8, 1);
+        assert_eq!(ExtraChannelType::SpotColor as u8, 2);
+        assert_eq!(ExtraChannelType::SelectionMask as u8, 3);
+        assert_eq!(ExtraChannelType::Black as u8, 4);
+        assert_eq!(ExtraChannelType::Cfa as u8, 5);
+        assert_eq!(ExtraChannelType::Thermal as u8, 6);
+        assert_eq!(ExtraChannelType::Optional as u8, 15);
+    }
+
+    #[test]
+    fn test_dim_shift() {
+        let mut alpha = ExtraChannelInfo::alpha();
+        alpha.dim_shift = 2; // Downsampled by 4x
+        assert!(!alpha.is_default_alpha());
+
+        let mut writer = BitWriter::new();
+        alpha.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 1);
+    }
 }

@@ -55,14 +55,62 @@ mod tests {
             let mut writer = BitWriter::new();
             write_size(&mut writer, value).unwrap();
             assert_eq!(writer.bits_written(), 11); // 2 + 9 bits
+            assert_eq!(size_bits(value), 11);
         }
     }
 
     #[test]
     fn test_medium_sizes() {
+        // Selector 1: 13 bits + 512 offset (values 512-8703)
         let value = 1000;
         let mut writer = BitWriter::new();
         write_size(&mut writer, value).unwrap();
         assert_eq!(writer.bits_written(), 15); // 2 + 13 bits
+        assert_eq!(size_bits(value), 15);
+    }
+
+    #[test]
+    fn test_large_sizes() {
+        // Selector 2: 18 bits + 8704 offset (values 8704-270847)
+        let value = 10000;
+        let mut writer = BitWriter::new();
+        write_size(&mut writer, value).unwrap();
+        assert_eq!(writer.bits_written(), 20); // 2 + 18 bits
+        assert_eq!(size_bits(value), 20);
+    }
+
+    #[test]
+    fn test_very_large_sizes() {
+        // Selector 3: 30 bits + 270848 offset
+        let value = 300000;
+        let mut writer = BitWriter::new();
+        write_size(&mut writer, value).unwrap();
+        assert_eq!(writer.bits_written(), 32); // 2 + 30 bits
+        assert_eq!(size_bits(value), 32);
+    }
+
+    #[test]
+    fn test_size_boundaries() {
+        // Test boundary values for each selector
+        let boundaries = [
+            (0, 11),                        // min selector 0
+            (511, 11),                      // max selector 0
+            (512, 15),                      // min selector 1
+            ((1 << 13) + (1 << 9) - 1, 15), // max selector 1
+            ((1 << 13) + (1 << 9), 20),     // min selector 2
+        ];
+
+        for (value, expected_bits) in boundaries {
+            let mut writer = BitWriter::new();
+            write_size(&mut writer, value).unwrap();
+            assert_eq!(
+                writer.bits_written(),
+                expected_bits,
+                "value {} should use {} bits",
+                value,
+                expected_bits
+            );
+            assert_eq!(size_bits(value), expected_bits);
+        }
     }
 }
