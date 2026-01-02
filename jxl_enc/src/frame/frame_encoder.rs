@@ -103,6 +103,10 @@ impl FrameEncoder {
         let quantizer = vardct_encoder.quantizer();
         let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
 
+        // Tokenize AC coefficients and build histograms
+        let (tokens, distributions) =
+            vardct_encoder.tokenize_ac_coefficients(&transformed.ac_coeffs)?;
+
         // Write VarDCT frame header
         vardct_encoder.write_frame_header(writer)?;
 
@@ -112,14 +116,14 @@ impl FrameEncoder {
         // LF Global section
         vardct_encoder.write_lf_global(&mut section_writer)?;
 
-        // HF Global section
-        vardct_encoder.write_hf_global(&mut section_writer)?;
+        // HF Global section (with histograms)
+        vardct_encoder.write_hf_global(&distributions, &mut section_writer)?;
 
         // LF Group (for single-group images)
         vardct_encoder.write_lf_group(&transformed.dc_coeffs, &mut section_writer)?;
 
-        // Pass Group (AC coefficients)
-        vardct_encoder.write_pass_group(&transformed.ac_coeffs, &mut section_writer)?;
+        // Pass Group (AC coefficients with entropy coding)
+        vardct_encoder.write_pass_group(&tokens, &distributions, &mut section_writer)?;
 
         // Byte-align before finishing
         section_writer.zero_pad_to_byte();

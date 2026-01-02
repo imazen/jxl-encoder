@@ -7,6 +7,7 @@ pub mod ac_strategy;
 pub mod context;
 pub mod enc_coeff;
 pub mod encoder;
+pub mod histogram;
 pub mod quant_weights;
 pub mod quantizer;
 pub mod tokenize;
