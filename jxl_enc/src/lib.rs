@@ -17,6 +17,7 @@ pub mod entropy_coding;
 pub mod error;
 pub mod frame;
 pub mod headers;
+pub mod heuristics;
 pub mod image;
 pub mod modular;
 pub mod vardct;

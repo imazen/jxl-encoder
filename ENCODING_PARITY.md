@@ -81,26 +81,90 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 - [x] DCT8 transform pipeline (block extraction, DCT, quantization)
 - [x] VarDCT frame header (encoding=0)
 - [x] Public API: `encode_lossy_rgb8()`
-
-### In Progress
 - [x] DC coefficients via modular path (uses improved modular stream)
 - [x] AC coefficient tokenization with context modeling
 - [x] Histogram building from tokens (`vardct/histogram.rs`)
 - [x] HF global section with histograms
 - [x] LF group encoding (AC strategy map, quant field, DC)
 - [x] Pass group encoding (AC coefficients)
-- [x] Decoder validation (jxl-oxide decodes correctly)
+- [x] Decoder validation (jxl-oxide 0.12 decodes correctly)
+- [x] **DCT8 perceptual weights** (per-channel dequant matrices with frequency bands)
+- [x] **AC strategy selection heuristics** (variance-based DCT8/DCT16/DCT32 selection)
+- [x] **Multi-group support** (images >256x256, proper TOC with multiple sections)
 
 ### Future Work - Lossy
-- [ ] Perceptual heuristics (adaptive quant, AC strategy selection)
+- [ ] Integrate AC strategy selection into encoder (currently using DCT8-only)
+- [ ] Split AC tokens by group (currently all tokens in group 0)
 - [ ] Chroma-from-Luma (CfL) correlation
+- [ ] Adaptive quant field (per-block quality adjustment)
 - [ ] Butteraugli-based quality tuning
 - [ ] EPF sharpness parameter
-- [ ] Multi-group support for large images
 
 ---
 
 ## Progress Log
+
+### 2026-01-01: Multi-Group Support
+
+**Added support for encoding images larger than 256x256:**
+
+For images >256x256, JXL uses multiple groups. Each 256x256 region is a separate
+group with its own TOC entry.
+
+Implemented:
+- `FrameEncoder`: `num_groups_x/y()`, `num_lf_groups()`, `num_toc_entries()`, `group_bounds()`
+- `VarDctEncoder`: `num_groups()`, `group_block_range()`
+- `encode_vardct_multi_group()` - encodes separate sections for multi-group images
+- `write_toc_multi()` - writes TOC with multiple section sizes
+
+TOC structure for multi-group (single pass):
+- Entry 0: LfGlobal
+- Entry 1: HfGlobal
+- Entry 2+: LfGroup (1 per LF group, typically 1 for images ≤2048x2048)
+- Remaining: PassGroup (1 per group per pass)
+
+Note: Currently all AC tokens go in group 0. Proper per-group splitting is future work.
+
+**Tests:** 201 passing (multi-group 512x512 decodes correctly with jxl-oxide)
+
+### 2026-01-01: AC Strategy Selection Heuristics
+
+**Added variance-based AC strategy selection infrastructure:**
+
+Created `heuristics/` module with:
+- `AcStrategyMap` - stores per-block strategy decisions
+- `HeuristicLevel` - enum for DCT8-only vs variance-based selection
+- `select_ac_strategies()` - main entry point
+
+Algorithm:
+1. Compute local variance for each 8x8 block
+2. For very smooth regions (variance < 0.001): assign DCT32
+3. For moderately smooth regions (variance < 0.01): assign DCT16
+4. Otherwise: keep DCT8
+
+Note: This creates the infrastructure; actual encoder still uses DCT8-only.
+Integrating varied DCT sizes requires changes to transform/encoding pipelines.
+
+**Tests:** 197 passing
+
+### 2026-01-01: DCT8 Perceptual Weights
+
+**Added per-channel perceptual quantization weights:**
+
+Implemented DCT8 frequency-dependent quantization based on jxl-rs distance bands.
+Each channel (X, Y, B) uses different weights reflecting human visual sensitivity:
+- Y (luminance): finest precision, most sensitive to detail
+- X, B (chroma): coarser quantization, human vision less sensitive
+
+Key functions in `quant_weights.rs`:
+- `band_mult()` - converts differential band values to multipliers
+- `interpolate_vec()` - exponential interpolation between bands
+- `generate_dct8_weights()` - produces 192 weights (3 channels × 64 positions)
+- `get_dct8_inv_dequant_per_channel()` - returns inverse weights for encoding
+
+Integrated into `transform.rs` to replace flat [1.0; 64] with per-channel weights.
+
+**Tests:** 189 passing
 
 ### 2026-01-01: VarDCT Decoder Validation Fixed
 

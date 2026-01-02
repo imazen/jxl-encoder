@@ -78,6 +78,46 @@ impl VarDctEncoder {
         &self.quantizer
     }
 
+    /// Group dimension in pixels (256x256).
+    const GROUP_DIM: usize = 256;
+
+    /// Number of groups in X direction.
+    pub fn num_groups_x(&self) -> usize {
+        self.width.div_ceil(Self::GROUP_DIM)
+    }
+
+    /// Number of groups in Y direction.
+    pub fn num_groups_y(&self) -> usize {
+        self.height.div_ceil(Self::GROUP_DIM)
+    }
+
+    /// Total number of groups.
+    pub fn num_groups(&self) -> usize {
+        self.num_groups_x() * self.num_groups_y()
+    }
+
+    /// Get block range for a group.
+    /// Returns (start_bx, start_by, end_bx, end_by) in block coordinates.
+    pub fn group_block_range(&self, group_idx: usize) -> (usize, usize, usize, usize) {
+        let num_groups_x = self.num_groups_x();
+        let gx = group_idx % num_groups_x;
+        let gy = group_idx / num_groups_x;
+
+        // Group bounds in pixels
+        let px_start_x = gx * Self::GROUP_DIM;
+        let px_start_y = gy * Self::GROUP_DIM;
+        let px_end_x = (px_start_x + Self::GROUP_DIM).min(self.width);
+        let px_end_y = (px_start_y + Self::GROUP_DIM).min(self.height);
+
+        // Convert to block coordinates
+        let start_bx = px_start_x / BLOCK_DIM;
+        let start_by = px_start_y / BLOCK_DIM;
+        let end_bx = px_end_x.div_ceil(BLOCK_DIM);
+        let end_by = px_end_y.div_ceil(BLOCK_DIM);
+
+        (start_bx, start_by, end_bx, end_by)
+    }
+
     /// Write the VarDCT frame header.
     ///
     /// This differs from modular by setting encoding=0 and includes
@@ -235,6 +275,92 @@ impl VarDctEncoder {
         let distributions = builder.build_distributions()?;
 
         Ok((tokens, distributions))
+    }
+
+    /// Tokenize AC coefficients for a specific group.
+    ///
+    /// Returns tokens only for blocks within the specified group.
+    /// The histograms must have been built from all groups beforehand.
+    pub fn tokenize_ac_coefficients_for_group(
+        &self,
+        ac_coeffs: &[i32],
+        group_idx: usize,
+    ) -> Vec<Token> {
+        let blocks_x = self.num_blocks_x();
+        let (start_bx, start_by, end_bx, end_by) = self.group_block_range(group_idx);
+
+        let group_blocks_x = end_bx - start_bx;
+        let group_blocks_y = end_by - start_by;
+        let num_group_blocks = group_blocks_x * group_blocks_y;
+
+        let mut tokens = Vec::with_capacity(num_group_blocks * 64);
+
+        // Process blocks within this group's bounds
+        for by in start_by..end_by {
+            for bx in start_bx..end_bx {
+                let block_idx = by * blocks_x + bx;
+
+                // Get quant field value for this block (uniform)
+                let qf = self.quantizer.quant_dc;
+
+                // Process each channel (X=0, Y=1, B=2)
+                for c in 0..3 {
+                    // Get block context
+                    let lf_idx = 0; // No LF thresholds in default mode
+                    let order_id = 0; // DCT8
+                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, c);
+
+                    // Get AC coefficients for this block/channel (63 coeffs per channel)
+                    let ac_start = block_idx * 3 * 63 + c * 63;
+                    let block_ac = &ac_coeffs[ac_start..ac_start + 63];
+
+                    // Count non-zeros
+                    let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
+
+                    // Emit non-zero count token
+                    let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
+                    tokens.push(Token::new(nz_ctx, nzeros as u32));
+
+                    if nzeros > 0 {
+                        // Get zero-density context offset
+                        let histo_offset = self
+                            .block_ctx_map
+                            .zero_density_context_offset(block_context);
+
+                        // Process coefficients in natural order
+                        let mut nzeros_left = nzeros;
+                        let mut prev = if nzeros > 4 { 0 } else { 1 };
+
+                        for k in 0..63 {
+                            if nzeros_left == 0 {
+                                break;
+                            }
+
+                            let coeff = block_ac[NATURAL_ORDER_8X8[k + 1] - 1];
+                            let ctx = histo_offset
+                                + super::context::zero_density_context(
+                                    nzeros_left,
+                                    k + 1,
+                                    0, // log_num_blocks = 0 for DCT8
+                                    prev,
+                                );
+
+                            let u_coeff = pack_signed(coeff);
+                            tokens.push(Token::new(ctx as u32, u_coeff));
+
+                            if coeff != 0 {
+                                prev = 1;
+                                nzeros_left -= 1;
+                            } else {
+                                prev = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        tokens
     }
 
     /// Write the HF Global section.

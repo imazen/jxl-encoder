@@ -196,9 +196,228 @@ impl LfQuantFactors {
     }
 }
 
+// =============================================================================
+// DCT8 Perceptual Quantization Weights
+// =============================================================================
+
+/// DCT8 library default distance bands per channel [X, Y, B].
+/// These define the perceptual weighting for each coefficient position.
+const DCT8_DISTANCE_BANDS: [[f32; 6]; 3] = [
+    [3150.0, 0.0, -0.4, -0.4, -0.4, -2.0], // X channel
+    [560.0, 0.0, -0.3, -0.3, -0.3, -0.3],  // Y channel
+    [512.0, -2.0, -1.0, 0.0, -1.0, -2.0],  // B channel
+];
+
+/// Number of distance bands for DCT8.
+const DCT8_NUM_BANDS: usize = 6;
+
+/// Minimum valid weight value.
+const ALMOST_ZERO: f32 = 1e-8;
+
+/// sqrt(2) for distance normalization.
+const SQRT_2: f32 = std::f32::consts::SQRT_2;
+
+/// Convert differential band parameter to multiplier.
+///
+/// If v > 0: returns 1 + v (grows by v proportion)
+/// If v <= 0: returns 1 / (1 - v) (shrinks by -v proportion)
+#[inline]
+fn band_mult(v: f32) -> f32 {
+    if v > 0.0 { 1.0 + v } else { 1.0 / (1.0 - v) }
+}
+
+/// Interpolate in log-space between array values.
+///
+/// Performs exponential interpolation: a * (b/a)^frac
+#[inline]
+fn interpolate_vec(scaled_pos: f32, bands: &[f32]) -> f32 {
+    let idx = scaled_pos as usize;
+    let frac = scaled_pos - idx as f32;
+    let a = bands[idx];
+    let b = bands[idx + 1];
+    // a * (b/a)^frac = exp(frac * ln(b/a) + ln(a))
+    a * (b / a).powf(frac)
+}
+
+/// Generate DCT8 quantization weights for all 3 channels.
+///
+/// Returns a 3*64 = 192 element array with weights for each position.
+/// Layout: [X0..X63, Y0..Y63, B0..B63] where index i is at row i/8, col i%8.
+pub fn generate_dct8_weights() -> [f32; 3 * 64] {
+    let mut weights = [0.0f32; 3 * 64];
+
+    for c in 0..3 {
+        // Expand differential parameters into absolute band values
+        let mut bands = [0.0f32; DCT8_NUM_BANDS];
+        bands[0] = DCT8_DISTANCE_BANDS[c][0];
+
+        for i in 1..DCT8_NUM_BANDS {
+            bands[i] = bands[i - 1] * band_mult(DCT8_DISTANCE_BANDS[c][i]);
+        }
+
+        // Compute spatial scaling factors
+        // Maps (0,0) to 0 and (7,7) to (num_bands-1) / sqrt(2)
+        let scale = (DCT8_NUM_BANDS - 1) as f32 / (SQRT_2 + 1e-6);
+        let rcpcol = scale / 7.0; // 8 columns, max index 7
+        let rcprow = scale / 7.0; // 8 rows, max index 7
+
+        // For each pixel position, compute weight based on distance from DC
+        for y in 0..8 {
+            let dy = y as f32 * rcprow;
+            let dy2 = dy * dy;
+
+            for x in 0..8 {
+                let dx = x as f32 * rcpcol;
+                let scaled_distance = (dx * dx + dy2).sqrt();
+
+                // Clamp to valid interpolation range
+                let scaled_distance = scaled_distance.min((DCT8_NUM_BANDS - 1) as f32 - 0.001);
+
+                let weight = interpolate_vec(scaled_distance, &bands);
+                weights[c * 64 + y * 8 + x] = weight.max(ALMOST_ZERO);
+            }
+        }
+    }
+
+    weights
+}
+
+/// Get the inverse dequant matrix for DCT8 encoding.
+///
+/// For encoding, we multiply coefficients by the inverse of the dequant weights.
+/// This means coefficients that are more perceptually important (higher weight)
+/// get less quantization, preserving quality where it matters.
+pub fn get_dct8_inv_dequant() -> [f32; 64] {
+    let weights = generate_dct8_weights();
+    let mut inv_dequant = [0.0f32; 64];
+
+    // Use Y channel weights (index 1) as it's the luminance channel
+    // This is a simplification - proper implementation would weight all 3 channels
+    for i in 0..64 {
+        let weight = weights[64 + i]; // Y channel
+        inv_dequant[i] = 1.0 / weight.max(ALMOST_ZERO);
+    }
+
+    inv_dequant
+}
+
+/// Get per-channel inverse dequant matrices for DCT8 encoding.
+///
+/// Returns [X_inv_dequant, Y_inv_dequant, B_inv_dequant].
+pub fn get_dct8_inv_dequant_per_channel() -> [[f32; 64]; 3] {
+    let weights = generate_dct8_weights();
+    let mut result = [[0.0f32; 64]; 3];
+
+    for c in 0..3 {
+        for i in 0..64 {
+            let weight = weights[c * 64 + i];
+            result[c][i] = 1.0 / weight.max(ALMOST_ZERO);
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_band_mult() {
+        // Positive values: 1 + v
+        assert!((band_mult(0.5) - 1.5).abs() < 1e-6);
+        assert!((band_mult(1.0) - 2.0).abs() < 1e-6);
+
+        // Negative values: 1 / (1 - v)
+        assert!((band_mult(-0.5) - 2.0 / 3.0).abs() < 1e-6);
+        assert!((band_mult(-1.0) - 0.5).abs() < 1e-6);
+
+        // Zero: edge case
+        assert!((band_mult(0.0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_generate_dct8_weights() {
+        let weights = generate_dct8_weights();
+
+        // Check array size
+        assert_eq!(weights.len(), 3 * 64);
+
+        // DC coefficient (position 0,0) should have highest weight per channel
+        for c in 0..3 {
+            let dc_weight = weights[c * 64];
+            // DC weight should be close to the first band value
+            assert!(
+                dc_weight > 100.0,
+                "DC weight for channel {} = {}",
+                c,
+                dc_weight
+            );
+
+            // High frequency corners should have lower weight
+            let hf_weight = weights[c * 64 + 63]; // position (7,7)
+            assert!(
+                hf_weight < dc_weight,
+                "HF weight {} should be < DC weight {} for channel {}",
+                hf_weight,
+                dc_weight,
+                c
+            );
+        }
+
+        // Y channel (c=1) DC should be ~560
+        let y_dc = weights[64];
+        assert!(
+            (y_dc - 560.0).abs() < 1.0,
+            "Y channel DC weight = {}, expected ~560",
+            y_dc
+        );
+    }
+
+    #[test]
+    fn test_get_dct8_inv_dequant() {
+        let inv_dequant = get_dct8_inv_dequant();
+
+        // Check array size
+        assert_eq!(inv_dequant.len(), 64);
+
+        // DC coefficient should have smallest inverse (highest weight in original)
+        let dc_inv = inv_dequant[0];
+        let hf_inv = inv_dequant[63];
+
+        // Inverse of high weight = small value
+        // Inverse of low weight = large value
+        assert!(
+            dc_inv < hf_inv,
+            "DC inv {} should be < HF inv {}",
+            dc_inv,
+            hf_inv
+        );
+    }
+
+    #[test]
+    fn test_get_dct8_inv_dequant_per_channel() {
+        let inv_dequant = get_dct8_inv_dequant_per_channel();
+
+        // Check array sizes
+        assert_eq!(inv_dequant.len(), 3);
+        for c in 0..3 {
+            assert_eq!(inv_dequant[c].len(), 64);
+        }
+
+        // Each channel should have DC < HF inverse weights
+        for c in 0..3 {
+            let dc_inv = inv_dequant[c][0];
+            let hf_inv = inv_dequant[c][63];
+            assert!(
+                dc_inv < hf_inv,
+                "Channel {} DC inv {} should be < HF inv {}",
+                c,
+                dc_inv,
+                hf_inv
+            );
+        }
+    }
 
     #[test]
     fn test_lf_quant_values() {
