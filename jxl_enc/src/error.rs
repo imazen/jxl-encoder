@@ -38,6 +38,9 @@ pub enum Error {
     #[error("Invalid number of channels: {0}")]
     InvalidChannelCount(usize),
 
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
     // Entropy coding errors
     #[error("Invalid histogram: {0}")]
     InvalidHistogram(String),
