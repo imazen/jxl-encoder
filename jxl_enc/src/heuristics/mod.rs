@@ -5,4 +5,4 @@
 
 pub mod ac_strategy;
 
-pub use ac_strategy::{AcStrategyMap, select_ac_strategies};
+pub use ac_strategy::{AcStrategyMap, HeuristicLevel, select_ac_strategies};
