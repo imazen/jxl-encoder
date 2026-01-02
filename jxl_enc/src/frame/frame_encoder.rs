@@ -97,6 +97,7 @@ impl FrameEncoder {
             distance,
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
+            ..Default::default()
         };
 
         let vardct_encoder = VarDctEncoder::new(self.width, self.height, options);

@@ -6,6 +6,7 @@ use crate::BLOCK_DIM;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::ans::{AnsDistribution, AnsEncoder};
 use crate::error::Result;
+use crate::heuristics::{AcStrategyMap, HeuristicLevel, select_ac_strategies};
 use crate::modular::channel::{Channel, ModularImage};
 use crate::modular::improved::write_improved_modular_stream;
 
@@ -25,6 +26,8 @@ pub struct VarDctOptions {
     pub use_default_quant_matrices: bool,
     /// Use default block context map.
     pub use_default_block_ctx: bool,
+    /// AC strategy selection heuristics level.
+    pub ac_strategy_heuristics: HeuristicLevel,
 }
 
 impl Default for VarDctOptions {
@@ -33,25 +36,31 @@ impl Default for VarDctOptions {
             distance: 1.0,
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
+            ac_strategy_heuristics: HeuristicLevel::Dct8Only,
         }
     }
 }
 
 /// VarDCT frame encoder.
 pub struct VarDctEncoder {
-    #[allow(dead_code)]
     options: VarDctOptions,
     width: usize,
     height: usize,
     quantizer: QuantizerParams,
     dequant_matrices: DequantMatrices,
     block_ctx_map: BlockContextMap,
+    ac_strategy_map: AcStrategyMap,
 }
 
 impl VarDctEncoder {
     /// Create a new VarDCT encoder.
     pub fn new(width: usize, height: usize, options: VarDctOptions) -> Self {
         let quantizer = QuantizerParams::from_distance(options.distance);
+        let blocks_x = width.div_ceil(BLOCK_DIM);
+        let blocks_y = height.div_ceil(BLOCK_DIM);
+
+        // Create default DCT8-only map; can be updated with compute_ac_strategies
+        let ac_strategy_map = AcStrategyMap::new_dct8(blocks_x, blocks_y);
 
         Self {
             options,
@@ -60,7 +69,26 @@ impl VarDctEncoder {
             quantizer,
             dequant_matrices: DequantMatrices::default(),
             block_ctx_map: BlockContextMap::default(),
+            ac_strategy_map,
         }
+    }
+
+    /// Compute AC strategy map based on image content.
+    ///
+    /// Call this after creating the encoder and before encoding.
+    /// The Y plane should be the luminance channel in linear space (or XYB Y).
+    pub fn compute_ac_strategies(&mut self, y_plane: &[f32]) {
+        self.ac_strategy_map = select_ac_strategies(
+            y_plane,
+            self.width,
+            self.height,
+            self.options.ac_strategy_heuristics,
+        );
+    }
+
+    /// Get the AC strategy map.
+    pub fn ac_strategy_map(&self) -> &AcStrategyMap {
+        &self.ac_strategy_map
     }
 
     /// Number of 8x8 blocks in X direction.
@@ -474,13 +502,23 @@ impl VarDctEncoder {
         let blocks_x = self.num_blocks_x();
         let blocks_y = self.num_blocks_y();
 
-        // AC strategy map (all DCT8)
-        // For all DCT8, we can write "use_acs_raw = true, all zeros"
+        // AC strategy map
+        // Note: Currently only DCT8 is supported in the transform pipeline.
+        // The strategy map is computed by heuristics, but we force DCT8 for encoding.
+        // use_acs_raw = true means we write raw strategy IDs per block.
         writer.write(1, 1)?; // use_acs_raw = true
-        // Write zeros for each block
-        for _by in 0..blocks_y {
-            for _bx in 0..blocks_x {
-                writer.write(1, 0)?; // DCT8 strategy
+
+        // Write strategy for each block using the actual map
+        // For DCT8 (id=0), write 0 as the first bit
+        // TODO: Support DCT16/32 once transform pipeline is updated
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let strategy = self.ac_strategy_map.get(bx, by);
+                // Currently we only encode DCT8, regardless of what was selected
+                // This is because DCT16/32 require different coefficient handling
+                let _strategy_id = strategy as u8;
+                // For now, always write DCT8 (id=0)
+                writer.write(1, 0)?;
             }
         }
 
