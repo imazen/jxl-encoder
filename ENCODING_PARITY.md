@@ -93,16 +93,48 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 - [x] **Multi-group support** (images >256x256, proper TOC with multiple sections)
 
 ### Future Work - Lossy
-- [ ] Integrate AC strategy selection into encoder (currently using DCT8-only)
-- [ ] Split AC tokens by group (currently all tokens in group 0)
-- [ ] Chroma-from-Luma (CfL) correlation
-- [ ] Adaptive quant field (per-block quality adjustment)
+- [x] **Split AC tokens by group** (each PassGroup encodes only its local blocks)
+- [x] **Integrate AC strategy selection** (variance-based heuristics, DCT8 encoding)
+- [x] **Chroma-from-Luma (CfL)** (per-tile correlation computation)
+- [x] **Adaptive quant field** (per-block quality based on variance)
 - [ ] Butteraugli-based quality tuning
 - [ ] EPF sharpness parameter
+- [ ] DCT16/DCT32 transform support (currently DCT8 only)
 
 ---
 
 ## Progress Log
+
+### 2026-01-01: VarDCT Heuristics Complete
+
+**Implemented all planned VarDCT heuristics:**
+
+1. **Per-group AC tokenization** - Each PassGroup now encodes only blocks within its
+   256x256 region, fixing multi-group encoding.
+
+2. **AC strategy selection integration** - `VarDctEncoder` now has:
+   - `ac_strategy_heuristics` option in `VarDctOptions`
+   - `compute_ac_strategies()` method for variance-based selection
+   - Strategy map written to bitstream (DCT8-only for now)
+
+3. **Chroma-from-Luma (CfL)** - New `heuristics/chroma_from_luma.rs`:
+   - `ColorCorrelationMap` with per-tile (64x64) correlation factors
+   - Linear regression to compute ytox/ytob factors
+   - DC correlation (ytox_dc, ytob_dc)
+   - Bitstream writing in `write_lf_global`
+
+4. **Adaptive quant field** - New `heuristics/adaptive_quant.rs`:
+   - `QuantField` with per-block quant values
+   - Variance-based adjustment (smooth=more compression, detailed=preserve quality)
+   - `compute_quant_field()` method
+   - `write_lf_group` uses per-block values
+
+**Notes:**
+- CfL and adaptive quant are disabled by default (opt-in via options)
+- AC strategy map computed but DCT8-only encoding (DCT16/32 transforms not wired up)
+- All heuristics infrastructure ready for future quality improvements
+
+**Tests:** 209 passing
 
 ### 2026-01-01: Multi-Group Support
 
