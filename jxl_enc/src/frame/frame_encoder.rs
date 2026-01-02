@@ -10,10 +10,11 @@ use crate::bit_writer::BitWriter;
 use crate::entropy_coding::ans::AnsDistribution;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
+use crate::heuristics::HeuristicLevel;
 use crate::modular::channel::ModularImage;
 use crate::modular::improved::write_improved_modular_stream;
 use crate::vardct::tokenize::Token;
-use crate::vardct::transform::transform_xyb_image;
+use crate::vardct::transform::{transform_xyb_image, transform_xyb_image_with_strategy};
 use crate::vardct::{VarDctEncoder, VarDctOptions};
 
 /// Options for frame encoding.
@@ -104,7 +105,8 @@ impl FrameEncoder {
         let num_groups = vardct_encoder.num_groups();
 
         // Compute heuristics from image content
-        if options.ac_strategy_heuristics != crate::heuristics::HeuristicLevel::Dct8Only {
+        let use_strategy = options.ac_strategy_heuristics != HeuristicLevel::Dct8Only;
+        if use_strategy {
             vardct_encoder.compute_ac_strategies(xyb_data);
         }
         if options.cfl_enabled {
@@ -115,13 +117,35 @@ impl FrameEncoder {
         }
 
         // Transform XYB image data into quantized DCT coefficients
-        // TODO: Use transform_and_quantize_with_strategy for DCT16/32 support
         let quantizer = vardct_encoder.quantizer();
-        let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
 
-        // Tokenize AC coefficients and build histograms
-        let (tokens, distributions) =
-            vardct_encoder.tokenize_ac_coefficients(&transformed.ac_coeffs)?;
+        // Use strategy-aware transform for DCT16/32 support
+        let (dc_coeffs, ac_coeffs, tokens, distributions) = if use_strategy {
+            let transformed = transform_xyb_image_with_strategy(
+                xyb_data,
+                self.width,
+                self.height,
+                quantizer,
+                vardct_encoder.ac_strategy_map(),
+            );
+            let (tokens, distributions) = vardct_encoder.tokenize_ac_with_strategy(&transformed)?;
+            (
+                transformed.dc_coeffs,
+                transformed.ac_coeffs,
+                tokens,
+                distributions,
+            )
+        } else {
+            let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
+            let (tokens, distributions) =
+                vardct_encoder.tokenize_ac_coefficients(&transformed.ac_coeffs)?;
+            (
+                transformed.dc_coeffs,
+                transformed.ac_coeffs,
+                tokens,
+                distributions,
+            )
+        };
 
         // Write VarDCT frame header
         vardct_encoder.write_frame_header(writer)?;
@@ -130,7 +154,7 @@ impl FrameEncoder {
             // Single group: all sections combined into one TOC entry
             self.encode_vardct_single_group(
                 &vardct_encoder,
-                &transformed.dc_coeffs,
+                &dc_coeffs,
                 &tokens,
                 &distributions,
                 writer,
@@ -140,8 +164,8 @@ impl FrameEncoder {
             // Pass ac_coeffs so we can tokenize per group
             self.encode_vardct_multi_group(
                 &vardct_encoder,
-                &transformed.dc_coeffs,
-                &transformed.ac_coeffs,
+                &dc_coeffs,
+                &ac_coeffs,
                 &distributions,
                 writer,
             )?;

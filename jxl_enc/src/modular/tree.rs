@@ -229,6 +229,163 @@ pub fn traverse_tree<'a>(tree: &'a Tree, properties: &PixelProperties) -> &'a Pr
     }
 }
 
+/// Tree serialization context indices.
+const SPLIT_VAL_CONTEXT: usize = 0;
+const PROPERTY_CONTEXT: usize = 1;
+const PREDICTOR_CONTEXT: usize = 2;
+const OFFSET_CONTEXT: usize = 3;
+const MULTIPLIER_LOG_CONTEXT: usize = 4;
+const MULTIPLIER_BITS_CONTEXT: usize = 5;
+
+/// Token for tree serialization.
+#[derive(Debug, Clone)]
+pub struct TreeToken {
+    /// Context for this token.
+    pub context: usize,
+    /// Token value (unsigned for property/predictor/log, signed for split_val/offset).
+    pub value: i32,
+    /// Whether this is a signed value.
+    pub is_signed: bool,
+}
+
+/// Collect tokens for tree serialization.
+pub fn collect_tree_tokens(tree: &Tree) -> Vec<TreeToken> {
+    let mut tokens = Vec::new();
+
+    // Process tree in BFS order
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(0usize);
+
+    while let Some(idx) = queue.pop_front() {
+        let node = &tree[idx];
+
+        if node.property < 0 {
+            // Leaf node: property = 0 (indicator), then predictor, offset, mul_log, mul_bits
+            tokens.push(TreeToken {
+                context: PROPERTY_CONTEXT,
+                value: 0, // 0 means leaf
+                is_signed: false,
+            });
+
+            // Predictor
+            tokens.push(TreeToken {
+                context: PREDICTOR_CONTEXT,
+                value: node.predictor as i32,
+                is_signed: false,
+            });
+
+            // Offset (signed)
+            tokens.push(TreeToken {
+                context: OFFSET_CONTEXT,
+                value: node.predictor_offset,
+                is_signed: true,
+            });
+
+            // Multiplier is encoded as (mul_bits + 1) << mul_log
+            // For multiplier = 1: mul_log = 0, mul_bits = 0
+            let (mul_log, mul_bits) = decompose_multiplier(node.multiplier as u32);
+            tokens.push(TreeToken {
+                context: MULTIPLIER_LOG_CONTEXT,
+                value: mul_log as i32,
+                is_signed: false,
+            });
+
+            tokens.push(TreeToken {
+                context: MULTIPLIER_BITS_CONTEXT,
+                value: mul_bits as i32,
+                is_signed: false,
+            });
+        } else {
+            // Split node: property+1, splitval, then children
+            tokens.push(TreeToken {
+                context: PROPERTY_CONTEXT,
+                value: node.property + 1, // +1 because 0 means leaf
+                is_signed: false,
+            });
+
+            tokens.push(TreeToken {
+                context: SPLIT_VAL_CONTEXT,
+                value: node.splitval,
+                is_signed: true,
+            });
+
+            // Queue children (left first to maintain BFS order)
+            queue.push_back(node.lchild);
+            queue.push_back(node.rchild);
+        }
+    }
+
+    tokens
+}
+
+/// Decompose multiplier into (log, bits) where multiplier = (bits + 1) << log.
+fn decompose_multiplier(multiplier: u32) -> (u32, u32) {
+    if multiplier == 0 {
+        return (0, 0);
+    }
+
+    let trailing = multiplier.trailing_zeros();
+    let mul_log = trailing;
+    let mul_bits = (multiplier >> trailing) - 1;
+
+    (mul_log, mul_bits)
+}
+
+/// Creates a tree with the weighted predictor.
+pub fn weighted_tree() -> Tree {
+    simple_tree(Predictor::Weighted)
+}
+
+/// Creates a tree that selects between Gradient and Weighted based on WP max error.
+/// Uses Gradient when max error is low (WP is stable), Weighted when error is higher.
+pub fn adaptive_gradient_weighted_tree() -> Tree {
+    vec![
+        // Root: split on WP max error (property 15)
+        PropertyDecisionNode {
+            property: Property::WpMaxError as i32,
+            splitval: 100, // Threshold
+            lchild: 1,     // Low error -> gradient
+            rchild: 2,     // High error -> weighted
+            ..Default::default()
+        },
+        // Leaf: Gradient predictor (for stable regions)
+        PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Gradient,
+            context_id: 0,
+            ..Default::default()
+        },
+        // Leaf: Weighted predictor (for complex regions)
+        PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Weighted,
+            context_id: 1,
+            ..Default::default()
+        },
+    ]
+}
+
+/// Count the number of unique context IDs used in a tree.
+pub fn count_contexts(tree: &Tree) -> u32 {
+    tree.iter()
+        .filter(|n| n.property < 0)
+        .map(|n| n.context_id)
+        .max()
+        .map(|m| m + 1)
+        .unwrap_or(1)
+}
+
+/// Assign context IDs to leaf nodes sequentially.
+pub fn assign_sequential_contexts(tree: &mut Tree) {
+    let mut next_context = 0u32;
+    for node in tree.iter_mut() {
+        if node.property < 0 {
+            node.context_id = next_context;
+            next_context += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +416,57 @@ mod tests {
         let leaf = traverse_tree(&tree, &props);
         assert_eq!(leaf.predictor, Predictor::Gradient);
         assert_eq!(leaf.context_id, 0);
+    }
+
+    #[test]
+    fn test_weighted_tree() {
+        let tree = weighted_tree();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].predictor, Predictor::Weighted);
+    }
+
+    #[test]
+    fn test_decompose_multiplier() {
+        assert_eq!(decompose_multiplier(1), (0, 0)); // (0+1) << 0 = 1
+        assert_eq!(decompose_multiplier(2), (1, 0)); // (0+1) << 1 = 2
+        assert_eq!(decompose_multiplier(4), (2, 0)); // (0+1) << 2 = 4
+        assert_eq!(decompose_multiplier(3), (0, 2)); // (2+1) << 0 = 3
+        assert_eq!(decompose_multiplier(6), (1, 2)); // (2+1) << 1 = 6
+    }
+
+    #[test]
+    fn test_collect_tree_tokens_simple() {
+        let tree = gradient_tree();
+        let tokens = collect_tree_tokens(&tree);
+        // Single leaf: property(0), predictor(5), offset(0), mul_log(0), mul_bits(0)
+        assert_eq!(tokens.len(), 5);
+        assert_eq!(tokens[0].value, 0); // property = 0 (leaf)
+        assert_eq!(tokens[1].value, Predictor::Gradient as i32);
+    }
+
+    #[test]
+    fn test_adaptive_tree() {
+        let tree = adaptive_gradient_weighted_tree();
+        assert_eq!(tree.len(), 3);
+
+        // Test traversal with low error -> gradient
+        let mut props = PixelProperties::default();
+        props.values[Property::WpMaxError as usize] = 50;
+        let leaf = traverse_tree(&tree, &props);
+        assert_eq!(leaf.predictor, Predictor::Gradient);
+
+        // Test traversal with high error -> weighted
+        props.values[Property::WpMaxError as usize] = 150;
+        let leaf = traverse_tree(&tree, &props);
+        assert_eq!(leaf.predictor, Predictor::Weighted);
+    }
+
+    #[test]
+    fn test_count_contexts() {
+        let tree = gradient_tree();
+        assert_eq!(count_contexts(&tree), 1);
+
+        let tree = adaptive_gradient_weighted_tree();
+        assert_eq!(count_contexts(&tree), 2);
     }
 }

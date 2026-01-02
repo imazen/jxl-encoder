@@ -1042,6 +1042,301 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
     Ok(())
 }
 
+/// Write a tree histogram that can encode tokens 0-6 (for Weighted predictor).
+fn write_tree_histogram_for_weighted(writer: &mut BitWriter) -> Result<()> {
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+
+    // Context map for 6 contexts: is_simple=1, bits_per_entry=0
+    writer.write(1, 1)?; // is_simple = 1
+    writer.write(2, 0)?; // bits_per_entry = 0
+
+    // use_prefix_code = 1
+    writer.write(1, 1)?;
+
+    // split_exponent = 15
+    writer.write(4, 15)?;
+
+    // Tree tokens for predictor=6: [0,6,0,0,0] → histogram [4,0,0,0,0,0,1]
+    const TREE_PREDICTOR: u32 = 6;
+    let max_symbol = TREE_PREDICTOR as u16;
+    let tree_histogram: &[u32] = &[4u32, 0, 0, 0, 0, 0, 1]; // 5 tokens: 4x symbol 0, 1x symbol 6
+
+    // alphabet_size via varint16
+    write_varint16(writer, max_symbol)?;
+
+    // Huffman table
+    let al_size = (max_symbol + 1) as usize;
+    if al_size > 1 {
+        build_and_store_huffman_tree(tree_histogram, writer)?;
+    }
+
+    Ok(())
+}
+
+/// Write tree tokens for a single leaf with Weighted predictor.
+fn write_weighted_tree_tokens(writer: &mut BitWriter) -> Result<()> {
+    const TREE_PREDICTOR: u32 = 6;
+
+    // Compute Huffman codes for the tree histogram
+    let tree_histogram = &[4u32, 0, 0, 0, 0, 0, 1]; // 5 tokens: 4x symbol 0, 1x symbol 6
+    let depths = create_huffman_tree(tree_histogram, 15);
+    let codes = convert_bit_depths_to_symbols(&depths);
+
+    // Encode: property=0 (leaf), predictor=6, offset=0, mul_log=0, mul_bits=0
+    let tokens = [0u32, TREE_PREDICTOR, 0, 0, 0];
+
+    for &token in &tokens {
+        let depth = depths.get(token as usize).copied().unwrap_or(0);
+        let code = codes.get(token as usize).copied().unwrap_or(0);
+        if depth > 0 {
+            writer.write(depth as usize, code as u64)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write weighted predictor header parameters.
+fn write_wp_header(
+    writer: &mut BitWriter,
+    params: &super::predictor::WeightedPredictorParams,
+) -> Result<()> {
+    if params.is_default() {
+        // all_default = 1 (no additional fields)
+        writer.write(1, 1)?;
+    } else {
+        // all_default = 0, write all parameters
+        writer.write(1, 0)?;
+        writer.write(5, params.p1c as u64)?;
+        writer.write(5, params.p2c as u64)?;
+        writer.write(5, params.p3ca as u64)?;
+        writer.write(5, params.p3cb as u64)?;
+        writer.write(5, params.p3cc as u64)?;
+        writer.write(5, params.p3cd as u64)?;
+        writer.write(5, params.p3ce as u64)?;
+        writer.write(4, params.w0 as u64)?;
+        writer.write(4, params.w1 as u64)?;
+        writer.write(4, params.w2 as u64)?;
+        writer.write(4, params.w3 as u64)?;
+    }
+    Ok(())
+}
+
+/// Write modular stream using the Weighted predictor for better compression.
+///
+/// The Weighted predictor adapts to local image statistics and typically
+/// achieves better compression than the Gradient predictor for natural images.
+pub fn write_modular_stream_with_weighted(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
+
+    let params = WeightedPredictorParams::default();
+
+    // Collect residuals with weighted prediction
+    let mut residuals = Vec::new();
+    let mut max_residual: u32 = 0;
+
+    for channel in &image.channels {
+        let width = channel.width();
+        let height = channel.height();
+        let mut wp_state = WeightedPredictorState::new(&params, width);
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+
+                // Gather neighbors
+                let neighbors = Neighbors::gather(channel, x, y);
+
+                // Get weighted prediction
+                let prediction = wp_state.predict(x, y, width, &neighbors);
+
+                // Compute residual
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+
+                residuals.push(packed);
+                max_residual = max_residual.max(packed);
+
+                // Update predictor state with actual value
+                wp_state.update_errors(pixel, x, y, width);
+            }
+        }
+    }
+
+    // Build histogram
+    let histogram_size = (max_residual + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for &r in &residuals {
+        histogram[r as usize] += 1;
+    }
+
+    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    eprintln!(
+        "WEIGHTED: {} residuals, {} unique symbols, max={}",
+        residuals.len(),
+        num_symbols,
+        max_residual
+    );
+
+    // === Global section ===
+    writer.write(1, 1)?; // dc_quant.all_default = true
+    writer.write(1, 1)?; // has_tree = true
+
+    // Tree histogram (Weighted predictor)
+    write_tree_histogram_for_weighted(writer)?;
+    write_weighted_tree_tokens(writer)?;
+
+    // Data histogram
+    writer.write(1, 0)?; // lz77.enabled = 0
+    writer.write(1, 1)?; // use_prefix_code = 1
+    writer.write(4, 15)?; // split_exponent = 15
+    write_varint16(writer, max_residual as u16)?;
+
+    if histogram_size > 1 {
+        build_and_store_huffman_tree(&histogram, writer)?;
+    }
+
+    // GroupHeader
+    writer.write(1, 1)?; // use_global_tree = true
+    write_wp_header(writer, &params)?; // wp_header
+    writer.write(2, 0)?; // num_transforms = 0
+
+    // Encode residuals
+    let depths = create_huffman_tree(&histogram, 15);
+    let codes = convert_bit_depths_to_symbols(&depths);
+    let code_map: HashMap<u32, (u16, u8)> = depths
+        .iter()
+        .zip(codes.iter())
+        .enumerate()
+        .filter(|(_, (d, _))| **d > 0)
+        .map(|(i, (d, c))| (i as u32, (*c, *d)))
+        .collect();
+
+    for &r in &residuals {
+        if let Some(&(code, depth)) = code_map.get(&r)
+            && depth > 0
+        {
+            writer.write(depth as usize, code as u64)?;
+        }
+    }
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
+/// Write modular stream with RCT and Weighted predictor for best compression.
+///
+/// Combines YCoCg color transform with adaptive weighted prediction.
+pub fn write_modular_stream_with_rct_weighted(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
+
+    // Only apply RCT to RGB images (3+ channels)
+    if image.channels.len() < 3 {
+        return write_modular_stream_with_weighted(image, writer);
+    }
+
+    // Clone the image and apply forward RCT
+    let mut transformed = image.clone();
+    let rct_type = RctType::YCOCG;
+    forward_rct(&mut transformed.channels, 0, rct_type)?;
+
+    let params = WeightedPredictorParams::default();
+
+    // Collect residuals with weighted prediction on transformed channels
+    let mut residuals = Vec::new();
+    let mut max_residual: u32 = 0;
+
+    for channel in &transformed.channels {
+        let width = channel.width();
+        let height = channel.height();
+        let mut wp_state = WeightedPredictorState::new(&params, width);
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+                let neighbors = Neighbors::gather(channel, x, y);
+                let prediction = wp_state.predict(x, y, width, &neighbors);
+
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+
+                residuals.push(packed);
+                max_residual = max_residual.max(packed);
+
+                wp_state.update_errors(pixel, x, y, width);
+            }
+        }
+    }
+
+    // Build histogram
+    let histogram_size = (max_residual + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for &r in &residuals {
+        histogram[r as usize] += 1;
+    }
+
+    eprintln!(
+        "RCT+WEIGHTED: {} residuals, {} unique symbols, max={}",
+        residuals.len(),
+        histogram.iter().filter(|&&c| c > 0).count(),
+        max_residual
+    );
+
+    // === Global section ===
+    writer.write(1, 1)?; // dc_quant.all_default = true
+    writer.write(1, 1)?; // has_tree = true
+
+    // Tree histogram (Weighted predictor)
+    write_tree_histogram_for_weighted(writer)?;
+    write_weighted_tree_tokens(writer)?;
+
+    // Data histogram
+    writer.write(1, 0)?; // lz77.enabled = 0
+    writer.write(1, 1)?; // use_prefix_code = 1
+    writer.write(4, 15)?; // split_exponent = 15
+    write_varint16(writer, max_residual as u16)?;
+
+    if histogram_size > 1 {
+        build_and_store_huffman_tree(&histogram, writer)?;
+    }
+
+    // GroupHeader with RCT transform
+    writer.write(1, 1)?; // use_global_tree = true
+    write_wp_header(writer, &params)?; // wp_header
+    // num_transforms = 1
+    writer.write(2, 1)?;
+    write_rct_transform(writer, 0, rct_type)?;
+
+    // Encode residuals
+    let depths = create_huffman_tree(&histogram, 15);
+    let codes = convert_bit_depths_to_symbols(&depths);
+    let code_map: HashMap<u32, (u16, u8)> = depths
+        .iter()
+        .zip(codes.iter())
+        .enumerate()
+        .filter(|(_, (d, _))| **d > 0)
+        .map(|(i, (d, c))| (i as u32, (*c, *d)))
+        .collect();
+
+    for &r in &residuals {
+        if let Some(&(code, depth)) = code_map.get(&r)
+            && depth > 0
+        {
+            writer.write(depth as usize, code as u64)?;
+        }
+    }
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1122,5 +1417,43 @@ mod tests {
         // - rct_type=6: 2 bits (00)
         // Total: 9 bits
         assert_eq!(writer.bits_written(), 9);
+    }
+
+    #[test]
+    fn test_weighted_stream() {
+        // 4x4 grayscale image with gradient
+        let data: Vec<u8> = vec![
+            100, 101, 102, 103, 101, 102, 103, 104, 102, 103, 104, 105, 103, 104, 105, 106,
+        ];
+        let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_modular_stream_with_weighted(&image, &mut writer).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("Weighted stream: {} bytes", bytes.len());
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn test_rct_weighted_stream() {
+        // 4x4 RGB image with smooth gradients
+        let mut data = Vec::new();
+        for y in 0..4 {
+            for x in 0..4 {
+                let base = (y * 4 + x) * 10;
+                data.push(base as u8);
+                data.push((base + 5) as u8);
+                data.push((base + 10) as u8);
+            }
+        }
+        let image = ModularImage::from_rgb8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_modular_stream_with_rct_weighted(&image, &mut writer).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("RCT+Weighted stream: {} bytes", bytes.len());
+        assert!(!bytes.is_empty());
     }
 }

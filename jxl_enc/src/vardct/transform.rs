@@ -511,6 +511,39 @@ pub fn transform_xyb_image(
     transform_and_quantize(&[&x_plane, &y_plane, &b_plane], width, height, quantizer)
 }
 
+/// Strategy-aware XYB transform pipeline entry point.
+///
+/// Takes interleaved XYB data and AC strategy map, returns transformed data
+/// with variable-length AC coefficients based on DCT sizes.
+pub fn transform_xyb_image_with_strategy(
+    xyb_interleaved: &[f32],
+    width: usize,
+    height: usize,
+    quantizer: &QuantizerParams,
+    ac_strategy_map: &AcStrategyMap,
+) -> TransformedDataWithStrategy {
+    let num_pixels = width * height;
+
+    // Deinterleave XYB data into planes
+    let mut x_plane = vec![0.0f32; num_pixels];
+    let mut y_plane = vec![0.0f32; num_pixels];
+    let mut b_plane = vec![0.0f32; num_pixels];
+
+    for i in 0..num_pixels {
+        x_plane[i] = xyb_interleaved[i * 3];
+        y_plane[i] = xyb_interleaved[i * 3 + 1];
+        b_plane[i] = xyb_interleaved[i * 3 + 2];
+    }
+
+    transform_and_quantize_with_strategy(
+        &[&x_plane, &y_plane, &b_plane],
+        width,
+        height,
+        quantizer,
+        ac_strategy_map,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

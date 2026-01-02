@@ -19,8 +19,18 @@ pub mod tree;
 
 pub use channel::{Channel, ModularImage};
 pub use encoder::{EncodedModularData, ModularEncoder, ModularEncoderOptions};
-pub use improved::write_modular_stream_with_rct;
-pub use predictor::Predictor;
+pub use improved::{
+    write_modular_stream_with_rct, write_modular_stream_with_rct_weighted,
+    write_modular_stream_with_weighted,
+};
+pub use predictor::{
+    Neighbors, Predictor, WeightedPredictorParams, WeightedPredictorState, pack_signed,
+    unpack_signed,
+};
 pub use rct::{RctType, forward_rct, inverse_rct};
 pub use token::Token;
-pub use tree::{PropertyDecisionNode, Tree};
+pub use tree::{
+    PixelProperties, Property, PropertyDecisionNode, Tree, TreeToken,
+    adaptive_gradient_weighted_tree, collect_tree_tokens, count_contexts, gradient_tree,
+    simple_tree, traverse_tree, weighted_tree,
+};
