@@ -297,6 +297,12 @@ fn write_sparse_lz77_histogram(
         writer.bits_written()
     );
 
+    // num_dist = 1 (number of distance contexts for LZ77)
+    // u2S(Val(1), Bits(1)+1, Bits(4)+3, Bits(8)+19)
+    // For value 1: selector 0 = Val(1)
+    writer.write(2, 0)?; // selector 0: value = 1
+    eprintln!("SPARSE_HIST [bit {}]: num_dist = 1", writer.bits_written());
+
     // Find the actual used symbols
     let max_raw_symbol = sparse_counts[..K_NUM_RAW_SYMBOLS]
         .iter()
