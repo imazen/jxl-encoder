@@ -178,6 +178,13 @@ impl FileHeader {
         header
     }
 
+    /// Creates a new file header for a lossy RGB image (VarDCT/XYB encoded).
+    pub fn new_rgb_lossy(width: u32, height: u32) -> Self {
+        let mut header = Self::new_rgb(width, height);
+        header.metadata.xyb_encoded = true;
+        header
+    }
+
     /// Writes the JXL signature.
     pub fn write_signature(writer: &mut BitWriter) -> Result<()> {
         writer.write_u8(JXL_SIGNATURE[0])?;
@@ -274,7 +281,7 @@ impl FileHeader {
         }
     }
 
-    /// Writes the complete file header (signature + size + metadata).
+    /// Writes the complete file header (signature + size + metadata + transform_data).
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
         eprintln!("FHDR [bit {}]: Starting file header", writer.bits_written());
         Self::write_signature(writer)?;
@@ -283,6 +290,23 @@ impl FileHeader {
         eprintln!("FHDR [bit {}]: After size header", writer.bits_written());
         self.write_image_metadata(writer)?;
         eprintln!("FHDR [bit {}]: After metadata", writer.bits_written());
+        // CustomTransformData - written after ImageMetadata
+        // For simple images, all_default = true (just 1 bit)
+        self.write_transform_data(writer)?;
+        eprintln!("FHDR [bit {}]: After transform_data", writer.bits_written());
+        Ok(())
+    }
+
+    /// Writes the CustomTransformData bundle.
+    /// For basic encoding (no custom transform settings), this is just all_default=true (1 bit).
+    fn write_transform_data(&self, writer: &mut BitWriter) -> Result<()> {
+        // CustomTransformData.all_default = true
+        // This is the default case - no custom upsampling weights or opsin matrix
+        eprintln!(
+            "XFRM [bit {}]: transform_data.all_default = true",
+            writer.bits_written()
+        );
+        writer.write_bit(true)?;
         Ok(())
     }
 
@@ -391,6 +415,7 @@ impl FileHeader {
     }
 
     /// Checks if all metadata is default.
+    /// Per JXL spec, all_default=true implies xyb_encoded=true (lossy mode).
     fn is_metadata_default(&self) -> bool {
         let meta = &self.metadata;
         meta.bit_depth.bits_per_sample == 8
@@ -400,7 +425,7 @@ impl FileHeader {
             && meta.animation.is_none()
             && !meta.have_intrinsic_size
             && meta.color_encoding.is_srgb()
-            && meta.xyb_encoded // xyb_encoded default is true
+            && meta.xyb_encoded // all_default requires xyb_encoded=true (lossy)
     }
 }
 

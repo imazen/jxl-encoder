@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_black_to_xyb() {
-        let (x, y, b) = srgb_to_xyb(0.0, 0.0, 0.0);
+        let (x, y, _b) = srgb_to_xyb(0.0, 0.0, 0.0);
         // Black has the bias applied before cube root
         let expected = OPSIN_ABSORBANCE_BIAS[0].cbrt();
         assert!((y - expected).abs() < 1e-6, "Y for black: {}", y);
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_red_to_xyb() {
-        let (x, y, b) = srgb_to_xyb(255.0, 0.0, 0.0);
+        let (x, y, _b) = srgb_to_xyb(255.0, 0.0, 0.0);
         // Red: L > M, so X > 0
         assert!(x > 0.0, "X for red should be positive: {}", x);
         assert!(y > 0.0, "Y for red should be positive: {}", y);
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_green_to_xyb() {
-        let (x, y, b) = srgb_to_xyb(0.0, 255.0, 0.0);
+        let (x, y, _b) = srgb_to_xyb(0.0, 255.0, 0.0);
         // Green: M > L (green has larger weight in M), so X < 0
         assert!(x < 0.0, "X for green should be negative: {}", x);
         assert!(y > 0.0, "Y for green should be positive: {}", y);
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_blue_to_xyb() {
-        let (x, y, b) = srgb_to_xyb(0.0, 0.0, 255.0);
+        let (_x, _y, b) = srgb_to_xyb(0.0, 0.0, 255.0);
         // Blue affects S channel most (B output)
         assert!(b > 0.0, "B for blue should be positive: {}", b);
     }

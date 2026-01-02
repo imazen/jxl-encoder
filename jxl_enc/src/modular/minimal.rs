@@ -298,6 +298,16 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     let code_map = build_codes_from_depths(&depths, &codes);
 
     eprintln!("DEBUG: Built {} Huffman codes", code_map.len());
+    for (&symbol, &(code, depth)) in &code_map {
+        eprintln!(
+            "  Huffman: symbol {} -> code={:b}, depth={}",
+            symbol, code, depth
+        );
+    }
+    eprintln!(
+        "DEBUG: First 10 residuals: {:?}",
+        &residuals[..residuals.len().min(10)]
+    );
 
     // Encode each residual
     for &r in &residuals {

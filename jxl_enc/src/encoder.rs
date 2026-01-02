@@ -88,6 +88,72 @@ impl Encoder {
         self.encode_modular_image(&image)
     }
 
+    /// Encodes an RGB8 image to JXL format with lossy compression.
+    ///
+    /// # Arguments
+    /// * `data` - RGB8 pixel data in row-major order (R,G,B,R,G,B,...)
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    /// * `distance` - Butteraugli distance (0.0 = lossless, 1.0 = high quality, higher = smaller files)
+    pub fn encode_lossy_rgb8(
+        &self,
+        data: &[u8],
+        width: usize,
+        height: usize,
+        distance: f32,
+    ) -> Result<Vec<u8>> {
+        use crate::color::xyb::srgb_image_to_xyb;
+
+        // Convert u8 to f32
+        let data_f32: Vec<f32> = data.iter().map(|&x| x as f32).collect();
+
+        // Separate RGB channels
+        let num_pixels = width * height;
+        let mut r = vec![0.0f32; num_pixels];
+        let mut g = vec![0.0f32; num_pixels];
+        let mut b = vec![0.0f32; num_pixels];
+        for i in 0..num_pixels {
+            r[i] = data_f32[i * 3];
+            g[i] = data_f32[i * 3 + 1];
+            b[i] = data_f32[i * 3 + 2];
+        }
+
+        // Convert to XYB color space
+        let mut x_out = vec![0.0f32; num_pixels];
+        let mut y_out = vec![0.0f32; num_pixels];
+        let mut b_out = vec![0.0f32; num_pixels];
+        srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+
+        // Interleave XYB channels back for VarDCT encoding
+        let mut xyb_data = vec![0.0f32; num_pixels * 3];
+        for i in 0..num_pixels {
+            xyb_data[i * 3] = x_out[i];
+            xyb_data[i * 3 + 1] = y_out[i];
+            xyb_data[i * 3 + 2] = b_out[i];
+        }
+
+        let mut writer = BitWriter::new();
+
+        // Write file header (for lossy, uses XYB color encoding)
+        let file_header = FileHeader::new_rgb_lossy(width as u32, height as u32);
+        file_header.write(&mut writer)?;
+
+        // Byte align before frame
+        writer.zero_pad_to_byte();
+
+        // Encode VarDCT frame
+        let frame_options = FrameEncoderOptions {
+            use_modular: false,
+            effort: self.options.effort,
+        };
+        let frame_encoder = FrameEncoder::new(width, height, frame_options);
+        let color_encoding = ColorEncoding::srgb();
+        frame_encoder.encode_vardct(&xyb_data, distance, &color_encoding, &mut writer)?;
+
+        let bytes = writer.finish_with_padding();
+        Ok(bytes)
+    }
+
     /// Encodes a ModularImage to JXL format.
     pub fn encode_modular_image(&self, image: &ModularImage) -> Result<Vec<u8>> {
         let mut writer = BitWriter::new();
@@ -139,6 +205,23 @@ pub fn encode_rgb8(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> 
 /// Encodes RGBA8 data to JXL with default options.
 pub fn encode_rgba8(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     Encoder::new().encode_rgba8(data, width, height)
+}
+
+/// Encodes RGB8 data to JXL with lossy compression.
+///
+/// # Arguments
+/// * `data` - RGB8 pixel data in row-major order
+/// * `width` - Image width in pixels
+/// * `height` - Image height in pixels
+/// * `distance` - Butteraugli distance (1.0 = high quality, higher = smaller files)
+pub fn encode_lossy_rgb8(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+) -> Result<Vec<u8>> {
+    Encoder::with_options(EncoderOptions::lossy(distance))
+        .encode_lossy_rgb8(data, width, height, distance)
 }
 
 #[cfg(test)]
@@ -260,6 +343,34 @@ mod tests {
 
         let options = EncoderOptions::lossy(1.0);
         assert_eq!(options.distance, 1.0);
+    }
+
+    #[test]
+    fn test_encode_lossy_8x8() {
+        // 8x8 RGB checkerboard for lossy encoding
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255; // R
+                    data[idx + 1] = 0; // G
+                    data[idx + 2] = 0; // B
+                } else {
+                    data[idx] = 0; // R
+                    data[idx + 1] = 0; // G
+                    data[idx + 2] = 255; // B
+                }
+            }
+        }
+
+        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+
+        // Check JXL signature
+        assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+
+        eprintln!("Encoded lossy 8x8: {} bytes", encoded.len());
+        std::fs::write("/tmp/lossy_8x8.jxl", &encoded).unwrap();
     }
 }
 
@@ -436,4 +547,456 @@ fn test_encode_gray_8x8_pattern() {
     let encoded = Encoder::new().encode_gray8(&data, 8, 8).unwrap();
     std::fs::write("/tmp/test_gray_8x8.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 8x8 checkerboard: {} bytes", encoded.len());
+}
+
+#[cfg(test)]
+mod corpus_tests {
+    use super::*;
+
+    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+
+    fn test_image_roundtrip(path: &str) -> Result<(usize, usize, usize), String> {
+        let img = image::open(path).map_err(|e| format!("Failed to open {}: {}", path, e))?;
+
+        let (width, height) = (img.width() as usize, img.height() as usize);
+
+        // Convert to appropriate format and encode
+        let encoded = match img.color() {
+            image::ColorType::L8 => {
+                let gray = img.to_luma8();
+                Encoder::new()
+                    .encode_gray8(gray.as_raw(), width, height)
+                    .map_err(|e| format!("Encode failed: {}", e))?
+            }
+            image::ColorType::Rgb8 => {
+                let rgb = img.to_rgb8();
+                Encoder::new()
+                    .encode_rgb8(rgb.as_raw(), width, height)
+                    .map_err(|e| format!("Encode failed: {}", e))?
+            }
+            image::ColorType::Rgba8 => {
+                let rgba = img.to_rgba8();
+                Encoder::new()
+                    .encode_rgba8(rgba.as_raw(), width, height)
+                    .map_err(|e| format!("Encode failed: {}", e))?
+            }
+            other => {
+                // Convert to RGB8 for other formats
+                let rgb = img.to_rgb8();
+                Encoder::new()
+                    .encode_rgb8(rgb.as_raw(), width, height)
+                    .map_err(|e| format!("Encode failed for {:?}: {}", other, e))?
+            }
+        };
+
+        // Verify JXL signature
+        if encoded.len() < 2 || encoded[0] != 0xFF || encoded[1] != 0x0A {
+            return Err("Invalid JXL signature".to_string());
+        }
+
+        Ok((width, height, encoded.len()))
+    }
+
+    #[test]
+    fn test_pngsuite_gray() {
+        // 8-bit grayscale from PNG suite
+        let path = format!("{}/pngsuite/basi0g08.png", CORPUS_PATH);
+        if std::path::Path::new(&path).exists() {
+            let img = image::open(&path).unwrap();
+            let gray = img.to_luma8();
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            let encoded = Encoder::new().encode_gray8(gray.as_raw(), w, h).unwrap();
+            std::fs::write("/tmp/pngsuite_gray.jxl", &encoded).unwrap();
+            eprintln!("basi0g08.png: {}x{} -> {} bytes", w, h, encoded.len());
+        } else {
+            eprintln!("Skipping: {} not found", path);
+        }
+    }
+
+    #[test]
+    fn test_pngsuite_rgb() {
+        // 8-bit RGB from PNG suite
+        let path = format!("{}/pngsuite/basi2c08.png", CORPUS_PATH);
+        if std::path::Path::new(&path).exists() {
+            let img = image::open(&path).unwrap();
+            let rgb = img.to_rgb8();
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
+            std::fs::write("/tmp/pngsuite_rgb.jxl", &encoded).unwrap();
+            eprintln!("basi2c08.png: {}x{} -> {} bytes", w, h, encoded.len());
+        } else {
+            eprintln!("Skipping: {} not found", path);
+        }
+    }
+
+    #[test]
+    fn test_kodak_01() {
+        let path = format!("{}/kodak/1.png", CORPUS_PATH);
+        if std::path::Path::new(&path).exists() {
+            match test_image_roundtrip(&path) {
+                Ok((w, h, size)) => {
+                    eprintln!("kodak/1.png: {}x{} -> {} bytes", w, h, size);
+                    // Save for manual verification
+                    let img = image::open(&path).unwrap();
+                    let rgb = img.to_rgb8();
+                    let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
+                    std::fs::write("/tmp/kodak1.jxl", &encoded).unwrap();
+                }
+                Err(e) => panic!("{}", e),
+            }
+        } else {
+            eprintln!("Skipping: {} not found", path);
+        }
+    }
+
+    #[test]
+    fn test_corpus_batch() {
+        // Test multiple images from the corpus
+        let test_images = [
+            "pngsuite/basi0g01.png", // 1-bit grayscale
+            "pngsuite/basi0g02.png", // 2-bit grayscale
+            "pngsuite/basi0g04.png", // 4-bit grayscale
+            "pngsuite/basi0g08.png", // 8-bit grayscale
+            "pngsuite/basi2c08.png", // 8-bit RGB
+            "pngsuite/basn0g08.png", // 8-bit grayscale, non-interlaced
+            "pngsuite/basn2c08.png", // 8-bit RGB, non-interlaced
+        ];
+
+        let mut passed = 0;
+        let mut failed = 0;
+
+        for img_path in &test_images {
+            let full_path = format!("{}/{}", CORPUS_PATH, img_path);
+            if !std::path::Path::new(&full_path).exists() {
+                eprintln!("SKIP: {} (not found)", img_path);
+                continue;
+            }
+
+            match test_image_roundtrip(&full_path) {
+                Ok((w, h, size)) => {
+                    eprintln!("PASS: {} ({}x{} -> {} bytes)", img_path, w, h, size);
+                    passed += 1;
+                }
+                Err(e) => {
+                    eprintln!("FAIL: {} - {}", img_path, e);
+                    failed += 1;
+                }
+            }
+        }
+
+        eprintln!("\nResults: {} passed, {} failed", passed, failed);
+        assert_eq!(failed, 0, "Some corpus tests failed");
+    }
+}
+
+#[test]
+fn test_encode_rgb_8x8() {
+    // 8x8 RGB checkerboard
+    let mut data = vec![0u8; 8 * 8 * 3];
+    for y in 0..8 {
+        for x in 0..8 {
+            let idx = (y * 8 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255; // R
+                data[idx + 1] = 0; // G
+                data[idx + 2] = 0; // B
+            } else {
+                data[idx] = 0; // R
+                data[idx + 1] = 0; // G
+                data[idx + 2] = 255; // B
+            }
+        }
+    }
+
+    let encoded = Encoder::new().encode_rgb8(&data, 8, 8).unwrap();
+    std::fs::write("/tmp/rgb_8x8.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 8x8: {} bytes", encoded.len());
+    assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+}
+
+#[test]
+fn test_encode_gray_8x8() {
+    // 8x8 grayscale checkerboard
+    let mut data = vec![0u8; 8 * 8];
+    for y in 0..8 {
+        for x in 0..8 {
+            let idx = y * 8 + x;
+            data[idx] = if (x + y) % 2 == 0 { 255 } else { 0 };
+        }
+    }
+
+    let encoded = Encoder::new().encode_gray8(&data, 8, 8).unwrap();
+    std::fs::write("/tmp/gray_8x8.jxl", &encoded).unwrap();
+    eprintln!("Encoded Gray 8x8: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_4x4() {
+    // 4x4 RGB checkerboard
+    let mut data = vec![0u8; 4 * 4 * 3];
+    for y in 0..4 {
+        for x in 0..4 {
+            let idx = (y * 4 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255; // R
+                data[idx + 1] = 0; // G
+                data[idx + 2] = 0; // B
+            } else {
+                data[idx] = 0; // R
+                data[idx + 1] = 0; // G
+                data[idx + 2] = 255; // B
+            }
+        }
+    }
+
+    let encoded = Encoder::new().encode_rgb8(&data, 4, 4).unwrap();
+    std::fs::write("/tmp/rgb_4x4.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 4x4: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_6x6() {
+    // 6x6 RGB checkerboard
+    let mut data = vec![0u8; 6 * 6 * 3];
+    for y in 0..6 {
+        for x in 0..6 {
+            let idx = (y * 6 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 6, 6).unwrap();
+    std::fs::write("/tmp/rgb_6x6.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 6x6: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_7x7() {
+    let mut data = vec![0u8; 7 * 7 * 3];
+    for y in 0..7 {
+        for x in 0..7 {
+            let idx = (y * 7 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 7, 7).unwrap();
+    std::fs::write("/tmp/rgb_7x7.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 7x7: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_9x9() {
+    let mut data = vec![0u8; 9 * 9 * 3];
+    for y in 0..9 {
+        for x in 0..9 {
+            let idx = (y * 9 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 9, 9).unwrap();
+    std::fs::write("/tmp/rgb_9x9.jxl", &encoded).unwrap();
+}
+
+#[test]
+fn test_encode_rgb_16x16() {
+    let mut data = vec![0u8; 16 * 16 * 3];
+    for y in 0..16 {
+        for x in 0..16 {
+            let idx = (y * 16 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 16, 16).unwrap();
+    std::fs::write("/tmp/rgb_16x16.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 16x16: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_24x24() {
+    let mut data = vec![0u8; 24 * 24 * 3];
+    for y in 0..24 {
+        for x in 0..24 {
+            let idx = (y * 24 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 24, 24).unwrap();
+    std::fs::write("/tmp/rgb_24x24.jxl", &encoded).unwrap();
+}
+
+#[test]
+fn test_encode_rgb_10x10() {
+    let mut data = vec![0u8; 10 * 10 * 3];
+    for y in 0..10 {
+        for x in 0..10 {
+            let idx = (y * 10 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 10, 10).unwrap();
+    std::fs::write("/tmp/rgb_10x10.jxl", &encoded).unwrap();
+}
+
+#[test]
+fn test_encode_rgb_32x32() {
+    let mut data = vec![0u8; 32 * 32 * 3];
+    for y in 0..32 {
+        for x in 0..32 {
+            let idx = (y * 32 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 32, 32).unwrap();
+    std::fs::write("/tmp/rgb_32x32.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 32x32: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_64x64() {
+    let mut data = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = (y * 64 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 64, 64).unwrap();
+    std::fs::write("/tmp/rgb_64x64.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 64x64: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_256x256() {
+    // 256x256 uses small size encoding (256/8=32 fits in 5 bits)
+    let mut data = vec![0u8; 256 * 256 * 3];
+    for y in 0..256 {
+        for x in 0..256 {
+            let idx = (y * 256 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 256, 256).unwrap();
+    std::fs::write("/tmp/rgb_256x256.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB 256x256: {} bytes", encoded.len());
+}
+
+#[test]
+fn test_encode_rgb_irregular_dimensions() {
+    // Test various irregular dimensions: non-multiples of 8, non-square, primes
+    let test_cases = [
+        (5, 5),     // small odd
+        (7, 11),    // non-square primes
+        (13, 17),   // larger primes
+        (100, 50),  // wide rectangle
+        (50, 100),  // tall rectangle
+        (255, 1),   // single row
+        (1, 255),   // single column
+        (127, 127), // odd, just under 128
+        (129, 129), // odd, just over 128
+    ];
+
+    for (w, h) in test_cases {
+        let mut data = vec![0u8; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 0;
+                } else {
+                    data[idx] = 0;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 255;
+                }
+            }
+        }
+        let encoded = Encoder::new()
+            .encode_rgb8(&data, w, h)
+            .unwrap_or_else(|e| panic!("{}x{} failed to encode: {}", w, h, e));
+
+        let path = format!("/tmp/rgb_{}x{}.jxl", w, h);
+        std::fs::write(&path, &encoded).unwrap();
+        eprintln!("{}x{}: {} bytes", w, h, encoded.len());
+
+        // Verify JXL signature
+        assert_eq!(
+            &encoded[0..2],
+            &[0xFF, 0x0A],
+            "{}x{} has invalid signature",
+            w,
+            h
+        );
+    }
 }

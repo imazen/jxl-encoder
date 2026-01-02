@@ -18,6 +18,7 @@ num-traits = "0.2"
 [dev-dependencies]
 rand = "0.9"
 rand_xorshift = "0.4"
+image = "0.25"
 
 [lints]
 workspace = true
