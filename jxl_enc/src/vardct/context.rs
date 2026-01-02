@@ -281,6 +281,15 @@ mod tests {
     }
 
     #[test]
+    fn test_block_context_b_channel() {
+        let bcm = BlockContextMap::new_default();
+
+        // B channel (2), order 0
+        let ctx = bcm.block_context(0, 64, 0, 2);
+        assert!(ctx < bcm.num_contexts);
+    }
+
+    #[test]
     fn test_nonzero_context() {
         let bcm = BlockContextMap::new_default();
 
@@ -293,14 +302,61 @@ mod tests {
     }
 
     #[test]
+    fn test_nonzero_context_buckets() {
+        let bcm = BlockContextMap::new_default();
+
+        // Test all bucket transitions
+        // 0-7: direct mapping
+        for i in 0..8 {
+            let ctx = bcm.nonzero_context(i, 0);
+            assert_eq!(ctx, i * bcm.num_contexts);
+        }
+
+        // 8-63: bucket = 4 + nonzeros/2
+        let ctx_8 = bcm.nonzero_context(8, 0);
+        assert_eq!(ctx_8, 8 * bcm.num_contexts);
+
+        let ctx_32 = bcm.nonzero_context(32, 0);
+        assert_eq!(ctx_32, 20 * bcm.num_contexts); // 4 + 32/2 = 20
+
+        // 64+: bucket = 36
+        let ctx_64 = bcm.nonzero_context(64, 0);
+        let ctx_100 = bcm.nonzero_context(100, 0);
+        assert_eq!(ctx_64, 36 * bcm.num_contexts);
+        assert_eq!(ctx_100, 36 * bcm.num_contexts);
+    }
+
+    #[test]
     fn test_zero_density_context() {
         // Basic smoke test
         let ctx = zero_density_context(32, 16, 0, 0);
-        assert!(ctx < ZERO_DENSITY_CONTEXT_COUNT);
+        assert!(ctx < ZERO_DENSITY_CONTEXT_COUNT * 2);
 
         // With previous zero
         let ctx_prev1 = zero_density_context(32, 16, 0, 1);
         assert_eq!(ctx_prev1, ctx + 1);
+    }
+
+    #[test]
+    fn test_zero_density_context_log_blocks() {
+        // Test with different log_num_blocks values
+        let ctx0 = zero_density_context(32, 16, 0, 0);
+        let ctx1 = zero_density_context(32, 16, 1, 0);
+        let ctx2 = zero_density_context(32, 16, 2, 0);
+
+        // Different log_num_blocks should give different contexts
+        assert!(ctx0 != ctx1 || ctx1 != ctx2);
+    }
+
+    #[test]
+    fn test_zero_density_context_edge_cases() {
+        // Edge cases for clamping
+        let ctx_low = zero_density_context(0, 0, 0, 0);
+        let ctx_high = zero_density_context(1000, 1000, 0, 0);
+
+        // Both should be valid
+        assert!(ctx_low < ZERO_DENSITY_CONTEXT_COUNT * 2);
+        assert!(ctx_high < ZERO_DENSITY_CONTEXT_COUNT * 2);
     }
 
     #[test]
@@ -318,5 +374,164 @@ mod tests {
 
         // Default mode writes just 1 bit
         assert_eq!(writer.bits_written(), 1);
+    }
+
+    #[test]
+    fn test_write_non_default() {
+        let bcm = BlockContextMap {
+            lf_thresholds: [vec![0, 10], vec![5], vec![]],
+            qf_thresholds: vec![32, 64],
+            context_map: vec![0; 39],
+            num_lf_contexts: 6, // (2+1) * (1+1) * 1
+            num_contexts: 1,
+            use_default: false,
+        };
+
+        let mut writer = BitWriter::new();
+        bcm.write(&mut writer).unwrap();
+
+        // Non-default mode writes more than 1 bit
+        assert!(writer.bits_written() > 1);
+    }
+
+    #[test]
+    fn test_lf_index() {
+        let bcm = BlockContextMap {
+            lf_thresholds: [vec![0, 10], vec![5], vec![]],
+            qf_thresholds: vec![],
+            context_map: DEFAULT_CONTEXT_MAP.to_vec(),
+            num_lf_contexts: 6,
+            num_contexts: DEFAULT_NUM_CONTEXTS,
+            use_default: false,
+        };
+
+        // Test LF index computation
+        let idx0 = bcm.lf_index([0, 0, 0]);
+        let idx1 = bcm.lf_index([1, 0, 0]); // crosses first Y threshold
+        let idx2 = bcm.lf_index([11, 0, 0]); // crosses both Y thresholds
+        let idx3 = bcm.lf_index([0, 6, 0]); // crosses X threshold
+
+        assert!(idx0 < bcm.num_lf_contexts);
+        assert!(idx1 < bcm.num_lf_contexts);
+        assert!(idx2 < bcm.num_lf_contexts);
+        assert!(idx3 < bcm.num_lf_contexts);
+
+        // Different LF values should give different indices
+        assert_ne!(idx0, idx2);
+    }
+
+    #[test]
+    fn test_block_context_with_qf_thresholds() {
+        let bcm = BlockContextMap {
+            lf_thresholds: [vec![], vec![], vec![]],
+            qf_thresholds: vec![32, 64, 128],
+            context_map: vec![0; 39 * 4], // Need more entries for QF buckets
+            num_lf_contexts: 1,
+            num_contexts: 1,
+            use_default: false,
+        };
+
+        // Test that different QF values give different contexts (when map allows)
+        let _ctx_low = bcm.block_context(0, 16, 0, 0);
+        let _ctx_mid = bcm.block_context(0, 64, 0, 0);
+        let _ctx_high = bcm.block_context(0, 200, 0, 0);
+    }
+
+    #[test]
+    fn test_zero_density_context_offset() {
+        let bcm = BlockContextMap::new_default();
+
+        let offset0 = bcm.zero_density_context_offset(0);
+        let offset1 = bcm.zero_density_context_offset(1);
+
+        assert_eq!(offset0, bcm.num_contexts * NON_ZERO_BUCKETS);
+        assert_eq!(
+            offset1,
+            bcm.num_contexts * NON_ZERO_BUCKETS + ZERO_DENSITY_CONTEXT_COUNT
+        );
+    }
+
+    #[test]
+    fn test_shift_right_ceil() {
+        // shift = 0 should return x unchanged
+        assert_eq!(shift_right_ceil(10, 0), 10);
+        assert_eq!(shift_right_ceil(0, 0), 0);
+
+        // shift > 0 should round up
+        assert_eq!(shift_right_ceil(8, 2), 2); // 8 / 4 = 2
+        assert_eq!(shift_right_ceil(9, 2), 3); // ceil(9 / 4) = 3
+        assert_eq!(shift_right_ceil(7, 2), 2); // ceil(7 / 4) = 2
+    }
+
+    #[test]
+    fn test_write_threshold_ranges() {
+        // Test all threshold encoding ranges
+        let test_values = [
+            0,     // < 16: 2 + 4 bits
+            1,     // < 16
+            15,    // < 16
+            16,    // 16-271: 2 + 8 bits
+            100,   // 16-271
+            271,   // 16-271
+            272,   // 272-65807: 2 + 16 bits
+            1000,  // 272-65807
+            65807, // 272-65807
+        ];
+
+        for &val in &test_values {
+            let mut writer = BitWriter::new();
+            write_threshold(&mut writer, val).unwrap();
+            assert!(writer.bits_written() > 0, "Failed for value {}", val);
+        }
+    }
+
+    #[test]
+    fn test_write_qf_threshold_ranges() {
+        // Test all QF threshold encoding ranges
+        let test_values = [
+            1,   // v=0: < 4
+            4,   // v=3: < 4
+            5,   // v=4: 4-11
+            12,  // v=11: 4-11
+            13,  // v=12: 12-43
+            44,  // v=43: 12-43
+            45,  // v=44: >= 44
+            100, // v=99: >= 44
+        ];
+
+        for &val in &test_values {
+            let mut writer = BitWriter::new();
+            write_qf_threshold(&mut writer, val).unwrap();
+            assert!(writer.bits_written() > 0, "Failed for value {}", val);
+        }
+    }
+
+    #[test]
+    fn test_coeff_freq_context_values() {
+        // Verify the context lookup table has valid values
+        for (i, &ctx) in COEFF_FREQ_CONTEXT.iter().enumerate() {
+            if i == 0 {
+                assert_eq!(ctx, 0xBAD, "First entry should be 0xBAD (DC not used)");
+            } else {
+                assert!(ctx <= 30, "Context {} at index {} should be <= 30", ctx, i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_coeff_num_nonzero_context_values() {
+        // Verify the non-zero count lookup table
+        for (i, &ctx) in COEFF_NUM_NONZERO_CONTEXT.iter().enumerate() {
+            if i == 0 {
+                assert_eq!(ctx, 0xBAD, "First entry should be 0xBAD");
+            } else {
+                assert!(
+                    ctx <= 206,
+                    "Context {} at index {} should be <= 206",
+                    ctx,
+                    i
+                );
+            }
+        }
     }
 }

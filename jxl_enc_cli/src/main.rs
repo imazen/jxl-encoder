@@ -100,7 +100,15 @@ fn main() {
 
     // Encode
     let encoded = match color_type {
-        png::ColorType::Rgb => encoder.encode_rgb8(&data, width as usize, height as usize),
+        png::ColorType::Rgb => {
+            if distance > 0.0 {
+                // Use VarDCT for lossy RGB
+                encoder.encode_lossy_rgb8(&data, width as usize, height as usize, distance)
+            } else {
+                // Use modular for lossless
+                encoder.encode_rgb8(&data, width as usize, height as usize)
+            }
+        }
         png::ColorType::Rgba => encoder.encode_rgba8(&data, width as usize, height as usize),
         png::ColorType::Grayscale => encoder.encode_gray8(&data, width as usize, height as usize),
         _ => {

@@ -327,4 +327,274 @@ mod tests {
         // Note: not all defaults match is_default() criteria
         frame.write(&mut writer, false).unwrap();
     }
+
+    #[test]
+    fn test_lossless_frame() {
+        let frame = FrameHeader::lossless();
+        assert_eq!(frame.encoding, Encoding::Modular);
+        assert!(!frame.do_ycbcr);
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_frame_type_values() {
+        assert_eq!(FrameType::Regular as u8, 0);
+        assert_eq!(FrameType::LfFrame as u8, 1);
+        assert_eq!(FrameType::ReferenceOnly as u8, 2);
+        assert_eq!(FrameType::SkipProgressive as u8, 3);
+    }
+
+    #[test]
+    fn test_encoding_values() {
+        assert_eq!(Encoding::VarDct as u8, 0);
+        assert_eq!(Encoding::Modular as u8, 1);
+    }
+
+    #[test]
+    fn test_blend_mode_values() {
+        assert_eq!(BlendMode::Replace as u8, 0);
+        assert_eq!(BlendMode::Add as u8, 1);
+        assert_eq!(BlendMode::Blend as u8, 2);
+        assert_eq!(BlendMode::AlphaWeightedAdd as u8, 3);
+        assert_eq!(BlendMode::Mul as u8, 4);
+    }
+
+    #[test]
+    fn test_frame_with_crop() {
+        let mut frame = FrameHeader::lossy();
+        // x0/y0 encoded as signed -> unsigned, values here map to encoded 0
+        frame.x0 = 0;
+        frame.y0 = 0;
+        frame.width = 20000; // Value must be >= 18688 for selector 3
+        frame.height = 20000;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // Should have crop info written
+        assert!(writer.bits_written() > 10);
+    }
+
+    #[test]
+    fn test_frame_with_large_crop_offset() {
+        let mut frame = FrameHeader::lossy();
+        // Use values that encode to >= 256 (first threshold)
+        frame.x0 = 128; // encodes to 256
+        frame.y0 = 128;
+        frame.width = 20000;
+        frame.height = 20000;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 10);
+    }
+
+    #[test]
+    fn test_frame_with_name() {
+        let mut frame = FrameHeader::lossy();
+        frame.name = "TestFrame".to_string(); // 9 chars, falls into selector 2
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // Should have name bytes written
+        assert!(writer.bits_written() > 80); // 9 bytes = 72 bits + header
+    }
+
+    #[test]
+    fn test_frame_with_long_name() {
+        let mut frame = FrameHeader::lossy();
+        frame.name = "ThisIsAVeryLongFrameName".to_string(); // 24 chars, selector 3
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 200);
+    }
+
+    #[test]
+    fn test_lf_frame_type() {
+        let mut frame = FrameHeader::lossy();
+        frame.frame_type = FrameType::LfFrame;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // LF frames don't write blending_info or save_as_reference
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_reference_only_frame() {
+        let mut frame = FrameHeader::lossy();
+        frame.frame_type = FrameType::ReferenceOnly;
+        frame.x0 = 5; // crop should be ignored for ReferenceOnly
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_skip_progressive_frame() {
+        let mut frame = FrameHeader::lossy();
+        frame.frame_type = FrameType::SkipProgressive;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_blend_mode_add() {
+        let mut frame = FrameHeader::lossy();
+        frame.blend_mode = BlendMode::Add;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // Add mode writes source reference
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_blend_mode_blend_with_alpha() {
+        let mut frame = FrameHeader::lossy();
+        frame.blend_mode = BlendMode::Blend;
+        frame.alpha_blend_channel = 1;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // Blend mode writes alpha_channel and clamp
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_blend_mode_alpha_weighted_add() {
+        let mut frame = FrameHeader::lossy();
+        frame.blend_mode = BlendMode::AlphaWeightedAdd;
+        frame.alpha_blend_channel = 2;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_blend_mode_mul() {
+        let mut frame = FrameHeader::lossy();
+        frame.blend_mode = BlendMode::Mul;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_upsampling_factors() {
+        for upsampling in [1, 2, 4, 8] {
+            let mut frame = FrameHeader::lossy();
+            frame.upsampling = upsampling;
+
+            let mut writer = BitWriter::new();
+            frame.write(&mut writer, false).unwrap();
+            assert!(writer.bits_written() > 0);
+        }
+    }
+
+    #[test]
+    fn test_ec_upsampling() {
+        let mut frame = FrameHeader::lossy();
+        frame.ec_upsampling = vec![2, 4, 8];
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_group_size_shift() {
+        for shift in 0..4 {
+            let mut frame = FrameHeader::lossy();
+            frame.group_size_shift = shift;
+
+            let mut writer = BitWriter::new();
+            frame.write(&mut writer, false).unwrap();
+            assert!(writer.bits_written() > 0);
+        }
+    }
+
+    #[test]
+    fn test_save_as_reference() {
+        let mut frame = FrameHeader::lossy();
+        frame.save_as_reference = 2;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_not_last_frame() {
+        let mut frame = FrameHeader::lossy();
+        frame.is_last = false;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_jpeg_upsampling() {
+        let mut frame = FrameHeader::lossy();
+        frame.do_ycbcr = true;
+        frame.jpeg_upsampling = [1, 2, 3];
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_vardct_no_ycbcr() {
+        let mut frame = FrameHeader::lossy();
+        frame.do_ycbcr = false;
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // Without YCbCr, jpeg_upsampling is not written
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_all_default_check() {
+        let mut frame = FrameHeader::default();
+        // Default has group_size_shift = 0, but is_default expects 1
+        frame.group_size_shift = 1;
+
+        // This should now be considered all_default
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // all_default = true writes just 1 bit
+        assert_eq!(writer.bits_written(), 1);
+    }
+
+    #[test]
+    fn test_flags_nonzero() {
+        let mut frame = FrameHeader::lossy();
+        frame.flags = 0x3; // Small value that fits in u64 encoding
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_short_name() {
+        let mut frame = FrameHeader::lossy();
+        frame.name = "Hi".to_string(); // 2 chars, falls into selector 0 branch
+
+        let mut writer = BitWriter::new();
+        frame.write(&mut writer, false).unwrap();
+        // selector 0 means length 0, name bytes are still written
+        assert!(writer.bits_written() > 0);
+    }
 }

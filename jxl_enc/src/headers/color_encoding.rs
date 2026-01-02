@@ -180,21 +180,17 @@ impl ColorEncoding {
     }
 
     /// Returns true if this matches the JXL default color encoding.
-    /// (sRGB with Relative rendering intent, no ICC)
+    /// (sRGB with Perceptual rendering intent, no ICC)
     ///
-    /// Note: Currently always returns false to force explicit color encoding,
-    /// matching libjxl's behavior for compatibility.
+    /// When all_default=true for metadata with xyb_encoded=true (lossy mode),
+    /// the decoder assumes sRGB input color space.
     pub fn is_srgb(&self) -> bool {
-        // libjxl always writes explicit color encoding for non-XYB files
-        // so we do the same for compatibility
-        false
-        // Original logic:
-        // self.color_space == ColorSpace::Rgb
-        //     && self.white_point == WhitePoint::D65
-        //     && self.primaries == Primaries::Srgb
-        //     && self.transfer_function == TransferFunction::Srgb
-        //     && self.rendering_intent == RenderingIntent::Relative
-        //     && !self.want_icc
+        self.color_space == ColorSpace::Rgb
+            && self.white_point == WhitePoint::D65
+            && self.primaries == Primaries::Srgb
+            && self.transfer_function == TransferFunction::Srgb
+            && self.rendering_intent == RenderingIntent::Perceptual
+            && !self.want_icc
     }
 
     /// Returns true if this is grayscale.
@@ -337,9 +333,9 @@ mod tests {
     #[test]
     fn test_srgb_is_default() {
         let enc = ColorEncoding::srgb();
-        // is_srgb() returns false to force explicit color encoding
-        // (matching libjxl behavior for non-XYB files)
-        assert!(!enc.is_srgb());
+        // is_srgb() returns true for default sRGB encoding
+        // (enables all_default=true for metadata in XYB mode)
+        assert!(enc.is_srgb());
     }
 
     #[test]
@@ -349,11 +345,242 @@ mod tests {
         enc.write(&mut writer).unwrap();
         writer.zero_pad_to_byte();
 
-        // With is_srgb() returning false, explicit color encoding is written:
+        // With is_srgb() returning true, all_default=true is written (1 bit)
+        // Padded to byte boundary = 8 bits
+        assert_eq!(writer.bits_written(), 8);
+    }
+
+    #[test]
+    fn test_write_non_default_srgb() {
+        // Non-default sRGB (Relative intent instead of Perceptual)
+        let enc = ColorEncoding {
+            color_space: ColorSpace::Rgb,
+            white_point: WhitePoint::D65,
+            primaries: Primaries::Srgb,
+            transfer_function: TransferFunction::Srgb,
+            rendering_intent: RenderingIntent::Relative, // Non-default
+            want_icc: false,
+        };
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        writer.zero_pad_to_byte();
+
+        // With is_srgb() returning false (Relative != Perceptual),
+        // explicit color encoding is written:
         // all_default=0 (1), want_icc=0 (1), color_space=0 (2),
         // white_point D65=1 (2), primaries sRGB=1 (2), have_gamma=0 (1),
         // transfer_function sRGB=13 (2+4=6), rendering_intent=1 (2)
         // Total: 17 bits -> 24 bits padded = 3 bytes
         assert_eq!(writer.bits_written(), 24);
+    }
+
+    #[test]
+    fn test_color_space_values() {
+        assert_eq!(ColorSpace::Rgb as u8, 0);
+        assert_eq!(ColorSpace::Gray as u8, 1);
+        assert_eq!(ColorSpace::Xyb as u8, 2);
+        assert_eq!(ColorSpace::Unknown as u8, 3);
+    }
+
+    #[test]
+    fn test_white_point_values() {
+        assert_eq!(WhitePoint::D65 as u8, 1);
+        assert_eq!(WhitePoint::Custom as u8, 2);
+        assert_eq!(WhitePoint::E as u8, 10);
+        assert_eq!(WhitePoint::Dci as u8, 11);
+    }
+
+    #[test]
+    fn test_primaries_values() {
+        assert_eq!(Primaries::Srgb as u8, 1);
+        assert_eq!(Primaries::Custom as u8, 2);
+        assert_eq!(Primaries::Bt2100 as u8, 9);
+        assert_eq!(Primaries::P3 as u8, 11);
+    }
+
+    #[test]
+    fn test_transfer_function_values() {
+        assert_eq!(TransferFunction::Bt709 as u8, 1);
+        assert_eq!(TransferFunction::Unknown as u8, 2);
+        assert_eq!(TransferFunction::Linear as u8, 8);
+        assert_eq!(TransferFunction::Srgb as u8, 13);
+        assert_eq!(TransferFunction::Pq as u8, 16);
+        assert_eq!(TransferFunction::Dci as u8, 17);
+        assert_eq!(TransferFunction::Hlg as u8, 18);
+    }
+
+    #[test]
+    fn test_rendering_intent_values() {
+        assert_eq!(RenderingIntent::Perceptual as u8, 0);
+        assert_eq!(RenderingIntent::Relative as u8, 1);
+        assert_eq!(RenderingIntent::Saturation as u8, 2);
+        assert_eq!(RenderingIntent::Absolute as u8, 3);
+    }
+
+    #[test]
+    fn test_write_linear_srgb() {
+        let enc = ColorEncoding::linear_srgb();
+        assert_eq!(enc.transfer_function, TransferFunction::Linear);
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_grayscale() {
+        let enc = ColorEncoding::grayscale();
+        assert!(enc.is_gray());
+        assert_eq!(enc.color_space, ColorSpace::Gray);
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        // Grayscale doesn't write primaries
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_gray() {
+        let enc = ColorEncoding::gray();
+        assert!(enc.is_gray());
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_display_p3() {
+        let enc = ColorEncoding::display_p3();
+        assert_eq!(enc.primaries, Primaries::P3);
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_bt2100_pq() {
+        let enc = ColorEncoding::bt2100_pq();
+        assert_eq!(enc.primaries, Primaries::Bt2100);
+        assert_eq!(enc.transfer_function, TransferFunction::Pq);
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_with_want_icc() {
+        let mut enc = ColorEncoding::srgb();
+        enc.want_icc = true;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        // With want_icc=true, only all_default=0 and want_icc=1 are written
+        assert_eq!(writer.bits_written(), 2);
+    }
+
+    #[test]
+    fn test_write_bt709_transfer() {
+        let mut enc = ColorEncoding::srgb();
+        enc.transfer_function = TransferFunction::Bt709;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_dci_transfer() {
+        let mut enc = ColorEncoding::srgb();
+        enc.transfer_function = TransferFunction::Dci;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_hlg_transfer() {
+        let mut enc = ColorEncoding::srgb();
+        enc.transfer_function = TransferFunction::Hlg;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_e_white_point() {
+        let mut enc = ColorEncoding::srgb();
+        enc.white_point = WhitePoint::E;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_dci_white_point() {
+        let mut enc = ColorEncoding::srgb();
+        enc.white_point = WhitePoint::Dci;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_rendering_intent_saturation() {
+        let mut enc = ColorEncoding::srgb();
+        enc.rendering_intent = RenderingIntent::Saturation;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_rendering_intent_absolute() {
+        let mut enc = ColorEncoding::srgb();
+        enc.rendering_intent = RenderingIntent::Absolute;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_xyb_color_space() {
+        let mut enc = ColorEncoding::srgb();
+        enc.color_space = ColorSpace::Xyb;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        // XYB doesn't write primaries (not RGB)
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_unknown_color_space() {
+        let mut enc = ColorEncoding::srgb();
+        enc.color_space = ColorSpace::Unknown;
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        // Unknown color space doesn't write primaries
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_default_encoding() {
+        let enc = ColorEncoding::default();
+        assert_eq!(enc.color_space, ColorSpace::Rgb);
+        assert_eq!(enc.white_point, WhitePoint::D65);
+        assert_eq!(enc.primaries, Primaries::Srgb);
+        assert_eq!(enc.transfer_function, TransferFunction::Srgb);
+        assert_eq!(enc.rendering_intent, RenderingIntent::Perceptual);
+        assert!(!enc.want_icc);
     }
 }

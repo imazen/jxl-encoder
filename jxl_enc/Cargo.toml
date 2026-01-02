@@ -19,7 +19,7 @@ num-traits = "0.2"
 rand = "0.9"
 rand_xorshift = "0.4"
 image = "0.25"
-jxl-oxide = "0.12"
+jxl-oxide = { path = "/home/lilith/work/jxl-efforts/jxl-oxide/crates/jxl-oxide" }
 
 [lints]
 workspace = true

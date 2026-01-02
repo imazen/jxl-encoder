@@ -128,7 +128,17 @@ impl FrameEncoder {
                 quantizer,
                 vardct_encoder.ac_strategy_map(),
             );
+            eprintln!(
+                "TRANSFORM_STRAT: dc_coeffs={}, ac_coeffs={}",
+                transformed.dc_coeffs.len(),
+                transformed.ac_coeffs.len()
+            );
             let (tokens, distributions) = vardct_encoder.tokenize_ac_with_strategy(&transformed)?;
+            eprintln!(
+                "TOKENIZE_STRAT: {} tokens, {} distributions",
+                tokens.len(),
+                distributions.len()
+            );
             (
                 transformed.dc_coeffs,
                 transformed.ac_coeffs,
@@ -137,8 +147,18 @@ impl FrameEncoder {
             )
         } else {
             let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
+            eprintln!(
+                "TRANSFORM: dc_coeffs={}, ac_coeffs={}",
+                transformed.dc_coeffs.len(),
+                transformed.ac_coeffs.len()
+            );
             let (tokens, distributions) =
                 vardct_encoder.tokenize_ac_coefficients(&transformed.ac_coeffs)?;
+            eprintln!(
+                "TOKENIZE: {} tokens, {} distributions",
+                tokens.len(),
+                distributions.len()
+            );
             (
                 transformed.dc_coeffs,
                 transformed.ac_coeffs,
@@ -149,6 +169,9 @@ impl FrameEncoder {
 
         // Write VarDCT frame header
         vardct_encoder.write_frame_header(writer)?;
+
+        // NOTE: No padding between frame header and TOC - the TOC starts
+        // immediately after the frame header (the TOC itself handles alignment)
 
         if num_groups == 1 {
             // Single group: all sections combined into one TOC entry
@@ -183,27 +206,38 @@ impl FrameEncoder {
         distributions: &[AnsDistribution],
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // Encode all sections to a single buffer
+        // For single-group VarDCT, we can use a single TOC entry containing all sections.
+        // The sections are concatenated in order: LfGlobal, HfGlobal, LfGroup, PassGroup
         let mut section_writer = BitWriter::new();
 
         // LF Global section
         vardct_encoder.write_lf_global(&mut section_writer)?;
         section_writer.zero_pad_to_byte();
+        let lf_global_size = section_writer.bytes_written();
+        eprintln!("SECTION: LF Global = {} bytes", lf_global_size);
 
         // HF Global section (with histograms)
         vardct_encoder.write_hf_global(distributions, &mut section_writer)?;
         section_writer.zero_pad_to_byte();
+        let hf_global_size = section_writer.bytes_written() - lf_global_size;
+        eprintln!("SECTION: HF Global = {} bytes", hf_global_size);
 
         // LF Group (DC coefficients)
         vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
         section_writer.zero_pad_to_byte();
+        let lf_group_size = section_writer.bytes_written() - lf_global_size - hf_global_size;
+        eprintln!("SECTION: LF Group = {} bytes", lf_group_size);
 
         // Pass Group (AC coefficients)
         vardct_encoder.write_pass_group(tokens, distributions, &mut section_writer)?;
         section_writer.zero_pad_to_byte();
+        let pass_group_size =
+            section_writer.bytes_written() - lf_global_size - hf_global_size - lf_group_size;
+        eprintln!("SECTION: Pass Group = {} bytes", pass_group_size);
 
         let section_data = section_writer.finish();
         let section_size = section_data.len();
+        eprintln!("SECTION: Total = {} bytes", section_size);
 
         // Write single TOC entry
         self.write_toc(writer, section_size)?;
