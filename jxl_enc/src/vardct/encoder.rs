@@ -6,7 +6,9 @@ use crate::BLOCK_DIM;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::ans::{AnsDistribution, AnsEncoder};
 use crate::error::Result;
-use crate::heuristics::{AcStrategyMap, ColorCorrelationMap, HeuristicLevel, select_ac_strategies};
+use crate::heuristics::{
+    AcStrategyMap, ColorCorrelationMap, HeuristicLevel, QuantField, select_ac_strategies,
+};
 use crate::modular::channel::{Channel, ModularImage};
 use crate::modular::improved::write_improved_modular_stream;
 
@@ -30,6 +32,10 @@ pub struct VarDctOptions {
     pub ac_strategy_heuristics: HeuristicLevel,
     /// Enable Chroma-from-Luma correlation.
     pub cfl_enabled: bool,
+    /// Enable adaptive quantization field.
+    pub adaptive_quant: bool,
+    /// Adaptive quantization strength (0.0 = uniform, 1.0 = full).
+    pub adaptive_quant_strength: f32,
 }
 
 impl Default for VarDctOptions {
@@ -39,7 +45,9 @@ impl Default for VarDctOptions {
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
             ac_strategy_heuristics: HeuristicLevel::Dct8Only,
-            cfl_enabled: false, // Disabled by default for now
+            cfl_enabled: false,    // Disabled by default for now
+            adaptive_quant: false, // Disabled by default for now
+            adaptive_quant_strength: 0.5,
         }
     }
 }
@@ -54,6 +62,7 @@ pub struct VarDctEncoder {
     block_ctx_map: BlockContextMap,
     ac_strategy_map: AcStrategyMap,
     color_correlation: ColorCorrelationMap,
+    quant_field: QuantField,
 }
 
 impl VarDctEncoder {
@@ -69,6 +78,10 @@ impl VarDctEncoder {
         // Create default color correlation (no CfL)
         let color_correlation = ColorCorrelationMap::new_default(width, height);
 
+        // Create uniform quant field; can be updated with compute_quant_field
+        let base_quant = quantizer.quant_dc.min(255) as u8;
+        let quant_field = QuantField::uniform(blocks_x, blocks_y, base_quant);
+
         Self {
             options,
             width,
@@ -78,6 +91,7 @@ impl VarDctEncoder {
             block_ctx_map: BlockContextMap::default(),
             ac_strategy_map,
             color_correlation,
+            quant_field,
         }
     }
 
@@ -92,6 +106,28 @@ impl VarDctEncoder {
             self.height,
             self.options.ac_strategy_heuristics,
         );
+    }
+
+    /// Compute adaptive quant field from image data.
+    ///
+    /// Call this after creating the encoder and before encoding.
+    /// The Y plane should be the luminance channel in linear space (or XYB Y).
+    pub fn compute_quant_field(&mut self, y_plane: &[f32]) {
+        if self.options.adaptive_quant {
+            let base_quant = self.quantizer.quant_dc.min(255) as u8;
+            self.quant_field = QuantField::compute_adaptive(
+                y_plane,
+                self.width,
+                self.height,
+                base_quant,
+                self.options.adaptive_quant_strength,
+            );
+        }
+    }
+
+    /// Get the quant field.
+    pub fn quant_field(&self) -> &QuantField {
+        &self.quant_field
     }
 
     /// Compute CfL correlation from XYB image data.
@@ -590,13 +626,14 @@ impl VarDctEncoder {
             }
         }
 
-        // Quant field (uniform)
-        // Write "use_raw_quant = true" and then the uniform quant value
+        // Quant field (uniform or adaptive)
+        // Write "use_raw_quant = true" and then the quant value per block
         writer.write(1, 1)?; // use_raw_quant = true
-        // Write the quant value for each block (uniform)
-        let quant_val = self.quantizer.quant_dc.min(255) as u64;
-        for _by in 0..blocks_y {
-            for _bx in 0..blocks_x {
+
+        // Write quant value for each block from the quant field
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let quant_val = self.quant_field.get(bx, by) as u64;
                 writer.write(8, quant_val)?;
             }
         }
