@@ -48,7 +48,7 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 
 2. **No Squeeze transform** - Only RCT implemented for lossless, no Squeeze transform yet.
 
-3. **Coefficient ordering for DCT16/32** - DCT16/32 transforms integrated but may need AC coefficient scan order adjustment to match libjxl exactly.
+3. **DCT16/32 not yet used in encoding** - Transform infrastructure and scan orders are ready, but the actual encoder still uses DCT8-only path. Wiring requires tokenization and context model updates.
 
 ## Implementation Progress
 
@@ -109,9 +109,10 @@ VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
 - [x] **Chroma-from-Luma (CfL)** (per-tile correlation computation)
 - [x] **Adaptive quant field** (per-block quality based on variance)
 - [x] **DCT16/DCT32 transform support** (block extraction, transform, quantization)
+- [x] **AC coefficient scan order for DCT16/DCT32** (natural order generation)
+- [ ] Wire DCT16/32 into actual encoding (tokenization, context modeling)
 - [ ] Butteraugli-based quality tuning
 - [ ] EPF sharpness parameter
-- [ ] AC coefficient scan order for DCT16/DCT32
 
 ---
 
@@ -140,7 +141,16 @@ Key implementation details:
 - Variable-length AC storage with offset array for per-block access
 - Quantization matrices scaled from DCT8 weights
 
-**Tests:** 221 passing (5 new transform tests)
+Also in `vardct/tokenize.rs`:
+- `generate_natural_order(cx, cy)` - zigzag scan order with LLF first
+- `log2_covered_blocks_for_strategy()` - for context modeling
+
+Heuristics wired into `frame_encoder.rs`:
+- AC strategy computation from image variance
+- CfL correlation computation
+- Adaptive quant field computation
+
+**Tests:** 225 passing (9 new tests)
 
 ### 2026-01-01: VarDCT Heuristics Complete
 
