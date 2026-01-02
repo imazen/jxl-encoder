@@ -46,10 +46,14 @@ pub fn transform_and_quantize(
     let mut ac_coeffs = vec![0i32; num_blocks * 3 * 63];
 
     // Get global scale for quantization
-    let inv_global_scale = quantizer.inv_global_scale();
+    // Note: quantize_block_8x8 expects global_scale_float (= global_scale / GLOBAL_SCALE_DENOM)
+    // which gives: qac = global_scale_float * quant = (global_scale / 65536) * quant
+    // Higher distance → lower global_scale → smaller qac → more quantization (more zeros)
+    let global_scale_float = quantizer.global_scale as f32 / 65536.0;
     let quant_dc = quantizer.quant_dc as i32;
 
     // Simple inverse dequant matrix (flat for now - real implementation uses the tables)
+    // Using flat 1.0 means no perceptual weighting - all coefficients treated equally
     let inv_dequant = [1.0f32; 64];
 
     // Process each block
@@ -72,7 +76,7 @@ pub fn transform_and_quantize(
                 quantize_block_8x8(
                     &dct_out,
                     quant_dc,
-                    inv_global_scale,
+                    global_scale_float,
                     &inv_dequant,
                     &mut quant_out,
                 );
