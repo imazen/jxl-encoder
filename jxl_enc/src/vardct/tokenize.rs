@@ -106,6 +106,122 @@ pub const ZIGZAG_ORDER_8X8: [usize; 64] = [
     52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 ];
 
+/// Generate natural coefficient order for a block.
+///
+/// The natural order places LLF (DC-equivalent) coefficients first,
+/// then AC coefficients in a zigzag-like pattern.
+///
+/// # Arguments
+/// * `cx` - Number of 8x8 blocks in x direction (covered_blocks_x)
+/// * `cy` - Number of 8x8 blocks in y direction (covered_blocks_y)
+pub fn generate_natural_order(cx: usize, cy: usize) -> Vec<usize> {
+    let block_dim = 8;
+    let width = cx * block_dim;
+    let height = cy * block_dim;
+    let size = width * height;
+
+    let mut order = vec![0usize; size];
+    let covered_blocks = cx * cy;
+
+    // Generate zigzag order for the full block
+    // The first covered_blocks positions are the LLF (one per 8x8 block)
+    // The rest follow zigzag pattern
+
+    // For square blocks, use standard zigzag
+    if cx == cy {
+        let mut cur = covered_blocks;
+
+        // First half of zigzag (upper-left triangle)
+        for i in 0..width {
+            for j in 0..=i {
+                let (x, y) = if i % 2 == 0 { (i - j, j) } else { (j, i - j) };
+
+                if x < width && y < height {
+                    // Check if this is an LLF position
+                    let block_x = x / block_dim;
+                    let block_y = y / block_dim;
+                    let local_x = x % block_dim;
+                    let local_y = y % block_dim;
+
+                    if local_x == 0 && local_y == 0 {
+                        // LLF position - DC of this 8x8 block
+                        let llf_idx = block_y * cx + block_x;
+                        order[llf_idx] = y * width + x;
+                    } else {
+                        // AC position
+                        if cur < size {
+                            order[cur] = y * width + x;
+                            cur += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Second half of zigzag (lower-right triangle)
+        for ip in (1..width).rev() {
+            let i = ip;
+            for j in 0..i {
+                let x_base = width - i + j;
+                let y_base = width - 1 - j;
+                let (x, y) = if (width - i).is_multiple_of(2) {
+                    (x_base, y_base)
+                } else {
+                    (y_base, x_base)
+                };
+
+                if x < width && y < height {
+                    let block_x = x / block_dim;
+                    let block_y = y / block_dim;
+                    let local_x = x % block_dim;
+                    let local_y = y % block_dim;
+
+                    if local_x == 0 && local_y == 0 {
+                        let llf_idx = block_y * cx + block_x;
+                        order[llf_idx] = y * width + x;
+                    } else if cur < size {
+                        order[cur] = y * width + x;
+                        cur += 1;
+                    }
+                }
+            }
+        }
+    } else {
+        // For non-square, use simple raster order with LLF first
+        let mut cur = covered_blocks;
+        for by in 0..cy {
+            for bx in 0..cx {
+                let llf_idx = by * cx + bx;
+                order[llf_idx] = (by * block_dim) * width + (bx * block_dim);
+            }
+        }
+        for y in 0..height {
+            for x in 0..width {
+                let local_x = x % block_dim;
+                let local_y = y % block_dim;
+                if local_x != 0 || local_y != 0 {
+                    order[cur] = y * width + x;
+                    cur += 1;
+                }
+            }
+        }
+    }
+
+    order
+}
+
+/// Get log2 of covered blocks for a given AC strategy.
+#[inline]
+pub fn log2_covered_blocks_for_strategy(cx: usize, cy: usize) -> usize {
+    let covered = cx * cy;
+    match covered {
+        1 => 0,  // DCT8
+        4 => 2,  // DCT16
+        16 => 4, // DCT32
+        _ => (covered as f32).log2().ceil() as usize,
+    }
+}
+
 /// Collect all tokens from multiple blocks.
 pub struct TokenCollector {
     pub tokens: Vec<Token>,
@@ -245,5 +361,62 @@ mod tests {
         assert_eq!(ZIGZAG_ORDER_8X8[3], 16); // (2,0)
         assert_eq!(ZIGZAG_ORDER_8X8[4], 9); // (1,1)
         assert_eq!(ZIGZAG_ORDER_8X8[5], 2); // (0,2)
+    }
+
+    #[test]
+    fn test_generate_natural_order_8x8() {
+        let order = generate_natural_order(1, 1);
+        assert_eq!(order.len(), 64);
+        // First position should be DC (position 0)
+        assert_eq!(order[0], 0);
+        // All positions should be unique
+        let mut sorted = order.clone();
+        sorted.sort();
+        for i in 0..64 {
+            assert_eq!(sorted[i], i);
+        }
+    }
+
+    #[test]
+    fn test_generate_natural_order_16x16() {
+        let order = generate_natural_order(2, 2);
+        assert_eq!(order.len(), 256);
+        // First 4 positions are LLF (DC of each 8x8 block)
+        // LLF positions are at (0,0), (8,0), (0,8), (8,8) in the 16x16 grid
+        let llf_positions = [0, 8, 16 * 8, 16 * 8 + 8]; // 0, 8, 128, 136
+        for i in 0..4 {
+            assert!(
+                llf_positions.contains(&order[i]),
+                "order[{}] = {} should be an LLF position",
+                i,
+                order[i]
+            );
+        }
+        // All positions should be unique
+        let mut sorted = order.clone();
+        sorted.sort();
+        for i in 0..256 {
+            assert_eq!(sorted[i], i, "Position {} missing from order", i);
+        }
+    }
+
+    #[test]
+    fn test_generate_natural_order_32x32() {
+        let order = generate_natural_order(4, 4);
+        assert_eq!(order.len(), 1024);
+        // First 16 positions are LLF (DC of each 8x8 block)
+        // All positions should be unique
+        let mut sorted = order.clone();
+        sorted.sort();
+        for i in 0..1024 {
+            assert_eq!(sorted[i], i, "Position {} missing from order", i);
+        }
+    }
+
+    #[test]
+    fn test_log2_covered_blocks() {
+        assert_eq!(log2_covered_blocks_for_strategy(1, 1), 0); // DCT8
+        assert_eq!(log2_covered_blocks_for_strategy(2, 2), 2); // DCT16
+        assert_eq!(log2_covered_blocks_for_strategy(4, 4), 4); // DCT32
     }
 }
