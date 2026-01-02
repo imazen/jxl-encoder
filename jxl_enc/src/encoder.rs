@@ -1001,6 +1001,26 @@ fn test_encode_rgb_irregular_dimensions() {
     }
 }
 
+/// Test with an image that has many unique colors (similar to pngsuite)
+/// This triggers more complex Huffman coding and LZ77 patterns
+#[test]
+fn test_encode_rgb_gradient() {
+    // 32x32 gradient image with many unique colors
+    let mut data = vec![0u8; 32 * 32 * 3];
+    for y in 0..32 {
+        for x in 0..32 {
+            let idx = (y * 32 + x) * 3;
+            // Create a gradient with many unique colors
+            data[idx] = (x * 8) as u8; // R varies with x
+            data[idx + 1] = (y * 8) as u8; // G varies with y
+            data[idx + 2] = ((x + y) * 4) as u8; // B varies with x+y
+        }
+    }
+    let encoded = Encoder::new().encode_rgb8(&data, 32, 32).unwrap();
+    std::fs::write("/tmp/rgb_gradient_32x32.jxl", &encoded).unwrap();
+    eprintln!("Encoded RGB gradient 32x32: {} bytes", encoded.len());
+}
+
 #[cfg(test)]
 mod decoder_validation {
     use super::*;

@@ -746,6 +746,11 @@ pub fn store_meta_huffman_tree(
         }
     }
 
+    eprintln!(
+        "STORE_META: codes_to_store={}, skip_some={}",
+        codes_to_store, skip_some
+    );
+
     // Write skip count (2 bits) - this is the simple_code_or_skip field
     // Values 0, 2, 3 indicate full tree with skip; value 1 would be simple code
     writer.write(2, skip_some as u64)?;
@@ -857,14 +862,29 @@ pub fn store_compressed_tree(
 /// }
 /// ```
 pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
+    // Debug: show raw depths for first and last few elements
+    let first_10: Vec<u8> = depths.iter().take(10).copied().collect();
+    let last_10: Vec<u8> = depths.iter().rev().take(10).rev().copied().collect();
+    eprintln!(
+        "STORE_HUFF: depths len={}, first_10={:?}, last_10={:?}",
+        depths.len(),
+        first_10,
+        last_10
+    );
+
     // RLE-compress the depth array
     let compressed = write_huffman_tree(depths);
+    eprintln!(
+        "STORE_HUFF: compressed codes={:?}, extra_bits={:?}",
+        compressed.codes, compressed.extra_bits
+    );
 
     // Build histogram of code length codes
     let mut histogram = [0u32; CODE_LENGTH_CODES];
     for &code in &compressed.codes {
         histogram[code as usize] += 1;
     }
+    eprintln!("STORE_HUFF: code_length_histogram={:?}", histogram);
 
     // Count how many distinct code length codes are used
     let mut num_codes = 0;
@@ -889,6 +909,11 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
     let code_length_codes_vec = convert_bit_depths_to_symbols(&code_length_depths);
     let mut code_length_codes_arr = [0u16; CODE_LENGTH_CODES];
     code_length_codes_arr.copy_from_slice(&code_length_codes_vec);
+
+    eprintln!(
+        "STORE_HUFF: num_codes={}, meta_depths={:?}",
+        num_codes, code_length_depths_arr
+    );
 
     // Write meta-Huffman tree
     store_meta_huffman_tree(num_codes, &code_length_depths_arr, writer)?;
@@ -969,6 +994,18 @@ pub fn build_and_store_huffman_tree(
 ) -> Result<HuffmanTable> {
     let length = histogram.len();
 
+    // Debug: print non-zero symbols
+    let nonzero: Vec<(usize, u32)> = histogram
+        .iter()
+        .enumerate()
+        .filter(|&(_, h)| *h > 0)
+        .map(|(i, h)| (i, *h))
+        .collect();
+    eprintln!(
+        "HUFFMAN_BUILD: alphabet_size={}, nonzero_symbols={:?}",
+        length, nonzero
+    );
+
     // Count non-zero symbols and track first 4
     let mut count = 0usize;
     let mut s4 = [0usize; 4];
@@ -1009,11 +1046,23 @@ pub fn build_and_store_huffman_tree(
     let depths = create_huffman_tree(histogram, MAX_CODE_DEPTH);
     let codes = convert_bit_depths_to_symbols(&depths);
 
+    // Debug: print depths for non-zero symbols
+    let depths_info: Vec<(usize, u8, u16)> = nonzero
+        .iter()
+        .map(|(i, _)| (*i, depths[*i], codes[*i]))
+        .collect();
+    eprintln!(
+        "HUFFMAN_BUILD: depths/codes for used symbols: {:?}",
+        depths_info
+    );
+
     if count <= 4 {
         // Simple Huffman code
+        eprintln!("HUFFMAN_BUILD: using simple code for {} symbols", count);
         store_simple_huffman_tree(&depths, &mut s4, count, max_bits, writer)?;
     } else {
         // Full code length table
+        eprintln!("HUFFMAN_BUILD: using full table for {} symbols", count);
         store_huffman_tree(&depths, writer)?;
     }
 
