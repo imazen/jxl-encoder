@@ -8,6 +8,7 @@ use crate::BLOCK_DIM;
 use crate::vardct::AcStrategy;
 
 /// Map of AC strategies for each 8x8 block in the image.
+#[derive(Clone)]
 pub struct AcStrategyMap {
     /// Strategy for each block, stored in row-major order.
     strategies: Vec<AcStrategy>,
