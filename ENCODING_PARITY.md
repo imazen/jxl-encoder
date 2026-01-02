@@ -4,9 +4,13 @@ This document tracks progress toward achieving encoding parity with the libjxl r
 
 ## Current Status
 
-**Date:** 2025-12-29
+**Date:** 2026-01-01
 
+### Lossless (Modular) Encoding
 The encoder produces valid JXL files with **perfect lossless round-trip** through jxl-rs for **arbitrary grayscale and RGB images**.
+
+### Lossy (VarDCT) Encoding - In Progress
+VarDCT encoding foundation is complete but coefficient entropy coding is not yet wired up.
 
 ## Verified Working
 
@@ -52,16 +56,72 @@ The encoder produces valid JXL files with **perfect lossless round-trip** throug
 - [x] Grayscale/RGB/RGBA support via ModularImage
 - [x] Lossless round-trip verified with jxl-rs (up to 256 symbols)
 
-### Future Work
+### Future Work - Lossless
 - [ ] ANS entropy coding (better compression than Huffman)
 - [ ] Better predictors (Gradient, Weighted Average, etc.)
 - [ ] Transform support (Squeeze, DCT, etc.)
 - [ ] djxl compatibility investigation
 - [ ] Multi-group images (>256x256)
 
+## VarDCT (Lossy) Implementation Progress
+
+### Completed
+- [x] XYB color transform (sRGB → Linear → Opsin → XYB)
+- [x] AC strategy types (27 transform types)
+- [x] Dequant matrices (17 library tables)
+- [x] Quantizer (distance → quant mapping)
+- [x] Block coefficient quantization
+- [x] Block context modeling (zero density contexts)
+- [x] Coefficient tokenization (pack_signed, token structure)
+- [x] DCT8 transform pipeline (block extraction, DCT, quantization)
+- [x] VarDCT frame header (encoding=0)
+- [x] Public API: `encode_lossy_rgb8()`
+
+### In Progress
+- [ ] Wire up ANS/Huffman for DC coefficients (modular path)
+- [ ] Wire up ANS for AC coefficient tokens
+- [ ] Proper histogram building and serialization in HF global
+- [ ] Complete LF group encoding (AC strategy map, quant field)
+- [ ] Complete pass group encoding (AC coefficients with contexts)
+
+### Future Work - Lossy
+- [ ] Perceptual heuristics (adaptive quant, AC strategy selection)
+- [ ] Chroma-from-Luma (CfL) correlation
+- [ ] Butteraugli-based quality tuning
+- [ ] EPF sharpness parameter
+- [ ] Multi-group support for large images
+
 ---
 
 ## Progress Log
+
+### 2026-01-01: VarDCT (Lossy) Encoding Foundation
+
+**Implemented VarDCT encoding infrastructure:**
+
+Phase 1 - Foundation:
+- XYB color transform (`color/xyb.rs`) - sRGB → XYB conversion with opsin matrices
+- AC strategy types (`vardct/ac_strategy.rs`) - 27 transform types (DCT8 to DCT256, AFV)
+- Dequant matrices (`vardct/quant_weights.rs`) - Library mode with 17 predefined tables
+
+Phase 2 - Quantization:
+- Quantizer (`vardct/quantizer.rs`) - Distance to quantizer parameter mapping
+- Block quantization (`vardct/enc_coeff.rs`) - Coefficient quantization with thresholds
+
+Phase 3 - Entropy Coding (partial):
+- Block context modeling (`vardct/context.rs`) - Zero density contexts, nonzero buckets
+- Coefficient tokenization (`vardct/tokenize.rs`) - Token structure and zigzag packing
+- ANS encoder (`entropy_coding/ans.rs`) - Basic ANS with distributions (not fully wired)
+
+Phase 4 - Frame Assembly:
+- VarDCT frame encoder (`vardct/encoder.rs`) - Frame header, LF/HF global, groups
+- DCT transform pipeline (`vardct/transform.rs`) - Block extraction, DCT8, quantization
+- Lossy public API (`encode_lossy_rgb8()`)
+
+**Status:** VarDCT encoding produces JXL file structure but coefficient entropy
+coding is not yet complete. Files have correct headers but placeholder data.
+
+**Tests:** 178 passing (new VarDCT and transform tests)
 
 ### 2025-12-29: Full Huffman Encoder
 
