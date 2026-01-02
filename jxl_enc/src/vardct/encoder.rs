@@ -81,7 +81,8 @@ impl VarDctEncoder {
     /// Write the VarDCT frame header.
     ///
     /// This differs from modular by setting encoding=0 and includes
-    /// VarDCT-specific fields like restoration filters.
+    /// VarDCT-specific fields like x_qm_scale and b_qm_scale.
+    /// Note: group_size_shift is ONLY for Modular frames, not VarDCT!
     pub fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
         // all_default = false (VarDCT needs specific settings)
         writer.write(1, 0)?;
@@ -92,40 +93,45 @@ impl VarDctEncoder {
         // encoding = VarDCT (0)
         writer.write(1, 0)?;
 
-        // flags = 0
+        // flags = 0 (U64 encoding: selector 0 means value 0)
         writer.write(2, 0)?;
 
-        // upsampling = 1 (selector 0)
+        // upsampling = 1 (selector 0 in u2S(1,2,4,8))
         writer.write(2, 0)?;
 
-        // group_size_shift = 1 (256 pixels)
-        writer.write(2, 1)?;
+        // ec_upsampling - for each extra channel (none for RGB, so nothing written)
 
-        // x_qm_scale = 3 (default)
+        // NOTE: group_size_shift is ONLY for Modular, NOT VarDCT!
+        // VarDCT always uses 256x256 groups.
+
+        // x_qm_scale = 3 (default) - only when !all_default && xyb_encoded && VarDCT
         writer.write(3, 3)?;
 
-        // b_qm_scale = 3 (default)
-        writer.write(3, 3)?;
+        // b_qm_scale = 2 (default) - only when !all_default && xyb_encoded && VarDCT
+        writer.write(3, 2)?;
 
-        // passes.num_passes = 1 (selector 0)
+        // passes.num_passes = 1 (selector 0 in u2S(1,2,3,Bits(3)+4))
         writer.write(2, 0)?;
 
-        // have_crop = false
+        // have_crop = false (only if frame_type != LFFrame)
         writer.write(1, 0)?;
 
-        // blending_info.mode = Replace (selector 0)
+        // blending_info.mode = Replace (selector 0 in u2S(0,1,2,Bits(2)+3))
         writer.write(2, 0)?;
 
-        // is_last = true
+        // is_last = true (only for RegularFrame or SkipProgressive)
         writer.write(1, 1)?;
 
-        // name_length = 0
-        writer.write(2, 0)?;
+        // save_as_reference - not written (is_last = true)
+
+        // name_length = 0 using u2S(0, Bits(4), Bits(5)+16, Bits(10)+48)
+        writer.write(2, 0)?; // selector 0 = value 0
 
         // restoration_filter - for VarDCT we enable defaults (gab, epf)
         writer.write(1, 1)?; // all_default = true
 
-        // extensions = 0
+        // extensions = 0 (no extensions)
+        // U64 encoding: selector 0 (2 bits) means value 0
         writer.write(2, 0)?;
 
         Ok(())
