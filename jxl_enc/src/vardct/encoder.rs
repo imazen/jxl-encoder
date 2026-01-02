@@ -301,7 +301,7 @@ impl VarDctEncoder {
             writer.write(2, 0)?; // selector 0 = 84
         } else if color_factor == 256 {
             writer.write(2, 1)?; // selector 1 = 256
-        } else if color_factor >= 2 && color_factor < 258 {
+        } else if (2..258).contains(&color_factor) {
             writer.write(2, 2)?; // selector 2 = Bits(8) + 2
             writer.write(8, (color_factor - 2) as u64)?;
         } else {
