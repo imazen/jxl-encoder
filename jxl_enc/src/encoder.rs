@@ -1040,6 +1040,57 @@ mod decoder_validation {
         }
     }
 
+    /// Test that our lossless RGB encoded files can be decoded by jxl-oxide
+    #[test]
+    fn test_decode_lossless_rgb() {
+        // 8x8 RGB checkerboard for lossless encoding
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255; // R
+                    data[idx + 1] = 0; // G
+                    data[idx + 2] = 0; // B
+                } else {
+                    data[idx] = 0;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 255;
+                }
+            }
+        }
+
+        let encoded = Encoder::new().encode_rgb8(&data, 8, 8).unwrap();
+        eprintln!("Lossless RGB 8x8 encoded to {} bytes", encoded.len());
+
+        // Try to decode with jxl-oxide
+        let decoder = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+
+        match decoder {
+            Ok(image) => {
+                eprintln!(
+                    "Successfully decoded lossless RGB 8x8: {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                assert_eq!(image.width(), 8);
+                assert_eq!(image.height(), 8);
+            }
+            Err(e) => {
+                eprintln!("Lossless RGB decode failed: {:?}", e);
+                eprintln!("Encoded bytes ({}):", encoded.len());
+                for (i, b) in encoded.iter().enumerate() {
+                    eprint!("{:02x} ", b);
+                    if (i + 1) % 16 == 0 {
+                        eprintln!();
+                    }
+                }
+                eprintln!();
+                panic!("jxl-oxide failed to decode lossless RGB file: {:?}", e);
+            }
+        }
+    }
+
     /// Test that our lossy encoded files can be decoded
     #[test]
     fn test_decode_lossy_rgb() {
@@ -1144,6 +1195,48 @@ mod decoder_validation {
 
             assert_eq!(image.width(), 8);
             assert_eq!(image.height(), 8);
+        }
+    }
+
+    /// Test that pngsuite RGB images can be decoded by jxl-oxide
+    #[test]
+    fn test_decode_pngsuite_rgb() {
+        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+        let path = format!("{}/pngsuite/basn2c08.png", CORPUS_PATH);
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("Skipping test: {} not found", path);
+            return;
+        }
+
+        let img = image::open(&path).unwrap();
+        let rgb = img.to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+
+        let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
+        eprintln!("basn2c08.png {}x{} encoded to {} bytes", w, h, encoded.len());
+
+        // Decode with jxl-oxide
+        match jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded)) {
+            Ok(image) => {
+                eprintln!(
+                    "Successfully decoded basn2c08: {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                assert_eq!(image.width(), w as u32);
+                assert_eq!(image.height(), h as u32);
+            }
+            Err(e) => {
+                eprintln!("basn2c08 decode failed: {:?}", e);
+                eprintln!("First 64 bytes:");
+                for (i, b) in encoded.iter().take(64).enumerate() {
+                    eprint!("{:02x} ", b);
+                    if (i + 1) % 16 == 0 {
+                        eprintln!();
+                    }
+                }
+                panic!("jxl-oxide failed to decode basn2c08: {:?}", e);
+            }
         }
     }
 
