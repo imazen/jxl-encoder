@@ -10,6 +10,7 @@ pub mod encoder;
 pub mod quant_weights;
 pub mod quantizer;
 pub mod tokenize;
+pub mod transform;
 
 pub use ac_strategy::AcStrategy;
 pub use context::BlockContextMap;

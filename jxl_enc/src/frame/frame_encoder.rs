@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::modular::channel::ModularImage;
 use crate::modular::improved::write_improved_modular_stream;
+use crate::vardct::transform::transform_xyb_image;
 use crate::vardct::{VarDctEncoder, VarDctOptions};
 
 /// Options for frame encoding.
@@ -85,7 +86,7 @@ impl FrameEncoder {
     /// Encodes an RGB image using VarDCT (lossy).
     pub fn encode_vardct(
         &self,
-        rgb_data: &[f32],
+        xyb_data: &[f32],
         distance: f32,
         _color_encoding: &ColorEncoding,
         writer: &mut BitWriter,
@@ -97,6 +98,10 @@ impl FrameEncoder {
         };
 
         let vardct_encoder = VarDctEncoder::new(self.width, self.height, options);
+
+        // Transform XYB image data into quantized DCT coefficients
+        let quantizer = vardct_encoder.quantizer();
+        let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
 
         // Write VarDCT frame header
         vardct_encoder.write_frame_header(writer)?;
@@ -111,15 +116,10 @@ impl FrameEncoder {
         vardct_encoder.write_hf_global(&mut section_writer)?;
 
         // LF Group (for single-group images)
-        // TODO: Extract DC coefficients from transformed data
-        let dc_coeffs: Vec<i32> =
-            vec![0; vardct_encoder.num_blocks_x() * vardct_encoder.num_blocks_y() * 3];
-        vardct_encoder.write_lf_group(&dc_coeffs, &mut section_writer)?;
+        vardct_encoder.write_lf_group(&transformed.dc_coeffs, &mut section_writer)?;
 
         // Pass Group (AC coefficients)
-        // TODO: Extract AC coefficients from transformed data
-        let ac_coeffs: Vec<i32> = vec![0; self.width * self.height * 3];
-        vardct_encoder.write_pass_group(&ac_coeffs, &mut section_writer)?;
+        vardct_encoder.write_pass_group(&transformed.ac_coeffs, &mut section_writer)?;
 
         // Byte-align before finishing
         section_writer.zero_pad_to_byte();
@@ -133,9 +133,6 @@ impl FrameEncoder {
         for byte in section_data {
             writer.write_u8(byte)?;
         }
-
-        // Mark that the rgb_data will be used for transformation later
-        let _ = rgb_data;
 
         Ok(())
     }

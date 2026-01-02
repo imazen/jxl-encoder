@@ -67,6 +67,11 @@ impl VarDctEncoder {
         self.height.div_ceil(BLOCK_DIM)
     }
 
+    /// Get the quantizer parameters.
+    pub fn quantizer(&self) -> &QuantizerParams {
+        &self.quantizer
+    }
+
     /// Write the VarDCT frame header.
     ///
     /// This differs from modular by setting encoding=0 and includes
