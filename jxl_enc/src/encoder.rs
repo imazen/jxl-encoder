@@ -1594,6 +1594,76 @@ mod decoder_validation {
         eprintln!("multi_group_256x256_lossy: PASSED jxl-oxide (VarDCT WIP)");
     }
 
+    /// Test multi-group encoding with actual multiple groups (>256x256)
+    #[test]
+    fn test_encode_multigroup_300x300() {
+        // 300x300 RGB image - requires 2x2 = 4 groups
+        let mut data = vec![0u8; 300 * 300 * 3];
+        for y in 0..300 {
+            for x in 0..300 {
+                let idx = (y * 300 + x) * 3;
+                data[idx] = ((x + y) % 256) as u8;
+                data[idx + 1] = (x % 256) as u8;
+                data[idx + 2] = (y % 256) as u8;
+            }
+        }
+
+        let encoded = Encoder::new().encode_rgb8(&data, 300, 300).unwrap();
+
+        // Check JXL signature
+        assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+
+        eprintln!("Multi-group 300x300: {} bytes", encoded.len());
+        std::fs::write("/tmp/test_multigroup_300.jxl", &encoded).unwrap();
+
+        // Verify with jxl-oxide
+        let result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+        assert!(
+            result.is_ok(),
+            "jxl-oxide should decode multi-group: {:?}",
+            result.err()
+        );
+        let image = result.unwrap();
+        assert_eq!(image.width(), 300);
+        assert_eq!(image.height(), 300);
+        eprintln!("Multi-group 300x300 decode: PASSED jxl-oxide");
+    }
+
+    /// Test multi-group encoding with 512x512 (4 full groups)
+    #[test]
+    fn test_encode_multigroup_512x512() {
+        // 512x512 RGB image - requires 2x2 = 4 groups (all full 256x256)
+        let mut data = vec![0u8; 512 * 512 * 3];
+        for y in 0..512 {
+            for x in 0..512 {
+                let idx = (y * 512 + x) * 3;
+                data[idx] = ((x + y) % 256) as u8;
+                data[idx + 1] = (x % 256) as u8;
+                data[idx + 2] = (y % 256) as u8;
+            }
+        }
+
+        let encoded = Encoder::new().encode_rgb8(&data, 512, 512).unwrap();
+
+        // Check JXL signature
+        assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+
+        eprintln!("Multi-group 512x512: {} bytes", encoded.len());
+        std::fs::write("/tmp/test_multigroup_512.jxl", &encoded).unwrap();
+
+        // Verify with jxl-oxide
+        let result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
+        assert!(
+            result.is_ok(),
+            "jxl-oxide should decode 512x512 multi-group: {:?}",
+            result.err()
+        );
+        let image = result.unwrap();
+        assert_eq!(image.width(), 512);
+        assert_eq!(image.height(), 512);
+        eprintln!("Multi-group 512x512 decode: PASSED jxl-oxide");
+    }
+
     /// Dual-decoder validation for corpus images
     #[test]
     fn test_dual_decode_corpus_images() {

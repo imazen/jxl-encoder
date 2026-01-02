@@ -1,16 +1,27 @@
 # JXL Encoder Investigation Notes
 
-## Current Status (2026-01-02) - VarDCT Investigation In Progress
+## Current Status (2026-01-02) - Multi-Group Support Added
 
 ### What Works
-- All 335 tests pass with jxl-oxide decoder
-- Lossless modular encoding works with both djxl and jxl-oxide
+- All 338 tests pass with jxl-oxide decoder
+- Lossless modular encoding (single-group ≤256x256) works with both djxl and jxl-oxide
+- **Lossless multi-group encoding (>256x256) works with jxl-oxide** - NEW
 - Lossy VarDCT encoding works with jxl-oxide
 - HybridUint encoding fix for `split_exponent=0` is verified correct
 - LZ77 correctly handles channel boundaries
 - Prediction function matches the tree-signaled predictor
 
-### Current Issue: VarDCT files fail to decode with djxl (libjxl)
+### Multi-Group Implementation (2026-01-02)
+
+Added support for lossless modular encoding of images larger than 256x256:
+- Implemented correct TOC structure: LfGlobal, HfGlobal (empty), LfGroup (empty), PassGroup sections
+- Global histogram shared across all groups
+- Each group encodes independently with GroupHeader + pixel data
+- Tested with 300x300 (4 partial groups) and 512x512 (4 full groups)
+
+**Limitation:** Multi-group files decode with jxl-oxide but fail with djxl (same issue as VarDCT).
+
+### Current Issue: VarDCT and Multi-Group files fail to decode with djxl (libjxl)
 
 **Symptoms:**
 - VarDCT encoded files decode successfully with jxl-oxide

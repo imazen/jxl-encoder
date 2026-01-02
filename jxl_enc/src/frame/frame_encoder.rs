@@ -12,7 +12,10 @@ use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::heuristics::HeuristicLevel;
 use crate::modular::channel::ModularImage;
-use crate::modular::improved::write_improved_modular_stream;
+use crate::modular::improved::{
+    build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
+    write_group_modular_section, write_improved_modular_stream,
+};
 use crate::vardct::tokenize::Token;
 use crate::vardct::transform::{transform_xyb_image, transform_xyb_image_with_strategy};
 use crate::vardct::{VarDctEncoder, VarDctOptions};
@@ -66,21 +69,152 @@ impl FrameEncoder {
         // Write frame header
         self.write_frame_header(writer)?;
 
-        // Encode the image data to a temporary buffer to know its size
-        // Use improved stream with gradient prediction for better compression
-        let mut section_writer = BitWriter::new();
-        write_improved_modular_stream(image, &mut section_writer)?;
-        let section_data = section_writer.finish();
-        let section_size = section_data.len();
+        let num_groups = self.num_groups();
 
-        eprintln!("DEBUG: section_size = {} bytes", section_size);
+        if num_groups == 1 {
+            // Single group: all sections combined into one TOC entry
+            let mut section_writer = BitWriter::new();
+            write_improved_modular_stream(image, &mut section_writer)?;
+            let section_data = section_writer.finish();
+            let section_size = section_data.len();
 
-        // Write TOC
-        self.write_toc(writer, section_size)?;
+            eprintln!("DEBUG: section_size = {} bytes", section_size);
 
-        // Append section data (already byte-aligned)
-        for byte in section_data {
+            // Write TOC
+            self.write_toc(writer, section_size)?;
+
+            // Append section data (already byte-aligned)
+            for byte in section_data {
+                writer.write_u8(byte)?;
+            }
+        } else {
+            // Multi-group: separate TOC entries for global and each group
+            self.encode_modular_multi_group(image, writer)?;
+        }
+
+        Ok(())
+    }
+
+    /// Encodes a modular image using multi-group format (>256x256 images).
+    ///
+    /// For multi-group frames, the JXL spec requires this TOC structure:
+    /// - Section 0: LfGlobal (dc_quant + tree + histograms)
+    /// - Section 1: HfGlobal (empty for modular encoding)
+    /// - Section 2..2+num_lf_groups: LfGroup (empty for modular encoding)
+    /// - Section 2+num_lf_groups..: PassGroup (GroupHeader + pixel data per 256x256 region)
+    fn encode_modular_multi_group(
+        &self,
+        image: &ModularImage,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let num_groups = self.num_groups();
+        let num_lf_groups = self.num_lf_groups();
+        let num_passes = 1;
+
+        eprintln!(
+            "MULTI_GROUP: Encoding {}x{} image with {} groups, {} lf_groups",
+            self.width, self.height, num_groups, num_lf_groups
+        );
+
+        // Step 1: Collect residuals from the entire image to build global histogram
+        let (all_residuals, max_residual) = collect_all_residuals(image);
+        let histogram = build_histogram_from_residuals(&all_residuals, max_residual);
+
+        eprintln!(
+            "MULTI_GROUP: {} total residuals, max={}, {} unique symbols",
+            all_residuals.len(),
+            max_residual,
+            histogram.iter().filter(|&&c| c > 0).count()
+        );
+
+        // Step 2: Write LfGlobal section (tree + histogram)
+        let mut lf_global_writer = BitWriter::new();
+        let global_state =
+            write_global_modular_section(&histogram, max_residual, &mut lf_global_writer)?;
+        let lf_global_data = lf_global_writer.finish();
+
+        eprintln!(
+            "MULTI_GROUP: LfGlobal section = {} bytes",
+            lf_global_data.len()
+        );
+
+        // Step 3: HfGlobal is empty for modular encoding (0 bytes)
+        let hf_global_data: Vec<u8> = Vec::new();
+        eprintln!("MULTI_GROUP: HfGlobal section = 0 bytes (empty for modular)");
+
+        // Step 4: LfGroup sections are empty for modular encoding
+        let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
+        eprintln!(
+            "MULTI_GROUP: {} LfGroup sections = 0 bytes each (empty for modular)",
+            num_lf_groups
+        );
+
+        // Step 5: Write each PassGroup's data (GroupHeader + pixel data)
+        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
+        for group_idx in 0..num_groups {
+            for _pass in 0..num_passes {
+                let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
+                let group_image = image.extract_region(x_start, y_start, x_end, y_end)?;
+
+                eprintln!(
+                    "MULTI_GROUP: Group {} bounds ({}, {}) - ({}, {}), size {}x{}",
+                    group_idx,
+                    x_start,
+                    y_start,
+                    x_end,
+                    y_end,
+                    group_image.width(),
+                    group_image.height()
+                );
+
+                let mut group_writer = BitWriter::new();
+                write_group_modular_section(&group_image, &global_state, &mut group_writer)?;
+                pass_group_data.push(group_writer.finish());
+
+                eprintln!(
+                    "MULTI_GROUP: PassGroup {} section = {} bytes",
+                    group_idx,
+                    pass_group_data.last().unwrap().len()
+                );
+            }
+        }
+
+        // Step 6: Collect all section sizes in correct order and write TOC
+        // Order: LfGlobal, HfGlobal, LfGroup[0..num_lf_groups], PassGroup[0..num_groups*num_passes]
+        let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups * num_passes);
+        section_sizes.push(lf_global_data.len());
+        section_sizes.push(hf_global_data.len());
+        for data in &lf_group_data {
+            section_sizes.push(data.len());
+        }
+        for data in &pass_group_data {
+            section_sizes.push(data.len());
+        }
+
+        eprintln!(
+            "MULTI_GROUP: {} total sections, sizes = {:?}",
+            section_sizes.len(),
+            section_sizes
+        );
+
+        self.write_toc_multi(writer, &section_sizes)?;
+
+        // Step 7: Append all section data in same order
+        for byte in lf_global_data {
             writer.write_u8(byte)?;
+        }
+        for byte in hf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in lf_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+        for data in pass_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
         }
 
         Ok(())
@@ -610,6 +744,39 @@ mod tests {
 
         // 4 groups, 2 passes: 2 + 1 + 8 = 11
         assert_eq!(encoder.num_toc_entries(2), 11);
+    }
+
+    #[test]
+    fn test_encode_multi_group_image() {
+        // 300x300 RGB image - requires 2x2 = 4 groups
+        let mut data = Vec::with_capacity(300 * 300 * 3);
+        for y in 0..300 {
+            for x in 0..300 {
+                // Smooth gradient for good compression
+                data.push(((x + y) % 256) as u8); // R
+                data.push(((x * 2) % 256) as u8); // G
+                data.push(((y * 2) % 256) as u8); // B
+            }
+        }
+
+        let image = ModularImage::from_rgb8(&data, 300, 300).unwrap();
+
+        let encoder = FrameEncoder::new(300, 300, FrameEncoderOptions::default());
+        assert_eq!(encoder.num_groups(), 4); // 2x2 groups
+
+        let mut writer = BitWriter::new();
+        let color_encoding = ColorEncoding::srgb();
+
+        encoder
+            .encode_modular(&image, &color_encoding, &mut writer)
+            .unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("Multi-group modular: {} bytes", bytes.len());
+        assert!(!bytes.is_empty());
+        // Should have reasonable size (not huge, not tiny)
+        assert!(bytes.len() > 100); // Has content
+        assert!(bytes.len() < 300 * 300 * 3); // Better than raw
     }
 
     #[test]
