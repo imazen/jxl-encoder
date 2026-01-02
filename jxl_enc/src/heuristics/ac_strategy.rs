@@ -72,7 +72,7 @@ impl AcStrategyMap {
 }
 
 /// Heuristic level for AC strategy selection.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HeuristicLevel {
     /// Use only DCT8 (JPEG-like, fastest)
     #[default]
