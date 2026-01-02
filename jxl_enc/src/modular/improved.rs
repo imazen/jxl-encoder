@@ -145,35 +145,43 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
     tokens
 }
 
-/// Build histograms for raw symbols and LZ77 tokens.
-fn build_histograms(tokens: &[Token]) -> ([u64; K_NUM_RAW_SYMBOLS], [u64; K_NUM_LZ77]) {
-    let mut raw_counts = [0u64; K_NUM_RAW_SYMBOLS];
-    let mut lz77_counts = [0u64; K_NUM_LZ77];
+/// LZ77 min_symbol value - symbols >= this are LZ77 length tokens
+const K_LZ77_MIN_SYMBOL: usize = 224;
+
+/// Build a single sparse histogram for symbols [0..K_NUM_RAW_SYMBOLS) and [K_LZ77_MIN_SYMBOL..K_LZ77_MIN_SYMBOL+K_NUM_LZ77)
+fn build_sparse_histogram(tokens: &[Token]) -> Vec<u64> {
+    // Sparse alphabet: 19 raw symbols + 33 LZ77 symbols = 52 symbols
+    // We'll encode raw [0..18] directly, LZ77 as [224..256]
+    let total_symbols = K_LZ77_MIN_SYMBOL + K_NUM_LZ77;
+    let mut counts = vec![0u64; total_symbols];
 
     for token in tokens {
         match token {
             Token::Raw(value) => {
                 let (tok, _, _) = encode_hybrid_uint_000(*value);
                 if (tok as usize) < K_NUM_RAW_SYMBOLS {
-                    raw_counts[tok as usize] += 1;
+                    counts[tok as usize] += 1;
                 }
             }
             Token::Lz77Run(count) => {
-                // LZ77 run: raw symbol 0 + lz77 token
-                raw_counts[0] += 1;
                 let adjusted = count - K_LZ77_MIN_LENGTH - 1;
                 let (tok, _, _) = encode_hybrid_uint_lz77(adjusted as u32);
-                if (tok as usize) < K_NUM_LZ77 {
-                    lz77_counts[tok as usize] += 1;
+                let symbol = K_LZ77_MIN_SYMBOL + tok as usize;
+                if symbol < total_symbols {
+                    counts[symbol] += 1;
                 }
             }
         }
     }
 
-    (raw_counts, lz77_counts)
+    // Also count distance symbols (all 1 for RLE)
+    // Distance context is separate, we'll handle it differently
+
+    counts
 }
 
 /// Compute Huffman code lengths using a simple algorithm.
+#[allow(dead_code)]
 fn compute_code_lengths(counts: &[u64], max_len: u8) -> Vec<u8> {
     let n = counts.len();
     if n == 0 {
@@ -254,162 +262,132 @@ fn write_varint16(writer: &mut BitWriter, value: u16) -> Result<()> {
     Ok(())
 }
 
-/// Write the LZ77-enabled histogram.
-/// Returns (raw_depths, raw_codes, lz77_depths, lz77_codes)
-#[allow(clippy::type_complexity)]
-fn write_lz77_histogram(
+/// Write the LZ77-enabled histogram using sparse alphabet.
+/// Returns (depths, codes) for the full sparse alphabet [0..257]
+fn write_sparse_lz77_histogram(
     writer: &mut BitWriter,
-    raw_counts: &[u64; K_NUM_RAW_SYMBOLS],
-    lz77_counts: &[u64; K_NUM_LZ77],
-) -> Result<(Vec<u8>, Vec<u16>, Vec<u8>, Vec<u16>)> {
+    sparse_counts: &[u64],
+) -> Result<(Vec<u8>, Vec<u16>)> {
+    eprintln!("SPARSE_HIST: Writing LZ77-enabled histogram");
+
     // lz77.enabled = 1
     writer.write(1, 1)?;
+    eprintln!(
+        "SPARSE_HIST [bit {}]: lz77.enabled = 1",
+        writer.bits_written()
+    );
 
     // lz77.min_symbol = 224 (u2S encoding)
-    // 224 = 0 + 224, so selector 3, then 224-224=0 in 8 bits
-    writer.write(2, 3)?; // selector 3: Bits(8) + 224
-    writer.write(8, 0)?; // 224 - 224 = 0
+    // u2S(224, Bits(8)+225, Bits(16)+481, Bits(32)+65537)
+    // 224 = selector 0 means value IS 224
+    writer.write(2, 0)?; // selector 0: value = 224
+    eprintln!(
+        "SPARSE_HIST [bit {}]: min_symbol = 224",
+        writer.bits_written()
+    );
 
     // lz77.min_length = K_LZ77_MIN_LENGTH = 7
     // u2S(3, 4, Bits(2)+5, Bits(8)+9)
     // 7 = Bits(2)+5 with bits=2, so selector 2
     writer.write(2, 2)?; // selector 2
     writer.write(2, 2)?; // 7 - 5 = 2
+    eprintln!(
+        "SPARSE_HIST [bit {}]: min_length = 7",
+        writer.bits_written()
+    );
 
-    // Build level 1 (raw + lz77 escape) code lengths
-    let mut level1_counts = [0u64; K_NUM_RAW_SYMBOLS + 1];
-    let mut num_raw = K_NUM_RAW_SYMBOLS;
-    while num_raw > 0 && raw_counts[num_raw - 1] == 0 {
-        num_raw -= 1;
-    }
-    level1_counts[..num_raw].copy_from_slice(&raw_counts[..num_raw]);
-
-    // LZ77 escape symbol count
-    level1_counts[num_raw] = lz77_counts.iter().sum();
-
-    let level1_depths = compute_code_lengths(&level1_counts[..=num_raw], 15);
-    let level1_codes = compute_codes_from_depths(&level1_depths);
-
-    // Build level 2 (lz77 tokens) code lengths
-    let mut num_lz77 = K_NUM_LZ77;
-    while num_lz77 > 0 && lz77_counts[num_lz77 - 1] == 0 {
-        num_lz77 -= 1;
-    }
-    num_lz77 = num_lz77.max(1);
-
-    let max_lz77_len = if num_raw < level1_depths.len() && level1_depths[num_raw] > 0 {
-        15 - level1_depths[num_raw]
-    } else {
-        14
-    };
-
-    let level2_depths = compute_code_lengths(&lz77_counts[..num_lz77], max_lz77_len);
-    let level2_codes = compute_codes_from_depths(&level2_depths);
-
-    // Write the prefix code using simple encoding
-    // For now, use the complex path (HSKIP=0)
-    writer.write(2, 0)?; // HSKIP = 0
-
-    // Write code lengths for code length alphabet (Brotli-style)
-    let code_length_order: [u8; 18] =
-        [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-
-    // Simplified: just write direct code lengths
-    // Count code length frequencies
-    let mut cl_counts = [0u64; 18];
-    for &d in &level1_depths {
-        cl_counts[d as usize] += 1;
-    }
-    for &d in &level2_depths {
-        cl_counts[d as usize] += 1;
-    }
-    cl_counts[17] += 3 + 2 * (K_NUM_LZ77 - 1) as u64; // For repeat codes
-
-    let cl_depths = compute_code_lengths(&cl_counts, 5);
-
-    let code_length_length_nbits = [2u8, 4, 3, 2, 2, 4];
-    let code_length_length_bits = [0u8, 7, 3, 2, 1, 15];
-
-    let mut num_code_lengths = 18;
-    while num_code_lengths > 0 && cl_depths[code_length_order[num_code_lengths - 1] as usize] == 0 {
-        num_code_lengths -= 1;
-    }
-    num_code_lengths = num_code_lengths.max(4);
-
-    for i in 0..num_code_lengths {
-        let sym = cl_depths[code_length_order[i] as usize] as usize;
-        let nbits = code_length_length_nbits[sym.min(5)];
-        let bits = code_length_length_bits[sym.min(5)];
-        writer.write(nbits as usize, bits as u64)?;
-    }
-
-    // Write code lengths for symbols using the code length codes
-    let cl_codes = compute_codes_from_depths(&cl_depths);
-
-    // Write raw symbol lengths
-    for &d in level1_depths.iter().take(num_raw + 1) {
-        let d = d as usize;
-        if cl_depths[d] > 0 {
-            writer.write(cl_depths[d] as usize, cl_codes[d] as u64)?;
-        }
-    }
-
-    // Write LZ77 lengths with repeat codes
-    for (i, &d) in level2_depths.iter().enumerate().take(num_lz77) {
-        let d = d as usize;
-        if i == 0 || d != level2_depths[i - 1] as usize {
-            if cl_depths[d] > 0 {
-                writer.write(cl_depths[d] as usize, cl_codes[d] as u64)?;
-            }
-        } else {
-            // Use repeat code 17 (repeat previous)
-            if cl_depths[17] > 0 {
-                writer.write(cl_depths[17] as usize, cl_codes[17] as u64)?;
-                writer.write(3, 0)?; // repeat count - 3
-            }
-        }
-    }
-
-    // Pad raw depths to K_NUM_RAW_SYMBOLS
-    let mut raw_depths = vec![0u8; K_NUM_RAW_SYMBOLS];
-    let mut raw_codes = vec![0u16; K_NUM_RAW_SYMBOLS];
-    for (i, (&d, &c)) in level1_depths
+    // Find the actual used symbols
+    let max_raw_symbol = sparse_counts[..K_NUM_RAW_SYMBOLS]
         .iter()
-        .zip(level1_codes.iter())
         .enumerate()
-        .take(num_raw)
-    {
-        raw_depths[i] = d;
-        raw_codes[i] = c;
+        .filter(|(_, c)| **c > 0)
+        .map(|(i, _)| i)
+        .max()
+        .unwrap_or(0);
+
+    let max_lz77_symbol = sparse_counts[K_LZ77_MIN_SYMBOL..]
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c > 0)
+        .map(|(i, _)| K_LZ77_MIN_SYMBOL + i)
+        .max()
+        .unwrap_or(K_LZ77_MIN_SYMBOL);
+
+    eprintln!(
+        "SPARSE_HIST: max_raw={}, max_lz77={} (count at lz77={})",
+        max_raw_symbol,
+        max_lz77_symbol,
+        sparse_counts.get(K_LZ77_MIN_SYMBOL).unwrap_or(&0)
+    );
+
+    // Build histogram for Huffman tree - only non-zero symbols
+    // For sparse alphabets, we use the complex prefix code path
+    let histogram: Vec<u32> = sparse_counts.iter().map(|&c| c as u32).collect();
+
+    // Count actual used symbols
+    let num_used: usize = histogram.iter().filter(|&&c| c > 0).count();
+    eprintln!("SPARSE_HIST: {} used symbols", num_used);
+
+    // Compute depths for all symbols (including zeros in gaps)
+    let depths = create_huffman_tree(&histogram, 15);
+    let codes = compute_codes_from_depths(&depths);
+
+    // Use the Huffman tree builder to store the prefix code
+    // First write use_prefix_code = 1
+    writer.write(1, 1)?;
+    eprintln!(
+        "SPARSE_HIST [bit {}]: use_prefix_code = 1",
+        writer.bits_written()
+    );
+
+    // split_exponent = 15
+    writer.write(4, 15)?;
+    eprintln!(
+        "SPARSE_HIST [bit {}]: split_exponent = 15",
+        writer.bits_written()
+    );
+
+    // Alphabet size - for LZ77 histograms, this is max symbol + 1
+    // But with sparse, we need to account for the full range up to max_lz77_symbol
+    let alphabet_size = max_lz77_symbol + 1;
+    write_varint16(writer, (alphabet_size - 1) as u16)?;
+    eprintln!(
+        "SPARSE_HIST [bit {}]: alphabet_size = {} (max_symbol={})",
+        writer.bits_written(),
+        alphabet_size,
+        alphabet_size - 1
+    );
+
+    // Write Huffman table if alphabet size > 1
+    if alphabet_size > 1 {
+        // For sparse alphabets, we use build_and_store_huffman_tree
+        // which handles the complex prefix code encoding
+        build_and_store_huffman_tree(&histogram[..alphabet_size], writer)?;
+        eprintln!(
+            "SPARSE_HIST [bit {}]: After Huffman table",
+            writer.bits_written()
+        );
     }
 
-    // Pad lz77 depths to K_NUM_LZ77
-    let mut lz77_depths = vec![0u8; K_NUM_LZ77];
-    let mut lz77_codes = vec![0u16; K_NUM_LZ77];
-    for (i, (&d, &c)) in level2_depths.iter().zip(level2_codes.iter()).enumerate() {
-        lz77_depths[i] = d;
-        lz77_codes[i] = c;
-    }
+    // Distance context histogram - for RLE we always use distance=1
+    // This is a single-symbol histogram (only symbol for distance=1)
+    eprintln!(
+        "SPARSE_HIST [bit {}]: Writing distance histogram",
+        writer.bits_written()
+    );
 
-    // Compute combined depths for lz77 tokens
-    let escape_depth = if num_raw < level1_depths.len() {
-        level1_depths[num_raw]
-    } else {
-        0
-    };
-    let _escape_code = if num_raw < level1_codes.len() {
-        level1_codes[num_raw]
-    } else {
-        0
-    };
+    // use_prefix_code = 1
+    writer.write(1, 1)?;
+    // split_exponent = 15
+    writer.write(4, 15)?;
+    // alphabet_size = 1 (only distance symbol 0 which encodes distance=1)
+    write_varint16(writer, 0)?;
+    eprintln!(
+        "SPARSE_HIST [bit {}]: Distance histogram done (single symbol)",
+        writer.bits_written()
+    );
 
-    for depth in lz77_depths.iter_mut() {
-        if *depth > 0 {
-            *depth += escape_depth;
-        }
-    }
-
-    Ok((raw_depths, raw_codes, lz77_depths, lz77_codes))
+    Ok((depths, codes))
 }
 
 /// Writes an improved modular stream with gradient prediction and LZ77.
@@ -417,11 +395,17 @@ pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWrite
     // Collect residuals with gradient prediction
     let tokens = collect_residuals_with_prediction(image);
 
-    // Build histograms
-    let (raw_counts, lz77_counts) = build_histograms(&tokens);
+    // Build sparse histogram [0..18] + [224..256]
+    let sparse_counts = build_sparse_histogram(&tokens);
 
-    let num_raw_used = raw_counts.iter().filter(|&&c| c > 0).count();
-    let num_lz77_used = lz77_counts.iter().filter(|&&c| c > 0).count();
+    let num_raw_used = sparse_counts[..K_NUM_RAW_SYMBOLS]
+        .iter()
+        .filter(|&&c| c > 0)
+        .count();
+    let num_lz77_used = sparse_counts[K_LZ77_MIN_SYMBOL..]
+        .iter()
+        .filter(|&&c| c > 0)
+        .count();
     let num_lz77_runs = tokens
         .iter()
         .filter(|t| matches!(t, Token::Lz77Run(_)))
@@ -444,24 +428,64 @@ pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWrite
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    // Tree histograms (single-symbol for single-leaf tree)
-    writer.write(1, 0)?; // lz77.enabled = 0 for tree
-    writer.write(1, 1)?; // use_prefix_code = 1
-    writer.write(4, 15)?; // split_exponent = 15
-    write_varint16(writer, 0)?; // alphabet_size = 1
-    // No Huffman table needed for single symbol
+    // Tree histogram for single-leaf tree with Gradient predictor
+    write_tree_histogram_for_gradient(writer)?;
+    write_gradient_tree_tokens(writer)?;
 
-    // Data histogram with LZ77
-    let (_raw_depths, _raw_codes, _lz77_depths, _lz77_codes) =
-        write_lz77_histogram(writer, &raw_counts, &lz77_counts)?;
+    // Data histogram with LZ77 (sparse alphabet)
+    let (depths, codes) = write_sparse_lz77_histogram(writer, &sparse_counts)?;
 
     // GroupHeader
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
     writer.write(2, 0)?; // num_transforms = 0
 
-    // For now, fall back to simple encoding since full LZ77 is complex
-    // TODO: Implement full token encoding with LZ77
+    // Encode tokens using sparse alphabet
+    for token in &tokens {
+        match token {
+            Token::Raw(value) => {
+                // Encode value using hybrid uint (split_exponent=0, msb_in_token=0, lsb_in_token=0)
+                let (tok, nbits, extra) = encode_hybrid_uint_000(*value);
+                let symbol = tok as usize;
+                let depth = depths[symbol];
+                let code = codes[symbol];
+                if depth > 0 {
+                    writer.write(depth as usize, code as u64)?;
+                }
+                // Write extra bits
+                if nbits > 0 {
+                    writer.write(nbits as usize, extra as u64)?;
+                }
+            }
+            Token::Lz77Run(count) => {
+                // LZ77: encode as single symbol >= 224
+                let adjusted = count - K_LZ77_MIN_LENGTH - 1;
+                let (tok, nbits, extra) = encode_hybrid_uint_lz77(adjusted as u32);
+
+                // Symbol in sparse alphabet
+                let symbol = K_LZ77_MIN_SYMBOL + tok as usize;
+                let depth = depths[symbol];
+                let code = codes[symbol];
+                if depth > 0 {
+                    writer.write(depth as usize, code as u64)?;
+                }
+
+                // Write extra bits for length
+                if nbits > 0 {
+                    writer.write(nbits as usize, extra as u64)?;
+                }
+
+                // Write distance symbol (always 0 for RLE, distance=1)
+                // Distance histogram has single symbol, so no bits needed
+            }
+        }
+    }
+
+    eprintln!(
+        "LZ77 [bit {}]: Encoded {} tokens",
+        writer.bits_written(),
+        tokens.len()
+    );
 
     writer.zero_pad_to_byte();
     Ok(())
