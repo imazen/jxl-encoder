@@ -115,12 +115,15 @@ impl FrameEncoder {
 
         // LF Global section
         vardct_encoder.write_lf_global(&mut section_writer)?;
+        section_writer.zero_pad_to_byte(); // Byte-align after LF global
 
         // HF Global section (with histograms)
         vardct_encoder.write_hf_global(&distributions, &mut section_writer)?;
+        section_writer.zero_pad_to_byte(); // Byte-align after HF global
 
         // LF Group (for single-group images)
         vardct_encoder.write_lf_group(&transformed.dc_coeffs, &mut section_writer)?;
+        section_writer.zero_pad_to_byte(); // Byte-align after LF group
 
         // Pass Group (AC coefficients with entropy coding)
         vardct_encoder.write_pass_group(&tokens, &distributions, &mut section_writer)?;
