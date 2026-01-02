@@ -6,7 +6,7 @@ use crate::BLOCK_DIM;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::ans::{AnsDistribution, AnsEncoder};
 use crate::error::Result;
-use crate::heuristics::{AcStrategyMap, HeuristicLevel, select_ac_strategies};
+use crate::heuristics::{AcStrategyMap, ColorCorrelationMap, HeuristicLevel, select_ac_strategies};
 use crate::modular::channel::{Channel, ModularImage};
 use crate::modular::improved::write_improved_modular_stream;
 
@@ -28,6 +28,8 @@ pub struct VarDctOptions {
     pub use_default_block_ctx: bool,
     /// AC strategy selection heuristics level.
     pub ac_strategy_heuristics: HeuristicLevel,
+    /// Enable Chroma-from-Luma correlation.
+    pub cfl_enabled: bool,
 }
 
 impl Default for VarDctOptions {
@@ -37,6 +39,7 @@ impl Default for VarDctOptions {
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
             ac_strategy_heuristics: HeuristicLevel::Dct8Only,
+            cfl_enabled: false, // Disabled by default for now
         }
     }
 }
@@ -50,6 +53,7 @@ pub struct VarDctEncoder {
     dequant_matrices: DequantMatrices,
     block_ctx_map: BlockContextMap,
     ac_strategy_map: AcStrategyMap,
+    color_correlation: ColorCorrelationMap,
 }
 
 impl VarDctEncoder {
@@ -62,6 +66,9 @@ impl VarDctEncoder {
         // Create default DCT8-only map; can be updated with compute_ac_strategies
         let ac_strategy_map = AcStrategyMap::new_dct8(blocks_x, blocks_y);
 
+        // Create default color correlation (no CfL)
+        let color_correlation = ColorCorrelationMap::new_default(width, height);
+
         Self {
             options,
             width,
@@ -70,6 +77,7 @@ impl VarDctEncoder {
             dequant_matrices: DequantMatrices::default(),
             block_ctx_map: BlockContextMap::default(),
             ac_strategy_map,
+            color_correlation,
         }
     }
 
@@ -84,6 +92,22 @@ impl VarDctEncoder {
             self.height,
             self.options.ac_strategy_heuristics,
         );
+    }
+
+    /// Compute CfL correlation from XYB image data.
+    ///
+    /// Call this after creating the encoder and before encoding.
+    /// The XYB data should be interleaved (X, Y, B per pixel).
+    pub fn compute_color_correlation(&mut self, xyb_data: &[f32]) {
+        if self.options.cfl_enabled {
+            self.color_correlation =
+                ColorCorrelationMap::compute_from_xyb(xyb_data, self.width, self.height);
+        }
+    }
+
+    /// Get the color correlation map.
+    pub fn color_correlation(&self) -> &ColorCorrelationMap {
+        &self.color_correlation
     }
 
     /// Get the AC strategy map.
@@ -216,8 +240,52 @@ impl VarDctEncoder {
         self.block_ctx_map.write(writer)?;
 
         // Write color correlation (LF)
-        // all_default = true
-        writer.write(1, 1)?;
+        self.write_color_correlation(writer)?;
+
+        Ok(())
+    }
+
+    /// Write color correlation parameters.
+    fn write_color_correlation(&self, writer: &mut BitWriter) -> Result<()> {
+        let cmap = &self.color_correlation;
+
+        // If using default correlation (no CfL), just write all_default=true
+        if !self.options.cfl_enabled || cmap.is_default() {
+            writer.write(1, 1)?; // all_default = true
+            return Ok(());
+        }
+
+        // all_default = false
+        writer.write(1, 0)?;
+
+        // Write color_factor using U32Enc kColorFactorDist
+        // U32Enc: Val(84), Val(256), BitsOffset(8,2), BitsOffset(16,258)
+        let color_factor = cmap.color_factor;
+        if color_factor == 84 {
+            writer.write(2, 0)?; // selector 0 = 84
+        } else if color_factor == 256 {
+            writer.write(2, 1)?; // selector 1 = 256
+        } else if color_factor >= 2 && color_factor < 258 {
+            writer.write(2, 2)?; // selector 2 = Bits(8) + 2
+            writer.write(8, (color_factor - 2) as u64)?;
+        } else {
+            writer.write(2, 3)?; // selector 3 = Bits(16) + 258
+            writer.write(16, (color_factor.saturating_sub(258)) as u64)?;
+        }
+
+        // Write base_correlation_x (F16)
+        // For simplicity, use 0.0 (encoded as 0x0000 in half-precision)
+        writer.write(16, 0)?; // base_correlation_x = 0.0
+
+        // Write base_correlation_b (F16)
+        // Default is 1.0 = 0x3C00 in half-precision
+        writer.write(16, 0x3C00)?; // base_correlation_b = 1.0
+
+        // Write ytox_dc (S32 signed integer)
+        write_signed_varint(writer, cmap.ytox_dc)?;
+
+        // Write ytob_dc (S32 signed integer)
+        write_signed_varint(writer, cmap.ytob_dc)?;
 
         Ok(())
     }
@@ -686,6 +754,37 @@ fn write_alphabet_size(writer: &mut BitWriter, size: usize) -> Result<()> {
         writer.write(2, 3)?; // selector 3 = value + 1
         writer.write(16, (n - 1) as u64)?;
     }
+    Ok(())
+}
+
+/// Write a signed 32-bit integer using JXL S32 encoding.
+///
+/// S32 uses a variable-length encoding:
+/// - Small values (±63) use fewer bits
+/// - Larger values use more bits
+fn write_signed_varint(writer: &mut BitWriter, value: i32) -> Result<()> {
+    // Convert signed to unsigned using zigzag encoding
+    let unsigned = if value >= 0 {
+        (value as u32) << 1
+    } else {
+        ((-value as u32) << 1) - 1
+    };
+
+    // Use variable-length encoding similar to U32
+    // U32Enc: Val(0), BitsOffset(4, 1), BitsOffset(8, 17), BitsOffset(12, 273)
+    if unsigned == 0 {
+        writer.write(2, 0)?; // selector 0 = 0
+    } else if unsigned <= 16 {
+        writer.write(2, 1)?; // selector 1
+        writer.write(4, (unsigned - 1) as u64)?;
+    } else if unsigned <= 272 {
+        writer.write(2, 2)?; // selector 2
+        writer.write(8, (unsigned - 17) as u64)?;
+    } else {
+        writer.write(2, 3)?; // selector 3
+        writer.write(12, (unsigned.saturating_sub(273)) as u64)?;
+    }
+
     Ok(())
 }
 
