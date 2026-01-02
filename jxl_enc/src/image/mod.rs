@@ -245,6 +245,7 @@ mod tests {
         assert_eq!(img.width(), 100);
         assert_eq!(img.height(), 100);
         assert_eq!(img.len(), 10000);
+        assert!(!img.is_empty());
     }
 
     #[test]
@@ -268,5 +269,111 @@ mod tests {
         assert_eq!(PixelFormat::Rgba8.bytes_per_pixel(), 4);
         assert!(PixelFormat::Rgba8.has_alpha());
         assert!(!PixelFormat::Rgb8.has_alpha());
+    }
+
+    #[test]
+    fn test_image_zero_width() {
+        let result: Result<Image<u8>> = Image::new(0, 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_image_zero_height() {
+        let result: Result<Image<u8>> = Image::new(10, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_image_from_vec() {
+        let data = vec![1u8, 2, 3, 4, 5, 6];
+        let img = Image::from_vec(data, 3, 2).unwrap();
+        assert_eq!(img.width(), 3);
+        assert_eq!(img.height(), 2);
+        assert_eq!(*img.get(0, 0), 1);
+        assert_eq!(*img.get(2, 1), 6);
+    }
+
+    #[test]
+    fn test_image_from_vec_wrong_size() {
+        let data = vec![1u8, 2, 3, 4, 5];
+        let result = Image::from_vec(data, 3, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_image_from_vec_zero_dims() {
+        let data = vec![1u8, 2, 3];
+        assert!(Image::from_vec(data.clone(), 0, 3).is_err());
+        assert!(Image::from_vec(data, 3, 0).is_err());
+    }
+
+    #[test]
+    fn test_image_row_access() {
+        let data = vec![1u8, 2, 3, 4, 5, 6];
+        let img = Image::from_vec(data, 3, 2).unwrap();
+        assert_eq!(img.row(0), &[1, 2, 3]);
+        assert_eq!(img.row(1), &[4, 5, 6]);
+    }
+
+    #[test]
+    fn test_image_row_mut() {
+        let data = vec![1u8, 2, 3, 4, 5, 6];
+        let mut img = Image::from_vec(data, 3, 2).unwrap();
+        img.row_mut(0)[1] = 99;
+        assert_eq!(*img.get(1, 0), 99);
+    }
+
+    #[test]
+    fn test_image_data_access() {
+        let data = vec![1u8, 2, 3, 4];
+        let mut img = Image::from_vec(data, 2, 2).unwrap();
+        assert_eq!(img.data(), &[1, 2, 3, 4]);
+        img.data_mut()[0] = 100;
+        assert_eq!(img.data()[0], 100);
+    }
+
+    #[test]
+    fn test_image_into_vec() {
+        let data = vec![1u8, 2, 3, 4];
+        let img = Image::from_vec(data.clone(), 2, 2).unwrap();
+        let recovered = img.into_vec();
+        assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn test_image_bundle_channel_access() {
+        let mut bundle: ImageBundle<u8> = ImageBundle::new(10, 10, 3).unwrap();
+        *bundle.channel_mut(1).get_mut(5, 5) = 42;
+        assert_eq!(*bundle.channel(1).get(5, 5), 42);
+    }
+
+    #[test]
+    fn test_pixel_format_all_variants() {
+        // Test all pixel format variants
+        let formats = [
+            (PixelFormat::Gray8, 1, 1, false, true),
+            (PixelFormat::GrayA8, 2, 1, true, true),
+            (PixelFormat::Rgb8, 3, 1, false, false),
+            (PixelFormat::Rgba8, 4, 1, true, false),
+            (PixelFormat::Gray16, 1, 2, false, true),
+            (PixelFormat::GrayA16, 2, 2, true, true),
+            (PixelFormat::Rgb16, 3, 2, false, false),
+            (PixelFormat::Rgba16, 4, 2, true, false),
+            (PixelFormat::RgbF32, 3, 4, false, false),
+            (PixelFormat::RgbaF32, 4, 4, true, false),
+        ];
+
+        for (format, channels, bytes_per_sample, has_alpha, is_gray) in formats {
+            assert_eq!(format.num_channels(), channels, "{:?}", format);
+            assert_eq!(format.bytes_per_sample(), bytes_per_sample, "{:?}", format);
+            assert_eq!(
+                format.bytes_per_pixel(),
+                channels * bytes_per_sample,
+                "{:?}",
+                format
+            );
+            assert_eq!(format.has_alpha(), has_alpha, "{:?}", format);
+            assert_eq!(format.is_grayscale(), is_gray, "{:?}", format);
+        }
     }
 }

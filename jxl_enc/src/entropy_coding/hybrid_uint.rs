@@ -139,4 +139,104 @@ mod tests {
         let (token2, _extra2, _num_extra2) = config.encode(100);
         assert!(token2 > 0, "token should be positive for value 100");
     }
+
+    #[test]
+    fn test_default_config() {
+        let config = HybridUintConfig::default();
+        assert_eq!(config.split_exponent, 4);
+        assert_eq!(config.msb_in_token, 2);
+        assert_eq!(config.lsb_in_token, 0);
+        assert_eq!(config.split, 16);
+    }
+
+    #[test]
+    fn test_split_exponent_zero() {
+        // Special case: split_exponent = 0 means only value 0 is direct coded
+        let config = HybridUintConfig::new(0, 0, 0);
+
+        let (token, extra, num_extra) = config.encode(0);
+        assert_eq!(token, 0);
+        assert_eq!(extra, 0);
+        assert_eq!(num_extra, 0);
+
+        // Value 1 needs hybrid encoding
+        let (token, _extra, _num_extra) = config.encode(1);
+        assert!(token >= 1);
+    }
+
+    #[test]
+    fn test_write_method() {
+        let config = HybridUintConfig::new(4, 2, 0);
+        let mut writer = BitWriter::new();
+
+        // Test writing with a simple token writer
+        config
+            .write(5, &mut writer, |w, token| {
+                w.write(8, token as u64)?;
+                Ok(())
+            })
+            .unwrap();
+
+        // Should have written 8 bits for token (no extra bits for value < 16)
+        assert_eq!(writer.bits_written(), 8);
+    }
+
+    #[test]
+    fn test_write_with_extra_bits() {
+        let config = HybridUintConfig::new(4, 2, 0);
+        let mut writer = BitWriter::new();
+
+        // Test writing a value that requires extra bits
+        config
+            .write(100, &mut writer, |w, token| {
+                w.write(8, token as u64)?;
+                Ok(())
+            })
+            .unwrap();
+
+        // Should have written 8 bits for token + extra bits
+        assert!(writer.bits_written() > 8);
+    }
+
+    #[test]
+    fn test_various_configs() {
+        // Test different configurations
+        let configs = [
+            HybridUintConfig::new(0, 0, 0),
+            HybridUintConfig::new(4, 0, 0),
+            HybridUintConfig::new(4, 2, 0),
+            HybridUintConfig::new(4, 2, 2),
+            HybridUintConfig::new(8, 4, 0),
+        ];
+
+        for config in configs {
+            // Encoding should work for all values
+            for value in [0, 1, 15, 16, 100, 1000, 10000] {
+                let (token, extra, num_extra) = config.encode(value);
+                // Token should be reasonable
+                assert!(
+                    token < 10000,
+                    "token {} unreasonable for value {}",
+                    token,
+                    value
+                );
+                // Extra bits should be bounded
+                assert!(num_extra <= 32, "too many extra bits");
+                // Extra should fit in num_extra bits
+                if num_extra > 0 {
+                    assert!(extra < (1 << num_extra));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lsb_in_token() {
+        // Test with lsb_in_token > 0
+        let config = HybridUintConfig::new(4, 2, 2);
+
+        let (token, _extra, _num_extra) = config.encode(32);
+        // With LSB encoding, token should be different
+        assert!(token > 0);
+    }
 }
