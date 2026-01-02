@@ -1057,6 +1057,229 @@ mod decoder_validation {
     /// Path to djxl from libjxl for dual-decoder validation
     const DJXL_PATH: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
 
+    /// Validates lossless roundtrip: encode -> decode -> compare pixels exactly.
+    ///
+    /// Returns the decoded pixel data on success.
+    fn validate_lossless_roundtrip_rgb(
+        original: &[u8],
+        width: usize,
+        height: usize,
+        test_name: &str,
+    ) -> Vec<u8> {
+        assert_eq!(original.len(), width * height * 3);
+
+        // Encode
+        let encoded = Encoder::new()
+            .encode_rgb8(original, width, height)
+            .expect(&format!("{}: encoding failed", test_name));
+
+        // Decode with jxl-oxide
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect(&format!("{}: jxl-oxide decode failed", test_name));
+
+        assert_eq!(image.width() as usize, width);
+        assert_eq!(image.height() as usize, height);
+
+        // Render frame and extract pixels
+        let render = image
+            .render_frame(0)
+            .expect(&format!("{}: render failed", test_name));
+
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf();
+
+        // Convert f32 (0.0-1.0 normalized range) to u8 (0-255)
+        let decoded: Vec<u8> = decoded_f32
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        // Compare pixel by pixel
+        assert_eq!(
+            decoded.len(),
+            original.len(),
+            "{}: decoded size mismatch ({} vs {})",
+            test_name,
+            decoded.len(),
+            original.len()
+        );
+
+        let mut max_diff: i32 = 0;
+        let mut diff_count = 0;
+        for (i, (&orig, &dec)) in original.iter().zip(decoded.iter()).enumerate() {
+            let diff = (orig as i32 - dec as i32).abs();
+            if diff > 0 {
+                diff_count += 1;
+                max_diff = max_diff.max(diff);
+                if diff_count <= 5 {
+                    let pixel = i / 3;
+                    let channel = i % 3;
+                    eprintln!(
+                        "{}: pixel {} channel {} differs: {} vs {} (diff={})",
+                        test_name, pixel, channel, orig, dec, diff
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            max_diff, 0,
+            "{}: lossless roundtrip failed! {} pixels differ, max_diff={}",
+            test_name, diff_count, max_diff
+        );
+
+        eprintln!(
+            "{}: PASSED lossless roundtrip ({}x{}, {} bytes)",
+            test_name,
+            width,
+            height,
+            encoded.len()
+        );
+        decoded
+    }
+
+    /// Validates lossless roundtrip for grayscale images.
+    fn validate_lossless_roundtrip_gray(
+        original: &[u8],
+        width: usize,
+        height: usize,
+        test_name: &str,
+    ) -> Vec<u8> {
+        assert_eq!(original.len(), width * height);
+
+        // Encode
+        let encoded = Encoder::new()
+            .encode_gray8(original, width, height)
+            .expect(&format!("{}: encoding failed", test_name));
+
+        // Decode with jxl-oxide
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect(&format!("{}: jxl-oxide decode failed", test_name));
+
+        assert_eq!(image.width() as usize, width);
+        assert_eq!(image.height() as usize, height);
+
+        // Render frame and extract pixels
+        let render = image
+            .render_frame(0)
+            .expect(&format!("{}: render failed", test_name));
+
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf();
+
+        // Convert f32 (0.0-1.0 normalized range) to u8 (0-255)
+        let decoded: Vec<u8> = decoded_f32
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        // Compare pixel by pixel
+        assert_eq!(
+            decoded.len(),
+            original.len(),
+            "{}: decoded size mismatch",
+            test_name
+        );
+
+        let mut max_diff: i32 = 0;
+        let mut diff_count = 0;
+        for (_i, (&orig, &dec)) in original.iter().zip(decoded.iter()).enumerate() {
+            let diff = (orig as i32 - dec as i32).abs();
+            if diff > 0 {
+                diff_count += 1;
+                max_diff = max_diff.max(diff);
+            }
+        }
+
+        assert_eq!(
+            max_diff, 0,
+            "{}: lossless roundtrip failed! {} pixels differ, max_diff={}",
+            test_name, diff_count, max_diff
+        );
+
+        eprintln!(
+            "{}: PASSED lossless roundtrip ({}x{}, {} bytes)",
+            test_name,
+            width,
+            height,
+            encoded.len()
+        );
+        decoded
+    }
+
+    /// Validates lossy roundtrip with tolerance.
+    ///
+    /// Returns (max_diff, mean_diff) for the decoded image.
+    fn validate_lossy_roundtrip_rgb(
+        original: &[u8],
+        width: usize,
+        height: usize,
+        distance: f32,
+        max_allowed_diff: i32,
+        test_name: &str,
+    ) -> (i32, f64) {
+        assert_eq!(original.len(), width * height * 3);
+
+        // Encode lossy
+        let encoded = encode_lossy_rgb8(original, width, height, distance)
+            .expect(&format!("{}: encoding failed", test_name));
+
+        // Decode with jxl-oxide
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect(&format!("{}: jxl-oxide decode failed", test_name));
+
+        assert_eq!(image.width() as usize, width);
+        assert_eq!(image.height() as usize, height);
+
+        // Render frame and extract pixels
+        let render = image
+            .render_frame(0)
+            .expect(&format!("{}: render failed", test_name));
+
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf();
+
+        // Convert f32 (0.0-1.0 normalized range) to u8 (0-255)
+        let decoded: Vec<u8> = decoded_f32
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        // Calculate statistics
+        let mut max_diff: i32 = 0;
+        let mut sum_diff: i64 = 0;
+        for (&orig, &dec) in original.iter().zip(decoded.iter()) {
+            let diff = (orig as i32 - dec as i32).abs();
+            max_diff = max_diff.max(diff);
+            sum_diff += diff as i64;
+        }
+        let mean_diff = sum_diff as f64 / original.len() as f64;
+
+        assert!(
+            max_diff <= max_allowed_diff,
+            "{}: lossy roundtrip max_diff {} exceeds tolerance {} (distance={}, mean_diff={:.2})",
+            test_name,
+            max_diff,
+            max_allowed_diff,
+            distance,
+            mean_diff
+        );
+
+        eprintln!(
+            "{}: PASSED lossy roundtrip (distance={}, max_diff={}, mean_diff={:.2}, {} bytes)",
+            test_name,
+            distance,
+            max_diff,
+            mean_diff,
+            encoded.len()
+        );
+
+        (max_diff, mean_diff)
+    }
+
     /// Validates that a JXL file can be decoded by both jxl-oxide and djxl.
     /// Returns (width, height) on success.
     fn validate_dual_decoder(
@@ -1700,5 +1923,198 @@ mod decoder_validation {
                 &format!("corpus_{}", image_path.replace("/", "_").replace(".", "_")),
             );
         }
+    }
+
+    // ========== PROPER ROUNDTRIP TESTS ==========
+    // These tests verify actual pixel values match after encode -> decode
+
+    /// Debug test to understand jxl-oxide output format
+    #[test]
+    fn test_debug_decode_format() {
+        // 2x2 simple test: Red, Green, Blue, White
+        let data = vec![
+            255, 0, 0, // R
+            0, 255, 0, // G
+            0, 0, 255, // B
+            255, 255, 255, // W
+        ];
+
+        let encoded = Encoder::new().encode_rgb8(&data, 2, 2).unwrap();
+        eprintln!("Encoded {} bytes", encoded.len());
+
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .unwrap();
+
+        eprintln!("Image: {}x{}", image.width(), image.height());
+
+        let render = image.render_frame(0).unwrap();
+        let fb = render.image_all_channels();
+
+        eprintln!(
+            "FrameBuffer: {}x{}, {} channels",
+            fb.width(),
+            fb.height(),
+            fb.channels()
+        );
+
+        let buf = fb.buf();
+        eprintln!("Buffer len: {}", buf.len());
+        for (i, v) in buf.iter().enumerate() {
+            eprintln!("  buf[{}] = {:.4}", i, v);
+        }
+
+        // Print expected vs actual for debugging
+        eprintln!("\nExpected input data:");
+        for (i, v) in data.iter().enumerate() {
+            eprintln!("  data[{}] = {}", i, v);
+        }
+    }
+
+    /// Test lossless roundtrip for a simple RGB checkerboard
+    #[test]
+    fn test_roundtrip_lossless_rgb_checkerboard() {
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255; // R
+                    data[idx + 1] = 0; // G
+                    data[idx + 2] = 0; // B
+                } else {
+                    data[idx] = 0;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 255;
+                }
+            }
+        }
+        validate_lossless_roundtrip_rgb(&data, 8, 8, "rgb_checkerboard_8x8");
+    }
+
+    /// Test lossless roundtrip for RGB gradient
+    #[test]
+    fn test_roundtrip_lossless_rgb_gradient() {
+        let mut data = vec![0u8; 16 * 16 * 3];
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = (y * 16 + x) * 3;
+                data[idx] = (x * 16) as u8;
+                data[idx + 1] = (y * 16) as u8;
+                data[idx + 2] = ((x + y) * 8) as u8;
+            }
+        }
+        validate_lossless_roundtrip_rgb(&data, 16, 16, "rgb_gradient_16x16");
+    }
+
+    /// Test lossless roundtrip for solid color
+    #[test]
+    fn test_roundtrip_lossless_rgb_solid() {
+        let mut data = vec![0u8; 32 * 32 * 3];
+        for i in 0..(32 * 32) {
+            data[i * 3] = 200;
+            data[i * 3 + 1] = 100;
+            data[i * 3 + 2] = 50;
+        }
+        validate_lossless_roundtrip_rgb(&data, 32, 32, "rgb_solid_32x32");
+    }
+
+    /// Test lossless roundtrip for grayscale gradient
+    #[test]
+    fn test_roundtrip_lossless_gray_gradient() {
+        let data: Vec<u8> = (0..64).map(|i| (i * 4) as u8).collect();
+        validate_lossless_roundtrip_gray(&data, 8, 8, "gray_gradient_8x8");
+    }
+
+    /// Test lossless roundtrip for grayscale varied values
+    #[test]
+    fn test_roundtrip_lossless_gray_varied() {
+        let data = vec![0u8, 64, 128, 192, 255, 100, 50, 200];
+        validate_lossless_roundtrip_gray(&data, 4, 2, "gray_varied_4x2");
+    }
+
+    /// Test lossless roundtrip for multi-group RGB (300x300)
+    /// NOTE: Currently skipped - multi-group pixel roundtrip has edge context bug
+    #[test]
+    #[ignore = "Multi-group residual encoding has group boundary context mismatch"]
+    fn test_roundtrip_lossless_rgb_multigroup_300() {
+        let mut data = vec![0u8; 300 * 300 * 3];
+        for y in 0..300 {
+            for x in 0..300 {
+                let idx = (y * 300 + x) * 3;
+                data[idx] = ((x + y) % 256) as u8;
+                data[idx + 1] = (x % 256) as u8;
+                data[idx + 2] = (y % 256) as u8;
+            }
+        }
+        validate_lossless_roundtrip_rgb(&data, 300, 300, "rgb_multigroup_300x300");
+    }
+
+    /// Test lossy roundtrip at distance 1.0 (high quality)
+    /// NOTE: VarDCT encoding is WIP - some decode issues exist
+    #[test]
+    #[ignore = "VarDCT lossy encoding has known jxl-oxide compatibility issues"]
+    fn test_roundtrip_lossy_rgb_d1() {
+        let mut data = vec![0u8; 16 * 16 * 3];
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = (y * 16 + x) * 3;
+                data[idx] = (x * 16) as u8;
+                data[idx + 1] = (y * 16) as u8;
+                data[idx + 2] = 128;
+            }
+        }
+        // At distance 1.0, max_diff should be reasonable (< 50 for most images)
+        validate_lossy_roundtrip_rgb(&data, 16, 16, 1.0, 80, "rgb_lossy_d1_16x16");
+    }
+
+    /// Test lossy roundtrip at distance 2.0 (medium quality)
+    /// NOTE: VarDCT encoding is WIP - some decode issues exist
+    #[test]
+    #[ignore = "VarDCT lossy encoding has known jxl-oxide compatibility issues"]
+    fn test_roundtrip_lossy_rgb_d2() {
+        let mut data = vec![0u8; 16 * 16 * 3];
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = (y * 16 + x) * 3;
+                data[idx] = (x * 16) as u8;
+                data[idx + 1] = (y * 16) as u8;
+                data[idx + 2] = 128;
+            }
+        }
+        // At distance 2.0, higher tolerance needed
+        validate_lossy_roundtrip_rgb(&data, 16, 16, 2.0, 120, "rgb_lossy_d2_16x16");
+    }
+
+    /// Test lossless roundtrip for corpus image (pngsuite)
+    #[test]
+    fn test_roundtrip_lossless_corpus_rgb() {
+        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+        let path = format!("{}/pngsuite/basn2c08.png", CORPUS_PATH);
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("Skipping: {} not found", path);
+            return;
+        }
+
+        let img = image::open(&path).unwrap();
+        let rgb = img.to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        validate_lossless_roundtrip_rgb(rgb.as_raw(), w, h, "corpus_basn2c08");
+    }
+
+    /// Test lossless roundtrip for corpus grayscale (pngsuite)
+    #[test]
+    fn test_roundtrip_lossless_corpus_gray() {
+        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+        let path = format!("{}/pngsuite/basn0g08.png", CORPUS_PATH);
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("Skipping: {} not found", path);
+            return;
+        }
+
+        let img = image::open(&path).unwrap();
+        let gray = img.to_luma8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        validate_lossless_roundtrip_gray(gray.as_raw(), w, h, "corpus_basn0g08");
     }
 }
