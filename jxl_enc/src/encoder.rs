@@ -1213,7 +1213,12 @@ mod decoder_validation {
         let (w, h) = (img.width() as usize, img.height() as usize);
 
         let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
-        eprintln!("basn2c08.png {}x{} encoded to {} bytes", w, h, encoded.len());
+        eprintln!(
+            "basn2c08.png {}x{} encoded to {} bytes",
+            w,
+            h,
+            encoded.len()
+        );
 
         // Decode with jxl-oxide
         match jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded)) {

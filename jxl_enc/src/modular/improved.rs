@@ -50,18 +50,13 @@ fn predict_clamped_gradient(left: i32, top: i32, topleft: i32) -> i32 {
     if s < 0 { grad } else { clamp }
 }
 
-/// Encode a hybrid uint for LZ77 run length.
+/// Encode a hybrid uint for LZ77 run length using config {0, 0, 0}.
+/// This matches libjxl's default length_uint_config.
 /// Returns (token, nbits, bits)
 #[inline]
-fn encode_hybrid_uint_lz77(value: u32) -> (u32, u32, u32) {
-    if value < 16 {
-        (value, 0, 0)
-    } else {
-        let n = 31 - (value | 1).leading_zeros();
-        let token = 16 + n - 4;
-        let bits = value - (1 << n);
-        (token, n, bits)
-    }
+fn encode_hybrid_uint_lz77_length(value: u32) -> (u32, u32, u32) {
+    // LZ77 length uses HybridUintConfig{0, 0, 0} (same as raw symbols)
+    encode_hybrid_uint_000(value)
 }
 
 /// Encode a hybrid uint for raw symbols (split_exponent=0, msb_in_token=0, lsb_in_token=0).
@@ -165,18 +160,19 @@ fn build_sparse_histogram(tokens: &[Token]) -> Vec<u64> {
                 }
             }
             Token::Lz77Run(count) => {
-                let adjusted = count - K_LZ77_MIN_LENGTH - 1;
-                let (tok, _, _) = encode_hybrid_uint_lz77(adjusted as u32);
+                // LZ77 encodes: length - min_length (not -1)
+                let adjusted = count - K_LZ77_MIN_LENGTH;
+                let (tok, _, _) = encode_hybrid_uint_lz77_length(adjusted as u32);
                 let symbol = K_LZ77_MIN_SYMBOL + tok as usize;
                 if symbol < total_symbols {
                     counts[symbol] += 1;
                 }
+                // Also count distance symbol (0 for RLE distance=1)
+                // Both contexts map to histogram 0, so distance uses same histogram
+                counts[0] += 1;
             }
         }
     }
-
-    // Also count distance symbols (all 1 for RLE)
-    // Distance context is separate, we'll handle it differently
 
     counts
 }
@@ -297,11 +293,32 @@ fn write_sparse_lz77_histogram(
         writer.bits_written()
     );
 
-    // num_dist = 1 (number of distance contexts for LZ77)
-    // u2S(Val(1), Bits(1)+1, Bits(4)+3, Bits(8)+19)
-    // For value 1: selector 0 = Val(1)
-    writer.write(2, 0)?; // selector 0: value = 1
-    eprintln!("SPARSE_HIST [bit {}]: num_dist = 1", writer.bits_written());
+    // length_uint_config: HybridUintConfig for LZ77 run lengths
+    // We use {0, 0, 0} which matches libjxl's default.
+    // Encoding: (log_alpha_size = 8)
+    //   split_exponent: CeilLog2Nonzero(8+1) = 4 bits
+    //   For split_exponent=0 (which != 8):
+    //     msb_in_token: CeilLog2Nonzero(0+1) = 0 bits (implicitly 0)
+    //     lsb_in_token: CeilLog2Nonzero(0-0+1) = 0 bits (implicitly 0)
+    // So we just write 4 bits with value 0.
+    writer.write(4, 0)?; // split_exponent = 0
+    eprintln!(
+        "SPARSE_HIST [bit {}]: length_uint_config = {{0, 0, 0}}",
+        writer.bits_written()
+    );
+
+    // Context map: With LZ77 enabled, we have num_contexts = 2:
+    //   - context 0: original token context
+    //   - context 1: LZ77 distance context
+    // Both map to histogram 0.
+    // Format: is_simple=1, bits_per_entry=0 (all zeros)
+    writer.write(1, 1)?; // is_simple = 1
+    writer.write(2, 0)?; // bits_per_entry = 0 (all contexts map to 0)
+    eprintln!(
+        "SPARSE_HIST [bit {}]: context_map (is_simple=1, bits=0)",
+        writer.bits_written()
+    );
+    // distance_context = context_map[1] = 0
 
     // Find the actual used symbols
     let max_raw_symbol = sparse_counts[..K_NUM_RAW_SYMBOLS]
@@ -376,23 +393,10 @@ fn write_sparse_lz77_histogram(
         );
     }
 
-    // Distance context histogram - for RLE we always use distance=1
-    // This is a single-symbol histogram (only symbol for distance=1)
-    eprintln!(
-        "SPARSE_HIST [bit {}]: Writing distance histogram",
-        writer.bits_written()
-    );
-
-    // use_prefix_code = 1
-    writer.write(1, 1)?;
-    // split_exponent = 15
-    writer.write(4, 15)?;
-    // alphabet_size = 1 (only distance symbol 0 which encodes distance=1)
-    write_varint16(writer, 0)?;
-    eprintln!(
-        "SPARSE_HIST [bit {}]: Distance histogram done (single symbol)",
-        writer.bits_written()
-    );
+    // Note: With context_map [0, 0], both token context and distance context
+    // use histogram 0. We don't need a separate distance histogram - the
+    // distance symbols (always 0 for our RLE with distance=1) are encoded
+    // using the same histogram as regular tokens.
 
     Ok((depths, codes))
 }
@@ -466,8 +470,9 @@ pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWrite
             }
             Token::Lz77Run(count) => {
                 // LZ77: encode as single symbol >= 224
-                let adjusted = count - K_LZ77_MIN_LENGTH - 1;
-                let (tok, nbits, extra) = encode_hybrid_uint_lz77(adjusted as u32);
+                // Length encoding: symbol = min_symbol + HybridUint(length - min_length)
+                let adjusted = count - K_LZ77_MIN_LENGTH;
+                let (tok, nbits, extra) = encode_hybrid_uint_lz77_length(adjusted as u32);
 
                 // Symbol in sparse alphabet
                 let symbol = K_LZ77_MIN_SYMBOL + tok as usize;
@@ -483,7 +488,13 @@ pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWrite
                 }
 
                 // Write distance symbol (always 0 for RLE, distance=1)
-                // Distance histogram has single symbol, so no bits needed
+                // The distance uses the same histogram (context_map[1] = 0)
+                // Distance 1 is encoded as symbol 0 with HybridUint{0,0,0}
+                let dist_depth = depths[0];
+                let dist_code = codes[0];
+                if dist_depth > 0 {
+                    writer.write(dist_depth as usize, dist_code as u64)?;
+                }
             }
         }
     }
