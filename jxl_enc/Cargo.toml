@@ -19,7 +19,11 @@ num-traits = "0.2"
 rand = "0.9"
 rand_xorshift = "0.4"
 image = "0.25"
-jxl-oxide = { path = "/home/lilith/work/jxl-efforts/jxl-oxide/crates/jxl-oxide" }
+# jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests - do not omit!
+jxl = { path = "../../jxl-rs/jxl" }
+jxl_transforms = { path = "../../jxl-rs/jxl_transforms" }
+# jxl-oxide is secondary - always test jxl-rs first
+jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
 
 [lints]
 workspace = true
