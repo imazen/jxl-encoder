@@ -1073,6 +1073,11 @@ mod decoder_validation {
             .encode_rgb8(original, width, height)
             .expect(&format!("{}: encoding failed", test_name));
 
+        // Save to file for debugging
+        let path = format!("/tmp/{}.jxl", test_name);
+        std::fs::write(&path, &encoded).unwrap();
+        eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
+
         // Decode with jxl-oxide
         let image = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&encoded))
@@ -2033,10 +2038,32 @@ mod decoder_validation {
         validate_lossless_roundtrip_gray(&data, 4, 2, "gray_varied_4x2");
     }
 
-    /// Test lossless roundtrip for multi-group RGB (300x300)
-    /// NOTE: Currently skipped - multi-group pixel roundtrip has edge context bug
+    /// Test single-group: 256x1 for comparison
     #[test]
-    #[ignore = "Multi-group residual encoding has group boundary context mismatch"]
+    fn test_roundtrip_lossless_rgb_singlegroup_256x1() {
+        // Single group 256x1 - for comparison with multi-group
+        let data = vec![128u8; 256 * 1 * 3];
+        validate_lossless_roundtrip_rgb(&data, 256, 1, "rgb_singlegroup_256x1");
+    }
+
+    /// Test minimal multi-group: 257x1 (just 2 groups in X direction)
+    #[test]
+    fn test_roundtrip_lossless_rgb_multigroup_257x1() {
+        // Tiny 257x1 image - should be 2 groups (256 + 1 pixels)
+        let data = vec![128u8; 257 * 1 * 3];
+        validate_lossless_roundtrip_rgb(&data, 257, 1, "rgb_multigroup_257x1");
+    }
+
+    /// Test minimal multi-group: 257x257 solid color (simplest case - all zeros residuals)
+    #[test]
+    fn test_roundtrip_lossless_rgb_multigroup_257_solid() {
+        // Solid gray - all predictions should be exact, residuals all 0
+        let data = vec![128u8; 257 * 257 * 3];
+        validate_lossless_roundtrip_rgb(&data, 257, 257, "rgb_multigroup_257_solid");
+    }
+
+    /// Test lossless roundtrip for multi-group RGB (300x300)
+    #[test]
     fn test_roundtrip_lossless_rgb_multigroup_300() {
         let mut data = vec![0u8; 300 * 300 * 3];
         for y in 0..300 {
