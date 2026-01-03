@@ -1,6 +1,16 @@
 # Side-by-Side Decoder Comparison: VarDCT (Lossy) Flow
 
-Comparing jxl-oxide and libjxl parsing logic for VarDCT frames.
+Comparing jxl-rs, jxl-oxide, and libjxl parsing logic for VarDCT frames.
+
+## Decoder Priority for Testing
+
+**ALWAYS test with jxl-rs first** (PRIMARY), then djxl/libjxl, then jxl-oxide.
+
+| Priority | Decoder | Location | Crate | GitHub |
+|----------|---------|----------|-------|--------|
+| 1 (PRIMARY) | **jxl-rs** | `~/work/jxl-rs` | `jxl` | https://github.com/lilith/jxl-rs |
+| 2 | djxl (libjxl) | `~/work/jxl-efforts/libjxl` | CLI tool | https://github.com/libjxl/libjxl |
+| 3 | jxl-oxide | `~/work/jxl-efforts/jxl-oxide` | `jxl-oxide` | https://github.com/tirr-c/jxl-oxide |
 
 ## Frame Data Order (VarDCT)
 
@@ -153,6 +163,16 @@ But if bit alignment is wrong, the decoder could read:
 4. Compare byte-by-byte with libjxl reference output
 
 ## Key File Locations
+
+### jxl-rs (PRIMARY - github.com/lilith/jxl-rs)
+| Component | File |
+|-----------|------|
+| Decoder API | `jxl/src/api/decoder.rs` |
+| Modular decode | `jxl/src/frame/modular/` |
+| VarDCT decode | `jxl/src/frame/vardct/` |
+| Entropy coding | `jxl/src/entropy_coding/` |
+| Headers | `jxl/src/headers/` |
+| BitReader | `jxl/src/bit_reader.rs` |
 
 ### jxl-oxide
 | Component | File | Lines |

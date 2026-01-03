@@ -158,6 +158,7 @@ Raw documentation (commit f8874549):
 
 ## References
 
+- **jxl-rs (PRIMARY Rust decoder)**: https://github.com/lilith/jxl-rs - Use for roundtrip tests
 - libjxl repo: https://github.com/libjxl/libjxl
 - jxl-oxide (Rust decoder): https://github.com/tirr-c/jxl-oxide
 - JPEG XL website: https://jpegxl.info/
