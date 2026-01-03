@@ -116,8 +116,27 @@ impl FrameEncoder {
             self.width, self.height, num_groups, num_lf_groups
         );
 
-        // Step 1: Collect residuals from the entire image to build global histogram
-        let (all_residuals, max_residual) = collect_all_residuals(image);
+        // Step 1: Extract each group and collect residuals using LOCAL coordinates.
+        // This is critical: we must use the same coordinate system that
+        // write_group_modular_section uses, otherwise the residuals won't match
+        // the Huffman codes we build.
+        let mut all_residuals = Vec::new();
+        let mut max_residual: u32 = 0;
+        let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
+
+        for group_idx in 0..num_groups {
+            let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
+            let group_image = image.extract_region(x_start, y_start, x_end, y_end)?;
+
+            // Collect residuals from this group using LOCAL coordinates (0-based within group)
+            let (group_residuals, group_max) = collect_all_residuals(&group_image);
+            all_residuals.extend(group_residuals);
+            max_residual = max_residual.max(group_max);
+
+            // Store for later encoding
+            group_images.push(group_image);
+        }
+
         let histogram = build_histogram_from_residuals(&all_residuals, max_residual);
 
         eprintln!(
@@ -150,11 +169,11 @@ impl FrameEncoder {
         );
 
         // Step 5: Write each PassGroup's data (GroupHeader + pixel data)
+        // Use the pre-extracted group_images to ensure residual consistency
         let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
-        for group_idx in 0..num_groups {
+        for (group_idx, group_image) in group_images.iter().enumerate() {
             for _pass in 0..num_passes {
                 let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
-                let group_image = image.extract_region(x_start, y_start, x_end, y_end)?;
 
                 eprintln!(
                     "MULTI_GROUP: Group {} bounds ({}, {}) - ({}, {}), size {}x{}",
@@ -168,7 +187,7 @@ impl FrameEncoder {
                 );
 
                 let mut group_writer = BitWriter::new();
-                write_group_modular_section(&group_image, &global_state, &mut group_writer)?;
+                write_group_modular_section(group_image, &global_state, &mut group_writer)?;
                 pass_group_data.push(group_writer.finish());
 
                 eprintln!(
@@ -180,13 +199,14 @@ impl FrameEncoder {
         }
 
         // Step 6: Collect all section sizes in correct order and write TOC
-        // Order: LfGlobal, HfGlobal, LfGroup[0..num_lf_groups], PassGroup[0..num_groups*num_passes]
+        // JXL spec order: LfGlobal, LfGroup[0..num_lf_groups], HfGlobal, PassGroup[0..num_groups*num_passes]
+        // Note: LfGroup comes BEFORE HfGlobal!
         let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups * num_passes);
         section_sizes.push(lf_global_data.len());
-        section_sizes.push(hf_global_data.len());
         for data in &lf_group_data {
             section_sizes.push(data.len());
         }
+        section_sizes.push(hf_global_data.len());
         for data in &pass_group_data {
             section_sizes.push(data.len());
         }
@@ -203,13 +223,13 @@ impl FrameEncoder {
         for byte in lf_global_data {
             writer.write_u8(byte)?;
         }
-        for byte in hf_global_data {
-            writer.write_u8(byte)?;
-        }
         for data in lf_group_data {
             for byte in data {
                 writer.write_u8(byte)?;
             }
+        }
+        for byte in hf_global_data {
+            writer.write_u8(byte)?;
         }
         for data in pass_group_data {
             for byte in data {
