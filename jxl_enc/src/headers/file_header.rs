@@ -415,17 +415,12 @@ impl FileHeader {
     }
 
     /// Checks if all metadata is default.
-    /// Per JXL spec, all_default=true implies xyb_encoded=true (lossy mode).
+    /// Per JXL spec, all_default=true implies xyb_encoded=false (lossless mode).
     fn is_metadata_default(&self) -> bool {
-        let meta = &self.metadata;
-        meta.bit_depth.bits_per_sample == 8
-            && !meta.bit_depth.float_sample
-            && meta.extra_channels.is_empty()
-            && meta.orientation == Orientation::Identity
-            && meta.animation.is_none()
-            && !meta.have_intrinsic_size
-            && meta.color_encoding.is_srgb()
-            && meta.xyb_encoded // all_default requires xyb_encoded=true (lossy)
+        // For now, always return false to write explicit metadata.
+        // This ensures compatibility while we investigate the all_default parsing issue.
+        // TODO: Enable all_default optimization once we confirm decoder compatibility.
+        false
     }
 }
 
