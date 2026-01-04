@@ -4,7 +4,7 @@
 
 use crate::BLOCK_DIM;
 use crate::bit_writer::BitWriter;
-use crate::entropy_coding::ans::{AnsDistribution, AnsEncoder};
+use crate::entropy_coding::ans::{ANS_MAX_ALPHABET_SIZE, AnsDistribution, AnsEncoder};
 use crate::error::Result;
 use crate::heuristics::{
     AcStrategyMap, ColorCorrelationMap, HeuristicLevel, QuantField, select_ac_strategies,
@@ -504,14 +504,6 @@ impl VarDctEncoder {
                     // Count non-zeros
                     let nzeros: usize = effective_ac.iter().filter(|&&x| x != 0).count();
 
-                    // Debug: print first block's AC coeffs
-                    if block_idx == 0 && c == 0 {
-                        eprintln!("AC_DEBUG_STRAT: block 0, channel 0: ac_start={}, ac_end={}, effective_ac.len()={}",
-                                  ac_start, ac_end, effective_ac.len());
-                        eprintln!("AC_DEBUG_STRAT: first 10 coeffs = {:?}", &effective_ac[..10.min(effective_ac.len())]);
-                        eprintln!("AC_DEBUG_STRAT: nzeros = {}", nzeros);
-                    }
-
                     // Emit non-zero count token
                     let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
                     tokens.push(Token::new(nz_ctx, nzeros as u32));
@@ -618,12 +610,6 @@ impl VarDctEncoder {
 
                     // Count non-zeros
                     let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
-
-                    // Debug: print first block's AC coeffs
-                    if block_idx == 0 && c == 0 {
-                        eprintln!("AC_DEBUG: block 0, channel 0: first 10 coeffs = {:?}", &block_ac[..10.min(block_ac.len())]);
-                        eprintln!("AC_DEBUG: nzeros = {}", nzeros);
-                    }
 
                     // Emit non-zero count token
                     let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
@@ -988,39 +974,43 @@ impl VarDctEncoder {
         // For Huffman/prefix codes with a single cluster, we can emit directly
 
         if tokens.is_empty() {
-            eprintln!("PASS_GROUP: tokens is empty, returning");
-            return Ok(());
-        }
-        eprintln!("PASS_GROUP: {} tokens to write", tokens.len());
-
-        // Debug: print token values
-        eprintln!("PASS_GROUP: token values: {:?}", tokens.iter().map(|t| (t.context, t.value)).collect::<Vec<_>>());
-
-        // Get the single distribution (we use cluster 0 for all contexts)
-        let dist = distributions.first().ok_or_else(|| {
-            crate::error::Error::InvalidHistogram("no distributions for pass group".to_string())
-        })?;
-
-        // Debug: print distribution info
-        eprintln!("PASS_GROUP: distribution alphabet_size={}, num_contexts={}", dist.alphabet_size(), distributions.len());
-
-        // For Huffman encoding, we need to emit symbols directly
-        // Use a simple encoding: each token value is written with fixed bits
-        let alphabet_size = dist.alphabet_size();
-        eprintln!("PASS_GROUP: alphabet_size = {}", alphabet_size);
-        if alphabet_size <= 1 {
-            // Single symbol - no bits needed per token
-            eprintln!("PASS_GROUP: single symbol, returning");
             return Ok(());
         }
 
-        let nbits = 8 - (alphabet_size as u32 - 1).leading_zeros();
-
-        // Emit each token
+        // Build a single merged distribution from all token values (ignoring contexts)
+        // This is simpler than full ANS with context maps
+        let mut value_counts = vec![0u32; ANS_MAX_ALPHABET_SIZE];
         for token in tokens {
-            let val = (token.value as usize).min(alphabet_size - 1);
-            writer.write(nbits as usize, val as u64)?;
+            let val = (token.value as usize).min(ANS_MAX_ALPHABET_SIZE - 1);
+            value_counts[val] += 1;
         }
+
+        // Find max symbol
+        let max_symbol = value_counts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &c)| c > 0)
+            .map(|(i, _)| i)
+            .max()
+            .unwrap_or(0);
+
+        // Create merged distribution
+        let freqs: Vec<u32> = value_counts[..=max_symbol].to_vec();
+        let merged_dist = AnsDistribution::from_frequencies(&freqs)?;
+
+        // Use ANS encoder
+        let mut encoder = AnsEncoder::new();
+
+        // Process tokens in reverse order (ANS requirement)
+        for token in tokens.iter().rev() {
+            let val = (token.value as usize).min(max_symbol);
+            if let Some(info) = merged_dist.get(val) {
+                encoder.put_symbol(info);
+            }
+        }
+
+        // Finalize and write
+        encoder.finalize(writer)?;
 
         Ok(())
     }
