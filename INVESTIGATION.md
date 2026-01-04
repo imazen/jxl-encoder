@@ -40,3 +40,51 @@ VarDCT implementation has bugs in both single-group and multi-group paths:
 ### Tests
 - Marked small lossy tests as `#[ignore]` with note about single-group bug
 - Confirmed multi-group tests pass (300x300, 512x512)
+
+## How to Prevent False Positives
+
+### Created `test_helpers.rs` - Single Source of Truth
+
+**Problem**: Tests don't verify what encoding mode they actually use, leading to false positives.
+
+**Solution**: Every test MUST use standardized helpers that verify encoding mode.
+
+```rust
+use crate::test_helpers::{test_lossless_roundtrip, test_lossy_roundtrip};
+
+#[test]
+fn test_lossless_multigroup_300x300() {
+    let data = vec![/* ... */];
+    
+    // This helper:
+    // 1. Encodes with Modular
+    // 2. Asserts bitstream has encoding=1
+    // 3. Decodes and verifies
+    test_lossless_roundtrip(&data, 300, 300, "lossless_300x300").unwrap();
+}
+
+#[test]
+fn test_lossy_multigroup_300x300() {
+    let data = vec![/* ... */];
+    
+    // This helper:
+    // 1. Encodes with VarDCT  
+    // 2. Asserts bitstream has encoding=0
+    // 3. Decodes and verifies
+    test_lossy_roundtrip(&data, 300, 300, 1.0, "lossy_300x300").unwrap();
+}
+```
+
+### Rules to Prevent Loops
+
+1. **NO ad-hoc verification scripts** - Use `test_helpers::parse_encoding_mode()` only
+2. **Explicit test names** - Must say "lossless" or "lossy", never ambiguous
+3. **Tests verify themselves** - Use `assert_encoding_mode()` in EVERY test
+4. **Read source, don't guess** - Check what API the test calls, don't assume
+
+### What Was Deceptive
+
+1. **Test names**: `test_encode_multigroup_300x300` doesn't say lossless/lossy
+2. **Multiple APIs**: `encode_rgb8()` vs `encode_lossy_rgb8()` - easy to confuse
+3. **Buggy verification tools**: Created Python script that had parsing bugs
+4. **Trusting tools over code**: Should read source, not trust ad-hoc scripts
