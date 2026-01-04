@@ -4,6 +4,8 @@
 //! It converts floating-point DCT coefficients to integers.
 
 use crate::bit_writer::BitWriter;
+#[allow(unused_imports)]
+use crate::{trace_section, trace_write};
 
 /// Denominator for global scale (1 << 16 = 65536).
 pub const GLOBAL_SCALE_DENOM: u32 = 1 << 16;
@@ -137,6 +139,42 @@ impl QuantizerParams {
             writer.write(16, qdc - 1).unwrap();
         }
     }
+
+    /// Write quantizer params to bitstream with tracing.
+    pub fn write_traced(&self, writer: &mut BitWriter) {
+        trace_section!(begin "QUANTIZER_PARAMS", writer);
+
+        let gs = self.global_scale as u64;
+        if (1..=2048).contains(&gs) {
+            trace_write!(writer, 2, 0, "global_scale.selector", "0 (1-2048)").unwrap();
+            trace_write!(writer, 11, gs - 1, "global_scale.value", &format!("{}", gs)).unwrap();
+        } else if (2049..=4096).contains(&gs) {
+            trace_write!(writer, 2, 1, "global_scale.selector", "1 (2049-4096)").unwrap();
+            trace_write!(writer, 11, gs - 2049, "global_scale.value", &format!("{}", gs)).unwrap();
+        } else if (4097..=8192).contains(&gs) {
+            trace_write!(writer, 2, 2, "global_scale.selector", "2 (4097-8192)").unwrap();
+            trace_write!(writer, 12, gs - 4097, "global_scale.value", &format!("{}", gs)).unwrap();
+        } else {
+            trace_write!(writer, 2, 3, "global_scale.selector", "3 (8193+)").unwrap();
+            trace_write!(writer, 16, gs - 8193, "global_scale.value", &format!("{}", gs)).unwrap();
+        }
+
+        let qdc = self.quant_dc as u64;
+        if qdc == 16 {
+            trace_write!(writer, 2, 0, "quant_dc", "selector=0 → 16").unwrap();
+        } else if (1..=32).contains(&qdc) {
+            trace_write!(writer, 2, 1, "quant_dc.selector", "1 (1-32)").unwrap();
+            trace_write!(writer, 5, qdc - 1, "quant_dc.value", &format!("{}", qdc)).unwrap();
+        } else if (1..=256).contains(&qdc) {
+            trace_write!(writer, 2, 2, "quant_dc.selector", "2 (1-256)").unwrap();
+            trace_write!(writer, 8, qdc - 1, "quant_dc.value", &format!("{}", qdc)).unwrap();
+        } else {
+            trace_write!(writer, 2, 3, "quant_dc.selector", "3 (1+)").unwrap();
+            trace_write!(writer, 16, qdc - 1, "quant_dc.value", &format!("{}", qdc)).unwrap();
+        }
+
+        trace_section!(end "QUANTIZER_PARAMS", writer);
+    }
 }
 
 /// Compute initial DC quantization from butteraugli distance.
@@ -231,6 +269,11 @@ impl Quantizer {
     /// Write quantizer parameters to bitstream.
     pub fn write(&self, writer: &mut BitWriter) {
         self.params.write(writer);
+    }
+
+    /// Write quantizer parameters to bitstream with tracing.
+    pub fn write_traced(&self, writer: &mut BitWriter) {
+        self.params.write_traced(writer);
     }
 }
 

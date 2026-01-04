@@ -11,6 +11,8 @@ use crate::heuristics::{
 };
 use crate::modular::channel::{Channel, ModularImage};
 use crate::modular::improved::write_vardct_modular_substream;
+#[allow(unused_imports)]
+use crate::{trace_note, trace_section, trace_write};
 
 use super::AcStrategy;
 use super::context::BlockContextMap;
@@ -216,78 +218,42 @@ impl VarDctEncoder {
     /// VarDCT-specific fields like x_qm_scale and b_qm_scale.
     /// Note: group_size_shift is ONLY for Modular frames, not VarDCT!
     pub fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
-        eprintln!(
-            "VARDCT_FRMH [bit {}]: Starting VarDCT frame header",
-            writer.bits_written()
-        );
+        trace_section!(begin "FRAME_HEADER", writer);
 
         // Write explicit frame header (matching libjxl reference output)
-        // all_default = false (need to specify VarDCT-specific fields)
-        writer.write(1, 0)?;
-        eprintln!(
-            "VARDCT_FRMH [bit {}]: all_default = 0",
-            writer.bits_written()
-        );
+        trace_write!(writer, 1, 0, "all_default", "false - need VarDCT fields")?;
+        trace_write!(writer, 2, 0, "frame_type", "RegularFrame")?;
+        trace_write!(writer, 1, 0, "encoding", "VarDCT")?;
+        trace_write!(writer, 2, 0, "flags", "U64 selector=0 → value=0")?;
+        trace_write!(writer, 2, 0, "upsampling", "u2S selector=0 → 1x")?;
+        trace_write!(writer, 3, 3, "x_qm_scale", "VarDCT XYB quant matrix scale")?;
+        trace_write!(writer, 3, 2, "b_qm_scale", "VarDCT XYB quant matrix scale")?;
+        trace_write!(writer, 2, 0, "passes.num_passes", "u2S selector=0 → 1 pass")?;
+        trace_write!(writer, 1, 0, "have_crop", "false")?;
+        trace_write!(writer, 2, 0, "blending_info.mode", "Replace")?;
+        trace_write!(writer, 1, 1, "is_last", "true")?;
+        trace_write!(writer, 2, 0, "name_length", "u2S selector=0 → 0")?;
 
-        // frame_type = RegularFrame (0)
-        writer.write(2, 0)?;
+        // restoration_filter section
+        trace_section!(begin "RESTORATION_FILTER", writer);
+        trace_write!(writer, 1, 0, "all_default", "false - need epf_iters=1")?;
+        trace_write!(writer, 1, 1, "gab", "true")?;
+        trace_write!(writer, 1, 0, "gab_custom", "false")?;
+        trace_write!(
+            writer,
+            2,
+            1,
+            "epf_iters",
+            "1 (reference uses 1, not default 2)"
+        )?;
+        trace_write!(writer, 1, 0, "epf_sharp_custom", "false")?;
+        trace_write!(writer, 1, 0, "epf_weight_custom", "false")?;
+        trace_write!(writer, 1, 0, "epf_sigma_custom", "false")?;
+        trace_section!(end "RESTORATION_FILTER", writer);
 
-        // encoding = VarDCT (0)
-        writer.write(1, 0)?;
+        trace_write!(writer, 2, 0, "extensions", "U64 selector=0 → none")?;
 
-        // flags = 0 (U64 encoding: selector 0 means value 0)
-        writer.write(2, 0)?;
-
-        // upsampling = 1 (selector 0 in u2S(1,2,4,8))
-        writer.write(2, 0)?;
-
-        // x_qm_scale = 3 (only for VarDCT with xyb_encoded)
-        writer.write(3, 3)?;
-
-        // b_qm_scale = 2 (only for VarDCT with xyb_encoded)
-        writer.write(3, 2)?;
-
-        // passes.num_passes = 1 (selector 0 in u2S(1,2,3,Bits(3)+4))
-        writer.write(2, 0)?;
-
-        // have_crop = false (only if frame_type != LFFrame)
-        writer.write(1, 0)?;
-
-        // blending_info.mode = Replace (selector 0 in u2S(0,1,2,Bits(2)+3))
-        writer.write(2, 0)?;
-
-        // is_last = true (only for RegularFrame or SkipProgressive)
-        writer.write(1, 1)?;
-
-        // name_length = 0 using u2S(0, Bits(4), Bits(5)+16, Bits(10)+48)
-        writer.write(2, 0)?; // selector 0 = value 0
-
-        // restoration_filter - explicit settings matching reference
-        // all_default = false (we need to specify epf_iters=1)
-        writer.write(1, 0)?;
-
-        // gab = true
-        writer.write(1, 1)?;
-        // gab_custom = false
-        writer.write(1, 0)?;
-
-        // epf_iters = 1 (reference uses 1, not default 2)
-        writer.write(2, 1)?;
-        // epf_sharp_custom = false
-        writer.write(1, 0)?;
-        // epf_weight_custom = false
-        writer.write(1, 0)?;
-        // epf_sigma_custom = false
-        writer.write(1, 0)?;
-
-        // extensions = 0 (no extensions)
-        // U64 encoding: selector 0 (2 bits) means value 0
-        writer.write(2, 0)?;
-        eprintln!(
-            "VARDCT_FRMH [bit {}]: frame header done",
-            writer.bits_written()
-        );
-
+        trace_section!(end "FRAME_HEADER", writer);
         Ok(())
     }
 
@@ -295,98 +261,79 @@ impl VarDctEncoder {
     ///
     /// Contains: LfQuantFactors, QuantizerParams, BlockCtxMap, ColorCorrelation, Tree, ModularGlobal.
     pub fn write_lf_global(&self, writer: &mut BitWriter) -> Result<()> {
-        eprintln!(
-            "LF_GLOBAL [bit {}]: Starting LF Global section",
-            writer.bits_written()
-        );
+        trace_section!(begin "LF_GLOBAL", writer);
 
         // Write LF quant factors (use defaults)
-        // Format: bit 1 = use default LF_QUANT values
-        writer.write(1, 1)?; // all_default = true
-        eprintln!(
-            "LF_GLOBAL [bit {}]: lf_quant_factors.all_default = 1",
-            writer.bits_written()
-        );
+        trace_write!(writer, 1, 1, "lf_quant_factors.all_default", "use defaults")?;
 
         // Write quantizer params (global_scale, quant_dc)
-        self.quantizer.write(writer);
-        eprintln!(
-            "LF_GLOBAL [bit {}]: quantizer_params (gs={}, qdc={})",
-            writer.bits_written(),
-            self.quantizer.global_scale,
-            self.quantizer.quant_dc
-        );
+        self.quantizer.write_traced(writer);
+        trace_note!(writer, "quantizer_params: gs={}, qdc={}", self.quantizer.global_scale, self.quantizer.quant_dc);
 
         // Write block context map (default = 1 bit)
-        self.block_ctx_map.write(writer)?;
-        eprintln!(
-            "LF_GLOBAL [bit {}]: block_context_map (default={})",
-            writer.bits_written(),
-            self.block_ctx_map.use_default
-        );
+        self.block_ctx_map.write_traced(writer)?;
 
         // Write color correlation (LF)
         self.write_color_correlation(writer)?;
-        eprintln!(
-            "LF_GLOBAL [bit {}]: color_correlation",
-            writer.bits_written()
-        );
 
         // Write global tree presence (0 = no global tree for VarDCT)
-        writer.write(1, 0)?;
-        eprintln!(
-            "LF_GLOBAL [bit {}]: has_global_tree = 0, LF Global done",
-            writer.bits_written()
-        );
+        trace_write!(
+            writer,
+            1,
+            0,
+            "has_global_tree",
+            "false - VarDCT uses per-group trees"
+        )?;
 
         // ModularGlobal is empty for VarDCT without extra channels
         // (no channels to encode, so nothing to write)
 
+        trace_section!(end "LF_GLOBAL", writer);
         Ok(())
     }
 
     /// Write color correlation parameters.
     fn write_color_correlation(&self, writer: &mut BitWriter) -> Result<()> {
+        trace_section!(begin "COLOR_CORRELATION", writer);
         let cmap = &self.color_correlation;
 
         // If using default correlation (no CfL), just write all_default=true
         if !self.options.cfl_enabled || cmap.is_default() {
-            writer.write(1, 1)?; // all_default = true
+            trace_write!(writer, 1, 1, "all_default", "true - no CfL")?;
+            trace_section!(end "COLOR_CORRELATION", writer);
             return Ok(());
         }
 
-        // all_default = false
-        writer.write(1, 0)?;
+        trace_write!(writer, 1, 0, "all_default", "false - custom CfL")?;
 
         // Write color_factor using U32Enc kColorFactorDist
         // U32Enc: Val(84), Val(256), BitsOffset(8,2), BitsOffset(16,258)
         let color_factor = cmap.color_factor;
         if color_factor == 84 {
-            writer.write(2, 0)?; // selector 0 = 84
+            trace_write!(writer, 2, 0, "color_factor", "selector=0 → 84")?;
         } else if color_factor == 256 {
-            writer.write(2, 1)?; // selector 1 = 256
+            trace_write!(writer, 2, 1, "color_factor", "selector=1 → 256")?;
         } else if (2..258).contains(&color_factor) {
-            writer.write(2, 2)?; // selector 2 = Bits(8) + 2
-            writer.write(8, (color_factor - 2) as u64)?;
+            trace_write!(writer, 2, 2, "color_factor.selector", "Bits(8)+2")?;
+            trace_write!(writer, 8, (color_factor - 2) as u64, "color_factor.value")?;
         } else {
-            writer.write(2, 3)?; // selector 3 = Bits(16) + 258
-            writer.write(16, (color_factor.saturating_sub(258)) as u64)?;
+            trace_write!(writer, 2, 3, "color_factor.selector", "Bits(16)+258")?;
+            trace_write!(
+                writer,
+                16,
+                (color_factor.saturating_sub(258)) as u64,
+                "color_factor.value"
+            )?;
         }
 
-        // Write base_correlation_x (F16)
-        // For simplicity, use 0.0 (encoded as 0x0000 in half-precision)
-        writer.write(16, 0)?; // base_correlation_x = 0.0
+        trace_write!(writer, 16, 0, "base_correlation_x", "F16: 0.0")?;
+        trace_write!(writer, 16, 0x3C00, "base_correlation_b", "F16: 1.0")?;
 
-        // Write base_correlation_b (F16)
-        // Default is 1.0 = 0x3C00 in half-precision
-        writer.write(16, 0x3C00)?; // base_correlation_b = 1.0
+        // Write ytox_dc and ytob_dc (S32 signed integers)
+        write_signed_varint_traced(writer, cmap.ytox_dc, "ytox_dc")?;
+        write_signed_varint_traced(writer, cmap.ytob_dc, "ytob_dc")?;
 
-        // Write ytox_dc (S32 signed integer)
-        write_signed_varint(writer, cmap.ytox_dc)?;
-
-        // Write ytob_dc (S32 signed integer)
-        write_signed_varint(writer, cmap.ytob_dc)?;
-
+        trace_section!(end "COLOR_CORRELATION", writer);
         Ok(())
     }
 
@@ -1132,6 +1079,55 @@ fn write_alphabet_size(writer: &mut BitWriter, size: usize) -> Result<()> {
 /// S32 uses a variable-length encoding:
 /// - Small values (±63) use fewer bits
 /// - Larger values use more bits
+fn write_signed_varint_traced(writer: &mut BitWriter, value: i32, field: &str) -> Result<()> {
+    // Convert signed to unsigned using zigzag encoding
+    let unsigned = if value >= 0 {
+        (value as u32) << 1
+    } else {
+        ((-value as u32) << 1) - 1
+    };
+
+    // Use variable-length encoding similar to U32
+    if unsigned == 0 {
+        trace_write!(
+            writer,
+            2,
+            0,
+            field,
+            &format!("selector=0 → {} (zigzag=0)", value)
+        )?;
+    } else if unsigned <= 16 {
+        trace_write!(writer, 2, 1, &format!("{}.selector", field), "1")?;
+        trace_write!(
+            writer,
+            4,
+            (unsigned - 1) as u64,
+            &format!("{}.value", field),
+            &format!("{} (zigzag={})", value, unsigned)
+        )?;
+    } else if unsigned <= 272 {
+        trace_write!(writer, 2, 2, &format!("{}.selector", field), "2")?;
+        trace_write!(
+            writer,
+            8,
+            (unsigned - 17) as u64,
+            &format!("{}.value", field),
+            &format!("{} (zigzag={})", value, unsigned)
+        )?;
+    } else {
+        trace_write!(writer, 2, 3, &format!("{}.selector", field), "3")?;
+        trace_write!(
+            writer,
+            12,
+            (unsigned.saturating_sub(273)) as u64,
+            &format!("{}.value", field),
+            &format!("{} (zigzag={})", value, unsigned)
+        )?;
+    }
+
+    Ok(())
+}
+
 fn write_signed_varint(writer: &mut BitWriter, value: i32) -> Result<()> {
     // Convert signed to unsigned using zigzag encoding
     let unsigned = if value >= 0 {
