@@ -210,8 +210,10 @@ impl FileHeader {
         let w_div8 = self.width.is_multiple_of(8) && self.width / 8 >= 1 && self.width / 8 <= 32;
         let small = h_div8 && w_div8;
 
-        eprintln!("SIZE_HDR: {}x{}, small={}, h_div8={}, w_div8={}",
-                  self.width, self.height, small, h_div8, w_div8);
+        eprintln!(
+            "SIZE_HDR: {}x{}, small={}, h_div8={}, w_div8={}",
+            self.width, self.height, small, h_div8, w_div8
+        );
         writer.write_bit(small)?;
 
         if small {

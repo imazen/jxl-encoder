@@ -1578,9 +1578,10 @@ mod decoder_validation {
             assert_eq!(image.height(), 8);
 
             // Try to actually render the frame (not just parse headers)
-            let _render = image
-                .render_frame(0)
-                .expect(&format!("test_decode_lossy_distances: render failed at distance {}", distance));
+            let _render = image.render_frame(0).expect(&format!(
+                "test_decode_lossy_distances: render failed at distance {}",
+                distance
+            ));
         }
     }
 
@@ -1799,9 +1800,10 @@ mod decoder_validation {
             assert_eq!(image.height(), 8);
 
             // Try to actually render the frame (not just parse headers)
-            let _render = image
-                .render_frame(0)
-                .expect(&format!("test_dual_decode_lossy_distances: render failed at distance {}", distance));
+            let _render = image.render_frame(0).expect(&format!(
+                "test_dual_decode_lossy_distances: render failed at distance {}",
+                distance
+            ));
         }
         eprintln!("lossy_distances: PASSED jxl-oxide (rendered successfully)");
     }

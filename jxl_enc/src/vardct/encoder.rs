@@ -268,7 +268,12 @@ impl VarDctEncoder {
 
         // Write quantizer params (global_scale, quant_dc)
         self.quantizer.write_traced(writer);
-        trace_note!(writer, "quantizer_params: gs={}, qdc={}", self.quantizer.global_scale, self.quantizer.quant_dc);
+        trace_note!(
+            writer,
+            "quantizer_params: gs={}, qdc={}",
+            self.quantizer.global_scale,
+            self.quantizer.quant_dc
+        );
 
         // Write block context map (default = 1 bit)
         self.block_ctx_map.write_traced(writer)?;

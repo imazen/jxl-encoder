@@ -879,8 +879,15 @@ mod debug_tests2 {
                 name,
                 &inv_dequant[c][0..8]
             );
-            eprintln!("  {} channel - pos 63 (Nyquist): {}", name, inv_dequant[c][63]);
-            eprintln!("  {} channel - last row: {:?}", name, &inv_dequant[c][56..64]);
+            eprintln!(
+                "  {} channel - pos 63 (Nyquist): {}",
+                name, inv_dequant[c][63]
+            );
+            eprintln!(
+                "  {} channel - last row: {:?}",
+                name,
+                &inv_dequant[c][56..64]
+            );
         }
 
         // Simulate quantization for checkerboard max AC coefficient
@@ -901,9 +908,11 @@ mod debug_tests2 {
             } else {
                 0
             };
-            eprintln!("  {} channel: inv_dequant[63]={:.6}, val={:.6}, quantized={}",
-                     name, inv_dq, val, quantized);
-            eprintln!("    val/threshold ratio = {:.3}", val/threshold);
+            eprintln!(
+                "  {} channel: inv_dequant[63]={:.6}, val={:.6}, quantized={}",
+                name, inv_dq, val, quantized
+            );
+            eprintln!("    val/threshold ratio = {:.3}", val / threshold);
         }
     }
 }

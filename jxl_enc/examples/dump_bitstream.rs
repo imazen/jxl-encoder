@@ -37,14 +37,28 @@ fn dump_bitstream(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     // Parse container/signature
     println!("=== SIGNATURE ===");
     let sig1 = reader.read(8)?;
-    println!("[{:6}] signature[0]: 0x{:02x} ({})",
-        reader.total_bits_read() - 8, sig1,
-        if sig1 == 0xFF { "0xFF - JXL codestream" } else { "unexpected" });
+    println!(
+        "[{:6}] signature[0]: 0x{:02x} ({})",
+        reader.total_bits_read() - 8,
+        sig1,
+        if sig1 == 0xFF {
+            "0xFF - JXL codestream"
+        } else {
+            "unexpected"
+        }
+    );
 
     let sig2 = reader.read(8)?;
-    println!("[{:6}] signature[1]: 0x{:02x} ({})",
-        reader.total_bits_read() - 8, sig2,
-        if sig2 == 0x0A { "0x0A - JXL codestream" } else { "unexpected" });
+    println!(
+        "[{:6}] signature[1]: 0x{:02x} ({})",
+        reader.total_bits_read() - 8,
+        sig2,
+        if sig2 == 0x0A {
+            "0x0A - JXL codestream"
+        } else {
+            "unexpected"
+        }
+    );
 
     if sig1 == 0xFF && sig2 == 0x0A {
         println!("→ Bare codestream (no container)\n");
@@ -73,8 +87,19 @@ fn dump_container(reader: &mut BitReader) -> Result<(), Box<dyn std::error::Erro
     let b10 = reader.read(8)?;
     let b11 = reader.read(8)?;
 
-    println!("[{:6}] rest of signature: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-        reader.total_bits_read() - 72, b3, b4, b5, b6, b7, b8, b9, b10, b11);
+    println!(
+        "[{:6}] rest of signature: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+        reader.total_bits_read() - 72,
+        b3,
+        b4,
+        b5,
+        b6,
+        b7,
+        b8,
+        b9,
+        b10,
+        b11
+    );
 
     // Parse boxes (simplified - just show structure)
     println!("\n=== BOXES ===");
@@ -82,7 +107,11 @@ fn dump_container(reader: &mut BitReader) -> Result<(), Box<dyn std::error::Erro
 
     // For now, just show hex dump of next 128 bytes
     let remaining = std::cmp::min(128, reader.total_bits_available() / 8);
-    print!("[{:6}] next {} bytes: ", reader.total_bits_read(), remaining);
+    print!(
+        "[{:6}] next {} bytes: ",
+        reader.total_bits_read(),
+        remaining
+    );
     for _ in 0..remaining {
         print!("{:02x} ", reader.read(8)?);
     }
@@ -97,7 +126,10 @@ fn dump_codestream(reader: &mut BitReader) -> Result<(), Box<dyn std::error::Err
     // Read size header
     let pos = reader.total_bits_read();
     let size_header = reader.read(16)?;
-    println!("[{:6}] size_header: {} ({:#018b})", pos, size_header, size_header);
+    println!(
+        "[{:6}] size_header: {} ({:#018b})",
+        pos, size_header, size_header
+    );
 
     // Decode DIY (Div8) flags
     let div8 = (size_header >> 15) & 1;
@@ -145,7 +177,10 @@ fn dump_codestream(reader: &mut BitReader) -> Result<(), Box<dyn std::error::Err
         if extra_fields != 0 {
             let pos = reader.total_bits_read();
             let orientation = reader.read(3)?;
-            println!("[{:6}] orientation: {} ({:03b})", pos, orientation, orientation);
+            println!(
+                "[{:6}] orientation: {} ({:03b})",
+                pos, orientation, orientation
+            );
         }
 
         // Read more metadata fields...
@@ -169,27 +204,41 @@ fn dump_codestream(reader: &mut BitReader) -> Result<(), Box<dyn std::error::Err
     if all_default == 0 {
         let pos = reader.total_bits_read();
         let frame_type = reader.read(2)?;
-        println!("[{:6}] frame_type: {} ({})", pos, frame_type,
+        println!(
+            "[{:6}] frame_type: {} ({})",
+            pos,
+            frame_type,
             match frame_type {
                 0 => "RegularFrame",
                 1 => "LFFrame",
                 2 => "ReferenceOnly",
                 3 => "SkipProgressive",
-                _ => "unknown"
-            });
+                _ => "unknown",
+            }
+        );
 
         let pos = reader.total_bits_read();
         let encoding = reader.read(1)?;
-        println!("[{:6}] encoding: {} ({})", pos, encoding,
-            if encoding == 0 { "VarDCT" } else { "Modular" });
+        println!(
+            "[{:6}] encoding: {} ({})",
+            pos,
+            encoding,
+            if encoding == 0 { "VarDCT" } else { "Modular" }
+        );
 
         // Show more frame header fields
         println!("  (remaining frame header fields not fully parsed)");
     }
 
-    println!("\n[{:6}] ... (end of partial parse)", reader.total_bits_read());
-    println!("\nRemaining: {} bits ({} bytes)",
-        reader.total_bits_available(), reader.total_bits_available() / 8);
+    println!(
+        "\n[{:6}] ... (end of partial parse)",
+        reader.total_bits_read()
+    );
+    println!(
+        "\nRemaining: {} bits ({} bytes)",
+        reader.total_bits_available(),
+        reader.total_bits_available() / 8
+    );
 
     Ok(())
 }
@@ -207,9 +256,12 @@ fn read_u32_0bits(reader: &mut BitReader) -> Result<u32, Box<dyn std::error::Err
             let bits = reader.read(30)?;
             bits as u32
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     };
 
-    println!("[{:6}] U32(0,0,0,BitsOffset(30,0)): selector={}, value={}", pos, selector, value);
+    println!(
+        "[{:6}] U32(0,0,0,BitsOffset(30,0)): selector={}, value={}",
+        pos, selector, value
+    );
     Ok(value)
 }
