@@ -394,8 +394,14 @@ mod tests {
         let image = result.unwrap();
         assert_eq!(image.width(), 8);
         assert_eq!(image.height(), 8);
+
+        // Try to actually render the frame (not just parse headers)
+        let render = image
+            .render_frame(0)
+            .expect("test_encode_lossy_8x8: render failed");
+
         eprintln!(
-            "Decode from file bytes succeeded: {}x{}",
+            "Decode from file bytes succeeded: {}x{}, rendered successfully",
             image.width(),
             image.height()
         );
@@ -1482,13 +1488,19 @@ mod decoder_validation {
 
         match decoder {
             Ok(image) => {
+                assert_eq!(image.width(), 8);
+                assert_eq!(image.height(), 8);
+
+                // Try to actually render the frame (not just parse headers)
+                let _render = image
+                    .render_frame(0)
+                    .expect("test_decode_lossy_rgb: render failed");
+
                 eprintln!(
-                    "Successfully decoded lossy 8x8: {}x{}",
+                    "Successfully decoded lossy 8x8: {}x{}, rendered successfully",
                     image.width(),
                     image.height()
                 );
-                assert_eq!(image.width(), 8);
-                assert_eq!(image.height(), 8);
             }
             Err(e) => {
                 eprintln!("Lossy decode failed: {:?}", e);
@@ -1524,13 +1536,19 @@ mod decoder_validation {
             .read(std::io::Cursor::new(&encoded))
             .expect("Failed to decode");
 
+        assert_eq!(image.width(), 8);
+        assert_eq!(image.height(), 8);
+
+        // Try to actually render the frame (not just parse headers)
+        let _render = image
+            .render_frame(0)
+            .expect("test_decode_lossy_solid_color: render failed");
+
         eprintln!(
-            "Successfully decoded solid color 8x8: {}x{}",
+            "Successfully decoded solid color 8x8: {}x{}, rendered successfully",
             image.width(),
             image.height()
         );
-        assert_eq!(image.width(), 8);
-        assert_eq!(image.height(), 8);
     }
 
     /// Test lossy encoding at different distance levels
@@ -1558,6 +1576,11 @@ mod decoder_validation {
 
             assert_eq!(image.width(), 8);
             assert_eq!(image.height(), 8);
+
+            // Try to actually render the frame (not just parse headers)
+            let _render = image
+                .render_frame(0)
+                .expect(&format!("test_decode_lossy_distances: render failed at distance {}", distance));
         }
     }
 
@@ -1629,13 +1652,19 @@ mod decoder_validation {
         // Verify decodes correctly with jxl-oxide
         match jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded)) {
             Ok(image) => {
+                assert_eq!(image.width(), 512);
+                assert_eq!(image.height(), 512);
+
+                // Try to actually render the frame (not just parse headers)
+                let _render = image
+                    .render_frame(0)
+                    .expect("test_decode_lossy_multi_group: render failed");
+
                 eprintln!(
-                    "Successfully decoded 512x512: {}x{}",
+                    "Successfully decoded 512x512: {}x{}, rendered successfully",
                     image.width(),
                     image.height()
                 );
-                assert_eq!(image.width(), 512);
-                assert_eq!(image.height(), 512);
             }
             Err(e) => {
                 eprintln!("Multi-group decode failed: {:?}", e);
@@ -1698,7 +1727,13 @@ mod decoder_validation {
         let image = oxide_result.unwrap();
         assert_eq!(image.width(), 16);
         assert_eq!(image.height(), 16);
-        eprintln!("lossy_vardct_16x16: PASSED jxl-oxide (VarDCT WIP)");
+
+        // Try to actually render the frame (not just parse headers)
+        let _render = image
+            .render_frame(0)
+            .expect("test_dual_decode_lossy_vardct: render failed");
+
+        eprintln!("lossy_vardct_16x16: PASSED jxl-oxide (rendered successfully)");
     }
 
     /// Dual-decoder validation for solid color image
@@ -1762,8 +1797,13 @@ mod decoder_validation {
             let image = oxide_result.unwrap();
             assert_eq!(image.width(), 8);
             assert_eq!(image.height(), 8);
+
+            // Try to actually render the frame (not just parse headers)
+            let _render = image
+                .render_frame(0)
+                .expect(&format!("test_dual_decode_lossy_distances: render failed at distance {}", distance));
         }
-        eprintln!("lossy_distances: PASSED jxl-oxide (VarDCT WIP)");
+        eprintln!("lossy_distances: PASSED jxl-oxide (rendered successfully)");
     }
 
     /// Dual-decoder validation for irregular dimensions
