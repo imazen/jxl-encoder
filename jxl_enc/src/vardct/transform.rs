@@ -879,6 +879,31 @@ mod debug_tests2 {
                 name,
                 &inv_dequant[c][0..8]
             );
+            eprintln!("  {} channel - pos 63 (Nyquist): {}", name, inv_dequant[c][63]);
+            eprintln!("  {} channel - last row: {:?}", name, &inv_dequant[c][56..64]);
+        }
+
+        // Simulate quantization for checkerboard max AC coefficient
+        let dct_coeff_63 = 0.092288f32; // From our DCT test
+        let qac = 4.975f32; // From debug output
+        let threshold = 0.5f32;
+
+        eprintln!("\nSimulate quantizing checkerboard max AC coeff (pos 63):");
+        eprintln!("  DCT coeff[63] = {}", dct_coeff_63);
+        eprintln!("  qac = {}", qac);
+        eprintln!("  threshold = {}", threshold);
+
+        for (c, name) in [(0, "X"), (1, "Y"), (2, "B")] {
+            let inv_dq = inv_dequant[c][63];
+            let val = inv_dq * qac * dct_coeff_63;
+            let quantized = if val.abs() >= threshold {
+                val.round() as i32
+            } else {
+                0
+            };
+            eprintln!("  {} channel: inv_dequant[63]={:.6}, val={:.6}, quantized={}",
+                     name, inv_dq, val, quantized);
+            eprintln!("    val/threshold ratio = {:.3}", val/threshold);
         }
     }
 }

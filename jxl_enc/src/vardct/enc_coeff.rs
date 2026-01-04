@@ -141,6 +141,7 @@ pub fn quantize_block_8x8(
 
     // AC coefficients use: inv_dequant_matrix[i] * global_scale_float * raw_quant
     let qac = global_scale_float * raw_quant as f32;
+
     for i in 1..BLOCK_SIZE {
         let q = inv_dequant_matrix[i] * qac;
         let val = q * block_in[i];
