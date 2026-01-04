@@ -43,51 +43,89 @@ impl HybridUintConfig {
     /// Encodes a value and returns (token, extra_bits, num_extra_bits).
     ///
     /// The token should be entropy-coded, while extra_bits are written raw.
+    ///
+    /// The decoder reconstructs: value = ((token_high << n) | rest_bits) << lsb_in_token | low_bits
+    /// where token_high = (token_shift | (1 << msb_in_token))
     pub fn encode(&self, value: u32) -> (u32, u32, u32) {
         if value < self.split {
             // Direct coding: token = value, no extra bits
-            (value, 0, 0)
-        } else {
-            // Compute the number of bits needed for the high part
-            let high_bits = value >> self.split_exponent;
-            if high_bits == 0 {
-                // Edge case: value is exactly split
-                return (self.split, 0, 0);
-            }
-
-            let n = 32 - high_bits.leading_zeros();
-            let token_base = self.split + (n - 1) * (self.msb_in_token + self.lsb_in_token + 1);
-
-            // Extract MSB and LSB portions for token
-            let low_bits = value & ((1 << self.split_exponent) - 1);
-
-            // Compute MSB portion (top msb_in_token bits of high_bits)
-            let msb = if n > self.msb_in_token {
-                (high_bits >> (n - 1 - self.msb_in_token)) & ((1 << self.msb_in_token) - 1)
-            } else {
-                high_bits & ((1 << self.msb_in_token) - 1)
-            };
-
-            // LSB portion from low_bits
-            let lsb = low_bits & ((1 << self.lsb_in_token) - 1);
-
-            let token = token_base + msb * (self.lsb_in_token + 1) + lsb;
-
-            // Extra bits: remaining bits not encoded in token
-            let extra_bits_count = if n > self.msb_in_token + 1 {
-                n - 1 - self.msb_in_token + self.split_exponent - self.lsb_in_token
-            } else {
-                self.split_exponent.saturating_sub(self.lsb_in_token)
-            };
-
-            let extra_bits = if extra_bits_count > 0 {
-                (value >> self.lsb_in_token) & ((1 << extra_bits_count) - 1)
-            } else {
-                0
-            };
-
-            (token, extra_bits, extra_bits_count)
+            return (value, 0, 0);
         }
+
+        // For values >= split, we need to encode using the hybrid format.
+        // The decoder does:
+        //   n = split_exponent - (msb_in_token + lsb_in_token) + ((token - split) >> (msb_in_token + lsb_in_token))
+        //   low_bits = token & ((1 << lsb_in_token) - 1)
+        //   token_shift = (token >> lsb_in_token) & ((1 << msb_in_token) - 1)
+        //   token_high = token_shift | (1 << msb_in_token)
+        //   result = ((token_high << n) | rest_bits) << lsb_in_token | low_bits
+
+        let l = self.lsb_in_token;
+        let m = self.msb_in_token;
+        let s = self.split_exponent;
+
+        // Extract the low bits (lsb_in_token bits from value)
+        let low_bits = value & ((1 << l) - 1);
+
+        // The remaining value after removing low bits
+        let value_shifted = value >> l;
+
+        // The decoder reconstructs: value_shifted = (token_high << n) | rest_bits
+        // where:
+        //   n = base_n + n_extra = (s - m - l) + ((token - split) >> (m + l))
+        //   token_high = (token_shift | (1 << m)), which has (m+1) bits
+        //   rest_bits has n bits
+        //
+        // So value_shifted has (m+1+n) bits total.
+        // Given value_shifted, we compute n = value_bits - m - 1, clamped to >= base_n.
+
+        // The number of bits in value_shifted (excluding leading zeros)
+        let value_bits = if value_shifted == 0 {
+            0
+        } else {
+            32 - value_shifted.leading_zeros()
+        };
+
+        // base_n is the minimum n (when n_extra = 0)
+        let base_n = s - (m + l);
+
+        // n = value_bits - (m + 1), but at least base_n
+        let n = if value_bits > m + 1 {
+            (value_bits - m - 1).max(base_n)
+        } else {
+            base_n
+        };
+
+        // n_extra is how many extra bits beyond base_n
+        let n_extra = n - base_n;
+
+        // token_high = value_shifted >> n (this should have the implicit leading 1)
+        let token_high = if value_shifted > 0 {
+            value_shifted >> n
+        } else {
+            // Edge case: value_shifted = 0, use minimum token_high
+            1 << m
+        };
+
+        // Ensure token_high has the implicit leading 1 set
+        // If value_shifted is very small, token_high might be 0
+        let token_high = token_high.max(1 << m);
+
+        // token_shift = token_high with the implicit leading 1 stripped
+        let token_shift = token_high & ((1 << m) - 1);
+
+        // rest_bits = the bits of value_shifted not captured in token_high
+        let rest_bits = value_shifted & ((1 << n) - 1);
+
+        // Token bucket offset based on n_extra
+        // From decoder: n = base_n + ((token - split) >> (m + l))
+        // So ((token - split) >> (m + l)) = n_extra
+        // token = split + (n_extra << (m + l)) + (token_shift << l) + low_bits
+        let bucket_offset = n_extra << (m + l);
+        let token = self.split + bucket_offset + (token_shift << l) + low_bits;
+
+        // The extra bits to write are rest_bits with n bits
+        (token, rest_bits, n)
     }
 
     /// Writes a HybridUint value, given an entropy coder for the token.

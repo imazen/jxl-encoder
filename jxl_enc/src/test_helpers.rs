@@ -104,10 +104,16 @@ pub fn test_lossy_roundtrip(
 ) -> Result<()> {
     let encoded = crate::encoder::encode_lossy_rgb8(data, width, height, distance)?;
 
+    // Save for debugging
+    let debug_path = format!("/tmp/{}.jxl", test_name);
+    std::fs::write(&debug_path, &encoded).ok();
+    eprintln!("DEBUG: Saved {} bytes to {}", encoded.len(), debug_path);
+
     // VERIFY we actually used VarDCT encoding
     assert_encoding_mode(&encoded, EncodingMode::VarDct, test_name);
 
-    // Decode and verify
+    // Decode with jxl-oxide
+    eprintln!("DEBUG: Trying jxl-oxide decoder...");
     let image = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(&encoded))
         .map_err(|e| {
