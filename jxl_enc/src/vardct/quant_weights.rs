@@ -284,9 +284,8 @@ pub fn generate_dct8_weights() -> [f32; 3 * 64] {
 
 /// Get the inverse dequant matrix for DCT8 encoding.
 ///
-/// For encoding, we multiply coefficients by the inverse of the dequant weights.
-/// This means coefficients that are more perceptually important (higher weight)
-/// get less quantization, preserving quality where it matters.
+/// For encoding, we use the perceptual weights directly.
+/// In libjxl, InvDequantMatrix() returns the weights themselves (not 1/weight).
 pub fn get_dct8_inv_dequant() -> [f32; 64] {
     let weights = generate_dct8_weights();
     let mut inv_dequant = [0.0f32; 64];
@@ -295,7 +294,7 @@ pub fn get_dct8_inv_dequant() -> [f32; 64] {
     // This is a simplification - proper implementation would weight all 3 channels
     for i in 0..64 {
         let weight = weights[64 + i]; // Y channel
-        inv_dequant[i] = 1.0 / weight.max(ALMOST_ZERO);
+        inv_dequant[i] = weight; // Use weight directly for quantization
     }
 
     inv_dequant
@@ -304,6 +303,11 @@ pub fn get_dct8_inv_dequant() -> [f32; 64] {
 /// Get per-channel inverse dequant matrices for DCT8 encoding.
 ///
 /// Returns [X_inv_dequant, Y_inv_dequant, B_inv_dequant].
+///
+/// In libjxl terminology:
+/// - "InvDequantMatrix" (used for quantization/encoding) contains the weights themselves
+/// - "DequantMatrix" (used for dequantization/decoding) contains 1/weight
+/// So for ENCODING, we return the weights directly.
 pub fn get_dct8_inv_dequant_per_channel() -> [[f32; 64]; 3] {
     let weights = generate_dct8_weights();
     let mut result = [[0.0f32; 64]; 3];
@@ -311,7 +315,9 @@ pub fn get_dct8_inv_dequant_per_channel() -> [[f32; 64]; 3] {
     for c in 0..3 {
         for i in 0..64 {
             let weight = weights[c * 64 + i];
-            result[c][i] = 1.0 / weight.max(ALMOST_ZERO);
+            // Use weight directly for quantization (encoding).
+            // libjxl stores this as "inv_table" which is used by InvDequantMatrix().
+            result[c][i] = weight;
         }
     }
 
@@ -381,18 +387,22 @@ mod tests {
         // Check array size
         assert_eq!(inv_dequant.len(), 64);
 
-        // DC coefficient should have smallest inverse (highest weight in original)
-        let dc_inv = inv_dequant[0];
-        let hf_inv = inv_dequant[63];
+        // DC coefficient should have highest weight (perceptually most important)
+        // HF coefficient should have lower weight (perceptually less important)
+        let dc_weight = inv_dequant[0];
+        let hf_weight = inv_dequant[63];
 
-        // Inverse of high weight = small value
-        // Inverse of low weight = large value
+        // DC weight > HF weight (DC is more important)
         assert!(
-            dc_inv < hf_inv,
-            "DC inv {} should be < HF inv {}",
-            dc_inv,
-            hf_inv
+            dc_weight > hf_weight,
+            "DC weight {} should be > HF weight {}",
+            dc_weight,
+            hf_weight
         );
+
+        // Weights should be reasonable (Y channel: DC~560, HF~196)
+        assert!(dc_weight > 100.0, "DC weight should be > 100");
+        assert!(hf_weight > 100.0, "HF weight should be > 100");
     }
 
     #[test]
@@ -405,17 +415,21 @@ mod tests {
             assert_eq!(inv_dequant[c].len(), 64);
         }
 
-        // Each channel should have DC < HF inverse weights
+        // Each channel should have DC weight > HF weight
+        // (DC is perceptually more important)
         for c in 0..3 {
-            let dc_inv = inv_dequant[c][0];
-            let hf_inv = inv_dequant[c][63];
+            let dc_weight = inv_dequant[c][0];
+            let hf_weight = inv_dequant[c][63];
             assert!(
-                dc_inv < hf_inv,
-                "Channel {} DC inv {} should be < HF inv {}",
+                dc_weight > hf_weight,
+                "Channel {} DC weight {} should be > HF weight {}",
                 c,
-                dc_inv,
-                hf_inv
+                dc_weight,
+                hf_weight
             );
+
+            // Weights should be reasonable (> 100)
+            assert!(dc_weight > 100.0, "Channel {} DC weight should be > 100", c);
         }
     }
 
