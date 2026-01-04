@@ -896,21 +896,19 @@ impl VarDctEncoder {
     /// - wp_header (WeightedHeader with all_default bit)
     /// - transforms (count encoded with u2S)
     fn write_group_header(&self, writer: &mut BitWriter) -> Result<()> {
+        trace_section!(begin "GROUP_HEADER", writer);
+
         // use_global_tree = false (we write our own tree)
-        writer.write(1, 0)?;
+        trace_write!(writer, 1, 0, "use_global_tree", "false - write local tree")?;
 
         // wp_header.all_default = true (use default weighted params)
-        writer.write(1, 1)?;
+        trace_write!(writer, 1, 1, "wp_header.all_default", "true - use defaults")?;
 
         // transforms count = 0 (no transforms)
         // u2S(0, 1, Bits(4)+2, Bits(8)+18): selector 0 = value 0
-        writer.write(2, 0)?;
+        trace_write!(writer, 2, 0, "transforms", "u2S selector=0 → count=0")?;
 
-        eprintln!(
-            "GROUP_HDR [bit {}]: use_global_tree=0, wp_header.all_default=1, transforms=0",
-            writer.bits_written()
-        );
-
+        trace_section!(end "GROUP_HEADER", writer);
         Ok(())
     }
 
