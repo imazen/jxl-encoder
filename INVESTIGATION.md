@@ -1,25 +1,35 @@
 
-## 2026-01-03: VarDCT Single-Group Bug
+## 2026-01-03: VarDCT Encoding Bug (BOTH Single and Multi-Group)
 
 ### Issue
-VarDCT encoding fails for single-group images (≤256x256) with `InvalidPaletteParams` decoder error from jxl-oxide.
+VarDCT (lossy) encoding fails for ALL image sizes with decoder errors from jxl-oxide.
+
+**IMPORTANT**: Earlier tests that "passed" were actually **lossless** Modular encoding, NOT VarDCT!
 
 ### Root Cause
-Byte corruption in section data for single-group VarDCT encoding. Bytes in the GroupHeader are modified after being written, suggesting either:
-1. BitWriter bug in specific usage pattern
-2. Code modifying bytes post-write
-3. Single-group encoding path has implementation issues
+VarDCT implementation has bugs in both single-group and multi-group paths:
+
+1. **Single-group (≤256x256)**: Byte corruption in GroupHeader
+   - Bytes modified after writing (byte 14: 0x28→0x88, byte 27: 0x25→0xFC)
+   - Decoder error: `InvalidEnum { name: "TransformId", value: 3 }`
+
+2. **Multi-group (>256x256)**: Insufficient data written
+   - Decoder error: `UnexpectedEof`
+   - Suggests missing data or incorrect TOC sizes
 
 ### Evidence
-- **512x512 test**: ✓ PASSES (multi-group)
-- **300x300 test**: ✓ PASSES (multi-group)
-- **8x8 test**: ✗ FAILS (single-group)
-- **256x256 test**: ✗ FAILS (single-group)
+**Lossless (Modular) - WORKS:**
+- ✓ 300x300 lossless: PASSES
+- ✓ 512x512 lossless: PASSES
 
-Section byte 27 (which should contain GroupHeader) changes from expected `0x25` to actual `0xFC` in finished output. Similarly, byte 14 changes from `0x28` to `0x88`.
+**Lossy (VarDCT) - FAILS:**
+- ✗ 8x8 lossy: FAILS (`InvalidEnum { name: "TransformId", value: 3 }`)
+- ✗ 256x256 lossy: FAILS (`InvalidEnum`)
+- ✗ 300x300 lossy: FAILS (`UnexpectedEof`)
+- ✗ 512x512 lossy: FAILS (`UnexpectedEof`)
 
 ### Workaround
-**VarDCT encoding works correctly for images >256 pixels in any dimension** (multi-group path). Small image failures are isolated to the single-group optimization path.
+**None - VarDCT encoding is currently broken for all sizes.** Use lossless Modular encoding instead.
 
 ### Next Steps
 1. Investigate single-group vs multi-group encoding differences
