@@ -78,10 +78,12 @@ These broke 15 lossless tests. We surgically extracted only the good VarDCT chan
 
 ### Investigation Approach
 1. ✅ Enable tracing (`--features trace-bitstream`)
-2. ⏭️ Compare AC tokenization output vs. histogram input
-3. ⏭️ Trace distribution building and clustering
-4. ⏭️ Verify context mapping for AC coefficients
-5. ⏭️ Compare our Pass Group structure to libjxl reference
+2. ✅ Compare with libjxl reference (dump_bitstream example)
+3. ✅ **Found Bug #1**: Size header format mismatch (small=true vs false)
+4. ✅ **Found Bug #2**: AC coefficients collapse to alphabet_size=1
+5. ⏭️ Fix size header to match libjxl
+6. ⏭️ Trace distribution building to find alphabet collapse
+7. ⏭️ Fix AC coefficient encoding
 
 ### Test Strategy
 - Use `test_roundtrip_lossy_rgb_d1` as primary test
