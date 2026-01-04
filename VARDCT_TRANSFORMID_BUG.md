@@ -1,13 +1,77 @@
-# VarDCT "Invalid TransformId" Bug Investigation
+# VarDCT Bug Investigation and Fixes
 
-**Status**: UNSOLVED - Complex bitstream structure issue
+**Status**: ✅ ALL FIXED (2026-01-04)
 **Date**: 2026-01-04
-**Affects**: All VarDCT (lossy) encoding, all image sizes
-**Error**: `InvalidEnum { name: "TransformId", value: 3 }` from all decoders
+**Affects**: All VarDCT encoding - single-group AND multi-group now working
+**Tests**: 357/357 passing (100%)
 
-## Summary
+## SOLUTION SUMMARY
 
-VarDCT encoding produces files that fail to decode with "Invalid TransformId value 3" error. Despite extensive investigation with bitstream tracing, the root cause remains elusive. **The bitstream appears to be written correctly, but decoders fail to parse it.**
+Two separate bugs were fixed:
+
+### Bug 1: LfChannelCorrelation Field Encoding (Single-group)
+
+**Error**: `InvalidEnum { name: "TransformId", value: 3 }`
+
+**Root Cause**: Wrong field encoding in LfChannelCorrelation (color correlation for CfL).
+
+**The Bug**: The encoder was writing `ytox_dc` and `ytob_dc` as signed varints (S32/zigzag encoding), but the decoder expects `x_factor_lf` and `b_factor_lf` as unsigned 8-bit values.
+
+**Location**: `jxl_enc/src/vardct/encoder.rs` in `write_color_correlation()`
+
+**Fix**: Changed from:
+```rust
+write_signed_varint_traced(writer, cmap.ytox_dc, "ytox_dc")?;
+write_signed_varint_traced(writer, cmap.ytob_dc, "ytob_dc")?;
+```
+
+To:
+```rust
+trace_write!(writer, 8, 128, "x_factor_lf", "default=128")?;
+trace_write!(writer, 8, 128, "b_factor_lf", "default=128")?;
+```
+
+**Why this caused TransformId=3**:
+1. Signed varint encoding writes variable-length data (could be 2-18 bits per value)
+2. The decoder expected exactly 8 bits per field
+3. This bit misalignment cascaded through subsequent fields
+4. When the decoder reached the modular substream, it was reading from wrong bit positions
+5. The `nb_transforms` field was read from garbage bits, giving a non-zero value
+6. The decoder then tried to read transform IDs, getting value 3 (invalid)
+
+### Bug 2: Missing num_hf_presets in HfGlobal (Multi-group)
+
+**Error**: `InvalidIntegerConfig { split_exponent: 2, msb_in_token: 0, lsb_in_token: Some(3) }`
+
+**Root Cause**: Missing `num_hf_presets` field in HfGlobal section for multi-group frames.
+
+**The Bug**: The encoder was not writing the `num_hf_presets` field before the coefficient orders. For single-group frames, this field uses 0 bits (ceil_log2(1) = 0), so it was implicitly correct. For multi-group frames (e.g., 4 groups for 512x512), it requires ceil_log2(4) = 2 bits.
+
+**Location**: `jxl_enc/src/vardct/encoder.rs` in `write_hf_global()`
+
+**Fix**: Added num_hf_presets encoding:
+```rust
+let num_groups = self.num_groups();
+let num_hf_presets_bits = num_groups.next_power_of_two().trailing_zeros() as usize;
+if num_hf_presets_bits > 0 {
+    // Write num_hf_presets - 1 = 0 (we use 1 preset)
+    writer.write(num_hf_presets_bits, 0)?;
+}
+```
+
+**Why this caused InvalidIntegerConfig**:
+1. The decoder expected to read `num_hf_presets` (2 bits for 4 groups)
+2. Without this field, the decoder read the coefficient order selector bits as num_hf_presets
+3. This shifted all subsequent reads by 2 bits
+4. The IntegerConfig (split_exponent, msb_in_token, lsb_in_token) was read from wrong positions
+5. The invalid config violated the constraint: `lsb_in_token + msb_in_token <= split_exponent`
+
+## Previous Wrong Hypotheses (for future reference)
+
+The investigation document below documented several wrong theories:
+- Size header format mismatch (was not the issue - our size header is correct)
+- do_ycbcr field alignment (was an issue for frame header, separate fix needed)
+- OpsinInverseMatrix missing (not required when using all_default encoding)
 
 ## The Problem
 

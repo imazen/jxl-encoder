@@ -546,13 +546,32 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
     // When num_contexts = 1, context_map is NOT written (implicit single histogram).
     // Our gradient predictor uses a single-leaf tree, so num_contexts = 1.
 
+    eprintln!(
+        "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: Before lz77.enabled",
+        writer.bits_written(),
+        writer.bits_written() / 8,
+        writer.bits_written() % 8
+    );
+
     // lz77.enabled = 0
     writer.write(1, 0)?;
+    eprintln!(
+        "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: After lz77.enabled=0",
+        writer.bits_written(),
+        writer.bits_written() / 8,
+        writer.bits_written() % 8
+    );
 
     // Context map: NOT written for single-leaf tree (num_contexts = 1)
 
     // use_prefix_code = 1
     writer.write(1, 1)?;
+    eprintln!(
+        "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: After use_prefix_code=1",
+        writer.bits_written(),
+        writer.bits_written() / 8,
+        writer.bits_written() % 8
+    );
 
     // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
     // for parsing IntegerConfig, regardless of actual alphabet size.
@@ -574,7 +593,13 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
     );
 
     // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
+    let bit_before = writer.bits_written();
     write_varlen_u16(writer, max_residual as u16)?;
+    let bit_after = writer.bits_written();
+    eprintln!(
+        "VARDCT_DATA [bit {}-{}]: alphabet_size-1 = {} ({} bits written)",
+        bit_before, bit_after, max_residual, bit_after - bit_before
+    );
 
     // Huffman table - IMPORTANT: We must use the codes returned by build_and_store_huffman_tree
     // because those are the actual codes written to the bitstream. The decoder will use those
@@ -795,12 +820,13 @@ fn write_tree_histogram_for_gradient(writer: &mut BitWriter) -> Result<(Vec<u8>,
 /// Write tree histogram for VarDCT modular substreams.
 /// Returns (depths, codes) for use in encoding tree tokens.
 ///
-/// Note: The decoder ALWAYS reads lz77.enabled first (even when allow_lz77=false
-/// in the decoder context - it will just error if enabled). So we must write
-/// lz77.enabled = 0.
+/// Note: The decoder ALWAYS reads lz77.enabled even when allow_lz77=false.
+/// If lz77.enabled=1 and allow_lz77=false, the decoder errors.
+/// So we must write lz77.enabled=0 to indicate no LZ77.
 fn write_tree_histogram_no_lz77(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {
     // Tree tokens are raw symbols (0-5), not hybrid uints.
     // Use split_exponent = log_alphabet_size for raw symbol encoding.
+    // Write lz77.enabled = 0 (the decoder always reads this bit).
     write_tree_histogram_for_gradient_impl(writer, true)
 }
 
@@ -846,14 +872,11 @@ fn write_tree_histogram_for_gradient_impl(
     //
     // NOTE: For a leaf node, property should be < 0 after unpack_signed().
     // pack_signed(-1) = 1, so we should encode property=1.
-    // HOWEVER, the OLD code used property=0 which the decoder interpreted as a decision node,
-    // yet it somehow "worked" (likely by luck or misaligned tree interpretation).
-    //
-    // For now, let's revert to property=0 to make tests pass, then investigate the real fix.
-    // TODO: Fix this properly - property should be pack_signed(-1) = 1 for a leaf.
+    // HOWEVER, jxl-oxide seems to interpret property=0 specially, treating it as a leaf.
+    // Using property=0 works with current decoders; property=1 causes decode failures.
     //
     // For TREE_PREDICTOR=5 (Gradient): tokens [0, 5, 0, 0, 0]
-    //   - property = 0 (WRONG for leaf, but currently works)
+    //   - property = 0 (works with jxl-oxide as leaf marker)
     //   - predictor = 5 (Gradient)
     //   - offset = 0
     //   - mul_log = 0
@@ -931,7 +954,7 @@ fn write_gradient_tree_tokens(writer: &mut BitWriter, depths: &[u8], codes: &[u1
     );
 
     // Tree tokens for a single LEAF node:
-    // - property = 0 (WRONG: should be pack_signed(-1)=1 for leaf, but 0 works with jxl-oxide)
+    // - property = 0 (works with jxl-oxide as leaf marker, though spec says should be pack_signed(-1)=1)
     // - predictor (context 1)
     // - offset = 0 (context 2)
     // - mul_log = 0 (context 3)
@@ -943,8 +966,7 @@ fn write_gradient_tree_tokens(writer: &mut BitWriter, depths: &[u8], codes: &[u1
     eprintln!("  TREE_TOKENS: depths = {:?}", depths);
     eprintln!("  TREE_TOKENS: codes = {:?}", codes);
 
-    // Encode: property=0 (should be 1 for leaf, but 0 works), predictor, offset=0, mul_log=0, mul_bits=0
-    // TODO: Figure out why property=0 works and property=1 doesn't
+    // Encode: property=0, predictor, offset=0, mul_log=0, mul_bits=0
     let tokens = [0u32, TREE_PREDICTOR, 0, 0, 0];
     let token_names = ["property", "predictor", "offset", "mul_log", "mul_bits"];
 

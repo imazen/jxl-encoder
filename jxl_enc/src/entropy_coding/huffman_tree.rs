@@ -753,16 +753,30 @@ pub fn store_meta_huffman_tree(
 
     // Write skip count (2 bits) - this is the simple_code_or_skip field
     // Values 0, 2, 3 indicate full tree with skip; value 1 would be simple code
+    let bit_pos_start = writer.bits_written();
     writer.write(2, skip_some as u64)?;
+    eprintln!("  META: wrote hskip={} at bit {}", skip_some, bit_pos_start);
 
     // Write code length depths using static Huffman code
+    // The decoder reads code lengths for symbols in storage order
+    let mut bitacc = 0usize;
     for i in skip_some..codes_to_store {
-        let depth_value = code_length_depths[STORAGE_ORDER[i]] as usize;
+        let symbol = STORAGE_ORDER[i];
+        let depth_value = code_length_depths[symbol] as usize;
         debug_assert!(depth_value <= 5, "Code length depth must be 0-5");
         let bits = DEPTH_CODE_BIT_LENGTHS[depth_value] as usize;
         let code = DEPTH_CODE_SYMBOLS[depth_value] as u64;
+        let bit_pos = writer.bits_written();
         writer.write(bits, code)?;
+        if depth_value > 0 {
+            bitacc += 32 >> depth_value;
+        }
+        eprintln!(
+            "  META[{}]: symbol={}, depth={}, code=0b{:0width$b} ({} bits), bitacc={}",
+            i, symbol, depth_value, code, bits, bitacc, width = bits
+        );
     }
+    eprintln!("  META: final bitacc={} (should be 32)", bitacc);
 
     Ok(())
 }
@@ -794,18 +808,41 @@ pub fn store_compressed_tree(
     code_length_codes: &[u16; CODE_LENGTH_CODES],
     writer: &mut BitWriter,
 ) -> Result<()> {
-    for i in 0..tree.codes.len() {
+    eprintln!("  TREE: meta_codes = {:?}", &code_length_codes[..5]);
+    eprintln!("  TREE: meta_depths = {:?}", &code_length_depths[..5]);
+
+    for i in 0..tree.codes.len().min(10) {
         let ix = tree.codes[i] as usize;
         debug_assert!(ix < CODE_LENGTH_CODES);
 
         // Write the code for this code length
         let depth = code_length_depths[ix] as usize;
         let code = code_length_codes[ix] as u64;
+        let bit_pos = writer.bits_written();
         if depth > 0 {
             writer.write(depth, code)?;
         }
+        eprintln!(
+            "  TREE[{}]: code_len_code={}, meta_depth={}, meta_code=0b{:b}, extra_bits={}",
+            i, ix, depth, code, tree.extra_bits[i]
+        );
 
         // Write extra bits for RLE codes
+        match ix {
+            16 => writer.write(2, tree.extra_bits[i] as u64)?,
+            17 => writer.write(3, tree.extra_bits[i] as u64)?,
+            _ => {}
+        }
+    }
+
+    // Write remaining codes silently
+    for i in 10..tree.codes.len() {
+        let ix = tree.codes[i] as usize;
+        let depth = code_length_depths[ix] as usize;
+        let code = code_length_codes[ix] as u64;
+        if depth > 0 {
+            writer.write(depth, code)?;
+        }
         match ix {
             16 => writer.write(2, tree.extra_bits[i] as u64)?,
             17 => writer.write(3, tree.extra_bits[i] as u64)?,

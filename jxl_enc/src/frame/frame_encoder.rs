@@ -360,46 +360,76 @@ impl FrameEncoder {
         distributions: &[AnsDistribution],
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // For single-group VarDCT, we can use a single TOC entry containing all sections.
-        // The sections are concatenated in order: LfGlobal, HfGlobal, LfGroup, PassGroup
+        // For single-group VarDCT, we use a single TOC entry containing all sections.
+        // CRITICAL: Section order must be LfGlobal → LfGroup → HfGlobal → PassGroup
+        // CRITICAL: In single-group mode, the decoder reads ALL sections from a single
+        // continuous BitReader WITHOUT byte alignment between sections. Only the final
+        // combined data is byte-aligned.
         let mut section_writer = BitWriter::new();
 
-        // LF Global section
+        // 1. LF Global section (NO byte padding - continuous bitstream)
+        let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_global(&mut section_writer)?;
-        section_writer.zero_pad_to_byte();
-        let lf_global_size = section_writer.bytes_written();
-        eprintln!("SECTION: LF Global = {} bytes", lf_global_size);
+        let lf_global_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION: LF Global = {} bits", lf_global_bits);
 
-        // HF Global section (with histograms)
-        vardct_encoder.write_hf_global(distributions, &mut section_writer)?;
-        section_writer.zero_pad_to_byte();
-        let hf_global_size = section_writer.bytes_written() - lf_global_size;
-        eprintln!("SECTION: HF Global = {} bytes", hf_global_size);
-
-        // LF Group (DC coefficients)
+        // 2. LF Group (DC coefficients + HF metadata) - NO byte padding
+        let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
-        section_writer.zero_pad_to_byte();
-        let lf_group_size = section_writer.bytes_written() - lf_global_size - hf_global_size;
-        eprintln!("SECTION: LF Group = {} bytes", lf_group_size);
+        let lf_group_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION: LF Group = {} bits", lf_group_bits);
 
-        // Pass Group (AC coefficients)
+        // 3. HF Global section (with histograms) - NO byte padding
+        let start_bits = section_writer.bits_written();
+        vardct_encoder.write_hf_global(tokens, distributions, &mut section_writer)?;
+        let hf_global_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION: HF Global = {} bits", hf_global_bits);
+
+        // 4. Pass Group (AC coefficients) - NO byte padding
+        let start_bits = section_writer.bits_written();
         vardct_encoder.write_pass_group(tokens, distributions, &mut section_writer)?;
+        let pass_group_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION: Pass Group = {} bits", pass_group_bits);
+
+        // Only pad to byte at the very end of all sections
         section_writer.zero_pad_to_byte();
-        let pass_group_size =
-            section_writer.bytes_written() - lf_global_size - hf_global_size - lf_group_size;
-        eprintln!("SECTION: Pass Group = {} bytes", pass_group_size);
 
         let section_data = section_writer.finish();
         let section_size = section_data.len();
         eprintln!("SECTION: Total = {} bytes", section_size);
+        eprintln!(
+            "SECTION: First 20 bytes: {:02x?}",
+            &section_data[..section_data.len().min(20)]
+        );
+        // Bytes around bit 134 (byte 16, bit 6) where DATA Huffman table starts
+        if section_data.len() > 20 {
+            eprintln!(
+                "SECTION: Bytes 14-25 (around DATA Huffman): {:02x?}",
+                &section_data[14..section_data.len().min(26)]
+            );
+        }
 
         // Write single TOC entry
+        eprintln!(
+            "MAIN_WRITER [bit {}]: Before TOC",
+            writer.bits_written()
+        );
         self.write_toc(writer, section_size)?;
+        eprintln!(
+            "MAIN_WRITER [bit {}, byte {}]: After TOC, before section data",
+            writer.bits_written(),
+            writer.bits_written() / 8
+        );
 
         // Append section data
         for byte in section_data {
             writer.write_u8(byte)?;
         }
+        eprintln!(
+            "MAIN_WRITER [bit {}, byte {}]: After section data",
+            writer.bits_written(),
+            writer.bits_written() / 8
+        );
 
         Ok(())
     }
@@ -417,10 +447,10 @@ impl FrameEncoder {
         let num_lf_groups = self.num_lf_groups();
         let num_passes = 1; // Single pass for now
 
-        // For multi-group, we need separate sections:
+        // For multi-group, sections must be in this order per JXL spec:
         // [0] LfGlobal
-        // [1] HfGlobal
-        // [2..2+num_lf_groups] LfGroup for each LF group
+        // [1..1+num_lf_groups] LfGroup for each LF group
+        // [1+num_lf_groups] HfGlobal
         // [2+num_lf_groups..] PassGroup for each (group, pass)
 
         let mut section_data: Vec<Vec<u8>> = Vec::new();
@@ -431,13 +461,7 @@ impl FrameEncoder {
         lf_global_writer.zero_pad_to_byte();
         section_data.push(lf_global_writer.finish());
 
-        // Section 1: HF Global
-        let mut hf_global_writer = BitWriter::new();
-        vardct_encoder.write_hf_global(distributions, &mut hf_global_writer)?;
-        hf_global_writer.zero_pad_to_byte();
-        section_data.push(hf_global_writer.finish());
-
-        // Sections 2..2+num_lf_groups: LF Group for each LF group
+        // Sections 1..1+num_lf_groups: LF Group for each LF group
         // For images ≤2048x2048, there's only 1 LF group
         for _lf_group_idx in 0..num_lf_groups {
             let mut lf_group_writer = BitWriter::new();
@@ -446,18 +470,31 @@ impl FrameEncoder {
             section_data.push(lf_group_writer.finish());
         }
 
-        // Sections for PassGroup: tokenize and write AC coefficients per group
+        // First, collect all group tokens so we can compute combined alphabet size
+        let mut all_group_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
+        for group_idx in 0..num_groups {
+            let group_tokens =
+                vardct_encoder.tokenize_ac_coefficients_for_group(ac_coeffs, group_idx);
+            all_group_tokens.push(group_tokens);
+        }
+
+        // Combine all tokens for HF Global histogram
+        let combined_tokens: Vec<Token> = all_group_tokens.iter().flatten().cloned().collect();
+
+        // Section 1+num_lf_groups: HF Global
+        let mut hf_global_writer = BitWriter::new();
+        vardct_encoder.write_hf_global(&combined_tokens, distributions, &mut hf_global_writer)?;
+        hf_global_writer.zero_pad_to_byte();
+        section_data.push(hf_global_writer.finish());
+
+        // Sections for PassGroup: write AC coefficients per group
         for group_idx in 0..num_groups {
             for _pass in 0..num_passes {
                 let mut pass_group_writer = BitWriter::new();
 
-                // Tokenize AC coefficients for this specific group
-                let group_tokens =
-                    vardct_encoder.tokenize_ac_coefficients_for_group(ac_coeffs, group_idx);
-
-                // Write tokens for this group
+                // Write tokens for this group (already tokenized above)
                 vardct_encoder.write_pass_group(
-                    &group_tokens,
+                    &all_group_tokens[group_idx],
                     distributions,
                     &mut pass_group_writer,
                 )?;
