@@ -2186,4 +2186,27 @@ mod decoder_validation {
         let (w, h) = (img.width() as usize, img.height() as usize);
         validate_lossless_roundtrip_gray(gray.as_raw(), w, h, "corpus_basn0g08");
     }
+#[cfg(test)]
+mod vardct_tests {
+    use crate::test_helpers::*;
+
+    #[test]
+    fn test_vardct_8x8_checkerboard() {
+        // 8x8 checkerboard - simplest VarDCT test
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                let val = if (x + y) % 2 == 0 { 255 } else { 0 };
+                data[idx] = val;     // R
+                data[idx + 1] = val; // G
+                data[idx + 2] = val; // B
+            }
+        }
+
+        // This will verify encoding mode and fail with clear error if wrong
+        test_lossy_roundtrip(&data, 8, 8, 1.0, "vardct_8x8_checkerboard")
+            .expect("VarDCT 8x8 should work");
+    }
+}
 }
