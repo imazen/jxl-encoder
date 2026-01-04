@@ -1,21 +1,29 @@
 
-## 2026-01-03: VarDCT Encoding Bug (BOTH Single and Multi-Group)
+## 2026-01-03: VarDCT Encoding Bug - InvalidEnum TransformId
 
 ### Issue
-VarDCT (lossy) encoding fails for ALL image sizes with decoder errors from jxl-oxide.
+VarDCT (lossy) encoding produces `InvalidEnum { name: "TransformId", value: 3 }` decoder error.
 
-**IMPORTANT**: Earlier tests that "passed" were actually **lossless** Modular encoding, NOT VarDCT!
+**FIXED**: Test infrastructure was detecting wrong encoding mode due to parsing bug.
+- Problem: `parse_encoding_mode()` was finding file header's `num_extra_channels=0` (bit 31) instead of frame header's `all_default` (bit 40)
+- Fix: Start searching at bit 38 to skip file header metadata
 
 ### Root Cause
-VarDCT implementation has bugs in both single-group and multi-group paths:
+VarDCT bitstream has incorrect TransformId value in modular substream.
 
-1. **Single-group (≤256x256)**: Byte corruption in GroupHeader
-   - Bytes modified after writing (byte 14: 0x28→0x88, byte 27: 0x25→0xFC)
-   - Decoder error: `InvalidEnum { name: "TransformId", value: 3 }`
+Single-group test (8x8) now correctly detects VarDCT encoding but fails decoding:
+- Decoder error: `InvalidEnum { name: "TransformId", value: 3 }`
+- This occurs in the Modular substream used for DC coefficients or HF metadata
 
-2. **Multi-group (>256x256)**: Insufficient data written
-   - Decoder error: `UnexpectedEof`
-   - Suggests missing data or incorrect TOC sizes
+### Progress
+**Fixed**:
+- Test helper `parse_encoding_mode()` now correctly detects VarDCT vs Modular (changed search range from bit 30 to bit 38)
+
+**Current Investigation**:
+- Our output: 44 bytes, fails to decode (both djxl and jxl-oxide)
+- Reference (cjxl): 85 bytes, decodes correctly
+- Need to find exact bit position where bitstreams diverge
+- Likely issue in GroupHeader or Tree writing for modular substreams
 
 ### Evidence
 **Lossless (Modular) - WORKS:**

@@ -26,9 +26,10 @@ pub fn parse_encoding_mode(data: &[u8]) -> Option<EncodingMode> {
         Some((data[byte_idx] >> bit_idx) & 1)
     }
 
-    // Frame header typically starts around bit 35-60 depending on size header
+    // Frame header typically starts around bit 38-60 depending on size header
     // Look for all_default=0 followed by frame_type (2 bits) and encoding (1 bit)
-    for start_bit in 30..70 {
+    // Start at 38 to skip file header metadata (which can have spurious zeros)
+    for start_bit in 38..70 {
         let all_default = read_bit(data, start_bit)?;
         if all_default == 0 {
             // all_default=0, so frame_type (2 bits) and encoding (1 bit) follow
