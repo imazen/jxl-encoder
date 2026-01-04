@@ -150,13 +150,34 @@ impl QuantizerParams {
             trace_write!(writer, 11, gs - 1, "global_scale.value", &format!("{}", gs)).unwrap();
         } else if (2049..=4096).contains(&gs) {
             trace_write!(writer, 2, 1, "global_scale.selector", "1 (2049-4096)").unwrap();
-            trace_write!(writer, 11, gs - 2049, "global_scale.value", &format!("{}", gs)).unwrap();
+            trace_write!(
+                writer,
+                11,
+                gs - 2049,
+                "global_scale.value",
+                &format!("{}", gs)
+            )
+            .unwrap();
         } else if (4097..=8192).contains(&gs) {
             trace_write!(writer, 2, 2, "global_scale.selector", "2 (4097-8192)").unwrap();
-            trace_write!(writer, 12, gs - 4097, "global_scale.value", &format!("{}", gs)).unwrap();
+            trace_write!(
+                writer,
+                12,
+                gs - 4097,
+                "global_scale.value",
+                &format!("{}", gs)
+            )
+            .unwrap();
         } else {
             trace_write!(writer, 2, 3, "global_scale.selector", "3 (8193+)").unwrap();
-            trace_write!(writer, 16, gs - 8193, "global_scale.value", &format!("{}", gs)).unwrap();
+            trace_write!(
+                writer,
+                16,
+                gs - 8193,
+                "global_scale.value",
+                &format!("{}", gs)
+            )
+            .unwrap();
         }
 
         let qdc = self.quant_dc as u64;

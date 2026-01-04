@@ -263,6 +263,16 @@ impl BitWriter {
         &self.storage[..self.bytes_written()]
     }
 
+    /// Returns a view of the internal storage for debugging.
+    ///
+    /// Unlike `as_bytes()`, this does not require byte alignment and returns
+    /// the raw storage including any partial bytes. Useful for debugging
+    /// bit-level encoding issues.
+    pub fn peek_bytes(&self) -> &[u8] {
+        let bytes = (self.bits_written + 7) / 8;
+        &self.storage[..bytes.min(self.storage.len())]
+    }
+
     /// Consumes the writer and returns the written bytes.
     ///
     /// The writer must be byte-aligned.
