@@ -210,13 +210,17 @@ impl FileHeader {
         let w_div8 = self.width.is_multiple_of(8) && self.width / 8 >= 1 && self.width / 8 <= 32;
         let small = h_div8 && w_div8;
 
+        eprintln!("SIZE_HDR: {}x{}, small={}, h_div8={}, w_div8={}",
+                  self.width, self.height, small, h_div8, w_div8);
         writer.write_bit(small)?;
 
         if small {
             // ysize_div8: Bits(5) + 1, so write (height/8 - 1) in 5 bits
+            eprintln!("SIZE_HDR: ysize_div8_minus_1 = {}", self.height / 8 - 1);
             writer.write(5, (self.height / 8 - 1) as u64)?;
 
             let ratio = self.compute_ratio();
+            eprintln!("SIZE_HDR: ratio = {}", ratio);
             writer.write(3, ratio as u64)?;
 
             if ratio == 0 {
@@ -366,12 +370,15 @@ impl FileHeader {
         meta.bit_depth.write(writer)?;
         eprintln!("META [bit {}]: After bit_depth", writer.bits_written());
 
-        // modular_16_bit_buffer_sufficient (always true for now)
+        // modular_16_bit_buffer_sufficient
+        // Default is true for bit depths <= 12
+        let mod16_sufficient = meta.bit_depth.bits_per_sample <= 12;
         eprintln!(
-            "META [bit {}]: modular_16_bit_buffer_sufficient = true",
-            writer.bits_written()
+            "META [bit {}]: modular_16_bit_buffer_sufficient = {}",
+            writer.bits_written(),
+            mod16_sufficient
         );
-        writer.write_bit(true)?;
+        writer.write_bit(mod16_sufficient)?;
 
         // num_extra_channels
         let num_extra = meta.extra_channels.len() as u32;

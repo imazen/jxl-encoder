@@ -504,6 +504,14 @@ impl VarDctEncoder {
                     // Count non-zeros
                     let nzeros: usize = effective_ac.iter().filter(|&&x| x != 0).count();
 
+                    // Debug: print first block's AC coeffs
+                    if block_idx == 0 && c == 0 {
+                        eprintln!("AC_DEBUG_STRAT: block 0, channel 0: ac_start={}, ac_end={}, effective_ac.len()={}",
+                                  ac_start, ac_end, effective_ac.len());
+                        eprintln!("AC_DEBUG_STRAT: first 10 coeffs = {:?}", &effective_ac[..10.min(effective_ac.len())]);
+                        eprintln!("AC_DEBUG_STRAT: nzeros = {}", nzeros);
+                    }
+
                     // Emit non-zero count token
                     let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
                     tokens.push(Token::new(nz_ctx, nzeros as u32));
@@ -610,6 +618,12 @@ impl VarDctEncoder {
 
                     // Count non-zeros
                     let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
+
+                    // Debug: print first block's AC coeffs
+                    if block_idx == 0 && c == 0 {
+                        eprintln!("AC_DEBUG: block 0, channel 0: first 10 coeffs = {:?}", &block_ac[..10.min(block_ac.len())]);
+                        eprintln!("AC_DEBUG: nzeros = {}", nzeros);
+                    }
 
                     // Emit non-zero count token
                     let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
@@ -979,10 +993,16 @@ impl VarDctEncoder {
         }
         eprintln!("PASS_GROUP: {} tokens to write", tokens.len());
 
+        // Debug: print token values
+        eprintln!("PASS_GROUP: token values: {:?}", tokens.iter().map(|t| (t.context, t.value)).collect::<Vec<_>>());
+
         // Get the single distribution (we use cluster 0 for all contexts)
         let dist = distributions.first().ok_or_else(|| {
             crate::error::Error::InvalidHistogram("no distributions for pass group".to_string())
         })?;
+
+        // Debug: print distribution info
+        eprintln!("PASS_GROUP: distribution alphabet_size={}, num_contexts={}", dist.alphabet_size(), distributions.len());
 
         // For Huffman encoding, we need to emit symbols directly
         // Use a simple encoding: each token value is written with fixed bits

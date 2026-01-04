@@ -27,11 +27,12 @@
 ## What's Broken ❌
 
 ### VarDCT AC Coefficient Loss
-**Status**: Known bug, tests correctly ignored
+**Status**: ROOT CAUSE IDENTIFIED - 2026-01-03
 
 **Symptoms**:
 ```
-PASS_GROUP: 12 tokens to write
+PASS_GROUP: 3 tokens to write
+PASS_GROUP: token values: [(7, 0), (0, 0), (7, 0)]  ← All values are 0!
 PASS_GROUP: alphabet_size = 1
 PASS_GROUP: single symbol, returning
 SECTION: Pass Group = 0 bytes  ← AC coefficients lost!
@@ -40,15 +41,20 @@ SECTION: Pass Group = 0 bytes  ← AC coefficients lost!
 **Impact**:
 - Files parse successfully (headers valid)
 - Decoding pixels fails:
-  - `test_roundtrip_lossy_rgb_d1`: `InvalidEnum { TransformId: 3 }`
-  - `test_roundtrip_lossy_rgb_d2`: `ClusterHole` error
+  - `test_encode_lossy_8x8`: `InvalidPaletteParams`
+  - Other lossy tests: `InvalidEnum`, `ClusterHole` errors
 
-**Root Cause** (suspected):
-AC coefficients are generated and tokenized (12 tokens seen), but somewhere between tokenization and histogram building, they collapse to a single symbol (alphabet_size=1). Possible locations:
-1. Token-to-symbol conversion
-2. Histogram building from distributions
-3. Context computation creating wrong mapping
-4. Distribution merging/clustering
+**Root Cause** (CONFIRMED):
+ALL AC coefficients are ZERO after DCT/quantization pipeline:
+```
+AC_DEBUG_STRAT: block 0, channel 0: first 10 coeffs = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+AC_DEBUG_STRAT: nzeros = 0
+```
+
+For a red/blue checkerboard pattern (8x8), AC coefficients should be NON-ZERO to capture the high-frequency pattern. The issue is in the **DCT transform or quantization pipeline**, NOT in tokenization/encoding.
+
+**Location**: `jxl_enc/src/vardct/transform.rs` - DCT transform and/or quantization
+**Next**: Investigate why checkerboard DCT produces all-zero AC coefficients
 
 ## Recent Changes (This Branch)
 
@@ -79,11 +85,12 @@ These broke 15 lossless tests. We surgically extracted only the good VarDCT chan
 ### Investigation Approach
 1. ✅ Enable tracing (`--features trace-bitstream`)
 2. ✅ Compare with libjxl reference (dump_bitstream example)
-3. ✅ **Found Bug #1**: Size header format mismatch (small=true vs false)
-4. ✅ **Found Bug #2**: AC coefficients collapse to alphabet_size=1
-5. ⏭️ Fix size header to match libjxl
-6. ⏭️ Trace distribution building to find alphabet collapse
-7. ⏭️ Fix AC coefficient encoding
+3. ✅ ~~Bug #1: Size header~~ - False alarm, was correct
+4. ✅ **FOUND ROOT CAUSE**: All AC coefficients quantized to zero
+5. ⏭️ Extract equivalent C++ code from libjxl for DCT/quantization
+6. ⏭️ Compare our implementation with libjxl reference
+7. ⏭️ Fix DCT/quantization to preserve AC coefficients
+8. ⏭️ Verify with roundtrip test
 
 ### Test Strategy
 - Use `test_roundtrip_lossy_rgb_d1` as primary test
