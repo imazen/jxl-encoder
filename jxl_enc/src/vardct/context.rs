@@ -5,6 +5,8 @@
 
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
+#[allow(unused_imports)]
+use crate::{trace_section, trace_write};
 
 use super::ac_strategy::NUM_ORDERS;
 
@@ -198,6 +200,34 @@ impl BlockContextMap {
             // Write context map
             write_context_map(writer, &self.context_map)?;
         }
+        Ok(())
+    }
+
+    /// Write block context map with tracing.
+    pub fn write_traced(&self, writer: &mut BitWriter) -> Result<()> {
+        trace_section!(begin "BLOCK_CTX_MAP", writer);
+
+        if self.use_default {
+            trace_write!(writer, 1, 1, "all_default", "true (15 contexts)")?;
+        } else {
+            trace_write!(writer, 1, 0, "all_default", "false - custom thresholds")?;
+            // Write LF thresholds
+            for (i, thr) in self.lf_thresholds.iter().enumerate() {
+                trace_write!(writer, 4, thr.len() as u64, &format!("lf_thr[{}].count", i))?;
+                for &t in thr {
+                    write_threshold(writer, t)?;
+                }
+            }
+            // Write QF thresholds
+            trace_write!(writer, 4, self.qf_thresholds.len() as u64, "qf_thr.count")?;
+            for &t in &self.qf_thresholds {
+                write_qf_threshold(writer, t)?;
+            }
+            // Write context map
+            write_context_map(writer, &self.context_map)?;
+        }
+
+        trace_section!(end "BLOCK_CTX_MAP", writer);
         Ok(())
     }
 }
