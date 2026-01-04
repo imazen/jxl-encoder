@@ -15,6 +15,9 @@ byteorder = "1.4"
 num-derive = "0.4"
 num-traits = "0.2"
 
+[features]
+trace-bitstream = []
+
 [dev-dependencies]
 rand = "0.9"
 rand_xorshift = "0.4"
