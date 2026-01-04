@@ -9,8 +9,8 @@ use crate::vardct::AcStrategy;
 use jxl_enc_transforms::{dct8, dct16, dct32};
 
 use super::enc_coeff::{quantize_block_8x8, quantize_block_16x16, quantize_block_32x32};
-use super::quant_weights::get_dct8_inv_dequant_per_channel;
-use super::quantizer::QuantizerParams;
+use super::quant_weights::{INV_LF_QUANT, get_dct8_inv_dequant_per_channel};
+use super::quantizer::{GLOBAL_SCALE_DENOM, QuantizerParams};
 
 /// Transformed and quantized image data.
 pub struct TransformedData {
@@ -50,15 +50,18 @@ pub fn transform_and_quantize(
     let mut ac_coeffs = vec![0i32; num_blocks * 3 * 63];
 
     // Get global scale for quantization
-    // Note: quantize_block_8x8 expects global_scale_float (= global_scale / GLOBAL_SCALE_DENOM)
-    // which gives: qac = global_scale_float * quant = (global_scale / 65536) * quant
-    // Higher distance → lower global_scale → smaller qac → more quantization (more zeros)
-    let global_scale_float = quantizer.global_scale as f32 / 65536.0;
+    let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
     let quant_dc = quantizer.quant_dc as i32;
 
+    // Compute raw_quant from a target quant field value
+    // In libjxl: raw_quant = quant_field * inv_global_scale + 0.5
+    // For uniform encoding, use a target quant field around 5.0
+    let inv_global_scale = GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32;
+    let quant_field_target = 5.0f32;
+    let raw_quant = ((quant_field_target * inv_global_scale + 0.5) as i32).max(1);
+
     // Get DCT8 inverse dequant matrices for each channel (X, Y, B)
-    // These provide perceptual weighting - higher weights = more quantization (less precision)
-    // Y channel (luma) gets finest precision, X and B (chroma) are quantized more coarsely
+    // These provide perceptual weighting for AC coefficients
     let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
 
     // Process each block
@@ -77,11 +80,14 @@ pub fn transform_and_quantize(
                 dct8(&block_in, &mut dct_out);
 
                 // Quantize with per-channel perceptual weights
+                // DC uses INV_LF_QUANT[c], AC uses inv_dequant_per_channel[c]
                 let mut quant_out = [0i32; 64];
                 quantize_block_8x8(
                     &dct_out,
                     quant_dc,
+                    raw_quant,
                     global_scale_float,
+                    INV_LF_QUANT[c],
                     &inv_dequant_per_channel[c],
                     &mut quant_out,
                 );
@@ -191,8 +197,14 @@ pub fn transform_and_quantize_with_strategy(
     // For each block, store the offset into ac_coeffs where its AC data starts
     let mut ac_offsets = vec![0usize; num_blocks * 3 + 1];
 
-    let global_scale_float = quantizer.global_scale as f32 / 65536.0;
+    let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
     let quant_dc = quantizer.quant_dc as i32;
+
+    // Compute raw_quant from a target quant field value
+    let inv_global_scale = GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32;
+    let quant_field_target = 5.0f32;
+    let raw_quant = ((quant_field_target * inv_global_scale + 0.5) as i32).max(1);
+
     let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
 
     // Track which blocks have been processed (for DCT16/32 which cover multiple 8x8 positions)
@@ -225,6 +237,7 @@ pub fn transform_and_quantize_with_strategy(
                         by,
                         num_blocks_x,
                         quant_dc,
+                        raw_quant,
                         global_scale_float,
                         &inv_dequant_per_channel,
                         &mut dc_coeffs,
@@ -249,6 +262,7 @@ pub fn transform_and_quantize_with_strategy(
                         by,
                         num_blocks_x,
                         quant_dc,
+                        raw_quant,
                         global_scale_float,
                         &inv_dequant_per_channel,
                         &mut dc_coeffs,
@@ -273,6 +287,7 @@ pub fn transform_and_quantize_with_strategy(
                         by,
                         num_blocks_x,
                         quant_dc,
+                        raw_quant,
                         global_scale_float,
                         &inv_dequant_per_channel,
                         &mut dc_coeffs,
@@ -326,6 +341,7 @@ fn process_dct8(
     by: usize,
     num_blocks_x: usize,
     quant_dc: i32,
+    raw_quant: i32,
     global_scale_float: f32,
     inv_dequant_per_channel: &[[f32; 64]; 3],
     dc_coeffs: &mut [i32],
@@ -346,7 +362,9 @@ fn process_dct8(
         quantize_block_8x8(
             &dct_out,
             quant_dc,
+            raw_quant,
             global_scale_float,
+            INV_LF_QUANT[c],
             &inv_dequant_per_channel[c],
             &mut quant_out,
         );
@@ -368,6 +386,7 @@ fn process_dct16(
     by: usize,
     num_blocks_x: usize,
     quant_dc: i32,
+    raw_quant: i32,
     global_scale_float: f32,
     inv_dequant_per_channel: &[[f32; 64]; 3],
     dc_coeffs: &mut [i32],
@@ -388,7 +407,9 @@ fn process_dct16(
         quantize_block_16x16(
             &dct_out,
             quant_dc,
+            raw_quant,
             global_scale_float,
+            INV_LF_QUANT[c],
             &inv_dequant_per_channel[c],
             &mut quant_out,
         );
@@ -432,6 +453,7 @@ fn process_dct32(
     by: usize,
     num_blocks_x: usize,
     quant_dc: i32,
+    raw_quant: i32,
     global_scale_float: f32,
     inv_dequant_per_channel: &[[f32; 64]; 3],
     dc_coeffs: &mut [i32],
@@ -452,7 +474,9 @@ fn process_dct32(
         quantize_block_32x32(
             &dct_out,
             quant_dc,
+            raw_quant,
             global_scale_float,
+            INV_LF_QUANT[c],
             &inv_dequant_per_channel[c],
             &mut quant_out,
         );
@@ -691,5 +715,220 @@ mod tests {
         assert_eq!(result.dc_coeffs.len(), 16 * 3);
         // DCT32 produces 1023 AC per channel for the block
         assert_eq!(result.ac_coeffs.len(), 3 * 1023);
+    }
+}
+
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+    use crate::color::xyb::srgb_to_xyb;
+
+    #[test]
+    fn debug_gradient_quantization() {
+        // Create 16x16 gradient image (same as test)
+        let mut r = vec![0.0f32; 256];
+        let mut g = vec![0.0f32; 256];
+        let mut b = vec![0.0f32; 256];
+
+        for y in 0..16 {
+            for x in 0..16 {
+                let idx = y * 16 + x;
+                r[idx] = ((x + y) * 8) as f32;
+                g[idx] = ((x * 2) % 256) as f32;
+                b[idx] = ((y * 2) % 256) as f32;
+            }
+        }
+
+        // Convert to XYB
+        let mut x_plane = vec![0.0f32; 256];
+        let mut y_plane = vec![0.0f32; 256];
+        let mut b_plane = vec![0.0f32; 256];
+
+        for i in 0..256 {
+            let (x, y, bb) = srgb_to_xyb(r[i], g[i], b[i]);
+            x_plane[i] = x;
+            y_plane[i] = y;
+            b_plane[i] = bb;
+        }
+
+        eprintln!("XYB ranges:");
+        eprintln!(
+            "  X: {:?} to {:?}",
+            x_plane.iter().cloned().fold(f32::INFINITY, f32::min),
+            x_plane.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+        );
+        eprintln!(
+            "  Y: {:?} to {:?}",
+            y_plane.iter().cloned().fold(f32::INFINITY, f32::min),
+            y_plane.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+        );
+        eprintln!(
+            "  B: {:?} to {:?}",
+            b_plane.iter().cloned().fold(f32::INFINITY, f32::min),
+            b_plane.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+        );
+
+        // Transform and quantize
+        let quantizer = QuantizerParams::from_distance(1.0);
+        eprintln!(
+            "Quantizer: global_scale={}, quant_dc={}",
+            quantizer.global_scale, quantizer.quant_dc
+        );
+
+        let result = transform_and_quantize(&[&x_plane, &y_plane, &b_plane], 16, 16, &quantizer);
+
+        eprintln!("DC coefficients: {:?}", result.dc_coeffs);
+
+        let nonzero_ac = result.ac_coeffs.iter().filter(|&&x| x != 0).count();
+        eprintln!(
+            "Non-zero AC: {} out of {}",
+            nonzero_ac,
+            result.ac_coeffs.len()
+        );
+
+        // Find max AC coefficient
+        let max_ac = result.ac_coeffs.iter().map(|&x| x.abs()).max().unwrap_or(0);
+        eprintln!("Max |AC|: {}", max_ac);
+
+        // Show first block's AC coefficients
+        eprintln!(
+            "First block AC (X channel, first 10): {:?}",
+            &result.ac_coeffs[0..10]
+        );
+    }
+
+    #[test]
+    fn debug_dct_output() {
+        use crate::color::xyb::srgb_to_xyb;
+        use jxl_enc_transforms::dct8;
+
+        // Create a simple gradient block (top-left 8x8 of our test image)
+        let mut r = [0.0f32; 64];
+        let mut g = [0.0f32; 64];
+        let mut b = [0.0f32; 64];
+
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = y * 8 + x;
+                r[idx] = ((x + y) * 8) as f32;
+                g[idx] = ((x * 2) % 256) as f32;
+                b[idx] = ((y * 2) % 256) as f32;
+            }
+        }
+
+        // Convert to XYB
+        let mut x_block = [0.0f32; 64];
+        let mut y_block = [0.0f32; 64];
+        let mut b_block = [0.0f32; 64];
+
+        for i in 0..64 {
+            let (x, y, bb) = srgb_to_xyb(r[i], g[i], b[i]);
+            x_block[i] = x;
+            y_block[i] = y;
+            b_block[i] = bb;
+        }
+
+        eprintln!("Y block values (first 8): {:?}", &y_block[0..8]);
+
+        // Apply DCT
+        let mut dct_y = [0.0f32; 64];
+        dct8(&y_block, &mut dct_y);
+
+        eprintln!("DCT Y coefficients:");
+        for row in 0..8 {
+            eprintln!(
+                "  Row {}: {:?}",
+                row,
+                &dct_y[row * 8..(row + 1) * 8]
+                    .iter()
+                    .map(|x| format!("{:.2}", x))
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        // Check quantization factor
+        let quantizer = QuantizerParams::from_distance(1.0);
+        let global_scale_float = quantizer.global_scale as f32 / 65536.0;
+        let quant_dc = quantizer.quant_dc as i32;
+        eprintln!(
+            "global_scale_float = {}, quant_dc = {}",
+            global_scale_float, quant_dc
+        );
+        eprintln!(
+            "qac = global_scale_float * quant_dc = {}",
+            global_scale_float * quant_dc as f32
+        );
+    }
+}
+
+#[cfg(test)]
+mod debug_tests2 {
+    use super::*;
+    use crate::vardct::quant_weights::get_dct8_inv_dequant_per_channel;
+
+    #[test]
+    fn debug_inv_dequant() {
+        let inv_dequant = get_dct8_inv_dequant_per_channel();
+
+        eprintln!("Inverse dequant matrices:");
+        for (c, name) in [(0, "X"), (1, "Y"), (2, "B")] {
+            eprintln!("  {} channel - DC (pos 0): {}", name, inv_dequant[c][0]);
+            eprintln!("  {} channel - AC1 (pos 1): {}", name, inv_dequant[c][1]);
+            eprintln!(
+                "  {} channel - first row: {:?}",
+                name,
+                &inv_dequant[c][0..8]
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod debug_tests3 {
+    use super::*;
+    use crate::vardct::quantizer::{GLOBAL_SCALE_DENOM, QuantizerParams};
+
+    #[test]
+    fn debug_quant_values() {
+        let quantizer = QuantizerParams::from_distance(1.0);
+
+        eprintln!("For distance=1.0:");
+        eprintln!("  global_scale = {}", quantizer.global_scale);
+        eprintln!("  quant_dc (serialized) = {}", quantizer.quant_dc);
+        eprintln!(
+            "  global_scale_float = {}",
+            quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32
+        );
+        eprintln!(
+            "  inv_global_scale = {}",
+            GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32
+        );
+
+        // What the raw quant field value should be for uniform encoding
+        // In libjxl: raw_quant = quant_field * inv_global_scale + 0.5
+        // For quant_field_target = 5.0:
+        let quant_field_target = 5.0f32;
+        let inv_global_scale = GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32;
+        let raw_quant = (quant_field_target * inv_global_scale + 0.5) as i32;
+        eprintln!("  raw_quant (from field target 5.0) = {}", raw_quant);
+
+        // What qac should be:
+        let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
+        let qac_with_raw = global_scale_float * raw_quant as f32;
+        let qac_with_dc = global_scale_float * quantizer.quant_dc as f32;
+
+        eprintln!("  qac with raw_quant = {}", qac_with_raw);
+        eprintln!("  qac with quant_dc = {}", qac_with_dc);
+
+        // For Y DC with inv_dequant = 0.00179:
+        let inv_dequant_y_dc = 0.00179f32;
+        let coeff = 2.02f32; // Typical Y DC coefficient
+
+        let quantized_with_raw = (coeff * inv_dequant_y_dc * qac_with_raw).round();
+        let quantized_with_dc = (coeff * inv_dequant_y_dc * qac_with_dc).round();
+
+        eprintln!("\n  For Y DC coeff = 2.02, inv_dequant = 0.00179:");
+        eprintln!("  quantized with raw_quant = {}", quantized_with_raw);
+        eprintln!("  quantized with quant_dc = {}", quantized_with_dc);
     }
 }

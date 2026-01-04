@@ -980,6 +980,15 @@ impl VarDctEncoder {
             b_dc[i] = dc_coeffs[i * 3 + 2];
         }
 
+        eprintln!(
+            "DC_COEFFS: blocks={}x{}, y_dc={:?}, x_dc={:?}, b_dc={:?}",
+            blocks_x,
+            blocks_y,
+            &y_dc[..y_dc.len().min(10)],
+            &x_dc[..x_dc.len().min(10)],
+            &b_dc[..b_dc.len().min(10)]
+        );
+
         // Create ModularImage from DC channels (Y, X, B order for VarDCTLF)
         let dc_image = ModularImage {
             channels: vec![
