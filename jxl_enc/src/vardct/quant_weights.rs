@@ -307,6 +307,7 @@ pub fn get_dct8_inv_dequant() -> [f32; 64] {
 /// In libjxl terminology:
 /// - "InvDequantMatrix" (used for quantization/encoding) contains the weights themselves
 /// - "DequantMatrix" (used for dequantization/decoding) contains 1/weight
+///
 /// So for ENCODING, we return the weights directly.
 pub fn get_dct8_inv_dequant_per_channel() -> [[f32; 64]; 3] {
     let weights = generate_dct8_weights();

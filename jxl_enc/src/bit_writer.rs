@@ -269,7 +269,7 @@ impl BitWriter {
     /// the raw storage including any partial bytes. Useful for debugging
     /// bit-level encoding issues.
     pub fn peek_bytes(&self) -> &[u8] {
-        let bytes = (self.bits_written + 7) / 8;
+        let bytes = self.bits_written.div_ceil(8);
         &self.storage[..bytes.min(self.storage.len())]
     }
 

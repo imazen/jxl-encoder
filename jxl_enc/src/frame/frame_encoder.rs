@@ -7,6 +7,8 @@
 
 use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
+#[allow(unused_imports)]
+use crate::entropy_coding::ClusteringType;
 use crate::entropy_coding::ans::AnsDistribution;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
@@ -18,7 +20,7 @@ use crate::modular::improved::{
 };
 use crate::vardct::tokenize::Token;
 use crate::vardct::transform::{transform_xyb_image, transform_xyb_image_with_strategy};
-use crate::vardct::{VarDctEncoder, VarDctOptions};
+use crate::vardct::{ClusteredHistogramSet, VarDctEncoder, VarDctOptions};
 
 /// Options for frame encoding.
 #[derive(Debug, Clone)]
@@ -328,12 +330,19 @@ impl FrameEncoder {
         // immediately after the frame header (the TOC itself handles alignment)
 
         if num_groups == 1 {
-            // Single group: all sections combined into one TOC entry
-            self.encode_vardct_single_group(
+            // Single group: use clustered histograms for better compression
+            let histogram_set =
+                vardct_encoder.build_clustered_histogram_set(&tokens, ClusteringType::Best)?;
+            eprintln!(
+                "CLUSTERING: {} contexts → {} clusters",
+                histogram_set.num_contexts,
+                histogram_set.num_clusters()
+            );
+            self.encode_vardct_single_group_clustered(
                 &vardct_encoder,
                 &dc_coeffs,
                 &tokens,
-                &distributions,
+                &histogram_set,
                 writer,
             )?;
         } else {
@@ -352,6 +361,9 @@ impl FrameEncoder {
     }
 
     /// Encode VarDCT for single-group images (≤256x256).
+    ///
+    /// Note: This is the non-clustered version, kept as fallback.
+    #[allow(dead_code)]
     fn encode_vardct_single_group(
         &self,
         vardct_encoder: &VarDctEncoder,
@@ -410,10 +422,7 @@ impl FrameEncoder {
         }
 
         // Write single TOC entry
-        eprintln!(
-            "MAIN_WRITER [bit {}]: Before TOC",
-            writer.bits_written()
-        );
+        eprintln!("MAIN_WRITER [bit {}]: Before TOC", writer.bits_written());
         self.write_toc(writer, section_size)?;
         eprintln!(
             "MAIN_WRITER [bit {}, byte {}]: After TOC, before section data",
@@ -430,6 +439,70 @@ impl FrameEncoder {
             writer.bits_written(),
             writer.bits_written() / 8
         );
+
+        Ok(())
+    }
+
+    /// Encode VarDCT for single-group images using clustered histograms.
+    ///
+    /// This version uses histogram clustering for better compression.
+    fn encode_vardct_single_group_clustered(
+        &self,
+        vardct_encoder: &VarDctEncoder,
+        dc_coeffs: &[i32],
+        tokens: &[Token],
+        histogram_set: &ClusteredHistogramSet,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        // For single-group VarDCT, we use a single TOC entry containing all sections.
+        let mut section_writer = BitWriter::new();
+
+        // 1. LF Global section (NO byte padding - continuous bitstream)
+        let start_bits = section_writer.bits_written();
+        vardct_encoder.write_lf_global(&mut section_writer)?;
+        let lf_global_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION_CLUSTERED: LF Global = {} bits", lf_global_bits);
+
+        // 2. LF Group (DC coefficients + HF metadata) - NO byte padding
+        let start_bits = section_writer.bits_written();
+        vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
+        let lf_group_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION_CLUSTERED: LF Group = {} bits", lf_group_bits);
+
+        // 3. HF Global section (with clustered histograms) - NO byte padding
+        let start_bits = section_writer.bits_written();
+        vardct_encoder.write_hf_global_clustered(tokens, histogram_set, &mut section_writer)?;
+        let hf_global_bits = section_writer.bits_written() - start_bits;
+        eprintln!(
+            "SECTION_CLUSTERED: HF Global = {} bits ({} clusters)",
+            hf_global_bits,
+            histogram_set.num_clusters()
+        );
+
+        // 4. Pass Group (AC coefficients) - NO byte padding
+        let start_bits = section_writer.bits_written();
+        vardct_encoder.write_pass_group_clustered(tokens, histogram_set, &mut section_writer)?;
+        let pass_group_bits = section_writer.bits_written() - start_bits;
+        eprintln!("SECTION_CLUSTERED: Pass Group = {} bits", pass_group_bits);
+
+        // Only pad to byte at the very end of all sections
+        section_writer.zero_pad_to_byte();
+
+        let section_data = section_writer.finish();
+        let section_size = section_data.len();
+        eprintln!(
+            "SECTION_CLUSTERED: Total = {} bytes, {} clusters",
+            section_size,
+            histogram_set.num_clusters()
+        );
+
+        // Write single TOC entry
+        self.write_toc(writer, section_size)?;
+
+        // Append section data
+        for byte in section_data {
+            writer.write_u8(byte)?;
+        }
 
         Ok(())
     }
@@ -488,13 +561,13 @@ impl FrameEncoder {
         section_data.push(hf_global_writer.finish());
 
         // Sections for PassGroup: write AC coefficients per group
-        for group_idx in 0..num_groups {
+        for group_tokens in all_group_tokens.iter() {
             for _pass in 0..num_passes {
                 let mut pass_group_writer = BitWriter::new();
 
                 // Write tokens for this group (already tokenized above)
                 vardct_encoder.write_pass_group(
-                    &all_group_tokens[group_idx],
+                    group_tokens,
                     distributions,
                     &mut pass_group_writer,
                 )?;

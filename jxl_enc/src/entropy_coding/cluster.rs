@@ -105,13 +105,13 @@ pub fn fast_cluster_histograms_with_prev(
         for h in &out {
             h.shannon_entropy();
         }
-        for i in 0..input.len() {
-            if dists[i] == 0.0 {
+        for (i, dist) in dists.iter_mut().enumerate() {
+            if *dist == 0.0 {
                 continue;
             }
-            for j in 0..prev_count {
-                let kl = histogram_kl_divergence(&input[i], &out[j]);
-                dists[i] = dists[i].min(kl);
+            for out_hist in out.iter().take(prev_count) {
+                let kl = histogram_kl_divergence(&input[i], out_hist);
+                *dist = dist.min(kl);
             }
         }
         // Find the histogram with maximum distance (most different from prev)
@@ -119,10 +119,9 @@ pub fn fast_cluster_histograms_with_prev(
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(Ordering::Equal))
+            && max_dist > 0.0
         {
-            if max_dist > 0.0 {
-                largest_idx = max_idx;
-            }
+            largest_idx = max_idx;
         }
     }
 
@@ -164,13 +163,13 @@ pub fn fast_cluster_histograms_with_prev(
         let mut best = 0;
         let mut best_dist = f32::MAX;
 
-        for j in 0..out.len() {
+        for (j, out_hist) in out.iter().enumerate() {
             let dist = if j < prev_count {
                 // Use KL divergence for previous histograms
-                histogram_kl_divergence(&input[i], &out[j])
+                histogram_kl_divergence(&input[i], out_hist)
             } else {
                 // Use symmetric distance for new histograms
-                histogram_distance(&input[i], &out[j])
+                histogram_distance(&input[i], out_hist)
             };
 
             if dist < best_dist {
@@ -446,8 +445,8 @@ fn histogram_reindex(histograms: &mut Vec<Histogram>, prev_count: usize, symbols
     // Assign new indices in order of first appearance
     let mut next_index = prev_count as u32;
     for &symbol in symbols.iter() {
-        if !new_index.contains_key(&symbol) {
-            new_index.insert(symbol, next_index);
+        if let std::collections::hash_map::Entry::Vacant(e) = new_index.entry(symbol) {
+            e.insert(next_index);
             histograms[next_index as usize] = tmp[symbol as usize].clone();
             next_index += 1;
         }
