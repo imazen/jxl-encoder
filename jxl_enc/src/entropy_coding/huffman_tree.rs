@@ -760,20 +760,24 @@ pub fn store_meta_huffman_tree(
     // Write code length depths using static Huffman code
     // The decoder reads code lengths for symbols in storage order
     let mut bitacc = 0usize;
-    for i in skip_some..codes_to_store {
-        let symbol = STORAGE_ORDER[i];
+    for (idx, &symbol) in STORAGE_ORDER[skip_some..codes_to_store].iter().enumerate() {
         let depth_value = code_length_depths[symbol] as usize;
         debug_assert!(depth_value <= 5, "Code length depth must be 0-5");
         let bits = DEPTH_CODE_BIT_LENGTHS[depth_value] as usize;
         let code = DEPTH_CODE_SYMBOLS[depth_value] as u64;
-        let bit_pos = writer.bits_written();
         writer.write(bits, code)?;
         if depth_value > 0 {
             bitacc += 32 >> depth_value;
         }
         eprintln!(
             "  META[{}]: symbol={}, depth={}, code=0b{:0width$b} ({} bits), bitacc={}",
-            i, symbol, depth_value, code, bits, bitacc, width = bits
+            skip_some + idx,
+            symbol,
+            depth_value,
+            code,
+            bits,
+            bitacc,
+            width = bits
         );
     }
     eprintln!("  META: final bitacc={} (should be 32)", bitacc);
@@ -818,7 +822,7 @@ pub fn store_compressed_tree(
         // Write the code for this code length
         let depth = code_length_depths[ix] as usize;
         let code = code_length_codes[ix] as u64;
-        let bit_pos = writer.bits_written();
+        let _bit_pos = writer.bits_written();
         if depth > 0 {
             writer.write(depth, code)?;
         }

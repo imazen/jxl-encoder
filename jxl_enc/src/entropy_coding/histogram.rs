@@ -306,7 +306,7 @@ pub fn histogram_kl_divergence(actual: &Histogram, coding: &Histogram) -> f32 {
 /// Ceiling division.
 #[inline]
 fn div_ceil(a: usize, b: usize) -> usize {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ pub mod context;
 pub mod enc_coeff;
 pub mod encoder;
 pub mod histogram;
+pub mod prefix_codes;
 pub mod quant_weights;
 pub mod quantizer;
 pub mod tokenize;
@@ -20,6 +21,7 @@ pub use enc_coeff::{
     unpack_signed,
 };
 pub use encoder::{VarDctEncoder, VarDctOptions};
+pub use histogram::ClusteredHistogramSet;
 pub use quant_weights::{DequantMatrices, INV_LF_QUANT, LF_QUANT, LfQuantFactors, QuantTable};
 pub use quantizer::{Quantizer, QuantizerParams};
 pub use tokenize::{Token, TokenCollector};

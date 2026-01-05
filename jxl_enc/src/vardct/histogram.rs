@@ -5,6 +5,7 @@
 use super::context::BlockContextMap;
 use super::tokenize::Token;
 use crate::entropy_coding::ans::{ANS_MAX_ALPHABET_SIZE, AnsDistribution};
+use crate::entropy_coding::{ClusteringType, Histogram as EntropyHistogram, cluster_histograms};
 use crate::error::Result;
 
 /// Histogram builder for AC coefficient tokens.
@@ -88,6 +89,20 @@ impl HistogramBuilder {
             1
         }
     }
+
+    /// Convert per-context counts to entropy_coding Histograms for clustering.
+    ///
+    /// This creates a vector of `EntropyHistogram` suitable for use with
+    /// the histogram clustering infrastructure in `entropy_coding::cluster`.
+    pub fn to_entropy_histograms(&self) -> Vec<EntropyHistogram> {
+        self.counts
+            .iter()
+            .map(|ctx_counts| {
+                let counts: Vec<i32> = ctx_counts.iter().map(|&c| c as i32).collect();
+                EntropyHistogram::from_counts(&counts)
+            })
+            .collect()
+    }
 }
 
 /// Simplified histogram for single-group encoding.
@@ -118,6 +133,91 @@ impl SimpleHistogramSet {
     /// Get the number of contexts.
     pub fn num_contexts(&self) -> usize {
         self.distributions.len()
+    }
+}
+
+/// Histogram set with clustering applied.
+///
+/// Uses the clustering infrastructure to group similar contexts together,
+/// reducing the number of histograms that need to be encoded while maintaining
+/// good compression efficiency.
+pub struct ClusteredHistogramSet {
+    /// Clustered histograms (typically 4-256, much fewer than num_contexts).
+    pub clustered_histograms: Vec<EntropyHistogram>,
+    /// ANS distributions for encoding (one per cluster).
+    pub distributions: Vec<AnsDistribution>,
+    /// Context map: context_index → cluster_index.
+    pub context_map: Vec<u8>,
+    /// Number of original contexts.
+    pub num_contexts: usize,
+}
+
+impl ClusteredHistogramSet {
+    /// Build clustered histogram set from tokens.
+    ///
+    /// # Arguments
+    /// * `tokens` - The tokens to build histograms from
+    /// * `bcm` - Block context map providing context count
+    /// * `clustering_type` - Controls compression/speed trade-off
+    pub fn from_tokens(
+        tokens: &[Token],
+        bcm: &BlockContextMap,
+        clustering_type: ClusteringType,
+    ) -> Result<Self> {
+        let num_contexts = bcm.num_ac_contexts();
+
+        // 1. Build per-context counts
+        let mut builder = HistogramBuilder::new(num_contexts);
+        builder.add_tokens(tokens);
+
+        // 2. Convert to entropy histograms
+        let histograms = builder.to_entropy_histograms();
+
+        // 3. Cluster based on clustering type
+        let max_clusters = match clustering_type {
+            ClusteringType::Fastest => 4,
+            ClusteringType::Fast => 64,
+            ClusteringType::Best => 256,
+        };
+        let cluster_result = cluster_histograms(clustering_type, &histograms, max_clusters)?;
+
+        // 4. Build distributions from clustered histograms
+        let distributions = cluster_result
+            .histograms
+            .iter()
+            .map(|h| {
+                let freqs: Vec<u32> = h.counts.iter().map(|&c| c.max(0) as u32).collect();
+                if freqs.iter().all(|&f| f == 0) {
+                    AnsDistribution::flat(1)
+                } else {
+                    AnsDistribution::from_frequencies(&freqs)
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // 5. Build context map (u8 since we have at most 256 clusters)
+        let context_map: Vec<u8> = cluster_result.symbols.iter().map(|&s| s as u8).collect();
+
+        Ok(Self {
+            clustered_histograms: cluster_result.histograms,
+            distributions,
+            context_map,
+            num_contexts,
+        })
+    }
+
+    /// Get the number of clusters.
+    pub fn num_clusters(&self) -> usize {
+        self.distributions.len()
+    }
+
+    /// Get the global maximum alphabet size across all clusters.
+    pub fn max_alphabet_size(&self) -> usize {
+        self.clustered_histograms
+            .iter()
+            .map(|h| h.alphabet_size())
+            .max()
+            .unwrap_or(1)
     }
 }
 
