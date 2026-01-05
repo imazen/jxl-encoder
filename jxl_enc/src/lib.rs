@@ -32,6 +32,9 @@ mod tests;
 #[cfg(test)]
 pub mod test_helpers;
 
+#[cfg(test)]
+mod vardct_quality_tests;
+
 /// Group dimension in pixels (256x256 groups).
 pub const GROUP_DIM: usize = 256;
 

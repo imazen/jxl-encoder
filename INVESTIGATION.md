@@ -1,3 +1,9 @@
+# INVESTIGATION.md
+
+> **ARCHIVED**: This document contains historical investigation notes from Jan 2-3, 2026.
+> For current status, see [STATUS.md](STATUS.md) and [VARDCT_STATUS.md](VARDCT_STATUS.md).
+
+---
 
 ## 2026-01-03: VarDCT Encoding Bug - InvalidEnum TransformId
 

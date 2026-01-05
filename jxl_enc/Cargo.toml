@@ -27,6 +27,9 @@ jxl = { path = "../../jxl-rs/jxl" }
 jxl_transforms = { path = "../../jxl-rs/jxl_transforms" }
 # jxl-oxide is secondary - always test jxl-rs first
 jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
+# SSIMULACRA2 for perceptual quality metrics
+ssimulacra2 = { path = "../../ssimulacra2/ssimulacra2" }
+yuvxyb = "0.4.1"
 
 [lints]
 workspace = true
