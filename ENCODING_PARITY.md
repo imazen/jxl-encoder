@@ -4,18 +4,28 @@ This document tracks progress toward achieving encoding parity with the libjxl r
 
 ## Current Status
 
-**Date:** 2026-01-02
+**Date:** 2026-01-05
+**Tests:** 403 passing
 
-### Lossless (Modular) Encoding
-The encoder produces valid JXL files with **perfect lossless round-trip** through jxl-rs for **arbitrary grayscale and RGB images**.
+### Lossless (Modular) Encoding - FULLY WORKING
+The encoder produces valid JXL files with **perfect lossless round-trip** through all three decoders:
+- jxl-rs (primary)
+- jxl-oxide
+- djxl (libjxl reference)
 
-### Lossy (VarDCT) Encoding - Working
-VarDCT encoding produces valid JXL files that decode correctly with jxl-oxide:
-- DCT8 forward transform with coefficient quantization
-- DC coefficients encoded via modular path
-- AC coefficient tokenization with context modeling
-- Histogram building and basic entropy coding
-- **Decoder validation passed** with jxl-oxide 0.12
+### Lossy (VarDCT) Encoding - PARTIAL
+VarDCT encoding produces files that encode successfully but have partial decoder compatibility:
+- **Encoding:** 100% success rate
+- **Decoding:** ~52% success rate (146/280 test cases)
+- **See:** [VARDCT_STATUS.md](VARDCT_STATUS.md) for full compatibility matrix
+
+Working:
+- Small images (up to 17x17) with any pattern
+- Solid color images at any size
+
+Issues at scale:
+- Medium images (24-256px): entropy coding configuration
+- Large images (>256px): multi-group section boundaries
 
 ## Verified Working
 

@@ -1,4 +1,9 @@
-# VarDCT Quantization Bug - FOUND 2026-01-03
+# VarDCT Quantization Bug - FIXED 2026-01-03
+
+> **RESOLVED**: This bug has been fixed. Retained for historical documentation.
+> For current VarDCT status, see [VARDCT_STATUS.md](VARDCT_STATUS.md).
+
+---
 
 ## Bug Summary
 

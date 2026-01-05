@@ -1,5 +1,10 @@
 # VarDCT AC Coefficient Investigation - 2026-01-03
 
+> **ARCHIVED**: Historical investigation document. Bug was FIXED - see [VARDCT_BUG_FOUND.md](VARDCT_BUG_FOUND.md).
+> For current status, see [VARDCT_STATUS.md](VARDCT_STATUS.md).
+
+---
+
 ## Problem Statement
 
 VarDCT (lossy) encoding produces files that parse successfully but fail to decode. All AC coefficients are being quantized to zero, resulting in empty Pass Group sections.

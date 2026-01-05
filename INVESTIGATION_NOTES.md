@@ -1,6 +1,11 @@
 # JXL Encoder Investigation Notes
 
-## Current Status (2026-01-02) - Multi-Group Support Added
+> **ARCHIVED**: This document contains historical investigation notes from Jan 2, 2026.
+> For current status, see [STATUS.md](STATUS.md) and [VARDCT_STATUS.md](VARDCT_STATUS.md).
+
+---
+
+## Status (2026-01-02) - Multi-Group Support Added
 
 ### What Works
 - All 338 tests pass with jxl-oxide decoder
