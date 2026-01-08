@@ -7,7 +7,7 @@
 mod tests {
     use crate::encoder::encode_lossy_rgb8;
     use crate::test_helpers::{EncodingMode, assert_encoding_mode};
-    use ssimulacra2::{Rgb, compute_frame_ssimulacra2};
+    use fast_ssim2::{Rgb, compute_frame_ssimulacra2};
     use yuvxyb::{ColorPrimaries, TransferCharacteristic};
 
     /// Test result containing decode status and quality metrics

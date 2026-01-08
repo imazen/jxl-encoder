@@ -946,24 +946,35 @@ impl VarDctEncoder {
             max_symbol, max_token, alphabet_size
         );
 
-        // IntegerConfig: split_exponent, msb_in_token, lsb_in_token
-        writer.write(4, 4)?; // split_exponent = 4
-        writer.write(3, 2)?; // msb_in_token = 2
-        writer.write(2, 0)?; // lsb_in_token = 0
-        eprintln!(
-            "HF_HIST_CLUSTERED [bit {}]: IntegerConfig (split=4, msb=2, lsb=0)",
-            writer.bits_written()
-        );
+        // Write IntegerConfig for EACH histogram (num_clusters histograms)
+        // Format: For log_alpha_size=15 (HUFFMAN_MAX_BITS):
+        //   - split_exponent: ceil_log2(16) = 4 bits
+        //   - msb_in_token: ceil_log2(split_exponent + 1) = ceil_log2(5) = 3 bits
+        //   - lsb_in_token: ceil_log2(split_exponent - msb_in_token + 1) = ceil_log2(3) = 2 bits
+        for cluster_idx in 0..num_clusters {
+            writer.write(4, 4)?; // split_exponent = 4
+            writer.write(3, 2)?; // msb_in_token = 2
+            writer.write(2, 0)?; // lsb_in_token = 0
+            eprintln!(
+                "HF_HIST_CLUSTERED [bit {}]: IntegerConfig {} (split=4, msb=2, lsb=0)",
+                writer.bits_written(),
+                cluster_idx
+            );
+        }
 
-        // Write alphabet size
-        write_alphabet_size(writer, alphabet_size)?;
-        eprintln!(
-            "HF_HIST_CLUSTERED [bit {}]: After alphabet_size = {}",
-            writer.bits_written(),
-            alphabet_size
-        );
+        // Write alphabet sizes for EACH histogram (all alphabet sizes first)
+        // HuffmanCodes::decode reads all alphabet sizes, then all prefix codes
+        for cluster_idx in 0..num_clusters {
+            write_alphabet_size(writer, alphabet_size)?;
+            eprintln!(
+                "HF_HIST_CLUSTERED [bit {}]: alphabet_size[{}] = {}",
+                writer.bits_written(),
+                cluster_idx,
+                alphabet_size
+            );
+        }
 
-        // Write prefix codes for EACH cluster
+        // Write prefix codes for EACH cluster (after all alphabet sizes)
         for cluster_idx in 0..num_clusters {
             write_prefix_code(writer, alphabet_size)?;
             eprintln!(
