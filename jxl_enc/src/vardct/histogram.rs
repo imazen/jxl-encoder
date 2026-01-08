@@ -174,11 +174,15 @@ impl ClusteredHistogramSet {
         let histograms = builder.to_entropy_histograms();
 
         // 3. Cluster based on clustering type
+        // Note: Simple context map encoding only supports up to 8 clusters (3 bits).
+        // Until ANS context map encoding is implemented, cap at 8.
+        const MAX_CLUSTERS_SIMPLE_CTXMAP: usize = 8;
         let max_clusters = match clustering_type {
             ClusteringType::Fastest => 4,
-            ClusteringType::Fast => 64,
-            ClusteringType::Best => 256,
+            ClusteringType::Fast => 8, // Was 64, capped for simple context map
+            ClusteringType::Best => 8, // Was 256, capped for simple context map
         };
+        let max_clusters = max_clusters.min(MAX_CLUSTERS_SIMPLE_CTXMAP);
         let cluster_result = cluster_histograms(clustering_type, &histograms, max_clusters)?;
 
         // 4. Build distributions from clustered histograms
