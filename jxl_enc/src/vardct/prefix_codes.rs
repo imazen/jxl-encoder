@@ -309,51 +309,89 @@ pub(crate) fn write_complex_prefix_code(
     let single_depth = symbols_short == 0 || symbols_long == 0 || depth_short == depth_long;
 
     if single_depth {
-        // All symbols have the same code length
+        // All symbols have the same code length.
+        //
+        // For the Kraft inequality to be satisfied (sum of 2^(-len) = 1),
+        // we need the code length code lengths to sum to 32 (in fixed point).
+        // A single symbol with code length 1 gives bitacc = 16, not 32.
+        //
+        // Solution: Use TWO code length symbols, both with code length 1.
+        // - The actual depth symbol (e.g., 5 for depth 5)
+        // - A dummy symbol (0 for code length 0, which we'll never select)
+        // This gives bitacc = 16 + 16 = 32.
         let cl_sym = if symbols_short > 0 {
             cl_used_short
         } else {
             cl_used_long
         };
 
-        // Find position in storage order
-        let pos = STORAGE_ORDER
+        // Use symbol 0 (code length 0) as the dummy
+        let cl_dummy = 0usize;
+
+        // Find positions in storage order
+        let pos_sym = STORAGE_ORDER
             .iter()
             .position(|&x| x == cl_sym as u8)
             .unwrap_or(0);
+        let pos_dummy = STORAGE_ORDER
+            .iter()
+            .position(|&x| x == cl_dummy as u8)
+            .unwrap_or(0);
 
-        // hskip: number of zeros at start of code length code lengths
-        // We can skip up to 3 of the first symbols in storage order if they're 0
-        let skip = pos.min(3);
+        let min_pos = pos_sym.min(pos_dummy);
+        let max_pos = pos_sym.max(pos_dummy);
+
+        // Skip zeros at start, but must not skip our symbols
+        let skip = if min_pos >= 3 {
+            3
+        } else if min_pos >= 2 {
+            2
+        } else {
+            0
+        };
+
+        eprintln!(
+            "COMPLEX_PREFIX single_depth: cl_sym={}, cl_dummy={}, pos_sym={}, pos_dummy={}, skip={}",
+            cl_sym, cl_dummy, pos_sym, pos_dummy, skip
+        );
 
         // Write hskip (2 bits)
-        // 0 = no skip, 2 = skip first 2, 3 = skip first 3
-        let hskip = if skip >= 2 { skip } else { 0 };
-        writer.write(2, hskip as u64)?;
+        writer.write(2, skip as u64)?;
 
-        // Write code length code lengths
-        // For single symbol in code length tree, we write code length 0 for it
-        // (special case: nonzero_count == 1)
-        for &cl_sym_at_i in &STORAGE_ORDER[hskip..=pos] {
-            let cl_cl = if cl_sym_at_i as usize == cl_sym {
-                1u8
+        // Write code length code lengths up to and including max_pos
+        // Both our symbols get code length 1
+        let mut space = 32i32;
+        for &storage_val in &STORAGE_ORDER[skip..=max_pos] {
+            let cl_sym_at_i = storage_val as usize;
+            let cl_cl = if cl_sym_at_i == cl_sym || cl_sym_at_i == cl_dummy {
+                1u8 // Both symbols get code length 1
             } else {
-                0u8
+                0u8 // Not used
             };
             writer.write(
                 CL_CODE_LENS[cl_cl as usize] as usize,
                 CL_CODE_BITS[cl_cl as usize] as u64,
             )?;
+            if cl_cl != 0 {
+                space -= 32 >> cl_cl;
+            }
         }
+        eprintln!("COMPLEX_PREFIX single_depth: space after cl-cl = {}", space);
 
-        // Now emit code lengths for each symbol
-        // With single code length symbol having code 0 (since it's the only one),
-        // we don't emit any bits per symbol
-        // But we need to emit `alphabet_size` instances...
-        // Actually, the decoder reads using the code length Huffman tree.
-        // With only one symbol (cl_sym), each read returns that symbol with 0 bits.
+        // Now emit code lengths for each alphabet symbol
+        // Both symbols (cl_sym and cl_dummy) have code length 1.
+        // The one that appears first in storage order gets code 0.
+        // We always select cl_sym (not cl_dummy), so write the appropriate bit.
+        let cl_sym_code = if pos_sym < pos_dummy { 0u64 } else { 1u64 };
 
-        // Nothing more to write - decoder will read 0 bits per code length
+        // Write alphabet_size bits, all selecting cl_sym
+        for _ in 0..alphabet_size {
+            writer.write(1, cl_sym_code)?;
+        }
+        eprintln!(
+            "COMPLEX_PREFIX single_depth: wrote {} code lengths (all {})",
+            alphabet_size, cl_sym_code
+        );
     } else {
         // Two distinct code lengths
         // Build a code length tree with symbols depth_short and depth_long
