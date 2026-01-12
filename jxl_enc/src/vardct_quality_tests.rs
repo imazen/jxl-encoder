@@ -331,13 +331,29 @@ mod tests {
             .collect()
     }
 
-    /// Standard dimensions to test - limited to known-working single-group sizes for now
-    /// TODO: Investigate why 32x32+ patterns fail decoding
+    /// Standard dimensions to test across single-group and multi-group sizes.
+    /// IMPORTANT: These dimensions are mandatory for regression testing.
+    /// DO NOT remove 500x500 or 1034x731 - they catch multi-group bugs.
     fn get_test_dimensions() -> Vec<(usize, usize)> {
         vec![
-            // Single-group sizes (known to work)
+            // Single-block
             (8, 8),
+            // Single-group, various sizes
             (16, 16),
+            (32, 32),
+            (64, 64),
+            (100, 100),
+            // Odd dimensions (non-block-aligned)
+            (17, 23),
+            (33, 47),
+            // Near group boundary (256x256 is one group)
+            (200, 200),
+            (256, 256),
+            // Multi-group (>256 in any dimension)
+            (300, 300),
+            // MANDATORY: Large multi-group sizes - DO NOT REMOVE
+            (500, 500),
+            (1034, 731),
         ]
     }
 

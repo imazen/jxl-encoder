@@ -276,7 +276,7 @@ impl FrameEncoder {
         let quantizer = vardct_encoder.quantizer();
 
         // Use strategy-aware transform for DCT16/32 support
-        let (dc_coeffs, ac_coeffs, tokens, distributions) = if use_strategy {
+        let (dc_coeffs, ac_coeffs, tokens, _distributions) = if use_strategy {
             let transformed = transform_xyb_image_with_strategy(
                 xyb_data,
                 self.width,
@@ -346,13 +346,27 @@ impl FrameEncoder {
                 writer,
             )?;
         } else {
-            // Multi-group: separate TOC entries for each section
-            // Pass ac_coeffs so we can tokenize per group
-            self.encode_vardct_multi_group(
+            // Multi-group: build histogram from per-group tokens (not global tokens)
+            // Each group is tokenized with LOCAL coordinates, so we must combine
+            // per-group tokens to build the histogram.
+            let mut combined_group_tokens = Vec::new();
+            for group_idx in 0..num_groups {
+                let group_tokens =
+                    vardct_encoder.tokenize_ac_coefficients_for_group(&ac_coeffs, group_idx);
+                combined_group_tokens.extend(group_tokens);
+            }
+            let histogram_set = vardct_encoder
+                .build_clustered_histogram_set(&combined_group_tokens, ClusteringType::Best)?;
+            eprintln!(
+                "MULTI_GROUP CLUSTERING: {} contexts → {} clusters",
+                histogram_set.num_contexts,
+                histogram_set.num_clusters()
+            );
+            self.encode_vardct_multi_group_clustered(
                 &vardct_encoder,
                 &dc_coeffs,
                 &ac_coeffs,
-                &distributions,
+                &histogram_set,
                 writer,
             )?;
         }
@@ -508,6 +522,9 @@ impl FrameEncoder {
     }
 
     /// Encode VarDCT for multi-group images (>256x256).
+    /// Note: This is the non-clustered version, kept for reference.
+    /// The clustered version (encode_vardct_multi_group_clustered) is used in production.
+    #[allow(dead_code)]
     fn encode_vardct_multi_group(
         &self,
         vardct_encoder: &VarDctEncoder,
@@ -569,6 +586,95 @@ impl FrameEncoder {
                 vardct_encoder.write_pass_group(
                     group_tokens,
                     distributions,
+                    &mut pass_group_writer,
+                )?;
+
+                pass_group_writer.zero_pad_to_byte();
+                section_data.push(pass_group_writer.finish());
+            }
+        }
+
+        // Collect section sizes
+        let section_sizes: Vec<usize> = section_data.iter().map(|s| s.len()).collect();
+
+        // Write TOC with all section sizes
+        self.write_toc_multi(writer, &section_sizes)?;
+
+        // Append all section data
+        for section in section_data {
+            for byte in section {
+                writer.write_u8(byte)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encode VarDCT for multi-group images using clustered histograms.
+    fn encode_vardct_multi_group_clustered(
+        &self,
+        vardct_encoder: &VarDctEncoder,
+        dc_coeffs: &[i32],
+        ac_coeffs: &[i32],
+        histogram_set: &ClusteredHistogramSet,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let num_groups = vardct_encoder.num_groups();
+        let num_lf_groups = self.num_lf_groups();
+        let num_passes = 1; // Single pass for now
+
+        // For multi-group, sections must be in this order per JXL spec:
+        // [0] LfGlobal
+        // [1..1+num_lf_groups] LfGroup for each LF group
+        // [1+num_lf_groups] HfGlobal
+        // [2+num_lf_groups..] PassGroup for each (group, pass)
+
+        let mut section_data: Vec<Vec<u8>> = Vec::new();
+
+        // Section 0: LF Global
+        let mut lf_global_writer = BitWriter::new();
+        vardct_encoder.write_lf_global(&mut lf_global_writer)?;
+        lf_global_writer.zero_pad_to_byte();
+        section_data.push(lf_global_writer.finish());
+
+        // Sections 1..1+num_lf_groups: LF Group for each LF group
+        for _lf_group_idx in 0..num_lf_groups {
+            let mut lf_group_writer = BitWriter::new();
+            vardct_encoder.write_lf_group(dc_coeffs, &mut lf_group_writer)?;
+            lf_group_writer.zero_pad_to_byte();
+            section_data.push(lf_group_writer.finish());
+        }
+
+        // Collect all group tokens for writing
+        let mut all_group_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
+        for group_idx in 0..num_groups {
+            let group_tokens =
+                vardct_encoder.tokenize_ac_coefficients_for_group(ac_coeffs, group_idx);
+            all_group_tokens.push(group_tokens);
+        }
+
+        // Combine all tokens for HF Global (histogram_set was built from these)
+        let combined_tokens: Vec<Token> = all_group_tokens.iter().flatten().cloned().collect();
+
+        // Section 1+num_lf_groups: HF Global with clustered histograms
+        let mut hf_global_writer = BitWriter::new();
+        vardct_encoder.write_hf_global_clustered(
+            &combined_tokens,
+            histogram_set,
+            &mut hf_global_writer,
+        )?;
+        hf_global_writer.zero_pad_to_byte();
+        section_data.push(hf_global_writer.finish());
+
+        // Sections for PassGroup: write AC coefficients per group using clustered codes
+        for group_tokens in all_group_tokens.iter() {
+            for _pass in 0..num_passes {
+                let mut pass_group_writer = BitWriter::new();
+
+                // Write tokens for this group using clustered histograms
+                vardct_encoder.write_pass_group_clustered(
+                    group_tokens,
+                    histogram_set,
                     &mut pass_group_writer,
                 )?;
 

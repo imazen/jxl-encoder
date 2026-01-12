@@ -5,8 +5,31 @@
 use super::context::BlockContextMap;
 use super::tokenize::Token;
 use crate::entropy_coding::ans::{ANS_MAX_ALPHABET_SIZE, AnsDistribution};
+use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::entropy_coding::{ClusteringType, Histogram as EntropyHistogram, cluster_histograms};
 use crate::error::Result;
+
+/// Compute the global alphabet size from tokens, applying HybridUint encoding.
+///
+/// This MUST be used consistently when writing histograms and tokens to ensure
+/// the decoder sees the same alphabet size in both places.
+pub fn compute_alphabet_size_from_tokens(tokens: &[Token]) -> usize {
+    if tokens.is_empty() {
+        return 1;
+    }
+
+    // Use the same HybridUint config as write_histograms_clustered
+    let hybrid_config = HybridUintConfig::new(4, 2, 0);
+
+    let max_symbol = tokens.iter().map(|t| t.value as usize).max().unwrap_or(0);
+    let max_token = if max_symbol < hybrid_config.split as usize {
+        max_symbol
+    } else {
+        let (token, _, _) = hybrid_config.encode(max_symbol as u32);
+        token as usize
+    };
+    max_token + 1
+}
 
 /// Histogram builder for AC coefficient tokens.
 pub struct HistogramBuilder {
@@ -150,6 +173,9 @@ pub struct ClusteredHistogramSet {
     pub context_map: Vec<u8>,
     /// Number of original contexts.
     pub num_contexts: usize,
+    /// Global alphabet size (after HybridUint encoding) for consistent encoding.
+    /// This MUST be used when writing tokens, not recomputed from group tokens.
+    pub global_alphabet_size: usize,
 }
 
 impl ClusteredHistogramSet {
@@ -202,11 +228,16 @@ impl ClusteredHistogramSet {
         // 5. Build context map (u8 since we have at most 256 clusters)
         let context_map: Vec<u8> = cluster_result.symbols.iter().map(|&s| s as u8).collect();
 
+        // 6. Compute global alphabet size from tokens
+        // This MUST be used consistently when writing histograms and tokens
+        let global_alphabet_size = compute_alphabet_size_from_tokens(tokens);
+
         Ok(Self {
             clustered_histograms: cluster_result.histograms,
             distributions,
             context_map,
             num_contexts,
+            global_alphabet_size,
         })
     }
 
