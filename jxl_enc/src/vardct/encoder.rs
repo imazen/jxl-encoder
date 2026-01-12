@@ -23,7 +23,7 @@ use super::prefix_codes::{build_canonical_huffman_codes, write_alphabet_size, wr
 use super::quant_weights::DequantMatrices;
 use super::quantizer::QuantizerParams;
 use super::tokenize::{
-    NATURAL_ORDER_8X8, Token, generate_natural_order, log2_covered_blocks_for_strategy,
+    Token, ZIGZAG_ORDER_8X8, generate_natural_order, log2_covered_blocks_for_strategy,
 };
 use super::transform::TransformedDataWithStrategy;
 
@@ -370,60 +370,94 @@ impl VarDctEncoder {
         // Collect tokens from all blocks
         let mut tokens = Vec::with_capacity(num_blocks * 64);
 
-        for block_idx in 0..num_blocks {
-            // Get quant field value for this block (uniform)
-            let qf = self.quantizer.quant_dc;
+        // Track non-zeros per column per channel (for prediction)
+        // This matches the decoder's non_zeros_grid_row
+        let mut nz_grid: [Vec<u32>; 3] = [vec![0; blocks_x], vec![0; blocks_x], vec![0; blocks_x]];
 
-            // Process each channel (X=0, Y=1, B=2)
-            for c in 0..3 {
-                // Get block context
-                let lf_idx = 0; // No LF thresholds in default mode
-                let order_id = 0; // DCT8
-                let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, c);
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let block_idx = by * blocks_x + bx;
 
-                // Get AC coefficients for this block/channel (63 coeffs per channel)
-                let ac_start = block_idx * 3 * 63 + c * 63;
-                let block_ac = &ac_coeffs[ac_start..ac_start + 63];
+                // Get quant field value for this block (uniform)
+                let qf = self.quantizer.quant_dc;
 
-                // Count non-zeros
-                let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
+                // Process channels in decoder order: Y, X, B
+                // Decoder uses c = [1, 0, 2][iteration] to remap, then uses c for grid
+                for &c in &[1usize, 0, 2] {
+                    // c is the channel index (1=Y, 0=X, 2=B)
 
-                // Emit non-zero count token
-                let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
-                tokens.push(Token::new(nz_ctx, nzeros as u32));
+                    // Get block context
+                    let lf_idx = 0; // No LF thresholds in default mode
+                    let order_id = 0; // DCT8
+                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, c);
 
-                if nzeros > 0 {
-                    // Get zero-density context offset
-                    let histo_offset = self
-                        .block_ctx_map
-                        .zero_density_context_offset(block_context);
+                    // Get AC coefficients for this block/channel (63 coeffs per channel)
+                    let ac_start = block_idx * 3 * 63 + c * 63;
+                    let block_ac = &ac_coeffs[ac_start..ac_start + 63];
 
-                    // Process coefficients in natural order
-                    let mut nzeros_left = nzeros;
-                    let mut prev = if nzeros > 4 { 0 } else { 1 };
+                    // Count actual non-zeros
+                    let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
 
-                    for k in 0..63 {
-                        if nzeros_left == 0 {
-                            break;
-                        }
-
-                        let coeff = block_ac[NATURAL_ORDER_8X8[k + 1] - 1]; // -1 because AC starts at 0
-                        let ctx = histo_offset
-                            + super::context::zero_density_context(
-                                nzeros_left,
-                                k + 1, // k is 1-based in context computation
-                                0,     // log_num_blocks = 0 for DCT8
-                                prev,
-                            );
-
-                        let u_coeff = pack_signed(coeff);
-                        tokens.push(Token::new(ctx as u32, u_coeff));
-
-                        if coeff != 0 {
-                            prev = 1;
-                            nzeros_left -= 1;
+                    // Compute predicted non-zeros from neighbors (matching decoder)
+                    // Decoder uses channel index (c) for grid, not iteration index
+                    let predicted = if by == 0 {
+                        if bx == 0 {
+                            32usize // First block uses fixed prediction
                         } else {
-                            prev = 0;
+                            nz_grid[c][bx - 1] as usize
+                        }
+                    } else if bx == 0 {
+                        nz_grid[c][bx] as usize
+                    } else {
+                        ((nz_grid[c][bx] + nz_grid[c][bx - 1] + 1) >> 1) as usize
+                    };
+
+                    // Use prediction for context (matching decoder)
+                    let nz_ctx =
+                        self.block_ctx_map.nonzero_context(predicted, block_context) as u32;
+
+                    // Emit actual non-zeros value with predicted context
+                    tokens.push(Token::new(nz_ctx, nzeros as u32));
+
+                    // Store actual non-zeros for future predictions
+                    // Use channel index (c) for grid
+                    nz_grid[c][bx] = nzeros as u32;
+
+                    if nzeros > 0 {
+                        // Get zero-density context offset
+                        let histo_offset = self
+                            .block_ctx_map
+                            .zero_density_context_offset(block_context);
+
+                        // Process coefficients in natural order
+                        let mut nzeros_left = nzeros;
+                        // Decoder: is_prev_coeff_nonzero = (non_zeros <= num_blocks * 4) as u32
+                        // For DCT8x8 (num_blocks=1), this is: (nzeros <= 4) ? 1 : 0
+                        let mut prev = if nzeros <= 4 { 1 } else { 0 };
+
+                        for k in 0..63 {
+                            if nzeros_left == 0 {
+                                break;
+                            }
+
+                            let coeff = block_ac[ZIGZAG_ORDER_8X8[k + 1] - 1]; // -1 because AC starts at 0
+                            let ctx = histo_offset
+                                + super::context::zero_density_context(
+                                    nzeros_left,
+                                    k, // k is 0-based, matching decoder's idx
+                                    0, // log_num_blocks = 0 for DCT8
+                                    prev,
+                                );
+
+                            let u_coeff = pack_signed(coeff);
+                            tokens.push(Token::new(ctx as u32, u_coeff));
+
+                            if coeff != 0 {
+                                prev = 1;
+                                nzeros_left -= 1;
+                            } else {
+                                prev = 0;
+                            }
                         }
                     }
                 }
@@ -455,8 +489,11 @@ impl VarDctEncoder {
         // Track which blocks have been processed (for DCT16/32)
         let mut processed = vec![false; num_blocks];
 
+        // Track non-zeros per column per channel (for prediction, matching decoder)
+        let mut nz_grid: [Vec<u32>; 3] = [vec![0; blocks_x], vec![0; blocks_x], vec![0; blocks_x]];
+
         // Generate natural orders for different block sizes
-        let order_8 = NATURAL_ORDER_8X8.to_vec();
+        let order_8 = ZIGZAG_ORDER_8X8.to_vec();
         let order_16 = generate_natural_order(2, 2);
         let order_32 = generate_natural_order(4, 4);
 
@@ -497,8 +534,9 @@ impl VarDctEncoder {
                 // Get quant field value
                 let qf = self.quantizer.quant_dc;
 
-                // Process each channel
-                for c in 0..3 {
+                // Process channels in decoder order: Y, X, B
+                // Decoder uses c = [1, 0, 2][iteration] to remap, then uses c for grid
+                for &c in &[1usize, 0, 2] {
                     let block_context = self.block_ctx_map.block_context(0, qf, order_id, c);
 
                     // Get AC coefficients for this block/channel
@@ -519,12 +557,39 @@ impl VarDctEncoder {
                         block_ac
                     };
 
-                    // Count non-zeros
+                    // Count actual non-zeros
                     let nzeros: usize = effective_ac.iter().filter(|&&x| x != 0).count();
 
-                    // Emit non-zero count token
-                    let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
+                    // Compute predicted non-zeros from neighbors (matching decoder)
+                    // Decoder uses channel index (c) for grid
+                    let predicted = if by == 0 {
+                        if bx == 0 {
+                            32usize // First block uses fixed prediction
+                        } else {
+                            nz_grid[c][bx - 1] as usize
+                        }
+                    } else if bx == 0 {
+                        nz_grid[c][bx] as usize
+                    } else {
+                        ((nz_grid[c][bx] + nz_grid[c][bx - 1] + 1) >> 1) as usize
+                    };
+
+                    // Use prediction for context (matching decoder)
+                    let nz_ctx =
+                        self.block_ctx_map.nonzero_context(predicted, block_context) as u32;
+
+                    // Emit actual non-zeros value with predicted context
                     tokens.push(Token::new(nz_ctx, nzeros as u32));
+
+                    // Store actual non-zeros for future predictions
+                    // For larger blocks (DCT16/32), store to all covered columns
+                    // Use channel index (c) for grid
+                    let nz_val = nzeros as u32;
+                    for dx in 0..cx {
+                        if bx + dx < blocks_x {
+                            nz_grid[c][bx + dx] = nz_val;
+                        }
+                    }
 
                     if nzeros > 0 {
                         let histo_offset = self
@@ -532,7 +597,9 @@ impl VarDctEncoder {
                             .zero_density_context_offset(block_context);
 
                         let mut nzeros_left = nzeros;
-                        let mut prev = if nzeros > ac_size / 16 { 0 } else { 1 };
+                        // Decoder: is_prev_coeff_nonzero = (non_zeros <= num_blocks * 4) as u32
+                        let num_8x8_blocks = covered_blocks;
+                        let mut prev = if nzeros <= num_8x8_blocks * 4 { 1 } else { 0 };
 
                         // Process coefficients in scan order
                         for k in 0..effective_ac.len() {
@@ -567,7 +634,7 @@ impl VarDctEncoder {
                             let ctx = histo_offset
                                 + super::context::zero_density_context(
                                     nzeros_left,
-                                    k + 1,
+                                    k, // k is 0-based, matching decoder's idx
                                     log2_blocks,
                                     prev,
                                 );
@@ -611,6 +678,10 @@ impl VarDctEncoder {
     ///
     /// Returns tokens only for blocks within the specified group.
     /// The histograms must have been built from all groups beforehand.
+    ///
+    /// NOTE: For proper multi-group prediction, this needs the prediction grid
+    /// from previous rows. For now, each group starts with a fresh grid.
+    /// TODO: Add prediction grid state parameter for cross-group prediction.
     pub fn tokenize_ac_coefficients_for_group(
         &self,
         ac_coeffs: &[i32],
@@ -625,16 +696,26 @@ impl VarDctEncoder {
 
         let mut tokens = Vec::with_capacity(num_group_blocks * 64);
 
+        // Track non-zeros per column per channel (for prediction)
+        // CRITICAL: Uses iteration order (0,1,2), not channel index
+        let mut nz_grid: [Vec<u32>; 3] =
+            [vec![0; group_blocks_x], vec![0; group_blocks_x], vec![0; group_blocks_x]];
+
         // Process blocks within this group's bounds
         for by in start_by..end_by {
+            let local_by = by - start_by;
             for bx in start_bx..end_bx {
+                let local_bx = bx - start_bx;
                 let block_idx = by * blocks_x + bx;
 
                 // Get quant field value for this block (uniform)
                 let qf = self.quantizer.quant_dc;
 
-                // Process each channel (X=0, Y=1, B=2)
-                for c in 0..3 {
+                // Process channels in decoder order: Y, X, B
+                // Decoder uses c = [1, 0, 2][iteration] to remap, then uses c for grid
+                for &c in &[1usize, 0, 2] {
+                    // c is the channel index (1=Y, 0=X, 2=B)
+
                     // Get block context
                     let lf_idx = 0; // No LF thresholds in default mode
                     let order_id = 0; // DCT8
@@ -644,12 +725,33 @@ impl VarDctEncoder {
                     let ac_start = block_idx * 3 * 63 + c * 63;
                     let block_ac = &ac_coeffs[ac_start..ac_start + 63];
 
-                    // Count non-zeros
+                    // Count actual non-zeros
                     let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
 
-                    // Emit non-zero count token
-                    let nz_ctx = self.block_ctx_map.nonzero_context(nzeros, block_context) as u32;
+                    // Compute predicted non-zeros from neighbors (matching decoder)
+                    // Use local coordinates within group for grid
+                    // Decoder uses channel index (c) for grid
+                    let predicted = if local_by == 0 {
+                        if local_bx == 0 {
+                            32usize // First block uses fixed prediction
+                        } else {
+                            nz_grid[c][local_bx - 1] as usize
+                        }
+                    } else if local_bx == 0 {
+                        nz_grid[c][local_bx] as usize
+                    } else {
+                        ((nz_grid[c][local_bx] + nz_grid[c][local_bx - 1] + 1) >> 1) as usize
+                    };
+
+                    // Use prediction for context (matching decoder)
+                    let nz_ctx =
+                        self.block_ctx_map.nonzero_context(predicted, block_context) as u32;
+
+                    // Emit actual non-zeros value with predicted context
                     tokens.push(Token::new(nz_ctx, nzeros as u32));
+
+                    // Store actual non-zeros for future predictions
+                    nz_grid[c][local_bx] = nzeros as u32;
 
                     if nzeros > 0 {
                         // Get zero-density context offset
@@ -659,18 +761,18 @@ impl VarDctEncoder {
 
                         // Process coefficients in natural order
                         let mut nzeros_left = nzeros;
-                        let mut prev = if nzeros > 4 { 0 } else { 1 };
+                        let mut prev = if nzeros <= 4 { 1 } else { 0 };
 
                         for k in 0..63 {
                             if nzeros_left == 0 {
                                 break;
                             }
 
-                            let coeff = block_ac[NATURAL_ORDER_8X8[k + 1] - 1];
+                            let coeff = block_ac[ZIGZAG_ORDER_8X8[k + 1] - 1];
                             let ctx = histo_offset
                                 + super::context::zero_density_context(
                                     nzeros_left,
-                                    k + 1,
+                                    k, // k is 0-based, matching decoder's idx
                                     0, // log_num_blocks = 0 for DCT8
                                     prev,
                                 );

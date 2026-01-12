@@ -17,29 +17,34 @@ pub const NON_ZERO_BUCKETS: usize = 37;
 pub const ZERO_DENSITY_CONTEXT_COUNT: usize = 458;
 
 /// Coefficient frequency context lookup.
-/// Maps coefficient position to context bucket.
-pub const COEFF_FREQ_CONTEXT: [usize; 64] = [
-    0xBAD, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19,
-    19, 20, 20, 21, 21, 22, 22, 23, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 25, 26, 26, 26, 26, 27,
-    27, 27, 27, 28, 28, 28, 28, 29, 29, 29, 29, 30, 30, 30, 30,
+/// Maps coefficient index (0-62) to context bucket.
+/// 63 entries matching the decoder's table.
+pub const COEFF_FREQ_CONTEXT: [usize; 63] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20,
+    20, 21, 21, 22, 22, 23, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 25, 26, 26, 26, 26, 27, 27, 27,
+    27, 28, 28, 28, 28, 29, 29, 29, 29, 30, 30, 30, 30,
 ];
 
 /// Coefficient non-zero count context lookup.
-/// Maps non-zero count to context bucket.
-pub const COEFF_NUM_NONZERO_CONTEXT: [usize; 64] = [
-    0xBAD, 0, 31, 62, 62, 93, 93, 93, 93, 123, 123, 123, 123, 152, 152, 152, 152, 152, 152, 152,
-    152, 180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 206, 206, 206, 206, 206, 206,
+/// Maps (non_zeros - 1) to context bucket (matching decoder).
+/// 63 entries for indices 0-62 (when non_zeros is 1-63).
+pub const COEFF_NUM_NONZERO_CONTEXT: [usize; 63] = [
+    0, 31, 62, 62, 93, 93, 93, 93, 123, 123, 123, 123, 152, 152, 152, 152, 152, 152, 152, 152, 180,
+    180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 206, 206, 206, 206, 206, 206, 206, 206,
     206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206, 206,
-    206, 206, 206, 206, 206, 206,
+    206, 206, 206, 206,
 ];
 
 /// Compute zero-density context for a coefficient.
 ///
 /// # Arguments
-/// * `nonzeros_left` - Number of non-zero coefficients remaining
-/// * `k` - Coefficient index in natural order
+/// * `nonzeros_left` - Number of non-zero coefficients remaining (must be >= 1)
+/// * `k` - Coefficient index in natural order (1-based)
 /// * `log_num_blocks` - Log2 of number of 8x8 blocks in transform
 /// * `prev` - Previous coefficient's zero flag (0 or 1)
+///
+/// Note: The decoder uses (non_zeros - 1) >> log_num_blocks for the context.
+/// We match this by computing (nonzeros_left - 1) >> log_num_blocks.
 #[inline]
 pub fn zero_density_context(
     nonzeros_left: usize,
@@ -47,21 +52,15 @@ pub fn zero_density_context(
     log_num_blocks: usize,
     prev: usize,
 ) -> usize {
-    let nonzeros_left_norm = shift_right_ceil(nonzeros_left, log_num_blocks);
+    // Match decoder: uses (non_zeros - 1) >> num_blocks_log
+    // nonzeros_left is guaranteed to be >= 1 here
+    debug_assert!(nonzeros_left >= 1, "nonzeros_left must be >= 1");
+    let nonzeros_idx = (nonzeros_left - 1) >> log_num_blocks;
     let k_norm = k >> log_num_blocks;
-    let nz = nonzeros_left_norm.clamp(1, 63);
-    let kn = k_norm.clamp(1, 63);
+    // Clamp to valid indices: 0-62 for both nz and k
+    let nz = nonzeros_idx.min(62);
+    let kn = k_norm.min(62);
     (COEFF_NUM_NONZERO_CONTEXT[nz] + COEFF_FREQ_CONTEXT[kn]) * 2 + prev
-}
-
-/// Shift right with ceiling.
-#[inline]
-fn shift_right_ceil(x: usize, shift: usize) -> usize {
-    if shift == 0 {
-        x
-    } else {
-        (x + (1 << shift) - 1) >> shift
-    }
 }
 
 /// Default context map for block context selection.
@@ -381,12 +380,17 @@ mod tests {
     #[test]
     fn test_zero_density_context_edge_cases() {
         // Edge cases for clamping
-        let ctx_low = zero_density_context(0, 0, 0, 0);
-        let ctx_high = zero_density_context(1000, 1000, 0, 0);
+        // Note: nonzeros_left must be >= 1 (we only call this when processing AC coefficients)
+        let ctx_low = zero_density_context(1, 1, 0, 0);
+        let ctx_high = zero_density_context(63, 63, 0, 0);
 
         // Both should be valid
         assert!(ctx_low < ZERO_DENSITY_CONTEXT_COUNT * 2);
         assert!(ctx_high < ZERO_DENSITY_CONTEXT_COUNT * 2);
+
+        // Test with high values that get clamped
+        let ctx_clamped = zero_density_context(1000, 1000, 0, 0);
+        assert!(ctx_clamped < ZERO_DENSITY_CONTEXT_COUNT * 2);
     }
 
     #[test]
@@ -482,18 +486,6 @@ mod tests {
     }
 
     #[test]
-    fn test_shift_right_ceil() {
-        // shift = 0 should return x unchanged
-        assert_eq!(shift_right_ceil(10, 0), 10);
-        assert_eq!(shift_right_ceil(0, 0), 0);
-
-        // shift > 0 should round up
-        assert_eq!(shift_right_ceil(8, 2), 2); // 8 / 4 = 2
-        assert_eq!(shift_right_ceil(9, 2), 3); // ceil(9 / 4) = 3
-        assert_eq!(shift_right_ceil(7, 2), 2); // ceil(7 / 4) = 2
-    }
-
-    #[test]
     fn test_write_threshold_ranges() {
         // Test all threshold encoding ranges
         let test_values = [
@@ -538,30 +530,30 @@ mod tests {
 
     #[test]
     fn test_coeff_freq_context_values() {
-        // Verify the context lookup table has valid values
+        // Verify the context lookup table has valid values (63 entries, 0-62)
+        // This matches the decoder's COEFF_FREQ_CONTEXT table exactly
+        assert_eq!(COEFF_FREQ_CONTEXT.len(), 63);
         for (i, &ctx) in COEFF_FREQ_CONTEXT.iter().enumerate() {
-            if i == 0 {
-                assert_eq!(ctx, 0xBAD, "First entry should be 0xBAD (DC not used)");
-            } else {
-                assert!(ctx <= 30, "Context {} at index {} should be <= 30", ctx, i);
-            }
+            assert!(ctx <= 30, "Context {} at index {} should be <= 30", ctx, i);
         }
+        // First entry is 0 (for coefficient index 0)
+        assert_eq!(COEFF_FREQ_CONTEXT[0], 0);
     }
 
     #[test]
     fn test_coeff_num_nonzero_context_values() {
         // Verify the non-zero count lookup table
+        // Table has 63 entries for indices 0-62 (matching decoder's (non_zeros-1))
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT.len(), 63);
         for (i, &ctx) in COEFF_NUM_NONZERO_CONTEXT.iter().enumerate() {
-            if i == 0 {
-                assert_eq!(ctx, 0xBAD, "First entry should be 0xBAD");
-            } else {
-                assert!(
-                    ctx <= 206,
-                    "Context {} at index {} should be <= 206",
-                    ctx,
-                    i
-                );
-            }
+            assert!(
+                ctx <= 206,
+                "Context {} at index {} should be <= 206",
+                ctx,
+                i
+            );
         }
+        // First entry (non_zeros=1, index=0) should map to context 0
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[0], 0);
     }
 }
