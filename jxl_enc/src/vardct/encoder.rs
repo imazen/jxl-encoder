@@ -698,8 +698,11 @@ impl VarDctEncoder {
 
         // Track non-zeros per column per channel (for prediction)
         // CRITICAL: Uses iteration order (0,1,2), not channel index
-        let mut nz_grid: [Vec<u32>; 3] =
-            [vec![0; group_blocks_x], vec![0; group_blocks_x], vec![0; group_blocks_x]];
+        let mut nz_grid: [Vec<u32>; 3] = [
+            vec![0; group_blocks_x],
+            vec![0; group_blocks_x],
+            vec![0; group_blocks_x],
+        ];
 
         // Process blocks within this group's bounds
         for by in start_by..end_by {
@@ -977,7 +980,7 @@ impl VarDctEncoder {
     fn write_histograms_clustered(
         &self,
         histogram_set: &ClusteredHistogramSet,
-        tokens: &[Token],
+        _tokens: &[Token],
         writer: &mut BitWriter,
     ) -> Result<()> {
         let start_bit = writer.bits_written();
@@ -1029,23 +1032,12 @@ impl VarDctEncoder {
             writer.bits_written()
         );
 
-        // Compute the maximum raw symbol value from tokens
-        let max_symbol = tokens.iter().map(|t| t.value as usize).max().unwrap_or(0);
-
-        // Use HybridUint encoding to bound token values
-        let hybrid_config = crate::entropy_coding::hybrid_uint::HybridUintConfig::new(4, 2, 0);
-
-        // Compute max token value after HybridUint encoding
-        let max_token = if max_symbol < hybrid_config.split as usize {
-            max_symbol
-        } else {
-            let (token, _, _) = hybrid_config.encode(max_symbol as u32);
-            token as usize
-        };
-        let alphabet_size = max_token + 1;
+        // Use the global alphabet size from histogram_set (computed at build time from all tokens)
+        // This MUST match what write_pass_group_clustered uses to ensure consistent encoding
+        let alphabet_size = histogram_set.global_alphabet_size;
         eprintln!(
-            "HF_HIST_CLUSTERED: max_symbol = {}, max_token = {}, alphabet_size = {}",
-            max_symbol, max_token, alphabet_size
+            "HF_HIST_CLUSTERED: using global_alphabet_size = {}",
+            alphabet_size
         );
 
         // Write IntegerConfig for EACH histogram (num_clusters histograms)
@@ -1386,15 +1378,11 @@ impl VarDctEncoder {
         // Use the same HybridUint config as write_histograms_clustered
         let hybrid_config = crate::entropy_coding::hybrid_uint::HybridUintConfig::new(4, 2, 0);
 
-        // Compute alphabet size the same way as write_histograms_clustered
-        let max_symbol = tokens.iter().map(|t| t.value as usize).max().unwrap_or(0);
-        let max_token = if max_symbol < hybrid_config.split as usize {
-            max_symbol
-        } else {
-            let (token, _, _) = hybrid_config.encode(max_symbol as u32);
-            token as usize
-        };
-        let alphabet_size = max_token + 1;
+        // CRITICAL: Use the global alphabet size from histogram_set, NOT computed from local tokens!
+        // This must match what was written in write_histograms_clustered.
+        // Computing it locally from group tokens causes mismatches when different groups
+        // have different max symbol values, leading to "non_zeros too large" decode errors.
+        let alphabet_size = histogram_set.global_alphabet_size;
 
         if alphabet_size <= 1 {
             // Single symbol - nothing to write (decoder knows the only possibility)
