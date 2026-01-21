@@ -194,10 +194,7 @@ mod tests {
     #[test]
     fn test_dct8_dc() {
         // Constant input should produce DC only
-        let mut input = [0.0f32; 64];
-        for i in 0..64 {
-            input[i] = 1.0;
-        }
+        let input = [1.0f32; 64];
         let mut output = [0.0f32; 64];
         dct8(&input, &mut output);
 

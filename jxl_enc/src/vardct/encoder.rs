@@ -52,7 +52,7 @@ impl Default for VarDctOptions {
             distance: 1.0,
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
-            ac_strategy_heuristics: HeuristicLevel::VarianceBased, // Adaptive DCT sizes
+            ac_strategy_heuristics: HeuristicLevel::Dct8Only, // DCT8 only until larger transform encoding is fixed
             cfl_enabled: true,    // Chroma-from-Luma for better compression
             adaptive_quant: true, // Per-block quality for perceptual quality
             adaptive_quant_strength: 0.5,
@@ -1182,15 +1182,16 @@ impl VarDctEncoder {
         let ytob_channel = Channel::from_vec(ytob_data, tiles_x, tiles_y)?;
 
         // transform_image: (count, 2) array
-        // Row 0: transform_type (0 = DCT8)
+        // Row 0: transform_type (enum value from AcStrategy)
         // Row 1: raw_quant - 1
         let mut transform_data = vec![0i32; count * 2];
         for i in 0..count {
-            // Transform type (DCT8 = 0)
-            transform_data[i] = 0;
-            // Raw quant - 1 (stored in second row)
+            // Get the actual transform type from AC strategy map
             let bx = i % blocks_x;
             let by = i / blocks_x;
+            let strategy = self.ac_strategy_map.get(bx, by);
+            transform_data[i] = strategy as i32;
+            // Raw quant - 1 (stored in second row)
             let quant = self.quant_field.get(bx, by) as i32;
             transform_data[count + i] = (quant - 1).max(0);
         }
@@ -1398,13 +1399,8 @@ impl VarDctEncoder {
             .map(|_| build_canonical_huffman_codes(alphabet_size))
             .collect();
 
-        eprintln!(
-            "PASS_GROUP_CLUSTERED: alphabet_size={}, num_clusters={}",
-            alphabet_size, num_clusters
-        );
-
         // Encode each token using the appropriate cluster's Huffman codes
-        for (token_count, token) in tokens.iter().enumerate() {
+        for token in tokens {
             let context = token.context as usize;
             let cluster_idx = if context < histogram_set.context_map.len() {
                 histogram_set.context_map[context] as usize
@@ -1418,13 +1414,6 @@ impl VarDctEncoder {
             let sym = encoded_token as usize;
             let code = codes[sym];
             let len = code_lengths[sym] as usize;
-
-            if token_count < 5 {
-                eprintln!(
-                    "PASS_GROUP_CLUSTERED: token {}: ctx={}, cluster={}, value={}, code={:#b} ({} bits)",
-                    token_count, context, cluster_idx, token.value, code, len
-                );
-            }
 
             writer.write(len, code as u64)?;
             if num_extra_bits > 0 {
