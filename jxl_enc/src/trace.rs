@@ -332,6 +332,7 @@ pub fn finish_trace() {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "trace-bitstream")]
     use super::*;
 
     #[test]

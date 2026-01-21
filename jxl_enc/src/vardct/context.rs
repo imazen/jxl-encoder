@@ -211,7 +211,8 @@ impl BlockContextMap {
         } else {
             trace_write!(writer, 1, 0, "all_default", "false - custom thresholds")?;
             // Write LF thresholds
-            for thr in self.lf_thresholds.iter() {
+            #[allow(unused_variables)]
+            for (i, thr) in self.lf_thresholds.iter().enumerate() {
                 trace_write!(writer, 4, thr.len() as u64, &format!("lf_thr[{}].count", i))?;
                 for &t in thr {
                     write_threshold(writer, t)?;

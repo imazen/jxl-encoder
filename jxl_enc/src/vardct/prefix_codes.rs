@@ -380,9 +380,11 @@ pub(crate) fn write_complex_prefix_code(
 
         // Now emit code lengths for each alphabet symbol
         // Both symbols (cl_sym and cl_dummy) have code length 1.
-        // The one that appears first in storage order gets code 0.
-        // We always select cl_sym (not cl_dummy), so write the appropriate bit.
-        let cl_sym_code = if pos_sym < pos_dummy { 0u64 } else { 1u64 };
+        // Canonical Huffman codes assign code 0 to the symbol with LOWER VALUE
+        // (not lower position in storage order).
+        // Since cl_dummy=0 < cl_sym (cl_sym is 1-5), cl_dummy always gets code 0.
+        // We want to select cl_sym (not cl_dummy), so we always write code 1.
+        let cl_sym_code = 1u64;
 
         // Write alphabet_size bits, all selecting cl_sym
         for _ in 0..alphabet_size {
@@ -503,10 +505,11 @@ pub(crate) fn write_complex_prefix_code(
 /// - Small values (±63) use fewer bits
 /// - Larger values use more bits
 #[allow(dead_code)]
+#[allow(unused_variables)]
 pub(crate) fn write_signed_varint_traced(
     writer: &mut BitWriter,
     value: i32,
-    _field: &str,
+    field: &str,
 ) -> Result<()> {
     // Convert signed to unsigned using zigzag encoding
     let unsigned = if value >= 0 {

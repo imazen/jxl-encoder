@@ -76,9 +76,10 @@ struct HuffmanNode {
     /// Total count (frequency) of this subtree.
     total_count: u32,
     /// Index of left child, or -1 if leaf.
-    index_left: i16,
+    index_left: i32,
     /// Index of right child, or symbol value if leaf.
-    index_right_or_value: i16,
+    /// Note: libjxl uses i16, but we need i32 for alphabets > 32K symbols.
+    index_right_or_value: i32,
 }
 
 impl HuffmanNode {
@@ -86,7 +87,7 @@ impl HuffmanNode {
         Self {
             total_count: count,
             index_left: -1,
-            index_right_or_value: symbol as i16,
+            index_right_or_value: symbol as i32,
         }
     }
 
@@ -228,8 +229,8 @@ pub fn create_huffman_tree(histogram: &[u32], tree_limit: u8) -> Vec<u8> {
             // Create parent node at the sentinel position
             let j_end = tree.len() - 1;
             tree[j_end].total_count = tree[left].total_count + tree[right].total_count;
-            tree[j_end].index_left = left as i16;
-            tree[j_end].index_right_or_value = right as i16;
+            tree[j_end].index_left = left as i32;
+            tree[j_end].index_right_or_value = right as i32;
 
             // Add new sentinel
             tree.push(HuffmanNode::sentinel());

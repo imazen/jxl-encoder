@@ -256,7 +256,18 @@ impl FrameEncoder {
             use_default_block_ctx: true,
             ..Default::default()
         };
+        self.encode_vardct_with_options(xyb_data, options, writer)
+    }
 
+    /// Encode a VarDCT (lossy) frame with custom options.
+    ///
+    /// This allows specifying AC strategy heuristics for DCT16/32 support.
+    pub fn encode_vardct_with_options(
+        &self,
+        xyb_data: &[f32],
+        options: VarDctOptions,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
         let mut vardct_encoder = VarDctEncoder::new(self.width, self.height, options.clone());
         let num_groups = vardct_encoder.num_groups();
 
@@ -1041,5 +1052,94 @@ mod tests {
 
         let bytes = writer.finish_with_padding();
         assert!(!bytes.is_empty());
+    }
+
+    /// Test DCT16/32 encoding with variance-based strategy selection.
+    ///
+    /// Creates a smooth gradient that should trigger DCT16/32 selection,
+    /// then verifies it can be decoded by jxl-oxide.
+    #[test]
+    fn test_vardct_with_variance_based_strategy() {
+        use crate::color::xyb::srgb_image_to_xyb;
+        use crate::headers::FileHeader;
+
+        // 32x32 smooth gradient - should trigger DCT16 or DCT32
+        let mut data = vec![0u8; 32 * 32 * 3];
+        for y in 0..32 {
+            for x in 0..32 {
+                let idx = (y * 32 + x) * 3;
+                // Very smooth gradient (low variance) to trigger larger DCTs
+                let val = ((x + y) / 2) as u8;
+                data[idx] = val; // R
+                data[idx + 1] = val; // G
+                data[idx + 2] = val; // B
+            }
+        }
+
+        // Convert to XYB
+        let num_pixels = 32 * 32;
+        let data_f32: Vec<f32> = data.iter().map(|&x| x as f32).collect();
+        let mut r = vec![0.0f32; num_pixels];
+        let mut g = vec![0.0f32; num_pixels];
+        let mut b = vec![0.0f32; num_pixels];
+        for i in 0..num_pixels {
+            r[i] = data_f32[i * 3];
+            g[i] = data_f32[i * 3 + 1];
+            b[i] = data_f32[i * 3 + 2];
+        }
+
+        let mut x_out = vec![0.0f32; num_pixels];
+        let mut y_out = vec![0.0f32; num_pixels];
+        let mut b_out = vec![0.0f32; num_pixels];
+        srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+
+        let mut xyb_data = vec![0.0f32; num_pixels * 3];
+        for i in 0..num_pixels {
+            xyb_data[i * 3] = x_out[i];
+            xyb_data[i * 3 + 1] = y_out[i];
+            xyb_data[i * 3 + 2] = b_out[i];
+        }
+
+        // Encode with variance-based strategy
+        let options = VarDctOptions {
+            distance: 1.0,
+            use_default_quant_matrices: true,
+            use_default_block_ctx: true,
+            ac_strategy_heuristics: HeuristicLevel::VarianceBased,
+            cfl_enabled: true,
+            adaptive_quant: false, // Keep simple for test
+            adaptive_quant_strength: 0.0,
+        };
+
+        let mut writer = BitWriter::new();
+        let file_header = FileHeader::new_rgb_lossy(32, 32);
+        file_header.write(&mut writer).unwrap();
+        writer.zero_pad_to_byte();
+
+        let encoder = FrameEncoder::new(32, 32, FrameEncoderOptions::default());
+        encoder
+            .encode_vardct_with_options(&xyb_data, options, &mut writer)
+            .expect("DCT16/32 encoding should succeed");
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("VarDCT with variance-based strategy: {} bytes", bytes.len());
+        assert!(!bytes.is_empty());
+
+        // Save for debugging
+        std::fs::write("/tmp/vardct_variance_based.jxl", &bytes).ok();
+
+        // Decode with jxl-oxide to verify roundtrip
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes))
+            .expect("jxl-oxide should parse DCT16/32 bitstream");
+        assert_eq!(image.width(), 32);
+        assert_eq!(image.height(), 32);
+
+        // Actually render to ensure full decode
+        image
+            .render_frame(0)
+            .expect("jxl-oxide should render DCT16/32 frame");
+
+        eprintln!("DCT16/32 roundtrip test PASSED");
     }
 }

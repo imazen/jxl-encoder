@@ -863,7 +863,6 @@ mod debug_tests {
 
 #[cfg(test)]
 mod debug_tests2 {
-    use super::*;
     use crate::vardct::quant_weights::get_dct8_inv_dequant_per_channel;
 
     #[test]
@@ -919,7 +918,6 @@ mod debug_tests2 {
 
 #[cfg(test)]
 mod debug_tests3 {
-    use super::*;
     use crate::vardct::quantizer::{GLOBAL_SCALE_DENOM, QuantizerParams};
 
     #[test]

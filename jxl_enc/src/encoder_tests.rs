@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(image.height(), 8);
 
         // Try to actually render the frame (not just parse headers)
-        let render = image
+        let _render = image
             .render_frame(0)
             .expect("test_encode_lossy_8x8: render failed");
 

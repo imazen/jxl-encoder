@@ -15,16 +15,13 @@ use crate::modular::improved::write_vardct_modular_substream;
 #[allow(unused_imports)]
 use crate::{trace_note, trace_section, trace_write};
 
-use super::AcStrategy;
 use super::context::BlockContextMap;
 use super::enc_coeff::pack_signed;
 use super::histogram::{ClusteredHistogramSet, HistogramBuilder};
 use super::prefix_codes::{build_canonical_huffman_codes, write_alphabet_size, write_prefix_code};
 use super::quant_weights::DequantMatrices;
 use super::quantizer::QuantizerParams;
-use super::tokenize::{
-    Token, ZIGZAG_ORDER_8X8, generate_natural_order, log2_covered_blocks_for_strategy,
-};
+use super::tokenize::{Token, ZIGZAG_ORDER_8X8, generate_natural_order};
 use super::transform::TransformedDataWithStrategy;
 
 /// VarDCT frame encoding options.
@@ -52,7 +49,7 @@ impl Default for VarDctOptions {
             distance: 1.0,
             use_default_quant_matrices: true,
             use_default_block_ctx: true,
-            ac_strategy_heuristics: HeuristicLevel::Dct8Only, // DCT8 only until larger transform encoding is fixed
+            ac_strategy_heuristics: HeuristicLevel::VarianceBased, // DCT8/16/32 based on image content
             cfl_enabled: true,    // Chroma-from-Luma for better compression
             adaptive_quant: true, // Per-block quality for perceptual quality
             adaptive_quant_strength: 0.5,
@@ -106,10 +103,16 @@ impl VarDctEncoder {
     /// Compute AC strategy map based on image content.
     ///
     /// Call this after creating the encoder and before encoding.
-    /// The Y plane should be the luminance channel in linear space (or XYB Y).
-    pub fn compute_ac_strategies(&mut self, y_plane: &[f32]) {
+    /// Takes interleaved XYB data and extracts the Y plane for variance analysis.
+    pub fn compute_ac_strategies(&mut self, xyb_interleaved: &[f32]) {
+        // Extract Y plane from interleaved XYB data (Y is at index 1 of each pixel)
+        let num_pixels = self.width * self.height;
+        let y_plane: Vec<f32> = (0..num_pixels)
+            .map(|i| xyb_interleaved[i * 3 + 1])
+            .collect();
+
         self.ac_strategy_map = select_ac_strategies(
-            y_plane,
+            &y_plane,
             self.width,
             self.height,
             self.options.ac_strategy_heuristics,
@@ -119,12 +122,18 @@ impl VarDctEncoder {
     /// Compute adaptive quant field from image data.
     ///
     /// Call this after creating the encoder and before encoding.
-    /// The Y plane should be the luminance channel in linear space (or XYB Y).
-    pub fn compute_quant_field(&mut self, y_plane: &[f32]) {
+    /// Takes interleaved XYB data and extracts the Y plane for analysis.
+    pub fn compute_quant_field(&mut self, xyb_interleaved: &[f32]) {
         if self.options.adaptive_quant {
+            // Extract Y plane from interleaved XYB data
+            let num_pixels = self.width * self.height;
+            let y_plane: Vec<f32> = (0..num_pixels)
+                .map(|i| xyb_interleaved[i * 3 + 1])
+                .collect();
+
             let base_quant = self.quantizer.quant_dc.min(255) as u8;
             self.quant_field = QuantField::compute_adaptive(
-                y_plane,
+                &y_plane,
                 self.width,
                 self.height,
                 base_quant,
@@ -506,21 +515,22 @@ impl VarDctEncoder {
                 }
 
                 let strategy = transformed.strategies.get(bx, by);
-                let (cx, cy) = match strategy {
-                    AcStrategy::Dct32x32 if bx + 3 < blocks_x && by + 3 < blocks_y => (4, 4),
-                    AcStrategy::Dct16x16 if bx + 1 < blocks_x && by + 1 < blocks_y => (2, 2),
-                    _ => (1, 1),
-                };
+                // Get the actual coverage from the strategy
+                let (cx, cy) = strategy.covered_blocks();
 
-                // Mark blocks as processed
-                for dy in 0..cy {
-                    for dx in 0..cx {
+                // Clamp to image bounds for safety (shouldn't happen with proper strategy selection)
+                let actual_cx = cx.min(blocks_x - bx);
+                let actual_cy = cy.min(blocks_y - by);
+
+                // Mark all covered blocks as processed
+                for dy in 0..actual_cy {
+                    for dx in 0..actual_cx {
                         processed[(by + dy) * blocks_x + (bx + dx)] = true;
                     }
                 }
 
                 let order_id = strategy.order_id();
-                let log2_blocks = log2_covered_blocks_for_strategy(cx, cy);
+                let log2_blocks = strategy.log2_covered_blocks() as usize;
                 let order: &[usize] = match (cx, cy) {
                     (4, 4) => &order_32,
                     (2, 2) => &order_16,
@@ -528,8 +538,6 @@ impl VarDctEncoder {
                 };
 
                 let covered_blocks = cx * cy;
-                let block_size = covered_blocks * 64;
-                let ac_size = block_size - covered_blocks; // Subtract DCs
 
                 // Get quant field value
                 let qf = self.quantizer.quant_dc;
@@ -548,14 +556,8 @@ impl VarDctEncoder {
                     };
                     let block_ac = &transformed.ac_coeffs[ac_start..ac_end];
 
-                    // For larger blocks, need to handle coefficient ordering properly
-                    // For now, use the AC directly (skipping LLF which is in dc_coeffs)
-                    let effective_ac = if block_ac.len() == ac_size {
-                        block_ac
-                    } else {
-                        // Fallback for DCT8
-                        block_ac
-                    };
+                    // Use the actual coefficients provided by the transform
+                    let effective_ac = block_ac;
 
                     // Count actual non-zeros
                     let nzeros: usize = effective_ac.iter().filter(|&&x| x != 0).count();
@@ -615,13 +617,13 @@ impl VarDctEncoder {
                             };
 
                             // Map from full-block position to AC array index
-                            // effective_ac contains coefficients starting from position 1 (after DC)
+                            // effective_ac contains coefficients starting from position covered_blocks (after LLF)
                             // For DCT8: coeff_idx 1 -> ac_index 0, coeff_idx 63 -> ac_index 62
                             // For DCT16/32: we skip covered_blocks LLF positions
                             let ac_index = if coeff_idx >= covered_blocks {
                                 coeff_idx - covered_blocks
                             } else {
-                                // This shouldn't happen since we start at k=0 + covered_blocks
+                                // LLF position - shouldn't happen in AC processing
                                 k
                             };
 
@@ -1136,8 +1138,11 @@ impl VarDctEncoder {
     /// Write HF metadata for the LF Group.
     ///
     /// HF metadata contains:
-    /// - count (ceil_log2(upper_bound) bits) - number of transform blocks
+    /// - count (ceil_log2(upper_bound) bits) - number of distinct transform blocks
     /// - 4 modular channels: ytox_map, ytob_map, transform_image, epf_map
+    ///
+    /// For DCT16/32, multiple 8x8 blocks are covered by a single transform.
+    /// Only the top-left block of each transform is written to transform_image.
     fn write_hf_metadata(&self, writer: &mut BitWriter) -> Result<()> {
         let blocks_x = self.num_blocks_x();
         let blocks_y = self.num_blocks_y();
@@ -1148,23 +1153,57 @@ impl VarDctEncoder {
         let tiles_y = blocks_y.div_ceil(8);
         let num_tiles = tiles_x * tiles_y;
 
-        // Count = number of transform blocks (for DCT8, every block is distinct)
-        // The count is encoded using ceil_log2(upper_bound) bits
+        // Build transform entries by walking grid and tracking processed blocks.
+        // For DCT8, every block is distinct. For DCT16/32, multiple blocks share one transform.
+        let mut processed = vec![false; num_blocks];
+        let mut transform_entries: Vec<(i32, i32)> = Vec::new();
+
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let block_idx = by * blocks_x + bx;
+                if processed[block_idx] {
+                    continue;
+                }
+
+                let strategy = self.ac_strategy_map.get(bx, by);
+                let (cx, cy) = strategy.covered_blocks();
+
+                // For boundary safety, clamp coverage to image bounds
+                let actual_cx = cx.min(blocks_x - bx);
+                let actual_cy = cy.min(blocks_y - by);
+
+                // Mark all covered blocks as processed
+                for dy in 0..actual_cy {
+                    for dx in 0..actual_cx {
+                        processed[(by + dy) * blocks_x + (bx + dx)] = true;
+                    }
+                }
+
+                // Store transform entry (only top-left block)
+                let quant = self.quant_field.get(bx, by) as i32;
+                transform_entries.push((strategy as i32, (quant - 1).max(0)));
+            }
+        }
+
+        let count = transform_entries.len();
+
+        // Count is encoded using ceil_log2(upper_bound) bits
+        // Upper bound is still num_blocks (worst case: all DCT8)
         let upper_bound = num_blocks;
         let count_bits = if upper_bound <= 1 {
             0
         } else {
             (usize::BITS - (upper_bound - 1).leading_zeros()) as usize
         };
-        let count = num_blocks; // Every block is a distinct transform
         if count_bits > 0 {
             writer.write(count_bits, (count - 1) as u64)?;
         }
         eprintln!(
-            "HF_META [bit {}]: count = {} ({} bits)",
+            "HF_META [bit {}]: count = {} distinct transforms ({} bits, num_blocks={})",
             writer.bits_written(),
             count,
-            count_bits
+            count_bits,
+            num_blocks
         );
 
         // Build 4 modular channels for HF metadata:
@@ -1185,15 +1224,9 @@ impl VarDctEncoder {
         // Row 0: transform_type (enum value from AcStrategy)
         // Row 1: raw_quant - 1
         let mut transform_data = vec![0i32; count * 2];
-        for i in 0..count {
-            // Get the actual transform type from AC strategy map
-            let bx = i % blocks_x;
-            let by = i / blocks_x;
-            let strategy = self.ac_strategy_map.get(bx, by);
-            transform_data[i] = strategy as i32;
-            // Raw quant - 1 (stored in second row)
-            let quant = self.quant_field.get(bx, by) as i32;
-            transform_data[count + i] = (quant - 1).max(0);
+        for (i, (strategy, quant)) in transform_entries.iter().enumerate() {
+            transform_data[i] = *strategy;
+            transform_data[count + i] = *quant;
         }
         let transform_channel = Channel::from_vec(transform_data, count, 2)?;
 
@@ -1463,6 +1496,7 @@ impl VarDctEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vardct::AcStrategy;
     use crate::vardct::quantizer::GLOBAL_SCALE_DENOM;
 
     #[test]
@@ -1495,5 +1529,99 @@ mod tests {
         assert!(params.global_scale > 0);
         assert!(params.global_scale <= GLOBAL_SCALE_DENOM);
         assert!(params.quant_dc > 0);
+    }
+
+    #[test]
+    fn test_write_hf_metadata_dct8() {
+        // Test that write_hf_metadata correctly counts all blocks for DCT8-only
+        let enc = VarDctEncoder::new(16, 16, VarDctOptions::default());
+        assert_eq!(enc.num_blocks_x(), 2);
+        assert_eq!(enc.num_blocks_y(), 2);
+
+        let mut writer = BitWriter::new();
+        // Need to write group header and HF metadata
+        enc.write_hf_metadata(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_hf_metadata_dct16() {
+        // Test with a 16x16 image (2x2 blocks) using DCT16 for all
+        use crate::heuristics::AcStrategyMap;
+
+        let options = VarDctOptions {
+            ac_strategy_heuristics: HeuristicLevel::VarianceBased,
+            ..Default::default()
+        };
+        let mut enc = VarDctEncoder::new(16, 16, options);
+
+        // Manually set all blocks to DCT16 (covers 2x2 blocks)
+        let mut strategy_map = AcStrategyMap::new_dct8(2, 2);
+        for by in 0..2 {
+            for bx in 0..2 {
+                strategy_map.set(bx, by, AcStrategy::Dct16x16);
+            }
+        }
+        enc.ac_strategy_map = strategy_map;
+
+        let mut writer = BitWriter::new();
+        enc.write_hf_metadata(&mut writer).unwrap();
+        // With DCT16 covering all 4 blocks as one transform, count should be 1
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_hf_metadata_dct32() {
+        // Test with a 32x32 image (4x4 blocks) using DCT32 for all
+        use crate::heuristics::AcStrategyMap;
+
+        let options = VarDctOptions {
+            ac_strategy_heuristics: HeuristicLevel::VarianceBased,
+            ..Default::default()
+        };
+        let mut enc = VarDctEncoder::new(32, 32, options);
+
+        // Manually set all blocks to DCT32 (covers 4x4 blocks)
+        let mut strategy_map = AcStrategyMap::new_dct8(4, 4);
+        for by in 0..4 {
+            for bx in 0..4 {
+                strategy_map.set(bx, by, AcStrategy::Dct32x32);
+            }
+        }
+        enc.ac_strategy_map = strategy_map;
+
+        let mut writer = BitWriter::new();
+        enc.write_hf_metadata(&mut writer).unwrap();
+        // With DCT32 covering all 16 blocks as one transform, count should be 1
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_hf_metadata_mixed_strategies() {
+        // Test with mixed DCT8 and DCT16
+        use crate::heuristics::AcStrategyMap;
+
+        let options = VarDctOptions {
+            ac_strategy_heuristics: HeuristicLevel::VarianceBased,
+            ..Default::default()
+        };
+        let mut enc = VarDctEncoder::new(32, 16, options);
+        // 4x2 blocks = 8 blocks total
+
+        // Set left half to DCT16 (covers 2x2), right half to DCT8
+        let mut strategy_map = AcStrategyMap::new_dct8(4, 2);
+        // (0,0), (1,0), (0,1), (1,1) -> DCT16 (1 transform)
+        strategy_map.set(0, 0, AcStrategy::Dct16x16);
+        strategy_map.set(1, 0, AcStrategy::Dct16x16);
+        strategy_map.set(0, 1, AcStrategy::Dct16x16);
+        strategy_map.set(1, 1, AcStrategy::Dct16x16);
+        // (2,0), (3,0), (2,1), (3,1) -> DCT8 (4 transforms)
+        // Already set to DCT8 by default
+        enc.ac_strategy_map = strategy_map;
+
+        let mut writer = BitWriter::new();
+        enc.write_hf_metadata(&mut writer).unwrap();
+        // Should have 1 DCT16 transform + 4 DCT8 transforms = 5 total
+        assert!(writer.bits_written() > 0);
     }
 }

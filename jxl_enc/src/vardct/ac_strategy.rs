@@ -198,6 +198,14 @@ impl AcStrategy {
         LUT[self as usize]
     }
 
+    /// Number of 8x8 blocks covered as (width, height) tuple.
+    pub fn covered_blocks(self) -> (usize, usize) {
+        (
+            self.covered_blocks_x() as usize,
+            self.covered_blocks_y() as usize,
+        )
+    }
+
     /// Log2 of covered blocks (total area in 8x8 units).
     pub fn log2_covered_blocks(self) -> u32 {
         let blocks = self.covered_blocks_x() * self.covered_blocks_y();
