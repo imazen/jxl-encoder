@@ -279,6 +279,9 @@ mod tests {
                 Ok(frame)
             });
         let decode_ok = decode_result.is_ok();
+        if let Err(ref e) = decode_result {
+            eprintln!("DECODE ERROR for {}x{} {}: {:?}", width, height, pattern, e);
+        }
 
         // Compute SSIMULACRA2 if decode succeeded
         let ssimulacra2_score = if let Ok(frame) = &decode_result {

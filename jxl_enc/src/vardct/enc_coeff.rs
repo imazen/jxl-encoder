@@ -130,8 +130,9 @@ pub fn quantize_block_8x8(
 ) {
     let threshold = DEFAULT_THRESHOLD;
 
-    // DC coefficient uses different quantization: inv_lf_quant * global_scale_float * quant_dc
-    let qdc = inv_lf_quant * global_scale_float * quant_dc as f32;
+    // DC coefficient quantization: quantized = raw * quant_dc / (inv_lf_quant * global_scale)
+    // This is the inverse of dequantization: raw = quantized * inv_lf_quant * global_scale / quant_dc
+    let qdc = quant_dc as f32 / (inv_lf_quant * global_scale_float);
     let dc_val = qdc * block_in[0];
     block_out[0] = if dc_val.abs() >= threshold {
         dc_val.round() as i32
@@ -139,11 +140,12 @@ pub fn quantize_block_8x8(
         0
     };
 
-    // AC coefficients use: inv_dequant_matrix[i] * global_scale_float * raw_quant
-    let qac = global_scale_float * raw_quant as f32;
+    // AC coefficient quantization: quantized = raw * raw_quant / (inv_dequant_matrix[i] * global_scale)
+    // This is the inverse of dequantization: raw = quantized * inv_dequant_matrix[i] * global_scale / raw_quant
+    let qac = raw_quant as f32 / global_scale_float;
 
     for i in 1..BLOCK_SIZE {
-        let q = inv_dequant_matrix[i] * qac;
+        let q = qac / inv_dequant_matrix[i];
         let val = q * block_in[i];
         block_out[i] = if val.abs() >= threshold {
             val.round() as i32
@@ -167,8 +169,9 @@ pub fn quantize_block_16x16(
 ) {
     let threshold = DEFAULT_THRESHOLD;
 
-    // DC coefficient (position 0) uses separate quantization
-    let qdc = inv_lf_quant * global_scale_float * quant_dc as f32;
+    // DC coefficient quantization: quantized = raw * quant_dc / (inv_lf_quant * global_scale)
+    // This is the inverse of dequantization: raw = quantized * inv_lf_quant * global_scale / quant_dc
+    let qdc = quant_dc as f32 / (inv_lf_quant * global_scale_float);
     let dc_val = qdc * block_in[0];
     block_out[0] = if dc_val.abs() >= threshold {
         dc_val.round() as i32
@@ -176,8 +179,9 @@ pub fn quantize_block_16x16(
         0
     };
 
-    // AC coefficients use: inv_dequant * global_scale_float * raw_quant
-    let qac = global_scale_float * raw_quant as f32;
+    // AC coefficient quantization: quantized = raw * raw_quant / (inv_dequant_matrix[i] * global_scale)
+    // This is the inverse of dequantization: raw = quantized * inv_dequant_matrix[i] * global_scale / raw_quant
+    let qac = raw_quant as f32 / global_scale_float;
 
     // Scale DCT8 weights to DCT16 by interpolation
     // For position (x, y) in 16x16, map to (x/2, y/2) in 8x8 weights
@@ -192,7 +196,7 @@ pub fn quantize_block_16x16(
             let y8 = y / 2;
             let weight_pos = y8 * 8 + x8;
 
-            let q = inv_dequant_8x8[weight_pos] * qac;
+            let q = qac / inv_dequant_8x8[weight_pos];
             let val = q * block_in[pos];
             block_out[pos] = if val.abs() >= threshold {
                 val.round() as i32
@@ -217,8 +221,9 @@ pub fn quantize_block_32x32(
 ) {
     let threshold = DEFAULT_THRESHOLD;
 
-    // DC coefficient (position 0) uses separate quantization
-    let qdc = inv_lf_quant * global_scale_float * quant_dc as f32;
+    // DC coefficient quantization: quantized = raw * quant_dc / (inv_lf_quant * global_scale)
+    // This is the inverse of dequantization: raw = quantized * inv_lf_quant * global_scale / quant_dc
+    let qdc = quant_dc as f32 / (inv_lf_quant * global_scale_float);
     let dc_val = qdc * block_in[0];
     block_out[0] = if dc_val.abs() >= threshold {
         dc_val.round() as i32
@@ -226,8 +231,9 @@ pub fn quantize_block_32x32(
         0
     };
 
-    // AC coefficients use: inv_dequant * global_scale_float * raw_quant
-    let qac = global_scale_float * raw_quant as f32;
+    // AC coefficient quantization: quantized = raw * raw_quant / (inv_dequant_matrix[i] * global_scale)
+    // This is the inverse of dequantization: raw = quantized * inv_dequant_matrix[i] * global_scale / raw_quant
+    let qac = raw_quant as f32 / global_scale_float;
 
     // Scale DCT8 weights to DCT32 by interpolation
     // For position (x, y) in 32x32, map to (x/4, y/4) in 8x8 weights
@@ -242,7 +248,7 @@ pub fn quantize_block_32x32(
             let y8 = y / 4;
             let weight_pos = y8 * 8 + x8;
 
-            let q = inv_dequant_8x8[weight_pos] * qac;
+            let q = qac / inv_dequant_8x8[weight_pos];
             let val = q * block_in[pos];
             block_out[pos] = if val.abs() >= threshold {
                 val.round() as i32
