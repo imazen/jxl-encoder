@@ -38,12 +38,101 @@ Never omit jxl-rs from decoder validation.
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
 - [ ] Full Huffman encoder with table serialization
 - [ ] Modular encoder (lossless path)
-- [ ] VarDCT encoder (lossy path)
+- [x] VarDCT encoder (lossy path) - DCT8 works, DCT16/32 not yet
 - [ ] Frame assembly pipeline
 - [ ] Color space transforms (RGB -> XYB)
 - [ ] Quantization
 - [ ] Context modeling
 - [ ] High-level encoder API
+
+## DCT16/32 Implementation Notes (Jan 21, 2026)
+
+Currently VarDCT works with DCT8x8 only. The variance-based AC strategy heuristics
+exist but are disabled (default: `Dct8Only`) because DCT16/32 encoding is incomplete.
+
+### Key Issues to Fix for DCT16/32 Support
+
+#### 1. Transform Image Count (`write_hf_metadata`)
+**Location**: `jxl_enc/src/vardct/encoder.rs:1141-1199`
+
+Current bug: `count = num_blocks` (number of 8x8 blocks)
+
+Should be: `count = number of distinct transforms`:
+- DCT8: 1 transform per block
+- DCT16: 1 transform per 2x2 blocks (covers 4)
+- DCT32: 1 transform per 4x4 blocks (covers 16)
+
+Only top-left block of each transform should be written to transform_image.
+
+#### 2. Transform Data Encoding
+Current code writes an entry for every 8x8 block. Should write:
+- One entry per distinct transform (top-left corner only)
+- Skip blocks that are covered by larger transforms
+
+#### 3. Tokenization (`tokenize_ac_with_strategy`)
+**Location**: `jxl_enc/src/vardct/encoder.rs:475-663`
+
+Current issues:
+- Processes all blocks including covered ones
+- AC offset indexing assumes per-block storage
+
+Should:
+- Skip blocks that are `Occupied` (covered by larger transform)
+- For DCT16: emit 255 AC tokens (16x16 - 4 LLF)
+- For DCT32: emit 1023 AC tokens (32x32 - 16 LLF)
+- Use correct coefficient scan order per transform type
+
+#### 4. Coefficient Layout (from `transform.rs`)
+- DCT8: 63 AC coefficients per block
+- DCT16: 255 AC (covers 4 blocks, stores 256-1 coefficients, 4 LLF positions)
+- DCT32: 1023 AC (covers 16 blocks, stores 1024-1 coefficients, 16 LLF positions)
+
+LLF (Low-Low Frequency) positions are DC equivalents stored separately.
+
+### Decoder Expectations (jxl-oxide)
+
+**Transform reading** (`jxl-vardct/src/hf_metadata.rs`):
+- Grid walk: iterate (y, x) in 8x8 block coordinates
+- Skip `Occupied` blocks
+- For each unoccupied block, read (transform_type, hf_mul)
+- Mark covered blocks (dx=0..dw, dy=0..dh) as either Data (top-left) or Occupied
+
+**Coefficient reading** (`jxl-vardct/src/hf_coeff.rs`):
+- `num_blocks = dct_select.dct_select_size()` → (w8, h8) in 8x8 units
+- `non_zeros > (63 << num_blocks_log)` validation
+- Order determined by `order_id` from transform type
+
+### libjxl Reference
+
+**Key files**:
+- `ac_strategy.h`: Transform type enum, coverage tables
+- `enc_ac_strategy.cc`: Strategy selection heuristics
+- `enc_group.cc`: Coefficient encoding with correct count
+
+**Coefficient layout normalization**:
+- Always stored with smaller dimension as rows, larger as columns
+- Affects scan order interpretation
+
+### Implementation Plan
+
+1. Fix `write_hf_metadata`:
+   - Count distinct transforms (not 8x8 blocks)
+   - Use `processed` grid to track coverage
+   - Write only top-left block entries
+
+2. Fix `tokenize_ac_with_strategy`:
+   - Skip `processed` blocks
+   - Use correct AC coefficient count per transform type
+   - Ensure scan order matches decoder expectations
+
+3. Re-enable variance-based heuristics:
+   - Change default back to `VarianceBased`
+   - Test with smooth gradients (triggers DCT16 selection)
+
+4. Test thoroughly:
+   - Various image sizes
+   - Mixed transform types (DCT8 + DCT16 in same image)
+   - Boundary conditions (transforms at group edges)
 
 ## Build Commands
 
