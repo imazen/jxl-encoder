@@ -48,6 +48,15 @@ pub const OPSIN_ABSORBANCE_BIAS: [f32; 3] = [
     0.0037930732552754493,
 ];
 
+/// Cube root of bias - subtracted AFTER cube root (libjxl's CubeRootAndAdd pattern)
+/// This is the negative bias that gets added after taking the cube root.
+#[allow(clippy::excessive_precision)]
+pub const NEG_OPSIN_ABSORBANCE_BIAS_CBRT: [f32; 3] = [
+    -0.15595420054, // -cbrt(OPSIN_ABSORBANCE_BIAS[0])
+    -0.15595420054,
+    -0.15595420054,
+];
+
 /// Convert a single sRGB value (0-255 range) to linear (0-1 range).
 ///
 /// Uses the standard sRGB transfer function:
@@ -94,10 +103,11 @@ pub fn linear_rgb_to_xyb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
         + OPSIN_ABSORBANCE_MATRIX[2][1] * g
         + OPSIN_ABSORBANCE_MATRIX[2][2] * b;
 
-    // Add bias and apply cube root
-    let l = (mixed0 + OPSIN_ABSORBANCE_BIAS[0]).cbrt();
-    let m = (mixed1 + OPSIN_ABSORBANCE_BIAS[1]).cbrt();
-    let s = (mixed2 + OPSIN_ABSORBANCE_BIAS[2]).cbrt();
+    // Add bias, apply cube root, then subtract cbrt(bias)
+    // This matches libjxl's CubeRootAndAdd pattern: cbrt(x + bias) - cbrt(bias)
+    let l = (mixed0 + OPSIN_ABSORBANCE_BIAS[0]).cbrt() + NEG_OPSIN_ABSORBANCE_BIAS_CBRT[0];
+    let m = (mixed1 + OPSIN_ABSORBANCE_BIAS[1]).cbrt() + NEG_OPSIN_ABSORBANCE_BIAS_CBRT[1];
+    let s = (mixed2 + OPSIN_ABSORBANCE_BIAS[2]).cbrt() + NEG_OPSIN_ABSORBANCE_BIAS_CBRT[2];
 
     // Mix into XYB
     let x = 0.5 * (l - m);
@@ -202,9 +212,9 @@ mod tests {
     #[test]
     fn test_black_to_xyb() {
         let (x, y, _b) = srgb_to_xyb(0.0, 0.0, 0.0);
-        // Black has the bias applied before cube root
-        let expected = OPSIN_ABSORBANCE_BIAS[0].cbrt();
-        assert!((y - expected).abs() < 1e-6, "Y for black: {}", y);
+        // Black: L = cbrt(0 + bias) - cbrt(bias) = 0
+        // This matches libjxl's behavior where black maps to (0, 0, 0) in XYB
+        assert!(y.abs() < 1e-6, "Y for black should be ~0: {}", y);
         assert!(x.abs() < 1e-6, "X for black should be ~0: {}", x);
     }
 

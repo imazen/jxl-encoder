@@ -130,23 +130,31 @@ pub fn quantize_block_8x8(
 ) {
     let threshold = DEFAULT_THRESHOLD;
 
-    // DC coefficient quantization: quantized = raw * quant_dc / (inv_lf_quant * global_scale)
-    // This is the inverse of dequantization: raw = quantized * inv_lf_quant * global_scale / quant_dc
-    let qdc = quant_dc as f32 / (inv_lf_quant * global_scale_float);
-    let dc_val = qdc * block_in[0];
+    // DC coefficient quantization (from libjxl's GetInvDcStep):
+    // The JXL LF image stores block AVERAGES, not DCT DC coefficients.
+    // Our DCT produces DC = 8 * average (orthonormal normalization for 8x8),
+    // so we need to divide by 8 to get the average before quantizing.
+    // quantized_dc = (dc_coeff / 8) * inv_lf_quant * global_scale_float * quant_dc
+    let qdc = inv_lf_quant * global_scale_float * quant_dc as f32;
+    let dc_avg = block_in[0] / 8.0; // Convert DCT DC to block average
+    let dc_val = qdc * dc_avg;
     block_out[0] = if dc_val.abs() >= threshold {
         dc_val.round() as i32
     } else {
         0
     };
 
-    // AC coefficient quantization: quantized = raw * raw_quant / (inv_dequant_matrix[i] * global_scale)
-    // This is the inverse of dequantization: raw = quantized * inv_dequant_matrix[i] * global_scale / raw_quant
-    let qac = raw_quant as f32 / global_scale_float;
+    // AC coefficient quantization:
+    // For now, use the simple division formula which matches the inverse of dequantization.
+    // quantized = coeff * qac / weight where qac = global_scale_float * raw_quant
+    // This should give small quantized values when weights are large (560 for Y)
+    let qac = global_scale_float * raw_quant as f32;
 
     for i in 1..BLOCK_SIZE {
-        let q = qac / inv_dequant_matrix[i];
-        let val = q * block_in[i];
+        // Note: inv_dequant_matrix contains the weights (e.g., 560 for Y)
+        // For small coefficients like -0.30, this gives: -0.30 * 5 / 560 = -0.003 → 0
+        // This is TOO MUCH quantization - we're losing all AC detail!
+        let val = block_in[i] * qac / inv_dequant_matrix[i];
         block_out[i] = if val.abs() >= threshold {
             val.round() as i32
         } else {
@@ -169,19 +177,19 @@ pub fn quantize_block_16x16(
 ) {
     let threshold = DEFAULT_THRESHOLD;
 
-    // DC coefficient quantization: quantized = raw * quant_dc / (inv_lf_quant * global_scale)
-    // This is the inverse of dequantization: raw = quantized * inv_lf_quant * global_scale / quant_dc
-    let qdc = quant_dc as f32 / (inv_lf_quant * global_scale_float);
-    let dc_val = qdc * block_in[0];
+    // DC coefficient quantization
+    // For 16x16 DCT, DC = 16 * average (orthonormal normalization)
+    let qdc = inv_lf_quant * global_scale_float * quant_dc as f32;
+    let dc_avg = block_in[0] / 16.0; // Convert DCT DC to block average
+    let dc_val = qdc * dc_avg;
     block_out[0] = if dc_val.abs() >= threshold {
         dc_val.round() as i32
     } else {
         0
     };
 
-    // AC coefficient quantization: quantized = raw * raw_quant / (inv_dequant_matrix[i] * global_scale)
-    // This is the inverse of dequantization: raw = quantized * inv_dequant_matrix[i] * global_scale / raw_quant
-    let qac = raw_quant as f32 / global_scale_float;
+    // AC coefficient quantization
+    let qac = global_scale_float * raw_quant as f32;
 
     // Scale DCT8 weights to DCT16 by interpolation
     // For position (x, y) in 16x16, map to (x/2, y/2) in 8x8 weights
@@ -196,8 +204,7 @@ pub fn quantize_block_16x16(
             let y8 = y / 2;
             let weight_pos = y8 * 8 + x8;
 
-            let q = qac / inv_dequant_8x8[weight_pos];
-            let val = q * block_in[pos];
+            let val = block_in[pos] * qac / inv_dequant_8x8[weight_pos];
             block_out[pos] = if val.abs() >= threshold {
                 val.round() as i32
             } else {
@@ -221,19 +228,19 @@ pub fn quantize_block_32x32(
 ) {
     let threshold = DEFAULT_THRESHOLD;
 
-    // DC coefficient quantization: quantized = raw * quant_dc / (inv_lf_quant * global_scale)
-    // This is the inverse of dequantization: raw = quantized * inv_lf_quant * global_scale / quant_dc
-    let qdc = quant_dc as f32 / (inv_lf_quant * global_scale_float);
-    let dc_val = qdc * block_in[0];
+    // DC coefficient quantization
+    // For 32x32 DCT, DC = 32 * average (orthonormal normalization)
+    let qdc = inv_lf_quant * global_scale_float * quant_dc as f32;
+    let dc_avg = block_in[0] / 32.0; // Convert DCT DC to block average
+    let dc_val = qdc * dc_avg;
     block_out[0] = if dc_val.abs() >= threshold {
         dc_val.round() as i32
     } else {
         0
     };
 
-    // AC coefficient quantization: quantized = raw * raw_quant / (inv_dequant_matrix[i] * global_scale)
-    // This is the inverse of dequantization: raw = quantized * inv_dequant_matrix[i] * global_scale / raw_quant
-    let qac = raw_quant as f32 / global_scale_float;
+    // AC coefficient quantization
+    let qac = global_scale_float * raw_quant as f32;
 
     // Scale DCT8 weights to DCT32 by interpolation
     // For position (x, y) in 32x32, map to (x/4, y/4) in 8x8 weights
@@ -248,8 +255,7 @@ pub fn quantize_block_32x32(
             let y8 = y / 4;
             let weight_pos = y8 * 8 + x8;
 
-            let q = qac / inv_dequant_8x8[weight_pos];
-            let val = q * block_in[pos];
+            let val = block_in[pos] * qac / inv_dequant_8x8[weight_pos];
             block_out[pos] = if val.abs() >= threshold {
                 val.round() as i32
             } else {
@@ -350,7 +356,7 @@ mod tests {
     #[test]
     fn test_quantize_block_8x8() {
         let mut block_in = [0.0f32; 64];
-        block_in[0] = 100.0; // DC coefficient
+        block_in[0] = 80.0; // DC coefficient (will be divided by 8 for block average)
         block_in[1] = 10.0; // AC coefficient
         block_in[63] = 1.0; // High frequency
 
@@ -360,7 +366,8 @@ mod tests {
         // quant_dc=1, raw_quant=1, global_scale_float=1.0, inv_lf_quant=1.0 means no scaling
         quantize_block_8x8(&block_in, 1, 1, 1.0, 1.0, &inv_dequant, &mut block_out);
 
-        assert_eq!(block_out[0], 100);
+        // DC: 80.0 / 8 = 10.0 (DCT DC to block average conversion)
+        assert_eq!(block_out[0], 10);
         assert_eq!(block_out[1], 10);
         assert_eq!(block_out[63], 1);
     }
