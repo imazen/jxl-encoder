@@ -836,7 +836,7 @@ impl VarDctEncoder {
         if num_hf_presets_bits > 0 {
             // Write num_hf_presets - 1 = 0 (we use 1 preset)
             writer.write(num_hf_presets_bits, 0)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_GLOBAL [bit {}]: num_hf_presets = 1 (wrote 0 in {} bits)",
                 writer.bits_written(),
                 num_hf_presets_bits
@@ -871,7 +871,7 @@ impl VarDctEncoder {
         if num_hf_presets_bits > 0 {
             // Write num_hf_presets - 1 = 0 (we use 1 preset)
             writer.write(num_hf_presets_bits, 0)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_GLOBAL_CLUSTERED [bit {}]: num_hf_presets = 1 (wrote 0 in {} bits)",
                 writer.bits_written(),
                 num_hf_presets_bits
@@ -899,16 +899,16 @@ impl VarDctEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         let start_bit = writer.bits_written();
-        eprintln!("HF_HIST [bit {}]: Starting histogram", start_bit);
+        crate::trace::debug_eprintln!("HF_HIST [bit {}]: Starting histogram", start_bit);
 
         // LZ77 enabled = false
         writer.write(1, 0)?;
-        eprintln!("HF_HIST [bit {}]: lz77.enabled = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("HF_HIST [bit {}]: lz77.enabled = 0", writer.bits_written());
 
         // Context map
         // For simplicity, map all contexts to cluster 0
         let num_contexts = distributions.len();
-        eprintln!("HF_HIST: num_contexts = {}", num_contexts);
+        crate::trace::debug_eprintln!("HF_HIST: num_contexts = {}", num_contexts);
 
         if num_contexts == 1 {
             // When num_contexts = 1, read_clusters returns immediately without reading bits
@@ -918,7 +918,7 @@ impl VarDctEncoder {
             // This maps all contexts to cluster 0
             writer.write(1, 1)?; // is_simple = true
             writer.write(2, 0)?; // bits_per_entry = 0 (all contexts map to 0)
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_HIST [bit {}]: context_map (is_simple=1, bits=0)",
                 writer.bits_written()
             );
@@ -926,14 +926,14 @@ impl VarDctEncoder {
 
         // Use prefix codes (Huffman) for simplicity
         writer.write(1, 1)?; // use_prefix_code = true
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST [bit {}]: use_prefix_code = 1",
             writer.bits_written()
         );
 
         // Compute the maximum raw symbol value
         let max_symbol = tokens.iter().map(|t| t.value as usize).max().unwrap_or(0);
-        eprintln!("HF_HIST: max_symbol = {}", max_symbol);
+        crate::trace::debug_eprintln!("HF_HIST: max_symbol = {}", max_symbol);
 
         // Use HybridUint encoding to bound token values
         // With split_exponent=4, msb_in_token=2, lsb_in_token=0:
@@ -949,7 +949,7 @@ impl VarDctEncoder {
             token as usize
         };
         let alphabet_size = max_token + 1;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST: max_token = {}, alphabet_size = {}",
             max_token, alphabet_size
         );
@@ -966,14 +966,14 @@ impl VarDctEncoder {
 
         // lsb_in_token (uses add_log2_ceil(4 - 2) = 2 bits)
         writer.write(2, 0)?; // lsb_in_token = 0
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST [bit {}]: IntegerConfig (split=4, msb=2, lsb=0)",
             writer.bits_written()
         );
 
         // Write alphabet size
         write_alphabet_size(writer, alphabet_size)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST [bit {}]: After alphabet_size = {}",
             writer.bits_written(),
             alphabet_size
@@ -981,7 +981,7 @@ impl VarDctEncoder {
 
         // Write prefix codes for the bounded token alphabet
         write_prefix_code(writer, alphabet_size)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST [bit {}]: After prefix_code, total = {} bits",
             writer.bits_written(),
             writer.bits_written() - start_bit
@@ -1002,7 +1002,7 @@ impl VarDctEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         let start_bit = writer.bits_written();
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED [bit {}]: Starting, {} clusters",
             start_bit,
             histogram_set.num_clusters()
@@ -1010,7 +1010,7 @@ impl VarDctEncoder {
 
         // LZ77 enabled = false
         writer.write(1, 0)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED [bit {}]: lz77.enabled = 0",
             writer.bits_written()
         );
@@ -1018,7 +1018,7 @@ impl VarDctEncoder {
         // Context map encoding
         let num_clusters = histogram_set.num_clusters();
         let num_contexts = histogram_set.num_contexts;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED: num_clusters = {}, num_contexts = {}",
             num_clusters, num_contexts
         );
@@ -1029,14 +1029,14 @@ impl VarDctEncoder {
             // Single cluster: simple context map encoding
             writer.write(1, 1)?; // is_simple = true
             writer.write(2, 0)?; // bits_per_entry = 0 (all contexts map to 0)
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: context_map (is_simple=1, bits=0)",
                 writer.bits_written()
             );
         } else {
             // Use proper context map encoding for multiple clusters
             encode_context_map(&histogram_set.context_map, num_clusters, writer)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: context_map encoded ({} clusters)",
                 writer.bits_written(),
                 num_clusters
@@ -1045,7 +1045,7 @@ impl VarDctEncoder {
 
         // Use prefix codes (Huffman) for simplicity
         writer.write(1, 1)?; // use_prefix_code = true
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED [bit {}]: use_prefix_code = 1",
             writer.bits_written()
         );
@@ -1053,7 +1053,7 @@ impl VarDctEncoder {
         // Use the global alphabet size from histogram_set (computed at build time from all tokens)
         // This MUST match what write_pass_group_clustered uses to ensure consistent encoding
         let alphabet_size = histogram_set.global_alphabet_size;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED: using global_alphabet_size = {}",
             alphabet_size
         );
@@ -1067,7 +1067,7 @@ impl VarDctEncoder {
             writer.write(4, 4)?; // split_exponent = 4
             writer.write(3, 2)?; // msb_in_token = 2
             writer.write(2, 0)?; // lsb_in_token = 0
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: IntegerConfig {} (split=4, msb=2, lsb=0)",
                 writer.bits_written(),
                 cluster_idx
@@ -1078,7 +1078,7 @@ impl VarDctEncoder {
         // HuffmanCodes::decode reads all alphabet sizes, then all prefix codes
         for cluster_idx in 0..num_clusters {
             write_alphabet_size(writer, alphabet_size)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: alphabet_size[{}] = {}",
                 writer.bits_written(),
                 cluster_idx,
@@ -1089,14 +1089,14 @@ impl VarDctEncoder {
         // Write prefix codes for EACH cluster (after all alphabet sizes)
         for cluster_idx in 0..num_clusters {
             write_prefix_code(writer, alphabet_size)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: After prefix_code for cluster {}",
                 writer.bits_written(),
                 cluster_idx
             );
         }
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED [bit {}]: Complete, total = {} bits",
             writer.bits_written(),
             writer.bits_written() - start_bit
@@ -1117,7 +1117,7 @@ impl VarDctEncoder {
         let blocks_y = self.num_blocks_y();
         let _num_blocks = blocks_x * blocks_y;
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "LF_GROUP [bit {}]: Starting, {}x{} blocks",
             writer.bits_written(),
             blocks_x,
@@ -1126,14 +1126,14 @@ impl VarDctEncoder {
 
         // 1. extra_precision (2 bits) - 0 for standard precision
         writer.write(2, 0)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "LF_GROUP [bit {}]: extra_precision = 0",
             writer.bits_written()
         );
 
         // 2. VarDCTLF modular stream (DC coefficients)
         self.write_dc_coeffs(dc_coeffs, writer)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "LF_GROUP [bit {}]: After DC coefficients",
             writer.bits_written()
         );
@@ -1143,7 +1143,7 @@ impl VarDctEncoder {
 
         // 4. HF metadata
         self.write_hf_metadata(writer)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "LF_GROUP [bit {}]: After HF metadata, LF Group done",
             writer.bits_written()
         );
@@ -1214,7 +1214,7 @@ impl VarDctEncoder {
         if count_bits > 0 {
             writer.write(count_bits, (count - 1) as u64)?;
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "HF_META [bit {}]: count = {} distinct transforms ({} bits, num_blocks={})",
             writer.bits_written(),
             count,
@@ -1308,7 +1308,7 @@ impl VarDctEncoder {
             b_dc[i] = dc_coeffs[i * 3 + 2];
         }
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "DC_COEFFS: blocks={}x{}, y_dc={:?}, x_dc={:?}, b_dc={:?}",
             blocks_x,
             blocks_y,
@@ -1381,7 +1381,7 @@ impl VarDctEncoder {
         // - (2n - 2^d) symbols get depth d
         let (codes, code_lengths) = build_canonical_huffman_codes(alphabet_size);
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "PASS_GROUP: alphabet_size={}, first 10 codes: {:?}, first 10 lengths: {:?}",
             alphabet_size,
             &codes[..alphabet_size.min(10)],
@@ -1395,7 +1395,7 @@ impl VarDctEncoder {
             let code = codes[sym];
             let len = code_lengths[sym] as usize;
             if token_count < 5 {
-                eprintln!(
+                crate::trace::debug_eprintln!(
                     "PASS_GROUP: token {}: value={}, encoded_token={}, code={:#b} ({} bits), extra_bits={:#x} ({} bits)",
                     token_count, token.value, encoded_token, code, len, extra_bits, num_extra_bits
                 );

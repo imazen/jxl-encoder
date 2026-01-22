@@ -48,18 +48,18 @@ fn write_histogram_with_full_huffman(
     let alphabet_size = histogram.len();
     let max_symbol = alphabet_size.saturating_sub(1) as u32;
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DEBUG write_histogram: num_contexts={}, alphabet_size={}, max_symbol={}",
         num_contexts, alphabet_size, max_symbol
     );
 
     // lz77.enabled = 0
-    eprintln!("  TRACE [bit {}]: lz77.enabled = 0", writer.bits_written());
+    crate::trace::debug_eprintln!("  TRACE [bit {}]: lz77.enabled = 0", writer.bits_written());
     writer.write(1, 0)?;
 
     // Context map (only if num_contexts > 1)
     if num_contexts > 1 {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  TRACE [bit {}]: context_map is_simple=1, bits_per_entry=0",
             writer.bits_written()
         );
@@ -68,7 +68,7 @@ fn write_histogram_with_full_huffman(
     }
 
     // use_prefix_code = 1
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TRACE [bit {}]: use_prefix_code = 1",
         writer.bits_written()
     );
@@ -78,7 +78,7 @@ fn write_histogram_with_full_huffman(
     // When split_exponent == log_alpha_size (both 15 for prefix codes),
     // msb_in_token and lsb_in_token are implicit and not written
     let split_exp = 15;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TRACE [bit {}]: split_exponent = {} (4 bits)",
         writer.bits_written(),
         split_exp
@@ -86,7 +86,7 @@ fn write_histogram_with_full_huffman(
     writer.write(4, split_exp as u64)?;
 
     // alphabet_size via varint16 (write max_symbol since decoder adds 1)
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TRACE [bit {}]: alphabet_size = {} via varint16",
         writer.bits_written(),
         max_symbol
@@ -94,7 +94,7 @@ fn write_histogram_with_full_huffman(
     write_varint16(writer, max_symbol as u16)?;
 
     // Huffman table using full encoder
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TRACE [bit {}]: Writing Huffman table (alphabet_size={})",
         writer.bits_written(),
         alphabet_size
@@ -102,13 +102,13 @@ fn write_histogram_with_full_huffman(
 
     if alphabet_size <= 1 {
         // Special case: alphabet_size <= 1, no Huffman table needed
-        eprintln!("  TRACE: alphabet_size<=1, no Huffman table needed");
+        crate::trace::debug_eprintln!("  TRACE: alphabet_size<=1, no Huffman table needed");
     } else {
         // Use the full Huffman encoder
         build_and_store_huffman_tree(histogram, writer)?;
     }
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TRACE [bit {}]: After Huffman table",
         writer.bits_written()
     );
@@ -226,7 +226,7 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     let (residuals, histogram, max_residual) = collect_residuals_and_histogram(image);
 
     let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DEBUG: {} residuals, {} unique symbols, max={}, histogram_size={}",
         residuals.len(),
         num_symbols,
@@ -235,19 +235,19 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     );
 
     let start_bits = writer.bits_written();
-    eprintln!("TRACE [bit {}]: Starting modular stream", start_bits);
+    crate::trace::debug_eprintln!("TRACE [bit {}]: Starting modular stream", start_bits);
 
     // === Global section (LfGlobal) ===
 
     // dc_quant.all_default = true
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: Writing dc_quant.all_default = 1",
         writer.bits_written()
     );
     writer.write(1, 1)?;
 
     // has_tree = true
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: Writing has_tree = 1",
         writer.bits_written()
     );
@@ -255,12 +255,12 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
 
     // === Tree histograms ===
     // NUM_TREE_CONTEXTS = 6, all tokens are 0 for single-leaf tree
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: Writing tree histograms (6 contexts, symbol 0)",
         writer.bits_written()
     );
     write_single_symbol_histogram(writer, 6, 0)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: After tree histograms",
         writer.bits_written()
     );
@@ -270,23 +270,23 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
 
     // === Leaf histograms ===
     // 1 context for single-leaf tree
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: Writing data histograms (1 context, {} symbols)",
         writer.bits_written(),
         num_symbols
     );
     write_histogram_with_full_huffman(writer, 1, &histogram)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: After data histograms",
         writer.bits_written()
     );
 
     // === GroupHeader ===
-    eprintln!("TRACE [bit {}]: Writing GroupHeader", writer.bits_written());
+    crate::trace::debug_eprintln!("TRACE [bit {}]: Writing GroupHeader", writer.bits_written());
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
     writer.write(2, 0)?; // num_transforms = 0
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "TRACE [bit {}]: After GroupHeader (4 bits)",
         writer.bits_written()
     );
@@ -297,14 +297,14 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     let codes = convert_bit_depths_to_symbols(&depths);
     let code_map = build_codes_from_depths(&depths, &codes);
 
-    eprintln!("DEBUG: Built {} Huffman codes", code_map.len());
+    crate::trace::debug_eprintln!("DEBUG: Built {} Huffman codes", code_map.len());
     for (&symbol, &(code, depth)) in &code_map {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  Huffman: symbol {} -> code={:b}, depth={}",
             symbol, code, depth
         );
     }
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "DEBUG: First 10 residuals: {:?}",
         &residuals[..residuals.len().min(10)]
     );
@@ -318,7 +318,7 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
             // depth == 0 means single symbol, no bits needed
         } else {
             // This shouldn't happen if histogram was built correctly
-            eprintln!("WARNING: No code for residual {}", r);
+            crate::trace::debug_eprintln!("WARNING: No code for residual {}", r);
         }
     }
 
@@ -359,7 +359,7 @@ mod tests {
         write_minimal_modular_stream(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("Encoded 16-symbol image: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("Encoded 16-symbol image: {} bytes", bytes.len());
     }
 
     #[test]
@@ -373,6 +373,6 @@ mod tests {
         write_minimal_modular_stream(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("Encoded 256-symbol image: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("Encoded 256-symbol image: {} bytes", bytes.len());
     }
 }

@@ -827,18 +827,18 @@ mod debug_tests {
             b_plane[i] = bb;
         }
 
-        eprintln!("XYB ranges:");
-        eprintln!(
+        crate::trace::debug_eprintln!("XYB ranges:");
+        crate::trace::debug_eprintln!(
             "  X: {:?} to {:?}",
             x_plane.iter().cloned().fold(f32::INFINITY, f32::min),
             x_plane.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
         );
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  Y: {:?} to {:?}",
             y_plane.iter().cloned().fold(f32::INFINITY, f32::min),
             y_plane.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
         );
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  B: {:?} to {:?}",
             b_plane.iter().cloned().fold(f32::INFINITY, f32::min),
             b_plane.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
@@ -846,17 +846,17 @@ mod debug_tests {
 
         // Transform and quantize
         let quantizer = QuantizerParams::from_distance(1.0);
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "Quantizer: global_scale={}, quant_dc={}",
             quantizer.global_scale, quantizer.quant_dc
         );
 
         let result = transform_and_quantize(&[&x_plane, &y_plane, &b_plane], 16, 16, &quantizer);
 
-        eprintln!("DC coefficients: {:?}", result.dc_coeffs);
+        crate::trace::debug_eprintln!("DC coefficients: {:?}", result.dc_coeffs);
 
         let nonzero_ac = result.ac_coeffs.iter().filter(|&&x| x != 0).count();
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "Non-zero AC: {} out of {}",
             nonzero_ac,
             result.ac_coeffs.len()
@@ -864,10 +864,10 @@ mod debug_tests {
 
         // Find max AC coefficient
         let max_ac = result.ac_coeffs.iter().map(|&x| x.abs()).max().unwrap_or(0);
-        eprintln!("Max |AC|: {}", max_ac);
+        crate::trace::debug_eprintln!("Max |AC|: {}", max_ac);
 
         // Show first block's AC coefficients
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "First block AC (X channel, first 10): {:?}",
             &result.ac_coeffs[0..10]
         );
@@ -904,15 +904,15 @@ mod debug_tests {
             b_block[i] = bb;
         }
 
-        eprintln!("Y block values (first 8): {:?}", &y_block[0..8]);
+        crate::trace::debug_eprintln!("Y block values (first 8): {:?}", &y_block[0..8]);
 
         // Apply DCT
         let mut dct_y = [0.0f32; 64];
         dct8(&y_block, &mut dct_y);
 
-        eprintln!("DCT Y coefficients:");
+        crate::trace::debug_eprintln!("DCT Y coefficients:");
         for row in 0..8 {
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "  Row {}: {:?}",
                 row,
                 &dct_y[row * 8..(row + 1) * 8]
@@ -926,11 +926,11 @@ mod debug_tests {
         let quantizer = QuantizerParams::from_distance(1.0);
         let global_scale_float = quantizer.global_scale as f32 / 65536.0;
         let quant_dc = quantizer.quant_dc as i32;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "global_scale_float = {}, quant_dc = {}",
             global_scale_float, quant_dc
         );
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "qac = global_scale_float * quant_dc = {}",
             global_scale_float * quant_dc as f32
         );
@@ -945,20 +945,20 @@ mod debug_tests2 {
     fn debug_inv_dequant() {
         let inv_dequant = get_dct8_inv_dequant_per_channel();
 
-        eprintln!("Inverse dequant matrices:");
+        crate::trace::debug_eprintln!("Inverse dequant matrices:");
         for (c, name) in [(0, "X"), (1, "Y"), (2, "B")] {
-            eprintln!("  {} channel - DC (pos 0): {}", name, inv_dequant[c][0]);
-            eprintln!("  {} channel - AC1 (pos 1): {}", name, inv_dequant[c][1]);
-            eprintln!(
+            crate::trace::debug_eprintln!("  {} channel - DC (pos 0): {}", name, inv_dequant[c][0]);
+            crate::trace::debug_eprintln!("  {} channel - AC1 (pos 1): {}", name, inv_dequant[c][1]);
+            crate::trace::debug_eprintln!(
                 "  {} channel - first row: {:?}",
                 name,
                 &inv_dequant[c][0..8]
             );
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "  {} channel - pos 63 (Nyquist): {}",
                 name, inv_dequant[c][63]
             );
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "  {} channel - last row: {:?}",
                 name,
                 &inv_dequant[c][56..64]
@@ -970,10 +970,10 @@ mod debug_tests2 {
         let qac = 4.975f32; // From debug output
         let threshold = 0.5f32;
 
-        eprintln!("\nSimulate quantizing checkerboard max AC coeff (pos 63):");
-        eprintln!("  DCT coeff[63] = {}", dct_coeff_63);
-        eprintln!("  qac = {}", qac);
-        eprintln!("  threshold = {}", threshold);
+        crate::trace::debug_eprintln!("\nSimulate quantizing checkerboard max AC coeff (pos 63):");
+        crate::trace::debug_eprintln!("  DCT coeff[63] = {}", dct_coeff_63);
+        crate::trace::debug_eprintln!("  qac = {}", qac);
+        crate::trace::debug_eprintln!("  threshold = {}", threshold);
 
         for (c, name) in [(0, "X"), (1, "Y"), (2, "B")] {
             let inv_dq = inv_dequant[c][63];
@@ -983,11 +983,11 @@ mod debug_tests2 {
             } else {
                 0
             };
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "  {} channel: inv_dequant[63]={:.6}, val={:.6}, quantized={}",
                 name, inv_dq, val, quantized
             );
-            eprintln!("    val/threshold ratio = {:.3}", val / threshold);
+            crate::trace::debug_eprintln!("    val/threshold ratio = {:.3}", val / threshold);
         }
     }
 }
@@ -1000,14 +1000,14 @@ mod debug_tests3 {
     fn debug_quant_values() {
         let quantizer = QuantizerParams::from_distance(1.0);
 
-        eprintln!("For distance=1.0:");
-        eprintln!("  global_scale = {}", quantizer.global_scale);
-        eprintln!("  quant_dc (serialized) = {}", quantizer.quant_dc);
-        eprintln!(
+        crate::trace::debug_eprintln!("For distance=1.0:");
+        crate::trace::debug_eprintln!("  global_scale = {}", quantizer.global_scale);
+        crate::trace::debug_eprintln!("  quant_dc (serialized) = {}", quantizer.quant_dc);
+        crate::trace::debug_eprintln!(
             "  global_scale_float = {}",
             quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32
         );
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  inv_global_scale = {}",
             GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32
         );
@@ -1018,15 +1018,15 @@ mod debug_tests3 {
         let quant_field_target = 5.0f32;
         let inv_global_scale = GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32;
         let raw_quant = (quant_field_target * inv_global_scale + 0.5) as i32;
-        eprintln!("  raw_quant (from field target 5.0) = {}", raw_quant);
+        crate::trace::debug_eprintln!("  raw_quant (from field target 5.0) = {}", raw_quant);
 
         // What qac should be:
         let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
         let qac_with_raw = global_scale_float * raw_quant as f32;
         let qac_with_dc = global_scale_float * quantizer.quant_dc as f32;
 
-        eprintln!("  qac with raw_quant = {}", qac_with_raw);
-        eprintln!("  qac with quant_dc = {}", qac_with_dc);
+        crate::trace::debug_eprintln!("  qac with raw_quant = {}", qac_with_raw);
+        crate::trace::debug_eprintln!("  qac with quant_dc = {}", qac_with_dc);
 
         // For Y DC with inv_dequant = 0.00179:
         let inv_dequant_y_dc = 0.00179f32;
@@ -1035,9 +1035,9 @@ mod debug_tests3 {
         let quantized_with_raw = (coeff * inv_dequant_y_dc * qac_with_raw).round();
         let quantized_with_dc = (coeff * inv_dequant_y_dc * qac_with_dc).round();
 
-        eprintln!("\n  For Y DC coeff = 2.02, inv_dequant = 0.00179:");
-        eprintln!("  quantized with raw_quant = {}", quantized_with_raw);
-        eprintln!("  quantized with quant_dc = {}", quantized_with_dc);
+        crate::trace::debug_eprintln!("\n  For Y DC coeff = 2.02, inv_dequant = 0.00179:");
+        crate::trace::debug_eprintln!("  quantized with raw_quant = {}", quantized_with_raw);
+        crate::trace::debug_eprintln!("  quantized with quant_dc = {}", quantized_with_dc);
     }
 }
 
@@ -1054,7 +1054,7 @@ mod dc_value_tests {
         // Solid gray 8x8 block
         let gray_val = 128u8;
 
-        eprintln!("Input: Solid gray {}", gray_val);
+        crate::trace::debug_eprintln!("Input: Solid gray {}", gray_val);
 
         // Convert to XYB
         let mut y_plane = [0.0f32; 64];
@@ -1063,13 +1063,13 @@ mod dc_value_tests {
             y_plane[i] = y;
         }
 
-        eprintln!("XYB Y[0]: {:.6}", y_plane[0]);
+        crate::trace::debug_eprintln!("XYB Y[0]: {:.6}", y_plane[0]);
 
         // Apply DCT
         let mut dct_y = [0.0f32; 64];
         dct8(&y_plane, &mut dct_y);
 
-        eprintln!("DCT Y[0] (DC): {:.6}", dct_y[0]);
+        crate::trace::debug_eprintln!("DCT Y[0] (DC): {:.6}", dct_y[0]);
 
         // Quantize DC
         let quantizer = QuantizerParams::from_distance(1.0);
@@ -1077,30 +1077,30 @@ mod dc_value_tests {
         let quant_dc = quantizer.quant_dc as i32;
         let inv_lf_quant_y = INV_LF_QUANT[1];
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "Quantizer: global_scale={}, quant_dc={}",
             quantizer.global_scale, quant_dc
         );
-        eprintln!("INV_LF_QUANT[Y] = {}", inv_lf_quant_y);
+        crate::trace::debug_eprintln!("INV_LF_QUANT[Y] = {}", inv_lf_quant_y);
 
         let qdc = inv_lf_quant_y * global_scale_float * quant_dc as f32;
         let dc_avg = dct_y[0] / 8.0; // Convert DCT DC to block average
         let dc_val = qdc * dc_avg;
         let quantized_dc = dc_val.round() as i32;
 
-        eprintln!("qdc = {}", qdc);
-        eprintln!("dc_avg (DC / 8) = {}", dc_avg);
-        eprintln!("dc_val = qdc * dc_avg = {}", dc_val);
-        eprintln!("quantized_dc = {}", quantized_dc);
+        crate::trace::debug_eprintln!("qdc = {}", qdc);
+        crate::trace::debug_eprintln!("dc_avg (DC / 8) = {}", dc_avg);
+        crate::trace::debug_eprintln!("dc_val = qdc * dc_avg = {}", dc_val);
+        crate::trace::debug_eprintln!("quantized_dc = {}", quantized_dc);
 
         // Now compute what value should decode back
         let reconstructed_avg = quantized_dc as f32 / qdc;
-        eprintln!("reconstructed_avg = {}", reconstructed_avg);
+        crate::trace::debug_eprintln!("reconstructed_avg = {}", reconstructed_avg);
 
         // The DC represents the average XYB Y value
-        eprintln!("\nExpected vs actual:");
-        eprintln!("  Input XYB Y = {:.6}", y_plane[0]);
-        eprintln!("  Reconstructed avg Y ≈ {:.6}", reconstructed_avg);
+        crate::trace::debug_eprintln!("\nExpected vs actual:");
+        crate::trace::debug_eprintln!("  Input XYB Y = {:.6}", y_plane[0]);
+        crate::trace::debug_eprintln!("  Reconstructed avg Y ≈ {:.6}", reconstructed_avg);
     }
 
     /// Test what value black decodes to
@@ -1109,15 +1109,15 @@ mod dc_value_tests {
         // Solid black 8x8 block
         let gray_val = 0u8;
 
-        eprintln!("Input: Solid black ({})", gray_val);
+        crate::trace::debug_eprintln!("Input: Solid black ({})", gray_val);
 
         // Convert to XYB
         let (_, y, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
-        eprintln!("XYB Y: {:.6}", y);
+        crate::trace::debug_eprintln!("XYB Y: {:.6}", y);
 
         // For a flat block, DCT DC = 8 * avg
         let dct_dc = 8.0 * y;
-        eprintln!("Expected DCT DC: {:.6}", dct_dc);
+        crate::trace::debug_eprintln!("Expected DCT DC: {:.6}", dct_dc);
 
         // Black should produce Y=0
         assert!(y.abs() < 1e-6, "Black should have Y=0, got {}", y);
@@ -1129,15 +1129,15 @@ mod dc_value_tests {
         // Solid white 8x8 block
         let gray_val = 255u8;
 
-        eprintln!("Input: Solid white ({})", gray_val);
+        crate::trace::debug_eprintln!("Input: Solid white ({})", gray_val);
 
         // Convert to XYB
         let (_, y, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
-        eprintln!("XYB Y: {:.6}", y);
+        crate::trace::debug_eprintln!("XYB Y: {:.6}", y);
 
         // For a flat block, DCT DC = 8 * avg
         let dct_dc = 8.0 * y;
-        eprintln!("Expected DCT DC: {:.6}", dct_dc);
+        crate::trace::debug_eprintln!("Expected DCT DC: {:.6}", dct_dc);
 
         // Quantize
         let quantizer = QuantizerParams::from_distance(1.0);
@@ -1150,10 +1150,10 @@ mod dc_value_tests {
         let dc_val = qdc * dc_avg;
         let quantized_dc = dc_val.round() as i32;
 
-        eprintln!("qdc = {}", qdc);
-        eprintln!("dc_avg = {}", dc_avg);
-        eprintln!("dc_val = {}", dc_val);
-        eprintln!("quantized_dc = {}", quantized_dc);
+        crate::trace::debug_eprintln!("qdc = {}", qdc);
+        crate::trace::debug_eprintln!("dc_avg = {}", dc_avg);
+        crate::trace::debug_eprintln!("dc_val = {}", dc_val);
+        crate::trace::debug_eprintln!("quantized_dc = {}", quantized_dc);
 
         // White should have XYB Y ≈ 0.84
         assert!(y > 0.8, "White should have Y > 0.8, got {}", y);

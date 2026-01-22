@@ -114,7 +114,7 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
                         .iter()
                         .position(|c| std::ptr::eq(c, channel))
                         .unwrap();
-                    eprintln!(
+                    crate::trace::debug_eprintln!(
                         "RESIDUAL[{}]: ch={} y={} x={} pixel={}, pred={}, residual={}, packed={}",
                         debug_count, channel_idx, y, x, pixel, prediction, residual, packed
                     );
@@ -336,11 +336,11 @@ fn write_sparse_lz77_histogram(
     writer: &mut BitWriter,
     sparse_counts: &[u64],
 ) -> Result<(Vec<u8>, Vec<u16>)> {
-    eprintln!("SPARSE_HIST: Writing LZ77-enabled histogram");
+    crate::trace::debug_eprintln!("SPARSE_HIST: Writing LZ77-enabled histogram");
 
     // lz77.enabled = 1
     writer.write(1, 1)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: lz77.enabled = 1",
         writer.bits_written()
     );
@@ -349,7 +349,7 @@ fn write_sparse_lz77_histogram(
     // u2S(224, Bits(8)+225, Bits(16)+481, Bits(32)+65537)
     // 224 = selector 0 means value IS 224
     writer.write(2, 0)?; // selector 0: value = 224
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: min_symbol = 224",
         writer.bits_written()
     );
@@ -359,7 +359,7 @@ fn write_sparse_lz77_histogram(
     // 7 = Bits(2)+5 with bits=2, so selector 2
     writer.write(2, 2)?; // selector 2
     writer.write(2, 2)?; // 7 - 5 = 2
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: min_length = 7",
         writer.bits_written()
     );
@@ -370,7 +370,7 @@ fn write_sparse_lz77_histogram(
     // When split_exponent=0, msb_bits = ceil_log2(1) = 0 and lsb_bits = 0, so they're implicit.
     const LZ77_LENGTH_LOG_ALPHA: u32 = 8;
     write_integer_config(writer, LZ77_LENGTH_LOG_ALPHA, 0, 0, 0)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: length_uint_config = {{0, 0, 0}}",
         writer.bits_written()
     );
@@ -382,7 +382,7 @@ fn write_sparse_lz77_histogram(
     // Format: is_simple=1, bits_per_entry=0 (all zeros)
     writer.write(1, 1)?; // is_simple = 1
     writer.write(2, 0)?; // bits_per_entry = 0 (all contexts map to 0)
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: context_map (is_simple=1, bits=0)",
         writer.bits_written()
     );
@@ -405,7 +405,7 @@ fn write_sparse_lz77_histogram(
         .max()
         .unwrap_or(K_LZ77_MIN_SYMBOL);
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST: max_raw={}, max_lz77={} (count at lz77={})",
         max_raw_symbol,
         max_lz77_symbol,
@@ -418,12 +418,12 @@ fn write_sparse_lz77_histogram(
 
     // Count actual used symbols
     let num_used: usize = histogram.iter().filter(|&&c| c > 0).count();
-    eprintln!("SPARSE_HIST: {} used symbols", num_used);
+    crate::trace::debug_eprintln!("SPARSE_HIST: {} used symbols", num_used);
 
     // Use the Huffman tree builder to store the prefix code
     // First write use_prefix_code = 1
     writer.write(1, 1)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: use_prefix_code = 1",
         writer.bits_written()
     );
@@ -438,7 +438,7 @@ fn write_sparse_lz77_histogram(
     // This MUST match encode_hybrid_uint_000 which uses config {0,0,0}
     const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
     write_integer_config(writer, LOG_ALPHABET_SIZE_PREFIX, 0, 0, 0)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: uint_config (log_alpha={}, split_exp=0)",
         writer.bits_written(),
         LOG_ALPHABET_SIZE_PREFIX
@@ -446,7 +446,7 @@ fn write_sparse_lz77_histogram(
 
     // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
     write_varlen_u16(writer, (alphabet_size - 1) as u16)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "SPARSE_HIST [bit {}]: alphabet_size = {} (max_symbol={})",
         writer.bits_written(),
         alphabet_size,
@@ -459,7 +459,7 @@ fn write_sparse_lz77_histogram(
     // canonical codes.
     let (depths, codes) = if alphabet_size > 1 {
         let table = build_and_store_huffman_tree(&histogram[..alphabet_size], writer)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "SPARSE_HIST [bit {}]: After Huffman table",
             writer.bits_written()
         );
@@ -529,7 +529,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
     }
 
     let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "VARDCT_MODULAR: {} residuals, {} unique symbols, max={}",
         residuals.len(),
         num_symbols,
@@ -546,7 +546,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
     // When num_contexts = 1, context_map is NOT written (implicit single histogram).
     // Our gradient predictor uses a single-leaf tree, so num_contexts = 1.
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: Before lz77.enabled",
         writer.bits_written(),
         writer.bits_written() / 8,
@@ -555,7 +555,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
 
     // lz77.enabled = 0
     writer.write(1, 0)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: After lz77.enabled=0",
         writer.bits_written(),
         writer.bits_written() / 8,
@@ -566,7 +566,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
 
     // use_prefix_code = 1
     writer.write(1, 1)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: After use_prefix_code=1",
         writer.bits_written(),
         writer.bits_written() / 8,
@@ -585,7 +585,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
         0,
         0,
     )?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "VARDCT_DATA [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
         writer.bits_written(),
         LOG_ALPHABET_SIZE_PREFIX,
@@ -596,7 +596,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
     let bit_before = writer.bits_written();
     write_varlen_u16(writer, max_residual as u16)?;
     let bit_after = writer.bits_written();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "VARDCT_DATA [bit {}-{}]: alphabet_size-1 = {} ({} bits written)",
         bit_before,
         bit_after,
@@ -634,7 +634,7 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
 
     // Note: NO byte padding here - VarDCT modular substreams are continuous
     // (DC is followed by HF metadata without byte alignment)
-    eprintln!("VARDCT_MODULAR [bit {}]: Done", writer.bits_written());
+    crate::trace::debug_eprintln!("VARDCT_MODULAR [bit {}]: Done", writer.bits_written());
     Ok(())
 }
 
@@ -662,7 +662,7 @@ fn write_improved_modular_stream_inner(
         .filter(|t| matches!(t, Token::Lz77Run(_)))
         .count();
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED: {} tokens, {} raw symbols used, {} lz77 tokens used, {} lz77 runs",
         tokens.len(),
         num_raw_used,
@@ -747,7 +747,7 @@ fn write_improved_modular_stream_inner(
         }
     }
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "LZ77 [bit {}]: Encoded {} tokens",
         writer.bits_written(),
         tokens.len()
@@ -772,7 +772,7 @@ fn predict_gradient(left: i32, top: i32, topleft: i32) -> i32 {
 /// Write a tree histogram for a single-leaf tree with Zero predictor.
 /// This should produce the same output as minimal.rs for tree histogram.
 fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<()> {
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: Starting tree histogram (Zero)",
         writer.bits_written()
     );
@@ -803,7 +803,7 @@ fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<()> {
     write_varlen_u16(writer, 0)?;
 
     // No Huffman table needed for alphabet_size = 1
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: After tree histogram (Zero)",
         writer.bits_written()
     );
@@ -840,7 +840,7 @@ fn write_tree_histogram_for_gradient_impl(
     writer: &mut BitWriter,
     write_lz77: bool,
 ) -> Result<(Vec<u8>, Vec<u16>)> {
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: Starting tree histogram (lz77={})",
         writer.bits_written(),
         write_lz77
@@ -850,7 +850,7 @@ fn write_tree_histogram_for_gradient_impl(
     // For modular substream trees (VarDCT), allow_lz77=false so we skip lz77.enabled
     if write_lz77 {
         writer.write(1, 0)?; // lz77.enabled = 0
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  TREE_HIST [bit {}]: lz77.enabled = 0",
             writer.bits_written()
         );
@@ -860,14 +860,14 @@ fn write_tree_histogram_for_gradient_impl(
     // (all contexts share same histogram)
     writer.write(1, 1)?; // is_simple = 1
     writer.write(2, 0)?; // bits_per_entry = 0
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: context_map (is_simple=1, bits=0)",
         writer.bits_written()
     );
 
     // use_prefix_code = 1
     writer.write(1, 1)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: use_prefix_code = 1",
         writer.bits_written()
     );
@@ -910,7 +910,7 @@ fn write_tree_histogram_for_gradient_impl(
         0,
         0,
     )?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
         writer.bits_written(),
         LOG_ALPHABET_SIZE_PREFIX,
@@ -921,7 +921,7 @@ fn write_tree_histogram_for_gradient_impl(
     // For prefix codes, this is written AFTER IntegerConfigs, BEFORE Huffman tables
     let alphabet_size = (max_symbol + 1) as u32;
     write_varlen_u16(writer, max_symbol)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: alphabet_size-1 = {} (alphabet_size={})",
         writer.bits_written(),
         max_symbol,
@@ -934,13 +934,13 @@ fn write_tree_histogram_for_gradient_impl(
     let al_size = (max_symbol + 1) as usize;
     let (depths, codes) = if al_size > 1 {
         let table = build_and_store_huffman_tree(tree_histogram, writer)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  TREE_HIST [bit {}]: After Huffman table",
             writer.bits_written()
         );
         (table.depths, table.codes)
     } else {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  TREE_HIST [bit {}]: No Huffman table (al_size=1)",
             writer.bits_written()
         );
@@ -957,7 +957,7 @@ pub(crate) fn write_gradient_tree_tokens(
     depths: &[u8],
     codes: &[u16],
 ) -> Result<()> {
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "  TREE_TOKENS [bit {}]: Starting tree tokens",
         writer.bits_written()
     );
@@ -972,8 +972,8 @@ pub(crate) fn write_gradient_tree_tokens(
     // The predictor to use (0=Zero, 5=Gradient) - must match write_tree_histogram_for_gradient
     const TREE_PREDICTOR: u32 = 5;
 
-    eprintln!("  TREE_TOKENS: depths = {:?}", depths);
-    eprintln!("  TREE_TOKENS: codes = {:?}", codes);
+    crate::trace::debug_eprintln!("  TREE_TOKENS: depths = {:?}", depths);
+    crate::trace::debug_eprintln!("  TREE_TOKENS: codes = {:?}", codes);
 
     // Encode: property=0, predictor, offset=0, mul_log=0, mul_bits=0
     let tokens = [0u32, TREE_PREDICTOR, 0, 0, 0];
@@ -982,7 +982,7 @@ pub(crate) fn write_gradient_tree_tokens(
     for (i, &token) in tokens.iter().enumerate() {
         let depth = depths.get(token as usize).copied().unwrap_or(0);
         let code = codes.get(token as usize).copied().unwrap_or(0);
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  TREE_TOKENS [bit {}]: {} = {} (depth={}, code={:0width$b})",
             writer.bits_written(),
             token_names[i],
@@ -996,7 +996,7 @@ pub(crate) fn write_gradient_tree_tokens(
         }
     }
 
-    eprintln!("  TREE_TOKENS [bit {}]: Done", writer.bits_written());
+    crate::trace::debug_eprintln!("  TREE_TOKENS [bit {}]: Done", writer.bits_written());
     Ok(())
 }
 
@@ -1052,7 +1052,7 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
 
     let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     let num_zeros = histogram.first().copied().unwrap_or(0);
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GRADIENT: {} residuals, {} unique symbols, max={}, zeros={}",
         residuals.len(),
         num_symbols,
@@ -1061,17 +1061,17 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
     );
 
     // === Global section ===
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: Starting modular stream",
         writer.bits_written()
     );
     writer.write(1, 1)?; // dc_quant.all_default = true
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: dc_quant.all_default = 1",
         writer.bits_written()
     );
     writer.write(1, 1)?; // has_tree = true
-    eprintln!("IMPROVED [bit {}]: has_tree = 1", writer.bits_written());
+    crate::trace::debug_eprintln!("IMPROVED [bit {}]: has_tree = 1", writer.bits_written());
 
     if USE_ZERO_PREDICTOR {
         // Tree histogram for Zero predictor (single symbol, no explicit tree tokens)
@@ -1084,15 +1084,15 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
     }
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: Starting data histogram",
         writer.bits_written()
     );
     // Data histogram
     writer.write(1, 0)?; // lz77.enabled = 0
-    eprintln!("IMPROVED [bit {}]: lz77.enabled = 0", writer.bits_written());
+    crate::trace::debug_eprintln!("IMPROVED [bit {}]: lz77.enabled = 0", writer.bits_written());
     writer.write(1, 1)?; // use_prefix_code = 1
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: use_prefix_code = 1",
         writer.bits_written()
     );
@@ -1108,7 +1108,7 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         0,
         0,
     )?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
         writer.bits_written(),
         LOG_ALPHABET_SIZE_PREFIX,
@@ -1117,7 +1117,7 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
 
     // alphabet_size-1 using VarLenUint16 encoding
     write_varlen_u16(writer, max_residual as u16)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: alphabet_size-1 = {}",
         writer.bits_written(),
         max_residual
@@ -1125,13 +1125,13 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
 
     // Build and store Huffman table - IMPORTANT: use the codes returned by build_and_store_huffman_tree
     let (depths, codes) = if histogram_size > 1 {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "IMPROVED [bit {}]: Starting Huffman table (histogram_size={})",
             writer.bits_written(),
             histogram_size
         );
         let table = build_and_store_huffman_tree(&histogram, writer)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "IMPROVED [bit {}]: After Huffman table",
             writer.bits_written()
         );
@@ -1142,14 +1142,14 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
     };
 
     // GroupHeader
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: Writing GroupHeader",
         writer.bits_written()
     );
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
     writer.write(2, 0)?; // num_transforms = 0
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: After GroupHeader",
         writer.bits_written()
     );
@@ -1163,17 +1163,17 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         .map(|(i, (d, c))| (i as u32, (*c, *d)))
         .collect();
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: Starting residual encoding",
         writer.bits_written()
     );
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED: First 20 residuals: {:?}",
         &residuals[..residuals.len().min(20)]
     );
-    eprintln!("IMPROVED: code_map has {} entries", code_map.len());
+    crate::trace::debug_eprintln!("IMPROVED: code_map has {} entries", code_map.len());
     for (&sym, &(code, depth)) in &code_map {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  sym {} -> code {:0width$b} (depth {})",
             sym,
             code,
@@ -1186,7 +1186,7 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         if let Some(&(code, depth)) = code_map.get(&r) {
             if depth > 0 {
                 if i < 10 {
-                    eprintln!(
+                    crate::trace::debug_eprintln!(
                         "  residual[{}] = {} -> code {:0width$b} (depth {})",
                         i,
                         r,
@@ -1198,13 +1198,13 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
                 writer.write(depth as usize, code as u64)?;
             }
         } else {
-            eprintln!("  WARNING: residual[{}] = {} has no code!", i, r);
+            crate::trace::debug_eprintln!("  WARNING: residual[{}] = {} has no code!", i, r);
         }
     }
 
-    eprintln!("IMPROVED [bit {}]: Before padding", writer.bits_written());
+    crate::trace::debug_eprintln!("IMPROVED [bit {}]: Before padding", writer.bits_written());
     writer.zero_pad_to_byte();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "IMPROVED [bit {}]: After padding (done)",
         writer.bits_written()
     );
@@ -1283,7 +1283,7 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
     let rct_type = RctType::YCOCG; // Best for typical images
     forward_rct(&mut transformed.channels, 0, rct_type)?;
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "RCT: Applied YCoCg transform to {} channels",
         transformed.channels.len()
     );
@@ -1326,7 +1326,7 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
     }
 
     let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "RCT: {} residuals, {} unique symbols, max={}",
         residuals.len(),
         num_symbols,
@@ -1379,7 +1379,7 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
     // Write the RCT transform descriptor
     write_rct_transform(writer, 0, rct_type)?;
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "RCT [bit {}]: After GroupHeader with transform",
         writer.bits_written()
     );
@@ -1547,7 +1547,7 @@ pub fn write_modular_stream_with_weighted(
     }
 
     let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "WEIGHTED: {} residuals, {} unique symbols, max={}",
         residuals.len(),
         num_symbols,
@@ -1669,7 +1669,7 @@ pub fn write_modular_stream_with_rct_weighted(
         histogram[r as usize] += 1;
     }
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "RCT+WEIGHTED: {} residuals, {} unique symbols, max={}",
         residuals.len(),
         histogram.iter().filter(|&&c| c > 0).count(),
@@ -1792,7 +1792,7 @@ mod tests {
         write_simple_modular_stream(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("Gradient stream: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("Gradient stream: {} bytes", bytes.len());
     }
 
     #[test]
@@ -1813,7 +1813,7 @@ mod tests {
         write_modular_stream_with_rct(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("RCT stream: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("RCT stream: {} bytes", bytes.len());
         assert!(!bytes.is_empty());
     }
 
@@ -1844,7 +1844,7 @@ mod tests {
         write_modular_stream_with_weighted(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("Weighted stream: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("Weighted stream: {} bytes", bytes.len());
         assert!(!bytes.is_empty());
     }
 
@@ -1866,7 +1866,7 @@ mod tests {
         write_modular_stream_with_rct_weighted(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("RCT+Weighted stream: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("RCT+Weighted stream: {} bytes", bytes.len());
         assert!(!bytes.is_empty());
     }
 
@@ -1883,22 +1883,22 @@ mod tests {
         }
         let image = ModularImage::from_rgb8(&data, 16, 16).unwrap();
 
-        eprintln!("\n=== LZ77 BIT TRACE TEST ===");
+        crate::trace::debug_eprintln!("\n=== LZ77 BIT TRACE TEST ===");
 
         let mut writer = BitWriter::new();
         write_improved_modular_stream(&image, &mut writer).unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("LZ77 stream: {} bytes", bytes.len());
-        eprintln!("Raw bytes: {:02x?}", &bytes[..bytes.len().min(50)]);
+        crate::trace::debug_eprintln!("LZ77 stream: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("Raw bytes: {:02x?}", &bytes[..bytes.len().min(50)]);
 
         // Now let's trace through what the decoder expects:
-        eprintln!("\n=== EXPECTED DECODER INTERPRETATION ===");
-        eprintln!("Bit 0: dc_quant.all_default = 1");
-        eprintln!("Bit 1: has_tree = 1");
-        eprintln!("--- TREE HISTOGRAM (6 contexts) ---");
-        eprintln!("Bit 2: lz77.enabled = 0");
-        eprintln!("Bits 3-5: context_map (is_simple=1, bits_per_entry=0)");
+        crate::trace::debug_eprintln!("\n=== EXPECTED DECODER INTERPRETATION ===");
+        crate::trace::debug_eprintln!("Bit 0: dc_quant.all_default = 1");
+        crate::trace::debug_eprintln!("Bit 1: has_tree = 1");
+        crate::trace::debug_eprintln!("--- TREE HISTOGRAM (6 contexts) ---");
+        crate::trace::debug_eprintln!("Bit 2: lz77.enabled = 0");
+        crate::trace::debug_eprintln!("Bits 3-5: context_map (is_simple=1, bits_per_entry=0)");
         // ... etc
     }
 }

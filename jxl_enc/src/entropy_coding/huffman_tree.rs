@@ -747,7 +747,7 @@ pub fn store_meta_huffman_tree(
         }
     }
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "STORE_META: codes_to_store={}, skip_some={}",
         codes_to_store, skip_some
     );
@@ -756,7 +756,7 @@ pub fn store_meta_huffman_tree(
     // Values 0, 2, 3 indicate full tree with skip; value 1 would be simple code
     let bit_pos_start = writer.bits_written();
     writer.write(2, skip_some as u64)?;
-    eprintln!("  META: wrote hskip={} at bit {}", skip_some, bit_pos_start);
+    crate::trace::debug_eprintln!("  META: wrote hskip={} at bit {}", skip_some, bit_pos_start);
 
     // Write code length depths using static Huffman code
     // The decoder reads code lengths for symbols in storage order
@@ -770,7 +770,7 @@ pub fn store_meta_huffman_tree(
         if depth_value > 0 {
             bitacc += 32 >> depth_value;
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  META[{}]: symbol={}, depth={}, code=0b{:0width$b} ({} bits), bitacc={}",
             skip_some + idx,
             symbol,
@@ -781,7 +781,7 @@ pub fn store_meta_huffman_tree(
             width = bits
         );
     }
-    eprintln!("  META: final bitacc={} (should be 32)", bitacc);
+    crate::trace::debug_eprintln!("  META: final bitacc={} (should be 32)", bitacc);
 
     Ok(())
 }
@@ -813,8 +813,8 @@ pub fn store_compressed_tree(
     code_length_codes: &[u16; CODE_LENGTH_CODES],
     writer: &mut BitWriter,
 ) -> Result<()> {
-    eprintln!("  TREE: meta_codes = {:?}", &code_length_codes[..5]);
-    eprintln!("  TREE: meta_depths = {:?}", &code_length_depths[..5]);
+    crate::trace::debug_eprintln!("  TREE: meta_codes = {:?}", &code_length_codes[..5]);
+    crate::trace::debug_eprintln!("  TREE: meta_depths = {:?}", &code_length_depths[..5]);
 
     for i in 0..tree.codes.len().min(10) {
         let ix = tree.codes[i] as usize;
@@ -827,7 +827,7 @@ pub fn store_compressed_tree(
         if depth > 0 {
             writer.write(depth, code)?;
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "  TREE[{}]: code_len_code={}, meta_depth={}, meta_code=0b{:b}, extra_bits={}",
             i, ix, depth, code, tree.extra_bits[i]
         );
@@ -907,7 +907,7 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
     // Debug: show raw depths for first and last few elements
     let first_10: Vec<u8> = depths.iter().take(10).copied().collect();
     let last_10: Vec<u8> = depths.iter().rev().take(10).rev().copied().collect();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "STORE_HUFF: depths len={}, first_10={:?}, last_10={:?}",
         depths.len(),
         first_10,
@@ -916,7 +916,7 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
 
     // RLE-compress the depth array
     let compressed = write_huffman_tree(depths);
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "STORE_HUFF: compressed codes={:?}, extra_bits={:?}",
         compressed.codes, compressed.extra_bits
     );
@@ -926,7 +926,7 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
     for &code in &compressed.codes {
         histogram[code as usize] += 1;
     }
-    eprintln!("STORE_HUFF: code_length_histogram={:?}", histogram);
+    crate::trace::debug_eprintln!("STORE_HUFF: code_length_histogram={:?}", histogram);
 
     // Count how many distinct code length codes are used
     let mut num_codes = 0;
@@ -952,7 +952,7 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
     let mut code_length_codes_arr = [0u16; CODE_LENGTH_CODES];
     code_length_codes_arr.copy_from_slice(&code_length_codes_vec);
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "STORE_HUFF: num_codes={}, meta_depths={:?}",
         num_codes, code_length_depths_arr
     );
@@ -1043,7 +1043,7 @@ pub fn build_and_store_huffman_tree(
         .filter(|&(_, h)| *h > 0)
         .map(|(i, h)| (i, *h))
         .collect();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "HUFFMAN_BUILD: alphabet_size={}, nonzero_symbols={:?}",
         length, nonzero
     );
@@ -1093,18 +1093,18 @@ pub fn build_and_store_huffman_tree(
         .iter()
         .map(|(i, _)| (*i, depths[*i], codes[*i]))
         .collect();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "HUFFMAN_BUILD: depths/codes for used symbols: {:?}",
         depths_info
     );
 
     if count <= 4 {
         // Simple Huffman code
-        eprintln!("HUFFMAN_BUILD: using simple code for {} symbols", count);
+        crate::trace::debug_eprintln!("HUFFMAN_BUILD: using simple code for {} symbols", count);
         store_simple_huffman_tree(&depths, &mut s4, count, max_bits, writer)?;
     } else {
         // Full code length table
-        eprintln!("HUFFMAN_BUILD: using full table for {} symbols", count);
+        crate::trace::debug_eprintln!("HUFFMAN_BUILD: using full table for {} symbols", count);
         store_huffman_tree(&depths, writer)?;
     }
 

@@ -127,7 +127,7 @@ pub fn encode_context_map(
     if entry_bits > 3 {
         // Simple mode only supports up to 3 bits per entry (8 clusters)
         // For now, just use 3 bits and mask values (clustering should ensure <= 8 clusters)
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "WARNING: context_map requires {} bits but simple mode max is 3 bits. \
              Using 3 bits, which may cause decoding errors if num_histograms > 8.",
             entry_bits

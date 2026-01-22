@@ -80,7 +80,7 @@ impl FrameEncoder {
             let section_data = section_writer.finish();
             let section_size = section_data.len();
 
-            eprintln!("DEBUG: section_size = {} bytes", section_size);
+            crate::trace::debug_eprintln!("DEBUG: section_size = {} bytes", section_size);
 
             // Write TOC
             self.write_toc(writer, section_size)?;
@@ -113,7 +113,7 @@ impl FrameEncoder {
         let num_lf_groups = self.num_lf_groups();
         let num_passes = 1;
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MULTI_GROUP: Encoding {}x{} image with {} groups, {} lf_groups",
             self.width, self.height, num_groups, num_lf_groups
         );
@@ -141,7 +141,7 @@ impl FrameEncoder {
 
         let histogram = build_histogram_from_residuals(&all_residuals, max_residual);
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MULTI_GROUP: {} total residuals, max={}, {} unique symbols",
             all_residuals.len(),
             max_residual,
@@ -154,18 +154,18 @@ impl FrameEncoder {
             write_global_modular_section(&histogram, max_residual, &mut lf_global_writer)?;
         let lf_global_data = lf_global_writer.finish();
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MULTI_GROUP: LfGlobal section = {} bytes",
             lf_global_data.len()
         );
 
         // Step 3: HfGlobal is empty for modular encoding (0 bytes)
         let hf_global_data: Vec<u8> = Vec::new();
-        eprintln!("MULTI_GROUP: HfGlobal section = 0 bytes (empty for modular)");
+        crate::trace::debug_eprintln!("MULTI_GROUP: HfGlobal section = 0 bytes (empty for modular)");
 
         // Step 4: LfGroup sections are empty for modular encoding
         let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MULTI_GROUP: {} LfGroup sections = 0 bytes each (empty for modular)",
             num_lf_groups
         );
@@ -177,7 +177,7 @@ impl FrameEncoder {
             for _pass in 0..num_passes {
                 let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
 
-                eprintln!(
+                crate::trace::debug_eprintln!(
                     "MULTI_GROUP: Group {} bounds ({}, {}) - ({}, {}), size {}x{}",
                     group_idx,
                     x_start,
@@ -192,7 +192,7 @@ impl FrameEncoder {
                 write_group_modular_section(group_image, &global_state, &mut group_writer)?;
                 pass_group_data.push(group_writer.finish());
 
-                eprintln!(
+                crate::trace::debug_eprintln!(
                     "MULTI_GROUP: PassGroup {} section = {} bytes",
                     group_idx,
                     pass_group_data.last().unwrap().len()
@@ -213,7 +213,7 @@ impl FrameEncoder {
             section_sizes.push(data.len());
         }
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MULTI_GROUP: {} total sections, sizes = {:?}",
             section_sizes.len(),
             section_sizes
@@ -295,13 +295,13 @@ impl FrameEncoder {
                 quantizer,
                 vardct_encoder.ac_strategy_map(),
             );
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "TRANSFORM_STRAT: dc_coeffs={}, ac_coeffs={}",
                 transformed.dc_coeffs.len(),
                 transformed.ac_coeffs.len()
             );
             let (tokens, distributions) = vardct_encoder.tokenize_ac_with_strategy(&transformed)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "TOKENIZE_STRAT: {} tokens, {} distributions",
                 tokens.len(),
                 distributions.len()
@@ -314,14 +314,14 @@ impl FrameEncoder {
             )
         } else {
             let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "TRANSFORM: dc_coeffs={}, ac_coeffs={}",
                 transformed.dc_coeffs.len(),
                 transformed.ac_coeffs.len()
             );
             let (tokens, distributions) =
                 vardct_encoder.tokenize_ac_coefficients(&transformed.ac_coeffs)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "TOKENIZE: {} tokens, {} distributions",
                 tokens.len(),
                 distributions.len()
@@ -344,7 +344,7 @@ impl FrameEncoder {
             // Single group: use clustered histograms for better compression
             let histogram_set =
                 vardct_encoder.build_clustered_histogram_set(&tokens, ClusteringType::Best)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "CLUSTERING: {} contexts → {} clusters",
                 histogram_set.num_contexts,
                 histogram_set.num_clusters()
@@ -368,7 +368,7 @@ impl FrameEncoder {
             }
             let histogram_set = vardct_encoder
                 .build_clustered_histogram_set(&combined_group_tokens, ClusteringType::Best)?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "MULTI_GROUP CLUSTERING: {} contexts → {} clusters",
                 histogram_set.num_contexts,
                 histogram_set.num_clusters()
@@ -408,48 +408,48 @@ impl FrameEncoder {
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_global(&mut section_writer)?;
         let lf_global_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION: LF Global = {} bits", lf_global_bits);
+        crate::trace::debug_eprintln!("SECTION: LF Global = {} bits", lf_global_bits);
 
         // 2. LF Group (DC coefficients + HF metadata) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
         let lf_group_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION: LF Group = {} bits", lf_group_bits);
+        crate::trace::debug_eprintln!("SECTION: LF Group = {} bits", lf_group_bits);
 
         // 3. HF Global section (with histograms) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_hf_global(tokens, distributions, &mut section_writer)?;
         let hf_global_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION: HF Global = {} bits", hf_global_bits);
+        crate::trace::debug_eprintln!("SECTION: HF Global = {} bits", hf_global_bits);
 
         // 4. Pass Group (AC coefficients) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_pass_group(tokens, distributions, &mut section_writer)?;
         let pass_group_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION: Pass Group = {} bits", pass_group_bits);
+        crate::trace::debug_eprintln!("SECTION: Pass Group = {} bits", pass_group_bits);
 
         // Only pad to byte at the very end of all sections
         section_writer.zero_pad_to_byte();
 
         let section_data = section_writer.finish();
         let section_size = section_data.len();
-        eprintln!("SECTION: Total = {} bytes", section_size);
-        eprintln!(
+        crate::trace::debug_eprintln!("SECTION: Total = {} bytes", section_size);
+        crate::trace::debug_eprintln!(
             "SECTION: First 20 bytes: {:02x?}",
             &section_data[..section_data.len().min(20)]
         );
         // Bytes around bit 134 (byte 16, bit 6) where DATA Huffman table starts
         if section_data.len() > 20 {
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "SECTION: Bytes 14-25 (around DATA Huffman): {:02x?}",
                 &section_data[14..section_data.len().min(26)]
             );
         }
 
         // Write single TOC entry
-        eprintln!("MAIN_WRITER [bit {}]: Before TOC", writer.bits_written());
+        crate::trace::debug_eprintln!("MAIN_WRITER [bit {}]: Before TOC", writer.bits_written());
         self.write_toc(writer, section_size)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MAIN_WRITER [bit {}, byte {}]: After TOC, before section data",
             writer.bits_written(),
             writer.bits_written() / 8
@@ -459,7 +459,7 @@ impl FrameEncoder {
         for byte in section_data {
             writer.write_u8(byte)?;
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "MAIN_WRITER [bit {}, byte {}]: After section data",
             writer.bits_written(),
             writer.bits_written() / 8
@@ -486,19 +486,19 @@ impl FrameEncoder {
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_global(&mut section_writer)?;
         let lf_global_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION_CLUSTERED: LF Global = {} bits", lf_global_bits);
+        crate::trace::debug_eprintln!("SECTION_CLUSTERED: LF Global = {} bits", lf_global_bits);
 
         // 2. LF Group (DC coefficients + HF metadata) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
         let lf_group_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION_CLUSTERED: LF Group = {} bits", lf_group_bits);
+        crate::trace::debug_eprintln!("SECTION_CLUSTERED: LF Group = {} bits", lf_group_bits);
 
         // 3. HF Global section (with clustered histograms) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_hf_global_clustered(tokens, histogram_set, &mut section_writer)?;
         let hf_global_bits = section_writer.bits_written() - start_bits;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "SECTION_CLUSTERED: HF Global = {} bits ({} clusters)",
             hf_global_bits,
             histogram_set.num_clusters()
@@ -508,14 +508,14 @@ impl FrameEncoder {
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_pass_group_clustered(tokens, histogram_set, &mut section_writer)?;
         let pass_group_bits = section_writer.bits_written() - start_bits;
-        eprintln!("SECTION_CLUSTERED: Pass Group = {} bits", pass_group_bits);
+        crate::trace::debug_eprintln!("SECTION_CLUSTERED: Pass Group = {} bits", pass_group_bits);
 
         // Only pad to byte at the very end of all sections
         section_writer.zero_pad_to_byte();
 
         let section_data = section_writer.finish();
         let section_size = section_data.len();
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "SECTION_CLUSTERED: Total = {} bytes, {} clusters",
             section_size,
             histogram_set.num_clusters()
@@ -712,38 +712,38 @@ impl FrameEncoder {
 
     /// Writes the frame header for a simple lossless modular frame.
     fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "FRMH [bit {}]: Starting frame header",
             writer.bits_written()
         );
 
         // all_default = false (because we use Modular encoding, not VarDCT default)
         writer.write(1, 0)?;
-        eprintln!("FRMH [bit {}]: all_default = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: all_default = 0", writer.bits_written());
 
         // frame_type = RegularFrame (0)
         writer.write(2, 0)?;
-        eprintln!("FRMH [bit {}]: frame_type = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: frame_type = 0", writer.bits_written());
 
         // encoding = Modular (1)
         writer.write(1, 1)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "FRMH [bit {}]: encoding = 1 (Modular)",
             writer.bits_written()
         );
 
         // flags = 0 (U64 encoding: selector 0 with 2 bits means value is 0)
         writer.write(2, 0)?;
-        eprintln!("FRMH [bit {}]: flags = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: flags = 0", writer.bits_written());
 
         // do_ycbcr = false (only for non-xyb_encoded, which is our case for lossless)
         // For lossless modular, xyb_encoded should be false in the image metadata
         writer.write(1, 0)?;
-        eprintln!("FRMH [bit {}]: do_ycbcr = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: do_ycbcr = 0", writer.bits_written());
 
         // upsampling = 1 (selector 0 in u2S(1,2,4,8))
         writer.write(2, 0)?;
-        eprintln!("FRMH [bit {}]: upsampling = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: upsampling = 0", writer.bits_written());
 
         // ec_upsampling - for each extra channel (none for RGB)
         // (already handled by not writing anything)
@@ -751,7 +751,7 @@ impl FrameEncoder {
         // group_size_shift: 0 = 128, 1 = 256, 2 = 512, 3 = 1024
         // We use GROUP_DIM = 256, so shift must be 1
         writer.write(2, 1)?; // selector 1 = 256 pixels
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "FRMH [bit {}]: group_size_shift = 1 (256)",
             writer.bits_written()
         );
@@ -759,18 +759,18 @@ impl FrameEncoder {
         // passes (only if frame_type != ReferenceOnly)
         // num_passes = 1 (selector 0 in u2S(1,2,3,Bits(3)+4))
         writer.write(2, 0)?;
-        eprintln!("FRMH [bit {}]: passes = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: passes = 0", writer.bits_written());
 
         // lf_level - not written (only for LFFrame)
 
         // have_crop = false (only if frame_type != LFFrame)
         writer.write(1, 0)?;
-        eprintln!("FRMH [bit {}]: have_crop = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: have_crop = 0", writer.bits_written());
 
         // blending_info (only for RegularFrame or SkipProgressive)
         // mode = Replace (selector 0 in u2S(0,1,2,Bits(2)+3))
         writer.write(2, 0)?;
-        eprintln!("FRMH [bit {}]: blending = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: blending = 0", writer.bits_written());
 
         // ec_blending_info - for each extra channel (none for RGB)
 
@@ -779,7 +779,7 @@ impl FrameEncoder {
 
         // is_last = true (only for RegularFrame or SkipProgressive)
         writer.write(1, 1)?;
-        eprintln!("FRMH [bit {}]: is_last = 1", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: is_last = 1", writer.bits_written());
 
         // save_as_reference - not written (is_last = true)
 
@@ -788,7 +788,7 @@ impl FrameEncoder {
         // name = empty string
         // name_length = 0 using u2S(0, Bits(4), Bits(5)+16, Bits(10)+48)
         writer.write(2, 0)?; // selector 0 = value 0
-        eprintln!("FRMH [bit {}]: name = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("FRMH [bit {}]: name = 0", writer.bits_written());
 
         // restoration_filter - MUST disable filters for lossless modular encoding!
         // Default has gab=true (Gaborish) and epf_iters=2 (Edge-Preserving Filter)
@@ -796,7 +796,7 @@ impl FrameEncoder {
         writer.write(1, 0)?; // all_default = false
         writer.write(1, 0)?; // gab = false (disable Gaborish)
         writer.write(2, 0)?; // epf_iters = 0 (disable EPF)
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "FRMH [bit {}]: restoration = disabled (gab=false, epf=0)",
             writer.bits_written()
         );
@@ -804,7 +804,7 @@ impl FrameEncoder {
         // extensions = 0 (no extensions)
         // u64 encoding: selector 0 (2 bits) means value 0
         writer.write(2, 0)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "FRMH [bit {}]: extensions = 0, frame header done",
             writer.bits_written()
         );
@@ -824,11 +824,11 @@ impl FrameEncoder {
 
     /// Writes the table of contents with multiple sections.
     fn write_toc_multi(&self, writer: &mut BitWriter, section_sizes: &[usize]) -> Result<()> {
-        eprintln!("TOC [bit {}]: Writing permuted = 0", writer.bits_written());
+        crate::trace::debug_eprintln!("TOC [bit {}]: Writing permuted = 0", writer.bits_written());
         // permuted = false
         writer.write(1, 0)?;
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "TOC [bit {}]: After permuted, byte aligning",
             writer.bits_written()
         );
@@ -837,7 +837,7 @@ impl FrameEncoder {
 
         // Write TOC entries using u2S(Bits(10), Bits(14)+1024, Bits(22)+17408, Bits(30)+4211712)
         for (i, &size) in section_sizes.iter().enumerate() {
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "TOC [bit {}]: Writing entry {} size={}",
                 writer.bits_written(),
                 i,
@@ -845,7 +845,7 @@ impl FrameEncoder {
             );
             self.write_toc_entry(writer, size as u32)?;
         }
-        eprintln!("TOC [bit {}]: After TOC entries", writer.bits_written());
+        crate::trace::debug_eprintln!("TOC [bit {}]: After TOC entries", writer.bits_written());
 
         // Byte align after TOC entries
         writer.zero_pad_to_byte();
@@ -1019,7 +1019,7 @@ mod tests {
             .unwrap();
 
         let bytes = writer.finish_with_padding();
-        eprintln!("Multi-group modular: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("Multi-group modular: {} bytes", bytes.len());
         assert!(!bytes.is_empty());
         // Should have reasonable size (not huge, not tiny)
         assert!(bytes.len() > 100); // Has content
@@ -1122,7 +1122,7 @@ mod tests {
             .expect("DCT16/32 encoding should succeed");
 
         let bytes = writer.finish_with_padding();
-        eprintln!("VarDCT with variance-based strategy: {} bytes", bytes.len());
+        crate::trace::debug_eprintln!("VarDCT with variance-based strategy: {} bytes", bytes.len());
         assert!(!bytes.is_empty());
 
         // Save for debugging
@@ -1140,6 +1140,6 @@ mod tests {
             .render_frame(0)
             .expect("jxl-oxide should render DCT16/32 frame");
 
-        eprintln!("DCT16/32 roundtrip test PASSED");
+        crate::trace::debug_eprintln!("DCT16/32 roundtrip test PASSED");
     }
 }

@@ -210,7 +210,7 @@ impl FileHeader {
         let w_div8 = self.width.is_multiple_of(8) && self.width / 8 >= 1 && self.width / 8 <= 32;
         let small = h_div8 && w_div8;
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "SIZE_HDR: {}x{}, small={}, h_div8={}, w_div8={}",
             self.width, self.height, small, h_div8, w_div8
         );
@@ -218,16 +218,16 @@ impl FileHeader {
 
         if small {
             // ysize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
-            eprintln!("SIZE_HDR: ysize_div8_minus_1 = {}", self.height / 8 - 1);
+            crate::trace::debug_eprintln!("SIZE_HDR: ysize_div8_minus_1 = {}", self.height / 8 - 1);
             writer.write(5, (self.height / 8 - 1) as u64)?;
 
             let ratio = self.compute_ratio();
-            eprintln!("SIZE_HDR: ratio = {}", ratio);
+            crate::trace::debug_eprintln!("SIZE_HDR: ratio = {}", ratio);
             writer.write(3, ratio as u64)?;
 
             if ratio == 0 {
                 // xsize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
-                eprintln!("SIZE_HDR: xsize_div8_minus_1 = {}", self.width / 8 - 1);
+                crate::trace::debug_eprintln!("SIZE_HDR: xsize_div8_minus_1 = {}", self.width / 8 - 1);
                 writer.write(5, (self.width / 8 - 1) as u64)?;
             }
         } else {
@@ -290,17 +290,17 @@ impl FileHeader {
 
     /// Writes the complete file header (signature + size + metadata + transform_data).
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
-        eprintln!("FHDR [bit {}]: Starting file header", writer.bits_written());
+        crate::trace::debug_eprintln!("FHDR [bit {}]: Starting file header", writer.bits_written());
         Self::write_signature(writer)?;
-        eprintln!("FHDR [bit {}]: After signature", writer.bits_written());
+        crate::trace::debug_eprintln!("FHDR [bit {}]: After signature", writer.bits_written());
         self.write_size_header(writer)?;
-        eprintln!("FHDR [bit {}]: After size header", writer.bits_written());
+        crate::trace::debug_eprintln!("FHDR [bit {}]: After size header", writer.bits_written());
         self.write_image_metadata(writer)?;
-        eprintln!("FHDR [bit {}]: After metadata", writer.bits_written());
+        crate::trace::debug_eprintln!("FHDR [bit {}]: After metadata", writer.bits_written());
         // CustomTransformData - written after ImageMetadata
         // For simple images, all_default = true (just 1 bit)
         self.write_transform_data(writer)?;
-        eprintln!("FHDR [bit {}]: After transform_data", writer.bits_written());
+        crate::trace::debug_eprintln!("FHDR [bit {}]: After transform_data", writer.bits_written());
         Ok(())
     }
 
@@ -309,7 +309,7 @@ impl FileHeader {
     fn write_transform_data(&self, writer: &mut BitWriter) -> Result<()> {
         // CustomTransformData.all_default = true
         // This is the default case - no custom upsampling weights or opsin matrix
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "XFRM [bit {}]: transform_data.all_default = true",
             writer.bits_written()
         );
@@ -323,7 +323,7 @@ impl FileHeader {
 
         // all_default flag
         let all_default = self.is_metadata_default();
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "META [bit {}]: all_default = {}",
             writer.bits_written(),
             all_default
@@ -339,7 +339,7 @@ impl FileHeader {
             || meta.orientation != Orientation::Identity
             || meta.have_intrinsic_size
             || meta.intensity_target != 255.0;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "META [bit {}]: extra_fields = {}",
             writer.bits_written(),
             extra_fields
@@ -369,14 +369,14 @@ impl FileHeader {
         }
 
         // bit_depth
-        eprintln!("META [bit {}]: Writing bit_depth", writer.bits_written());
+        crate::trace::debug_eprintln!("META [bit {}]: Writing bit_depth", writer.bits_written());
         meta.bit_depth.write(writer)?;
-        eprintln!("META [bit {}]: After bit_depth", writer.bits_written());
+        crate::trace::debug_eprintln!("META [bit {}]: After bit_depth", writer.bits_written());
 
         // modular_16_bit_buffer_sufficient
         // Default is true for bit depths <= 12
         let mod16_sufficient = meta.bit_depth.bits_per_sample <= 12;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "META [bit {}]: modular_16_bit_buffer_sufficient = {}",
             writer.bits_written(),
             mod16_sufficient
@@ -385,7 +385,7 @@ impl FileHeader {
 
         // num_extra_channels
         let num_extra = meta.extra_channels.len() as u32;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "META [bit {}]: num_extra_channels = {}",
             writer.bits_written(),
             num_extra
@@ -397,7 +397,7 @@ impl FileHeader {
         }
 
         // xyb_encoded (true for lossy, false for lossless)
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "META [bit {}]: xyb_encoded = {}",
             writer.bits_written(),
             meta.xyb_encoded
@@ -405,12 +405,12 @@ impl FileHeader {
         writer.write_bit(meta.xyb_encoded)?;
 
         // color_encoding
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "META [bit {}]: Writing color_encoding",
             writer.bits_written()
         );
         meta.color_encoding.write(writer)?;
-        eprintln!("META [bit {}]: After color_encoding", writer.bits_written());
+        crate::trace::debug_eprintln!("META [bit {}]: After color_encoding", writer.bits_written());
 
         // tone_mapping - only if extra_fields
         if extra_fields {

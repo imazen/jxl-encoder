@@ -249,7 +249,7 @@ pub(crate) fn write_complex_prefix_code(
     writer: &mut BitWriter,
     alphabet_size: usize,
 ) -> Result<()> {
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "COMPLEX_PREFIX [bit {}]: alphabet_size={}",
         writer.bits_written(),
         alphabet_size
@@ -270,7 +270,7 @@ pub(crate) fn write_complex_prefix_code(
     // If d == 1, all symbols have depth 1 (special case)
     let (depth_short, depth_long) = if d <= 1 { (1, 1) } else { (d - 1, d) };
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "COMPLEX_PREFIX: d={}, symbols_short={} (depth {}), symbols_long={} (depth {})",
         d, symbols_short, depth_short, symbols_long, depth_long
     );
@@ -350,7 +350,7 @@ pub(crate) fn write_complex_prefix_code(
             0
         };
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX single_depth: cl_sym={}, cl_dummy={}, pos_sym={}, pos_dummy={}, skip={}",
             cl_sym, cl_dummy, pos_sym, pos_dummy, skip
         );
@@ -376,7 +376,7 @@ pub(crate) fn write_complex_prefix_code(
                 space -= 32 >> cl_cl;
             }
         }
-        eprintln!("COMPLEX_PREFIX single_depth: space after cl-cl = {}", space);
+        crate::trace::debug_eprintln!("COMPLEX_PREFIX single_depth: space after cl-cl = {}", space);
 
         // Now emit code lengths for each alphabet symbol
         // Both symbols (cl_sym and cl_dummy) have code length 1.
@@ -390,7 +390,7 @@ pub(crate) fn write_complex_prefix_code(
         for _ in 0..alphabet_size {
             writer.write(1, cl_sym_code)?;
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX single_depth: wrote {} code lengths (all {})",
             alphabet_size, cl_sym_code
         );
@@ -419,14 +419,14 @@ pub(crate) fn write_complex_prefix_code(
             0
         };
 
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX: pos_short={}, pos_long={}, min={}, max={}, skip={}",
             pos_short, pos_long, min_pos, max_pos, skip
         );
 
         // hskip
         writer.write(2, skip as u64)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX [bit {}]: wrote hskip={}",
             writer.bits_written(),
             skip
@@ -448,7 +448,7 @@ pub(crate) fn write_complex_prefix_code(
                 CL_CODE_LENS[cl_cl as usize] as usize,
                 CL_CODE_BITS[cl_cl as usize] as u64,
             )?;
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "COMPLEX_PREFIX [bit {}]: storage[{}]={} -> cl_cl={}, bits={:#b} ({} bits)",
                 writer.bits_written(),
                 skip + idx,
@@ -462,7 +462,7 @@ pub(crate) fn write_complex_prefix_code(
                 num_codes += 1;
             }
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX: After cl-cl: space={}, num_codes={}",
             space, num_codes
         );
@@ -488,7 +488,7 @@ pub(crate) fn write_complex_prefix_code(
             };
             writer.write(1, bit)?;
         }
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX [bit {}]: wrote {} code lengths ({} bits)",
             writer.bits_written(),
             alphabet_size,
