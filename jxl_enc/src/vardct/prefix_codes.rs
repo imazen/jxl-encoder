@@ -272,7 +272,11 @@ pub(crate) fn write_complex_prefix_code(
 
     crate::trace::debug_eprintln!(
         "COMPLEX_PREFIX: d={}, symbols_short={} (depth {}), symbols_long={} (depth {})",
-        d, symbols_short, depth_short, symbols_long, depth_long
+        d,
+        symbols_short,
+        depth_short,
+        symbols_long,
+        depth_long
     );
 
     // Build code length array
@@ -352,7 +356,11 @@ pub(crate) fn write_complex_prefix_code(
 
         crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX single_depth: cl_sym={}, cl_dummy={}, pos_sym={}, pos_dummy={}, skip={}",
-            cl_sym, cl_dummy, pos_sym, pos_dummy, skip
+            cl_sym,
+            cl_dummy,
+            pos_sym,
+            pos_dummy,
+            skip
         );
 
         // Write hskip (2 bits)
@@ -392,7 +400,8 @@ pub(crate) fn write_complex_prefix_code(
         }
         crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX single_depth: wrote {} code lengths (all {})",
-            alphabet_size, cl_sym_code
+            alphabet_size,
+            cl_sym_code
         );
     } else {
         // Two distinct code lengths
@@ -421,7 +430,11 @@ pub(crate) fn write_complex_prefix_code(
 
         crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX: pos_short={}, pos_long={}, min={}, max={}, skip={}",
-            pos_short, pos_long, min_pos, max_pos, skip
+            pos_short,
+            pos_long,
+            min_pos,
+            max_pos,
+            skip
         );
 
         // hskip
@@ -464,7 +477,8 @@ pub(crate) fn write_complex_prefix_code(
         }
         crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX: After cl-cl: space={}, num_codes={}",
-            space, num_codes
+            space,
+            num_codes
         );
 
         // Assign codes to the two code length symbols

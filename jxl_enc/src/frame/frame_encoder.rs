@@ -115,7 +115,10 @@ impl FrameEncoder {
 
         crate::trace::debug_eprintln!(
             "MULTI_GROUP: Encoding {}x{} image with {} groups, {} lf_groups",
-            self.width, self.height, num_groups, num_lf_groups
+            self.width,
+            self.height,
+            num_groups,
+            num_lf_groups
         );
 
         // Step 1: Extract each group and collect residuals using LOCAL coordinates.
@@ -161,7 +164,9 @@ impl FrameEncoder {
 
         // Step 3: HfGlobal is empty for modular encoding (0 bytes)
         let hf_global_data: Vec<u8> = Vec::new();
-        crate::trace::debug_eprintln!("MULTI_GROUP: HfGlobal section = 0 bytes (empty for modular)");
+        crate::trace::debug_eprintln!(
+            "MULTI_GROUP: HfGlobal section = 0 bytes (empty for modular)"
+        );
 
         // Step 4: LfGroup sections are empty for modular encoding
         let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();

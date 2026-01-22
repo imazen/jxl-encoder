@@ -2373,7 +2373,7 @@ mod quality_comparison_tests {
             for x in 0..8 {
                 let idx = (y * 8 + x) * 3;
                 let val = (x * 32) as u8; // 0, 32, 64, 96, 128, 160, 192, 224
-                data[idx] = val;     // R
+                data[idx] = val; // R
                 data[idx + 1] = val; // G
                 data[idx + 2] = val; // B
             }
@@ -2392,16 +2392,20 @@ mod quality_comparison_tests {
         let samples: Vec<f32> = fb.buf().to_vec();
 
         // Check row 0: should be gradient (different values per column)
-        let row0: Vec<i32> = (0..8).map(|col| {
-            let idx = col * 3; // row 0
-            (samples[idx] * 255.0).round() as i32
-        }).collect();
+        let row0: Vec<i32> = (0..8)
+            .map(|col| {
+                let idx = col * 3; // row 0
+                (samples[idx] * 255.0).round() as i32
+            })
+            .collect();
 
         // Check col 0: should be constant (same value per row)
-        let col0: Vec<i32> = (0..8).map(|row| {
-            let idx = row * 8 * 3; // col 0
-            (samples[idx] * 255.0).round() as i32
-        }).collect();
+        let col0: Vec<i32> = (0..8)
+            .map(|row| {
+                let idx = row * 8 * 3; // col 0
+                (samples[idx] * 255.0).round() as i32
+            })
+            .collect();
 
         eprintln!("Input: horizontal gradient [0, 32, 64, 96, 128, 160, 192, 224]");
         eprintln!("Row 0 (should vary): {:?}", row0);
@@ -2429,7 +2433,8 @@ mod quality_comparison_tests {
         assert!(
             row0_variance > col0_variance,
             "Gradient is transposed! Row variance ({:.1}) should be > col variance ({:.1})",
-            row0_variance, col0_variance
+            row0_variance,
+            col0_variance
         );
     }
 }
@@ -2440,7 +2445,7 @@ mod quality_comparison_tests {
 #[cfg(test)]
 mod dual_decoder_butteraugli_tests {
     use crate::encoder::encode_lossy_rgb8;
-    use butteraugli::{butteraugli, ButteraugliParams};
+    use butteraugli::{ButteraugliParams, butteraugli};
     use imgref::Img;
     use rgb::RGB8;
     use std::io::Cursor;
@@ -2509,7 +2514,8 @@ mod dual_decoder_butteraugli_tests {
         }
 
         // Load the decoded PNG
-        let img = image::open(&png_path).map_err(|e| format!("Failed to load decoded PNG: {}", e))?;
+        let img =
+            image::open(&png_path).map_err(|e| format!("Failed to load decoded PNG: {}", e))?;
         let rgb = img.to_rgb8();
         let (w, h) = (img.width() as usize, img.height() as usize);
         let pixels = rgb.to_vec();
@@ -2568,10 +2574,7 @@ mod dual_decoder_butteraugli_tests {
     }
 
     /// Run dual-decoder test for a single image at multiple distances
-    fn test_image_at_distances(
-        path: &str,
-        distances: &[f32],
-    ) -> Vec<Result<TestResult, String>> {
+    fn test_image_at_distances(path: &str, distances: &[f32]) -> Vec<Result<TestResult, String>> {
         let image_name = std::path::Path::new(path)
             .file_name()
             .unwrap_or_default()
@@ -2585,7 +2588,10 @@ mod dual_decoder_butteraugli_tests {
 
         // Skip images smaller than 8x8 (butteraugli minimum)
         if width < 8 || height < 8 {
-            return vec![Err(format!("{}: too small ({}x{})", image_name, width, height))];
+            return vec![Err(format!(
+                "{}: too small ({}x{})",
+                image_name, width, height
+            ))];
         }
 
         distances
@@ -2604,10 +2610,14 @@ mod dual_decoder_butteraugli_tests {
 
                 // Compute butteraugli scores
                 let oxide_score = compute_butteraugli(&original, &oxide_decoded, width, height)
-                    .map_err(|e| format!("{} d={}: oxide butteraugli: {}", image_name, distance, e))?;
+                    .map_err(|e| {
+                        format!("{} d={}: oxide butteraugli: {}", image_name, distance, e)
+                    })?;
 
                 let jxlrs_score = compute_butteraugli(&original, &jxlrs_decoded, width, height)
-                    .map_err(|e| format!("{} d={}: jxlrs butteraugli: {}", image_name, distance, e))?;
+                    .map_err(|e| {
+                        format!("{} d={}: jxlrs butteraugli: {}", image_name, distance, e)
+                    })?;
 
                 let score_diff = (oxide_score - jxlrs_score).abs();
 
@@ -2652,12 +2662,22 @@ mod dual_decoder_butteraugli_tests {
         // Distance values to test
         let distances = [0.5, 1.0, 2.0, 4.0];
 
-        eprintln!("\n╔═══════════════════════════════════════════════════════════════════════════════════════╗");
-        eprintln!("║                    DUAL-DECODER BUTTERAUGLI VALIDATION                                ║");
-        eprintln!("╠═══════════════════════════════════════════════════════════════════════════════════════╣");
-        eprintln!("║ {:25} │ {:6} │ {:10} │ {:10} │ {:8} │ {:8} ║",
-            "Image", "Dist", "Oxide BA", "jxl-rs BA", "Diff", "Size");
-        eprintln!("╠═══════════════════════════════════════════════════════════════════════════════════════╣");
+        eprintln!(
+            "\n╔═══════════════════════════════════════════════════════════════════════════════════════╗"
+        );
+        eprintln!(
+            "║                    DUAL-DECODER BUTTERAUGLI VALIDATION                                ║"
+        );
+        eprintln!(
+            "╠═══════════════════════════════════════════════════════════════════════════════════════╣"
+        );
+        eprintln!(
+            "║ {:25} │ {:6} │ {:10} │ {:10} │ {:8} │ {:8} ║",
+            "Image", "Dist", "Oxide BA", "jxl-rs BA", "Diff", "Size"
+        );
+        eprintln!(
+            "╠═══════════════════════════════════════════════════════════════════════════════════════╣"
+        );
 
         let mut all_results: Vec<TestResult> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
@@ -2677,8 +2697,12 @@ mod dual_decoder_butteraugli_tests {
                     Ok(r) => {
                         eprintln!(
                             "║ {:25} │ {:6.1} │ {:10.4} │ {:10.4} │ {:8.4} │ {:8} ║",
-                            r.image_name, r.distance, r.oxide_butteraugli, r.jxlrs_butteraugli,
-                            r.score_diff, r.encoded_size
+                            r.image_name,
+                            r.distance,
+                            r.oxide_butteraugli,
+                            r.jxlrs_butteraugli,
+                            r.score_diff,
+                            r.encoded_size
                         );
                         max_diff = max_diff.max(r.score_diff);
                         all_results.push(r);
@@ -2691,7 +2715,9 @@ mod dual_decoder_butteraugli_tests {
             }
         }
 
-        eprintln!("╠═══════════════════════════════════════════════════════════════════════════════════════╣");
+        eprintln!(
+            "╠═══════════════════════════════════════════════════════════════════════════════════════╣"
+        );
 
         // Summary statistics
         if !all_results.is_empty() {
@@ -2699,16 +2725,22 @@ mod dual_decoder_butteraugli_tests {
                 / all_results.len() as f64;
             let avg_jxlrs: f64 = all_results.iter().map(|r| r.jxlrs_butteraugli).sum::<f64>()
                 / all_results.len() as f64;
-            let avg_diff: f64 = all_results.iter().map(|r| r.score_diff).sum::<f64>()
-                / all_results.len() as f64;
+            let avg_diff: f64 =
+                all_results.iter().map(|r| r.score_diff).sum::<f64>() / all_results.len() as f64;
 
-            eprintln!("║ {:25} │ {:6} │ {:10.4} │ {:10.4} │ {:8.4} │ {:8} ║",
-                "AVERAGE", "", avg_oxide, avg_jxlrs, avg_diff, "");
-            eprintln!("║ {:25} │ {:6} │ {:10} │ {:10} │ {:8.4} │ {:8} ║",
-                "MAX DIFF", "", "", "", max_diff, "");
+            eprintln!(
+                "║ {:25} │ {:6} │ {:10.4} │ {:10.4} │ {:8.4} │ {:8} ║",
+                "AVERAGE", "", avg_oxide, avg_jxlrs, avg_diff, ""
+            );
+            eprintln!(
+                "║ {:25} │ {:6} │ {:10} │ {:10} │ {:8.4} │ {:8} ║",
+                "MAX DIFF", "", "", "", max_diff, ""
+            );
         }
 
-        eprintln!("╚═══════════════════════════════════════════════════════════════════════════════════════╝");
+        eprintln!(
+            "╚═══════════════════════════════════════════════════════════════════════════════════════╝"
+        );
 
         // Assertions
         // 1. Both decoders should produce very similar butteraugli scores
@@ -2717,7 +2749,8 @@ mod dual_decoder_butteraugli_tests {
         assert!(
             max_diff < MAX_ALLOWED_DIFF,
             "Decoder outputs differ too much! Max butteraugli diff: {:.4} (allowed: {:.4})",
-            max_diff, MAX_ALLOWED_DIFF
+            max_diff,
+            MAX_ALLOWED_DIFF
         );
 
         // 2. Check that butteraugli scores are reasonable for the distances
@@ -2760,22 +2793,21 @@ mod dual_decoder_butteraugli_tests {
         for y in 0..height {
             for x in 0..width {
                 let idx = (y * width + x) * 3;
-                original[idx] = (x * 4) as u8;     // R: horizontal gradient
+                original[idx] = (x * 4) as u8; // R: horizontal gradient
                 original[idx + 1] = (y * 4) as u8; // G: vertical gradient
-                original[idx + 2] = 128;           // B: constant
+                original[idx + 2] = 128; // B: constant
             }
         }
 
         let distances = [1.0f32, 2.0];
 
         for distance in distances {
-            let encoded = encode_lossy_rgb8(&original, width, height, distance)
-                .expect("Encode failed");
+            let encoded =
+                encode_lossy_rgb8(&original, width, height, distance).expect("Encode failed");
 
-            let (oxide_decoded, _, _) = decode_with_oxide(&encoded)
-                .expect("jxl-oxide decode failed");
-            let (jxlrs_decoded, _, _) = decode_with_jxlrs(&encoded)
-                .expect("jxl-rs decode failed");
+            let (oxide_decoded, _, _) =
+                decode_with_oxide(&encoded).expect("jxl-oxide decode failed");
+            let (jxlrs_decoded, _, _) = decode_with_jxlrs(&encoded).expect("jxl-rs decode failed");
 
             let oxide_score = compute_butteraugli(&original, &oxide_decoded, width, height)
                 .expect("Butteraugli failed");
@@ -2792,7 +2824,9 @@ mod dual_decoder_butteraugli_tests {
             assert!(
                 diff < 0.1,
                 "Decoder outputs differ! oxide={:.4}, jxl-rs={:.4}, diff={:.4}",
-                oxide_score, jxlrs_score, diff
+                oxide_score,
+                jxlrs_score,
+                diff
             );
         }
 
@@ -2879,7 +2913,11 @@ mod dual_decoder_butteraugli_tests {
         }
 
         println!("\n=== CORPUS TEST: CLIC + CID22 ===");
-        println!("Found {} images, {} already processed", images.len(), processed.len());
+        println!(
+            "Found {} images, {} already processed",
+            images.len(),
+            processed.len()
+        );
 
         // Open results file for appending
         let mut results_file = OpenOptions::new()
@@ -2943,8 +2981,18 @@ mod dual_decoder_butteraugli_tests {
                     data
                 }
                 Err(e) => {
-                    writeln!(failures_file, "{} ({}x{}): ENCODE FAIL: {:?}", rel_path, width, height, e).unwrap();
-                    writeln!(results_file, "{},{},{},encode_fail,0", rel_path, width, height).unwrap();
+                    writeln!(
+                        failures_file,
+                        "{} ({}x{}): ENCODE FAIL: {:?}",
+                        rel_path, width, height, e
+                    )
+                    .unwrap();
+                    writeln!(
+                        results_file,
+                        "{},{},{},encode_fail,0",
+                        rel_path, width, height
+                    )
+                    .unwrap();
                     continue;
                 }
             };
@@ -2955,11 +3003,32 @@ mod dual_decoder_butteraugli_tests {
                     decode_ok += 1;
                     total_size += encoded.len();
                     total_pixels += width * height;
-                    writeln!(results_file, "{},{},{},ok,{}", rel_path, width, height, encoded.len()).unwrap();
+                    writeln!(
+                        results_file,
+                        "{},{},{},ok,{}",
+                        rel_path,
+                        width,
+                        height,
+                        encoded.len()
+                    )
+                    .unwrap();
                 }
                 Err(e) => {
-                    writeln!(failures_file, "{} ({}x{}): DECODE FAIL: {}", rel_path, width, height, e).unwrap();
-                    writeln!(results_file, "{},{},{},decode_fail,{}", rel_path, width, height, encoded.len()).unwrap();
+                    writeln!(
+                        failures_file,
+                        "{} ({}x{}): DECODE FAIL: {}",
+                        rel_path, width, height, e
+                    )
+                    .unwrap();
+                    writeln!(
+                        results_file,
+                        "{},{},{},decode_fail,{}",
+                        rel_path,
+                        width,
+                        height,
+                        encoded.len()
+                    )
+                    .unwrap();
                 }
             };
 
@@ -2987,13 +3056,24 @@ mod dual_decoder_butteraugli_tests {
         // Summary
         println!("\n=== SUMMARY ===");
         println!("Total processed: {}", total_tests);
-        println!("Encode success:  {} ({:.1}%)", encode_ok, encode_ok as f64 / total_tests as f64 * 100.0);
-        println!("Decode success:  {} ({:.1}%)", decode_ok, decode_ok as f64 / total_tests as f64 * 100.0);
+        println!(
+            "Encode success:  {} ({:.1}%)",
+            encode_ok,
+            encode_ok as f64 / total_tests as f64 * 100.0
+        );
+        println!(
+            "Decode success:  {} ({:.1}%)",
+            decode_ok,
+            decode_ok as f64 / total_tests as f64 * 100.0
+        );
         println!("Time elapsed:    {:.1}s", elapsed.as_secs_f64());
 
         if total_pixels > 0 {
             let bpp = total_size as f64 * 8.0 / total_pixels as f64;
-            println!("Total size:      {:.2} MB", total_size as f64 / 1024.0 / 1024.0);
+            println!(
+                "Total size:      {:.2} MB",
+                total_size as f64 / 1024.0 / 1024.0
+            );
             println!("Avg bpp:         {:.3}", bpp);
         }
 

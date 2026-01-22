@@ -848,7 +848,8 @@ mod debug_tests {
         let quantizer = QuantizerParams::from_distance(1.0);
         crate::trace::debug_eprintln!(
             "Quantizer: global_scale={}, quant_dc={}",
-            quantizer.global_scale, quantizer.quant_dc
+            quantizer.global_scale,
+            quantizer.quant_dc
         );
 
         let result = transform_and_quantize(&[&x_plane, &y_plane, &b_plane], 16, 16, &quantizer);
@@ -928,7 +929,8 @@ mod debug_tests {
         let quant_dc = quantizer.quant_dc as i32;
         crate::trace::debug_eprintln!(
             "global_scale_float = {}, quant_dc = {}",
-            global_scale_float, quant_dc
+            global_scale_float,
+            quant_dc
         );
         crate::trace::debug_eprintln!(
             "qac = global_scale_float * quant_dc = {}",
@@ -948,7 +950,11 @@ mod debug_tests2 {
         crate::trace::debug_eprintln!("Inverse dequant matrices:");
         for (c, name) in [(0, "X"), (1, "Y"), (2, "B")] {
             crate::trace::debug_eprintln!("  {} channel - DC (pos 0): {}", name, inv_dequant[c][0]);
-            crate::trace::debug_eprintln!("  {} channel - AC1 (pos 1): {}", name, inv_dequant[c][1]);
+            crate::trace::debug_eprintln!(
+                "  {} channel - AC1 (pos 1): {}",
+                name,
+                inv_dequant[c][1]
+            );
             crate::trace::debug_eprintln!(
                 "  {} channel - first row: {:?}",
                 name,
@@ -956,7 +962,8 @@ mod debug_tests2 {
             );
             crate::trace::debug_eprintln!(
                 "  {} channel - pos 63 (Nyquist): {}",
-                name, inv_dequant[c][63]
+                name,
+                inv_dequant[c][63]
             );
             crate::trace::debug_eprintln!(
                 "  {} channel - last row: {:?}",
@@ -985,7 +992,10 @@ mod debug_tests2 {
             };
             crate::trace::debug_eprintln!(
                 "  {} channel: inv_dequant[63]={:.6}, val={:.6}, quantized={}",
-                name, inv_dq, val, quantized
+                name,
+                inv_dq,
+                val,
+                quantized
             );
             crate::trace::debug_eprintln!("    val/threshold ratio = {:.3}", val / threshold);
         }
@@ -1044,8 +1054,8 @@ mod debug_tests3 {
 #[cfg(test)]
 mod dc_value_tests {
     use crate::color::xyb::srgb_to_xyb;
-    use crate::vardct::quantizer::{QuantizerParams, GLOBAL_SCALE_DENOM};
     use crate::vardct::quant_weights::INV_LF_QUANT;
+    use crate::vardct::quantizer::{GLOBAL_SCALE_DENOM, QuantizerParams};
     use jxl_enc_transforms::dct8;
 
     /// Test what DC value a solid mid-gray block produces
@@ -1079,7 +1089,8 @@ mod dc_value_tests {
 
         crate::trace::debug_eprintln!(
             "Quantizer: global_scale={}, quant_dc={}",
-            quantizer.global_scale, quant_dc
+            quantizer.global_scale,
+            quant_dc
         );
         crate::trace::debug_eprintln!("INV_LF_QUANT[Y] = {}", inv_lf_quant_y);
 
