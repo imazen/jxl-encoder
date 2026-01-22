@@ -116,7 +116,14 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
                         .unwrap();
                     crate::trace::debug_eprintln!(
                         "RESIDUAL[{}]: ch={} y={} x={} pixel={}, pred={}, residual={}, packed={}",
-                        debug_count, channel_idx, y, x, pixel, prediction, residual, packed
+                        debug_count,
+                        channel_idx,
+                        y,
+                        x,
+                        pixel,
+                        prediction,
+                        residual,
+                        packed
                     );
                     debug_count += 1;
                 }

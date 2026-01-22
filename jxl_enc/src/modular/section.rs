@@ -249,7 +249,9 @@ pub fn write_group_modular_section(
     for (&symbol, &(code, depth)) in &code_map {
         crate::trace::debug_eprintln!(
             "GROUP_MODULAR:   symbol {} -> code {:b} (depth {})",
-            symbol, code, depth
+            symbol,
+            code,
+            depth
         );
     }
 
@@ -287,7 +289,8 @@ pub fn write_group_modular_section(
                     // Symbol not in histogram - this shouldn't happen if histogram was built correctly
                     crate::trace::debug_eprintln!(
                         "WARNING: residual {} not in code_map (max={})",
-                        packed, state.max_residual
+                        packed,
+                        state.max_residual
                     );
                 }
             }

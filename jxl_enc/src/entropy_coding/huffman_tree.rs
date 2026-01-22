@@ -749,7 +749,8 @@ pub fn store_meta_huffman_tree(
 
     crate::trace::debug_eprintln!(
         "STORE_META: codes_to_store={}, skip_some={}",
-        codes_to_store, skip_some
+        codes_to_store,
+        skip_some
     );
 
     // Write skip count (2 bits) - this is the simple_code_or_skip field
@@ -829,7 +830,11 @@ pub fn store_compressed_tree(
         }
         crate::trace::debug_eprintln!(
             "  TREE[{}]: code_len_code={}, meta_depth={}, meta_code=0b{:b}, extra_bits={}",
-            i, ix, depth, code, tree.extra_bits[i]
+            i,
+            ix,
+            depth,
+            code,
+            tree.extra_bits[i]
         );
 
         // Write extra bits for RLE codes
@@ -918,7 +923,8 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
     let compressed = write_huffman_tree(depths);
     crate::trace::debug_eprintln!(
         "STORE_HUFF: compressed codes={:?}, extra_bits={:?}",
-        compressed.codes, compressed.extra_bits
+        compressed.codes,
+        compressed.extra_bits
     );
 
     // Build histogram of code length codes
@@ -954,7 +960,8 @@ pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
 
     crate::trace::debug_eprintln!(
         "STORE_HUFF: num_codes={}, meta_depths={:?}",
-        num_codes, code_length_depths_arr
+        num_codes,
+        code_length_depths_arr
     );
 
     // Write meta-Huffman tree
@@ -1045,7 +1052,8 @@ pub fn build_and_store_huffman_tree(
         .collect();
     crate::trace::debug_eprintln!(
         "HUFFMAN_BUILD: alphabet_size={}, nonzero_symbols={:?}",
-        length, nonzero
+        length,
+        nonzero
     );
 
     // Count non-zero symbols and track first 4

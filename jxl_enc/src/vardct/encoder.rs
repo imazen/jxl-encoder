@@ -626,7 +626,8 @@ impl VarDctEncoder {
                             // jxl-oxide transposes coordinates when h >= w, which is true for all
                             // square transforms (DCT8, DCT16, DCT32).
                             let block_dim = cx * 8; // 8 for DCT8, 16 for DCT16, 32 for DCT32
-                            let transposed_coeff_idx = (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim);
+                            let transposed_coeff_idx =
+                                (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim);
 
                             // Map from full-block position to AC array index
                             // effective_ac contains coefficients starting from position covered_blocks (after LLF)
@@ -951,7 +952,8 @@ impl VarDctEncoder {
         let alphabet_size = max_token + 1;
         crate::trace::debug_eprintln!(
             "HF_HIST: max_token = {}, alphabet_size = {}",
-            max_token, alphabet_size
+            max_token,
+            alphabet_size
         );
 
         // IntegerConfig: split_exponent determines direct vs hybrid encoding
@@ -1020,7 +1022,8 @@ impl VarDctEncoder {
         let num_contexts = histogram_set.num_contexts;
         crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED: num_clusters = {}, num_contexts = {}",
-            num_clusters, num_contexts
+            num_clusters,
+            num_contexts
         );
 
         if num_contexts == 1 {
@@ -1397,7 +1400,13 @@ impl VarDctEncoder {
             if token_count < 5 {
                 crate::trace::debug_eprintln!(
                     "PASS_GROUP: token {}: value={}, encoded_token={}, code={:#b} ({} bits), extra_bits={:#x} ({} bits)",
-                    token_count, token.value, encoded_token, code, len, extra_bits, num_extra_bits
+                    token_count,
+                    token.value,
+                    encoded_token,
+                    code,
+                    len,
+                    extra_bits,
+                    num_extra_bits
                 );
             }
             writer.write(len, code as u64)?;

@@ -50,7 +50,9 @@ fn write_histogram_with_full_huffman(
 
     crate::trace::debug_eprintln!(
         "DEBUG write_histogram: num_contexts={}, alphabet_size={}, max_symbol={}",
-        num_contexts, alphabet_size, max_symbol
+        num_contexts,
+        alphabet_size,
+        max_symbol
     );
 
     // lz77.enabled = 0
@@ -301,7 +303,9 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     for (&symbol, &(code, depth)) in &code_map {
         crate::trace::debug_eprintln!(
             "  Huffman: symbol {} -> code={:b}, depth={}",
-            symbol, code, depth
+            symbol,
+            code,
+            depth
         );
     }
     crate::trace::debug_eprintln!(

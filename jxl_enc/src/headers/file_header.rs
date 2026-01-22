@@ -212,7 +212,11 @@ impl FileHeader {
 
         crate::trace::debug_eprintln!(
             "SIZE_HDR: {}x{}, small={}, h_div8={}, w_div8={}",
-            self.width, self.height, small, h_div8, w_div8
+            self.width,
+            self.height,
+            small,
+            h_div8,
+            w_div8
         );
         writer.write_bit(small)?;
 
@@ -227,7 +231,10 @@ impl FileHeader {
 
             if ratio == 0 {
                 // xsize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
-                crate::trace::debug_eprintln!("SIZE_HDR: xsize_div8_minus_1 = {}", self.width / 8 - 1);
+                crate::trace::debug_eprintln!(
+                    "SIZE_HDR: xsize_div8_minus_1 = {}",
+                    self.width / 8 - 1
+                );
                 writer.write(5, (self.width / 8 - 1) as u64)?;
             }
         } else {
