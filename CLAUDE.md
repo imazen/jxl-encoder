@@ -38,12 +38,36 @@ Never omit jxl-rs from decoder validation.
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
 - [ ] Full Huffman encoder with table serialization
 - [ ] Modular encoder (lossless path)
-- [x] VarDCT encoder (lossy path) - DCT8/16/32 now working
+- [ ] **VarDCT encoder quality fix** - Decodes but produces GARBAGE for >32x32
 - [ ] Frame assembly pipeline
 - [ ] Color space transforms (RGB -> XYB)
 - [ ] Quantization
 - [ ] Context modeling
 - [ ] High-level encoder API
+
+## Known Bugs (ACTIVE)
+
+### CRITICAL: VarDCT Quality Catastrophically Broken for >32x32 Images
+
+**Status**: UNFIXED as of Jan 22, 2026
+**Impact**: Images decode successfully but are unrecognizable garbage
+**Symptom**: SSIM2 scores of -500 to -1000 (should be >50)
+
+| Size | SSIM2 | Expected | Status |
+|------|-------|----------|--------|
+| 16x16 | 73-92 | >50 | ✓ OK |
+| 64x64 | -562 | >50 | ❌ BROKEN |
+| 128x128 | -1011 | >50 | ❌ BROKEN |
+| 256x256 | -928 | >50 | ❌ BROKEN |
+| 512x512 | -1000+ | >50 | ❌ BROKEN |
+
+**Test**: `cargo test test_vardct_quality_enforcement -- --ignored --nocapture`
+**Visual**: `cargo test test_save_broken_image -- --ignored --nocapture`
+  Then: `display /tmp/broken_decoded.png`
+
+**History**: Tests only checked decode success, not quality. This allowed
+"100% decode success" claims while actual quality was catastrophically broken.
+Quality enforcement tests added Jan 22, 2026 to prevent future false positives.
 
 ## DCT16/32 Implementation Notes (Jan 21, 2026)
 
