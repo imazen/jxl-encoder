@@ -2798,4 +2798,214 @@ mod dual_decoder_butteraugli_tests {
 
         eprintln!("✓ Quick butteraugli test passed");
     }
+
+    /// Comprehensive corpus test for CLIC and CID22 datasets
+    /// Tests encode/decode across all images - supports resume via CSV file
+    #[test]
+    #[ignore = "Full corpus test; run with: cargo test test_corpus_clic_cid -- --ignored --nocapture"]
+    fn test_corpus_clic_cid() {
+        use std::collections::HashSet;
+        use std::fs::{File, OpenOptions};
+        use std::io::{BufRead, BufReader, Write};
+        use std::time::Instant;
+
+        let corpus_path = std::path::Path::new(CORPUS_PATH);
+        if !corpus_path.exists() {
+            println!("SKIP: corpus not found at {}", CORPUS_PATH);
+            return;
+        }
+
+        // Results file for resume support
+        let results_path = "/tmp/jxl_corpus_results.csv";
+        let failures_path = "/tmp/jxl_corpus_failures.txt";
+
+        // Load previously processed images
+        let mut processed: HashSet<String> = HashSet::new();
+        let mut prev_encode_ok = 0usize;
+        let mut prev_decode_ok = 0usize;
+        let mut prev_total_size = 0usize;
+        let mut prev_total_pixels = 0usize;
+
+        if let Ok(file) = File::open(results_path) {
+            let reader = BufReader::new(file);
+            for line in reader.lines().skip(1) {
+                // Skip header
+                if let Ok(line) = line {
+                    let parts: Vec<&str> = line.split(',').collect();
+                    if parts.len() >= 5 {
+                        processed.insert(parts[0].to_string());
+                        prev_encode_ok += 1;
+                        prev_decode_ok += 1;
+                        if let (Ok(w), Ok(h), Ok(size)) = (
+                            parts[1].parse::<usize>(),
+                            parts[2].parse::<usize>(),
+                            parts[4].parse::<usize>(),
+                        ) {
+                            prev_total_pixels += w * h;
+                            prev_total_size += size;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect all PNG files from CID22 and clic2025
+        let mut images: Vec<std::path::PathBuf> = Vec::new();
+
+        let cid_path = corpus_path.join("CID22");
+        if cid_path.exists() {
+            for entry in walkdir::WalkDir::new(&cid_path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if path.extension().map(|e| e == "png").unwrap_or(false) {
+                    images.push(path.to_path_buf());
+                }
+            }
+        }
+
+        let clic_path = corpus_path.join("clic2025");
+        if clic_path.exists() {
+            for entry in walkdir::WalkDir::new(&clic_path)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                if path.extension().map(|e| e == "png").unwrap_or(false) {
+                    images.push(path.to_path_buf());
+                }
+            }
+        }
+
+        println!("\n=== CORPUS TEST: CLIC + CID22 ===");
+        println!("Found {} images, {} already processed", images.len(), processed.len());
+
+        // Open results file for appending
+        let mut results_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(results_path)
+            .expect("Failed to open results file");
+
+        // Write header if file is empty
+        if processed.is_empty() {
+            writeln!(results_file, "path,width,height,status,size").unwrap();
+        }
+
+        let mut failures_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(failures_path)
+            .expect("Failed to open failures file");
+
+        let mut encode_ok = prev_encode_ok;
+        let mut decode_ok = prev_decode_ok;
+        let mut total_size = prev_total_size;
+        let mut total_pixels = prev_total_pixels;
+        let mut new_tests = 0;
+
+        let start = Instant::now();
+
+        for (idx, image_path) in images.iter().enumerate() {
+            let rel_path = image_path
+                .strip_prefix(corpus_path)
+                .unwrap_or(image_path)
+                .to_string_lossy()
+                .to_string();
+
+            // Skip already processed
+            if processed.contains(&rel_path) {
+                continue;
+            }
+
+            // Load image
+            let (original, width, height) = match load_png(image_path.to_str().unwrap()) {
+                Some(data) => data,
+                None => {
+                    writeln!(failures_file, "{}: failed to load", rel_path).unwrap();
+                    continue;
+                }
+            };
+
+            // Skip very small images
+            if width < 8 || height < 8 {
+                writeln!(results_file, "{},{},{},skipped,0", rel_path, width, height).unwrap();
+                continue;
+            }
+
+            new_tests += 1;
+
+            // Encode
+            let encoded = match encode_lossy_rgb8(&original, width, height, 1.0) {
+                Ok(data) => {
+                    encode_ok += 1;
+                    data
+                }
+                Err(e) => {
+                    writeln!(failures_file, "{} ({}x{}): ENCODE FAIL: {:?}", rel_path, width, height, e).unwrap();
+                    writeln!(results_file, "{},{},{},encode_fail,0", rel_path, width, height).unwrap();
+                    continue;
+                }
+            };
+
+            // Decode with jxl-oxide
+            match decode_with_oxide(&encoded) {
+                Ok(_) => {
+                    decode_ok += 1;
+                    total_size += encoded.len();
+                    total_pixels += width * height;
+                    writeln!(results_file, "{},{},{},ok,{}", rel_path, width, height, encoded.len()).unwrap();
+                }
+                Err(e) => {
+                    writeln!(failures_file, "{} ({}x{}): DECODE FAIL: {}", rel_path, width, height, e).unwrap();
+                    writeln!(results_file, "{},{},{},decode_fail,{}", rel_path, width, height, encoded.len()).unwrap();
+                }
+            };
+
+            // Progress every 10 new images
+            if new_tests % 10 == 0 {
+                let total_done = processed.len() + new_tests;
+                println!(
+                    "Progress: {}/{} ({:.1}%) - encode:{} decode:{} - {:.1}s",
+                    total_done,
+                    images.len(),
+                    total_done as f64 / images.len() as f64 * 100.0,
+                    encode_ok,
+                    decode_ok,
+                    start.elapsed().as_secs_f64()
+                );
+                // Flush to ensure we don't lose progress
+                results_file.flush().unwrap();
+                failures_file.flush().unwrap();
+            }
+        }
+
+        let elapsed = start.elapsed();
+        let total_tests = encode_ok.max(1);
+
+        // Summary
+        println!("\n=== SUMMARY ===");
+        println!("Total processed: {}", total_tests);
+        println!("Encode success:  {} ({:.1}%)", encode_ok, encode_ok as f64 / total_tests as f64 * 100.0);
+        println!("Decode success:  {} ({:.1}%)", decode_ok, decode_ok as f64 / total_tests as f64 * 100.0);
+        println!("Time elapsed:    {:.1}s", elapsed.as_secs_f64());
+
+        if total_pixels > 0 {
+            let bpp = total_size as f64 * 8.0 / total_pixels as f64;
+            println!("Total size:      {:.2} MB", total_size as f64 / 1024.0 / 1024.0);
+            println!("Avg bpp:         {:.3}", bpp);
+        }
+
+        println!("\nResults: {}", results_path);
+        println!("Failures: {}", failures_path);
+
+        // Assert high success rate
+        let success_rate = decode_ok as f64 / total_tests as f64 * 100.0;
+        assert!(
+            success_rate >= 95.0,
+            "Decode success rate {:.1}% is below 95% threshold",
+            success_rate
+        );
+    }
 }
