@@ -1,8 +1,8 @@
-# JXL Encoder Status - 2026-01-05
+# JXL Encoder Status - 2026-01-22
 
 ## Summary
 
-**Tests**: 403 passing
+**Tests**: 412 passing
 **Branch**: main
 
 ## What Works
@@ -16,20 +16,15 @@
 - LZ77 compression, gradient prediction
 - RCT (Reversible Color Transform)
 
-### VarDCT Lossy Encoding - PARTIAL
-- Encoding always succeeds (100%)
-- Decoding: ~52% success rate
+### VarDCT Lossy Encoding - FULLY WORKING
+- Encoding: 100% success rate
+- Decoding: 100% success rate (280/280 test cases)
 - See [VARDCT_STATUS.md](VARDCT_STATUS.md) for full compatibility matrix
 
-**Working dimensions:**
-- 8x8, 9x9, 15x15, 16x16, 17x17 (all patterns)
-- 8x16, 16x8 (all patterns)
-- Solid color images at any size
-
-**Known issues by size:**
-- 24-64px: HybridUint split_exponent configuration
-- 64-256px: ANS stream encoding
-- >256px: Multi-group section boundaries
+**All dimensions working:**
+- Single-group: 8x8 through 256x256
+- Multi-group: 257x257, 300x300, 512x512, asymmetric sizes
+- All test patterns: solid, gradients, checkerboards, noise, color bars
 
 ## Components
 
