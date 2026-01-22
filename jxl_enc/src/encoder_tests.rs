@@ -2001,3 +2001,435 @@ mod decoder_validation {
         }
     }
 }
+
+/// Quality comparison tests between our encoder and libjxl.
+/// These tests compare SSIMULACRA2 scores at the same distance values.
+#[cfg(test)]
+mod quality_comparison_tests {
+    use crate::encoder::encode_lossy_rgb8;
+    use fast_ssim2::{Rgb, compute_frame_ssimulacra2};
+    use std::process::Command;
+    use yuvxyb::{ColorPrimaries, TransferCharacteristic};
+
+    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+    const LIBJXL_CJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl";
+    const LIBJXL_DJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+
+    /// Load a PNG image and return RGB8 data
+    fn load_png(path: &str) -> Option<(Vec<u8>, usize, usize)> {
+        let img = image::open(path).ok()?;
+        let rgb = img.to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        Some((rgb.to_vec(), w, h))
+    }
+
+    /// Compute SSIMULACRA2 score between original and decoded images
+    fn compute_ssim2_score(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+        let orig_f32: Vec<[f32; 3]> = original
+            .chunks(3)
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
+            .collect();
+        let dec_f32: Vec<[f32; 3]> = decoded
+            .chunks(3)
+            .map(|c| {
+                [
+                    c[0] as f32 / 255.0,
+                    c[1] as f32 / 255.0,
+                    c[2] as f32 / 255.0,
+                ]
+            })
+            .collect();
+
+        let source = Rgb::new(
+            orig_f32,
+            width,
+            height,
+            TransferCharacteristic::SRGB,
+            ColorPrimaries::BT709,
+        )
+        .unwrap();
+
+        let distorted = Rgb::new(
+            dec_f32,
+            width,
+            height,
+            TransferCharacteristic::SRGB,
+            ColorPrimaries::BT709,
+        )
+        .unwrap();
+
+        compute_frame_ssimulacra2(source, distorted).unwrap_or(f64::NAN)
+    }
+
+    /// Encode with libjxl and decode back to PNG
+    fn encode_decode_libjxl(input: &str, distance: f32) -> Option<Vec<u8>> {
+        let jxl_path = format!("/tmp/libjxl_test_{}.jxl", std::process::id());
+        let out_path = format!("/tmp/libjxl_test_{}.png", std::process::id());
+
+        // Encode with cjxl
+        let status = Command::new(LIBJXL_CJXL)
+            .args([input, &jxl_path, "-d", &format!("{}", distance)])
+            .output()
+            .ok()?;
+
+        if !status.status.success() {
+            eprintln!("cjxl failed: {}", String::from_utf8_lossy(&status.stderr));
+            return None;
+        }
+
+        // Decode with djxl
+        let status = Command::new(LIBJXL_DJXL)
+            .args([&jxl_path, &out_path])
+            .output()
+            .ok()?;
+
+        if !status.status.success() {
+            eprintln!("djxl failed: {}", String::from_utf8_lossy(&status.stderr));
+            return None;
+        }
+
+        // Load decoded PNG
+        let img = image::open(&out_path).ok()?;
+        let rgb = img.to_rgb8();
+
+        // Cleanup temp files
+        let _ = std::fs::remove_file(&jxl_path);
+        let _ = std::fs::remove_file(&out_path);
+
+        Some(rgb.to_vec())
+    }
+
+    /// Encode with our encoder and decode with jxl-oxide
+    fn encode_decode_ours(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        distance: f32,
+    ) -> Option<Vec<u8>> {
+        use crate::encoder::encode_lossy_rgb8;
+
+        let encoded = encode_lossy_rgb8(data, width, height, distance).ok()?;
+
+        // Decode with jxl-oxide
+        let img = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .ok()?;
+
+        let frame = img.render_frame(0).ok()?;
+        let fb = frame.image_all_channels();
+        let buf = fb.buf();
+        let channels = fb.channels();
+
+        // Convert f32 back to u8
+        let mut decoded = Vec::with_capacity(width * height * 3);
+        for i in 0..(width * height) {
+            let idx = i * channels;
+            decoded.push((buf[idx].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+            decoded.push((buf[idx + 1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+            decoded.push((buf[idx + 2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+        }
+
+        Some(decoded)
+    }
+
+    /// Get file sizes for comparison
+    fn get_encoded_sizes(
+        input_path: &str,
+        data: &[u8],
+        width: usize,
+        height: usize,
+        distance: f32,
+    ) -> (Option<usize>, Option<usize>) {
+        use crate::encoder::encode_lossy_rgb8;
+
+        // Our encoder size
+        let our_size = encode_lossy_rgb8(data, width, height, distance)
+            .ok()
+            .map(|e| e.len());
+
+        // libjxl size
+        let jxl_path = format!("/tmp/libjxl_size_{}.jxl", std::process::id());
+        let libjxl_size = Command::new(LIBJXL_CJXL)
+            .args([input_path, &jxl_path, "-d", &format!("{}", distance)])
+            .output()
+            .ok()
+            .and_then(|status| {
+                if status.status.success() {
+                    std::fs::metadata(&jxl_path).ok().map(|m| m.len() as usize)
+                } else {
+                    None
+                }
+            });
+
+        let _ = std::fs::remove_file(&jxl_path);
+
+        (our_size, libjxl_size)
+    }
+
+    #[test]
+    fn test_quality_comparison_kodak01() {
+        let path = format!("{}/kodak/1.png", CORPUS_PATH);
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("Skipping: Kodak image not found at {}", path);
+            return;
+        }
+
+        let (data, width, height) = load_png(&path).expect("Failed to load image");
+        let distances = [0.5, 1.0, 2.0, 4.0];
+
+        eprintln!("\n╔════════════════════════════════════════════════════════════════════════╗");
+        eprintln!("║           QUALITY COMPARISON: jxl-encoder-rs vs libjxl               ║");
+        eprintln!("║                    Kodak 1 (768x512)                                 ║");
+        eprintln!("╠════════════════════════════════════════════════════════════════════════╣");
+        eprintln!(
+            "║ {:>8} │ {:>12} {:>12} │ {:>10} {:>10} │ {:>8} ║",
+            "Distance", "Our SSIM2", "libjxl SSIM2", "Our Size", "libjxl", "Δ SSIM2"
+        );
+        eprintln!("╠════════════════════════════════════════════════════════════════════════╣");
+
+        for distance in distances {
+            // Encode and decode with both
+            let our_decoded = encode_decode_ours(&data, width, height, distance);
+            let libjxl_decoded = encode_decode_libjxl(&path, distance);
+
+            // Compute SSIMULACRA2 scores
+            let our_score = our_decoded
+                .as_ref()
+                .map(|d| compute_ssim2_score(&data, d, width, height))
+                .unwrap_or(f64::NAN);
+
+            let libjxl_score = libjxl_decoded
+                .as_ref()
+                .map(|d| compute_ssim2_score(&data, d, width, height))
+                .unwrap_or(f64::NAN);
+
+            // Get file sizes
+            let (our_size, libjxl_size) = get_encoded_sizes(&path, &data, width, height, distance);
+
+            let delta = our_score - libjxl_score;
+            let delta_str = if delta.is_nan() {
+                "N/A".to_string()
+            } else {
+                format!("{:+.2}", delta)
+            };
+
+            eprintln!(
+                "║ {:>8.1} │ {:>12.2} {:>12.2} │ {:>10} {:>10} │ {:>8} ║",
+                distance,
+                our_score,
+                libjxl_score,
+                our_size
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "ERR".to_string()),
+                libjxl_size
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "ERR".to_string()),
+                delta_str
+            );
+        }
+
+        eprintln!("╚════════════════════════════════════════════════════════════════════════╝");
+        eprintln!("\nNote: SSIMULACRA2 scores above 70 are generally good quality.");
+        eprintln!("      Δ SSIM2 shows difference (positive = ours is better).");
+    }
+
+    /// Comprehensive comparison across multiple Kodak images.
+    /// Run with: cargo test quality_comparison_comprehensive -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn test_quality_comparison_comprehensive() {
+        let kodak_images: Vec<String> = (1..=24)
+            .map(|i| format!("{}/kodak/{}.png", CORPUS_PATH, i))
+            .filter(|p| std::path::Path::new(p).exists())
+            .collect();
+
+        if kodak_images.is_empty() {
+            eprintln!("No Kodak images found, skipping comprehensive test");
+            return;
+        }
+
+        eprintln!(
+            "\n╔═══════════════════════════════════════════════════════════════════════════════╗"
+        );
+        eprintln!(
+            "║              COMPREHENSIVE QUALITY COMPARISON (Kodak Suite)                  ║"
+        );
+        eprintln!(
+            "╠═══════════════════════════════════════════════════════════════════════════════╣"
+        );
+
+        let distances = [1.0, 2.0, 4.0];
+
+        for distance in distances {
+            eprintln!(
+                "╠═══════════════════════════════════════════════════════════════════════════════╣"
+            );
+            eprintln!(
+                "║ Distance: {:.1}                                                                 ║",
+                distance
+            );
+            eprintln!(
+                "╠═══════════════════════════════════════════════════════════════════════════════╣"
+            );
+            eprintln!(
+                "║ {:>8} │ {:>12} {:>12} │ {:>10} {:>10} │ {:>8} ║",
+                "Image", "Our SSIM2", "libjxl SSIM2", "Our Size", "libjxl", "Δ SSIM2"
+            );
+            eprintln!(
+                "╠═══════════════════════════════════════════════════════════════════════════════╣"
+            );
+
+            let mut our_scores = Vec::new();
+            let mut libjxl_scores = Vec::new();
+
+            for (idx, path) in kodak_images.iter().enumerate() {
+                let (data, width, height) = match load_png(path) {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                let our_decoded = encode_decode_ours(&data, width, height, distance);
+                let libjxl_decoded = encode_decode_libjxl(path, distance);
+
+                let our_score = our_decoded
+                    .as_ref()
+                    .map(|d| compute_ssim2_score(&data, d, width, height))
+                    .unwrap_or(f64::NAN);
+
+                let libjxl_score = libjxl_decoded
+                    .as_ref()
+                    .map(|d| compute_ssim2_score(&data, d, width, height))
+                    .unwrap_or(f64::NAN);
+
+                let (our_size, libjxl_size) =
+                    get_encoded_sizes(path, &data, width, height, distance);
+
+                if !our_score.is_nan() {
+                    our_scores.push(our_score);
+                }
+                if !libjxl_score.is_nan() {
+                    libjxl_scores.push(libjxl_score);
+                }
+
+                let delta = our_score - libjxl_score;
+                eprintln!(
+                    "║ {:>8} │ {:>12.2} {:>12.2} │ {:>10} {:>10} │ {:>+8.2} ║",
+                    format!("kodak{:02}", idx + 1),
+                    our_score,
+                    libjxl_score,
+                    our_size
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "ERR".to_string()),
+                    libjxl_size
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "ERR".to_string()),
+                    delta
+                );
+            }
+
+            // Print averages
+            let our_avg = if our_scores.is_empty() {
+                f64::NAN
+            } else {
+                our_scores.iter().sum::<f64>() / our_scores.len() as f64
+            };
+            let libjxl_avg = if libjxl_scores.is_empty() {
+                f64::NAN
+            } else {
+                libjxl_scores.iter().sum::<f64>() / libjxl_scores.len() as f64
+            };
+
+            eprintln!(
+                "╠═══════════════════════════════════════════════════════════════════════════════╣"
+            );
+            eprintln!(
+                "║ {:>8} │ {:>12.2} {:>12.2} │ {:>10} {:>10} │ {:>+8.2} ║",
+                "AVERAGE",
+                our_avg,
+                libjxl_avg,
+                "",
+                "",
+                our_avg - libjxl_avg
+            );
+        }
+
+        eprintln!(
+            "╚═══════════════════════════════════════════════════════════════════════════════╝"
+        );
+    }
+
+    /// Test that horizontal gradient is properly preserved (not transposed to vertical)
+    #[test]
+    fn test_vardct_horizontal_gradient_orientation() {
+        // Create 8x8 horizontal gradient (varies by column, constant by row)
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                let val = (x * 32) as u8; // 0, 32, 64, 96, 128, 160, 192, 224
+                data[idx] = val;     // R
+                data[idx + 1] = val; // G
+                data[idx + 2] = val; // B
+            }
+        }
+
+        // Encode with lossy VarDCT
+        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        std::fs::write("/tmp/test_hgrad_orientation.jxl", &encoded).unwrap();
+
+        // Decode with jxl-oxide
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("Failed to parse JXL");
+        let frame = image.render_frame(0).expect("Failed to render");
+        let fb = frame.image_all_channels();
+        let samples: Vec<f32> = fb.buf().to_vec();
+
+        // Check row 0: should be gradient (different values per column)
+        let row0: Vec<i32> = (0..8).map(|col| {
+            let idx = col * 3; // row 0
+            (samples[idx] * 255.0).round() as i32
+        }).collect();
+
+        // Check col 0: should be constant (same value per row)
+        let col0: Vec<i32> = (0..8).map(|row| {
+            let idx = row * 8 * 3; // col 0
+            (samples[idx] * 255.0).round() as i32
+        }).collect();
+
+        eprintln!("Input: horizontal gradient [0, 32, 64, 96, 128, 160, 192, 224]");
+        eprintln!("Row 0 (should vary): {:?}", row0);
+        eprintln!("Col 0 (should be constant): {:?}", col0);
+
+        // Row 0 should have variation (horizontal gradient)
+        let row0_variance: f64 = {
+            let mean = row0.iter().sum::<i32>() as f64 / 8.0;
+            row0.iter().map(|v| (*v as f64 - mean).powi(2)).sum::<f64>() / 8.0
+        };
+
+        // Col 0 should be constant (no variation in vertical direction)
+        let col0_variance: f64 = {
+            let mean = col0.iter().sum::<i32>() as f64 / 8.0;
+            col0.iter().map(|v| (*v as f64 - mean).powi(2)).sum::<f64>() / 8.0
+        };
+
+        eprintln!("Row 0 variance: {:.1}", row0_variance);
+        eprintln!("Col 0 variance: {:.1}", col0_variance);
+
+        // For a horizontal gradient:
+        // - Row variance should be HIGH (values differ across columns)
+        // - Column variance should be LOW (values same across rows)
+        // If transposed, these would be reversed.
+        assert!(
+            row0_variance > col0_variance,
+            "Gradient is transposed! Row variance ({:.1}) should be > col variance ({:.1})",
+            row0_variance, col0_variance
+        );
+    }
+}
