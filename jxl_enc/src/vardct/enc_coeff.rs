@@ -145,16 +145,13 @@ pub fn quantize_block_8x8(
     };
 
     // AC coefficient quantization:
-    // For now, use the simple division formula which matches the inverse of dequantization.
-    // quantized = coeff * qac / weight where qac = global_scale_float * raw_quant
-    // This should give small quantized values when weights are large (560 for Y)
+    // quantized = inv_dequant * qac * coeff
+    // inv_dequant_matrix contains 1/weight values, so larger inv_dequant = finer quantization
     let qac = global_scale_float * raw_quant as f32;
 
     for i in 1..BLOCK_SIZE {
-        // Note: inv_dequant_matrix contains the weights (e.g., 560 for Y)
-        // For small coefficients like -0.30, this gives: -0.30 * 5 / 560 = -0.003 → 0
-        // This is TOO MUCH quantization - we're losing all AC detail!
-        let val = block_in[i] * qac / inv_dequant_matrix[i];
+        // Matches the generic quantize function: val = inv_dequant * qac * coeff
+        let val = inv_dequant_matrix[i] * qac * block_in[i];
         block_out[i] = if val.abs() >= threshold {
             val.round() as i32
         } else {

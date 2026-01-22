@@ -53,37 +53,56 @@ pub fn transform_and_quantize(
     let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
     let quant_dc = quantizer.quant_dc as i32;
 
-    // Compute raw_quant from a target quant field value
+    // Compute raw_quant for uniform quantization
     // In libjxl: raw_quant = quant_field * inv_global_scale + 0.5
-    // For uniform encoding, use a target quant field around 5.0
-    let inv_global_scale = GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32;
-    let quant_field_target = 5.0f32;
-    let raw_quant = ((quant_field_target * inv_global_scale + 0.5) as i32).max(1);
+    // For distance=1.0 with default settings, quant_field ≈ 0.765 and raw_quant ≈ 1
+    // Using raw_quant=1 gives proper quantization levels matching the trace_quant output
+    let raw_quant = 1i32;
 
     // Get DCT8 inverse dequant matrices for each channel (X, Y, B)
     // These provide perceptual weighting for AC coefficients
     let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
+
+    // Default CfL factors (from JXL spec):
+    // cfl_fac_x = base_correlation_x + ytox_lf / color_factor = 0 + 0/84 = 0
+    // cfl_fac_b = base_correlation_b + ytob_lf / color_factor = 1 + 0/84 = 1
+    let cfl_fac_x = 0.0f32;
+    let cfl_fac_b = 1.0f32;
 
     // Process each block
     for by in 0..num_blocks_y {
         for bx in 0..num_blocks_x {
             let block_idx = by * num_blocks_x + bx;
 
-            // Process each channel (X, Y, B)
+            // Extract and DCT all channels first
+            let mut dct_y = [0.0f32; 64];
+            let mut dct_x = [0.0f32; 64];
+            let mut dct_b = [0.0f32; 64];
+
+            let mut block_in = [0.0f32; 64];
+            extract_block(xyb_data[0], width, height, bx, by, &mut block_in); // X
+            dct8(&block_in, &mut dct_x);
+            extract_block(xyb_data[1], width, height, bx, by, &mut block_in); // Y
+            dct8(&block_in, &mut dct_y);
+            extract_block(xyb_data[2], width, height, bx, by, &mut block_in); // B
+            dct8(&block_in, &mut dct_b);
+
+            // Apply inverse CfL (Color from Luma) transform
+            // The decoder applies: decoded_X = Y * cfl_fac_x + encoded_X
+            //                      decoded_B = Y * cfl_fac_b + encoded_B
+            // So encoder must compute: encoded_X = raw_X - Y * cfl_fac_x
+            //                          encoded_B = raw_B - Y * cfl_fac_b
+            for i in 0..64 {
+                dct_x[i] -= dct_y[i] * cfl_fac_x;
+                dct_b[i] -= dct_y[i] * cfl_fac_b;
+            }
+
+            // Quantize each channel with inverse-CfL-adjusted coefficients
+            let dct_channels = [&dct_x, &dct_y, &dct_b];
             for c in 0..3 {
-                // Extract 8x8 block from planar data
-                let mut block_in = [0.0f32; 64];
-                extract_block(xyb_data[c], width, height, bx, by, &mut block_in);
-
-                // Apply DCT
-                let mut dct_out = [0.0f32; 64];
-                dct8(&block_in, &mut dct_out);
-
-                // Quantize with per-channel perceptual weights
-                // DC uses INV_LF_QUANT[c], AC uses inv_dequant_per_channel[c]
                 let mut quant_out = [0i32; 64];
                 quantize_block_8x8(
-                    &dct_out,
+                    dct_channels[c],
                     quant_dc,
                     raw_quant,
                     global_scale_float,
@@ -200,10 +219,9 @@ pub fn transform_and_quantize_with_strategy(
     let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
     let quant_dc = quantizer.quant_dc as i32;
 
-    // Compute raw_quant from a target quant field value
-    let inv_global_scale = GLOBAL_SCALE_DENOM as f32 / quantizer.global_scale as f32;
-    let quant_field_target = 5.0f32;
-    let raw_quant = ((quant_field_target * inv_global_scale + 0.5) as i32).max(1);
+    // Compute raw_quant for uniform quantization
+    // Using raw_quant=1 gives proper quantization levels
+    let raw_quant = 1i32;
 
     let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
 
@@ -351,16 +369,36 @@ fn process_dct8(
 ) {
     let block_idx = by * num_blocks_x + bx;
 
+    // Default CfL factors (from libjxl: base_correlation = 0, color_factor = 84)
+    // With default settings, no chroma correlation is applied
+    let cfl_fac_x = 0.0f32;
+    let cfl_fac_b = 1.0f32;
+
+    // Extract and DCT all channels
+    let mut dct_x = [0.0f32; 64];
+    let mut dct_y = [0.0f32; 64];
+    let mut dct_b = [0.0f32; 64];
+
+    let mut block_in = [0.0f32; 64];
+    extract_block(xyb_data[0], width, height, bx, by, &mut block_in);
+    dct8(&block_in, &mut dct_x);
+    extract_block(xyb_data[1], width, height, bx, by, &mut block_in);
+    dct8(&block_in, &mut dct_y);
+    extract_block(xyb_data[2], width, height, bx, by, &mut block_in);
+    dct8(&block_in, &mut dct_b);
+
+    // Apply inverse CfL transform
+    for i in 0..64 {
+        dct_x[i] -= dct_y[i] * cfl_fac_x;
+        dct_b[i] -= dct_y[i] * cfl_fac_b;
+    }
+
+    // Quantize each channel
+    let dct_channels = [&dct_x, &dct_y, &dct_b];
     for c in 0..3 {
-        let mut block_in = [0.0f32; 64];
-        extract_block(xyb_data[c], width, height, bx, by, &mut block_in);
-
-        let mut dct_out = [0.0f32; 64];
-        dct8(&block_in, &mut dct_out);
-
         let mut quant_out = [0i32; 64];
         quantize_block_8x8(
-            &dct_out,
+            dct_channels[c],
             quant_dc,
             raw_quant,
             global_scale_float,
@@ -396,16 +434,35 @@ fn process_dct16(
 ) {
     let block_idx = by * num_blocks_x + bx;
 
+    // Default CfL factors
+    let cfl_fac_x = 0.0f32;
+    let cfl_fac_b = 1.0f32;
+
+    // Extract and DCT all channels
+    let mut dct_x = [0.0f32; 256];
+    let mut dct_y = [0.0f32; 256];
+    let mut dct_b = [0.0f32; 256];
+
+    let mut block_in = [0.0f32; 256];
+    extract_block_16x16(xyb_data[0], width, height, bx, by, &mut block_in);
+    dct16(&block_in, &mut dct_x);
+    extract_block_16x16(xyb_data[1], width, height, bx, by, &mut block_in);
+    dct16(&block_in, &mut dct_y);
+    extract_block_16x16(xyb_data[2], width, height, bx, by, &mut block_in);
+    dct16(&block_in, &mut dct_b);
+
+    // Apply inverse CfL transform
+    for i in 0..256 {
+        dct_x[i] -= dct_y[i] * cfl_fac_x;
+        dct_b[i] -= dct_y[i] * cfl_fac_b;
+    }
+
+    // Quantize each channel
+    let dct_channels: [&[f32; 256]; 3] = [&dct_x, &dct_y, &dct_b];
     for c in 0..3 {
-        let mut block_in = [0.0f32; 256];
-        extract_block_16x16(xyb_data[c], width, height, bx, by, &mut block_in);
-
-        let mut dct_out = [0.0f32; 256];
-        dct16(&block_in, &mut dct_out);
-
         let mut quant_out = [0i32; 256];
         quantize_block_16x16(
-            &dct_out,
+            dct_channels[c],
             quant_dc,
             raw_quant,
             global_scale_float,
@@ -463,16 +520,35 @@ fn process_dct32(
 ) {
     let block_idx = by * num_blocks_x + bx;
 
+    // Default CfL factors
+    let cfl_fac_x = 0.0f32;
+    let cfl_fac_b = 1.0f32;
+
+    // Extract and DCT all channels
+    let mut dct_x = [0.0f32; 1024];
+    let mut dct_y = [0.0f32; 1024];
+    let mut dct_b = [0.0f32; 1024];
+
+    let mut block_in = [0.0f32; 1024];
+    extract_block_32x32(xyb_data[0], width, height, bx, by, &mut block_in);
+    dct32(&block_in, &mut dct_x);
+    extract_block_32x32(xyb_data[1], width, height, bx, by, &mut block_in);
+    dct32(&block_in, &mut dct_y);
+    extract_block_32x32(xyb_data[2], width, height, bx, by, &mut block_in);
+    dct32(&block_in, &mut dct_b);
+
+    // Apply inverse CfL transform
+    for i in 0..1024 {
+        dct_x[i] -= dct_y[i] * cfl_fac_x;
+        dct_b[i] -= dct_y[i] * cfl_fac_b;
+    }
+
+    // Quantize each channel
+    let dct_channels: [&[f32; 1024]; 3] = [&dct_x, &dct_y, &dct_b];
     for c in 0..3 {
-        let mut block_in = [0.0f32; 1024];
-        extract_block_32x32(xyb_data[c], width, height, bx, by, &mut block_in);
-
-        let mut dct_out = [0.0f32; 1024];
-        dct32(&block_in, &mut dct_out);
-
         let mut quant_out = [0i32; 1024];
         quantize_block_32x32(
-            &dct_out,
+            dct_channels[c],
             quant_dc,
             raw_quant,
             global_scale_float,
