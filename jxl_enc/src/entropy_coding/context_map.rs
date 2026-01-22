@@ -6,6 +6,21 @@
 //! Context map encoding.
 //!
 //! Ported from libjxl `lib/jxl/enc_context_map.cc`.
+//!
+//! # Current Implementation
+//!
+//! Currently uses simple encoding only, which supports up to 8 histograms
+//! (3 bits per entry). This covers most practical use cases.
+//!
+//! # Future Enhancement: ANS Encoding
+//!
+//! For better compression with many clusters (>8), the JXL format supports
+//! ANS-based context map encoding with optional MTF transform:
+//! 1. **Prefix code (Huffman)**: Uses Huffman codes for symbols.
+//! 2. **Prefix code with MTF**: Applies move-to-front transform before Huffman.
+//!
+//! This requires implementing the full JXL entropy bundle format, which is
+//! non-trivial. See libjxl `lib/jxl/enc_context_map.cc` for reference.
 
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
@@ -71,12 +86,27 @@ pub fn inverse_move_to_front_transform(input: &[u8], max_symbol: u8) -> Vec<u8> 
 /// Encode context map to bitstream.
 ///
 /// The context map maps context indices to histogram indices.
-/// This function tries both raw and move-to-front encoding and picks smaller.
 ///
-/// Encoding format:
+/// # Current Implementation
+///
+/// Uses simple encoding only, which supports up to 8 histograms (3 bits per entry).
+/// This is sufficient for reasonable clustering without the complexity of implementing
+/// the full ANS entropy bundle format for context maps.
+///
+/// # Encoding Format
+///
 /// - If num_histograms == 1: write (1, 0) → no actual entries needed
 /// - Simple mode: write (1, entry_bits) then each entry with entry_bits bits
-/// - ANS mode: write (0, use_mtf) then ANS-encoded symbols
+///
+/// # Future Work
+///
+/// To support >8 histograms with efficient encoding, implement the full JXL entropy
+/// bundle format for context maps (is_simple=0 path). This requires:
+/// - lz77.enabled flag
+/// - Full histogram bundle with ANS/prefix codes
+/// - HybridUint encoding for symbols
+///
+/// Reference: libjxl lib/jxl/enc_context_map.cc
 pub fn encode_context_map(
     context_map: &[u8],
     num_histograms: usize,
@@ -94,26 +124,21 @@ pub fn encode_context_map(
     // This allows up to 8 histograms (2^3 = 8)
     let entry_bits = ceil_log2_nonzero(num_histograms);
 
-    // JXL simple context map encoding only supports up to 3 bits per entry
-    // For more histograms, we would need ANS encoding, but our ANS context map
-    // encoder isn't implemented correctly. Instead, limit to 8 clusters.
     if entry_bits > 3 {
-        // This shouldn't happen if we limit clustering properly
-        // Fall back to simple encoding with 3 bits (may cause issues for >8 clusters)
+        // Simple mode only supports up to 3 bits per entry (8 clusters)
+        // For now, just use 3 bits and mask values (clustering should ensure <= 8 clusters)
         eprintln!(
             "WARNING: context_map requires {} bits but simple mode max is 3 bits. \
-             Limiting to 8 histograms may cause decoding errors.",
+             Using 3 bits, which may cause decoding errors if num_histograms > 8.",
             entry_bits
         );
     }
 
-    // Always use simple mode (ANS mode not correctly implemented)
-    // Simple mode: write is_simple=1, bits_per_entry, then each entry
-    let effective_bits = entry_bits.min(3); // Cap at 3 bits for simple mode
+    let effective_bits = entry_bits.min(3);
     writer.write(1, 1)?; // simple flag
     writer.write(2, effective_bits as u64)?; // bits per entry
     for &entry in context_map {
-        // Mask entry to fit within effective_bits (in case of overflow)
+        // Mask entry to fit within effective_bits
         let masked_entry = entry & ((1 << effective_bits) - 1);
         writer.write(effective_bits, masked_entry as u64)?;
     }
