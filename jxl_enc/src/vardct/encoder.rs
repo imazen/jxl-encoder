@@ -449,7 +449,13 @@ impl VarDctEncoder {
                                 break;
                             }
 
-                            let coeff = block_ac[ZIGZAG_ORDER_8X8[k + 1] - 1]; // -1 because AC starts at 0
+                            // Pre-transpose coefficient index for DCT8 because jxl-oxide
+                            // transposes coordinates when h >= w (which is true for 8x8).
+                            // Our DCT output is dct[v*8+u]. To compensate for decoder transpose,
+                            // we access dct[u*8+v] instead (swap row/col indices).
+                            let orig_idx = ZIGZAG_ORDER_8X8[k + 1];
+                            let transposed_idx = (orig_idx % 8) * 8 + (orig_idx / 8);
+                            let coeff = block_ac[transposed_idx - 1]; // -1 because AC starts at 0
                             let ctx = histo_offset
                                 + super::context::zero_density_context(
                                     nzeros_left,
@@ -616,12 +622,18 @@ impl VarDctEncoder {
                                 k + covered_blocks
                             };
 
+                            // Pre-transpose coefficient index for square blocks.
+                            // jxl-oxide transposes coordinates when h >= w, which is true for all
+                            // square transforms (DCT8, DCT16, DCT32).
+                            let block_dim = cx * 8; // 8 for DCT8, 16 for DCT16, 32 for DCT32
+                            let transposed_coeff_idx = (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim);
+
                             // Map from full-block position to AC array index
                             // effective_ac contains coefficients starting from position covered_blocks (after LLF)
                             // For DCT8: coeff_idx 1 -> ac_index 0, coeff_idx 63 -> ac_index 62
                             // For DCT16/32: we skip covered_blocks LLF positions
-                            let ac_index = if coeff_idx >= covered_blocks {
-                                coeff_idx - covered_blocks
+                            let ac_index = if transposed_coeff_idx >= covered_blocks {
+                                transposed_coeff_idx - covered_blocks
                             } else {
                                 // LLF position - shouldn't happen in AC processing
                                 k
@@ -773,7 +785,11 @@ impl VarDctEncoder {
                                 break;
                             }
 
-                            let coeff = block_ac[ZIGZAG_ORDER_8X8[k + 1] - 1];
+                            // Pre-transpose coefficient index for DCT8 because jxl-oxide
+                            // transposes coordinates when h >= w (which is true for 8x8).
+                            let orig_idx = ZIGZAG_ORDER_8X8[k + 1];
+                            let transposed_idx = (orig_idx % 8) * 8 + (orig_idx / 8);
+                            let coeff = block_ac[transposed_idx - 1]; // -1 because AC starts at 0
                             let ctx = histo_offset
                                 + super::context::zero_density_context(
                                     nzeros_left,
@@ -1301,7 +1317,8 @@ impl VarDctEncoder {
             &b_dc[..b_dc.len().min(10)]
         );
 
-        // Create ModularImage from DC channels (Y, X, B order for VarDCTLF)
+        // Create ModularImage from DC channels
+        // Order: Y (c=0), X (c=1), B (c=2) - standard XYB channel order
         let dc_image = ModularImage {
             channels: vec![
                 Channel::from_vec(y_dc, blocks_x, blocks_y)?,
