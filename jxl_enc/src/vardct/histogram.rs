@@ -200,23 +200,16 @@ impl ClusteredHistogramSet {
         let histograms = builder.to_entropy_histograms();
 
         // 3. Cluster based on clustering type
-        // IMPORTANT: With simple context map encoding, the overhead is
-        // num_contexts × ceil_log2(num_clusters) bits.
-        // For 7425 contexts and 8 clusters, that's 7425 × 3 = 22KB overhead!
-        //
-        // Until proper ANS+MTF context map encoding is implemented (which compresses
-        // repeated cluster assignments efficiently), force 1 cluster.
-        // This trades ~2-5KB quality loss for ~20KB size savings.
-        //
-        // TODO: Implement ANS+MTF context map encoding, then increase max_clusters.
-        // See libjxl lib/jxl/enc_context_map.cc for reference.
-        const MAX_CLUSTERS_SIMPLE_CTXMAP: usize = 1; // Was 8, forced to 1 to avoid context map overhead
+        // With ANS+MTF context map encoding implemented, we can now use multiple clusters
+        // without the 22KB overhead that simple encoding had.
+        // The encoder automatically picks the best encoding strategy (simple, Huffman, or MTF+Huffman).
+        const MAX_CLUSTERS: usize = 8; // Typical good value balancing quality vs header size
         let max_clusters = match clustering_type {
-            ClusteringType::Fastest => 1, // Force 1 cluster
-            ClusteringType::Fast => 1,    // Force 1 cluster
-            ClusteringType::Best => 1,    // Force 1 cluster
+            ClusteringType::Fastest => 1, // Single cluster for speed
+            ClusteringType::Fast => 4,    // Moderate clustering
+            ClusteringType::Best => 8,    // Full clustering for quality
         };
-        let max_clusters = max_clusters.min(MAX_CLUSTERS_SIMPLE_CTXMAP);
+        let max_clusters = max_clusters.min(MAX_CLUSTERS);
         let cluster_result = cluster_histograms(clustering_type, &histograms, max_clusters)?;
 
         // 4. Build distributions from clustered histograms

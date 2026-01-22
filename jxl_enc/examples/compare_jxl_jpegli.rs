@@ -34,8 +34,14 @@ fn main() {
         let jxl_result = encode_jxl(&data, width, height, 1.0);
         let jxl_ssim = compute_ssim(&data, &jxl_result, width, height, "jxl");
         let jxl_bpp = (jxl_result.len() * 8) as f64 / (width * height) as f64;
-        println!("JXL d=1.0   {}x{}   {:5}    {:.2}    {:.3}",
-            width, height, jxl_result.len(), jxl_ssim.unwrap_or(-1.0), jxl_bpp);
+        println!(
+            "JXL d=1.0   {}x{}   {:5}    {:.2}    {:.3}",
+            width,
+            height,
+            jxl_result.len(),
+            jxl_ssim.unwrap_or(-1.0),
+            jxl_bpp
+        );
 
         // Encode with cjpegli at quality 90
         let jpeg_path = format!("/tmp/test_{}x{}_q90.jpg", width, height);
@@ -48,8 +54,14 @@ fn main() {
             let jpeg_bytes = std::fs::read(&jpeg_path).unwrap();
             let jpeg_ssim = compute_ssim_jpeg(&data, &jpeg_path, width, height);
             let jpeg_bpp = (jpeg_bytes.len() * 8) as f64 / (width * height) as f64;
-            println!("JPEGLI q90  {}x{}   {:5}    {:.2}    {:.3}",
-                width, height, jpeg_bytes.len(), jpeg_ssim.unwrap_or(-1.0), jpeg_bpp);
+            println!(
+                "JPEGLI q90  {}x{}   {:5}    {:.2}    {:.3}",
+                width,
+                height,
+                jpeg_bytes.len(),
+                jpeg_ssim.unwrap_or(-1.0),
+                jpeg_bpp
+            );
         }
 
         // Encode with cjpegli at quality 80
@@ -63,8 +75,14 @@ fn main() {
             let jpeg_bytes = std::fs::read(&jpeg_path).unwrap();
             let jpeg_ssim = compute_ssim_jpeg(&data, &jpeg_path, width, height);
             let jpeg_bpp = (jpeg_bytes.len() * 8) as f64 / (width * height) as f64;
-            println!("JPEGLI q80  {}x{}   {:5}    {:.2}    {:.3}",
-                width, height, jpeg_bytes.len(), jpeg_ssim.unwrap_or(-1.0), jpeg_bpp);
+            println!(
+                "JPEGLI q80  {}x{}   {:5}    {:.2}    {:.3}",
+                width,
+                height,
+                jpeg_bytes.len(),
+                jpeg_ssim.unwrap_or(-1.0),
+                jpeg_bpp
+            );
         }
 
         println!();
@@ -84,8 +102,14 @@ fn encode_jxl(data: &[u8], width: usize, height: usize, distance: f32) -> Vec<u8
     jxl_enc::encoder::encode_lossy_rgb8(data, width, height, distance).unwrap()
 }
 
-fn compute_ssim(original: &[u8], encoded: &[u8], width: usize, height: usize, ext: &str) -> Option<f64> {
-    use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+fn compute_ssim(
+    original: &[u8],
+    encoded: &[u8],
+    width: usize,
+    height: usize,
+    ext: &str,
+) -> Option<f64> {
+    use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 
     // Decode JXL
     let decoded = if ext == "jxl" {
@@ -123,7 +147,8 @@ fn compute_ssim(original: &[u8], encoded: &[u8], width: usize, height: usize, ex
         height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
-    ).ok()?;
+    )
+    .ok()?;
 
     let distorted = Rgb::new(
         decoded,
@@ -131,20 +156,28 @@ fn compute_ssim(original: &[u8], encoded: &[u8], width: usize, height: usize, ex
         height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
-    ).ok()?;
+    )
+    .ok()?;
 
     compute_frame_ssimulacra2(source, distorted).ok()
 }
 
 fn compute_ssim_jpeg(original: &[u8], jpeg_path: &str, width: usize, height: usize) -> Option<f64> {
-    use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+    use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 
     // Decode JPEG using image crate
     let img = image::open(jpeg_path).ok()?;
     let rgb = img.to_rgb8();
 
-    let decoded: Vec<[f32; 3]> = rgb.pixels()
-        .map(|p| [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0])
+    let decoded: Vec<[f32; 3]> = rgb
+        .pixels()
+        .map(|p| {
+            [
+                p[0] as f32 / 255.0,
+                p[1] as f32 / 255.0,
+                p[2] as f32 / 255.0,
+            ]
+        })
         .collect();
 
     // Convert original to f32
@@ -164,7 +197,8 @@ fn compute_ssim_jpeg(original: &[u8], jpeg_path: &str, width: usize, height: usi
         height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
-    ).ok()?;
+    )
+    .ok()?;
 
     let distorted = Rgb::new(
         decoded,
@@ -172,7 +206,8 @@ fn compute_ssim_jpeg(original: &[u8], jpeg_path: &str, width: usize, height: usi
         height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
-    ).ok()?;
+    )
+    .ok()?;
 
     compute_frame_ssimulacra2(source, distorted).ok()
 }
