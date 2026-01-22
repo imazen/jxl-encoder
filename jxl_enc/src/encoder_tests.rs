@@ -3162,4 +3162,58 @@ mod dual_decoder_butteraugli_tests {
             }
         }
     }
+
+    /// Save a broken image for visual comparison
+    #[test]
+    #[ignore = "Visual comparison test"]
+    fn test_save_broken_image() {
+        let original_path = "/home/lilith/work/codec-corpus/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png";
+
+        let Some((original, width, height)) = load_png(original_path) else {
+            panic!("Failed to load {}", original_path);
+        };
+
+        println!("Loaded {}x{} image", width, height);
+
+        // Encode
+        let encoded = encode_lossy_rgb8(&original, width, height, 1.0).expect("Encode failed");
+
+        // Save JXL
+        std::fs::write("/tmp/broken.jxl", &encoded).unwrap();
+        println!("Saved /tmp/broken.jxl ({} bytes)", encoded.len());
+
+        // Decode with jxl-oxide
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("Decode failed");
+
+        let frame = jxl_image.render_frame(0).expect("Render failed");
+        let fb = frame.image_all_channels();
+        let buf = fb.buf();
+        let channels = fb.channels();
+
+        // Convert to RGB8
+        let mut decoded = vec![0u8; width * height * 3];
+        for i in 0..(width * height) {
+            let idx = i * channels;
+            decoded[i * 3] = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
+            decoded[i * 3 + 1] = (buf[idx + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
+            decoded[i * 3 + 2] = (buf[idx + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+
+        // Save decoded PNG
+        image::save_buffer(
+            "/tmp/broken_decoded.png",
+            &decoded,
+            width as u32,
+            height as u32,
+            image::ColorType::Rgb8,
+        )
+        .expect("Failed to save decoded PNG");
+
+        println!("Saved /tmp/broken_decoded.png");
+        println!("\nRun:");
+        println!("  display {} &", original_path);
+        println!("  display /tmp/broken_decoded.png &");
+    }
 }
