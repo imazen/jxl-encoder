@@ -2433,3 +2433,369 @@ mod quality_comparison_tests {
         );
     }
 }
+
+/// Dual-decoder validation with butteraugli quality metrics.
+/// Tests that both jxl-rs and jxl-oxide produce identical results
+/// and that butteraugli scores are reasonable for the encoder distance.
+#[cfg(test)]
+mod dual_decoder_butteraugli_tests {
+    use crate::encoder::encode_lossy_rgb8;
+    use butteraugli::{butteraugli, ButteraugliParams};
+    use imgref::Img;
+    use rgb::RGB8;
+    use std::io::Cursor;
+    use std::process::Command;
+
+    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+    const JXLRS_CLI: &str = "/home/lilith/work/jxl-rs/target/release/jxl_cli";
+
+    /// Load a PNG image and return RGB8 data with dimensions
+    fn load_png(path: &str) -> Option<(Vec<u8>, usize, usize)> {
+        let img = image::open(path).ok()?;
+        let rgb = img.to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        Some((rgb.to_vec(), w, h))
+    }
+
+    /// Decode JXL with jxl-oxide and return RGB8 pixels
+    fn decode_with_oxide(jxl_data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
+        let image = jxl_oxide::JxlImage::builder()
+            .read(Cursor::new(jxl_data))
+            .map_err(|e| format!("jxl-oxide parse error: {:?}", e))?;
+
+        let frame = image
+            .render_frame(0)
+            .map_err(|e| format!("jxl-oxide render error: {:?}", e))?;
+
+        let fb = frame.image_all_channels();
+        let samples: &[f32] = fb.buf();
+        let width = image.width() as usize;
+        let height = image.height() as usize;
+
+        // Convert f32 RGB to u8 RGB
+        let mut rgb8 = Vec::with_capacity(width * height * 3);
+        for i in 0..(width * height) {
+            let r = (samples[i * 3].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let g = (samples[i * 3 + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let b = (samples[i * 3 + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
+            rgb8.push(r);
+            rgb8.push(g);
+            rgb8.push(b);
+        }
+
+        Ok((rgb8, width, height))
+    }
+
+    /// Decode JXL with jxl-rs CLI and return RGB8 pixels
+    fn decode_with_jxlrs(jxl_data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
+        // Write JXL to temp file
+        let jxl_path = format!("/tmp/test_jxlrs_{}.jxl", std::process::id());
+        let png_path = format!("/tmp/test_jxlrs_{}.png", std::process::id());
+
+        std::fs::write(&jxl_path, jxl_data)
+            .map_err(|e| format!("Failed to write temp JXL: {}", e))?;
+
+        // Decode with jxl-rs CLI
+        let output = Command::new(JXLRS_CLI)
+            .args([&jxl_path, &png_path])
+            .output()
+            .map_err(|e| format!("Failed to run jxl_cli: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Clean up
+            let _ = std::fs::remove_file(&jxl_path);
+            return Err(format!("jxl_cli failed: {}", stderr));
+        }
+
+        // Load the decoded PNG
+        let img = image::open(&png_path).map_err(|e| format!("Failed to load decoded PNG: {}", e))?;
+        let rgb = img.to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let pixels = rgb.to_vec();
+
+        // Clean up temp files
+        let _ = std::fs::remove_file(&jxl_path);
+        let _ = std::fs::remove_file(&png_path);
+
+        Ok((pixels, w, h))
+    }
+
+    /// Compute butteraugli score between original and decoded images
+    fn compute_butteraugli(
+        original: &[u8],
+        decoded: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<f64, String> {
+        if original.len() != decoded.len() {
+            return Err(format!(
+                "Size mismatch: original {} vs decoded {}",
+                original.len(),
+                decoded.len()
+            ));
+        }
+
+        // Convert to RGB8 pixels
+        let orig_pixels: Vec<RGB8> = original
+            .chunks(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let dec_pixels: Vec<RGB8> = decoded
+            .chunks(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect();
+
+        let img1 = Img::new(orig_pixels, width, height);
+        let img2 = Img::new(dec_pixels, width, height);
+
+        let params = ButteraugliParams::default();
+        let result = butteraugli(img1.as_ref(), img2.as_ref(), &params)
+            .map_err(|e| format!("Butteraugli error: {:?}", e))?;
+
+        Ok(result.score)
+    }
+
+    /// Test result for a single encode/decode operation
+    #[derive(Debug)]
+    struct TestResult {
+        image_name: String,
+        distance: f32,
+        oxide_butteraugli: f64,
+        jxlrs_butteraugli: f64,
+        score_diff: f64,
+        encoded_size: usize,
+    }
+
+    /// Run dual-decoder test for a single image at multiple distances
+    fn test_image_at_distances(
+        path: &str,
+        distances: &[f32],
+    ) -> Vec<Result<TestResult, String>> {
+        let image_name = std::path::Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let (original, width, height) = match load_png(path) {
+            Some(data) => data,
+            None => return vec![Err(format!("Failed to load {}", path))],
+        };
+
+        // Skip images smaller than 8x8 (butteraugli minimum)
+        if width < 8 || height < 8 {
+            return vec![Err(format!("{}: too small ({}x{})", image_name, width, height))];
+        }
+
+        distances
+            .iter()
+            .map(|&distance| {
+                // Encode
+                let encoded = encode_lossy_rgb8(&original, width, height, distance)
+                    .map_err(|e| format!("{} d={}: encode error: {:?}", image_name, distance, e))?;
+
+                // Decode with both decoders
+                let (oxide_decoded, _, _) = decode_with_oxide(&encoded)
+                    .map_err(|e| format!("{} d={}: {}", image_name, distance, e))?;
+
+                let (jxlrs_decoded, _, _) = decode_with_jxlrs(&encoded)
+                    .map_err(|e| format!("{} d={}: {}", image_name, distance, e))?;
+
+                // Compute butteraugli scores
+                let oxide_score = compute_butteraugli(&original, &oxide_decoded, width, height)
+                    .map_err(|e| format!("{} d={}: oxide butteraugli: {}", image_name, distance, e))?;
+
+                let jxlrs_score = compute_butteraugli(&original, &jxlrs_decoded, width, height)
+                    .map_err(|e| format!("{} d={}: jxlrs butteraugli: {}", image_name, distance, e))?;
+
+                let score_diff = (oxide_score - jxlrs_score).abs();
+
+                Ok(TestResult {
+                    image_name: image_name.clone(),
+                    distance,
+                    oxide_butteraugli: oxide_score,
+                    jxlrs_butteraugli: jxlrs_score,
+                    score_diff,
+                    encoded_size: encoded.len(),
+                })
+            })
+            .collect()
+    }
+
+    /// Main test: sweep corpus images at multiple distance values
+    /// Validates that both decoders produce matching butteraugli scores
+    #[test]
+    #[ignore = "Requires codec-corpus and jxl-rs CLI; run with: cargo test dual_decoder_butteraugli -- --ignored --nocapture"]
+    fn test_dual_decoder_butteraugli_sweep() {
+        // Check prerequisites
+        if !std::path::Path::new(CORPUS_PATH).exists() {
+            eprintln!("SKIP: corpus not found at {}", CORPUS_PATH);
+            return;
+        }
+        if !std::path::Path::new(JXLRS_CLI).exists() {
+            eprintln!("SKIP: jxl-rs CLI not found at {}", JXLRS_CLI);
+            eprintln!("Build with: cd ~/work/jxl-rs && cargo build --release -p jxl_cli");
+            return;
+        }
+
+        // Test images (subset of corpus for reasonable test time)
+        let test_images = [
+            "pngsuite/basn2c08.png", // 32x32 RGB
+            "pngsuite/basn6a08.png", // 32x32 RGBA
+            "kodak/1.png",           // 768x512
+            "kodak/2.png",           // 768x512
+            "kodak/3.png",           // 768x512
+            "kodak/10.png",          // 512x768
+        ];
+
+        // Distance values to test
+        let distances = [0.5, 1.0, 2.0, 4.0];
+
+        eprintln!("\n╔═══════════════════════════════════════════════════════════════════════════════════════╗");
+        eprintln!("║                    DUAL-DECODER BUTTERAUGLI VALIDATION                                ║");
+        eprintln!("╠═══════════════════════════════════════════════════════════════════════════════════════╣");
+        eprintln!("║ {:25} │ {:6} │ {:10} │ {:10} │ {:8} │ {:8} ║",
+            "Image", "Dist", "Oxide BA", "jxl-rs BA", "Diff", "Size");
+        eprintln!("╠═══════════════════════════════════════════════════════════════════════════════════════╣");
+
+        let mut all_results: Vec<TestResult> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        let mut max_diff: f64 = 0.0;
+
+        for image_rel in &test_images {
+            let path = format!("{}/{}", CORPUS_PATH, image_rel);
+            if !std::path::Path::new(&path).exists() {
+                eprintln!("║ {:25} │ SKIP: file not found", image_rel);
+                continue;
+            }
+
+            let results = test_image_at_distances(&path, &distances);
+
+            for result in results {
+                match result {
+                    Ok(r) => {
+                        eprintln!(
+                            "║ {:25} │ {:6.1} │ {:10.4} │ {:10.4} │ {:8.4} │ {:8} ║",
+                            r.image_name, r.distance, r.oxide_butteraugli, r.jxlrs_butteraugli,
+                            r.score_diff, r.encoded_size
+                        );
+                        max_diff = max_diff.max(r.score_diff);
+                        all_results.push(r);
+                    }
+                    Err(e) => {
+                        eprintln!("║ ERROR: {} ║", e);
+                        errors.push(e);
+                    }
+                }
+            }
+        }
+
+        eprintln!("╠═══════════════════════════════════════════════════════════════════════════════════════╣");
+
+        // Summary statistics
+        if !all_results.is_empty() {
+            let avg_oxide: f64 = all_results.iter().map(|r| r.oxide_butteraugli).sum::<f64>()
+                / all_results.len() as f64;
+            let avg_jxlrs: f64 = all_results.iter().map(|r| r.jxlrs_butteraugli).sum::<f64>()
+                / all_results.len() as f64;
+            let avg_diff: f64 = all_results.iter().map(|r| r.score_diff).sum::<f64>()
+                / all_results.len() as f64;
+
+            eprintln!("║ {:25} │ {:6} │ {:10.4} │ {:10.4} │ {:8.4} │ {:8} ║",
+                "AVERAGE", "", avg_oxide, avg_jxlrs, avg_diff, "");
+            eprintln!("║ {:25} │ {:6} │ {:10} │ {:10} │ {:8.4} │ {:8} ║",
+                "MAX DIFF", "", "", "", max_diff, "");
+        }
+
+        eprintln!("╚═══════════════════════════════════════════════════════════════════════════════════════╝");
+
+        // Assertions
+        // 1. Both decoders should produce very similar butteraugli scores
+        //    (allowing small differences due to floating-point and color conversion)
+        const MAX_ALLOWED_DIFF: f64 = 0.1;
+        assert!(
+            max_diff < MAX_ALLOWED_DIFF,
+            "Decoder outputs differ too much! Max butteraugli diff: {:.4} (allowed: {:.4})",
+            max_diff, MAX_ALLOWED_DIFF
+        );
+
+        // 2. Check that butteraugli scores are reasonable for the distances
+        //    Higher distance = higher butteraugli (more distortion)
+        for r in &all_results {
+            // For distance >= 1.0, butteraugli should be roughly in the same ballpark
+            // This is a sanity check, not a strict requirement
+            if r.distance >= 1.0 && r.oxide_butteraugli > r.distance as f64 * 5.0 {
+                eprintln!(
+                    "WARNING: {} d={} has unexpectedly high butteraugli: {:.4}",
+                    r.image_name, r.distance, r.oxide_butteraugli
+                );
+            }
+        }
+
+        // 3. No errors should have occurred
+        assert!(
+            errors.is_empty(),
+            "Encountered {} errors during testing:\n{}",
+            errors.len(),
+            errors.join("\n")
+        );
+
+        eprintln!("\n✓ All {} test cases passed", all_results.len());
+    }
+
+    /// Quick sanity test with a single synthetic image
+    #[test]
+    #[ignore = "Requires jxl-rs CLI; run with: cargo test test_dual_decoder_butteraugli_quick -- --ignored --nocapture"]
+    fn test_dual_decoder_butteraugli_quick() {
+        if !std::path::Path::new(JXLRS_CLI).exists() {
+            eprintln!("SKIP: jxl-rs CLI not found at {}", JXLRS_CLI);
+            return;
+        }
+
+        // Create a simple gradient test image
+        let width = 64;
+        let height = 64;
+        let mut original = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                original[idx] = (x * 4) as u8;     // R: horizontal gradient
+                original[idx + 1] = (y * 4) as u8; // G: vertical gradient
+                original[idx + 2] = 128;           // B: constant
+            }
+        }
+
+        let distances = [1.0f32, 2.0];
+
+        for distance in distances {
+            let encoded = encode_lossy_rgb8(&original, width, height, distance)
+                .expect("Encode failed");
+
+            let (oxide_decoded, _, _) = decode_with_oxide(&encoded)
+                .expect("jxl-oxide decode failed");
+            let (jxlrs_decoded, _, _) = decode_with_jxlrs(&encoded)
+                .expect("jxl-rs decode failed");
+
+            let oxide_score = compute_butteraugli(&original, &oxide_decoded, width, height)
+                .expect("Butteraugli failed");
+            let jxlrs_score = compute_butteraugli(&original, &jxlrs_decoded, width, height)
+                .expect("Butteraugli failed");
+
+            let diff = (oxide_score - jxlrs_score).abs();
+
+            eprintln!(
+                "Distance {:.1}: oxide={:.4}, jxl-rs={:.4}, diff={:.4}",
+                distance, oxide_score, jxlrs_score, diff
+            );
+
+            assert!(
+                diff < 0.1,
+                "Decoder outputs differ! oxide={:.4}, jxl-rs={:.4}, diff={:.4}",
+                oxide_score, jxlrs_score, diff
+            );
+        }
+
+        eprintln!("✓ Quick butteraugli test passed");
+    }
+}
