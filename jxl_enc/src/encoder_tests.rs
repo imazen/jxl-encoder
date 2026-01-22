@@ -3089,4 +3089,77 @@ mod dual_decoder_butteraugli_tests {
             success_rate
         );
     }
+
+    /// Quick quality check on a few corpus images using butteraugli
+    /// Run with: cargo test test_corpus_quality_sample -- --ignored --nocapture
+    #[test]
+    #[ignore = "Quality sampling test"]
+    fn test_corpus_quality_sample() {
+        let corpus_path = std::path::Path::new("/home/lilith/work/codec-corpus");
+        if !corpus_path.exists() {
+            eprintln!("SKIP: codec-corpus not found");
+            return;
+        }
+
+        // Sample diverse images
+        let samples = [
+            "CID22/CID22-512/training/258947.png",
+            "CID22/CID22-512/training/1183021.png",
+            "CID22/CID22-512/training/pexels-photo-4210863.png",
+        ];
+
+        println!("\n=== CORPUS QUALITY SAMPLE (Butteraugli) ===");
+        println!(
+            "{:<50} {:>8} {:>12} {:>10}",
+            "Image", "Size", "Butteraugli", "Status"
+        );
+        println!("{}", "-".repeat(85));
+
+        for sample in &samples {
+            let path = corpus_path.join(sample);
+            if !path.exists() {
+                println!("{:<50} SKIP (not found)", sample);
+                continue;
+            }
+
+            let Some((original, width, height)) = load_png(path.to_str().unwrap()) else {
+                println!("{:<50} Load error", sample);
+                continue;
+            };
+
+            // Encode at distance 1.0
+            let Ok(encoded) = encode_lossy_rgb8(&original, width, height, 1.0) else {
+                println!("{:<50} Encode error", sample);
+                continue;
+            };
+
+            // Decode with jxl-oxide
+            let Ok((decoded, _, _)) = decode_with_oxide(&encoded) else {
+                println!("{:<50} Decode error", sample);
+                continue;
+            };
+
+            match compute_butteraugli(&original, &decoded, width, height) {
+                Ok(score) => {
+                    let status = if score < 1.0 {
+                        "EXCELLENT"
+                    } else if score < 2.0 {
+                        "GOOD"
+                    } else if score < 4.0 {
+                        "FAIR"
+                    } else {
+                        "POOR"
+                    };
+                    println!(
+                        "{:<50} {:>6}KB {:>12.4} {:>10}",
+                        sample,
+                        encoded.len() / 1024,
+                        score,
+                        status
+                    );
+                }
+                Err(e) => println!("{:<50} Butteraugli error: {}", sample, e),
+            }
+        }
+    }
 }
