@@ -566,9 +566,11 @@ mod tests {
 
     #[test]
     fn test_all_default_check() {
-        let mut frame = FrameHeader::default();
         // Default has group_size_shift = 0, but is_default expects 1
-        frame.group_size_shift = 1;
+        let frame = FrameHeader {
+            group_size_shift: 1,
+            ..Default::default()
+        };
 
         // This should now be considered all_default
         let mut writer = BitWriter::new();

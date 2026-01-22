@@ -372,8 +372,8 @@ mod tests {
         // All positions should be unique
         let mut sorted = order.clone();
         sorted.sort();
-        for i in 0..64 {
-            assert_eq!(sorted[i], i);
+        for (i, &val) in sorted.iter().enumerate() {
+            assert_eq!(val, i);
         }
     }
 
@@ -384,19 +384,19 @@ mod tests {
         // First 4 positions are LLF (DC of each 8x8 block)
         // LLF positions are at (0,0), (8,0), (0,8), (8,8) in the 16x16 grid
         let llf_positions = [0, 8, 16 * 8, 16 * 8 + 8]; // 0, 8, 128, 136
-        for i in 0..4 {
+        for (i, &pos) in order.iter().enumerate().take(4) {
             assert!(
-                llf_positions.contains(&order[i]),
+                llf_positions.contains(&pos),
                 "order[{}] = {} should be an LLF position",
                 i,
-                order[i]
+                pos
             );
         }
         // All positions should be unique
         let mut sorted = order.clone();
         sorted.sort();
-        for i in 0..256 {
-            assert_eq!(sorted[i], i, "Position {} missing from order", i);
+        for (i, &val) in sorted.iter().enumerate() {
+            assert_eq!(val, i, "Position {} missing from order", i);
         }
     }
 
@@ -408,8 +408,8 @@ mod tests {
         // All positions should be unique
         let mut sorted = order.clone();
         sorted.sort();
-        for i in 0..1024 {
-            assert_eq!(sorted[i], i, "Position {} missing from order", i);
+        for (i, &val) in sorted.iter().enumerate() {
+            assert_eq!(val, i, "Position {} missing from order", i);
         }
     }
 

@@ -582,7 +582,7 @@ mod tests {
         let result = fast_cluster_histograms(&input, 10).unwrap();
 
         // Empty histograms should be assigned to cluster 0
-        assert!(result.histograms.len() >= 1);
+        assert!(!result.histograms.is_empty());
         assert_eq!(result.symbols[0], 0);
         assert_eq!(result.symbols[2], 0);
     }

@@ -1067,11 +1067,8 @@ mod dc_value_tests {
         crate::trace::debug_eprintln!("Input: Solid gray {}", gray_val);
 
         // Convert to XYB
-        let mut y_plane = [0.0f32; 64];
-        for i in 0..64 {
-            let (_, y, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
-            y_plane[i] = y;
-        }
+        let (_, y_val, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
+        let y_plane = [y_val; 64];
 
         crate::trace::debug_eprintln!("XYB Y[0]: {:.6}", y_plane[0]);
 

@@ -858,7 +858,7 @@ mod decoder_validation {
         // Encode
         let encoded = Encoder::new()
             .encode_rgb8(original, width, height)
-            .expect(&format!("{}: encoding failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Save to file for debugging
         let path = format!("/tmp/{}.jxl", test_name);
@@ -868,7 +868,7 @@ mod decoder_validation {
         // Decode with jxl-oxide
         let image = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&encoded))
-            .expect(&format!("{}: jxl-oxide decode failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: jxl-oxide decode failed: {}", test_name, e));
 
         assert_eq!(image.width() as usize, width);
         assert_eq!(image.height() as usize, height);
@@ -876,7 +876,7 @@ mod decoder_validation {
         // Render frame and extract pixels
         let render = image
             .render_frame(0)
-            .expect(&format!("{}: render failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: render failed: {}", test_name, e));
 
         let fb = render.image_all_channels();
         let decoded_f32 = fb.buf();
@@ -943,12 +943,12 @@ mod decoder_validation {
         // Encode
         let encoded = Encoder::new()
             .encode_gray8(original, width, height)
-            .expect(&format!("{}: encoding failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Decode with jxl-oxide
         let image = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&encoded))
-            .expect(&format!("{}: jxl-oxide decode failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: jxl-oxide decode failed: {}", test_name, e));
 
         assert_eq!(image.width() as usize, width);
         assert_eq!(image.height() as usize, height);
@@ -956,7 +956,7 @@ mod decoder_validation {
         // Render frame and extract pixels
         let render = image
             .render_frame(0)
-            .expect(&format!("{}: render failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: render failed: {}", test_name, e));
 
         let fb = render.image_all_channels();
         let decoded_f32 = fb.buf();
@@ -977,7 +977,7 @@ mod decoder_validation {
 
         let mut max_diff: i32 = 0;
         let mut diff_count = 0;
-        for (_i, (&orig, &dec)) in original.iter().zip(decoded.iter()).enumerate() {
+        for (&orig, &dec) in original.iter().zip(decoded.iter()) {
             let diff = (orig as i32 - dec as i32).abs();
             if diff > 0 {
                 diff_count += 1;
@@ -1016,12 +1016,12 @@ mod decoder_validation {
 
         // Encode lossy
         let encoded = encode_lossy_rgb8(original, width, height, distance)
-            .expect(&format!("{}: encoding failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Decode with jxl-oxide
         let image = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&encoded))
-            .expect(&format!("{}: jxl-oxide decode failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: jxl-oxide decode failed: {}", test_name, e));
 
         assert_eq!(image.width() as usize, width);
         assert_eq!(image.height() as usize, height);
@@ -1029,7 +1029,7 @@ mod decoder_validation {
         // Render frame and extract pixels
         let render = image
             .render_frame(0)
-            .expect(&format!("{}: render failed", test_name));
+            .unwrap_or_else(|e| panic!("{}: render failed: {}", test_name, e));
 
         let fb = render.image_all_channels();
         let decoded_f32 = fb.buf();
@@ -1353,16 +1353,18 @@ mod decoder_validation {
             // Verify decodes correctly
             let image = jxl_oxide::JxlImage::builder()
                 .read(std::io::Cursor::new(&encoded))
-                .expect(&format!("Failed to decode at distance {}", distance));
+                .unwrap_or_else(|e| panic!("Failed to decode at distance {}: {}", distance, e));
 
             assert_eq!(image.width(), 8);
             assert_eq!(image.height(), 8);
 
             // Try to actually render the frame (not just parse headers)
-            let _render = image.render_frame(0).expect(&format!(
-                "test_decode_lossy_distances: render failed at distance {}",
-                distance
-            ));
+            let _render = image.render_frame(0).unwrap_or_else(|e| {
+                panic!(
+                    "test_decode_lossy_distances: render failed at distance {}: {}",
+                    distance, e
+                )
+            });
         }
     }
 
@@ -1591,10 +1593,12 @@ mod decoder_validation {
             assert_eq!(image.height(), 8);
 
             // Try to actually render the frame (not just parse headers)
-            let _render = image.render_frame(0).expect(&format!(
-                "test_dual_decode_lossy_distances: render failed at distance {}",
-                distance
-            ));
+            let _render = image.render_frame(0).unwrap_or_else(|e| {
+                panic!(
+                    "test_dual_decode_lossy_distances: render failed at distance {}: {}",
+                    distance, e
+                )
+            });
         }
         eprintln!("lossy_distances: PASSED jxl-oxide (rendered successfully)");
     }
@@ -1875,7 +1879,7 @@ mod decoder_validation {
     #[test]
     fn test_roundtrip_lossless_rgb_singlegroup_256x1() {
         // Single group 256x1 - for comparison with multi-group
-        let data = vec![128u8; 256 * 1 * 3];
+        let data = vec![128u8; 256 * 3];
         validate_lossless_roundtrip_rgb(&data, 256, 1, "rgb_singlegroup_256x1");
     }
 
@@ -1883,7 +1887,7 @@ mod decoder_validation {
     #[test]
     fn test_roundtrip_lossless_rgb_multigroup_257x1() {
         // Tiny 257x1 image - should be 2 groups (256 + 1 pixels)
-        let data = vec![128u8; 257 * 1 * 3];
+        let data = vec![128u8; 257 * 3];
         validate_lossless_roundtrip_rgb(&data, 257, 1, "rgb_multigroup_257x1");
     }
 
@@ -2862,22 +2866,19 @@ mod dual_decoder_butteraugli_tests {
 
         if let Ok(file) = File::open(results_path) {
             let reader = BufReader::new(file);
-            for line in reader.lines().skip(1) {
-                // Skip header
-                if let Ok(line) = line {
-                    let parts: Vec<&str> = line.split(',').collect();
-                    if parts.len() >= 5 {
-                        processed.insert(parts[0].to_string());
-                        prev_encode_ok += 1;
-                        prev_decode_ok += 1;
-                        if let (Ok(w), Ok(h), Ok(size)) = (
-                            parts[1].parse::<usize>(),
-                            parts[2].parse::<usize>(),
-                            parts[4].parse::<usize>(),
-                        ) {
-                            prev_total_pixels += w * h;
-                            prev_total_size += size;
-                        }
+            for line in reader.lines().skip(1).flatten() {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 5 {
+                    processed.insert(parts[0].to_string());
+                    prev_encode_ok += 1;
+                    prev_decode_ok += 1;
+                    if let (Ok(w), Ok(h), Ok(size)) = (
+                        parts[1].parse::<usize>(),
+                        parts[2].parse::<usize>(),
+                        parts[4].parse::<usize>(),
+                    ) {
+                        prev_total_pixels += w * h;
+                        prev_total_size += size;
                     }
                 }
             }
@@ -2945,7 +2946,7 @@ mod dual_decoder_butteraugli_tests {
 
         let start = Instant::now();
 
-        for (idx, image_path) in images.iter().enumerate() {
+        for image_path in images.iter() {
             let rel_path = image_path
                 .strip_prefix(corpus_path)
                 .unwrap_or(image_path)

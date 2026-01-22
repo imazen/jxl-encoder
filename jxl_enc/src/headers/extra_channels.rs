@@ -228,9 +228,11 @@ mod tests {
 
     #[test]
     fn test_cfa_channel() {
-        let mut cfa = ExtraChannelInfo::default();
-        cfa.ec_type = ExtraChannelType::Cfa;
-        cfa.cfa_channel = 2;
+        let cfa = ExtraChannelInfo {
+            ec_type: ExtraChannelType::Cfa,
+            cfa_channel: 2,
+            ..Default::default()
+        };
 
         let mut writer = BitWriter::new();
         cfa.write(&mut writer).unwrap();

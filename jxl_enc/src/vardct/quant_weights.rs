@@ -412,15 +412,15 @@ mod tests {
 
         // Check array sizes
         assert_eq!(inv_dequant.len(), 3);
-        for c in 0..3 {
-            assert_eq!(inv_dequant[c].len(), 64);
+        for channel in &inv_dequant {
+            assert_eq!(channel.len(), 64);
         }
 
         // Each channel should have DC weight > HF weight
         // (DC is perceptually more important)
-        for c in 0..3 {
-            let dc_weight = inv_dequant[c][0];
-            let hf_weight = inv_dequant[c][63];
+        for (c, channel) in inv_dequant.iter().enumerate() {
+            let dc_weight = channel[0];
+            let hf_weight = channel[63];
             assert!(
                 dc_weight > hf_weight,
                 "Channel {} DC weight {} should be > HF weight {}",
