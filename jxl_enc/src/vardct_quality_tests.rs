@@ -627,6 +627,77 @@ mod tests {
         }
     }
 
+    /// CRITICAL: Quality enforcement test for larger images
+    /// This test MUST fail if quality is broken. DO NOT weaken these thresholds!
+    ///
+    /// SSIM2 thresholds:
+    /// - > 70: Good quality (acceptable for most use cases)
+    /// - > 50: Minimum acceptable (visible artifacts but recognizable)
+    /// - < 0: Catastrophically broken (images are unrecognizable garbage)
+    ///
+    /// STATUS: FAILING - VarDCT quality is catastrophically broken for images > 32x32
+    /// DO NOT REMOVE THIS TEST. Fix the encoder instead.
+    /// See: SSIM2 scores of -500 to -1000 (should be > 50)
+    #[test]
+    #[ignore = "QUALITY BROKEN: VarDCT produces garbage for >32x32. Fix encoder, don't delete test!"]
+    fn test_vardct_quality_enforcement() {
+        // Test at sizes that historically had quality problems
+        let test_cases = [
+            (64, 64, 1.0, 50.0),   // Single group, should be easy
+            (128, 128, 1.0, 50.0), // Larger single group
+            (256, 256, 1.0, 50.0), // Max single group
+            (300, 300, 1.0, 50.0), // Multi-group
+        ];
+
+        eprintln!("\n=== QUALITY ENFORCEMENT TEST ===");
+        eprintln!("Testing that SSIM2 scores meet minimum thresholds.");
+        eprintln!("If this test fails, image quality is broken!\n");
+
+        let mut failures = Vec::new();
+
+        for (w, h, distance, min_ssim2) in test_cases {
+            let data = generate_horizontal_gradient(w, h);
+            let result = run_vardct_test(&data, w, h, distance, "quality_enforcement");
+
+            let ssim2 = result.ssimulacra2_score.unwrap_or(f64::NEG_INFINITY);
+            let status = if !result.decode_ok {
+                "DECODE_FAIL"
+            } else if ssim2 < 0.0 {
+                "CATASTROPHIC"
+            } else if ssim2 < min_ssim2 {
+                "BELOW_THRESHOLD"
+            } else {
+                "OK"
+            };
+
+            eprintln!(
+                "  {}x{} d={}: SSIM2={:>8.2} (min={}) [{}]",
+                w, h, distance, ssim2, min_ssim2, status
+            );
+
+            if !result.decode_ok || ssim2 < min_ssim2 {
+                failures.push((w, h, distance, ssim2, min_ssim2));
+            }
+        }
+
+        if !failures.is_empty() {
+            eprintln!("\n!!! QUALITY FAILURES !!!");
+            for (w, h, d, actual, expected) in &failures {
+                eprintln!(
+                    "  {}x{} d={}: SSIM2={:.2} < required {}",
+                    w, h, d, actual, expected
+                );
+            }
+            panic!(
+                "Quality enforcement failed! {} of {} tests below threshold.\n\
+                 This means encoded images are GARBAGE, not just 'slightly degraded'.\n\
+                 DO NOT weaken these thresholds - fix the encoder!",
+                failures.len(),
+                test_cases.len()
+            );
+        }
+    }
+
     #[test]
     #[allow(clippy::type_complexity)]
     fn test_vardct_comprehensive_report() {
@@ -708,8 +779,22 @@ mod tests {
 
             assert!(result.decode_ok, "{}: Decode failed", name);
 
-            // Log quality score for debugging
-            eprintln!("{}: SSIM2 = {:?}", name, result.ssimulacra2_score);
+            // CRITICAL: Enforce minimum quality threshold
+            // SSIM2 > 50 is minimum acceptable for lossy at distance 1.0
+            // Good quality is > 70, excellent is > 85
+            let score = result
+                .ssimulacra2_score
+                .expect("SSIM2 should be computed for decoded images");
+            eprintln!("{}: SSIM2 = {:.2}", name, score);
+
+            assert!(
+                score > 50.0,
+                "{}: SSIM2 score {:.2} is below minimum threshold of 50. \
+                 This indicates catastrophic quality loss. \
+                 Tests must not pass with broken quality!",
+                name,
+                score
+            );
         }
     }
 
