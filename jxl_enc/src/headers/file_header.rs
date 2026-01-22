@@ -217,7 +217,7 @@ impl FileHeader {
         writer.write_bit(small)?;
 
         if small {
-            // ysize_div8: Bits(5) + 1, so write (height/8 - 1) in 5 bits
+            // ysize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
             eprintln!("SIZE_HDR: ysize_div8_minus_1 = {}", self.height / 8 - 1);
             writer.write(5, (self.height / 8 - 1) as u64)?;
 
@@ -226,7 +226,8 @@ impl FileHeader {
             writer.write(3, ratio as u64)?;
 
             if ratio == 0 {
-                // xsize_div8: Bits(5) + 1
+                // xsize_div8_minus_1: Bits(5), decoder adds 1 then multiplies by 8
+                eprintln!("SIZE_HDR: xsize_div8_minus_1 = {}", self.width / 8 - 1);
                 writer.write(5, (self.width / 8 - 1) as u64)?;
             }
         } else {

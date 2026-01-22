@@ -1,102 +1,79 @@
-/// Trace the exact tokens being written for vertical vs horizontal gradients
-use jxl_enc::encoder::encode_lossy_rgb8;
+#![allow(unused)]
+use jxl_enc::encoder::Encoder;
+use jxl_enc::color::xyb::srgb_to_xyb;
+use jxl_enc::vardct::quantizer::QuantizerParams;
+use jxl_enc::vardct::transform::transform_xyb_image;
+use jxl_enc::vardct::tokenize::ZIGZAG_ORDER_8X8;
+use jxl_enc::vardct::enc_coeff::pack_signed;
 use std::io::Cursor;
 
-fn generate_vertical(size: usize) -> Vec<u8> {
-    let mut data = vec![0u8; size * size * 3];
-    for y in 0..size {
-        let val = (y * 255 / size.max(1)) as u8;
-        for x in 0..size {
-            let idx = (y * size + x) * 3;
-            data[idx] = val;
-            data[idx + 1] = val;
-            data[idx + 2] = val;
+fn main() {
+    // Create 8x8 vertical gradient
+    let mut pixels = Vec::with_capacity(8 * 8 * 3);
+    for row in 0..8 {
+        let val = (row * 32) as u8;
+        for _col in 0..8 {
+            pixels.push(val);
+            pixels.push(val);
+            pixels.push(val);
         }
     }
-    data
-}
 
-fn generate_horizontal(size: usize) -> Vec<u8> {
-    let mut data = vec![0u8; size * size * 3];
-    for y in 0..size {
-        for x in 0..size {
-            let val = (x * 255 / size.max(1)) as u8;
-            let idx = (y * size + x) * 3;
-            data[idx] = val;
-            data[idx + 1] = val;
-            data[idx + 2] = val;
+    // Convert to XYB
+    let mut xyb_data = vec![0.0f32; 8 * 8 * 3];
+    for i in 0..64 {
+        let r = pixels[i * 3] as f32;
+        let g = pixels[i * 3 + 1] as f32;
+        let b = pixels[i * 3 + 2] as f32;
+        let (x, y, bb) = srgb_to_xyb(r, g, b);
+        xyb_data[i * 3] = x;
+        xyb_data[i * 3 + 1] = y;
+        xyb_data[i * 3 + 2] = bb;
+    }
+    
+    let quantizer = QuantizerParams::from_distance(1.0);
+    let transformed = transform_xyb_image(&xyb_data, 8, 8, &quantizer);
+    
+    // Get Y channel AC coefficients
+    let y_ac_start = 0 * 63 + 1 * 63;
+    let y_ac = &transformed.ac_coeffs[y_ac_start..y_ac_start + 63];
+    
+    // Count non-zeros for Y channel
+    let nzeros: i32 = y_ac.iter().filter(|&&c| c != 0).count() as i32;
+    println!("Y channel non-zeros: {}", nzeros);
+    
+    println!("\nTokens that would be emitted for Y channel:");
+    println!("  Non-zero count token: value = {}", nzeros);
+    
+    let mut nzeros_left = nzeros;
+    let mut prev = if nzeros <= 4 { 1 } else { 0 };
+    
+    for k in 0..30 {
+        if nzeros_left == 0 {
+            break;
+        }
+        
+        let idx = ZIGZAG_ORDER_8X8[k + 1];
+        let coeff = y_ac[idx - 1]; // -1 because AC starts at 0
+        let u_coeff = pack_signed(coeff);
+        
+        let v = idx / 8;
+        let u = idx % 8;
+        
+        println!("  k={:2}: zigzag_idx={:2} (v={}, u={}) -> coeff={:4} -> packed={:4}", 
+                 k, idx, v, u, coeff, u_coeff);
+        
+        if coeff != 0 {
+            prev = 1;
+            nzeros_left -= 1;
+        } else {
+            prev = 0;
         }
     }
-    data
-}
-
-fn try_decode(jxl_data: &[u8]) -> String {
-    match jxl_oxide::JxlImage::builder().read(Cursor::new(jxl_data)) {
-        Ok(img) => match img.render_frame(0) {
-            Ok(_) => "OK".to_string(),
-            Err(e) => format!("Render FAIL: {:?}", e),
-        },
-        Err(e) => format!("Parse FAIL: {:?}", e),
-    }
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let size = 33;
-
-    eprintln!("=== Encoding 33x33 horizontal gradient ===");
-    let h_data = generate_horizontal(size);
-    let h_jxl = encode_lossy_rgb8(&h_data, size, size, 85.0)?;
-    eprintln!(
-        "Horizontal: {} bytes, decode: {}",
-        h_jxl.len(),
-        try_decode(&h_jxl)
-    );
-    std::fs::write("/tmp/h33_trace.jxl", &h_jxl)?;
-
-    eprintln!("\n=== Encoding 33x33 vertical gradient ===");
-    let v_data = generate_vertical(size);
-    let v_jxl = encode_lossy_rgb8(&v_data, size, size, 85.0)?;
-    eprintln!(
-        "Vertical: {} bytes, decode: {}",
-        v_jxl.len(),
-        try_decode(&v_jxl)
-    );
-    std::fs::write("/tmp/v33_trace.jxl", &v_jxl)?;
-
-    // Compare the first 200 bytes
-    eprintln!("\n=== Byte comparison (first 200 bytes) ===");
-    let max_len = h_jxl.len().min(v_jxl.len()).min(200);
-    let mut first_diff = None;
-    for i in 0..max_len {
-        if h_jxl[i] != v_jxl[i] && first_diff.is_none() {
-            first_diff = Some(i);
-        }
-    }
-    eprintln!("First difference at byte {}", first_diff.unwrap_or(max_len));
-
-    // Show bytes around the difference
-    if let Some(diff_pos) = first_diff {
-        let start = diff_pos.saturating_sub(8);
-        let end = (diff_pos + 16).min(max_len);
-        eprintln!("\nHorizontal bytes {}..{}:", start, end);
-        for i in start..end {
-            if i == diff_pos {
-                eprint!("[{:02x}] ", h_jxl[i]);
-            } else {
-                eprint!("{:02x} ", h_jxl[i]);
-            }
-        }
-        eprintln!();
-        eprintln!("Vertical bytes {}..{}:", start, end);
-        for i in start..end {
-            if i == diff_pos {
-                eprint!("[{:02x}] ", v_jxl[i]);
-            } else {
-                eprint!("{:02x} ", v_jxl[i]);
-            }
-        }
-        eprintln!();
-    }
-
-    Ok(())
+    
+    println!("\nExpected decoder behavior:");
+    println!("  Decoder reads nzeros = {} at first", nzeros);
+    println!("  Then reads {} coefficient tokens", nzeros);
+    println!("  At k=1 (zigzag position 2 after DC), decoder places coeff at natural_order[2] = (0,1) = index 8");
+    println!("  That's the vertical frequency position");
 }
