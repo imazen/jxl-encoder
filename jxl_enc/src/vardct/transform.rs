@@ -1040,3 +1040,122 @@ mod debug_tests3 {
         eprintln!("  quantized with quant_dc = {}", quantized_with_dc);
     }
 }
+
+#[cfg(test)]
+mod dc_value_tests {
+    use crate::color::xyb::srgb_to_xyb;
+    use crate::vardct::quantizer::{QuantizerParams, GLOBAL_SCALE_DENOM};
+    use crate::vardct::quant_weights::INV_LF_QUANT;
+    use jxl_enc_transforms::dct8;
+
+    /// Test what DC value a solid mid-gray block produces
+    #[test]
+    fn test_solid_gray_dc_value() {
+        // Solid gray 8x8 block
+        let gray_val = 128u8;
+
+        eprintln!("Input: Solid gray {}", gray_val);
+
+        // Convert to XYB
+        let mut y_plane = [0.0f32; 64];
+        for i in 0..64 {
+            let (_, y, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
+            y_plane[i] = y;
+        }
+
+        eprintln!("XYB Y[0]: {:.6}", y_plane[0]);
+
+        // Apply DCT
+        let mut dct_y = [0.0f32; 64];
+        dct8(&y_plane, &mut dct_y);
+
+        eprintln!("DCT Y[0] (DC): {:.6}", dct_y[0]);
+
+        // Quantize DC
+        let quantizer = QuantizerParams::from_distance(1.0);
+        let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
+        let quant_dc = quantizer.quant_dc as i32;
+        let inv_lf_quant_y = INV_LF_QUANT[1];
+
+        eprintln!(
+            "Quantizer: global_scale={}, quant_dc={}",
+            quantizer.global_scale, quant_dc
+        );
+        eprintln!("INV_LF_QUANT[Y] = {}", inv_lf_quant_y);
+
+        let qdc = inv_lf_quant_y * global_scale_float * quant_dc as f32;
+        let dc_avg = dct_y[0] / 8.0; // Convert DCT DC to block average
+        let dc_val = qdc * dc_avg;
+        let quantized_dc = dc_val.round() as i32;
+
+        eprintln!("qdc = {}", qdc);
+        eprintln!("dc_avg (DC / 8) = {}", dc_avg);
+        eprintln!("dc_val = qdc * dc_avg = {}", dc_val);
+        eprintln!("quantized_dc = {}", quantized_dc);
+
+        // Now compute what value should decode back
+        let reconstructed_avg = quantized_dc as f32 / qdc;
+        eprintln!("reconstructed_avg = {}", reconstructed_avg);
+
+        // The DC represents the average XYB Y value
+        eprintln!("\nExpected vs actual:");
+        eprintln!("  Input XYB Y = {:.6}", y_plane[0]);
+        eprintln!("  Reconstructed avg Y ≈ {:.6}", reconstructed_avg);
+    }
+
+    /// Test what value black decodes to
+    #[test]
+    fn test_black_dc_value() {
+        // Solid black 8x8 block
+        let gray_val = 0u8;
+
+        eprintln!("Input: Solid black ({})", gray_val);
+
+        // Convert to XYB
+        let (_, y, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
+        eprintln!("XYB Y: {:.6}", y);
+
+        // For a flat block, DCT DC = 8 * avg
+        let dct_dc = 8.0 * y;
+        eprintln!("Expected DCT DC: {:.6}", dct_dc);
+
+        // Black should produce Y=0
+        assert!(y.abs() < 1e-6, "Black should have Y=0, got {}", y);
+    }
+
+    /// Test what value white decodes to
+    #[test]
+    fn test_white_dc_value() {
+        // Solid white 8x8 block
+        let gray_val = 255u8;
+
+        eprintln!("Input: Solid white ({})", gray_val);
+
+        // Convert to XYB
+        let (_, y, _) = srgb_to_xyb(gray_val as f32, gray_val as f32, gray_val as f32);
+        eprintln!("XYB Y: {:.6}", y);
+
+        // For a flat block, DCT DC = 8 * avg
+        let dct_dc = 8.0 * y;
+        eprintln!("Expected DCT DC: {:.6}", dct_dc);
+
+        // Quantize
+        let quantizer = QuantizerParams::from_distance(1.0);
+        let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
+        let quant_dc = quantizer.quant_dc as i32;
+        let inv_lf_quant_y = INV_LF_QUANT[1];
+
+        let qdc = inv_lf_quant_y * global_scale_float * quant_dc as f32;
+        let dc_avg = dct_dc / 8.0;
+        let dc_val = qdc * dc_avg;
+        let quantized_dc = dc_val.round() as i32;
+
+        eprintln!("qdc = {}", qdc);
+        eprintln!("dc_avg = {}", dc_avg);
+        eprintln!("dc_val = {}", dc_val);
+        eprintln!("quantized_dc = {}", quantized_dc);
+
+        // White should have XYB Y ≈ 0.84
+        assert!(y > 0.8, "White should have Y > 0.8, got {}", y);
+    }
+}
