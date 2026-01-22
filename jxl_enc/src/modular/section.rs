@@ -102,21 +102,21 @@ pub fn write_global_modular_section(
     max_residual: u32,
     writer: &mut BitWriter,
 ) -> Result<GlobalModularState> {
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: Starting global section",
         writer.bits_written()
     );
 
     // dc_quant.all_default = true
     writer.write(1, 1)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: dc_quant.all_default = 1",
         writer.bits_written()
     );
 
     // has_tree = true
     writer.write(1, 1)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: has_tree = 1",
         writer.bits_written()
     );
@@ -126,19 +126,19 @@ pub fn write_global_modular_section(
     // Tree tokens for single leaf with Gradient predictor
     write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: Starting data histogram",
         writer.bits_written()
     );
 
     // Data histogram (no LZ77 for multi-group simplicity)
     writer.write(1, 0)?; // lz77.enabled = 0
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: lz77.enabled = 0",
         writer.bits_written()
     );
     writer.write(1, 1)?; // use_prefix_code = 1
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: use_prefix_code = 1",
         writer.bits_written()
     );
@@ -152,14 +152,14 @@ pub fn write_global_modular_section(
         0,
         0,
     )?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: IntegerConfig (split_exp=15, raw symbols)",
         writer.bits_written()
     );
 
     // alphabet_size-1 using VarLenUint16 encoding
     write_varlen_u16(writer, max_residual as u16)?;
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: alphabet_size-1 = {}",
         writer.bits_written(),
         max_residual
@@ -168,7 +168,7 @@ pub fn write_global_modular_section(
     // Build and store Huffman table
     let (depths, codes) = if histogram.len() > 1 {
         let table = build_and_store_huffman_tree(histogram, writer)?;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "GLOBAL_MODULAR [bit {}]: After Huffman table",
             writer.bits_written()
         );
@@ -184,14 +184,14 @@ pub fn write_global_modular_section(
     writer.write(1, 1)?; // use_global_tree = true (use the tree we just wrote)
     writer.write(1, 1)?; // wp_params.default_wp = true
     writer.write(2, 0)?; // nb_transforms = 0
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: After GlobalModular ModularHeader",
         writer.bits_written()
     );
 
     // Byte-align at end of global section
     writer.zero_pad_to_byte();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: Global section done",
         writer.bits_written()
     );
@@ -215,7 +215,7 @@ pub fn write_group_modular_section(
     state: &GlobalModularState,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Starting group section ({}x{})",
         writer.bits_written(),
         group_image.width(),
@@ -226,7 +226,7 @@ pub fn write_group_modular_section(
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
     writer.write(2, 0)?; // num_transforms = 0
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: After GroupHeader",
         writer.bits_written()
     );
@@ -241,13 +241,13 @@ pub fn write_group_modular_section(
         .map(|(i, (d, c))| (i as u32, (*c, *d)))
         .collect();
 
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GROUP_MODULAR: code_map has {} entries, max_residual={}",
         code_map.len(),
         state.max_residual
     );
     for (&symbol, &(code, depth)) in &code_map {
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "GROUP_MODULAR:   symbol {} -> code {:b} (depth {})",
             symbol, code, depth
         );
@@ -285,7 +285,7 @@ pub fn write_group_modular_section(
                     }
                 } else {
                     // Symbol not in histogram - this shouldn't happen if histogram was built correctly
-                    eprintln!(
+                    crate::trace::debug_eprintln!(
                         "WARNING: residual {} not in code_map (max={})",
                         packed, state.max_residual
                     );
@@ -296,7 +296,7 @@ pub fn write_group_modular_section(
 
     // Byte-align at end of group section
     writer.zero_pad_to_byte();
-    eprintln!(
+    crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Group section done ({} values encoded)",
         writer.bits_written(),
         encoded_count

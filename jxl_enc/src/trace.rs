@@ -309,7 +309,24 @@ macro_rules! trace_bytes {
     };
 }
 
+/// Debug print macro - only outputs when trace-bitstream feature is enabled.
+/// Use this instead of eprintln! for debug output in encoder code.
+#[macro_export]
+#[cfg(feature = "trace-bitstream")]
+macro_rules! debug_eprintln {
+    ($($arg:tt)*) => {
+        eprintln!($($arg)*)
+    };
+}
+
+#[macro_export]
+#[cfg(not(feature = "trace-bitstream"))]
+macro_rules! debug_eprintln {
+    ($($arg:tt)*) => {};
+}
+
 // Re-export macros at crate level
+pub use debug_eprintln;
 pub use trace_bytes;
 pub use trace_note;
 pub use trace_section;

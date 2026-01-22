@@ -34,6 +34,7 @@ yuvxyb = "0.4.1"
 butteraugli = { path = "../../butteraugli/butteraugli" }
 imgref = "1.10"
 rgb = "0.8"
+walkdir = "2.5"
 
 [lints]
 workspace = true

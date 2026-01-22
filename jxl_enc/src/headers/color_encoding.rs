@@ -202,7 +202,7 @@ impl ColorEncoding {
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
         // all_default flag
         let all_default = self.is_srgb();
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "CENC [bit {}]: all_default = {}",
             writer.bits_written(),
             all_default
@@ -214,7 +214,7 @@ impl ColorEncoding {
         }
 
         // want_icc
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "CENC [bit {}]: want_icc = {}",
             writer.bits_written(),
             self.want_icc
@@ -227,7 +227,7 @@ impl ColorEncoding {
         }
 
         // color_space
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "CENC [bit {}]: color_space = {:?} ({})",
             writer.bits_written(),
             self.color_space,
@@ -242,7 +242,7 @@ impl ColorEncoding {
             WhitePoint::E => 10,
             WhitePoint::Dci => 11,
         };
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "CENC [bit {}]: white_point = {:?} ({})",
             writer.bits_written(),
             self.white_point,
@@ -262,7 +262,7 @@ impl ColorEncoding {
                 Primaries::Bt2100 => 9,
                 Primaries::P3 => 11,
             };
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "CENC [bit {}]: primaries = {:?} ({})",
                 writer.bits_written(),
                 self.primaries,
@@ -274,7 +274,7 @@ impl ColorEncoding {
                 todo!("Custom primaries not implemented");
             }
         } else {
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "CENC [bit {}]: primaries skipped (not RGB)",
                 writer.bits_written()
             );
@@ -282,7 +282,7 @@ impl ColorEncoding {
 
         // have_gamma
         let have_gamma = self.transfer_function == TransferFunction::Unknown;
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "CENC [bit {}]: have_gamma = {}",
             writer.bits_written(),
             have_gamma
@@ -303,7 +303,7 @@ impl ColorEncoding {
                 TransferFunction::Dci => 17,
                 TransferFunction::Hlg => 18,
             };
-            eprintln!(
+            crate::trace::debug_eprintln!(
                 "CENC [bit {}]: transfer_function = {:?} ({})",
                 writer.bits_written(),
                 self.transfer_function,
@@ -313,14 +313,14 @@ impl ColorEncoding {
         }
 
         // rendering_intent
-        eprintln!(
+        crate::trace::debug_eprintln!(
             "CENC [bit {}]: rendering_intent = {:?} ({})",
             writer.bits_written(),
             self.rendering_intent,
             self.rendering_intent as u8
         );
         writer.write(2, self.rendering_intent as u64)?;
-        eprintln!("CENC [bit {}]: color_encoding done", writer.bits_written());
+        crate::trace::debug_eprintln!("CENC [bit {}]: color_encoding done", writer.bits_written());
 
         Ok(())
     }
