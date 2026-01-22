@@ -12,6 +12,7 @@ mod tests {
 
     /// Test result containing decode status and quality metrics
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct TestResult {
         width: usize,
         height: usize,
@@ -85,7 +86,7 @@ mod tests {
             for x in 0..width {
                 let bx = x / block_size;
                 let by = y / block_size;
-                let val = if (bx + by) % 2 == 0 { 255 } else { 0 };
+                let val = if (bx + by).is_multiple_of(2) { 255 } else { 0 };
                 let idx = (y * width + x) * 3;
                 data[idx] = val;
                 data[idx + 1] = val;
@@ -150,10 +151,10 @@ mod tests {
     fn generate_noise(width: usize, height: usize, seed: u32) -> Vec<u8> {
         let mut data = vec![0u8; width * height * 3];
         let mut state = seed;
-        for i in 0..(width * height * 3) {
+        for pixel in &mut data {
             // Simple LCG PRNG
             state = state.wrapping_mul(1103515245).wrapping_add(12345);
-            data[i] = ((state >> 16) & 0xFF) as u8;
+            *pixel = ((state >> 16) & 0xFF) as u8;
         }
         data
     }
@@ -183,7 +184,11 @@ mod tests {
     fn generate_stripes(width: usize, height: usize, stripe_height: usize) -> Vec<u8> {
         let mut data = vec![0u8; width * height * 3];
         for y in 0..height {
-            let val = if (y / stripe_height) % 2 == 0 { 255 } else { 0 };
+            let val = if (y / stripe_height).is_multiple_of(2) {
+                255
+            } else {
+                0
+            };
             for x in 0..width {
                 let idx = (y * width + x) * 3;
                 data[idx] = val;
@@ -623,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn test_vardct_comprehensive_report() {
         // Generate a comprehensive report of all patterns at common dimensions
         // Uses only 16x16 which is known to work
@@ -711,6 +717,7 @@ mod tests {
     /// Run with: cargo test --package jxl_enc test_vardct_compatibility_matrix -- --nocapture --ignored
     #[test]
     #[ignore] // Run manually for diagnostics
+    #[allow(clippy::type_complexity)]
     fn test_vardct_compatibility_matrix() {
         let dimensions = [
             // Single block

@@ -143,6 +143,6 @@ mod tests {
         // For now, just ensure it doesn't panic on various inputs
         let _ = parse_encoding_mode(&[]);
         let _ = parse_encoding_mode(&[0xFF, 0x0A]);
-        let _ = parse_encoding_mode(&vec![0; 100]);
+        let _ = parse_encoding_mode(&[0; 100]);
     }
 }

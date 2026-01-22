@@ -1362,8 +1362,8 @@ mod tests {
     fn test_build_and_store_256_symbols() {
         // Full byte alphabet with varying frequencies
         let mut histogram = vec![0u32; 256];
-        for i in 0..256 {
-            histogram[i] = (i as u32 + 1) * 2;
+        for (i, h) in histogram.iter_mut().enumerate() {
+            *h = (i as u32 + 1) * 2;
         }
 
         let mut writer = BitWriter::new();
