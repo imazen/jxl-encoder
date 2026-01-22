@@ -30,6 +30,10 @@ jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
 # SSIMULACRA2 for perceptual quality metrics (package is "fast-ssim2")
 fast-ssim2 = { path = "../../fast-ssim2/ssimulacra2" }
 yuvxyb = "0.4.1"
+# Butteraugli perceptual quality metric
+butteraugli = { path = "../../butteraugli/butteraugli" }
+imgref = "1.10"
+rgb = "0.8"
 
 [lints]
 workspace = true
