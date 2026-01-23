@@ -66,7 +66,9 @@ pub fn tokenize_block(
         }
 
         let coeff = coeffs[order[k]];
-        let ctx = histo_offset + zero_density_context(nzeros_left, k, log2_covered_blocks, prev);
+        // jxl-oxide uses 0-based idx for context, so subtract covered_blocks
+        let idx = k - covered_blocks;
+        let ctx = histo_offset + zero_density_context(nzeros_left, idx, log2_covered_blocks, prev);
 
         let u_coeff = pack_signed(coeff);
         tokens.push(Token::new(ctx as u32, u_coeff));

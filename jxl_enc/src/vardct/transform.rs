@@ -4,7 +4,7 @@
 //! Supports DCT8, DCT16, and DCT32 transforms based on AC strategy.
 
 use crate::BLOCK_DIM;
-use crate::heuristics::AcStrategyMap;
+use crate::heuristics::{AcStrategyMap, QuantField};
 use crate::vardct::AcStrategy;
 use jxl_enc_transforms::{dct8, dct16, dct32};
 
@@ -33,11 +33,13 @@ pub struct TransformedData {
 /// * `width` - Image width in pixels
 /// * `height` - Image height in pixels
 /// * `quantizer` - Quantization parameters
+/// * `quant_field` - Per-block quantization values
 pub fn transform_and_quantize(
     xyb_data: &[&[f32]; 3],
     width: usize,
     height: usize,
     quantizer: &QuantizerParams,
+    quant_field: &QuantField,
 ) -> TransformedData {
     let num_blocks_x = width.div_ceil(BLOCK_DIM);
     let num_blocks_y = height.div_ceil(BLOCK_DIM);
@@ -53,12 +55,6 @@ pub fn transform_and_quantize(
     let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
     let quant_dc = quantizer.quant_dc as i32;
 
-    // Compute raw_quant for uniform quantization
-    // In libjxl: raw_quant = quant_field * inv_global_scale + 0.5
-    // For distance=1.0 with default settings, quant_field ≈ 0.765 and raw_quant ≈ 1
-    // Using raw_quant=1 gives proper quantization levels matching the trace_quant output
-    let raw_quant = 1i32;
-
     // Get DCT8 inverse dequant matrices for each channel (X, Y, B)
     // These provide perceptual weighting for AC coefficients
     let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
@@ -73,6 +69,9 @@ pub fn transform_and_quantize(
     for by in 0..num_blocks_y {
         for bx in 0..num_blocks_x {
             let block_idx = by * num_blocks_x + bx;
+
+            // Get per-block quantization value
+            let raw_quant = quant_field.get(bx, by) as i32;
 
             // Extract and DCT all channels first
             let mut dct_y = [0.0f32; 64];
@@ -204,6 +203,7 @@ pub fn transform_and_quantize_with_strategy(
     height: usize,
     quantizer: &QuantizerParams,
     ac_strategy_map: &AcStrategyMap,
+    quant_field: &QuantField,
 ) -> TransformedDataWithStrategy {
     let num_blocks_x = width.div_ceil(BLOCK_DIM);
     let num_blocks_y = height.div_ceil(BLOCK_DIM);
@@ -218,10 +218,6 @@ pub fn transform_and_quantize_with_strategy(
 
     let global_scale_float = quantizer.global_scale as f32 / GLOBAL_SCALE_DENOM as f32;
     let quant_dc = quantizer.quant_dc as i32;
-
-    // Compute raw_quant for uniform quantization
-    // Using raw_quant=1 gives proper quantization levels
-    let raw_quant = 1i32;
 
     let inv_dequant_per_channel = get_dct8_inv_dequant_per_channel();
 
@@ -243,6 +239,20 @@ pub fn transform_and_quantize_with_strategy(
             }
 
             let strategy = ac_strategy_map.get(bx, by);
+
+            // Get per-block quantization value from the top-left block of the transform region
+            let raw_quant = quant_field.get(bx, by) as i32;
+
+            #[cfg(debug_assertions)]
+            if bx == 0 && by == 0 {
+                eprintln!(
+                    "DEBUG transform_with_strategy: block(0,0) raw_quant={}, global_scale_float={:.4}, quant_dc={}, strategy={:?}",
+                    raw_quant,
+                    global_scale_float,
+                    quant_dc,
+                    strategy
+                );
+            }
 
             match strategy {
                 AcStrategy::Dct32x32 if bx + 3 < num_blocks_x && by + 3 < num_blocks_y => {
@@ -799,6 +809,7 @@ pub fn transform_xyb_image(
     width: usize,
     height: usize,
     quantizer: &QuantizerParams,
+    quant_field: &QuantField,
 ) -> TransformedData {
     let num_pixels = width * height;
 
@@ -813,7 +824,13 @@ pub fn transform_xyb_image(
         b_plane[i] = xyb_interleaved[i * 3 + 2];
     }
 
-    transform_and_quantize(&[&x_plane, &y_plane, &b_plane], width, height, quantizer)
+    transform_and_quantize(
+        &[&x_plane, &y_plane, &b_plane],
+        width,
+        height,
+        quantizer,
+        quant_field,
+    )
 }
 
 /// Strategy-aware XYB transform pipeline entry point.
@@ -826,6 +843,7 @@ pub fn transform_xyb_image_with_strategy(
     height: usize,
     quantizer: &QuantizerParams,
     ac_strategy_map: &AcStrategyMap,
+    quant_field: &QuantField,
 ) -> TransformedDataWithStrategy {
     let num_pixels = width * height;
 
@@ -846,12 +864,21 @@ pub fn transform_xyb_image_with_strategy(
         height,
         quantizer,
         ac_strategy_map,
+        quant_field,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vardct::Quantizer;
+
+    /// Helper to compute the correct base_quant for tests.
+    /// The quant field stores raw AC quant values, computed from quant_field_target = 5.0.
+    fn compute_base_quant(quantizer: &QuantizerParams) -> u8 {
+        let quant = Quantizer::new(quantizer.clone());
+        quant.quant_from_field(5.0).min(255) as u8
+    }
 
     #[test]
     fn test_extract_block() {
@@ -876,8 +903,11 @@ mod tests {
         let flat_value = 0.5f32;
         let plane = vec![flat_value; 64];
         let quantizer = QuantizerParams::from_distance(1.0);
+        let base_quant = compute_base_quant(&quantizer);
+        let quant_field = QuantField::uniform(1, 1, base_quant);
 
-        let result = transform_and_quantize(&[&plane, &plane, &plane], 8, 8, &quantizer);
+        let result =
+            transform_and_quantize(&[&plane, &plane, &plane], 8, 8, &quantizer, &quant_field);
 
         assert_eq!(result.num_blocks_x, 1);
         assert_eq!(result.num_blocks_y, 1);
@@ -890,8 +920,11 @@ mod tests {
         // 16x16 image = 4 blocks
         let plane = vec![1.0f32; 256];
         let quantizer = QuantizerParams::from_distance(1.0);
+        let base_quant = compute_base_quant(&quantizer);
+        let quant_field = QuantField::uniform(2, 2, base_quant);
 
-        let result = transform_and_quantize(&[&plane, &plane, &plane], 16, 16, &quantizer);
+        let result =
+            transform_and_quantize(&[&plane, &plane, &plane], 16, 16, &quantizer, &quant_field);
 
         assert_eq!(result.num_blocks_x, 2);
         assert_eq!(result.num_blocks_y, 2);
@@ -936,6 +969,8 @@ mod tests {
         let plane = vec![1.0f32; 256];
         let quantizer = QuantizerParams::from_distance(1.0);
         let ac_map = AcStrategyMap::new_dct8(2, 2);
+        let base_quant = compute_base_quant(&quantizer);
+        let quant_field = QuantField::uniform(2, 2, base_quant);
 
         let result = transform_and_quantize_with_strategy(
             &[&plane, &plane, &plane],
@@ -943,6 +978,7 @@ mod tests {
             16,
             &quantizer,
             &ac_map,
+            &quant_field,
         );
 
         assert_eq!(result.num_blocks_x, 2);
@@ -959,6 +995,8 @@ mod tests {
         let quantizer = QuantizerParams::from_distance(1.0);
         let mut ac_map = AcStrategyMap::new_dct8(2, 2);
         ac_map.set(0, 0, AcStrategy::Dct16x16);
+        let base_quant = compute_base_quant(&quantizer);
+        let quant_field = QuantField::uniform(2, 2, base_quant);
 
         let result = transform_and_quantize_with_strategy(
             &[&plane, &plane, &plane],
@@ -966,6 +1004,7 @@ mod tests {
             16,
             &quantizer,
             &ac_map,
+            &quant_field,
         );
 
         assert_eq!(result.num_blocks_x, 2);
@@ -982,6 +1021,8 @@ mod tests {
         let quantizer = QuantizerParams::from_distance(1.0);
         let mut ac_map = AcStrategyMap::new_dct8(4, 4);
         ac_map.set(0, 0, AcStrategy::Dct32x32);
+        let base_quant = compute_base_quant(&quantizer);
+        let quant_field = QuantField::uniform(4, 4, base_quant);
 
         let result = transform_and_quantize_with_strategy(
             &[&plane, &plane, &plane],
@@ -989,6 +1030,7 @@ mod tests {
             32,
             &quantizer,
             &ac_map,
+            &quant_field,
         );
 
         assert_eq!(result.num_blocks_x, 4);
@@ -1132,13 +1174,22 @@ mod debug_tests {
 
         // Transform and quantize
         let quantizer = QuantizerParams::from_distance(1.0);
+        let quant = crate::vardct::Quantizer::new(quantizer.clone());
+        let base_quant = quant.quant_from_field(5.0).min(255) as u8;
+        let quant_field = QuantField::uniform(2, 2, base_quant);
         crate::trace::debug_eprintln!(
             "Quantizer: global_scale={}, quant_dc={}",
             quantizer.global_scale,
             quantizer.quant_dc
         );
 
-        let result = transform_and_quantize(&[&x_plane, &y_plane, &b_plane], 16, 16, &quantizer);
+        let result = transform_and_quantize(
+            &[&x_plane, &y_plane, &b_plane],
+            16,
+            16,
+            &quantizer,
+            &quant_field,
+        );
 
         crate::trace::debug_eprintln!("DC coefficients: {:?}", result.dc_coeffs);
 
@@ -1525,13 +1576,22 @@ mod diagnostic_tests {
 
         // Transform and quantize
         let quantizer = QuantizerParams::from_distance(1.0);
+        let quant = crate::vardct::Quantizer::new(quantizer.clone());
+        let base_quant = quant.quant_from_field(5.0).min(255) as u8;
+        let quant_field = QuantField::uniform(blocks_x, blocks_y, base_quant);
         println!(
-            "\nQuantizer: global_scale={}, quant_dc={}",
-            quantizer.global_scale, quantizer.quant_dc
+            "\nQuantizer: global_scale={}, quant_dc={}, base_quant={}",
+            quantizer.global_scale, quantizer.quant_dc, base_quant
         );
 
-        let transformed =
-            transform_and_quantize_with_strategy(&planes, width, height, &quantizer, &ac_map);
+        let transformed = transform_and_quantize_with_strategy(
+            &planes,
+            width,
+            height,
+            &quantizer,
+            &ac_map,
+            &quant_field,
+        );
 
         // Check the DC/LLF coefficients
         println!("\nDC coefficients for each block (should be LLF values):");
@@ -1575,8 +1635,14 @@ mod diagnostic_tests {
         // Compare with DCT8 path
         println!("\n=== DCT8 comparison ===");
         let ac_map_dct8 = AcStrategyMap::new_dct8(blocks_x, blocks_y);
-        let transformed_dct8 =
-            transform_and_quantize_with_strategy(&planes, width, height, &quantizer, &ac_map_dct8);
+        let transformed_dct8 = transform_and_quantize_with_strategy(
+            &planes,
+            width,
+            height,
+            &quantizer,
+            &ac_map_dct8,
+            &quant_field,
+        );
 
         println!("DC coefficients (DCT8):");
         for by in 0..blocks_y {

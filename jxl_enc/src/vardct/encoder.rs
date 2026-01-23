@@ -20,7 +20,7 @@ use super::enc_coeff::pack_signed;
 use super::histogram::{ClusteredHistogramSet, HistogramBuilder};
 use super::prefix_codes::{build_canonical_huffman_codes, write_alphabet_size, write_prefix_code};
 use super::quant_weights::DequantMatrices;
-use super::quantizer::QuantizerParams;
+use super::quantizer::{Quantizer, QuantizerParams};
 use super::tokenize::{Token, ZIGZAG_ORDER_8X8, generate_natural_order};
 use super::transform::TransformedDataWithStrategy;
 
@@ -84,7 +84,9 @@ impl VarDctEncoder {
         let color_correlation = ColorCorrelationMap::new_default(width, height);
 
         // Create uniform quant field; can be updated with compute_quant_field
-        let base_quant = quantizer.quant_dc.min(255) as u8;
+        // The quant field stores raw AC quant values, computed from quant_field_target = 5.0
+        let quant = Quantizer::new(quantizer.clone());
+        let base_quant = quant.quant_from_field(5.0).min(255) as u8;
         let quant_field = QuantField::uniform(blocks_x, blocks_y, base_quant);
 
         Self {
@@ -131,7 +133,9 @@ impl VarDctEncoder {
                 .map(|i| xyb_interleaved[i * 3 + 1])
                 .collect();
 
-            let base_quant = self.quantizer.quant_dc.min(255) as u8;
+            // The quant field stores raw AC quant values, computed from quant_field_target = 5.0
+            let quant = Quantizer::new(self.quantizer.clone());
+            let base_quant = quant.quant_from_field(5.0).min(255) as u8;
             self.quant_field = QuantField::compute_adaptive(
                 &y_plane,
                 self.width,
@@ -390,15 +394,17 @@ impl VarDctEncoder {
                 // Get quant field value for this block (uniform)
                 let qf = self.quantizer.quant_dc;
 
-                // Process channels in decoder order: Y, X, B
-                // Decoder uses c = [1, 0, 2][iteration] to remap, then uses c for grid
-                for &c in &[1usize, 0, 2] {
-                    // c is the channel index (1=Y, 0=X, 2=B)
+                // Process channels matching decoder order.
+                // jxl-oxide uses loop index (0, 1, 2) for context computation (ch_idx),
+                // but remaps to [1, 0, 2] for actual data access (Y, X, B).
+                const CHANNEL_REMAP: [usize; 3] = [1, 0, 2];
+                for ctx_idx in 0..3 {
+                    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
 
-                    // Get block context
+                    // Get block context - uses ctx_idx (0, 1, 2), NOT remapped channel
                     let lf_idx = 0; // No LF thresholds in default mode
                     let order_id = 0; // DCT8
-                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, c);
+                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, ctx_idx);
 
                     // Get AC coefficients for this block/channel (63 coeffs per channel)
                     let ac_start = block_idx * 3 * 63 + c * 63;
@@ -508,6 +514,7 @@ impl VarDctEncoder {
         let mut nz_grid: [Vec<u32>; 3] = [vec![0; blocks_x], vec![0; blocks_x], vec![0; blocks_x]];
 
         // Generate natural orders for different block sizes
+        // jxl-oxide's natural_order for DCT8 matches ZIGZAG_ORDER_8X8.
         let order_8 = ZIGZAG_ORDER_8X8.to_vec();
         let order_16 = generate_natural_order(2, 2);
         let order_32 = generate_natural_order(4, 4);
@@ -548,10 +555,17 @@ impl VarDctEncoder {
                 // Get quant field value
                 let qf = self.quantizer.quant_dc;
 
-                // Process channels in decoder order: Y, X, B
-                // Decoder uses c = [1, 0, 2][iteration] to remap, then uses c for grid
-                for &c in &[1usize, 0, 2] {
-                    let block_context = self.block_ctx_map.block_context(0, qf, order_id, c);
+                // Process channels matching decoder order.
+                // jxl-oxide uses loop index (0, 1, 2) for context computation (ch_idx),
+                // but remaps to [1, 0, 2] for actual data access (Y, X, B).
+                // - ctx_idx=0 -> data channel 1 (Y)
+                // - ctx_idx=1 -> data channel 0 (X)
+                // - ctx_idx=2 -> data channel 2 (B)
+                const CHANNEL_REMAP: [usize; 3] = [1, 0, 2]; // Y, X, B
+                for ctx_idx in 0..3 {
+                    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
+                    // Context uses ctx_idx (0, 1, 2), NOT the remapped channel
+                    let block_context = self.block_ctx_map.block_context(0, qf, order_id, ctx_idx);
 
                     // Get AC coefficients for this block/channel
                     let ac_start = transformed.ac_offsets[block_idx * 3 + c];
@@ -604,6 +618,15 @@ impl VarDctEncoder {
                             .block_ctx_map
                             .zero_density_context_offset(block_context);
 
+                        // Debug: print first few coefficients for first block/channel
+                        let is_first = bx == 0 && by == 0 && ctx_idx == 0;
+                        if is_first {
+                            eprintln!("DEBUG tokenize_ac_with_strategy: first block channel X");
+                            eprintln!("  nzeros={}, covered_blocks={}, log2_blocks={}", nzeros, covered_blocks, log2_blocks);
+                            eprintln!("  effective_ac.len()={}", effective_ac.len());
+                            eprintln!("  First 10 effective_ac: {:?}", &effective_ac[..10.min(effective_ac.len())]);
+                        }
+
                         let mut nzeros_left = nzeros;
                         // Decoder: is_prev_coeff_nonzero = (non_zeros <= num_blocks * 4) as u32
                         let num_8x8_blocks = covered_blocks;
@@ -615,7 +638,9 @@ impl VarDctEncoder {
                                 break;
                             }
 
-                            // Use the appropriate order
+                            // Use the appropriate order to get the position in the block
+                            // The decoder uses permutation[k] to determine where to store the coefficient,
+                            // so we need to send the coefficient that should go at that position.
                             let coeff_idx = if k + covered_blocks < order.len() {
                                 order[k + covered_blocks]
                             } else {
@@ -623,15 +648,23 @@ impl VarDctEncoder {
                             };
 
                             // Pre-transpose coefficient index for square blocks.
-                            // jxl-oxide transposes coordinates when h >= w, which is true for all
-                            // square transforms (DCT8, DCT16, DCT32).
+                            // jxl-oxide (and libjxl decoder) transposes coordinates when h >= w,
+                            // which is true for all square transforms (DCT8, DCT16, DCT32).
+                            // We need to pre-transpose so that after the decoder's transpose,
+                            // coefficients end up in the correct positions.
                             let block_dim = cx * 8; // 8 for DCT8, 16 for DCT16, 32 for DCT32
-                            let transposed_coeff_idx =
-                                (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim);
+                            let transposed_coeff_idx = if cx == cy {
+                                // Square block - apply transpose: (x,y) -> (y,x)
+                                // Position i = y * width + x becomes x * width + y
+                                (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim)
+                            } else {
+                                // Non-square block - no transpose
+                                coeff_idx
+                            };
 
                             // Map from full-block position to AC array index
                             // effective_ac contains coefficients starting from position covered_blocks (after LLF)
-                            // For DCT8: coeff_idx 1 -> ac_index 0, coeff_idx 63 -> ac_index 62
+                            // For DCT8: position 1 -> ac_index 0, position 63 -> ac_index 62
                             // For DCT16/32: we skip covered_blocks LLF positions
                             let ac_index = if transposed_coeff_idx >= covered_blocks {
                                 transposed_coeff_idx - covered_blocks
@@ -646,16 +679,24 @@ impl VarDctEncoder {
                                 0
                             };
 
+                            // jxl-oxide uses 0-based idx for the loop, starting from
+                            // the first AC coefficient. Our k=0 matches idx=0.
                             let ctx = histo_offset
                                 + super::context::zero_density_context(
                                     nzeros_left,
-                                    k, // k is 0-based, matching decoder's idx
+                                    k, // 0-based index matching jxl-oxide
                                     log2_blocks,
                                     prev,
                                 );
 
                             let u_coeff = pack_signed(coeff);
                             tokens.push(Token::new(ctx as u32, u_coeff));
+
+                            // Debug for first block/channel
+                            if is_first && k < 10 {
+                                eprintln!("  k={}: coeff_idx={} -> transposed={} -> ac_index={} -> coeff={} -> u_coeff={}, ctx={}",
+                                    k, coeff_idx, transposed_coeff_idx, ac_index, coeff, u_coeff, ctx);
+                            }
 
                             if coeff != 0 {
                                 prev = 1;
@@ -729,15 +770,17 @@ impl VarDctEncoder {
                 // Get quant field value for this block (uniform)
                 let qf = self.quantizer.quant_dc;
 
-                // Process channels in decoder order: Y, X, B
-                // Decoder uses c = [1, 0, 2][iteration] to remap, then uses c for grid
-                for &c in &[1usize, 0, 2] {
-                    // c is the channel index (1=Y, 0=X, 2=B)
+                // Process channels matching decoder order.
+                // jxl-oxide uses loop index (0, 1, 2) for context computation (ch_idx),
+                // but remaps to [1, 0, 2] for actual data access (Y, X, B).
+                const CHANNEL_REMAP: [usize; 3] = [1, 0, 2];
+                for ctx_idx in 0..3 {
+                    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
 
-                    // Get block context
+                    // Get block context - uses ctx_idx (0, 1, 2), NOT remapped channel
                     let lf_idx = 0; // No LF thresholds in default mode
                     let order_id = 0; // DCT8
-                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, c);
+                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, ctx_idx);
 
                     // Get AC coefficients for this block/channel (63 coeffs per channel)
                     let ac_start = block_idx * 3 * 63 + c * 63;
