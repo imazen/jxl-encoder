@@ -798,6 +798,170 @@ mod tests {
         }
     }
 
+    /// Debug test to inspect gradient pixel differences
+    #[test]
+    #[ignore]
+    fn test_debug_gradient_pixels() {
+        let data = generate_horizontal_gradient(16, 16);
+
+        let encoded = encode_lossy_rgb8(&data, 16, 16, 1.0).expect("Encode failed");
+        eprintln!("Encoded size: {} bytes", encoded.len());
+
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("Decode failed");
+
+        let frame = jxl_image.render_frame(0).expect("Render failed");
+        let fb = frame.image_all_channels();
+        let buf = fb.buf();
+        let channels = fb.channels();
+
+        eprintln!("\nPixel comparison (first row, X=0..15):");
+        eprintln!("  X | Orig | Decoded | Diff");
+        eprintln!("----+------+---------+------");
+        let mut max_diff = 0i32;
+        let mut sum_diff = 0i32;
+        for x in 0..16 {
+            let orig_val = (x * 255 / 16) as u8;
+            let idx = x * channels;
+            let dec_r = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let diff = (orig_val as i32 - dec_r as i32).abs();
+            eprintln!(" {:2} | {:3}  | {:3}     | {:3}", x, orig_val, dec_r, diff);
+            max_diff = max_diff.max(diff);
+            sum_diff += diff;
+        }
+
+        // Compute total stats
+        let mut total_max = 0i32;
+        let mut total_sum = 0i32;
+        for i in 0..(16 * 16) {
+            let orig = data[i * 3] as i32;
+            let idx = i * channels;
+            let dec = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as i32;
+            let diff = (orig - dec).abs();
+            total_max = total_max.max(diff);
+            total_sum += diff;
+        }
+        eprintln!("\nTotal: max_diff={}, mean_diff={:.2}", total_max, total_sum as f32 / 256.0);
+
+        // Save the JXL for debugging
+        std::fs::write("/tmp/gradient_debug.jxl", &encoded).unwrap();
+        eprintln!("\nSaved to /tmp/gradient_debug.jxl ({} bytes)", encoded.len());
+
+        // Check all three color channels
+        eprintln!("\nFull RGB for first row:");
+        eprintln!("  X | Orig R,G,B | Dec R, G, B");
+        for x in 0..16 {
+            let orig_val = (x * 255 / 16) as u8;
+            let idx = x * channels;
+            let dec_r = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let dec_g = (buf[idx + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let dec_b = (buf[idx + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
+            eprintln!(" {:2} | {:3},{:3},{:3} | {:3},{:3},{:3}", x, orig_val, orig_val, orig_val, dec_r, dec_g, dec_b);
+        }
+    }
+
+    /// Debug quantized coefficients for gradient
+    #[test]
+    #[ignore]
+    fn test_debug_gradient_coefficients() {
+        use crate::color::xyb::srgb_to_xyb;
+        use crate::heuristics::QuantField;
+        use crate::vardct::transform::transform_and_quantize;
+        use crate::vardct::quantizer::{Quantizer, QuantizerParams};
+        use jxl_enc_transforms::dct8;
+
+        let data = generate_horizontal_gradient(8, 8); // Single 8x8 block
+
+        // Print original values
+        eprintln!("Original gradient (first row, pixel values):");
+        for x in 0..8 {
+            let idx = x * 3;
+            eprint!("{:3} ", data[idx]);
+        }
+        eprintln!();
+
+        // Trace XYB conversion for first pixel
+        // NOTE: srgb_to_xyb expects 0-255 range, NOT normalized!
+        let test_val = data[0] as f32; // First pixel (0-255 range)
+        eprintln!("\nXYB conversion trace for pixel 0 (sRGB={}):", data[0]);
+        let test_xyb = srgb_to_xyb(test_val, test_val, test_val);
+        eprintln!("  XYB result: ({:.4}, {:.4}, {:.4})", test_xyb.0, test_xyb.1, test_xyb.2);
+
+        // Trace for mid-gray
+        let mid_val = data[4 * 3] as f32; // Mid pixel (0-255 range)
+        eprintln!("\nXYB conversion trace for pixel 4 (sRGB={}):", data[4 * 3]);
+        let mid_xyb = srgb_to_xyb(mid_val, mid_val, mid_val);
+        eprintln!("  XYB result: ({:.4}, {:.4}, {:.4})", mid_xyb.0, mid_xyb.1, mid_xyb.2);
+
+        // Convert to XYB - use 0-255 range as srgb_to_xyb expects!
+        let rgb_f32: Vec<f32> = data.iter().map(|&x| x as f32).collect();
+        let mut xyb = vec![0.0f32; 64 * 3];
+        for i in 0..64 {
+            let (x, y, b) = srgb_to_xyb(rgb_f32[i * 3], rgb_f32[i * 3 + 1], rgb_f32[i * 3 + 2]);
+            xyb[i] = x;
+            xyb[64 + i] = y;
+            xyb[128 + i] = b;
+        }
+
+        // Print Y channel values (first row)
+        eprintln!("\nXYB Y channel (first row):");
+        for x in 0..8 {
+            eprint!("{:.3} ", xyb[64 + x]);
+        }
+        eprintln!();
+
+        // Apply DCT directly
+        let mut dct_y = [0.0f32; 64];
+        let y_block: [f32; 64] = xyb[64..128].try_into().unwrap();
+        dct8(&y_block, &mut dct_y);
+
+        eprintln!("\nRaw DCT Y coefficients (all 64):");
+        for row in 0..8 {
+            for col in 0..8 {
+                let idx = row * 8 + col;
+                let val = dct_y[idx];
+                if val.abs() > 0.001 {
+                    eprint!("{:7.3}", val);
+                } else {
+                    eprint!("      0");
+                }
+            }
+            eprintln!();
+        }
+
+        let xyb_planes: [&[f32]; 3] = [&xyb[0..64], &xyb[64..128], &xyb[128..192]];
+
+        let quantizer = QuantizerParams::from_distance(1.0);
+        let quant = Quantizer::new(quantizer.clone());
+        let base_quant = quant.quant_from_field(5.0).min(255) as u8;
+        let quant_field = QuantField::uniform(1, 1, base_quant);
+
+        eprintln!("\nbase_quant = {}", base_quant);
+
+        // Transform and quantize
+        let transformed = transform_and_quantize(&xyb_planes, 8, 8, &quantizer, &quant_field);
+
+        // Print DC coefficients
+        eprintln!("\nQuantized DC coefficients (X, Y, B):");
+        eprintln!("  X: {}", transformed.dc_coeffs[0]);
+        eprintln!("  Y: {}", transformed.dc_coeffs[1]);
+        eprintln!("  B: {}", transformed.dc_coeffs[2]);
+
+        // Print Y channel AC coefficients
+        eprintln!("\nQuantized Y channel AC coefficients:");
+        let y_ac_start = 0 * 63 + 1 * 63; // block 0, channel 1 (Y)
+        for i in 0..63 {
+            let coeff = transformed.ac_coeffs[y_ac_start + i];
+            if coeff != 0 {
+                let pos = i + 1; // AC position (1-63)
+                let row = pos / 8;
+                let col = pos % 8;
+                eprintln!("  AC[{:2}] ({},{}) = {}", pos, row, col, coeff);
+            }
+        }
+    }
+
     /// Diagnostic test to generate full compatibility matrix
     /// Run with: cargo test --package jxl_enc test_vardct_compatibility_matrix -- --nocapture --ignored
     #[test]
@@ -1187,5 +1351,340 @@ mod tests {
         eprintln!(
             "  If both score similarly poorly at larger sizes, the bug is size-related, not DCT-type-related."
         );
+    }
+
+    /// Test colored vs grayscale encoding
+    #[test]
+    #[ignore]
+    fn test_colored_vs_grayscale() {
+        // Grayscale solid (R=G=B)
+        let gray_data = generate_solid(64, 64, 128, 128, 128);
+        let gray_result = run_vardct_test(&gray_data, 64, 64, 1.0, "gray_solid");
+        eprintln!("Grayscale solid: SSIM2={:.2}", gray_result.ssimulacra2_score.unwrap_or(f64::NAN));
+
+        // Colored solid (R≠G≠B)
+        let color_data = generate_solid(64, 64, 200, 100, 50);
+        let color_result = run_vardct_test(&color_data, 64, 64, 1.0, "color_solid");
+        eprintln!("Colored solid: SSIM2={:.2}", color_result.ssimulacra2_score.unwrap_or(f64::NAN));
+
+        // Grayscale gradient
+        let gray_grad = generate_horizontal_gradient(64, 64);
+        let gray_grad_result = run_vardct_test(&gray_grad, 64, 64, 1.0, "gray_gradient");
+        eprintln!("Grayscale gradient: SSIM2={:.2}", gray_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+
+        // Colored gradient (same pattern as failing test)
+        let mut color_grad = vec![0u8; 64 * 64 * 3];
+        for y in 0..64 {
+            for x in 0..64 {
+                let val = ((x + y) * 255 / 128) as u8;
+                let idx = (y * 64 + x) * 3;
+                color_grad[idx] = val;
+                color_grad[idx + 1] = val / 2;
+                color_grad[idx + 2] = 255 - val;
+            }
+        }
+        let color_grad_result = run_vardct_test(&color_grad, 64, 64, 1.0, "color_gradient");
+        eprintln!("Colored gradient: SSIM2={:.2}", color_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+
+        // Summary
+        eprintln!("\nSummary:");
+        eprintln!("  Grayscale (R=G=B): solid={:.2}, gradient={:.2}",
+            gray_result.ssimulacra2_score.unwrap_or(f64::NAN),
+            gray_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+        eprintln!("  Colored (R≠G≠B): solid={:.2}, gradient={:.2}",
+            color_result.ssimulacra2_score.unwrap_or(f64::NAN),
+            color_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+    }
+
+    /// Test DCT8 with a solid image (all same value)
+    #[test]
+    #[ignore]
+    fn test_dct8_solid_image() {
+        // Create 16x16 solid gray image
+        let data = generate_solid(16, 16, 128, 128, 128);
+
+        let encoded = encode_lossy_rgb8(&data, 16, 16, 1.0).expect("Encode failed");
+        eprintln!("Encoded size: {} bytes", encoded.len());
+
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("Decode failed");
+
+        let frame = jxl_image.render_frame(0).expect("Render failed");
+        let fb = frame.image_all_channels();
+        let buf = fb.buf();
+        let channels = fb.channels();
+
+        eprintln!("\nPixel comparison (first row, X=0..15):");
+        let mut max_diff = 0i32;
+        for x in 0..16 {
+            let orig_val = 128u8;
+            let idx = x * channels;
+            let dec_r = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let diff = (orig_val as i32 - dec_r as i32).abs();
+            max_diff = max_diff.max(diff);
+            if diff > 10 {
+                eprintln!("  x={}: orig={}, dec={}, diff={}", x, orig_val, dec_r, diff);
+            }
+        }
+        eprintln!("Max diff: {} (should be small for solid)", max_diff);
+        assert!(max_diff < 30, "DCT8 solid image has large errors: max_diff={}", max_diff);
+    }
+
+    /// Debug test to trace tokenization of DCT8 coefficients
+    #[test]
+    #[ignore]
+    fn test_debug_dct8_tokenization() {
+        use crate::color::xyb::srgb_to_xyb;
+        use crate::heuristics::{AcStrategyMap, QuantField};
+        use crate::vardct::transform::transform_and_quantize_with_strategy;
+        use crate::vardct::quantizer::{Quantizer, QuantizerParams};
+        use crate::vardct::tokenize::ZIGZAG_ORDER_8X8;
+
+        // Create 16x16 horizontal gradient (4 DCT8 blocks)
+        let data = generate_horizontal_gradient(16, 16);
+
+        // Convert to XYB
+        let mut xyb = vec![0.0f32; 16 * 16 * 3];
+        for i in 0..(16 * 16) {
+            let (x, y, b) = srgb_to_xyb(data[i * 3] as f32, data[i * 3 + 1] as f32, data[i * 3 + 2] as f32);
+            xyb[i] = x;
+            xyb[16 * 16 + i] = y;
+            xyb[2 * 16 * 16 + i] = b;
+        }
+
+        // Create slices for each channel
+        let x_slice = &xyb[0..16 * 16];
+        let y_slice = &xyb[16 * 16..2 * 16 * 16];
+        let b_slice = &xyb[2 * 16 * 16..3 * 16 * 16];
+        let xyb_data: [&[f32]; 3] = [x_slice, y_slice, b_slice];
+
+        // Setup quantizer
+        let quantizer_params = QuantizerParams::from_distance(1.0);
+        let quantizer = Quantizer::new(quantizer_params.clone());
+        eprintln!("Quantizer: global_scale={}, quant_dc={}", quantizer_params.global_scale, quantizer_params.quant_dc);
+
+        // Create AC strategy map (force DCT8 for all blocks)
+        let ac_strategy_map = AcStrategyMap::new_dct8(2, 2); // 2x2 blocks in 8x8 terms
+
+        // Create quant field
+        let base_quant = quantizer.quant_from_field(5.0).min(255) as u8;
+        let quant_field = QuantField::uniform(2, 2, base_quant);
+        eprintln!("QuantField: get(0,0)={}, base_quant={}", quant_field.get(0, 0), base_quant);
+
+        // Transform and quantize
+        let transformed = transform_and_quantize_with_strategy(
+            &xyb_data,
+            16,
+            16,
+            &quantizer_params,
+            &ac_strategy_map,
+            &quant_field,
+        );
+
+        // Print DC coefficients for each block
+        eprintln!("\nDC coefficients (per block, per channel):");
+        for by in 0..2 {
+            for bx in 0..2 {
+                let block_idx = by * 2 + bx;
+                let dc_x = transformed.dc_coeffs[block_idx * 3];
+                let dc_y = transformed.dc_coeffs[block_idx * 3 + 1];
+                let dc_b = transformed.dc_coeffs[block_idx * 3 + 2];
+                eprintln!("  block({},{}) idx={}: X={}, Y={}, B={}", bx, by, block_idx, dc_x, dc_y, dc_b);
+            }
+        }
+
+        // Print first block's Y channel AC coefficients
+        eprintln!("\nBlock (0,0) Y channel AC coefficients:");
+        let block_0_y_start = transformed.ac_offsets[0 * 3 + 1]; // Block 0, Y channel
+        let block_0_y_end = transformed.ac_offsets[0 * 3 + 2];   // Next channel start
+        let block_0_y_ac = &transformed.ac_coeffs[block_0_y_start..block_0_y_end];
+
+        eprintln!("  AC array slice [{}, {}): {} coefficients", block_0_y_start, block_0_y_end, block_0_y_ac.len());
+        eprintln!("  First 10 AC values (raw array order):");
+        for (i, &v) in block_0_y_ac.iter().take(10).enumerate() {
+            eprintln!("    ac[{}] = {} (position {} in 8x8 block)", i, v, i + 1);
+        }
+
+        // Now trace what tokenization would do
+        eprintln!("\nTokenization trace (first few coefficients):");
+        let covered_blocks = 1; // DCT8
+        let block_dim = 8;
+        let order = &ZIGZAG_ORDER_8X8;
+
+        for k in 0..10 {
+            let coeff_idx = order[k + covered_blocks];
+            let transposed_idx = (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim);
+            let ac_index = transposed_idx - covered_blocks;
+            let coeff = if ac_index < block_0_y_ac.len() {
+                block_0_y_ac[ac_index]
+            } else {
+                0
+            };
+            eprintln!(
+                "  k={}: order[{}]={} -> transpose -> {} -> ac[{}] = {}",
+                k, k + covered_blocks, coeff_idx, transposed_idx, ac_index, coeff
+            );
+        }
+
+        // What the decoder expects (trace decoder logic)
+        eprintln!("\nDecoder perspective (what it places where):");
+        eprintln!("  Decoder reads in natural_order (same as ZIGZAG_ORDER_8X8 for DCT8).");
+        eprintln!("  For k=0: reads token, places at natural_order[1]=1, then transposes to position 8");
+        eprintln!("  For k=1: reads token, places at natural_order[2]=8, then transposes to position 1");
+        eprintln!("  So coefficient sent at k=0 ends up at position 8 (vertical freq)");
+        eprintln!("  And coefficient sent at k=1 ends up at position 1 (horizontal freq)");
+
+        // Verify what we're sending
+        eprintln!("\nVerification:");
+        eprintln!("  For horizontal gradient, we need large value at position 1 (horizontal freq)");
+        eprintln!("  Position 1 in final block comes from k=1, which sends ac[{}] = {}",
+            order[2] - 1, block_0_y_ac.get((order[2] % 8) * 8 + (order[2] / 8) - 1).copied().unwrap_or(0));
+        eprintln!("  Position 8 in final block comes from k=0, which sends ac[{}] = {}",
+            order[1] - 1, block_0_y_ac.get((order[1] % 8) * 8 + (order[1] / 8) - 1).copied().unwrap_or(0));
+    }
+
+    /// Debug test specifically for colored gradients to trace channel encoding
+    #[test]
+    #[ignore]
+    fn test_debug_colored_gradient_channels() {
+        use crate::color::xyb::srgb_to_xyb;
+        use crate::heuristics::{AcStrategyMap, QuantField};
+        use crate::vardct::transform::transform_and_quantize_with_strategy;
+        use crate::vardct::quantizer::{Quantizer, QuantizerParams};
+
+        // Create a simple 8x8 colored gradient
+        let mut rgb_data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                // R varies with x, G varies with y, B is inverse of R
+                rgb_data[idx] = (x * 32) as u8;        // R: 0 to 224
+                rgb_data[idx + 1] = (y * 32) as u8;   // G: 0 to 224
+                rgb_data[idx + 2] = (255 - x * 32) as u8; // B: 255 to 31
+            }
+        }
+        eprintln!("Input RGB for pixel (0,0): R={}, G={}, B={}",
+            rgb_data[0], rgb_data[1], rgb_data[2]);
+        eprintln!("Input RGB for pixel (7,0): R={}, G={}, B={}",
+            rgb_data[7*3], rgb_data[7*3+1], rgb_data[7*3+2]);
+        eprintln!("Input RGB for pixel (0,7): R={}, G={}, B={}",
+            rgb_data[7*8*3], rgb_data[7*8*3+1], rgb_data[7*8*3+2]);
+        eprintln!("Input RGB for pixel (7,7): R={}, G={}, B={}",
+            rgb_data[(7*8+7)*3], rgb_data[(7*8+7)*3+1], rgb_data[(7*8+7)*3+2]);
+
+        // Convert to XYB
+        let mut xyb = vec![0.0f32; 8 * 8 * 3];
+        for i in 0..(8 * 8) {
+            let (x, y, b) = srgb_to_xyb(
+                rgb_data[i * 3] as f32,
+                rgb_data[i * 3 + 1] as f32,
+                rgb_data[i * 3 + 2] as f32
+            );
+            xyb[i] = x;
+            xyb[8 * 8 + i] = y;
+            xyb[2 * 8 * 8 + i] = b;
+        }
+
+        eprintln!("\nXYB for pixel (0,0): X={:.4}, Y={:.4}, B={:.4}",
+            xyb[0], xyb[64], xyb[128]);
+        eprintln!("XYB for pixel (7,0): X={:.4}, Y={:.4}, B={:.4}",
+            xyb[7], xyb[64+7], xyb[128+7]);
+
+        // Create slices for each channel
+        let x_slice = &xyb[0..64];
+        let y_slice = &xyb[64..128];
+        let b_slice = &xyb[128..192];
+        let xyb_data: [&[f32]; 3] = [x_slice, y_slice, b_slice];
+
+        // Setup quantizer
+        let quantizer_params = QuantizerParams::from_distance(1.0);
+        let quantizer = Quantizer::new(quantizer_params.clone());
+
+        // Create AC strategy map (force DCT8)
+        let ac_strategy_map = AcStrategyMap::new_dct8(1, 1); // 1 block
+
+        // Create quant field
+        let base_quant = quantizer.quant_from_field(5.0).min(255) as u8;
+        let quant_field = QuantField::uniform(1, 1, base_quant);
+
+        // Transform and quantize
+        let transformed = transform_and_quantize_with_strategy(
+            &xyb_data,
+            8,
+            8,
+            &quantizer_params,
+            &ac_strategy_map,
+            &quant_field,
+        );
+
+        // Print DC coefficients
+        eprintln!("\nDC coefficients:");
+        eprintln!("  X: {}", transformed.dc_coeffs[0]);
+        eprintln!("  Y: {}", transformed.dc_coeffs[1]);
+        eprintln!("  B: {}", transformed.dc_coeffs[2]);
+
+        // Print AC coefficients for each channel
+        eprintln!("\nAC coefficients per channel (first 10):");
+        for (c, name) in [(0, "X"), (1, "Y"), (2, "B")] {
+            let ac_start = transformed.ac_offsets[c];
+            let ac_end = transformed.ac_offsets[c + 1].min(transformed.ac_coeffs.len());
+            let ac = &transformed.ac_coeffs[ac_start..ac_end];
+            eprintln!("  {} channel ({} coeffs total):", name, ac.len());
+            let non_zero_count = ac.iter().filter(|&&v| v != 0).count();
+            eprintln!("    Non-zero count: {}", non_zero_count);
+            for (i, &v) in ac.iter().take(10).enumerate() {
+                if v != 0 {
+                    eprintln!("    ac[{}] = {}", i, v);
+                }
+            }
+        }
+
+        // Now encode and decode to see the result
+        let encoded = encode_lossy_rgb8(&rgb_data, 8, 8, 1.0).expect("Encode failed");
+        eprintln!("\nEncoded size: {} bytes", encoded.len());
+
+        // Save to disk for debugging with djxl
+        std::fs::write("/tmp/grad_ours.jxl", &encoded).unwrap();
+        eprintln!("Saved to /tmp/grad_ours.jxl");
+
+        // Decode with jxl-oxide
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("Failed to parse JXL");
+        let frame = jxl_image.render_frame(0).expect("Failed to render");
+
+        // Check decoded values
+        let fb = frame.image_all_channels();
+        let buf = fb.buf();
+        let channels = fb.channels() as usize;
+
+        eprintln!("\nDecoded vs Original (first row):");
+        for x in 0..8 {
+            let orig_r = rgb_data[x * 3];
+            let orig_g = rgb_data[x * 3 + 1];
+            let orig_b = rgb_data[x * 3 + 2];
+            let idx = x * channels;
+            let dec_r = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let dec_g = (buf[idx + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let dec_b = (buf[idx + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
+            eprintln!("  x={}: orig=({},{},{}) dec=({},{},{})",
+                x, orig_r, orig_g, orig_b, dec_r, dec_g, dec_b);
+        }
+
+        // Calculate SSIM2 using proper API
+        let original_f32 = rgb8_to_f32(&rgb_data, 8, 8);
+        let decoded_f32: Vec<[f32; 3]> = (0..64)
+            .map(|i| {
+                let idx = i * channels;
+                [buf[idx], buf[idx + 1], buf[idx + 2]]
+            })
+            .collect();
+
+        if let Some(ssim2) = compute_ssim2(&rgb_data, &decoded_f32, 8, 8) {
+            eprintln!("\nSSIM2 score: {:.2}", ssim2);
+        } else {
+            eprintln!("\nCould not compute SSIM2");
+        }
     }
 }

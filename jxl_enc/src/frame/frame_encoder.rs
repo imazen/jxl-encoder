@@ -290,6 +290,7 @@ impl FrameEncoder {
 
         // Transform XYB image data into quantized DCT coefficients
         let quantizer = vardct_encoder.quantizer();
+        let quant_field = vardct_encoder.quant_field();
 
         // Use strategy-aware transform for DCT16/32 support
         let (dc_coeffs, ac_coeffs, tokens, _distributions) = if use_strategy {
@@ -299,6 +300,7 @@ impl FrameEncoder {
                 self.height,
                 quantizer,
                 vardct_encoder.ac_strategy_map(),
+                quant_field,
             );
             crate::trace::debug_eprintln!(
                 "TRANSFORM_STRAT: dc_coeffs={}, ac_coeffs={}",
@@ -318,7 +320,13 @@ impl FrameEncoder {
                 distributions,
             )
         } else {
-            let transformed = transform_xyb_image(xyb_data, self.width, self.height, quantizer);
+            let transformed = transform_xyb_image(
+                xyb_data,
+                self.width,
+                self.height,
+                quantizer,
+                quant_field,
+            );
             crate::trace::debug_eprintln!(
                 "TRANSFORM: dc_coeffs={}, ac_coeffs={}",
                 transformed.dc_coeffs.len(),

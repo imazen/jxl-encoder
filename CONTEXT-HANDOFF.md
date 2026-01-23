@@ -1,11 +1,64 @@
-# Context Handoff - VarDCT Quality Bug Investigation
+# Context Handoff - VarDCT Encoding Investigation
 
 **Created**: Jan 22, 2026
-**Session Focus**: Investigating why real photos encode with 4x larger files and 4x worse quality than libjxl
+**Updated**: Jan 23, 2026
+**Session Focus**: Channel context mismatch fix investigation
 
-## Critical Finding: ROOT CAUSE IDENTIFIED
+## Status: QUALITY TESTS NOW PASSING
 
-### The Bug
+The colored diagonal gradient bug has been **RESOLVED**. All VarDCT quality tests pass with SSIM2 scores of 63-85.
+
+## Fix Applied This Session
+
+### Channel Context Mismatch (FIXED)
+
+**Location**: `jxl_enc/src/vardct/context.rs:140-145`
+
+**Before (buggy):**
+```rust
+let c_idx = if channel < 2 { channel ^ 1 } else { 2 };
+```
+
+**After (fixed):**
+```rust
+let c_idx = channel;  // Use raw channel index - NO remapping here!
+```
+
+**Why this matters**: jxl-oxide decoder uses the raw loop index (0, 1, 2) for context computation (`ch_idx = c * 13 + order_id`). The channel remapping to [1, 0, 2] only affects DATA access, not context computation. Our encoder was incorrectly remapping the channel index BEFORE computing the context, causing decoder to read coefficients with wrong context.
+
+### Tokenization Channel Handling
+
+The tokenization code in `encoder.rs:565-578` correctly handles channels:
+```rust
+const CHANNEL_REMAP: [usize; 3] = [1, 0, 2]; // Y, X, B
+for ctx_idx in 0..3 {
+    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
+    // Context uses ctx_idx (0, 1, 2), NOT the remapped channel
+    let block_context = self.block_ctx_map.block_context(0, qf, order_id, ctx_idx);
+    // Get AC coefficients using c (remapped) for data access
+    let ac_start = transformed.ac_offsets[block_idx * 3 + c];
+    ...
+}
+```
+
+## Test Results
+
+### Quality Enforcement Test (PASSING)
+```bash
+cargo test -p jxl_enc test_vardct_quality_enforcement -- --ignored --nocapture
+```
+- 64x64 d=1: SSIM2=73.29 (min=50) [OK]
+- 128x128 d=1: SSIM2=63.66 (min=50) [OK]
+- 256x256 d=1: SSIM2=77.20 (min=50) [OK]
+- 300x300 d=1: SSIM2=85.81 (min=50) [OK]
+
+### Gradient Tests (PASSING)
+```bash
+cargo test -p jxl_enc test_vardct_gradients -- --nocapture
+```
+- Horizontal, vertical, diagonal, and radial gradients all pass
+
+## Known Bug: raw_quant Hardcoded to 1 (NOT YET FIXED)
 
 **Location**: `jxl_enc/src/vardct/transform.rs:60`
 
@@ -17,163 +70,64 @@ let raw_quant = 1i32;  // Hardcoded!
 let raw_quant = quant_field.get(bx, by) as i32;  // Use per-block values
 ```
 
-The `QuantField` is computed with adaptive per-block quantization values but **never used** during actual coefficient quantization.
+**Impact**:
+- Real photos encode 4x larger with 4x worse quality than libjxl
+- File size (1507x2048 photo, d=1.0): Our 760KB vs libjxl 184KB
+- SSIM2: Our 23.5 vs libjxl 82.6
+- Bits per coefficient: Our 0.65 vs libjxl 0.16
 
-### Why This Matters
+**Synthetic tests still pass** because they have less fine detail that survives even with wrong quantization.
 
-For distance=1.0 with `global_scale=8813`:
+## Debug Output Still Present
 
-| Parameter | Current (Wrong) | Expected (Correct) |
-|-----------|-----------------|-------------------|
-| raw_quant | 1 | ~38 |
-| qac | 0.134 | 5.11 |
-| Zeroing threshold (HF) | 0.019 | 0.0005 |
+Debug eprintln! statements exist in:
+- `jxl_enc/src/vardct/encoder.rs:622-628` - Tokenization trace for first block
+- `jxl_enc/src/vardct/encoder.rs:696-698` - Per-coefficient trace
+- `jxl_enc/src/vardct/transform.rs:246-255` - Transform strategy debug
 
-**Effect**: With `raw_quant=1`, the zeroing threshold is 38x higher, causing fine image detail to be discarded. This explains the blurry 8x8 blocks and poor SSIM2 scores.
+These can be removed after confirming stability.
 
-### Quality Metrics
+## Code Architecture Summary
 
-| Metric | Our Encoder | libjxl (cjxl) |
-|--------|-------------|---------------|
-| File size (1507x2048 photo, d=1.0) | 760KB | 184KB |
-| SSIM2 | 23.5 | 82.6 |
-| Bits per coefficient | 0.65 | 0.16 |
+### Context Flow
+1. `tokenize_ac_with_strategy()` iterates ctx_idx=0,1,2
+2. Remaps to data channel: c = [1,0,2][ctx_idx] (Y, X, B)
+3. Calls `block_context(lf_idx, qf, order_id, ctx_idx)` with RAW ctx_idx
+4. `block_context()` uses ctx_idx directly (no remapping) to compute context
+5. Context used for histogram building and token writing
 
-## Investigation Path (What Was Checked)
+### Default Context Map
+- 15 block contexts (DEFAULT_NUM_CONTEXTS)
+- 37 non-zero buckets (NON_ZERO_BUCKETS)
+- 458 zero-density contexts (ZERO_DENSITY_CONTEXT_COUNT)
+- Total AC contexts: 15 * (37 + 458) = 7425
 
-### 1. Quantization Formula Verification
-- **Verified CORRECT**: `quantized = inv_dequant_matrix[i] * qac * coeff`
-- Matches libjxl's `QuantizeBlockAC` in `enc_group.cc:94-98`
-- Our weights (560 for Y DC, 196 for Y HF) match libjxl's `InvDequantMatrix`
+## Files Modified This Session
 
-### 2. Global Scale Computation
-- **Verified CORRECT**: `global_scale ≈ 8813` for distance=1.0
-- Computed from: `GLOBAL_SCALE_DENOM * quant_ac / quant_field_target`
-- Where `quant_ac = 0.765 / distance` and `quant_field_target = 5.0`
-
-### 3. Per-Block Quant Field
-- **EXISTS but UNUSED**: `QuantField` struct in `heuristics/adaptive_quant.rs`
-- Stores u8 values (1-255) per block based on variance analysis
-- `base_quant ≈ 10` for distance=1.0
-- `VarDctEncoder` computes it but `transform_and_quantize` ignores it
-
-### 4. Threshold Value
-- **Verified CLOSE**: Our `DEFAULT_THRESHOLD = 0.5` vs libjxl's `0.58`
-- This is NOT the root cause (small difference)
-
-### 5. Entropy Coding Efficiency
-- **SECONDARY ISSUE**: 0.65 bits/coeff vs expected 0.1-0.3
-- Likely caused by unusual coefficient distribution from wrong raw_quant
-- May have additional ANS encoding issues
-
-## Key Code Locations
-
-### Quantization
-- `jxl_enc/src/vardct/transform.rs:60` - **BUG LOCATION** (raw_quant=1)
-- `jxl_enc/src/vardct/enc_coeff.rs:150` - Quantization formula (correct)
-- `jxl_enc/src/vardct/quantizer.rs:64-92` - QuantizerParams::from_distance (correct)
-
-### Quant Field (computed but unused)
-- `jxl_enc/src/heuristics/adaptive_quant.rs:10` - QuantField struct
-- `jxl_enc/src/heuristics/adaptive_quant.rs:40` - compute_adaptive()
-- `jxl_enc/src/vardct/encoder.rs:135` - Where it's computed
-- `jxl_enc/src/vardct/encoder.rs:1202` - Only used for metadata, not quantization!
-
-### libjxl Reference
-- `~/work/jxl-efforts/libjxl/lib/jxl/enc_group.cc:63-64` - qac computation
-- `~/work/jxl-efforts/libjxl/lib/jxl/enc_group.cc:94-98` - quantization loop
-- `~/work/jxl-efforts/libjxl/lib/jxl/quantizer.cc:84` - raw_quant from quant_field
-
-## Fix Required
-
-### Step 1: Update transform_and_quantize signature
-```rust
-pub fn transform_and_quantize(
-    xyb_data: &[&[f32]; 3],
-    width: usize,
-    height: usize,
-    quantizer: &QuantizerParams,
-    quant_field: &QuantField,  // ADD THIS
-) -> TransformedData {
-```
-
-### Step 2: Use per-block quant values
-```rust
-// At line 60, REPLACE:
-let raw_quant = 1i32;
-
-// WITH:
-let raw_quant = quant_field.get(bx, by) as i32;
-```
-
-### Step 3: Update all callers
-- `VarDctEncoder::encode_frame()` needs to pass `&self.quant_field`
-- Similar fix needed in `transform_and_quantize_with_strategy()`
-
-### Step 4: Verify
-```bash
-cargo test test_save_broken_image -- --ignored --nocapture
-# Then visually compare /tmp/broken_decoded.png with original
-# SSIM2 should improve from 23 to >70
-```
-
-## Test Commands
-
-```bash
-# Quality enforcement test (synthetic images)
-cargo test test_vardct_quality_enforcement -- --ignored --nocapture
-
-# Real photo quality test
-cargo test test_save_broken_image -- --ignored --nocapture
-# Output: /tmp/broken.jxl, /tmp/broken_decoded.png
-
-# Compare with libjxl
-~/work/jxl-efforts/libjxl/build/tools/cjxl \
-  ~/work/codec-corpus/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png \
-  /tmp/reference_d1.jxl -d 1.0
-~/work/jxl-efforts/libjxl/build/tools/djxl /tmp/reference_d1.jxl /tmp/reference_d1.png
-
-# SSIM2 comparison (if fast-ssim2 available)
-ssim2 original.png decoded.png
-```
-
-## Python Analysis Scripts (in /tmp/)
-
-- `/tmp/quant_formula.py` - Compares our formula vs potential alternatives
-- `/tmp/check_weights.py` - Analyzes DCT8 perceptual weights and thresholds
-- `/tmp/extract_quant.py` - Reads quantizer params from JXL files
-
-## Commits Made This Session
-
-1. `f699e9b` - docs: document raw_quant=1 bug as root cause of quality gap
-
-## Previous Session Summary
-
-The previous session fixed three bugs that caused VarDCT quality to go from SSIM2 -1000 to +90:
-1. Transpose bug in `tokenize_ac_with_strategy`
-2. Wrong LLF-to-DC scaling in `llf_to_dc_dct16`
-3. DC quantization missing divide-by-8
-
-These fixes made synthetic tests pass (SSIM2 85-95), but real photos still had issues (SSIM2 23).
+1. `/home/lilith/work/jxl-encoder-rs/jxl_enc/src/vardct/context.rs` - Removed channel remapping in `block_context()`
 
 ## Next Steps
 
-1. **Implement the fix** - Pass QuantField to transform functions, use per-block raw_quant
-2. **Verify quality improves** - SSIM2 should go from 23 to >70 for real photos
-3. **Check file size** - Should decrease from 760KB closer to libjxl's 184KB
-4. **If still large**: Investigate ANS entropy coding efficiency separately
+1. **Remove debug output** - Clean up eprintln! statements
+2. **Fix raw_quant bug** - Use `quant_field.get(bx, by)` instead of hardcoded 1
+3. **Commit the fix** - If not already committed
+4. **Run full test suite** - `cargo test -p jxl_enc`
 
-## User Messages This Session
+## Commands for Verification
 
-1. "Please continue the conversation from where we left it off without asking the user any further questions. Continue with the last task that you were asked to work on."
-2. "write full handoff"
+```bash
+# Run quality enforcement test
+cargo test -p jxl_enc test_vardct_quality_enforcement -- --ignored --nocapture
 
-## Important Notes
+# Run all gradient tests
+cargo test -p jxl_enc test_vardct_gradients -- --nocapture
 
-- The QuantField EXISTS and is COMPUTED correctly - it's just not USED
-- This bug explains why synthetic tests pass but real photos fail
-- Synthetic images have less fine detail, so losing it matters less
-- The fix is straightforward but touches multiple functions
+# Run all VarDCT tests
+cargo test -p jxl_enc vardct
+
+# Check for warnings
+cargo clippy -p jxl_enc -- -D warnings
+```
 
 ---
 **DELETE THIS FILE** after loading into new session.
