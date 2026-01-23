@@ -267,6 +267,27 @@ Key files to port from `libjxl/lib/jxl/`:
 **CRITICAL**: All roundtrip validation tests MUST include jxl-rs. Do not create tests
 that only use jxl-oxide or only use djxl - always include jxl-rs as well.
 
+### CRITICAL: No Synthetic-Only Quality Tests
+
+**Synthetic images (gradients, solid colors, checkerboards) mask real bugs.**
+
+The `raw_quant=1` bug is a perfect example:
+- Synthetic tests: SSIM2 63-85 (PASSING)
+- Real photos: SSIM2 23 (4x worse than libjxl)
+
+**Rules:**
+1. **Quality validation tests MUST use real photos** from `~/work/codec-corpus/`
+2. Synthetic images are OK for unit tests (DCT correctness, bit-exactness)
+3. Synthetic images are OK for decode-only tests (does it parse without error?)
+4. **Quality thresholds MUST be validated on real photos**, not synthetic images
+5. When a synthetic test passes but real photos fail, the synthetic test is LYING
+
+**Mandatory quality test:**
+```bash
+cargo test test_save_broken_image -- --ignored --nocapture
+# Must produce SSIM2 > 70 on real photo (currently broken due to raw_quant=1)
+```
+
 ## CRITICAL: Patterns of Mistakes to Avoid
 
 **MANDATORY READING before making any changes to this codebase.**
