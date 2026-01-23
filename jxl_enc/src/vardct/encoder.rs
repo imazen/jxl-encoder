@@ -860,6 +860,224 @@ impl VarDctEncoder {
         tokens
     }
 
+    /// Tokenize AC coefficients for a specific group, using strategy-aware offsets.
+    ///
+    /// This version correctly handles variable-size DCT blocks (DCT8, DCT16, DCT32)
+    /// by using the ac_offsets from TransformedDataWithStrategy.
+    ///
+    /// Returns tokens only for blocks within the specified group.
+    pub fn tokenize_ac_with_strategy_for_group(
+        &self,
+        transformed: &TransformedDataWithStrategy,
+        group_idx: usize,
+    ) -> Vec<Token> {
+        let blocks_x = self.num_blocks_x();
+        let blocks_y = self.num_blocks_y();
+        let (start_bx, start_by, end_bx, end_by) = self.group_block_range(group_idx);
+
+        let group_blocks_x = end_bx - start_bx;
+        let num_group_blocks = group_blocks_x * (end_by - start_by);
+
+        let mut tokens = Vec::with_capacity(num_group_blocks * 64);
+
+        // Track which blocks have been processed (for DCT16/32)
+        let mut processed = vec![vec![false; blocks_x]; blocks_y];
+
+        // Track non-zeros per column per channel (for prediction, matching decoder)
+        let mut nz_grid: [Vec<u32>; 3] = [
+            vec![0; group_blocks_x],
+            vec![0; group_blocks_x],
+            vec![0; group_blocks_x],
+        ];
+
+        // Generate natural orders for different block sizes
+        let order_8 = ZIGZAG_ORDER_8X8.to_vec();
+        let order_16 = generate_natural_order(2, 2);
+        let order_32 = generate_natural_order(4, 4);
+
+        // Debug: count transforms processed for first group
+        let debug_group = group_idx == 0;
+        let mut debug_block_count = 0;
+
+        for by in start_by..end_by {
+            let local_by = by - start_by;
+            for bx in start_bx..end_bx {
+                let local_bx = bx - start_bx;
+                let block_idx = by * blocks_x + bx;
+
+                if processed[by][bx] {
+                    continue;
+                }
+
+                let strategy = transformed.strategies.get(bx, by);
+                let (cx, cy) = strategy.covered_blocks();
+
+                if debug_group && debug_block_count < 3 {
+                    eprintln!(
+                        "DEBUG group0 block({},{}): strategy={:?}, coverage=({},{}), block_idx={}",
+                        bx, by, strategy, cx, cy, block_idx
+                    );
+                    // Check ac_offsets for this block
+                    for c in 0..3 {
+                        let ac_start = transformed.ac_offsets[block_idx * 3 + c];
+                        let ac_end = if block_idx * 3 + c + 1 < transformed.ac_offsets.len() {
+                            transformed.ac_offsets[block_idx * 3 + c + 1]
+                        } else {
+                            transformed.ac_coeffs.len()
+                        };
+                        eprintln!(
+                            "  ch{}: ac_offsets[{}..{}] len={}",
+                            c, ac_start, ac_end, ac_end - ac_start
+                        );
+                    }
+                    debug_block_count += 1;
+                }
+
+                // Clamp to image bounds
+                let actual_cx = cx.min(blocks_x - bx);
+                let actual_cy = cy.min(blocks_y - by);
+
+                // Mark all covered blocks as processed
+                for dy in 0..actual_cy {
+                    for dx in 0..actual_cx {
+                        if by + dy < blocks_y && bx + dx < blocks_x {
+                            processed[by + dy][bx + dx] = true;
+                        }
+                    }
+                }
+
+                let order_id = strategy.order_id();
+                let log2_blocks = strategy.log2_covered_blocks() as usize;
+                let order: &[usize] = match (cx, cy) {
+                    (4, 4) => &order_32,
+                    (2, 2) => &order_16,
+                    _ => &order_8,
+                };
+
+                let covered_blocks = cx * cy;
+                let qf = self.quantizer.quant_dc;
+
+                // Process channels matching decoder order
+                const CHANNEL_REMAP: [usize; 3] = [1, 0, 2];
+                for ctx_idx in 0..3 {
+                    let c = CHANNEL_REMAP[ctx_idx];
+                    let block_context = self.block_ctx_map.block_context(0, qf, order_id, ctx_idx);
+
+                    // Get AC coefficients using offsets
+                    let ac_start = transformed.ac_offsets[block_idx * 3 + c];
+                    let ac_end = if block_idx * 3 + c + 1 < transformed.ac_offsets.len() {
+                        transformed.ac_offsets[block_idx * 3 + c + 1]
+                    } else {
+                        transformed.ac_coeffs.len()
+                    };
+                    let block_ac = &transformed.ac_coeffs[ac_start..ac_end];
+
+                    let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
+
+                    // Compute predicted non-zeros from neighbors (local coords for group)
+                    let predicted = if local_by == 0 {
+                        if local_bx == 0 {
+                            32usize
+                        } else {
+                            nz_grid[c][local_bx - 1] as usize
+                        }
+                    } else if local_bx == 0 {
+                        nz_grid[c][local_bx] as usize
+                    } else {
+                        ((nz_grid[c][local_bx] + nz_grid[c][local_bx - 1] + 1) >> 1) as usize
+                    };
+
+                    let nz_ctx =
+                        self.block_ctx_map.nonzero_context(predicted, block_context) as u32;
+                    tokens.push(Token::new(nz_ctx, nzeros as u32));
+
+                    // Store actual non-zeros for future predictions
+                    let nz_val = nzeros as u32;
+                    for dx in 0..cx {
+                        if local_bx + dx < group_blocks_x {
+                            nz_grid[c][local_bx + dx] = nz_val;
+                        }
+                    }
+
+                    if nzeros > 0 {
+                        let histo_offset = self
+                            .block_ctx_map
+                            .zero_density_context_offset(block_context);
+
+                        let mut nzeros_left = nzeros;
+                        let num_8x8_blocks = covered_blocks;
+                        let mut prev = if nzeros <= num_8x8_blocks * 4 { 1 } else { 0 };
+
+                        // Debug: trace first few coefficients for first DCT16 block
+                        let debug_this_block = debug_group && debug_block_count <= 3 && cx > 1 && ctx_idx == 0;
+
+                        for k in 0..block_ac.len() {
+                            if nzeros_left == 0 {
+                                break;
+                            }
+
+                            let coeff_idx = if k + covered_blocks < order.len() {
+                                order[k + covered_blocks]
+                            } else {
+                                k + covered_blocks
+                            };
+
+                            // Pre-transpose for square blocks
+                            let block_dim = cx * 8;
+                            let transposed_coeff_idx = if cx == cy {
+                                (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim)
+                            } else {
+                                coeff_idx
+                            };
+
+                            // Map from full-block position to AC array index
+                            // (same formula as tokenize_ac_with_strategy)
+                            let ac_index = if transposed_coeff_idx >= covered_blocks {
+                                transposed_coeff_idx - covered_blocks
+                            } else {
+                                // LLF position - fallback to k
+                                k
+                            };
+
+                            let coeff = if ac_index < block_ac.len() {
+                                block_ac[ac_index]
+                            } else {
+                                0
+                            };
+
+                            if debug_this_block && k < 5 {
+                                eprintln!(
+                                    "  DCT16 k={}: coeff_idx={} transposed={} ac_index={} coeff={}",
+                                    k, coeff_idx, transposed_coeff_idx, ac_index, coeff
+                                );
+                            }
+
+                            let ctx = histo_offset
+                                + super::context::zero_density_context(
+                                    nzeros_left,
+                                    k,
+                                    log2_blocks,
+                                    prev,
+                                );
+
+                            let u_coeff = pack_signed(coeff);
+                            tokens.push(Token::new(ctx as u32, u_coeff));
+
+                            if coeff != 0 {
+                                prev = 1;
+                                nzeros_left -= 1;
+                            } else {
+                                prev = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        tokens
+    }
+
     /// Write the HF Global section.
     ///
     /// Contains: DequantMatrices, num_histograms, coeff_orders, histograms.
@@ -1465,14 +1683,17 @@ impl VarDctEncoder {
     ///
     /// This version uses the context map to select the appropriate
     /// Huffman code for each token based on its context's cluster.
+    ///
+    /// Note: histograms_id is only written when num_hf_presets > 1.
+    /// We always use 1 preset, so histograms_id is never written.
     pub fn write_pass_group_clustered(
         &self,
         tokens: &[Token],
         histogram_set: &ClusteredHistogramSet,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // For multi-group: histograms_id would be written here
-        // For single group, it's implicit (id = 0)
+        // Note: histograms_id would be written here ONLY if num_hf_presets > 1.
+        // We always use 1 preset, so skip it.
 
         if tokens.is_empty() {
             return Ok(());
