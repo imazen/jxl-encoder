@@ -3216,4 +3216,83 @@ mod dual_decoder_butteraugli_tests {
         println!("  display {} &", original_path);
         println!("  display /tmp/broken_decoded.png &");
     }
+
+    /// Test quality on frymire.png - a real photo that catches bugs synthetic images miss.
+    ///
+    /// This test is MANDATORY for quality validation. Synthetic images mask bugs like
+    /// raw_quant=1 where synthetic tests show SSIM2 63-85 but real photos get SSIM2 23.
+    #[test]
+    #[ignore = "Real photo quality test - run with: cargo test test_frymire_quality -- --ignored --nocapture"]
+    fn test_frymire_quality() {
+        // frymire.png is stored in jxl_enc/tests/images/
+        let frymire_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/frymire.png");
+
+        let Some((original, width, height)) = load_png(frymire_path) else {
+            panic!("Failed to load frymire.png from {}", frymire_path);
+        };
+
+        println!("Loaded frymire.png: {}x{}", width, height);
+
+        // Encode at distance 1.0
+        let encoded = encode_lossy_rgb8(&original, width, height, 1.0).expect("Encode failed");
+        println!("Encoded: {} bytes ({:.2} bpp)", encoded.len(),
+            encoded.len() as f64 * 8.0 / (width * height) as f64);
+
+        // Decode with jxl-oxide
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("JXL parse failed");
+
+        let frame = jxl_image.render_frame(0).expect("Render failed");
+        let fb = frame.image_all_channels();
+        let buf = fb.buf();
+        let channels = fb.channels();
+
+        // Convert to RGB8 for SSIM2
+        let mut decoded = vec![0u8; width * height * 3];
+        for i in 0..(width * height) {
+            let idx = i * channels;
+            decoded[i * 3] = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
+            decoded[i * 3 + 1] = (buf[idx + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
+            decoded[i * 3 + 2] = (buf[idx + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+
+        // Compute SSIM2 using fast-ssim2
+        use fast_ssim2::{Rgb8Image, Ssimulacra2};
+
+        let original_img = Rgb8Image::new(original.clone(), width, height)
+            .expect("Original image creation failed");
+        let decoded_img = Rgb8Image::new(decoded.clone(), width, height)
+            .expect("Decoded image creation failed");
+
+        let ssim2 = Ssimulacra2::compute(&original_img, &decoded_img);
+        println!("SSIM2: {:.2}", ssim2);
+
+        // libjxl at d=1.0 achieves SSIM2 ~80+ on real photos
+        // Our target is SSIM2 > 70 (accounting for implementation differences)
+        const MIN_SSIM2: f64 = 70.0;
+
+        if ssim2 < MIN_SSIM2 {
+            // Save files for debugging
+            std::fs::write("/tmp/frymire.jxl", &encoded).ok();
+            image::save_buffer(
+                "/tmp/frymire_decoded.png",
+                &decoded,
+                width as u32,
+                height as u32,
+                image::ColorType::Rgb8,
+            ).ok();
+            println!("\nSaved /tmp/frymire.jxl and /tmp/frymire_decoded.png for debugging");
+        }
+
+        assert!(
+            ssim2 >= MIN_SSIM2,
+            "SSIM2 {:.2} below minimum {:.2} - real photo quality broken!\n\
+             This test catches bugs that synthetic images miss (like raw_quant=1).\n\
+             See CLAUDE.md 'Known Bugs' section.",
+            ssim2, MIN_SSIM2
+        );
+
+        println!("PASS: SSIM2 {:.2} >= {:.2}", ssim2, MIN_SSIM2);
+    }
 }
