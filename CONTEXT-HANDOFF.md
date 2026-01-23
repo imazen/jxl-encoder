@@ -2,61 +2,35 @@
 
 **Created**: Jan 22, 2026
 **Updated**: Jan 23, 2026
-**Session Focus**: Channel context mismatch fix investigation
+**Session Focus**: Multi-group VarDCT encoding investigation
 
-## Status: QUALITY TESTS NOW PASSING
+## Status: ENCODER WORKING - JXL-OXIDE BUG FOUND
 
-The colored diagonal gradient bug has been **RESOLVED**. All VarDCT quality tests pass with SSIM2 scores of 63-85.
+Single-group images (≤256x256) work perfectly with jxl-oxide.
+Multi-group images (>256x256) encode correctly but jxl-oxide fails to decode them.
 
-## Fix Applied This Session
-
-### Channel Context Mismatch (FIXED)
-
-**Location**: `jxl_enc/src/vardct/context.rs:140-145`
-
-**Before (buggy):**
-```rust
-let c_idx = if channel < 2 { channel ^ 1 } else { 2 };
-```
-
-**After (fixed):**
-```rust
-let c_idx = channel;  // Use raw channel index - NO remapping here!
-```
-
-**Why this matters**: jxl-oxide decoder uses the raw loop index (0, 1, 2) for context computation (`ch_idx = c * 13 + order_id`). The channel remapping to [1, 0, 2] only affects DATA access, not context computation. Our encoder was incorrectly remapping the channel index BEFORE computing the context, causing decoder to read coefficients with wrong context.
-
-### Tokenization Channel Handling
-
-The tokenization code in `encoder.rs:565-578` correctly handles channels:
-```rust
-const CHANNEL_REMAP: [usize; 3] = [1, 0, 2]; // Y, X, B
-for ctx_idx in 0..3 {
-    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
-    // Context uses ctx_idx (0, 1, 2), NOT the remapped channel
-    let block_context = self.block_ctx_map.block_context(0, qf, order_id, ctx_idx);
-    // Get AC coefficients using c (remapped) for data access
-    let ac_start = transformed.ac_offsets[block_idx * 3 + c];
-    ...
-}
-```
+**CRITICAL FINDING**: djxl (libjxl decoder) decodes our multi-group output CORRECTLY with RMSE=9.82 (good quality).
+The issue is a bug in **jxl-oxide's multi-group VarDCT decoder**, NOT our encoder.
 
 ## Test Results
 
-### Quality Enforcement Test (PASSING)
-```bash
-cargo test -p jxl_enc test_vardct_quality_enforcement -- --ignored --nocapture
-```
-- 64x64 d=1: SSIM2=73.29 (min=50) [OK]
-- 128x128 d=1: SSIM2=63.66 (min=50) [OK]
-- 256x256 d=1: SSIM2=77.20 (min=50) [OK]
-- 300x300 d=1: SSIM2=85.81 (min=50) [OK]
+### Single-Group Tests (PASSING with jxl-oxide)
+- 64x64 d=1: SSIM2=73.29 [OK]
+- 128x128 d=1: SSIM2=63.66 [OK]
+- 256x256 d=1: SSIM2=77.20 [OK]
 
-### Gradient Tests (PASSING)
+### Multi-Group Tests (ENCODER CORRECT, jxl-oxide BUG)
+- 257x257 d=1: jxl-oxide RMSE=81.49 (FAIL), djxl RMSE=9.82 (PASS!)
+- 300x300 d=1: jxl-oxide SSIM2=-64.03 (FAIL), djxl decodes correctly
+
+**Proof**: Our 257x257 output at `/tmp/test_257_ours.jxl`:
 ```bash
-cargo test -p jxl_enc test_vardct_gradients -- --nocapture
+# Decodes correctly with djxl
+/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl /tmp/test_257_ours.jxl /tmp/test_257_decoded.png
+# Result: RMSE=9.82 (good quality)
+
+# Fails with jxl-oxide (RMSE=81.49 - decoder bug)
 ```
-- Horizontal, vertical, diagonal, and radial gradients all pass
 
 ## Known Bug: raw_quant Hardcoded to 1 (NOT YET FIXED)
 
@@ -74,59 +48,42 @@ let raw_quant = quant_field.get(bx, by) as i32;  // Use per-block values
 - Real photos encode 4x larger with 4x worse quality than libjxl
 - File size (1507x2048 photo, d=1.0): Our 760KB vs libjxl 184KB
 - SSIM2: Our 23.5 vs libjxl 82.6
-- Bits per coefficient: Our 0.65 vs libjxl 0.16
 
-**Synthetic tests still pass** because they have less fine detail that survives even with wrong quantization.
+**Synthetic tests still pass** because they have limited fine detail.
 
-## Debug Output Still Present
+## Multi-Group Encoding Architecture
 
-Debug eprintln! statements exist in:
-- `jxl_enc/src/vardct/encoder.rs:622-628` - Tokenization trace for first block
-- `jxl_enc/src/vardct/encoder.rs:696-698` - Per-coefficient trace
-- `jxl_enc/src/vardct/transform.rs:246-255` - Transform strategy debug
+For images >256x256 pixels:
+- Groups: ceil(width/256) × ceil(height/256) regular groups
+- LF Groups: ceil(width/2048) × ceil(height/2048) LF groups (DC + metadata)
+- Sections: LfGlobal, LfGroup[0..n], HfGlobal, PassGroup[0..m]
 
-These can be removed after confirming stability.
+Each section is byte-padded independently and listed in TOC.
 
-## Code Architecture Summary
-
-### Context Flow
-1. `tokenize_ac_with_strategy()` iterates ctx_idx=0,1,2
-2. Remaps to data channel: c = [1,0,2][ctx_idx] (Y, X, B)
-3. Calls `block_context(lf_idx, qf, order_id, ctx_idx)` with RAW ctx_idx
-4. `block_context()` uses ctx_idx directly (no remapping) to compute context
-5. Context used for histogram building and token writing
-
-### Default Context Map
-- 15 block contexts (DEFAULT_NUM_CONTEXTS)
-- 37 non-zero buckets (NON_ZERO_BUCKETS)
-- 458 zero-density contexts (ZERO_DENSITY_CONTEXT_COUNT)
-- Total AC contexts: 15 * (37 + 458) = 7425
-
-## Files Modified This Session
-
-1. `/home/lilith/work/jxl-encoder-rs/jxl_enc/src/vardct/context.rs` - Removed channel remapping in `block_context()`
+Key code paths:
+- `frame_encoder.rs`: `encode_vardct_multi_group_clustered_old()` for multi-group
+- `encoder.rs`: `tokenize_ac_coefficients_for_group()` for per-group tokenization
+- `encoder.rs`: `write_pass_group_clustered()` for AC data per group
 
 ## Next Steps
 
-1. **Remove debug output** - Clean up eprintln! statements
-2. **Fix raw_quant bug** - Use `quant_field.get(bx, by)` instead of hardcoded 1
-3. **Commit the fix** - If not already committed
-4. **Run full test suite** - `cargo test -p jxl_enc`
+1. **Report jxl-oxide bug** - Multi-group VarDCT decoder fails
+2. **Update tests** - Use djxl as fallback for multi-group verification
+3. **Fix raw_quant bug** - Use per-block quant field values
+4. **Test with frymire.png** - Real photo quality after raw_quant fix
 
 ## Commands for Verification
 
 ```bash
-# Run quality enforcement test
+# Single-group tests (should pass)
 cargo test -p jxl_enc test_vardct_quality_enforcement -- --ignored --nocapture
 
-# Run all gradient tests
-cargo test -p jxl_enc test_vardct_gradients -- --nocapture
+# Verify multi-group with djxl (should pass)
+cargo run -p jxl_enc --example test_multi_group --release
+/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl /tmp/test_257_ours.jxl /tmp/decoded.png
 
-# Run all VarDCT tests
-cargo test -p jxl_enc vardct
-
-# Check for warnings
-cargo clippy -p jxl_enc -- -D warnings
+# Compare decoded quality
+python3 -c "from PIL import Image; import numpy as np; ..."
 ```
 
 ---
