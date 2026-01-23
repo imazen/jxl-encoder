@@ -16,18 +16,18 @@ pub const NON_ZERO_BUCKETS: usize = 37;
 /// Number of zero-density contexts per block context.
 pub const ZERO_DENSITY_CONTEXT_COUNT: usize = 458;
 
-/// Coefficient frequency context lookup.
-/// Maps coefficient index (0-62) to context bucket.
-/// 63 entries matching the decoder's table.
+/// Coefficient frequency context lookup (0-based indexing).
+/// Maps coefficient index (idx >> log_num_blocks) to context bucket.
+/// 63 entries, matching jxl-oxide decoder's table.
 pub const COEFF_FREQ_CONTEXT: [usize; 63] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20,
     20, 21, 21, 22, 22, 23, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 25, 26, 26, 26, 26, 27, 27, 27,
     27, 28, 28, 28, 28, 29, 29, 29, 29, 30, 30, 30, 30,
 ];
 
-/// Coefficient non-zero count context lookup.
-/// Maps (non_zeros - 1) to context bucket (matching decoder).
-/// 63 entries for indices 0-62 (when non_zeros is 1-63).
+/// Coefficient non-zero count context lookup (0-based indexing).
+/// Maps ((non_zeros - 1) >> log_num_blocks) to context bucket.
+/// 63 entries, matching jxl-oxide decoder's table.
 pub const COEFF_NUM_NONZERO_CONTEXT: [usize; 63] = [
     0, 31, 62, 62, 93, 93, 93, 93, 123, 123, 123, 123, 152, 152, 152, 152, 152, 152, 152, 152, 180,
     180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 180, 206, 206, 206, 206, 206, 206, 206, 206,
@@ -39,27 +39,30 @@ pub const COEFF_NUM_NONZERO_CONTEXT: [usize; 63] = [
 ///
 /// # Arguments
 /// * `nonzeros_left` - Number of non-zero coefficients remaining (must be >= 1)
-/// * `k` - Coefficient index in natural order (1-based)
+/// * `idx` - Loop index (0-based, iterating over AC coefficients)
 /// * `log_num_blocks` - Log2 of number of 8x8 blocks in transform
-/// * `prev` - Previous coefficient's zero flag (0 or 1)
+/// * `prev` - Previous coefficient's non-zero flag (0 or 1)
 ///
-/// Note: The decoder uses (non_zeros - 1) >> log_num_blocks for the context.
-/// We match this by computing (nonzeros_left - 1) >> log_num_blocks.
+/// Uses (non_zeros - 1) >> log_num_blocks for normalization, matching jxl-oxide decoder.
+/// Uses idx >> log_num_blocks for coefficient position (0-based).
 #[inline]
 pub fn zero_density_context(
     nonzeros_left: usize,
-    k: usize,
+    idx: usize,
     log_num_blocks: usize,
     prev: usize,
 ) -> usize {
-    // Match decoder: uses (non_zeros - 1) >> num_blocks_log
-    // nonzeros_left is guaranteed to be >= 1 here
     debug_assert!(nonzeros_left >= 1, "nonzeros_left must be >= 1");
-    let nonzeros_idx = (nonzeros_left - 1) >> log_num_blocks;
-    let k_norm = k >> log_num_blocks;
-    // Clamp to valid indices: 0-62 for both nz and k
-    let nz = nonzeros_idx.min(62);
-    let kn = k_norm.min(62);
+
+    // jxl-oxide formula: (non_zeros - 1) >> log_num_blocks
+    // This gives 0-based index into the table
+    let non_zeros_idx = (nonzeros_left - 1) >> log_num_blocks;
+    let idx_norm = idx >> log_num_blocks;
+
+    // Clamp to valid indices: 0-62 (table has 63 entries)
+    let nz = non_zeros_idx.min(62);
+    let kn = idx_norm.min(62);
+
     (COEFF_NUM_NONZERO_CONTEXT[nz] + COEFF_FREQ_CONTEXT[kn]) * 2 + prev
 }
 
@@ -123,7 +126,9 @@ impl BlockContextMap {
     /// * `lf_idx` - LF bucket index (from LF thresholds)
     /// * `qf` - Quant field value for this block
     /// * `order_id` - Order ID (from AC strategy)
-    /// * `channel` - Channel (0=Y, 1=X, 2=B)
+    /// * `channel` - Channel index in iteration order (0, 1, 2).
+    ///               Note: jxl-oxide uses raw loop index for context (not the remapped channel).
+    ///               The caller handles channel remapping for data access separately.
     pub fn block_context(&self, lf_idx: usize, qf: u32, order_id: usize, channel: usize) -> usize {
         // Find QF bucket
         let mut qf_idx = 0;
@@ -133,10 +138,12 @@ impl BlockContextMap {
             }
         }
 
-        // Channel remapping: Y=1, X=0, B=2 in encoding order
-        let c_idx = if channel < 2 { channel ^ 1 } else { 2 };
+        // Use raw channel index - NO remapping here!
+        // jxl-oxide computes ch_idx = c * 13 + order_id where c is the raw loop index (0, 1, 2).
+        // The channel remapping to [1, 0, 2] only affects DATA access, not context computation.
+        let c_idx = channel;
 
-        // Compute flat index
+        // Compute flat index: (c_idx * NUM_ORDERS + order_id) * num_qf_buckets + qf_idx * num_lf_contexts + lf_idx
         let mut idx = c_idx;
         idx = idx * NUM_ORDERS + order_id;
         idx = idx * (self.qf_thresholds.len() + 1) + qf_idx;
@@ -381,9 +388,9 @@ mod tests {
     #[test]
     fn test_zero_density_context_edge_cases() {
         // Edge cases for clamping
-        // Note: nonzeros_left must be >= 1 (we only call this when processing AC coefficients)
-        let ctx_low = zero_density_context(1, 1, 0, 0);
-        let ctx_high = zero_density_context(63, 63, 0, 0);
+        // Note: nonzeros_left must be >= 1, idx can be 0 (first AC coefficient)
+        let ctx_low = zero_density_context(1, 0, 0, 0);
+        let ctx_high = zero_density_context(63, 62, 0, 0);
 
         // Both should be valid
         assert!(ctx_low < ZERO_DENSITY_CONTEXT_COUNT * 2);
@@ -531,22 +538,30 @@ mod tests {
 
     #[test]
     fn test_coeff_freq_context_values() {
-        // Verify the context lookup table has valid values (63 entries, 0-62)
-        // This matches the decoder's COEFF_FREQ_CONTEXT table exactly
-        assert_eq!(COEFF_FREQ_CONTEXT.len(), 63);
-        for (i, &ctx) in COEFF_FREQ_CONTEXT.iter().enumerate() {
+        // Verify the context lookup table has valid values
+        // 64 entries with index 0 as sentinel (matching jxl-rs decoder)
+        assert_eq!(COEFF_FREQ_CONTEXT.len(), 64);
+        // Index 0 is sentinel (never accessed)
+        assert_eq!(COEFF_FREQ_CONTEXT[0], usize::MAX);
+        // Indices 1-63 have valid context values 0-30
+        for i in 1..64 {
+            let ctx = COEFF_FREQ_CONTEXT[i];
             assert!(ctx <= 30, "Context {} at index {} should be <= 30", ctx, i);
         }
-        // First entry is 0 (for coefficient index 0)
-        assert_eq!(COEFF_FREQ_CONTEXT[0], 0);
+        // Index 1 (first AC, k=1) should have context 0
+        assert_eq!(COEFF_FREQ_CONTEXT[1], 0);
     }
 
     #[test]
     fn test_coeff_num_nonzero_context_values() {
         // Verify the non-zero count lookup table
-        // Table has 63 entries for indices 0-62 (matching decoder's (non_zeros-1))
-        assert_eq!(COEFF_NUM_NONZERO_CONTEXT.len(), 63);
-        for (i, &ctx) in COEFF_NUM_NONZERO_CONTEXT.iter().enumerate() {
+        // 64 entries with index 0 as sentinel (matching jxl-rs decoder)
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT.len(), 64);
+        // Index 0 is sentinel (never accessed)
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[0], usize::MAX);
+        // Indices 1-63 have valid context values 0-206
+        for i in 1..64 {
+            let ctx = COEFF_NUM_NONZERO_CONTEXT[i];
             assert!(
                 ctx <= 206,
                 "Context {} at index {} should be <= 206",
@@ -554,7 +569,7 @@ mod tests {
                 i
             );
         }
-        // First entry (non_zeros=1, index=0) should map to context 0
-        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[0], 0);
+        // Index 1 (nonzeros=1) should have context 0
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[1], 0);
     }
 }
