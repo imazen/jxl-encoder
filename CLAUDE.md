@@ -72,14 +72,38 @@ Never omit jxl-rs from decoder validation.
 **Lesson**: Tests that only check decode success are false positives. Always verify
 perceptual quality (SSIM2 > 50) for image codec work.
 
-## Known Limitations
+## Known Bugs (ACTIVE)
 
-### Real Photo Quality Gap (Investigating - Jan 22, 2026)
+### CRITICAL: Raw Quant Hardcoded to 1 (Jan 22, 2026)
 
-**Status**: UNDER INVESTIGATION
+**Status**: ROOT CAUSE IDENTIFIED - NOT YET FIXED
 
-Synthetic test images (gradients, patterns) encode with good quality (SSIM2 85-95),
-but real photos encode with significantly worse quality than libjxl.
+**Location**: `jxl_enc/src/vardct/transform.rs:60`
+
+```rust
+// WRONG - hardcoded
+let raw_quant = 1i32;
+
+// SHOULD BE - using per-block quant field
+let raw_quant = quant_field.get(bx, by) as i32;
+```
+
+**Impact**:
+- `raw_quant=1` vs expected `raw_quant≈38` for distance=1.0
+- This causes qac (quantization multiplier) to be 38x smaller than intended
+- Produces "unusual" coefficient distribution with mostly zeros and small values
+- Results in poor entropy coding efficiency (4x worse than libjxl)
+
+**Analysis**:
+- For distance=1.0 with `global_scale=8813`:
+  - Expected: `raw_quant = quant_field_target * inv_global_scale + 0.5 = 5.0 * 7.44 + 0.5 ≈ 38`
+  - Actual: `raw_quant = 1` (hardcoded)
+- With `raw_quant=1`: zeroing threshold = 0.019 (coeffs > 0.019 survive)
+- With `raw_quant=38`: zeroing threshold = 0.0005 (much more detail preserved)
+
+### Real Photo Quality Gap (Jan 22, 2026)
+
+**Status**: ROOT CAUSES IDENTIFIED
 
 | Metric | Our Encoder | libjxl (cjxl) |
 |--------|-------------|---------------|
@@ -87,23 +111,32 @@ but real photos encode with significantly worse quality than libjxl.
 | SSIM2 | 23.5 | 82.6 |
 | Bits per coefficient | 0.65 | 0.16 |
 
+**Root Causes Identified**:
+
+1. **raw_quant hardcoded to 1** (see above) - This is the PRIMARY cause.
+   The per-block `QuantField` is computed but never used during quantization.
+
+2. **Entropy coding efficiency** - 0.65 bits/coeff vs expected 0.1-0.3 bits/coeff.
+   This is likely a SECONDARY effect caused by the unusual coefficient distribution
+   from wrong raw_quant. May also have ANS encoding issues.
+
 **Symptoms**:
 - Blurry 8x8 block artifacts visible
 - 4x larger files with 4x worse quality
-- Suggests we're keeping too many non-zero coefficients (noise, not signal)
+- Low SSIM2 because coefficients that should be kept are being zeroed
 
-**Hypotheses**:
-1. Quantization weights may differ from libjxl defaults
-2. Threshold for zeroing small coefficients may be wrong
-3. Entropy coding may be inefficient
+**Fix Required**:
+1. Pass `QuantField` reference to `transform_and_quantize` functions
+2. Use `quant_field.get(bx, by)` as `raw_quant` per block
+3. Verify entropy coding efficiency improves
 
 **Test**: Encode `/home/lilith/work/codec-corpus/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png`
 ```bash
 cargo test test_save_broken_image -- --ignored --nocapture
 ```
 
-**Note**: This does NOT affect the synthetic test quality (which passes). The issue
-is specific to real-world images with complex textures.
+**Note**: Synthetic test images pass because they have limited detail that survives
+even with the wrong quantization. Real photos have fine detail that gets lost.
 
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
