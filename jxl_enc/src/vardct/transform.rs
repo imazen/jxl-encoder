@@ -8,7 +8,7 @@ use crate::heuristics::AcStrategyMap;
 use crate::vardct::AcStrategy;
 use jxl_enc_transforms::{dct8, dct16, dct32};
 
-use super::enc_coeff::{quantize_block_8x8, quantize_block_16x16, quantize_block_32x32};
+use super::enc_coeff::quantize_block_8x8;
 use super::quant_weights::{INV_LF_QUANT, get_dct8_inv_dequant_per_channel};
 use super::quantizer::{GLOBAL_SCALE_DENOM, QuantizerParams};
 
@@ -414,8 +414,139 @@ fn process_dct8(
     }
 }
 
+/// DCT resample scale factors for DCT32 -> 4x4 (from libjxl dct_scales.h).
+#[allow(clippy::excessive_precision)]
+const DCT_RESAMPLE_SCALE_32_4: [f32; 4] = [1.0, 0.9748868, 0.9017642, 0.7870549];
+
+/// Convert LLF coefficients to DC values for DCT16.
+///
+/// The decoder's `reinterpreting_dct2d_2_2` takes 4 DC values and applies
+/// a forward 2x2 DCT to produce LLF coefficients. We need to invert this.
+///
+/// The jxl 2x2 forward DCT (reinterpreting_dct_2 applied twice, column-first):
+/// Given input [a, b, c, d] arranged as [[a,b],[c,d]]:
+///
+/// Step 1 - Column DCT with stride:
+///   v0 = (a+c)*0.5, v1 = (a-c)*0.554469  (column 0)
+///   v2 = (b+d)*0.5, v3 = (b-d)*0.554469  (column 1)
+///
+/// Step 2 - Transpose: [[v0,v1],[v2,v3]] -> [[v0,v2],[v1,v3]]
+///
+/// Step 3 - Row DCT:
+///   out[0] = (v0+v2)*0.5 = (a+b+c+d)*0.25
+///   out[1] = (v0-v2)*0.554469 = ((a+c)-(b+d))*0.5*0.554469 = (a-b+c-d)*0.277234
+///   out[16] = (v1+v3)*0.5 = ((a-c)+(b-d))*0.554469*0.5 = (a+b-c-d)*0.277234
+///   out[17] = (v1-v3)*0.554469 = ((a-c)-(b-d))*0.554469^2 = (a-b-c+d)*0.307435
+///
+/// Note: out[1] and out[16] are swapped from a "normal" 2x2 DCT due to transpose order!
+///
+/// So the mapping is:
+///   LLF[0][0] = (a+b+c+d) * 0.25
+///   LLF[0][1] = (a-b+c-d) * 0.277234   <- note the sign pattern
+///   LLF[1][0] = (a+b-c-d) * 0.277234   <- swapped with above in a normal DCT
+///   LLF[1][1] = (a-b-c+d) * 0.307435
+fn llf_to_dc_dct16(llf: [[f32; 2]; 2]) -> [[f32; 2]; 2] {
+    // Convert LLF coefficients from our DCT16 output to DC values for the
+    // 4 covered 8x8 blocks. The decoder will apply ReinterpretingDCT to these
+    // DC values to reconstruct the LLF.
+    //
+    // Our DCT16 produces (for piecewise constant quadrants with pixel values a, b, c, d):
+    //   l00 = (a+b+c+d) * 4.0
+    //   l01 = (a-b+c-d) * 3.607
+    //   l10 = (a+b-c-d) * 3.607
+    //   l11 = (a-b-c+d) * 3.253
+    //
+    // The decoder expects DC values where dc[i] = 8 * block_avg[i] (same as DCT8).
+    // ReinterpretingDCT then produces:
+    //   jxl_l00 = (dc0+dc1+dc2+dc3) * 0.25 = 8*(a+b+c+d) * 0.25 = 2*(a+b+c+d)
+    //   jxl_l01 = (dc0-dc1+dc2-dc3) * 0.277234 = 8*(a-b+c-d) * 0.277234 = 2.218*(a-b+c-d)
+    //   jxl_l10 = (dc0+dc1-dc2-dc3) * 0.277234 = 8*(a+b-c-d) * 0.277234 = 2.218*(a+b-c-d)
+    //   jxl_l11 = (dc0-dc1-dc2+dc3) * 0.307435 = 8*(a-b-c+d) * 0.307435 = 2.459*(a-b-c+d)
+    //
+    // To convert our LLF to DC values, we multiply by constants that combine:
+    // 1. Converting our LLF scaling to jxl LLF scaling
+    // 2. Applying jxl's ReinterpretingIDCT
+    //
+    // The combined constants give sums in terms of 8*pixel_value:
+    //   s1 = 8*(a+b+c+d) = l00 * (8/4) = l00 * 2
+    //   s2 = 8*(a-b+c-d) = l01 * (8*0.277234/3.607) ≈ l01 * 0.6147
+    //   s3 = 8*(a+b-c-d) = l10 * 0.6147
+    //   s4 = 8*(a-b-c+d) = l11 * (8*0.307435/3.253) ≈ l11 * 0.7559
+    //
+    // Actually, let's compute directly: we need s = 8*(pattern) from our l = pattern * our_scale
+    // s = l * (8 / our_scale)
+    let l00 = llf[0][0];
+    let l01 = llf[0][1];
+    let l10 = llf[1][0];
+    let l11 = llf[1][1];
+
+    // Conversion constants: multiply to get 8 * (pattern sum)
+    // l00 = (a+b+c+d) * 4.0, need 8*(a+b+c+d), so multiply by 8/4 = 2
+    // l01 = (a-b+c-d) * 3.607, need 8*(a-b+c-d), so multiply by 8/3.607 ≈ 2.218
+    // l10 = (a+b-c-d) * 3.607, need 8*(a+b-c-d), so multiply by 8/3.607 ≈ 2.218
+    // l11 = (a-b-c+d) * 3.253, need 8*(a-b-c+d), so multiply by 8/3.253 ≈ 2.459
+    const SCALE_00: f32 = 2.0; // 8 / 4
+    const SCALE_01: f32 = 8.0 * 0.277234; // 8 / 3.607 ≈ 2.218
+    const SCALE_10: f32 = 8.0 * 0.277234; // 8 / 3.607 ≈ 2.218
+    const SCALE_11: f32 = 8.0 * 0.307435; // 8 / 3.253 ≈ 2.459
+
+    // Compute sums in 8*pixel_value units
+    let s1 = l00 * SCALE_00; // = 8*(a+b+c+d)
+    let s2 = l01 * SCALE_01; // = 8*(a-b+c-d)
+    let s3 = l10 * SCALE_10; // = 8*(a+b-c-d)
+    let s4 = l11 * SCALE_11; // = 8*(a-b-c+d)
+
+    // Solve for DC values (each = 8 * pixel_value for that block):
+    // s1 + s2 + s3 + s4 = 32*a, so dc0 = 8*a = (s1+s2+s3+s4)/4
+    // s1 - s2 + s3 - s4 = 32*b, so dc1 = 8*b = (s1-s2+s3-s4)/4
+    // s1 + s2 - s3 - s4 = 32*c, so dc2 = 8*c = (s1+s2-s3-s4)/4
+    // s1 - s2 - s3 + s4 = 32*d, so dc3 = 8*d = (s1-s2-s3+s4)/4
+    let dc0 = (s1 + s2 + s3 + s4) * 0.25;
+    let dc1 = (s1 - s2 + s3 - s4) * 0.25;
+    let dc2 = (s1 + s2 - s3 - s4) * 0.25;
+    let dc3 = (s1 - s2 - s3 + s4) * 0.25;
+
+    [[dc0, dc1], [dc2, dc3]]
+}
+
+/// Convert LLF coefficients to DC values for DCT32 using 4x4 IDCT.
+#[allow(clippy::needless_range_loop)]
+fn llf_to_dc_dct32(llf: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    // Apply resample scale factors
+    let mut scaled = [[0.0f32; 4]; 4];
+    for y in 0..4 {
+        for x in 0..4 {
+            scaled[y][x] = llf[y][x] * DCT_RESAMPLE_SCALE_32_4[y] * DCT_RESAMPLE_SCALE_32_4[x];
+        }
+    }
+
+    // Apply 4x4 IDCT using the standard formula
+    let mut dc = [[0.0f32; 4]; 4];
+    let pi = std::f32::consts::PI;
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut sum = 0.0f32;
+            for k in 0..4 {
+                for l in 0..4 {
+                    let ck = if k == 0 { 1.0 / (2.0f32).sqrt() } else { 1.0 };
+                    let cl = if l == 0 { 1.0 / (2.0f32).sqrt() } else { 1.0 };
+                    sum += ck
+                        * cl
+                        * scaled[k][l]
+                        * ((2.0 * i as f32 + 1.0) * k as f32 * pi / 8.0).cos()
+                        * ((2.0 * j as f32 + 1.0) * l as f32 * pi / 8.0).cos();
+                }
+            }
+            dc[i][j] = sum * 0.5;
+        }
+    }
+
+    dc
+}
+
 /// Process a 2x2 region with DCT16.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 fn process_dct16(
     xyb_data: &[&[f32]; 3],
     width: usize,
@@ -457,36 +588,72 @@ fn process_dct16(
         dct_b[i] -= dct_y[i] * cfl_fac_b;
     }
 
-    // Quantize each channel
-    let dct_channels: [&[f32; 256]; 3] = [&dct_x, &dct_y, &dct_b];
-    for c in 0..3 {
-        let mut quant_out = [0i32; 256];
-        quantize_block_16x16(
-            dct_channels[c],
-            quant_dc,
-            raw_quant,
-            global_scale_float,
-            INV_LF_QUANT[c],
-            &inv_dequant_per_channel[c],
-            &mut quant_out,
-        );
+    // DC quantization threshold
+    let threshold = 0.5f32;
 
-        // DC goes at top-left block position only
-        dc_coeffs[block_idx * 3 + c] = quant_out[0];
-        // Zero DC for covered blocks (they get the shared DC from top-left)
+    // Process each channel
+    for c in 0..3 {
+        let dct: &[f32; 256] = match c {
+            0 => &dct_x,
+            1 => &dct_y,
+            _ => &dct_b,
+        };
+
+        // Extract 2x2 LLF region (positions 0, 1, 16, 17) as float
+        let llf = [
+            [dct[0], dct[1]],   // positions (0,0) and (1,0)
+            [dct[16], dct[17]], // positions (0,1) and (1,1)
+        ];
+
+        // Convert LLF to DC values using 2x2 IDCT.
+        // The DC values returned are in "8 * block_average" format (same as DCT8).
+        let dc_values = llf_to_dc_dct16(llf);
+
+        // Quantize DC values using the same formula as quantize_block_8x8:
+        // The JXL LF image stores block AVERAGES, not DCT DC coefficients.
+        // dc_values[i] = 8 * block_average, so divide by 8 to get the average.
+        // quantized_dc = (dc_value / 8) * inv_lf_quant * global_scale_float * quant_dc
+        let qdc = INV_LF_QUANT[c] * global_scale_float * quant_dc as f32;
+
         for dy in 0..2 {
             for dx in 0..2 {
-                if dx != 0 || dy != 0 {
-                    let covered_idx = (by + dy) * num_blocks_x + (bx + dx);
-                    dc_coeffs[covered_idx * 3 + c] = 0;
-                }
+                let covered_idx = (by + dy) * num_blocks_x + (bx + dx);
+                let dc_avg = dc_values[dy][dx] / 8.0; // Convert to block average
+                let dc_val = dc_avg * qdc;
+                dc_coeffs[covered_idx * 3 + c] = if dc_val.abs() >= threshold {
+                    dc_val.round() as i32
+                } else {
+                    0
+                };
             }
         }
 
-        // AC coefficients (255 of them for DCT16)
+        // Now quantize AC coefficients (all positions except LLF 0, 1, 16, 17)
+        let qac = global_scale_float * raw_quant as f32;
+
         ac_offsets[block_idx * 3 + c] = *current_offset;
-        ac_coeffs.extend_from_slice(&quant_out[1..256]);
-        *current_offset += 255;
+        for pos in 0..256 {
+            // Skip LLF positions
+            if pos == 0 || pos == 1 || pos == 16 || pos == 17 {
+                continue;
+            }
+
+            // Map to 8x8 position for weight lookup
+            let x = pos % 16;
+            let y = pos / 16;
+            let x8 = x / 2;
+            let y8 = y / 2;
+            let weight_pos = y8 * 8 + x8;
+
+            let val = dct[pos] * qac * inv_dequant_per_channel[c][weight_pos];
+            let quantized = if val.abs() >= threshold {
+                val.round() as i32
+            } else {
+                0
+            };
+            ac_coeffs.push(quantized);
+        }
+        *current_offset += 252; // 256 - 4 LLF positions
 
         // Set offsets for covered blocks to point to empty region
         for dy in 0..2 {
@@ -502,6 +669,7 @@ fn process_dct16(
 
 /// Process a 4x4 region with DCT32.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 fn process_dct32(
     xyb_data: &[&[f32]; 3],
     width: usize,
@@ -543,36 +711,73 @@ fn process_dct32(
         dct_b[i] -= dct_y[i] * cfl_fac_b;
     }
 
-    // Quantize each channel
-    let dct_channels: [&[f32; 1024]; 3] = [&dct_x, &dct_y, &dct_b];
-    for c in 0..3 {
-        let mut quant_out = [0i32; 1024];
-        quantize_block_32x32(
-            dct_channels[c],
-            quant_dc,
-            raw_quant,
-            global_scale_float,
-            INV_LF_QUANT[c],
-            &inv_dequant_per_channel[c],
-            &mut quant_out,
-        );
+    // DC quantization threshold
+    let threshold = 0.5f32;
 
-        // DC goes at top-left block position only
-        dc_coeffs[block_idx * 3 + c] = quant_out[0];
-        // Zero DC for covered blocks
-        for dy in 0..4 {
-            for dx in 0..4 {
-                if dx != 0 || dy != 0 {
-                    let covered_idx = (by + dy) * num_blocks_x + (bx + dx);
-                    dc_coeffs[covered_idx * 3 + c] = 0;
-                }
+    // Process each channel
+    for c in 0..3 {
+        let dct = match c {
+            0 => &dct_x,
+            1 => &dct_y,
+            _ => &dct_b,
+        };
+
+        // Extract 4x4 LLF region from the 32x32 grid
+        // LLF positions: (y, x) where y < 4 and x < 4
+        // Position in grid = y * 32 + x
+        let mut llf = [[0.0f32; 4]; 4];
+        for y in 0..4 {
+            for x in 0..4 {
+                llf[y][x] = dct[y * 32 + x];
             }
         }
 
-        // AC coefficients (1023 of them for DCT32)
+        // Convert LLF to DC values using 4x4 IDCT
+        let dc_values = llf_to_dc_dct32(llf);
+
+        // Quantize DC values using the same formula as quantize_block_8x8:
+        // dc_values[i] = 8 * block_average, so divide by 8 to get the average.
+        let qdc = INV_LF_QUANT[c] * global_scale_float * quant_dc as f32;
+
+        for dy in 0..4 {
+            for dx in 0..4 {
+                let covered_idx = (by + dy) * num_blocks_x + (bx + dx);
+                let dc_avg = dc_values[dy][dx] / 8.0; // Convert to block average
+                let dc_val = dc_avg * qdc;
+                dc_coeffs[covered_idx * 3 + c] = if dc_val.abs() >= threshold {
+                    dc_val.round() as i32
+                } else {
+                    0
+                };
+            }
+        }
+
+        // Now quantize AC coefficients (all positions except 4x4 LLF region)
+        let qac = global_scale_float * raw_quant as f32;
+
         ac_offsets[block_idx * 3 + c] = *current_offset;
-        ac_coeffs.extend_from_slice(&quant_out[1..1024]);
-        *current_offset += 1023;
+        for pos in 0..1024 {
+            let x = pos % 32;
+            let y = pos / 32;
+            // Skip LLF region (x < 4 && y < 4)
+            if x < 4 && y < 4 {
+                continue;
+            }
+
+            // Map to 8x8 position for weight lookup
+            let x8 = x / 4;
+            let y8 = y / 4;
+            let weight_pos = y8 * 8 + x8;
+
+            let val = dct[pos] * qac * inv_dequant_per_channel[c][weight_pos];
+            let quantized = if val.abs() >= threshold {
+                val.round() as i32
+            } else {
+                0
+            };
+            ac_coeffs.push(quantized);
+        }
+        *current_offset += 1008; // 1024 - 16 LLF positions
 
         // Set offsets for covered blocks to point to empty region
         for dy in 0..4 {
@@ -766,8 +971,8 @@ mod tests {
         assert_eq!(result.num_blocks_x, 2);
         assert_eq!(result.num_blocks_y, 2);
         assert_eq!(result.dc_coeffs.len(), 4 * 3);
-        // DCT16 produces 255 AC per channel for the block
-        assert_eq!(result.ac_coeffs.len(), 3 * 255);
+        // DCT16 produces 252 AC per channel (256 - 4 LLF positions)
+        assert_eq!(result.ac_coeffs.len(), 3 * 252);
     }
 
     #[test]
@@ -789,8 +994,89 @@ mod tests {
         assert_eq!(result.num_blocks_x, 4);
         assert_eq!(result.num_blocks_y, 4);
         assert_eq!(result.dc_coeffs.len(), 16 * 3);
-        // DCT32 produces 1023 AC per channel for the block
-        assert_eq!(result.ac_coeffs.len(), 3 * 1023);
+        // DCT32 produces 1008 AC per channel (1024 - 16 LLF positions)
+        assert_eq!(result.ac_coeffs.len(), 3 * 1008);
+    }
+
+    #[test]
+    fn test_llf_to_dc_dct16_roundtrip() {
+        // Test that llf_to_dc_dct16 correctly converts our DCT16 LLF output to DC values.
+        // Our DCT16 produces LLF coefficients with these scaling factors
+        // (for piecewise constant 16x16 blocks with pixel values a, b, c, d in quadrants):
+        //   l00 = (a+b+c+d) * 4.0
+        //   l01 = (a-b+c-d) * 3.607
+        //   l10 = (a+b-c-d) * 3.607
+        //   l11 = (a-b-c+d) * 3.253
+        //
+        // The DC values should be 8 * pixel_value for each quadrant (same as DCT8).
+
+        // Test with known pixel values for each 8x8 quadrant
+        let a = 100.0f32; // top-left quadrant pixel value
+        let b = 110.0f32; // top-right quadrant pixel value
+        let c = 120.0f32; // bottom-left quadrant pixel value
+        let d = 130.0f32; // bottom-right quadrant pixel value
+
+        // Compute LLF as our DCT16 would produce
+        const OUR_SCALE_00: f32 = 4.0;
+        const OUR_SCALE_01: f32 = 1.0 / 0.277234; // ≈ 3.607
+        const OUR_SCALE_10: f32 = 1.0 / 0.277234;
+        const OUR_SCALE_11: f32 = 1.0 / 0.307435; // ≈ 3.253
+
+        let l00 = (a + b + c + d) * OUR_SCALE_00;
+        let l01 = (a - b + c - d) * OUR_SCALE_01;
+        let l10 = (a + b - c - d) * OUR_SCALE_10;
+        let l11 = (a - b - c + d) * OUR_SCALE_11;
+
+        let llf = [[l00, l01], [l10, l11]];
+
+        // Convert LLF to DC values
+        let dc = llf_to_dc_dct16(llf);
+
+        // Expected DC values are 8 * pixel_value (same as DCT8)
+        let expected_dc0 = 8.0 * a; // 800
+        let expected_dc1 = 8.0 * b; // 880
+        let expected_dc2 = 8.0 * c; // 960
+        let expected_dc3 = 8.0 * d; // 1040
+
+        eprintln!("Input pixel values: a={}, b={}, c={}, d={}", a, b, c, d);
+        eprintln!(
+            "Forward LLF: l00={}, l01={}, l10={}, l11={}",
+            l00, l01, l10, l11
+        );
+        eprintln!(
+            "Recovered DC: [0][0]={}, [0][1]={}, [1][0]={}, [1][1]={}",
+            dc[0][0], dc[0][1], dc[1][0], dc[1][1]
+        );
+        eprintln!(
+            "Expected DC: 8*a={}, 8*b={}, 8*c={}, 8*d={}",
+            expected_dc0, expected_dc1, expected_dc2, expected_dc3
+        );
+
+        // Check recovery - DC values should be 8 * pixel_value
+        assert!(
+            (dc[0][0] - expected_dc0).abs() < 1.0,
+            "dc[0][0]={} should be 8*a={}",
+            dc[0][0],
+            expected_dc0
+        );
+        assert!(
+            (dc[0][1] - expected_dc1).abs() < 1.0,
+            "dc[0][1]={} should be 8*b={}",
+            dc[0][1],
+            expected_dc1
+        );
+        assert!(
+            (dc[1][0] - expected_dc2).abs() < 1.0,
+            "dc[1][0]={} should be 8*c={}",
+            dc[1][0],
+            expected_dc2
+        );
+        assert!(
+            (dc[1][1] - expected_dc3).abs() < 1.0,
+            "dc[1][1]={} should be 8*d={}",
+            dc[1][1],
+            expected_dc3
+        );
     }
 }
 
@@ -1165,5 +1451,156 @@ mod dc_value_tests {
 
         // White should have XYB Y ≈ 0.84
         assert!(y > 0.8, "White should have Y > 0.8, got {}", y);
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    use crate::color::xyb::srgb_image_to_xyb;
+    use crate::vardct::quantizer::QuantizerParams;
+
+    #[test]
+    #[ignore = "diagnostic test for DCT16 coefficient inspection"]
+    fn test_dct16_coefficient_values() {
+        // Create a 16x16 gradient image
+        let width = 16usize;
+        let height = 16usize;
+        let num_pixels = width * height;
+
+        // Create RGB planes as f32 (sRGB values 0-255)
+        let mut r_in = vec![0.0f32; num_pixels];
+        let mut g_in = vec![0.0f32; num_pixels];
+        let mut b_in = vec![0.0f32; num_pixels];
+
+        for y in 0..height {
+            for x in 0..width {
+                let val = ((x + y) * 255 / (width + height)) as f32;
+                let idx = y * width + x;
+                r_in[idx] = val;
+                g_in[idx] = val;
+                b_in[idx] = val;
+            }
+        }
+
+        // Convert to XYB
+        let mut x_plane = vec![0.0f32; num_pixels];
+        let mut y_plane = vec![0.0f32; num_pixels];
+        let mut b_plane = vec![0.0f32; num_pixels];
+        srgb_image_to_xyb(
+            &r_in,
+            &g_in,
+            &b_in,
+            &mut x_plane,
+            &mut y_plane,
+            &mut b_plane,
+        );
+
+        let planes: [&[f32]; 3] = [&x_plane, &y_plane, &b_plane];
+
+        println!("XYB values (first 5 pixels):");
+        for i in 0..5 {
+            println!(
+                "  Pixel {}: X={:.4}, Y={:.4}, B={:.4}",
+                i, x_plane[i], y_plane[i], b_plane[i]
+            );
+        }
+
+        // Create DCT16 strategy map (force all blocks to DCT16)
+        let blocks_x = width.div_ceil(BLOCK_DIM);
+        let blocks_y = height.div_ceil(BLOCK_DIM);
+        println!(
+            "\nBlock grid: {}x{} = {} blocks",
+            blocks_x,
+            blocks_y,
+            blocks_x * blocks_y
+        );
+
+        let mut ac_map = AcStrategyMap::new_dct8(blocks_x, blocks_y);
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                ac_map.set(bx, by, AcStrategy::Dct16x16);
+            }
+        }
+
+        // Transform and quantize
+        let quantizer = QuantizerParams::from_distance(1.0);
+        println!(
+            "\nQuantizer: global_scale={}, quant_dc={}",
+            quantizer.global_scale, quantizer.quant_dc
+        );
+
+        let transformed =
+            transform_and_quantize_with_strategy(&planes, width, height, &quantizer, &ac_map);
+
+        // Check the DC/LLF coefficients
+        println!("\nDC coefficients for each block (should be LLF values):");
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let idx = by * blocks_x + bx;
+                let dc_x = transformed.dc_coeffs[idx * 3];
+                let dc_y = transformed.dc_coeffs[idx * 3 + 1];
+                let dc_b = transformed.dc_coeffs[idx * 3 + 2];
+                println!(
+                    "  Block ({},{}): X={}, Y={}, B={}",
+                    bx, by, dc_x, dc_y, dc_b
+                );
+            }
+        }
+
+        // Check AC coefficient count
+        println!("\nAC coefficient stats:");
+        println!("  Total AC coefficients: {}", transformed.ac_coeffs.len());
+
+        // For DCT16, we expect 252 AC per channel (256 - 4 LLF)
+        // With 1 DCT16 covering 4 blocks, for 3 channels = 252 * 3 = 756
+        let expected_ac = 252 * 3; // 1 DCT16 for 3 channels
+        println!("  Expected AC coefficients: {}", expected_ac);
+
+        let nonzeros: usize = transformed.ac_coeffs.iter().filter(|&&x| x != 0).count();
+        println!("  Non-zero AC coefficients: {}", nonzeros);
+
+        // Show AC offsets
+        println!("\nAC offsets (first 12):");
+        for i in 0..12.min(transformed.ac_offsets.len()) {
+            println!("  ac_offsets[{}] = {}", i, transformed.ac_offsets[i]);
+        }
+
+        // Show first few AC coefficients
+        println!("\nFirst 20 AC coefficients:");
+        for i in 0..20.min(transformed.ac_coeffs.len()) {
+            println!("  ac_coeffs[{}] = {}", i, transformed.ac_coeffs[i]);
+        }
+
+        // Compare with DCT8 path
+        println!("\n=== DCT8 comparison ===");
+        let ac_map_dct8 = AcStrategyMap::new_dct8(blocks_x, blocks_y);
+        let transformed_dct8 =
+            transform_and_quantize_with_strategy(&planes, width, height, &quantizer, &ac_map_dct8);
+
+        println!("DC coefficients (DCT8):");
+        for by in 0..blocks_y {
+            for bx in 0..blocks_x {
+                let idx = by * blocks_x + bx;
+                let dc_x = transformed_dct8.dc_coeffs[idx * 3];
+                let dc_y = transformed_dct8.dc_coeffs[idx * 3 + 1];
+                let dc_b = transformed_dct8.dc_coeffs[idx * 3 + 2];
+                println!(
+                    "  Block ({},{}): X={}, Y={}, B={}",
+                    bx, by, dc_x, dc_y, dc_b
+                );
+            }
+        }
+
+        let nonzeros_dct8: usize = transformed_dct8
+            .ac_coeffs
+            .iter()
+            .filter(|&&x| x != 0)
+            .count();
+        println!(
+            "\nDCT8 total AC: {}, non-zeros: {}",
+            transformed_dct8.ac_coeffs.len(),
+            nonzeros_dct8
+        );
     }
 }

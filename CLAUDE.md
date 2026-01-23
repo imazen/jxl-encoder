@@ -38,76 +38,96 @@ Never omit jxl-rs from decoder validation.
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
 - [ ] Full Huffman encoder with table serialization
 - [ ] Modular encoder (lossless path)
-- [ ] **VarDCT encoder quality fix** - Decodes but produces GARBAGE for >32x32
 - [ ] Frame assembly pipeline
 - [ ] Color space transforms (RGB -> XYB)
 - [ ] Quantization
 - [ ] Context modeling
 - [ ] High-level encoder API
 
-## Known Bugs (ACTIVE)
+## Resolved Bugs
 
-### CRITICAL: VarDCT Quality Catastrophically Broken for >32x32 Images
+### VarDCT Quality Bug (FIXED Jan 22, 2026)
 
-**Status**: UNFIXED as of Jan 22, 2026
-**Impact**: Images decode successfully but are unrecognizable garbage
-**Symptom**: SSIM2 scores of -500 to -1000 (should be >50)
+**Status**: RESOLVED - VarDCT now produces quality SSIM2 scores of 85-95 at all sizes.
 
 | Size | SSIM2 | Expected | Status |
 |------|-------|----------|--------|
-| 16x16 | 73-92 | >50 | ✓ OK |
-| 64x64 | -562 | >50 | ❌ BROKEN |
-| 128x128 | -1011 | >50 | ❌ BROKEN |
-| 256x256 | -928 | >50 | ❌ BROKEN |
-| 512x512 | -1000+ | >50 | ❌ BROKEN |
+| 64x64 | 85-86 | >50 | ✓ OK |
+| 128x128 | 92-93 | >50 | ✓ OK |
+| 256x256 | 93-94 | >50 | ✓ OK |
+| 300x300 | 92-93 | >50 | ✓ OK |
+
+**Root Causes Fixed**:
+1. **Transpose bug in `tokenize_ac_with_strategy`**: Coefficient indices weren't being
+   transposed for decoders that expect transposed coordinates for square blocks.
+2. **Wrong LLF-to-DC scaling in `llf_to_dc_dct16`**: Used jxl's reinterpreting DCT
+   constants (0.25, 0.277) instead of deriving correct conversion factors (2.0, 2.218, 2.459)
+   based on our standard DCT-II output.
+3. **DC quantization missing divide-by-8**: DC values from `llf_to_dc_dct16` are in
+   "8 * block_average" format, but code used them directly. Added `dc_avg = dc / 8.0`
+   before quantizing (matching `quantize_block_8x8`'s approach).
 
 **Test**: `cargo test test_vardct_quality_enforcement -- --ignored --nocapture`
-**Visual**: `cargo test test_save_broken_image -- --ignored --nocapture`
-  Then: `display /tmp/broken_decoded.png`
 
-**History**: Tests only checked decode success, not quality. This allowed
-"100% decode success" claims while actual quality was catastrophically broken.
-Quality enforcement tests added Jan 22, 2026 to prevent future false positives.
+**Lesson**: Tests that only check decode success are false positives. Always verify
+perceptual quality (SSIM2 > 50) for image codec work.
 
-## DCT16/32 Implementation Notes (Jan 21, 2026)
+## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
-**Status: IMPLEMENTED** - VarDCT now supports DCT8, DCT16, and DCT32 transforms.
-Variance-based AC strategy heuristics are now enabled by default.
+**Status: WORKING** - VarDCT now supports DCT8, DCT16, and DCT32 transforms with
+verified quality (SSIM2 85-95). Variance-based AC strategy heuristics enabled by default.
 
-### What Was Fixed
+### What Was Fixed (Chronological)
 
-#### 1. Transform Image Count (`write_hf_metadata`)
-Fixed `write_hf_metadata` to count distinct transforms instead of all 8x8 blocks.
-Now walks the grid tracking processed blocks and only writes entries for top-left
-blocks of each transform.
+#### Phase 1: Bitstream Structure (Jan 21)
 
-#### 2. Transform Data Encoding
-Now writes one entry per distinct transform (top-left corner only), skipping
-blocks covered by larger transforms.
+1. **Transform Image Count (`write_hf_metadata`)**: Fixed to count distinct transforms
+   instead of all 8x8 blocks. Walks grid tracking processed blocks, only writes entries
+   for top-left blocks of each transform.
 
-#### 3. Tokenization (`tokenize_ac_with_strategy`)
-Fixed to:
-- Use `strategy.covered_blocks()` to get actual coverage
-- Skip processed blocks (covered by larger transforms)
-- Use correct AC coefficient count from transform output
+2. **Transform Data Encoding**: Writes one entry per distinct transform (top-left corner
+   only), skipping blocks covered by larger transforms.
 
-#### 4. Coefficient Layout
+3. **Tokenization (`tokenize_ac_with_strategy`)**: Fixed to use `strategy.covered_blocks()`
+   for actual coverage, skip processed blocks, and use correct AC coefficient count.
+
+#### Phase 2: Quality Fixes (Jan 22)
+
+4. **Transpose Bug in `tokenize_ac_with_strategy`**: Re-added coordinate transpose for
+   decoder compatibility. Decoders transpose when h >= w (true for square blocks):
+   ```rust
+   let block_dim = cx * 8; // 8 for DCT8, 16 for DCT16, 32 for DCT32
+   let transposed_idx = (coeff_idx % block_dim) * block_dim + (coeff_idx / block_dim);
+   ```
+
+5. **LLF-to-DC Scaling in `llf_to_dc_dct16`**: Our DCT16 uses standard DCT-II normalization,
+   not jxl's custom scaling. Derived correct constants empirically:
+   - Our DCT16 output[0] = sum * 4.0 (vs jxl's sum * 0.5)
+   - Correct scaling: SCALE_00=2.0, SCALE_01=SCALE_10=2.218, SCALE_11=2.459
+
+6. **DC Quantization (CRITICAL)**: `llf_to_dc_dct16` returns "8 * block_average" format.
+   Must divide by 8 before quantizing (same as `quantize_block_8x8`):
+   ```rust
+   let dc_avg = dc_values[dy][dx] / 8.0;  // Convert to block average
+   let dc_val = dc_avg * qdc;
+   ```
+
+### Coefficient Layout
+
 - DCT8: 63 AC coefficients (64 - 1 DC)
 - DCT16: 255 AC coefficients (256 - 1 DC)
 - DCT32: 1023 AC coefficients (1024 - 1 DC)
 
 ### Helper Methods Added
 
-Added `AcStrategy::covered_blocks()` method returning `(usize, usize)` for
-convenient access to the coverage dimensions.
+`AcStrategy::covered_blocks()` returning `(usize, usize)` for convenient coverage access.
 
 ### Tests Added
 
-- `test_write_hf_metadata_dct8` - Verify DCT8 metadata encoding
-- `test_write_hf_metadata_dct16` - Verify DCT16 metadata encoding
-- `test_write_hf_metadata_dct32` - Verify DCT32 metadata encoding
+- `test_write_hf_metadata_dct8/16/32` - Verify metadata encoding
 - `test_write_hf_metadata_mixed_strategies` - Mixed DCT8/16 encoding
-- `test_vardct_with_variance_based_strategy` - Full roundtrip with jxl-oxide
+- `test_vardct_with_variance_based_strategy` - Full roundtrip
+- `test_vardct_quality_enforcement` - Quality verification (SSIM2 > 50)
 
 ## Build Commands
 
@@ -431,6 +451,54 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
 **Detection:**
 - If debugging commit adds tracing, tracing should have existed from the start
 - If can't explain where bytes come from, need more tracing
+
+## INVESTIGATION.md Maintenance (MANDATORY)
+
+**INVESTIGATION.md is the single source of truth for all debugging investigations. NEVER delete from it.**
+
+### Rules
+
+1. **Keep INVESTIGATION.md up to date at ALL times** - Update immediately when you discover something
+2. **NEVER delete content** - Only add or mark sections as resolved
+3. **Label findings by confidence level:**
+   - `[PROVEN]` - Verified with evidence (include proof: test output, hex dump, etc.)
+   - `[LIKELY]` - Strong evidence but not conclusive
+   - `[SUSPICION]` - Educated guess, needs investigation
+   - `[THREAD]` - Investigation path to explore
+   - `[RULED OUT]` - Investigated and disproven (explain why)
+   - `[RESOLVED]` - Issue was fixed (link to commit)
+
+### Format
+
+```markdown
+## YYYY-MM-DD: Issue Title
+
+### Status: [ACTIVE|RESOLVED|BLOCKED]
+
+### Summary
+Brief description of the problem.
+
+### Findings
+- [PROVEN] X causes Y (proof: `cargo test foo` output shows...)
+- [SUSPICION] Could be related to Z
+- [THREAD] Need to check if W affects this
+
+### What's Been Tried
+- Tried A - didn't work because...
+- Tried B - partial success, revealed...
+
+### Next Steps
+1. Investigate X
+2. Test Y with Z
+```
+
+### Why This Exists
+
+Investigation loops have wasted weeks of effort. Proper documentation prevents:
+- Re-discovering the same bug
+- Re-trying failed approaches
+- Losing context between sessions
+- Multiple people investigating the same issue
 
 ## Bitstream Tracing (NEVER REMOVE)
 

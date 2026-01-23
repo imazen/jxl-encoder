@@ -956,4 +956,236 @@ mod tests {
             }
         }
     }
+
+    /// Diagnostic test to find exact size threshold where quality breaks
+    /// Run with: cargo test --package jxl_enc test_vardct_size_threshold -- --nocapture --ignored
+    #[test]
+    #[ignore] // Run manually for diagnostics
+    fn test_vardct_size_threshold() {
+        eprintln!("\n=== VarDCT Size Threshold Analysis ===");
+        eprintln!("Finding the exact size where quality degrades catastrophically");
+        eprintln!("Pattern: diagonal gradient (contains all frequencies)");
+        eprintln!();
+        eprintln!(
+            "{:>6}  {:>8}  {:>8}  {:>8}  Notes",
+            "Size", "Blocks", "SSIM2", "Status"
+        );
+        eprintln!("{}", "-".repeat(60));
+
+        // Test sizes from 8 to 128 to find exact threshold
+        let sizes = [8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128];
+
+        let mut last_working_size = 0;
+        let mut first_broken_size = 0;
+
+        for size in sizes {
+            let data = generate_diagonal_gradient(size, size);
+            let result = run_vardct_test(&data, size, size, 1.0, "gradient");
+
+            let blocks = size.div_ceil(8) * size.div_ceil(8);
+            let score = result.ssimulacra2_score.unwrap_or(f64::NAN);
+
+            let (status, notes) = if !result.decode_ok {
+                ("DECODE_FAIL", "Could not decode")
+            } else if score > 50.0 {
+                last_working_size = size;
+                ("OK", "Quality acceptable")
+            } else if score > 0.0 {
+                if first_broken_size == 0 {
+                    first_broken_size = size;
+                }
+                ("DEGRADED", "Quality degraded but visible")
+            } else {
+                if first_broken_size == 0 {
+                    first_broken_size = size;
+                }
+                ("BROKEN", "Catastrophic quality loss")
+            };
+
+            eprintln!(
+                "{:>6}  {:>8}  {:>8.2}  {:>8}  {}",
+                size, blocks, score, status, notes
+            );
+        }
+
+        eprintln!();
+        eprintln!("Summary:");
+        eprintln!(
+            "  Last working size: {}x{}",
+            last_working_size, last_working_size
+        );
+        eprintln!(
+            "  First broken size: {}x{}",
+            first_broken_size, first_broken_size
+        );
+        if first_broken_size > 0 && last_working_size > 0 {
+            let working_blocks = last_working_size.div_ceil(8) * last_working_size.div_ceil(8);
+            let broken_blocks = first_broken_size.div_ceil(8) * first_broken_size.div_ceil(8);
+            eprintln!(
+                "  Block threshold: {} blocks works, {} blocks fails",
+                working_blocks, broken_blocks
+            );
+        }
+    }
+
+    /// Test comparing DCT8-only vs VarianceBased heuristics on the same image.
+    ///
+    /// This isolates whether the quality bug is in DCT16/32 support specifically,
+    /// or if it affects all images at larger sizes.
+    #[test]
+    #[ignore = "diagnostic test for DCT16/32 quality investigation"]
+    fn test_dct8_vs_variance_quality() {
+        use crate::bit_writer::BitWriter;
+        use crate::color::xyb::srgb_image_to_xyb;
+        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use crate::headers::file_header::FileHeader;
+        use crate::heuristics::HeuristicLevel;
+        use crate::vardct::encoder::VarDctOptions;
+
+        fn encode_with_heuristic(
+            rgb_data: &[u8],
+            width: usize,
+            height: usize,
+            heuristic: HeuristicLevel,
+        ) -> Vec<u8> {
+            // Convert RGB to XYB
+            let num_pixels = width * height;
+            let mut r = vec![0.0f32; num_pixels];
+            let mut g = vec![0.0f32; num_pixels];
+            let mut b = vec![0.0f32; num_pixels];
+            for i in 0..num_pixels {
+                r[i] = rgb_data[i * 3] as f32;
+                g[i] = rgb_data[i * 3 + 1] as f32;
+                b[i] = rgb_data[i * 3 + 2] as f32;
+            }
+
+            let mut x_out = vec![0.0f32; num_pixels];
+            let mut y_out = vec![0.0f32; num_pixels];
+            let mut b_out = vec![0.0f32; num_pixels];
+            srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+
+            let mut xyb_data = vec![0.0f32; num_pixels * 3];
+            for i in 0..num_pixels {
+                xyb_data[i * 3] = x_out[i];
+                xyb_data[i * 3 + 1] = y_out[i];
+                xyb_data[i * 3 + 2] = b_out[i];
+            }
+
+            let options = VarDctOptions {
+                distance: 1.0,
+                use_default_quant_matrices: true,
+                use_default_block_ctx: true,
+                ac_strategy_heuristics: heuristic,
+                cfl_enabled: true,
+                adaptive_quant: false,
+                adaptive_quant_strength: 0.0,
+            };
+
+            let mut writer = BitWriter::new();
+            let file_header = FileHeader::new_rgb_lossy(width as u32, height as u32);
+            file_header.write(&mut writer).unwrap();
+            writer.zero_pad_to_byte();
+
+            let encoder = FrameEncoder::new(width, height, FrameEncoderOptions::default());
+            encoder
+                .encode_vardct_with_options(&xyb_data, options, &mut writer)
+                .expect("Encoding failed");
+
+            writer.finish_with_padding()
+        }
+
+        fn decode_and_score(original: &[u8], jxl_bytes: &[u8], width: usize, height: usize) -> f64 {
+            let decoder = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(jxl_bytes))
+                .unwrap();
+            let frame = decoder.render_frame(0).unwrap();
+            let fb = frame.image_all_channels();
+            let channels = fb.channels();
+            let buf = fb.buf();
+
+            // Extract decoded f32 RGB
+            let decoded: Vec<[f32; 3]> = (0..(width * height))
+                .map(|i| {
+                    let idx = i * channels;
+                    [buf[idx], buf[idx + 1], buf[idx + 2]]
+                })
+                .collect();
+
+            // Convert original to f32
+            let original_f32: Vec<[f32; 3]> = (0..(width * height))
+                .map(|i| {
+                    [
+                        original[i * 3] as f32 / 255.0,
+                        original[i * 3 + 1] as f32 / 255.0,
+                        original[i * 3 + 2] as f32 / 255.0,
+                    ]
+                })
+                .collect();
+
+            let source = Rgb::new(
+                original_f32,
+                width,
+                height,
+                TransferCharacteristic::SRGB,
+                ColorPrimaries::BT709,
+            )
+            .unwrap();
+            let distorted = Rgb::new(
+                decoded,
+                width,
+                height,
+                TransferCharacteristic::SRGB,
+                ColorPrimaries::BT709,
+            )
+            .unwrap();
+            compute_frame_ssimulacra2(source, distorted).unwrap()
+        }
+
+        eprintln!("\n=== DCT8-Only vs VarianceBased Quality Comparison ===\n");
+        eprintln!("Size   DCT8-Only   VarianceBased   Difference");
+        eprintln!("----   ---------   -------------   ----------");
+
+        for size in [32, 48, 64, 80, 96, 128] {
+            // Generate smooth gradient (triggers DCT16/32 in VarianceBased mode)
+            let mut data = vec![0u8; size * size * 3];
+            for y in 0..size {
+                for x in 0..size {
+                    let val = ((x + y) * 255 / (size * 2)) as u8;
+                    let idx = (y * size + x) * 3;
+                    data[idx] = val;
+                    data[idx + 1] = val / 2;
+                    data[idx + 2] = 255 - val;
+                }
+            }
+
+            let dct8_jxl = encode_with_heuristic(&data, size, size, HeuristicLevel::Dct8Only);
+            let variance_jxl =
+                encode_with_heuristic(&data, size, size, HeuristicLevel::VarianceBased);
+
+            let dct8_score = decode_and_score(&data, &dct8_jxl, size, size);
+            let variance_score = decode_and_score(&data, &variance_jxl, size, size);
+            let diff = variance_score - dct8_score;
+
+            eprintln!(
+                "{:4}   {:9.2}   {:13.2}   {:+10.2}",
+                size, dct8_score, variance_score, diff
+            );
+
+            // Save 64x64 samples for visual inspection
+            if size == 64 {
+                std::fs::write("/tmp/dct8_64x64.jxl", &dct8_jxl).ok();
+                std::fs::write("/tmp/variance_64x64.jxl", &variance_jxl).ok();
+                eprintln!("  -> Saved to /tmp/dct8_64x64.jxl and /tmp/variance_64x64.jxl");
+            }
+        }
+
+        eprintln!("\nConclusion:");
+        eprintln!(
+            "  If DCT8-Only scores are acceptable (>40) but VarianceBased are catastrophic (<0),"
+        );
+        eprintln!("  then the bug is specifically in DCT16/32 encoding path.");
+        eprintln!(
+            "  If both score similarly poorly at larger sizes, the bug is size-related, not DCT-type-related."
+        );
+    }
 }
