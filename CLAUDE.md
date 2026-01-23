@@ -72,6 +72,39 @@ Never omit jxl-rs from decoder validation.
 **Lesson**: Tests that only check decode success are false positives. Always verify
 perceptual quality (SSIM2 > 50) for image codec work.
 
+## Known Limitations
+
+### Real Photo Quality Gap (Investigating - Jan 22, 2026)
+
+**Status**: UNDER INVESTIGATION
+
+Synthetic test images (gradients, patterns) encode with good quality (SSIM2 85-95),
+but real photos encode with significantly worse quality than libjxl.
+
+| Metric | Our Encoder | libjxl (cjxl) |
+|--------|-------------|---------------|
+| File size (1507x2048 photo, d=1.0) | 760KB | 184KB |
+| SSIM2 | 23.5 | 82.6 |
+| Bits per coefficient | 0.65 | 0.16 |
+
+**Symptoms**:
+- Blurry 8x8 block artifacts visible
+- 4x larger files with 4x worse quality
+- Suggests we're keeping too many non-zero coefficients (noise, not signal)
+
+**Hypotheses**:
+1. Quantization weights may differ from libjxl defaults
+2. Threshold for zeroing small coefficients may be wrong
+3. Entropy coding may be inefficient
+
+**Test**: Encode `/home/lilith/work/codec-corpus/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png`
+```bash
+cargo test test_save_broken_image -- --ignored --nocapture
+```
+
+**Note**: This does NOT affect the synthetic test quality (which passes). The issue
+is specific to real-world images with complex textures.
+
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
 **Status: WORKING** - VarDCT now supports DCT8, DCT16, and DCT32 transforms with
