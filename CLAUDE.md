@@ -97,6 +97,24 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 cargo test test_dct8_only_quality -- --ignored --nocapture
 ```
 
+### Vertical Gradient Encoding Bug (Jan 23, 2026)
+
+**Status**: BROKEN - Vertical gradients fail to decode at all sizes
+
+**Symptoms**:
+- jxl-rs decode error: `EndOfBlockResidualNonZeros(N)`
+- Horizontal, diagonal, radial gradients work fine
+- Only vertical gradients are affected
+
+**Likely Cause**: Something in the DCT coefficient ordering or context computation
+handles column-major patterns incorrectly. The vertical gradient creates a specific
+pattern of coefficients that triggers an edge case in the encoder.
+
+**Test**:
+```bash
+cargo test test_vardct_gradients -- --nocapture
+```
+
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
 **Status: WORKING for single-group only** - VarDCT supports DCT8, DCT16, and DCT32 transforms
