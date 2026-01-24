@@ -104,6 +104,17 @@ impl Encoder {
     ) -> Result<Vec<u8>> {
         use crate::color::xyb::srgb_image_to_xyb;
 
+        // Multi-group VarDCT (>256x256) is broken - produces garbage output
+        #[cfg(feature = "safe-mode")]
+        if width > 256 || height > 256 {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "Image {}x{} exceeds safe-mode limit of 256x256. Multi-group VarDCT encoding \
+                 is broken and produces garbage output. Use --no-default-features to disable \
+                 this check for debugging, or resize your image to fit within 256x256.",
+                width, height
+            )));
+        }
+
         // Convert u8 to f32
         let data_f32: Vec<f32> = data.iter().map(|&x| x as f32).collect();
 
