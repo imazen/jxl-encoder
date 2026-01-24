@@ -398,13 +398,15 @@ impl VarDctEncoder {
                 // jxl-oxide uses loop index (0, 1, 2) for context computation (ch_idx),
                 // but remaps to [1, 0, 2] for actual data access (Y, X, B).
                 const CHANNEL_REMAP: [usize; 3] = [1, 0, 2];
-                for ctx_idx in 0..3 {
-                    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
+                for (ctx_idx, &c) in CHANNEL_REMAP.iter().enumerate() {
+                    // c is the data channel (from CHANNEL_REMAP), ctx_idx is the context index
 
                     // Get block context - uses ctx_idx (0, 1, 2), NOT remapped channel
                     let lf_idx = 0; // No LF thresholds in default mode
                     let order_id = 0; // DCT8
-                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, ctx_idx);
+                    let block_context = self
+                        .block_ctx_map
+                        .block_context(lf_idx, qf, order_id, ctx_idx);
 
                     // Get AC coefficients for this block/channel (63 coeffs per channel)
                     let ac_start = block_idx * 3 * 63 + c * 63;
@@ -562,9 +564,8 @@ impl VarDctEncoder {
                 // - ctx_idx=1 -> data channel 0 (X)
                 // - ctx_idx=2 -> data channel 2 (B)
                 const CHANNEL_REMAP: [usize; 3] = [1, 0, 2]; // Y, X, B
-                for ctx_idx in 0..3 {
-                    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
-                    // Context uses ctx_idx (0, 1, 2), NOT the remapped channel
+                for (ctx_idx, &c) in CHANNEL_REMAP.iter().enumerate() {
+                    // c is the data channel (from CHANNEL_REMAP), ctx_idx is the context index
                     let block_context = self.block_ctx_map.block_context(0, qf, order_id, ctx_idx);
 
                     // Get AC coefficients for this block/channel
@@ -622,9 +623,15 @@ impl VarDctEncoder {
                         let is_first = bx == 0 && by == 0 && ctx_idx == 0;
                         if is_first {
                             eprintln!("DEBUG tokenize_ac_with_strategy: first block channel X");
-                            eprintln!("  nzeros={}, covered_blocks={}, log2_blocks={}", nzeros, covered_blocks, log2_blocks);
+                            eprintln!(
+                                "  nzeros={}, covered_blocks={}, log2_blocks={}",
+                                nzeros, covered_blocks, log2_blocks
+                            );
                             eprintln!("  effective_ac.len()={}", effective_ac.len());
-                            eprintln!("  First 10 effective_ac: {:?}", &effective_ac[..10.min(effective_ac.len())]);
+                            eprintln!(
+                                "  First 10 effective_ac: {:?}",
+                                &effective_ac[..10.min(effective_ac.len())]
+                            );
                         }
 
                         let mut nzeros_left = nzeros;
@@ -694,8 +701,16 @@ impl VarDctEncoder {
 
                             // Debug for first block/channel
                             if is_first && k < 10 {
-                                eprintln!("  k={}: coeff_idx={} -> transposed={} -> ac_index={} -> coeff={} -> u_coeff={}, ctx={}",
-                                    k, coeff_idx, transposed_coeff_idx, ac_index, coeff, u_coeff, ctx);
+                                eprintln!(
+                                    "  k={}: coeff_idx={} -> transposed={} -> ac_index={} -> coeff={} -> u_coeff={}, ctx={}",
+                                    k,
+                                    coeff_idx,
+                                    transposed_coeff_idx,
+                                    ac_index,
+                                    coeff,
+                                    u_coeff,
+                                    ctx
+                                );
                             }
 
                             if coeff != 0 {
@@ -760,6 +775,19 @@ impl VarDctEncoder {
             vec![0; group_blocks_x],
         ];
 
+        // Debug: print group info for first call
+        let debug_first = start_bx == 0 && start_by == 0;
+        if debug_first {
+            eprintln!(
+                "DEBUG tokenize_ac_coefficients_for_group: group_idx={}, blocks_x={}",
+                group_idx, blocks_x
+            );
+            eprintln!(
+                "  range: bx={}..{}, by={}..{}",
+                start_bx, end_bx, start_by, end_by
+            );
+        }
+
         // Process blocks within this group's bounds
         for by in start_by..end_by {
             let local_by = by - start_by;
@@ -774,17 +802,29 @@ impl VarDctEncoder {
                 // jxl-oxide uses loop index (0, 1, 2) for context computation (ch_idx),
                 // but remaps to [1, 0, 2] for actual data access (Y, X, B).
                 const CHANNEL_REMAP: [usize; 3] = [1, 0, 2];
-                for ctx_idx in 0..3 {
-                    let c = CHANNEL_REMAP[ctx_idx]; // Data channel
+                for (ctx_idx, &c) in CHANNEL_REMAP.iter().enumerate() {
+                    // c is the data channel (from CHANNEL_REMAP), ctx_idx is the context index
 
                     // Get block context - uses ctx_idx (0, 1, 2), NOT remapped channel
                     let lf_idx = 0; // No LF thresholds in default mode
                     let order_id = 0; // DCT8
-                    let block_context = self.block_ctx_map.block_context(lf_idx, qf, order_id, ctx_idx);
+                    let block_context = self
+                        .block_ctx_map
+                        .block_context(lf_idx, qf, order_id, ctx_idx);
 
                     // Get AC coefficients for this block/channel (63 coeffs per channel)
                     let ac_start = block_idx * 3 * 63 + c * 63;
                     let block_ac = &ac_coeffs[ac_start..ac_start + 63];
+
+                    // Debug first block
+                    if debug_first && bx == 0 && by == 0 && ctx_idx == 0 {
+                        eprintln!("DEBUG first block (0,0) channel Y (c={}):", c);
+                        eprintln!(
+                            "  ac_start={}, first 10 AC: {:?}",
+                            ac_start,
+                            &block_ac[..10.min(block_ac.len())]
+                        );
+                    }
 
                     // Count actual non-zeros
                     let nzeros: usize = block_ac.iter().filter(|&&x| x != 0).count();
@@ -834,6 +874,19 @@ impl VarDctEncoder {
                             let orig_idx = ZIGZAG_ORDER_8X8[k + 1];
                             let transposed_idx = (orig_idx % 8) * 8 + (orig_idx / 8);
                             let coeff = block_ac[transposed_idx - 1]; // -1 because AC starts at 0
+
+                            // Debug: trace first block's Y channel coefficient mapping
+                            if debug_first && bx == 0 && by == 0 && ctx_idx == 0 && k < 5 {
+                                eprintln!(
+                                    "  k={}: zigzag[k+1]={} -> transposed={} -> ac_idx={} -> coeff={}",
+                                    k,
+                                    orig_idx,
+                                    transposed_idx,
+                                    transposed_idx - 1,
+                                    coeff
+                                );
+                            }
+
                             let ctx = histo_offset
                                 + super::context::zero_density_context(
                                     nzeros_left,
@@ -927,7 +980,10 @@ impl VarDctEncoder {
                         };
                         eprintln!(
                             "  ch{}: ac_offsets[{}..{}] len={}",
-                            c, ac_start, ac_end, ac_end - ac_start
+                            c,
+                            ac_start,
+                            ac_end,
+                            ac_end - ac_start
                         );
                     }
                     debug_block_count += 1;
@@ -959,8 +1015,7 @@ impl VarDctEncoder {
 
                 // Process channels matching decoder order
                 const CHANNEL_REMAP: [usize; 3] = [1, 0, 2];
-                for ctx_idx in 0..3 {
-                    let c = CHANNEL_REMAP[ctx_idx];
+                for (ctx_idx, &c) in CHANNEL_REMAP.iter().enumerate() {
                     let block_context = self.block_ctx_map.block_context(0, qf, order_id, ctx_idx);
 
                     // Get AC coefficients using offsets
@@ -1009,7 +1064,8 @@ impl VarDctEncoder {
                         let mut prev = if nzeros <= num_8x8_blocks * 4 { 1 } else { 0 };
 
                         // Debug: trace first few coefficients for first DCT16 block
-                        let debug_this_block = debug_group && debug_block_count <= 3 && cx > 1 && ctx_idx == 0;
+                        let debug_this_block =
+                            debug_group && debug_block_count <= 3 && cx > 1 && ctx_idx == 0;
 
                         for k in 0..block_ac.len() {
                             if nzeros_left == 0 {

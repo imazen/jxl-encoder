@@ -281,8 +281,8 @@ impl FrameEncoder {
         // Compute heuristics from image content
         // TEMPORARY: Disable DCT16/32 for multi-group images due to coefficient ordering bug
         // TODO: Fix the natural_order/transpose/LLF position mapping for multi-group DCT16/32
-        let use_strategy = options.ac_strategy_heuristics != HeuristicLevel::Dct8Only
-            && num_groups == 1; // Only use DCT16/32 for single-group images
+        let use_strategy =
+            options.ac_strategy_heuristics != HeuristicLevel::Dct8Only && num_groups == 1; // Only use DCT16/32 for single-group images
         if use_strategy {
             vardct_encoder.compute_ac_strategies(xyb_data);
         }
@@ -323,13 +323,8 @@ impl FrameEncoder {
             let dc = transformed.dc_coeffs.clone();
             (dc, Some(transformed), tokens)
         } else {
-            let transformed = transform_xyb_image(
-                xyb_data,
-                self.width,
-                self.height,
-                quantizer,
-                quant_field,
-            );
+            let transformed =
+                transform_xyb_image(xyb_data, self.width, self.height, quantizer, quant_field);
             crate::trace::debug_eprintln!(
                 "TRANSFORM: dc_coeffs={}, ac_coeffs={}",
                 transformed.dc_coeffs.len(),
@@ -388,32 +383,16 @@ impl FrameEncoder {
                 writer,
             )?;
         } else {
-            // Multi-group: Use the simple DCT8-only tokenization path
-            // The transform without strategy produces fixed 63-coeff indexing
-            // which works with tokenize_ac_coefficients_for_group.
+            // Multi-group: Use strategy-aware tokenization for DCT16/32 support
             let transformed = transformed_with_strategy
                 .as_ref()
                 .expect("TransformedDataWithStrategy required for multi-group");
-            let ac_coeffs = &transformed.ac_coeffs;
-            let mut combined_group_tokens = Vec::new();
-            for group_idx in 0..num_groups {
-                let group_tokens =
-                    vardct_encoder.tokenize_ac_coefficients_for_group(ac_coeffs, group_idx);
-                combined_group_tokens.extend(group_tokens);
-            }
-            let histogram_set = vardct_encoder
-                .build_clustered_histogram_set(&combined_group_tokens, ClusteringType::Best)?;
-            crate::trace::debug_eprintln!(
-                "MULTI_GROUP CLUSTERING: {} contexts → {} clusters",
-                histogram_set.num_contexts,
-                histogram_set.num_clusters()
-            );
-            // Use the old encode function with ac_coeffs slice
-            self.encode_vardct_multi_group_clustered_old(
+            // Let encode_vardct_multi_group_clustered handle tokenization and histogram building
+            // internally to avoid double-tokenization mismatch
+            self.encode_vardct_multi_group_clustered(
                 &vardct_encoder,
                 &dc_coeffs,
-                ac_coeffs,
-                &histogram_set,
+                transformed,
                 writer,
             )?;
         }
@@ -660,6 +639,8 @@ impl FrameEncoder {
     /// Encode VarDCT for multi-group images using clustered histograms (old version with &[i32]).
     /// This version uses the simpler tokenize_ac_coefficients_for_group which assumes
     /// fixed 63-coefficient indexing (DCT8 only).
+    /// NOTE: Currently unused - kept for reference during multi-group debugging.
+    #[allow(dead_code)]
     fn encode_vardct_multi_group_clustered_old(
         &self,
         vardct_encoder: &VarDctEncoder,
@@ -690,10 +671,20 @@ impl FrameEncoder {
         for group_idx in 0..num_groups {
             let group_tokens =
                 vardct_encoder.tokenize_ac_coefficients_for_group(ac_coeffs, group_idx);
+            eprintln!(
+                "DEBUG MULTI_GROUP: group {} has {} tokens",
+                group_idx,
+                group_tokens.len()
+            );
             all_group_tokens.push(group_tokens);
         }
 
         let combined_tokens: Vec<Token> = all_group_tokens.iter().flatten().cloned().collect();
+        eprintln!(
+            "DEBUG MULTI_GROUP: combined_tokens={}, histogram clusters={}",
+            combined_tokens.len(),
+            histogram_set.num_clusters()
+        );
 
         let mut hf_global_writer = BitWriter::new();
         vardct_encoder.write_hf_global_clustered(
@@ -718,6 +709,7 @@ impl FrameEncoder {
         }
 
         let section_sizes: Vec<usize> = section_data.iter().map(|s| s.len()).collect();
+        eprintln!("DEBUG MULTI_GROUP: section_sizes={:?}", section_sizes);
         self.write_toc_multi(writer, &section_sizes)?;
         for section in section_data {
             for byte in section {
@@ -729,13 +721,11 @@ impl FrameEncoder {
     }
 
     /// Encode VarDCT for multi-group images using clustered histograms.
-    #[allow(dead_code)]
     fn encode_vardct_multi_group_clustered(
         &self,
         vardct_encoder: &VarDctEncoder,
         dc_coeffs: &[i32],
         transformed: &TransformedDataWithStrategy,
-        histogram_set: &ClusteredHistogramSet,
         writer: &mut BitWriter,
     ) -> Result<()> {
         let num_groups = vardct_encoder.num_groups();
@@ -774,14 +764,23 @@ impl FrameEncoder {
             all_group_tokens.push(group_tokens);
         }
 
-        // Combine all tokens for HF Global (histogram_set was built from these)
+        // Combine all tokens for HF Global
         let combined_tokens: Vec<Token> = all_group_tokens.iter().flatten().cloned().collect();
+
+        // Build histogram_set from the tokens we'll actually use
+        let histogram_set =
+            vardct_encoder.build_clustered_histogram_set(&combined_tokens, ClusteringType::Best)?;
+        eprintln!(
+            "DEBUG MULTI_GROUP: combined_tokens={}, clusters={}",
+            combined_tokens.len(),
+            histogram_set.num_clusters()
+        );
 
         // Section 1+num_lf_groups: HF Global with clustered histograms
         let mut hf_global_writer = BitWriter::new();
         vardct_encoder.write_hf_global_clustered(
             &combined_tokens,
-            histogram_set,
+            &histogram_set,
             &mut hf_global_writer,
         )?;
         hf_global_writer.zero_pad_to_byte();
@@ -795,7 +794,7 @@ impl FrameEncoder {
                 // Write tokens for this group using clustered histograms
                 vardct_encoder.write_pass_group_clustered(
                     group_tokens,
-                    histogram_set,
+                    &histogram_set,
                     &mut pass_group_writer,
                 )?;
 
@@ -806,6 +805,7 @@ impl FrameEncoder {
 
         // Collect section sizes
         let section_sizes: Vec<usize> = section_data.iter().map(|s| s.len()).collect();
+        eprintln!("DEBUG MULTI_GROUP: section_sizes={:?}", section_sizes);
 
         // Write TOC with all section sizes
         self.write_toc_multi(writer, &section_sizes)?;

@@ -28,7 +28,7 @@ jxl_transforms = { path = "../../jxl-rs/jxl_transforms" }
 # jxl-oxide is secondary - always test jxl-rs first
 jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
 # SSIMULACRA2 for perceptual quality metrics (package is "fast-ssim2")
-fast-ssim2 = { path = "../../fast-ssim2/ssimulacra2" }
+fast-ssim2 = { path = "../../fast-ssim2/ssimulacra2", features = ["imgref"] }
 yuvxyb = "0.4.1"
 # Butteraugli perceptual quality metric
 butteraugli = { path = "../../butteraugli/butteraugli" }

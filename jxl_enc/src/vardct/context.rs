@@ -127,8 +127,8 @@ impl BlockContextMap {
     /// * `qf` - Quant field value for this block
     /// * `order_id` - Order ID (from AC strategy)
     /// * `channel` - Channel index in iteration order (0, 1, 2).
-    ///               Note: jxl-oxide uses raw loop index for context (not the remapped channel).
-    ///               The caller handles channel remapping for data access separately.
+    ///   Note: jxl-oxide uses raw loop index for context (not the remapped channel).
+    ///   The caller handles channel remapping for data access separately.
     pub fn block_context(&self, lf_idx: usize, qf: u32, order_id: usize, channel: usize) -> usize {
         // Find QF bucket
         let mut qf_idx = 0;
@@ -539,37 +539,26 @@ mod tests {
     #[test]
     fn test_coeff_freq_context_values() {
         // Verify the context lookup table has valid values
-        // 64 entries with index 0 as sentinel (matching jxl-rs decoder)
-        assert_eq!(COEFF_FREQ_CONTEXT.len(), 64);
-        // Index 0 is sentinel (never accessed)
-        assert_eq!(COEFF_FREQ_CONTEXT[0], usize::MAX);
-        // Indices 1-63 have valid context values 0-30
-        for i in 1..64 {
-            let ctx = COEFF_FREQ_CONTEXT[i];
+        // 63 entries for AC coefficients
+        assert_eq!(COEFF_FREQ_CONTEXT.len(), 63);
+        // All indices have valid context values 0-30
+        for (i, &ctx) in COEFF_FREQ_CONTEXT.iter().enumerate() {
             assert!(ctx <= 30, "Context {} at index {} should be <= 30", ctx, i);
         }
-        // Index 1 (first AC, k=1) should have context 0
-        assert_eq!(COEFF_FREQ_CONTEXT[1], 0);
+        // Index 0 (first AC coefficient) should have context 0
+        assert_eq!(COEFF_FREQ_CONTEXT[0], 0);
     }
 
     #[test]
     fn test_coeff_num_nonzero_context_values() {
         // Verify the non-zero count lookup table
-        // 64 entries with index 0 as sentinel (matching jxl-rs decoder)
-        assert_eq!(COEFF_NUM_NONZERO_CONTEXT.len(), 64);
-        // Index 0 is sentinel (never accessed)
-        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[0], usize::MAX);
-        // Indices 1-63 have valid context values 0-206
-        for i in 1..64 {
-            let ctx = COEFF_NUM_NONZERO_CONTEXT[i];
-            assert!(
-                ctx <= 206,
-                "Context {} at index {} should be <= 206",
-                ctx,
-                i
-            );
+        // 63 entries for AC coefficients
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT.len(), 63);
+        // All indices have valid context values 0-206
+        for (i, &ctx) in COEFF_NUM_NONZERO_CONTEXT.iter().enumerate() {
+            assert!(ctx <= 206, "Context {} at index {} should be <= 206", ctx, i);
         }
-        // Index 1 (nonzeros=1) should have context 0
-        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[1], 0);
+        // Index 0 (nonzeros=1) should have context 0
+        assert_eq!(COEFF_NUM_NONZERO_CONTEXT[0], 0);
     }
 }

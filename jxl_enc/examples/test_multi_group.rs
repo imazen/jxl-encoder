@@ -10,9 +10,9 @@ fn main() {
         for x in 0..w {
             let idx = (y * w + x) * 3;
             // Simple gradient
-            data[idx] = (x * 255 / w) as u8;     // R
+            data[idx] = (x * 255 / w) as u8; // R
             data[idx + 1] = (y * 255 / h) as u8; // G
-            data[idx + 2] = 128;                  // B constant
+            data[idx + 2] = 128; // B constant
         }
     }
 
@@ -39,11 +39,19 @@ fn main() {
             eprintln!("\nFirst row pixels (channels={}):", channels);
             for x in 0..5.min(w) {
                 let orig_idx = x * 3;
-                let r_dec = (buf[0 * w + x] * 255.0).round() as u8;  // R channel
-                let g_dec = (buf[w * h + 0 * w + x] * 255.0).round() as u8;  // G channel
-                let b_dec = (buf[2 * w * h + 0 * w + x] * 255.0).round() as u8;  // B channel
-                eprintln!("  x={}: decoded=({},{},{}) orig=({},{},{})",
-                    x, r_dec, g_dec, b_dec, data[orig_idx], data[orig_idx+1], data[orig_idx+2]);
+                let r_dec = (buf[x] * 255.0).round() as u8; // R channel (row 0)
+                let g_dec = (buf[w * h + x] * 255.0).round() as u8; // G channel (row 0)
+                let b_dec = (buf[2 * w * h + x] * 255.0).round() as u8; // B channel (row 0)
+                eprintln!(
+                    "  x={}: decoded=({},{},{}) orig=({},{},{})",
+                    x,
+                    r_dec,
+                    g_dec,
+                    b_dec,
+                    data[orig_idx],
+                    data[orig_idx + 1],
+                    data[orig_idx + 2]
+                );
             }
 
             // Check pixel at (256, 0) - first pixel in group 1
@@ -55,8 +63,15 @@ fn main() {
                 let g_dec = (buf[w * h + y * w + x] * 255.0).round() as u8;
                 let b_dec = (buf[2 * w * h + y * w + x] * 255.0).round() as u8;
                 eprintln!("\nPixel at (256, 0) [group 1]:");
-                eprintln!("  decoded=({},{},{}) orig=({},{},{})",
-                    r_dec, g_dec, b_dec, data[orig_idx], data[orig_idx+1], data[orig_idx+2]);
+                eprintln!(
+                    "  decoded=({},{},{}) orig=({},{},{})",
+                    r_dec,
+                    g_dec,
+                    b_dec,
+                    data[orig_idx],
+                    data[orig_idx + 1],
+                    data[orig_idx + 2]
+                );
             }
 
             // Calculate RMSE
@@ -69,8 +84,8 @@ fn main() {
                     let g_dec = (buf[w * h + y * w + x] * 255.0).round() as f64;
                     let b_dec = (buf[2 * w * h + y * w + x] * 255.0).round() as f64;
                     total_error += (r_dec - data[idx] as f64).powi(2)
-                                 + (g_dec - data[idx+1] as f64).powi(2)
-                                 + (b_dec - data[idx+2] as f64).powi(2);
+                        + (g_dec - data[idx + 1] as f64).powi(2)
+                        + (b_dec - data[idx + 2] as f64).powi(2);
                     count += 3;
                 }
             }
