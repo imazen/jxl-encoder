@@ -3235,8 +3235,11 @@ mod dual_decoder_butteraugli_tests {
 
         // Encode at distance 1.0
         let encoded = encode_lossy_rgb8(&original, width, height, 1.0).expect("Encode failed");
-        println!("Encoded: {} bytes ({:.2} bpp)", encoded.len(),
-            encoded.len() as f64 * 8.0 / (width * height) as f64);
+        println!(
+            "Encoded: {} bytes ({:.2} bpp)",
+            encoded.len(),
+            encoded.len() as f64 * 8.0 / (width * height) as f64
+        );
 
         // Decode with jxl-oxide
         let jxl_image = jxl_oxide::JxlImage::builder()
@@ -3258,14 +3261,24 @@ mod dual_decoder_butteraugli_tests {
         }
 
         // Compute SSIM2 using fast-ssim2
-        use fast_ssim2::{Rgb8Image, Ssimulacra2};
+        use fast_ssim2::compute_ssimulacra2;
+        use imgref::ImgVec;
 
-        let original_img = Rgb8Image::new(original.clone(), width, height)
-            .expect("Original image creation failed");
-        let decoded_img = Rgb8Image::new(decoded.clone(), width, height)
-            .expect("Decoded image creation failed");
+        // Convert to [u8; 3] arrays
+        let original_rgb: Vec<[u8; 3]> = original
+            .chunks_exact(3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect();
+        let decoded_rgb: Vec<[u8; 3]> = decoded
+            .chunks_exact(3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect();
 
-        let ssim2 = Ssimulacra2::compute(&original_img, &decoded_img);
+        let original_img = ImgVec::new(original_rgb, width, height);
+        let decoded_img = ImgVec::new(decoded_rgb, width, height);
+
+        let ssim2 = compute_ssimulacra2(original_img.as_ref(), decoded_img.as_ref())
+            .expect("SSIM2 computation failed");
         println!("SSIM2: {:.2}", ssim2);
 
         // libjxl at d=1.0 achieves SSIM2 ~80+ on real photos
@@ -3281,7 +3294,8 @@ mod dual_decoder_butteraugli_tests {
                 width as u32,
                 height as u32,
                 image::ColorType::Rgb8,
-            ).ok();
+            )
+            .ok();
             println!("\nSaved /tmp/frymire.jxl and /tmp/frymire_decoded.png for debugging");
         }
 
@@ -3290,7 +3304,8 @@ mod dual_decoder_butteraugli_tests {
             "SSIM2 {:.2} below minimum {:.2} - real photo quality broken!\n\
              This test catches bugs that synthetic images miss (like raw_quant=1).\n\
              See CLAUDE.md 'Known Bugs' section.",
-            ssim2, MIN_SSIM2
+            ssim2,
+            MIN_SSIM2
         );
 
         println!("PASS: SSIM2 {:.2} >= {:.2}", ssim2, MIN_SSIM2);

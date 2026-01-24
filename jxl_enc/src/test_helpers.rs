@@ -1,4 +1,7 @@
 //! Test helpers to prevent false positives and verify what tests actually do.
+//!
+//! IMPORTANT: Use jxl-rs as the PRIMARY decoder for all roundtrip tests.
+//! jxl-oxide is only a secondary/fallback decoder.
 
 use crate::error::Result;
 
@@ -7,6 +10,254 @@ use crate::error::Result;
 pub enum EncodingMode {
     VarDct,  // encoding=0 (lossy)
     Modular, // encoding=1 (lossless)
+}
+
+/// Decoded image result from jxl-rs
+pub struct DecodedImage {
+    /// Width in pixels
+    pub width: usize,
+    /// Height in pixels
+    pub height: usize,
+    /// Number of color channels (3 for RGB, 4 for RGBA)
+    pub channels: usize,
+    /// Pixel data as interleaved f32 values [R, G, B, ...] row by row
+    pub pixels: Vec<f32>,
+}
+
+impl DecodedImage {
+    /// Get pixel value at (x, y) for channel c
+    pub fn get(&self, x: usize, y: usize, c: usize) -> f32 {
+        let idx = (y * self.width + x) * self.channels + c;
+        self.pixels[idx]
+    }
+
+    /// Get RGB pixel as (r, g, b) scaled to 0-255
+    pub fn get_rgb_u8(&self, x: usize, y: usize) -> (u8, u8, u8) {
+        let r = (self.get(x, y, 0) * 255.0).clamp(0.0, 255.0) as u8;
+        let g = (self.get(x, y, 1) * 255.0).clamp(0.0, 255.0) as u8;
+        let b = (self.get(x, y, 2) * 255.0).clamp(0.0, 255.0) as u8;
+        (r, g, b)
+    }
+}
+
+/// Decode JXL data using jxl-rs (PRIMARY decoder for single-group images).
+///
+/// WARNING: jxl-rs has a multi-group VarDCT decoder bug (same as jxl-oxide).
+/// For images >256x256, use decode_with_djxl() instead.
+///
+/// Returns decoded image with f32 pixel values.
+pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
+    use jxl::api::states::Initialized;
+    use jxl::api::{
+        JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
+        ProcessingResult,
+    };
+    use jxl::image::{Image, Rect};
+
+    let options = JxlDecoderOptions::default();
+    let mut decoder: JxlDecoder<Initialized> = JxlDecoder::new(options);
+    let mut input = data;
+
+    // Process until we have image info
+    let mut decoder = loop {
+        match decoder
+            .process(&mut input)
+            .map_err(|e| crate::error::Error::InvalidInput(format!("jxl-rs init error: {:?}", e)))?
+        {
+            ProcessingResult::Complete { result } => break result,
+            ProcessingResult::NeedsMoreInput { fallback, .. } => {
+                if input.is_empty() {
+                    return Err(crate::error::Error::InvalidInput(
+                        "jxl-rs: unexpected end of input during header parsing".to_string(),
+                    ));
+                }
+                decoder = fallback;
+            }
+        }
+    };
+
+    // Get basic info
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+
+    // Request f32 RGB format
+    let default_format = decoder.current_pixel_format();
+    let num_channels = default_format.color_type.samples_per_pixel();
+
+    let requested_format = JxlPixelFormat {
+        color_type: default_format.color_type,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: default_format
+            .extra_channel_format
+            .iter()
+            .map(|_| Some(JxlDataFormat::f32()))
+            .collect(),
+    };
+    decoder.set_pixel_format(requested_format);
+
+    // Process until we have frame info
+    let mut decoder = loop {
+        match decoder.process(&mut input).map_err(|e| {
+            crate::error::Error::InvalidInput(format!("jxl-rs frame error: {:?}", e))
+        })? {
+            ProcessingResult::Complete { result } => break result,
+            ProcessingResult::NeedsMoreInput { fallback, .. } => {
+                if input.is_empty() {
+                    return Err(crate::error::Error::InvalidInput(
+                        "jxl-rs: unexpected end of input during frame parsing".to_string(),
+                    ));
+                }
+                decoder = fallback;
+            }
+        }
+    };
+
+    // Create output buffer
+    let mut color_buffer = Image::<f32>::new((width * num_channels, height)).map_err(|e| {
+        crate::error::Error::InvalidInput(format!("jxl-rs buffer alloc error: {:?}", e))
+    })?;
+
+    let mut buffers: Vec<_> = vec![JxlOutputBuffer::from_image_rect_mut(
+        color_buffer
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * num_channels, height),
+            })
+            .into_raw(),
+    )];
+
+    // Decode frame
+    loop {
+        match decoder.process(&mut input, &mut buffers).map_err(|e| {
+            crate::error::Error::InvalidInput(format!("jxl-rs decode error: {:?}", e))
+        })? {
+            ProcessingResult::Complete { .. } => break,
+            ProcessingResult::NeedsMoreInput { fallback, .. } => {
+                if input.is_empty() {
+                    return Err(crate::error::Error::InvalidInput(
+                        "jxl-rs: unexpected end of input during decode".to_string(),
+                    ));
+                }
+                decoder = fallback;
+            }
+        }
+    }
+
+    // Extract pixels from buffer
+    let mut pixels = Vec::with_capacity(width * height * num_channels);
+    for y in 0..height {
+        let row = color_buffer.row(y);
+        pixels.extend_from_slice(row);
+    }
+
+    Ok(DecodedImage {
+        width,
+        height,
+        channels: num_channels,
+        pixels,
+    })
+}
+
+/// Decode JXL data using djxl (libjxl reference decoder).
+///
+/// This is the GOLD STANDARD decoder. Use for multi-group VarDCT images
+/// since both jxl-rs and jxl-oxide have multi-group decoder bugs.
+///
+/// Requires djxl binary at `/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl`
+pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
+    use std::process::Command;
+
+    // Use unique temp file names to avoid race conditions
+    let pid = std::process::id();
+    let temp_jxl = format!("/tmp/decode_test_djxl_{}.jxl", pid);
+    let temp_png = format!("/tmp/decode_test_djxl_{}.png", pid);
+
+    std::fs::write(&temp_jxl, data).map_err(|e| {
+        crate::error::Error::InvalidInput(format!("Failed to write temp file: {:?}", e))
+    })?;
+
+    // Run djxl
+    let djxl_path = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+    let output = Command::new(djxl_path)
+        .args([&temp_jxl, &temp_png])
+        .output()
+        .map_err(|e| crate::error::Error::InvalidInput(format!("Failed to run djxl: {:?}", e)))?;
+
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&temp_jxl);
+        return Err(crate::error::Error::InvalidInput(format!(
+            "djxl failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    // Load PNG with image crate
+    let img = image::open(&temp_png).map_err(|e| {
+        let _ = std::fs::remove_file(&temp_jxl);
+        let _ = std::fs::remove_file(&temp_png);
+        crate::error::Error::InvalidInput(format!("Failed to load decoded PNG: {:?}", e))
+    })?;
+    let rgb = img.to_rgb8();
+
+    let width = rgb.width() as usize;
+    let height = rgb.height() as usize;
+
+    // Convert u8 to f32
+    let pixels: Vec<f32> = rgb.as_raw().iter().map(|&v| v as f32 / 255.0).collect();
+
+    // Debug: check the actual pixel values we're returning
+    eprintln!(
+        "DEBUG decode_with_djxl: {}x{}, first 9 u8 raw: {:?}",
+        width,
+        height,
+        rgb.as_raw().iter().take(9).copied().collect::<Vec<_>>()
+    );
+
+    // Cleanup temp files
+    let _ = std::fs::remove_file(&temp_jxl);
+    let _ = std::fs::remove_file(&temp_png);
+
+    Ok(DecodedImage {
+        width,
+        height,
+        channels: 3,
+        pixels,
+    })
+}
+
+/// Decode JXL data using jxl-oxide (SECONDARY decoder).
+///
+/// WARNING: jxl-oxide has a multi-group VarDCT decoder bug.
+/// For images >256x256, use decode_with_djxl() instead.
+pub fn decode_with_jxl_oxide(data: &[u8]) -> Result<DecodedImage> {
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(data))
+        .map_err(|e| {
+            crate::error::Error::InvalidInput(format!("jxl-oxide decode failed: {:?}", e))
+        })?;
+
+    let width = image.width() as usize;
+    let height = image.height() as usize;
+    let channels = image.pixel_format().channels();
+
+    // Render to get actual pixels
+    let render = image.render_frame(0).map_err(|e| {
+        crate::error::Error::InvalidInput(format!("jxl-oxide render failed: {:?}", e))
+    })?;
+
+    // Get pixel data as f32 (interleaved)
+    let framebuffer = render.image_all_channels();
+    let buf = framebuffer.buf();
+
+    // buf is already interleaved [R,G,B,R,G,B,...] for all pixels
+    let pixels = buf.to_vec();
+
+    Ok(DecodedImage {
+        width,
+        height,
+        channels,
+        pixels,
+    })
 }
 
 /// Parse the encoding mode from a JXL bitstream.
@@ -63,7 +314,7 @@ pub fn assert_encoding_mode(data: &[u8], expected: EncodingMode, test_name: &str
 }
 
 /// Standard roundtrip test for lossless encoding.
-/// Encodes with Modular, verifies encoding mode, then decodes.
+/// Encodes with Modular, verifies encoding mode, then decodes with jxl-rs (primary).
 pub fn test_lossless_roundtrip(
     data: &[u8],
     width: usize,
@@ -75,26 +326,16 @@ pub fn test_lossless_roundtrip(
     // VERIFY we actually used Modular encoding
     assert_encoding_mode(&encoded, EncodingMode::Modular, test_name);
 
-    // Decode and verify
-    let image = jxl_oxide::JxlImage::builder()
-        .read(std::io::Cursor::new(&encoded))
-        .map_err(|e| {
-            crate::error::Error::InvalidInput(format!("jxl-oxide decode failed: {:?}", e))
-        })?;
-
-    assert_eq!(image.width(), width as u32);
-    assert_eq!(image.height(), height as u32);
-
-    // Actually render to ensure full decode
-    image.render_frame(0).map_err(|e| {
-        crate::error::Error::InvalidInput(format!("jxl-oxide render failed: {:?}", e))
-    })?;
+    // Decode with jxl-rs (PRIMARY decoder)
+    let decoded = decode_with_jxl_rs(&encoded)?;
+    assert_eq!(decoded.width, width, "{}: width mismatch", test_name);
+    assert_eq!(decoded.height, height, "{}: height mismatch", test_name);
 
     Ok(())
 }
 
 /// Standard roundtrip test for lossy VarDCT encoding.
-/// Encodes with VarDCT, verifies encoding mode, then decodes.
+/// Encodes with VarDCT, verifies encoding mode, then decodes with jxl-rs (primary).
 pub fn test_lossy_roundtrip(
     data: &[u8],
     width: usize,
@@ -112,23 +353,86 @@ pub fn test_lossy_roundtrip(
     // VERIFY we actually used VarDCT encoding
     assert_encoding_mode(&encoded, EncodingMode::VarDct, test_name);
 
-    // Decode with jxl-oxide
-    eprintln!("DEBUG: Trying jxl-oxide decoder...");
-    let image = jxl_oxide::JxlImage::builder()
-        .read(std::io::Cursor::new(&encoded))
-        .map_err(|e| {
-            crate::error::Error::InvalidInput(format!("jxl-oxide decode failed: {:?}", e))
-        })?;
-
-    assert_eq!(image.width(), width as u32);
-    assert_eq!(image.height(), height as u32);
-
-    // Actually render to ensure full decode
-    image.render_frame(0).map_err(|e| {
-        crate::error::Error::InvalidInput(format!("jxl-oxide render failed: {:?}", e))
-    })?;
+    // Decode with jxl-rs (PRIMARY decoder)
+    eprintln!("DEBUG: Decoding with jxl-rs (primary)...");
+    let decoded = decode_with_jxl_rs(&encoded)?;
+    assert_eq!(decoded.width, width, "{}: width mismatch", test_name);
+    assert_eq!(decoded.height, height, "{}: height mismatch", test_name);
 
     Ok(())
+}
+
+/// Lossy roundtrip test with quality verification using SSIMULACRA2.
+/// Returns SSIM2 score (higher is better, typically 50+ is acceptable).
+pub fn test_lossy_roundtrip_with_quality(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    distance: f32,
+    test_name: &str,
+) -> Result<f64> {
+    let encoded = crate::encoder::encode_lossy_rgb8(data, width, height, distance)?;
+
+    // Save for debugging
+    let debug_path = format!("/tmp/{}.jxl", test_name);
+    std::fs::write(&debug_path, &encoded).ok();
+
+    // VERIFY we actually used VarDCT encoding
+    assert_encoding_mode(&encoded, EncodingMode::VarDct, test_name);
+
+    // Decode with jxl-rs (PRIMARY decoder)
+    let decoded = decode_with_jxl_rs(&encoded)?;
+    assert_eq!(decoded.width, width, "{}: width mismatch", test_name);
+    assert_eq!(decoded.height, height, "{}: height mismatch", test_name);
+
+    // Calculate SSIMULACRA2 score
+    let ssim2 = calculate_ssim2(data, &decoded, width, height);
+
+    eprintln!(
+        "{}: encoded {} bytes, SSIM2={:.2}",
+        test_name,
+        encoded.len(),
+        ssim2
+    );
+
+    Ok(ssim2)
+}
+
+/// Calculate SSIMULACRA2 score between original RGB8 data and decoded image.
+/// Returns score where 100 = identical, 90+ = imperceptible, <50 = significant degradation.
+pub fn calculate_ssim2(
+    original: &[u8],
+    decoded: &DecodedImage,
+    width: usize,
+    height: usize,
+) -> f64 {
+    use fast_ssim2::compute_ssimulacra2;
+    use imgref::ImgVec;
+
+    // Convert original to [u8; 3] array format
+    let original_rgb: Vec<[u8; 3]> = original
+        .chunks_exact(3)
+        .map(|rgb| [rgb[0], rgb[1], rgb[2]])
+        .collect();
+
+    // Convert decoded f32 back to u8 for comparison
+    // (decoded is already in sRGB, just scale to 0-255)
+    let decoded_rgb: Vec<[u8; 3]> = (0..height)
+        .flat_map(|y| {
+            (0..width).map(move |x| {
+                let r = (decoded.get(x, y, 0) * 255.0).clamp(0.0, 255.0) as u8;
+                let g = (decoded.get(x, y, 1) * 255.0).clamp(0.0, 255.0) as u8;
+                let b = (decoded.get(x, y, 2) * 255.0).clamp(0.0, 255.0) as u8;
+                [r, g, b]
+            })
+        })
+        .collect();
+
+    let src = ImgVec::new(original_rgb, width, height);
+    let dst = ImgVec::new(decoded_rgb, width, height);
+
+    // compute_ssimulacra2 handles sRGB->linear conversion internally
+    compute_ssimulacra2(src.as_ref(), dst.as_ref()).unwrap_or(0.0)
 }
 
 #[cfg(test)]

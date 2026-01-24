@@ -46,16 +46,14 @@ Never omit jxl-rs from decoder validation.
 
 ## Resolved Bugs
 
+### raw_quant Bug (FIXED Jan 23, 2026)
+
+The `raw_quant` value in `transform.rs` was hardcoded to 1 instead of using the
+per-block quantization field. This is now fixed - line 74 uses `quant_field.get(bx, by)`.
+
 ### VarDCT Quality Bug (FIXED Jan 22, 2026)
 
-**Status**: RESOLVED - VarDCT now produces quality SSIM2 scores of 85-95 at all sizes.
-
-| Size | SSIM2 | Expected | Status |
-|------|-------|----------|--------|
-| 64x64 | 85-86 | >50 | ✓ OK |
-| 128x128 | 92-93 | >50 | ✓ OK |
-| 256x256 | 93-94 | >50 | ✓ OK |
-| 300x300 | 92-93 | >50 | ✓ OK |
+**Status**: RESOLVED for single-group images (≤256x256).
 
 **Root Causes Fixed**:
 1. **Transpose bug in `tokenize_ac_with_strategy`**: Coefficient indices weren't being
@@ -67,81 +65,43 @@ Never omit jxl-rs from decoder validation.
    "8 * block_average" format, but code used them directly. Added `dc_avg = dc / 8.0`
    before quantizing (matching `quantize_block_8x8`'s approach).
 
-**Test**: `cargo test test_vardct_quality_enforcement -- --ignored --nocapture`
-
-**Lesson**: Tests that only check decode success are false positives. Always verify
-perceptual quality (SSIM2 > 50) for image codec work.
-
 ## Known Bugs (ACTIVE)
 
-### CRITICAL: Raw Quant Hardcoded to 1 (Jan 22, 2026)
+### Multi-Group VarDCT Broken (Jan 23, 2026)
 
-**Status**: ROOT CAUSE IDENTIFIED - NOT YET FIXED
+**Status**: BROKEN - Images >256x256 produce garbage output
 
-**Location**: `jxl_enc/src/vardct/transform.rs:60`
-
-```rust
-// WRONG - hardcoded
-let raw_quant = 1i32;
-
-// SHOULD BE - using per-block quant field
-let raw_quant = quant_field.get(bx, by) as i32;
-```
-
-**Impact**:
-- `raw_quant=1` vs expected `raw_quant≈38` for distance=1.0
-- This causes qac (quantization multiplier) to be 38x smaller than intended
-- Produces "unusual" coefficient distribution with mostly zeros and small values
-- Results in poor entropy coding efficiency (4x worse than libjxl)
-
-**Analysis**:
-- For distance=1.0 with `global_scale=8813`:
-  - Expected: `raw_quant = quant_field_target * inv_global_scale + 0.5 = 5.0 * 7.44 + 0.5 ≈ 38`
-  - Actual: `raw_quant = 1` (hardcoded)
-- With `raw_quant=1`: zeroing threshold = 0.019 (coeffs > 0.019 survive)
-- With `raw_quant=38`: zeroing threshold = 0.0005 (much more detail preserved)
-
-### Real Photo Quality Gap (Jan 22, 2026)
-
-**Status**: ROOT CAUSES IDENTIFIED
-
-| Metric | Our Encoder | libjxl (cjxl) |
-|--------|-------------|---------------|
-| File size (1507x2048 photo, d=1.0) | 760KB | 184KB |
-| SSIM2 | 23.5 | 82.6 |
-| Bits per coefficient | 0.65 | 0.16 |
-
-**Root Causes Identified**:
-
-1. **raw_quant hardcoded to 1** (see above) - This is the PRIMARY cause.
-   The per-block `QuantField` is computed but never used during quantization.
-
-2. **Entropy coding efficiency** - 0.65 bits/coeff vs expected 0.1-0.3 bits/coeff.
-   This is likely a SECONDARY effect caused by the unusual coefficient distribution
-   from wrong raw_quant. May also have ANS encoding issues.
+| Size | SSIM2 | File Size | Status |
+|------|-------|-----------|--------|
+| ≤256x256 | 60-95 | Good | ✓ Single-group works |
+| 257x257+ | -64 | 40x larger | ✗ Multi-group broken |
 
 **Symptoms**:
-- Blurry 8x8 block artifacts visible
-- 4x larger files with 4x worse quality
-- Low SSIM2 because coefficients that should be kept are being zeroed
+- SSIM2 = -64 (catastrophically corrupt)
+- File sizes 40-50x larger than cjxl reference
+- Decoded blocks show step patterns instead of smooth gradients
+- Large blocks of zeros in output file (31% non-zero vs 98% for cjxl)
 
-**Fix Required**:
-1. Pass `QuantField` reference to `transform_and_quantize` functions
-2. Use `quant_field.get(bx, by)` as `raw_quant` per block
-3. Verify entropy coding efficiency improves
+**What Works**:
+- Single-group encoding (≤256x256) with all DCT sizes
+- DCT8, DCT16, DCT32 transforms produce good quality
+- Both jxl-rs and jxl-oxide decode single-group correctly
 
-**Test**: Encode `/home/lilith/work/codec-corpus/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png`
+**What's Broken**:
+- Multi-group encoding produces invalid bitstream
+- Token/histogram mismatch suspected between HfGlobal and PassGroup sections
+- Section sizing or TOC entries may be wrong
+
+**Test**:
 ```bash
-cargo test test_save_broken_image -- --ignored --nocapture
+cargo test test_dct8_only_quality -- --ignored --nocapture
 ```
-
-**Note**: Synthetic test images pass because they have limited detail that survives
-even with the wrong quantization. Real photos have fine detail that gets lost.
 
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
-**Status: WORKING** - VarDCT now supports DCT8, DCT16, and DCT32 transforms with
-verified quality (SSIM2 85-95). Variance-based AC strategy heuristics enabled by default.
+**Status: WORKING for single-group only** - VarDCT supports DCT8, DCT16, and DCT32 transforms
+with verified quality (SSIM2 60-95) for images ≤256x256 pixels. Multi-group images (>256x256)
+are broken regardless of DCT size - see Known Bugs above.
 
 ### What Was Fixed (Chronological)
 

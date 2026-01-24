@@ -247,10 +247,7 @@ pub fn transform_and_quantize_with_strategy(
             if bx == 0 && by == 0 {
                 eprintln!(
                     "DEBUG transform_with_strategy: block(0,0) raw_quant={}, global_scale_float={:.4}, quant_dc={}, strategy={:?}",
-                    raw_quant,
-                    global_scale_float,
-                    quant_dc,
-                    strategy
+                    raw_quant, global_scale_float, quant_dc, strategy
                 );
             }
 

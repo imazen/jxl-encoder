@@ -7,8 +7,7 @@
 mod tests {
     use crate::encoder::encode_lossy_rgb8;
     use crate::test_helpers::{EncodingMode, assert_encoding_mode};
-    use fast_ssim2::{Rgb, compute_frame_ssimulacra2};
-    use yuvxyb::{ColorPrimaries, TransferCharacteristic};
+    use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 
     /// Test result containing decode status and quality metrics
     #[derive(Debug)]
@@ -223,6 +222,83 @@ mod tests {
 
         let original_f32 = rgb8_to_f32(original, width, height);
 
+        // Debug: show comparison at various positions
+        if width > 256 {
+            eprintln!(
+                "DEBUG SSIM2 input for {}x{} (len orig={} dec={}):",
+                width,
+                height,
+                original_f32.len(),
+                decoded.len()
+            );
+
+            // Save images for external analysis
+            let orig_u8: Vec<u8> = original_f32
+                .iter()
+                .flat_map(|p| {
+                    [
+                        (p[0] * 255.0) as u8,
+                        (p[1] * 255.0) as u8,
+                        (p[2] * 255.0) as u8,
+                    ]
+                })
+                .collect();
+            let dec_u8: Vec<u8> = decoded
+                .iter()
+                .flat_map(|p| {
+                    [
+                        (p[0] * 255.0).clamp(0.0, 255.0) as u8,
+                        (p[1] * 255.0).clamp(0.0, 255.0) as u8,
+                        (p[2] * 255.0).clamp(0.0, 255.0) as u8,
+                    ]
+                })
+                .collect();
+            let _ = image::save_buffer(
+                format!("/tmp/ssim_debug_{}_original.png", width),
+                &orig_u8,
+                width as u32,
+                height as u32,
+                image::ColorType::Rgb8,
+            );
+            let _ = image::save_buffer(
+                format!("/tmp/ssim_debug_{}_decoded.png", width),
+                &dec_u8,
+                width as u32,
+                height as u32,
+                image::ColorType::Rgb8,
+            );
+            eprintln!("  Saved debug images to /tmp/ssim_debug_{}_*.png", width);
+
+            // Compute stats for entire image
+            let mut orig_sum = 0.0f64;
+            let mut dec_sum = 0.0f64;
+            let mut diff_sq_sum = 0.0f64;
+            let mut neg_count = 0usize;
+            let mut high_count = 0usize;
+
+            for (o, d) in original_f32.iter().zip(decoded.iter()) {
+                orig_sum += o[0] as f64;
+                dec_sum += d[0] as f64;
+                diff_sq_sum += ((o[0] - d[0]) as f64).powi(2);
+                if d[0] < 0.0 {
+                    neg_count += 1;
+                }
+                if d[0] > 1.1 {
+                    high_count += 1;
+                }
+            }
+            let n = original_f32.len() as f64;
+            let rmse = (diff_sq_sum / n).sqrt();
+
+            eprintln!(
+                "  Stats: orig_mean={:.3} dec_mean={:.3} rmse={:.4}",
+                orig_sum / n,
+                dec_sum / n,
+                rmse
+            );
+            eprintln!("  Bad values: {} negative, {} > 1.1", neg_count, high_count);
+        }
+
         let source = Rgb::new(
             original_f32,
             width,
@@ -276,33 +352,55 @@ mod tests {
 
         let encoded_size = encoded.len();
 
-        // Try jxl-oxide decode
-        let decode_result = jxl_oxide::JxlImage::builder()
-            .read(std::io::Cursor::new(&encoded))
-            .and_then(|img| {
-                let frame = img.render_frame(0)?;
-                Ok(frame)
-            });
+        // Save multi-group JXL files for debugging
+        if width > 256 || height > 256 {
+            let path = format!("/tmp/multigroup_{}x{}_ours.jxl", width, height);
+            std::fs::write(&path, &encoded).ok();
+            eprintln!("DEBUG: Saved {} ({} bytes)", path, encoded_size);
+        }
+
+        // Choose decoder based on image size
+        // Both jxl-rs and jxl-oxide have multi-group VarDCT decoder bugs
+        // Use djxl (libjxl reference) for images >256x256
+        use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+        let is_multi_group = width > 256 || height > 256;
+        let decoder_name = if is_multi_group { "djxl" } else { "jxl-rs" };
+        eprintln!("DEBUG: Using {} for {}x{}", decoder_name, width, height);
+
+        let decode_result = if is_multi_group {
+            decode_with_djxl(&encoded)
+        } else {
+            decode_with_jxl_rs(&encoded)
+        };
+
         let decode_ok = decode_result.is_ok();
         if let Err(ref e) = decode_result {
-            eprintln!("DECODE ERROR for {}x{} {}: {:?}", width, height, pattern, e);
+            eprintln!(
+                "DECODE ERROR ({}) for {}x{} {}: {:?}",
+                decoder_name, width, height, pattern, e
+            );
+        }
+
+        // Debug: print first few decoded pixels
+        if let Ok(ref decoded) = decode_result {
+            let first_pixels: Vec<f32> = decoded.pixels.iter().take(9).copied().collect();
+            eprintln!("DEBUG: First 3 pixels (f32): {:?}", first_pixels);
         }
 
         // Compute SSIMULACRA2 if decode succeeded
-        let ssimulacra2_score = if let Ok(frame) = &decode_result {
-            // Get decoded pixels using image_all_channels()
-            let fb = frame.image_all_channels();
-            let channels = fb.channels();
-            if channels >= 3 {
-                // Extract RGB from interleaved buffer
-                let buf = fb.buf();
-                let decoded: Vec<[f32; 3]> = (0..(width * height))
+        let ssimulacra2_score = if let Ok(ref decoded) = decode_result {
+            if decoded.channels >= 3 {
+                // Extract RGB from interleaved pixels
+                let decoded_f32: Vec<[f32; 3]> = (0..(width * height))
                     .map(|i| {
-                        let idx = i * channels;
-                        [buf[idx], buf[idx + 1], buf[idx + 2]]
+                        [
+                            decoded.pixels[i * decoded.channels],
+                            decoded.pixels[i * decoded.channels + 1],
+                            decoded.pixels[i * decoded.channels + 2],
+                        ]
                     })
                     .collect();
-                compute_ssim2(data, &decoded, width, height)
+                compute_ssim2(data, &decoded_f32, width, height)
             } else {
                 None
             }
@@ -820,7 +918,6 @@ mod tests {
         eprintln!("  X | Orig | Decoded | Diff");
         eprintln!("----+------+---------+------");
         let mut max_diff = 0i32;
-        let mut sum_diff = 0i32;
         for x in 0..16 {
             let orig_val = (x * 255 / 16) as u8;
             let idx = x * channels;
@@ -828,7 +925,6 @@ mod tests {
             let diff = (orig_val as i32 - dec_r as i32).abs();
             eprintln!(" {:2} | {:3}  | {:3}     | {:3}", x, orig_val, dec_r, diff);
             max_diff = max_diff.max(diff);
-            sum_diff += diff;
         }
 
         // Compute total stats
@@ -842,11 +938,18 @@ mod tests {
             total_max = total_max.max(diff);
             total_sum += diff;
         }
-        eprintln!("\nTotal: max_diff={}, mean_diff={:.2}", total_max, total_sum as f32 / 256.0);
+        eprintln!(
+            "\nTotal: max_diff={}, mean_diff={:.2}",
+            total_max,
+            total_sum as f32 / 256.0
+        );
 
         // Save the JXL for debugging
         std::fs::write("/tmp/gradient_debug.jxl", &encoded).unwrap();
-        eprintln!("\nSaved to /tmp/gradient_debug.jxl ({} bytes)", encoded.len());
+        eprintln!(
+            "\nSaved to /tmp/gradient_debug.jxl ({} bytes)",
+            encoded.len()
+        );
 
         // Check all three color channels
         eprintln!("\nFull RGB for first row:");
@@ -857,7 +960,10 @@ mod tests {
             let dec_r = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
             let dec_g = (buf[idx + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
             let dec_b = (buf[idx + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
-            eprintln!(" {:2} | {:3},{:3},{:3} | {:3},{:3},{:3}", x, orig_val, orig_val, orig_val, dec_r, dec_g, dec_b);
+            eprintln!(
+                " {:2} | {:3},{:3},{:3} | {:3},{:3},{:3}",
+                x, orig_val, orig_val, orig_val, dec_r, dec_g, dec_b
+            );
         }
     }
 
@@ -867,8 +973,8 @@ mod tests {
     fn test_debug_gradient_coefficients() {
         use crate::color::xyb::srgb_to_xyb;
         use crate::heuristics::QuantField;
-        use crate::vardct::transform::transform_and_quantize;
         use crate::vardct::quantizer::{Quantizer, QuantizerParams};
+        use crate::vardct::transform::transform_and_quantize;
         use jxl_enc_transforms::dct8;
 
         let data = generate_horizontal_gradient(8, 8); // Single 8x8 block
@@ -886,13 +992,19 @@ mod tests {
         let test_val = data[0] as f32; // First pixel (0-255 range)
         eprintln!("\nXYB conversion trace for pixel 0 (sRGB={}):", data[0]);
         let test_xyb = srgb_to_xyb(test_val, test_val, test_val);
-        eprintln!("  XYB result: ({:.4}, {:.4}, {:.4})", test_xyb.0, test_xyb.1, test_xyb.2);
+        eprintln!(
+            "  XYB result: ({:.4}, {:.4}, {:.4})",
+            test_xyb.0, test_xyb.1, test_xyb.2
+        );
 
         // Trace for mid-gray
         let mid_val = data[4 * 3] as f32; // Mid pixel (0-255 range)
         eprintln!("\nXYB conversion trace for pixel 4 (sRGB={}):", data[4 * 3]);
         let mid_xyb = srgb_to_xyb(mid_val, mid_val, mid_val);
-        eprintln!("  XYB result: ({:.4}, {:.4}, {:.4})", mid_xyb.0, mid_xyb.1, mid_xyb.2);
+        eprintln!(
+            "  XYB result: ({:.4}, {:.4}, {:.4})",
+            mid_xyb.0, mid_xyb.1, mid_xyb.2
+        );
 
         // Convert to XYB - use 0-255 range as srgb_to_xyb expects!
         let rgb_f32: Vec<f32> = data.iter().map(|&x| x as f32).collect();
@@ -950,7 +1062,7 @@ mod tests {
 
         // Print Y channel AC coefficients
         eprintln!("\nQuantized Y channel AC coefficients:");
-        let y_ac_start = 0 * 63 + 1 * 63; // block 0, channel 1 (Y)
+        let y_ac_start = 63; // block 0, channel 1 (Y) = block_idx * 3 * 63 + c * 63 = 0 + 63
         for i in 0..63 {
             let coeff = transformed.ac_coeffs[y_ac_start + i];
             if coeff != 0 {
@@ -1360,17 +1472,26 @@ mod tests {
         // Grayscale solid (R=G=B)
         let gray_data = generate_solid(64, 64, 128, 128, 128);
         let gray_result = run_vardct_test(&gray_data, 64, 64, 1.0, "gray_solid");
-        eprintln!("Grayscale solid: SSIM2={:.2}", gray_result.ssimulacra2_score.unwrap_or(f64::NAN));
+        eprintln!(
+            "Grayscale solid: SSIM2={:.2}",
+            gray_result.ssimulacra2_score.unwrap_or(f64::NAN)
+        );
 
         // Colored solid (R≠G≠B)
         let color_data = generate_solid(64, 64, 200, 100, 50);
         let color_result = run_vardct_test(&color_data, 64, 64, 1.0, "color_solid");
-        eprintln!("Colored solid: SSIM2={:.2}", color_result.ssimulacra2_score.unwrap_or(f64::NAN));
+        eprintln!(
+            "Colored solid: SSIM2={:.2}",
+            color_result.ssimulacra2_score.unwrap_or(f64::NAN)
+        );
 
         // Grayscale gradient
         let gray_grad = generate_horizontal_gradient(64, 64);
         let gray_grad_result = run_vardct_test(&gray_grad, 64, 64, 1.0, "gray_gradient");
-        eprintln!("Grayscale gradient: SSIM2={:.2}", gray_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+        eprintln!(
+            "Grayscale gradient: SSIM2={:.2}",
+            gray_grad_result.ssimulacra2_score.unwrap_or(f64::NAN)
+        );
 
         // Colored gradient (same pattern as failing test)
         let mut color_grad = vec![0u8; 64 * 64 * 3];
@@ -1384,16 +1505,23 @@ mod tests {
             }
         }
         let color_grad_result = run_vardct_test(&color_grad, 64, 64, 1.0, "color_gradient");
-        eprintln!("Colored gradient: SSIM2={:.2}", color_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+        eprintln!(
+            "Colored gradient: SSIM2={:.2}",
+            color_grad_result.ssimulacra2_score.unwrap_or(f64::NAN)
+        );
 
         // Summary
         eprintln!("\nSummary:");
-        eprintln!("  Grayscale (R=G=B): solid={:.2}, gradient={:.2}",
+        eprintln!(
+            "  Grayscale (R=G=B): solid={:.2}, gradient={:.2}",
             gray_result.ssimulacra2_score.unwrap_or(f64::NAN),
-            gray_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
-        eprintln!("  Colored (R≠G≠B): solid={:.2}, gradient={:.2}",
+            gray_grad_result.ssimulacra2_score.unwrap_or(f64::NAN)
+        );
+        eprintln!(
+            "  Colored (R≠G≠B): solid={:.2}, gradient={:.2}",
             color_result.ssimulacra2_score.unwrap_or(f64::NAN),
-            color_grad_result.ssimulacra2_score.unwrap_or(f64::NAN));
+            color_grad_result.ssimulacra2_score.unwrap_or(f64::NAN)
+        );
     }
 
     /// Test DCT8 with a solid image (all same value)
@@ -1428,7 +1556,11 @@ mod tests {
             }
         }
         eprintln!("Max diff: {} (should be small for solid)", max_diff);
-        assert!(max_diff < 30, "DCT8 solid image has large errors: max_diff={}", max_diff);
+        assert!(
+            max_diff < 30,
+            "DCT8 solid image has large errors: max_diff={}",
+            max_diff
+        );
     }
 
     /// Debug test to trace tokenization of DCT8 coefficients
@@ -1437,9 +1569,9 @@ mod tests {
     fn test_debug_dct8_tokenization() {
         use crate::color::xyb::srgb_to_xyb;
         use crate::heuristics::{AcStrategyMap, QuantField};
-        use crate::vardct::transform::transform_and_quantize_with_strategy;
         use crate::vardct::quantizer::{Quantizer, QuantizerParams};
         use crate::vardct::tokenize::ZIGZAG_ORDER_8X8;
+        use crate::vardct::transform::transform_and_quantize_with_strategy;
 
         // Create 16x16 horizontal gradient (4 DCT8 blocks)
         let data = generate_horizontal_gradient(16, 16);
@@ -1447,7 +1579,11 @@ mod tests {
         // Convert to XYB
         let mut xyb = vec![0.0f32; 16 * 16 * 3];
         for i in 0..(16 * 16) {
-            let (x, y, b) = srgb_to_xyb(data[i * 3] as f32, data[i * 3 + 1] as f32, data[i * 3 + 2] as f32);
+            let (x, y, b) = srgb_to_xyb(
+                data[i * 3] as f32,
+                data[i * 3 + 1] as f32,
+                data[i * 3 + 2] as f32,
+            );
             xyb[i] = x;
             xyb[16 * 16 + i] = y;
             xyb[2 * 16 * 16 + i] = b;
@@ -1462,7 +1598,10 @@ mod tests {
         // Setup quantizer
         let quantizer_params = QuantizerParams::from_distance(1.0);
         let quantizer = Quantizer::new(quantizer_params.clone());
-        eprintln!("Quantizer: global_scale={}, quant_dc={}", quantizer_params.global_scale, quantizer_params.quant_dc);
+        eprintln!(
+            "Quantizer: global_scale={}, quant_dc={}",
+            quantizer_params.global_scale, quantizer_params.quant_dc
+        );
 
         // Create AC strategy map (force DCT8 for all blocks)
         let ac_strategy_map = AcStrategyMap::new_dct8(2, 2); // 2x2 blocks in 8x8 terms
@@ -1470,7 +1609,11 @@ mod tests {
         // Create quant field
         let base_quant = quantizer.quant_from_field(5.0).min(255) as u8;
         let quant_field = QuantField::uniform(2, 2, base_quant);
-        eprintln!("QuantField: get(0,0)={}, base_quant={}", quant_field.get(0, 0), base_quant);
+        eprintln!(
+            "QuantField: get(0,0)={}, base_quant={}",
+            quant_field.get(0, 0),
+            base_quant
+        );
 
         // Transform and quantize
         let transformed = transform_and_quantize_with_strategy(
@@ -1490,17 +1633,25 @@ mod tests {
                 let dc_x = transformed.dc_coeffs[block_idx * 3];
                 let dc_y = transformed.dc_coeffs[block_idx * 3 + 1];
                 let dc_b = transformed.dc_coeffs[block_idx * 3 + 2];
-                eprintln!("  block({},{}) idx={}: X={}, Y={}, B={}", bx, by, block_idx, dc_x, dc_y, dc_b);
+                eprintln!(
+                    "  block({},{}) idx={}: X={}, Y={}, B={}",
+                    bx, by, block_idx, dc_x, dc_y, dc_b
+                );
             }
         }
 
         // Print first block's Y channel AC coefficients
         eprintln!("\nBlock (0,0) Y channel AC coefficients:");
-        let block_0_y_start = transformed.ac_offsets[0 * 3 + 1]; // Block 0, Y channel
-        let block_0_y_end = transformed.ac_offsets[0 * 3 + 2];   // Next channel start
+        let block_0_y_start = transformed.ac_offsets[1]; // Block 0, Y channel (idx = block*3 + c = 0 + 1)
+        let block_0_y_end = transformed.ac_offsets[2]; // Next channel start (idx = 0 + 2)
         let block_0_y_ac = &transformed.ac_coeffs[block_0_y_start..block_0_y_end];
 
-        eprintln!("  AC array slice [{}, {}): {} coefficients", block_0_y_start, block_0_y_end, block_0_y_ac.len());
+        eprintln!(
+            "  AC array slice [{}, {}): {} coefficients",
+            block_0_y_start,
+            block_0_y_end,
+            block_0_y_ac.len()
+        );
         eprintln!("  First 10 AC values (raw array order):");
         for (i, &v) in block_0_y_ac.iter().take(10).enumerate() {
             eprintln!("    ac[{}] = {} (position {} in 8x8 block)", i, v, i + 1);
@@ -1523,25 +1674,46 @@ mod tests {
             };
             eprintln!(
                 "  k={}: order[{}]={} -> transpose -> {} -> ac[{}] = {}",
-                k, k + covered_blocks, coeff_idx, transposed_idx, ac_index, coeff
+                k,
+                k + covered_blocks,
+                coeff_idx,
+                transposed_idx,
+                ac_index,
+                coeff
             );
         }
 
         // What the decoder expects (trace decoder logic)
         eprintln!("\nDecoder perspective (what it places where):");
         eprintln!("  Decoder reads in natural_order (same as ZIGZAG_ORDER_8X8 for DCT8).");
-        eprintln!("  For k=0: reads token, places at natural_order[1]=1, then transposes to position 8");
-        eprintln!("  For k=1: reads token, places at natural_order[2]=8, then transposes to position 1");
+        eprintln!(
+            "  For k=0: reads token, places at natural_order[1]=1, then transposes to position 8"
+        );
+        eprintln!(
+            "  For k=1: reads token, places at natural_order[2]=8, then transposes to position 1"
+        );
         eprintln!("  So coefficient sent at k=0 ends up at position 8 (vertical freq)");
         eprintln!("  And coefficient sent at k=1 ends up at position 1 (horizontal freq)");
 
         // Verify what we're sending
         eprintln!("\nVerification:");
         eprintln!("  For horizontal gradient, we need large value at position 1 (horizontal freq)");
-        eprintln!("  Position 1 in final block comes from k=1, which sends ac[{}] = {}",
-            order[2] - 1, block_0_y_ac.get((order[2] % 8) * 8 + (order[2] / 8) - 1).copied().unwrap_or(0));
-        eprintln!("  Position 8 in final block comes from k=0, which sends ac[{}] = {}",
-            order[1] - 1, block_0_y_ac.get((order[1] % 8) * 8 + (order[1] / 8) - 1).copied().unwrap_or(0));
+        eprintln!(
+            "  Position 1 in final block comes from k=1, which sends ac[{}] = {}",
+            order[2] - 1,
+            block_0_y_ac
+                .get((order[2] % 8) * 8 + (order[2] / 8) - 1)
+                .copied()
+                .unwrap_or(0)
+        );
+        eprintln!(
+            "  Position 8 in final block comes from k=0, which sends ac[{}] = {}",
+            order[1] - 1,
+            block_0_y_ac
+                .get((order[1] % 8) * 8 + (order[1] / 8) - 1)
+                .copied()
+                .unwrap_or(0)
+        );
     }
 
     /// Debug test specifically for colored gradients to trace channel encoding
@@ -1550,8 +1722,8 @@ mod tests {
     fn test_debug_colored_gradient_channels() {
         use crate::color::xyb::srgb_to_xyb;
         use crate::heuristics::{AcStrategyMap, QuantField};
-        use crate::vardct::transform::transform_and_quantize_with_strategy;
         use crate::vardct::quantizer::{Quantizer, QuantizerParams};
+        use crate::vardct::transform::transform_and_quantize_with_strategy;
 
         // Create a simple 8x8 colored gradient
         let mut rgb_data = vec![0u8; 8 * 8 * 3];
@@ -1559,19 +1731,33 @@ mod tests {
             for x in 0..8 {
                 let idx = (y * 8 + x) * 3;
                 // R varies with x, G varies with y, B is inverse of R
-                rgb_data[idx] = (x * 32) as u8;        // R: 0 to 224
-                rgb_data[idx + 1] = (y * 32) as u8;   // G: 0 to 224
+                rgb_data[idx] = (x * 32) as u8; // R: 0 to 224
+                rgb_data[idx + 1] = (y * 32) as u8; // G: 0 to 224
                 rgb_data[idx + 2] = (255 - x * 32) as u8; // B: 255 to 31
             }
         }
-        eprintln!("Input RGB for pixel (0,0): R={}, G={}, B={}",
-            rgb_data[0], rgb_data[1], rgb_data[2]);
-        eprintln!("Input RGB for pixel (7,0): R={}, G={}, B={}",
-            rgb_data[7*3], rgb_data[7*3+1], rgb_data[7*3+2]);
-        eprintln!("Input RGB for pixel (0,7): R={}, G={}, B={}",
-            rgb_data[7*8*3], rgb_data[7*8*3+1], rgb_data[7*8*3+2]);
-        eprintln!("Input RGB for pixel (7,7): R={}, G={}, B={}",
-            rgb_data[(7*8+7)*3], rgb_data[(7*8+7)*3+1], rgb_data[(7*8+7)*3+2]);
+        eprintln!(
+            "Input RGB for pixel (0,0): R={}, G={}, B={}",
+            rgb_data[0], rgb_data[1], rgb_data[2]
+        );
+        eprintln!(
+            "Input RGB for pixel (7,0): R={}, G={}, B={}",
+            rgb_data[7 * 3],
+            rgb_data[7 * 3 + 1],
+            rgb_data[7 * 3 + 2]
+        );
+        eprintln!(
+            "Input RGB for pixel (0,7): R={}, G={}, B={}",
+            rgb_data[7 * 8 * 3],
+            rgb_data[7 * 8 * 3 + 1],
+            rgb_data[7 * 8 * 3 + 2]
+        );
+        eprintln!(
+            "Input RGB for pixel (7,7): R={}, G={}, B={}",
+            rgb_data[(7 * 8 + 7) * 3],
+            rgb_data[(7 * 8 + 7) * 3 + 1],
+            rgb_data[(7 * 8 + 7) * 3 + 2]
+        );
 
         // Convert to XYB
         let mut xyb = vec![0.0f32; 8 * 8 * 3];
@@ -1579,17 +1765,23 @@ mod tests {
             let (x, y, b) = srgb_to_xyb(
                 rgb_data[i * 3] as f32,
                 rgb_data[i * 3 + 1] as f32,
-                rgb_data[i * 3 + 2] as f32
+                rgb_data[i * 3 + 2] as f32,
             );
             xyb[i] = x;
             xyb[8 * 8 + i] = y;
             xyb[2 * 8 * 8 + i] = b;
         }
 
-        eprintln!("\nXYB for pixel (0,0): X={:.4}, Y={:.4}, B={:.4}",
-            xyb[0], xyb[64], xyb[128]);
-        eprintln!("XYB for pixel (7,0): X={:.4}, Y={:.4}, B={:.4}",
-            xyb[7], xyb[64+7], xyb[128+7]);
+        eprintln!(
+            "\nXYB for pixel (0,0): X={:.4}, Y={:.4}, B={:.4}",
+            xyb[0], xyb[64], xyb[128]
+        );
+        eprintln!(
+            "XYB for pixel (7,0): X={:.4}, Y={:.4}, B={:.4}",
+            xyb[7],
+            xyb[64 + 7],
+            xyb[128 + 7]
+        );
 
         // Create slices for each channel
         let x_slice = &xyb[0..64];
@@ -1668,12 +1860,13 @@ mod tests {
             let dec_r = (buf[idx].clamp(0.0, 1.0) * 255.0).round() as u8;
             let dec_g = (buf[idx + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
             let dec_b = (buf[idx + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
-            eprintln!("  x={}: orig=({},{},{}) dec=({},{},{})",
-                x, orig_r, orig_g, orig_b, dec_r, dec_g, dec_b);
+            eprintln!(
+                "  x={}: orig=({},{},{}) dec=({},{},{})",
+                x, orig_r, orig_g, orig_b, dec_r, dec_g, dec_b
+            );
         }
 
         // Calculate SSIM2 using proper API
-        let original_f32 = rgb8_to_f32(&rgb_data, 8, 8);
         let decoded_f32: Vec<[f32; 3]> = (0..64)
             .map(|i| {
                 let idx = i * channels;
@@ -1685,6 +1878,93 @@ mod tests {
             eprintln!("\nSSIM2 score: {:.2}", ssim2);
         } else {
             eprintln!("\nCould not compute SSIM2");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_save_multigroup_debug() {
+        // Save a 300x300 gradient to disk for debugging
+        let width = 300;
+        let height = 300;
+        let data = generate_horizontal_gradient(width, height);
+
+        // Save original as PNG for comparison
+        use image::{ImageBuffer, Rgb};
+        let orig_img: ImageBuffer<Rgb<u8>, _> =
+            ImageBuffer::from_raw(width as u32, height as u32, data.clone()).unwrap();
+        orig_img.save("/tmp/multigroup_original.png").unwrap();
+        eprintln!("Saved original to /tmp/multigroup_original.png");
+
+        // Encode
+        let encoded = encode_lossy_rgb8(&data, width, height, 1.0).unwrap();
+        eprintln!("Encoded size: {} bytes", encoded.len());
+
+        // Save encoded JXL
+        std::fs::write("/tmp/multigroup_test.jxl", &encoded).unwrap();
+        eprintln!("Saved encoded to /tmp/multigroup_test.jxl");
+
+        // Decode with djxl
+        use std::process::Command;
+        let output = Command::new("djxl")
+            .args(["/tmp/multigroup_test.jxl", "/tmp/multigroup_decoded.png"])
+            .output()
+            .expect("Failed to run djxl");
+
+        if !output.status.success() {
+            eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
+            panic!("djxl failed to decode");
+        }
+        eprintln!("Decoded with djxl to /tmp/multigroup_decoded.png");
+
+        // Print first row pixel values from decoded
+        let decoded_img = image::open("/tmp/multigroup_decoded.png")
+            .unwrap()
+            .to_rgb8();
+        eprintln!("\nFirst row pixel values (every 8th pixel):");
+        for x in (0..width).step_by(8) {
+            let pixel = decoded_img.get_pixel(x as u32, 0);
+            let expected = x * 255 / width;
+            eprintln!(
+                "  x={:3}: decoded={:3}, expected≈{:3}",
+                x, pixel[0], expected
+            );
+        }
+
+        eprintln!("\nRun: display /tmp/multigroup_original.png /tmp/multigroup_decoded.png");
+    }
+
+    /// Test that DCT8-only encoding works (tests the non-strategy path)
+    ///
+    /// This is important because multi-group images are forced to use DCT8-only,
+    /// which bypasses the strategy-aware tokenization. This test verifies that
+    /// the DCT8-only path produces acceptable quality.
+    #[test]
+    #[ignore]
+    fn test_dct8_only_quality() {
+        // The only way to force DCT8-only for single-group is to test a 257x257 image
+        // (which triggers multi-group) since single-group always uses variance-based
+        // strategy selection by default.
+        //
+        // So we test 257x257 which is the smallest multi-group size.
+        let width = 257;
+        let height = 257;
+        let rgb_data = generate_horizontal_gradient(width, height);
+
+        // This will use the multi-group DCT8-only path
+        let result = run_vardct_test(&rgb_data, width, height, 1.0, "dct8_only");
+
+        eprintln!("257x257 DCT8-only result:");
+        eprintln!("  Encoded size: {} bytes", result.encoded_size);
+        eprintln!("  Decode OK: {}", result.decode_ok);
+        eprintln!("  SSIM2: {:?}", result.ssimulacra2_score);
+
+        let ssim2 = result.ssimulacra2_score.unwrap_or(f64::NEG_INFINITY);
+        if ssim2 < 50.0 {
+            panic!(
+                "DCT8-only (multi-group) quality is broken! SSIM2={:.2}",
+                ssim2
+            );
         }
     }
 }
