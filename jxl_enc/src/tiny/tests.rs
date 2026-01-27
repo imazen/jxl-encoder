@@ -80,7 +80,7 @@ fn test_distance_params_reasonable() {
 
 #[test]
 fn test_static_codes_exist() {
-    // Verify static codes are properly defined
+    // Verify DC static codes are properly defined
     assert_eq!(
         static_codes::DC_CONTEXT_MAP.len(),
         static_codes::NUM_DC_CONTEXTS
@@ -90,11 +90,47 @@ fn test_static_codes_exist() {
         static_codes::NUM_DC_PREFIX_CODES
     );
 
-    // Verify prefix codes have reasonable depths
+    // Verify DC prefix codes have reasonable depths
     for code in &static_codes::DC_PREFIX_CODES {
         for &depth in &code.depths {
             assert!(depth <= 15, "Huffman depth {} exceeds maximum 15", depth);
         }
+    }
+
+    // Verify AC static codes are properly defined
+    assert_eq!(
+        static_codes::AC_CONTEXT_MAP.len(),
+        static_codes::NUM_AC_CONTEXTS,
+        "AC context map should have {} entries",
+        static_codes::NUM_AC_CONTEXTS
+    );
+    assert_eq!(
+        static_codes::AC_PREFIX_CODES.len(),
+        static_codes::NUM_AC_PREFIX_CODES
+    );
+
+    // Verify AC prefix codes have reasonable depths
+    for (i, code) in static_codes::AC_PREFIX_CODES.iter().enumerate() {
+        for (j, &depth) in code.depths.iter().enumerate() {
+            assert!(
+                depth <= 15,
+                "AC code {} symbol {} has depth {} > 15",
+                i,
+                j,
+                depth
+            );
+        }
+    }
+
+    // Verify context map values are within bounds
+    for (i, &ctx) in static_codes::AC_CONTEXT_MAP.iter().enumerate() {
+        assert!(
+            (ctx as usize) < static_codes::NUM_AC_PREFIX_CODES,
+            "AC context map entry {} maps to prefix code {} but only {} codes exist",
+            i,
+            ctx,
+            static_codes::NUM_AC_PREFIX_CODES
+        );
     }
 }
 

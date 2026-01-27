@@ -44,8 +44,8 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 |------|-------|--------|-------|
 | `enc_huffman_tree.cc` | 144 | TODO | Huffman tree construction |
 | `enc_cluster.cc` | 133 | TODO | Histogram clustering |
-| `static_entropy_codes.h` | 972 | TODO | Pre-computed entropy tables |
-| `ac_context.h` | 118 | TODO | AC coefficient context |
+| `static_entropy_codes.h` | 972 | DONE | Pre-computed entropy tables |
+| `ac_context.h` | 118 | DONE | AC coefficient context |
 | `quant_weights.cc` | 159 | TODO | Quantization matrices |
 
 ### Heuristics (Priority 3, can simplify)
@@ -142,10 +142,21 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 
 ## Progress Log
 
+### 2026-01-26 (cont.)
+- Ported full AC static entropy codes (1980 context map entries, 8 prefix codes)
+- Added validation tests for AC codes
+
 ### 2026-01-26
 - Initial analysis of libjxl-tiny codebase
 - Created this tracking document
 - Key insight: ~9500 lines total, very manageable
+- Created module structure: `jxl_enc/src/tiny/`
+- Ported DC static entropy codes (45 context map entries, 8 prefix codes)
+- Ported AC context computation (non_zero_context, zero_density_context)
+- Ported token types (Token, UintCoder)
+- Ported entropy code types (PrefixCode, EntropyCode, write_token)
+- Ported frame header writing (DistanceParams, write_frame_header, write_toc)
+- 22 tests passing
 
 ## Known Issues
 
