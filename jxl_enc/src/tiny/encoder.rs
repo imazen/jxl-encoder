@@ -708,11 +708,18 @@ impl TinyEncoder {
             group_idx, start_bx, start_by, end_bx, end_by
         );
 
+        // Debug: track bits for specific groups (600x600 = 75x75 blocks, groups 0,4,5)
+        let debug_this_group = (group_idx == 0 || group_idx == 4 || group_idx == 5) && xsize_blocks == 75 && ysize_blocks == 75;
+        let mut group_total_bits = 0usize;
+        let mut group_block_count = 0usize;
+
         // Process blocks in row-major order, with channels interleaved per block
         // CRITICAL: libjxl-tiny loops: for block { for channel {Y,X,B} { tokenize } }
         // We must match this exact order!
         for by in start_by..end_by {
             for bx in start_bx..end_bx {
+                let block_start_bits = writer.bits_written();
+
                 // Process channels in order: Y (1), X (0), B (2)
                 for &c in &[1usize, 0, 2] {
                     let block = &quant_ac[c][by][bx];
@@ -740,6 +747,15 @@ impl TinyEncoder {
                         predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
                     };
 
+                    // Validate nzeros matches actual count (debug only)
+                    #[cfg(debug_assertions)]
+                    {
+                        let actual_nz = block[1..].iter().filter(|&&x| x != 0).count() as u8;
+                        debug_assert_eq!(nz, actual_nz,
+                            "nzeros mismatch at c={} by={} bx={}: stored={} actual={}",
+                            c, by, bx, nz, actual_nz);
+                    }
+
                     // Tokenize AC coefficients
                     #[cfg(feature = "debug-tokens")]
                     if by < start_by + 2 && bx < start_bx + 2 {
@@ -755,7 +771,32 @@ impl TinyEncoder {
                         writer,
                     )?;
                 }
+
+                // Debug: track bits per block
+                let block_bits = writer.bits_written() - block_start_bits;
+                group_total_bits += block_bits;
+                group_block_count += 1;
+
+                // Log first few blocks and any anomalously large blocks
+                if debug_this_group && (group_block_count <= 4 || block_bits > 100) {
+                    let local_by = by - start_by;
+                    let local_bx_dbg = bx - start_bx;
+                    eprintln!(
+                        "  G{} block ({},{}) = {} bits [nz: Y={}, X={}, B={}]",
+                        group_idx, local_by, local_bx_dbg, block_bits,
+                        nzeros[1][by][bx], nzeros[0][by][bx], nzeros[2][by][bx]
+                    );
+                }
             }
+        }
+
+        // Debug summary for tracked groups
+        if debug_this_group {
+            eprintln!(
+                "Group {} summary: {} blocks, {} total bits, {:.1} bits/block avg",
+                group_idx, group_block_count, group_total_bits,
+                group_total_bits as f64 / group_block_count as f64
+            );
         }
 
         #[cfg(feature = "debug-tokens")]
