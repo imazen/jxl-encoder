@@ -16,7 +16,7 @@ use super::dc_coding::{
 };
 use super::dct::dct_8x8;
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
-use super::quant::{INV_DC_QUANT, QUANT_WEIGHTS};
+use super::quant::INV_DC_QUANT;
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use crate::bit_writer::BitWriter;
 use crate::color::xyb::linear_rgb_to_xyb;
@@ -78,6 +78,10 @@ impl TinyEncoder {
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
 
+        // Compute raw_quant for uniform images (for proper adaptive quantization,
+        // this would be computed per-block from the image content)
+        let raw_quant = params.raw_quant_uniform();
+
         // Perform DCT and quantization
         let (quant_dc, quant_ac, nzeros) = self.transform_and_quantize(
             &xyb_x,
@@ -90,6 +94,7 @@ impl TinyEncoder {
             xsize_blocks,
             ysize_blocks,
             &params,
+            raw_quant,
         );
 
         // Get static entropy codes
@@ -114,10 +119,6 @@ impl TinyEncoder {
         write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
         debug_log!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
-
-        // Compute raw_quant for uniform images (for proper adaptive quantization,
-        // this would be computed per-block from the image content)
-        let raw_quant = params.raw_quant_uniform();
 
         // For single-group images, combine all sections at the bit level
         // (no byte padding between sections, only at the end)
@@ -288,11 +289,12 @@ impl TinyEncoder {
         xyb_b: &[f32],
         width: usize,
         height: usize,
-        padded_width: usize,
-        padded_height: usize,
+        _padded_width: usize,
+        _padded_height: usize,
         xsize_blocks: usize,
         ysize_blocks: usize,
         params: &DistanceParams,
+        raw_quant: u8,
     ) -> (
         [Vec<Vec<i16>>; 3],
         [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
@@ -321,11 +323,17 @@ impl TinyEncoder {
         let channels = [xyb_x, xyb_y, xyb_b];
 
         // Process each block
+        // We need to:
+        // 1. DCT all 3 channels
+        // 2. Apply CFL to X and B channel AC coefficients (subtract Y * factor)
+        // 3. Quantize all channels
+
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
-                // Process Y first (c=1), then X (c=0) and B (c=2) for CFL
-                for &c in &[1usize, 0, 2] {
-                    // Extract 8x8 block with edge padding (flat array)
+                // Step 1: Extract and DCT all 3 channels
+                let mut dct_blocks = [[0.0f32; DCT_BLOCK_SIZE]; 3];
+
+                for c in 0..3 {
                     let mut block = [0.0f32; DCT_BLOCK_SIZE];
                     for dy in 0..BLOCK_DIM {
                         for dx in 0..BLOCK_DIM {
@@ -341,22 +349,44 @@ impl TinyEncoder {
                         debug_log!("Block[0,0,c=0]: sum={:.4}, first={:.4}", block_sum, block[0]);
                     }
 
-                    // Perform DCT
-                    let mut dct_block = [0.0f32; DCT_BLOCK_SIZE];
-                    dct_8x8(&block, &mut dct_block);
+                    dct_8x8(&block, &mut dct_blocks[c]);
 
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 0 {
-                        debug_log!("DCT[0,0,c=0]: DC={:.4}", dct_block[0]);
+                        debug_log!("DCT[0,0,c=0]: DC={:.4}", dct_blocks[c][0]);
                     }
+                }
 
+                // Step 2: Apply CFL to X and B channel AC coefficients
+                // CFL factors for AC: YtoXRatio = 0 (ytox=0), YtoBRatio = 1.0 (ytob=0)
+                // out_x = in_x - x_factor * in_y (x_factor = 0)
+                // out_b = in_b - b_factor * in_y (b_factor = 1.0)
+                //
+                // This means for ytox=0, ytob=0:
+                // - X channel AC coefficients stay unchanged (factor = 0)
+                // - B channel AC coefficients: out_b = in_b - in_y
+                //
+                // For grayscale images where B = Y, this gives B - Y = 0
+
+                // X channel: factor = 0, so no change needed
+                // (If we had adaptive CFL, we'd apply: x_ac[i] -= ytox_factor * y_ac[i])
+
+                // B channel: factor = 1.0, so B_ac = B_ac - Y_ac
+                for idx in 1..DCT_BLOCK_SIZE {
+                    // Skip DC (index 0), only apply to AC coefficients
+                    dct_blocks[2][idx] -= dct_blocks[1][idx];
+                }
+
+                // Step 3: Quantize DC and AC for all channels
+                // Process Y first (c=1), then X (c=0) and B (c=2) for CFL
+                for &c in &[1usize, 0, 2] {
                     // Quantize DC with CFL (Chroma From Luma)
                     // Formula: qdc = round(dc * INV_DC_QUANT[c] * scale_dc - Y_dc * cfl_factor[c])
                     // where scale_dc = quant_dc * scale = quant_dc * global_scale / 65536
                     // CFL factors: X=0, Y=0, B=INV_DC_QUANT[2]*DC_QUANT[1]=256*(1/512)=0.5
-                    let dc = dct_block[0];
+                    let dc = dct_blocks[c][0];
                     let dc_scale = INV_DC_QUANT[c] * params.scale_dc;
-                    let cfl_factor = if c == 2 {
+                    let dc_cfl_factor = if c == 2 {
                         // B channel: subtract 0.5 * Y_dc for chroma correlation
                         // CFL factor = INV_DC_QUANT[2] * DC_QUANT[1] = 256 * (1/512) = 0.5
                         0.5f32
@@ -364,18 +394,29 @@ impl TinyEncoder {
                         0.0f32
                     };
                     let y_dc = quant_dc[1][by][bx] as f32;
-                    let qdc = (dc * dc_scale - y_dc * cfl_factor).round() as i16;
+                    let qdc = (dc * dc_scale - y_dc * dc_cfl_factor).round() as i16;
                     quant_dc[c][by][bx] = qdc;
 
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 {
                         debug_log!("Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
-                                  c, dc, dc_scale, y_dc, cfl_factor, y_dc * cfl_factor, qdc);
+                                  c, dc, dc_scale, y_dc, dc_cfl_factor, y_dc * dc_cfl_factor, qdc);
                     }
 
-                    // Quantize AC coefficients
-                    let ac_scale = params.scale;
-                    let weights = &QUANT_WEIGHTS[..DCT_BLOCK_SIZE]; // DCT8 uses first 64 weights
+                    // Quantize AC coefficients (CFL already applied above for B channel)
+                    // Formula: qval = round(coef * (1/weight) * qac)
+                    // where qac = scale * raw_quant
+                    //
+                    // libjxl-tiny's kQuantWeights are small values (e.g., 0.0003).
+                    // libjxl-tiny's InvMatrix = 1/kQuantWeights = large values (e.g., 3152).
+                    // Quantization uses InvMatrix (large values).
+                    //
+                    // Our QUANT_WEIGHTS are the small values (same as kQuantWeights).
+                    // So we need to DIVIDE by QUANT_WEIGHTS (equivalent to multiplying by InvMatrix).
+                    //
+                    // CRITICAL: Use per-channel weights! Each channel has different weights.
+                    let qac = params.scale * raw_quant as f32;
+                    let weights = super::quant::quant_weights(0, c); // DCT8 strategy=0, per-channel
 
                     let mut qblock = [0i32; DCT_BLOCK_SIZE];
                     for idx in 0..DCT_BLOCK_SIZE {
@@ -383,9 +424,10 @@ impl TinyEncoder {
                             // DC is handled separately
                             qblock[0] = 0;
                         } else {
-                            let coef = dct_block[idx];
+                            let coef = dct_blocks[c][idx];
                             let weight = weights[idx];
-                            let qval = (coef * ac_scale / weight).round() as i32;
+                            // DIVIDE by weight (equivalent to multiplying by InvMatrix = 1/weight)
+                            let qval = (coef * qac / weight).round() as i32;
                             qblock[idx] = qval;
                         }
                     }
@@ -393,6 +435,18 @@ impl TinyEncoder {
 
                     // Count non-zeros
                     let _nz = num_nonzero_8x8_except_dc(&qblock, &mut nzeros[c][by][bx]);
+
+                    #[cfg(feature = "debug-tokens")]
+                    if by == 0 && bx == 0 && c == 1 {
+                        let nonzero_coeffs: Vec<(usize, i32, f32)> = qblock.iter().enumerate()
+                            .filter(|&(_, v)| *v != 0)
+                            .map(|(i, v)| (i, *v, dct_blocks[c][i]))
+                            .collect();
+                        debug_log!("AC Y[0,0] qac={:.4} (scale={:.4} * raw_quant={}), nonzero coeffs: {:?}",
+                                  qac, params.scale, raw_quant, nonzero_coeffs);
+                        debug_log!("AC Y[0,0] DC={:.4}, coeff[63]={:.4} (checkerboard freq)",
+                                  dct_blocks[c][0], dct_blocks[c][63]);
+                    }
                 }
             }
         }

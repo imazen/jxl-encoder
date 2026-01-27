@@ -1183,3 +1183,324 @@ fn test_solid_color_multigroup() {
         }
     }
 }
+
+/// Compare our encoder output with libjxl-tiny reference
+#[test]
+#[ignore]
+fn test_compare_with_libjxl_tiny() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== libjxl-tiny Comparison Test ===\n");
+    
+    // Create same 64x64 red-blue vertical gradient as libjxl-tiny test
+    // Red at top (y=0), blue at bottom (y=63)
+    let mut linear_rgb = Vec::with_capacity(64 * 64 * 3);
+    for y in 0..64 {
+        let t = y as f32 / 63.0;
+        for _x in 0..64 {
+            let r = 1.0 - t;  // Linear RGB values
+            let g = 0.0;
+            let b = t;
+            linear_rgb.push(r);
+            linear_rgb.push(g);
+            linear_rgb.push(b);
+        }
+    }
+    
+    // Encode with our encoder
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(64, 64, &linear_rgb).unwrap();
+    eprintln!("Our encoder: {} bytes", bytes.len());
+    
+    // Read libjxl-tiny reference
+    let ref_bytes = match std::fs::read("/tmp/jxl_compare/libjxl_tiny.jxl") {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Could not read reference file: {}", e);
+            eprintln!("Run: ~/work/libjxl-tiny/build/encoder/cjxl_tiny /tmp/jxl_compare/gradient.pfm /tmp/jxl_compare/libjxl_tiny.jxl --quality 100");
+            return;
+        }
+    };
+    eprintln!("Reference:   {} bytes", ref_bytes.len());
+    
+    // Find first difference
+    let mut first_diff = None;
+    for i in 0..bytes.len().min(ref_bytes.len()) {
+        if bytes[i] != ref_bytes[i] {
+            first_diff = Some(i);
+            break;
+        }
+    }
+    
+    if let Some(pos) = first_diff {
+        eprintln!("\nFirst difference at byte {}:", pos);
+        let start = pos.saturating_sub(4);
+        let end = (pos + 8).min(bytes.len()).min(ref_bytes.len());
+        eprint!("  Ours: ");
+        for i in start..end {
+            if i == pos { eprint!("["); }
+            eprint!("{:02x}", bytes[i]);
+            if i == pos { eprint!("]"); }
+            eprint!(" ");
+        }
+        eprintln!();
+        eprint!("  Ref:  ");
+        for i in start..end {
+            if i == pos { eprint!("["); }
+            eprint!("{:02x}", ref_bytes[i]);
+            if i == pos { eprint!("]"); }
+            eprint!(" ");
+        }
+        eprintln!();
+    } else if bytes.len() != ref_bytes.len() {
+        eprintln!("\nSize mismatch: ours={}, ref={}", bytes.len(), ref_bytes.len());
+    } else {
+        eprintln!("\nPerfect byte match!");
+    }
+    
+    // Decode both
+    let decode = |data: &[u8], name: &str| -> Option<Vec<f32>> {
+        let reader = Cursor::new(data);
+        let image = match jxl_oxide::JxlImage::builder().read(reader) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!("{}: parse error: {:?}", name, e);
+                return None;
+            }
+        };
+        let render = match image.render_frame(0) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{}: render error: {:?}", name, e);
+                return None;
+            }
+        };
+        Some(render.image_all_channels().buf().to_vec())
+    };
+    
+    if let (Some(ours), Some(ref_dec)) = (decode(&bytes, "ours"), decode(&ref_bytes, "ref")) {
+        // Compare decoded values
+        let mut max_diff: f32 = 0.0;
+        let mut sum_sq_diff: f64 = 0.0;
+        for i in 0..ours.len() {
+            let diff = (ours[i] - ref_dec[i]).abs();
+            max_diff = max_diff.max(diff);
+            sum_sq_diff += (diff as f64).powi(2);
+        }
+        let rmse = (sum_sq_diff / ours.len() as f64).sqrt();
+        
+        eprintln!("\nDecoded pixel comparison:");
+        eprintln!("  Max difference: {:.6}", max_diff);
+        eprintln!("  RMSE: {:.6}", rmse);
+        
+        // Show corner values
+        eprintln!("\nCorner pixel values (linear RGB):");
+        eprintln!("  Top-left (should be red ~1,0,0):");
+        eprintln!("    Ours: [{:.4}, {:.4}, {:.4}]", ours[0], ours[1], ours[2]);
+        eprintln!("    Ref:  [{:.4}, {:.4}, {:.4}]", ref_dec[0], ref_dec[1], ref_dec[2]);
+        let last = (64*64 - 1) * 3;
+        eprintln!("  Bottom-right (should be blue ~0,0,1):");
+        eprintln!("    Ours: [{:.4}, {:.4}, {:.4}]", ours[last], ours[last+1], ours[last+2]);
+        eprintln!("    Ref:  [{:.4}, {:.4}, {:.4}]", ref_dec[last], ref_dec[last+1], ref_dec[last+2]);
+    }
+}
+
+/// Save files for jxl-inspect comparison
+#[test]
+#[ignore]
+fn test_save_comparison_files() {
+    eprintln!("\n=== Save Comparison Files ===\n");
+    
+    // Create same 64x64 red-blue vertical gradient
+    let mut linear_rgb = Vec::with_capacity(64 * 64 * 3);
+    for y in 0..64 {
+        let t = y as f32 / 63.0;
+        for _x in 0..64 {
+            linear_rgb.push(1.0 - t);
+            linear_rgb.push(0.0);
+            linear_rgb.push(t);
+        }
+    }
+    
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(64, 64, &linear_rgb).unwrap();
+    
+    std::fs::create_dir_all("/tmp/jxl_compare").ok();
+    std::fs::write("/tmp/jxl_compare/rust.jxl", &bytes).unwrap();
+    eprintln!("Saved rust.jxl: {} bytes", bytes.len());
+    
+    // Print hex dump of first 64 bytes
+    eprintln!("\nFirst 64 bytes of rust.jxl:");
+    for (i, chunk) in bytes[..64.min(bytes.len())].chunks(16).enumerate() {
+        eprint!("{:04x}: ", i * 16);
+        for b in chunk {
+            eprint!("{:02x} ", b);
+        }
+        eprintln!();
+    }
+}
+
+/// Test single block encoding/decoding to trace exactly what happens
+#[test]
+#[ignore]
+fn test_single_block_noise() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== Single Block Noise Test ===\n");
+    
+    // Create an 8x8 image with known noise pattern
+    // Use a simple deterministic pattern that creates non-zero AC coefficients
+    let mut linear_rgb = Vec::with_capacity(8 * 8 * 3);
+    
+    // Checkerboard pattern: alternating high/low values
+    for y in 0..8 {
+        for x in 0..8 {
+            let v = if (x + y) % 2 == 0 { 0.8 } else { 0.2 };
+            linear_rgb.push(v); // R
+            linear_rgb.push(v); // G
+            linear_rgb.push(v); // B
+        }
+    }
+    
+    eprintln!("Input:");
+    eprintln!("  Size: 8x8 pixels");
+    eprintln!("  Pattern: checkerboard 0.8/0.2");
+    let avg_input = linear_rgb.iter().sum::<f32>() / linear_rgb.len() as f32;
+    eprintln!("  Average: {:.4}", avg_input);
+    
+    // Encode
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = match encoder.encode(8, 8, &linear_rgb) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("ENCODE ERROR: {:?}", e);
+            return;
+        }
+    };
+    eprintln!("\nEncoded: {} bytes", bytes.len());
+    
+    // Decode
+    let reader = Cursor::new(&bytes);
+    let image = match jxl_oxide::JxlImage::builder().read(reader) {
+        Ok(img) => img,
+        Err(e) => {
+            eprintln!("PARSE ERROR: {:?}", e);
+            return;
+        }
+    };
+    
+    let render = match image.render_frame(0) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("DECODE ERROR: {:?}", e);
+            return;
+        }
+    };
+    
+    let fb = render.image_all_channels();
+    let decoded = fb.buf();
+    
+    eprintln!("\nDecoded:");
+    eprintln!("  Size: {} values", decoded.len());
+    let avg_decoded = decoded.iter().sum::<f32>() / decoded.len() as f32;
+    let min_decoded = decoded.iter().cloned().fold(f32::MAX, f32::min);
+    let max_decoded = decoded.iter().cloned().fold(f32::MIN, f32::max);
+    eprintln!("  Average: {:.4} (expected ~0.5)", avg_decoded);
+    eprintln!("  Min: {:.4}, Max: {:.4}", min_decoded, max_decoded);
+    
+    // Show first 8 pixels
+    eprintln!("\nFirst row (R values):");
+    for x in 0..8 {
+        let r = decoded[x * 3];
+        let expected = if x % 2 == 0 { 0.8 } else { 0.2 };
+        let diff = r - expected;
+        eprintln!("  pixel[{}]: {:.4} (expected {:.1}, diff {:+.4})", x, r, expected, diff);
+    }
+}
+
+/// Compare XYB conversion with libjxl-tiny
+#[test]
+#[ignore]
+fn test_xyb_conversion() {
+    use jxl_enc::color::xyb::linear_rgb_to_xyb;
+
+    eprintln!("\n=== XYB Conversion Test ===\n");
+
+    // Test with grayscale 0.5 (average of checkerboard)
+    let (x, y, b) = linear_rgb_to_xyb(0.5, 0.5, 0.5);
+    eprintln!("Gray 0.5: X={:.4}, Y={:.4}, B={:.4}", x, y, b);
+
+    // Test with the two checkerboard values
+    let (x1, y1, b1) = linear_rgb_to_xyb(0.8, 0.8, 0.8);
+    let (x2, y2, b2) = linear_rgb_to_xyb(0.2, 0.2, 0.2);
+    eprintln!("Gray 0.8: X={:.4}, Y={:.4}, B={:.4}", x1, y1, b1);
+    eprintln!("Gray 0.2: X={:.4}, Y={:.4}, B={:.4}", x2, y2, b2);
+
+    // Average should match gray 0.5
+    let avg_y = (y1 + y2) / 2.0;
+    eprintln!("Average Y of 0.8 and 0.2: {:.4} (should be ~{:.4})", avg_y, y);
+}
+
+/// Compare our checkerboard with libjxl-tiny's
+#[test]
+#[ignore]
+fn test_compare_checkerboard() {
+    use std::io::Cursor;
+
+    eprintln!("\n=== Checkerboard Comparison ===\n");
+
+    // Create 8x8 checkerboard
+    let mut linear_rgb = Vec::with_capacity(8 * 8 * 3);
+    for y in 0..8 {
+        for x in 0..8 {
+            let v = if (x + y) % 2 == 0 { 0.8 } else { 0.2 };
+            linear_rgb.push(v);
+            linear_rgb.push(v);
+            linear_rgb.push(v);
+        }
+    }
+
+    // Encode with our encoder
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(8, 8, &linear_rgb).expect("encode failed");
+    eprintln!("Our encoder: {} bytes", bytes.len());
+
+    // Decode our output
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse failed");
+    let render = image.render_frame(0).expect("render failed");
+    let ours = render.image_all_channels().buf().to_vec();
+
+    let avg_ours = ours.iter().sum::<f32>() / ours.len() as f32;
+    eprintln!("Our decoded average: {:.4}", avg_ours);
+
+    // Load libjxl-tiny output
+    let ref_bytes = match std::fs::read("/tmp/jxl_compare/checker_tiny.jxl") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("No reference file, run libjxl-tiny first");
+            return;
+        }
+    };
+    eprintln!("libjxl-tiny: {} bytes", ref_bytes.len());
+
+    let reader = Cursor::new(&ref_bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse failed");
+    let render = image.render_frame(0).expect("render failed");
+    let ref_dec = render.image_all_channels().buf().to_vec();
+
+    let avg_ref = ref_dec.iter().sum::<f32>() / ref_dec.len() as f32;
+    eprintln!("Reference decoded average: {:.4}", avg_ref);
+
+    // Save our output for byte comparison
+    std::fs::write("/tmp/jxl_compare/checker_rust.jxl", &bytes).expect("write failed");
+    eprintln!("Saved our output to /tmp/jxl_compare/checker_rust.jxl");
+
+    // Compare first row
+    eprintln!("\nFirst row comparison (R channel):");
+    for x in 0..8 {
+        let expected = if x % 2 == 0 { 0.8 } else { 0.2 };
+        eprintln!("  pixel[{}]: ours={:.4}, ref={:.4}, expected={:.1}",
+                  x, ours[x * 3], ref_dec[x * 3], expected);
+    }
+}

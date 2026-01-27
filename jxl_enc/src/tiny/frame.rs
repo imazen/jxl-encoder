@@ -109,7 +109,13 @@ impl DistanceParams {
     /// For distance=1.0 with quant_field≈0.73:
     ///   raw_quant = round(0.73 * 8.93 + 0.5) ≈ 7
     pub fn raw_quant_uniform(&self) -> u8 {
-        // Use 0.73 as the approximate quant_field for uniform images
+        // Use 0.73 as the approximate quant_field for uniform images.
+        // This value was determined empirically by comparing with libjxl-tiny output.
+        //
+        // Note: For proper adaptive quantization, this should be computed per-block
+        // based on image masking. The uniform value of ~7 works well for smooth images.
+        // High-frequency images (checkerboard, noise) have different masking and
+        // libjxl-tiny computes different raw_qf values per-block.
         const UNIFORM_QUANT_FIELD: f32 = 0.73;
         clamp(
             (UNIFORM_QUANT_FIELD * self.inv_scale + 0.5).round() as i32,

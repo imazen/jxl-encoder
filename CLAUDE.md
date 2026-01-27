@@ -117,6 +117,34 @@ This caused all AC tokens to be in the wrong order, making the bitstream undecod
 **Fix**: Moved the channel loop inside the block loop in `write_ac_group()`.
 After fix, output matches libjxl-tiny reference byte-for-byte.
 
+### Per-Channel Quantization Weights Bug (FIXED Jan 27, 2026)
+
+**Issue**: High-frequency content (checkerboards, noise) decoded with completely wrong values
+(e.g., 3.6x too bright for bright pixels, 0 instead of 0.2 for dark pixels).
+
+**Root Cause**: In `transform_and_quantize()`, the quantization was using X channel weights
+for ALL channels instead of per-channel weights:
+
+```rust
+// WRONG - always uses X channel weights (offset 0)
+let weights = &QUANT_WEIGHTS[..DCT_BLOCK_SIZE];
+
+// CORRECT - uses per-channel weights
+let weights = super::quant::quant_weights(0, c);  // strategy=0 (DCT8), c=channel
+```
+
+Each channel has different quantization weights:
+- X channel: indices 0-63 (small values ~3e-4)
+- Y channel: indices 64-127 (medium values ~1.8e-3)
+- B channel: indices 128-191 (larger values ~1.9e-3 to 1.6e-2)
+
+Using X weights for Y/B caused wrong quantization, especially for AC coefficients.
+
+**Fix**: Use `quant_weights(0, c)` to get the correct per-channel weight table.
+
+**After fix**: Checkerboard test now matches libjxl-tiny byte-for-byte (1108 bytes each),
+decoded values are identical.
+
 ### raw_quant Bug (FIXED Jan 23, 2026)
 
 The `raw_quant` value in `transform.rs` was hardcoded to 1 instead of using the
