@@ -21,6 +21,7 @@ mod ac_context;
 mod ac_group;
 mod common;
 mod dc_coding;
+mod dct;
 mod encoder;
 mod entropy_code;
 mod frame;
