@@ -97,7 +97,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
 
     // Build Huffman codes for each clustered histogram
     let mut prefix_codes = Vec::with_capacity(histograms.len());
-    for hist in &histograms {
+    for (i, hist) in histograms.iter().enumerate() {
         let mut depths = [0u8; ALPHABET_SIZE];
         let mut length = ALPHABET_SIZE;
         while length > 0 && hist.counts[length - 1] == 0 {
@@ -111,20 +111,29 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
         let mut bits = [0u16; ALPHABET_SIZE];
         convert_bit_depths_to_symbols(&depths, &mut bits);
 
+        #[cfg(test)]
+        {
+            let depth_slice: Vec<u8> = depths.iter().take(length.min(20)).copied().collect();
+            eprintln!(
+                "  context_tree BuildHuffmanCodes[{}]: length={}, depths={:?}{}",
+                i,
+                length,
+                depth_slice,
+                if length > 20 { ", ..." } else { "" }
+            );
+        }
+
         prefix_codes.push(PrefixCode { depths, bits });
     }
 
     #[cfg(test)]
     {
         eprintln!(
-            "  context_tree_entropy: {} histograms -> {} prefix codes",
+            "  context_tree_entropy: {} histograms -> {} prefix codes, context_map len={}",
             NUM_TREE_CONTEXTS,
-            prefix_codes.len()
+            prefix_codes.len(),
+            context_map.len()
         );
-        // Print histogram total counts to understand clustering
-        for (i, hist) in histograms.iter().enumerate() {
-            eprintln!("    histogram[{}]: total={}, bit_cost={:.1}", i, hist.total_count, hist.bit_cost);
-        }
     }
 
     (context_map, prefix_codes)
@@ -177,6 +186,9 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
 ///
 /// This is written as a context map in the DC global section.
 pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
+    #[cfg(test)]
+    let start_bits = writer.bits_written();
+
     // Check if all values are 0 (simple case)
     let max_val = *COMPACT_BLOCK_CONTEXT_MAP.iter().max().unwrap_or(&0);
     if max_val == 0 {
@@ -208,6 +220,17 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
     }
     create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
 
+    #[cfg(test)]
+    {
+        let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
+        eprintln!(
+            "  write_block_context_map: {} entries, length={}, depths={:?}",
+            COMPACT_BLOCK_CONTEXT_MAP.len(),
+            length,
+            depth_slice
+        );
+    }
+
     let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
     convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
 
@@ -216,8 +239,14 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
         bits: ctxmap_bits,
     };
 
+    #[cfg(test)]
+    let before_prefix = writer.bits_written();
+
     // Write the prefix code for the context map
     write_prefix_codes(&[ctxmap_code], writer)?;
+
+    #[cfg(test)]
+    let after_prefix = writer.bits_written();
 
     // Write the context map tokens
     for t in &tokens {
@@ -231,6 +260,17 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
         let total_bits = depth + encoded.nbits as usize;
 
         writer.write(total_bits, data)?;
+    }
+
+    #[cfg(test)]
+    {
+        let total = writer.bits_written() - start_bits;
+        let prefix_bits = after_prefix - before_prefix;
+        let token_bits = writer.bits_written() - after_prefix;
+        eprintln!(
+            "  write_block_context_map bits: header=3, prefix_code={}, tokens={}, total={}",
+            prefix_bits, token_bits, total
+        );
     }
 
     Ok(())

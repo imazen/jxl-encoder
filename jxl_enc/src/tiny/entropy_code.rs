@@ -662,7 +662,7 @@ fn write_prefix_code(code: &PrefixCode, writer: &mut BitWriter) -> Result<()> {
     if count <= 1 {
         // Single symbol or empty code
         writer.write(4, 1)?; // Simple code marker
-        writer.write(max_bits.max(1), s4[0] as u64)?;
+        writer.write(max_bits, s4[0] as u64)?;
         return Ok(());
     }
 
@@ -677,6 +677,9 @@ fn write_prefix_code(code: &PrefixCode, writer: &mut BitWriter) -> Result<()> {
 
 /// Write all prefix codes.
 pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -> Result<()> {
+    #[cfg(test)]
+    let start_bits = writer.bits_written();
+
     writer.write(1, 1)?; // use_prefix_code = true (Huffman, not ANS)
 
     // Write HybridUint config for each code
@@ -685,6 +688,9 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
         writer.write(3, 2)?; // msb_in_token = 2
         writer.write(2, 0)?; // lsb_in_token = 0
     }
+
+    #[cfg(test)]
+    let after_config = writer.bits_written();
 
     // Write alphabet sizes
     for pc in prefix_codes {
@@ -697,17 +703,49 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
         write_var_len_uint16(num_symbol - 1, writer)?;
     }
 
+    #[cfg(test)]
+    let after_sizes = writer.bits_written();
+
     // Write each prefix code
-    for pc in prefix_codes {
+    for (idx, pc) in prefix_codes.iter().enumerate() {
         let mut num_symbol = 1usize;
         for i in 0..ALPHABET_SIZE {
             if pc.depths[i] > 0 {
                 num_symbol = i + 1;
             }
         }
+        #[cfg(test)]
+        let before_code = writer.bits_written();
+
         if num_symbol > 1 {
             write_prefix_code(pc, writer)?;
         }
+
+        #[cfg(test)]
+        {
+            let code_bits = writer.bits_written() - before_code;
+            if prefix_codes.len() <= 8 && code_bits > 0 {
+                let depth_slice: Vec<u8> = pc.depths.iter().take(num_symbol.min(16)).copied().collect();
+                eprintln!(
+                    "    prefix_code[{}]: num_symbol={}, {} bits, depths={:?}{}",
+                    idx, num_symbol, code_bits, depth_slice,
+                    if num_symbol > 16 { ", ..." } else { "" }
+                );
+            }
+        }
+    }
+
+    #[cfg(test)]
+    {
+        let total = writer.bits_written() - start_bits;
+        eprintln!(
+            "  write_prefix_codes: {} codes, config={} bits, sizes={} bits, codes={} bits, total={} bits",
+            prefix_codes.len(),
+            after_config - start_bits - 1,  // -1 for use_prefix_code bit
+            after_sizes - after_config,
+            writer.bits_written() - after_sizes,
+            total
+        );
     }
 
     Ok(())
@@ -715,6 +753,9 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
 
 /// Write the context map.
 pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
+    #[cfg(test)]
+    let start_bits = writer.bits_written();
+
     if code.num_contexts == 0 {
         return Ok(());
     }
@@ -750,6 +791,15 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
     }
     create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
 
+    #[cfg(test)]
+    {
+        let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
+        eprintln!(
+            "  write_context_map: {} contexts, length={}, depths={:?}",
+            code.num_contexts, length, depth_slice
+        );
+    }
+
     let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
     convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
 
@@ -758,8 +808,14 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
         bits: ctxmap_bits,
     };
 
+    #[cfg(test)]
+    let before_prefix = writer.bits_written();
+
     // Write the prefix code for the context map
     write_prefix_codes(&[ctxmap_code], writer)?;
+
+    #[cfg(test)]
+    let after_prefix = writer.bits_written();
 
     // Write the context map tokens
     for t in &tokens {
@@ -773,6 +829,17 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
         let total_bits = depth + encoded.nbits as usize;
 
         writer.write(total_bits, data)?;
+    }
+
+    #[cfg(test)]
+    {
+        let total = writer.bits_written() - start_bits;
+        let prefix_bits = after_prefix - before_prefix;
+        let token_bits = writer.bits_written() - after_prefix;
+        eprintln!(
+            "  write_context_map bits: header=3, prefix_code={}, tokens={}, total={}",
+            prefix_bits, token_bits, total
+        );
     }
 
     Ok(())
