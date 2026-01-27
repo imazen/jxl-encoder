@@ -10,10 +10,7 @@ use super::ac_group::{
     tokenize_ac_coefficients,
 };
 use super::common::*;
-use super::dc_coding::{
-    write_ac_metadata_tokens, write_ac_metadata_tokens_region, write_dc_tokens,
-    write_dc_tokens_region,
-};
+use super::dc_coding::{write_ac_metadata_tokens_region, write_dc_tokens_region};
 use super::dct::dct_8x8;
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
