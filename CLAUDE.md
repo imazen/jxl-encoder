@@ -80,6 +80,24 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 
 ## Resolved Bugs
 
+### Multi-Group DC Region Bug (FIXED Jan 27, 2026)
+
+**Issue**: Multi-group images (>256x256) produced massive file sizes and corrupt output.
+
+**Root Cause**: `write_dc_group` was ignoring the `dc_group_idx` parameter and writing
+ALL DC tokens and AC metadata for every DC group, instead of only the data for that
+specific group's region.
+
+For example, with 4 DC groups:
+- WRONG: Each DC group wrote 4x the data (entire image)
+- CORRECT: Each DC group writes 1/4 of the data (its 256x256 block region)
+
+**Fix**:
+- Added `write_dc_tokens_region()` that takes block bounds (start_bx, start_by, end_bx, end_by)
+- Added `write_ac_metadata_tokens_region()` for regional AC metadata
+- Updated `write_dc_group()` to compute the block region from dc_group_idx
+- Each DC group now writes only tokens for blocks in its region
+
 ### AC Group Channel Interleaving Bug (FIXED Jan 27, 2026)
 
 **Issue**: AC tokens were being written in the wrong order in the bitstream.
@@ -120,36 +138,6 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-### Multi-Group VarDCT Broken (Jan 23, 2026)
-
-**Status**: BROKEN - Images >256x256 produce garbage output
-
-| Size | SSIM2 | File Size | Status |
-|------|-------|-----------|--------|
-| ≤256x256 | 60-95 | Good | ✓ Single-group works |
-| 257x257+ | -64 | 40x larger | ✗ Multi-group broken |
-
-**Symptoms**:
-- SSIM2 = -64 (catastrophically corrupt)
-- File sizes 40-50x larger than cjxl reference
-- Decoded blocks show step patterns instead of smooth gradients
-- Large blocks of zeros in output file (31% non-zero vs 98% for cjxl)
-
-**What Works**:
-- Single-group encoding (≤256x256) with all DCT sizes
-- DCT8, DCT16, DCT32 transforms produce good quality
-- Both jxl-rs and jxl-oxide decode single-group correctly
-
-**What's Broken**:
-- Multi-group encoding produces invalid bitstream
-- Token/histogram mismatch suspected between HfGlobal and PassGroup sections
-- Section sizing or TOC entries may be wrong
-
-**Test**:
-```bash
-cargo test test_dct8_only_quality -- --ignored --nocapture
-```
-
 ### Vertical Gradient Encoding Bug (Jan 23, 2026)
 
 **Status**: BROKEN - Vertical gradients fail to decode at all sizes
@@ -170,9 +158,8 @@ cargo test test_vardct_gradients -- --nocapture
 
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
-**Status: WORKING for single-group only** - VarDCT supports DCT8, DCT16, and DCT32 transforms
-with verified quality (SSIM2 60-95) for images ≤256x256 pixels. Multi-group images (>256x256)
-are broken regardless of DCT size - see Known Bugs above.
+**Status: WORKING** - VarDCT supports DCT8, DCT16, and DCT32 transforms with verified
+quality (SSIM2 60-95). Multi-group DC region bug was fixed Jan 27, 2026.
 
 ### What Was Fixed (Chronological)
 
