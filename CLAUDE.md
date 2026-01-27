@@ -65,8 +65,8 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Frame header writing (DistanceParams, TOC)
 - [x] DC coding with gradient predictor
 - [x] AC group encoding with channel interleaving
-- [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte, SSIM2=73.5 on photos)
-- [ ] Multi-group encoding (>256x256 images) - parses/decodes but SSIM2 is negative (BUG)
+- [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte, SSIM2=90+ on photos)
+- [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
@@ -145,6 +145,40 @@ Using X weights for Y/B caused wrong quantization, especially for AC coefficient
 **After fix**: Checkerboard test now matches libjxl-tiny byte-for-byte (1108 bytes each),
 decoded values are identical.
 
+### DCT Transpose Bug (FIXED Jan 27, 2026)
+
+**Issue**: Multi-group images had catastrophic quality (SSIM2 = -41 to +14 instead of 70-90).
+Single-group high-frequency content showed diagonal error pattern where only pixels at (i,i)
+were correct, all off-diagonal pixels were wrong.
+
+**Root Cause**: Our `dct_8x8()` was adding an extra transpose at the end that libjxl-tiny
+doesn't do for square blocks.
+
+In libjxl-tiny's `ComputeScaledDCT` for 8x8 (ROWS >= COLS):
+```cpp
+DCT1D<ROWS, COLS>()(from, DCTTo(to, COLS));              // Transform rows
+Transpose<ROWS, COLS>::Run(DCTFrom(to, COLS), DCTTo(block, ROWS));  // Transpose
+DCT1D<COLS, ROWS>()(DCTFrom(block, ROWS), DCTTo(to, ROWS)); // Transform cols
+// No final transpose! Output is in transposed layout.
+```
+
+Our code was:
+```rust
+dct1d_8(&mut tmp[...]);        // Transform rows
+transpose(&tmp, &mut transposed);  // Transpose
+dct1d_8(&mut transposed[...]);    // Transform cols
+transpose(&transposed, output);    // WRONG! Extra transpose back
+```
+
+**Fix**: Removed the final transpose in `dct_8x8()`. The decoder expects coefficients
+in transposed layout where `output[cx * 8 + cy]` contains the coefficient for frequency
+`(cy, cx)`.
+
+**After fix**:
+- Single-group (200x200): SSIM2 = 90.6
+- Multi-group (1638x2048): SSIM2 = 83-86 on CLIC 2025 validation images
+- 8x8 random test: avg error dropped from 0.1582 to 0.0068 (23x improvement)
+
 ### raw_quant Bug (FIXED Jan 23, 2026)
 
 The `raw_quant` value in `transform.rs` was hardcoded to 1 instead of using the
@@ -165,48 +199,6 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
    before quantizing (matching `quantize_block_8x8`'s approach).
 
 ## Known Bugs (ACTIVE)
-
-### Multi-Group Quality Bug (3x3+ groups) - Jan 27, 2026
-
-**Status**: PARTIALLY FIXED - 1x1 and 2x2 groups work, 3x3+ groups still broken
-
-**Current state after per-channel weights fix:**
-- 256x256 (1x1 groups): SSIM2 = 69.4 ✓
-- 512x512 (2x2 groups): SSIM2 = 74.6 ✓
-- 768x768 (3x3 groups): SSIM2 = 14.4 ✗
-- 1024x1024 (4x4 groups): SSIM2 = -18.9 ✗
-- 1280x1280 (5x5 groups): SSIM2 = -22.5 ✗
-
-**Key observation**: The issue manifests when there are MORE than 4 AC groups.
-2x2 = 4 groups works, 3x3 = 9 groups fails.
-
-**Both djxl and jxl-oxide produce bad output**, confirming the bitstream is wrong.
-They produce DIFFERENT bad outputs (djxl SSIM2=-57.9 vs jxl-oxide SSIM2=14.4),
-suggesting ambiguous/corrupt data that's interpreted differently.
-
-**Possible causes to investigate:**
-1. AC group boundary handling for groups beyond index 4
-2. nzeros prediction across group boundaries
-3. Context computation for larger group indices
-4. Something in the 3rd row/column of groups
-
-**What Works**:
-- DC group region bounds are correctly computed
-- TOC is written correctly (files parse successfully)
-- Decoder renders without errors
-- Single-group and 2x2 multi-group encoding is correct
-
-**What's Broken**:
-- The actual pixel data is wrong in multi-group output
-- Likely something in AC group encoding or group boundary handling
-- Could be coefficient order or context computation across group boundaries
-
-**Test**:
-```bash
-cargo test --test clic2025 test_clic2025_first_5 -- --ignored --nocapture
-# Compare with single-group:
-cargo test --test clic2025 test_clic2025_small_crop -- --ignored --nocapture
-```
 
 ### Vertical Gradient Encoding Bug (Jan 23, 2026)
 

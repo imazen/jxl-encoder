@@ -1504,3 +1504,763 @@ fn test_compare_checkerboard() {
                   x, ours[x * 3], ref_dec[x * 3], expected);
     }
 }
+
+#[test]
+#[ignore]
+fn test_dark_values_multigroup() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== Dark Values Multi-Group Test ===\n");
+    eprintln!("Testing with dark values (0.05-0.25) similar to real photo.\n");
+    
+    for &size in &[256u32, 512, 768, 1024] {
+        let n = (size * size) as usize;
+        let mut linear_rgb: Vec<f32> = Vec::with_capacity(n * 3);
+        let mut seed = 12345u64;
+        
+        for _ in 0..n {
+            // LCG random in dark range
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let val = 0.05 + ((seed >> 33) as f32 / 4294967295.0) * 0.20;
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+        }
+        
+        let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        let bytes = encoder.encode(size as usize, size as usize, &linear_rgb)
+            .expect("Encode failed");
+        
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+        let render = image.render_frame(0).expect("Render failed");
+        let decoded = render.image_all_channels().buf().to_vec();
+        
+        let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
+        let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let out_of_range = decoded.iter().filter(|&&v| v < 0.0 || v > 1.0).count();
+        
+        let grid = (size + 255) / 256;
+        eprintln!("{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}",
+                  size, size, grid, grid, avg, min_val, max_val, out_of_range);
+        
+        if out_of_range > 0 {
+            eprintln!("  ERROR: {} values out of range", out_of_range);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_color_multigroup() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== Color (Non-Grayscale) Multi-Group Test ===\n");
+    eprintln!("Testing with varied RGB values (not R=G=B).\n");
+    
+    for &size in &[256u32, 512, 768, 1024] {
+        let n = (size * size) as usize;
+        let mut linear_rgb: Vec<f32> = Vec::with_capacity(n * 3);
+        let mut seed = 12345u64;
+        
+        fn lcg(seed: &mut u64) -> f32 {
+            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((*seed >> 33) as f32) / 4294967295.0
+        }
+        
+        for _ in 0..n {
+            // Different values for R, G, B
+            let r = 0.1 + lcg(&mut seed) * 0.3;  // 0.1-0.4
+            let g = 0.2 + lcg(&mut seed) * 0.4;  // 0.2-0.6
+            let b = 0.05 + lcg(&mut seed) * 0.2; // 0.05-0.25
+            linear_rgb.push(r);
+            linear_rgb.push(g);
+            linear_rgb.push(b);
+        }
+        
+        let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        let bytes = encoder.encode(size as usize, size as usize, &linear_rgb)
+            .expect("Encode failed");
+        
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+        let render = image.render_frame(0).expect("Render failed");
+        let decoded = render.image_all_channels().buf().to_vec();
+        
+        let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
+        let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let out_of_range = decoded.iter().filter(|&&v| v < -0.1 || v > 1.1).count();
+        
+        let grid = (size + 255) / 256;
+        eprintln!("{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}",
+                  size, size, grid, grid, avg, min_val, max_val, out_of_range);
+        
+        if out_of_range > 0 {
+            eprintln!("  ERROR: {} values significantly out of range", out_of_range);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_analyze_clic_photo() {
+    use image::GenericImageView;
+    
+    eprintln!("\n=== Analyzing CLIC Photo Properties ===\n");
+    
+    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
+    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    
+    let first_png = std::fs::read_dir(&validation_dir)
+        .expect("Could not read directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .next()
+        .expect("No PNG files found");
+    
+    let img = image::open(first_png.path()).expect("Could not open image");
+    let (width, height) = img.dimensions();
+    eprintln!("Image: {}x{}", width, height);
+    
+    // Crop to 768x768
+    let size = 768u32;
+    let cropped = img.crop_imm(0, 0, size.min(width), size.min(height));
+    let rgb = cropped.to_rgb8();
+    
+    // Analyze sRGB values (0-255)
+    let mut r_sum = 0u64;
+    let mut g_sum = 0u64;
+    let mut b_sum = 0u64;
+    let mut r_min = 255u8;
+    let mut r_max = 0u8;
+    let mut g_min = 255u8;
+    let mut g_max = 0u8;
+    let mut b_min = 255u8;
+    let mut b_max = 0u8;
+    
+    for p in rgb.pixels() {
+        r_sum += p[0] as u64;
+        g_sum += p[1] as u64;
+        b_sum += p[2] as u64;
+        r_min = r_min.min(p[0]);
+        r_max = r_max.max(p[0]);
+        g_min = g_min.min(p[1]);
+        g_max = g_max.max(p[1]);
+        b_min = b_min.min(p[2]);
+        b_max = b_max.max(p[2]);
+    }
+    
+    let n = (size * size) as f64;
+    eprintln!("sRGB stats:");
+    eprintln!("  R: avg={:.1}, min={}, max={}", r_sum as f64 / n, r_min, r_max);
+    eprintln!("  G: avg={:.1}, min={}, max={}", g_sum as f64 / n, g_min, g_max);
+    eprintln!("  B: avg={:.1}, min={}, max={}", b_sum as f64 / n, b_min, b_max);
+    
+    // Convert to linear and analyze
+    let linear_rgb: Vec<f32> = rgb.pixels()
+        .flat_map(|p| {
+            let r = (p[0] as f32 / 255.0).powf(2.2);
+            let g = (p[1] as f32 / 255.0).powf(2.2);
+            let b = (p[2] as f32 / 255.0).powf(2.2);
+            [r, g, b]
+        })
+        .collect();
+    
+    let lin_r: Vec<f32> = linear_rgb.iter().step_by(3).cloned().collect();
+    let lin_g: Vec<f32> = linear_rgb.iter().skip(1).step_by(3).cloned().collect();
+    let lin_b: Vec<f32> = linear_rgb.iter().skip(2).step_by(3).cloned().collect();
+    
+    fn stats(v: &[f32]) -> (f32, f32, f32) {
+        let sum: f32 = v.iter().sum();
+        let avg = sum / v.len() as f32;
+        let min = v.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = v.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        (avg, min, max)
+    }
+    
+    let (r_avg, r_min, r_max) = stats(&lin_r);
+    let (g_avg, g_min, g_max) = stats(&lin_g);
+    let (b_avg, b_min, b_max) = stats(&lin_b);
+    
+    eprintln!("\nLinear RGB stats:");
+    eprintln!("  R: avg={:.4}, min={:.4}, max={:.4}", r_avg, r_min, r_max);
+    eprintln!("  G: avg={:.4}, min={:.4}, max={:.4}", g_avg, g_min, g_max);
+    eprintln!("  B: avg={:.4}, min={:.4}, max={:.4}", b_avg, b_min, b_max);
+    
+    // Check per-group regions
+    eprintln!("\nPer-group input stats (linear):");
+    let group_size = 256usize;
+    let w = size as usize;
+    for gy in 0..3 {
+        for gx in 0..3 {
+            let x0 = gx * group_size;
+            let y0 = gy * group_size;
+            let x1 = (x0 + group_size).min(w);
+            let y1 = (y0 + group_size).min(w);
+            
+            let mut group_sum: f32 = 0.0;
+            let mut group_min = f32::INFINITY;
+            let mut group_max = f32::NEG_INFINITY;
+            
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let idx = (y * w + x) * 3;
+                    for c in 0..3 {
+                        let v = linear_rgb[idx + c];
+                        group_sum += v;
+                        group_min = group_min.min(v);
+                        group_max = group_max.max(v);
+                    }
+                }
+            }
+            
+            let group_n = ((x1-x0) * (y1-y0) * 3) as f32;
+            let group_idx = gy * 3 + gx;
+            eprintln!("  Group {} ({},{}): avg={:.4}, min={:.4}, max={:.4}",
+                      group_idx, gx, gy, group_sum / group_n, group_min, group_max);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_high_contrast_multigroup() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== High Contrast Multi-Group Test ===\n");
+    eprintln!("Testing with full range values (0.0-1.0) like the corrupt CLIC groups.\n");
+    
+    for &size in &[256u32, 512, 768, 1024] {
+        let n = (size * size) as usize;
+        let mut linear_rgb: Vec<f32> = Vec::with_capacity(n * 3);
+        let mut seed = 12345u64;
+        
+        fn lcg(seed: &mut u64) -> f32 {
+            *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((*seed >> 33) as f32) / 4294967295.0
+        }
+        
+        for _ in 0..n {
+            // Full range 0.0-1.0 for all channels
+            let r = lcg(&mut seed);
+            let g = lcg(&mut seed);
+            let b = lcg(&mut seed);
+            linear_rgb.push(r);
+            linear_rgb.push(g);
+            linear_rgb.push(b);
+        }
+        
+        let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        let bytes = encoder.encode(size as usize, size as usize, &linear_rgb)
+            .expect("Encode failed");
+        
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+        let render = image.render_frame(0).expect("Render failed");
+        let decoded = render.image_all_channels().buf().to_vec();
+        
+        let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
+        let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let out_of_range = decoded.iter().filter(|&&v| v < -0.1 || v > 1.1).count();
+        
+        let grid = (size + 255) / 256;
+        eprintln!("{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}",
+                  size, size, grid, grid, avg, min_val, max_val, out_of_range);
+        
+        if out_of_range > 0 {
+            eprintln!("  ERROR: {} values significantly out of range", out_of_range);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn test_bright_block_trace() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== Bright Block Tracing ===\n");
+    
+    // Create a simple 8x8 bright image (single block)
+    let size = 8u32;
+    let val = 0.8f32;  // Bright value
+    let linear_rgb: Vec<f32> = vec![val; (size * size * 3) as usize];
+    
+    eprintln!("Input: {}x{} solid bright (linear RGB = {:.4})", size, size, val);
+    
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size as usize, size as usize, &linear_rgb)
+        .expect("Encode failed");
+    
+    eprintln!("Encoded to {} bytes", bytes.len());
+    
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+    let render = image.render_frame(0).expect("Render failed");
+    let decoded = render.image_all_channels().buf().to_vec();
+    
+    // Check first pixel
+    let r = decoded[0];
+    let g = decoded[1];
+    let b = decoded[2];
+    eprintln!("Decoded pixel[0]: R={:.4}, G={:.4}, B={:.4}", r, g, b);
+    eprintln!("Expected: ~{:.4}", val);
+    eprintln!("Ratio: {:.4}x", r / val);
+    
+    // Also test with dark value for comparison
+    let dark_val = 0.2f32;
+    let dark_rgb: Vec<f32> = vec![dark_val; (size * size * 3) as usize];
+    
+    let bytes2 = encoder.encode(size as usize, size as usize, &dark_rgb).expect("Encode");
+    let reader2 = Cursor::new(&bytes2);
+    let image2 = jxl_oxide::JxlImage::builder().read(reader2).expect("Parse");
+    let render2 = image2.render_frame(0).expect("Render");
+    let decoded2 = render2.image_all_channels().buf().to_vec();
+    
+    eprintln!("\nDark input: linear RGB = {:.4}", dark_val);
+    eprintln!("Decoded pixel[0]: R={:.4}, G={:.4}, B={:.4}", 
+              decoded2[0], decoded2[1], decoded2[2]);
+    eprintln!("Expected: ~{:.4}", dark_val);
+    eprintln!("Ratio: {:.4}x", decoded2[0] / dark_val);
+}
+
+#[test]
+#[ignore]
+fn test_high_contrast_checkerboard() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== High Contrast Checkerboard Test ===\n");
+    
+    // 8x8 checkerboard with values 0.1 and 0.9 (high contrast)
+    let size = 8u32;
+    let dark = 0.1f32;
+    let bright = 0.9f32;
+    
+    let mut linear_rgb: Vec<f32> = Vec::with_capacity((size * size * 3) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let val = if (x + y) % 2 == 0 { bright } else { dark };
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+        }
+    }
+    
+    let expected_avg = (dark + bright) / 2.0;
+    let input_avg: f32 = linear_rgb.iter().sum::<f32>() / linear_rgb.len() as f32;
+    eprintln!("Input: {}x{} checkerboard dark={:.2} bright={:.2}", size, size, dark, bright);
+    eprintln!("Input average: {:.4} (expected {:.4})", input_avg, expected_avg);
+    
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size as usize, size as usize, &linear_rgb)
+        .expect("Encode failed");
+    
+    eprintln!("Encoded to {} bytes", bytes.len());
+    
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+    let render = image.render_frame(0).expect("Render failed");
+    let decoded = render.image_all_channels().buf().to_vec();
+    
+    let decoded_avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
+    let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    
+    eprintln!("Decoded: avg={:.4}, min={:.4}, max={:.4}", decoded_avg, min_val, max_val);
+    eprintln!("Expected avg: {:.4}", expected_avg);
+    eprintln!("Ratio: {:.4}x", decoded_avg / expected_avg);
+    
+    // Show first row
+    eprintln!("\nFirst row (R channel):");
+    for x in 0..8 {
+        let expected = if x % 2 == 0 { bright } else { dark };
+        eprintln!("  pixel[{}]: decoded={:.4}, expected={:.4}, diff={:+.4}",
+                  x, decoded[x as usize * 3], expected, 
+                  decoded[x as usize * 3] - expected);
+    }
+}
+
+#[test]
+#[ignore]
+fn test_full_range_random_8x8() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== Full Range Random 8x8 Test ===\n");
+    
+    let size = 8u32;
+    let mut linear_rgb: Vec<f32> = Vec::with_capacity((size * size * 3) as usize);
+    let mut seed = 12345u64;
+    
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((*seed >> 33) as f32) / 4294967295.0
+    }
+    
+    for _ in 0..(size * size) {
+        let r = lcg(&mut seed);
+        let g = lcg(&mut seed);
+        let b = lcg(&mut seed);
+        linear_rgb.push(r);
+        linear_rgb.push(g);
+        linear_rgb.push(b);
+    }
+    
+    let input_avg: f32 = linear_rgb.iter().sum::<f32>() / linear_rgb.len() as f32;
+    let input_min = linear_rgb.iter().cloned().fold(f32::INFINITY, f32::min);
+    let input_max = linear_rgb.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    eprintln!("Input: avg={:.4}, min={:.4}, max={:.4}", input_avg, input_min, input_max);
+    
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size as usize, size as usize, &linear_rgb)
+        .expect("Encode failed");
+    
+    eprintln!("Encoded to {} bytes", bytes.len());
+    
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+    let render = image.render_frame(0).expect("Render failed");
+    let decoded = render.image_all_channels().buf().to_vec();
+    
+    let decoded_avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
+    let decoded_min = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
+    let decoded_max = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    
+    eprintln!("Decoded: avg={:.4}, min={:.4}, max={:.4}", decoded_avg, decoded_min, decoded_max);
+    eprintln!("Average ratio: {:.4}x", decoded_avg / input_avg);
+    
+    // Compare first few pixels
+    eprintln!("\nFirst 4 pixels comparison:");
+    for i in 0..4 {
+        let idx = i * 3;
+        eprintln!("  pixel[{}]: input=({:.3},{:.3},{:.3}) decoded=({:.3},{:.3},{:.3})",
+                  i,
+                  linear_rgb[idx], linear_rgb[idx+1], linear_rgb[idx+2],
+                  decoded[idx], decoded[idx+1], decoded[idx+2]);
+    }
+}
+
+#[test]
+#[ignore]
+fn test_grayscale_vs_color_random() {
+    use std::io::Cursor;
+    
+    eprintln!("\n=== Grayscale vs Color Random Comparison ===\n");
+    
+    let size = 8u32;
+    let mut seed = 12345u64;
+    
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((*seed >> 33) as f32) / 4294967295.0
+    }
+    
+    // Test 1: Grayscale (R=G=B)
+    eprintln!("=== Test 1: Grayscale Random ===");
+    let mut gray_rgb: Vec<f32> = Vec::with_capacity((size * size * 3) as usize);
+    seed = 12345;
+    for _ in 0..(size * size) {
+        let v = lcg(&mut seed);
+        gray_rgb.push(v);
+        gray_rgb.push(v);
+        gray_rgb.push(v);
+    }
+    
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size as usize, size as usize, &gray_rgb).unwrap();
+    
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    let render = image.render_frame(0).unwrap();
+    let gray_dec = render.image_all_channels().buf().to_vec();
+    
+    // Compare first few pixels
+    eprintln!("First 4 pixels:");
+    let mut gray_max_err = 0f32;
+    for i in 0..4 {
+        let idx = i * 3;
+        let err = (gray_rgb[idx] - gray_dec[idx]).abs();
+        gray_max_err = gray_max_err.max(err);
+        eprintln!("  pixel[{}]: input={:.4} decoded=({:.4},{:.4},{:.4}) err={:.4}",
+                  i, gray_rgb[idx], gray_dec[idx], gray_dec[idx+1], gray_dec[idx+2], err);
+    }
+    eprintln!("Max error: {:.4}", gray_max_err);
+    
+    // Test 2: Color (R≠G≠B)
+    eprintln!("\n=== Test 2: Color Random ===");
+    let mut color_rgb: Vec<f32> = Vec::with_capacity((size * size * 3) as usize);
+    seed = 12345;
+    for _ in 0..(size * size) {
+        color_rgb.push(lcg(&mut seed));
+        color_rgb.push(lcg(&mut seed));
+        color_rgb.push(lcg(&mut seed));
+    }
+    
+    let bytes = encoder.encode(size as usize, size as usize, &color_rgb).unwrap();
+    
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    let render = image.render_frame(0).unwrap();
+    let color_dec = render.image_all_channels().buf().to_vec();
+    
+    eprintln!("First 4 pixels:");
+    let mut color_max_err = 0f32;
+    for i in 0..4 {
+        let idx = i * 3;
+        for c in 0..3 {
+            let err = (color_rgb[idx+c] - color_dec[idx+c]).abs();
+            color_max_err = color_max_err.max(err);
+        }
+        eprintln!("  pixel[{}]: input=({:.3},{:.3},{:.3}) decoded=({:.3},{:.3},{:.3})",
+                  i,
+                  color_rgb[idx], color_rgb[idx+1], color_rgb[idx+2],
+                  color_dec[idx], color_dec[idx+1], color_dec[idx+2]);
+    }
+    eprintln!("Max error: {:.4}", color_max_err);
+    
+    eprintln!("\n=== Conclusion ===");
+    if color_max_err > gray_max_err * 2.0 {
+        eprintln!("Color images have much larger errors than grayscale - likely CFL bug!");
+    } else {
+        eprintln!("Both have similar error levels");
+    }
+}
+
+#[test]
+#[ignore]
+fn test_gradient_16x16_debug() {
+    // Create the same 16x16 gradient as libjxl-tiny test
+    let size = 16usize;
+    let n = size * size;
+    let mut linear_rgb: Vec<f32> = Vec::with_capacity(n * 3);
+    for y in 0..size {
+        for x in 0..size {
+            let val = (x + y) as f32 / (2.0 * (size - 1) as f32);
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+        }
+    }
+    
+    // Encode with our encoder
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size, size, &linear_rgb).unwrap();
+    
+    // Save
+    std::fs::write("/tmp/jxl_debug/rust_16.jxl", &bytes).unwrap();
+    println!("Our encoder: {} bytes", bytes.len());
+    
+    // Decode with jxl-oxide to verify
+    let reader = std::io::Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let render = image.render_frame(0).expect("render");
+    let decoded = render.image_all_channels().buf().to_vec();
+    
+    // Stats
+    let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
+    let min = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    println!("Decoded avg={:.4}, min={:.4}, max={:.4}", avg, min, max);
+    
+    // Compare first few pixels
+    println!("\nFirst 4 decoded pixels:");
+    for i in 0..4 {
+        let expected = (0 + i) as f32 / (2.0 * (size - 1) as f32);
+        println!("  pixel[0,{}]: expected={:.4}, decoded=({:.4},{:.4},{:.4})",
+                 i, expected, decoded[i*3], decoded[i*3+1], decoded[i*3+2]);
+    }
+}
+
+#[test]
+#[ignore]
+fn test_random_16x16_debug() {
+    // Create 16x16 random content using LCG
+    let size = 16usize;
+    let n = size * size;
+    let mut linear_rgb: Vec<f32> = Vec::with_capacity(n * 3);
+    let mut seed = 12345u64;
+    for _y in 0..size {
+        for _x in 0..size {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let val = (seed >> 33) as f32 / u32::MAX as f32;
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+        }
+    }
+    
+    // Encode with our encoder
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size, size, &linear_rgb).unwrap();
+    
+    println!("Our encoder: {} bytes", bytes.len());
+    
+    // Decode with jxl-oxide
+    let reader = std::io::Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let render = image.render_frame(0).expect("render");
+    let decoded = render.image_all_channels().buf().to_vec();
+    
+    // Regenerate input for comparison
+    seed = 12345u64;
+    let mut max_err = 0.0f32;
+    println!("\nFirst 8 pixels:");
+    for i in 0..8 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let expected = (seed >> 33) as f32 / u32::MAX as f32;
+        let dec = decoded[i*3];
+        let err = (dec - expected).abs();
+        max_err = max_err.max(err);
+        println!("  pixel[{}]: expected={:.4}, decoded={:.4}, err={:.4}",
+                 i, expected, dec, err);
+    }
+    println!("\nMax error in first 8: {:.4}", max_err);
+}
+
+#[test]
+#[ignore]
+fn test_random_ac_coeffs() {
+    // Create 8x8 random content - just one block for easier analysis
+    let size = 8usize;
+    let mut linear_rgb: Vec<f32> = Vec::with_capacity(size * size * 3);
+    let mut seed = 12345u64;
+    for _y in 0..size {
+        for _x in 0..size {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let val = (seed >> 33) as f32 / u32::MAX as f32;
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+            linear_rgb.push(val);
+        }
+    }
+    
+    // Encode
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let bytes = encoder.encode(size, size, &linear_rgb).unwrap();
+    println!("Encoded {} bytes", bytes.len());
+    
+    // Decode and check
+    let reader = std::io::Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let render = image.render_frame(0).expect("render");
+    let decoded = render.image_all_channels().buf().to_vec();
+    
+    // Check decoded vs input
+    seed = 12345u64;
+    println!("\nPixel comparison (8x8 block):");
+    let mut total_err = 0.0f32;
+    for y in 0..size {
+        for x in 0..size {
+            let idx = y * size + x;
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let expected = (seed >> 33) as f32 / u32::MAX as f32;
+            let dec = decoded[idx * 3];
+            let err = (dec - expected).abs();
+            total_err += err;
+            if err > 0.05 {
+                print!("*{:.2} ", err);
+            } else {
+                print!("{:.2} ", err);
+            }
+        }
+        println!();
+    }
+    println!("Average error: {:.4}", total_err / (size * size) as f32);
+}
+
+#[test]
+#[ignore]
+fn test_compare_libjxl_tiny() {
+    // Create same random 8x8 using LCG
+    let size = 8usize;
+    let mut expected = Vec::new();
+    let mut linear_rgb: Vec<f32> = Vec::with_capacity(size * size * 3);
+    let mut seed = 12345u64;
+    for _ in 0..(size * size) {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let val = (seed >> 33) as f32 / u32::MAX as f32;
+        expected.push(val);
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+    }
+    
+    println!("Expected first row:");
+    for x in 0..8 {
+        print!("{:.3} ", expected[x]);
+    }
+    println!();
+    
+    // Decode libjxl-tiny output
+    if let Ok(bytes) = std::fs::read("/tmp/jxl_debug/random_8x8_tiny.jxl") {
+        let reader = Cursor::new(&bytes);
+        match jxl_oxide::JxlImage::builder().read(reader) {
+            Ok(image) => {
+                match image.render_frame(0) {
+                    Ok(render) => {
+                        let buf = render.image_all_channels().buf().to_vec();
+                        println!("\nlibjxl-tiny decoded first row:");
+                        for x in 0..8 {
+                            print!("{:.3} ", buf[x * 3]);
+                        }
+                        println!();
+                        
+                        // Check for reasonable values
+                        let max_val = buf.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                        let min_val = buf.iter().cloned().fold(f32::INFINITY, f32::min);
+                        println!("libjxl-tiny: min={:.3}, max={:.3}", min_val, max_val);
+                        
+                        if max_val.abs() > 10.0 || min_val.abs() > 10.0 {
+                            println!("WARNING: libjxl-tiny output has extreme values!");
+                        } else {
+                            // Compute error
+                            let mut total_err = 0.0f32;
+                            for i in 0..64 {
+                                let err = (buf[i * 3] - expected[i]).abs();
+                                total_err += err;
+                            }
+                            println!("libjxl-tiny avg error: {:.4}", total_err / 64.0);
+                        }
+                    }
+                    Err(e) => println!("libjxl-tiny render error: {:?}", e),
+                }
+            }
+            Err(e) => println!("libjxl-tiny parse error: {:?}", e),
+        }
+    } else {
+        println!("Could not read libjxl-tiny output file");
+    }
+    
+    // Encode with our encoder
+    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let our_bytes = encoder.encode(size, size, &linear_rgb).expect("encode");
+    println!("\nOur encoder: {} bytes", our_bytes.len());
+    
+    let reader = Cursor::new(&our_bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let render = image.render_frame(0).expect("render");
+    let buf = render.image_all_channels().buf().to_vec();
+    
+    println!("Our encoder decoded first row:");
+    for x in 0..8 {
+        print!("{:.3} ", buf[x * 3]);
+    }
+    println!();
+    
+    // Compute error
+    let mut total_err = 0.0f32;
+    for i in 0..64 {
+        let err = (buf[i * 3] - expected[i]).abs();
+        total_err += err;
+    }
+    println!("Our encoder avg error: {:.4}", total_err / 64.0);
+    
+    // Compare file sizes
+    if let Ok(tiny_bytes) = std::fs::read("/tmp/jxl_debug/random_8x8_tiny.jxl") {
+        println!("\nFile size comparison:");
+        println!("  libjxl-tiny: {} bytes", tiny_bytes.len());
+        println!("  our encoder: {} bytes", our_bytes.len());
+        println!("  difference: {} bytes", our_bytes.len() as i64 - tiny_bytes.len() as i64);
+    }
+}
