@@ -20,6 +20,7 @@ pub mod headers;
 pub mod heuristics;
 pub mod image;
 pub mod modular;
+pub mod tiny;
 pub mod trace;
 pub mod vardct;
 

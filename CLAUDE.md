@@ -7,6 +7,9 @@ This is a work-in-progress Rust implementation of a JPEG XL encoder, being porte
 ## Reference Implementations
 
 - **libjxl (C++)**: `~/work/jxl-efforts/libjxl` - The reference encoder/decoder
+- **libjxl-tiny (C++)**: `~/work/libjxl-tiny` - Simplified encoder being ported
+  - Tracking document: [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md)
+  - Port location: `jxl_enc/src/tiny/`
 - **jxl-rs (Rust decoder)**: `~/work/jxl-rs` - **PRIMARY** Rust decoder for roundtrip tests
   - GitHub: https://github.com/lilith/jxl-rs (more conformant and complete)
 - **jxl-oxide (Rust decoder)**: `~/work/jxl-efforts/jxl-oxide` - Alternative Rust decoder
@@ -33,6 +36,22 @@ Never omit jxl-rs from decoder validation.
 - Huffman encoder skeleton
 - ANS encoder skeleton
 - HybridUint encoder
+
+### In Progress: libjxl-tiny Port
+
+A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md) for detailed progress.
+
+- [x] Module structure (`jxl_enc/src/tiny/`)
+- [x] Common utilities and constants
+- [x] Token and UintCoder
+- [x] Entropy code types and write_token
+- [x] AC context computation
+- [x] Static DC prefix codes (8 Huffman codes, 45 contexts)
+- [x] Frame header writing (DistanceParams, TOC)
+- [ ] Static AC prefix codes
+- [ ] DC coding with gradient predictor
+- [ ] AC group encoding
+- [ ] Integration and roundtrip testing
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)

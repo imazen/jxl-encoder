@@ -556,7 +556,12 @@ mod tests {
         assert_eq!(COEFF_NUM_NONZERO_CONTEXT.len(), 63);
         // All indices have valid context values 0-206
         for (i, &ctx) in COEFF_NUM_NONZERO_CONTEXT.iter().enumerate() {
-            assert!(ctx <= 206, "Context {} at index {} should be <= 206", ctx, i);
+            assert!(
+                ctx <= 206,
+                "Context {} at index {} should be <= 206",
+                ctx,
+                i
+            );
         }
         // Index 0 (nonzeros=1) should have context 0
         assert_eq!(COEFF_NUM_NONZERO_CONTEXT[0], 0);
