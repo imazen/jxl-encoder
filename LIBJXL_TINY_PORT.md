@@ -142,6 +142,13 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 
 ## Progress Log
 
+### 2026-01-26 (cont. 4)
+- Added basic integration tests for encoder skeleton
+- test_tiny_encoder_produces_jxl_signature
+- test_tiny_encoder_various_sizes
+- 35 tiny module tests passing
+- Documented remaining integration work needed
+
 ### 2026-01-26 (cont. 3)
 - Ported AC group encoding (`ac_group.rs`)
 - Coefficient order tables (COEFF_ORDER_8X8, COEFF_ORDER_8X16)
@@ -178,6 +185,54 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 ## Known Issues
 
 (None yet)
+
+## Remaining Integration Work
+
+The following components are ported but not yet wired together in `encoder.rs`:
+
+### Required for Working Encoder
+1. **RGB → XYB Conversion**: Already exists in `color/xyb.rs`
+   - `linear_rgb_to_xyb()` for single pixel
+   - `linear_image_to_xyb()` for whole image
+
+2. **Forward DCT**: Already exists in `jxl_enc_transforms`
+   - `dct8()` for 8x8 blocks
+   - `dct16()` for 16x16 blocks (used by DCT8x16/DCT16x8)
+
+3. **Quantization**: Need to port from `quant_weights.cc`
+   - Default quantization matrices
+   - Apply `DistanceParams.scale` to coefficients
+
+4. **DC Encoding**: Ported in `dc_coding.rs`
+   - Need to wire `write_dc_tokens()` into encoder
+   - Requires quantized DC values
+
+5. **AC Encoding**: Ported in `ac_group.rs`
+   - Need to wire `tokenize_ac_coefficients()` into encoder
+   - Requires quantized AC values and nzeros tracking
+
+### Bitstream Structure (Partially Done)
+- [x] File header with size
+- [x] Frame header (write_frame_header)
+- [x] TOC (write_toc)
+- [ ] DC global section (need actual DC entropy code)
+- [ ] DC group sections (need actual DC data)
+- [ ] AC global section (need actual AC entropy code)
+- [ ] AC group sections (need actual AC data)
+
+### Integration Steps
+1. Split input image into 256x256 groups
+2. For each group:
+   a. Convert RGB → XYB (3 channels)
+   b. Split into 8x8 blocks
+   c. Run DCT on each block
+   d. Quantize DC and AC coefficients
+   e. Accumulate DC values for dc_coding
+   f. Accumulate AC tokens for ac_group
+3. Write DC global with static entropy code
+4. Write DC groups using write_dc_tokens
+5. Write AC global with static entropy code
+6. Write AC groups using tokenize_ac_coefficients
 
 ## References
 
