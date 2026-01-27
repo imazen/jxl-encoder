@@ -47,6 +47,8 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 | `static_entropy_codes.h` | 972 | DONE | Pre-computed entropy tables |
 | `ac_context.h` | 118 | DONE | AC coefficient context |
 | `quant_weights.cc` | 159 | TODO | Quantization matrices |
+| `enc_transforms-inl.h` | 660 | DONE | Forward DCT (8x8, 16x8, 8x16) |
+| `dct_scales.h` | 118 | DONE | DCT constants and multipliers |
 
 ### Heuristics (Priority 3, can simplify)
 
@@ -142,6 +144,14 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 
 ## Progress Log
 
+### 2026-01-26 (cont. 5)
+- Ported forward DCT from libjxl-tiny (`dct.rs`)
+- Recursive radix-2 DCT algorithm (Perera & Liu)
+- Constants: SQRT2, WC_MULTIPLIERS_4/8/16, DCT_RESAMPLE_SCALE
+- Functions: dct_8x8, dct_16x8, dct_8x16, dc_from_dct_*
+- 7 DCT tests passing
+- 42 tiny module tests passing total
+
 ### 2026-01-26 (cont. 4)
 - Added basic integration tests for encoder skeleton
 - test_tiny_encoder_produces_jxl_signature
@@ -195,9 +205,11 @@ The following components are ported but not yet wired together in `encoder.rs`:
    - `linear_rgb_to_xyb()` for single pixel
    - `linear_image_to_xyb()` for whole image
 
-2. **Forward DCT**: Already exists in `jxl_enc_transforms`
-   - `dct8()` for 8x8 blocks
-   - `dct16()` for 16x16 blocks (used by DCT8x16/DCT16x8)
+2. **Forward DCT**: Now in `tiny/dct.rs` (ported from libjxl-tiny)
+   - `dct_8x8()` for 8x8 blocks
+   - `dct_16x8()` for 16x8 blocks
+   - `dct_8x16()` for 8x16 blocks
+   - `dc_from_dct_*()` for DC extraction
 
 3. **Quantization**: Need to port from `quant_weights.cc`
    - Default quantization matrices
