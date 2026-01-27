@@ -33,8 +33,8 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `enc_frame.cc` | 862 | TODO | Main frame encoding pipeline |
-| `enc_group.cc` | 518 | TODO | AC group encoding, quantization, tokenization |
+| `enc_frame.cc` | 862 | PARTIAL | Main frame encoding pipeline (frame header done) |
+| `enc_group.cc` | 518 | PARTIAL | AC tokenization done, quantization TODO |
 | `enc_entropy_code.cc` | 556 | TODO | Huffman tree building/writing |
 | `enc_bit_writer.cc` | 144 | SKIP | Already have BitWriter |
 
@@ -141,6 +141,16 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 4. **Quality tests**: SSIMULACRA2 on real photos from codec-corpus
 
 ## Progress Log
+
+### 2026-01-26 (cont. 3)
+- Ported AC group encoding (`ac_group.rs`)
+- Coefficient order tables (COEFF_ORDER_8X8, COEFF_ORDER_8X16)
+- num_nonzero_8x8_except_dc: Count non-zeros in 8x8 block
+- num_nonzero_except_llf: Count non-zeros for larger transforms
+- predict_from_top_and_left: Neighbor prediction
+- tokenize_ac_coefficients: Core tokenization loop
+- 5 new tests for AC group encoding
+- 33 tiny module tests passing
 
 ### 2026-01-26 (cont. 2)
 - Ported DC coding with gradient predictor (`dc_coding.rs`)

@@ -18,6 +18,7 @@
 //! producing valid JPEG XL bitstreams.
 
 mod ac_context;
+mod ac_group;
 mod common;
 mod dc_coding;
 mod encoder;
