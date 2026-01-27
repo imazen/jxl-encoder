@@ -139,3 +139,48 @@ fn test_encoder_default() {
     let enc = TinyEncoder::default();
     assert_eq!(enc.distance, 1.0);
 }
+
+/// Test that the tiny encoder produces a valid JXL signature.
+/// Note: Full encoding is not yet implemented - this verifies the skeleton.
+#[test]
+fn test_tiny_encoder_produces_jxl_signature() {
+    let encoder = TinyEncoder::new(1.0);
+
+    // Create a simple 8x8 gray image (linear RGB)
+    let width = 8;
+    let height = 8;
+    let linear_rgb = vec![0.5f32; width * height * 3];
+
+    let result = encoder.encode(width, height, &linear_rgb);
+    assert!(result.is_ok(), "Encoding should not fail: {:?}", result.err());
+
+    let bytes = result.unwrap();
+
+    // Must have JXL signature
+    assert!(bytes.len() >= 2, "Output too short");
+    assert_eq!(bytes[0], 0xFF, "Missing JXL signature byte 1");
+    assert_eq!(bytes[1], 0x0A, "Missing JXL signature byte 2");
+
+    // Should have reasonable output size (at minimum: sig + header + frame header + sections)
+    assert!(bytes.len() > 10, "Output too short: {} bytes", bytes.len());
+}
+
+/// Test various image sizes with the tiny encoder skeleton.
+#[test]
+fn test_tiny_encoder_various_sizes() {
+    let encoder = TinyEncoder::new(1.0);
+
+    for (width, height) in &[(8, 8), (16, 16), (64, 64), (256, 256)] {
+        let linear_rgb = vec![0.5f32; width * height * 3];
+        let result = encoder.encode(*width, *height, &linear_rgb);
+        assert!(
+            result.is_ok(),
+            "Encoding {}x{} failed: {:?}",
+            width,
+            height,
+            result.err()
+        );
+        let bytes = result.unwrap();
+        assert_eq!(bytes[0..2], [0xFF, 0x0A], "Missing JXL signature for {}x{}", width, height);
+    }
+}
