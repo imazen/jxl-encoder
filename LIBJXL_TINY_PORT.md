@@ -46,7 +46,7 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 | `enc_cluster.cc` | 133 | TODO | Histogram clustering |
 | `static_entropy_codes.h` | 972 | DONE | Pre-computed entropy tables |
 | `ac_context.h` | 118 | DONE | AC coefficient context |
-| `quant_weights.cc` | 159 | TODO | Quantization matrices |
+| `quant_weights.cc` | 159 | DONE | Quantization matrices |
 | `enc_transforms-inl.h` | 660 | DONE | Forward DCT (8x8, 16x8, 8x16) |
 | `dct_scales.h` | 118 | DONE | DCT constants and multipliers |
 
@@ -143,6 +143,14 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 4. **Quality tests**: SSIMULACRA2 on real photos from codec-corpus
 
 ## Progress Log
+
+### 2026-01-26 (cont. 6)
+- Ported quantization weights from libjxl-tiny (`quant.rs`)
+- Constants: INV_DC_QUANT, DC_QUANT, QUANT_WEIGHTS (576 floats)
+- Table layout: TABLE_SIZE_IN_BLOCKS, TABLE_OFFSET_IN_BLOCKS
+- Functions: quant_weights(), inv_quant_weight(), quantize_coeff(), dequantize_coeff()
+- 6 new quant tests passing
+- 48 tiny module tests passing total
 
 ### 2026-01-26 (cont. 5)
 - Ported forward DCT from libjxl-tiny (`dct.rs`)
