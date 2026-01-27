@@ -33,8 +33,8 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `enc_frame.cc` | 862 | PARTIAL | Main frame encoding pipeline (frame header done) |
-| `enc_group.cc` | 518 | PARTIAL | AC tokenization done, quantization TODO |
+| `enc_frame.cc` | 862 | PARTIAL | Main frame encoding pipeline (integration done, entropy code headers TODO) |
+| `enc_group.cc` | 518 | DONE | AC tokenization, quantization, and integration complete |
 | `enc_entropy_code.cc` | 556 | TODO | Huffman tree building/writing |
 | `enc_bit_writer.cc` | 144 | SKIP | Already have BitWriter |
 
@@ -143,6 +143,15 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 4. **Quality tests**: SSIMULACRA2 on real photos from codec-corpus
 
 ## Progress Log
+
+### 2026-01-26 (cont. 7)
+- Integrated all ported components in `encoder.rs`
+- Full encoding pipeline: XYB conversion → DCT → quantization → DC/AC tokenization
+- Uses static entropy codes from libjxl-tiny
+- Writes proper JXL bitstream with frame header, TOC, DC/AC sections
+- Single-group images (≤256x256) use combined section format
+- 49 tiny module tests passing
+- NOTE: Bitstream not yet decodable - entropy code header writing needs work
 
 ### 2026-01-26 (cont. 6)
 - Ported quantization weights from libjxl-tiny (`quant.rs`)
