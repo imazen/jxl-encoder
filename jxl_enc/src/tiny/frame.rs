@@ -193,7 +193,7 @@ pub fn write_toc(section_sizes: &[usize], writer: &mut BitWriter) -> Result<()> 
         let mut success = false;
         for (i, &bits) in BITS.iter().enumerate() {
             if section_size < offset + (1 << bits) {
-                #[cfg(test)]
+                #[cfg(feature = "debug-tokens")]
                 eprintln!(
                     "TOC[{}]: size={}, selector={}, bits={}, value={}",
                     idx,

@@ -111,7 +111,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
         let mut bits = [0u16; ALPHABET_SIZE];
         convert_bit_depths_to_symbols(&depths, &mut bits);
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         {
             let depth_slice: Vec<u8> = depths.iter().take(length.min(20)).copied().collect();
             eprintln!(
@@ -126,7 +126,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
         prefix_codes.push(PrefixCode { depths, bits });
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         eprintln!(
             "  context_tree_entropy: {} histograms -> {} prefix codes, context_map len={}",
@@ -156,7 +156,7 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
     // Build entropy code for the tokens
     let (context_map, prefix_codes) = build_context_tree_entropy_code(&tokens);
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         eprintln!(
             "context_tree: {} contexts, {} prefix codes, context_map={:?}",
@@ -186,7 +186,7 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
 ///
 /// This is written as a context map in the DC global section.
 pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
 
     // Check if all values are 0 (simple case)
@@ -220,7 +220,7 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
     }
     create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
         eprintln!(
@@ -239,13 +239,13 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
         bits: ctxmap_bits,
     };
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let before_prefix = writer.bits_written();
 
     // Write the prefix code for the context map
     write_prefix_codes(&[ctxmap_code], writer)?;
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let after_prefix = writer.bits_written();
 
     // Write the context map tokens
@@ -262,7 +262,7 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
         writer.write(total_bits, data)?;
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         let total = writer.bits_written() - start_bits;
         let prefix_bits = after_prefix - before_prefix;

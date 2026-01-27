@@ -126,7 +126,7 @@ pub fn write_dc_tokens(
     let height = quant_dc[0].len();
     let width = quant_dc[0][0].len();
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         eprintln!("write_dc_tokens: {}x{} blocks", width, height);
         for c in 0..3 {
@@ -136,6 +136,12 @@ pub fn write_dc_tokens(
             eprintln!("  channel {}: sum={}, avg={:.2}", c, sum, sum as f32 / count as f32);
         }
     }
+
+    // Counter for limiting debug output
+    #[cfg(feature = "debug-tokens")]
+    let mut dc_debug_count = 0usize;
+    #[cfg(feature = "debug-tokens")]
+    const DC_DEBUG_LIMIT: usize = 16;
 
     // Encode in channel order: Y (1), X (0), B (2)
     for &c in &[1, 0, 2] {
@@ -175,16 +181,25 @@ pub fn write_dc_tokens(
 
                 // Create and write token
                 let token = Token::new(ctx_id, pack_signed(residual));
-                #[cfg(test)]
+                #[cfg(feature = "debug-tokens")]
                 {
                     let before = writer.bits_written();
-                    eprintln!("  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
-                              c, y, x, actual, guess, residual, ctx_id, pack_signed(residual));
+                    if dc_debug_count < DC_DEBUG_LIMIT {
+                        eprintln!("  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
+                                  c, y, x, actual, guess, residual, ctx_id, pack_signed(residual));
+                    }
                     write_token(&token, dc_code, writer)?;
                     let after = writer.bits_written();
-                    eprintln!("    -> wrote {} bits", after - before);
+                    if dc_debug_count < DC_DEBUG_LIMIT {
+                        eprintln!("    -> wrote {} bits", after - before);
+                    }
+                    dc_debug_count += 1;
+                    if dc_debug_count == DC_DEBUG_LIMIT {
+                        let total_tokens = width * height * 3;
+                        eprintln!("  ... ({} more DC tokens)", total_tokens - DC_DEBUG_LIMIT);
+                    }
                 }
-                #[cfg(not(test))]
+                #[cfg(not(feature = "debug-tokens"))]
                 write_token(&token, dc_code, writer)?;
             }
         }
@@ -229,7 +244,7 @@ pub fn write_ac_metadata_tokens(
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
     // CFL maps use 64-pixel tiles, not 8-pixel blocks
     let xsize_pixels = xsize_blocks * BLOCK_DIM;
@@ -237,7 +252,7 @@ pub fn write_ac_metadata_tokens(
     let cfl_xsize = div_ceil(xsize_pixels, COLOR_TILE_DIM);
     let cfl_ysize = div_ceil(ysize_pixels, COLOR_TILE_DIM);
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let after_start = writer.bits_written();
 
     // YtoX and YtoB tokens
@@ -266,7 +281,7 @@ pub fn write_ac_metadata_tokens(
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let after_cfl = writer.bits_written();
 
     // AC strategy tokens
@@ -292,7 +307,7 @@ pub fn write_ac_metadata_tokens(
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let after_acs = writer.bits_written();
 
     // Quant field tokens
@@ -321,7 +336,7 @@ pub fn write_ac_metadata_tokens(
         }
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let after_qf = writer.bits_written();
 
     // EPF (Edge-Preserving Filter) tokens
@@ -333,7 +348,7 @@ pub fn write_ac_metadata_tokens(
         write_token(&token, dc_code, writer)?;
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         let after_epf = writer.bits_written();
         eprintln!("  ac_metadata breakdown:");

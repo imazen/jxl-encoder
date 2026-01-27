@@ -17,6 +17,8 @@ num-traits = "0.2"
 
 [features]
 trace-bitstream = []
+# Verbose debug output for token encoding (DC, AC, entropy codes)
+debug-tokens = []
 # Safe mode prevents encoding images > 256x256 (multi-group VarDCT is broken)
 # Enabled by default to prevent garbage output. Disable with --no-default-features
 # to allow multi-group encoding for debugging/development.
