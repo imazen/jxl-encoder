@@ -1,0 +1,349 @@
+// Copyright (c) the JPEG XL Project Authors. All rights reserved.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+//! AC group encoding - quantization and tokenization of AC coefficients.
+//!
+//! This module handles encoding AC coefficients within a group:
+//! - Counting non-zero coefficients
+//! - Predicting non-zeros from neighbors
+//! - Tokenizing coefficients in zig-zag scan order
+//!
+//! Ported from libjxl-tiny enc_group.cc.
+
+use super::ac_context::{
+    block_context, non_zero_context, zero_density_context, zero_density_contexts_offset,
+};
+use super::common::{pack_signed, DCT_BLOCK_SIZE};
+use super::entropy_code::{write_token, EntropyCode};
+use super::token::Token;
+use crate::bit_writer::BitWriter;
+use crate::error::Result;
+
+/// Default zig-zag coefficient order for DCT8 (8x8).
+/// Excludes DC at position 0, so indices 1-63 map to AC coefficients.
+#[rustfmt::skip]
+pub static COEFF_ORDER_8X8: [u32; 64] = [
+    0,  1,  8, 16,  9,  2,  3, 10, 17, 24, 32, 25, 18, 11,  4,
+    5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13,  6,  7, 14,
+   21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30,
+   37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54,
+   47, 55, 62, 63,
+];
+
+/// Default zig-zag coefficient order for DCT8x16 / DCT16x8 (128 coefficients).
+/// This follows the pattern used in libjxl-tiny.
+#[rustfmt::skip]
+pub static COEFF_ORDER_8X16: [u32; 128] = [
+    0,   1,  16,   2,   3,  17,  32,  18,   4,   5,  19,
+   33,  48,  34,  20,   6,   7,  21,  35,  49,  64,  50,  36,  22,   8,   9,
+   23,  37,  51,  65,  80,  66,  52,  38,  24,  10,  11,  25,  39,  53,  67,
+   81,  96,  82,  68,  54,  40,  26,  12,  13,  27,  41,  55,  69,  83,  97,
+  112,  98,  84,  70,  56,  42,  28,  14,  15,  29,  43,  57,  71,  85,  99,
+  113, 114, 100,  86,  72,  58,  44,  30,  31,  45,  59,  73,  87, 101, 115,
+  116, 102,  88,  74,  60,  46,  47,  61,  75,  89, 103, 117, 118, 104,  90,
+   76,  62,  63,  77,  91, 105, 119, 120, 106,  92,  78,  79,  93, 107, 121,
+  122, 108,  94,  95, 109, 123, 124, 110, 111, 125, 126, 127,
+];
+
+/// Get coefficient order based on AC strategy.
+/// Strategy 0 = DCT8, 6/7 = DCT8x16/DCT16x8.
+pub fn get_coeff_order(raw_strategy: u8) -> &'static [u32] {
+    match raw_strategy {
+        0 => &COEFF_ORDER_8X8,
+        6 | 7 => &COEFF_ORDER_8X16,
+        _ => &COEFF_ORDER_8X8, // Default to 8x8 for unknown strategies
+    }
+}
+
+/// Count non-zero coefficients in an 8x8 block, excluding DC.
+///
+/// Returns the count and also stores it in the nzeros_pos slot.
+#[inline]
+pub fn num_nonzero_8x8_except_dc(block: &[i32; DCT_BLOCK_SIZE], nzeros_pos: &mut u8) -> u8 {
+    let mut nzeros = 0u8;
+    // Skip DC at position 0, count non-zeros in positions 1-63
+    for &coef in &block[1..] {
+        if coef != 0 {
+            nzeros += 1;
+        }
+    }
+    *nzeros_pos = nzeros;
+    nzeros
+}
+
+/// Count non-zero coefficients excluding LLF (Low-Low Frequency / DC region).
+///
+/// For larger transforms (DCT16x8, DCT8x16), the LLF region is larger than 1 coefficient.
+/// The LLF region is cx*cy coefficients at the top-left.
+///
+/// Also stores the shifted nzeros (nzeros / covered_blocks) in each 8x8 block position.
+pub fn num_nonzero_except_llf(
+    cx: usize,
+    cy: usize,
+    block: &[i32],
+    nzeros_stride: usize,
+    nzeros_pos: &mut [u8],
+    covered_blocks_x: usize,
+    covered_blocks_y: usize,
+) -> u8 {
+    let block_dim = 8;
+    let covered_blocks = cx * cy;
+    let log2_covered_blocks = covered_blocks.trailing_zeros() as usize;
+
+    let mut nzeros = 0i32;
+    let total_coeffs = cx * cy * DCT_BLOCK_SIZE;
+
+    // Count all non-zeros first
+    for y in 0..(cy * block_dim) {
+        let row_start = y * cx * block_dim;
+        for x in 0..(cx * block_dim) {
+            let coef = block[row_start + x];
+            if coef != 0 {
+                nzeros += 1;
+            }
+        }
+    }
+
+    // Subtract LLF region (top-left cx*cy coefficients that form DC for the larger transform)
+    for y in 0..cy {
+        for x in 0..cx {
+            if block[y * cx * block_dim + x] != 0 {
+                nzeros -= 1;
+            }
+        }
+    }
+
+    // Clamp to valid range
+    let nzeros = nzeros.max(0) as u8;
+
+    // Compute shifted nzeros for per-8x8-block storage
+    let shifted_nzeros = ((nzeros as usize + covered_blocks - 1) >> log2_covered_blocks) as u8;
+
+    // Fill in all covered 8x8 block positions
+    for y in 0..covered_blocks_y {
+        for x in 0..covered_blocks_x {
+            nzeros_pos[x + y * nzeros_stride] = shifted_nzeros;
+        }
+    }
+
+    // Return actual nzeros (not the total_coeffs, but only AC)
+    // For consistency, clamp to the number of AC coefficients
+    let max_ac = (total_coeffs - covered_blocks) as u8;
+    nzeros.min(max_ac)
+}
+
+/// Predict number of non-zeros from top and left neighbors.
+///
+/// If at left edge, use top value (or default if no top).
+/// If at top edge, use left value.
+/// Otherwise, average top and left with rounding.
+#[inline]
+pub fn predict_from_top_and_left(
+    row_top: Option<&[u8]>,
+    row: &[u8],
+    x: usize,
+    default_val: i32,
+) -> i32 {
+    if x == 0 {
+        match row_top {
+            Some(top) => top[x] as i32,
+            None => default_val,
+        }
+    } else {
+        match row_top {
+            Some(top) => (top[x] as i32 + row[x - 1] as i32 + 1) / 2,
+            None => row[x - 1] as i32,
+        }
+    }
+}
+
+/// AC strategy codes for libjxl-tiny.
+/// Only DCT8 (0), DCT8x16 (6), and DCT16x8 (7) are used.
+pub const AC_STRATEGY_DCT8: u8 = 0;
+pub const AC_STRATEGY_DCT8X16: u8 = 6;
+pub const AC_STRATEGY_DCT16X8: u8 = 7;
+
+/// Get block size info for AC strategy.
+/// Returns (cx, cy, covered_blocks, log2_covered_blocks, strategy_code).
+pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
+    match raw_strategy {
+        AC_STRATEGY_DCT8 => (1, 1, 1, 0, 0),
+        AC_STRATEGY_DCT8X16 => (1, 2, 2, 1, 6),
+        AC_STRATEGY_DCT16X8 => (2, 1, 2, 1, 7),
+        _ => (1, 1, 1, 0, 0), // Default to DCT8
+    }
+}
+
+/// Tokenize AC coefficients for a single block/transform.
+///
+/// This is the core tokenization loop that:
+/// 1. Writes the number of non-zeros as first token
+/// 2. Iterates through coefficients in zig-zag order
+/// 3. Writes each coefficient with appropriate context
+///
+/// # Arguments
+/// * `quantized` - Quantized coefficients in natural order (not zig-zag)
+/// * `channel` - Channel index (0=X, 1=Y, 2=B)
+/// * `raw_strategy` - AC strategy code
+/// * `nzeros` - Number of non-zero AC coefficients (already computed)
+/// * `predicted_nzeros` - Predicted nzeros from neighbors
+/// * `ac_code` - Entropy code for AC coefficients
+/// * `writer` - Bitstream writer
+pub fn tokenize_ac_coefficients(
+    quantized: &[i32],
+    channel: usize,
+    raw_strategy: u8,
+    nzeros: u8,
+    predicted_nzeros: i32,
+    ac_code: &EntropyCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let (cx, cy, covered_blocks, log2_covered_blocks, strategy_code) =
+        ac_strategy_info(raw_strategy);
+    let size = cx * cy * DCT_BLOCK_SIZE;
+
+    // Get block context and compute contexts
+    let block_ctx = block_context(channel, strategy_code);
+    let nzero_ctx = non_zero_context(predicted_nzeros as usize, block_ctx);
+    let histo_offset = zero_density_contexts_offset(block_ctx);
+
+    // Write number of non-zeros as first token
+    let nz_token = Token::new(nzero_ctx as u32, nzeros as u32);
+    write_token(&nz_token, ac_code, writer)?;
+
+    // Get coefficient order
+    let order = get_coeff_order(raw_strategy);
+
+    // Track remaining non-zeros and previous coefficient status
+    let mut nzeros_left = nzeros as usize;
+    let mut prev = if nzeros_left > size / 16 { 0 } else { 1 };
+
+    // Skip LLF coefficients, start at covered_blocks
+    for k in covered_blocks..size.min(order.len()) {
+        if nzeros_left == 0 {
+            break;
+        }
+
+        let coef = quantized[order[k] as usize];
+
+        // Compute context for this coefficient
+        let ctx =
+            histo_offset + zero_density_context(nzeros_left, k, covered_blocks, log2_covered_blocks, prev);
+
+        // Encode coefficient
+        let u_coef = pack_signed(coef);
+        let token = Token::new(ctx as u32, u_coef);
+        write_token(&token, ac_code, writer)?;
+
+        // Update tracking
+        if coef != 0 {
+            prev = 1;
+            nzeros_left -= 1;
+        } else {
+            prev = 0;
+        }
+    }
+
+    debug_assert_eq!(nzeros_left, 0, "Not all non-zeros were encoded");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_coeff_order_8x8() {
+        // Verify zig-zag order properties
+        assert_eq!(COEFF_ORDER_8X8[0], 0); // DC first
+        assert_eq!(COEFF_ORDER_8X8[1], 1); // Then (0,1)
+        assert_eq!(COEFF_ORDER_8X8[2], 8); // Then (1,0)
+        assert_eq!(COEFF_ORDER_8X8[63], 63); // Last is (7,7)
+
+        // Verify all 64 positions are present
+        let mut seen = [false; 64];
+        for &idx in &COEFF_ORDER_8X8 {
+            seen[idx as usize] = true;
+        }
+        assert!(seen.iter().all(|&s| s), "Not all positions in zig-zag order");
+    }
+
+    #[test]
+    fn test_coeff_order_8x16() {
+        // Verify first element is DC
+        assert_eq!(COEFF_ORDER_8X16[0], 0);
+
+        // Verify all 128 positions are present
+        let mut seen = [false; 128];
+        for &idx in &COEFF_ORDER_8X16 {
+            seen[idx as usize] = true;
+        }
+        assert!(
+            seen.iter().all(|&s| s),
+            "Not all positions in 8x16 zig-zag order"
+        );
+    }
+
+    #[test]
+    fn test_num_nonzero_8x8_except_dc() {
+        let mut block = [0i32; 64];
+        let mut nzeros_pos = 0u8;
+
+        // All zeros
+        let nz = num_nonzero_8x8_except_dc(&block, &mut nzeros_pos);
+        assert_eq!(nz, 0);
+        assert_eq!(nzeros_pos, 0);
+
+        // DC only (should not count)
+        block[0] = 100;
+        let nz = num_nonzero_8x8_except_dc(&block, &mut nzeros_pos);
+        assert_eq!(nz, 0);
+        assert_eq!(nzeros_pos, 0);
+
+        // Some AC coefficients
+        block[1] = 5;
+        block[8] = -3;
+        block[63] = 1;
+        let nz = num_nonzero_8x8_except_dc(&block, &mut nzeros_pos);
+        assert_eq!(nz, 3);
+        assert_eq!(nzeros_pos, 3);
+    }
+
+    #[test]
+    fn test_predict_from_top_and_left() {
+        // No top, at x=0: use default
+        assert_eq!(predict_from_top_and_left(None, &[0, 1, 2], 0, 32), 32);
+
+        // No top, at x>0: use left
+        let row = [5, 10, 15];
+        assert_eq!(predict_from_top_and_left(None, &row, 1, 32), 5);
+        assert_eq!(predict_from_top_and_left(None, &row, 2, 32), 10);
+
+        // Has top, at x=0: use top
+        let top = [20, 30, 40];
+        assert_eq!(predict_from_top_and_left(Some(&top), &row, 0, 32), 20);
+
+        // Has top, at x>0: average with rounding
+        // (30 + 5 + 1) / 2 = 18
+        assert_eq!(predict_from_top_and_left(Some(&top), &row, 1, 32), 18);
+        // (40 + 10 + 1) / 2 = 25
+        assert_eq!(predict_from_top_and_left(Some(&top), &row, 2, 32), 25);
+    }
+
+    #[test]
+    fn test_ac_strategy_info() {
+        // DCT8
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT8);
+        assert_eq!((cx, cy, cb, log2cb, code), (1, 1, 1, 0, 0));
+
+        // DCT8x16
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT8X16);
+        assert_eq!((cx, cy, cb, log2cb, code), (1, 2, 2, 1, 6));
+
+        // DCT16x8
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT16X8);
+        assert_eq!((cx, cy, cb, log2cb, code), (2, 1, 2, 1, 7));
+    }
+}
