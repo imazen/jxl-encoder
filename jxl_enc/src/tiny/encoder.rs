@@ -20,6 +20,8 @@ use super::quant::{INV_DC_QUANT, QUANT_WEIGHTS};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use crate::bit_writer::BitWriter;
 use crate::color::xyb::linear_rgb_to_xyb;
+#[cfg(feature = "debug-tokens")]
+use crate::debug_log;
 use crate::error::Result;
 
 /// Tiny JPEG XL encoder.
@@ -101,17 +103,17 @@ impl TinyEncoder {
         writer.write(8, 0xFF)?;
         writer.write(8, 0x0A)?;
         #[cfg(feature = "debug-tokens")]
-        eprintln!("After signature: bit {}", writer.bits_written());
+        debug_log!("After signature: bit {}", writer.bits_written());
 
         // Write size header (simple format for small images)
         self.write_file_header(width, height, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
-        eprintln!("After file header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
+        debug_log!("After file header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
         // Write frame header
         write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
-        eprintln!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
+        debug_log!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
         // Compute raw_quant for uniform images (for proper adaptive quantization,
         // this would be computed per-block from the image content)
@@ -153,7 +155,7 @@ impl TinyEncoder {
 
             #[cfg(feature = "debug-tokens")]
             {
-                eprintln!("Section bit counts: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
+                debug_log!("Section bit counts: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
                     dc_global.bits_written(), dc_group.bits_written(),
                     ac_global.bits_written(), ac_group_writer.bits_written());
             }
@@ -161,23 +163,23 @@ impl TinyEncoder {
             // Combine at bit level
             let mut combined = dc_global;
             #[cfg(feature = "debug-tokens")]
-            eprintln!("After DC_global: {} bits", combined.bits_written());
+            debug_log!("After DC_global: {} bits", combined.bits_written());
             combined.append_unaligned(&dc_group)?;
             #[cfg(feature = "debug-tokens")]
-            eprintln!("After DC_group: {} bits", combined.bits_written());
+            debug_log!("After DC_group: {} bits", combined.bits_written());
             combined.append_unaligned(&ac_global)?;
             #[cfg(feature = "debug-tokens")]
-            eprintln!("After AC_global: {} bits", combined.bits_written());
+            debug_log!("After AC_global: {} bits", combined.bits_written());
             combined.append_unaligned(&ac_group_writer)?;
             #[cfg(feature = "debug-tokens")]
-            eprintln!("After AC_group: {} bits", combined.bits_written());
+            debug_log!("After AC_group: {} bits", combined.bits_written());
             combined.zero_pad_to_byte();
             let combined_bytes = combined.finish();
 
             #[cfg(feature = "debug-tokens")]
             {
-                eprintln!("Combined section size: {} bytes", combined_bytes.len());
-                eprintln!(
+                debug_log!("Combined section size: {} bytes", combined_bytes.len());
+                debug_log!(
                     "Before TOC: bit {} (byte {})",
                     writer.bits_written(),
                     writer.bits_written() / 8
@@ -185,7 +187,7 @@ impl TinyEncoder {
             }
             write_toc(&[combined_bytes.len()], &mut writer)?;
             #[cfg(feature = "debug-tokens")]
-            eprintln!(
+            debug_log!(
                 "After TOC: bit {} (byte {})",
                 writer.bits_written(),
                 writer.bits_written() / 8
@@ -336,7 +338,7 @@ impl TinyEncoder {
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 0 {
                         let block_sum: f32 = block.iter().sum();
-                        eprintln!("Block[0,0,c=0]: sum={:.4}, first={:.4}", block_sum, block[0]);
+                        debug_log!("Block[0,0,c=0]: sum={:.4}, first={:.4}", block_sum, block[0]);
                     }
 
                     // Perform DCT
@@ -345,7 +347,7 @@ impl TinyEncoder {
 
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 0 {
-                        eprintln!("DCT[0,0,c=0]: DC={:.4}", dct_block[0]);
+                        debug_log!("DCT[0,0,c=0]: DC={:.4}", dct_block[0]);
                     }
 
                     // Quantize DC with CFL (Chroma From Luma)
@@ -367,7 +369,7 @@ impl TinyEncoder {
 
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 {
-                        eprintln!("Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
+                        debug_log!("Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
                                   c, dc, dc_scale, y_dc, cfl_factor, y_dc * cfl_factor, qdc);
                     }
 
@@ -545,15 +547,15 @@ impl TinyEncoder {
             let after_dc_code = writer.bits_written();
             let total_bits = after_dc_code - start_bits;
             let bytes_before_pad = (total_bits + 7) / 8;
-            eprintln!("DC_global detailed breakdown:");
-            eprintln!("  dequant_dc: {} bits (1)", after_dequant_dc - start_bits);
-            eprintln!("  quant_scales: {} bits", after_quant - after_dequant_dc);
-            eprintln!("  block_ctx_map: {} bits (1+16+map)", after_block_ctx - after_quant);
-            eprintln!("  dc_cmap: 1 bit (default=1)");
-            eprintln!("  context_tree: {} bits", after_ctx_tree - after_block_ctx - 1);
-            eprintln!("  lz77: 1 bit (no=0)");
-            eprintln!("  dc_entropy_code: {} bits", after_dc_code - after_lz77);
-            eprintln!("  total bits: {}, bytes before pad: {}", total_bits, bytes_before_pad);
+            debug_log!("DC_global detailed breakdown:");
+            debug_log!("  dequant_dc: {} bits (1)", after_dequant_dc - start_bits);
+            debug_log!("  quant_scales: {} bits", after_quant - after_dequant_dc);
+            debug_log!("  block_ctx_map: {} bits (1+16+map)", after_block_ctx - after_quant);
+            debug_log!("  dc_cmap: 1 bit (default=1)");
+            debug_log!("  context_tree: {} bits", after_ctx_tree - after_block_ctx - 1);
+            debug_log!("  lz77: 1 bit (no=0)");
+            debug_log!("  dc_entropy_code: {} bits", after_dc_code - after_lz77);
+            debug_log!("  total bits: {}, bytes before pad: {}", total_bits, bytes_before_pad);
         }
 
         Ok(())
@@ -588,7 +590,7 @@ impl TinyEncoder {
         let region_ysize = end_by - start_by;
 
         #[cfg(feature = "debug-tokens")]
-        eprintln!(
+        debug_log!(
             "DC_group {}: blocks ({},{}) to ({},{}) = {}x{}",
             dc_group_idx, start_bx, start_by, end_bx, end_by, region_xsize, region_ysize
         );
@@ -624,12 +626,12 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         {
             let total = writer.bits_written() - start_bits;
-            eprintln!("DC_group {} breakdown:", dc_group_idx);
-            eprintln!("  header1: {} bits (2+4)", after_header1 - start_bits);
-            eprintln!("  dc_tokens: {} bits", after_dc_tokens - after_header1);
-            eprintln!("  header2: {} bits (nb_bits+4)", after_header2 - after_dc_tokens);
-            eprintln!("  ac_metadata: {} bits", writer.bits_written() - after_header2);
-            eprintln!("  total: {} bits ({} bytes before pad)", total, (total + 7) / 8);
+            debug_log!("DC_group {} breakdown:", dc_group_idx);
+            debug_log!("  header1: {} bits (2+4)", after_header1 - start_bits);
+            debug_log!("  dc_tokens: {} bits", after_dc_tokens - after_header1);
+            debug_log!("  header2: {} bits (nb_bits+4)", after_header2 - after_dc_tokens);
+            debug_log!("  ac_metadata: {} bits", writer.bits_written() - after_header2);
+            debug_log!("  total: {} bits ({} bytes before pad)", total, (total + 7) / 8);
         }
 
         Ok(())
@@ -666,9 +668,9 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         {
             let after_ac_code = writer.bits_written();
-            eprintln!("AC_global breakdown:");
-            eprintln!("  header: {} bits", before_ac_code - start_bits);
-            eprintln!("  ac_entropy_code: {} bits ({} contexts, {} prefix codes)",
+            debug_log!("AC_global breakdown:");
+            debug_log!("  header: {} bits", before_ac_code - start_bits);
+            debug_log!("  ac_entropy_code: {} bits ({} contexts, {} prefix codes)",
                       after_ac_code - before_ac_code,
                       ac_code.num_contexts,
                       ac_code.num_prefix_codes);
@@ -701,7 +703,7 @@ impl TinyEncoder {
         let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
 
         #[cfg(feature = "debug-tokens")]
-        eprintln!(
+        debug_log!(
             "AC group {}: blocks ({},{}) to ({},{})",
             group_idx, start_bx, start_by, end_bx, end_by
         );
@@ -741,7 +743,7 @@ impl TinyEncoder {
                     // Tokenize AC coefficients
                     #[cfg(feature = "debug-tokens")]
                     if by < start_by + 2 && bx < start_bx + 2 {
-                        eprintln!("AC[c={},by={},bx={}]: nz={}, predicted={}", c, by, bx, nz, predicted_nz);
+                        debug_log!("AC[c={},by={},bx={}]: nz={}, predicted={}", c, by, bx, nz, predicted_nz);
                     }
                     tokenize_ac_coefficients(
                         block,
@@ -759,13 +761,13 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         {
             let total_bits = writer.bits_written() - start_bits;
-            eprintln!("AC_group {} breakdown: {} bits ({} bytes before pad)", group_idx, total_bits, (total_bits + 7) / 8);
+            debug_log!("AC_group {} breakdown: {} bits ({} bytes before pad)", group_idx, total_bits, (total_bits + 7) / 8);
             // Show the raw bytes for comparison
             let bytes = writer.peek_bytes();
             let ac_start_byte = start_bits / 8;
             let ac_end_byte = writer.bits_written().div_ceil(8);
             if ac_end_byte <= bytes.len() && ac_start_byte < ac_end_byte {
-                eprintln!("AC_group raw bytes: {:02x?}", &bytes[ac_start_byte..ac_end_byte.min(ac_start_byte + 10)]);
+                debug_log!("AC_group raw bytes: {:02x?}", &bytes[ac_start_byte..ac_end_byte.min(ac_start_byte + 10)]);
             }
         }
 
@@ -857,8 +859,8 @@ mod tests {
         assert!(result.is_ok());
         let bytes = result.unwrap();
 
-        eprintln!("Output file size: {} bytes", bytes.len());
-        eprintln!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
+        debug_log!("Output file size: {} bytes", bytes.len());
+        debug_log!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
 
         // Write output to file for comparison
         std::fs::write("/tmp/our_16x16.jxl", &bytes).unwrap();

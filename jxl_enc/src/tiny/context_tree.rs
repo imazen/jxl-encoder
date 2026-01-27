@@ -15,6 +15,8 @@ use super::entropy_code::{
 };
 use super::token::{Token, UintCoder};
 use crate::bit_writer::BitWriter;
+#[cfg(feature = "debug-tokens")]
+use crate::debug_log;
 use crate::error::Result;
 
 /// Number of contexts for the context tree.
@@ -114,7 +116,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
         #[cfg(feature = "debug-tokens")]
         {
             let depth_slice: Vec<u8> = depths.iter().take(length.min(20)).copied().collect();
-            eprintln!(
+            debug_log!(
                 "  context_tree BuildHuffmanCodes[{}]: length={}, depths={:?}{}",
                 i,
                 length,
@@ -128,7 +130,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
 
     #[cfg(feature = "debug-tokens")]
     {
-        eprintln!(
+        debug_log!(
             "  context_tree_entropy: {} histograms -> {} prefix codes, context_map len={}",
             NUM_TREE_CONTEXTS,
             prefix_codes.len(),
@@ -158,7 +160,7 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
 
     #[cfg(feature = "debug-tokens")]
     {
-        eprintln!(
+        debug_log!(
             "context_tree: {} contexts, {} prefix codes, context_map={:?}",
             context_map.len(),
             prefix_codes.len(),
@@ -223,7 +225,7 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     {
         let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
-        eprintln!(
+        debug_log!(
             "  write_block_context_map: {} entries, length={}, depths={:?}",
             COMPACT_BLOCK_CONTEXT_MAP.len(),
             length,
@@ -267,7 +269,7 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
         let total = writer.bits_written() - start_bits;
         let prefix_bits = after_prefix - before_prefix;
         let token_bits = writer.bits_written() - after_prefix;
-        eprintln!(
+        debug_log!(
             "  write_block_context_map bits: header=3, prefix_code={}, tokens={}, total={}",
             prefix_bits, token_bits, total
         );
