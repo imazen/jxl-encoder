@@ -25,6 +25,7 @@ mod dct;
 mod encoder;
 mod entropy_code;
 mod frame;
+mod quant;
 mod static_codes;
 mod token;
 
