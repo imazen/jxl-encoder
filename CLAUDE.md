@@ -66,7 +66,7 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] DC coding with gradient predictor
 - [x] AC group encoding with channel interleaving
 - [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte)
-- [ ] Multi-group encoding (>256x256 images)
+- [x] Multi-group encoding (>256x256 images) - tested with CLIC 2025 up to 2048x2048
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
