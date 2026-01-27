@@ -19,7 +19,9 @@
 
 mod ac_context;
 mod ac_group;
+mod cluster;
 mod common;
+mod context_tree;
 mod dc_coding;
 mod dct;
 mod encoder;

@@ -195,6 +195,42 @@ fn test_tiny_encoder_various_sizes() {
     }
 }
 
+/// Test that libjxl-tiny reference output can be decoded by jxl-oxide.
+/// This verifies that jxl-oxide supports libjxl-tiny's output format.
+#[test]
+#[ignore = "Decoder integration test - run with --ignored"]
+fn test_decode_libjxl_tiny_reference() {
+    use std::io::Cursor;
+
+    // Try both OPTIMIZE_CODE=1 (175 bytes) and OPTIMIZE_CODE=0 (1101 bytes) references
+    for path in &["/tmp/tiny_ref_16x16.jxl", "/tmp/tiny_ref_static_16x16.jxl"] {
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Reference file not found at {}", path);
+            continue;
+        }
+
+        let data = std::fs::read(path).expect("read reference file");
+        eprintln!("\n=== Testing {} ({} bytes) ===", path, data.len());
+        eprintln!("First 20 bytes: {:02x?}", &data[..20.min(data.len())]);
+
+        let result = jxl_oxide::JxlImage::builder().read(Cursor::new(&data));
+        match result {
+            Ok(img) => {
+                eprintln!("Parsed! Size: {}x{}", img.width(), img.height());
+                match img.render_frame(0) {
+                    Ok(frame) => {
+                        eprintln!("Decoded frame successfully!");
+                        let fb = frame.image_all_channels();
+                        eprintln!("  Frame buffer: {}x{}", fb.width(), fb.height());
+                    }
+                    Err(e) => eprintln!("Render failed: {:?}", e),
+                }
+            }
+            Err(e) => eprintln!("Parse failed: {:?}", e),
+        }
+    }
+}
+
 /// Test that the tiny encoder output can be at least parsed (header read) by a decoder.
 /// This verifies the entropy code header writing is valid.
 #[test]
@@ -204,9 +240,9 @@ fn test_tiny_encoder_decode() {
 
     let encoder = TinyEncoder::new(1.0);
 
-    // Create a simple 8x8 red image (linear RGB)
-    let width = 8;
-    let height = 8;
+    // Create a simple 16x16 red image (linear RGB) - same as libjxl-tiny reference
+    let width = 16;
+    let height = 16;
     let mut linear_rgb = vec![0.0f32; width * height * 3];
     for i in 0..(width * height) {
         linear_rgb[i * 3] = 1.0; // R
@@ -219,10 +255,35 @@ fn test_tiny_encoder_decode() {
         .expect("encoding should succeed");
 
     // Save to file for manual inspection
-    let output_path = "/mnt/v/output/jxl-encoder-rs/tiny/test_8x8.jxl";
+    let output_path = "/mnt/v/output/jxl-encoder-rs/tiny/test_16x16.jxl";
     if let Ok(()) = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/tiny") {
         let _ = std::fs::write(output_path, &encoded);
         eprintln!("Wrote {} bytes to {}", encoded.len(), output_path);
+    }
+
+    // Compare with libjxl-tiny OPTIMIZE_CODE=0 (static) reference if available
+    // The static reference uses the same code path as our encoder
+    let ref_path = "/tmp/tiny_ref_static_16x16.jxl";
+    if std::path::Path::new(ref_path).exists() {
+        let ref_data = std::fs::read(ref_path).expect("read reference");
+        eprintln!("\n=== Comparison with libjxl-tiny static reference (OPTIMIZE_CODE=0) ===");
+        eprintln!("Our size: {} bytes, Reference: {} bytes", encoded.len(), ref_data.len());
+
+        // Byte-by-byte comparison with bit breakdown
+        let min_len = encoded.len().min(ref_data.len()).min(50);
+        eprintln!("\nByte comparison (first {} bytes):", min_len);
+        eprintln!("Byte | Ours | Ref  | Match");
+        eprintln!("-----|------|------|------");
+        for i in 0..min_len {
+            let ours = encoded[i];
+            let refs = ref_data[i];
+            let mark = if ours == refs { "  ✓" } else { "<<< DIFF" };
+            eprintln!("{:4} | 0x{:02x} | 0x{:02x} | {}", i, ours, refs, mark);
+            if ours != refs {
+                eprintln!("      ours bits: {:08b}", ours);
+                eprintln!("      ref  bits: {:08b}", refs);
+            }
+        }
     }
 
     // Try to parse the header with jxl-oxide
