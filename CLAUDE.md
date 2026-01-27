@@ -65,8 +65,8 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Frame header writing (DistanceParams, TOC)
 - [x] DC coding with gradient predictor
 - [x] AC group encoding with channel interleaving
-- [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte)
-- [x] Multi-group encoding (>256x256 images) - tested with CLIC 2025 up to 2048x2048
+- [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte, SSIM2=73.5 on photos)
+- [ ] Multi-group encoding (>256x256 images) - parses/decodes but SSIM2 is negative (BUG)
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
@@ -137,6 +137,33 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
    before quantizing (matching `quantize_block_8x8`'s approach).
 
 ## Known Bugs (ACTIVE)
+
+### Multi-Group Quality Bug (Jan 27, 2026)
+
+**Status**: BROKEN - Multi-group images decode but with catastrophic quality
+
+**Symptoms**:
+- Single-group images (≤256x256): SSIM2 = 73.5 (acceptable)
+- Multi-group images (>256x256): SSIM2 = -41 to -64 (catastrophic)
+- Images parse and decode without errors
+- But decoded pixels are severely corrupted
+
+**What Works**:
+- DC group region bounds are correctly computed
+- TOC is written correctly (files parse successfully)
+- Decoder renders without errors
+
+**What's Broken**:
+- The actual pixel data is wrong in multi-group output
+- Likely something in AC group encoding or group boundary handling
+- Could be coefficient order or context computation across group boundaries
+
+**Test**:
+```bash
+cargo test --test clic2025 test_clic2025_first_5 -- --ignored --nocapture
+# Compare with single-group:
+cargo test --test clic2025 test_clic2025_small_crop -- --ignored --nocapture
+```
 
 ### Vertical Gradient Encoding Bug (Jan 23, 2026)
 
