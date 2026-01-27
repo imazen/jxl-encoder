@@ -10,10 +10,10 @@ use super::ac_group::{
     tokenize_ac_coefficients,
 };
 use super::common::*;
-use super::dc_coding::write_dc_tokens;
+use super::dc_coding::{write_ac_metadata_tokens, write_dc_tokens};
 use super::dct::dct_8x8;
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
-use super::quant::{DC_QUANT, QUANT_WEIGHTS};
+use super::quant::{INV_DC_QUANT, QUANT_WEIGHTS};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use crate::bit_writer::BitWriter;
 use crate::color::xyb::linear_rgb_to_xyb;
@@ -110,41 +110,34 @@ impl TinyEncoder {
         #[cfg(test)]
         eprintln!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
-        // Create section writers
-        let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
+        // Compute raw_quant for uniform images (for proper adaptive quantization,
+        // this would be computed per-block from the image content)
+        let raw_quant = params.raw_quant_uniform();
 
-        // DC Global section
-        let mut dc_global = BitWriter::new();
-        self.write_dc_global(&params, num_dc_groups, &dc_code, &mut dc_global)?;
-        dc_global.zero_pad_to_byte();
-        sections.push(dc_global.finish());
+        // For single-group images, combine all sections at the bit level
+        // (no byte padding between sections, only at the end)
+        if num_sections == 4 {
+            // Write sections to individual BitWriters (no padding)
+            let mut dc_global = BitWriter::new();
+            self.write_dc_global(&params, num_dc_groups, &dc_code, &mut dc_global)?;
 
-        // DC group sections
-        for dc_group_idx in 0..num_dc_groups {
             let mut dc_group = BitWriter::new();
             self.write_dc_group(
-                dc_group_idx,
+                0,
                 &quant_dc,
                 xsize_blocks,
                 ysize_blocks,
+                raw_quant,
                 &dc_code,
                 &mut dc_group,
             )?;
-            dc_group.zero_pad_to_byte();
-            sections.push(dc_group.finish());
-        }
 
-        // AC Global section
-        let mut ac_global = BitWriter::new();
-        self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
-        ac_global.zero_pad_to_byte();
-        sections.push(ac_global.finish());
+            let mut ac_global = BitWriter::new();
+            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
 
-        // AC group sections
-        for group_idx in 0..num_groups {
             let mut ac_group_writer = BitWriter::new();
             self.write_ac_group(
-                group_idx,
+                0,
                 &quant_ac,
                 &nzeros,
                 xsize_blocks,
@@ -152,39 +145,96 @@ impl TinyEncoder {
                 &ac_code,
                 &mut ac_group_writer,
             )?;
-            ac_group_writer.zero_pad_to_byte();
-            sections.push(ac_group_writer.finish());
-        }
 
-        // Write TOC
-        let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
-
-        // Debug: print section sizes
-        #[cfg(test)]
-        eprintln!(
-            "Section sizes: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
-            section_sizes.get(0).unwrap_or(&0),
-            section_sizes.get(1).unwrap_or(&0),
-            section_sizes.get(2).unwrap_or(&0),
-            section_sizes.get(3).unwrap_or(&0),
-        );
-
-        // For single-group images, combine all sections into one
-        if sections.len() == 4 {
-            let mut combined = sections.remove(0);
-            for section in sections {
-                combined.extend(section);
-            }
             #[cfg(test)]
             {
-                eprintln!("Combined section size: {}", combined.len());
-                eprintln!("Before TOC: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
+                eprintln!("Section bit counts: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
+                    dc_global.bits_written(), dc_group.bits_written(),
+                    ac_global.bits_written(), ac_group_writer.bits_written());
             }
-            write_toc(&[combined.len()], &mut writer)?;
+
+            // Combine at bit level
+            let mut combined = dc_global;
             #[cfg(test)]
-            eprintln!("After TOC: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
-            writer.append_bytes(&combined)?;
+            eprintln!("After DC_global: {} bits", combined.bits_written());
+            combined.append_unaligned(&dc_group)?;
+            #[cfg(test)]
+            eprintln!("After DC_group: {} bits", combined.bits_written());
+            combined.append_unaligned(&ac_global)?;
+            #[cfg(test)]
+            eprintln!("After AC_global: {} bits", combined.bits_written());
+            combined.append_unaligned(&ac_group_writer)?;
+            #[cfg(test)]
+            eprintln!("After AC_group: {} bits", combined.bits_written());
+            combined.zero_pad_to_byte();
+            let combined_bytes = combined.finish();
+
+            #[cfg(test)]
+            {
+                eprintln!("Combined section size: {} bytes", combined_bytes.len());
+                eprintln!(
+                    "Before TOC: bit {} (byte {})",
+                    writer.bits_written(),
+                    writer.bits_written() / 8
+                );
+            }
+            write_toc(&[combined_bytes.len()], &mut writer)?;
+            #[cfg(test)]
+            eprintln!(
+                "After TOC: bit {} (byte {})",
+                writer.bits_written(),
+                writer.bits_written() / 8
+            );
+            writer.append_bytes(&combined_bytes)?;
         } else {
+            // Multi-group: use byte-aligned sections
+            let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
+
+            // DC Global section
+            let mut dc_global = BitWriter::new();
+            self.write_dc_global(&params, num_dc_groups, &dc_code, &mut dc_global)?;
+            dc_global.zero_pad_to_byte();
+            sections.push(dc_global.finish());
+
+            // DC group sections
+            for dc_group_idx in 0..num_dc_groups {
+                let mut dc_group = BitWriter::new();
+                self.write_dc_group(
+                    dc_group_idx,
+                    &quant_dc,
+                    xsize_blocks,
+                    ysize_blocks,
+                    raw_quant,
+                    &dc_code,
+                    &mut dc_group,
+                )?;
+                dc_group.zero_pad_to_byte();
+                sections.push(dc_group.finish());
+            }
+
+            // AC Global section
+            let mut ac_global = BitWriter::new();
+            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+            ac_global.zero_pad_to_byte();
+            sections.push(ac_global.finish());
+
+            // AC group sections
+            for group_idx in 0..num_groups {
+                let mut ac_group_writer = BitWriter::new();
+                self.write_ac_group(
+                    group_idx,
+                    &quant_ac,
+                    &nzeros,
+                    xsize_blocks,
+                    ysize_blocks,
+                    &ac_code,
+                    &mut ac_group_writer,
+                )?;
+                ac_group_writer.zero_pad_to_byte();
+                sections.push(ac_group_writer.finish());
+            }
+
+            let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
             write_toc(&section_sizes, &mut writer)?;
             for section in sections {
                 writer.append_bytes(&section)?;
@@ -264,7 +314,8 @@ impl TinyEncoder {
         // Process each block
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
-                for c in 0..3 {
+                // Process Y first (c=1), then X (c=0) and B (c=2) for CFL
+                for &c in &[1usize, 0, 2] {
                     // Extract 8x8 block with edge padding (flat array)
                     let mut block = [0.0f32; DCT_BLOCK_SIZE];
                     for dy in 0..BLOCK_DIM {
@@ -275,15 +326,43 @@ impl TinyEncoder {
                         }
                     }
 
+                    #[cfg(test)]
+                    if by == 0 && bx == 0 && c == 0 {
+                        let block_sum: f32 = block.iter().sum();
+                        eprintln!("Block[0,0,c=0]: sum={:.4}, first={:.4}", block_sum, block[0]);
+                    }
+
                     // Perform DCT
                     let mut dct_block = [0.0f32; DCT_BLOCK_SIZE];
                     dct_8x8(&block, &mut dct_block);
 
-                    // Quantize DC
+                    #[cfg(test)]
+                    if by == 0 && bx == 0 && c == 0 {
+                        eprintln!("DCT[0,0,c=0]: DC={:.4}", dct_block[0]);
+                    }
+
+                    // Quantize DC with CFL (Chroma From Luma)
+                    // Formula: qdc = round(dc * INV_DC_QUANT[c] * scale_dc - Y_dc * cfl_factor[c])
+                    // where scale_dc = quant_dc * scale = quant_dc * global_scale / 65536
+                    // CFL factors: X=0, Y=0, B=INV_DC_QUANT[2]*DC_QUANT[1]=256*(1/512)=0.5
                     let dc = dct_block[0];
-                    let dc_scale = DC_QUANT[c] * params.scale;
-                    let qdc = (dc * dc_scale).round() as i16;
+                    let dc_scale = INV_DC_QUANT[c] * params.scale_dc;
+                    let cfl_factor = if c == 2 {
+                        // B channel: subtract 0.5 * Y_dc for chroma correlation
+                        // CFL factor = INV_DC_QUANT[2] * DC_QUANT[1] = 256 * (1/512) = 0.5
+                        0.5f32
+                    } else {
+                        0.0f32
+                    };
+                    let y_dc = quant_dc[1][by][bx] as f32;
+                    let qdc = (dc * dc_scale - y_dc * cfl_factor).round() as i16;
                     quant_dc[c][by][bx] = qdc;
+
+                    #[cfg(test)]
+                    if by == 0 && bx == 0 {
+                        eprintln!("Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
+                                  c, dc, dc_scale, y_dc, cfl_factor, y_dc * cfl_factor, qdc);
+                    }
 
                     // Quantize AC coefficients
                     let ac_scale = params.scale;
@@ -478,20 +557,53 @@ impl TinyEncoder {
         &self,
         _dc_group_idx: usize,
         quant_dc: &[Vec<Vec<i16>>; 3],
-        _xsize_blocks: usize,
-        _ysize_blocks: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        raw_quant: u8,
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        #[cfg(test)]
+        let start_bits = writer.bits_written();
+
         // DC group header
         writer.write(2, 0)?; // extra_dc_precision = 0
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
+        #[cfg(test)]
+        let after_header1 = writer.bits_written();
+
         // Write DC tokens using gradient predictor
         write_dc_tokens(quant_dc, dc_code, writer)?;
 
-        // TODO: Write AC metadata (YtoX, YtoB, AC strategy, quant field, EPF)
-        // For now, we'll write minimal metadata
+        #[cfg(test)]
+        let after_dc_tokens = writer.bits_written();
+
+        // AC metadata header
+        let num_blocks = xsize_blocks * ysize_blocks;
+        let num_ac_blocks = num_blocks; // All DCT8, so all blocks are first blocks
+        let nb_bits = ceil_log2_nonzero(num_blocks);
+        if nb_bits != 0 {
+            writer.write(nb_bits as usize, (num_ac_blocks - 1) as u64)?;
+        }
+        writer.write(4, 3)?; // use global tree, default wp, no transforms
+
+        #[cfg(test)]
+        let after_header2 = writer.bits_written();
+
+        // Write AC metadata tokens (YtoX, YtoB, AC strategy, quant field, EPF)
+        write_ac_metadata_tokens(xsize_blocks, ysize_blocks, raw_quant, dc_code, writer)?;
+
+        #[cfg(test)]
+        {
+            let total = writer.bits_written() - start_bits;
+            eprintln!("DC_group breakdown:");
+            eprintln!("  header1: {} bits (2+4)", after_header1 - start_bits);
+            eprintln!("  dc_tokens: {} bits", after_dc_tokens - after_header1);
+            eprintln!("  header2: {} bits (nb_bits+4)", after_header2 - after_dc_tokens);
+            eprintln!("  ac_metadata: {} bits", writer.bits_written() - after_header2);
+            eprintln!("  total: {} bits ({} bytes before pad)", total, (total + 7) / 8);
+        }
 
         Ok(())
     }
@@ -549,10 +661,16 @@ impl TinyEncoder {
         ac_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // Process blocks in channel order: Y (1), X (0), B (2)
-        for &c in &[1usize, 0, 2] {
-            for by in 0..ysize_blocks {
-                for bx in 0..xsize_blocks {
+        #[cfg(test)]
+        let start_bits = writer.bits_written();
+
+        // Process blocks in row-major order, with channels interleaved per block
+        // CRITICAL: libjxl-tiny loops: for block { for channel {Y,X,B} { tokenize } }
+        // We must match this exact order!
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                // Process channels in order: Y (1), X (0), B (2)
+                for &c in &[1usize, 0, 2] {
                     let block = &quant_ac[c][by][bx];
                     let nz = nzeros[c][by][bx];
 
@@ -565,6 +683,8 @@ impl TinyEncoder {
                     let predicted_nz = predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32);
 
                     // Tokenize AC coefficients
+                    #[cfg(test)]
+                    eprintln!("AC[c={},by={},bx={}]: nz={}, predicted={}", c, by, bx, nz, predicted_nz);
                     tokenize_ac_coefficients(
                         block,
                         c,
@@ -575,6 +695,19 @@ impl TinyEncoder {
                         writer,
                     )?;
                 }
+            }
+        }
+
+        #[cfg(test)]
+        {
+            let total_bits = writer.bits_written() - start_bits;
+            eprintln!("AC_group breakdown: {} bits ({} bytes before pad)", total_bits, (total_bits + 7) / 8);
+            // Show the raw bytes for comparison
+            let bytes = writer.peek_bytes();
+            let ac_start_byte = start_bits / 8;
+            let ac_end_byte = writer.bits_written().div_ceil(8);
+            if ac_end_byte <= bytes.len() && ac_start_byte < ac_end_byte {
+                eprintln!("AC_group raw bytes: {:02x?}", &bytes[ac_start_byte..ac_end_byte.min(ac_start_byte + 10)]);
             }
         }
 
@@ -643,5 +776,44 @@ mod tests {
         assert!(x[0].abs() < 0.01, "X should be near zero for gray");
         assert!(y[0] > 0.0, "Y should be positive");
         assert!(b[0] > 0.0, "B should be positive");
+    }
+
+    #[test]
+    fn test_encode_16x16_red_image() {
+        // Test a 16x16 pixel image (2x2 blocks) to compare with libjxl-tiny
+        let encoder = TinyEncoder::new(1.0);
+
+        let width = 16;
+        let height = 16;
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                linear_rgb[idx] = 1.0; // R
+                linear_rgb[idx + 1] = 0.0; // G
+                linear_rgb[idx + 2] = 0.0; // B
+            }
+        }
+
+        let result = encoder.encode(width, height, &linear_rgb);
+        assert!(result.is_ok());
+        let bytes = result.unwrap();
+
+        eprintln!("Output file size: {} bytes", bytes.len());
+        eprintln!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
+
+        // Write output to file for comparison
+        std::fs::write("/tmp/our_16x16.jxl", &bytes).unwrap();
+
+        // libjxl-tiny produces:
+        // DC_group: 106 bits (14 bytes)
+        // Total combined: 1086 bytes
+        // Total file: 1104 bytes
+        //
+        // Our encoder should match these sizes
+
+        // Check signature
+        assert_eq!(bytes[0], 0xFF);
+        assert_eq!(bytes[1], 0x0A);
     }
 }

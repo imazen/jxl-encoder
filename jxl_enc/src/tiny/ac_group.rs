@@ -211,7 +211,19 @@ pub fn tokenize_ac_coefficients(
 
     // Write number of non-zeros as first token
     let nz_token = Token::new(nzero_ctx as u32, nzeros as u32);
+    #[cfg(test)]
+    let bits_before = writer.bits_written();
     write_token(&nz_token, ac_code, writer)?;
+    #[cfg(test)]
+    {
+        let bits_after = writer.bits_written();
+        let prefix_idx = ac_code.context_map[nzero_ctx] as usize;
+        let pc = &ac_code.prefix_codes[prefix_idx];
+        eprintln!(
+            "  AC nzeros token: ctx={}, value={}, prefix_idx={}, depth={}, bits={:#x}, wrote {} bits",
+            nzero_ctx, nzeros, prefix_idx, pc.depths[0], pc.bits[0], bits_after - bits_before
+        );
+    }
 
     // Get coefficient order
     let order = get_coeff_order(raw_strategy);

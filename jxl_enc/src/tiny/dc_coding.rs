@@ -126,6 +126,17 @@ pub fn write_dc_tokens(
     let height = quant_dc[0].len();
     let width = quant_dc[0][0].len();
 
+    #[cfg(test)]
+    {
+        eprintln!("write_dc_tokens: {}x{} blocks", width, height);
+        for c in 0..3 {
+            let channel = &quant_dc[c];
+            let sum: i32 = channel.iter().flat_map(|row| row.iter()).map(|&v| v as i32).sum();
+            let count = width * height;
+            eprintln!("  channel {}: sum={}, avg={:.2}", c, sum, sum as f32 / count as f32);
+        }
+    }
+
     // Encode in channel order: Y (1), X (0), B (2)
     for &c in &[1, 0, 2] {
         let channel = &quant_dc[c];
@@ -164,9 +175,173 @@ pub fn write_dc_tokens(
 
                 // Create and write token
                 let token = Token::new(ctx_id, pack_signed(residual));
+                #[cfg(test)]
+                {
+                    let before = writer.bits_written();
+                    eprintln!("  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
+                              c, y, x, actual, guess, residual, ctx_id, pack_signed(residual));
+                    write_token(&token, dc_code, writer)?;
+                    let after = writer.bits_written();
+                    eprintln!("    -> wrote {} bits", after - before);
+                }
+                #[cfg(not(test))]
                 write_token(&token, dc_code, writer)?;
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Color tile dimension (64 pixels) for CFL maps.
+const COLOR_TILE_DIM: usize = 64;
+
+/// Block dimension (8 pixels).
+const BLOCK_DIM: usize = 8;
+
+/// Ceiling division helper.
+#[inline]
+const fn div_ceil(a: usize, b: usize) -> usize {
+    (a + b - 1) / b
+}
+
+/// Write AC metadata tokens (YtoX, YtoB, AC strategy, quant field, EPF) using gradient predictor.
+///
+/// AC metadata is encoded in the DC group section using the DC entropy code.
+///
+/// Context assignments:
+/// - YtoX: context 2
+/// - YtoB: context 1
+/// - AC strategy: contexts 10, 9, 8, 7 based on left value
+/// - Quant field: contexts 6, 5, 4, 3 based on left value
+/// - EPF: context 0
+///
+/// # Arguments
+/// * `xsize_blocks` - Number of 8x8 blocks in x direction
+/// * `ysize_blocks` - Number of 8x8 blocks in y direction
+/// * `raw_quant` - Raw quantization field value (1-255, typically ~7 for distance=1.0)
+/// * `dc_code` - DC entropy code to use for token writing
+/// * `writer` - BitWriter to write encoded data
+pub fn write_ac_metadata_tokens(
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    raw_quant: u8,
+    dc_code: &EntropyCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    #[cfg(test)]
+    let start_bits = writer.bits_written();
+    // CFL maps use 64-pixel tiles, not 8-pixel blocks
+    let xsize_pixels = xsize_blocks * BLOCK_DIM;
+    let ysize_pixels = ysize_blocks * BLOCK_DIM;
+    let cfl_xsize = div_ceil(xsize_pixels, COLOR_TILE_DIM);
+    let cfl_ysize = div_ceil(ysize_pixels, COLOR_TILE_DIM);
+
+    #[cfg(test)]
+    let after_start = writer.bits_written();
+
+    // YtoX and YtoB tokens
+    // For simple encoder, all CFL values are 0, so all residuals are 0
+    for c in 0..2 {
+        // YtoX uses context 2, YtoB uses context 1
+        let ctx_id = (2 - c) as u32;
+        for y in 0..cfl_ysize {
+            for x in 0..cfl_xsize {
+                // Neighbors for gradient prediction
+                let left = if x > 0 {
+                    0i64
+                } else if y > 0 {
+                    0i64
+                } else {
+                    0i64
+                };
+                let top = if y > 0 { 0i64 } else { left };
+                let topleft = if x > 0 && y > 0 { 0i64 } else { left };
+                let guess = clamped_gradient(top as i32, left as i32, topleft as i32);
+                let actual = 0i32; // All CFL values are 0
+                let residual = actual - guess;
+                let token = Token::new(ctx_id, pack_signed(residual));
+                write_token(&token, dc_code, writer)?;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    let after_cfl = writer.bits_written();
+
+    // AC strategy tokens
+    // All DCT8 (code 0), so all residuals are 0
+    let mut left_acs = 0i32;
+    for y in 0..ysize_blocks {
+        for x in 0..xsize_blocks {
+            // For DCT8, every block is a first block
+            let cur = 0i32; // DCT8 strategy code
+            // Context based on left value
+            let ctx_id = if left_acs > 11 {
+                7
+            } else if left_acs > 5 {
+                8
+            } else if left_acs > 3 {
+                9
+            } else {
+                10
+            };
+            let token = Token::new(ctx_id, pack_signed(cur));
+            write_token(&token, dc_code, writer)?;
+            left_acs = cur;
+        }
+    }
+
+    #[cfg(test)]
+    let after_acs = writer.bits_written();
+
+    // Quant field tokens
+    // cur = raw_quant - 1 (offset by 1 in the encoding)
+    // Initial left is ac_strategy[0][0].StrategyCode() = 0 for DCT8
+    let qf_value = (raw_quant as i32) - 1; // cur value for all blocks
+    let mut left_qf = 0i32;
+    for y in 0..ysize_blocks {
+        for x in 0..xsize_blocks {
+            // For DCT8, every block is a first block
+            let cur = qf_value;
+            let residual = cur - left_qf;
+            // Context based on left value
+            let ctx_id = if left_qf > 11 {
+                3
+            } else if left_qf > 5 {
+                4
+            } else if left_qf > 3 {
+                5
+            } else {
+                6
+            };
+            let token = Token::new(ctx_id, pack_signed(residual));
+            write_token(&token, dc_code, writer)?;
+            left_qf = cur;
+        }
+    }
+
+    #[cfg(test)]
+    let after_qf = writer.bits_written();
+
+    // EPF (Edge-Preserving Filter) tokens
+    // Write one EPF token per block with value PackSigned(4) = 8
+    // Context 0 is used for EPF tokens
+    let nblocks = xsize_blocks * ysize_blocks;
+    for _ in 0..nblocks {
+        let token = Token::new(0, pack_signed(4)); // EPF default value 4
+        write_token(&token, dc_code, writer)?;
+    }
+
+    #[cfg(test)]
+    {
+        let after_epf = writer.bits_written();
+        eprintln!("  ac_metadata breakdown:");
+        eprintln!("    cfl (YtoX+YtoB): {} bits ({} tokens)", after_cfl - after_start, cfl_xsize * cfl_ysize * 2);
+        eprintln!("    ac_strategy: {} bits ({} tokens)", after_acs - after_cfl, xsize_blocks * ysize_blocks);
+        eprintln!("    quant_field: {} bits ({} tokens)", after_qf - after_acs, xsize_blocks * ysize_blocks);
+        eprintln!("    epf: {} bits ({} tokens)", after_epf - after_qf, nblocks);
+        eprintln!("    total: {} bits", after_epf - start_bits);
     }
 
     Ok(())

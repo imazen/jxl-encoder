@@ -95,6 +95,26 @@ impl DistanceParams {
             epf_iters,
         }
     }
+
+    /// Compute raw quantization field value for a uniform (constant) image.
+    ///
+    /// For adaptive quantization with a uniform image, the quant field is
+    /// approximately 0.73-0.78 (not 1.0) due to the masking computations.
+    /// This value was determined empirically by comparing with libjxl-tiny output.
+    ///
+    /// raw_quant = clamp(round(quant_field * inv_scale + 0.5), 1, 255)
+    ///
+    /// For distance=1.0 with quant_field≈0.73:
+    ///   raw_quant = round(0.73 * 8.93 + 0.5) ≈ 7
+    pub fn raw_quant_uniform(&self) -> u8 {
+        // Use 0.73 as the approximate quant_field for uniform images
+        const UNIFORM_QUANT_FIELD: f32 = 0.73;
+        clamp(
+            (UNIFORM_QUANT_FIELD * self.inv_scale + 0.5).round() as i32,
+            1,
+            255,
+        ) as u8
+    }
 }
 
 /// Write the frame header.
@@ -168,11 +188,20 @@ pub fn write_toc(section_sizes: &[usize], writer: &mut BitWriter) -> Result<()> 
 
     const BITS: [usize; 4] = [10, 14, 22, 30];
 
-    for &section_size in section_sizes {
+    for (idx, &section_size) in section_sizes.iter().enumerate() {
         let mut offset = 0;
         let mut success = false;
         for (i, &bits) in BITS.iter().enumerate() {
             if section_size < offset + (1 << bits) {
+                #[cfg(test)]
+                eprintln!(
+                    "TOC[{}]: size={}, selector={}, bits={}, value={}",
+                    idx,
+                    section_size,
+                    i,
+                    bits,
+                    section_size - offset
+                );
                 writer.write(2, i as u64)?;
                 writer.write(bits, (section_size - offset) as u64)?;
                 success = true;
