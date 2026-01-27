@@ -19,6 +19,7 @@
 
 mod ac_context;
 mod common;
+mod dc_coding;
 mod encoder;
 mod entropy_code;
 mod frame;
