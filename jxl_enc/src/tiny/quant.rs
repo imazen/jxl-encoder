@@ -340,11 +340,7 @@ mod tests {
             .cloned()
             .fold(f32::NEG_INFINITY, f32::max);
 
-        assert!(
-            min_weight > 1e-5,
-            "Min weight {} too small",
-            min_weight
-        );
+        assert!(min_weight > 1e-5, "Min weight {} too small", min_weight);
         assert!(max_weight < 1.0, "Max weight {} too large", max_weight);
     }
 }

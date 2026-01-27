@@ -11,7 +11,7 @@
 //! gradient property.
 
 use super::common::pack_signed;
-use super::entropy_code::{write_token, EntropyCode};
+use super::entropy_code::{EntropyCode, write_token};
 use super::token::Token;
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
@@ -32,11 +32,7 @@ pub fn clamped_gradient(n: i32, w: i32, l: i32) -> i32 {
     let grad = (n as i64 + w as i64 - l as i64) as i32;
     // Clamp to [m, M]
     let grad_clamp_m = if l < m { big_m } else { grad };
-    if l > big_m {
-        m
-    } else {
-        grad_clamp_m
-    }
+    if l > big_m { m } else { grad_clamp_m }
 }
 
 /// Context lookup table for DC coding based on gradient property.
@@ -162,11 +158,8 @@ pub fn write_dc_tokens(
                 let residual = actual - guess;
 
                 // Compute gradient property for context lookup
-                let grad_prop =
-                    (GRAD_RANGE_MID + top as i64 + left as i64 - topleft as i64).clamp(
-                        GRAD_RANGE_MIN,
-                        GRAD_RANGE_MAX,
-                    ) as usize;
+                let grad_prop = (GRAD_RANGE_MID + top as i64 + left as i64 - topleft as i64)
+                    .clamp(GRAD_RANGE_MIN, GRAD_RANGE_MAX) as usize;
                 let ctx_id = GRADIENT_CONTEXT_LUT[grad_prop] as u32;
 
                 // Create and write token

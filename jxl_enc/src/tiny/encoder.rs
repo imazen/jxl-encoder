@@ -6,13 +6,13 @@
 //! Main tiny encoder implementation.
 
 use super::ac_group::{
-    num_nonzero_8x8_except_dc, predict_from_top_and_left, tokenize_ac_coefficients,
-    AC_STRATEGY_DCT8,
+    AC_STRATEGY_DCT8, num_nonzero_8x8_except_dc, predict_from_top_and_left,
+    tokenize_ac_coefficients,
 };
 use super::common::*;
 use super::dc_coding::write_dc_tokens;
 use super::dct::dct_8x8;
-use super::frame::{write_frame_header, write_quant_scales, write_toc, DistanceParams};
+use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::{DC_QUANT, QUANT_WEIGHTS};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use crate::bit_writer::BitWriter;
@@ -290,12 +290,7 @@ impl TinyEncoder {
     }
 
     /// Write the file header (size box).
-    fn write_file_header(
-        &self,
-        width: usize,
-        height: usize,
-        writer: &mut BitWriter,
-    ) -> Result<()> {
+    fn write_file_header(&self, width: usize, height: usize, writer: &mut BitWriter) -> Result<()> {
         // Simple approach: write all_default=0, then size fields
         writer.write(1, 0)?; // not all default
 
@@ -453,8 +448,7 @@ impl TinyEncoder {
                     } else {
                         None
                     };
-                    let predicted_nz =
-                        predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32);
+                    let predicted_nz = predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32);
 
                     // Tokenize AC coefficients
                     tokenize_ac_coefficients(
@@ -473,25 +467,13 @@ impl TinyEncoder {
         Ok(())
     }
 
-    /// Write entropy code header (simplified - just signal use of pre-computed codes).
+    /// Write entropy code (context map + prefix codes).
     fn write_entropy_code_header(
         &self,
-        _code: &super::entropy_code::EntropyCode,
+        code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // For now, write a simple prefix code header
-        // This signals use of a simple code
-
-        // Use simple prefix codes (depth = 0 for symbol 0, depth = 1 otherwise)
-        // In practice, we need to write the actual prefix code table here
-
-        // num_codes - 1 (in 2 bits), then depths
-        // For simplicity, write a trivial code
-        writer.write(1, 1)?; // use simple code
-        writer.write(2, 0)?; // NSYM = 1 (only one symbol)
-        writer.write(8, 0)?; // the symbol is 0
-
-        Ok(())
+        super::entropy_code::write_entropy_code(code, writer)
     }
 }
 
