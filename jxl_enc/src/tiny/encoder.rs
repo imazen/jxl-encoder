@@ -859,8 +859,8 @@ mod tests {
         assert!(result.is_ok());
         let bytes = result.unwrap();
 
-        debug_log!("Output file size: {} bytes", bytes.len());
-        debug_log!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
+        eprintln!("Output file size: {} bytes", bytes.len());
+        eprintln!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
 
         // Write output to file for comparison
         std::fs::write("/tmp/our_16x16.jxl", &bytes).unwrap();
