@@ -181,7 +181,12 @@ fn transpose<const N: usize, const M: usize>(input: &[f32], output: &mut [f32]) 
 /// Compute scaled 8x8 DCT.
 ///
 /// Input: 8x8 block in row-major order
-/// Output: 8x8 DCT coefficients in row-major order
+/// Output: 8x8 DCT coefficients in **transposed** layout
+///
+/// IMPORTANT: libjxl-tiny's ComputeScaledDCT does NOT transpose back for square blocks.
+/// The decoder expects coefficients in this transposed layout. For 8x8 blocks,
+/// output[cx * 8 + cy] contains the coefficient for frequency (cy, cx) where
+/// cy is the vertical frequency and cx is the horizontal frequency.
 pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut tmp = [0.0f32; 64];
 
@@ -210,8 +215,9 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
         }
     }
 
-    // Transpose back
-    transpose::<8, 8>(&transposed, output);
+    // DO NOT transpose back! libjxl-tiny expects transposed output for square blocks.
+    // This matches ComputeScaledDCT in libjxl-tiny/encoder/enc_transforms-inl.h
+    output.copy_from_slice(&transposed);
 }
 
 /// Compute scaled 16x8 DCT (16 rows, 8 columns).
