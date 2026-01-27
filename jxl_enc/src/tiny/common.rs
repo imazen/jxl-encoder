@@ -24,6 +24,9 @@ pub const GROUP_DIM_IN_BLOCKS: usize = GROUP_DIM / BLOCK_DIM;
 /// DC group dimension (8 groups = 2048 pixels).
 pub const DC_GROUP_DIM: usize = GROUP_DIM * BLOCK_DIM;
 
+/// DC group dimension in blocks (256 blocks).
+pub const DC_GROUP_DIM_IN_BLOCKS: usize = DC_GROUP_DIM / BLOCK_DIM;
+
 /// Tile dimension for chroma-from-luma (64 pixels when enabled).
 pub const TILE_DIM: usize = 64;
 

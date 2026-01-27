@@ -126,15 +126,45 @@ pub fn write_dc_tokens(
     let height = quant_dc[0].len();
     let width = quant_dc[0][0].len();
 
+    // Write entire image (single DC group case)
+    write_dc_tokens_region(quant_dc, 0, 0, width, height, dc_code, writer)
+}
+
+/// Encode DC coefficients for a specific region using gradient predictor.
+///
+/// For multi-group encoding, each DC group only writes its portion of DC tokens.
+/// The region is specified in block coordinates.
+///
+/// # Arguments
+/// * `quant_dc` - Quantized DC coefficients for each channel, shape [3][full_height][full_width]
+/// * `start_bx` - Starting block x coordinate (inclusive)
+/// * `start_by` - Starting block y coordinate (inclusive)
+/// * `end_bx` - Ending block x coordinate (exclusive)
+/// * `end_by` - Ending block y coordinate (exclusive)
+/// * `dc_code` - DC entropy code to use for token writing
+/// * `writer` - BitWriter to write encoded data
+pub fn write_dc_tokens_region(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+    dc_code: &EntropyCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let region_width = end_bx - start_bx;
+    let region_height = end_by - start_by;
+
+    if region_width == 0 || region_height == 0 {
+        return Ok(());
+    }
+
     #[cfg(feature = "debug-tokens")]
     {
-        eprintln!("write_dc_tokens: {}x{} blocks", width, height);
-        for c in 0..3 {
-            let channel = &quant_dc[c];
-            let sum: i32 = channel.iter().flat_map(|row| row.iter()).map(|&v| v as i32).sum();
-            let count = width * height;
-            eprintln!("  channel {}: sum={}, avg={:.2}", c, sum, sum as f32 / count as f32);
-        }
+        eprintln!(
+            "write_dc_tokens_region: blocks ({},{}) to ({},{}) = {}x{}",
+            start_bx, start_by, end_bx, end_by, region_width, region_height
+        );
     }
 
     // Counter for limiting debug output
@@ -146,24 +176,27 @@ pub fn write_dc_tokens(
     // Encode in channel order: Y (1), X (0), B (2)
     for &c in &[1, 0, 2] {
         let channel = &quant_dc[c];
-        for y in 0..height {
-            for x in 0..width {
+        for y in start_by..end_by {
+            for x in start_bx..end_bx {
                 // Get neighbor values with edge handling
-                let left = if x > 0 {
+                // Note: we use actual coordinates, not region-local coordinates,
+                // because we have access to the full DC array and neighbors may be
+                // outside this DC group's region
+                let left = if x > start_bx {
                     channel[y][x - 1] as i32
-                } else if y > 0 {
+                } else if y > start_by {
                     channel[y - 1][x] as i32
                 } else {
                     0
                 };
 
-                let top = if y > 0 {
+                let top = if y > start_by {
                     channel[y - 1][x] as i32
                 } else {
                     left
                 };
 
-                let topleft = if x > 0 && y > 0 {
+                let topleft = if x > start_bx && y > start_by {
                     channel[y - 1][x - 1] as i32
                 } else {
                     left
@@ -185,8 +218,10 @@ pub fn write_dc_tokens(
                 {
                     let before = writer.bits_written();
                     if dc_debug_count < DC_DEBUG_LIMIT {
-                        eprintln!("  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
-                                  c, y, x, actual, guess, residual, ctx_id, pack_signed(residual));
+                        eprintln!(
+                            "  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
+                            c, y, x, actual, guess, residual, ctx_id, pack_signed(residual)
+                        );
                     }
                     write_token(&token, dc_code, writer)?;
                     let after = writer.bits_written();
@@ -195,7 +230,7 @@ pub fn write_dc_tokens(
                     }
                     dc_debug_count += 1;
                     if dc_debug_count == DC_DEBUG_LIMIT {
-                        let total_tokens = width * height * 3;
+                        let total_tokens = region_width * region_height * 3;
                         eprintln!("  ... ({} more DC tokens)", total_tokens - DC_DEBUG_LIMIT);
                     }
                 }
@@ -232,8 +267,8 @@ const fn div_ceil(a: usize, b: usize) -> usize {
 /// - EPF: context 0
 ///
 /// # Arguments
-/// * `xsize_blocks` - Number of 8x8 blocks in x direction
-/// * `ysize_blocks` - Number of 8x8 blocks in y direction
+/// * `xsize_blocks` - Number of 8x8 blocks in x direction (for the region)
+/// * `ysize_blocks` - Number of 8x8 blocks in y direction (for the region)
 /// * `raw_quant` - Raw quantization field value (1-255, typically ~7 for distance=1.0)
 /// * `dc_code` - DC entropy code to use for token writing
 /// * `writer` - BitWriter to write encoded data
@@ -244,11 +279,33 @@ pub fn write_ac_metadata_tokens(
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
+    // For single DC group, the region is the entire image
+    write_ac_metadata_tokens_region(xsize_blocks, ysize_blocks, raw_quant, dc_code, writer)
+}
+
+/// Write AC metadata tokens for a specific region.
+///
+/// For multi-group encoding, each DC group writes metadata only for its blocks.
+/// The region dimensions are in blocks (not pixels).
+///
+/// # Arguments
+/// * `region_xsize_blocks` - Number of blocks in x direction for this region
+/// * `region_ysize_blocks` - Number of blocks in y direction for this region
+/// * `raw_quant` - Raw quantization field value (1-255)
+/// * `dc_code` - DC entropy code
+/// * `writer` - BitWriter
+pub fn write_ac_metadata_tokens_region(
+    region_xsize_blocks: usize,
+    region_ysize_blocks: usize,
+    raw_quant: u8,
+    dc_code: &EntropyCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
     // CFL maps use 64-pixel tiles, not 8-pixel blocks
-    let xsize_pixels = xsize_blocks * BLOCK_DIM;
-    let ysize_pixels = ysize_blocks * BLOCK_DIM;
+    let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
+    let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
     let cfl_xsize = div_ceil(xsize_pixels, COLOR_TILE_DIM);
     let cfl_ysize = div_ceil(ysize_pixels, COLOR_TILE_DIM);
 
@@ -287,8 +344,8 @@ pub fn write_ac_metadata_tokens(
     // AC strategy tokens
     // All DCT8 (code 0), so all residuals are 0
     let mut left_acs = 0i32;
-    for y in 0..ysize_blocks {
-        for x in 0..xsize_blocks {
+    for y in 0..region_ysize_blocks {
+        for x in 0..region_xsize_blocks {
             // For DCT8, every block is a first block
             let cur = 0i32; // DCT8 strategy code
             // Context based on left value
@@ -315,8 +372,8 @@ pub fn write_ac_metadata_tokens(
     // Initial left is ac_strategy[0][0].StrategyCode() = 0 for DCT8
     let qf_value = (raw_quant as i32) - 1; // cur value for all blocks
     let mut left_qf = 0i32;
-    for y in 0..ysize_blocks {
-        for x in 0..xsize_blocks {
+    for y in 0..region_ysize_blocks {
+        for x in 0..region_xsize_blocks {
             // For DCT8, every block is a first block
             let cur = qf_value;
             let residual = cur - left_qf;
@@ -342,7 +399,7 @@ pub fn write_ac_metadata_tokens(
     // EPF (Edge-Preserving Filter) tokens
     // Write one EPF token per block with value PackSigned(4) = 8
     // Context 0 is used for EPF tokens
-    let nblocks = xsize_blocks * ysize_blocks;
+    let nblocks = region_xsize_blocks * region_ysize_blocks;
     for _ in 0..nblocks {
         let token = Token::new(0, pack_signed(4)); // EPF default value 4
         write_token(&token, dc_code, writer)?;
@@ -353,8 +410,8 @@ pub fn write_ac_metadata_tokens(
         let after_epf = writer.bits_written();
         eprintln!("  ac_metadata breakdown:");
         eprintln!("    cfl (YtoX+YtoB): {} bits ({} tokens)", after_cfl - after_start, cfl_xsize * cfl_ysize * 2);
-        eprintln!("    ac_strategy: {} bits ({} tokens)", after_acs - after_cfl, xsize_blocks * ysize_blocks);
-        eprintln!("    quant_field: {} bits ({} tokens)", after_qf - after_acs, xsize_blocks * ysize_blocks);
+        eprintln!("    ac_strategy: {} bits ({} tokens)", after_acs - after_cfl, region_xsize_blocks * region_ysize_blocks);
+        eprintln!("    quant_field: {} bits ({} tokens)", after_qf - after_acs, region_xsize_blocks * region_ysize_blocks);
         eprintln!("    epf: {} bits ({} tokens)", after_epf - after_qf, nblocks);
         eprintln!("    total: {} bits", after_epf - start_bits);
     }
