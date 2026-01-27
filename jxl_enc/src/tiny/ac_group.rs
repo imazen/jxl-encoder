@@ -211,10 +211,10 @@ pub fn tokenize_ac_coefficients(
 
     // Write number of non-zeros as first token
     let nz_token = Token::new(nzero_ctx as u32, nzeros as u32);
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     let bits_before = writer.bits_written();
     write_token(&nz_token, ac_code, writer)?;
-    #[cfg(test)]
+    #[cfg(feature = "debug-tokens")]
     {
         let bits_after = writer.bits_written();
         let prefix_idx = ac_code.context_map[nzero_ctx] as usize;

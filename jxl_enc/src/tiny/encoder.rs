@@ -97,17 +97,17 @@ impl TinyEncoder {
         // Write JXL signature
         writer.write(8, 0xFF)?;
         writer.write(8, 0x0A)?;
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         eprintln!("After signature: bit {}", writer.bits_written());
 
         // Write size header (simple format for small images)
         self.write_file_header(width, height, &mut writer)?;
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         eprintln!("After file header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
         // Write frame header
         write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         eprintln!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
         // Compute raw_quant for uniform images (for proper adaptive quantization,
@@ -142,11 +142,12 @@ impl TinyEncoder {
                 &nzeros,
                 xsize_blocks,
                 ysize_blocks,
+                xsize_groups,
                 &ac_code,
                 &mut ac_group_writer,
             )?;
 
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             {
                 eprintln!("Section bit counts: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
                     dc_global.bits_written(), dc_group.bits_written(),
@@ -155,21 +156,21 @@ impl TinyEncoder {
 
             // Combine at bit level
             let mut combined = dc_global;
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             eprintln!("After DC_global: {} bits", combined.bits_written());
             combined.append_unaligned(&dc_group)?;
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             eprintln!("After DC_group: {} bits", combined.bits_written());
             combined.append_unaligned(&ac_global)?;
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             eprintln!("After AC_global: {} bits", combined.bits_written());
             combined.append_unaligned(&ac_group_writer)?;
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             eprintln!("After AC_group: {} bits", combined.bits_written());
             combined.zero_pad_to_byte();
             let combined_bytes = combined.finish();
 
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             {
                 eprintln!("Combined section size: {} bytes", combined_bytes.len());
                 eprintln!(
@@ -179,7 +180,7 @@ impl TinyEncoder {
                 );
             }
             write_toc(&[combined_bytes.len()], &mut writer)?;
-            #[cfg(test)]
+            #[cfg(feature = "debug-tokens")]
             eprintln!(
                 "After TOC: bit {} (byte {})",
                 writer.bits_written(),
@@ -227,6 +228,7 @@ impl TinyEncoder {
                     &nzeros,
                     xsize_blocks,
                     ysize_blocks,
+                    xsize_groups,
                     &ac_code,
                     &mut ac_group_writer,
                 )?;
@@ -326,7 +328,7 @@ impl TinyEncoder {
                         }
                     }
 
-                    #[cfg(test)]
+                    #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 0 {
                         let block_sum: f32 = block.iter().sum();
                         eprintln!("Block[0,0,c=0]: sum={:.4}, first={:.4}", block_sum, block[0]);
@@ -336,7 +338,7 @@ impl TinyEncoder {
                     let mut dct_block = [0.0f32; DCT_BLOCK_SIZE];
                     dct_8x8(&block, &mut dct_block);
 
-                    #[cfg(test)]
+                    #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 0 {
                         eprintln!("DCT[0,0,c=0]: DC={:.4}", dct_block[0]);
                     }
@@ -358,7 +360,7 @@ impl TinyEncoder {
                     let qdc = (dc * dc_scale - y_dc * cfl_factor).round() as i16;
                     quant_dc[c][by][bx] = qdc;
 
-                    #[cfg(test)]
+                    #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 {
                         eprintln!("Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
                                   c, dc, dc_scale, y_dc, cfl_factor, y_dc * cfl_factor, qdc);
@@ -494,17 +496,17 @@ impl TinyEncoder {
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
 
         writer.write(1, 1)?; // default dequant dc
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_dequant_dc = writer.bits_written();
 
         write_quant_scales(params.global_scale, params.quant_dc, writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_quant = writer.bits_written();
 
         // BlockCtxMap - non-default, write compact map
@@ -514,7 +516,7 @@ impl TinyEncoder {
         // Write compact block context map
         super::context_tree::write_block_context_map(writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_block_ctx = writer.bits_written();
 
         writer.write(1, 1)?; // default DC cmap
@@ -522,18 +524,18 @@ impl TinyEncoder {
         // Write context tree for modular stream DC header
         super::context_tree::write_context_tree(num_dc_groups, writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_ctx_tree = writer.bits_written();
 
         writer.write(1, 0)?; // no lz77
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_lz77 = writer.bits_written();
 
         // Write DC entropy code
         self.write_entropy_code_header(dc_code, writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         {
             let after_dc_code = writer.bits_written();
             let total_bits = after_dc_code - start_bits;
@@ -563,20 +565,20 @@ impl TinyEncoder {
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
 
         // DC group header
         writer.write(2, 0)?; // extra_dc_precision = 0
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_header1 = writer.bits_written();
 
         // Write DC tokens using gradient predictor
         write_dc_tokens(quant_dc, dc_code, writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_dc_tokens = writer.bits_written();
 
         // AC metadata header
@@ -588,13 +590,13 @@ impl TinyEncoder {
         }
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let after_header2 = writer.bits_written();
 
         // Write AC metadata tokens (YtoX, YtoB, AC strategy, quant field, EPF)
         write_ac_metadata_tokens(xsize_blocks, ysize_blocks, raw_quant, dc_code, writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         {
             let total = writer.bits_written() - start_bits;
             eprintln!("DC_group breakdown:");
@@ -615,7 +617,7 @@ impl TinyEncoder {
         ac_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
 
         writer.write(1, 1)?; // all default quant matrices
@@ -630,13 +632,13 @@ impl TinyEncoder {
 
         writer.write(1, 0)?; // no lz77
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let before_ac_code = writer.bits_written();
 
         // Write entropy code
         self.write_entropy_code_header(ac_code, writer)?;
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         {
             let after_ac_code = writer.bits_written();
             eprintln!("AC_global breakdown:");
@@ -653,38 +655,69 @@ impl TinyEncoder {
     /// Write AC group section.
     fn write_ac_group(
         &self,
-        _group_idx: usize,
+        group_idx: usize,
         quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[Vec<Vec<u8>>; 3],
         xsize_blocks: usize,
         ysize_blocks: usize,
+        xsize_groups: usize,
         ac_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
+
+        // Compute block range for this group
+        let group_x = group_idx % xsize_groups;
+        let group_y = group_idx / xsize_groups;
+        let start_bx = group_x * GROUP_DIM_IN_BLOCKS;
+        let start_by = group_y * GROUP_DIM_IN_BLOCKS;
+        let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+        let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "AC group {}: blocks ({},{}) to ({},{})",
+            group_idx, start_bx, start_by, end_bx, end_by
+        );
 
         // Process blocks in row-major order, with channels interleaved per block
         // CRITICAL: libjxl-tiny loops: for block { for channel {Y,X,B} { tokenize } }
         // We must match this exact order!
-        for by in 0..ysize_blocks {
-            for bx in 0..xsize_blocks {
+        for by in start_by..end_by {
+            for bx in start_bx..end_bx {
                 // Process channels in order: Y (1), X (0), B (2)
                 for &c in &[1usize, 0, 2] {
                     let block = &quant_ac[c][by][bx];
                     let nz = nzeros[c][by][bx];
 
                     // Predict nzeros from neighbors
-                    let row_top = if by > 0 {
+                    // At group boundaries, treat as edge (no neighbor from other groups)
+                    let row_top = if by > start_by {
                         Some(nzeros[c][by - 1].as_slice())
                     } else {
-                        None
+                        None // First row of group: no top neighbor
                     };
-                    let predicted_nz = predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32);
+
+                    // For left prediction, we need the position relative to group start
+                    // If at first column of group, use default prediction
+                    let local_bx = bx - start_bx;
+                    let predicted_nz = if local_bx == 0 {
+                        // First column of group: predict from top only (or default)
+                        match row_top {
+                            Some(top) => top[bx] as i32,
+                            None => 32, // Default value
+                        }
+                    } else {
+                        // Not first column: use standard prediction
+                        predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
+                    };
 
                     // Tokenize AC coefficients
-                    #[cfg(test)]
-                    eprintln!("AC[c={},by={},bx={}]: nz={}, predicted={}", c, by, bx, nz, predicted_nz);
+                    #[cfg(feature = "debug-tokens")]
+                    if by < start_by + 2 && bx < start_bx + 2 {
+                        eprintln!("AC[c={},by={},bx={}]: nz={}, predicted={}", c, by, bx, nz, predicted_nz);
+                    }
                     tokenize_ac_coefficients(
                         block,
                         c,
@@ -698,10 +731,10 @@ impl TinyEncoder {
             }
         }
 
-        #[cfg(test)]
+        #[cfg(feature = "debug-tokens")]
         {
             let total_bits = writer.bits_written() - start_bits;
-            eprintln!("AC_group breakdown: {} bits ({} bytes before pad)", total_bits, (total_bits + 7) / 8);
+            eprintln!("AC_group {} breakdown: {} bits ({} bytes before pad)", group_idx, total_bits, (total_bits + 7) / 8);
             // Show the raw bytes for comparison
             let bytes = writer.peek_bytes();
             let ac_start_byte = start_bits / 8;
