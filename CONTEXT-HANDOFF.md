@@ -1,126 +1,144 @@
-# Context Handoff: Multi-Group VarDCT Bug Investigation
+# Context Handoff - libjxl-tiny Port
 
-## Date: 2026-01-23
+**Date**: 2026-01-26
+**Last Commit**: `decb47a feat(tiny): port entropy code writing from libjxl-tiny`
 
-## Problem Summary
+## What We're Building
 
-Multi-group VarDCT images (>256x256 pixels) produce catastrophically corrupt output:
-- SSIM2 = -64 (anything below 0 is garbage)
-- 50x larger files than cjxl reference (40KB vs 800 bytes for 300x300)
-- Decoded blocks show step patterns instead of smooth gradients
+A simplified JPEG XL encoder in `jxl_enc/src/tiny/` ported from libjxl-tiny (~9,500 lines C++). This is a parallel code path, not a replacement for the full encoder.
 
-Single-group images (≤256x256) work correctly with SSIM2 = 60-80.
+Key simplifications:
+- Only DCT8, DCT8x16, DCT16x8 transforms
+- Only Huffman entropy coding (no ANS)
+- Default zig-zag coefficient order
+- Fixed context tree for DC coding
 
-## Verified Facts
+## Current State
 
-1. **cjxl (libjxl reference encoder) works for multi-group**:
-   - 256x256: 473 bytes, RMSE=0.39, block(0,0) decoded correctly
-   - 257x257: 550 bytes, RMSE=0.38, block(0,0) decoded correctly
-   - 300x300: 800 bytes, RMSE=0.42, decoded correctly
+**Tests**: 49 tiny module tests passing
+**Bitstream**: NOT DECODABLE - jxl-oxide reports "InvalidFloat"
 
-2. **Our encoder fails for multi-group**:
-   - 257x257: 30KB, SSIM2=-64, decoded blocks are garbage
-   - 300x300: 40KB, SSIM2=-64, decoded blocks are garbage
-   - Decoded block (0,0): `[0 0 0 0 7 17 24 24]` instead of `[0 0 1 2 3 4 5 5]`
+### What's Working
+- XYB color conversion
+- Forward DCT (8x8)
+- Quantization with proper weights
+- DC tokenization with gradient predictor
+- AC tokenization
+- Static entropy codes (8 DC codes, 8 AC codes)
+- Entropy code header writing (context map + prefix codes)
+- Frame header, TOC, section assembly
 
-3. **The tokenization logic is correct**:
-   - AC coefficients ARE being generated: `[-142, -4, 3, 1, 6, 0, 2, 0, 0, 0]`
-   - Transpose logic matches single-group (both use same formula)
-   - Channel remapping is consistent (CHANNEL_REMAP = [1, 0, 2])
+### What's Broken
 
-4. **The raw_quant bug was already fixed**:
-   - Line 74 in transform.rs uses `quant_field.get(bx, by)`, not hardcoded 1
-   - CLAUDE.md documentation is outdated on this point
+The output fails to decode with "InvalidFloat" error:
+- Our 8x8 output: 959 bytes
+- cjxl reference: 65 bytes
 
-## Key Differences: Single-Group vs Multi-Group
+**Root Cause**: The DC section modular stream header is incomplete.
 
-### Single-Group (encode_vardct_single_group_clustered):
-- All sections in ONE continuous bitstream (no byte padding between sections)
-- Single TOC entry
-- Uses `tokenize_ac_with_strategy` -> `write_pass_group_clustered`
+In `encoder.rs:374`, we write:
+```rust
+writer.write(1, 0)?; // empty tree (uses default predictor)
+```
 
-### Multi-Group (encode_vardct_multi_group_clustered_old):
-- Each section in SEPARATE byte-aligned blocks
-- Multiple TOC entries (7 for 300x300: LfGlobal, LfGroup, HfGlobal, PassGroup*4)
-- Uses `tokenize_ac_coefficients_for_group` -> `write_pass_group_clustered`
-- Tokenizes twice (once for histogram, once in encoding function)
+But libjxl-tiny writes 313 context tree tokens (`kContextTreeTokens` in `enc_frame.cc:181-312`) before the DC entropy code. This context tree tells the decoder how to interpret the DC coefficients.
 
-## Suspicious Patterns
+## Key Files
 
-1. **Large blocks of zeros in output file**:
-   - 536 bytes of zeros starting at 0x3d
-   - 186 bytes of zeros around 0x267
-   - 181 bytes of zeros around 0x49e
-   - Only 31.6% non-zero bytes vs 97.8% for cjxl
+| File | Purpose |
+|------|---------|
+| `jxl_enc/src/tiny/encoder.rs` | Main encoder - orchestrates the pipeline |
+| `jxl_enc/src/tiny/entropy_code.rs` | Entropy code writing (just ported) |
+| `jxl_enc/src/tiny/static_codes.rs` | Pre-computed Huffman tables |
+| `jxl_enc/src/tiny/frame.rs` | Frame header, TOC writing |
+| `jxl_enc/src/tiny/dc_coding.rs` | DC tokenization with gradient predictor |
+| `jxl_enc/src/tiny/ac_group.rs` | AC coefficient tokenization |
+| `jxl_enc/src/tiny/dct.rs` | Forward DCT transforms |
+| `jxl_enc/src/tiny/quant.rs` | Quantization weights |
+| `LIBJXL_TINY_PORT.md` | Detailed progress tracking |
 
-2. **File structure divergence at byte 3**:
-   - Our file: `ff 0a 58 19 90 09...`
-   - cjxl:     `ff 0a 58 99 01 00...`
-   - Divergence suggests different encoding settings or dimension encoding
+## Reference Source
 
-## Functions to Investigate
+libjxl-tiny is at `~/work/libjxl-tiny/encoder/`
 
-### Primary suspects:
-1. `encode_vardct_multi_group_clustered_old` (frame_encoder.rs:663-729)
-   - Section ordering
-   - TOC writing
-   - Pass through ac_coeffs
+Key files to consult:
+- `enc_frame.cc:181-312` - `kContextTreeTokens` array (313 tokens)
+- `enc_frame.cc:516-600` - How context tree is written
+- `enc_entropy_code.cc` - Already ported to `entropy_code.rs`
 
-2. `write_hf_global_clustered` (encoder.rs)
-   - Histogram encoding for all groups combined
-   - Context map writing
+## Next Steps to Make Bitstream Decodable
 
-3. `write_pass_group_clustered` (encoder.rs:1709-1767)
-   - Token encoding per group
-   - Uses global alphabet_size from histogram_set
+### Step 1: Port Context Tree Tokens
 
-### Lower priority:
-4. `write_lf_group` for each LF group
-   - Currently writes ALL DC coefficients for EVERY LF group
-   - For 300x300, num_lf_groups=1 so this isn't the immediate bug
+Copy `kContextTreeTokens` from `enc_frame.cc:181-312`:
+```cpp
+static const Token kContextTreeTokens[kNumContextTreeTokens] = {
+    {1, 2},   {0, 4},  {1, 1},   {0, 2},  {1, 10},   {0, 0},  ...
+};
+```
+
+Add to a new constant in `encoder.rs` or a dedicated module.
+
+### Step 2: Write Context Tree Before DC Entropy Code
+
+In `write_dc_global()` (encoder.rs:357-382), replace:
+```rust
+writer.write(1, 0)?; // empty tree
+```
+
+With code that writes the context tree tokens using the DC entropy code.
+
+### Step 3: Verify with Hex Dump Comparison
+
+Compare first 50 bytes of output with cjxl reference:
+```bash
+hexdump -C /mnt/v/output/jxl-encoder-rs/tiny/test_8x8.jxl | head -5
+hexdump -C /mnt/v/output/jxl-encoder-rs/tiny/cjxl_8x8.jxl | head -5
+```
+
+Current divergence starts at byte 2:
+- cjxl: `ff 0a 41 40 42 ...`
+- ours: `ff 0a e2 00 38 ...`
 
 ## Test Commands
 
 ```bash
-# Run quality test (shows the bug)
-cargo test test_dct8_only_quality -- --ignored --nocapture
+# Run tiny module tests
+cargo test -p jxl_enc --lib tiny::
 
-# Run multi-group debug test (saves files for comparison)
-cargo test test_save_multigroup_debug -- --ignored --nocapture
+# Run decode test (ignored by default)
+cargo test -p jxl_enc --lib tiny::tests::test_tiny_encoder_decode -- --ignored --nocapture
 
-# Compare with reference encoder
-CJXL=/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl
-DJXL=/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl
-$CJXL /tmp/gradient_300.png /tmp/gradient_300_cjxl.jxl -d 1.0
-$DJXL /tmp/gradient_300_cjxl.jxl /tmp/gradient_300_cjxl_dec.png
+# Decode with djxl for error messages
+~/work/jxl-efforts/libjxl/build/tools/djxl /mnt/v/output/jxl-encoder-rs/tiny/test_8x8.jxl /tmp/out.png -v
 ```
 
-## Files Created for Analysis
+## Important Patterns
 
-- `/tmp/multigroup_test.jxl` - Our broken 300x300 encoded file (40KB)
-- `/tmp/multigroup_original.png` - Original gradient
-- `/tmp/multigroup_decoded.png` - Decoded garbage output
-- `/tmp/gradient_300_cjxl.jxl` - Reference cjxl output (800 bytes)
-- `/tmp/gradient_300_cjxl_decoded.png` - Correctly decoded from cjxl
+### Token Writing
+```rust
+use super::entropy_code::write_token;
+use super::token::Token;
 
-## Next Steps
+let token = Token::new(context, value);
+write_token(&token, &entropy_code, writer)?;
+```
 
-1. **Compare bitstream structure**: Hex-dump cjxl's 257x257 output and trace section boundaries
-2. **Add bitstream tracing**: Enable `--features trace-bitstream` and log what's written
-3. **Verify section sizes in TOC**: Check if TOC entries match actual section sizes
-4. **Verify histogram matches tokens**: Ensure HfGlobal histogram is compatible with PassGroup tokens
-5. **Test with single PassGroup**: Force all 4 groups into one section to isolate the issue
+### Entropy Code Usage
+```rust
+let dc_code = get_dc_entropy_code();  // 45 contexts, 8 prefix codes
+let ac_code = get_ac_entropy_code();  // 1980 contexts, 8 prefix codes
+```
 
-## Session Notes
+## Files Modified This Session
 
-- This session focused on tracing the coefficient access logic (which appears correct)
-- The issue is likely in the bitstream encoding, not in coefficient generation
-- The zeros in the file suggest either wrong encoding or excessive padding
-- Context is approaching 120K tokens limit
+- `jxl_enc/src/tiny/entropy_code.rs` - Added 685 lines of entropy code writing
+- `jxl_enc/src/tiny/encoder.rs` - Wired up write_entropy_code
+- `jxl_enc/src/tiny/tests.rs` - Added decode test
+- `LIBJXL_TINY_PORT.md` - Updated progress
 
-## Related Files
+## Verification After Handoff
 
-- `jxl_enc/src/frame/frame_encoder.rs` - Multi-group encoding logic
-- `jxl_enc/src/vardct/encoder.rs` - VarDCT encoder (tokenization, writing)
-- `jxl_enc/src/vardct/transform.rs` - DCT transform and quantization
-- `jxl_enc/src/vardct_quality_tests.rs` - Quality tests
+1. `git log -1` should show `decb47a feat(tiny): port entropy code writing`
+2. `cargo test -p jxl_enc --lib tiny::` should pass 49 tests
+3. Read `LIBJXL_TINY_PORT.md` for full progress history

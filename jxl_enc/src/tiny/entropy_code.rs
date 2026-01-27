@@ -142,7 +142,7 @@ fn reverse_bits(num_bits: u32, bits: u16) -> u16 {
 }
 
 /// Convert bit depths to Huffman symbols.
-fn convert_bit_depths_to_symbols(depth: &[u8], bits: &mut [u16]) {
+pub fn convert_bit_depths_to_symbols(depth: &[u8], bits: &mut [u16]) {
     const MAX_BITS: usize = 16;
     let mut bl_count = [0u16; MAX_BITS];
 
@@ -465,7 +465,7 @@ fn write_huffman_tree(
 
 /// Create a Huffman tree from histogram counts.
 /// Returns the bit depths for each symbol.
-fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &mut [u8]) {
+pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &mut [u8]) {
     #[derive(Clone, Copy)]
     struct HuffmanNode {
         total_count: u32,

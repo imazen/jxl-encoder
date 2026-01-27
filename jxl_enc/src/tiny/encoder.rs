@@ -97,12 +97,18 @@ impl TinyEncoder {
         // Write JXL signature
         writer.write(8, 0xFF)?;
         writer.write(8, 0x0A)?;
+        #[cfg(test)]
+        eprintln!("After signature: bit {}", writer.bits_written());
 
         // Write size header (simple format for small images)
         self.write_file_header(width, height, &mut writer)?;
+        #[cfg(test)]
+        eprintln!("After file header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
         // Write frame header
         write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
+        #[cfg(test)]
+        eprintln!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
 
         // Create section writers
         let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
@@ -153,13 +159,30 @@ impl TinyEncoder {
         // Write TOC
         let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
 
+        // Debug: print section sizes
+        #[cfg(test)]
+        eprintln!(
+            "Section sizes: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
+            section_sizes.get(0).unwrap_or(&0),
+            section_sizes.get(1).unwrap_or(&0),
+            section_sizes.get(2).unwrap_or(&0),
+            section_sizes.get(3).unwrap_or(&0),
+        );
+
         // For single-group images, combine all sections into one
         if sections.len() == 4 {
             let mut combined = sections.remove(0);
             for section in sections {
                 combined.extend(section);
             }
+            #[cfg(test)]
+            {
+                eprintln!("Combined section size: {}", combined.len());
+                eprintln!("Before TOC: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
+            }
             write_toc(&[combined.len()], &mut writer)?;
+            #[cfg(test)]
+            eprintln!("After TOC: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
             writer.append_bytes(&combined)?;
         } else {
             write_toc(&section_sizes, &mut writer)?;
@@ -289,66 +312,102 @@ impl TinyEncoder {
         (quant_dc, quant_ac, nzeros)
     }
 
-    /// Write the file header (size box).
+    /// Write the file header (SizeHeader + ImageMetadata).
+    ///
+    /// Follows libjxl-tiny's enc_file.cc exactly:
+    /// 1. SizeHeader with small=0 (U32 encoding)
+    /// 2. ImageMetadata with float samples (32-bit, 8 exp bits)
+    /// 3. ColorEncoding with sRGB primaries, Linear transfer
+    /// 4. all_default_transform_data = 1
+    /// 5. Zero padding to byte
     fn write_file_header(&self, width: usize, height: usize, writer: &mut BitWriter) -> Result<()> {
-        // Simple approach: write all_default=0, then size fields
-        writer.write(1, 0)?; // not all default
-
-        // xyb_encoded (1 bit) - 1 for VarDCT
-        writer.write(1, 1)?;
-
-        // Size encoding
+        // 1. SizeHeader - use U32 format (small=0), same as libjxl-tiny
         self.write_size(width, height, writer)?;
 
-        // Use defaults for everything else
-        writer.write(1, 1)?; // default bit depth (8-bit)
-        writer.write(1, 1)?; // default modular 16 bit buffers
-        writer.write(1, 0)?; // no extra channels
-        writer.write(1, 1)?; // all_default color encoding
+        // 2. ImageMetadata
+        writer.write(1, 0)?; // not all default
+        writer.write(1, 0)?; // no extra fields
+
+        // Bit depth - 32-bit float with 8 exponent bits (libjxl-tiny format)
+        writer.write(1, 1)?; // float = 1
+        writer.write(2, 0)?; // bits_per_sample selector 0 = 32 bits
+        writer.write(4, 7)?; // exp_bits = 8 (encoded as 7+1)
+
+        writer.write(1, 0)?; // modular 16 bit buffer NOT sufficient (for float)
+
+        // Extra channels - none
+        writer.write(2, 0)?; // selector 0 = 0 extra channels
+
+        // xyb_encoded = 1 (required for VarDCT)
+        writer.write(1, 1)?;
+
+        // Color encoding - sRGB primaries/white, Linear transfer
+        writer.write(1, 0)?; // not all default
+        writer.write(1, 0)?; // no ICC profile
+        writer.write(2, 0)?; // color_space = RGB (0)
+        writer.write(2, 1)?; // white_point = D65 (1)
+        writer.write(2, 1)?; // primaries = sRGB (1)
+        writer.write(1, 0)?; // no gamma (use transfer function)
+        // TransferFunction: U32(0, 1, 2+Read(4), 18+Read(6))
+        // For Linear (value 8): selector=2, extra=6 (8 = 2 + 6)
+        writer.write(2, 2)?; // selector 2
+        writer.write(4, 6)?; // value 6 -> transfer_function = 2+6 = 8 = Linear
+        writer.write(2, 1)?; // rendering_intent = relative (1)
+
+        // Extensions
         writer.write(2, 0)?; // no extensions
+
+        // 3. all_default_transform_data = 1 (required before frame)
+        writer.write(1, 1)?;
+
+        // 4. Zero pad to byte before frame
+        writer.zero_pad_to_byte();
 
         Ok(())
     }
 
-    /// Write image size.
+    /// Write image size header.
+    ///
+    /// Uses U32 format (small=0) to match libjxl-tiny exactly.
+    /// Format: small=0, height U32, ratio=0, width U32
     fn write_size(&self, width: usize, height: usize, writer: &mut BitWriter) -> Result<()> {
-        // div8 = 0 means dimensions directly
+        // Helper to write a dimension using U32 encoding
+        // Matches libjxl-tiny's WriteSize() exactly
+        fn write_dim(size: usize, writer: &mut BitWriter) -> Result<()> {
+            let size_m1 = (size.saturating_sub(1)) as u32;
+            // U32 selectors: 9 bits, 13 bits, 18 bits, 30 bits
+            // Select first one where value fits
+            let k_bits: [u32; 4] = [9, 13, 18, 30];
+            for (i, &bits) in k_bits.iter().enumerate() {
+                if size_m1 < (1u32 << bits) {
+                    writer.write(2, i as u64)?;
+                    writer.write(bits as usize, size_m1 as u64)?;
+                    return Ok(());
+                }
+            }
+            // Shouldn't reach here for valid sizes
+            Ok(())
+        }
+
+        // small = 0 (use U32 encoding)
         writer.write(1, 0)?;
-
-        let h = height as u64;
-        let w = width as u64;
-
-        // Write height
-        if height <= 256 {
-            writer.write(2, 0)?; // selector 0
-            writer.write(9, h - 1)?;
-        } else if height <= 8449 {
-            writer.write(2, 1)?; // selector 1
-            writer.write(13, h - 1 - 256)?;
-        } else {
-            writer.write(2, 2)?;
-            writer.write(18, h - 1 - 8449)?;
-        }
-
-        // ratio = 0 (no aspect ratio)
-        writer.write(3, 0)?;
-
-        // Write width
-        if width <= 256 {
-            writer.write(2, 0)?;
-            writer.write(9, w - 1)?;
-        } else if width <= 8449 {
-            writer.write(2, 1)?;
-            writer.write(13, w - 1 - 256)?;
-        } else {
-            writer.write(2, 2)?;
-            writer.write(18, w - 1 - 8449)?;
-        }
+        write_dim(height, writer)?;
+        writer.write(3, 0)?; // ratio = 0 (explicit width)
+        write_dim(width, writer)?;
 
         Ok(())
     }
 
     /// Write DC global section.
+    ///
+    /// This follows the libjxl-tiny WriteDCGlobal pattern:
+    /// 1. Default dequant DC
+    /// 2. Quant scales
+    /// 3. Non-default BlockCtxMap + compact block context map
+    /// 4. Default DC cmap
+    /// 5. Context tree for modular stream
+    /// 6. No LZ77
+    /// 7. DC entropy code
     fn write_dc_global(
         &self,
         params: &DistanceParams,
@@ -356,22 +415,60 @@ impl TinyEncoder {
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        #[cfg(test)]
+        let start_bits = writer.bits_written();
+
         writer.write(1, 1)?; // default dequant dc
+
+        #[cfg(test)]
+        let after_dequant_dc = writer.bits_written();
+
         write_quant_scales(params.global_scale, params.quant_dc, writer)?;
 
-        // BlockCtxMap - use default
-        writer.write(1, 1)?; // all default BlockCtxMap
+        #[cfg(test)]
+        let after_quant = writer.bits_written();
+
+        // BlockCtxMap - non-default, write compact map
+        writer.write(1, 0)?; // non-default BlockCtxMap
+        writer.write(16, 0)?; // no dc ctx, no qft
+
+        // Write compact block context map
+        super::context_tree::write_block_context_map(writer)?;
+
+        #[cfg(test)]
+        let after_block_ctx = writer.bits_written();
 
         writer.write(1, 1)?; // default DC cmap
 
-        // Write modular stream header for DC
-        // Simple context tree: just a single leaf
-        writer.write(1, 0)?; // empty tree (uses default predictor)
+        // Write context tree for modular stream DC header
+        super::context_tree::write_context_tree(num_dc_groups, writer)?;
+
+        #[cfg(test)]
+        let after_ctx_tree = writer.bits_written();
 
         writer.write(1, 0)?; // no lz77
 
-        // Write entropy code
+        #[cfg(test)]
+        let after_lz77 = writer.bits_written();
+
+        // Write DC entropy code
         self.write_entropy_code_header(dc_code, writer)?;
+
+        #[cfg(test)]
+        {
+            let after_dc_code = writer.bits_written();
+            let total_bits = after_dc_code - start_bits;
+            let bytes_before_pad = (total_bits + 7) / 8;
+            eprintln!("DC_global detailed breakdown:");
+            eprintln!("  dequant_dc: {} bits (1)", after_dequant_dc - start_bits);
+            eprintln!("  quant_scales: {} bits", after_quant - after_dequant_dc);
+            eprintln!("  block_ctx_map: {} bits (1+16+map)", after_block_ctx - after_quant);
+            eprintln!("  dc_cmap: 1 bit (default=1)");
+            eprintln!("  context_tree: {} bits", after_ctx_tree - after_block_ctx - 1);
+            eprintln!("  lz77: 1 bit (no=0)");
+            eprintln!("  dc_entropy_code: {} bits", after_dc_code - after_lz77);
+            eprintln!("  total bits: {}, bytes before pad: {}", total_bits, bytes_before_pad);
+        }
 
         Ok(())
     }
@@ -406,6 +503,9 @@ impl TinyEncoder {
         ac_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        #[cfg(test)]
+        let start_bits = writer.bits_written();
+
         writer.write(1, 1)?; // all default quant matrices
 
         let num_histo_bits = ceil_log2_nonzero(num_groups);
@@ -418,8 +518,22 @@ impl TinyEncoder {
 
         writer.write(1, 0)?; // no lz77
 
+        #[cfg(test)]
+        let before_ac_code = writer.bits_written();
+
         // Write entropy code
         self.write_entropy_code_header(ac_code, writer)?;
+
+        #[cfg(test)]
+        {
+            let after_ac_code = writer.bits_written();
+            eprintln!("AC_global breakdown:");
+            eprintln!("  header: {} bits", before_ac_code - start_bits);
+            eprintln!("  ac_entropy_code: {} bits ({} contexts, {} prefix codes)",
+                      after_ac_code - before_ac_code,
+                      ac_code.num_contexts,
+                      ac_code.num_prefix_codes);
+        }
 
         Ok(())
     }

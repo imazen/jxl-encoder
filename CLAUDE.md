@@ -14,6 +14,20 @@ This is a work-in-progress Rust implementation of a JPEG XL encoder, being porte
   - GitHub: https://github.com/lilith/jxl-rs (more conformant and complete)
 - **jxl-oxide (Rust decoder)**: `~/work/jxl-efforts/jxl-oxide` - Alternative Rust decoder
 
+## CRITICAL: libjxl-tiny vs cjxl (full libjxl)
+
+**NEVER compare libjxl-tiny output with cjxl output. They are completely different encoders.**
+
+- **libjxl-tiny** uses: 32-bit float samples, specific file header format, static Huffman codes, simplified VarDCT
+- **cjxl (full libjxl)** uses: different sample format, different header structure, ANS entropy coding, full feature set
+
+When debugging the tiny encoder port:
+1. **ONLY compare against libjxl-tiny output** (build it first if needed)
+2. **NEVER use cjxl as a reference** for byte-level comparison
+3. Both produce valid JXL, but the bitstreams are structurally different
+
+To build libjxl-tiny: `cd ~/work/libjxl-tiny && mkdir -p build && cd build && cmake -GNinja -DBUILD_TESTING=OFF .. && ninja`
+
 ## IMPORTANT: Decoder Testing Priority
 
 **ALWAYS use jxl-rs as the primary decoder for roundtrip validation tests.**
