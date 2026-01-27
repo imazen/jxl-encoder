@@ -61,11 +61,12 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Entropy code types and write_token
 - [x] AC context computation
 - [x] Static DC prefix codes (8 Huffman codes, 45 contexts)
+- [x] Static AC prefix codes (8 Huffman codes, 1980 contexts)
 - [x] Frame header writing (DistanceParams, TOC)
-- [ ] Static AC prefix codes
-- [ ] DC coding with gradient predictor
-- [ ] AC group encoding
-- [ ] Integration and roundtrip testing
+- [x] DC coding with gradient predictor
+- [x] AC group encoding with channel interleaving
+- [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte)
+- [ ] Multi-group encoding (>256x256 images)
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
@@ -78,6 +79,25 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [ ] High-level encoder API
 
 ## Resolved Bugs
+
+### AC Group Channel Interleaving Bug (FIXED Jan 27, 2026)
+
+**Issue**: AC tokens were being written in the wrong order in the bitstream.
+
+**Root Cause**: The loop order was wrong. libjxl-tiny uses:
+```cpp
+for (by, bx) { for channel {Y, X, B} { tokenize } }
+```
+
+But our code had:
+```rust
+for channel {Y, X, B} { for (by, bx) { tokenize } }
+```
+
+This caused all AC tokens to be in the wrong order, making the bitstream undecodable.
+
+**Fix**: Moved the channel loop inside the block loop in `write_ac_group()`.
+After fix, output matches libjxl-tiny reference byte-for-byte.
 
 ### raw_quant Bug (FIXED Jan 23, 2026)
 
