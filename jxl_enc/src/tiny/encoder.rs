@@ -10,7 +10,10 @@ use super::ac_group::{
     tokenize_ac_coefficients,
 };
 use super::common::*;
-use super::dc_coding::{write_ac_metadata_tokens, write_dc_tokens};
+use super::dc_coding::{
+    write_ac_metadata_tokens, write_ac_metadata_tokens_region, write_dc_tokens,
+    write_dc_tokens_region,
+};
 use super::dct::dct_8x8;
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::{INV_DC_QUANT, QUANT_WEIGHTS};
@@ -127,6 +130,7 @@ impl TinyEncoder {
                 &quant_dc,
                 xsize_blocks,
                 ysize_blocks,
+                xsize_dc_groups,
                 raw_quant,
                 &dc_code,
                 &mut dc_group,
@@ -205,6 +209,7 @@ impl TinyEncoder {
                     &quant_dc,
                     xsize_blocks,
                     ysize_blocks,
+                    xsize_dc_groups,
                     raw_quant,
                     &dc_code,
                     &mut dc_group,
@@ -555,18 +560,38 @@ impl TinyEncoder {
     }
 
     /// Write DC group section.
+    ///
+    /// For single-group images (≤256x256), dc_group_idx is 0 and covers the whole image.
+    /// For multi-group images, each DC group covers a 256x256 block region (2048x2048 pixels).
     fn write_dc_group(
         &self,
-        _dc_group_idx: usize,
+        dc_group_idx: usize,
         quant_dc: &[Vec<Vec<i16>>; 3],
         xsize_blocks: usize,
         ysize_blocks: usize,
+        xsize_dc_groups: usize,
         raw_quant: u8,
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
+
+        // Compute the block region for this DC group
+        let dc_gx = dc_group_idx % xsize_dc_groups;
+        let dc_gy = dc_group_idx / xsize_dc_groups;
+        let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+        let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+        let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+        let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+        let region_xsize = end_bx - start_bx;
+        let region_ysize = end_by - start_by;
+
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "DC_group {}: blocks ({},{}) to ({},{}) = {}x{}",
+            dc_group_idx, start_bx, start_by, end_bx, end_by, region_xsize, region_ysize
+        );
 
         // DC group header
         writer.write(2, 0)?; // extra_dc_precision = 0
@@ -575,14 +600,14 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         let after_header1 = writer.bits_written();
 
-        // Write DC tokens using gradient predictor
-        write_dc_tokens(quant_dc, dc_code, writer)?;
+        // Write DC tokens using gradient predictor for this region only
+        write_dc_tokens_region(quant_dc, start_bx, start_by, end_bx, end_by, dc_code, writer)?;
 
         #[cfg(feature = "debug-tokens")]
         let after_dc_tokens = writer.bits_written();
 
-        // AC metadata header
-        let num_blocks = xsize_blocks * ysize_blocks;
+        // AC metadata header - uses region block count
+        let num_blocks = region_xsize * region_ysize;
         let num_ac_blocks = num_blocks; // All DCT8, so all blocks are first blocks
         let nb_bits = ceil_log2_nonzero(num_blocks);
         if nb_bits != 0 {
@@ -593,13 +618,13 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         let after_header2 = writer.bits_written();
 
-        // Write AC metadata tokens (YtoX, YtoB, AC strategy, quant field, EPF)
-        write_ac_metadata_tokens(xsize_blocks, ysize_blocks, raw_quant, dc_code, writer)?;
+        // Write AC metadata tokens for this region only
+        write_ac_metadata_tokens_region(region_xsize, region_ysize, raw_quant, dc_code, writer)?;
 
         #[cfg(feature = "debug-tokens")]
         {
             let total = writer.bits_written() - start_bits;
-            eprintln!("DC_group breakdown:");
+            eprintln!("DC_group {} breakdown:", dc_group_idx);
             eprintln!("  header1: {} bits (2+4)", after_header1 - start_bits);
             eprintln!("  dc_tokens: {} bits", after_dc_tokens - after_header1);
             eprintln!("  header2: {} bits (nb_bits+4)", after_header2 - after_dc_tokens);
