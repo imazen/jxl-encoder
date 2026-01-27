@@ -15,8 +15,8 @@
 use super::ac_context::{
     block_context, non_zero_context, zero_density_context, zero_density_contexts_offset,
 };
-use super::common::{pack_signed, DCT_BLOCK_SIZE};
-use super::entropy_code::{write_token, EntropyCode};
+use super::common::{DCT_BLOCK_SIZE, pack_signed};
+use super::entropy_code::{EntropyCode, write_token};
 use super::token::Token;
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
@@ -229,8 +229,8 @@ pub fn tokenize_ac_coefficients(
         let coef = quantized[order[k] as usize];
 
         // Compute context for this coefficient
-        let ctx =
-            histo_offset + zero_density_context(nzeros_left, k, covered_blocks, log2_covered_blocks, prev);
+        let ctx = histo_offset
+            + zero_density_context(nzeros_left, k, covered_blocks, log2_covered_blocks, prev);
 
         // Encode coefficient
         let u_coef = pack_signed(coef);
@@ -267,7 +267,10 @@ mod tests {
         for &idx in &COEFF_ORDER_8X8 {
             seen[idx as usize] = true;
         }
-        assert!(seen.iter().all(|&s| s), "Not all positions in zig-zag order");
+        assert!(
+            seen.iter().all(|&s| s),
+            "Not all positions in zig-zag order"
+        );
     }
 
     #[test]

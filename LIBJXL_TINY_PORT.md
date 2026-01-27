@@ -33,16 +33,16 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `enc_frame.cc` | 862 | PARTIAL | Main frame encoding pipeline (integration done, entropy code headers TODO) |
+| `enc_frame.cc` | 862 | PARTIAL | Main frame encoding pipeline (integration done, context tree TODO) |
 | `enc_group.cc` | 518 | DONE | AC tokenization, quantization, and integration complete |
-| `enc_entropy_code.cc` | 556 | TODO | Huffman tree building/writing |
+| `enc_entropy_code.cc` | 556 | DONE | Huffman tree building/writing ported to entropy_code.rs |
 | `enc_bit_writer.cc` | 144 | SKIP | Already have BitWriter |
 
 ### Supporting Infrastructure (Priority 2)
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `enc_huffman_tree.cc` | 144 | TODO | Huffman tree construction |
+| `enc_huffman_tree.cc` | 144 | DONE | Huffman tree construction (in entropy_code.rs) |
 | `enc_cluster.cc` | 133 | TODO | Histogram clustering |
 | `static_entropy_codes.h` | 972 | DONE | Pre-computed entropy tables |
 | `ac_context.h` | 118 | DONE | AC coefficient context |
@@ -144,6 +144,16 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 
 ## Progress Log
 
+### 2026-01-26 (cont. 8)
+- Ported entropy code writing from enc_entropy_code.cc (`entropy_code.rs`)
+- Functions: write_entropy_code, write_context_map, write_prefix_codes
+- Full Huffman tree serialization: StoreHuffmanTree, StoreSimpleHuffmanTree
+- RLE encoding for code length sequences
+- CreateHuffmanTree from histogram counts
+- 49 tiny module tests passing
+- NOTE: Bitstream still not decodable - jxl-oxide reports "InvalidFloat"
+- Next: Need to fix DC section modular stream header (context tree)
+
 ### 2026-01-26 (cont. 7)
 - Integrated all ported components in `encoder.rs`
 - Full encoding pipeline: XYB conversion → DCT → quantization → DC/AC tokenization
@@ -211,7 +221,26 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 
 ## Known Issues
 
-(None yet)
+### Bitstream Not Decodable (2026-01-26)
+
+**Status**: ACTIVE
+
+**Symptom**: jxl-oxide fails with "InvalidFloat" error when parsing the output.
+
+**Analysis**:
+- Output is 959 bytes for 8x8 image (cjxl produces 65 bytes)
+- The huge size difference indicates we're writing something wrong
+- "InvalidFloat" suggests a malformed floating-point value somewhere
+
+**Likely causes**:
+1. DC section modular stream header missing context tree tokens
+2. Frame header structure incorrect
+3. Section TOC or sizes wrong
+
+**What's needed**:
+- Port the `kContextTreeTokens` (313 tokens) for modular stream DC header
+- Verify frame header bit layout matches libjxl-tiny
+- Compare output hex dump with cjxl to find divergence point
 
 ## Remaining Integration Work
 
