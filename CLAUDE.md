@@ -166,55 +166,35 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-### Multi-Group Quality Bug (Jan 27, 2026)
+### Multi-Group Quality Bug (3x3+ groups) - Jan 27, 2026
 
-**Status**: BROKEN - Multi-group images decode but with catastrophic quality
+**Status**: PARTIALLY FIXED - 1x1 and 2x2 groups work, 3x3+ groups still broken
 
-**Updated Investigation (Jan 27, 2026 PM):**
+**Current state after per-channel weights fix:**
+- 256x256 (1x1 groups): SSIM2 = 69.4 ✓
+- 512x512 (2x2 groups): SSIM2 = 74.6 ✓
+- 768x768 (3x3 groups): SSIM2 = 14.4 ✗
+- 1024x1024 (4x4 groups): SSIM2 = -18.9 ✗
+- 1280x1280 (5x5 groups): SSIM2 = -22.5 ✗
 
-Testing revealed the bug has TWO distinct components:
+**Key observation**: The issue manifests when there are MORE than 4 AC groups.
+2x2 = 4 groups works, 3x3 = 9 groups fails.
 
-1. **Structural encoding works correctly:**
-   - Solid color images: WORK at all sizes (256 to 1024)
-   - Gradient images: WORK at all sizes (256 to 1024)
-   - TOC section sizes match what decoders read
+**Both djxl and jxl-oxide produce bad output**, confirming the bitstream is wrong.
+They produce DIFFERENT bad outputs (djxl SSIM2=-57.9 vs jxl-oxide SSIM2=14.4),
+suggesting ambiguous/corrupt data that's interpreted differently.
 
-2. **High-frequency content fails even at single-group:**
-   - Noise images: FAIL even at 256x256 (single group!)
-   - Values 30% higher than expected on average
-   - Max values 8-10x expected (e.g., 8.16 instead of 1.0)
-
-3. **Multi-group adds additional corruption:**
-   - Real photos: 256x256 SSIM2=71.1, 512x512 SSIM2=76.2 (both work)
-   - Real photos: 768x768 SSIM2=-3.2, 1024x1024 SSIM2=-33.6 (broken)
-   - Both djxl (reference) and jxl-oxide produce bad output
-
-**Per-group corruption pattern (768x768):**
-```
-Row 0: [OK]     [OK]     [OK]
-Row 1: [OK]     [OK]     [CORRUPT]
-Row 2: [OK]     [CORRUPT] [CORRUPT]
-```
-Groups 5(2,1), 7(1,2), 8(2,2) are corrupt, with inflated sizes:
-- Normal groups: ~8-10k bits
-- Group 5: 86k bits (10x larger)
-- Group 7: 16k bits (2x larger)
-- Group 8: 250k bits (30x larger)
-
-**Likely root causes:**
-1. AC coefficient encoding bug when many non-zeros (high-frequency content)
-2. Something cumulative across groups after row 0
-
-**Symptoms**:
-- Single-group images (≤256x256): SSIM2 = 73.5 (acceptable)
-- Multi-group images (>256x256): SSIM2 = -41 to -64 (catastrophic)
-- Images parse and decode without errors
-- But decoded pixels are severely corrupted
+**Possible causes to investigate:**
+1. AC group boundary handling for groups beyond index 4
+2. nzeros prediction across group boundaries
+3. Context computation for larger group indices
+4. Something in the 3rd row/column of groups
 
 **What Works**:
 - DC group region bounds are correctly computed
 - TOC is written correctly (files parse successfully)
 - Decoder renders without errors
+- Single-group and 2x2 multi-group encoding is correct
 
 **What's Broken**:
 - The actual pixel data is wrong in multi-group output
