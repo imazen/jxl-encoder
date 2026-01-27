@@ -142,6 +142,13 @@ writer->Write(8, 111);  // skip adaptive dc flag (128)
 
 ## Progress Log
 
+### 2026-01-26 (cont. 2)
+- Ported DC coding with gradient predictor (`dc_coding.rs`)
+- ClampedGradient function for DC prediction
+- GradientContextLut table (1024 entries)
+- write_dc_tokens function for encoding quantized DC coefficients
+- 6 new tests for DC coding
+
 ### 2026-01-26 (cont.)
 - Ported full AC static entropy codes (1980 context map entries, 8 prefix codes)
 - Added validation tests for AC codes
