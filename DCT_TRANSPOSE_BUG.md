@@ -64,19 +64,36 @@ The diagonal error pattern completely disappeared.
 
 ## Check Non-Tiny Encoder
 
-**ACTION REQUIRED**: Search for similar patterns in the non-tiny encoder:
+**PRELIMINARY ANALYSIS**: The non-tiny encoder uses a DIFFERENT approach:
 
-1. Look for 2D DCT implementations that transpose back after column transforms
-2. Check files:
-   - `jxl_enc/src/vardct/` - VarDCT encoder
-   - `jxl_enc/src/frame/` - Frame encoder
-   - `jxl_enc_transforms/` - Transform library
-3. Search for patterns like:
+### What the Non-Tiny Encoder Does
+
+1. **DCT output is standard layout**: `jxl_enc_transforms/src/dct.rs` outputs coefficients in standard row-major order (rows first, then columns, no final transpose).
+
+2. **Compensates during encoding**: `jxl_enc/src/vardct/encoder.rs` pre-transposes coefficient indices when encoding (lines 460-466, 657-677):
    ```rust
-   transpose  // after column DCT
-   // or
-   for row { for col { output[row * N + col] = ... } }  // after 2D DCT
+   // Pre-transpose coefficient index for DCT8 because jxl-oxide
+   // transposes coordinates when h >= w (which is true for 8x8).
+   let transposed_idx = (orig_idx % 8) * 8 + (orig_idx / 8);
+   let coeff = block_ac[transposed_idx - 1];
    ```
+
+3. **This is a workaround**: Instead of having the DCT produce transposed output (like libjxl-tiny), the encoder reads coefficients from transposed positions.
+
+### Potential Issues
+
+The non-tiny encoder's approach may be correct, but it's more complex and error-prone:
+- Two separate places need to agree on the transpose behavior
+- The DCT produces one layout, the encoder expects another
+- Comments mention "TODO: Fix the natural_order/transpose/LLF position mapping for multi-group DCT16/32"
+
+### Recommendation
+
+Consider whether to:
+1. **Keep current approach**: Verify the index transpose is correct everywhere
+2. **Match tiny encoder**: Have DCT produce transposed output, simplify encoder logic
+
+Either way, verify quality on multi-group images with the non-tiny encoder.
 
 ## How to Test
 
