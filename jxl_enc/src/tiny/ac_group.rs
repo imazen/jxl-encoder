@@ -19,6 +19,8 @@ use super::common::{DCT_BLOCK_SIZE, pack_signed};
 use super::entropy_code::{EntropyCode, write_token};
 use super::token::Token;
 use crate::bit_writer::BitWriter;
+#[cfg(feature = "debug-tokens")]
+use crate::debug_log;
 use crate::error::Result;
 
 /// Default zig-zag coefficient order for DCT8 (8x8).
@@ -219,7 +221,7 @@ pub fn tokenize_ac_coefficients(
         let bits_after = writer.bits_written();
         let prefix_idx = ac_code.context_map[nzero_ctx] as usize;
         let pc = &ac_code.prefix_codes[prefix_idx];
-        eprintln!(
+        debug_log!(
             "  AC nzeros token: ctx={}, value={}, prefix_idx={}, depth={}, bits={:#x}, wrote {} bits",
             nzero_ctx, nzeros, prefix_idx, pc.depths[0], pc.bits[0], bits_after - bits_before
         );

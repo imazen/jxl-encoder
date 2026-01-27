@@ -14,6 +14,8 @@ use super::common::pack_signed;
 use super::entropy_code::{EntropyCode, write_token};
 use super::token::Token;
 use crate::bit_writer::BitWriter;
+#[cfg(feature = "debug-tokens")]
+use crate::debug_log;
 use crate::error::Result;
 
 /// Compute the clamped gradient prediction from neighbors.
@@ -161,7 +163,7 @@ pub fn write_dc_tokens_region(
 
     #[cfg(feature = "debug-tokens")]
     {
-        eprintln!(
+        debug_log!(
             "write_dc_tokens_region: blocks ({},{}) to ({},{}) = {}x{}",
             start_bx, start_by, end_bx, end_by, region_width, region_height
         );
@@ -218,7 +220,7 @@ pub fn write_dc_tokens_region(
                 {
                     let before = writer.bits_written();
                     if dc_debug_count < DC_DEBUG_LIMIT {
-                        eprintln!(
+                        debug_log!(
                             "  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
                             c, y, x, actual, guess, residual, ctx_id, pack_signed(residual)
                         );
@@ -226,12 +228,12 @@ pub fn write_dc_tokens_region(
                     write_token(&token, dc_code, writer)?;
                     let after = writer.bits_written();
                     if dc_debug_count < DC_DEBUG_LIMIT {
-                        eprintln!("    -> wrote {} bits", after - before);
+                        debug_log!("    -> wrote {} bits", after - before);
                     }
                     dc_debug_count += 1;
                     if dc_debug_count == DC_DEBUG_LIMIT {
                         let total_tokens = region_width * region_height * 3;
-                        eprintln!("  ... ({} more DC tokens)", total_tokens - DC_DEBUG_LIMIT);
+                        debug_log!("  ... ({} more DC tokens)", total_tokens - DC_DEBUG_LIMIT);
                     }
                 }
                 #[cfg(not(feature = "debug-tokens"))]
@@ -408,12 +410,12 @@ pub fn write_ac_metadata_tokens_region(
     #[cfg(feature = "debug-tokens")]
     {
         let after_epf = writer.bits_written();
-        eprintln!("  ac_metadata breakdown:");
-        eprintln!("    cfl (YtoX+YtoB): {} bits ({} tokens)", after_cfl - after_start, cfl_xsize * cfl_ysize * 2);
-        eprintln!("    ac_strategy: {} bits ({} tokens)", after_acs - after_cfl, region_xsize_blocks * region_ysize_blocks);
-        eprintln!("    quant_field: {} bits ({} tokens)", after_qf - after_acs, region_xsize_blocks * region_ysize_blocks);
-        eprintln!("    epf: {} bits ({} tokens)", after_epf - after_qf, nblocks);
-        eprintln!("    total: {} bits", after_epf - start_bits);
+        debug_log!("  ac_metadata breakdown:");
+        debug_log!("    cfl (YtoX+YtoB): {} bits ({} tokens)", after_cfl - after_start, cfl_xsize * cfl_ysize * 2);
+        debug_log!("    ac_strategy: {} bits ({} tokens)", after_acs - after_cfl, region_xsize_blocks * region_ysize_blocks);
+        debug_log!("    quant_field: {} bits ({} tokens)", after_qf - after_acs, region_xsize_blocks * region_ysize_blocks);
+        debug_log!("    epf: {} bits ({} tokens)", after_epf - after_qf, nblocks);
+        debug_log!("    total: {} bits", after_epf - start_bits);
     }
 
     Ok(())

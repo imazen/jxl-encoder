@@ -7,6 +7,8 @@
 
 use super::common::clamp;
 use crate::bit_writer::BitWriter;
+#[cfg(feature = "debug-tokens")]
+use crate::debug_log;
 use crate::error::Result;
 
 /// Distance-dependent encoding parameters.
@@ -194,7 +196,7 @@ pub fn write_toc(section_sizes: &[usize], writer: &mut BitWriter) -> Result<()> 
         for (i, &bits) in BITS.iter().enumerate() {
             if section_size < offset + (1 << bits) {
                 #[cfg(feature = "debug-tokens")]
-                eprintln!(
+                debug_log!(
                     "TOC[{}]: size={}, selector={}, bits={}, value={}",
                     idx,
                     section_size,

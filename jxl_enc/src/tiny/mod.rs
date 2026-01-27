@@ -24,6 +24,7 @@ mod common;
 mod context_tree;
 mod dc_coding;
 mod dct;
+pub mod debug_log;
 mod encoder;
 mod entropy_code;
 mod frame;
