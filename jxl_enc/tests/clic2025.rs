@@ -139,6 +139,54 @@ fn test_clic2025_first_5() {
 }
 
 #[test]
+#[ignore] // Run with: cargo test --test clic2025 test_clic2025_all -- --ignored --nocapture
+fn test_clic2025_all() {
+    eprintln!("\n=== CLIC 2025 Full Validation Set Test (32 images) ===\n");
+
+    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
+    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+
+    let mut entries: Vec<_> = std::fs::read_dir(&validation_dir)
+        .expect("Could not read clic2025 validation directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .collect();
+
+    // Sort for consistent ordering
+    entries.sort_by_key(|e| e.path());
+
+    let mut scores: Vec<f64> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+
+    for entry in &entries {
+        match test_clic_image_with_ssim2(&entry.path().to_string_lossy()) {
+            Some(score) => scores.push(score),
+            None => failed.push(entry.path().to_string_lossy().to_string()),
+        }
+    }
+
+    eprintln!("\n--- Summary ---");
+    eprintln!("Total images: {}", entries.len());
+    eprintln!("Passed: {}", scores.len());
+    if !failed.is_empty() {
+        eprintln!("Failed: {} - {:?}", failed.len(), failed);
+    }
+
+    if !scores.is_empty() {
+        let avg_ssim2 = scores.iter().sum::<f64>() / scores.len() as f64;
+        let min_ssim2 = scores.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_ssim2 = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        eprintln!("SSIM2: avg={:.1}, min={:.1}, max={:.1}", avg_ssim2, min_ssim2, max_ssim2);
+        eprintln!("(90+ = imperceptible, 70-90 = subtle, 50-70 = noticeable)\n");
+
+        // Assert all images passed with acceptable quality
+        assert!(failed.is_empty(), "Some images failed to encode/decode");
+        assert!(min_ssim2 > 50.0, "Quality too low! Min SSIM2 = {:.1}", min_ssim2);
+    }
+}
+
+#[test]
 #[ignore] // Run with: cargo test --test clic2025 test_clic2025_small_crop -- --ignored --nocapture
 fn test_clic2025_small_crop() {
     eprintln!("\n=== CLIC 2025 Single-Group Quality Test (200x200 crop) ===\n");
