@@ -174,7 +174,7 @@ fn test_tiny_encoder_produces_jxl_signature() {
 fn test_tiny_encoder_various_sizes() {
     let encoder = TinyEncoder::new(1.0);
 
-    for (width, height) in &[(8, 8), (16, 16), (64, 64), (256, 256)] {
+    for (width, height) in &[(8, 8), (16, 16), (64, 64), (256, 256), (300, 300)] {
         let linear_rgb = vec![0.5f32; width * height * 3];
         let result = encoder.encode(*width, *height, &linear_rgb);
         assert!(

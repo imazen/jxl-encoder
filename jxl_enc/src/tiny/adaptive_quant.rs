@@ -318,7 +318,9 @@ fn compute_pre_erosion(
     const MATCH_GAMMA_OFFSET: f32 = 0.019;
     const K_X_MUL: f32 = 23.426_803_f32;
 
-    // Extend tile region by 4 pixels for border handling
+    // Extend tile region by 4 pixels for border handling.
+    // tile_x1/tile_y1 may exceed image dimensions (padded to block boundary);
+    // pixel accesses below are clamped to simulate edge replication.
     let x0 = if tile_x0 > 0 { tile_x0 - 4 } else { 0 };
     let x1 = if tile_x1 < width {
         tile_x1 + 4
@@ -339,34 +341,40 @@ fn compute_pre_erosion(
     let mut diff_buffer = vec![0.0_f32; diff_width];
     let mut pre_erosion = vec![0.0_f32; pre_erosion_w * pre_erosion_h];
 
+    // max_x / max_y: clamp coordinates to actual image bounds (edge replication)
+    let max_x = width - 1;
+    let max_y = height - 1;
+
     for y in y_start..y_end {
-        let y2 = if y + 1 < height { y + 1 } else { y };
-        let y1 = if y > 0 { y - 1 } else { y };
+        let yc = y.min(max_y);
+        let y2 = (y + 1).min(max_y);
+        let y1 = if y > 0 { (y - 1).min(max_y) } else { 0 };
 
         for x in x0..x1 {
-            let x2 = if x + 1 < width { x + 1 } else { x };
-            let x1_local = if x > 0 { x - 1 } else { x };
+            let xc = x.min(max_x);
+            let x2 = (x + 1).min(max_x);
+            let x1_local = if x > 0 { (x - 1).min(max_x) } else { 0 };
 
             // Y channel base (average of 4 neighbors)
             let base = 0.25
-                * (xyb_y[y2 * width + x]
-                    + xyb_y[y1 * width + x]
-                    + xyb_y[y * width + x1_local]
-                    + xyb_y[y * width + x2]);
+                * (xyb_y[y2 * width + xc]
+                    + xyb_y[y1 * width + xc]
+                    + xyb_y[yc * width + x1_local]
+                    + xyb_y[yc * width + x2]);
 
-            let gammac = ratio_of_derivatives(xyb_y[y * width + x] + MATCH_GAMMA_OFFSET, false);
+            let gammac = ratio_of_derivatives(xyb_y[yc * width + xc] + MATCH_GAMMA_OFFSET, false);
 
-            let mut diff = gammac * (xyb_y[y * width + x] - base);
+            let mut diff = gammac * (xyb_y[yc * width + xc] - base);
             diff *= diff;
 
             // X channel base
             let base_x = 0.25
-                * (xyb_x[y2 * width + x]
-                    + xyb_x[y1 * width + x]
-                    + xyb_x[y * width + x1_local]
-                    + xyb_x[y * width + x2]);
+                * (xyb_x[y2 * width + xc]
+                    + xyb_x[y1 * width + xc]
+                    + xyb_x[yc * width + x1_local]
+                    + xyb_x[yc * width + x2]);
 
-            let mut diff_x = gammac * (xyb_x[y * width + x] - base_x);
+            let mut diff_x = gammac * (xyb_x[yc * width + xc] - base_x);
             diff_x *= diff_x;
             diff += K_X_MUL * diff_x;
             diff = masking_sqrt(diff);
@@ -586,11 +594,15 @@ pub fn compute_adaptive_quant_field(
     const K_AC_QUANT: f32 = 0.8294;
     let scale = K_AC_QUANT / distance;
 
-    // Process the entire image as one tile
+    // Process the entire image as one tile.
+    // Use padded pixel dimensions (rounded up to block boundaries) so that
+    // pre-erosion / fuzzy-erosion produce an aq_map covering all blocks.
+    // The C++ reference pads the XYB image to block boundaries; we simulate
+    // the same by using padded tile bounds and clamping pixel accesses.
+    let padded_w = xsize_blocks * 8;
+    let padded_h = ysize_blocks * 8;
     let tile_x0_pixels = 0;
     let tile_y0_pixels = 0;
-    let tile_x1_pixels = width;
-    let tile_y1_pixels = height;
 
     // Step 1: Compute pre-erosion (4x downsample of local differences)
     let (pre_erosion, pre_erosion_w, pre_erosion_h) = compute_pre_erosion(
@@ -600,8 +612,8 @@ pub fn compute_adaptive_quant_field(
         height,
         tile_x0_pixels,
         tile_y0_pixels,
-        tile_x1_pixels,
-        tile_y1_pixels,
+        padded_w,
+        padded_h,
     );
 
     // Step 2: Fuzzy erosion (3×3 min-4 weighted sum, 2x downsample)
@@ -610,16 +622,8 @@ pub fn compute_adaptive_quant_field(
     // Region is 2 * xsize_blocks × 2 * ysize_blocks
     let from_x0 = if tile_x0_pixels > 0 { 1 } else { 0 };
     let from_y0 = if tile_y0_pixels > 0 { 1 } else { 0 };
-    let erosion_region_w = xsize_blocks * 2;
-    let erosion_region_h = ysize_blocks * 2;
-
-    // Clamp to available pre_erosion dimensions
-    let erosion_region_w = erosion_region_w.min(pre_erosion_w.saturating_sub(from_x0));
-    let erosion_region_h = erosion_region_h.min(pre_erosion_h.saturating_sub(from_y0));
-
-    // Ensure even dimensions for 2x downsample
-    let erosion_region_w = erosion_region_w & !1;
-    let erosion_region_h = erosion_region_h & !1;
+    let erosion_region_w = (xsize_blocks * 2).min(pre_erosion_w.saturating_sub(from_x0));
+    let erosion_region_h = (ysize_blocks * 2).min(pre_erosion_h.saturating_sub(from_y0));
 
     let (mut aq_map, aq_map_w, _aq_map_h) = fuzzy_erosion(
         &pre_erosion,
@@ -835,5 +839,44 @@ mod tests {
             left_avg,
             right_avg
         );
+    }
+
+    #[test]
+    fn test_adaptive_quant_field_non_multiple_of_8() {
+        // Regression test: dimensions not multiples of 8 caused OOB panic
+        // because pre-erosion dimensions were too small for the block count.
+        for &(w, h) in &[
+            (300, 300),
+            (301, 301),
+            (100, 100),
+            (17, 17),
+            (9, 9),
+            (15, 33),
+            (257, 129),
+        ] {
+            let n = w * h;
+            let xyb_x = vec![0.0_f32; n];
+            let xyb_y = vec![0.5_f32; n];
+            let xyb_b = vec![0.5_f32; n];
+
+            let xb = (w + 7) / 8;
+            let yb = (h + 7) / 8;
+
+            let result =
+                compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
+
+            assert_eq!(
+                result.len(),
+                xb * yb,
+                "wrong length for {}x{}: got {}, expected {}",
+                w,
+                h,
+                result.len(),
+                xb * yb
+            );
+            for &v in &result {
+                assert!(v >= 1, "quant value {} out of range for {}x{}", v, w, h);
+            }
+        }
     }
 }
