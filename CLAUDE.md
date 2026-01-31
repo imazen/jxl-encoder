@@ -69,7 +69,10 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
 - [x] Adaptive quantization (per-block raw_quant from perceptual masking) - fixes quality ceiling
 - [x] Chroma-from-luma (per-tile ytox/ytob from least-squares fitting)
-- [x] Adaptive AC strategy (DCT8/DCT16x8/DCT8x16 per 16x16 region) - 8% smaller files, heuristics need tuning
+- [x] Adaptive AC strategy (DCT8/DCT16x8/DCT8x16 per 16x16 region) - 8% smaller files, quality matches C++ reference
+- [x] C++ QuantizeBlockAC thresholding (per-quadrant coefficient zeroing)
+- [x] Y roundtrip quantization (AdjustQuantBias dequant for CfL accuracy)
+- [x] x_qm_mul for X channel quantization (distance-dependent scaling)
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
@@ -226,6 +229,33 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 ## Known Bugs (ACTIVE)
 
 (none)
+
+## Investigation Notes
+
+### CfL on DC/LLF: Why AC-Only Is Correct (Jan 31, 2026)
+
+C++ libjxl-tiny applies CfL to ALL coefficient positions (0..size) including DC/LLF.
+Our encoder applies CfL to AC only (covered_blocks..size). Testing full CfL produces
+SSIM2 = -40 (catastrophic). Root cause: the decoder's `DequantBlock` calls
+`LowestFrequenciesFromDC` AFTER `DequantLane`, overwriting LLF positions with
+DC-derived values. Coefficient-level CfL on LLF is discarded. DC CfL uses
+dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder.
+
+### AC Strategy Quality Gap Is Inherent (Jan 31, 2026)
+
+The ~4 SSIM2 gap between strategy ON and OFF at d=1.0 is inherent to the entropy-based
+strategy selection, NOT a bug.
+
+Apples-to-apples comparison on same 256x256 crops (5 images):
+  d=2.0: Rust ON=68.95 (7554B) | C++ ON=63.69 (7809B) | Rust OFF=70.45 (8273B)
+  d=1.0: Rust ON=77.59 (11005B) | C++ ON=74.42 (11202B) | Rust OFF=81.88 (11943B)
+  d=0.5: Rust ON=81.61 (17157B) | C++ ON=79.70 (17441B) | Rust OFF=87.89 (18625B)
+
+Our Rust encoder produces 2-5 SSIM2 BETTER quality than C++ at the same distance,
+likely because AC-only CfL avoids the DC error from C++'s full-range CfL. Files are
+also slightly smaller. C++ cjxl_tiny crashes on multi-group images (>256x256).
+
+Test: `cargo test -p jxl_enc --test clic2025 test_cpp_crop_comparison -- --ignored`
 
 ## Resolved Bugs (continued)
 

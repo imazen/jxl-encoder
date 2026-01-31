@@ -3006,3 +3006,75 @@ fn test_strategy_ab_comparison() {
         }
     }
 }
+
+/// Direct comparison: encode exact same 256x256 crops that C++ cjxl_tiny used.
+/// C++ results (strategy always ON):
+///   d=0.5: avg 79.70 SSIM2, avg 17441 B
+///   d=1.0: avg 74.42 SSIM2, avg 11202 B
+///   d=2.0: avg 63.69 SSIM2, avg  7809 B
+#[test]
+#[ignore]
+fn test_cpp_crop_comparison() {
+    eprintln!("\n=== Apples-to-Apples: Rust vs C++ on same 256x256 crops ===\n");
+    let crop_dir = "/mnt/v/output/jxl-encoder-rs/quality-comparison";
+    let distances = [2.0f32, 1.0, 0.5];
+
+    for &d in &distances {
+        let mut on_scores = Vec::new();
+        let mut off_scores = Vec::new();
+        let mut on_sizes = Vec::new();
+        let mut off_sizes = Vec::new();
+
+        for i in 0..5 {
+            let path = format!("{}/clic_crop256_{}.png", crop_dir, i);
+            let img = match image::open(&path) {
+                Ok(img) => img,
+                Err(e) => {
+                    eprintln!("Skip {}: {}", path, e);
+                    continue;
+                }
+            };
+            let (w, h) = img.dimensions();
+            let rgb = img.to_rgb8();
+            let original_srgb: Vec<[u8; 3]> =
+                rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+            let linear_rgb: Vec<f32> = rgb
+                .pixels()
+                .flat_map(|p| {
+                    let r = (p[0] as f32 / 255.0).powf(2.2);
+                    let g = (p[1] as f32 / 255.0).powf(2.2);
+                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    [r, g, b]
+                })
+                .collect();
+
+            if let Some((ssim2, size)) = encode_and_measure_ssim2_strategy(
+                w as usize, h as usize, &linear_rgb, &original_srgb, d, true,
+            ) {
+                on_scores.push(ssim2);
+                on_sizes.push(size);
+            }
+            if let Some((ssim2, size)) = encode_and_measure_ssim2_strategy(
+                w as usize, h as usize, &linear_rgb, &original_srgb, d, false,
+            ) {
+                off_scores.push(ssim2);
+                off_sizes.push(size);
+            }
+        }
+
+        if !on_scores.is_empty() {
+            let on_avg = on_scores.iter().sum::<f64>() / on_scores.len() as f64;
+            let off_avg = off_scores.iter().sum::<f64>() / off_scores.len() as f64;
+            let on_size = on_sizes.iter().sum::<usize>() / on_sizes.len();
+            let off_size = off_sizes.iter().sum::<usize>() / off_sizes.len();
+            eprintln!(
+                "d={:.2}: Rust ON={:.2} ({}B) | Rust OFF={:.2} ({}B) | delta={:+.2}",
+                d, on_avg, on_size, off_avg, off_size, on_avg - off_avg
+            );
+        }
+    }
+    eprintln!("\nC++ cjxl_tiny (strategy always ON):");
+    eprintln!("d=2.00: 63.69 SSIM2 (7809B)");
+    eprintln!("d=1.00: 74.42 SSIM2 (11202B)");
+    eprintln!("d=0.50: 79.70 SSIM2 (17441B)");
+}
