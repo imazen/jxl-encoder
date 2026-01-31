@@ -42,6 +42,10 @@ pub struct TinyEncoder {
     /// When false (default), uses pre-computed static codes (streaming, single-pass).
     /// When true, uses a two-pass mode: collect tokens first, build optimal codes, then write.
     pub optimize_codes: bool,
+    /// Enable chroma-from-luma (CfL) optimization.
+    /// When true (default), computes per-tile ytox/ytob values via least-squares fitting.
+    /// When false, uses ytox=0, ytob=0 (no chroma decorrelation).
+    pub cfl_enabled: bool,
 }
 
 impl Default for TinyEncoder {
@@ -49,6 +53,7 @@ impl Default for TinyEncoder {
         Self {
             distance: 1.0,
             optimize_codes: false,
+            cfl_enabled: true,
         }
     }
 }
@@ -59,6 +64,7 @@ impl TinyEncoder {
         Self {
             distance,
             optimize_codes: false,
+            cfl_enabled: true,
         }
     }
 
@@ -106,15 +112,22 @@ impl TinyEncoder {
         );
 
         // Compute per-tile chroma-from-luma map
-        let cfl_map = compute_cfl_map(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            width,
-            height,
-            xsize_blocks,
-            ysize_blocks,
-        );
+        let cfl_map = if self.cfl_enabled {
+            compute_cfl_map(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                width,
+                height,
+                xsize_blocks,
+                ysize_blocks,
+            )
+        } else {
+            CflMap::zeros(
+                div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
+                div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
+            )
+        };
 
         // Perform DCT and quantization
         let (quant_dc, quant_ac, nzeros) = self.transform_and_quantize(
