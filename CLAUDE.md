@@ -734,6 +734,14 @@ trace_write!(writer, 2, 0, "frame_type", "RegularFrame")?;
 [bit_pos] SECTION.field: value (n_bits bits) = 0bXXXX // description
 ```
 
+## Buffer Padding Rule
+
+Always pad and align buffers to the working tile/block size upfront, with edge replication,
+rather than adding bounds checks and scalar fallback paths throughout the processing code.
+Wasting a few bytes of memory is cheaper than scattered branches and prevents entire classes
+of off-by-one / OOB bugs. The adaptive_quant OOB bug (Jan 31, 2026) was caused by operating
+on unpadded dimensions — the C++ reference pads first and never worries about it again.
+
 ## Notes
 
 - The encoder produces little-endian bitstreams (LSB first within bytes)
