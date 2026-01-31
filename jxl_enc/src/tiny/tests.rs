@@ -267,7 +267,11 @@ fn test_tiny_encoder_decode() {
     if std::path::Path::new(ref_path).exists() {
         let ref_data = std::fs::read(ref_path).expect("read reference");
         eprintln!("\n=== Comparison with libjxl-tiny static reference (OPTIMIZE_CODE=0) ===");
-        eprintln!("Our size: {} bytes, Reference: {} bytes", encoded.len(), ref_data.len());
+        eprintln!(
+            "Our size: {} bytes, Reference: {} bytes",
+            encoded.len(),
+            ref_data.len()
+        );
 
         // Byte-by-byte comparison with bit breakdown
         let min_len = encoded.len().min(ref_data.len()).min(50);

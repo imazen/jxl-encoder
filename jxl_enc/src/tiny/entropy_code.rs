@@ -727,10 +727,14 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
         {
             let code_bits = writer.bits_written() - before_code;
             if prefix_codes.len() <= 8 && code_bits > 0 {
-                let depth_slice: Vec<u8> = pc.depths.iter().take(num_symbol.min(16)).copied().collect();
+                let depth_slice: Vec<u8> =
+                    pc.depths.iter().take(num_symbol.min(16)).copied().collect();
                 debug_log!(
                     "    prefix_code[{}]: num_symbol={}, {} bits, depths={:?}{}",
-                    idx, num_symbol, code_bits, depth_slice,
+                    idx,
+                    num_symbol,
+                    code_bits,
+                    depth_slice,
                     if num_symbol > 16 { ", ..." } else { "" }
                 );
             }
@@ -743,7 +747,7 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
         debug_log!(
             "  write_prefix_codes: {} codes, config={} bits, sizes={} bits, codes={} bits, total={} bits",
             prefix_codes.len(),
-            after_config - start_bits - 1,  // -1 for use_prefix_code bit
+            after_config - start_bits - 1, // -1 for use_prefix_code bit
             after_sizes - after_config,
             writer.bits_written() - after_sizes,
             total
@@ -798,7 +802,9 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
         let depth_slice: Vec<u8> = ctxmap_depths.iter().take(length).copied().collect();
         debug_log!(
             "  write_context_map: {} contexts, length={}, depths={:?}",
-            code.num_contexts, length, depth_slice
+            code.num_contexts,
+            length,
+            depth_slice
         );
     }
 
@@ -840,7 +846,9 @@ pub fn write_context_map(code: &EntropyCode, writer: &mut BitWriter) -> Result<(
         let token_bits = writer.bits_written() - after_prefix;
         debug_log!(
             "  write_context_map bits: header=3, prefix_code={}, tokens={}, total={}",
-            prefix_bits, token_bits, total
+            prefix_bits,
+            token_bits,
+            total
         );
     }
 

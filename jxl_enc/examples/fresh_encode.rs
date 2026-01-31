@@ -72,7 +72,9 @@ fn main() {
     }
 
     let oxide_path = format!("{}/FRESH_decoded_oxide.png", out_dir);
-    output_img.save(&oxide_path).expect("Failed to save decoded PNG");
+    output_img
+        .save(&oxide_path)
+        .expect("Failed to save decoded PNG");
     eprintln!("Saved jxl-oxide decoded: {}", oxide_path);
 
     // Also decode with djxl for comparison
