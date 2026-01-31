@@ -1,144 +1,64 @@
-# Context Handoff - libjxl-tiny Port
+# Context Handoff — 2026-01-30
 
-**Date**: 2026-01-26
-**Last Commit**: `decb47a feat(tiny): port entropy code writing from libjxl-tiny`
+## What Was Done This Session
 
-## What We're Building
+Implemented dynamic Huffman codes for the tiny encoder as a two-pass optimization mode. Commit `1364d5d`.
 
-A simplified JPEG XL encoder in `jxl_enc/src/tiny/` ported from libjxl-tiny (~9,500 lines C++). This is a parallel code path, not a replacement for the full encoder.
+### Changes (5 files, +728 lines)
 
-Key simplifications:
-- Only DCT8, DCT8x16, DCT16x8 transforms
-- Only Huffman entropy coding (no ANS)
-- Default zig-zag coefficient order
-- Fixed context tree for DC coding
+- **`jxl_enc/src/tiny/entropy_code.rs`** — Added `OwnedEntropyCode` struct (owned context_map + prefix_codes), `build_entropy_code()` that builds optimal Huffman codes from token frequencies via histogram clustering, and `write_tokens()` to replay collected tokens.
+
+- **`jxl_enc/src/tiny/dc_coding.rs`** — Added `collect_dc_tokens_region()` and `collect_ac_metadata_tokens_region()` — mechanical copies of the write functions that return `Vec<Token>` instead of writing to a bitstream.
+
+- **`jxl_enc/src/tiny/ac_group.rs`** — Added `collect_ac_coefficients()` — token collection variant of `tokenize_ac_coefficients()`.
+
+- **`jxl_enc/src/tiny/encoder.rs`** — Added `optimize_codes: bool` field to `TinyEncoder` (default `false`). Added `encode_two_pass()` private method that: (1) collects tokens per section, (2) builds optimal DC and AC codes via `build_entropy_code()`, (3) writes bitstream using dynamic codes. Added `write_dc_group_from_tokens()` for replaying DC group data with the header bits interleaved correctly.
+
+- **`jxl_enc/src/tiny/tests.rs`** — 3 new tests: `test_optimize_codes_roundtrip_small` (verifies pixel-identical decode), `test_optimize_codes_various_sizes` (8x8, 16x16, 200x200), `test_optimize_codes_boundary_256` (256x256).
+
+### Key Design Decision: DC Group Token Splitting
+
+The DC group section has this layout: `[DC header] [DC tokens] [AC metadata header] [AC metadata tokens]`. The AC metadata header (nb_bits, use_global_tree flags) comes BETWEEN the two sets of tokens. So `encode_two_pass` keeps DC tokens and AC metadata tokens in separate Vecs per group, and `write_dc_group_from_tokens` writes them with the header bits in between.
+
+### Test Results
+
+All 69 tests pass (66 pre-existing + 3 new). File size comparisons:
+- 16x16: 1104 → 175 bytes (-84%)
+- 200x200: 3379 → 1477 bytes (-56%)
+- Pixel values are identical between static and dynamic modes.
 
 ## Current State
 
-**Tests**: 49 tiny module tests passing
-**Bitstream**: NOT DECODABLE - jxl-oxide reports "InvalidFloat"
+- Branch: `main`, clean working tree
+- 5 commits ahead of origin (not pushed)
+- All tests pass: `cargo test -p jxl_enc -- tiny`
 
-### What's Working
-- XYB color conversion
-- Forward DCT (8x8)
-- Quantization with proper weights
-- DC tokenization with gradient predictor
-- AC tokenization
-- Static entropy codes (8 DC codes, 8 AC codes)
-- Entropy code header writing (context map + prefix codes)
-- Frame header, TOC, section assembly
+## Known Issues (Pre-Existing, Not From This Session)
 
-### What's Broken
+1. **adaptive_quant.rs OOB at 300x300**: `adaptive_quant.rs:541` panics with index OOB for images where dimensions aren't nice multiples. The existing test suite only tests up to 256x256. This blocks multi-group dynamic code testing.
 
-The output fails to decode with "InvalidFloat" error:
-- Our 8x8 output: 959 bytes
-- cjxl reference: 65 bytes
+2. **Clippy warnings**: 332 pre-existing clippy warnings throughout the crate (none from tiny encoder new code). All in files outside the tiny module.
 
-**Root Cause**: The DC section modular stream header is incomplete.
+## What's Next (Potential Follow-Up Work)
 
-In `encoder.rs:374`, we write:
-```rust
-writer.write(1, 0)?; // empty tree (uses default predictor)
-```
+1. **Multi-group testing**: Fix the adaptive_quant OOB bug so multi-group images (>256x256) work, then test dynamic codes on large real photos.
 
-But libjxl-tiny writes 313 context tree tokens (`kContextTreeTokens` in `enc_frame.cc:181-312`) before the DC entropy code. This context tree tells the decoder how to interpret the DC coefficients.
+2. **Real photo benchmarking**: Run on CLIC 2025 images to measure actual compression improvement on real content (synthetic images are dominated by code table overhead, real photos will show smaller but still meaningful gains).
 
-## Key Files
+3. **Make `optimize_codes` the default**: Once validated on real photos, consider making two-pass the default and keeping static codes only for streaming use cases.
 
-| File | Purpose |
-|------|---------|
-| `jxl_enc/src/tiny/encoder.rs` | Main encoder - orchestrates the pipeline |
-| `jxl_enc/src/tiny/entropy_code.rs` | Entropy code writing (just ported) |
-| `jxl_enc/src/tiny/static_codes.rs` | Pre-computed Huffman tables |
-| `jxl_enc/src/tiny/frame.rs` | Frame header, TOC writing |
-| `jxl_enc/src/tiny/dc_coding.rs` | DC tokenization with gradient predictor |
-| `jxl_enc/src/tiny/ac_group.rs` | AC coefficient tokenization |
-| `jxl_enc/src/tiny/dct.rs` | Forward DCT transforms |
-| `jxl_enc/src/tiny/quant.rs` | Quantization weights |
-| `LIBJXL_TINY_PORT.md` | Detailed progress tracking |
+4. **ANS entropy coding**: The plan mentions this as the next major step after Huffman. ANS would replace Huffman for even better compression.
 
-## Reference Source
+5. **Full libjxl-tiny parity**: See `LIBJXL_TINY_PORT.md` for remaining items.
 
-libjxl-tiny is at `~/work/libjxl-tiny/encoder/`
+## Key Files to Read
 
-Key files to consult:
-- `enc_frame.cc:181-312` - `kContextTreeTokens` array (313 tokens)
-- `enc_frame.cc:516-600` - How context tree is written
-- `enc_entropy_code.cc` - Already ported to `entropy_code.rs`
+- `CLAUDE.md` — Project instructions and resolved bugs
+- `LIBJXL_TINY_PORT.md` — Port progress tracking
+- `jxl_enc/src/tiny/encoder.rs` — Main encoder with both paths
+- `jxl_enc/src/tiny/entropy_code.rs` — Entropy code building
+- `jxl_enc/src/tiny/tests.rs` — All unit tests
 
-## Next Steps to Make Bitstream Decodable
+## Delete This File
 
-### Step 1: Port Context Tree Tokens
-
-Copy `kContextTreeTokens` from `enc_frame.cc:181-312`:
-```cpp
-static const Token kContextTreeTokens[kNumContextTreeTokens] = {
-    {1, 2},   {0, 4},  {1, 1},   {0, 2},  {1, 10},   {0, 0},  ...
-};
-```
-
-Add to a new constant in `encoder.rs` or a dedicated module.
-
-### Step 2: Write Context Tree Before DC Entropy Code
-
-In `write_dc_global()` (encoder.rs:357-382), replace:
-```rust
-writer.write(1, 0)?; // empty tree
-```
-
-With code that writes the context tree tokens using the DC entropy code.
-
-### Step 3: Verify with Hex Dump Comparison
-
-Compare first 50 bytes of output with cjxl reference:
-```bash
-hexdump -C /mnt/v/output/jxl-encoder-rs/tiny/test_8x8.jxl | head -5
-hexdump -C /mnt/v/output/jxl-encoder-rs/tiny/cjxl_8x8.jxl | head -5
-```
-
-Current divergence starts at byte 2:
-- cjxl: `ff 0a 41 40 42 ...`
-- ours: `ff 0a e2 00 38 ...`
-
-## Test Commands
-
-```bash
-# Run tiny module tests
-cargo test -p jxl_enc --lib tiny::
-
-# Run decode test (ignored by default)
-cargo test -p jxl_enc --lib tiny::tests::test_tiny_encoder_decode -- --ignored --nocapture
-
-# Decode with djxl for error messages
-~/work/jxl-efforts/libjxl/build/tools/djxl /mnt/v/output/jxl-encoder-rs/tiny/test_8x8.jxl /tmp/out.png -v
-```
-
-## Important Patterns
-
-### Token Writing
-```rust
-use super::entropy_code::write_token;
-use super::token::Token;
-
-let token = Token::new(context, value);
-write_token(&token, &entropy_code, writer)?;
-```
-
-### Entropy Code Usage
-```rust
-let dc_code = get_dc_entropy_code();  // 45 contexts, 8 prefix codes
-let ac_code = get_ac_entropy_code();  // 1980 contexts, 8 prefix codes
-```
-
-## Files Modified This Session
-
-- `jxl_enc/src/tiny/entropy_code.rs` - Added 685 lines of entropy code writing
-- `jxl_enc/src/tiny/encoder.rs` - Wired up write_entropy_code
-- `jxl_enc/src/tiny/tests.rs` - Added decode test
-- `LIBJXL_TINY_PORT.md` - Updated progress
-
-## Verification After Handoff
-
-1. `git log -1` should show `decb47a feat(tiny): port entropy code writing`
-2. `cargo test -p jxl_enc --lib tiny::` should pass 49 tests
-3. Read `LIBJXL_TINY_PORT.md` for full progress history
+After loading into a new session, delete this file.
