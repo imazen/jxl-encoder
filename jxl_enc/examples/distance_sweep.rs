@@ -1,0 +1,112 @@
+//! Sweep distance values and measure SSIM2 to verify quality converges toward 100.
+//! Also compares with cjxl at each distance level.
+use std::io::Cursor;
+
+fn main() {
+    let base = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
+    let ssim2_bin = format!("{}/work/fast-ssim2/target/release/fast-ssim2-cli", base);
+
+    let img_path = format!(
+        "{}/work/codec-corpus/clic2025/final-test/07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png",
+        base
+    );
+
+    eprintln!("Loading: {}", img_path);
+    let img = image::open(&img_path).expect("Could not open image");
+    let rgb = img.to_rgb8();
+    let (width, height) = (rgb.width() as usize, rgb.height() as usize);
+    eprintln!("Size: {}x{}", width, height);
+
+    let out_dir = "/mnt/v/output/jxl-encoder-rs/distance_sweep";
+    std::fs::create_dir_all(out_dir).ok();
+    let orig_path = format!("{}/original.png", out_dir);
+    img.save(&orig_path).expect("Failed to save original");
+
+    // Convert to linear RGB for our encoder
+    let linear_rgb: Vec<f32> = rgb.pixels().flat_map(|p| {
+        let r = (p[0] as f32 / 255.0).powf(2.2);
+        let g = (p[1] as f32 / 255.0).powf(2.2);
+        let b = (p[2] as f32 / 255.0).powf(2.2);
+        [r, g, b]
+    }).collect();
+
+    let distances = [2.0f32, 1.0, 0.5, 0.25, 0.1, 0.05, 0.01];
+
+    // Main sweep
+    eprintln!("\n--- Quality Sweep ---");
+    eprintln!("{:<10} {:>10} {:>8} {:>8}  |  {:>10} {:>8} {:>8}",
+        "distance", "tiny_bytes", "tiny_bpp", "tiny_s2",
+        "cjxl_bytes", "cjxl_bpp", "cjxl_s2");
+    eprintln!("{}", "-".repeat(78));
+
+    for &dist in &distances {
+        // --- Our tiny encoder ---
+        let encoder = jxl_enc::tiny::TinyEncoder::new(dist);
+        let bytes = encoder.encode(width, height, &linear_rgb).expect("Encoding failed");
+        let tiny_bpp = bytes.len() as f64 * 8.0 / (width * height) as f64;
+
+        // Decode with jxl-oxide
+        let reader = Cursor::new(&bytes);
+        let image_dec = jxl_oxide::JxlImage::builder().read(reader).expect("Parse failed");
+        let render = image_dec.render_frame(0).expect("Render failed");
+        let fb = render.image_all_channels();
+        let decoded = fb.buf();
+
+        let mut output_img = image::RgbImage::new(width as u32, height as u32);
+        for (i, pixel) in output_img.pixels_mut().enumerate() {
+            let r = (decoded[i * 3].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let g = (decoded[i * 3 + 1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let b = (decoded[i * 3 + 2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            *pixel = image::Rgb([r, g, b]);
+        }
+        let tiny_dec_path = format!("{}/tiny_d{}.png", out_dir, dist);
+        output_img.save(&tiny_dec_path).expect("Failed to save");
+
+        // SSIM2 for tiny
+        let tiny_ssim = measure_ssim2(&ssim2_bin, &orig_path, &tiny_dec_path);
+
+        // --- cjxl reference ---
+        let cjxl_path = format!("{}/cjxl_d{}.jxl", out_dir, dist);
+        let cjxl_dec_path = format!("{}/cjxl_d{}_decoded.png", out_dir, dist);
+
+        let cjxl_ok = std::process::Command::new(format!("{}/work/jxl-efforts/libjxl/build/tools/cjxl", base))
+            .args([&img_path, &cjxl_path, "-d", &dist.to_string(), "-e", "3"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        let (cjxl_bytes, cjxl_bpp, cjxl_ssim) = if cjxl_ok {
+            let cjxl_size = std::fs::metadata(&cjxl_path).map(|m| m.len()).unwrap_or(0);
+            let cjxl_bpp_val = cjxl_size as f64 * 8.0 / (width * height) as f64;
+
+            // Decode with djxl
+            let djxl_ok = std::process::Command::new(format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", base))
+                .args([&cjxl_path, &cjxl_dec_path])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            let ssim = if djxl_ok {
+                measure_ssim2(&ssim2_bin, &orig_path, &cjxl_dec_path)
+            } else {
+                -999.0
+            };
+            (cjxl_size as usize, cjxl_bpp_val, ssim)
+        } else {
+            (0, 0.0, -999.0)
+        };
+
+        eprintln!("{:<10.4} {:>10} {:>8.2} {:>8.2}  |  {:>10} {:>8.2} {:>8.2}",
+            dist, bytes.len(), tiny_bpp, tiny_ssim,
+            cjxl_bytes, cjxl_bpp, cjxl_ssim);
+    }
+}
+
+fn measure_ssim2(bin: &str, orig: &str, decoded: &str) -> f64 {
+    let output = std::process::Command::new(bin)
+        .args(["image", orig, decoded])
+        .output()
+        .expect("Failed to run fast-ssim2-cli");
+    let s = String::from_utf8_lossy(&output.stdout);
+    s.split_whitespace().last().and_then(|v| v.parse().ok()).unwrap_or(-999.0)
+}
