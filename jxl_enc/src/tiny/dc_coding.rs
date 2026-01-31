@@ -10,6 +10,7 @@
 //! (actual - prediction) is then entropy coded with context based on the
 //! gradient property.
 
+use super::chroma_from_luma::CflMap;
 use super::common::pack_signed;
 use super::entropy_code::{EntropyCode, write_token};
 use super::token::Token;
@@ -322,6 +323,7 @@ pub fn collect_ac_metadata_tokens_region(
     full_xsize_blocks: usize,
     start_bx: usize,
     start_by: usize,
+    cfl_map: &CflMap,
 ) -> Vec<Token> {
     let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
     let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
@@ -333,12 +335,59 @@ pub fn collect_ac_metadata_tokens_region(
     let capacity = 2 * cfl_xsize * cfl_ysize + 3 * nblocks;
     let mut tokens = Vec::with_capacity(capacity);
 
-    // YtoX and YtoB tokens (CFL = 0, so all residuals are 0)
+    // Compute the global tile offset for this region
+    let global_tile_x0 = start_bx / TILES_IN_BLOCKS;
+    let global_tile_y0 = start_by / TILES_IN_BLOCKS;
+
+    // YtoX and YtoB tokens with gradient prediction
     for c in 0..2 {
         let ctx_id = (2 - c) as u32;
-        for _y in 0..cfl_ysize {
-            for _x in 0..cfl_xsize {
-                tokens.push(Token::new(ctx_id, pack_signed(0)));
+        for y in 0..cfl_ysize {
+            for x in 0..cfl_xsize {
+                let global_tx = global_tile_x0 + x;
+                let global_ty = global_tile_y0 + y;
+                let actual = if c == 0 {
+                    cfl_map.ytox_at(global_tx, global_ty) as i32
+                } else {
+                    cfl_map.ytob_at(global_tx, global_ty) as i32
+                };
+                // Gradient prediction from neighbors in the CfL map
+                let left = if x > 0 {
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx - 1, global_ty) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx - 1, global_ty) as i64
+                    }
+                } else if y > 0 {
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx, global_ty - 1) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx, global_ty - 1) as i64
+                    }
+                } else {
+                    0i64
+                };
+                let top = if y > 0 {
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx, global_ty - 1) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx, global_ty - 1) as i64
+                    }
+                } else {
+                    left
+                };
+                let topleft = if x > 0 && y > 0 {
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx - 1, global_ty - 1) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx - 1, global_ty - 1) as i64
+                    }
+                } else {
+                    left
+                };
+                let guess = clamped_gradient(top as i32, left as i32, topleft as i32);
+                let residual = actual - guess;
+                tokens.push(Token::new(ctx_id, pack_signed(residual)));
             }
         }
     }
@@ -399,6 +448,9 @@ const COLOR_TILE_DIM: usize = 64;
 /// Block dimension (8 pixels).
 const BLOCK_DIM: usize = 8;
 
+/// CFL tile dimension in blocks (64 / 8 = 8 blocks per tile).
+const TILES_IN_BLOCKS: usize = COLOR_TILE_DIM / BLOCK_DIM;
+
 /// Ceiling division helper.
 #[inline]
 const fn div_ceil(a: usize, b: usize) -> usize {
@@ -428,6 +480,7 @@ pub fn write_ac_metadata_tokens(
     ysize_blocks: usize,
     quant_field: &[u8],
     full_xsize_blocks: usize,
+    cfl_map: &CflMap,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -439,6 +492,7 @@ pub fn write_ac_metadata_tokens(
         full_xsize_blocks,
         0,
         0,
+        cfl_map,
         dc_code,
         writer,
     )
@@ -465,6 +519,7 @@ pub fn write_ac_metadata_tokens_region(
     full_xsize_blocks: usize,
     start_bx: usize,
     start_by: usize,
+    cfl_map: &CflMap,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -479,25 +534,58 @@ pub fn write_ac_metadata_tokens_region(
     #[cfg(feature = "debug-tokens")]
     let after_start = writer.bits_written();
 
-    // YtoX and YtoB tokens
-    // For simple encoder, all CFL values are 0, so all residuals are 0
+    // Compute the global tile offset for this region
+    let global_tile_x0 = start_bx / TILES_IN_BLOCKS;
+    let global_tile_y0 = start_by / TILES_IN_BLOCKS;
+
+    // YtoX and YtoB tokens with gradient prediction from actual CfL map values
     for c in 0..2 {
         // YtoX uses context 2, YtoB uses context 1
         let ctx_id = (2 - c) as u32;
         for y in 0..cfl_ysize {
             for x in 0..cfl_xsize {
-                // Neighbors for gradient prediction
+                let global_tx = global_tile_x0 + x;
+                let global_ty = global_tile_y0 + y;
+                let actual = if c == 0 {
+                    cfl_map.ytox_at(global_tx, global_ty) as i32
+                } else {
+                    cfl_map.ytob_at(global_tx, global_ty) as i32
+                };
+                // Gradient prediction from neighbors in the CfL map
                 let left = if x > 0 {
-                    0i64
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx - 1, global_ty) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx - 1, global_ty) as i64
+                    }
                 } else if y > 0 {
-                    0i64
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx, global_ty - 1) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx, global_ty - 1) as i64
+                    }
                 } else {
                     0i64
                 };
-                let top = if y > 0 { 0i64 } else { left };
-                let topleft = if x > 0 && y > 0 { 0i64 } else { left };
+                let top = if y > 0 {
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx, global_ty - 1) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx, global_ty - 1) as i64
+                    }
+                } else {
+                    left
+                };
+                let topleft = if x > 0 && y > 0 {
+                    if c == 0 {
+                        cfl_map.ytox_at(global_tx - 1, global_ty - 1) as i64
+                    } else {
+                        cfl_map.ytob_at(global_tx - 1, global_ty - 1) as i64
+                    }
+                } else {
+                    left
+                };
                 let guess = clamped_gradient(top as i32, left as i32, topleft as i32);
-                let actual = 0i32; // All CFL values are 0
                 let residual = actual - guess;
                 let token = Token::new(ctx_id, pack_signed(residual));
                 write_token(&token, dc_code, writer)?;

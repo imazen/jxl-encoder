@@ -68,6 +68,7 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte, SSIM2=90+ on photos)
 - [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
 - [x] Adaptive quantization (per-block raw_quant from perceptual masking) - fixes quality ceiling
+- [x] Chroma-from-luma (per-tile ytox/ytob from least-squares fitting)
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)

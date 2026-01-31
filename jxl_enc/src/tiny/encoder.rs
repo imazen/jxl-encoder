@@ -10,6 +10,7 @@ use super::ac_group::{
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::adaptive_quant::compute_adaptive_quant_field;
+use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
 use super::common::*;
 use super::dc_coding::{
     collect_ac_metadata_tokens_region, collect_dc_tokens_region, write_ac_metadata_tokens_region,
@@ -104,6 +105,17 @@ impl TinyEncoder {
             params.inv_scale,
         );
 
+        // Compute per-tile chroma-from-luma map
+        let cfl_map = compute_cfl_map(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            width,
+            height,
+            xsize_blocks,
+            ysize_blocks,
+        );
+
         // Perform DCT and quantization
         let (quant_dc, quant_ac, nzeros) = self.transform_and_quantize(
             &xyb_x,
@@ -117,6 +129,7 @@ impl TinyEncoder {
             ysize_blocks,
             &params,
             &quant_field,
+            &cfl_map,
         );
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
@@ -138,6 +151,7 @@ impl TinyEncoder {
                 &quant_ac,
                 &nzeros,
                 &quant_field,
+                &cfl_map,
             );
         }
 
@@ -187,6 +201,7 @@ impl TinyEncoder {
                 ysize_blocks,
                 xsize_dc_groups,
                 &quant_field,
+                &cfl_map,
                 &dc_code,
                 &mut dc_group,
             )?;
@@ -270,6 +285,7 @@ impl TinyEncoder {
                     ysize_blocks,
                     xsize_dc_groups,
                     &quant_field,
+                    &cfl_map,
                     &dc_code,
                     &mut dc_group,
                 )?;
@@ -351,6 +367,7 @@ impl TinyEncoder {
         ysize_blocks: usize,
         params: &DistanceParams,
         quant_field: &[u8],
+        cfl_map: &CflMap,
     ) -> (
         [Vec<Vec<i16>>; 3],
         [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
@@ -417,24 +434,16 @@ impl TinyEncoder {
                     }
                 }
 
-                // Step 2: Apply CFL to X and B channel AC coefficients
-                // CFL factors for AC: YtoXRatio = 0 (ytox=0), YtoBRatio = 1.0 (ytob=0)
-                // out_x = in_x - x_factor * in_y (x_factor = 0)
-                // out_b = in_b - b_factor * in_y (b_factor = 1.0)
-                //
-                // This means for ytox=0, ytob=0:
-                // - X channel AC coefficients stay unchanged (factor = 0)
-                // - B channel AC coefficients: out_b = in_b - in_y
-                //
-                // For grayscale images where B = Y, this gives B - Y = 0
-
-                // X channel: factor = 0, so no change needed
-                // (If we had adaptive CFL, we'd apply: x_ac[i] -= ytox_factor * y_ac[i])
-
-                // B channel: factor = 1.0, so B_ac = B_ac - Y_ac
-                for idx in 1..DCT_BLOCK_SIZE {
-                    // Skip DC (index 0), only apply to AC coefficients
-                    dct_blocks[2][idx] -= dct_blocks[1][idx];
+                // Step 2: Apply CFL (chroma from luma) to X and B channels
+                // Uses per-tile ytox/ytob values from the CfL map.
+                // C++ applies CfL to ALL coefficients including DC.
+                let tx = bx / TILE_DIM_IN_BLOCKS;
+                let ty_cfl = by / TILE_DIM_IN_BLOCKS;
+                let x_factor = ytox_ratio(cfl_map.ytox_at(tx, ty_cfl));
+                let b_factor = ytob_ratio(cfl_map.ytob_at(tx, ty_cfl));
+                for idx in 0..DCT_BLOCK_SIZE {
+                    dct_blocks[0][idx] -= x_factor * dct_blocks[1][idx];
+                    dct_blocks[2][idx] -= b_factor * dct_blocks[1][idx];
                 }
 
                 // Step 3: Quantize DC and AC for all channels
@@ -715,6 +724,7 @@ impl TinyEncoder {
         ysize_blocks: usize,
         xsize_dc_groups: usize,
         quant_field: &[u8],
+        cfl_map: &CflMap,
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -778,6 +788,7 @@ impl TinyEncoder {
             xsize_blocks,
             start_bx,
             start_by,
+            cfl_map,
             dc_code,
             writer,
         )?;
@@ -1036,6 +1047,7 @@ impl TinyEncoder {
         quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[Vec<Vec<u8>>; 3],
         quant_field: &[u8],
+        cfl_map: &CflMap,
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
@@ -1060,6 +1072,7 @@ impl TinyEncoder {
                 xsize_blocks,
                 start_bx,
                 start_by,
+                cfl_map,
             );
             dc_tokens_per_group.push(dc_tokens);
             ac_metadata_tokens_per_group.push(md_tokens);
