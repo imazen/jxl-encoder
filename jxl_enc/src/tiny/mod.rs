@@ -19,6 +19,7 @@
 
 mod ac_context;
 mod ac_group;
+mod adaptive_quant;
 mod cluster;
 mod common;
 mod context_tree;
