@@ -3007,52 +3007,245 @@ fn test_strategy_ab_comparison() {
     }
 }
 
-/// Save JXL files from Rust encoder for external measurement with djxl + ssimulacra2.
-/// This avoids decoder/SSIM2 tool differences that bias comparisons.
+/// Fair apples-to-apples quality comparison: C++ cjxl_tiny vs Rust encoder.
+///
+/// Same source images, same 256x256 center crops, same decoder (djxl),
+/// same metric (ssimulacra2 CLI). No in-process decoding or measurement
+/// differences to bias results.
+///
+/// Requires external tools:
+///   - ~/work/libjxl-tiny/build/encoder/cjxl_tiny
+///   - ~/work/jxl-efforts/libjxl/build/tools/djxl
+///   - ~/work/jxl-efforts/libjxl/build/tools/ssimulacra2
+///
+/// Source images: ~/work/codec-corpus/clic2025-1024/ (first 5 PNGs, sorted)
 #[test]
 #[ignore]
-fn test_save_rust_jxl_for_comparison() {
-    let crop_dir = "/mnt/v/output/jxl-encoder-rs/quality-comparison";
-    let distances = [2.0f32, 1.0, 0.5];
+fn test_cpp_vs_rust_quality() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+    let cjxl_tiny = format!("{}/work/libjxl-tiny/build/encoder/cjxl_tiny", home);
+    let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
+    let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
+    let work_dir = "/mnt/v/output/jxl-encoder-rs/quality-comparison";
+    std::fs::create_dir_all(work_dir).unwrap();
 
-    for i in 0..5 {
-        let path = format!("{}/clic_crop256_{}.png", crop_dir, i);
-        let img = match image::open(&path) {
-            Ok(img) => img,
-            Err(e) => {
-                eprintln!("Skip {}: {}", path, e);
-                continue;
-            }
-        };
+    let have_cpp = std::path::Path::new(&cjxl_tiny).exists();
+    assert!(
+        std::path::Path::new(&djxl).exists(),
+        "djxl not found at {}",
+        djxl
+    );
+    assert!(
+        std::path::Path::new(&ssim_tool).exists(),
+        "ssimulacra2 not found at {}",
+        ssim_tool
+    );
+    if !have_cpp {
+        eprintln!("WARNING: cjxl_tiny not found at {}, skipping C++ column", cjxl_tiny);
+    }
+
+    // Load first 5 images from corpus (sorted for reproducibility)
+    let mut entries: Vec<_> = std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|_| panic!("corpus not found: {}", corpus_dir))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .collect();
+    entries.sort_by_key(|e| e.path());
+    let entries: Vec<_> = entries.into_iter().take(5).collect();
+    assert!(!entries.is_empty(), "no PNGs in {}", corpus_dir);
+
+    let crop_size: u32 = 256;
+    let distances = [0.5f32, 1.0, 2.0];
+
+    // Prepare crops: PNG (reference) + PFM (C++ input) + linear RGB (Rust input)
+    struct CropInfo {
+        png_path: String,
+        pfm_path: String,
+        width: u32,
+        height: u32,
+        linear_rgb: Vec<f32>,
+    }
+    let mut crops: Vec<CropInfo> = Vec::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        let img = image::open(entry.path()).unwrap();
         let (w, h) = img.dimensions();
-        let rgb = img.to_rgb8();
+        let cx = (w.saturating_sub(crop_size)) / 2;
+        let cy = (h.saturating_sub(crop_size)) / 2;
+        let cw = crop_size.min(w);
+        let ch = crop_size.min(h);
+        let cropped = img.crop_imm(cx, cy, cw, ch);
+        let rgb = cropped.to_rgb8();
+
+        let png_path = format!("{}/crop_{}.png", work_dir, i);
+        rgb.save(&png_path).unwrap();
+
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
-                [r, g, b]
+                [
+                    (p[0] as f32 / 255.0).powf(2.2),
+                    (p[1] as f32 / 255.0).powf(2.2),
+                    (p[2] as f32 / 255.0).powf(2.2),
+                ]
             })
             .collect();
 
-        for &d in &distances {
-            // Strategy ON
-            let mut encoder = jxl_enc::tiny::TinyEncoder::new(d);
-            encoder.ac_strategy_enabled = true;
-            if let Ok(bytes) = encoder.encode(w as usize, h as usize, &linear_rgb) {
-                let out_path = format!("{}/rust_crop256_{}_d{}_on.jxl", crop_dir, i, d);
-                std::fs::write(&out_path, &bytes).unwrap();
-                eprintln!("Saved {} ({} bytes)", out_path, bytes.len());
-            }
-            // Strategy OFF
-            encoder.ac_strategy_enabled = false;
-            if let Ok(bytes) = encoder.encode(w as usize, h as usize, &linear_rgb) {
-                let out_path = format!("{}/rust_crop256_{}_d{}_off.jxl", crop_dir, i, d);
-                std::fs::write(&out_path, &bytes).unwrap();
-                eprintln!("Saved {} ({} bytes)", out_path, bytes.len());
+        // Write PFM (bottom-to-top row order, little-endian floats)
+        let pfm_path = format!("{}/crop_{}.pfm", work_dir, i);
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&pfm_path).unwrap();
+            write!(f, "PF\n{} {}\n-1.0\n", cw, ch).unwrap();
+            for y in (0..ch as usize).rev() {
+                for x in 0..cw as usize {
+                    let off = (y * cw as usize + x) * 3;
+                    for c in 0..3 {
+                        f.write_all(&linear_rgb[off + c].to_le_bytes()).unwrap();
+                    }
+                }
             }
         }
+
+        crops.push(CropInfo {
+            png_path,
+            pfm_path,
+            width: cw,
+            height: ch,
+            linear_rgb,
+        });
     }
-    eprintln!("\nDone. Now measure with: djxl + ssimulacra2 CLI for fair comparison.");
+
+    // Helper: run external command, return true on success
+    fn run(cmd: &str, args: &[&str]) -> bool {
+        std::process::Command::new(cmd)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    // Helper: measure SSIM2 between two PNGs
+    fn ssim2(tool: &str, a: &str, b: &str) -> Option<f64> {
+        let out = std::process::Command::new(tool).args([a, b]).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout);
+        s.lines().last()?.trim().parse::<f64>().ok()
+    }
+
+    eprintln!("\n=== C++ cjxl_tiny vs Rust jxl-encoder-rs ===");
+    eprintln!(
+        "Crops: {}x 256x256 from clic2025-1024 | Decoder: djxl | Metric: ssimulacra2\n",
+        crops.len()
+    );
+
+    for &d in &distances {
+        eprintln!("--- distance={:.1} ---", d);
+        if have_cpp {
+            eprintln!(
+                "{:<6} {:>10} {:>7}  {:>10} {:>7}  {:>10} {:>7}",
+                "img", "C++", "size", "Rust_ON", "size", "Rust_OFF", "size"
+            );
+        } else {
+            eprintln!(
+                "{:<6} {:>10} {:>7}  {:>10} {:>7}",
+                "img", "Rust_ON", "size", "Rust_OFF", "size"
+            );
+        }
+
+        let mut cpp_scores = Vec::new();
+        let mut ron_scores = Vec::new();
+        let mut roff_scores = Vec::new();
+
+        for (i, crop) in crops.iter().enumerate() {
+            let (w, h) = (crop.width as usize, crop.height as usize);
+
+            // Rust ON
+            let ron_jxl = format!("{}/rust_{}_d{:.1}_on.jxl", work_dir, i, d);
+            let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
+            let mut enc = jxl_enc::tiny::TinyEncoder::new(d);
+            enc.ac_strategy_enabled = true;
+            let ron_bytes = enc.encode(w, h, &crop.linear_rgb).unwrap();
+            let ron_size = ron_bytes.len();
+            std::fs::write(&ron_jxl, &ron_bytes).unwrap();
+            run(&djxl, &[&ron_jxl, &ron_dec]);
+            let ron_s = ssim2(&ssim_tool, &crop.png_path, &ron_dec);
+
+            // Rust OFF
+            let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
+            let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
+            enc.ac_strategy_enabled = false;
+            let roff_bytes = enc.encode(w, h, &crop.linear_rgb).unwrap();
+            let roff_size = roff_bytes.len();
+            std::fs::write(&roff_jxl, &roff_bytes).unwrap();
+            run(&djxl, &[&roff_jxl, &roff_dec]);
+            let roff_s = ssim2(&ssim_tool, &crop.png_path, &roff_dec);
+
+            // C++ (if available)
+            let (cpp_s, cpp_size) = if have_cpp {
+                let cpp_jxl = format!("{}/cpp_{}_d{:.1}.jxl", work_dir, i, d);
+                let cpp_dec = format!("{}/cpp_{}_d{:.1}_dec.png", work_dir, i, d);
+                let d_str = format!("{}", d);
+                let ok = run(&cjxl_tiny, &[&crop.pfm_path, &cpp_jxl, "-d", &d_str]);
+                if ok {
+                    let sz = std::fs::metadata(&cpp_jxl)
+                        .map(|m| m.len() as usize)
+                        .unwrap_or(0);
+                    run(&djxl, &[&cpp_jxl, &cpp_dec]);
+                    (ssim2(&ssim_tool, &crop.png_path, &cpp_dec), sz)
+                } else {
+                    (None, 0)
+                }
+            } else {
+                (None, 0)
+            };
+
+            // Record and print
+            if let (Some(rs), Some(fs)) = (ron_s, roff_s) {
+                ron_scores.push(rs);
+                roff_scores.push(fs);
+                if have_cpp {
+                    if let Some(cs) = cpp_s {
+                        cpp_scores.push(cs);
+                        eprintln!(
+                            "img{}  {:>10.2} {:>6}B  {:>10.2} {:>6}B  {:>10.2} {:>6}B",
+                            i, cs, cpp_size, rs, ron_size, fs, roff_size
+                        );
+                    } else {
+                        eprintln!(
+                            "img{}  {:>10} {:>7}  {:>10.2} {:>6}B  {:>10.2} {:>6}B",
+                            i, "ERR", "", rs, ron_size, fs, roff_size
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "img{}  {:>10.2} {:>6}B  {:>10.2} {:>6}B",
+                        i, rs, ron_size, fs, roff_size
+                    );
+                }
+            }
+        }
+
+        // Print averages
+        if !ron_scores.is_empty() {
+            let n = ron_scores.len() as f64;
+            let ron_avg = ron_scores.iter().sum::<f64>() / n;
+            let roff_avg = roff_scores.iter().sum::<f64>() / n;
+            if !cpp_scores.is_empty() {
+                let cpp_avg = cpp_scores.iter().sum::<f64>() / cpp_scores.len() as f64;
+                eprintln!(
+                    "AVG   {:>10.2}          {:>10.2}          {:>10.2}",
+                    cpp_avg, ron_avg, roff_avg
+                );
+            } else {
+                eprintln!("AVG   {:>10.2}          {:>10.2}", ron_avg, roff_avg);
+            }
+        }
+        eprintln!();
+    }
 }
