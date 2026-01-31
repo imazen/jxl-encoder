@@ -200,7 +200,12 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-*No active bugs - all known issues resolved.*
+### Tiny Encoder Quality Ceiling (SSIM2 plateaus at ~82.5)
+
+SSIM2 stops improving below distance=0.5. File sizes barely grow either, indicating
+quantization parameters saturate. cjxl reaches 92+ at the same distances.
+Likely cause: `DistanceParams::compute()` clamping or `raw_quant_uniform()` hardcoded
+approximation. See INVESTIGATION.md for full data and analysis.
 
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 
