@@ -2655,3 +2655,145 @@ fn test_compare_libjxl_tiny() {
         );
     }
 }
+
+#[test]
+#[ignore]
+fn test_cfl_quality_1024() {
+    eprintln!("\n=== CfL Quality Test (clic2025-1024, d=1.0) ===\n");
+    let dir = format!(
+        "{}/work/codec-corpus/clic2025-1024",
+        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
+    );
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .collect();
+    entries.sort_by_key(|e| e.path());
+
+    let mut scores = Vec::new();
+    let mut sizes = Vec::new();
+    for entry in entries.iter().take(5) {
+        let path = entry.path();
+        if let Some(score) = test_clic_image_with_ssim2(&path.to_string_lossy()) {
+            scores.push(score);
+            // Re-encode to get file size
+            let img = image::open(&path).unwrap();
+            let (w, h) = img.dimensions();
+            let rgb = img.to_rgb8();
+            let linear_rgb: Vec<f32> = rgb
+                .pixels()
+                .flat_map(|p| {
+                    let r = (p[0] as f32 / 255.0).powf(2.2);
+                    let g = (p[1] as f32 / 255.0).powf(2.2);
+                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    [r, g, b]
+                })
+                .collect();
+            let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+            let bytes = encoder.encode(w as usize, h as usize, &linear_rgb).unwrap();
+            sizes.push(bytes.len());
+        }
+    }
+
+    if !scores.is_empty() {
+        let avg = scores.iter().sum::<f64>() / scores.len() as f64;
+        let min = scores.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let avg_size = sizes.iter().sum::<usize>() / sizes.len();
+        eprintln!("\n--- Summary (CfL enabled, d=1.0) ---");
+        eprintln!("Images: {}", scores.len());
+        eprintln!("SSIM2: avg={:.2}, min={:.2}, max={:.2}", avg, min, max);
+        eprintln!("Size:  avg={} bytes", avg_size);
+    }
+}
+
+/// Encode image at given distance and measure SSIM2 and file size.
+fn encode_and_measure_ssim2(
+    width: usize,
+    height: usize,
+    linear_rgb: &[f32],
+    original_srgb: &[[u8; 3]],
+    distance: f32,
+) -> Option<(f64, usize)> {
+    let encoder = jxl_enc::tiny::TinyEncoder::new(distance);
+    let bytes = encoder.encode(width, height, linear_rgb).ok()?;
+    let file_size = bytes.len();
+
+    let reader = std::io::Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    let render = image.render_frame(0).ok()?;
+    let fb = render.image_all_channels();
+    let decoded_linear = fb.buf();
+
+    let decoded_srgb: Vec<[u8; 3]> = decoded_linear
+        .chunks(3)
+        .map(|rgb| {
+            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            [r, g, b]
+        })
+        .collect();
+
+    let original_img = imgref::Img::new(original_srgb.to_vec(), width, height);
+    let decoded_img = imgref::Img::new(decoded_srgb, width, height);
+    let ssim2 =
+        fast_ssim2::compute_ssimulacra2(original_img.as_ref(), decoded_img.as_ref()).ok()?;
+    Some((ssim2, file_size))
+}
+
+/// Multi-distance sweep on 5 images to check quality across distances.
+#[test]
+#[ignore]
+fn test_cfl_quality_sweep() {
+    eprintln!("\n=== CfL Quality Sweep (clic2025-1024, multiple distances) ===\n");
+    let dir = format!(
+        "{}/work/codec-corpus/clic2025-1024",
+        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
+    );
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .collect();
+    entries.sort_by_key(|e| e.path());
+
+    let distances = [2.0, 1.0, 0.5, 0.25];
+
+    for &d in &distances {
+        let mut scores = Vec::new();
+        let mut total_size = 0usize;
+        for entry in entries.iter().take(5) {
+            let path = entry.path();
+            let img = image::open(&path).unwrap();
+            let (w, h) = img.dimensions();
+            let rgb = img.to_rgb8();
+            let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+            let linear_rgb: Vec<f32> = rgb
+                .pixels()
+                .flat_map(|p| {
+                    let r = (p[0] as f32 / 255.0).powf(2.2);
+                    let g = (p[1] as f32 / 255.0).powf(2.2);
+                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    [r, g, b]
+                })
+                .collect();
+            if let Some((ssim2, size)) =
+                encode_and_measure_ssim2(w as usize, h as usize, &linear_rgb, &original_srgb, d)
+            {
+                scores.push(ssim2);
+                total_size += size;
+            }
+        }
+        if !scores.is_empty() {
+            let avg = scores.iter().sum::<f64>() / scores.len() as f64;
+            let min = scores.iter().cloned().fold(f64::INFINITY, f64::min);
+            let avg_size = total_size / scores.len();
+            eprintln!(
+                "d={:.2}: SSIM2 avg={:.2} min={:.2} | avg size={} bytes",
+                d, avg, min, avg_size
+            );
+        }
+    }
+}
