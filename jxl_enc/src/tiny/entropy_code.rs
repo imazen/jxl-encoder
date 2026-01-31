@@ -862,6 +862,76 @@ pub fn write_entropy_code(code: &EntropyCode, writer: &mut BitWriter) -> Result<
     Ok(())
 }
 
+/// An owned entropy code (context map + prefix codes on the heap).
+///
+/// Unlike `EntropyCode` which borrows from static data, this holds owned
+/// data built dynamically from actual token frequencies.
+pub struct OwnedEntropyCode {
+    /// Context map: maps context ID -> prefix code index.
+    pub context_map: Vec<u8>,
+    /// Prefix codes (Huffman codes).
+    pub prefix_codes: Vec<PrefixCode>,
+}
+
+impl OwnedEntropyCode {
+    /// Borrow as an `EntropyCode` for use with `write_token` etc.
+    pub fn as_entropy_code(&self) -> EntropyCode<'_> {
+        EntropyCode::new(&self.context_map, &self.prefix_codes)
+    }
+}
+
+/// Build an optimal entropy code from collected tokens.
+///
+/// 1. Creates per-context histograms from all tokens.
+/// 2. Clusters histograms (max 8 clusters) to produce a context map.
+/// 3. Builds a Huffman tree for each cluster.
+///
+/// Returns an `OwnedEntropyCode` ready for writing.
+pub fn build_entropy_code(tokens: &[Token], num_contexts: usize) -> OwnedEntropyCode {
+    use super::cluster::{Histogram, cluster_histograms};
+
+    // Build per-context histograms
+    let mut histograms: Vec<Histogram> = (0..num_contexts).map(|_| Histogram::new()).collect();
+    for token in tokens {
+        let ctx = token.context as usize;
+        let encoded = UintCoder::encode(token.value);
+        histograms[ctx].add(encoded.token as usize);
+    }
+
+    // Cluster histograms → context_map + merged histograms
+    let context_map = cluster_histograms(&mut histograms);
+
+    // Build a PrefixCode from each clustered histogram
+    let prefix_codes: Vec<PrefixCode> = histograms
+        .iter()
+        .map(|h| {
+            let mut depths = [0u8; ALPHABET_SIZE];
+            let mut bits = [0u16; ALPHABET_SIZE];
+            if h.total_count > 0 {
+                create_huffman_tree(&h.counts, ALPHABET_SIZE, 15, &mut depths);
+            } else {
+                // Empty histogram: single-symbol code for symbol 0
+                depths[0] = 1;
+            }
+            convert_bit_depths_to_symbols(&depths, &mut bits);
+            PrefixCode { depths, bits }
+        })
+        .collect();
+
+    OwnedEntropyCode {
+        context_map,
+        prefix_codes,
+    }
+}
+
+/// Write pre-collected tokens using the given entropy code.
+pub fn write_tokens(tokens: &[Token], code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
+    for token in tokens {
+        write_token(token, code, writer)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,16 +6,21 @@
 //! Main tiny encoder implementation.
 
 use super::ac_group::{
-    AC_STRATEGY_DCT8, num_nonzero_8x8_except_dc, predict_from_top_and_left,
-    tokenize_ac_coefficients,
+    AC_STRATEGY_DCT8, collect_ac_coefficients, num_nonzero_8x8_except_dc,
+    predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::adaptive_quant::compute_adaptive_quant_field;
 use super::common::*;
-use super::dc_coding::{write_ac_metadata_tokens_region, write_dc_tokens_region};
+use super::dc_coding::{
+    collect_ac_metadata_tokens_region, collect_dc_tokens_region, write_ac_metadata_tokens_region,
+    write_dc_tokens_region,
+};
 use super::dct::dct_8x8;
+use super::entropy_code::{build_entropy_code, write_tokens};
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
+use super::token::Token;
 use crate::bit_writer::BitWriter;
 use crate::color::xyb::linear_rgb_to_xyb;
 #[cfg(feature = "debug-tokens")]
@@ -32,18 +37,28 @@ use crate::error::Result;
 pub struct TinyEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
+    /// Use dynamic Huffman codes built from actual token frequencies.
+    /// When false (default), uses pre-computed static codes (streaming, single-pass).
+    /// When true, uses a two-pass mode: collect tokens first, build optimal codes, then write.
+    pub optimize_codes: bool,
 }
 
 impl Default for TinyEncoder {
     fn default() -> Self {
-        Self { distance: 1.0 }
+        Self {
+            distance: 1.0,
+            optimize_codes: false,
+        }
     }
 }
 
 impl TinyEncoder {
     /// Create a new tiny encoder with the given distance.
     pub fn new(distance: f32) -> Self {
-        Self { distance }
+        Self {
+            distance,
+            optimize_codes: false,
+        }
     }
 
     /// Encode an image in linear sRGB format.
@@ -103,6 +118,28 @@ impl TinyEncoder {
             &params,
             &quant_field,
         );
+
+        // Two-pass mode: collect tokens, build optimal codes, write bitstream
+        if self.optimize_codes {
+            return self.encode_two_pass(
+                width,
+                height,
+                &params,
+                xsize_blocks,
+                ysize_blocks,
+                xsize_groups,
+                ysize_groups,
+                xsize_dc_groups,
+                ysize_dc_groups,
+                num_groups,
+                num_dc_groups,
+                num_sections,
+                &quant_dc,
+                &quant_ac,
+                &nzeros,
+                &quant_field,
+            );
+        }
 
         // Get static entropy codes
         let dc_code = get_dc_entropy_code();
@@ -975,6 +1012,266 @@ impl TinyEncoder {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    /// Two-pass encoding: collect all tokens, build optimal codes, write bitstream.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_two_pass(
+        &self,
+        width: usize,
+        height: usize,
+        params: &DistanceParams,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        xsize_groups: usize,
+        _ysize_groups: usize,
+        xsize_dc_groups: usize,
+        _ysize_dc_groups: usize,
+        num_groups: usize,
+        num_dc_groups: usize,
+        num_sections: usize,
+        quant_dc: &[Vec<Vec<i16>>; 3],
+        quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+        nzeros: &[Vec<Vec<u8>>; 3],
+        quant_field: &[u8],
+    ) -> Result<Vec<u8>> {
+        // ── Pass 1: Collect tokens per section ──
+
+        // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
+        let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
+        let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
+        for dc_group_idx in 0..num_dc_groups {
+            let dc_gx = dc_group_idx % xsize_dc_groups;
+            let dc_gy = dc_group_idx / xsize_dc_groups;
+            let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+            let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+            let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+            let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+            let region_xsize = end_bx - start_bx;
+            let region_ysize = end_by - start_by;
+
+            let dc_tokens = collect_dc_tokens_region(quant_dc, start_bx, start_by, end_bx, end_by);
+            let md_tokens = collect_ac_metadata_tokens_region(
+                region_xsize,
+                region_ysize,
+                quant_field,
+                xsize_blocks,
+                start_bx,
+                start_by,
+            );
+            dc_tokens_per_group.push(dc_tokens);
+            ac_metadata_tokens_per_group.push(md_tokens);
+        }
+
+        // AC section tokens: one Vec<Token> per ac_group
+        let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
+        for group_idx in 0..num_groups {
+            let group_x = group_idx % xsize_groups;
+            let group_y = group_idx / xsize_groups;
+            let start_bx = group_x * GROUP_DIM_IN_BLOCKS;
+            let start_by = group_y * GROUP_DIM_IN_BLOCKS;
+            let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+            let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+
+            let mut tokens = Vec::new();
+            for by in start_by..end_by {
+                for bx in start_bx..end_bx {
+                    for &c in &[1usize, 0, 2] {
+                        let block = &quant_ac[c][by][bx];
+                        let nz = nzeros[c][by][bx];
+                        let local_bx = bx - start_bx;
+                        let row_top = if by > start_by {
+                            Some(nzeros[c][by - 1].as_slice())
+                        } else {
+                            None
+                        };
+                        let predicted_nz = if local_bx == 0 {
+                            match row_top {
+                                Some(top) => top[bx] as i32,
+                                None => 32,
+                            }
+                        } else {
+                            predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
+                        };
+                        let block_tokens =
+                            collect_ac_coefficients(block, c, AC_STRATEGY_DCT8, nz, predicted_nz);
+                        tokens.extend_from_slice(&block_tokens);
+                    }
+                }
+            }
+            ac_section_tokens.push(tokens);
+        }
+
+        // ── Build optimal codes ──
+
+        // Merge all DC section tokens (DC + AC metadata) for frequency counting
+        let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
+            + ac_metadata_tokens_per_group
+                .iter()
+                .map(|t| t.len())
+                .sum::<usize>();
+        let mut all_dc_tokens = Vec::with_capacity(total_dc_tokens);
+        for section in &dc_tokens_per_group {
+            all_dc_tokens.extend_from_slice(section);
+        }
+        for section in &ac_metadata_tokens_per_group {
+            all_dc_tokens.extend_from_slice(section);
+        }
+        let dc_owned_code = build_entropy_code(&all_dc_tokens, super::dc_coding::NUM_DC_CONTEXTS);
+
+        // Merge all AC section tokens for frequency counting
+        let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
+        let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
+        for section in &ac_section_tokens {
+            all_ac_tokens.extend_from_slice(section);
+        }
+        let ac_owned_code = build_entropy_code(&all_ac_tokens, super::ac_context::NUM_AC_CONTEXTS);
+
+        let dc_code = dc_owned_code.as_entropy_code();
+        let ac_code = ac_owned_code.as_entropy_code();
+
+        // ── Pass 2: Write bitstream ──
+
+        let mut writer = BitWriter::with_capacity(width * height * 4);
+
+        // Write JXL signature
+        writer.write(8, 0xFF)?;
+        writer.write(8, 0x0A)?;
+
+        // Write file header
+        self.write_file_header(width, height, &mut writer)?;
+
+        // Write frame header
+        write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
+
+        if num_sections == 4 {
+            // Single-group: combine sections at the bit level
+            let mut dc_global = BitWriter::new();
+            self.write_dc_global(params, num_dc_groups, &dc_code, &mut dc_global)?;
+
+            let mut dc_group = BitWriter::new();
+            self.write_dc_group_from_tokens(
+                0,
+                xsize_blocks,
+                ysize_blocks,
+                xsize_dc_groups,
+                &dc_tokens_per_group[0],
+                &ac_metadata_tokens_per_group[0],
+                &dc_code,
+                &mut dc_group,
+            )?;
+
+            let mut ac_global = BitWriter::new();
+            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+
+            let mut ac_group_writer = BitWriter::new();
+            write_tokens(&ac_section_tokens[0], &ac_code, &mut ac_group_writer)?;
+
+            let mut combined = dc_global;
+            combined.append_unaligned(&dc_group)?;
+            combined.append_unaligned(&ac_global)?;
+            combined.append_unaligned(&ac_group_writer)?;
+            combined.zero_pad_to_byte();
+            let combined_bytes = combined.finish();
+
+            write_toc(&[combined_bytes.len()], &mut writer)?;
+            writer.append_bytes(&combined_bytes)?;
+        } else {
+            // Multi-group: byte-aligned sections
+            let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
+
+            // DC Global
+            let mut dc_global = BitWriter::new();
+            self.write_dc_global(params, num_dc_groups, &dc_code, &mut dc_global)?;
+            dc_global.zero_pad_to_byte();
+            sections.push(dc_global.finish());
+
+            // DC groups
+            for dc_group_idx in 0..num_dc_groups {
+                let mut dc_group = BitWriter::new();
+                self.write_dc_group_from_tokens(
+                    dc_group_idx,
+                    xsize_blocks,
+                    ysize_blocks,
+                    xsize_dc_groups,
+                    &dc_tokens_per_group[dc_group_idx],
+                    &ac_metadata_tokens_per_group[dc_group_idx],
+                    &dc_code,
+                    &mut dc_group,
+                )?;
+                dc_group.zero_pad_to_byte();
+                sections.push(dc_group.finish());
+            }
+
+            // AC Global
+            let mut ac_global = BitWriter::new();
+            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+            ac_global.zero_pad_to_byte();
+            sections.push(ac_global.finish());
+
+            // AC groups
+            for ac_tokens in &ac_section_tokens {
+                let mut ac_group_writer = BitWriter::new();
+                write_tokens(ac_tokens, &ac_code, &mut ac_group_writer)?;
+                ac_group_writer.zero_pad_to_byte();
+                sections.push(ac_group_writer.finish());
+            }
+
+            let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
+            write_toc(&section_sizes, &mut writer)?;
+            for section in sections {
+                writer.append_bytes(&section)?;
+            }
+        }
+
+        Ok(writer.finish_with_padding())
+    }
+
+    /// Write DC group section from pre-collected tokens (two-pass mode).
+    ///
+    /// Writes the DC group header, DC tokens, AC metadata sub-header, then AC
+    /// metadata tokens — matching the exact bitstream layout of `write_dc_group`.
+    #[allow(clippy::too_many_arguments)]
+    fn write_dc_group_from_tokens(
+        &self,
+        dc_group_idx: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        xsize_dc_groups: usize,
+        dc_tokens: &[Token],
+        ac_metadata_tokens: &[Token],
+        dc_code: &super::entropy_code::EntropyCode,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let dc_gx = dc_group_idx % xsize_dc_groups;
+        let dc_gy = dc_group_idx / xsize_dc_groups;
+        let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+        let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+        let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+        let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+        let region_xsize = end_bx - start_bx;
+        let region_ysize = end_by - start_by;
+
+        // DC group header
+        writer.write(2, 0)?; // extra_dc_precision = 0
+        writer.write(4, 3)?; // use global tree, default wp, no transforms
+
+        // Write DC tokens
+        write_tokens(dc_tokens, dc_code, writer)?;
+
+        // AC metadata sub-header (comes between DC tokens and AC metadata tokens)
+        let num_blocks = region_xsize * region_ysize;
+        let num_ac_blocks = num_blocks;
+        let nb_bits = ceil_log2_nonzero(num_blocks);
+        if nb_bits != 0 {
+            writer.write(nb_bits as usize, (num_ac_blocks - 1) as u64)?;
+        }
+        writer.write(4, 3)?; // use global tree, default wp, no transforms
+
+        // Write AC metadata tokens
+        write_tokens(ac_metadata_tokens, dc_code, writer)?;
 
         Ok(())
     }

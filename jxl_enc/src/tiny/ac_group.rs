@@ -269,6 +269,58 @@ pub fn tokenize_ac_coefficients(
     Ok(())
 }
 
+/// Collect AC coefficient tokens for a single block/transform (without writing).
+///
+/// Same logic as `tokenize_ac_coefficients()` but returns a `Vec<Token>`.
+pub fn collect_ac_coefficients(
+    quantized: &[i32],
+    channel: usize,
+    raw_strategy: u8,
+    nzeros: u8,
+    predicted_nzeros: i32,
+) -> Vec<Token> {
+    let (cx, cy, covered_blocks, log2_covered_blocks, strategy_code) =
+        ac_strategy_info(raw_strategy);
+    let size = cx * cy * DCT_BLOCK_SIZE;
+
+    let block_ctx = block_context(channel, strategy_code);
+    let nzero_ctx = non_zero_context(predicted_nzeros as usize, block_ctx);
+    let histo_offset = zero_density_contexts_offset(block_ctx);
+
+    // Capacity: 1 nzeros token + up to nzeros coefficient tokens
+    let mut tokens = Vec::with_capacity(1 + nzeros as usize);
+
+    // Write number of non-zeros as first token
+    tokens.push(Token::new(nzero_ctx as u32, nzeros as u32));
+
+    let order = get_coeff_order(raw_strategy);
+
+    let mut nzeros_left = nzeros as usize;
+    let mut prev = if nzeros_left > size / 16 { 0 } else { 1 };
+
+    for k in covered_blocks..size.min(order.len()) {
+        if nzeros_left == 0 {
+            break;
+        }
+
+        let coef = quantized[order[k] as usize];
+        let ctx = histo_offset
+            + zero_density_context(nzeros_left, k, covered_blocks, log2_covered_blocks, prev);
+        let u_coef = pack_signed(coef);
+        tokens.push(Token::new(ctx as u32, u_coef));
+
+        if coef != 0 {
+            prev = 1;
+            nzeros_left -= 1;
+        } else {
+            prev = 0;
+        }
+    }
+
+    debug_assert_eq!(nzeros_left, 0, "Not all non-zeros were collected");
+    tokens
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

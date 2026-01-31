@@ -326,3 +326,171 @@ fn test_tiny_encoder_decode() {
         }
     }
 }
+
+#[test]
+fn test_optimize_codes_roundtrip_small() {
+    use std::io::Cursor;
+
+    // Encode a 16x16 red image with both static and dynamic codes
+    let width = 16;
+    let height = 16;
+    let mut linear_rgb = vec![0.0f32; width * height * 3];
+    for i in 0..(width * height) {
+        linear_rgb[i * 3] = 1.0; // R
+    }
+
+    // Static codes (default)
+    let mut enc_static = TinyEncoder::new(1.0);
+    enc_static.optimize_codes = false;
+    let static_bytes = enc_static
+        .encode(width, height, &linear_rgb)
+        .expect("static encode failed");
+
+    // Dynamic codes (two-pass)
+    let mut enc_dynamic = TinyEncoder::new(1.0);
+    enc_dynamic.optimize_codes = true;
+    let dynamic_bytes = enc_dynamic
+        .encode(width, height, &linear_rgb)
+        .expect("dynamic encode failed");
+
+    eprintln!(
+        "16x16: static={} bytes, dynamic={} bytes",
+        static_bytes.len(),
+        dynamic_bytes.len()
+    );
+
+    // Both must have valid JXL signature
+    assert_eq!(static_bytes[0], 0xFF);
+    assert_eq!(static_bytes[1], 0x0A);
+    assert_eq!(dynamic_bytes[0], 0xFF);
+    assert_eq!(dynamic_bytes[1], 0x0A);
+
+    // Both must decode successfully with jxl-oxide
+    let static_img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&static_bytes))
+        .expect("static JXL parse failed");
+    let static_frame = static_img
+        .render_frame(0)
+        .expect("static frame decode failed");
+
+    let dynamic_img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&dynamic_bytes))
+        .expect("dynamic JXL parse failed");
+    let dynamic_frame = dynamic_img
+        .render_frame(0)
+        .expect("dynamic frame decode failed");
+
+    // Same dimensions
+    assert_eq!(static_frame.image_all_channels().width(), width);
+    assert_eq!(dynamic_frame.image_all_channels().width(), width);
+
+    // Pixel values should be identical (same quantization, different entropy coding)
+    let static_buf = static_frame.image_all_channels();
+    let dynamic_buf = dynamic_frame.image_all_channels();
+    let s_pixels = static_buf.buf();
+    let d_pixels = dynamic_buf.buf();
+    assert_eq!(s_pixels.len(), d_pixels.len());
+    for (i, (&s, &d)) in s_pixels.iter().zip(d_pixels.iter()).enumerate() {
+        assert!(
+            (s - d).abs() < 1e-6,
+            "pixel {} differs: static={}, dynamic={}",
+            i,
+            s,
+            d
+        );
+    }
+}
+
+#[test]
+fn test_optimize_codes_various_sizes() {
+    use std::io::Cursor;
+
+    // Test both small and multi-group sizes
+    for &(w, h) in &[(8, 8), (16, 16), (200, 200)] {
+        let mut linear_rgb = vec![0.0f32; w * h * 3];
+        // Simple gradient
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) * 3;
+                linear_rgb[idx] = x as f32 / w as f32;
+                linear_rgb[idx + 1] = y as f32 / h as f32;
+                linear_rgb[idx + 2] = 0.3;
+            }
+        }
+
+        let mut enc = TinyEncoder::new(2.0);
+        enc.optimize_codes = true;
+        let bytes = enc
+            .encode(w, h, &linear_rgb)
+            .unwrap_or_else(|e| panic!("encode {}x{} failed: {:?}", w, h, e));
+
+        // Must decode
+        let img = jxl_oxide::JxlImage::builder()
+            .read(Cursor::new(&bytes))
+            .unwrap_or_else(|e| panic!("parse {}x{} failed: {:?}", w, h, e));
+        let frame = img
+            .render_frame(0)
+            .unwrap_or_else(|e| panic!("render {}x{} failed: {:?}", w, h, e));
+        let fb = frame.image_all_channels();
+        assert_eq!(fb.width(), w);
+        assert_eq!(fb.height(), h);
+
+        // Compare with static
+        let mut enc_static = TinyEncoder::new(2.0);
+        enc_static.optimize_codes = false;
+        let static_bytes = enc_static.encode(w, h, &linear_rgb).unwrap();
+
+        eprintln!(
+            "  {}x{}: static={} bytes, dynamic={} bytes (diff={:+})",
+            w,
+            h,
+            static_bytes.len(),
+            bytes.len(),
+            bytes.len() as i64 - static_bytes.len() as i64
+        );
+    }
+}
+
+#[test]
+fn test_optimize_codes_boundary_256() {
+    use std::io::Cursor;
+
+    // 256x256 is the boundary — single group
+    let w = 256;
+    let h = 256;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear_rgb[idx] = (x as f32 / w as f32) * 0.8;
+            linear_rgb[idx + 1] = (y as f32 / h as f32) * 0.6;
+            linear_rgb[idx + 2] = 0.2;
+        }
+    }
+
+    let mut enc = TinyEncoder::new(2.0);
+    enc.optimize_codes = true;
+    let bytes = enc.encode(w, h, &linear_rgb).expect("encode failed");
+
+    // Must decode
+    let img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes))
+        .expect("parse failed");
+    let frame = img.render_frame(0).expect("render failed");
+    assert_eq!(frame.image_all_channels().width(), w);
+    assert_eq!(frame.image_all_channels().height(), h);
+
+    // Compare with static
+    let mut enc_static = TinyEncoder::new(2.0);
+    enc_static.optimize_codes = false;
+    let static_bytes = enc_static.encode(w, h, &linear_rgb).unwrap();
+
+    eprintln!(
+        "  {}x{}: static={} bytes, dynamic={} bytes (diff={:+})",
+        w,
+        h,
+        static_bytes.len(),
+        bytes.len(),
+        bytes.len() as i64 - static_bytes.len() as i64
+    );
+}
