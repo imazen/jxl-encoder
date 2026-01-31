@@ -1,8 +1,79 @@
 # INVESTIGATION.md
 
-## 2026-01-22: AC Coefficient Encoding Bug - Decoded Values Wrong
+## 2026-01-30: Tiny Encoder Quality Ceiling — SSIM2 Plateaus at ~82.5
 
 ### Status: ACTIVE
+
+### Summary
+
+Lowering the `distance` parameter below 0.5 produces almost no quality improvement.
+SSIM2 flatlines around 82.5 regardless of distance, and file sizes barely grow.
+This indicates quantization is not actually getting finer at low distance values.
+
+By comparison, cjxl (libjxl reference) continues improving to SSIM2 ~92 at d=0.05,
+and its file sizes grow proportionally (8.8x from d=2.0 to d=0.01).
+
+### Evidence
+
+Test image: CLIC 2025 final-test landscape (2048x1360, 48 groups).
+Measured 2026-01-30 with `fast-ssim2-cli`, decoded via jxl-oxide.
+
+```
+distance   tiny_bytes tiny_bpp  tiny_s2  |  cjxl_bytes cjxl_bpp  cjxl_s2
+------------------------------------------------------------------------------
+2.0000         795705     2.29    67.77  |      355520     1.02    72.88
+1.0000         802145     2.30    79.43  |      609347     1.75    81.28
+0.5000         892476     2.56    81.36  |     1015857     2.92    87.03
+0.2500         901855     2.59    81.49  |     1474018     4.23    90.01
+0.1000         985092     2.83    82.51  |     2382925     6.84    91.72
+0.0500        1005328     2.89    82.46  |     3129919     8.99    92.27
+0.0100        1025536     2.95    82.53  |     3129919     8.99    92.27
+```
+
+Key observations:
+- **Tiny encoder:** d=0.5 → d=0.01 gains only +1.2 SSIM2 (81.36 → 82.53)
+- **Tiny encoder:** file size grows only 1.15x over that range (892KB → 1026KB)
+- **cjxl:** d=0.5 → d=0.01 gains +5.2 SSIM2 (87.03 → 92.27)
+- **cjxl:** file size grows 3.1x over that range (1016KB → 3130KB)
+- **cjxl also has a floor:** d=0.05 and d=0.01 produce identical output (3130KB, SSIM2=92.27)
+
+### Findings
+
+- [PROVEN] Quality stops improving below distance=0.5 for the tiny encoder
+- [PROVEN] File sizes barely grow, confirming quantization isn't getting finer
+- [SUSPICION] `DistanceParams::compute()` has `global_scale = clamp(scale, 1, scaled_quant_dc)` — the upper clamp on `scaled_quant_dc` may be binding at low distances, preventing global_scale from growing large enough
+- [SUSPICION] `raw_quant_uniform()` uses hardcoded `0.73` quant field — at low distances, `inv_scale` changes but the uniform approximation may not produce enough dynamic range
+- [SUSPICION] The sRGB gamma approximation (`powf(2.2)` / `powf(1.0/2.2)`) instead of the true sRGB transfer function contributes some fixed error, but this alone wouldn't explain the plateau since cjxl also goes through XYB and achieves 92+
+- [THREAD] Need to print actual `global_scale`, `quant_dc`, `scale`, and `raw_quant` values at each distance to identify which parameter is clamping
+
+### Likely Root Causes (ranked)
+
+1. **Quantization parameter saturation**: The `DistanceParams` math clamps or saturates somewhere, so below d=0.5 the actual quantization step size stops shrinking. The fact that file sizes barely grow is strong evidence.
+
+2. **Fixed `raw_quant` approximation**: `raw_quant_uniform()` uses a single hardcoded estimate (0.73) of the quant field. Without per-block adaptive quantization, every block gets the same quantization regardless of content. This caps quality for complex regions.
+
+3. **sRGB gamma mismatch**: The encoder uses `powf(2.2)` to linearize, but the true sRGB transfer function has a linear segment below 0.0031308. The decoder (jxl-oxide) uses the correct sRGB EOTF. This creates a small but systematic mismatch in dark tones. However, this is a fixed ~0.5-1.0 SSIM2 penalty, not the cause of the plateau.
+
+### Reproduction
+
+```bash
+cargo run --release --example distance_sweep
+```
+
+Output files in `/mnt/v/output/jxl-encoder-rs/distance_sweep/`.
+
+### Next Steps
+
+1. Print `DistanceParams` fields at each distance level to find which parameter clamps
+2. Compare our `global_scale` / `quant_dc` values against libjxl-tiny at the same distances
+3. If parameter saturation confirmed, fix the clamping math
+4. Separately: implement per-block adaptive quantization (replaces `raw_quant_uniform()`)
+
+---
+
+## 2026-01-22: AC Coefficient Encoding Bug - Decoded Values Wrong
+
+### Status: [RESOLVED] — Fixed Jan 27, 2026 (commits 25dfc9b, 7214a0c, ded4c0a)
 
 ### Summary
 VarDCT-encoded horizontal gradients produce completely wrong decoded pixel values. The bitstream is valid (both djxl and jxl-oxide decode it) but the reconstructed image shows extreme values (0 and 255 oscillating) instead of smooth gradient.
@@ -138,6 +209,8 @@ The variance-based strategy selector chooses:
 ---
 
 ## 2026-01-03: VarDCT Encoding Bug - InvalidEnum TransformId
+
+### Status: [RESOLVED]
 
 ### Issue
 VarDCT (lossy) encoding produces `InvalidEnum { name: "TransformId", value: 3 }` decoder error.
