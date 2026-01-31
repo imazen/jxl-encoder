@@ -10,6 +10,7 @@
 //! (actual - prediction) is then entropy coded with context based on the
 //! gradient property.
 
+use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::pack_signed;
 use super::entropy_code::{EntropyCode, write_token};
@@ -324,6 +325,7 @@ pub fn collect_ac_metadata_tokens_region(
     start_bx: usize,
     start_by: usize,
     cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
 ) -> Vec<Token> {
     let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
     let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
@@ -392,11 +394,16 @@ pub fn collect_ac_metadata_tokens_region(
         }
     }
 
-    // AC strategy tokens (all DCT8 = 0)
+    // AC strategy tokens — first blocks only
     let mut left_acs = 0i32;
-    for _y in 0..region_ysize_blocks {
-        for _x in 0..region_xsize_blocks {
-            let cur = 0i32;
+    for y in 0..region_ysize_blocks {
+        for x in 0..region_xsize_blocks {
+            let abs_bx = start_bx + x;
+            let abs_by = start_by + y;
+            if !ac_strategy.is_first(abs_bx, abs_by) {
+                continue;
+            }
+            let cur = ac_strategy.strategy_code(abs_bx, abs_by) as i32;
             let ctx_id = if left_acs > 11 {
                 7
             } else if left_acs > 5 {
@@ -411,12 +418,16 @@ pub fn collect_ac_metadata_tokens_region(
         }
     }
 
-    // Quant field tokens
-    let mut left_qf = 0i32;
+    // Quant field tokens — first blocks only
+    let initial_acs_code = ac_strategy.strategy_code(start_bx, start_by) as i32;
+    let mut left_qf = initial_acs_code;
     for y in 0..region_ysize_blocks {
         for x in 0..region_xsize_blocks {
             let abs_by = start_by + y;
             let abs_bx = start_bx + x;
+            if !ac_strategy.is_first(abs_bx, abs_by) {
+                continue;
+            }
             let block_idx = abs_by * full_xsize_blocks + abs_bx;
             let cur = (quant_field[block_idx] as i32) - 1;
             let residual = cur - left_qf;
@@ -481,6 +492,7 @@ pub fn write_ac_metadata_tokens(
     quant_field: &[u8],
     full_xsize_blocks: usize,
     cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -493,6 +505,7 @@ pub fn write_ac_metadata_tokens(
         0,
         0,
         cfl_map,
+        ac_strategy,
         dc_code,
         writer,
     )
@@ -520,6 +533,7 @@ pub fn write_ac_metadata_tokens_region(
     start_bx: usize,
     start_by: usize,
     cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -596,14 +610,17 @@ pub fn write_ac_metadata_tokens_region(
     #[cfg(feature = "debug-tokens")]
     let after_cfl = writer.bits_written();
 
-    // AC strategy tokens
-    // All DCT8 (code 0), so all residuals are 0
+    // AC strategy tokens — write strategy code for each first block only
+    // C++ does: if (!acs.IsFirstBlock()) continue;
     let mut left_acs = 0i32;
     for y in 0..region_ysize_blocks {
         for x in 0..region_xsize_blocks {
-            // For DCT8, every block is a first block
-            let cur = 0i32; // DCT8 strategy code
-            // Context based on left value
+            let abs_bx = start_bx + x;
+            let abs_by = start_by + y;
+            if !ac_strategy.is_first(abs_bx, abs_by) {
+                continue;
+            }
+            let cur = ac_strategy.strategy_code(abs_bx, abs_by) as i32;
             let ctx_id = if left_acs > 11 {
                 7
             } else if left_acs > 5 {
@@ -622,19 +639,20 @@ pub fn write_ac_metadata_tokens_region(
     #[cfg(feature = "debug-tokens")]
     let after_acs = writer.bits_written();
 
-    // Quant field tokens - per-block values from adaptive quantization
-    // cur = quant_field[by][bx] - 1 (offset by 1 in the encoding)
-    // Initial left is ac_strategy[0][0].StrategyCode() = 0 for DCT8
-    let mut left_qf = 0i32;
+    // Quant field tokens — write for first blocks only, skip non-first
+    // The initial left_qf = strategy_code of block (0,0) in the region
+    let initial_acs_code = ac_strategy.strategy_code(start_bx, start_by) as i32;
+    let mut left_qf = initial_acs_code;
     for y in 0..region_ysize_blocks {
         for x in 0..region_xsize_blocks {
-            // Look up per-block quant value from the full image quant field
             let abs_by = start_by + y;
             let abs_bx = start_bx + x;
+            if !ac_strategy.is_first(abs_bx, abs_by) {
+                continue;
+            }
             let block_idx = abs_by * full_xsize_blocks + abs_bx;
             let cur = (quant_field[block_idx] as i32) - 1;
             let residual = cur - left_qf;
-            // Context based on left value
             let ctx_id = if left_qf > 11 {
                 3
             } else if left_qf > 5 {

@@ -2889,3 +2889,120 @@ fn test_cfl_ab_comparison() {
         }
     }
 }
+
+/// Encode image with AC strategy on/off, measure SSIM2 and file size.
+fn encode_and_measure_ssim2_strategy(
+    width: usize,
+    height: usize,
+    linear_rgb: &[f32],
+    original_srgb: &[[u8; 3]],
+    distance: f32,
+    ac_strategy_enabled: bool,
+) -> Option<(f64, usize)> {
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(distance);
+    encoder.ac_strategy_enabled = ac_strategy_enabled;
+    let bytes = encoder.encode(width, height, linear_rgb).ok()?;
+    let file_size = bytes.len();
+
+    let reader = std::io::Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    let render = image.render_frame(0).ok()?;
+    let fb = render.image_all_channels();
+    let decoded_linear = fb.buf();
+
+    let decoded_srgb: Vec<[u8; 3]> = decoded_linear
+        .chunks(3)
+        .map(|rgb| {
+            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            [r, g, b]
+        })
+        .collect();
+
+    let original_img = imgref::Img::new(original_srgb.to_vec(), width, height);
+    let decoded_img = imgref::Img::new(decoded_srgb, width, height);
+    let ssim2 =
+        fast_ssim2::compute_ssimulacra2(original_img.as_ref(), decoded_img.as_ref()).ok()?;
+    Some((ssim2, file_size))
+}
+
+/// A/B comparison: AC strategy selection ON vs OFF (DCT8-only).
+/// Tests whether adaptive strategy improves compression.
+#[test]
+#[ignore]
+fn test_strategy_ab_comparison() {
+    eprintln!("\n=== AC Strategy A/B Comparison (clic2025-1024) ===\n");
+    let dir = format!(
+        "{}/work/codec-corpus/clic2025-1024",
+        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
+    );
+    let mut entries: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .collect();
+    entries.sort_by_key(|e| e.path());
+
+    let distances = [2.0, 1.0, 0.5];
+
+    for &d in &distances {
+        let mut on_scores = Vec::new();
+        let mut off_scores = Vec::new();
+        let mut on_sizes = Vec::new();
+        let mut off_sizes = Vec::new();
+
+        for entry in entries.iter().take(5) {
+            let path = entry.path();
+            let img = image::open(&path).unwrap();
+            let (w, h) = img.dimensions();
+            let rgb = img.to_rgb8();
+            let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+            let linear_rgb: Vec<f32> = rgb
+                .pixels()
+                .flat_map(|p| {
+                    let r = (p[0] as f32 / 255.0).powf(2.2);
+                    let g = (p[1] as f32 / 255.0).powf(2.2);
+                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    [r, g, b]
+                })
+                .collect();
+
+            if let Some((ssim2, size)) = encode_and_measure_ssim2_strategy(
+                w as usize,
+                h as usize,
+                &linear_rgb,
+                &original_srgb,
+                d,
+                true, // strategy ON
+            ) {
+                on_scores.push(ssim2);
+                on_sizes.push(size);
+            }
+            if let Some((ssim2, size)) = encode_and_measure_ssim2_strategy(
+                w as usize,
+                h as usize,
+                &linear_rgb,
+                &original_srgb,
+                d,
+                false, // strategy OFF (DCT8-only)
+            ) {
+                off_scores.push(ssim2);
+                off_sizes.push(size);
+            }
+        }
+
+        if !on_scores.is_empty() && !off_scores.is_empty() {
+            let on_avg = on_scores.iter().sum::<f64>() / on_scores.len() as f64;
+            let off_avg = off_scores.iter().sum::<f64>() / off_scores.len() as f64;
+            let on_size = on_sizes.iter().sum::<usize>() / on_sizes.len();
+            let off_size = off_sizes.iter().sum::<usize>() / off_sizes.len();
+            let ssim2_delta = on_avg - off_avg;
+            let size_pct = (on_size as f64 - off_size as f64) / off_size as f64 * 100.0;
+            eprintln!(
+                "d={:.2}: Strategy ON avg={:.2} ({} B) | OFF avg={:.2} ({} B) | delta={:+.2} SSIM2, {:.1}% size",
+                d, on_avg, on_size, off_avg, off_size, ssim2_delta, size_pct
+            );
+        }
+    }
+}

@@ -69,6 +69,7 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
 - [x] Adaptive quantization (per-block raw_quant from perceptual masking) - fixes quality ceiling
 - [x] Chroma-from-luma (per-tile ytox/ytob from least-squares fitting)
+- [x] Adaptive AC strategy (DCT8/DCT16x8/DCT8x16 per 16x16 region) - 8% smaller files, heuristics need tuning
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
@@ -81,6 +82,28 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [ ] High-level encoder API
 
 ## Resolved Bugs
+
+### DCT16x8 Final Transpose Bug (FIXED Jan 31, 2026)
+
+**Issue**: Enabling AC strategy selection (DCT16x8/DCT8x16) produced SSIM2 = -10 (catastrophically wrong pixels).
+
+**Root Cause**: `dct_16x8()` in `dct.rs` had an extra final transpose that the C++ reference does NOT have. The C++ `ComputeScaledDCT<16,8>` takes the `ROWS >= COLS` branch which does NOT include a final transpose (matching `dct_8x8` behavior). But `ComputeScaledDCT<8,16>` takes the `ROWS < COLS` branch which DOES include a final transpose.
+
+Our code had both `dct_16x8` and `dct_8x16` with final transposes, but only `dct_8x16` should have one.
+
+Additionally, `dc_from_dct_16x8()` accessed `coeffs[8]` for the second LLF coefficient, which was correct for the old (wrong) layout but wrong for the correct layout. In the correct 8×16 layout (stride 16), the second LLF coefficient is at `coeffs[1]`, not `coeffs[8]`.
+
+**Fix**: Removed the final transpose from `dct_16x8()` and updated `dc_from_dct_16x8()` to read `coeffs[1]` instead of `coeffs[8]`.
+
+**Key insight for future DCT work**: The C++ `ComputeScaledDCT<ROWS, COLS>` includes a final transpose ONLY when `ROWS < COLS`. For `ROWS >= COLS` (including square 8×8), no final transpose. All rectangular transforms output coefficients in 8×16 layout (stride 16) regardless of spatial orientation.
+
+### Shifted vs Raw nzeros Bug (FIXED Jan 31, 2026)
+
+**Issue**: Multi-block transforms (DCT16x8/DCT8x16) caused decoder error "non_zeros too large".
+
+**Root Cause**: `num_nonzero_except_llf()` returns two different values: a raw (unshifted) count written to the bitstream, and per-block shifted counts (raw / covered_blocks) stored in the nzeros array for neighbor prediction. The encoder was writing the SHIFTED nzeros to the bitstream, but the decoder expects RAW nzeros. For DCT8 (shift=0) they're identical, but for 2-block transforms the encoder wrote half the expected value.
+
+**Fix**: Added a parallel `raw_nzeros` array alongside the shifted `nzeros` array. `raw_nzeros` stores the unshifted count at first-block positions (from `num_nonzero_except_llf` return value). Used `raw_nzeros` for bitstream tokens, `nzeros` (shifted) for neighbor prediction.
 
 ### Multi-Group DC Region Bug (FIXED Jan 27, 2026)
 
