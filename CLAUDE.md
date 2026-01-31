@@ -205,6 +205,20 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Resolved Bugs (continued)
 
+### Adaptive Quant OOB for Non-Multiple-of-8 Dimensions (FIXED Jan 31, 2026)
+
+**Issue**: `adaptive_quant.rs` panicked with index OOB for images whose dimensions
+aren't multiples of 8 (e.g. 300x300). This blocked multi-group dynamic code testing.
+
+**Root Cause**: The C++ reference pads the XYB image to block boundaries (multiples of 8)
+before computing adaptive quantization. Our code passed raw pixel dimensions (e.g. 300),
+causing the pre-erosion 4x downsample to produce a map too small for the block count:
+- 300x300 → pre_erosion_w = 300/4 = 75 → fuzzy output = 37 (but 38 blocks needed)
+
+**Fix**: Pass padded tile dimensions (`xsize_blocks * 8`) to `compute_pre_erosion` and
+clamp pixel accesses to actual image bounds (edge replication, matching C++'s
+`CopyAndPadImage`).
+
 ### Tiny Encoder Quality Ceiling (FIXED Jan 30, 2026)
 
 **Issue**: SSIM2 plateaued at ~82.5 below distance=0.5. File sizes barely grew,
