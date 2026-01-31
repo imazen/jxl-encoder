@@ -284,8 +284,8 @@ After fixing the DCT resample scale direction bug (see Resolved Bugs below):
 - C++ has a catastrophic bug on img3 (SSIM2 drops to 46-56 vs Rust's 71-88)
 - C++ cjxl_tiny crashes on multi-group images (>256x256)
 
-Output dir: `/mnt/v/output/jxl-encoder-rs/quality-comparison/`
-Test: `cargo test -p jxl_enc --test clic2025 test_save_rust_jxl_for_comparison -- --ignored`
+Test: `cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_quality -- --ignored --nocapture`
+(self-contained: loads corpus, crops, encodes both C++ and Rust, decodes with djxl, measures with ssimulacra2 CLI)
 
 ## Resolved Bugs (continued)
 
