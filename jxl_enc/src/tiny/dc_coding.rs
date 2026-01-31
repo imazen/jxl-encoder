@@ -257,6 +257,142 @@ pub fn write_dc_tokens_region(
     Ok(())
 }
 
+/// Collect DC tokens for a specific region (without writing).
+///
+/// Same logic as `write_dc_tokens_region()` but returns a `Vec<Token>` instead
+/// of writing to a bitstream. Used by the two-pass encoding mode.
+pub fn collect_dc_tokens_region(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+) -> Vec<Token> {
+    let region_width = end_bx - start_bx;
+    let region_height = end_by - start_by;
+
+    if region_width == 0 || region_height == 0 {
+        return Vec::new();
+    }
+
+    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+
+    for &c in &[1, 0, 2] {
+        let channel = &quant_dc[c];
+        for y in start_by..end_by {
+            for x in start_bx..end_bx {
+                let left = if x > start_bx {
+                    channel[y][x - 1] as i32
+                } else if y > start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    0
+                };
+                let top = if y > start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    left
+                };
+                let topleft = if x > start_bx && y > start_by {
+                    channel[y - 1][x - 1] as i32
+                } else {
+                    left
+                };
+                let guess = clamped_gradient(top, left, topleft);
+                let actual = channel[y][x] as i32;
+                let residual = actual - guess;
+                let grad_prop = (GRAD_RANGE_MID + top as i64 + left as i64 - topleft as i64)
+                    .clamp(GRAD_RANGE_MIN, GRAD_RANGE_MAX) as usize;
+                let ctx_id = GRADIENT_CONTEXT_LUT[grad_prop] as u32;
+                tokens.push(Token::new(ctx_id, pack_signed(residual)));
+            }
+        }
+    }
+
+    tokens
+}
+
+/// Collect AC metadata tokens for a specific region (without writing).
+///
+/// Same logic as `write_ac_metadata_tokens_region()` but returns a `Vec<Token>`.
+pub fn collect_ac_metadata_tokens_region(
+    region_xsize_blocks: usize,
+    region_ysize_blocks: usize,
+    quant_field: &[u8],
+    full_xsize_blocks: usize,
+    start_bx: usize,
+    start_by: usize,
+) -> Vec<Token> {
+    let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
+    let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
+    let cfl_xsize = div_ceil(xsize_pixels, COLOR_TILE_DIM);
+    let cfl_ysize = div_ceil(ysize_pixels, COLOR_TILE_DIM);
+
+    let nblocks = region_xsize_blocks * region_ysize_blocks;
+    // CFL (2 * cfl tiles) + ACS (nblocks) + QF (nblocks) + EPF (nblocks)
+    let capacity = 2 * cfl_xsize * cfl_ysize + 3 * nblocks;
+    let mut tokens = Vec::with_capacity(capacity);
+
+    // YtoX and YtoB tokens (CFL = 0, so all residuals are 0)
+    for c in 0..2 {
+        let ctx_id = (2 - c) as u32;
+        for _y in 0..cfl_ysize {
+            for _x in 0..cfl_xsize {
+                tokens.push(Token::new(ctx_id, pack_signed(0)));
+            }
+        }
+    }
+
+    // AC strategy tokens (all DCT8 = 0)
+    let mut left_acs = 0i32;
+    for _y in 0..region_ysize_blocks {
+        for _x in 0..region_xsize_blocks {
+            let cur = 0i32;
+            let ctx_id = if left_acs > 11 {
+                7
+            } else if left_acs > 5 {
+                8
+            } else if left_acs > 3 {
+                9
+            } else {
+                10
+            };
+            tokens.push(Token::new(ctx_id, pack_signed(cur)));
+            left_acs = cur;
+        }
+    }
+
+    // Quant field tokens
+    let mut left_qf = 0i32;
+    for y in 0..region_ysize_blocks {
+        for x in 0..region_xsize_blocks {
+            let abs_by = start_by + y;
+            let abs_bx = start_bx + x;
+            let block_idx = abs_by * full_xsize_blocks + abs_bx;
+            let cur = (quant_field[block_idx] as i32) - 1;
+            let residual = cur - left_qf;
+            let ctx_id = if left_qf > 11 {
+                3
+            } else if left_qf > 5 {
+                4
+            } else if left_qf > 3 {
+                5
+            } else {
+                6
+            };
+            tokens.push(Token::new(ctx_id, pack_signed(residual)));
+            left_qf = cur;
+        }
+    }
+
+    // EPF tokens
+    for _ in 0..nblocks {
+        tokens.push(Token::new(0, pack_signed(4)));
+    }
+
+    tokens
+}
+
 /// Color tile dimension (64 pixels) for CFL maps.
 const COLOR_TILE_DIM: usize = 64;
 
