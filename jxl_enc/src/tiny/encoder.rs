@@ -9,6 +9,7 @@ use super::ac_group::{
     AC_STRATEGY_DCT8, num_nonzero_8x8_except_dc, predict_from_top_and_left,
     tokenize_ac_coefficients,
 };
+use super::adaptive_quant::compute_adaptive_quant_field;
 use super::common::*;
 use super::dc_coding::{write_ac_metadata_tokens_region, write_dc_tokens_region};
 use super::dct::dct_8x8;
@@ -75,9 +76,18 @@ impl TinyEncoder {
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
 
-        // Compute raw_quant for uniform images (for proper adaptive quantization,
-        // this would be computed per-block from the image content)
-        let raw_quant = params.raw_quant_uniform();
+        // Compute adaptive per-block quantization field
+        let quant_field = compute_adaptive_quant_field(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            width,
+            height,
+            xsize_blocks,
+            ysize_blocks,
+            self.distance,
+            params.inv_scale,
+        );
 
         // Perform DCT and quantization
         let (quant_dc, quant_ac, nzeros) = self.transform_and_quantize(
@@ -91,7 +101,7 @@ impl TinyEncoder {
             xsize_blocks,
             ysize_blocks,
             &params,
-            raw_quant,
+            &quant_field,
         );
 
         // Get static entropy codes
@@ -110,12 +120,20 @@ impl TinyEncoder {
         // Write size header (simple format for small images)
         self.write_file_header(width, height, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
-        debug_log!("After file header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
+        debug_log!(
+            "After file header: bit {} (byte {})",
+            writer.bits_written(),
+            writer.bits_written() / 8
+        );
 
         // Write frame header
         write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
-        debug_log!("After frame header: bit {} (byte {})", writer.bits_written(), writer.bits_written() / 8);
+        debug_log!(
+            "After frame header: bit {} (byte {})",
+            writer.bits_written(),
+            writer.bits_written() / 8
+        );
 
         // For single-group images, combine all sections at the bit level
         // (no byte padding between sections, only at the end)
@@ -131,7 +149,7 @@ impl TinyEncoder {
                 xsize_blocks,
                 ysize_blocks,
                 xsize_dc_groups,
-                raw_quant,
+                &quant_field,
                 &dc_code,
                 &mut dc_group,
             )?;
@@ -153,9 +171,13 @@ impl TinyEncoder {
 
             #[cfg(feature = "debug-tokens")]
             {
-                debug_log!("Section bit counts: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
-                    dc_global.bits_written(), dc_group.bits_written(),
-                    ac_global.bits_written(), ac_group_writer.bits_written());
+                debug_log!(
+                    "Section bit counts: DC_global={}, DC_group={}, AC_global={}, AC_group={}",
+                    dc_global.bits_written(),
+                    dc_group.bits_written(),
+                    ac_global.bits_written(),
+                    ac_group_writer.bits_written()
+                );
             }
 
             // Combine at bit level
@@ -210,7 +232,7 @@ impl TinyEncoder {
                     xsize_blocks,
                     ysize_blocks,
                     xsize_dc_groups,
-                    raw_quant,
+                    &quant_field,
                     &dc_code,
                     &mut dc_group,
                 )?;
@@ -291,7 +313,7 @@ impl TinyEncoder {
         xsize_blocks: usize,
         ysize_blocks: usize,
         params: &DistanceParams,
-        raw_quant: u8,
+        quant_field: &[u8],
     ) -> (
         [Vec<Vec<i16>>; 3],
         [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
@@ -343,7 +365,11 @@ impl TinyEncoder {
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 0 {
                         let block_sum: f32 = block.iter().sum();
-                        debug_log!("Block[0,0,c=0]: sum={:.4}, first={:.4}", block_sum, block[0]);
+                        debug_log!(
+                            "Block[0,0,c=0]: sum={:.4}, first={:.4}",
+                            block_sum,
+                            block[0]
+                        );
                     }
 
                     dct_8x8(&block, &mut dct_blocks[c]);
@@ -396,8 +422,16 @@ impl TinyEncoder {
 
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 {
-                        debug_log!("Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
-                                  c, dc, dc_scale, y_dc, dc_cfl_factor, y_dc * dc_cfl_factor, qdc);
+                        debug_log!(
+                            "Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
+                            c,
+                            dc,
+                            dc_scale,
+                            y_dc,
+                            dc_cfl_factor,
+                            y_dc * dc_cfl_factor,
+                            qdc
+                        );
                     }
 
                     // Quantize AC coefficients (CFL already applied above for B channel)
@@ -412,7 +446,7 @@ impl TinyEncoder {
                     // So we need to DIVIDE by QUANT_WEIGHTS (equivalent to multiplying by InvMatrix).
                     //
                     // CRITICAL: Use per-channel weights! Each channel has different weights.
-                    let qac = params.scale * raw_quant as f32;
+                    let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
                     let weights = super::quant::quant_weights(0, c); // DCT8 strategy=0, per-channel
 
                     let mut qblock = [0i32; DCT_BLOCK_SIZE];
@@ -435,14 +469,24 @@ impl TinyEncoder {
 
                     #[cfg(feature = "debug-tokens")]
                     if by == 0 && bx == 0 && c == 1 {
-                        let nonzero_coeffs: Vec<(usize, i32, f32)> = qblock.iter().enumerate()
+                        let nonzero_coeffs: Vec<(usize, i32, f32)> = qblock
+                            .iter()
+                            .enumerate()
                             .filter(|&(_, v)| *v != 0)
                             .map(|(i, v)| (i, *v, dct_blocks[c][i]))
                             .collect();
-                        debug_log!("AC Y[0,0] qac={:.4} (scale={:.4} * raw_quant={}), nonzero coeffs: {:?}",
-                                  qac, params.scale, raw_quant, nonzero_coeffs);
-                        debug_log!("AC Y[0,0] DC={:.4}, coeff[63]={:.4} (checkerboard freq)",
-                                  dct_blocks[c][0], dct_blocks[c][63]);
+                        debug_log!(
+                            "AC Y[0,0] qac={:.4} (scale={:.4} * raw_quant={}), nonzero coeffs: {:?}",
+                            qac,
+                            params.scale,
+                            quant_field[by * xsize_blocks + bx],
+                            nonzero_coeffs
+                        );
+                        debug_log!(
+                            "AC Y[0,0] DC={:.4}, coeff[63]={:.4} (checkerboard freq)",
+                            dct_blocks[c][0],
+                            dct_blocks[c][63]
+                        );
                     }
                 }
             }
@@ -601,12 +645,22 @@ impl TinyEncoder {
             debug_log!("DC_global detailed breakdown:");
             debug_log!("  dequant_dc: {} bits (1)", after_dequant_dc - start_bits);
             debug_log!("  quant_scales: {} bits", after_quant - after_dequant_dc);
-            debug_log!("  block_ctx_map: {} bits (1+16+map)", after_block_ctx - after_quant);
+            debug_log!(
+                "  block_ctx_map: {} bits (1+16+map)",
+                after_block_ctx - after_quant
+            );
             debug_log!("  dc_cmap: 1 bit (default=1)");
-            debug_log!("  context_tree: {} bits", after_ctx_tree - after_block_ctx - 1);
+            debug_log!(
+                "  context_tree: {} bits",
+                after_ctx_tree - after_block_ctx - 1
+            );
             debug_log!("  lz77: 1 bit (no=0)");
             debug_log!("  dc_entropy_code: {} bits", after_dc_code - after_lz77);
-            debug_log!("  total bits: {}, bytes before pad: {}", total_bits, bytes_before_pad);
+            debug_log!(
+                "  total bits: {}, bytes before pad: {}",
+                total_bits,
+                bytes_before_pad
+            );
         }
 
         Ok(())
@@ -623,7 +677,7 @@ impl TinyEncoder {
         xsize_blocks: usize,
         ysize_blocks: usize,
         xsize_dc_groups: usize,
-        raw_quant: u8,
+        quant_field: &[u8],
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -643,7 +697,13 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "DC_group {}: blocks ({},{}) to ({},{}) = {}x{}",
-            dc_group_idx, start_bx, start_by, end_bx, end_by, region_xsize, region_ysize
+            dc_group_idx,
+            start_bx,
+            start_by,
+            end_bx,
+            end_by,
+            region_xsize,
+            region_ysize
         );
 
         // DC group header
@@ -654,7 +714,9 @@ impl TinyEncoder {
         let after_header1 = writer.bits_written();
 
         // Write DC tokens using gradient predictor for this region only
-        write_dc_tokens_region(quant_dc, start_bx, start_by, end_bx, end_by, dc_code, writer)?;
+        write_dc_tokens_region(
+            quant_dc, start_bx, start_by, end_bx, end_by, dc_code, writer,
+        )?;
 
         #[cfg(feature = "debug-tokens")]
         let after_dc_tokens = writer.bits_written();
@@ -672,7 +734,16 @@ impl TinyEncoder {
         let after_header2 = writer.bits_written();
 
         // Write AC metadata tokens for this region only
-        write_ac_metadata_tokens_region(region_xsize, region_ysize, raw_quant, dc_code, writer)?;
+        write_ac_metadata_tokens_region(
+            region_xsize,
+            region_ysize,
+            quant_field,
+            xsize_blocks,
+            start_bx,
+            start_by,
+            dc_code,
+            writer,
+        )?;
 
         #[cfg(feature = "debug-tokens")]
         {
@@ -680,9 +751,19 @@ impl TinyEncoder {
             debug_log!("DC_group {} breakdown:", dc_group_idx);
             debug_log!("  header1: {} bits (2+4)", after_header1 - start_bits);
             debug_log!("  dc_tokens: {} bits", after_dc_tokens - after_header1);
-            debug_log!("  header2: {} bits (nb_bits+4)", after_header2 - after_dc_tokens);
-            debug_log!("  ac_metadata: {} bits", writer.bits_written() - after_header2);
-            debug_log!("  total: {} bits ({} bytes before pad)", total, (total + 7) / 8);
+            debug_log!(
+                "  header2: {} bits (nb_bits+4)",
+                after_header2 - after_dc_tokens
+            );
+            debug_log!(
+                "  ac_metadata: {} bits",
+                writer.bits_written() - after_header2
+            );
+            debug_log!(
+                "  total: {} bits ({} bytes before pad)",
+                total,
+                (total + 7) / 8
+            );
         }
 
         Ok(())
@@ -721,10 +802,12 @@ impl TinyEncoder {
             let after_ac_code = writer.bits_written();
             debug_log!("AC_global breakdown:");
             debug_log!("  header: {} bits", before_ac_code - start_bits);
-            debug_log!("  ac_entropy_code: {} bits ({} contexts, {} prefix codes)",
-                      after_ac_code - before_ac_code,
-                      ac_code.num_contexts,
-                      ac_code.num_prefix_codes);
+            debug_log!(
+                "  ac_entropy_code: {} bits ({} contexts, {} prefix codes)",
+                after_ac_code - before_ac_code,
+                ac_code.num_contexts,
+                ac_code.num_prefix_codes
+            );
         }
 
         Ok(())
@@ -756,11 +839,17 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "AC group {}: blocks ({},{}) to ({},{})",
-            group_idx, start_bx, start_by, end_bx, end_by
+            group_idx,
+            start_bx,
+            start_by,
+            end_bx,
+            end_by
         );
 
         // Debug: track bits for specific groups (600x600 = 75x75 blocks, groups 0,4,5)
-        let debug_this_group = (group_idx == 0 || group_idx == 4 || group_idx == 5) && xsize_blocks == 75 && ysize_blocks == 75;
+        let debug_this_group = (group_idx == 0 || group_idx == 4 || group_idx == 5)
+            && xsize_blocks == 75
+            && ysize_blocks == 75;
         let mut group_total_bits = 0usize;
         let mut group_block_count = 0usize;
 
@@ -802,15 +891,24 @@ impl TinyEncoder {
                     #[cfg(debug_assertions)]
                     {
                         let actual_nz = block[1..].iter().filter(|&&x| x != 0).count() as u8;
-                        debug_assert_eq!(nz, actual_nz,
+                        debug_assert_eq!(
+                            nz, actual_nz,
                             "nzeros mismatch at c={} by={} bx={}: stored={} actual={}",
-                            c, by, bx, nz, actual_nz);
+                            c, by, bx, nz, actual_nz
+                        );
                     }
 
                     // Tokenize AC coefficients
                     #[cfg(feature = "debug-tokens")]
                     if by < start_by + 2 && bx < start_bx + 2 {
-                        debug_log!("AC[c={},by={},bx={}]: nz={}, predicted={}", c, by, bx, nz, predicted_nz);
+                        debug_log!(
+                            "AC[c={},by={},bx={}]: nz={}, predicted={}",
+                            c,
+                            by,
+                            bx,
+                            nz,
+                            predicted_nz
+                        );
                     }
                     tokenize_ac_coefficients(
                         block,
@@ -834,8 +932,13 @@ impl TinyEncoder {
                     let local_bx_dbg = bx - start_bx;
                     eprintln!(
                         "  G{} block ({},{}) = {} bits [nz: Y={}, X={}, B={}]",
-                        group_idx, local_by, local_bx_dbg, block_bits,
-                        nzeros[1][by][bx], nzeros[0][by][bx], nzeros[2][by][bx]
+                        group_idx,
+                        local_by,
+                        local_bx_dbg,
+                        block_bits,
+                        nzeros[1][by][bx],
+                        nzeros[0][by][bx],
+                        nzeros[2][by][bx]
                     );
                 }
             }
@@ -845,7 +948,9 @@ impl TinyEncoder {
         if debug_this_group {
             eprintln!(
                 "Group {} summary: {} blocks, {} total bits, {:.1} bits/block avg",
-                group_idx, group_block_count, group_total_bits,
+                group_idx,
+                group_block_count,
+                group_total_bits,
                 group_total_bits as f64 / group_block_count as f64
             );
         }
@@ -853,13 +958,21 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         {
             let total_bits = writer.bits_written() - start_bits;
-            debug_log!("AC_group {} breakdown: {} bits ({} bytes before pad)", group_idx, total_bits, (total_bits + 7) / 8);
+            debug_log!(
+                "AC_group {} breakdown: {} bits ({} bytes before pad)",
+                group_idx,
+                total_bits,
+                (total_bits + 7) / 8
+            );
             // Show the raw bytes for comparison
             let bytes = writer.peek_bytes();
             let ac_start_byte = start_bits / 8;
             let ac_end_byte = writer.bits_written().div_ceil(8);
             if ac_end_byte <= bytes.len() && ac_start_byte < ac_end_byte {
-                debug_log!("AC_group raw bytes: {:02x?}", &bytes[ac_start_byte..ac_end_byte.min(ac_start_byte + 10)]);
+                debug_log!(
+                    "AC_group raw bytes: {:02x?}",
+                    &bytes[ac_start_byte..ac_end_byte.min(ac_start_byte + 10)]
+                );
             }
         }
 

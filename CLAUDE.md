@@ -67,6 +67,7 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] AC group encoding with channel interleaving
 - [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte, SSIM2=90+ on photos)
 - [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
+- [x] Adaptive quantization (per-block raw_quant from perceptual masking) - fixes quality ceiling
 
 ### TODO (Major Components)
 - [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
@@ -200,12 +201,34 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-### Tiny Encoder Quality Ceiling (SSIM2 plateaus at ~82.5)
+(none)
 
-SSIM2 stops improving below distance=0.5. File sizes barely grow either, indicating
-quantization parameters saturate. cjxl reaches 92+ at the same distances.
-Likely cause: `DistanceParams::compute()` clamping or `raw_quant_uniform()` hardcoded
-approximation. See INVESTIGATION.md for full data and analysis.
+## Resolved Bugs (continued)
+
+### Tiny Encoder Quality Ceiling (FIXED Jan 30, 2026)
+
+**Issue**: SSIM2 plateaued at ~82.5 below distance=0.5. File sizes barely grew,
+indicating quantization parameters saturated.
+
+**Root Cause**: `raw_quant_uniform()` returned a single hardcoded quantization value
+for all blocks. At low distances, this uniform value saturated and couldn't provide
+finer quantization where the image needed it.
+
+**Fix**: Ported libjxl-tiny's adaptive quantization pipeline (`enc_adaptive_quantization.cc`)
+to `jxl_enc/src/tiny/adaptive_quant.rs`. The pipeline computes per-block raw_quant values
+based on perceptual masking:
+1. Pre-erosion: Y + kXMul×X local differences, gamma ratio, masking sqrt, 4x downsample
+2. Fuzzy erosion: 3×3 min-4 weighted sum, 2x downsample
+3. Per-block modulations: ComputeMask + HfModulation + ColorModulation + GammaModulation + exp2
+4. Convert to raw_quant u8 per block
+
+**After fix** (CLIC 2025 test image, 2048x1360):
+- d=2.0: SSIM2 58.75 (was similar)
+- d=1.0: SSIM2 75.13 (was similar)
+- d=0.5: SSIM2 82.18 (was ~82.5)
+- d=0.25: SSIM2 86.42 (was ~82.5, +4 points)
+- d=0.1: SSIM2 89.12 (was ~82.5, +6.6 points)
+- d=0.05: SSIM2 90.20 (was ~82.5, +7.7 points)
 
 ## DCT16/32 Implementation Notes (Jan 21-22, 2026)
 

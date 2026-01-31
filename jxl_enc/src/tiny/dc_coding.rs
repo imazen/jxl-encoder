@@ -165,7 +165,12 @@ pub fn write_dc_tokens_region(
     {
         debug_log!(
             "write_dc_tokens_region: blocks ({},{}) to ({},{}) = {}x{}",
-            start_bx, start_by, end_bx, end_by, region_width, region_height
+            start_bx,
+            start_by,
+            end_bx,
+            end_by,
+            region_width,
+            region_height
         );
     }
 
@@ -222,7 +227,14 @@ pub fn write_dc_tokens_region(
                     if dc_debug_count < DC_DEBUG_LIMIT {
                         debug_log!(
                             "  DC[c={},y={},x={}]: actual={}, guess={}, residual={}, ctx={}, token_val={}",
-                            c, y, x, actual, guess, residual, ctx_id, pack_signed(residual)
+                            c,
+                            y,
+                            x,
+                            actual,
+                            guess,
+                            residual,
+                            ctx_id,
+                            pack_signed(residual)
                         );
                     }
                     write_token(&token, dc_code, writer)?;
@@ -271,18 +283,29 @@ const fn div_ceil(a: usize, b: usize) -> usize {
 /// # Arguments
 /// * `xsize_blocks` - Number of 8x8 blocks in x direction (for the region)
 /// * `ysize_blocks` - Number of 8x8 blocks in y direction (for the region)
-/// * `raw_quant` - Raw quantization field value (1-255, typically ~7 for distance=1.0)
+/// * `quant_field` - Per-block raw quantization values (1-255), indexed as `[by * full_xsize_blocks + bx]`
+/// * `full_xsize_blocks` - Full image width in blocks (for quant_field indexing)
 /// * `dc_code` - DC entropy code to use for token writing
 /// * `writer` - BitWriter to write encoded data
 pub fn write_ac_metadata_tokens(
     xsize_blocks: usize,
     ysize_blocks: usize,
-    raw_quant: u8,
+    quant_field: &[u8],
+    full_xsize_blocks: usize,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    // For single DC group, the region is the entire image
-    write_ac_metadata_tokens_region(xsize_blocks, ysize_blocks, raw_quant, dc_code, writer)
+    // For single DC group, the region is the entire image (start at block 0,0)
+    write_ac_metadata_tokens_region(
+        xsize_blocks,
+        ysize_blocks,
+        quant_field,
+        full_xsize_blocks,
+        0,
+        0,
+        dc_code,
+        writer,
+    )
 }
 
 /// Write AC metadata tokens for a specific region.
@@ -293,13 +316,19 @@ pub fn write_ac_metadata_tokens(
 /// # Arguments
 /// * `region_xsize_blocks` - Number of blocks in x direction for this region
 /// * `region_ysize_blocks` - Number of blocks in y direction for this region
-/// * `raw_quant` - Raw quantization field value (1-255)
+/// * `quant_field` - Per-block raw quantization values (1-255), indexed as `[by * full_xsize_blocks + bx]`
+/// * `full_xsize_blocks` - Full image width in blocks (for quant_field indexing)
+/// * `start_bx` - Starting block x coordinate of this region
+/// * `start_by` - Starting block y coordinate of this region
 /// * `dc_code` - DC entropy code
 /// * `writer` - BitWriter
 pub fn write_ac_metadata_tokens_region(
     region_xsize_blocks: usize,
     region_ysize_blocks: usize,
-    raw_quant: u8,
+    quant_field: &[u8],
+    full_xsize_blocks: usize,
+    start_bx: usize,
+    start_by: usize,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -369,15 +398,17 @@ pub fn write_ac_metadata_tokens_region(
     #[cfg(feature = "debug-tokens")]
     let after_acs = writer.bits_written();
 
-    // Quant field tokens
-    // cur = raw_quant - 1 (offset by 1 in the encoding)
+    // Quant field tokens - per-block values from adaptive quantization
+    // cur = quant_field[by][bx] - 1 (offset by 1 in the encoding)
     // Initial left is ac_strategy[0][0].StrategyCode() = 0 for DCT8
-    let qf_value = (raw_quant as i32) - 1; // cur value for all blocks
     let mut left_qf = 0i32;
     for y in 0..region_ysize_blocks {
         for x in 0..region_xsize_blocks {
-            // For DCT8, every block is a first block
-            let cur = qf_value;
+            // Look up per-block quant value from the full image quant field
+            let abs_by = start_by + y;
+            let abs_bx = start_bx + x;
+            let block_idx = abs_by * full_xsize_blocks + abs_bx;
+            let cur = (quant_field[block_idx] as i32) - 1;
             let residual = cur - left_qf;
             // Context based on left value
             let ctx_id = if left_qf > 11 {
@@ -411,10 +442,26 @@ pub fn write_ac_metadata_tokens_region(
     {
         let after_epf = writer.bits_written();
         debug_log!("  ac_metadata breakdown:");
-        debug_log!("    cfl (YtoX+YtoB): {} bits ({} tokens)", after_cfl - after_start, cfl_xsize * cfl_ysize * 2);
-        debug_log!("    ac_strategy: {} bits ({} tokens)", after_acs - after_cfl, region_xsize_blocks * region_ysize_blocks);
-        debug_log!("    quant_field: {} bits ({} tokens)", after_qf - after_acs, region_xsize_blocks * region_ysize_blocks);
-        debug_log!("    epf: {} bits ({} tokens)", after_epf - after_qf, nblocks);
+        debug_log!(
+            "    cfl (YtoX+YtoB): {} bits ({} tokens)",
+            after_cfl - after_start,
+            cfl_xsize * cfl_ysize * 2
+        );
+        debug_log!(
+            "    ac_strategy: {} bits ({} tokens)",
+            after_acs - after_cfl,
+            region_xsize_blocks * region_ysize_blocks
+        );
+        debug_log!(
+            "    quant_field: {} bits ({} tokens)",
+            after_qf - after_acs,
+            region_xsize_blocks * region_ysize_blocks
+        );
+        debug_log!(
+            "    epf: {} bits ({} tokens)",
+            after_epf - after_qf,
+            nblocks
+        );
         debug_log!("    total: {} bits", after_epf - start_bits);
     }
 
