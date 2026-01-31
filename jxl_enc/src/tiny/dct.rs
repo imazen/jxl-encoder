@@ -316,9 +316,11 @@ pub fn dc_from_dct_8x8(coeffs: &[f32; 64]) -> f32 {
 pub fn dc_from_dct_16x8(coeffs: &[f32; 128]) -> [f32; 2] {
     // For 16x8, the LF region is 2x1 coefficients (2 rows, 1 col in freq domain)
     // In the 8×16 output layout (stride 16), both LLF coefficients are at indices 0 and 1.
-    // (Same layout as C++ which uses input_stride=16 and reads input[0], input[1])
-    let lf0 = coeffs[0] * DCT_RESAMPLE_SCALE_2_TO_16[0];
-    let lf1 = coeffs[1] * DCT_RESAMPLE_SCALE_2_TO_16[1];
+    //
+    // C++ DCFromLowestFrequencies uses DCTTotalResampleScale<16, 2> (forward direction:
+    // FROM 16-point DCT TO 2-point domain). Must use 16_TO_2 scales, NOT 2_TO_16.
+    let lf0 = coeffs[0] * DCT_RESAMPLE_SCALE_16_TO_2[0];
+    let lf1 = coeffs[1] * DCT_RESAMPLE_SCALE_16_TO_2[1];
 
     // 2-point IDCT: [a+b, a-b]
     [lf0 + lf1, lf0 - lf1]
@@ -328,8 +330,9 @@ pub fn dc_from_dct_16x8(coeffs: &[f32; 128]) -> [f32; 2] {
 /// Returns 2 DC values (for the 2 covered 8x8 blocks).
 pub fn dc_from_dct_8x16(coeffs: &[f32; 128]) -> [f32; 2] {
     // For 8x16, the LF region is 1x2 coefficients
-    let lf0 = coeffs[0] * DCT_RESAMPLE_SCALE_2_TO_16[0];
-    let lf1 = coeffs[1] * DCT_RESAMPLE_SCALE_2_TO_16[1];
+    // Uses 16_TO_2 direction (FROM 16-point DCT TO 2-point domain).
+    let lf0 = coeffs[0] * DCT_RESAMPLE_SCALE_16_TO_2[0];
+    let lf1 = coeffs[1] * DCT_RESAMPLE_SCALE_16_TO_2[1];
 
     // 2-point IDCT: [a+b, a-b]
     [lf0 + lf1, lf0 - lf1]
