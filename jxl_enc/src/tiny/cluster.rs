@@ -7,7 +7,7 @@
 //!
 //! Ported from libjxl-tiny enc_cluster.cc
 
-use super::entropy_code::{create_huffman_tree, ALPHABET_SIZE};
+use super::entropy_code::{ALPHABET_SIZE, create_huffman_tree};
 
 /// A histogram of symbol counts.
 #[derive(Clone)]
@@ -152,10 +152,7 @@ fn fast_cluster_histograms(
 }
 
 /// Reindex histograms so symbols come in increasing order.
-fn histogram_reindex(
-    symbols: &[u32],
-    histograms: &mut Vec<Histogram>,
-) -> Vec<u8> {
+fn histogram_reindex(symbols: &[u32], histograms: &mut Vec<Histogram>) -> Vec<u8> {
     use std::collections::HashMap;
 
     let tmp = histograms.clone();

@@ -223,7 +223,12 @@ pub fn tokenize_ac_coefficients(
         let pc = &ac_code.prefix_codes[prefix_idx];
         debug_log!(
             "  AC nzeros token: ctx={}, value={}, prefix_idx={}, depth={}, bits={:#x}, wrote {} bits",
-            nzero_ctx, nzeros, prefix_idx, pc.depths[0], pc.bits[0], bits_after - bits_before
+            nzero_ctx,
+            nzeros,
+            prefix_idx,
+            pc.depths[0],
+            pc.bits[0],
+            bits_after - bits_before
         );
     }
 
