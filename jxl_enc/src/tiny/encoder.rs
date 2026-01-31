@@ -830,10 +830,12 @@ impl TinyEncoder {
                 }
 
                 // ── Step 6: CfL on AC coefficients using roundtripped Y ───
-                // Apply CfL to AC only (skip LLF/DC). The C++ applies to all
-                // coefficients but has matching DC CfL handling in the decoder.
-                // Our DC CfL is handled separately via the dc_cfl_factor term.
-                let llf_count = covered_blocks; // LLF coefficients to skip
+                // C++ applies CfL to ALL positions (0..size) including DC/LLF,
+                // but the decoder's DequantBlock calls LowestFrequenciesFromDC
+                // AFTER DequantLane, overwriting LLF positions with DC-derived
+                // values. So coefficient-level CfL on LLF is discarded by the
+                // decoder. We skip LLF here; DC CfL uses dc_cfl_factor instead.
+                let llf_count = covered_blocks;
                 #[allow(clippy::needless_range_loop)]
                 for k in llf_count..size {
                     dct_coeffs[0][k] -= x_factor * dct_coeffs[1][k];
