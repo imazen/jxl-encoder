@@ -54,7 +54,7 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
-| `enc_adaptive_quantization.cc` | 537 | TODO | AQ field heuristics |
+| `enc_adaptive_quantization.cc` | 537 | DONE | AQ field heuristics → `adaptive_quant.rs` |
 | `enc_ac_strategy.cc` | 269 | TODO | DCT size selection |
 | `enc_chroma_from_luma.cc` | 153 | TODO | CfL optimization |
 

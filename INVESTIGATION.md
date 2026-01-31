@@ -2,7 +2,7 @@
 
 ## 2026-01-30: Tiny Encoder Quality Ceiling — SSIM2 Plateaus at ~82.5
 
-### Status: ACTIVE
+### Status: RESOLVED (adaptive quantization ported, commit b7b80fd)
 
 ### Summary
 

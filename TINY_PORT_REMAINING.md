@@ -75,24 +75,10 @@ The tiny encoder is **functionally complete** for basic use:
 
 ---
 
-### 4. Adaptive Quantization (LOW-MEDIUM IMPACT)
+### 4. ~~Adaptive Quantization~~ ✅ DONE
 
-**Current**: Uniform quantization (`raw_quant_uniform()` returns constant).
-
-**libjxl-tiny**: `enc_adaptive_quantization.cc` computes per-block quantization based on:
-- Visual masking (texture/noise tolerance)
-- Butteraugli-inspired perceptual model
-- Local contrast
-
-**Impact**:
-- Can improve quality by 10-20% at same file size
-- Spends bits where they matter visually
-- Complex images benefit most
-
-**Files to port**:
-- `enc_adaptive_quantization.cc` → new `adaptive_quant.rs`
-
-**Effort**: High (3-5 days, complex perceptual model)
+Ported in commit b7b80fd. Per-block raw_quant from perceptual masking pipeline.
+Fixes quality ceiling: SSIM2 now reaches 90+ at low distances (was ~82.5).
 
 ---
 
