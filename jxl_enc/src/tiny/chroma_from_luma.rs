@@ -46,6 +46,17 @@ pub struct CflMap {
 }
 
 impl CflMap {
+    /// Create a CfL map with all zeros (no chroma decorrelation).
+    pub fn zeros(xsize_tiles: usize, ysize_tiles: usize) -> Self {
+        let n = xsize_tiles * ysize_tiles;
+        Self {
+            ytox: vec![0i8; n],
+            ytob: vec![0i8; n],
+            xsize_tiles,
+            ysize_tiles,
+        }
+    }
+
     /// Get the ytox value for a tile at (tx, ty).
     #[inline]
     pub fn ytox_at(&self, tx: usize, ty: usize) -> i8 {
