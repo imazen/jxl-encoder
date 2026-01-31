@@ -55,15 +55,15 @@ This is a parallel code path in jxl-encoder-rs, NOT a replacement.
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
 | `enc_adaptive_quantization.cc` | 537 | DONE | AQ field heuristics → `adaptive_quant.rs` |
-| `enc_ac_strategy.cc` | 269 | TODO | DCT size selection |
-| `enc_chroma_from_luma.cc` | 153 | TODO | CfL optimization |
+| `enc_ac_strategy.cc` | 269 | DONE | DCT size selection → `ac_strategy.rs` |
+| `enc_chroma_from_luma.cc` | 153 | DONE | CfL optimization → `chroma_from_luma.rs` |
 
 ### Image Types (Priority 4)
 
 | File | Lines | Status | Notes |
 |------|-------|--------|-------|
 | `image.h/cc` | 627 | TODO | Image buffer types |
-| `ac_strategy.h` | 194 | TODO | AC strategy types |
+| `ac_strategy.h` | 194 | DONE | AC strategy types → `ac_strategy.rs` |
 
 ## Porting Strategy
 

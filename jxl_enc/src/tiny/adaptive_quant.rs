@@ -590,7 +590,7 @@ pub fn compute_adaptive_quant_field(
     ysize_blocks: usize,
     distance: f32,
     inv_scale: f32,
-) -> Vec<u8> {
+) -> (Vec<u8>, Vec<f32>) {
     const K_AC_QUANT: f32 = 0.8294;
     let scale = K_AC_QUANT / distance;
 
@@ -635,6 +635,16 @@ pub fn compute_adaptive_quant_field(
         erosion_region_h,
     );
 
+    // Step 2.5: Compute masking field for AC strategy use (snapshot before modulations)
+    // In C++, this is: mask[y][x] = ComputeMaskForAcStrategyUse(aq_map[y][x])
+    let mut masking = vec![0.0f32; xsize_blocks * ysize_blocks];
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            masking[by * xsize_blocks + bx] =
+                compute_mask_for_ac_strategy_use(aq_map[by * aq_map_w + bx]);
+        }
+    }
+
     // Step 3: Per-block modulations
     per_block_modulations(
         xyb_x,
@@ -662,7 +672,7 @@ pub fn compute_adaptive_quant_field(
         }
     }
 
-    raw_quant_field
+    (raw_quant_field, masking)
 }
 
 #[cfg(test)]
@@ -774,9 +784,11 @@ mod tests {
         let xb = w / 8;
         let yb = h / 8;
 
-        let result = compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
+        let (result, masking) =
+            compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
         assert_eq!(result.len(), xb * yb);
+        assert_eq!(masking.len(), xb * yb);
         // All values should be in valid range
         for &v in &result {
             assert!(v >= 1 && v <= 255, "quant value {} out of range", v);
@@ -818,7 +830,8 @@ mod tests {
         let xb = w / 8;
         let yb = h / 8;
 
-        let result = compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
+        let (result, _masking) =
+            compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
         assert_eq!(result.len(), xb * yb);
         // All values should be in valid range
@@ -862,7 +875,7 @@ mod tests {
             let xb = (w + 7) / 8;
             let yb = (h + 7) / 8;
 
-            let result =
+            let (result, _masking) =
                 compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
             assert_eq!(

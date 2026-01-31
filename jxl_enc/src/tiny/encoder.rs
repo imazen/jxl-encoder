@@ -6,8 +6,12 @@
 //! Main tiny encoder implementation.
 
 use super::ac_group::{
-    AC_STRATEGY_DCT8, collect_ac_coefficients, num_nonzero_8x8_except_dc,
+    collect_ac_coefficients, num_nonzero_8x8_except_dc, num_nonzero_except_llf,
     predict_from_top_and_left, tokenize_ac_coefficients,
+};
+use super::ac_strategy::{
+    AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, adjust_quant_field,
+    compute_ac_strategy,
 };
 use super::adaptive_quant::compute_adaptive_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
@@ -16,7 +20,7 @@ use super::dc_coding::{
     collect_ac_metadata_tokens_region, collect_dc_tokens_region, write_ac_metadata_tokens_region,
     write_dc_tokens_region,
 };
-use super::dct::dct_8x8;
+use super::dct::{dc_from_dct_8x16, dc_from_dct_16x8, dct_8x8, dct_8x16, dct_16x8};
 use super::entropy_code::{build_entropy_code, write_tokens};
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
@@ -46,6 +50,10 @@ pub struct TinyEncoder {
     /// When true (default), computes per-tile ytox/ytob values via least-squares fitting.
     /// When false, uses ytox=0, ytob=0 (no chroma decorrelation).
     pub cfl_enabled: bool,
+    /// Enable adaptive AC strategy selection (DCT8/DCT16x8/DCT8x16).
+    /// When true (default), selects the best transform size per 16x16 block region.
+    /// When false, uses DCT8 for all blocks.
+    pub ac_strategy_enabled: bool,
 }
 
 impl Default for TinyEncoder {
@@ -54,6 +62,7 @@ impl Default for TinyEncoder {
             distance: 1.0,
             optimize_codes: false,
             cfl_enabled: true,
+            ac_strategy_enabled: true,
         }
     }
 }
@@ -65,6 +74,7 @@ impl TinyEncoder {
             distance,
             optimize_codes: false,
             cfl_enabled: true,
+            ac_strategy_enabled: true,
         }
     }
 
@@ -98,8 +108,8 @@ impl TinyEncoder {
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
 
-        // Compute adaptive per-block quantization field
-        let quant_field = compute_adaptive_quant_field(
+        // Compute adaptive per-block quantization field and masking
+        let (mut quant_field, masking) = compute_adaptive_quant_field(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -129,8 +139,30 @@ impl TinyEncoder {
             )
         };
 
+        // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16)
+        let ac_strategy = if !self.ac_strategy_enabled {
+            AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
+        } else {
+            compute_ac_strategy(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                width,
+                height,
+                xsize_blocks,
+                ysize_blocks,
+                self.distance,
+                &quant_field,
+                &masking,
+                &cfl_map,
+            )
+        };
+
+        // Adjust quant field for multi-block transforms (max over covered blocks)
+        adjust_quant_field(&ac_strategy, &mut quant_field);
+
         // Perform DCT and quantization
-        let (quant_dc, quant_ac, nzeros) = self.transform_and_quantize(
+        let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -143,6 +175,7 @@ impl TinyEncoder {
             &params,
             &quant_field,
             &cfl_map,
+            &ac_strategy,
         );
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
@@ -163,8 +196,10 @@ impl TinyEncoder {
                 &quant_dc,
                 &quant_ac,
                 &nzeros,
+                &raw_nzeros,
                 &quant_field,
                 &cfl_map,
+                &ac_strategy,
             );
         }
 
@@ -215,6 +250,7 @@ impl TinyEncoder {
                 xsize_dc_groups,
                 &quant_field,
                 &cfl_map,
+                &ac_strategy,
                 &dc_code,
                 &mut dc_group,
             )?;
@@ -227,9 +263,11 @@ impl TinyEncoder {
                 0,
                 &quant_ac,
                 &nzeros,
+                &raw_nzeros,
                 xsize_blocks,
                 ysize_blocks,
                 xsize_groups,
+                &ac_strategy,
                 &ac_code,
                 &mut ac_group_writer,
             )?;
@@ -299,6 +337,7 @@ impl TinyEncoder {
                     xsize_dc_groups,
                     &quant_field,
                     &cfl_map,
+                    &ac_strategy,
                     &dc_code,
                     &mut dc_group,
                 )?;
@@ -319,9 +358,11 @@ impl TinyEncoder {
                     group_idx,
                     &quant_ac,
                     &nzeros,
+                    &raw_nzeros,
                     xsize_blocks,
                     ysize_blocks,
                     xsize_groups,
+                    &ac_strategy,
                     &ac_code,
                     &mut ac_group_writer,
                 )?;
@@ -366,7 +407,12 @@ impl TinyEncoder {
 
     /// Perform DCT and quantization on all blocks.
     ///
+    /// Supports DCT8, DCT16X8, and DCT8X16 transforms based on ac_strategy.
+    /// For multi-block transforms, only first blocks are processed; the second
+    /// block's quant_ac slot stores the second half of the 128 coefficients.
+    ///
     /// Returns (quantized_dc, quantized_ac, nzeros)
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn transform_and_quantize(
         &self,
         xyb_x: &[f32],
@@ -381,10 +427,12 @@ impl TinyEncoder {
         params: &DistanceParams,
         quant_field: &[u8],
         cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
     ) -> (
-        [Vec<Vec<i16>>; 3],
-        [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
-        [Vec<Vec<u8>>; 3],
+        [Vec<Vec<i16>>; 3],                   // quant_dc
+        [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3], // quant_ac
+        [Vec<Vec<u8>>; 3],                    // nzeros (shifted, for prediction)
+        [Vec<Vec<u8>>; 3],                    // raw_nzeros (unshifted, for bitstream)
     ) {
         // Initialize output arrays
         let mut quant_dc: [Vec<Vec<i16>>; 3] = [
@@ -399,163 +447,246 @@ impl TinyEncoder {
             vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
         ];
 
+        // Shifted nzeros for neighbor prediction (nzeros / covered_blocks)
         let mut nzeros: [Vec<Vec<u8>>; 3] = [
             vec![vec![0u8; xsize_blocks]; ysize_blocks],
             vec![vec![0u8; xsize_blocks]; ysize_blocks],
             vec![vec![0u8; xsize_blocks]; ysize_blocks],
         ];
+        // Raw (unshifted) nzeros for bitstream writing — stored at first-block positions
+        let mut raw_nzeros: [Vec<Vec<u8>>; 3] = [
+            vec![vec![0u8; xsize_blocks]; ysize_blocks],
+            vec![vec![0u8; xsize_blocks]; ysize_blocks],
+            vec![vec![0u8; xsize_blocks]; ysize_blocks],
+        ];
 
-        // Channel data
         let channels = [xyb_x, xyb_y, xyb_b];
-
-        // Process each block
-        // We need to:
-        // 1. DCT all 3 channels
-        // 2. Apply CFL to X and B channel AC coefficients (subtract Y * factor)
-        // 3. Quantize all channels
 
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
-                // Step 1: Extract and DCT all 3 channels
-                let mut dct_blocks = [[0.0f32; DCT_BLOCK_SIZE]; 3];
-
-                for c in 0..3 {
-                    let mut block = [0.0f32; DCT_BLOCK_SIZE];
-                    for dy in 0..BLOCK_DIM {
-                        for dx in 0..BLOCK_DIM {
-                            let py = (by * BLOCK_DIM + dy).min(height - 1);
-                            let px = (bx * BLOCK_DIM + dx).min(width - 1);
-                            block[dy * BLOCK_DIM + dx] = channels[c][py * width + px];
-                        }
-                    }
-
-                    #[cfg(feature = "debug-tokens")]
-                    if by == 0 && bx == 0 && c == 0 {
-                        let block_sum: f32 = block.iter().sum();
-                        debug_log!(
-                            "Block[0,0,c=0]: sum={:.4}, first={:.4}",
-                            block_sum,
-                            block[0]
-                        );
-                    }
-
-                    dct_8x8(&block, &mut dct_blocks[c]);
-
-                    #[cfg(feature = "debug-tokens")]
-                    if by == 0 && bx == 0 && c == 0 {
-                        debug_log!("DCT[0,0,c=0]: DC={:.4}", dct_blocks[c][0]);
-                    }
+                // Skip non-first blocks of multi-block transforms
+                if !ac_strategy.is_first(bx, by) {
+                    continue;
                 }
 
-                // Step 2: Apply CFL (chroma from luma) to X and B channels
-                // Uses per-tile ytox/ytob values from the CfL map.
-                //
-                // Note: CfL is only applied to AC coefficients (idx 1..64).
-                // DC has its own separate CfL mechanism in the DC quantization
-                // step (the fixed dc_cfl_factor = 0.5 for B channel). The decoder
-                // applies tile-level CfL only to AC, not DC.
+                let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                let covered_x = ac_strategy.covered_blocks_x(bx, by);
+                let covered_y = ac_strategy.covered_blocks_y(bx, by);
+                let covered_blocks = covered_x * covered_y;
+                let size = covered_blocks * DCT_BLOCK_SIZE;
+
+                // CfL factors for this tile
                 let tx = bx / TILE_DIM_IN_BLOCKS;
                 let ty_cfl = by / TILE_DIM_IN_BLOCKS;
                 let x_factor = ytox_ratio(cfl_map.ytox_at(tx, ty_cfl));
                 let b_factor = ytob_ratio(cfl_map.ytob_at(tx, ty_cfl));
-                for idx in 1..DCT_BLOCK_SIZE {
-                    dct_blocks[0][idx] -= x_factor * dct_blocks[1][idx];
-                    dct_blocks[2][idx] -= b_factor * dct_blocks[1][idx];
+
+                // Step 1: Extract pixels and apply DCT for all 3 channels
+                // For DCT8: 64 coefficients; DCT16X8/DCT8X16: 128 coefficients
+                let mut dct_coeffs: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; size]);
+
+                for c in 0..3 {
+                    match raw_strategy {
+                        0 => {
+                            // DCT8
+                            let mut block = [0.0f32; 64];
+                            for dy in 0..8 {
+                                for dx in 0..8 {
+                                    let py = (by * BLOCK_DIM + dy).min(height - 1);
+                                    let px = (bx * BLOCK_DIM + dx).min(width - 1);
+                                    block[dy * 8 + dx] = channels[c][py * width + px];
+                                }
+                            }
+                            let mut output = [0.0f32; 64];
+                            dct_8x8(&block, &mut output);
+                            dct_coeffs[c].copy_from_slice(&output);
+                        }
+                        RAW_STRATEGY_DCT16X8 => {
+                            // 1 wide × 2 tall: 8×16 pixel block
+                            let mut block = [0.0f32; 128];
+                            for dy in 0..16 {
+                                for dx in 0..8 {
+                                    let py = (by * BLOCK_DIM + dy).min(height - 1);
+                                    let px = (bx * BLOCK_DIM + dx).min(width - 1);
+                                    block[dy * 8 + dx] = channels[c][py * width + px];
+                                }
+                            }
+                            let mut output = [0.0f32; 128];
+                            dct_16x8(&block, &mut output);
+                            dct_coeffs[c].copy_from_slice(&output);
+                        }
+                        RAW_STRATEGY_DCT8X16 => {
+                            // 2 wide × 1 tall: 16×8 pixel block
+                            let mut block = [0.0f32; 128];
+                            for dy in 0..8 {
+                                for dx in 0..16 {
+                                    let py = (by * BLOCK_DIM + dy).min(height - 1);
+                                    let px = (bx * BLOCK_DIM + dx).min(width - 1);
+                                    block[dy * 16 + dx] = channels[c][py * width + px];
+                                }
+                            }
+                            let mut output = [0.0f32; 128];
+                            dct_8x16(&block, &mut output);
+                            dct_coeffs[c].copy_from_slice(&output);
+                        }
+                        _ => unreachable!(),
+                    }
                 }
 
-                // Step 3: Quantize DC and AC for all channels
-                // Process Y first (c=1), then X (c=0) and B (c=2) for CFL
+                // Step 2: Apply CFL to X and B channels (AC coefficients only, not DC/LLF)
+                // DC has its own separate CFL mechanism in the DC quantization step
+                // (the fixed dc_cfl_factor = 0.5 for B channel).
+                // For DCT8: skip coeff 0. For larger transforms: skip LLF region (top-left cx×cy).
+                let llf_count = covered_x * covered_y; // Number of LLF coefficients to skip
+                #[allow(clippy::needless_range_loop)]
+                for k in llf_count..size {
+                    dct_coeffs[0][k] -= x_factor * dct_coeffs[1][k];
+                    dct_coeffs[2][k] -= b_factor * dct_coeffs[1][k];
+                }
+
+                // Step 3: Extract DC values and quantize
+                let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
+
+                // Process Y first, then X, B (for DC CFL)
                 for &c in &[1usize, 0, 2] {
-                    // Quantize DC with CFL (Chroma From Luma)
-                    // Formula: qdc = round(dc * INV_DC_QUANT[c] * scale_dc - Y_dc * cfl_factor[c])
-                    // where scale_dc = quant_dc * scale = quant_dc * global_scale / 65536
-                    // CFL factors: X=0, Y=0, B=INV_DC_QUANT[2]*DC_QUANT[1]=256*(1/512)=0.5
-                    let dc = dct_blocks[c][0];
-                    let dc_scale = INV_DC_QUANT[c] * params.scale_dc;
-                    let dc_cfl_factor = if c == 2 {
-                        // B channel: subtract 0.5 * Y_dc for chroma correlation
-                        // CFL factor = INV_DC_QUANT[2] * DC_QUANT[1] = 256 * (1/512) = 0.5
-                        0.5f32
-                    } else {
-                        0.0f32
-                    };
-                    let y_dc = quant_dc[1][by][bx] as f32;
-                    let qdc = (dc * dc_scale - y_dc * dc_cfl_factor).round() as i16;
-                    quant_dc[c][by][bx] = qdc;
+                    // Extract DC values based on strategy
+                    let dc_cfl_factor = if c == 2 { 0.5f32 } else { 0.0f32 };
+                    let inv_factor = INV_DC_QUANT[c] * params.scale_dc;
 
-                    #[cfg(feature = "debug-tokens")]
-                    if by == 0 && bx == 0 {
-                        debug_log!(
-                            "Quant[0,0,c={}]: dc={:.4}, scale_dc={:.6}, cfl={:.1}*{:.1}={:.1}, qdc={}",
-                            c,
-                            dc,
-                            dc_scale,
-                            y_dc,
-                            dc_cfl_factor,
-                            y_dc * dc_cfl_factor,
-                            qdc
-                        );
-                    }
-
-                    // Quantize AC coefficients (CFL already applied above for B channel)
-                    // Formula: qval = round(coef * (1/weight) * qac)
-                    // where qac = scale * raw_quant
-                    //
-                    // libjxl-tiny's kQuantWeights are small values (e.g., 0.0003).
-                    // libjxl-tiny's InvMatrix = 1/kQuantWeights = large values (e.g., 3152).
-                    // Quantization uses InvMatrix (large values).
-                    //
-                    // Our QUANT_WEIGHTS are the small values (same as kQuantWeights).
-                    // So we need to DIVIDE by QUANT_WEIGHTS (equivalent to multiplying by InvMatrix).
-                    //
-                    // CRITICAL: Use per-channel weights! Each channel has different weights.
-                    let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
-                    let weights = super::quant::quant_weights(0, c); // DCT8 strategy=0, per-channel
-
-                    let mut qblock = [0i32; DCT_BLOCK_SIZE];
-                    for idx in 0..DCT_BLOCK_SIZE {
-                        if idx == 0 {
-                            // DC is handled separately
-                            qblock[0] = 0;
-                        } else {
-                            let coef = dct_blocks[c][idx];
-                            let weight = weights[idx];
-                            // DIVIDE by weight (equivalent to multiplying by InvMatrix = 1/weight)
-                            let qval = (coef * qac / weight).round() as i32;
-                            qblock[idx] = qval;
+                    match raw_strategy {
+                        0 => {
+                            // DCT8: single DC
+                            let dc = dct_coeffs[c][0];
+                            let y_dc = quant_dc[1][by][bx] as f32;
+                            let qdc = (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                            quant_dc[c][by][bx] = qdc;
                         }
+                        RAW_STRATEGY_DCT16X8 => {
+                            // 1×2: two DCs (top, bottom)
+                            let coeffs_arr: [f32; 128] = dct_coeffs[c][..128]
+                                .try_into()
+                                .expect("128 coefficients for DCT16x8");
+                            let dcs = dc_from_dct_16x8(&coeffs_arr);
+                            for iy in 0..2 {
+                                let y_dc = quant_dc[1][by + iy][bx] as f32;
+                                let qdc =
+                                    (dcs[iy] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                                quant_dc[c][by + iy][bx] = qdc;
+                            }
+                        }
+                        RAW_STRATEGY_DCT8X16 => {
+                            // 2×1: two DCs (left, right)
+                            let coeffs_arr: [f32; 128] = dct_coeffs[c][..128]
+                                .try_into()
+                                .expect("128 coefficients for DCT8x16");
+                            let dcs = dc_from_dct_8x16(&coeffs_arr);
+                            for ix in 0..2 {
+                                let y_dc = quant_dc[1][by][bx + ix] as f32;
+                                let qdc =
+                                    (dcs[ix] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                                quant_dc[c][by][bx + ix] = qdc;
+                            }
+                        }
+                        _ => unreachable!(),
                     }
-                    quant_ac[c][by][bx] = qblock;
+
+                    // Quantize AC coefficients
+                    let weights = super::quant::quant_weights(raw_strategy as usize, c);
+
+                    // For multi-block transforms, store the first 64 coefficients in the
+                    // first block's slot and the second 64 in the second block's slot.
+                    // The tokenizer assembles them back into a contiguous 128-coeff buffer.
+                    #[allow(clippy::needless_range_loop)]
+                    for idx in 0..size {
+                        let qval = if idx < covered_blocks {
+                            // LLF region (DC for larger transforms) — handled separately
+                            0
+                        } else {
+                            let coef = dct_coeffs[c][idx];
+                            let weight = weights[idx];
+                            (coef * qac / weight).round() as i32
+                        };
+
+                        // Map coefficient index to block slot
+                        let block_slot = idx / DCT_BLOCK_SIZE;
+                        let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                        let slot_by = by
+                            + if raw_strategy == RAW_STRATEGY_DCT16X8 {
+                                block_slot
+                            } else {
+                                0
+                            };
+                        let slot_bx = bx
+                            + if raw_strategy == RAW_STRATEGY_DCT8X16 {
+                                block_slot
+                            } else {
+                                0
+                            };
+                        quant_ac[c][slot_by][slot_bx][coeff_in_block] = qval;
+                    }
 
                     // Count non-zeros
-                    let _nz = num_nonzero_8x8_except_dc(&qblock, &mut nzeros[c][by][bx]);
-
-                    #[cfg(feature = "debug-tokens")]
-                    if by == 0 && bx == 0 && c == 1 {
-                        let nonzero_coeffs: Vec<(usize, i32, f32)> = qblock
-                            .iter()
-                            .enumerate()
-                            .filter(|&(_, v)| *v != 0)
-                            .map(|(i, v)| (i, *v, dct_blocks[c][i]))
+                    if covered_blocks == 1 {
+                        num_nonzero_8x8_except_dc(&quant_ac[c][by][bx], &mut nzeros[c][by][bx]);
+                        // For DCT8, raw == shifted
+                        raw_nzeros[c][by][bx] = nzeros[c][by][bx];
+                    } else {
+                        // Assemble contiguous buffer for nzeros counting
+                        let full_block: Vec<i32> = (0..size)
+                            .map(|idx| {
+                                let block_slot = idx / DCT_BLOCK_SIZE;
+                                let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                                let slot_by = by
+                                    + if raw_strategy == RAW_STRATEGY_DCT16X8 {
+                                        block_slot
+                                    } else {
+                                        0
+                                    };
+                                let slot_bx = bx
+                                    + if raw_strategy == RAW_STRATEGY_DCT8X16 {
+                                        block_slot
+                                    } else {
+                                        0
+                                    };
+                                quant_ac[c][slot_by][slot_bx][coeff_in_block]
+                            })
                             .collect();
-                        debug_log!(
-                            "AC Y[0,0] qac={:.4} (scale={:.4} * raw_quant={}), nonzero coeffs: {:?}",
-                            qac,
-                            params.scale,
-                            quant_field[by * xsize_blocks + bx],
-                            nonzero_coeffs
+                        // cx/cy for nzeros: use the dimension order expected by tokenizer
+                        // DCT16X8 (raw=1): 1 wide × 2 tall, but C++ swaps so cx≥cy → cx=2, cy=1
+                        // DCT8X16 (raw=2): 2 wide × 1 tall → cx=2, cy=1
+                        let (cx, cy) = if covered_y > covered_x {
+                            (covered_y, covered_x) // swap so cx >= cy
+                        } else {
+                            (covered_x, covered_y)
+                        };
+                        // num_nonzero_except_llf writes into a flat buffer with stride.
+                        // Since nzeros is row-of-rows, we need a flat scratch buffer
+                        // that spans covered_blocks_y rows, then copy back.
+                        let flat_len = (covered_y - 1) * xsize_blocks + covered_x;
+                        let mut flat_nz = vec![0u8; flat_len];
+                        let raw_nz = num_nonzero_except_llf(
+                            cx,
+                            cy,
+                            &full_block,
+                            xsize_blocks,
+                            &mut flat_nz,
+                            covered_x,
+                            covered_y,
                         );
-                        debug_log!(
-                            "AC Y[0,0] DC={:.4}, coeff[63]={:.4} (checkerboard freq)",
-                            dct_blocks[c][0],
-                            dct_blocks[c][63]
-                        );
+                        // Copy shifted nzeros back into per-row array (for prediction)
+                        for dy in 0..covered_y {
+                            for dx in 0..covered_x {
+                                nzeros[c][by + dy][bx + dx] = flat_nz[dx + dy * xsize_blocks];
+                            }
+                        }
+                        // Store raw (unshifted) nzeros at first-block position
+                        raw_nzeros[c][by][bx] = raw_nz;
                     }
                 }
             }
         }
 
-        (quant_dc, quant_ac, nzeros)
+        (quant_dc, quant_ac, nzeros, raw_nzeros)
     }
 
     /// Write the file header (SizeHeader + ImageMetadata).
@@ -733,6 +864,7 @@ impl TinyEncoder {
     ///
     /// For single-group images (≤256x256), dc_group_idx is 0 and covers the whole image.
     /// For multi-group images, each DC group covers a 256x256 block region (2048x2048 pixels).
+    #[allow(clippy::too_many_arguments)]
     fn write_dc_group(
         &self,
         dc_group_idx: usize,
@@ -742,6 +874,7 @@ impl TinyEncoder {
         xsize_dc_groups: usize,
         quant_field: &[u8],
         cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -785,9 +918,16 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         let after_dc_tokens = writer.bits_written();
 
-        // AC metadata header - uses region block count
+        // AC metadata header - count first blocks (distinct transforms) in region
         let num_blocks = region_xsize * region_ysize;
-        let num_ac_blocks = num_blocks; // All DCT8, so all blocks are first blocks
+        let mut num_ac_blocks = 0;
+        for ry in start_by..end_by {
+            for rx in start_bx..end_bx {
+                if ac_strategy.is_first(rx, ry) {
+                    num_ac_blocks += 1;
+                }
+            }
+        }
         let nb_bits = ceil_log2_nonzero(num_blocks);
         if nb_bits != 0 {
             writer.write(nb_bits as usize, (num_ac_blocks - 1) as u64)?;
@@ -806,6 +946,7 @@ impl TinyEncoder {
             start_bx,
             start_by,
             cfl_map,
+            ac_strategy,
             dc_code,
             writer,
         )?;
@@ -879,14 +1020,17 @@ impl TinyEncoder {
     }
 
     /// Write AC group section.
+    #[allow(clippy::too_many_arguments)]
     fn write_ac_group(
         &self,
         group_idx: usize,
         quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[Vec<Vec<u8>>; 3],
+        raw_nzeros: &[Vec<Vec<u8>>; 3],
         xsize_blocks: usize,
         ysize_blocks: usize,
         xsize_groups: usize,
+        ac_strategy: &AcStrategyMap,
         ac_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -923,67 +1067,83 @@ impl TinyEncoder {
         // We must match this exact order!
         for by in start_by..end_by {
             for bx in start_bx..end_bx {
+                // Skip non-first blocks of multi-block transforms
+                if !ac_strategy.is_first(bx, by) {
+                    continue;
+                }
+
+                let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                let covered_x = ac_strategy.covered_blocks_x(bx, by);
+                let covered_y = ac_strategy.covered_blocks_y(bx, by);
+                let covered_blocks = covered_x * covered_y;
+                let size = covered_blocks * DCT_BLOCK_SIZE;
+                let strategy_code = ac_strategy.strategy_code(bx, by);
+
                 let block_start_bits = writer.bits_written();
 
                 // Process channels in order: Y (1), X (0), B (2)
                 for &c in &[1usize, 0, 2] {
-                    let block = &quant_ac[c][by][bx];
-                    let nz = nzeros[c][by][bx];
+                    // Raw (unshifted) nzeros for bitstream token
+                    let nz = raw_nzeros[c][by][bx];
 
-                    // Predict nzeros from neighbors
-                    // At group boundaries, treat as edge (no neighbor from other groups)
+                    // Predict nzeros from shifted neighbors (matches C++ PredictFromTopAndLeft)
                     let row_top = if by > start_by {
                         Some(nzeros[c][by - 1].as_slice())
                     } else {
-                        None // First row of group: no top neighbor
+                        None
                     };
-
-                    // For left prediction, we need the position relative to group start
-                    // If at first column of group, use default prediction
                     let local_bx = bx - start_bx;
                     let predicted_nz = if local_bx == 0 {
-                        // First column of group: predict from top only (or default)
                         match row_top {
                             Some(top) => top[bx] as i32,
-                            None => 32, // Default value
+                            None => 32,
                         }
                     } else {
-                        // Not first column: use standard prediction
                         predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
                     };
 
-                    // Validate nzeros matches actual count (debug only)
-                    #[cfg(debug_assertions)]
-                    {
-                        let actual_nz = block[1..].iter().filter(|&&x| x != 0).count() as u8;
-                        debug_assert_eq!(
-                            nz, actual_nz,
-                            "nzeros mismatch at c={} by={} bx={}: stored={} actual={}",
-                            c, by, bx, nz, actual_nz
-                        );
-                    }
-
-                    // Tokenize AC coefficients
-                    #[cfg(feature = "debug-tokens")]
-                    if by < start_by + 2 && bx < start_bx + 2 {
-                        debug_log!(
-                            "AC[c={},by={},bx={}]: nz={}, predicted={}",
+                    if covered_blocks == 1 {
+                        // DCT8: use existing single-block path
+                        tokenize_ac_coefficients(
+                            &quant_ac[c][by][bx],
                             c,
-                            by,
-                            bx,
+                            strategy_code,
                             nz,
-                            predicted_nz
-                        );
+                            predicted_nz,
+                            ac_code,
+                            writer,
+                        )?;
+                    } else {
+                        // Multi-block: assemble contiguous coefficient buffer
+                        let full_block: Vec<i32> = (0..size)
+                            .map(|idx| {
+                                let block_slot = idx / DCT_BLOCK_SIZE;
+                                let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                                let slot_by = by
+                                    + if raw_strategy == RAW_STRATEGY_DCT16X8 {
+                                        block_slot
+                                    } else {
+                                        0
+                                    };
+                                let slot_bx = bx
+                                    + if raw_strategy == RAW_STRATEGY_DCT8X16 {
+                                        block_slot
+                                    } else {
+                                        0
+                                    };
+                                quant_ac[c][slot_by][slot_bx][coeff_in_block]
+                            })
+                            .collect();
+                        tokenize_ac_coefficients(
+                            &full_block,
+                            c,
+                            strategy_code,
+                            nz,
+                            predicted_nz,
+                            ac_code,
+                            writer,
+                        )?;
                     }
-                    tokenize_ac_coefficients(
-                        block,
-                        c,
-                        AC_STRATEGY_DCT8,
-                        nz,
-                        predicted_nz,
-                        ac_code,
-                        writer,
-                    )?;
                 }
 
                 // Debug: track bits per block
@@ -1063,8 +1223,10 @@ impl TinyEncoder {
         quant_dc: &[Vec<Vec<i16>>; 3],
         quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[Vec<Vec<u8>>; 3],
+        raw_nzeros: &[Vec<Vec<u8>>; 3],
         quant_field: &[u8],
         cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
@@ -1090,6 +1252,7 @@ impl TinyEncoder {
                 start_bx,
                 start_by,
                 cfl_map,
+                ac_strategy,
             );
             dc_tokens_per_group.push(dc_tokens);
             ac_metadata_tokens_per_group.push(md_tokens);
@@ -1108,10 +1271,21 @@ impl TinyEncoder {
             let mut tokens = Vec::new();
             for by in start_by..end_by {
                 for bx in start_bx..end_bx {
+                    if !ac_strategy.is_first(bx, by) {
+                        continue;
+                    }
+                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                    let covered_x = ac_strategy.covered_blocks_x(bx, by);
+                    let covered_y = ac_strategy.covered_blocks_y(bx, by);
+                    let covered_blocks = covered_x * covered_y;
+                    let size = covered_blocks * DCT_BLOCK_SIZE;
+                    let strategy_code = ac_strategy.strategy_code(bx, by);
+
                     for &c in &[1usize, 0, 2] {
-                        let block = &quant_ac[c][by][bx];
-                        let nz = nzeros[c][by][bx];
+                        // Raw (unshifted) nzeros for bitstream token
+                        let nz = raw_nzeros[c][by][bx];
                         let local_bx = bx - start_bx;
+                        // Prediction uses shifted nzeros from neighbors
                         let row_top = if by > start_by {
                             Some(nzeros[c][by - 1].as_slice())
                         } else {
@@ -1125,9 +1299,45 @@ impl TinyEncoder {
                         } else {
                             predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
                         };
-                        let block_tokens =
-                            collect_ac_coefficients(block, c, AC_STRATEGY_DCT8, nz, predicted_nz);
-                        tokens.extend_from_slice(&block_tokens);
+                        if covered_blocks == 1 {
+                            let block_tokens = collect_ac_coefficients(
+                                &quant_ac[c][by][bx],
+                                c,
+                                strategy_code,
+                                nz,
+                                predicted_nz,
+                            );
+                            tokens.extend_from_slice(&block_tokens);
+                        } else {
+                            // Assemble contiguous buffer
+                            let full_block: Vec<i32> = (0..size)
+                                .map(|idx| {
+                                    let block_slot = idx / DCT_BLOCK_SIZE;
+                                    let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                                    let slot_by = by
+                                        + if raw_strategy == RAW_STRATEGY_DCT16X8 {
+                                            block_slot
+                                        } else {
+                                            0
+                                        };
+                                    let slot_bx = bx
+                                        + if raw_strategy == RAW_STRATEGY_DCT8X16 {
+                                            block_slot
+                                        } else {
+                                            0
+                                        };
+                                    quant_ac[c][slot_by][slot_bx][coeff_in_block]
+                                })
+                                .collect();
+                            let block_tokens = collect_ac_coefficients(
+                                &full_block,
+                                c,
+                                strategy_code,
+                                nz,
+                                predicted_nz,
+                            );
+                            tokens.extend_from_slice(&block_tokens);
+                        }
                     }
                 }
             }
@@ -1189,6 +1399,7 @@ impl TinyEncoder {
                 xsize_dc_groups,
                 &dc_tokens_per_group[0],
                 &ac_metadata_tokens_per_group[0],
+                ac_strategy,
                 &dc_code,
                 &mut dc_group,
             )?;
@@ -1228,6 +1439,7 @@ impl TinyEncoder {
                     xsize_dc_groups,
                     &dc_tokens_per_group[dc_group_idx],
                     &ac_metadata_tokens_per_group[dc_group_idx],
+                    ac_strategy,
                     &dc_code,
                     &mut dc_group,
                 )?;
@@ -1272,6 +1484,7 @@ impl TinyEncoder {
         xsize_dc_groups: usize,
         dc_tokens: &[Token],
         ac_metadata_tokens: &[Token],
+        ac_strategy: &AcStrategyMap,
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -1291,9 +1504,16 @@ impl TinyEncoder {
         // Write DC tokens
         write_tokens(dc_tokens, dc_code, writer)?;
 
-        // AC metadata sub-header (comes between DC tokens and AC metadata tokens)
+        // AC metadata sub-header — count first blocks (distinct transforms)
         let num_blocks = region_xsize * region_ysize;
-        let num_ac_blocks = num_blocks;
+        let mut num_ac_blocks = 0;
+        for ry in start_by..end_by {
+            for rx in start_bx..end_bx {
+                if ac_strategy.is_first(rx, ry) {
+                    num_ac_blocks += 1;
+                }
+            }
+        }
         let nb_bits = ceil_log2_nonzero(num_blocks);
         if nb_bits != 0 {
             writer.write(nb_bits as usize, (num_ac_blocks - 1) as u64)?;

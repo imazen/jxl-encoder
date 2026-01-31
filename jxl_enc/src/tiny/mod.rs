@@ -19,6 +19,7 @@
 
 mod ac_context;
 mod ac_group;
+mod ac_strategy;
 mod adaptive_quant;
 mod chroma_from_luma;
 mod cluster;

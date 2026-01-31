@@ -254,12 +254,10 @@ pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
         }
     }
 
-    // Transpose 8x16 -> 16x8
-    for row in 0..8 {
-        for col in 0..16 {
-            output[col * 8 + row] = transposed[row * 16 + col];
-        }
-    }
+    // No final transpose — C++ ComputeScaledDCT<16,8> (ROWS >= COLS branch)
+    // does not include a final transpose, matching DCT8x8 behavior.
+    // Output is in 8x16 layout: output[fx * 16 + fy] for frequency (fy, fx).
+    output.copy_from_slice(&transposed);
 }
 
 /// Compute scaled 8x16 DCT (8 rows, 16 columns).
@@ -316,10 +314,11 @@ pub fn dc_from_dct_8x8(coeffs: &[f32; 64]) -> f32 {
 ///
 /// Uses ReinterpretingIDCT to convert LF coefficients to DC.
 pub fn dc_from_dct_16x8(coeffs: &[f32; 128]) -> [f32; 2] {
-    // For 16x8, the LF region is 2x1 coefficients
-    // We need to apply inverse scaling and mini-IDCT
+    // For 16x8, the LF region is 2x1 coefficients (2 rows, 1 col in freq domain)
+    // In the 8×16 output layout (stride 16), both LLF coefficients are at indices 0 and 1.
+    // (Same layout as C++ which uses input_stride=16 and reads input[0], input[1])
     let lf0 = coeffs[0] * DCT_RESAMPLE_SCALE_2_TO_16[0];
-    let lf1 = coeffs[8] * DCT_RESAMPLE_SCALE_2_TO_16[1]; // coeffs[1*8] in 16x8 layout
+    let lf1 = coeffs[1] * DCT_RESAMPLE_SCALE_2_TO_16[1];
 
     // 2-point IDCT: [a+b, a-b]
     [lf0 + lf1, lf0 - lf1]
