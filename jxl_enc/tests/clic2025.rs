@@ -3042,7 +3042,10 @@ fn test_cpp_vs_rust_quality() {
         ssim_tool
     );
     if !have_cpp {
-        eprintln!("WARNING: cjxl_tiny not found at {}, skipping C++ column", cjxl_tiny);
+        eprintln!(
+            "WARNING: cjxl_tiny not found at {}, skipping C++ column",
+            cjxl_tiny
+        );
     }
 
     // Load first 5 images from corpus (sorted for reproducibility)
@@ -3130,7 +3133,10 @@ fn test_cpp_vs_rust_quality() {
 
     // Helper: measure SSIM2 between two PNGs
     fn ssim2(tool: &str, a: &str, b: &str) -> Option<f64> {
-        let out = std::process::Command::new(tool).args([a, b]).output().ok()?;
+        let out = std::process::Command::new(tool)
+            .args([a, b])
+            .output()
+            .ok()?;
         if !out.status.success() {
             return None;
         }
@@ -3245,6 +3251,192 @@ fn test_cpp_vs_rust_quality() {
             } else {
                 eprintln!("AVG   {:>10.2}          {:>10.2}", ron_avg, roff_avg);
             }
+        }
+        eprintln!();
+    }
+}
+
+/// Multi-group quality test: full 1024x1024 images (4+ groups).
+///
+/// Verifies AC strategy works on multi-group images using the same fair
+/// methodology (djxl + ssimulacra2 CLI). C++ cjxl_tiny crashes on >256x256.
+///
+/// Source images: ~/work/codec-corpus/clic2025-1024/ (first 5 PNGs, sorted)
+#[test]
+#[ignore]
+fn test_multigroup_quality() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+    let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
+    let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
+    let work_dir = "/mnt/v/output/jxl-encoder-rs/multigroup-quality";
+    std::fs::create_dir_all(work_dir).unwrap();
+
+    assert!(std::path::Path::new(&djxl).exists(), "djxl not found");
+    assert!(
+        std::path::Path::new(&ssim_tool).exists(),
+        "ssimulacra2 not found"
+    );
+
+    let mut entries: Vec<_> = std::fs::read_dir(&corpus_dir)
+        .unwrap_or_else(|_| panic!("corpus not found: {}", corpus_dir))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .collect();
+    entries.sort_by_key(|e| e.path());
+    let entries: Vec<_> = entries.into_iter().take(5).collect();
+    assert!(!entries.is_empty(), "no PNGs in {}", corpus_dir);
+
+    let distances = [0.5f32, 1.0, 2.0];
+
+    fn run(cmd: &str, args: &[&str]) -> bool {
+        std::process::Command::new(cmd)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn ssim2(tool: &str, a: &str, b: &str) -> Option<f64> {
+        let out = std::process::Command::new(tool)
+            .args([a, b])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .last()?
+            .trim()
+            .parse::<f64>()
+            .ok()
+    }
+
+    struct ImageInfo {
+        png_path: String,
+        width: u32,
+        height: u32,
+        linear_rgb: Vec<f32>,
+        name: String,
+    }
+    let mut images: Vec<ImageInfo> = Vec::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        let img = image::open(entry.path()).unwrap();
+        let (w, h) = img.dimensions();
+        let rgb = img.to_rgb8();
+
+        let png_path = format!("{}/ref_{}.png", work_dir, i);
+        rgb.save(&png_path).unwrap();
+
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                [
+                    (p[0] as f32 / 255.0).powf(2.2),
+                    (p[1] as f32 / 255.0).powf(2.2),
+                    (p[2] as f32 / 255.0).powf(2.2),
+                ]
+            })
+            .collect();
+
+        let name = entry
+            .path()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        images.push(ImageInfo {
+            png_path,
+            width: w,
+            height: h,
+            linear_rgb,
+            name,
+        });
+    }
+
+    eprintln!("\n=== Multi-Group Quality (full images, djxl + ssimulacra2) ===");
+    for img in &images {
+        eprintln!(
+            "  {}: {}x{} ({} groups)",
+            img.name,
+            img.width,
+            img.height,
+            ((img.width + 255) / 256) * ((img.height + 255) / 256)
+        );
+    }
+    eprintln!();
+
+    for &d in &distances {
+        eprintln!("--- distance={:.1} ---", d);
+        eprintln!(
+            "{:<6} {:>10} {:>8}  {:>10} {:>8}  {:>8}",
+            "img", "Rust_ON", "size", "Rust_OFF", "size", "ON-OFF"
+        );
+
+        let mut ron_scores = Vec::new();
+        let mut roff_scores = Vec::new();
+        let mut ron_sizes = Vec::new();
+        let mut roff_sizes = Vec::new();
+
+        for (i, img) in images.iter().enumerate() {
+            let (w, h) = (img.width as usize, img.height as usize);
+
+            let ron_jxl = format!("{}/rust_{}_d{:.1}_on.jxl", work_dir, i, d);
+            let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
+            let mut enc = jxl_enc::tiny::TinyEncoder::new(d);
+            enc.ac_strategy_enabled = true;
+            let ron_bytes = enc.encode(w, h, &img.linear_rgb).unwrap();
+            let ron_size = ron_bytes.len();
+            std::fs::write(&ron_jxl, &ron_bytes).unwrap();
+            run(&djxl, &[&ron_jxl, &ron_dec]);
+            let ron_s = ssim2(&ssim_tool, &img.png_path, &ron_dec);
+
+            let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
+            let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
+            enc.ac_strategy_enabled = false;
+            let roff_bytes = enc.encode(w, h, &img.linear_rgb).unwrap();
+            let roff_size = roff_bytes.len();
+            std::fs::write(&roff_jxl, &roff_bytes).unwrap();
+            run(&djxl, &[&roff_jxl, &roff_dec]);
+            let roff_s = ssim2(&ssim_tool, &img.png_path, &roff_dec);
+
+            if let (Some(rs), Some(fs)) = (ron_s, roff_s) {
+                ron_scores.push(rs);
+                roff_scores.push(fs);
+                ron_sizes.push(ron_size);
+                roff_sizes.push(roff_size);
+                eprintln!(
+                    "img{}  {:>10.2} {:>7}B  {:>10.2} {:>7}B  {:>+7.2}",
+                    i,
+                    rs,
+                    ron_size,
+                    fs,
+                    roff_size,
+                    rs - fs
+                );
+            }
+        }
+
+        if !ron_scores.is_empty() {
+            let n = ron_scores.len() as f64;
+            let ron_avg = ron_scores.iter().sum::<f64>() / n;
+            let roff_avg = roff_scores.iter().sum::<f64>() / n;
+            let ron_sz = ron_sizes.iter().sum::<usize>() / ron_sizes.len();
+            let roff_sz = roff_sizes.iter().sum::<usize>() / roff_sizes.len();
+            let size_pct = (ron_sz as f64 - roff_sz as f64) / roff_sz as f64 * 100.0;
+            eprintln!(
+                "AVG   {:>10.2} {:>7}B  {:>10.2} {:>7}B  {:>+7.2}  ({:+.1}% size)",
+                ron_avg,
+                ron_sz,
+                roff_avg,
+                roff_sz,
+                ron_avg - roff_avg,
+                size_pct
+            );
         }
         eprintln!();
     }
