@@ -69,7 +69,7 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
 - [x] Adaptive quantization (per-block raw_quant from perceptual masking) - fixes quality ceiling
 - [x] Chroma-from-luma (per-tile ytox/ytob from least-squares fitting)
-- [x] Adaptive AC strategy (DCT8/DCT16x8/DCT8x16 per 16x16 region) - 8% smaller files, within ~2-4 SSIM2 of C++ reference
+- [x] Adaptive AC strategy (DCT8/DCT16x8/DCT8x16 per 16x16 region) - 8% smaller files, beats C++ reference by ~2.3 SSIM2
 - [x] C++ QuantizeBlockAC thresholding (per-quadrant coefficient zeroing)
 - [x] Y roundtrip quantization (AdjustQuantBias dequant for CfL accuracy)
 - [x] x_qm_mul for X channel quantization (distance-dependent scaling)
@@ -85,6 +85,27 @@ A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL
 - [ ] High-level encoder API
 
 ## Resolved Bugs
+
+### DCT Resample Scale Direction Bug (FIXED Jan 31, 2026)
+
+**Issue**: AC strategy selection (DCT16x8/DCT8x16) caused 4-13 SSIM2 quality loss
+compared to DCT8-only, far worse than C++ reference (~2 SSIM2 loss).
+
+**Root Cause**: `dc_from_dct_16x8()` and `dc_from_dct_8x16()` used
+`DCT_RESAMPLE_SCALE_2_TO_16[1] = 1.109` (the inverse direction) when they should
+use `DCT_RESAMPLE_SCALE_16_TO_2[1] = 0.902` (the forward direction). These are
+reciprocals. The C++ `DCFromLowestFrequencies` uses `DCTTotalResampleScale<16, 2>`
+which goes FROM the 16-point DCT domain TO the 2-point domain.
+
+The wrong scale caused the second LLF coefficient to be ~1.23x too large, producing
+wrong DC values for all non-DCT8 blocks. This propagated through Y roundtrip
+(affecting CfL) and DC prediction.
+
+**Fix**: Changed both functions to use `DCT_RESAMPLE_SCALE_16_TO_2` instead of
+`DCT_RESAMPLE_SCALE_2_TO_16`.
+
+**Impact**: ON-OFF gap dropped from 4-13 SSIM2 to 0.0-0.2 SSIM2.
+Rust ON now beats C++ by ~2.3-2.6 SSIM2 at all distances.
 
 ### DCT16x8 Final Transpose Bug (FIXED Jan 31, 2026)
 
@@ -246,33 +267,22 @@ dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder
 Fair apples-to-apples comparison: same 256x256 center crops from CLIC 2025, same
 decoder (djxl), same metric tool (ssimulacra2 CLI). Date: 2026-01-31.
 
+After fixing the DCT resample scale direction bug (see Resolved Bugs below):
+
 **Excluding img3 (C++ outlier — scores 20-30 below other images at all distances):**
 
-| Distance | C++ (SSIM2) | Rust ON | Rust OFF | C++ vs Rust ON |
+| Distance | C++ (SSIM2) | Rust ON | Rust OFF | Rust ON vs C++ |
 |----------|-------------|---------|----------|----------------|
-| d=0.5    | 85.57       | 82.00   | 88.12    | C++ +3.6       |
-| d=1.0    | 79.76       | 77.99   | 82.24    | C++ +1.8       |
-| d=2.0    | 68.06       | 69.06   | 70.55    | Rust ON +1.0   |
-
-**Including all 5 images (img3 is a C++ encoder bug — catastrophic quality):**
-
-| Distance | C++ (SSIM2) | Rust ON | Rust OFF |
-|----------|-------------|---------|----------|
-| d=0.5    | 79.69       | 81.77   | 88.22    |
-| d=1.0    | 74.42       | 77.67   | 82.06    |
-| d=2.0    | 63.68       | 69.00   | 70.51    |
+| d=0.5    | 85.57       | 87.89   | 88.13    | Rust +2.3      |
+| d=1.0    | 79.77       | 82.16   | 82.24    | Rust +2.4      |
+| d=2.0    | 68.06       | 70.64   | 70.55    | Rust +2.6      |
 
 **Conclusions:**
-- C++ AC strategy selection produces ~2-4 SSIM2 better quality than Rust at d=0.5-1.0
-- At d=2.0, Rust matches or slightly beats C++ (+1.0 SSIM2)
-- Rust OFF (DCT8-only) beats BOTH C++ and Rust ON at all distances, but at ~6-8% larger files
-- The ON vs OFF gap (~4-6 SSIM2) is inherent to entropy-based strategy selection
-- C++ has a catastrophic bug on img3 (SSIM2 drops to 46-56 vs Rust's 68-88)
+- Rust ON beats C++ by ~2.3-2.6 SSIM2 at all distances
+- ON-OFF gap is 0.0-0.2 SSIM2 (strategy selection has negligible quality cost)
+- Strategy selection provides 5-8% compression benefit with near-zero quality loss
+- C++ has a catastrophic bug on img3 (SSIM2 drops to 46-56 vs Rust's 71-88)
 - C++ cjxl_tiny crashes on multi-group images (>256x256)
-
-**Next steps to close the quality gap:**
-- Investigate why C++ does better at d=0.5-1.0 (strategy heuristic thresholds?)
-- The entropy-based strategy selection may need quality-aware weighting
 
 Output dir: `/mnt/v/output/jxl-encoder-rs/quality-comparison/`
 Test: `cargo test -p jxl_enc --test clic2025 test_save_rust_jxl_for_comparison -- --ignored`
