@@ -436,12 +436,16 @@ impl TinyEncoder {
 
                 // Step 2: Apply CFL (chroma from luma) to X and B channels
                 // Uses per-tile ytox/ytob values from the CfL map.
-                // C++ applies CfL to ALL coefficients including DC.
+                //
+                // Note: CfL is only applied to AC coefficients (idx 1..64).
+                // DC has its own separate CfL mechanism in the DC quantization
+                // step (the fixed dc_cfl_factor = 0.5 for B channel). The decoder
+                // applies tile-level CfL only to AC, not DC.
                 let tx = bx / TILE_DIM_IN_BLOCKS;
                 let ty_cfl = by / TILE_DIM_IN_BLOCKS;
                 let x_factor = ytox_ratio(cfl_map.ytox_at(tx, ty_cfl));
                 let b_factor = ytob_ratio(cfl_map.ytob_at(tx, ty_cfl));
-                for idx in 0..DCT_BLOCK_SIZE {
+                for idx in 1..DCT_BLOCK_SIZE {
                     dct_blocks[0][idx] -= x_factor * dct_blocks[1][idx];
                     dct_blocks[2][idx] -= b_factor * dct_blocks[1][idx];
                 }
