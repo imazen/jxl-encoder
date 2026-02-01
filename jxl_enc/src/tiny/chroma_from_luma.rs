@@ -105,16 +105,20 @@ fn find_best_multiplier(
 /// values by DCT-transforming each block, weighting coefficients by inverse
 /// quantization matrices, and fitting a least-squares linear model.
 ///
+/// `stride` is the row stride (padded width) of the XYB buffers.
+/// `buf_height` is the padded height. Both must be multiples of 8.
+///
 /// Ported from libjxl-tiny's `ComputeCmapTile`.
 pub fn compute_cfl_map(
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
-    width: usize,
-    height: usize,
+    stride: usize,
+    buf_height: usize,
     xsize_blocks: usize,
     ysize_blocks: usize,
 ) -> CflMap {
+    let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
     let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
     let num_tiles = xsize_tiles * ysize_tiles;
@@ -151,10 +155,10 @@ pub fn compute_cfl_map(
                     let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
 
                     for dy in 0..BLOCK_DIM {
+                        let py = by * BLOCK_DIM + dy;
                         for dx in 0..BLOCK_DIM {
-                            let py = (by * BLOCK_DIM + dy).min(height - 1);
-                            let px = (bx * BLOCK_DIM + dx).min(width - 1);
-                            let idx = py * width + px;
+                            let px = bx * BLOCK_DIM + dx;
+                            let idx = py * stride + px;
                             block_y[dy * BLOCK_DIM + dx] = xyb_y[idx];
                             block_x[dy * BLOCK_DIM + dx] = xyb_x[idx];
                             block_b[dy * BLOCK_DIM + dx] = xyb_b[idx];

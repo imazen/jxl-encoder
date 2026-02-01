@@ -120,9 +120,8 @@ impl AcStrategyMap {
 ///
 /// # Arguments
 /// * `raw_strategy` - 0=DCT8, 1=DCT16X8, 2=DCT8X16
-/// * `xyb` - The three XYB channel planes
-/// * `width` - Image width in pixels
-/// * `height` - Image height in pixels
+/// * `xyb` - The three XYB channel planes (padded to block boundaries)
+/// * `stride` - Row stride (padded width) of the XYB buffers
 /// * `bx`, `by` - Block coordinates of the top-left 8×8 block
 /// * `distance` - Butteraugli target distance
 /// * `quant_field` - Per-block quant values (flat, indexed by*xblocks+bx)
@@ -133,8 +132,7 @@ impl AcStrategyMap {
 fn estimate_entropy(
     raw_strategy: u8,
     xyb: [&[f32]; 3],
-    width: usize,
-    height: usize,
+    stride: usize,
     bx: usize,
     by: usize,
     distance: f32,
@@ -156,7 +154,7 @@ fn estimate_entropy(
         match raw_strategy {
             RAW_STRATEGY_DCT8 => {
                 let mut input = [0.0f32; 64];
-                extract_block_8x8(xyb_c, width, height, bx, by, &mut input);
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 64];
                 dct_8x8(&input, &mut output);
                 block[offset..offset + 64].copy_from_slice(&output);
@@ -164,7 +162,7 @@ fn estimate_entropy(
             RAW_STRATEGY_DCT16X8 => {
                 // 1 wide × 2 tall: extract 8×16 pixel region
                 let mut input = [0.0f32; 128];
-                extract_block_8x16(xyb_c, width, height, bx, by, &mut input);
+                extract_block_8x16(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 128];
                 dct_16x8(&input, &mut output);
                 block[offset..offset + 128].copy_from_slice(&output);
@@ -172,7 +170,7 @@ fn estimate_entropy(
             RAW_STRATEGY_DCT8X16 => {
                 // 2 wide × 1 tall: extract 16×8 pixel region
                 let mut input = [0.0f32; 128];
-                extract_block_16x8(xyb_c, width, height, bx, by, &mut input);
+                extract_block_16x8(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 128];
                 dct_8x16(&input, &mut output);
                 block[offset..offset + 128].copy_from_slice(&output);
@@ -257,58 +255,44 @@ fn estimate_entropy(
 
 // ─── Block extraction helpers ────────────────────────────────────────────────
 
-/// Extract an 8×8 pixel block from a plane with edge clamping.
-fn extract_block_8x8(
-    plane: &[f32],
-    width: usize,
-    height: usize,
-    bx: usize,
-    by: usize,
-    out: &mut [f32; 64],
-) {
+/// Extract an 8×8 pixel block from a plane.
+///
+/// The buffer must be padded to at least (by*8+8) rows and (bx*8+8) columns
+/// with edge-replicated values, so no bounds checking is needed.
+fn extract_block_8x8(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 64]) {
     for dy in 0..8 {
+        let py = by * BLOCK_DIM + dy;
         for dx in 0..8 {
-            let py = (by * BLOCK_DIM + dy).min(height - 1);
-            let px = (bx * BLOCK_DIM + dx).min(width - 1);
-            out[dy * 8 + dx] = plane[py * width + px];
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 8 + dx] = plane[py * stride + px];
         }
     }
 }
 
 /// Extract an 8×16 pixel block (1 wide × 2 tall) for DCT16x8.
 /// Layout: 16 rows × 8 cols, row-major.
-fn extract_block_8x16(
-    plane: &[f32],
-    width: usize,
-    height: usize,
-    bx: usize,
-    by: usize,
-    out: &mut [f32; 128],
-) {
+///
+/// The buffer must be padded to at least (by*8+16) rows and (bx*8+8) columns.
+fn extract_block_8x16(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 128]) {
     for dy in 0..16 {
+        let py = by * BLOCK_DIM + dy;
         for dx in 0..8 {
-            let py = (by * BLOCK_DIM + dy).min(height - 1);
-            let px = (bx * BLOCK_DIM + dx).min(width - 1);
-            out[dy * 8 + dx] = plane[py * width + px];
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 8 + dx] = plane[py * stride + px];
         }
     }
 }
 
 /// Extract a 16×8 pixel block (2 wide × 1 tall) for DCT8x16.
 /// Layout: 8 rows × 16 cols, row-major.
-fn extract_block_16x8(
-    plane: &[f32],
-    width: usize,
-    height: usize,
-    bx: usize,
-    by: usize,
-    out: &mut [f32; 128],
-) {
+///
+/// The buffer must be padded to at least (by*8+8) rows and (bx*8+16) columns.
+fn extract_block_16x8(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 128]) {
     for dy in 0..8 {
+        let py = by * BLOCK_DIM + dy;
         for dx in 0..16 {
-            let py = (by * BLOCK_DIM + dy).min(height - 1);
-            let px = (bx * BLOCK_DIM + dx).min(width - 1);
-            out[dy * 16 + dx] = plane[py * width + px];
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 16 + dx] = plane[py * stride + px];
         }
     }
 }
@@ -323,11 +307,11 @@ fn extract_block_16x8(
 /// # Arguments
 /// * `(bx0, by0)` - Tile origin in block coordinates
 /// * `(cx, cy)` - Position within tile (in 8×8 blocks, must be even)
+/// * `stride` - Row stride (padded width) of the XYB buffers
 #[allow(clippy::too_many_arguments)]
 fn find_best_16x16_transform(
     xyb: [&[f32]; 3],
-    width: usize,
-    height: usize,
+    stride: usize,
     bx0: usize,
     by0: usize,
     cx: usize,
@@ -361,8 +345,7 @@ fn find_best_16x16_transform(
             let e = estimate_entropy(
                 RAW_STRATEGY_DCT8,
                 xyb,
-                width,
-                height,
+                stride,
                 abs_bx + dx,
                 abs_by + dy,
                 distance,
@@ -381,8 +364,7 @@ fn find_best_16x16_transform(
         * estimate_entropy(
             RAW_STRATEGY_DCT16X8,
             xyb,
-            width,
-            height,
+            stride,
             abs_bx,
             abs_by,
             distance,
@@ -396,8 +378,7 @@ fn find_best_16x16_transform(
         * estimate_entropy(
             RAW_STRATEGY_DCT16X8,
             xyb,
-            width,
-            height,
+            stride,
             abs_bx + 1,
             abs_by,
             distance,
@@ -413,8 +394,7 @@ fn find_best_16x16_transform(
         * estimate_entropy(
             RAW_STRATEGY_DCT8X16,
             xyb,
-            width,
-            height,
+            stride,
             abs_bx,
             abs_by,
             distance,
@@ -428,8 +408,7 @@ fn find_best_16x16_transform(
         * estimate_entropy(
             RAW_STRATEGY_DCT8X16,
             xyb,
-            width,
-            height,
+            stride,
             abs_bx,
             abs_by + 1,
             distance,
@@ -508,11 +487,12 @@ pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
 /// `find_best_16x16_transform()` for each.
 ///
 /// # Arguments
-/// * `xyb_x`, `xyb_y`, `xyb_b` - XYB channel planes
-/// * `width`, `height` - Image dimensions in pixels
+/// * `xyb_x`, `xyb_y`, `xyb_b` - XYB channel planes (padded to block boundaries)
+/// * `stride` - Row stride (padded width) of the XYB buffers
+/// * `buf_height` - Padded height of the XYB buffers
 /// * `xsize_blocks`, `ysize_blocks` - Image dimensions in 8×8 blocks
 /// * `distance` - Butteraugli target distance
-/// * `quant_field_u8` - Per-block raw_quant in [1, 255]
+/// * `quant_field_float` - Per-block float aq_map values
 /// * `masking` - Per-block masking field from adaptive quantization
 /// * `cfl_map` - Chroma-from-luma parameters
 #[allow(clippy::too_many_arguments)]
@@ -520,8 +500,8 @@ pub fn compute_ac_strategy(
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
-    width: usize,
-    height: usize,
+    stride: usize,
+    buf_height: usize,
     xsize_blocks: usize,
     ysize_blocks: usize,
     distance: f32,
@@ -529,6 +509,7 @@ pub fn compute_ac_strategy(
     masking: &[f32],
     cfl_map: &CflMap,
 ) -> AcStrategyMap {
+    let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
 
     // C++ passes the float aq_map values directly to EstimateEntropy.
@@ -556,8 +537,7 @@ pub fn compute_ac_strategy(
                 while cx + 1 < tile_w {
                     find_best_16x16_transform(
                         xyb,
-                        width,
-                        height,
+                        stride,
                         tile_bx,
                         tile_by,
                         cx,
@@ -642,9 +622,9 @@ mod tests {
     #[test]
     fn test_estimate_entropy_finite() {
         // Test that estimate_entropy produces finite positive values
-        let width = 16;
-        let height = 16;
-        let n = width * height;
+        let stride = 16;
+        let buf_height = 16;
+        let n = stride * buf_height;
         let xyb_x = vec![0.1f32; n];
         let xyb_y = vec![0.5f32; n];
         let xyb_b = vec![0.3f32; n];
@@ -655,8 +635,7 @@ mod tests {
         let ent = estimate_entropy(
             RAW_STRATEGY_DCT8,
             [&xyb_x, &xyb_y, &xyb_b],
-            width,
-            height,
+            stride,
             0,
             0,
             1.0,
