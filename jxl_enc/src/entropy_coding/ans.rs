@@ -29,18 +29,18 @@ const RLE_MARKER_SYM: u8 = 13;
 /// Format: (nbits, code_lsb) - the code to write for each symbol.
 /// This is the inverse of the decoder's lookup table in jxl-rs.
 const LOGCOUNT_PREFIX_CODE: [(u8, u8); 14] = [
-    (5, 0b10001), // 0: freq=0 (but we use 0 for zero, not logcount 0)
-    (4, 0b1011),  // 1: logcount=1, freq=1
-    (4, 0b1111),  // 2: logcount=2, freq in [2,3]
-    (4, 0b0011),  // 3: logcount=3, freq in [4,7]
-    (4, 0b1001),  // 4: logcount=4, freq in [8,15]
-    (4, 0b0111),  // 5: logcount=5, freq in [16,31]
-    (3, 0b100),   // 6: logcount=6, freq in [32,63]
-    (3, 0b010),   // 7: logcount=7, freq in [64,127]
-    (3, 0b101),   // 8: logcount=8, freq in [128,255]
-    (3, 0b110),   // 9: logcount=9, freq in [256,511]
-    (3, 0b000),   // 10: logcount=10, freq in [512,1023]
-    (6, 0b100001), // 11: logcount=11, freq in [1024,2047]
+    (5, 0b10001),   // 0: freq=0 (but we use 0 for zero, not logcount 0)
+    (4, 0b1011),    // 1: logcount=1, freq=1
+    (4, 0b1111),    // 2: logcount=2, freq in [2,3]
+    (4, 0b0011),    // 3: logcount=3, freq in [4,7]
+    (4, 0b1001),    // 4: logcount=4, freq in [8,15]
+    (4, 0b0111),    // 5: logcount=5, freq in [16,31]
+    (3, 0b100),     // 6: logcount=6, freq in [32,63]
+    (3, 0b010),     // 7: logcount=7, freq in [64,127]
+    (3, 0b101),     // 8: logcount=8, freq in [128,255]
+    (3, 0b110),     // 9: logcount=9, freq in [256,511]
+    (3, 0b000),     // 10: logcount=10, freq in [512,1023]
+    (6, 0b100001),  // 11: logcount=11, freq in [1024,2047]
     (7, 0b0000001), // 12: logcount=12, freq in [2048,4095]
     (7, 0b1000001), // 13: RLE marker
 ];
@@ -336,10 +336,10 @@ impl AnsDistribution {
         // Working bucket structure matching jxl-rs
         #[derive(Clone)]
         struct WorkingBucket {
-            dist: u16,           // Frequency of primary symbol
-            alias_symbol: u16,   // Alias symbol (used when pos >= cutoff)
-            alias_offset: u16,   // Offset for alias symbol
-            alias_cutoff: u16,   // Positions [0, cutoff) use primary, [cutoff, bucket_size) use alias
+            dist: u16,         // Frequency of primary symbol
+            alias_symbol: u16, // Alias symbol (used when pos >= cutoff)
+            alias_offset: u16, // Offset for alias symbol
+            alias_cutoff: u16, // Positions [0, cutoff) use primary, [cutoff, bucket_size) use alias
         }
 
         let mut buckets: Vec<WorkingBucket> = (0..table_size)
@@ -546,8 +546,13 @@ fn write_var_len_uint8(writer: &mut BitWriter, n: u8) -> Result<()> {
 
 /// Floor log2 of a value.
 #[inline]
-fn floor_log2(n: u32) -> u32 {
+pub fn floor_log2_ans(n: u32) -> u32 {
     if n == 0 { 0 } else { 31 - n.leading_zeros() }
+}
+
+#[inline]
+fn floor_log2(n: u32) -> u32 {
+    floor_log2_ans(n)
 }
 
 /// Precision calculation for frequency encoding.
@@ -790,13 +795,23 @@ impl ANSEncodingHistogram {
         }
         self.counts[omit_pos] = remainder;
 
-        // Verify omit_pos still has the highest (or tied) logcount
+        // Verify omit_pos is the FIRST symbol with the highest logcount.
+        // The decoder re-derives omit_pos by scanning symbols in order and picking
+        // the first one with the maximum logcount. We must ensure that after
+        // rebalancing, no EARLIER symbol has the same or higher logcount.
         let omit_logcount = floor_log2(self.counts[omit_pos] as u32) + 1;
         for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
-            if i != omit_pos && count > 0 {
+            if i == omit_pos {
+                continue;
+            }
+            if count > 0 {
                 let logcount = floor_log2(count as u32) + 1;
                 if logcount > omit_logcount {
-                    // Another symbol has higher logcount - decoder would pick wrong omit_pos
+                    // Higher logcount - decoder picks this instead
+                    return false;
+                }
+                if logcount == omit_logcount && i < omit_pos {
+                    // Same logcount but earlier position - decoder picks this instead
                     return false;
                 }
             }
@@ -1172,47 +1187,50 @@ mod tests {
     fn test_ans_roundtrip_manual() {
         // Create a simple flat distribution
         let dist = AnsDistribution::flat(2).unwrap();
-        
+
         println!("Distribution: {} symbols", dist.alphabet_size());
         for (i, sym) in dist.symbols.iter().enumerate() {
             println!("  Symbol {}: freq={}", i, sym.freq);
         }
-        
+
         // Encode symbol 0
         let mut encoder = AnsEncoder::new();
         let initial_state = encoder.state();
         println!("\nInitial state: 0x{:08x}", initial_state);
         assert_eq!(initial_state, 0x130000, "Initial state should be 0x130000");
-        
+
         let info = &dist.symbols[0];
         encoder.put_symbol(info);
         let encoded_state = encoder.state();
         println!("After encoding symbol 0: state=0x{:08x}", encoded_state);
-        
+
         // Now manually decode to verify
         let idx = encoded_state & 0xFFF;
         println!("Decode: idx = {}", idx);
-        
+
         // For flat distribution of 2, each has freq 2048
         // Symbol 0: cumul=0, freq=2048 -> positions [0, 2048)
         // Symbol 1: cumul=2048, freq=2048 -> positions [2048, 4096)
         let decoded_symbol = if idx < 2048 { 0 } else { 1 };
         let offset_in_symbol = if idx < 2048 { idx } else { idx - 2048 };
         let freq = 2048u32;
-        
+
         println!("Decoded symbol: {}", decoded_symbol);
         println!("Offset in symbol: {}", offset_in_symbol);
-        
+
         // The decoder does: next_state = (state >> 12) * freq + offset
         let quotient = encoded_state >> 12;
         let next_state = quotient * freq + offset_in_symbol;
-        println!("next_state = {} * {} + {} = 0x{:08x}", quotient, freq, offset_in_symbol, next_state);
-        
+        println!(
+            "next_state = {} * {} + {} = 0x{:08x}",
+            quotient, freq, offset_in_symbol, next_state
+        );
+
         // The next_state should be the initial state (0x130000)
         assert_eq!(next_state, 0x130000, "Decoded state should be 0x130000");
         assert_eq!(decoded_symbol, 0, "Decoded symbol should be 0");
     }
-    
+
     #[test]
     fn test_ans_roundtrip_multiple_symbols() {
         use crate::bit_writer::BitWriter;
@@ -1226,7 +1244,11 @@ mod tests {
         let dist = AnsDistribution::from_normalized_counts(&counts).unwrap();
 
         let symbols_to_encode: Vec<usize> = vec![0, 1, 2, 3, 0, 1];
-        println!("Encoding {} symbols: {:?}", symbols_to_encode.len(), symbols_to_encode);
+        println!(
+            "Encoding {} symbols: {:?}",
+            symbols_to_encode.len(),
+            symbols_to_encode
+        );
 
         // Encode in reverse order (as ANS requires)
         let mut encoder = AnsEncoder::new();
@@ -1243,9 +1265,11 @@ mod tests {
         println!("Encoded bytes: {:02x?}", encoded_bytes);
 
         // Build decoder histogram by writing and reading back
-        let ans_histo =
-            ANSEncodingHistogram::from_histogram(&Histogram::from_counts(&counts), ANSHistogramStrategy::Precise)
-                .unwrap();
+        let ans_histo = ANSEncodingHistogram::from_histogram(
+            &Histogram::from_counts(&counts),
+            ANSHistogramStrategy::Precise,
+        )
+        .unwrap();
         let mut hist_writer = BitWriter::new();
         ans_histo.write(&mut hist_writer).unwrap();
         let hist_bytes = hist_writer.finish_with_padding();
@@ -1253,7 +1277,10 @@ mod tests {
         let mut hist_br = BitReader::new(&hist_bytes);
         let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).unwrap();
 
-        println!("Decoded histogram frequencies: {:?}", &decoded_hist.frequencies[..4]);
+        println!(
+            "Decoded histogram frequencies: {:?}",
+            &decoded_hist.frequencies[..4]
+        );
 
         // Decode using jxl-rs compatible decoder
         let mut br = BitReader::new(&encoded_bytes);
@@ -1263,7 +1290,10 @@ mod tests {
         let mut decoded = Vec::new();
         for i in 0..symbols_to_encode.len() {
             let symbol = decoded_hist.read(&mut br, &mut ans_reader.0) as usize;
-            println!("  step {}: symbol={}, state=0x{:08x}", i, symbol, ans_reader.0);
+            println!(
+                "  step {}: symbol={}, state=0x{:08x}",
+                i, symbol, ans_reader.0
+            );
             decoded.push(symbol);
         }
 
@@ -1271,7 +1301,10 @@ mod tests {
         println!("Decoded:  {:?}", decoded);
         println!("Final state: 0x{:08x}", ans_reader.0);
 
-        assert_eq!(decoded, symbols_to_encode, "Decoded symbols should match original");
+        assert_eq!(
+            decoded, symbols_to_encode,
+            "Decoded symbols should match original"
+        );
         assert!(
             ans_reader.check_final_state().is_ok(),
             "Final state should be 0x130000, got 0x{:08x}",
@@ -1281,23 +1314,26 @@ mod tests {
 
     #[test]
     fn test_ans_histogram_write_decode_roundtrip() {
-        use crate::entropy_coding::histogram::Histogram;
         use crate::bit_writer::BitWriter;
+        use crate::entropy_coding::histogram::Histogram;
 
         // Create a histogram with several symbols
         let histo = Histogram::from_counts(&[100, 50, 25, 10]);
-        
-        let encoded = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
-        
+
+        let encoded =
+            ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+
         println!("Histogram: {:?}", histo.counts);
         println!("Encoded counts: {:?}", encoded.counts);
-        println!("Method: {}, alphabet_size: {}, omit_pos: {}", 
-                 encoded.method, encoded.alphabet_size, encoded.omit_pos);
-        
+        println!(
+            "Method: {}, alphabet_size: {}, omit_pos: {}",
+            encoded.method, encoded.alphabet_size, encoded.omit_pos
+        );
+
         // Verify sum is 4096
         let sum: i32 = encoded.counts.iter().sum();
         assert_eq!(sum, ANS_TAB_SIZE as i32, "Sum should be 4096");
-        
+
         // Write to bitstream
         let mut writer = BitWriter::new();
         encoded.write(&mut writer).unwrap();

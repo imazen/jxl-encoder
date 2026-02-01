@@ -5218,7 +5218,11 @@ fn test_ans_histogram_roundtrip_jxl_rs() {
 
         eprintln!(
             "Test '{}': alphabet={}, method={}, omit_pos={}, {} bytes",
-            name, encoded.alphabet_size, encoded.method, encoded.omit_pos, bytes.len()
+            name,
+            encoded.alphabet_size,
+            encoded.method,
+            encoded.omit_pos,
+            bytes.len()
         );
         eprintln!("  Counts: {:?}", &encoded.counts[..encoded.alphabet_size]);
         eprintln!("  Bytes: {:02x?}", &bytes[..bytes.len().min(16)]);
@@ -5254,7 +5258,9 @@ fn test_ans_histogram_roundtrip_jxl_rs() {
 #[test]
 fn test_ans_skewed_histogram_roundtrip() {
     use jxl_enc::bit_writer::BitWriter;
-    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder};
+    use jxl_enc::entropy_coding::ans::{
+        ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
+    };
     use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, BitReader};
     use jxl_enc::entropy_coding::histogram::Histogram;
 
@@ -5292,7 +5298,11 @@ fn test_ans_skewed_histogram_roundtrip() {
     let mut hist_writer = BitWriter::new();
     ans_histo.write(&mut hist_writer).expect("write failed");
     let hist_bytes = hist_writer.finish_with_padding();
-    eprintln!("\nHistogram bytes ({} bytes): {:02x?}", hist_bytes.len(), hist_bytes);
+    eprintln!(
+        "\nHistogram bytes ({} bytes): {:02x?}",
+        hist_bytes.len(),
+        hist_bytes
+    );
 
     // Parse with our decoder
     let mut hist_br = BitReader::new(&hist_bytes);
@@ -5313,7 +5323,8 @@ fn test_ans_skewed_histogram_roundtrip() {
 
     // Now test symbol encoding/decoding
     eprintln!("\nTesting symbol encoding:");
-    let dist = AnsDistribution::from_normalized_counts(&ans_histo.counts).expect("distribution failed");
+    let dist =
+        AnsDistribution::from_normalized_counts(&ans_histo.counts).expect("distribution failed");
 
     // Encode [0, 0, 0, 1, 32] in reverse
     let symbols: Vec<usize> = vec![0, 0, 0, 1, 32];
@@ -5325,9 +5336,15 @@ fn test_ans_skewed_histogram_roundtrip() {
     eprintln!("  final encoder state: 0x{:08x}", encoder.state());
 
     let mut token_writer = BitWriter::new();
-    encoder.finalize(&mut token_writer).expect("finalize failed");
+    encoder
+        .finalize(&mut token_writer)
+        .expect("finalize failed");
     let token_bytes = token_writer.finish_with_padding();
-    eprintln!("  token bytes ({} bytes): {:02x?}", token_bytes.len(), token_bytes);
+    eprintln!(
+        "  token bytes ({} bytes): {:02x?}",
+        token_bytes.len(),
+        token_bytes
+    );
 
     // Decode with our decoder
     let mut token_br = BitReader::new(&token_bytes);
@@ -5358,26 +5375,34 @@ fn test_ans_single_symbol_no_state_change() {
     // Single symbol at position 8
     let mut counts = vec![0i32; 64];
     counts[8] = 4096;
-    
+
     let dist = AnsDistribution::from_normalized_counts(&counts).expect("distribution failed");
-    
+
     eprintln!("Single-symbol distribution:");
     eprintln!("  symbol 8: freq={}", dist.symbols[8].freq);
-    
+
     // Encode 10 copies of symbol 8
     let mut encoder = AnsEncoder::new();
     eprintln!("\nEncoding 10 copies of symbol 8:");
     for i in 0..10 {
         let state_before = encoder.state();
         encoder.put_symbol(&dist.symbols[8]);
-        eprintln!("  step {}: state before=0x{:08x}, after=0x{:08x}", 
-                  i, state_before, encoder.state());
+        eprintln!(
+            "  step {}: state before=0x{:08x}, after=0x{:08x}",
+            i,
+            state_before,
+            encoder.state()
+        );
     }
-    
+
     eprintln!("\nFinal state: 0x{:08x}", encoder.state());
-    
+
     // For a single-symbol distribution (100% probability), state should never change
-    assert_eq!(encoder.state(), 0x00130000, "state should not change for 100% probability symbol");
+    assert_eq!(
+        encoder.state(),
+        0x00130000,
+        "state should not change for 100% probability symbol"
+    );
 }
 
 /// Debug single-symbol distribution reverse_map.
@@ -5388,29 +5413,35 @@ fn test_ans_single_symbol_reverse_map() {
     // Single symbol at position 8
     let mut counts = vec![0i32; 64];
     counts[8] = 4096;
-    
+
     let dist = AnsDistribution::from_normalized_counts(&counts).expect("distribution failed");
-    
+
     eprintln!("Single-symbol distribution for symbol 8:");
     eprintln!("  symbols[8].freq = {}", dist.symbols[8].freq);
     eprintln!("  symbols[8].ifreq = {}", dist.symbols[8].ifreq);
-    eprintln!("  symbols[8].reverse_map.len() = {}", dist.symbols[8].reverse_map.len());
-    eprintln!("  reverse_map[0..10] = {:?}", &dist.symbols[8].reverse_map[..10.min(dist.symbols[8].reverse_map.len())]);
-    
+    eprintln!(
+        "  symbols[8].reverse_map.len() = {}",
+        dist.symbols[8].reverse_map.len()
+    );
+    eprintln!(
+        "  reverse_map[0..10] = {:?}",
+        &dist.symbols[8].reverse_map[..10.min(dist.symbols[8].reverse_map.len())]
+    );
+
     // The key observation: for freq=4096, reverse_map[r] for ANY r should map to
     // the SAME idx when state = r + v * 4096 for some v.
-    // Actually, reverse_map[r] should be the idx where decoder state=idx*4096 + r 
+    // Actually, reverse_map[r] should be the idx where decoder state=idx*4096 + r
     // can reconstruct r.
-    
-    // For freq=4096 (100% probability), all 4096 positions in the alias table 
+
+    // For freq=4096 (100% probability), all 4096 positions in the alias table
     // belong to symbol 8. The decoder formula is:
     // next_state = (state >> 12) * freq + offset
     //            = (state >> 12) * 4096 + offset
     // For this to work, every idx in [0, 4095] should have offset = idx
     // (since we want next_state = (state >> 12) * 4096 + idx)
-    
+
     // So reverse_map[r] should be r (identity mapping) for single-symbol case.
-    
+
     for i in 0..10 {
         eprintln!("  reverse_map[{}] = {}", i, dist.symbols[8].reverse_map[i]);
         if dist.symbols[8].reverse_map[i] != i as u16 {
@@ -5423,7 +5454,9 @@ fn test_ans_single_symbol_reverse_map() {
 #[test]
 fn test_ans_single_symbol_full_cycle() {
     use jxl_enc::bit_writer::BitWriter;
-    use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder, ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_enc::entropy_coding::ans::{
+        ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
+    };
     use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, BitReader};
     use jxl_enc::entropy_coding::histogram::Histogram;
 
@@ -5432,10 +5465,10 @@ fn test_ans_single_symbol_full_cycle() {
     for _ in 0..10 {
         histo.add(8);
     }
-    
+
     let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
         .expect("histogram failed");
-    
+
     eprintln!("Histogram:");
     eprintln!("  method: {}", ans_histo.method);
     eprintln!("  alphabet_size: {}", ans_histo.alphabet_size);
@@ -5444,10 +5477,10 @@ fn test_ans_single_symbol_full_cycle() {
             eprintln!("  counts[{}] = {}", i, ans_histo.counts[i]);
         }
     }
-    
+
     // Build distribution for encoding
     let dist = AnsDistribution::from_normalized_counts(&ans_histo.counts).expect("dist failed");
-    
+
     // Encode
     let symbols: Vec<usize> = vec![8; 10];
     let mut encoder = AnsEncoder::new();
@@ -5455,23 +5488,36 @@ fn test_ans_single_symbol_full_cycle() {
     for (i, &sym) in symbols.iter().rev().enumerate() {
         let state_before = encoder.state();
         encoder.put_symbol(&dist.symbols[sym]);
-        eprintln!("  enc[{}]: sym={}, state 0x{:08x} -> 0x{:08x}", 
-                  i, sym, state_before, encoder.state());
+        eprintln!(
+            "  enc[{}]: sym={}, state 0x{:08x} -> 0x{:08x}",
+            i,
+            sym,
+            state_before,
+            encoder.state()
+        );
     }
-    
+
     let encoder_final_state = encoder.state();
     eprintln!("\nEncoder final state: 0x{:08x}", encoder_final_state);
-    
+
     let mut token_writer = BitWriter::new();
-    encoder.finalize(&mut token_writer).expect("finalize failed");
+    encoder
+        .finalize(&mut token_writer)
+        .expect("finalize failed");
     let token_bytes = token_writer.finish_with_padding();
-    eprintln!("Token bytes ({} bytes): {:02x?}", token_bytes.len(), token_bytes);
-    
+    eprintln!(
+        "Token bytes ({} bytes): {:02x?}",
+        token_bytes.len(),
+        token_bytes
+    );
+
     // Serialize histogram
     let mut hist_writer = BitWriter::new();
-    ans_histo.write(&mut hist_writer).expect("hist write failed");
+    ans_histo
+        .write(&mut hist_writer)
+        .expect("hist write failed");
     let hist_bytes = hist_writer.finish_with_padding();
-    
+
     // Decode histogram
     let mut hist_br = BitReader::new(&hist_bytes);
     let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).expect("hist decode failed");
@@ -5481,28 +5527,33 @@ fn test_ans_single_symbol_full_cycle() {
             eprintln!("  freq[{}] = {}", i, decoded_hist.frequencies[i]);
         }
     }
-    
+
     // Decode tokens
     let mut token_br = BitReader::new(&token_bytes);
     let initial_state = token_br.read(32).expect("read state failed") as u32;
     eprintln!("\nDecoder initial state: 0x{:08x}", initial_state);
-    assert_eq!(initial_state, encoder_final_state, "initial state should match encoder final");
-    
+    assert_eq!(
+        initial_state, encoder_final_state,
+        "initial state should match encoder final"
+    );
+
     let mut state = initial_state;
     let mut decoded_symbols = Vec::new();
     eprintln!("Decoding:");
     for i in 0..symbols.len() {
         let state_before = state;
         let sym = decoded_hist.read(&mut token_br, &mut state);
-        eprintln!("  dec[{}]: sym={}, state 0x{:08x} -> 0x{:08x}", 
-                  i, sym, state_before, state);
+        eprintln!(
+            "  dec[{}]: sym={}, state 0x{:08x} -> 0x{:08x}",
+            i, sym, state_before, state
+        );
         decoded_symbols.push(sym as usize);
     }
-    
+
     eprintln!("\nDecoded: {:?}", decoded_symbols);
     eprintln!("Expected: {:?}", symbols);
     eprintln!("Final state: 0x{:08x} (expected 0x00130000)", state);
-    
+
     assert_eq!(decoded_symbols, symbols, "symbols should match");
     assert_eq!(state, 0x00130000, "final state should be 0x00130000");
 }
@@ -5519,14 +5570,14 @@ fn test_rgba_simple() {
 
         let mut rgba_data = vec![0u8; width * height * 4];
         for i in 0..(width * height) {
-            rgba_data[i * 4] = ((i * 3) % 256) as u8;     // R - varying
+            rgba_data[i * 4] = ((i * 3) % 256) as u8; // R - varying
             rgba_data[i * 4 + 1] = ((i * 5) % 256) as u8; // G - varying
             rgba_data[i * 4 + 2] = ((i * 7) % 256) as u8; // B - varying
-            rgba_data[i * 4 + 3] = 255;                    // A - opaque
+            rgba_data[i * 4 + 3] = 255; // A - opaque
         }
 
-        let jxl_bytes = jxl_enc::encode_rgba8(&rgba_data, width, height)
-            .expect("Failed to encode RGBA");
+        let jxl_bytes =
+            jxl_enc::encode_rgba8(&rgba_data, width, height).expect("Failed to encode RGBA");
 
         eprintln!("RGBA Encoded {} bytes", jxl_bytes.len());
 
@@ -5539,8 +5590,12 @@ fn test_rgba_simple() {
         match rgba_image.render_frame(0) {
             Ok(render) => {
                 let fb = render.image_all_channels();
-                eprintln!("RGBA jxl-oxide decoded successfully: {}x{} (channels={})",
-                    fb.width(), fb.height(), fb.channels());
+                eprintln!(
+                    "RGBA jxl-oxide decoded successfully: {}x{} (channels={})",
+                    fb.width(),
+                    fb.height(),
+                    fb.channels()
+                );
 
                 // Verify lossless encoding - compare first 10 pixels
                 let decoded = fb.buf();
@@ -5555,28 +5610,485 @@ fn test_rgba_simple() {
                     let got_r = decoded[i * channels];
                     let got_g = decoded[i * channels + 1];
                     let got_b = decoded[i * channels + 2];
-                    let got_a = if channels > 3 { decoded[i * channels + 3] } else { 1.0 };
+                    let got_a = if channels > 3 {
+                        decoded[i * channels + 3]
+                    } else {
+                        1.0
+                    };
 
                     let tol = 0.01; // Allow small tolerance for floating point
-                    if (got_r - expected_r).abs() > tol ||
-                       (got_g - expected_g).abs() > tol ||
-                       (got_b - expected_b).abs() > tol ||
-                       (got_a - expected_a).abs() > tol {
+                    if (got_r - expected_r).abs() > tol
+                        || (got_g - expected_g).abs() > tol
+                        || (got_b - expected_b).abs() > tol
+                        || (got_a - expected_a).abs() > tol
+                    {
                         if errors < 3 {
-                            eprintln!("Pixel {}: expected ({:.3},{:.3},{:.3},{:.3}), got ({:.3},{:.3},{:.3},{:.3})",
-                                i, expected_r, expected_g, expected_b, expected_a,
-                                got_r, got_g, got_b, got_a);
+                            eprintln!(
+                                "Pixel {}: expected ({:.3},{:.3},{:.3},{:.3}), got ({:.3},{:.3},{:.3},{:.3})",
+                                i,
+                                expected_r,
+                                expected_g,
+                                expected_b,
+                                expected_a,
+                                got_r,
+                                got_g,
+                                got_b,
+                                got_a
+                            );
                         }
                         errors += 1;
                     }
                 }
                 if errors > 0 {
-                    panic!("RGBA verification failed: {} pixel errors for {}x{}", errors, width, height);
+                    panic!(
+                        "RGBA verification failed: {} pixel errors for {}x{}",
+                        errors, width, height
+                    );
                 }
             }
             Err(e) => {
-                panic!("RGBA jxl-oxide render error for {}x{}: {:?}", width, height, e);
+                panic!(
+                    "RGBA jxl-oxide render error for {}x{}: {:?}",
+                    width, height, e
+                );
             }
+        }
+    }
+}
+
+/// Test ANS encoding with CLIC 2025 images - compare quality and file size with Huffman
+#[test]
+#[ignore]
+fn test_ans_clic2025() {
+    use std::io::Cursor;
+
+    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
+
+    if !clic_dir.exists() {
+        eprintln!("CLIC 2025 directory not found: {:?}", clic_dir);
+        return;
+    }
+
+    // Get first 5 images
+    let mut entries: Vec<_> = std::fs::read_dir(&clic_dir)
+        .expect("Failed to read CLIC directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+        .take(5)
+        .collect();
+
+    entries.sort_by_key(|e| e.path());
+
+    eprintln!("\n=== ANS vs Huffman on CLIC 2025 ===\n");
+    eprintln!(
+        "{:<12} {:>8} {:>8} {:>8} {:>7} {:>7} {:>8}",
+        "Image", "Size", "Huffman", "ANS", "Ratio", "SSIM2H", "SSIM2A"
+    );
+    eprintln!("{}", "-".repeat(70));
+
+    let mut total_huffman = 0usize;
+    let mut total_ans = 0usize;
+    let mut count = 0;
+
+    for entry in &entries {
+        let path = entry.path();
+        let filename = path.file_name().unwrap().to_string_lossy();
+        let short_name = &filename[..8.min(filename.len())];
+
+        let img = match image::open(&path) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!("{}: Failed to open: {}", short_name, e);
+                continue;
+            }
+        };
+
+        let (width, height) = img.dimensions();
+        let rgb = img.to_rgb8();
+
+        // Get original pixels for SSIM2
+        let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+
+        // Convert to linear RGB for encoding
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                let r = (p[0] as f32 / 255.0).powf(2.2);
+                let g = (p[1] as f32 / 255.0).powf(2.2);
+                let b = (p[2] as f32 / 255.0).powf(2.2);
+                [r, g, b]
+            })
+            .collect();
+
+        // Encode with Huffman
+        let mut encoder_huff = jxl_enc::tiny::TinyEncoder::new(1.0);
+        encoder_huff.use_ans = false;
+        let bytes_huff = match encoder_huff.encode(width as usize, height as usize, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: Huffman encode failed: {:?}", short_name, e);
+                continue;
+            }
+        };
+
+        // Encode with ANS
+        let mut encoder_ans = jxl_enc::tiny::TinyEncoder::new(1.0);
+        encoder_ans.use_ans = true;
+        let bytes_ans = match encoder_ans.encode(width as usize, height as usize, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: ANS encode failed: {:?}", short_name, e);
+                continue;
+            }
+        };
+
+        // Decode Huffman and compute SSIM2
+        let ssim2_huff =
+            decode_and_ssim2(&bytes_huff, &original_srgb, width as usize, height as usize);
+
+        // Decode ANS and compute SSIM2
+        let ssim2_ans =
+            decode_and_ssim2(&bytes_ans, &original_srgb, width as usize, height as usize);
+
+        let size_str = format!("{}x{}", width, height);
+        let ratio = bytes_huff.len() as f64 / bytes_ans.len() as f64;
+
+        eprintln!(
+            "{:<12} {:>8} {:>8} {:>8} {:>6.2}x {:>7.1} {:>7.1}",
+            short_name,
+            size_str,
+            bytes_huff.len(),
+            bytes_ans.len(),
+            ratio,
+            ssim2_huff.unwrap_or(f64::NAN),
+            ssim2_ans.unwrap_or(f64::NAN)
+        );
+
+        total_huffman += bytes_huff.len();
+        total_ans += bytes_ans.len();
+        count += 1;
+
+        // Verify ANS decodes correctly
+        if ssim2_ans.is_none() {
+            panic!("{}: ANS decode failed!", short_name);
+        }
+
+        // Verify quality is similar (within 0.5 SSIM2)
+        if let (Some(h), Some(a)) = (ssim2_huff, ssim2_ans) {
+            let diff = (h - a).abs();
+            if diff > 0.5 {
+                eprintln!("WARNING: SSIM2 difference {} for {}", diff, short_name);
+            }
+        }
+    }
+
+    if count > 0 {
+        eprintln!("{}", "-".repeat(70));
+        let overall_ratio = total_huffman as f64 / total_ans as f64;
+        eprintln!(
+            "{:<12} {:>8} {:>8} {:>8} {:>6.2}x",
+            "TOTAL", "", total_huffman, total_ans, overall_ratio
+        );
+
+        // ANS should be smaller or equal (allowing 5% overhead for edge cases)
+        assert!(
+            overall_ratio >= 0.95,
+            "ANS files are unexpectedly larger than Huffman: ratio={:.2}x",
+            overall_ratio
+        );
+    }
+}
+
+/// Helper: decode JXL bytes and compute SSIM2 against original
+fn decode_and_ssim2(
+    bytes: &[u8],
+    original: &[[u8; 3]],
+    width: usize,
+    height: usize,
+) -> Option<f64> {
+    use std::io::Cursor;
+
+    let reader = Cursor::new(bytes);
+    let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    let render = image.render_frame(0).ok()?;
+    let fb = render.image_all_channels();
+    let decoded = fb.buf();
+
+    // Convert decoded linear to sRGB
+    let decoded_srgb: Vec<[u8; 3]> = decoded
+        .chunks(3)
+        .map(|rgb| {
+            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            [r, g, b]
+        })
+        .collect();
+
+    let original_img = imgref::Img::new(original.to_vec(), width, height);
+    let decoded_img = imgref::Img::new(decoded_srgb, width, height);
+
+    fast_ssim2::compute_ssimulacra2(original_img.as_ref(), decoded_img.as_ref()).ok()
+}
+
+/// Test ANS with multi-group images (synthetic gradient)
+#[test]
+#[ignore]
+fn test_ans_multigroup_gradient() {
+    use std::io::Cursor;
+
+    // Test sizes: single-group and multi-group
+    // Include 2048x1360 which matches the failing CLIC image dimensions
+    for (width, height) in [(256, 256), (512, 512), (1024, 1024), (2048, 1360)] {
+        eprintln!("\n=== ANS multi-group test {}x{} ===", width, height);
+
+        // Create gradient image (linear RGB)
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                linear_rgb[idx] = x as f32 / width as f32;
+                linear_rgb[idx + 1] = y as f32 / height as f32;
+                linear_rgb[idx + 2] = 0.5;
+            }
+        }
+
+        // Encode with ANS
+        let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        encoder.use_ans = true;
+
+        let bytes = match encoder.encode(width, height, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                panic!("ANS encode failed for {}x{}: {:?}", width, height, e);
+            }
+        };
+
+        eprintln!("Encoded {} bytes", bytes.len());
+
+        // Write to file for external debugging
+        let filename = format!("/tmp/test_ans_{}x{}.jxl", width, height);
+        std::fs::write(&filename, &bytes).unwrap();
+
+        // Decode with jxl-oxide
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder()
+            .read(reader)
+            .expect("Failed to parse ANS JXL");
+
+        match image.render_frame(0) {
+            Ok(render) => {
+                eprintln!(
+                    "jxl-oxide decoded: {}x{}",
+                    render.image_all_channels().width(),
+                    render.image_all_channels().height()
+                );
+            }
+            Err(e) => {
+                panic!("jxl-oxide render error for {}x{}: {:?}", width, height, e);
+            }
+        }
+    }
+}
+
+/// Test ANS with specific failing CLIC image
+#[test]
+#[ignore]
+fn test_ans_failing_image() {
+    use std::io::Cursor;
+
+    let path = std::path::Path::new(env!("HOME"))
+        .join("work/codec-corpus/clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png");
+
+    if !path.exists() {
+        eprintln!("Test image not found: {:?}", path);
+        return;
+    }
+
+    let img = image::open(&path).expect("Failed to open image");
+    let (width, height) = img.dimensions();
+    eprintln!("Image size: {}x{}", width, height);
+
+    let rgb = img.to_rgb8();
+    let linear_rgb: Vec<f32> = rgb
+        .pixels()
+        .flat_map(|p| {
+            let r = (p[0] as f32 / 255.0).powf(2.2);
+            let g = (p[1] as f32 / 255.0).powf(2.2);
+            let b = (p[2] as f32 / 255.0).powf(2.2);
+            [r, g, b]
+        })
+        .collect();
+
+    // Encode with ANS
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.use_ans = true;
+
+    eprintln!("Starting ANS encode...");
+    let bytes = encoder
+        .encode(width as usize, height as usize, &linear_rgb)
+        .expect("ANS encode failed");
+
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    // Save for debugging
+    std::fs::write("/tmp/test_ans_failing.jxl", &bytes).unwrap();
+    eprintln!("Saved to /tmp/test_ans_failing.jxl");
+
+    // Try decode with jxl-oxide
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("Failed to parse JXL");
+
+    eprintln!("Parsed, attempting render...");
+    match image.render_frame(0) {
+        Ok(render) => {
+            eprintln!(
+                "SUCCESS: jxl-oxide decoded {}x{}",
+                render.image_all_channels().width(),
+                render.image_all_channels().height()
+            );
+        }
+        Err(e) => {
+            eprintln!("RENDER FAILED: {:?}", e);
+            panic!("Render failed");
+        }
+    }
+}
+
+/// Debug ANS vs Huffman for failing image
+#[test]
+#[ignore]
+fn test_ans_vs_huffman_debug() {
+    use std::io::Cursor;
+
+    let path = std::path::Path::new(env!("HOME"))
+        .join("work/codec-corpus/clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png");
+
+    if !path.exists() {
+        eprintln!("Test image not found");
+        return;
+    }
+
+    let img = image::open(&path).expect("Failed to open image");
+    let (width, height) = img.dimensions();
+    eprintln!("Image size: {}x{}", width, height);
+
+    let rgb = img.to_rgb8();
+    let linear_rgb: Vec<f32> = rgb
+        .pixels()
+        .flat_map(|p| {
+            let r = (p[0] as f32 / 255.0).powf(2.2);
+            let g = (p[1] as f32 / 255.0).powf(2.2);
+            let b = (p[2] as f32 / 255.0).powf(2.2);
+            [r, g, b]
+        })
+        .collect();
+
+    // Encode with Huffman first
+    let mut encoder_huff = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder_huff.use_ans = false;
+    let bytes_huff = encoder_huff
+        .encode(width as usize, height as usize, &linear_rgb)
+        .expect("Huffman encode failed");
+    eprintln!("Huffman: {} bytes", bytes_huff.len());
+    std::fs::write("/tmp/test_huff.jxl", &bytes_huff).unwrap();
+
+    // Verify Huffman works
+    let reader = Cursor::new(&bytes_huff);
+    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    match image.render_frame(0) {
+        Ok(_) => eprintln!("Huffman: decode OK"),
+        Err(e) => eprintln!("Huffman: decode FAILED: {:?}", e),
+    }
+
+    // Now encode with ANS
+    let mut encoder_ans = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder_ans.use_ans = true;
+    let bytes_ans = encoder_ans
+        .encode(width as usize, height as usize, &linear_rgb)
+        .expect("ANS encode failed");
+    eprintln!("ANS: {} bytes", bytes_ans.len());
+    std::fs::write("/tmp/test_ans.jxl", &bytes_ans).unwrap();
+
+    // Check ANS
+    let reader = Cursor::new(&bytes_ans);
+    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    match image.render_frame(0) {
+        Ok(_) => eprintln!("ANS: decode OK"),
+        Err(e) => {
+            eprintln!("ANS: decode FAILED: {:?}", e);
+
+            // Compare first 200 bytes of each file
+            eprintln!("\nHuffman header (first 100 bytes):");
+            eprintln!("{:02x?}", &bytes_huff[..100.min(bytes_huff.len())]);
+            eprintln!("\nANS header (first 100 bytes):");
+            eprintln!("{:02x?}", &bytes_ans[..100.min(bytes_ans.len())]);
+        }
+    }
+}
+
+/// Binary search for smallest failing crop from the CLIC image
+#[test]
+#[ignore]
+fn test_ans_crop_binary_search() {
+    use std::io::Cursor;
+
+    let path = std::path::Path::new(env!("HOME"))
+        .join("work/codec-corpus/clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png");
+
+    if !path.exists() {
+        eprintln!("Test image not found");
+        return;
+    }
+
+    let img = image::open(&path).expect("Failed to open image");
+    let rgb = img.to_rgb8();
+    let (full_w, full_h) = img.dimensions();
+    eprintln!("Full image: {}x{}", full_w, full_h);
+
+    // Test at different crop sizes from the top-left corner
+    // Test with original image at 2048x1360 and with bottom rows zeroed
+    let sizes = [(2048, 1360)];
+
+    for &(w, h) in &sizes {
+        if w > full_w as usize || h > full_h as usize {
+            continue;
+        }
+
+        // Crop the image
+        let mut linear_rgb = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let p = rgb.get_pixel(x as u32, y as u32);
+                linear_rgb.push((p[0] as f32 / 255.0).powf(2.2));
+                linear_rgb.push((p[1] as f32 / 255.0).powf(2.2));
+                linear_rgb.push((p[2] as f32 / 255.0).powf(2.2));
+            }
+        }
+
+        let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        encoder.use_ans = true;
+
+        let bytes = encoder
+            .encode(w, h, &linear_rgb)
+            .expect("ANS encode failed");
+
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder()
+            .read(reader)
+            .expect("Failed to parse JXL");
+
+        let result = image.render_frame(0);
+        let status = match &result {
+            Ok(_) => "OK",
+            Err(_) => "FAIL",
+        };
+        eprintln!("{:>4}x{:<4} {:>8} bytes  {}", w, h, bytes.len(), status);
+
+        if result.is_err() {
+            eprintln!("  Error: {:?}", result.unwrap_err());
         }
     }
 }

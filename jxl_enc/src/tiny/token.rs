@@ -40,12 +40,19 @@ pub struct EncodedUint {
 
 /// Uint coder for entropy coding.
 ///
-/// Encoding scheme:
-/// - N = 0-15: token=N, nbits=0
-/// - N = 16 (10000): token=16, nbits=2, bits=00
-/// - N = 17 (10001): token=16, nbits=2, bits=01
-/// - N = 20 (10100): token=17, nbits=2, bits=00
-/// - ...up to N=65535: token=63, nbits=13
+/// Encoding scheme (from libjxl-tiny):
+/// - N = 0-15: token=N, nbits=0 (direct values)
+/// - N >= 16: token = (n << 2) + (m >> (n - 2)), nbits = n - 2
+///   where n = floor_log2(N), m = N - (1 << n)
+///
+/// Examples:
+/// - N = 16 (10000):      (token=16, nbits=2, bits='00')
+/// - N = 17 (10001):      (token=16, nbits=2, bits='01')
+/// - N = 20 (10100):      (token=17, nbits=2, bits='00')
+/// - N = 24 (11000):      (token=18, nbits=2, bits='00')
+/// - N = 28 (11100):      (token=19, nbits=2, bits='00')
+/// - N = 32 (100000):     (token=20, nbits=3, bits='000')
+/// - N = 65535:           (token=63, nbits=13, bits='1111111111111')
 pub struct UintCoder;
 
 impl UintCoder {
@@ -53,6 +60,7 @@ impl UintCoder {
     #[inline]
     pub fn encode(value: u32) -> EncodedUint {
         if value < 16 {
+            // Direct encoding for small values
             EncodedUint {
                 token: value,
                 nbits: 0,
@@ -64,6 +72,7 @@ impl UintCoder {
             let token = (n << 2) + (m >> (n - 2));
             let nbits = n - 2;
             let bits = value & ((1u32 << nbits) - 1);
+
             EncodedUint { token, nbits, bits }
         }
     }
@@ -85,51 +94,63 @@ mod tests {
 
     #[test]
     fn test_uint_coder_values() {
-        // N = 16 (10000): token=16, nbits=2, bits=00
+        // libjxl-tiny encoding: token = (n << 2) + (m >> (n - 2))
+        // N = 16: n=4, m=0, token=(4<<2)+(0>>2)=16, nbits=2, bits=0
         let e = UintCoder::encode(16);
-        assert_eq!(e.token, 16);
-        assert_eq!(e.nbits, 2);
-        assert_eq!(e.bits, 0);
+        assert_eq!(e.token, 16, "token for 16");
+        assert_eq!(e.nbits, 2, "nbits for 16");
+        assert_eq!(e.bits, 0, "bits for 16");
 
-        // N = 17 (10001): token=16, nbits=2, bits=01
+        // N = 17: n=4, m=1, token=(4<<2)+(1>>2)=16, nbits=2, bits=1
         let e = UintCoder::encode(17);
-        assert_eq!(e.token, 16);
-        assert_eq!(e.nbits, 2);
-        assert_eq!(e.bits, 1);
+        assert_eq!(e.token, 16, "token for 17");
+        assert_eq!(e.nbits, 2, "nbits for 17");
+        assert_eq!(e.bits, 1, "bits for 17");
 
-        // N = 20 (10100): token=17, nbits=2, bits=00
+        // N = 20: n=4, m=4, token=(4<<2)+(4>>2)=17, nbits=2, bits=0
         let e = UintCoder::encode(20);
-        assert_eq!(e.token, 17);
-        assert_eq!(e.nbits, 2);
-        assert_eq!(e.bits, 0);
+        assert_eq!(e.token, 17, "token for 20");
+        assert_eq!(e.nbits, 2, "nbits for 20");
+        assert_eq!(e.bits, 0, "bits for 20");
 
-        // N = 24 (11000): token=18, nbits=2, bits=00
+        // N = 24: n=4, m=8, token=(4<<2)+(8>>2)=18, nbits=2, bits=0
         let e = UintCoder::encode(24);
-        assert_eq!(e.token, 18);
-        assert_eq!(e.nbits, 2);
-        assert_eq!(e.bits, 0);
+        assert_eq!(e.token, 18, "token for 24");
+        assert_eq!(e.nbits, 2, "nbits for 24");
+        assert_eq!(e.bits, 0, "bits for 24");
 
-        // N = 28 (11100): token=19, nbits=2, bits=00
+        // N = 28: n=4, m=12, token=(4<<2)+(12>>2)=19, nbits=2, bits=0
         let e = UintCoder::encode(28);
-        assert_eq!(e.token, 19);
-        assert_eq!(e.nbits, 2);
-        assert_eq!(e.bits, 0);
+        assert_eq!(e.token, 19, "token for 28");
+        assert_eq!(e.nbits, 2, "nbits for 28");
+        assert_eq!(e.bits, 0, "bits for 28");
 
-        // N = 32 (100000): token=20, nbits=3, bits=000
+        // N = 32: n=5, m=0, token=(5<<2)+(0>>3)=20, nbits=3, bits=0
         let e = UintCoder::encode(32);
-        assert_eq!(e.token, 20);
-        assert_eq!(e.nbits, 3);
-        assert_eq!(e.bits, 0);
+        assert_eq!(e.token, 20, "token for 32");
+        assert_eq!(e.nbits, 3, "nbits for 32");
+        assert_eq!(e.bits, 0, "bits for 32");
     }
 
     #[test]
     fn test_uint_coder_large_value() {
-        // N = 65535: token=63, nbits=13
+        // N = 65535: n=15, m=32767
+        // token = (15<<2) + (32767>>13) = 60 + 3 = 63
+        // nbits = 15 - 2 = 13
+        // bits = 65535 & 8191 = 8191
         let e = UintCoder::encode(65535);
-        assert_eq!(e.token, 63);
-        assert_eq!(e.nbits, 13);
+        assert_eq!(e.token, 63, "token for 65535");
+        assert_eq!(e.nbits, 13, "nbits for 65535");
+        assert_eq!(e.bits, 8191, "bits for 65535");
         // Verify we can reconstruct the value
-        let reconstructed = (1u32 << 15) + ((e.token & 3) << 13) + e.bits;
+        // exponent n = token >> 2 = 15
+        // top 2 bits of m = token & 3 = 3
+        // m = (3 << 13) + bits = 24576 + 8191 = 32767
+        // value = (1 << 15) + 32767 = 65535
+        let n = e.token >> 2;
+        let top_bits = e.token & 3;
+        let m = (top_bits << e.nbits) + e.bits;
+        let reconstructed = (1u32 << n) + m;
         assert_eq!(reconstructed, 65535);
     }
 }
