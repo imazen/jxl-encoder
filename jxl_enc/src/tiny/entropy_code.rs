@@ -994,6 +994,242 @@ pub fn write_tokens(tokens: &[Token], code: &EntropyCode, writer: &mut BitWriter
     Ok(())
 }
 
+// ============================================================================
+// ANS Entropy Coding
+// ============================================================================
+
+use crate::entropy_coding::ans::{
+    ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
+};
+
+/// Log2 of alphabet size for ANS. With split=4, max token is 4+31=35, so we need 6 bits.
+pub const ANS_LOG_ALPHA_SIZE: usize = 6;
+/// Alphabet size for ANS (2^6 = 64, matches ALPHABET_SIZE).
+pub const ANS_ALPHA_SIZE: usize = 1 << ANS_LOG_ALPHA_SIZE;
+
+/// An owned ANS entropy code (context map + ANS distributions on the heap).
+#[derive(Debug)]
+pub struct OwnedAnsEntropyCode {
+    /// Context map: maps context ID -> distribution index.
+    pub context_map: Vec<u8>,
+    /// ANS encoding histograms for header serialization.
+    pub histograms: Vec<ANSEncodingHistogram>,
+    /// ANS distributions for runtime encoding.
+    pub distributions: Vec<AnsDistribution>,
+}
+
+impl OwnedAnsEntropyCode {
+    /// Get the number of distributions.
+    pub fn num_distributions(&self) -> usize {
+        self.distributions.len()
+    }
+}
+
+/// Build an ANS entropy code from collected tokens.
+///
+/// 1. Creates per-context histograms from all tokens.
+/// 2. Clusters histograms (max 8 clusters) to produce a context map.
+/// 3. Normalizes each cluster histogram to sum to 4096.
+/// 4. Builds ANS distributions for encoding.
+pub fn build_entropy_code_ans(tokens: &[Token], num_contexts: usize) -> OwnedAnsEntropyCode {
+    build_entropy_code_ans_with_options(tokens, num_contexts, false)
+}
+
+/// Build an ANS entropy code with optional enhanced clustering.
+pub fn build_entropy_code_ans_with_options(
+    tokens: &[Token],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+) -> OwnedAnsEntropyCode {
+    use crate::entropy_coding::cluster::{
+        ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
+    };
+    use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
+
+    // Build per-context histograms
+    let mut histograms: Vec<EnhancedHistogram> =
+        (0..num_contexts).map(|_| EnhancedHistogram::new()).collect();
+
+    for token in tokens {
+        let ctx = token.context as usize;
+        let encoded = UintCoder::encode(token.value);
+        if ctx < histograms.len() {
+            histograms[ctx].add(encoded.token as usize);
+        }
+    }
+
+    // Cluster histograms
+    let cluster_type = if enhanced_clustering {
+        ClusteringType::Best
+    } else {
+        ClusteringType::Fast
+    };
+
+    let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, 8)
+        .expect("ANS clustering failed");
+
+    let context_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
+
+    // Build ANS histograms and distributions from clustered histograms
+    let mut ans_histograms = Vec::with_capacity(result.histograms.len());
+    let mut ans_distributions = Vec::with_capacity(result.histograms.len());
+
+    for histo in &result.histograms {
+        // Create ANS encoding histogram (normalized)
+        let ans_histo =
+            ANSEncodingHistogram::from_histogram(histo, ANSHistogramStrategy::Precise)
+                .expect("ANS histogram normalization failed");
+
+        // Build ANS distribution for encoding
+        let ans_dist = AnsDistribution::from_normalized_counts(&ans_histo.counts)
+            .expect("ANS distribution building failed");
+
+        ans_histograms.push(ans_histo);
+        ans_distributions.push(ans_dist);
+    }
+
+    OwnedAnsEntropyCode {
+        context_map,
+        histograms: ans_histograms,
+        distributions: ans_distributions,
+    }
+}
+
+/// Write ANS entropy code header (context map + distributions).
+pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
+    // Write context map (same format as Huffman)
+    write_context_map_for_ans(code, writer)?;
+
+    // Write LZ77 disabled (1 bit = 0)
+    writer.write(1, 0)?;
+
+    // Write use_prefix_code = 0 (use ANS, not Huffman)
+    writer.write(1, 0)?;
+
+    // Write log_alpha_size - 5 (we use 6, so write 1)
+    writer.write(2, (ANS_LOG_ALPHA_SIZE - 5) as u64)?;
+
+    // Write HybridUint configs for each histogram
+    for _ in &code.histograms {
+        write_hybrid_uint_config(writer)?;
+    }
+
+    // Write ANS distributions
+    for histo in &code.histograms {
+        histo.write(writer)?;
+    }
+
+    Ok(())
+}
+
+/// Write context map for ANS entropy code.
+fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
+    let num_contexts = code.context_map.len();
+    let num_histograms = code.histograms.len();
+
+    if num_histograms == 1 {
+        // Simple context map: all contexts map to histogram 0
+        writer.write(1, 1)?; // simple_context_map = true
+        writer.write(2, 0)?; // nbits = 0
+    } else if num_histograms <= 4
+        && num_contexts <= 256
+        && code.context_map.iter().all(|&c| (c as usize) < num_histograms)
+    {
+        // Simple context map with multiple histograms
+        let nbits = if num_histograms <= 2 {
+            1
+        } else {
+            2
+        };
+        writer.write(1, 1)?; // simple_context_map = true
+        writer.write(2, nbits as u64)?;
+
+        for &ctx in &code.context_map {
+            writer.write(nbits, ctx as u64)?;
+        }
+    } else {
+        // Complex context map - use the same encoding as Huffman
+        // This is a simplified version; full implementation would use entropy coding
+        writer.write(1, 0)?; // simple_context_map = false
+
+        // Write using flat prefix code (simplest)
+        // num_histograms - 1 using VarLenUint8
+        write_var_len_uint16((num_histograms - 1).min(255), writer)?;
+
+        // Write map entries - for now use simple encoding
+        // (Full implementation would use move-to-front + entropy coding)
+        for &ctx in &code.context_map {
+            // Write each entry as a simple integer
+            let bits_needed = if num_histograms <= 2 {
+                1
+            } else if num_histograms <= 4 {
+                2
+            } else if num_histograms <= 8 {
+                3
+            } else {
+                4
+            };
+            writer.write(bits_needed, ctx as u64)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write HybridUint config (split_exponent, msb_in_token, lsb_in_token).
+///
+/// Uses the same config as our UintCoder: split=4, msb=2, lsb=0.
+fn write_hybrid_uint_config(writer: &mut BitWriter) -> Result<()> {
+    // For log_alpha_size = 6:
+    // split_exponent uses ceil_log2(log_alpha_size + 1) = ceil_log2(7) = 3 bits
+    // msb_in_token uses ceil_log2(log_alpha_size + 2 - split) = ceil_log2(4) = 2 bits
+    // lsb_in_token uses ceil_log2(log_alpha_size + 1 - split) = ceil_log2(3) = 2 bits
+
+    // split_exponent = 4
+    writer.write(3, 4)?;
+    // msb_in_token = 2
+    writer.write(2, 2)?;
+    // lsb_in_token = 0
+    writer.write(2, 0)?;
+
+    Ok(())
+}
+
+/// Write tokens using ANS entropy coding.
+///
+/// Tokens are processed in reverse order (ANS requirement), and the output
+/// is written in the correct forward order for the decoder.
+pub fn write_tokens_ans(
+    tokens: &[Token],
+    code: &OwnedAnsEntropyCode,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let mut encoder = AnsEncoder::new();
+
+    // Process tokens in reverse order
+    for token in tokens.iter().rev() {
+        let ctx = token.context as usize;
+        let encoded = UintCoder::encode(token.value);
+
+        // Get the distribution for this context
+        let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+        if let Some(dist) = code.distributions.get(dist_idx) {
+            // Push extra bits first (they come after the symbol in forward order)
+            encoder.push_bits(encoded.bits, encoded.nbits as u8);
+
+            // Push the ANS symbol
+            if let Some(info) = dist.get(encoded.token as usize) {
+                encoder.put_symbol(info);
+            }
+        }
+    }
+
+    // Finalize: writes state + reversed bits
+    encoder.finalize(writer)?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
