@@ -284,62 +284,128 @@ mod ordered_float {
     }
 }
 
-/// Estimate Huffman population cost (header + data bits).
+/// Estimate Huffman population cost for clustering merge decisions.
 ///
-/// Estimates the cost of serializing a Huffman tree plus encoding the data.
-/// JXL Huffman trees have two formats:
-/// - Simple (1-4 symbols): 4-bit marker + symbol indices
-/// - Complex (>4 symbols): Nested Huffman tree for code lengths
+/// For Huffman coding, the key insight is that header cost savings from
+/// merging histograms are minimal compared to data cost increases.
+/// The simple/tiny clustering uses data-only cost (sum of count * depth)
+/// and produces good results.
+///
+/// This function computes data cost using actual Huffman code lengths,
+/// plus a small header penalty that scales with alphabet size to
+/// discourage creating very large merged alphabets.
 fn huffman_population_cost(h: &Histogram) -> f32 {
     if h.total_count == 0 {
         return 0.0;
     }
 
     let alphabet_size = h.alphabet_size();
-
-    // Count non-zero symbols
-    let mut non_zero_count = 0usize;
-    for i in 0..alphabet_size {
-        if h.counts[i] > 0 {
-            non_zero_count += 1;
-        }
-    }
-
-    if non_zero_count == 0 {
+    if alphabet_size == 0 {
         return 0.0;
     }
 
-    // Data cost (entropy)
-    let data_cost = h.cached_entropy();
+    // Compute ACTUAL Huffman data cost using real code lengths
+    let data_cost = compute_huffman_data_cost(h, alphabet_size);
 
-    // Header cost depends on number of symbols
-    let header_cost = if non_zero_count == 1 {
-        // Single symbol: 4-bit marker + symbol index
-        // Symbol index uses ceil(log2(alphabet_size)) bits
-        let symbol_bits = if alphabet_size <= 1 {
-            0
-        } else {
-            (alphabet_size as f32).log2().ceil() as usize
-        };
-        4.0 + symbol_bits as f32
-    } else if non_zero_count <= 4 {
-        // Simple tree: 4-bit marker + symbol indices + tree structure
-        // Each symbol uses ceil(log2(alphabet_size)) bits
-        let symbol_bits = (alphabet_size as f32).log2().ceil() as usize;
-        // Plus 1-2 bits for tree shape per symbol
-        4.0 + (non_zero_count as f32) * (symbol_bits as f32 + 1.5)
+    // For merge decisions, we want to penalize large alphabets slightly
+    // because they require more complex tree serialization.
+    // But don't over-penalize - the data cost is the main factor.
+    //
+    // Count non-zero symbols to estimate header complexity
+    let non_zero_count = h.counts.iter().take(alphabet_size).filter(|&&c| c > 0).count();
+
+    // Small header penalty: 0.1 bits per non-zero symbol
+    // This is much smaller than data cost, so it only tips the balance
+    // when data costs are very close.
+    let header_penalty = (non_zero_count as f32) * 0.1;
+
+    data_cost + header_penalty
+}
+
+/// Compute actual Huffman data cost using real code lengths.
+///
+/// This builds a real Huffman tree and computes sum(count * depth),
+/// which is the exact number of bits needed to encode the data.
+fn compute_huffman_data_cost(h: &Histogram, alphabet_size: usize) -> f32 {
+    use super::huffman_tree::create_huffman_tree;
+
+    if alphabet_size == 0 {
+        return 0.0;
+    }
+
+    // Convert to u32 counts for create_huffman_tree
+    let counts: Vec<u32> = h
+        .counts
+        .iter()
+        .take(alphabet_size)
+        .map(|&c| c.max(0) as u32)
+        .collect();
+
+    // Check for empty or single-symbol histogram
+    let non_zero = counts.iter().filter(|&&c| c > 0).count();
+    if non_zero == 0 {
+        return 0.0;
+    }
+    if non_zero == 1 {
+        // Single symbol needs 1 bit per occurrence
+        return counts.iter().sum::<u32>() as f32;
+    }
+
+    // Build actual Huffman tree with depth limit 15
+    let depths = create_huffman_tree(&counts, 15);
+
+    // Compute data cost: sum(count * depth)
+    let mut cost = 0.0f32;
+    for (i, &count) in counts.iter().enumerate() {
+        if count > 0 && i < depths.len() {
+            cost += count as f32 * depths[i] as f32;
+        }
+    }
+
+    cost
+}
+
+/// Compute cost of encoding histogram A's data using a tree built for histogram B.
+///
+/// This is the key insight for correct merge cost estimation:
+/// When contexts are merged, BOTH original contexts use the merged tree,
+/// which is suboptimal for each individually.
+fn compute_cross_coding_cost(data: &Histogram, tree: &Histogram, alphabet_size: usize) -> f32 {
+    use super::huffman_tree::create_huffman_tree;
+
+    if alphabet_size == 0 {
+        return 0.0;
+    }
+
+    // Build tree from 'tree' histogram
+    let tree_counts: Vec<u32> = tree
+        .counts
+        .iter()
+        .take(alphabet_size)
+        .map(|&c| c.max(0) as u32)
+        .collect();
+
+    let non_zero = tree_counts.iter().filter(|&&c| c > 0).count();
+    if non_zero == 0 {
+        return 0.0;
+    }
+
+    let depths = if non_zero == 1 {
+        vec![1u8; alphabet_size]
     } else {
-        // Complex tree: nested Huffman for code lengths (symbols 0-17)
-        // Outer tree: ~3 bits per code length symbol on average
-        // Inner tree: code lengths themselves
-        // Rough estimate: 3 bits per non-zero symbol for the length encoding
-        // Plus some overhead for the code length tree itself (~20-40 bits)
-        let length_encoding_cost = (non_zero_count as f32) * 3.0;
-        let tree_overhead = 30.0; // Fixed overhead for nested tree
-        length_encoding_cost + tree_overhead
+        create_huffman_tree(&tree_counts, 15)
     };
 
-    data_cost + header_cost
+    // Encode 'data' using depths from 'tree'
+    let mut cost = 0.0f32;
+    for (i, &count) in data.counts.iter().take(alphabet_size).enumerate() {
+        if count > 0 && i < depths.len() {
+            let depth = if depths[i] == 0 { 15 } else { depths[i] }; // Penalize symbols not in tree
+            cost += count.max(0) as f32 * depth as f32;
+        }
+    }
+
+    cost
 }
 
 /// Estimate ANS population cost (header + data bits).
@@ -767,3 +833,51 @@ mod tests {
         assert_eq!(symbols, vec![0, 1, 0, 2, 1]);
     }
 }
+
+    #[test]
+    fn test_huffman_cost_disjoint_histograms() {
+        // Disjoint histograms - merging should NOT be beneficial
+        let a = Histogram::from_counts(&[100, 50, 25, 0, 0, 0, 0, 0]);
+        a.shannon_entropy();
+
+        let b = Histogram::from_counts(&[0, 0, 0, 80, 40, 20, 0, 0]);
+        b.shannon_entropy();
+
+        let mut merged = a.clone();
+        merged.add_histogram(&b);
+        merged.shannon_entropy();
+
+        let cost_a = huffman_population_cost(&a);
+        let cost_b = huffman_population_cost(&b);
+        let cost_merged = huffman_population_cost(&merged);
+        let delta = cost_merged - cost_a - cost_b;
+
+        // Disjoint histograms: merging increases data cost significantly
+        assert!(delta >= 0.0, "Disjoint merge should not be beneficial");
+    }
+
+    #[test]
+    fn test_huffman_cost_identical_histograms() {
+        // Identical histograms - merging should have near-zero delta
+        let a = Histogram::from_counts(&[100, 50, 25, 10, 0, 0, 0, 0]);
+        a.shannon_entropy();
+
+        let b = Histogram::from_counts(&[100, 50, 25, 10, 0, 0, 0, 0]);
+        b.shannon_entropy();
+
+        let mut merged = a.clone();
+        merged.add_histogram(&b);
+        merged.shannon_entropy();
+
+        let cost_a = huffman_population_cost(&a);
+        let cost_b = huffman_population_cost(&b);
+        let cost_merged = huffman_population_cost(&merged);
+        let delta = cost_merged - cost_a - cost_b;
+
+        // Identical histograms use same Huffman tree, so merged cost = 2x individual
+        assert!(
+            delta.abs() < 1.0,
+            "Identical histograms should have near-zero delta, got {}",
+            delta
+        );
+    }
