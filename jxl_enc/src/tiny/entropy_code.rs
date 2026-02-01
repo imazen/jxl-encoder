@@ -915,7 +915,7 @@ pub fn build_entropy_code_with_options(
     let (context_map, clustered_histograms) = if enhanced_clustering {
         // Use the enhanced clustering from entropy_coding::cluster
         use crate::entropy_coding::cluster::{
-            ClusteringType, cluster_histograms as enhanced_cluster,
+            ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
         };
         use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
@@ -929,8 +929,14 @@ pub fn build_entropy_code_with_options(
             .collect();
 
         // Run enhanced clustering with pair merge refinement
-        let result = enhanced_cluster(ClusteringType::Best, &enhanced_histos, 8)
-            .expect("Enhanced clustering failed");
+        // Use Huffman cost model since tiny encoder uses Huffman codes
+        let result = enhanced_cluster(
+            ClusteringType::Best,
+            EntropyType::Huffman,
+            &enhanced_histos,
+            8,
+        )
+        .expect("Enhanced clustering failed");
 
         // Convert back to tiny histogram type for Huffman tree building
         let out_histos: Vec<TinyHistogram> = result

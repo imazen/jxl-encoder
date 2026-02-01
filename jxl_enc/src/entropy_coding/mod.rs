@@ -20,7 +20,9 @@ pub use ans::{
     ANS_LOG_TAB_SIZE, ANS_MAX_ALPHABET_SIZE, ANS_SIGNATURE, ANS_TAB_MASK, ANS_TAB_SIZE,
     ANSEncodingHistogram, ANSHistogramStrategy, AnsEncoder, get_population_count_precision,
 };
-pub use cluster::{ClusterResult, ClusteringType, cluster_histograms, fast_cluster_histograms};
+pub use cluster::{
+    ClusterResult, ClusteringType, EntropyType, cluster_histograms, fast_cluster_histograms,
+};
 pub use context_map::{
     encode_context_map, inverse_move_to_front_transform, move_to_front_transform,
 };
