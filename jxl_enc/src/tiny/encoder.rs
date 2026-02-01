@@ -120,7 +120,8 @@ impl TinyEncoder {
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
 
         // Compute adaptive per-block quantization field and masking
-        let (mut quant_field, masking) = compute_adaptive_quant_field(
+        // Returns: raw_quant u8 (for encoding), masking (for strategy), float aq_map (for strategy)
+        let (mut quant_field, masking, quant_field_float) = compute_adaptive_quant_field(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -163,7 +164,7 @@ impl TinyEncoder {
                 xsize_blocks,
                 ysize_blocks,
                 self.distance,
-                &quant_field,
+                &quant_field_float,
                 &masking,
                 &cfl_map,
             )
@@ -2081,7 +2082,7 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0xe648bda6b13a5dd9;
+        const EXPECTED_HASH: u64 = 0xabeb5f516c2a5d4b;
         assert_eq!(
             hash,
             EXPECTED_HASH,

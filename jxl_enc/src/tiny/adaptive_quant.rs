@@ -590,7 +590,11 @@ pub fn compute_adaptive_quant_field(
     ysize_blocks: usize,
     distance: f32,
     inv_scale: f32,
-) -> (Vec<u8>, Vec<f32>) {
+) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
+    // Returns (raw_quant_u8, masking, quant_field_float)
+    // quant_field_float contains the float aq_map values that C++ passes
+    // to EstimateEntropy. These are NOT the same as raw_quant cast to f32!
+    // raw_quant = clamp(round(aq_map * inv_scale), 1, 255)
     const K_AC_QUANT: f32 = 0.8294;
     let scale = K_AC_QUANT / distance;
 
@@ -662,17 +666,19 @@ pub fn compute_adaptive_quant_field(
         aq_map_w,
     );
 
-    // Step 4: Convert float quant_field to raw_quant u8 values
+    // Step 4: Extract compact float quant field and convert to raw_quant u8
+    let mut quant_field_float = vec![0.0f32; xsize_blocks * ysize_blocks];
     let mut raw_quant_field = vec![0u8; xsize_blocks * ysize_blocks];
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
             let qf = aq_map[by * aq_map_w + bx];
+            quant_field_float[by * xsize_blocks + bx] = qf;
             let val = (qf * inv_scale + 0.5).round() as i32;
             raw_quant_field[by * xsize_blocks + bx] = clamp(val, 1, 255) as u8;
         }
     }
 
-    (raw_quant_field, masking)
+    (raw_quant_field, masking, quant_field_float)
 }
 
 #[cfg(test)]
@@ -784,7 +790,7 @@ mod tests {
         let xb = w / 8;
         let yb = h / 8;
 
-        let (result, masking) =
+        let (result, masking, _quant_float) =
             compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
         assert_eq!(result.len(), xb * yb);
@@ -830,7 +836,7 @@ mod tests {
         let xb = w / 8;
         let yb = h / 8;
 
-        let (result, _masking) =
+        let (result, _masking, _quant_float) =
             compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
         assert_eq!(result.len(), xb * yb);
@@ -875,7 +881,7 @@ mod tests {
             let xb = (w + 7) / 8;
             let yb = (h + 7) / 8;
 
-            let (result, _masking) =
+            let (result, _masking, _quant_float) =
                 compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
             assert_eq!(
