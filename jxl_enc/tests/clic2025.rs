@@ -3256,10 +3256,12 @@ fn test_cpp_vs_rust_quality() {
     }
 }
 
-/// Multi-group quality test: full 1024x1024 images (4+ groups).
+/// Multi-group quality test: full 1024x1024 images (16 groups each).
 ///
-/// Verifies AC strategy works on multi-group images using the same fair
-/// methodology (djxl + ssimulacra2 CLI). C++ cjxl_tiny crashes on >256x256.
+/// Fair apples-to-apples comparison: C++ cjxl_tiny vs Rust (ON/OFF),
+/// all decoded with djxl, all measured with ssimulacra2 CLI.
+/// C++ cjxl_tiny had a crash bug on >256x256 (OOB in debug names array) that
+/// was fixed — requires patched build at ~/work/libjxl-tiny/build/encoder/cjxl_tiny.
 ///
 /// Source images: ~/work/codec-corpus/clic2025-1024/ (first 5 PNGs, sorted)
 #[test]
@@ -3269,6 +3271,7 @@ fn test_multigroup_quality() {
     let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
     let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
     let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
+    let cjxl_tiny = format!("{}/work/libjxl-tiny/build/encoder/cjxl_tiny", home);
     let work_dir = "/mnt/v/output/jxl-encoder-rs/multigroup-quality";
     std::fs::create_dir_all(work_dir).unwrap();
 
@@ -3277,6 +3280,13 @@ fn test_multigroup_quality() {
         std::path::Path::new(&ssim_tool).exists(),
         "ssimulacra2 not found"
     );
+    let have_cpp = std::path::Path::new(&cjxl_tiny).exists();
+    if !have_cpp {
+        eprintln!(
+            "WARNING: cjxl_tiny not found at {}, skipping C++ column",
+            cjxl_tiny
+        );
+    }
 
     let mut entries: Vec<_> = std::fs::read_dir(&corpus_dir)
         .unwrap_or_else(|_| panic!("corpus not found: {}", corpus_dir))
@@ -3317,6 +3327,7 @@ fn test_multigroup_quality() {
 
     struct ImageInfo {
         png_path: String,
+        pfm_path: String,
         width: u32,
         height: u32,
         linear_rgb: Vec<f32>,
@@ -3343,6 +3354,22 @@ fn test_multigroup_quality() {
             })
             .collect();
 
+        // Write PFM for C++ encoder (bottom-to-top row order, little-endian)
+        let pfm_path = format!("{}/ref_{}.pfm", work_dir, i);
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&pfm_path).unwrap();
+            write!(f, "PF\n{} {}\n-1.0\n", w, h).unwrap();
+            for y in (0..h as usize).rev() {
+                for x in 0..w as usize {
+                    let off = (y * w as usize + x) * 3;
+                    for c in 0..3 {
+                        f.write_all(&linear_rgb[off + c].to_le_bytes()).unwrap();
+                    }
+                }
+            }
+        }
+
         let name = entry
             .path()
             .file_stem()
@@ -3351,6 +3378,7 @@ fn test_multigroup_quality() {
             .to_string();
         images.push(ImageInfo {
             png_path,
+            pfm_path,
             width: w,
             height: h,
             linear_rgb,
@@ -3372,19 +3400,44 @@ fn test_multigroup_quality() {
 
     for &d in &distances {
         eprintln!("--- distance={:.1} ---", d);
-        eprintln!(
-            "{:<6} {:>10} {:>8}  {:>10} {:>8}  {:>8}",
-            "img", "Rust_ON", "size", "Rust_OFF", "size", "ON-OFF"
-        );
+        if have_cpp {
+            eprintln!(
+                "{:<6} {:>8} {:>8}  {:>8} {:>8}  {:>8} {:>8}  {:>8} {:>8}",
+                "img", "C++", "size", "Rust_ON", "size", "Rust_OFF", "size", "ON-C++", "ON-OFF"
+            );
+        } else {
+            eprintln!(
+                "{:<6} {:>8} {:>8}  {:>8} {:>8}  {:>8}",
+                "img", "Rust_ON", "size", "Rust_OFF", "size", "ON-OFF"
+            );
+        }
 
+        let mut cpp_scores = Vec::new();
         let mut ron_scores = Vec::new();
         let mut roff_scores = Vec::new();
+        let mut cpp_sizes = Vec::new();
         let mut ron_sizes = Vec::new();
         let mut roff_sizes = Vec::new();
 
         for (i, img) in images.iter().enumerate() {
             let (w, h) = (img.width as usize, img.height as usize);
 
+            // C++ encode
+            let mut cpp_s: Option<f64> = None;
+            let mut cpp_size: usize = 0;
+            if have_cpp {
+                let cpp_jxl = format!("{}/cpp_{}_d{:.1}.jxl", work_dir, i, d);
+                let cpp_dec = format!("{}/cpp_{}_d{:.1}_dec.png", work_dir, i, d);
+                let d_str = format!("{}", d);
+                if run(&cjxl_tiny, &[&img.pfm_path, &cpp_jxl, "-d", &d_str]) {
+                    cpp_size =
+                        std::fs::metadata(&cpp_jxl).map(|m| m.len() as usize).unwrap_or(0);
+                    run(&djxl, &[&cpp_jxl, &cpp_dec]);
+                    cpp_s = ssim2(&ssim_tool, &img.png_path, &cpp_dec);
+                }
+            }
+
+            // Rust ON
             let ron_jxl = format!("{}/rust_{}_d{:.1}_on.jxl", work_dir, i, d);
             let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
             let mut enc = jxl_enc::tiny::TinyEncoder::new(d);
@@ -3395,6 +3448,7 @@ fn test_multigroup_quality() {
             run(&djxl, &[&ron_jxl, &ron_dec]);
             let ron_s = ssim2(&ssim_tool, &img.png_path, &ron_dec);
 
+            // Rust OFF
             let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
             let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
             enc.ac_strategy_enabled = false;
@@ -3409,15 +3463,20 @@ fn test_multigroup_quality() {
                 roff_scores.push(fs);
                 ron_sizes.push(ron_size);
                 roff_sizes.push(roff_size);
-                eprintln!(
-                    "img{}  {:>10.2} {:>7}B  {:>10.2} {:>7}B  {:>+7.2}",
-                    i,
-                    rs,
-                    ron_size,
-                    fs,
-                    roff_size,
-                    rs - fs
-                );
+                if let Some(cs) = cpp_s {
+                    cpp_scores.push(cs);
+                    cpp_sizes.push(cpp_size);
+                    eprintln!(
+                        "img{}  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2} {:>+7.2}",
+                        i, cs, cpp_size, rs, ron_size, fs, roff_size,
+                        rs - cs, rs - fs
+                    );
+                } else {
+                    eprintln!(
+                        "img{}  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2}",
+                        i, rs, ron_size, fs, roff_size, rs - fs
+                    );
+                }
             }
         }
 
@@ -3428,15 +3487,20 @@ fn test_multigroup_quality() {
             let ron_sz = ron_sizes.iter().sum::<usize>() / ron_sizes.len();
             let roff_sz = roff_sizes.iter().sum::<usize>() / roff_sizes.len();
             let size_pct = (ron_sz as f64 - roff_sz as f64) / roff_sz as f64 * 100.0;
-            eprintln!(
-                "AVG   {:>10.2} {:>7}B  {:>10.2} {:>7}B  {:>+7.2}  ({:+.1}% size)",
-                ron_avg,
-                ron_sz,
-                roff_avg,
-                roff_sz,
-                ron_avg - roff_avg,
-                size_pct
-            );
+            if !cpp_scores.is_empty() {
+                let cpp_avg = cpp_scores.iter().sum::<f64>() / cpp_scores.len() as f64;
+                let cpp_sz = cpp_sizes.iter().sum::<usize>() / cpp_sizes.len();
+                eprintln!(
+                    "AVG   {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2} {:>+7.2}  ({:+.1}% size ON vs OFF)",
+                    cpp_avg, cpp_sz, ron_avg, ron_sz, roff_avg, roff_sz,
+                    ron_avg - cpp_avg, ron_avg - roff_avg, size_pct
+                );
+            } else {
+                eprintln!(
+                    "AVG   {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2}  ({:+.1}% size)",
+                    ron_avg, ron_sz, roff_avg, roff_sz, ron_avg - roff_avg, size_pct
+                );
+            }
         }
         eprintln!();
     }
