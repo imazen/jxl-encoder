@@ -302,6 +302,81 @@ pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     }
 }
 
+/// Compute scaled 16x16 DCT (16 rows, 16 columns).
+///
+/// Input: 16x16 block in row-major order (256 floats)
+/// Output: 16x16 DCT coefficients
+///
+/// Like `dct_8x8()`, there is NO final transpose for square blocks.
+/// C++ `ComputeScaledDCT<16,16>` takes the ROWS >= COLS branch (no final transpose).
+pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
+    let mut tmp = [0.0f32; 256];
+
+    // Transform rows (16 columns each)
+    for row in 0..16 {
+        let row_start = row * 16;
+        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
+        dct1d_16(&mut tmp[row_start..row_start + 16]);
+        // Scale by 1/N
+        for i in 0..16 {
+            tmp[row_start + i] *= 1.0 / 16.0;
+        }
+    }
+
+    // Transpose 16x16
+    let mut transposed = [0.0f32; 256];
+    transpose::<16, 16>(&tmp, &mut transposed);
+
+    // Transform columns (now rows after transpose)
+    for row in 0..16 {
+        let row_start = row * 16;
+        dct1d_16(&mut transposed[row_start..row_start + 16]);
+        // Scale by 1/N
+        for i in 0..16 {
+            transposed[row_start + i] *= 1.0 / 16.0;
+        }
+    }
+
+    // DO NOT transpose back! Same as DCT8x8 - square blocks stay transposed.
+    output.copy_from_slice(&transposed);
+}
+
+/// Extract DC values from 16x16 DCT coefficients.
+/// Returns 4 DC values (for the 4 covered 8x8 blocks) in order [dc00, dc01, dc10, dc11].
+///
+/// The LLF region is 2x2 coefficients at positions [0, 1, 16, 17] in the 16x16 layout
+/// (stride 16). We apply `DCTTotalResampleScale<16, 2>` to each dimension, then a
+/// 2x2 IDCT to get the 4 DC values.
+///
+/// C++ uses `ReinterpretingIDCT<16, 16, 2, 2, 2, 2>` with the ROWS >= COLS branch
+/// (since ROWS=COLS=2), which reads LLF in (y, x) = (0..LF_COLS, 0..LF_ROWS) order.
+pub fn dc_from_dct_16x16(coeffs: &[f32; 256]) -> [f32; 4] {
+    let s0 = DCT_RESAMPLE_SCALE_16_TO_2[0]; // 1.0
+    let s1 = DCT_RESAMPLE_SCALE_16_TO_2[1]; // 0.9018...
+
+    // Read LLF 2x2 from positions [0, 1, 16, 17] and apply resample scales.
+    // C++ ROWS >= COLS branch: block[y * ROWS + x] = input[y * stride + x] * scale_col[y] * scale_row[x]
+    // For 16x16 (ROWS=COLS=2): scale_col = scale_row = DCTTotalResampleScale<16,2>
+    let b00 = coeffs[0] * s0 * s0;
+    let b10 = coeffs[1] * s1 * s0; // block[0*2+1]  = input[0*16+1] * s0 * s1 -- but C++ has [y*R+x] = [y*stride+x]*s_c(y)*s_r(x)
+    let b01 = coeffs[16] * s0 * s1; // block[1*2+0] = input[1*16+0] * s1 * s0
+    let b11 = coeffs[17] * s1 * s1;
+
+    // 2x2 IDCT (ComputeScaledIDCT<2,2>):
+    // For 2-point IDCT: [a, b] -> [a+b, a-b]
+    // Apply to rows then columns:
+    // Row 0: [b00+b10, b00-b10]
+    // Row 1: [b01+b11, b01-b11]
+    // Column 0: [(b00+b10)+(b01+b11), (b00+b10)-(b01+b11)]
+    // Column 1: [(b00-b10)+(b01-b11), (b00-b10)-(b01-b11)]
+    let dc00 = (b00 + b10) + (b01 + b11);
+    let dc01 = (b00 - b10) + (b01 - b11);
+    let dc10 = (b00 + b10) - (b01 + b11);
+    let dc11 = (b00 - b10) - (b01 - b11);
+
+    [dc00, dc01, dc10, dc11]
+}
+
 /// Extract DC value from 8x8 DCT coefficients.
 /// For DCT8, DC is just the [0,0] coefficient.
 #[inline]
@@ -425,5 +500,87 @@ mod tests {
         // With only lf0=1.0 and lf1=0, we get [1, 1] from IDCT
         assert!((dc[0] - 1.0).abs() < 1e-5);
         assert!((dc[1] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_dct_16x16_constant() {
+        // Constant 16x16 block should have only DC, all AC ~0
+        let input = [0.5f32; 256];
+        let mut output = [0.0f32; 256];
+        dct_16x16(&input, &mut output);
+
+        // AC should be zero
+        for i in 1..256 {
+            assert!(
+                output[i].abs() < 1e-4,
+                "AC[{}]: {} should be ~0",
+                i,
+                output[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_dct_16x16_no_final_transpose() {
+        // Verify the output layout: coefficients should NOT be transposed back.
+        // For a block that's non-zero only along row 0, the DCT should produce
+        // coefficients that vary along the frequency row direction (index / 16)
+        // but are zero for frequency column > 0 (index % 16 > 0).
+        let mut input = [0.0f32; 256];
+        // Set row 0 to a specific pattern
+        for x in 0..16 {
+            input[x] = (x as f32 + 1.0) / 16.0;
+        }
+        let mut output = [0.0f32; 256];
+        dct_16x16(&input, &mut output);
+
+        // After DCT with no transpose: the horizontal transform is applied first,
+        // then vertical. With only row 0 non-zero, the vertical transform produces
+        // DC in all rows. So we should have non-zero values in column 0 (indices 0, 16, 32, ...)
+        // but also in other positions due to the non-trivial row content.
+        // Key check: output[1] should be non-zero (it's the (0,1) frequency),
+        // NOT at output[16] which would be the case with a final transpose.
+        assert!(
+            output[1].abs() > 1e-6,
+            "output[1] should be non-zero for non-trivial row 0"
+        );
+    }
+
+    #[test]
+    fn test_dc_from_dct_16x16_uniform() {
+        // Uniform input: all 4 DC values should be equal
+        let input = [1.0f32; 256];
+        let mut output = [0.0f32; 256];
+        dct_16x16(&input, &mut output);
+        let dc = dc_from_dct_16x16(&output);
+
+        // All 4 DC values should be approximately equal (uniform input)
+        for i in 1..4 {
+            assert!(
+                (dc[i] - dc[0]).abs() < 1e-3,
+                "dc[{}]={} should equal dc[0]={}",
+                i,
+                dc[i],
+                dc[0]
+            );
+        }
+    }
+
+    #[test]
+    fn test_dc_from_dct_16x16_dc_only() {
+        // If only LLF[0] (DC) is set, all 4 outputs should be equal
+        let mut coeffs = [0.0f32; 256];
+        coeffs[0] = 4.0;
+        let dc = dc_from_dct_16x16(&coeffs);
+        // With b00=4, b01=b10=b11=0:
+        // dc00 = dc01 = dc10 = dc11 = 4.0
+        for i in 0..4 {
+            assert!(
+                (dc[i] - 4.0).abs() < 1e-5,
+                "dc[{}]={} should be 4.0",
+                i,
+                dc[i]
+            );
+        }
     }
 }

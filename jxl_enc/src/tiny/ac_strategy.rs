@@ -16,23 +16,25 @@
 
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
-use super::dct::{dct_8x8, dct_8x16, dct_16x8};
+use super::dct::{dct_8x8, dct_8x16, dct_16x8, dct_16x16};
 use super::quant::quant_weights;
 
 /// Raw strategy codes matching the C++ `AcStrategy::Type` enum.
 pub const RAW_STRATEGY_DCT8: u8 = 0;
 pub const RAW_STRATEGY_DCT16X8: u8 = 1;
 pub const RAW_STRATEGY_DCT8X16: u8 = 2;
+pub const RAW_STRATEGY_DCT16X16: u8 = 3;
 
 /// Strategy code as written to the bitstream (via `StrategyCode()`).
 /// These differ from raw strategy codes.
-const STRATEGY_CODE_LUT: [u8; 3] = [0, 6, 7];
+/// DCT16X16 = bitstream code 4 (from libjxl ac_strategy.h:45).
+const STRATEGY_CODE_LUT: [u8; 4] = [0, 6, 7, 4];
 
 /// Covered blocks in X direction for each raw strategy.
-const COVERED_X: [usize; 3] = [1, 1, 2];
+pub(crate) const COVERED_X: [usize; 4] = [1, 1, 2, 2];
 
 /// Covered blocks in Y direction for each raw strategy.
-const COVERED_Y: [usize; 3] = [1, 2, 1];
+const COVERED_Y: [usize; 4] = [1, 2, 1, 2];
 
 /// Per-block AC strategy map.
 ///
@@ -148,7 +150,7 @@ fn estimate_entropy(
     let size = num_blocks * DCT_BLOCK_SIZE;
 
     // Apply transform for each channel
-    let mut block = [0.0f32; 3 * 2 * DCT_BLOCK_SIZE]; // max 3 channels × 128 coeffs
+    let mut block = [0.0f32; 3 * 4 * DCT_BLOCK_SIZE]; // max 3 channels × 256 coeffs (DCT16x16)
     for (c, xyb_c) in xyb.iter().enumerate() {
         let offset = c * size;
         match raw_strategy {
@@ -174,6 +176,14 @@ fn estimate_entropy(
                 let mut output = [0.0f32; 128];
                 dct_8x16(&input, &mut output);
                 block[offset..offset + 128].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT16X16 => {
+                // 2 wide × 2 tall: extract 16×16 pixel region
+                let mut input = [0.0f32; 256];
+                extract_block_16x16(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 256];
+                dct_16x16(&input, &mut output);
+                block[offset..offset + 256].copy_from_slice(&output);
             }
             _ => unreachable!(),
         }
@@ -297,6 +307,20 @@ fn extract_block_16x8(plane: &[f32], stride: usize, bx: usize, by: usize, out: &
     }
 }
 
+/// Extract a 16×16 pixel block (2 wide × 2 tall) for DCT16x16.
+/// Layout: 16 rows × 16 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+16) rows and (bx*8+16) columns.
+fn extract_block_16x16(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 256]) {
+    for dy in 0..16 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..16 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 16 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
 // ─── 16×16 transform selection ──────────────────────────────────────────────
 
 /// Find the best transform for a 16×16 block region (2×2 group of 8×8 blocks).
@@ -334,6 +358,13 @@ fn find_best_16x16_transform(
     let k8x16mul2: f32 = 0.901_958_8;
     let k8x16base: f32 = 1.6;
     let mul16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
+
+    // DCT16x16: larger transform favored at higher distances, penalized at low distances.
+    // Tuning: slightly more aggressive than DCT16x8 since it covers 4 blocks.
+    let k16x16mul1: f32 = -0.65;
+    let k16x16mul2: f32 = 0.88;
+    let k16x16base: f32 = 1.8;
+    let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
@@ -419,13 +450,43 @@ fn find_best_16x16_transform(
             ytob,
         );
 
-    // Compare 16x8 split vs 8x16 split
+    // Evaluate DCT16x16 (one transform covering the entire 2x2 region)
+    let entropy_16x16 = mul16x16
+        * estimate_entropy(
+            RAW_STRATEGY_DCT16X16,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+        );
+
+    // Compare all options: four 8x8, 16x8 split, 8x16 split, or one 16x16
+    let cost_all_8x8 = entropy[0][0] + entropy[0][1] + entropy[1][0] + entropy[1][1];
     let cost16x8 = (entropy_16x8_left).min(entropy[0][0] + entropy[1][0])
         + (entropy_16x8_right).min(entropy[0][1] + entropy[1][1]);
     let cost8x16 = (entropy_8x16_top).min(entropy[0][0] + entropy[0][1])
         + (entropy_8x16_bottom).min(entropy[1][0] + entropy[1][1]);
+    let cost16x16 = entropy_16x16;
 
-    if cost16x8 < cost8x16 {
+    // Find best non-DCT8 cost (minimum of 16x8, 8x16, 16x16)
+    let best_rect = cost16x8.min(cost8x16);
+    let best_large = best_rect.min(cost16x16);
+
+    // Only use a non-DCT8 strategy if it beats four DCT8 blocks
+    if best_large >= cost_all_8x8 {
+        return; // Keep all four as DCT8
+    }
+
+    if cost16x16 <= best_rect {
+        // DCT16x16 is the overall best
+        ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X16);
+    } else if cost16x8 < cost8x16 {
         // Try 16x8 for each column
         if entropy_16x8_left < entropy[0][0] + entropy[1][0] {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X8);

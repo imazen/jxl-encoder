@@ -402,6 +402,32 @@ fn test_optimize_codes_roundtrip_small() {
 }
 
 #[test]
+fn test_static_codes_8x8_roundtrip() {
+    use std::io::Cursor;
+
+    // 8x8 = one DCT8 block, must use static codes path
+    let width = 8;
+    let height = 8;
+    let mut linear_rgb = vec![0.0f32; width * height * 3];
+    for i in 0..(width * height) {
+        linear_rgb[i * 3] = 1.0; // R
+    }
+
+    let mut enc = TinyEncoder::new(1.0);
+    enc.optimize_codes = false;
+    let bytes = enc
+        .encode(width, height, &linear_rgb)
+        .expect("encode failed");
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes))
+        .expect("parse failed");
+    let frame = img.render_frame(0).expect("render failed");
+    assert_eq!(frame.image_all_channels().width(), width);
+    eprintln!("8x8 static roundtrip OK: {} bytes", bytes.len());
+}
+
+#[test]
 fn test_optimize_codes_various_sizes() {
     use std::io::Cursor;
 

@@ -10,8 +10,8 @@ use super::ac_group::{
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::ac_strategy::{
-    AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, adjust_quant_field,
-    compute_ac_strategy,
+    AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
+    adjust_quant_field, compute_ac_strategy,
 };
 use super::adaptive_quant::compute_adaptive_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
@@ -20,7 +20,9 @@ use super::dc_coding::{
     collect_ac_metadata_tokens_region, collect_dc_tokens_region, write_ac_metadata_tokens_region,
     write_dc_tokens_region,
 };
-use super::dct::{dc_from_dct_8x16, dc_from_dct_16x8, dct_8x8, dct_8x16, dct_16x8};
+use super::dct::{
+    dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dct_8x8, dct_8x16, dct_16x8, dct_16x16,
+};
 use super::entropy_code::{
     OwnedAnsEntropyCode, OwnedEntropyCode, build_entropy_code_ans_with_options,
     build_entropy_code_with_options, verify_ans_roundtrip, verify_histogram_serialization,
@@ -682,6 +684,18 @@ impl TinyEncoder {
                 dct_8x16(&block, &mut dct_out);
                 output[..128].copy_from_slice(&dct_out);
             }
+            RAW_STRATEGY_DCT16X16 => {
+                let mut block = [0.0f32; 256];
+                for dy in 0..16 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..16 {
+                        block[dy * 16 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 256];
+                dct_16x16(&block, &mut dct_out);
+                output[..256].copy_from_slice(&dct_out);
+            }
             _ => unreachable!(),
         }
     }
@@ -733,18 +747,8 @@ impl TinyEncoder {
 
             let block_slot = idx / DCT_BLOCK_SIZE;
             let coeff_in_block = idx % DCT_BLOCK_SIZE;
-            let slot_by = by
-                + if raw_strategy == RAW_STRATEGY_DCT16X8 {
-                    block_slot
-                } else {
-                    0
-                };
-            let slot_bx = bx
-                + if raw_strategy == RAW_STRATEGY_DCT8X16 {
-                    block_slot
-                } else {
-                    0
-                };
+            let slot_by = by + block_slot / covered_x;
+            let slot_bx = bx + block_slot % covered_x;
             quant_ac[slot_by][slot_bx][coeff_in_block] = qval;
         }
     }
@@ -879,6 +883,19 @@ impl TinyEncoder {
                                 quant_dc[1][by][bx + ix] = (dcs[ix] * inv_factor).round() as i16;
                             }
                         }
+                        RAW_STRATEGY_DCT16X16 => {
+                            let coeffs_arr: [f32; 256] = dct_coeffs[1][..256]
+                                .try_into()
+                                .expect("256 coefficients for DCT16x16");
+                            let dcs = dc_from_dct_16x16(&coeffs_arr);
+                            // dcs = [dc00, dc01, dc10, dc11] in row-major 2x2
+                            for iy in 0..2 {
+                                for ix in 0..2 {
+                                    quant_dc[1][by + iy][bx + ix] =
+                                        (dcs[iy * 2 + ix] * inv_factor).round() as i16;
+                                }
+                            }
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -938,18 +955,8 @@ impl TinyEncoder {
                         } else {
                             let block_slot = idx / DCT_BLOCK_SIZE;
                             let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                            let slot_by = by
-                                + if raw_strategy == RAW_STRATEGY_DCT16X8 {
-                                    block_slot
-                                } else {
-                                    0
-                                };
-                            let slot_bx = bx
-                                + if raw_strategy == RAW_STRATEGY_DCT8X16 {
-                                    block_slot
-                                } else {
-                                    0
-                                };
+                            let slot_by = by + block_slot / covered_x;
+                            let slot_bx = bx + block_slot % covered_x;
                             quant_ac[1][slot_by][slot_bx][coeff_in_block]
                         };
                         let adj = Self::adjust_quant_bias(q, 1);
@@ -1020,6 +1027,20 @@ impl TinyEncoder {
                                     (dcs[ix] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                             }
                         }
+                        RAW_STRATEGY_DCT16X16 => {
+                            let coeffs_arr: [f32; 256] = dct_coeffs[c][..256]
+                                .try_into()
+                                .expect("256 coefficients for DCT16x16");
+                            let dcs = dc_from_dct_16x16(&coeffs_arr);
+                            for iy in 0..2 {
+                                for ix in 0..2 {
+                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
+                                    quant_dc[c][by + iy][bx + ix] =
+                                        (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
+                                            .round() as i16;
+                                }
+                            }
+                        }
                         _ => unreachable!(),
                     }
 
@@ -1054,18 +1075,8 @@ impl TinyEncoder {
                             .map(|idx| {
                                 let block_slot = idx / DCT_BLOCK_SIZE;
                                 let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                                let slot_by = by
-                                    + if raw_strategy == RAW_STRATEGY_DCT16X8 {
-                                        block_slot
-                                    } else {
-                                        0
-                                    };
-                                let slot_bx = bx
-                                    + if raw_strategy == RAW_STRATEGY_DCT8X16 {
-                                        block_slot
-                                    } else {
-                                        0
-                                    };
+                                let slot_by = by + block_slot / covered_x;
+                                let slot_bx = bx + block_slot % covered_x;
                                 quant_ac[c][slot_by][slot_bx][coeff_in_block]
                             })
                             .collect();
@@ -1476,13 +1487,6 @@ impl TinyEncoder {
             end_by
         );
 
-        // Debug: track bits for specific groups (600x600 = 75x75 blocks, groups 0,4,5)
-        let debug_this_group = (group_idx == 0 || group_idx == 4 || group_idx == 5)
-            && xsize_blocks == 75
-            && ysize_blocks == 75;
-        let mut group_total_bits = 0usize;
-        let mut group_block_count = 0usize;
-
         // Process blocks in row-major order, with channels interleaved per block
         // CRITICAL: libjxl-tiny loops: for block { for channel {Y,X,B} { tokenize } }
         // We must match this exact order!
@@ -1499,8 +1503,6 @@ impl TinyEncoder {
                 let covered_blocks = covered_x * covered_y;
                 let size = covered_blocks * DCT_BLOCK_SIZE;
                 let strategy_code = ac_strategy.strategy_code(bx, by);
-
-                let block_start_bits = writer.bits_written();
 
                 // Process channels in order: Y (1), X (0), B (2)
                 for &c in &[1usize, 0, 2] {
@@ -1542,18 +1544,8 @@ impl TinyEncoder {
                             .map(|idx| {
                                 let block_slot = idx / DCT_BLOCK_SIZE;
                                 let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                                let slot_by = by
-                                    + if raw_strategy == RAW_STRATEGY_DCT16X8 {
-                                        block_slot
-                                    } else {
-                                        0
-                                    };
-                                let slot_bx = bx
-                                    + if raw_strategy == RAW_STRATEGY_DCT8X16 {
-                                        block_slot
-                                    } else {
-                                        0
-                                    };
+                                let slot_by = by + block_slot / covered_x;
+                                let slot_bx = bx + block_slot % covered_x;
                                 quant_ac[c][slot_by][slot_bx][coeff_in_block]
                             })
                             .collect();
@@ -1570,39 +1562,7 @@ impl TinyEncoder {
                         )?;
                     }
                 }
-
-                // Debug: track bits per block
-                let block_bits = writer.bits_written() - block_start_bits;
-                group_total_bits += block_bits;
-                group_block_count += 1;
-
-                // Log first few blocks and any anomalously large blocks
-                if debug_this_group && (group_block_count <= 4 || block_bits > 100) {
-                    let local_by = by - start_by;
-                    let local_bx_dbg = bx - start_bx;
-                    eprintln!(
-                        "  G{} block ({},{}) = {} bits [nz: Y={}, X={}, B={}]",
-                        group_idx,
-                        local_by,
-                        local_bx_dbg,
-                        block_bits,
-                        nzeros[1][by][bx],
-                        nzeros[0][by][bx],
-                        nzeros[2][by][bx]
-                    );
-                }
             }
-        }
-
-        // Debug summary for tracked groups
-        if debug_this_group {
-            eprintln!(
-                "Group {} summary: {} blocks, {} total bits, {:.1} bits/block avg",
-                group_idx,
-                group_block_count,
-                group_total_bits,
-                group_total_bits as f64 / group_block_count as f64
-            );
         }
 
         #[cfg(feature = "debug-tokens")]
@@ -1769,18 +1729,8 @@ impl TinyEncoder {
                                 .map(|idx| {
                                     let block_slot = idx / DCT_BLOCK_SIZE;
                                     let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                                    let slot_by = by
-                                        + if raw_strategy == RAW_STRATEGY_DCT16X8 {
-                                            block_slot
-                                        } else {
-                                            0
-                                        };
-                                    let slot_bx = bx
-                                        + if raw_strategy == RAW_STRATEGY_DCT8X16 {
-                                            block_slot
-                                        } else {
-                                            0
-                                        };
+                                    let slot_by = by + block_slot / covered_x;
+                                    let slot_bx = bx + block_slot % covered_x;
                                     quant_ac[c][slot_by][slot_bx][coeff_in_block]
                                 })
                                 .collect();
@@ -2212,8 +2162,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated for custom coefficient ordering + u2S encoding fix
-        const EXPECTED_HASH: u64 = 0xdbd35c78351ca5f9;
+        // Updated for DCT16x16 block context map fix
+        const EXPECTED_HASH: u64 = 0xaa00e0f36ce35260;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2279,8 +2229,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated for custom coefficient ordering + u2S encoding fix
-        const EXPECTED_HASH: u64 = 0xdba09efd7ba3ba1f;
+        // Updated for DCT16x16 block context map fix
+        const EXPECTED_HASH: u64 = 0xddcf4e4af8343646;
         assert_eq!(
             hash,
             EXPECTED_HASH,

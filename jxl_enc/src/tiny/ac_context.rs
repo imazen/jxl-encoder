@@ -55,11 +55,20 @@ pub static COMPACT_BLOCK_CONTEXT_MAP: [u8; 39] = [
 ];
 
 /// Full block context map.
+///
+/// Indexed by `[c * NUM_AC_STRATEGY_CODES + strategy_code]` where c is encoder
+/// channel (0=X, 1=Y, 2=B). Values must be consistent with `COMPACT_BLOCK_CONTEXT_MAP`
+/// which the decoder reads, indexed by `[ch_idx * 13 + order_id]` where
+/// ch_idx swaps X↔Y (0→1, 1→0, 2→2) and order_id maps from strategy codes via
+/// a LUT (e.g., code 0→order 0, code 4→order 2, code 5→order 3, code 6,7→order 4).
 static BLOCK_CONTEXT_MAP: [u8; 81] = [
-    // X
-    2, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // Y
-    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // B
-    2, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // X (c=0): decoder reads with ch_idx=1 (compact group 1)
+    //  code: 0  1  2  3  4  5  6  7  8 ...
+    2, 0, 0, 0, 2, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // Y (c=1): decoder reads with ch_idx=0 (compact group 0)
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // B (c=2): decoder reads with ch_idx=2 (compact group 2)
+    2, 0, 0, 0, 2, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 /// Get block context from channel and AC strategy code.

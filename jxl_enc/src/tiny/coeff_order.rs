@@ -194,6 +194,10 @@ pub fn count_zero_coefficients(
     for ch in &mut counts[0] {
         *ch = vec![0i64; 64];
     }
+    // Bucket 2: DCT16x16, size 256
+    for ch in &mut counts[2] {
+        *ch = vec![0i64; 256];
+    }
     // Bucket 4: DCT8x16/DCT16x8, size 128
     for ch in &mut counts[4] {
         *ch = vec![0i64; 128];
@@ -228,21 +232,12 @@ pub fn count_zero_coefficients(
                     }
                 } else {
                     // Multi-block: assemble from sub-blocks
+                    let covered_x_local = super::ac_strategy::COVERED_X[raw_strategy as usize];
                     for (idx, count) in counts[bucket][c][..size].iter_mut().enumerate() {
                         let block_slot = idx / DCT_BLOCK_SIZE;
                         let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                        let slot_by = by
-                            + if raw_strategy == super::ac_strategy::RAW_STRATEGY_DCT16X8 {
-                                block_slot
-                            } else {
-                                0
-                            };
-                        let slot_bx = bx
-                            + if raw_strategy == super::ac_strategy::RAW_STRATEGY_DCT8X16 {
-                                block_slot
-                            } else {
-                                0
-                            };
+                        let slot_by = by + block_slot / covered_x_local;
+                        let slot_bx = bx + block_slot % covered_x_local;
                         if quant_ac[c][slot_by][slot_bx][coeff_in_block] == 0 {
                             *count += 1;
                         }
@@ -340,6 +335,7 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
 fn bucket_to_cx_cy(bucket: usize) -> (usize, usize) {
     match bucket {
         0 => (1, 1), // DCT8: 1x1 blocks
+        2 => (2, 2), // DCT16x16: 2x2 blocks
         4 => (2, 1), // DCT8x16/DCT16x8: 2x1 blocks (after CoefficientLayout)
         _ => (0, 0), // Not supported by our encoder
     }
@@ -505,9 +501,20 @@ mod tests {
     }
 
     #[test]
+    fn test_natural_coeff_order_16x16() {
+        // 2x2 covered blocks
+        let order = natural_coeff_order(2, 2);
+        assert_eq!(order.len(), 256);
+
+        // Must match our existing COEFF_ORDER_16X16
+        let existing = super::super::ac_group::COEFF_ORDER_16X16;
+        assert_eq!(order, &existing[..]);
+    }
+
+    #[test]
     fn test_natural_coeff_order_lut_inverse() {
         // LUT must be inverse of order
-        for &(cx, cy) in &[(1, 1), (2, 1)] {
+        for &(cx, cy) in &[(1, 1), (2, 1), (2, 2)] {
             let order = natural_coeff_order(cx, cy);
             let lut = natural_coeff_order_lut(cx, cy);
             assert_eq!(order.len(), lut.len());
@@ -608,6 +615,7 @@ mod tests {
     #[test]
     fn test_strategy_bucket() {
         assert_eq!(strategy_bucket(0), 0); // DCT8 -> bucket 0
+        assert_eq!(strategy_bucket(4), 2); // DCT16X16 -> bucket 2
         assert_eq!(strategy_bucket(6), 4); // DCT8X16 -> bucket 4
         assert_eq!(strategy_bucket(7), 4); // DCT16X8 -> bucket 4
     }
