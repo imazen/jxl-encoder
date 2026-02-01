@@ -312,7 +312,12 @@ fn huffman_population_cost(h: &Histogram) -> f32 {
     // But don't over-penalize - the data cost is the main factor.
     //
     // Count non-zero symbols to estimate header complexity
-    let non_zero_count = h.counts.iter().take(alphabet_size).filter(|&&c| c > 0).count();
+    let non_zero_count = h
+        .counts
+        .iter()
+        .take(alphabet_size)
+        .filter(|&&c| c > 0)
+        .count();
 
     // Small header penalty: 0.1 bits per non-zero symbol
     // This is much smaller than data cost, so it only tips the balance
@@ -834,50 +839,50 @@ mod tests {
     }
 }
 
-    #[test]
-    fn test_huffman_cost_disjoint_histograms() {
-        // Disjoint histograms - merging should NOT be beneficial
-        let a = Histogram::from_counts(&[100, 50, 25, 0, 0, 0, 0, 0]);
-        a.shannon_entropy();
+#[test]
+fn test_huffman_cost_disjoint_histograms() {
+    // Disjoint histograms - merging should NOT be beneficial
+    let a = Histogram::from_counts(&[100, 50, 25, 0, 0, 0, 0, 0]);
+    a.shannon_entropy();
 
-        let b = Histogram::from_counts(&[0, 0, 0, 80, 40, 20, 0, 0]);
-        b.shannon_entropy();
+    let b = Histogram::from_counts(&[0, 0, 0, 80, 40, 20, 0, 0]);
+    b.shannon_entropy();
 
-        let mut merged = a.clone();
-        merged.add_histogram(&b);
-        merged.shannon_entropy();
+    let mut merged = a.clone();
+    merged.add_histogram(&b);
+    merged.shannon_entropy();
 
-        let cost_a = huffman_population_cost(&a);
-        let cost_b = huffman_population_cost(&b);
-        let cost_merged = huffman_population_cost(&merged);
-        let delta = cost_merged - cost_a - cost_b;
+    let cost_a = huffman_population_cost(&a);
+    let cost_b = huffman_population_cost(&b);
+    let cost_merged = huffman_population_cost(&merged);
+    let delta = cost_merged - cost_a - cost_b;
 
-        // Disjoint histograms: merging increases data cost significantly
-        assert!(delta >= 0.0, "Disjoint merge should not be beneficial");
-    }
+    // Disjoint histograms: merging increases data cost significantly
+    assert!(delta >= 0.0, "Disjoint merge should not be beneficial");
+}
 
-    #[test]
-    fn test_huffman_cost_identical_histograms() {
-        // Identical histograms - merging should have near-zero delta
-        let a = Histogram::from_counts(&[100, 50, 25, 10, 0, 0, 0, 0]);
-        a.shannon_entropy();
+#[test]
+fn test_huffman_cost_identical_histograms() {
+    // Identical histograms - merging should have near-zero delta
+    let a = Histogram::from_counts(&[100, 50, 25, 10, 0, 0, 0, 0]);
+    a.shannon_entropy();
 
-        let b = Histogram::from_counts(&[100, 50, 25, 10, 0, 0, 0, 0]);
-        b.shannon_entropy();
+    let b = Histogram::from_counts(&[100, 50, 25, 10, 0, 0, 0, 0]);
+    b.shannon_entropy();
 
-        let mut merged = a.clone();
-        merged.add_histogram(&b);
-        merged.shannon_entropy();
+    let mut merged = a.clone();
+    merged.add_histogram(&b);
+    merged.shannon_entropy();
 
-        let cost_a = huffman_population_cost(&a);
-        let cost_b = huffman_population_cost(&b);
-        let cost_merged = huffman_population_cost(&merged);
-        let delta = cost_merged - cost_a - cost_b;
+    let cost_a = huffman_population_cost(&a);
+    let cost_b = huffman_population_cost(&b);
+    let cost_merged = huffman_population_cost(&merged);
+    let delta = cost_merged - cost_a - cost_b;
 
-        // Identical histograms use same Huffman tree, so merged cost = 2x individual
-        assert!(
-            delta.abs() < 1.0,
-            "Identical histograms should have near-zero delta, got {}",
-            delta
-        );
-    }
+    // Identical histograms use same Huffman tree, so merged cost = 2x individual
+    assert!(
+        delta.abs() < 1.0,
+        "Identical histograms should have near-zero delta, got {}",
+        delta
+    );
+}
