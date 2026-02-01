@@ -40,6 +40,16 @@ pub enum ClusteringType {
     Best,
 }
 
+/// Entropy coding method - affects header cost estimation for clustering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum EntropyType {
+    /// Huffman prefix codes (used by libjxl-tiny, simpler header format).
+    #[default]
+    Huffman,
+    /// ANS (Asymmetric Numeral Systems) - used by full libjxl, larger alphabet support.
+    Ans,
+}
+
 /// Fast k-means-like clustering.
 ///
 /// Algorithm:
@@ -274,37 +284,110 @@ mod ordered_float {
     }
 }
 
-/// Estimate ANS population cost (header + data bits).
+/// Estimate Huffman population cost (header + data bits).
 ///
-/// This is a simplified version of libjxl's `Histogram::ANSPopulationCost()`.
-fn ans_population_cost(h: &Histogram) -> Result<f32> {
+/// Estimates the cost of serializing a Huffman tree plus encoding the data.
+/// JXL Huffman trees have two formats:
+/// - Simple (1-4 symbols): 4-bit marker + symbol indices
+/// - Complex (>4 symbols): Nested Huffman tree for code lengths
+fn huffman_population_cost(h: &Histogram) -> f32 {
     if h.total_count == 0 {
-        return Ok(0.0);
+        return 0.0;
     }
 
     let alphabet_size = h.alphabet_size();
-    if alphabet_size <= 1 {
-        // Single symbol or empty: almost no header cost
-        return Ok(0.0);
+
+    // Count non-zero symbols
+    let mut non_zero_count = 0usize;
+    for i in 0..alphabet_size {
+        if h.counts[i] > 0 {
+            non_zero_count += 1;
+        }
+    }
+
+    if non_zero_count == 0 {
+        return 0.0;
     }
 
     // Data cost (entropy)
     let data_cost = h.cached_entropy();
 
-    // Header cost estimate: roughly log2(n) bits per symbol for frequencies
-    // This is a rough approximation - the actual cost depends on the encoding method
-    let header_cost = (alphabet_size as f32) * 5.0; // ~5 bits per symbol average
+    // Header cost depends on number of symbols
+    let header_cost = if non_zero_count == 1 {
+        // Single symbol: 4-bit marker + symbol index
+        // Symbol index uses ceil(log2(alphabet_size)) bits
+        let symbol_bits = if alphabet_size <= 1 {
+            0
+        } else {
+            (alphabet_size as f32).log2().ceil() as usize
+        };
+        4.0 + symbol_bits as f32
+    } else if non_zero_count <= 4 {
+        // Simple tree: 4-bit marker + symbol indices + tree structure
+        // Each symbol uses ceil(log2(alphabet_size)) bits
+        let symbol_bits = (alphabet_size as f32).log2().ceil() as usize;
+        // Plus 1-2 bits for tree shape per symbol
+        4.0 + (non_zero_count as f32) * (symbol_bits as f32 + 1.5)
+    } else {
+        // Complex tree: nested Huffman for code lengths (symbols 0-17)
+        // Outer tree: ~3 bits per code length symbol on average
+        // Inner tree: code lengths themselves
+        // Rough estimate: 3 bits per non-zero symbol for the length encoding
+        // Plus some overhead for the code length tree itself (~20-40 bits)
+        let length_encoding_cost = (non_zero_count as f32) * 3.0;
+        let tree_overhead = 30.0; // Fixed overhead for nested tree
+        length_encoding_cost + tree_overhead
+    };
 
-    Ok(data_cost + header_cost)
+    data_cost + header_cost
+}
+
+/// Estimate ANS population cost (header + data bits).
+///
+/// This is a simplified version of libjxl's `Histogram::ANSPopulationCost()`.
+/// ANS uses a frequency table with log-scale precision, supporting larger alphabets.
+fn ans_population_cost(h: &Histogram) -> f32 {
+    if h.total_count == 0 {
+        return 0.0;
+    }
+
+    let alphabet_size = h.alphabet_size();
+    if alphabet_size <= 1 {
+        // Single symbol or empty: almost no header cost
+        return 0.0;
+    }
+
+    // Data cost (entropy)
+    let data_cost = h.cached_entropy();
+
+    // Header cost estimate: roughly 5 bits per symbol for frequency table
+    // ANS encodes frequencies using variable-length coding based on precision
+    // This is a rough approximation - actual cost depends on the shift parameter
+    let header_cost = (alphabet_size as f32) * 5.0;
+
+    data_cost + header_cost
+}
+
+/// Estimate population cost for a histogram based on entropy type.
+fn population_cost(h: &Histogram, entropy_type: EntropyType) -> f32 {
+    match entropy_type {
+        EntropyType::Huffman => huffman_population_cost(h),
+        EntropyType::Ans => ans_population_cost(h),
+    }
 }
 
 /// Refine clusters by merging pairs that reduce total cost.
 ///
 /// This implements the pair merge refinement from libjxl's `ClusterHistograms`
 /// when `params.clustering == ClusteringType::Best`.
+///
+/// The `entropy_type` parameter controls the cost model used for merge decisions:
+/// - `EntropyType::Huffman`: Uses Huffman tree serialization cost model
+/// - `EntropyType::Ans`: Uses ANS frequency table cost model
 pub fn refine_clusters_by_merging(
     histograms: &mut Vec<Histogram>,
     symbols: &mut [u32],
+    entropy_type: EntropyType,
 ) -> Result<()> {
     if histograms.is_empty() {
         return Ok(());
@@ -332,9 +415,9 @@ pub fn refine_clusters_by_merging(
             merged.add_histogram(&histograms[j as usize]);
             merged.shannon_entropy();
 
-            let merged_cost = ans_population_cost(&merged)?;
-            let individual_cost = ans_population_cost(&histograms[i as usize])?
-                + ans_population_cost(&histograms[j as usize])?;
+            let merged_cost = population_cost(&merged, entropy_type);
+            let individual_cost = population_cost(&histograms[i as usize], entropy_type)
+                + population_cost(&histograms[j as usize], entropy_type);
 
             let cost = merged_cost - individual_cost;
 
@@ -388,9 +471,9 @@ pub fn refine_clusters_by_merging(
             merged.add_histogram(&histograms[j as usize]);
             merged.shannon_entropy();
 
-            let merged_cost = ans_population_cost(&merged)?;
-            let individual_cost = ans_population_cost(&histograms[first])?
-                + ans_population_cost(&histograms[j as usize])?;
+            let merged_cost = population_cost(&merged, entropy_type);
+            let individual_cost = population_cost(&histograms[first], entropy_type)
+                + population_cost(&histograms[j as usize], entropy_type);
 
             let cost = merged_cost - individual_cost;
 
@@ -463,8 +546,16 @@ fn histogram_reindex(histograms: &mut Vec<Histogram>, prev_count: usize, symbols
 /// Full clustering pipeline.
 ///
 /// Combines fast clustering with optional pair merge refinement.
+///
+/// # Arguments
+///
+/// * `clustering_type` - Controls clustering aggressiveness (Fastest/Fast/Best)
+/// * `entropy_type` - Controls cost model for merge decisions (Huffman/Ans)
+/// * `input` - Input histograms to cluster
+/// * `max_histograms` - Maximum number of output clusters
 pub fn cluster_histograms(
     clustering_type: ClusteringType,
+    entropy_type: EntropyType,
     input: &[Histogram],
     max_histograms: usize,
 ) -> Result<ClusterResult> {
@@ -480,7 +571,7 @@ pub fn cluster_histograms(
 
     // Pair merge refinement for Best quality
     if clustering_type == ClusteringType::Best && !result.histograms.is_empty() {
-        refine_clusters_by_merging(&mut result.histograms, &mut result.symbols)?;
+        refine_clusters_by_merging(&mut result.histograms, &mut result.symbols, entropy_type)?;
     }
 
     // Reindex for canonical form
@@ -597,14 +688,15 @@ mod tests {
             })
             .collect();
 
-        let result = cluster_histograms(ClusteringType::Fastest, &input, 10).unwrap();
+        let result =
+            cluster_histograms(ClusteringType::Fastest, EntropyType::Huffman, &input, 10).unwrap();
 
         // Fastest should limit to 4 clusters
         assert!(result.histograms.len() <= 4);
     }
 
     #[test]
-    fn test_cluster_histograms_best_merges() {
+    fn test_cluster_histograms_best_merges_huffman() {
         // Create two pairs of similar histograms
         let input = vec![
             make_histogram(&[100, 50, 25, 10]),
@@ -613,11 +705,50 @@ mod tests {
             make_histogram(&[11, 23, 52, 105]), // Similar to 2
         ];
 
-        let result = cluster_histograms(ClusteringType::Best, &input, 10).unwrap();
+        let result =
+            cluster_histograms(ClusteringType::Best, EntropyType::Huffman, &input, 10).unwrap();
 
         // With best quality, similar histograms should be merged
-        // We should get at most 2 clusters (possibly merged further)
         assert!(result.histograms.len() <= 4);
+    }
+
+    #[test]
+    fn test_cluster_histograms_best_merges_ans() {
+        // Create two pairs of similar histograms
+        let input = vec![
+            make_histogram(&[100, 50, 25, 10]),
+            make_histogram(&[105, 52, 23, 11]), // Similar to 0
+            make_histogram(&[10, 25, 50, 100]),
+            make_histogram(&[11, 23, 52, 105]), // Similar to 2
+        ];
+
+        let result =
+            cluster_histograms(ClusteringType::Best, EntropyType::Ans, &input, 10).unwrap();
+
+        // With best quality, similar histograms should be merged
+        assert!(result.histograms.len() <= 4);
+    }
+
+    #[test]
+    fn test_huffman_vs_ans_cost_model() {
+        // Histogram with many symbols - ANS and Huffman should have different costs
+        let mut counts = vec![0i32; 64];
+        for (i, c) in counts.iter_mut().enumerate() {
+            *c = (64 - i as i32) * 10; // Decreasing frequencies
+        }
+        let h = make_histogram(&counts);
+
+        let huffman_cost = huffman_population_cost(&h);
+        let ans_cost = ans_population_cost(&h);
+
+        // Both should be positive
+        assert!(huffman_cost > 0.0);
+        assert!(ans_cost > 0.0);
+
+        // For large alphabets, ANS header cost (5 bits/symbol) should be higher
+        // than Huffman's nested tree (~3 bits/symbol + 30 bit overhead)
+        // This test just verifies they're different - actual values depend on distribution
+        assert!((huffman_cost - ans_cost).abs() > 1.0);
     }
 
     #[test]

@@ -6,7 +6,9 @@ use super::context::BlockContextMap;
 use super::tokenize::Token;
 use crate::entropy_coding::ans::{ANS_MAX_ALPHABET_SIZE, AnsDistribution};
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
-use crate::entropy_coding::{ClusteringType, Histogram as EntropyHistogram, cluster_histograms};
+use crate::entropy_coding::{
+    ClusteringType, EntropyType, Histogram as EntropyHistogram, cluster_histograms,
+};
 use crate::error::Result;
 
 /// Compute the global alphabet size from tokens, applying HybridUint encoding.
@@ -210,7 +212,9 @@ impl ClusteredHistogramSet {
             ClusteringType::Best => 8,    // Full clustering for quality
         };
         let max_clusters = max_clusters.min(MAX_CLUSTERS);
-        let cluster_result = cluster_histograms(clustering_type, &histograms, max_clusters)?;
+        // Use ANS cost model since VarDCT uses ANS entropy coding
+        let cluster_result =
+            cluster_histograms(clustering_type, EntropyType::Ans, &histograms, max_clusters)?;
 
         // 4. Build distributions from clustered histograms
         let distributions = cluster_result
