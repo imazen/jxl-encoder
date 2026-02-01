@@ -6,6 +6,10 @@
 //! Adaptive quantization field computation.
 //!
 //! Ported from libjxl-tiny `enc_adaptive_quantization.cc`.
+
+// Ported float constants from C++ - exact values are intentional for parity.
+#![allow(clippy::excessive_precision)]
+#![allow(clippy::approx_constant)]
 //! Computes per-block quantization values based on perceptual masking.
 //!
 //! Pipeline:
@@ -185,6 +189,7 @@ fn hf_modulation(x: usize, y: usize, xyb_y: &[f32], stride: usize, out_val: f32)
 ///
 /// The buffer must be padded to at least (y+8) rows and (x+8) columns with
 /// edge-replicated values, so no bounds checking is needed.
+#[allow(clippy::too_many_arguments)]
 fn color_modulation(
     x: usize,
     y: usize,
@@ -211,7 +216,7 @@ fn color_modulation(
 
     // Offset: reduce bits from areas not blue or red
     let offset = strength * -0.009_174_542_f32;
-    let mut result = out_val + offset;
+    let result = out_val + offset;
 
     let mut blue_coverage = 0.0_f32;
     let mut red_coverage = 0.0_f32;
@@ -284,6 +289,7 @@ fn gamma_modulation(
 ///
 /// The tile may be padded by 4 pixels on each side for border handling.
 /// Output dimensions: ceil(tile_pixel_w / 4) × ceil(tile_pixel_h / 4).
+#[allow(clippy::too_many_arguments)]
 fn compute_pre_erosion(
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -490,6 +496,7 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 /// quant field via exp2.
 ///
 /// `stride` is the row stride (padded width) of the XYB buffers.
+#[allow(clippy::too_many_arguments)]
 fn per_block_modulations(
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -559,6 +566,7 @@ fn per_block_modulations(
 /// * `xsize_blocks`, `ysize_blocks` - image dimensions in 8×8 blocks
 /// * `distance` - butteraugli target distance
 /// * `inv_scale` - 1.0 / (global_scale / 65536)
+#[allow(clippy::too_many_arguments)]
 pub fn compute_adaptive_quant_field(
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -772,7 +780,7 @@ mod tests {
         assert_eq!(masking.len(), xb * yb);
         // All values should be in valid range
         for &v in &result {
-            assert!(v >= 1 && v <= 255, "quant value {} out of range", v);
+            assert!(v >= 1, "quant value {} out of range", v);
         }
         // For uniform image, all blocks should have the same value
         let first = result[0];
@@ -817,7 +825,7 @@ mod tests {
         assert_eq!(result.len(), xb * yb);
         // All values should be in valid range
         for &v in &result {
-            assert!(v >= 1 && v <= 255, "quant value {} out of range", v);
+            assert!(v >= 1, "quant value {} out of range", v);
         }
         // Smooth and textured regions should differ
         // (left column blocks vs right column blocks)
@@ -843,7 +851,7 @@ mod tests {
         // The caller (encoder.rs) pads XYB buffers to block boundaries with
         // edge replication. This test simulates that by allocating padded buffers.
         for &(w, h) in &[
-            (300, 300),
+            (300usize, 300usize),
             (301, 301),
             (100, 100),
             (17, 17),
@@ -851,8 +859,8 @@ mod tests {
             (15, 33),
             (257, 129),
         ] {
-            let xb = (w + 7) / 8;
-            let yb = (h + 7) / 8;
+            let xb = w.div_ceil(8);
+            let yb = h.div_ceil(8);
             let pw = xb * 8; // padded width
             let ph = yb * 8; // padded height
             let n = pw * ph;

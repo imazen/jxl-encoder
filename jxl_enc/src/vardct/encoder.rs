@@ -1216,8 +1216,8 @@ impl VarDctEncoder {
         distributions: &[AnsDistribution],
         writer: &mut BitWriter,
     ) -> Result<()> {
-        let start_bit = writer.bits_written();
-        crate::trace::debug_eprintln!("HF_HIST [bit {}]: Starting histogram", start_bit);
+        let _start_bit = writer.bits_written();
+        crate::trace::debug_eprintln!("HF_HIST [bit {}]: Starting histogram", _start_bit);
 
         // LZ77 enabled = false
         writer.write(1, 0)?;
@@ -1303,7 +1303,7 @@ impl VarDctEncoder {
         crate::trace::debug_eprintln!(
             "HF_HIST [bit {}]: After prefix_code, total = {} bits",
             writer.bits_written(),
-            writer.bits_written() - start_bit
+            writer.bits_written() - _start_bit
         );
 
         Ok(())
@@ -1320,10 +1320,10 @@ impl VarDctEncoder {
         _tokens: &[Token],
         writer: &mut BitWriter,
     ) -> Result<()> {
-        let start_bit = writer.bits_written();
+        let _start_bit = writer.bits_written();
         crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED [bit {}]: Starting, {} clusters",
-            start_bit,
+            _start_bit,
             histogram_set.num_clusters()
         );
 
@@ -1383,43 +1383,43 @@ impl VarDctEncoder {
         //   - split_exponent: ceil_log2(16) = 4 bits
         //   - msb_in_token: ceil_log2(split_exponent + 1) = ceil_log2(5) = 3 bits
         //   - lsb_in_token: ceil_log2(split_exponent - msb_in_token + 1) = ceil_log2(3) = 2 bits
-        for cluster_idx in 0..num_clusters {
+        for _cluster_idx in 0..num_clusters {
             writer.write(4, 4)?; // split_exponent = 4
             writer.write(3, 2)?; // msb_in_token = 2
             writer.write(2, 0)?; // lsb_in_token = 0
             crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: IntegerConfig {} (split=4, msb=2, lsb=0)",
                 writer.bits_written(),
-                cluster_idx
+                _cluster_idx
             );
         }
 
         // Write alphabet sizes for EACH histogram (all alphabet sizes first)
         // HuffmanCodes::decode reads all alphabet sizes, then all prefix codes
-        for cluster_idx in 0..num_clusters {
+        for _cluster_idx in 0..num_clusters {
             write_alphabet_size(writer, alphabet_size)?;
             crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: alphabet_size[{}] = {}",
                 writer.bits_written(),
-                cluster_idx,
+                _cluster_idx,
                 alphabet_size
             );
         }
 
         // Write prefix codes for EACH cluster (after all alphabet sizes)
-        for cluster_idx in 0..num_clusters {
+        for _cluster_idx in 0..num_clusters {
             write_prefix_code(writer, alphabet_size)?;
             crate::trace::debug_eprintln!(
                 "HF_HIST_CLUSTERED [bit {}]: After prefix_code for cluster {}",
                 writer.bits_written(),
-                cluster_idx
+                _cluster_idx
             );
         }
 
         crate::trace::debug_eprintln!(
             "HF_HIST_CLUSTERED [bit {}]: Complete, total = {} bits",
             writer.bits_written(),
-            writer.bits_written() - start_bit
+            writer.bits_written() - _start_bit
         );
 
         Ok(())

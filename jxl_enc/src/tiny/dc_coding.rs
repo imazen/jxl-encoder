@@ -118,6 +118,7 @@ pub const NUM_DC_CONTEXTS: usize = 45;
 /// * `quant_dc` - Quantized DC coefficients for each channel, shape [3][height][width]
 /// * `dc_code` - DC entropy code to use for token writing
 /// * `writer` - BitWriter to write encoded data
+#[allow(dead_code)]
 pub fn write_dc_tokens(
     quant_dc: &[Vec<Vec<i16>>; 3],
     dc_code: &EntropyCode,
@@ -317,6 +318,7 @@ pub fn collect_dc_tokens_region(
 /// Collect AC metadata tokens for a specific region (without writing).
 ///
 /// Same logic as `write_ac_metadata_tokens_region()` but returns a `Vec<Token>`.
+#[allow(clippy::too_many_arguments)]
 pub fn collect_ac_metadata_tokens_region(
     region_xsize_blocks: usize,
     region_ysize_blocks: usize,
@@ -329,8 +331,8 @@ pub fn collect_ac_metadata_tokens_region(
 ) -> Vec<Token> {
     let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
     let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
-    let cfl_xsize = div_ceil(xsize_pixels, COLOR_TILE_DIM);
-    let cfl_ysize = div_ceil(ysize_pixels, COLOR_TILE_DIM);
+    let cfl_xsize = xsize_pixels.div_ceil(COLOR_TILE_DIM);
+    let cfl_ysize = ysize_pixels.div_ceil(COLOR_TILE_DIM);
 
     let nblocks = region_xsize_blocks * region_ysize_blocks;
     // CFL (2 * cfl tiles) + ACS (nblocks) + QF (nblocks) + EPF (nblocks)
@@ -462,12 +464,6 @@ const BLOCK_DIM: usize = 8;
 /// CFL tile dimension in blocks (64 / 8 = 8 blocks per tile).
 const TILES_IN_BLOCKS: usize = COLOR_TILE_DIM / BLOCK_DIM;
 
-/// Ceiling division helper.
-#[inline]
-const fn div_ceil(a: usize, b: usize) -> usize {
-    (a + b - 1) / b
-}
-
 /// Write AC metadata tokens (YtoX, YtoB, AC strategy, quant field, EPF) using gradient predictor.
 ///
 /// AC metadata is encoded in the DC group section using the DC entropy code.
@@ -486,6 +482,8 @@ const fn div_ceil(a: usize, b: usize) -> usize {
 /// * `full_xsize_blocks` - Full image width in blocks (for quant_field indexing)
 /// * `dc_code` - DC entropy code to use for token writing
 /// * `writer` - BitWriter to write encoded data
+#[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 pub fn write_ac_metadata_tokens(
     xsize_blocks: usize,
     ysize_blocks: usize,
@@ -525,6 +523,7 @@ pub fn write_ac_metadata_tokens(
 /// * `start_by` - Starting block y coordinate of this region
 /// * `dc_code` - DC entropy code
 /// * `writer` - BitWriter
+#[allow(clippy::too_many_arguments)]
 pub fn write_ac_metadata_tokens_region(
     region_xsize_blocks: usize,
     region_ysize_blocks: usize,
@@ -542,8 +541,8 @@ pub fn write_ac_metadata_tokens_region(
     // CFL maps use 64-pixel tiles, not 8-pixel blocks
     let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
     let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
-    let cfl_xsize = div_ceil(xsize_pixels, COLOR_TILE_DIM);
-    let cfl_ysize = div_ceil(ysize_pixels, COLOR_TILE_DIM);
+    let cfl_xsize = xsize_pixels.div_ceil(COLOR_TILE_DIM);
+    let cfl_ysize = ysize_pixels.div_ceil(COLOR_TILE_DIM);
 
     #[cfg(feature = "debug-tokens")]
     let after_start = writer.bits_written();
@@ -745,7 +744,7 @@ mod tests {
         // Verify all LUT values are valid context IDs (11-44)
         for &ctx in &GRADIENT_CONTEXT_LUT {
             assert!(
-                ctx >= 11 && ctx <= 44,
+                (11..=44).contains(&ctx),
                 "Context {} out of expected range [11, 44]",
                 ctx
             );

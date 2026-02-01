@@ -51,6 +51,7 @@ pub struct FrameEncoder {
     width: usize,
     /// Image height.
     height: usize,
+    #[allow(dead_code)]
     /// Number of extra channels (e.g., 1 for alpha).
     num_extra_channels: usize,
 }
@@ -203,15 +204,15 @@ impl FrameEncoder {
         let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
         for (group_idx, group_image) in group_images.iter().enumerate() {
             for _pass in 0..num_passes {
-                let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
+                let (_x_start, _y_start, _x_end, _y_end) = self.group_bounds(group_idx);
 
                 crate::trace::debug_eprintln!(
                     "MULTI_GROUP: Group {} bounds ({}, {}) - ({}, {}), size {}x{}",
                     group_idx,
-                    x_start,
-                    y_start,
-                    x_end,
-                    y_end,
+                    _x_start,
+                    _y_start,
+                    _x_end,
+                    _y_end,
                     group_image.width(),
                     group_image.height()
                 );
@@ -443,26 +444,26 @@ impl FrameEncoder {
         // 1. LF Global section (NO byte padding - continuous bitstream)
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_global(&mut section_writer)?;
-        let lf_global_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION: LF Global = {} bits", lf_global_bits);
+        let _lf_global_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION: LF Global = {} bits", _lf_global_bits);
 
         // 2. LF Group (DC coefficients + HF metadata) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
-        let lf_group_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION: LF Group = {} bits", lf_group_bits);
+        let _lf_group_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION: LF Group = {} bits", _lf_group_bits);
 
         // 3. HF Global section (with histograms) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_hf_global(tokens, distributions, &mut section_writer)?;
-        let hf_global_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION: HF Global = {} bits", hf_global_bits);
+        let _hf_global_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION: HF Global = {} bits", _hf_global_bits);
 
         // 4. Pass Group (AC coefficients) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_pass_group(tokens, distributions, &mut section_writer)?;
-        let pass_group_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION: Pass Group = {} bits", pass_group_bits);
+        let _pass_group_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION: Pass Group = {} bits", _pass_group_bits);
 
         // Only pad to byte at the very end of all sections
         section_writer.zero_pad_to_byte();
@@ -521,30 +522,30 @@ impl FrameEncoder {
         // 1. LF Global section (NO byte padding - continuous bitstream)
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_global(&mut section_writer)?;
-        let lf_global_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION_CLUSTERED: LF Global = {} bits", lf_global_bits);
+        let _lf_global_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION_CLUSTERED: LF Global = {} bits", _lf_global_bits);
 
         // 2. LF Group (DC coefficients + HF metadata) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_lf_group(dc_coeffs, &mut section_writer)?;
-        let lf_group_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION_CLUSTERED: LF Group = {} bits", lf_group_bits);
+        let _lf_group_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION_CLUSTERED: LF Group = {} bits", _lf_group_bits);
 
         // 3. HF Global section (with clustered histograms) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_hf_global_clustered(tokens, histogram_set, &mut section_writer)?;
-        let hf_global_bits = section_writer.bits_written() - start_bits;
+        let _hf_global_bits = section_writer.bits_written() - start_bits;
         crate::trace::debug_eprintln!(
             "SECTION_CLUSTERED: HF Global = {} bits ({} clusters)",
-            hf_global_bits,
+            _hf_global_bits,
             histogram_set.num_clusters()
         );
 
         // 4. Pass Group (AC coefficients) - NO byte padding
         let start_bits = section_writer.bits_written();
         vardct_encoder.write_pass_group_clustered(tokens, histogram_set, &mut section_writer)?;
-        let pass_group_bits = section_writer.bits_written() - start_bits;
-        crate::trace::debug_eprintln!("SECTION_CLUSTERED: Pass Group = {} bits", pass_group_bits);
+        let _pass_group_bits = section_writer.bits_written() - start_bits;
+        crate::trace::debug_eprintln!("SECTION_CLUSTERED: Pass Group = {} bits", _pass_group_bits);
 
         // Only pad to byte at the very end of all sections
         section_writer.zero_pad_to_byte();
@@ -841,6 +842,7 @@ impl FrameEncoder {
         Ok(())
     }
 
+    #[allow(dead_code)]
     /// Writes the frame header for a simple lossless modular frame (no extra channels).
     fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
         self.write_frame_header_with_extra_channels(writer, 0)
@@ -889,12 +891,12 @@ impl FrameEncoder {
         // ec_upsampling - for each extra channel
         // Each extra channel uses u2S(1, 2, 4, 8) encoding.
         // We want upsampling = 1, which is selector 0.
-        for ec_idx in 0..num_extra_channels {
+        for _ec_idx in 0..num_extra_channels {
             writer.write(2, 0)?; // selector 0 = value 1 (no upsampling)
             crate::trace::debug_eprintln!(
                 "FRMH [bit {}]: ec_upsampling[{}] = 1",
                 writer.bits_written(),
-                ec_idx
+                _ec_idx
             );
         }
 
@@ -926,12 +928,12 @@ impl FrameEncoder {
         // Each uses BlendingInfo which starts with mode.
         // For full_frame && mode == Replace, source is NOT written (condition fails).
         // mode = Replace (selector 0), no alpha_channel or clamp (num_extra > 0 but mode != Blend/AlphaWeightedAdd)
-        for ec_idx in 0..num_extra_channels {
+        for _ec_idx in 0..num_extra_channels {
             writer.write(2, 0)?; // mode = Replace (selector 0)
             crate::trace::debug_eprintln!(
                 "FRMH [bit {}]: ec_blending_info[{}].mode = Replace",
                 writer.bits_written(),
-                ec_idx
+                _ec_idx
             );
             // alpha_channel, clamp, source NOT written for Replace mode with full_frame
         }
@@ -998,11 +1000,12 @@ impl FrameEncoder {
         writer.zero_pad_to_byte();
 
         // Write TOC entries using u2S(Bits(10), Bits(14)+1024, Bits(22)+17408, Bits(30)+4211712)
-        for (i, &size) in section_sizes.iter().enumerate() {
+        #[allow(clippy::unused_enumerate_index)]
+        for (_i, &size) in section_sizes.iter().enumerate() {
             crate::trace::debug_eprintln!(
                 "TOC [bit {}]: Writing entry {} size={}",
                 writer.bits_written(),
-                i,
+                _i,
                 size
             );
             self.write_toc_entry(writer, size as u32)?;

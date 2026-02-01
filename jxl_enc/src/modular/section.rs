@@ -246,17 +246,17 @@ pub fn write_group_modular_section(
         code_map.len(),
         state.max_residual
     );
-    for (&symbol, &(code, depth)) in &code_map {
+    for (&_symbol, &(_code, _depth)) in &code_map {
         crate::trace::debug_eprintln!(
             "GROUP_MODULAR:   symbol {} -> code {:b} (depth {})",
-            symbol,
-            code,
-            depth
+            _symbol,
+            _code,
+            _depth
         );
     }
 
     // Collect and encode residuals for this group
-    let mut encoded_count = 0;
+    let mut _encoded_count = 0;
     for channel in &group_image.channels {
         let width = channel.width();
         let height = channel.height();
@@ -283,7 +283,7 @@ pub fn write_group_modular_section(
                 if let Some(&(code, depth)) = code_map.get(&packed) {
                     if depth > 0 {
                         writer.write(depth as usize, code as u64)?;
-                        encoded_count += 1;
+                        _encoded_count += 1;
                     }
                 } else {
                     // Symbol not in histogram - this shouldn't happen if histogram was built correctly
@@ -302,7 +302,7 @@ pub fn write_group_modular_section(
     crate::trace::debug_eprintln!(
         "GROUP_MODULAR [bit {}]: Group section done ({} values encoded)",
         writer.bits_written(),
-        encoded_count
+        _encoded_count
     );
 
     Ok(())

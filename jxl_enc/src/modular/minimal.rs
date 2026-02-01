@@ -225,19 +225,19 @@ fn build_codes_from_depths(depths: &[u8], codes: &[u16]) -> HashMap<u32, (u16, u
 /// Supports arbitrary images with any number of unique pixel values.
 pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
     // Collect all residuals and build histogram
-    let (residuals, histogram, max_residual) = collect_residuals_and_histogram(image);
+    let (residuals, histogram, _max_residual) = collect_residuals_and_histogram(image);
 
-    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
         "DEBUG: {} residuals, {} unique symbols, max={}, histogram_size={}",
         residuals.len(),
-        num_symbols,
-        max_residual,
+        _num_symbols,
+        _max_residual,
         histogram.len()
     );
 
-    let start_bits = writer.bits_written();
-    crate::trace::debug_eprintln!("TRACE [bit {}]: Starting modular stream", start_bits);
+    let _start_bits = writer.bits_written();
+    crate::trace::debug_eprintln!("TRACE [bit {}]: Starting modular stream", _start_bits);
 
     // === Global section (LfGlobal) ===
 
@@ -275,7 +275,7 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     crate::trace::debug_eprintln!(
         "TRACE [bit {}]: Writing data histograms (1 context, {} symbols)",
         writer.bits_written(),
-        num_symbols
+        _num_symbols
     );
     write_histogram_with_full_huffman(writer, 1, &histogram)?;
     crate::trace::debug_eprintln!(
@@ -300,12 +300,12 @@ pub fn write_minimal_modular_stream(image: &ModularImage, writer: &mut BitWriter
     let code_map = build_codes_from_depths(&depths, &codes);
 
     crate::trace::debug_eprintln!("DEBUG: Built {} Huffman codes", code_map.len());
-    for (&symbol, &(code, depth)) in &code_map {
+    for (&_symbol, &(_code, _depth)) in &code_map {
         crate::trace::debug_eprintln!(
             "  Huffman: symbol {} -> code={:b}, depth={}",
-            symbol,
-            code,
-            depth
+            _symbol,
+            _code,
+            _depth
         );
     }
     crate::trace::debug_eprintln!(

@@ -116,7 +116,7 @@ fn test_clic2025_first_5() {
     let entries: Vec<_> = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .take(5)
         .collect();
 
@@ -160,7 +160,7 @@ fn test_clic2025_all() {
     let mut entries: Vec<_> = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
 
     // Sort for consistent ordering
@@ -215,8 +215,7 @@ fn test_clic2025_small_crop() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -308,8 +307,7 @@ fn test_save_multigroup_comparison() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -324,7 +322,7 @@ fn test_save_multigroup_comparison() {
         "Cropped to: {}x{} (requires {} groups)",
         cw,
         ch,
-        ((cw + 255) / 256) * ((ch + 255) / 256)
+        cw.div_ceil(256) * ch.div_ceil(256)
     );
 
     // Save original
@@ -383,7 +381,7 @@ fn test_save_multigroup_comparison() {
     let avg = sum / decoded_linear.len() as f32;
     let out_of_range = decoded_linear
         .iter()
-        .filter(|&&v| v < 0.0 || v > 1.0)
+        .filter(|&&v| !(0.0..=1.0).contains(&v))
         .count();
     eprintln!(
         "Decoded linear stats: min={:.4}, max={:.4}, avg={:.4}, out_of_range={}/{}",
@@ -398,8 +396,8 @@ fn test_save_multigroup_comparison() {
     let w = cw as usize;
     let h = ch as usize;
     let group_size = 256usize; // pixels
-    let num_groups_x = (w + group_size - 1) / group_size;
-    let num_groups_y = (h + group_size - 1) / group_size;
+    let num_groups_x = w.div_ceil(group_size);
+    let num_groups_y = h.div_ceil(group_size);
     for gy in 0..num_groups_y {
         for gx in 0..num_groups_x {
             let x0 = gx * group_size;
@@ -412,7 +410,7 @@ fn test_save_multigroup_comparison() {
                     let idx = (y * w + x) * 3;
                     for c in 0..3 {
                         let v = decoded_linear[idx + c];
-                        if v < 0.0 || v > 1.0 {
+                        if !(0.0..=1.0).contains(&v) {
                             bad_count += 1;
                         }
                     }
@@ -476,8 +474,7 @@ fn test_exact_multiples() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -534,7 +531,7 @@ fn test_exact_multiples() {
         let ssim2 = fast_ssim2::compute_ssimulacra2(original_img.as_ref(), decoded_img.as_ref())
             .expect("SSIM2 failed");
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{}: {}x{} = {} full groups, SSIM2 = {:.1}",
             size,
@@ -558,8 +555,7 @@ fn test_multigroup_sizes() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -573,7 +569,7 @@ fn test_multigroup_sizes() {
 
         let cropped = img.crop_imm(0, 0, crop_size, crop_size);
         let (cw, ch) = cropped.dimensions();
-        let num_groups = ((cw + 255) / 256) * ((ch + 255) / 256);
+        let num_groups = cw.div_ceil(256) * ch.div_ceil(256);
 
         let rgb = cropped.to_rgb8();
         let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
@@ -661,8 +657,7 @@ fn test_djxl_vs_jxl_oxide() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -711,7 +706,7 @@ fn test_djxl_vs_jxl_oxide() {
         .fold(f32::NEG_INFINITY, f32::max);
     let oxide_bad = oxide_decoded
         .iter()
-        .filter(|&&v| v < 0.0 || v > 1.0)
+        .filter(|&&v| !(0.0..=1.0).contains(&v))
         .count();
 
     eprintln!(
@@ -819,8 +814,7 @@ fn test_section_sizes() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -878,8 +872,7 @@ fn test_compare_working_vs_broken() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -903,8 +896,8 @@ fn test_compare_working_vs_broken() {
             .encode(size as usize, size as usize, &linear_rgb)
             .expect("Encode failed");
 
-        let num_groups = ((size + 255) / 256) * ((size + 255) / 256);
-        let num_dc_groups = ((size + 2047) / 2048) * ((size + 2047) / 2048);
+        let num_groups = (size.div_ceil(256)) * (size.div_ceil(256));
+        let num_dc_groups = size.div_ceil(2048) * size.div_ceil(2048);
         let num_sections = 2 + num_dc_groups as usize + num_groups as usize;
         let pixels = (size * size) as usize;
         let bpp = bytes.len() as f64 * 8.0 / pixels as f64;
@@ -931,13 +924,16 @@ fn test_compare_working_vs_broken() {
 
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let bad = decoded.iter().filter(|&&v| v < 0.0 || v > 1.0).count();
+        let bad = decoded
+            .iter()
+            .filter(|&&v| !(0.0..=1.0).contains(&v))
+            .count();
 
         eprintln!(
             "  Decoded: min={:.4}, max={:.4}, bad={}",
             min_val, max_val, bad
         );
-        eprintln!("");
+        eprintln!();
     }
 }
 
@@ -952,8 +948,7 @@ fn test_nzeros_by_group() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -1034,8 +1029,7 @@ fn test_per_group_corruption() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -1076,14 +1070,14 @@ fn test_per_group_corruption() {
 
     let w = size as usize;
     let group_size = 256usize;
-    let num_groups_x = (w + group_size - 1) / group_size; // 3
+    let num_groups_x = w.div_ceil(group_size); // 3
 
     eprintln!("768x768 = 3x3 group grid");
     eprintln!("Group layout:");
     eprintln!("  [0] [1] [2]");
     eprintln!("  [3] [4] [5]");
     eprintln!("  [6] [7] [8]");
-    eprintln!("");
+    eprintln!();
 
     for gy in 0..3 {
         for gx in 0..3 {
@@ -1104,7 +1098,7 @@ fn test_per_group_corruption() {
                         let v = decoded[idx + c];
                         group_min = group_min.min(v);
                         group_max = group_max.max(v);
-                        if v < 0.0 || v > 1.0 {
+                        if !(0.0..=1.0).contains(&v) {
                             bad_count += 1;
                         }
                     }
@@ -1138,8 +1132,7 @@ fn test_real_photo_value_stats() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -1181,10 +1174,16 @@ fn test_real_photo_value_stats() {
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
-        let out_of_range = decoded.iter().filter(|&&v| v < -0.5 || v > 1.5).count();
-        let moderately_bad = decoded.iter().filter(|&&v| v < 0.0 || v > 1.0).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(-0.5..=1.5).contains(&v))
+            .count();
+        let moderately_bad = decoded
+            .iter()
+            .filter(|&&v| !(0.0..=1.0).contains(&v))
+            .count();
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, moderate_bad={}, severe_bad={}",
             size, size, grid, grid, avg, min_val, max_val, moderately_bad, out_of_range
@@ -1240,9 +1239,12 @@ fn test_noise_multigroup() {
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let out_of_range = decoded.iter().filter(|&&v| v < -0.5 || v > 1.5).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(-0.5..=1.5).contains(&v))
+            .count();
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         let compression = (size * size * 3) as f64 / bytes.len() as f64;
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}, {:.1}x compression",
@@ -1303,7 +1305,10 @@ fn test_gradient_multigroup() {
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let out_of_range = decoded.iter().filter(|&&v| v < -0.1 || v > 1.1).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(-0.1..=1.1).contains(&v))
+            .count();
 
         // Check first and last columns (should be ~0 and ~1)
         let first_col_avg: f32 = (0..size)
@@ -1322,7 +1327,7 @@ fn test_gradient_multigroup() {
             .sum::<f32>()
             / size as f32;
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}, first_col={:.3}, last_col={:.3}",
             size,
@@ -1373,9 +1378,12 @@ fn test_solid_color_multigroup() {
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let out_of_range = decoded.iter().filter(|&&v| v < 0.0 || v > 1.0).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(0.0..=1.0).contains(&v))
+            .count();
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}/{}",
             size,
@@ -1456,24 +1464,26 @@ fn test_compare_with_libjxl_tiny() {
         let start = pos.saturating_sub(4);
         let end = (pos + 8).min(bytes.len()).min(ref_bytes.len());
         eprint!("  Ours: ");
-        for i in start..end {
-            if i == pos {
+        for (i, &b) in bytes[start..end].iter().enumerate() {
+            let idx = start + i;
+            if idx == pos {
                 eprint!("[");
             }
-            eprint!("{:02x}", bytes[i]);
-            if i == pos {
+            eprint!("{:02x}", b);
+            if idx == pos {
                 eprint!("]");
             }
             eprint!(" ");
         }
         eprintln!();
         eprint!("  Ref:  ");
-        for i in start..end {
-            if i == pos {
+        for (i, &b) in ref_bytes[start..end].iter().enumerate() {
+            let idx = start + i;
+            if idx == pos {
                 eprint!("[");
             }
-            eprint!("{:02x}", ref_bytes[i]);
-            if i == pos {
+            eprint!("{:02x}", b);
+            if idx == pos {
                 eprint!("]");
             }
             eprint!(" ");
@@ -1803,9 +1813,12 @@ fn test_dark_values_multigroup() {
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let out_of_range = decoded.iter().filter(|&&v| v < 0.0 || v > 1.0).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(0.0..=1.0).contains(&v))
+            .count();
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}",
             size, size, grid, grid, avg, min_val, max_val, out_of_range
@@ -1862,9 +1875,12 @@ fn test_color_multigroup() {
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let out_of_range = decoded.iter().filter(|&&v| v < -0.1 || v > 1.1).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(-0.1..=1.1).contains(&v))
+            .count();
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}",
             size, size, grid, grid, avg, min_val, max_val, out_of_range
@@ -1892,8 +1908,7 @@ fn test_analyze_clic_photo() {
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
-        .next()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .expect("No PNG files found");
 
     let img = image::open(first_png.path()).expect("Could not open image");
@@ -2068,9 +2083,12 @@ fn test_high_contrast_multigroup() {
         let avg: f32 = decoded.iter().sum::<f32>() / decoded.len() as f32;
         let min_val = decoded.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_val = decoded.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let out_of_range = decoded.iter().filter(|&&v| v < -0.1 || v > 1.1).count();
+        let out_of_range = decoded
+            .iter()
+            .filter(|&&v| !(-0.1..=1.1).contains(&v))
+            .count();
 
-        let grid = (size + 255) / 256;
+        let grid = size.div_ceil(256);
         eprintln!(
             "{}x{} ({}x{}): avg={:.4}, min={:.4}, max={:.4}, bad={}",
             size, size, grid, grid, avg, min_val, max_val, out_of_range
@@ -2301,7 +2319,6 @@ fn test_grayscale_vs_color_random() {
     eprintln!("\n=== Grayscale vs Color Random Comparison ===\n");
 
     let size = 8u32;
-    let mut seed = 12345u64;
 
     fn lcg(seed: &mut u64) -> f32 {
         *seed = seed
@@ -2313,7 +2330,7 @@ fn test_grayscale_vs_color_random() {
     // Test 1: Grayscale (R=G=B)
     eprintln!("=== Test 1: Grayscale Random ===");
     let mut gray_rgb: Vec<f32> = Vec::with_capacity((size * size * 3) as usize);
-    seed = 12345;
+    let mut seed: u64 = 12345;
     for _ in 0..(size * size) {
         let v = lcg(&mut seed);
         gray_rgb.push(v);
@@ -2437,7 +2454,7 @@ fn test_gradient_16x16_debug() {
     // Compare first few pixels
     println!("\nFirst 4 decoded pixels:");
     for i in 0..4 {
-        let expected = (0 + i) as f32 / (2.0 * (size - 1) as f32);
+        let expected = i as f32 / (2.0 * (size - 1) as f32);
         println!(
             "  pixel[0,{}]: expected={:.4}, decoded=({:.4},{:.4},{:.4})",
             i,
@@ -2576,8 +2593,8 @@ fn test_compare_libjxl_tiny() {
     }
 
     println!("Expected first row:");
-    for x in 0..8 {
-        print!("{:.3} ", expected[x]);
+    for val in &expected[..8] {
+        print!("{:.3} ", val);
     }
     println!();
 
@@ -2669,7 +2686,7 @@ fn test_cfl_quality_1024() {
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
 
@@ -2770,7 +2787,7 @@ fn test_cfl_quality_sweep() {
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
 
@@ -2825,7 +2842,7 @@ fn test_cfl_ab_comparison() {
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
 
@@ -2942,7 +2959,7 @@ fn test_strategy_ab_comparison() {
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
 
@@ -3054,7 +3071,7 @@ fn test_cpp_vs_rust_quality() {
     let mut entries: Vec<_> = std::fs::read_dir(&corpus_dir)
         .unwrap_or_else(|_| panic!("corpus not found: {}", corpus_dir))
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
     let entries: Vec<_> = entries.into_iter().take(5).collect();
@@ -3293,7 +3310,7 @@ fn test_multigroup_quality() {
     let mut entries: Vec<_> = std::fs::read_dir(&corpus_dir)
         .unwrap_or_else(|_| panic!("corpus not found: {}", corpus_dir))
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
     let entries: Vec<_> = entries.into_iter().take(5).collect();
@@ -3395,7 +3412,7 @@ fn test_multigroup_quality() {
             img.name,
             img.width,
             img.height,
-            ((img.width + 255) / 256) * ((img.height + 255) / 256)
+            img.width.div_ceil(256) * img.height.div_ceil(256)
         );
     }
     eprintln!();
@@ -3749,7 +3766,7 @@ fn test_comprehensive_rd_sweep() {
     let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
         Ok(e) => e
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
             .collect(),
         Err(_) => {
             eprintln!("Corpus dir {} not found, skipping test", corpus_dir);
@@ -4090,7 +4107,7 @@ fn test_distance_vs_butteraugli() {
         eprintln!("(Ideal ratio is 1.0 - distance should equal butteraugli score)");
 
         // Warn if ratio is way off
-        if avg_ratio < 0.5 || avg_ratio > 2.0 {
+        if !(0.5..=2.0).contains(&avg_ratio) {
             eprintln!("\nWARNING: Average ratio is outside expected range [0.5, 2.0]");
         }
     }
@@ -4155,7 +4172,7 @@ fn test_butteraugli_quality_gate() {
     // Test 2: Solid color should have very low Butteraugli
     {
         let (w, h) = (64, 64);
-        let linear_rgb: Vec<f32> = vec![0.5, 0.3, 0.2].repeat(w * h);
+        let linear_rgb: Vec<f32> = [0.5, 0.3, 0.2].repeat(w * h);
 
         let orig_pixels: Vec<RGB<f32>> = linear_rgb
             .chunks(3)
@@ -4341,12 +4358,12 @@ fn test_cpp_vs_rust_butteraugli() {
 
         // Determine winner (lower butteraugli + smaller size = better)
         // Use butteraugli/size ratio - lower is better
-        let cpp_ratio = if cpp_size > 0 {
+        let _cpp_ratio = if cpp_size > 0 {
             cpp_btrgl / (cpp_size as f32 / 1000.0)
         } else {
             f32::MAX
         };
-        let rust_ratio = if rust_size > 0 {
+        let _rust_ratio = if rust_size > 0 {
             rust_btrgl / (rust_size as f32 / 1000.0)
         } else {
             f32::MAX
@@ -4373,7 +4390,7 @@ fn test_cpp_vs_rust_butteraugli() {
 #[ignore]
 fn test_encode_extra_distances() {
     use std::fs::File;
-    use std::io::{Read, Write};
+    use std::io::Read;
 
     let mut f = match File::open("/tmp/linear_256.bin") {
         Ok(f) => f,
@@ -5009,7 +5026,7 @@ fn test_static_vs_dynamic_sweep() {
                 .collect();
             let dec_img_s = Img::new(dec_linear_s, ws, hs);
             let ba_s = butteraugli_linear(orig_img.as_ref(), dec_img_s.as_ref(), &ba_params)
-                .map(|r| r.score as f64)
+                .map(|r| r.score)
                 .unwrap_or(f64::NAN);
 
             let dec_linear_d: Vec<RGB<f32>> = buf_d
@@ -5018,7 +5035,7 @@ fn test_static_vs_dynamic_sweep() {
                 .collect();
             let dec_img_d = Img::new(dec_linear_d, ws, hs);
             let ba_d = butteraugli_linear(orig_img.as_ref(), dec_img_d.as_ref(), &ba_params)
-                .map(|r| r.score as f64)
+                .map(|r| r.score)
                 .unwrap_or(f64::NAN);
 
             let size_s = bytes_static.len();
@@ -5236,10 +5253,10 @@ fn test_ans_histogram_roundtrip_jxl_rs() {
                 eprintln!("  jxl-rs decoded successfully!");
 
                 // Verify single symbol case
-                if encoded.method == 1 {
-                    if let Some(sym) = codes.single_symbol(0) {
-                        eprintln!("  Single symbol: {}", sym);
-                    }
+                if encoded.method == 1
+                    && let Some(sym) = codes.single_symbol(0)
+                {
+                    eprintln!("  Single symbol: {}", sym);
                 }
             }
             Err(e) => {
@@ -5660,8 +5677,6 @@ fn test_rgba_simple() {
 #[test]
 #[ignore]
 fn test_ans_clic2025() {
-    use std::io::Cursor;
-
     let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
 
     if !clic_dir.exists() {
@@ -6087,8 +6102,8 @@ fn test_ans_crop_binary_search() {
         };
         eprintln!("{:>4}x{:<4} {:>8} bytes  {}", w, h, bytes.len(), status);
 
-        if result.is_err() {
-            eprintln!("  Error: {:?}", result.unwrap_err());
+        if let Err(e) = &result {
+            eprintln!("  Error: {:?}", e);
         }
     }
 }
@@ -6101,8 +6116,6 @@ fn test_ans_crop_binary_search() {
 #[test]
 #[ignore = "Requires CLIC 2025 images"]
 fn test_custom_orders() {
-    use std::io::Cursor;
-
     let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
 
     if !clic_dir.exists() {

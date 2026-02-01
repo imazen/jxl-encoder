@@ -4,7 +4,7 @@
 //! the bitstream is correct.
 
 use jxl_enc::bit_writer::BitWriter;
-use jxl_enc::entropy_coding::ans::{ANS_TAB_SIZE, AnsDistribution, AnsEncoder};
+use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder};
 
 /// Test encoding and decoding a single symbol with a flat distribution.
 #[test]
@@ -429,7 +429,7 @@ fn test_ans_with_hybrid_uint() {
     println!("Decoding:");
     let mut decoded_values = Vec::new();
     for i in 0..values.len() {
-        let token = decoded_hist.read(&mut br, &mut ans_reader.0) as u32;
+        let token = decoded_hist.read(&mut br, &mut ans_reader.0);
         // Decode HybridUint extra bits
         let nbits = if token < 16 { 0 } else { (token >> 2) - 2 };
         let extra_bits = if nbits > 0 {
@@ -541,7 +541,7 @@ fn test_ans_multi_context() {
     println!("Decoding:");
     let mut decoded_tokens: Vec<(u32, u32)> = Vec::new();
     for (i, &(ctx, _)) in tokens.iter().enumerate() {
-        let token = decoded_hist.read(&mut br, &mut ans_reader.0) as u32;
+        let token = decoded_hist.read(&mut br, &mut ans_reader.0);
         let nbits = if token < 16 { 0 } else { (token >> 2) - 2 };
         let extra_bits = if nbits > 0 {
             br.read(nbits as usize).unwrap_or(0) as u32
@@ -592,7 +592,7 @@ fn test_ans_full_entropy_code_format() {
         (1, 8),  // context 1, value 8
     ];
 
-    let num_contexts = 3;
+    let _num_contexts = 3;
 
     // Build histogram from tokens (all contexts map to one histogram for simplicity)
     let mut symbol_counts = vec![0i32; 64];
@@ -646,7 +646,7 @@ fn test_ans_full_entropy_code_format() {
 
     // === WRITE TOKEN STREAM ===
     let mut encoder = AnsEncoder::new();
-    for &(ctx, val) in tokens.iter().rev() {
+    for &(_ctx, val) in tokens.iter().rev() {
         let (token, nbits, bits) = hybrid_uint_encode(val);
         encoder.push_bits(bits, nbits as u8);
         let info = dist

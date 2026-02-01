@@ -108,6 +108,7 @@ impl DistanceParams {
     ///
     /// For distance=1.0 with quant_field≈0.73:
     ///   raw_quant = round(0.73 * 8.93 + 0.5) ≈ 7
+    #[allow(dead_code)]
     pub fn raw_quant_uniform(&self) -> u8 {
         // Use 0.73 as the approximate quant_field for uniform images.
         // This value was determined empirically by comparing with libjxl-tiny output.
@@ -196,7 +197,8 @@ pub fn write_toc(section_sizes: &[usize], writer: &mut BitWriter) -> Result<()> 
 
     const BITS: [usize; 4] = [10, 14, 22, 30];
 
-    for (idx, &section_size) in section_sizes.iter().enumerate() {
+    #[allow(clippy::unused_enumerate_index)]
+    for (_idx, &section_size) in section_sizes.iter().enumerate() {
         let mut offset = 0;
         let mut success = false;
         for (i, &bits) in BITS.iter().enumerate() {
@@ -204,7 +206,7 @@ pub fn write_toc(section_sizes: &[usize], writer: &mut BitWriter) -> Result<()> 
                 #[cfg(feature = "debug-tokens")]
                 debug_log!(
                     "TOC[{}]: size={}, selector={}, bits={}, value={}",
-                    idx,
+                    _idx,
                     section_size,
                     i,
                     bits,

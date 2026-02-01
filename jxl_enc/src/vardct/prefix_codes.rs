@@ -368,7 +368,7 @@ pub(crate) fn write_complex_prefix_code(
 
         // Write code length code lengths up to and including max_pos
         // Both our symbols get code length 1
-        let mut space = 32i32;
+        let mut _space = 32i32;
         for &storage_val in &STORAGE_ORDER[skip..=max_pos] {
             let cl_sym_at_i = storage_val as usize;
             let cl_cl = if cl_sym_at_i == cl_sym || cl_sym_at_i == cl_dummy {
@@ -381,10 +381,13 @@ pub(crate) fn write_complex_prefix_code(
                 CL_CODE_BITS[cl_cl as usize] as u64,
             )?;
             if cl_cl != 0 {
-                space -= 32 >> cl_cl;
+                _space -= 32 >> cl_cl;
             }
         }
-        crate::trace::debug_eprintln!("COMPLEX_PREFIX single_depth: space after cl-cl = {}", space);
+        crate::trace::debug_eprintln!(
+            "COMPLEX_PREFIX single_depth: _space after cl-cl = {}",
+            _space
+        );
 
         // Now emit code lengths for each alphabet symbol
         // Both symbols (cl_sym and cl_dummy) have code length 1.
@@ -448,9 +451,10 @@ pub(crate) fn write_complex_prefix_code(
         // Write code length code lengths up to and including max_pos
         // Both symbols get code length 1 (since we have exactly 2 symbols,
         // they each get 1 bit: 0 for one, 1 for the other)
-        let mut space = 32i32;
-        let mut num_codes = 0;
-        for (idx, &storage_val) in STORAGE_ORDER[skip..=max_pos].iter().enumerate() {
+        let mut _space = 32i32;
+        let mut _num_codes = 0;
+        #[allow(clippy::unused_enumerate_index)]
+        for (_idx, &storage_val) in STORAGE_ORDER[skip..=max_pos].iter().enumerate() {
             let cl_sym_at_i = storage_val as usize;
             let cl_cl = if cl_sym_at_i == cl_used_short || cl_sym_at_i == cl_used_long {
                 1u8 // code length 1 for this symbol
@@ -464,21 +468,21 @@ pub(crate) fn write_complex_prefix_code(
             crate::trace::debug_eprintln!(
                 "COMPLEX_PREFIX [bit {}]: storage[{}]={} -> cl_cl={}, bits={:#b} ({} bits)",
                 writer.bits_written(),
-                skip + idx,
+                skip + _idx,
                 cl_sym_at_i,
                 cl_cl,
                 CL_CODE_BITS[cl_cl as usize],
                 CL_CODE_LENS[cl_cl as usize]
             );
             if cl_cl != 0 {
-                space -= 32 >> cl_cl;
-                num_codes += 1;
+                _space -= 32 >> cl_cl;
+                _num_codes += 1;
             }
         }
         crate::trace::debug_eprintln!(
             "COMPLEX_PREFIX: After cl-cl: space={}, num_codes={}",
-            space,
-            num_codes
+            _space,
+            _num_codes
         );
 
         // Assign codes to the two code length symbols
@@ -493,7 +497,7 @@ pub(crate) fn write_complex_prefix_code(
         // Now emit code lengths for each alphabet symbol
         // symbols_short symbols use first_cl (if pos_short < pos_long) or second_cl
         // symbols_long symbols use the other
-        let start_bit = writer.bits_written();
+        let _start_bit = writer.bits_written();
         for &sym_cl in code_lengths.iter().take(alphabet_size) {
             let bit = if sym_cl as usize == first_cl {
                 0u64
@@ -506,7 +510,7 @@ pub(crate) fn write_complex_prefix_code(
             "COMPLEX_PREFIX [bit {}]: wrote {} code lengths ({} bits)",
             writer.bits_written(),
             alphabet_size,
-            writer.bits_written() - start_bit
+            writer.bits_written() - _start_bit
         );
     }
 
