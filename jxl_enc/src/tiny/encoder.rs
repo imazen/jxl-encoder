@@ -602,8 +602,8 @@ impl TinyEncoder {
         qac: f32,
         qm_multiplier: f32,
         channel: usize,
-        block_width: usize,
-        block_height: usize,
+        _block_width: usize,
+        _block_height: usize,
         covered_x: usize,
         covered_y: usize,
         covered_blocks: usize,
@@ -613,12 +613,17 @@ impl TinyEncoder {
         by: usize,
         quant_ac: &mut [Vec<[i32; DCT_BLOCK_SIZE]>],
     ) {
+        // C++ QuantizeBlockAC uses (ysize, xsize) = (covered_y, covered_x)
+        // for the coefficient grid, with stride = xsize * 8.
+        // This determines quadrant boundaries for thresholding.
+        let grid_width = covered_x * BLOCK_DIM;
+        let grid_height = covered_y * BLOCK_DIM;
         for idx in 0..size {
             let qval = if idx < covered_blocks {
                 0 // LLF handled separately
             } else {
-                let y = idx / block_width;
-                let x = idx % block_width;
+                let y = idx / grid_width;
+                let x = idx % grid_width;
                 Self::quantize_coeff_ac(
                     dct_coeffs[idx],
                     1.0 / weights[idx],
@@ -627,8 +632,8 @@ impl TinyEncoder {
                     channel,
                     y,
                     x,
-                    block_height,
-                    block_width,
+                    grid_height,
+                    grid_width,
                     covered_x,
                     covered_y,
                 )
@@ -816,12 +821,15 @@ impl TinyEncoder {
                 {
                     let weights = super::quant::quant_weights(raw_strategy as usize, 1);
                     let inv_qac = 1.0 / qac;
+                    // Use C++ convention: grid = (covered_y * 8, covered_x * 8)
+                    let grid_w = covered_x * BLOCK_DIM;
+                    let grid_h = covered_y * BLOCK_DIM;
                     for idx in 0..size {
                         let q = if idx < covered_blocks {
                             // LLF: not stored in quant_ac, compute inline
                             // C++ QuantizeBlockAC quantizes all positions including LLF
-                            let y = idx / block_width;
-                            let x = idx % block_width;
+                            let y = idx / grid_w;
+                            let x = idx % grid_w;
                             Self::quantize_coeff_ac(
                                 dct_coeffs[1][idx],
                                 1.0 / weights[idx],
@@ -830,8 +838,8 @@ impl TinyEncoder {
                                 1,
                                 y,
                                 x,
-                                block_height,
-                                block_width,
+                                grid_h,
+                                grid_w,
                                 covered_x,
                                 covered_y,
                             )

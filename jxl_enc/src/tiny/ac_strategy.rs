@@ -219,7 +219,10 @@ fn estimate_entropy(
         let mut entropy_sum = 0.0f32;
         let mut nzeros_sum = 0.0f32;
 
-        for i in 0..size {
+        // Skip LLF coefficients (positions 0..num_blocks).
+        // C++ zeroes these positions in InvMatrix so they contribute nothing.
+        // LLF/DC coefficients are handled by the DC path, not AC entropy.
+        for i in num_blocks..size {
             let val_in = block[offset_c + i];
             let val_y = block[offset_y + i] * cmap_factor;
             // inv_matrix stores weights; C++ InvMatrix = 1/weight
