@@ -51,6 +51,8 @@ pub struct FrameEncoder {
     width: usize,
     /// Image height.
     height: usize,
+    /// Number of extra channels (e.g., 1 for alpha).
+    num_extra_channels: usize,
 }
 
 impl FrameEncoder {
@@ -60,6 +62,22 @@ impl FrameEncoder {
             options,
             width,
             height,
+            num_extra_channels: 0,
+        }
+    }
+
+    /// Creates a new frame encoder with extra channel support.
+    pub fn new_with_extra_channels(
+        width: usize,
+        height: usize,
+        options: FrameEncoderOptions,
+        num_extra_channels: usize,
+    ) -> Self {
+        Self {
+            options,
+            width,
+            height,
+            num_extra_channels,
         }
     }
 
@@ -70,8 +88,11 @@ impl FrameEncoder {
         _color_encoding: &ColorEncoding,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // Write frame header
-        self.write_frame_header(writer)?;
+        // Compute num_extra_channels from image
+        let num_extra_channels = if image.has_alpha { 1 } else { 0 };
+
+        // Write frame header with extra channel info
+        self.write_frame_header_with_extra_channels(writer, num_extra_channels)?;
 
         let num_groups = self.num_groups();
 
@@ -820,11 +841,21 @@ impl FrameEncoder {
         Ok(())
     }
 
-    /// Writes the frame header for a simple lossless modular frame.
+    /// Writes the frame header for a simple lossless modular frame (no extra channels).
     fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
+        self.write_frame_header_with_extra_channels(writer, 0)
+    }
+
+    /// Writes the frame header for a lossless modular frame with extra channels.
+    fn write_frame_header_with_extra_channels(
+        &self,
+        writer: &mut BitWriter,
+        num_extra_channels: usize,
+    ) -> Result<()> {
         crate::trace::debug_eprintln!(
-            "FRMH [bit {}]: Starting frame header",
-            writer.bits_written()
+            "FRMH [bit {}]: Starting frame header (num_extra_channels={})",
+            writer.bits_written(),
+            num_extra_channels
         );
 
         // all_default = false (because we use Modular encoding, not VarDCT default)
@@ -855,8 +886,17 @@ impl FrameEncoder {
         writer.write(2, 0)?;
         crate::trace::debug_eprintln!("FRMH [bit {}]: upsampling = 0", writer.bits_written());
 
-        // ec_upsampling - for each extra channel (none for RGB)
-        // (already handled by not writing anything)
+        // ec_upsampling - for each extra channel
+        // Each extra channel uses u2S(1, 2, 4, 8) encoding.
+        // We want upsampling = 1, which is selector 0.
+        for ec_idx in 0..num_extra_channels {
+            writer.write(2, 0)?; // selector 0 = value 1 (no upsampling)
+            crate::trace::debug_eprintln!(
+                "FRMH [bit {}]: ec_upsampling[{}] = 1",
+                writer.bits_written(),
+                ec_idx
+            );
+        }
 
         // group_size_shift: 0 = 128, 1 = 256, 2 = 512, 3 = 1024
         // We use GROUP_DIM = 256, so shift must be 1
@@ -882,7 +922,19 @@ impl FrameEncoder {
         writer.write(2, 0)?;
         crate::trace::debug_eprintln!("FRMH [bit {}]: blending = 0", writer.bits_written());
 
-        // ec_blending_info - for each extra channel (none for RGB)
+        // ec_blending_info - for each extra channel
+        // Each uses BlendingInfo which starts with mode.
+        // For full_frame && mode == Replace, source is NOT written (condition fails).
+        // mode = Replace (selector 0), no alpha_channel or clamp (num_extra > 0 but mode != Blend/AlphaWeightedAdd)
+        for ec_idx in 0..num_extra_channels {
+            writer.write(2, 0)?; // mode = Replace (selector 0)
+            crate::trace::debug_eprintln!(
+                "FRMH [bit {}]: ec_blending_info[{}].mode = Replace",
+                writer.bits_written(),
+                ec_idx
+            );
+            // alpha_channel, clamp, source NOT written for Replace mode with full_frame
+        }
 
         // duration - not written (no animation)
         // timecode - not written (no timecode)
