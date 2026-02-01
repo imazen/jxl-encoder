@@ -12,6 +12,16 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
+/// sRGB to linear conversion (exact IEC 61966-2-1 transfer function).
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = c as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "cjxl-rs")]
 #[command(author, version, about = "JPEG XL encoder in Rust", long_about = None)]
@@ -39,6 +49,10 @@ struct Args {
     /// Distance (alternative to quality, 0 = lossless, 1 = visually lossless)
     #[arg(short, long)]
     distance: Option<f32>,
+
+    /// Disable dynamic Huffman code optimization (use static codes)
+    #[arg(long)]
+    no_optimize_codes: bool,
 
     /// Be quiet (minimal output)
     #[arg(long)]
@@ -89,28 +103,58 @@ fn main() {
         println!("Image:    {}x{} {:?}", width, height, color_type);
     }
 
-    // Create encoder
-    let options = EncoderOptions {
-        distance,
-        effort: args.effort,
-        force_modular: distance == 0.0,
-    };
-
-    let encoder = Encoder::with_options(options);
-
     // Encode
     let encoded = match color_type {
         png::ColorType::Rgb => {
             if distance > 0.0 {
-                // Use VarDCT for lossy RGB
-                encoder.encode_lossy_rgb8(&data, width as usize, height as usize, distance)
+                // Use TinyEncoder (VarDCT) for lossy RGB
+                let mut tiny = jxl_enc::tiny::TinyEncoder::new(distance);
+                if args.no_optimize_codes {
+                    tiny.optimize_codes = false;
+                }
+
+                // Convert sRGB u8 to linear f32 for the tiny encoder
+                let linear_rgb: Vec<f32> = data
+                    .chunks(3)
+                    .flat_map(|px| {
+                        [
+                            srgb_to_linear(px[0]),
+                            srgb_to_linear(px[1]),
+                            srgb_to_linear(px[2]),
+                        ]
+                    })
+                    .collect();
+
+                tiny.encode(width as usize, height as usize, &linear_rgb)
             } else {
                 // Use modular for lossless
+                let options = EncoderOptions {
+                    distance,
+                    effort: args.effort,
+                    force_modular: true,
+                };
+                let encoder = Encoder::with_options(options);
                 encoder.encode_rgb8(&data, width as usize, height as usize)
             }
         }
-        png::ColorType::Rgba => encoder.encode_rgba8(&data, width as usize, height as usize),
-        png::ColorType::Grayscale => encoder.encode_gray8(&data, width as usize, height as usize),
+        png::ColorType::Rgba => {
+            let options = EncoderOptions {
+                distance,
+                effort: args.effort,
+                force_modular: distance == 0.0,
+            };
+            let encoder = Encoder::with_options(options);
+            encoder.encode_rgba8(&data, width as usize, height as usize)
+        }
+        png::ColorType::Grayscale => {
+            let options = EncoderOptions {
+                distance,
+                effort: args.effort,
+                force_modular: distance == 0.0,
+            };
+            let encoder = Encoder::with_options(options);
+            encoder.encode_gray8(&data, width as usize, height as usize)
+        }
         _ => {
             eprintln!("Error: Unsupported color type: {:?}", color_type);
             std::process::exit(1);
