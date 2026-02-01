@@ -22,6 +22,29 @@ pub const ANS_MAX_ALPHABET_SIZE: usize = 256;
 /// Initial state marker.
 pub const ANS_SIGNATURE: u32 = 0x13;
 
+/// RLE marker symbol in logcount prefix code.
+const RLE_MARKER_SYM: u8 = 13;
+
+/// Prefix code table for encoding log-frequency values (0-13).
+/// Format: (nbits, code_lsb) - the code to write for each symbol.
+/// This is the inverse of the decoder's lookup table in jxl-rs.
+const LOGCOUNT_PREFIX_CODE: [(u8, u8); 14] = [
+    (5, 0b10001), // 0: freq=0 (but we use 0 for zero, not logcount 0)
+    (4, 0b1011),  // 1: logcount=1, freq=1
+    (4, 0b1111),  // 2: logcount=2, freq in [2,3]
+    (4, 0b0011),  // 3: logcount=3, freq in [4,7]
+    (4, 0b1001),  // 4: logcount=4, freq in [8,15]
+    (4, 0b0111),  // 5: logcount=5, freq in [16,31]
+    (3, 0b100),   // 6: logcount=6, freq in [32,63]
+    (3, 0b010),   // 7: logcount=7, freq in [64,127]
+    (3, 0b101),   // 8: logcount=8, freq in [128,255]
+    (3, 0b110),   // 9: logcount=9, freq in [256,511]
+    (3, 0b000),   // 10: logcount=10, freq in [512,1023]
+    (6, 0b100001), // 11: logcount=11, freq in [1024,2047]
+    (7, 0b0000001), // 12: logcount=12, freq in [2048,4095]
+    (7, 0b1000001), // 13: RLE marker
+];
+
 /// Precision for reciprocal multiplication (avoids division).
 const RECIPROCAL_PRECISION: u32 = 44;
 
@@ -93,6 +116,18 @@ impl AnsEncoder {
 
         // Update state
         self.state = (v << ANS_LOG_TAB_SIZE) + offset;
+    }
+
+    /// Pushes extra bits into the encoder's output buffer.
+    ///
+    /// Used for HybridUint extra bits that are interleaved with ANS symbols.
+    /// These bits are stored in the same reversed buffer and will be emitted
+    /// in proper order during finalize().
+    #[inline]
+    pub fn push_bits(&mut self, bits: u32, nbits: u8) {
+        if nbits > 0 {
+            self.bits.push((bits, nbits));
+        }
     }
 
     /// Finalizes encoding and writes to a BitWriter.
@@ -211,6 +246,41 @@ impl AnsDistribution {
         }
 
         Self::from_frequencies(&freqs)
+    }
+
+    /// Creates a distribution from pre-normalized counts.
+    ///
+    /// The counts must already sum to ANS_TAB_SIZE (4096). This is used
+    /// when building distributions from ANSEncodingHistogram which has
+    /// already done the normalization.
+    pub fn from_normalized_counts(counts: &[i32]) -> Result<Self> {
+        if counts.is_empty() {
+            return Err(Error::InvalidHistogram("empty distribution".to_string()));
+        }
+
+        // Verify sum
+        let total: i32 = counts.iter().sum();
+        if total != ANS_TAB_SIZE as i32 {
+            return Err(Error::InvalidHistogram(format!(
+                "normalized counts sum to {} instead of {}",
+                total, ANS_TAB_SIZE
+            )));
+        }
+
+        // Build symbol info
+        let mut symbols: Vec<AnsEncSymbolInfo> = counts
+            .iter()
+            .map(|&c| AnsEncSymbolInfo::new(c.max(0) as u16))
+            .collect();
+
+        // Build reverse maps
+        Self::build_reverse_maps(&mut symbols)?;
+
+        Ok(Self {
+            symbols,
+            log_alpha_size: ANS_LOG_TAB_SIZE,
+            total: ANS_TAB_SIZE,
+        })
     }
 
     /// Builds reverse maps for all symbols.
@@ -520,6 +590,9 @@ impl ANSEncodingHistogram {
     /// Rebalance histogram to sum to ANS_TAB_SIZE with given shift.
     ///
     /// Returns true on success, false on failure.
+    ///
+    /// The decoder determines omit_pos as the first symbol with highest logcount,
+    /// then computes its frequency as 4096 - sum(others). We must match this.
     fn rebalance_histogram(&mut self, histo: &super::histogram::Histogram, shift: u32) -> bool {
         let total_count = histo.total_count;
         if total_count == 0 {
@@ -528,39 +601,53 @@ impl ANSEncodingHistogram {
 
         let norm = ANS_TAB_SIZE as f64 / total_count as f64;
 
-        // Find the bin with maximum count (will be our omit_pos)
-        let mut max_count = 0i32;
-        let mut omit_pos = 0;
-        let mut running_total = 0i32;
-
+        // First pass: normalize all counts (without precision constraints yet)
         for (i, &count) in histo.counts.iter().enumerate().take(self.alphabet_size) {
-            if count > max_count {
-                max_count = count;
-                omit_pos = i;
-            }
-
             if count == 0 {
                 self.counts[i] = 0;
                 continue;
             }
 
-            // Calculate target normalized count
             let target = count as f64 * norm;
             let mut normalized = target.round() as i32;
-
-            // Ensure at least 1 for non-zero counts
             normalized = normalized.max(1);
-            // Ensure less than ANS_TAB_SIZE
             normalized = normalized.min((ANS_TAB_SIZE - 1) as i32);
+            self.counts[i] = normalized;
+        }
 
-            // Apply precision constraints
+        // Find the first symbol with maximum logcount - this will be omit_pos
+        let mut max_logcount = 0u32;
+        let mut omit_pos = 0;
+        for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
+            if count > 0 {
+                let logcount = floor_log2(count as u32) + 1;
+                if logcount > max_logcount {
+                    max_logcount = logcount;
+                    omit_pos = i;
+                }
+            }
+        }
+        self.omit_pos = omit_pos;
+
+        // Second pass: apply precision constraints to all symbols EXCEPT omit_pos
+        let mut running_total = 0i32;
+        for i in 0..self.alphabet_size {
+            if i == omit_pos || self.counts[i] == 0 {
+                if i != omit_pos {
+                    running_total += self.counts[i];
+                }
+                continue;
+            }
+
+            let mut normalized = self.counts[i];
+
+            // Apply precision constraints for non-omit symbols
             if shift < ANS_LOG_TAB_SIZE && normalized > 1 {
                 let logcount = floor_log2(normalized as u32);
                 let precision = get_population_count_precision(logcount, shift);
                 let drop_bits = logcount.saturating_sub(precision);
                 let mask = (1i32 << drop_bits) - 1;
                 normalized &= !mask;
-                // Make sure we didn't drop to 0
                 if normalized == 0 {
                     normalized = 1i32 << drop_bits;
                 }
@@ -570,22 +657,23 @@ impl ANSEncodingHistogram {
             running_total += normalized;
         }
 
-        // Adjust omit_pos to balance
-        self.omit_pos = omit_pos;
-        let remainder = ANS_TAB_SIZE as i32 - running_total + self.counts[omit_pos];
-
+        // omit_pos frequency is the remainder (this is how decoder computes it)
+        let remainder = ANS_TAB_SIZE as i32 - running_total;
         if remainder <= 0 || remainder > ANS_TAB_SIZE as i32 {
-            // Can't balance, try simple adjustment
-            let diff = running_total - ANS_TAB_SIZE as i32;
-            if diff > 0 && self.counts[omit_pos] > diff {
-                self.counts[omit_pos] -= diff;
-            } else if diff < 0 {
-                self.counts[omit_pos] -= diff; // This adds |diff|
-            } else {
-                return false;
+            return false;
+        }
+        self.counts[omit_pos] = remainder;
+
+        // Verify omit_pos still has the highest (or tied) logcount
+        let omit_logcount = floor_log2(self.counts[omit_pos] as u32) + 1;
+        for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
+            if i != omit_pos && count > 0 {
+                let logcount = floor_log2(count as u32) + 1;
+                if logcount > omit_logcount {
+                    // Another symbol has higher logcount - decoder would pick wrong omit_pos
+                    return false;
+                }
             }
-        } else {
-            self.counts[omit_pos] = remainder;
         }
 
         // Verify sum
@@ -676,24 +764,38 @@ impl ANSEncodingHistogram {
     }
 
     /// Write general (non-flat, non-small) histogram.
+    ///
+    /// Matches the format expected by jxl-rs `decode_dist_complex()`.
     fn write_general(&self, writer: &mut BitWriter) -> Result<()> {
         writer.write(1, 0)?; // Non-small
         writer.write(1, 0)?; // Non-flat
 
-        // Encode method (shift + 1) using unary + suffix
-        let method = self.method;
-        let upper_bound_log = 4; // floor_log2(13)
-        let log = floor_log2(method);
+        // Encode shift using unary + suffix (method = shift + 1)
+        // Format: len ones, then 0 (unless at max), then len suffix bits
+        let shift = (self.method - 1) as i32;
+        let shift_val = (shift + 1) as u32; // shift+1 is stored, range 1-13
 
-        // Write unary prefix
-        writer.write(log as usize, (1u64 << log) - 1)?;
-        if log != upper_bound_log {
+        // Determine unary length
+        let mut len = 0u32;
+        while len < 3 && shift_val >= (1u32 << (len + 1)) {
+            len += 1;
+        }
+
+        // Write unary prefix (len ones)
+        for _ in 0..len {
+            writer.write(1, 1)?;
+        }
+        // Write terminating 0 if len < 3
+        if len < 3 {
             writer.write(1, 0)?;
         }
-        // Write value suffix
-        writer.write(log as usize, ((1u64 << log) - 1) & method as u64)?;
+        // Write suffix bits
+        if len > 0 {
+            let suffix = shift_val - (1u32 << len);
+            writer.write(len as usize, suffix as u64)?;
+        }
 
-        // Encode alphabet size
+        // Encode alphabet size - 3
         if self.alphabet_size < 3 {
             return Err(Error::InvalidHistogram(
                 "General histogram needs at least 3 symbols".to_string(),
@@ -701,34 +803,52 @@ impl ANSEncodingHistogram {
         }
         write_var_len_uint8(writer, (self.alphabet_size - 3) as u8)?;
 
-        // Encode omit_pos
-        write_var_len_uint8(writer, self.omit_pos as u8)?;
+        // Encode log-frequency values for each symbol using the fixed prefix code.
+        // The decoder determines omit_pos as the first symbol with highest logcount.
+        for i in 0..self.alphabet_size {
+            let count = self.counts[i];
 
-        // Encode frequencies (simplified: just write bit widths and values)
-        let shift = self.method - 1;
+            // Compute logcount (0 means freq=0, 1-12 means log2(freq)+1)
+            let logcount = if count <= 0 {
+                0
+            } else {
+                floor_log2(count as u32) + 1
+            };
+
+            // Write the logcount using fixed prefix code
+            let (nbits, code) = LOGCOUNT_PREFIX_CODE[logcount as usize];
+            writer.write(nbits as usize, code as u64)?;
+        }
+
+        // Now write precision bits for each non-zero, non-omit symbol with logcount > 1.
+        // The decoder skips precision bits for omit_pos (highest logcount symbol).
         for i in 0..self.alphabet_size {
             if i == self.omit_pos {
                 continue;
             }
 
             let count = self.counts[i];
-            if count == 0 {
-                writer.write(1, 0)?; // Zero marker
-            } else {
-                writer.write(1, 1)?; // Non-zero
-                let bit_width = floor_log2(count as u32) + 1;
-                let logcount = bit_width - 1;
-                let precision = get_population_count_precision(logcount, shift);
-                let drop_bits = logcount.saturating_sub(precision);
+            if count <= 0 {
+                continue;
+            }
 
-                // Write bit width using Huffman-like encoding
-                // (simplified: just write the width)
-                writer.write(4, bit_width as u64)?;
+            let logcount = floor_log2(count as u32) + 1;
+            if logcount <= 1 {
+                // logcount=1 means freq=1, no precision bits needed
+                continue;
+            }
 
-                if precision > 0 {
-                    let encoded_value = (count as u32 >> drop_bits) - (1 << precision);
-                    writer.write(precision as usize, encoded_value as u64)?;
-                }
+            // zeros = logcount - 1 (the log2 of the frequency)
+            let zeros = (logcount - 1) as i32;
+            // bitcount = shift - (12 - zeros) / 2, clamped to [0, zeros]
+            let bitcount = (shift - ((ANS_LOG_TAB_SIZE as i32 - zeros) >> 1)).clamp(0, zeros);
+
+            if bitcount > 0 {
+                // The value stored is: freq = (1 << zeros) + (extra << (zeros - bitcount))
+                // So: extra = (freq - (1 << zeros)) >> (zeros - bitcount)
+                let base = 1i32 << zeros;
+                let extra = ((count - base) >> (zeros - bitcount)) as u32;
+                writer.write(bitcount as usize, extra as u64)?;
             }
         }
 
