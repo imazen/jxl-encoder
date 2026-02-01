@@ -49,7 +49,7 @@ C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller fil
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT16x8/DCT8x16 per 16x16 region)
+- [x] AC strategy selection (DCT8/DCT16x8/DCT8x16/DCT16x16 per 16x16 region)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
 - [x] AC coding with channel interleaving
@@ -81,11 +81,11 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   on CLIC 2025 photos with identical quality. Verified with jxl-oxide on all 5 CLIC
   2025 test images (up to 2048x1360). Includes debug-build invariant checks for
   histogram serialization roundtrip and ANS symbol roundtrip.
-- [ ] **More AC strategies** — DCT16x16, DCT32x32 (~3-5% smaller on smooth content).
-  Forward transforms exist in `jxl_enc_transforms` up to 32x32. Work: LLF extraction
-  for larger blocks, strategy selection heuristics, nzeros bookkeeping for 4+ block
-  coverage. The 2-block transform infrastructure (nzeros, raw_nzeros, covered_blocks)
-  is the template.
+- [x] **DCT16x16** — Working. 2×2 block coverage (256 coefficients), 7-band quant
+  weights, distance-dependent strategy selection. Verified with jxl-oxide and djxl.
+- [ ] **DCT32x32** — Same pattern as DCT16x16 but 4×4 coverage (1024 coefficients).
+  Forward transform exists in `jxl_enc_transforms`. Work: 32x32 quant weights,
+  strategy selection, LLF extraction (4×4 region).
 - [ ] **DCT4x8, DCT8x4, DCT4x4** — Better for edges/detail (~1-3% smaller).
 - [x] **Custom coefficient ordering** — Working! Default-on in two-pass mode.
   Per-strategy scan order from coefficient statistics. Sorts positions by zero
@@ -125,6 +125,32 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Single uint coding scheme, no backward references
 
 ## Resolved Bugs
+
+### DCT16x16 Block Context Map Mismatch (FIXED Feb 1, 2026)
+
+**Issue**: Static Huffman encoder path produced UnexpectedEof when DCT16x16 was
+selected. Dynamic (two-pass optimized) path worked fine. Both djxl and jxl-oxide
+rejected the static file.
+
+**Root Cause**: The encoder's `BLOCK_CONTEXT_MAP` (81 entries, indexed by
+`[c * 27 + strategy_code]`) had wrong values for DCT16x16 (code 4) and DCT32x32
+(code 5) on X and B channels. The decoder reads a compact 39-entry context map
+indexed by `[ch_idx * 13 + order_id]` where:
+- `ch_idx` swaps X↔Y: `if c < 2 { c ^ 1 } else { 2 }`
+- `order_id` maps from strategy codes via a LUT: code 0→0, code 4→2, code 5→3, code 6,7→4
+
+The compact map assigns `block_ctx=2` for X/B channels at order_ids 2-3, but the
+encoder's full map had `block_ctx=0` for strategy codes 4-5 on those channels.
+This caused the encoder to use the wrong AC entropy context for nzeros and coefficient
+tokens, making the bitstream unreadable.
+
+**Fix**: Updated `BLOCK_CONTEXT_MAP` positions [4], [5], [58], [59] from 0 to 2,
+matching what the decoder derives from `COMPACT_BLOCK_CONTEXT_MAP`.
+
+**Key insight**: The decoder uses `order_id` (0-12, grouping transforms by coefficient
+order shape) not `strategy_code` (0-26) for block context lookup. When adding new
+transforms, the encoder's `BLOCK_CONTEXT_MAP` must be consistent with the compact
+map at the corresponding `order_id`, accounting for the X↔Y channel swap.
 
 ### RGBA Frame Header Missing Extra Channel Fields (FIXED Feb 1, 2026)
 
