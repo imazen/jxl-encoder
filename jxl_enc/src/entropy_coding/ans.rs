@@ -313,6 +313,19 @@ impl AnsDistribution {
             )));
         }
 
+        // Special case: single-symbol distribution
+        // jxl-rs uses a simplified alias table where offset = idx for all positions.
+        // This means reverse_map[r] = r (identity mapping) for the single symbol.
+        if let Some(single_sym_idx) = symbols.iter().position(|s| s.freq == ANS_TAB_SIZE as u16) {
+            // Clear all reverse maps
+            for sym in symbols.iter_mut() {
+                sym.reverse_map.clear();
+            }
+            // Set identity mapping for the single symbol
+            symbols[single_sym_idx].reverse_map = (0..ANS_TAB_SIZE as u16).collect();
+            return Ok(());
+        }
+
         // Build the alias table exactly like jxl-rs decoder does
         // For log_alpha_size = 6: table_size = 64, bucket_size = 64
         const LOG_ALPHA_SIZE: usize = 6;
@@ -397,8 +410,12 @@ impl AnsDistribution {
                 (bucket_idx, pos)
             } else {
                 // Alias symbol
+                // jxl-rs stores: bucket.alias_offset = working.alias_offset - working.alias_cutoff
+                // Then reads: offset = bucket.alias_offset + pos
+                // So total offset = (working.alias_offset - working.alias_cutoff) + pos
+                // We have working bucket, so: offset = alias_offset - alias_cutoff + pos
                 let alias_sym = bucket.alias_symbol as usize;
-                let offset = bucket.alias_offset + pos;
+                let offset = bucket.alias_offset - alias_cutoff + pos;
                 (alias_sym, offset)
             };
 
