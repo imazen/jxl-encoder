@@ -1,8 +1,8 @@
 # libjxl-tiny Port to Rust
 
-**Status**: IN PROGRESS
+**Status**: FEATURE-COMPLETE (2026-01-31)
 **Started**: 2026-01-26
-**Source**: `~/work/libjxl-tiny` (BSD-3-Clause, commit TBD)
+**Source**: `~/work/libjxl-tiny` (BSD-3-Clause)
 
 ## Overview
 
@@ -297,3 +297,61 @@ The following components are ported but not yet wired together in `encoder.rs`:
 - libjxl-tiny README: `~/work/libjxl-tiny/README.md`
 - Coding tools doc: `~/work/libjxl-tiny/doc/coding_tools.md`
 - Data flow diagram: `~/work/libjxl-tiny/doc/data_flow.svg`
+
+## Test Coverage (Updated 2026-01-31)
+
+### Unit Tests (88 tests in tiny module)
+- `ac_context.rs`: 3 tests - AC coefficient context computation
+- `ac_group.rs`: 5 tests - AC group tokenization
+- `ac_strategy.rs`: 6 tests - DCT strategy selection (DCT8/DCT16x8/DCT8x16)
+- `adaptive_quant.rs`: 9 tests - Per-block quantization field
+- `chroma_from_luma.rs`: 6 tests - CfL coefficient fitting
+- `cluster.rs`: 3 tests - Histogram clustering
+- `common.rs`: 4 tests - Utility functions
+- `context_tree.rs`: 5 tests - Modular stream context tree
+- `dc_coding.rs`: 6 tests - DC gradient predictor
+- `dct.rs`: 7 tests - Forward DCT transforms
+- `encoder.rs`: 8 tests - Main encoder + hash lock tests
+- `frame.rs`: 2 tests - Frame header/TOC
+- `quant.rs`: 6 tests - Quantization weights
+- `tests.rs`: 14 tests - Integration tests
+- `token.rs`: 3 tests - Token encoding
+
+### Integration Tests (40 tests in clic2025.rs)
+Key tests:
+- `test_comprehensive_rd_sweep`: 5 images × 7 distances (0.1 to 4.0)
+- `test_cpp_vs_rust_quality`: Compares with C++ libjxl-tiny at 3 distances
+- `test_multigroup_quality`: Full 1024×1024 images at 3 distances
+- `test_cfl_quality_sweep`: CfL A/B comparison at 4 distances
+- `test_strategy_ab_comparison`: AC strategy ON/OFF at 3 distances
+- `test_enhanced_clustering_compression`: Clustering algorithm comparison
+
+### RD Curve Results (2026-01-31, 5 images from clic2025-1024)
+| Distance | Avg Size | Avg SSIM2 | Min SSIM2 | Avg bpp |
+|----------|----------|-----------|-----------|---------|
+| 0.10     | 630 KB   | 80.69     | 67.26     | 4.925   |
+| 0.25     | 399 KB   | 79.75     | 66.74     | 3.117   |
+| 0.50     | 256 KB   | 77.46     | 64.84     | 2.003   |
+| 1.00     | 164 KB   | 72.74     | 59.86     | 1.280   |
+| 2.00     | 109 KB   | 62.08     | 49.08     | 0.851   |
+| 3.00     | 87 KB    | 55.29     | 43.26     | 0.680   |
+| 4.00     | 76 KB    | 51.35     | 38.65     | 0.592   |
+
+### Quality vs C++ Reference (256×256 crops, d=0.5/1.0/2.0)
+Rust beats C++ libjxl-tiny by ~2.3-2.6 SSIM2 at all distances.
+See CLAUDE.md "AC Strategy Quality vs C++ Reference" for details.
+
+### How to Run Tests
+```bash
+# All tiny unit tests
+cargo test -p jxl_enc --lib tiny --release
+
+# Comprehensive RD sweep (requires corpus)
+cargo test -p jxl_enc --test clic2025 test_comprehensive_rd_sweep --release -- --ignored --nocapture
+
+# C++ comparison (requires libjxl-tiny build)
+cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_quality --release -- --ignored --nocapture
+
+# All ignored integration tests
+cargo test -p jxl_enc --test clic2025 --release -- --ignored --nocapture
+```
