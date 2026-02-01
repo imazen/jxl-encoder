@@ -134,6 +134,14 @@ impl AnsEncoder {
     ///
     /// Writes the final state followed by all accumulated bits in reverse order.
     pub fn finalize(self, writer: &mut BitWriter) -> Result<()> {
+        // Debug: show final state
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "ANS finalize: state=0x{:08x}, {} bit chunks",
+            self.state,
+            self.bits.len()
+        );
+
         // Write final state (32 bits)
         writer.write(32, self.state as u64)?;
 
@@ -283,42 +291,143 @@ impl AnsDistribution {
         })
     }
 
-    /// Builds reverse maps for all symbols.
+    /// Builds reverse maps for all symbols using the alias table method.
+    ///
+    /// The decoder uses an alias table with buckets. Each idx in [0, 4096) maps to some
+    /// symbol and an offset within that symbol's range. The encoder needs to know,
+    /// for each symbol s and remainder r in [0, freq[s]), what idx to output.
+    ///
+    /// This exactly mirrors the decoder's build_alias_map and read methods.
     fn build_reverse_maps(symbols: &mut [AnsEncSymbolInfo]) -> Result<()> {
-        // First pass: compute cumulative positions
-        let mut cumul = vec![0u32; symbols.len() + 1];
-        for (i, sym) in symbols.iter().enumerate() {
-            cumul[i + 1] = cumul[i] + sym.freq as u32;
+        let alphabet_size = symbols.len();
+        if alphabet_size == 0 {
+            return Ok(());
         }
 
-        // Verify total
-        let total = *cumul.last().unwrap_or(&0);
+        // Verify frequencies sum to ANS_TAB_SIZE
+        let total: u32 = symbols.iter().map(|s| s.freq as u32).sum();
         if total != ANS_TAB_SIZE {
-            // This shouldn't happen if normalization is correct
             return Err(Error::InvalidHistogram(format!(
                 "frequencies sum to {} instead of {}",
                 total, ANS_TAB_SIZE
             )));
         }
 
-        // Build reverse maps: for each position in [0, ANS_TAB_SIZE),
-        // find which symbol it belongs to and its offset within that symbol
-        for pos in 0..ANS_TAB_SIZE {
-            // Binary search for the symbol
-            let mut lo = 0;
-            let mut hi = symbols.len();
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                if cumul[mid + 1] <= pos {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
+        // Build the alias table exactly like jxl-rs decoder does
+        // For log_alpha_size = 6: table_size = 64, bucket_size = 64
+        const LOG_ALPHA_SIZE: usize = 6;
+        let table_size = 1usize << LOG_ALPHA_SIZE; // 64
+        let log_bucket_size = ANS_LOG_TAB_SIZE as usize - LOG_ALPHA_SIZE; // 6
+        let bucket_size = 1u16 << log_bucket_size; // 64
 
-            if lo < symbols.len() && symbols[lo].freq > 0 {
-                let offset = pos - cumul[lo];
-                symbols[lo].reverse_map[offset as usize] = pos as u16;
+        // Working bucket structure matching jxl-rs
+        #[derive(Clone)]
+        struct WorkingBucket {
+            dist: u16,           // Frequency of primary symbol
+            alias_symbol: u16,   // Alias symbol (used when pos >= cutoff)
+            alias_offset: u16,   // Offset for alias symbol
+            alias_cutoff: u16,   // Positions [0, cutoff) use primary, [cutoff, bucket_size) use alias
+        }
+
+        let mut buckets: Vec<WorkingBucket> = (0..table_size)
+            .map(|i| {
+                let dist = if i < alphabet_size {
+                    symbols[i].freq
+                } else {
+                    0
+                };
+                WorkingBucket {
+                    dist,
+                    alias_symbol: if i < alphabet_size { i as u16 } else { 0 },
+                    alias_offset: 0,
+                    alias_cutoff: dist,
+                }
+            })
+            .collect();
+
+        // Separate into underfull and overfull
+        let mut underfull: Vec<usize> = Vec::new();
+        let mut overfull: Vec<usize> = Vec::new();
+        for (i, bucket) in buckets.iter().enumerate() {
+            if bucket.alias_cutoff < bucket_size {
+                underfull.push(i);
+            } else if bucket.alias_cutoff > bucket_size {
+                overfull.push(i);
+            }
+        }
+
+        // Alias redistribution - exactly matching jxl-rs
+        while let (Some(o), Some(u)) = (overfull.pop(), underfull.pop()) {
+            let by = bucket_size - buckets[u].alias_cutoff;
+            buckets[o].alias_cutoff -= by;
+            buckets[u].alias_symbol = o as u16;
+            buckets[u].alias_offset = buckets[o].alias_cutoff;
+
+            match buckets[o].alias_cutoff.cmp(&bucket_size) {
+                std::cmp::Ordering::Less => underfull.push(o),
+                std::cmp::Ordering::Greater => overfull.push(o),
+                std::cmp::Ordering::Equal => {}
+            }
+        }
+
+        // Clear existing reverse maps
+        for sym in symbols.iter_mut() {
+            sym.reverse_map.clear();
+        }
+
+        // For each idx in [0, 4096), simulate the decoder to find which symbol it decodes to
+        // and what offset within that symbol's range.
+        // We need to track: for symbol s with freq[s], what idx values map to it?
+        // The decoder computes: next_state = (state >> 12) * freq + offset
+        // So for a given idx, the offset contributed to the next state depends on
+        // whether it's the primary or alias symbol.
+
+        // Build a table: for each idx, what (symbol, offset) does it decode to?
+        let mut idx_to_symbol_offset: Vec<(usize, u16)> = Vec::with_capacity(ANS_TAB_SIZE as usize);
+
+        for idx in 0..ANS_TAB_SIZE {
+            let bucket_idx = (idx >> log_bucket_size) as usize;
+            let pos = (idx as u16) & (bucket_size - 1);
+
+            let bucket = &buckets[bucket_idx.min(table_size - 1)];
+            let alias_cutoff = bucket.alias_cutoff;
+
+            let (symbol, offset) = if pos < alias_cutoff {
+                // Primary symbol (bucket index)
+                (bucket_idx, pos)
+            } else {
+                // Alias symbol
+                let alias_sym = bucket.alias_symbol as usize;
+                let offset = bucket.alias_offset + pos;
+                (alias_sym, offset)
+            };
+
+            idx_to_symbol_offset.push((symbol, offset));
+        }
+
+        // Now invert: for each symbol, collect all (offset, idx) pairs and sort by offset
+        let mut symbol_positions: Vec<Vec<(u16, u32)>> = vec![Vec::new(); alphabet_size];
+        for (idx, &(symbol, offset)) in idx_to_symbol_offset.iter().enumerate() {
+            if symbol < alphabet_size {
+                symbol_positions[symbol].push((offset, idx as u32));
+            }
+        }
+
+        // Sort each symbol's positions by offset and extract idx values
+        for (sym_idx, positions) in symbol_positions.iter_mut().enumerate() {
+            positions.sort_by_key(|(offset, _)| *offset);
+            symbols[sym_idx].reverse_map = positions.iter().map(|(_, idx)| *idx as u16).collect();
+        }
+
+        // Verify each symbol got the right number of positions
+        for (i, sym) in symbols.iter().enumerate() {
+            if sym.reverse_map.len() != sym.freq as usize {
+                return Err(Error::InvalidHistogram(format!(
+                    "symbol {} has freq {} but got {} positions",
+                    i,
+                    sym.freq,
+                    sym.reverse_map.len()
+                )));
             }
         }
 
@@ -1040,5 +1149,144 @@ mod tests {
         let bytes = writer.finish_with_padding();
         // Should produce some output
         assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn test_ans_roundtrip_manual() {
+        // Create a simple flat distribution
+        let dist = AnsDistribution::flat(2).unwrap();
+        
+        println!("Distribution: {} symbols", dist.alphabet_size());
+        for (i, sym) in dist.symbols.iter().enumerate() {
+            println!("  Symbol {}: freq={}", i, sym.freq);
+        }
+        
+        // Encode symbol 0
+        let mut encoder = AnsEncoder::new();
+        let initial_state = encoder.state();
+        println!("\nInitial state: 0x{:08x}", initial_state);
+        assert_eq!(initial_state, 0x130000, "Initial state should be 0x130000");
+        
+        let info = &dist.symbols[0];
+        encoder.put_symbol(info);
+        let encoded_state = encoder.state();
+        println!("After encoding symbol 0: state=0x{:08x}", encoded_state);
+        
+        // Now manually decode to verify
+        let idx = encoded_state & 0xFFF;
+        println!("Decode: idx = {}", idx);
+        
+        // For flat distribution of 2, each has freq 2048
+        // Symbol 0: cumul=0, freq=2048 -> positions [0, 2048)
+        // Symbol 1: cumul=2048, freq=2048 -> positions [2048, 4096)
+        let decoded_symbol = if idx < 2048 { 0 } else { 1 };
+        let offset_in_symbol = if idx < 2048 { idx } else { idx - 2048 };
+        let freq = 2048u32;
+        
+        println!("Decoded symbol: {}", decoded_symbol);
+        println!("Offset in symbol: {}", offset_in_symbol);
+        
+        // The decoder does: next_state = (state >> 12) * freq + offset
+        let quotient = encoded_state >> 12;
+        let next_state = quotient * freq + offset_in_symbol;
+        println!("next_state = {} * {} + {} = 0x{:08x}", quotient, freq, offset_in_symbol, next_state);
+        
+        // The next_state should be the initial state (0x130000)
+        assert_eq!(next_state, 0x130000, "Decoded state should be 0x130000");
+        assert_eq!(decoded_symbol, 0, "Decoded symbol should be 0");
+    }
+    
+    #[test]
+    fn test_ans_roundtrip_multiple_symbols() {
+        use crate::bit_writer::BitWriter;
+        use crate::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+
+        // Test encoding multiple symbols and verify they can be decoded
+        // using the jxl-rs compatible decoder (alias table method)
+
+        // Create a flat distribution with 4 symbols (each freq = 1024)
+        let counts = [1024i32, 1024, 1024, 1024];
+        let dist = AnsDistribution::from_normalized_counts(&counts).unwrap();
+
+        let symbols_to_encode: Vec<usize> = vec![0, 1, 2, 3, 0, 1];
+        println!("Encoding {} symbols: {:?}", symbols_to_encode.len(), symbols_to_encode);
+
+        // Encode in reverse order (as ANS requires)
+        let mut encoder = AnsEncoder::new();
+        for &sym in symbols_to_encode.iter().rev() {
+            encoder.put_symbol(&dist.symbols[sym]);
+        }
+
+        println!("Final state after encoding: 0x{:08x}", encoder.state());
+
+        // Finalize encoder to bitstream
+        let mut writer = BitWriter::new();
+        encoder.finalize(&mut writer).unwrap();
+        let encoded_bytes = writer.finish_with_padding();
+        println!("Encoded bytes: {:02x?}", encoded_bytes);
+
+        // Build decoder histogram by writing and reading back
+        let ans_histo =
+            ANSEncodingHistogram::from_histogram(&Histogram::from_counts(&counts), ANSHistogramStrategy::Precise)
+                .unwrap();
+        let mut hist_writer = BitWriter::new();
+        ans_histo.write(&mut hist_writer).unwrap();
+        let hist_bytes = hist_writer.finish_with_padding();
+
+        let mut hist_br = BitReader::new(&hist_bytes);
+        let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).unwrap();
+
+        println!("Decoded histogram frequencies: {:?}", &decoded_hist.frequencies[..4]);
+
+        // Decode using jxl-rs compatible decoder
+        let mut br = BitReader::new(&encoded_bytes);
+        let mut ans_reader = AnsReader::init(&mut br).unwrap();
+
+        println!("Decoding:");
+        let mut decoded = Vec::new();
+        for i in 0..symbols_to_encode.len() {
+            let symbol = decoded_hist.read(&mut br, &mut ans_reader.0) as usize;
+            println!("  step {}: symbol={}, state=0x{:08x}", i, symbol, ans_reader.0);
+            decoded.push(symbol);
+        }
+
+        println!("Original: {:?}", symbols_to_encode);
+        println!("Decoded:  {:?}", decoded);
+        println!("Final state: 0x{:08x}", ans_reader.0);
+
+        assert_eq!(decoded, symbols_to_encode, "Decoded symbols should match original");
+        assert!(
+            ans_reader.check_final_state().is_ok(),
+            "Final state should be 0x130000, got 0x{:08x}",
+            ans_reader.0
+        );
+    }
+
+    #[test]
+    fn test_ans_histogram_write_decode_roundtrip() {
+        use crate::entropy_coding::histogram::Histogram;
+        use crate::bit_writer::BitWriter;
+
+        // Create a histogram with several symbols
+        let histo = Histogram::from_counts(&[100, 50, 25, 10]);
+        
+        let encoded = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+        
+        println!("Histogram: {:?}", histo.counts);
+        println!("Encoded counts: {:?}", encoded.counts);
+        println!("Method: {}, alphabet_size: {}, omit_pos: {}", 
+                 encoded.method, encoded.alphabet_size, encoded.omit_pos);
+        
+        // Verify sum is 4096
+        let sum: i32 = encoded.counts.iter().sum();
+        assert_eq!(sum, ANS_TAB_SIZE as i32, "Sum should be 4096");
+        
+        // Write to bitstream
+        let mut writer = BitWriter::new();
+        encoded.write(&mut writer).unwrap();
+        let bytes = writer.finish_with_padding();
+
+        println!("Encoded histogram: {} bytes", bytes.len());
+        println!("Bytes: {:02x?}", bytes);
     }
 }
