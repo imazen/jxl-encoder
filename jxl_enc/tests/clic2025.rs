@@ -5248,3 +5248,261 @@ fn test_ans_histogram_roundtrip_jxl_rs() {
         }
     }
 }
+
+/// Test histogram round-trip for the exact case from failing ANS encode.
+/// Uses our internal ans_decode module to avoid jxl-rs private API issues.
+#[test]
+fn test_ans_skewed_histogram_roundtrip() {
+    use jxl_enc::bit_writer::BitWriter;
+    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder};
+    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, BitReader};
+    use jxl_enc::entropy_coding::histogram::Histogram;
+
+    // Recreate the histogram from the debug output:
+    // Skewed distribution like DC tokens: mostly token 0, rare token 1 and 32
+    let mut histo = Histogram::new();
+    for _ in 0..190 {
+        histo.add(0);
+    }
+    histo.add(1);
+    histo.add(32);
+
+    eprintln!("Original histogram:");
+    eprintln!("  total: {}", histo.total_count);
+    eprintln!("  alphabet_size: {}", histo.alphabet_size());
+
+    // Build ANS histogram
+    let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
+        .expect("histogram normalization failed");
+
+    eprintln!("\nANS histogram:");
+    eprintln!("  method: {}", ans_histo.method);
+    eprintln!("  alphabet_size: {}", ans_histo.alphabet_size);
+    eprintln!("  omit_pos: {}", ans_histo.omit_pos);
+    for i in 0..ans_histo.alphabet_size {
+        if ans_histo.counts[i] > 0 {
+            eprintln!("  counts[{}] = {}", i, ans_histo.counts[i]);
+        }
+    }
+    let sum: i32 = ans_histo.counts.iter().sum();
+    eprintln!("  sum: {}", sum);
+    assert_eq!(sum, 4096, "counts must sum to 4096");
+
+    // Serialize histogram
+    let mut hist_writer = BitWriter::new();
+    ans_histo.write(&mut hist_writer).expect("write failed");
+    let hist_bytes = hist_writer.finish_with_padding();
+    eprintln!("\nHistogram bytes ({} bytes): {:02x?}", hist_bytes.len(), hist_bytes);
+
+    // Parse with our decoder
+    let mut hist_br = BitReader::new(&hist_bytes);
+    let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).expect("decode failed");
+    eprintln!("Decoded histogram frequencies:");
+    for i in 0..decoded_hist.frequencies.len() {
+        if decoded_hist.frequencies[i] > 0 {
+            eprintln!("  freq[{}] = {}", i, decoded_hist.frequencies[i]);
+        }
+    }
+
+    // Verify frequencies match
+    for i in 0..ans_histo.alphabet_size {
+        let expected = ans_histo.counts[i] as u16;
+        let actual = decoded_hist.frequencies.get(i).copied().unwrap_or(0);
+        assert_eq!(actual, expected, "frequency mismatch at symbol {}", i);
+    }
+
+    // Now test symbol encoding/decoding
+    eprintln!("\nTesting symbol encoding:");
+    let dist = AnsDistribution::from_normalized_counts(&ans_histo.counts).expect("distribution failed");
+
+    // Encode [0, 0, 0, 1, 32] in reverse
+    let symbols: Vec<usize> = vec![0, 0, 0, 1, 32];
+    let mut encoder = AnsEncoder::new();
+    for &sym in symbols.iter().rev() {
+        let info = dist.get(sym).expect("symbol not found");
+        encoder.put_symbol(info);
+    }
+    eprintln!("  final encoder state: 0x{:08x}", encoder.state());
+
+    let mut token_writer = BitWriter::new();
+    encoder.finalize(&mut token_writer).expect("finalize failed");
+    let token_bytes = token_writer.finish_with_padding();
+    eprintln!("  token bytes ({} bytes): {:02x?}", token_bytes.len(), token_bytes);
+
+    // Decode with our decoder
+    let mut token_br = BitReader::new(&token_bytes);
+    let initial_state = token_br.read(32).unwrap() as u32;
+    eprintln!("  decoder read initial state: 0x{:08x}", initial_state);
+
+    let mut state = initial_state;
+    let mut decoded_symbols = Vec::new();
+    for i in 0..symbols.len() {
+        let sym = decoded_hist.read(&mut token_br, &mut state);
+        eprintln!("    step {}: sym={}, state=0x{:08x}", i, sym, state);
+        decoded_symbols.push(sym as usize);
+    }
+
+    eprintln!("\nDecoded: {:?}", decoded_symbols);
+    eprintln!("Expected: {:?}", symbols);
+    eprintln!("Final state: 0x{:08x}", state);
+
+    assert_eq!(decoded_symbols, symbols, "symbols should match");
+    assert_eq!(state, 0x00130000, "final state should be 0x00130000");
+}
+
+/// Test single-symbol ANS distribution - should not change state.
+#[test]
+fn test_ans_single_symbol_no_state_change() {
+    use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder};
+
+    // Single symbol at position 8
+    let mut counts = vec![0i32; 64];
+    counts[8] = 4096;
+    
+    let dist = AnsDistribution::from_normalized_counts(&counts).expect("distribution failed");
+    
+    eprintln!("Single-symbol distribution:");
+    eprintln!("  symbol 8: freq={}", dist.symbols[8].freq);
+    
+    // Encode 10 copies of symbol 8
+    let mut encoder = AnsEncoder::new();
+    eprintln!("\nEncoding 10 copies of symbol 8:");
+    for i in 0..10 {
+        let state_before = encoder.state();
+        encoder.put_symbol(&dist.symbols[8]);
+        eprintln!("  step {}: state before=0x{:08x}, after=0x{:08x}", 
+                  i, state_before, encoder.state());
+    }
+    
+    eprintln!("\nFinal state: 0x{:08x}", encoder.state());
+    
+    // For a single-symbol distribution (100% probability), state should never change
+    assert_eq!(encoder.state(), 0x00130000, "state should not change for 100% probability symbol");
+}
+
+/// Debug single-symbol distribution reverse_map.
+#[test]
+fn test_ans_single_symbol_reverse_map() {
+    use jxl_enc::entropy_coding::ans::AnsDistribution;
+
+    // Single symbol at position 8
+    let mut counts = vec![0i32; 64];
+    counts[8] = 4096;
+    
+    let dist = AnsDistribution::from_normalized_counts(&counts).expect("distribution failed");
+    
+    eprintln!("Single-symbol distribution for symbol 8:");
+    eprintln!("  symbols[8].freq = {}", dist.symbols[8].freq);
+    eprintln!("  symbols[8].ifreq = {}", dist.symbols[8].ifreq);
+    eprintln!("  symbols[8].reverse_map.len() = {}", dist.symbols[8].reverse_map.len());
+    eprintln!("  reverse_map[0..10] = {:?}", &dist.symbols[8].reverse_map[..10.min(dist.symbols[8].reverse_map.len())]);
+    
+    // The key observation: for freq=4096, reverse_map[r] for ANY r should map to
+    // the SAME idx when state = r + v * 4096 for some v.
+    // Actually, reverse_map[r] should be the idx where decoder state=idx*4096 + r 
+    // can reconstruct r.
+    
+    // For freq=4096 (100% probability), all 4096 positions in the alias table 
+    // belong to symbol 8. The decoder formula is:
+    // next_state = (state >> 12) * freq + offset
+    //            = (state >> 12) * 4096 + offset
+    // For this to work, every idx in [0, 4095] should have offset = idx
+    // (since we want next_state = (state >> 12) * 4096 + idx)
+    
+    // So reverse_map[r] should be r (identity mapping) for single-symbol case.
+    
+    for i in 0..10 {
+        eprintln!("  reverse_map[{}] = {}", i, dist.symbols[8].reverse_map[i]);
+        if dist.symbols[8].reverse_map[i] != i as u16 {
+            eprintln!("    ERROR: expected {}", i);
+        }
+    }
+}
+
+/// Full encode-decode cycle for single-symbol distribution.
+#[test]
+fn test_ans_single_symbol_full_cycle() {
+    use jxl_enc::bit_writer::BitWriter;
+    use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder, ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, BitReader};
+    use jxl_enc::entropy_coding::histogram::Histogram;
+
+    // Single symbol 8 with 10 occurrences
+    let mut histo = Histogram::new();
+    for _ in 0..10 {
+        histo.add(8);
+    }
+    
+    let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
+        .expect("histogram failed");
+    
+    eprintln!("Histogram:");
+    eprintln!("  method: {}", ans_histo.method);
+    eprintln!("  alphabet_size: {}", ans_histo.alphabet_size);
+    for i in 0..ans_histo.alphabet_size {
+        if ans_histo.counts[i] > 0 {
+            eprintln!("  counts[{}] = {}", i, ans_histo.counts[i]);
+        }
+    }
+    
+    // Build distribution for encoding
+    let dist = AnsDistribution::from_normalized_counts(&ans_histo.counts).expect("dist failed");
+    
+    // Encode
+    let symbols: Vec<usize> = vec![8; 10];
+    let mut encoder = AnsEncoder::new();
+    eprintln!("\nEncoding:");
+    for (i, &sym) in symbols.iter().rev().enumerate() {
+        let state_before = encoder.state();
+        encoder.put_symbol(&dist.symbols[sym]);
+        eprintln!("  enc[{}]: sym={}, state 0x{:08x} -> 0x{:08x}", 
+                  i, sym, state_before, encoder.state());
+    }
+    
+    let encoder_final_state = encoder.state();
+    eprintln!("\nEncoder final state: 0x{:08x}", encoder_final_state);
+    
+    let mut token_writer = BitWriter::new();
+    encoder.finalize(&mut token_writer).expect("finalize failed");
+    let token_bytes = token_writer.finish_with_padding();
+    eprintln!("Token bytes ({} bytes): {:02x?}", token_bytes.len(), token_bytes);
+    
+    // Serialize histogram
+    let mut hist_writer = BitWriter::new();
+    ans_histo.write(&mut hist_writer).expect("hist write failed");
+    let hist_bytes = hist_writer.finish_with_padding();
+    
+    // Decode histogram
+    let mut hist_br = BitReader::new(&hist_bytes);
+    let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).expect("hist decode failed");
+    eprintln!("\nDecoded histogram frequencies:");
+    for i in 0..decoded_hist.frequencies.len() {
+        if decoded_hist.frequencies[i] > 0 {
+            eprintln!("  freq[{}] = {}", i, decoded_hist.frequencies[i]);
+        }
+    }
+    
+    // Decode tokens
+    let mut token_br = BitReader::new(&token_bytes);
+    let initial_state = token_br.read(32).expect("read state failed") as u32;
+    eprintln!("\nDecoder initial state: 0x{:08x}", initial_state);
+    assert_eq!(initial_state, encoder_final_state, "initial state should match encoder final");
+    
+    let mut state = initial_state;
+    let mut decoded_symbols = Vec::new();
+    eprintln!("Decoding:");
+    for i in 0..symbols.len() {
+        let state_before = state;
+        let sym = decoded_hist.read(&mut token_br, &mut state);
+        eprintln!("  dec[{}]: sym={}, state 0x{:08x} -> 0x{:08x}", 
+                  i, sym, state_before, state);
+        decoded_symbols.push(sym as usize);
+    }
+    
+    eprintln!("\nDecoded: {:?}", decoded_symbols);
+    eprintln!("Expected: {:?}", symbols);
+    eprintln!("Final state: 0x{:08x} (expected 0x00130000)", state);
+    
+    assert_eq!(decoded_symbols, symbols, "symbols should match");
+    assert_eq!(state, 0x00130000, "final state should be 0x00130000");
+}

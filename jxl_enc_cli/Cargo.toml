@@ -10,6 +10,10 @@ repository.workspace = true
 name = "cjxl-rs"
 path = "src/main.rs"
 
+[features]
+default = []
+debug-tokens = ["jxl_enc/debug-tokens"]
+
 [dependencies]
 jxl_enc = { path = "../jxl_enc", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
