@@ -525,15 +525,15 @@ pub fn compute_ac_strategy(
     xsize_blocks: usize,
     ysize_blocks: usize,
     distance: f32,
-    quant_field_u8: &[u8],
+    quant_field_float: &[f32],
     masking: &[f32],
     cfl_map: &CflMap,
 ) -> AcStrategyMap {
     let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
 
-    // Convert u8 quant field to f32 for entropy estimation
-    // (C++ uses ImageF quant_field directly)
-    let quant_field_f32: Vec<f32> = quant_field_u8.iter().map(|&q| q as f32).collect();
+    // C++ passes the float aq_map values directly to EstimateEntropy.
+    // These are the adaptive quant values BEFORE conversion to u8 raw_quant.
+    // Using u8 cast to f32 would give ~6x larger values (raw_quant = aq_map * inv_scale).
 
     let xyb = [xyb_x, xyb_y, xyb_b];
 
@@ -563,7 +563,7 @@ pub fn compute_ac_strategy(
                         cx,
                         cy,
                         distance,
-                        &quant_field_f32,
+                        quant_field_float,
                         xsize_blocks,
                         masking,
                         ytox,
