@@ -12,7 +12,6 @@ pub mod ans;
 pub mod cluster;
 pub mod context_map;
 pub mod histogram;
-pub mod huffman;
 pub mod huffman_tree;
 pub mod hybrid_uint;
 
@@ -30,7 +29,6 @@ pub use histogram::{
     HISTOGRAM_ROUNDING, Histogram, MIN_DISTANCE_FOR_DISTINCT, histogram_distance,
     histogram_kl_divergence,
 };
-pub use huffman::HuffmanEncoder;
 pub use huffman_tree::{
     HuffmanTable, build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
     store_huffman_tree, write_huffman_tree,

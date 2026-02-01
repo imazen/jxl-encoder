@@ -48,12 +48,6 @@ pub enum Error {
     #[error("ANS encoding error: {0}")]
     AnsEncodingError(String),
 
-    #[error("Huffman table too large: {0} symbols")]
-    HuffmanTableTooLarge(usize),
-
-    #[error("Invalid Huffman code lengths")]
-    InvalidHuffmanCodeLengths,
-
     #[error("Too many unique symbols: found {found}, max {max} (minimal encoder limit)")]
     TooManySymbols { found: usize, max: usize },
 
