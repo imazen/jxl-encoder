@@ -9,8 +9,8 @@
 //! JPEG XL encoder aimed at photographic images. It uses a subset of encoding tools:
 //!
 //! - Only DCT8, DCT8x16, and DCT16x8 transforms
-//! - Only Huffman entropy coding (no ANS)
-//! - Default zig-zag coefficient order
+//! - Huffman or ANS entropy coding (`use_ans` flag)
+//! - Custom or default zig-zag coefficient order (`custom_orders` flag)
 //! - Fixed context tree for DC coding
 //! - No LZ77 backward references
 //!

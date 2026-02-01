@@ -61,6 +61,7 @@ C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller fil
 - [x] Frame assembly, TOC, multi-group section layout
 - [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
 - [x] ANS entropy coding (`--ans` flag) with histogram clustering
+- [x] Custom coefficient ordering (default-on, `--no-custom-orders` to disable)
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
@@ -86,9 +87,13 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   coverage. The 2-block transform infrastructure (nzeros, raw_nzeros, covered_blocks)
   is the template.
 - [ ] **DCT4x8, DCT8x4, DCT4x4** — Better for edges/detail (~1-3% smaller).
-- [ ] **Custom coefficient ordering** — Per-strategy scan order from coefficient
-  statistics instead of fixed zig-zag (~2-4% smaller). Self-contained optimization
-  over existing token stream.
+- [x] **Custom coefficient ordering** — Working! Default-on in two-pass mode.
+  Per-strategy scan order from coefficient statistics. Sorts positions by zero
+  count so zeros cluster at end of scan. Verified on all 5 CLIC 2025 images
+  with jxl-oxide. Modest savings (~0.05% at d=1.0) — the quantized zero counts
+  reduce permutation entropy but the overhead of encoding the permutation nearly
+  offsets the AC savings. May improve more at lower distances or with more AC
+  strategies. Use `--no-custom-orders` to disable.
 
 **Tier 2: Quality and specialized wins**
 
@@ -113,8 +118,8 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 
 For reference, libjxl-tiny's simplifications vs full libjxl:
 - Only DCT8, DCT16x8, DCT8x16 (not 27 strategies)
-- Static Huffman only (no ANS, no histogram clustering)
-- Fixed zig-zag coefficient order (no custom orders)
+- Static Huffman only (no ANS, no histogram clustering) — **we have ANS**
+- Fixed zig-zag coefficient order (no custom orders) — **we have custom orders**
 - No error diffusion in quantization
 - Default block entropy context model only
 - Single uint coding scheme, no backward references
