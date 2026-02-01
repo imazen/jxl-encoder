@@ -4161,3 +4161,102 @@ fn test_encode_256_crop_for_comparison() {
         eprintln!("d={}: {} bytes -> {}", dist_str, bytes.len(), out_path);
     }
 }
+
+/// Compare butteraugli scores between C++ and Rust libjxl-tiny outputs
+/// Run with: cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_butteraugli -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_cpp_vs_rust_butteraugli() {
+    use butteraugli::{butteraugli_linear, srgb_to_linear, ButteraugliParams};
+    use imgref::Img;
+    use rgb::RGB;
+    use std::io::Cursor;
+
+    let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
+    let crop_path = format!("{}/crop_256.png", work);
+    
+    // Load original image
+    let img = image::open(&crop_path).unwrap();
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let rgb = img.to_rgb8();
+    
+    // Convert to linear RGB
+    let linear_rgb: Vec<f32> = rgb.pixels().flat_map(|p| {
+        [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])]
+    }).collect();
+    
+    let orig_pixels: Vec<RGB<f32>> = linear_rgb.chunks(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = Img::new(orig_pixels, w, h);
+    
+    let params = ButteraugliParams::default();
+    
+    eprintln!("\n=== C++ vs Rust Butteraugli Comparison ===");
+    eprintln!("{:<6} | {:>10} {:>10} | {:>10} {:>10} | {:>8}", 
+              "Dist", "C++ Size", "C++ Btrgl", "Rust Size", "Rust Btrgl", "Winner");
+    eprintln!("{}", "-".repeat(70));
+    
+    for dist in &["0.5", "1.0", "2.0", "3.0"] {
+        // Read C++ JXL and decode with jxl-oxide
+        let cpp_path = format!("{}/cpp_d{}.jxl", work, dist);
+        let cpp_bytes = std::fs::read(&cpp_path).unwrap_or_default();
+        let cpp_size = cpp_bytes.len();
+        
+        let cpp_btrgl = if !cpp_bytes.is_empty() {
+            let reader = Cursor::new(&cpp_bytes);
+            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+                if let Ok(render) = image.render_frame(0) {
+                    let decoded = render.image_all_channels();
+                    let dec_buf = decoded.buf();
+                    let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+                        .map(|c| RGB::new(c[0], c[1], c[2]))
+                        .collect();
+                    let dec_img = Img::new(dec_pixels, w, h);
+                    butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+                        .map(|r| r.score as f32)
+                        .unwrap_or(-1.0)
+                } else { -1.0 }
+            } else { -1.0 }
+        } else { -1.0 };
+        
+        // Read Rust JXL and decode
+        let rust_path = format!("{}/rust_d{}.jxl", work, dist);
+        let rust_bytes = std::fs::read(&rust_path).unwrap_or_default();
+        let rust_size = rust_bytes.len();
+        
+        let rust_btrgl = if !rust_bytes.is_empty() {
+            let reader = Cursor::new(&rust_bytes);
+            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+                if let Ok(render) = image.render_frame(0) {
+                    let decoded = render.image_all_channels();
+                    let dec_buf = decoded.buf();
+                    let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+                        .map(|c| RGB::new(c[0], c[1], c[2]))
+                        .collect();
+                    let dec_img = Img::new(dec_pixels, w, h);
+                    butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+                        .map(|r| r.score as f32)
+                        .unwrap_or(-1.0)
+                } else { -1.0 }
+            } else { -1.0 }
+        } else { -1.0 };
+        
+        // Determine winner (lower butteraugli + smaller size = better)
+        // Use butteraugli/size ratio - lower is better
+        let cpp_ratio = if cpp_size > 0 { cpp_btrgl / (cpp_size as f32 / 1000.0) } else { f32::MAX };
+        let rust_ratio = if rust_size > 0 { rust_btrgl / (rust_size as f32 / 1000.0) } else { f32::MAX };
+        let winner = if rust_btrgl < cpp_btrgl && rust_size <= cpp_size {
+            "RUST++"
+        } else if rust_btrgl < cpp_btrgl {
+            "Rust"
+        } else if cpp_btrgl < rust_btrgl {
+            "C++"
+        } else {
+            "Tie"
+        };
+        
+        eprintln!("{:<6} | {:>10} {:>10.3} | {:>10} {:>10.3} | {:>8}", 
+                  dist, cpp_size, cpp_btrgl, rust_size, rust_btrgl, winner);
+    }
+}
