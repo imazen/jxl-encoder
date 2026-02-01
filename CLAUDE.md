@@ -832,3 +832,32 @@ on unpadded dimensions — the C++ reference pads first and never worries about 
 - JXL signature is 0xFF 0x0A
 - Group size is 256x256 pixels
 - Block size is 8x8 for DCT
+
+### Enhanced Clustering Cost Model Discovery (Jan 31, 2026)
+
+**Finding:** Enhanced clustering with pair merge refinement produces ~0.5% LARGER
+files when using Huffman entropy coding. The fast clustering algorithm (k-means-like
+without refinement) is already near-optimal for Huffman.
+
+**Root Cause Analysis:**
+1. Fast clustering uses histogram distance = `merged_data_cost - sum(individual_data_costs)`
+2. This correctly measures the DATA cost increase from merging
+3. For Huffman, header cost savings from merging are minimal (~1-2 bits per merge)
+4. The pair merge refinement finds "beneficial" merges based on cost model, but
+   the actual file is larger due to:
+   - Context map encoding overhead
+   - Suboptimal tree sharing across contexts with different distributions
+
+**Cost Model Details:**
+- Shannon entropy underestimates Huffman cost by 2-3% (integer code lengths)
+- Implemented `compute_huffman_data_cost()` using actual `create_huffman_tree()`
+- Header cost for Huffman: simple tree (1-4 symbols) ~4+n*8 bits, complex tree ~40+n*2.5 bits
+- ANS header cost: ~5 bits per symbol for frequency table
+
+**Implication for ANS:**
+When ANS is implemented, enhanced clustering SHOULD help because:
+- ANS has larger header cost (~5 bits/symbol vs Huffman's ~2.5 bits/symbol for complex trees)
+- Merging clusters saves more header bits with ANS
+- The pair merge refinement cost model (`EntropyType::Ans`) is designed for this
+
+**Test:** `cargo test -p jxl_enc --test clic2025 test_enhanced_clustering_compression -- --ignored`

@@ -3715,3 +3715,170 @@ fn test_enhanced_clustering_compression() {
         savings
     );
 }
+
+/// Comprehensive rate-distortion test across multiple images and distance values.
+/// This is the canonical test for validating encoder quality/compression tradeoffs.
+///
+/// Tests 5 images from clic2025-1024 corpus at 7 distance values (0.1 to 4.0).
+/// Outputs a formatted table with SSIM2 quality and file size for each point.
+/// 
+/// Run with: cargo test -p jxl_enc --test clic2025 test_comprehensive_rd_sweep -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_comprehensive_rd_sweep() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+    let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
+    let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
+    let work_dir = "/mnt/v/output/jxl-encoder-rs/rd-sweep";
+    std::fs::create_dir_all(work_dir).unwrap();
+
+    // Verify tools exist
+    if !std::path::Path::new(&djxl).exists() {
+        eprintln!("djxl not found at {}, skipping test", djxl);
+        return;
+    }
+    if !std::path::Path::new(&ssim_tool).exists() {
+        eprintln!("ssimulacra2 tool not found at {}, skipping test", ssim_tool);
+        return;
+    }
+
+    // Load first 5 images (sorted for reproducibility)
+    let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
+        Ok(e) => e.filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+            .collect(),
+        Err(_) => {
+            eprintln!("Corpus dir {} not found, skipping test", corpus_dir);
+            return;
+        }
+    };
+    entries.sort_by_key(|e| e.path());
+    let entries: Vec<_> = entries.into_iter().take(5).collect();
+    
+    if entries.is_empty() {
+        eprintln!("No PNG images found in corpus, skipping test");
+        return;
+    }
+
+    // Comprehensive distance sweep from high quality (d=0.1) to low quality (d=4.0)
+    let distances = [0.1f32, 0.25, 0.5, 1.0, 2.0, 3.0, 4.0];
+
+    eprintln!("\n=== Comprehensive Rate-Distortion Sweep ===");
+    eprintln!("Date: 2026-01-31");
+    eprintln!("Images: {} from clic2025-1024 (1024x1024)", entries.len());
+    eprintln!("Distances: {:?}", distances);
+    eprintln!();
+
+    // Header
+    eprintln!("{:<20} {:>8} {:>10} {:>10} {:>10}", 
+              "Image", "Distance", "Size (KB)", "SSIM2", "bpp");
+    eprintln!("{}", "-".repeat(62));
+
+    // Collect per-distance averages
+    let mut distance_stats: Vec<(f32, Vec<f64>, Vec<usize>)> = 
+        distances.iter().map(|&d| (d, Vec::new(), Vec::new())).collect();
+
+    for entry in &entries {
+        let path = entry.path();
+        let name: String = path.file_stem().unwrap().to_string_lossy().chars().take(18).collect();
+        
+        // Load and convert image
+        let img = image::open(&path).unwrap();
+        let (w, h) = img.dimensions();
+        let pixels = (w * h) as usize;
+        let rgb = img.to_rgb8();
+        
+        let linear_rgb: Vec<f32> = rgb.pixels().flat_map(|p| {
+            let r = (p[0] as f32 / 255.0).powf(2.2);
+            let g = (p[1] as f32 / 255.0).powf(2.2);
+            let b = (p[2] as f32 / 255.0).powf(2.2);
+            [r, g, b]
+        }).collect();
+        
+        // Save original for SSIM2 comparison
+        let orig_path = format!("{}/{}_orig.png", work_dir, name);
+        rgb.save(&orig_path).unwrap();
+
+        for (di, &distance) in distances.iter().enumerate() {
+            // Encode
+            let encoder = jxl_enc::tiny::TinyEncoder::new(distance);
+            let bytes = encoder.encode(w as usize, h as usize, &linear_rgb).unwrap();
+            let size_kb = bytes.len() as f64 / 1024.0;
+            let bpp = bytes.len() as f64 * 8.0 / pixels as f64;
+
+            // Decode with djxl
+            let jxl_path = format!("{}/{}_{}.jxl", work_dir, name, distance);
+            let dec_path = format!("{}/{}_{}_dec.png", work_dir, name, distance);
+            std::fs::write(&jxl_path, &bytes).unwrap();
+            
+            let decode_ok = std::process::Command::new(&djxl)
+                .args([&jxl_path, &dec_path])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            
+            if !decode_ok {
+                eprintln!("{:<20} {:>8.2} {:>10} {:>10} {:>10}", 
+                          name, distance, "DECODE", "FAIL", "-");
+                continue;
+            }
+
+            // Measure SSIM2
+            let ssim_output = std::process::Command::new(&ssim_tool)
+                .args([&orig_path, &dec_path])
+                .output()
+                .ok();
+            
+            let ssim2 = ssim_output.and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .last()
+                        .and_then(|l| l.trim().parse::<f64>().ok())
+                } else {
+                    None
+                }
+            });
+
+            match ssim2 {
+                Some(score) => {
+                    eprintln!("{:<20} {:>8.2} {:>10.1} {:>10.2} {:>10.3}", 
+                              name, distance, size_kb, score, bpp);
+                    distance_stats[di].1.push(score);
+                    distance_stats[di].2.push(bytes.len());
+                }
+                None => {
+                    eprintln!("{:<20} {:>8.2} {:>10.1} {:>10} {:>10.3}", 
+                              name, distance, size_kb, "ERR", bpp);
+                }
+            }
+        }
+        eprintln!(); // Blank line between images
+    }
+
+    // Summary statistics
+    eprintln!("{}", "=".repeat(62));
+    eprintln!("\n=== Summary by Distance ===\n");
+    eprintln!("{:>10} {:>12} {:>12} {:>12} {:>12}", 
+              "Distance", "Avg Size", "Avg SSIM2", "Min SSIM2", "Avg bpp");
+    eprintln!("{}", "-".repeat(62));
+    
+    let img = image::open(entries[0].path()).unwrap();
+    let pixels = (img.width() * img.height()) as f64;
+    
+    for (distance, scores, sizes) in &distance_stats {
+        if !scores.is_empty() {
+            let avg_size = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64 / 1024.0;
+            let avg_ssim = scores.iter().sum::<f64>() / scores.len() as f64;
+            let min_ssim = scores.iter().cloned().fold(f64::INFINITY, f64::min);
+            let avg_bpp = sizes.iter().sum::<usize>() as f64 * 8.0 / sizes.len() as f64 / pixels;
+            eprintln!("{:>10.2} {:>10.1} KB {:>12.2} {:>12.2} {:>12.3}", 
+                      distance, avg_size, avg_ssim, min_ssim, avg_bpp);
+        }
+    }
+    
+    eprintln!("\nOutput files saved to: {}", work_dir);
+}
