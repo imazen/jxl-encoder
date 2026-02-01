@@ -11,7 +11,7 @@ use super::ac_group::{
 };
 use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
-    adjust_quant_field, compute_ac_strategy,
+    RAW_STRATEGY_DCT32X32, adjust_quant_field, compute_ac_strategy,
 };
 use super::adaptive_quant::compute_adaptive_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
@@ -21,12 +21,13 @@ use super::dc_coding::{
     write_dc_tokens_region,
 };
 use super::dct::{
-    dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dct_8x8, dct_8x16, dct_16x8, dct_16x16,
+    dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_32x32, dct_8x8, dct_8x16,
+    dct_16x8, dct_16x16, dct_32x32,
 };
 use super::entropy_code::{
     OwnedAnsEntropyCode, OwnedEntropyCode, build_entropy_code_ans_with_options,
-    build_entropy_code_with_options, verify_ans_roundtrip, verify_histogram_serialization,
-    write_entropy_code_ans, write_tokens, write_tokens_ans,
+    build_entropy_code_with_options, verify_histogram_serialization, write_entropy_code_ans,
+    write_tokens, write_tokens_ans,
 };
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
@@ -86,6 +87,7 @@ impl<'a> BuiltEntropyCode<'a> {
         }
     }
 
+    #[allow(dead_code)]
     /// Returns the number of contexts in this entropy code.
     pub fn num_contexts(&self) -> usize {
         match self {
@@ -95,6 +97,7 @@ impl<'a> BuiltEntropyCode<'a> {
         }
     }
 
+    #[allow(dead_code)]
     /// Returns the number of histograms/prefix codes in this entropy code.
     pub fn num_histograms(&self) -> usize {
         match self {
@@ -555,6 +558,7 @@ impl TinyEncoder {
     ///
     /// `qm_multiplier` is typically 1.0, but for X channel it's `x_qm_mul`.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn quantize_coeff_ac(
         coef: f32,
         inv_weight: f32, // 1/weight (InvMatrix in C++)
@@ -607,6 +611,7 @@ impl TinyEncoder {
     /// Ported from libjxl-tiny's AdjustQuantBias. For ±1 values, returns a
     /// channel-specific biased value. For larger values, applies a small
     /// reciprocal correction: `q - 0.145 / q`.
+    #[allow(clippy::excessive_precision)]
     #[inline]
     fn adjust_quant_bias(quantized: i32, channel: usize) -> f32 {
         // kDefaultQuantBias from libjxl-tiny enc_group.cc
@@ -696,6 +701,18 @@ impl TinyEncoder {
                 dct_16x16(&block, &mut dct_out);
                 output[..256].copy_from_slice(&dct_out);
             }
+            RAW_STRATEGY_DCT32X32 => {
+                let mut block = [0.0f32; 1024];
+                for dy in 0..32 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..32 {
+                        block[dy * 32 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 1024];
+                dct_32x32(&block, &mut dct_out);
+                output[..1024].copy_from_slice(&dct_out);
+            }
             _ => unreachable!(),
         }
     }
@@ -714,7 +731,7 @@ impl TinyEncoder {
         covered_y: usize,
         covered_blocks: usize,
         size: usize,
-        raw_strategy: u8,
+        _raw_strategy: u8,
         bx: usize,
         by: usize,
         quant_ac: &mut [Vec<[i32; DCT_BLOCK_SIZE]>],
@@ -896,6 +913,19 @@ impl TinyEncoder {
                                 }
                             }
                         }
+                        RAW_STRATEGY_DCT32X32 => {
+                            let coeffs_arr: [f32; 1024] = dct_coeffs[1][..1024]
+                                .try_into()
+                                .expect("1024 coefficients for DCT32x32");
+                            let dcs = dc_from_dct_32x32(&coeffs_arr);
+                            // dcs = 16 DC values in row-major 4x4
+                            for iy in 0..4 {
+                                for ix in 0..4 {
+                                    quant_dc[1][by + iy][bx + ix] =
+                                        (dcs[iy * 4 + ix] * inv_factor).round() as i16;
+                                }
+                            }
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -1037,6 +1067,20 @@ impl TinyEncoder {
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
+                                            .round() as i16;
+                                }
+                            }
+                        }
+                        RAW_STRATEGY_DCT32X32 => {
+                            let coeffs_arr: [f32; 1024] = dct_coeffs[c][..1024]
+                                .try_into()
+                                .expect("1024 coefficients for DCT32x32");
+                            let dcs = dc_from_dct_32x32(&coeffs_arr);
+                            for iy in 0..4 {
+                                for ix in 0..4 {
+                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
+                                    quant_dc[c][by + iy][bx + ix] =
+                                        (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
                             }
@@ -1251,7 +1295,7 @@ impl TinyEncoder {
         {
             let after_dc_code = writer.bits_written();
             let total_bits = after_dc_code - start_bits;
-            let bytes_before_pad = (total_bits + 7) / 8;
+            let bytes_before_pad = total_bits.div_ceil(8);
             debug_log!("DC_global detailed breakdown:");
             debug_log!("  dequant_dc: {} bits (1)", after_dequant_dc - start_bits);
             debug_log!("  quant_scales: {} bits", after_quant - after_dequant_dc);
@@ -1384,7 +1428,7 @@ impl TinyEncoder {
             debug_log!(
                 "  total: {} bits ({} bytes before pad)",
                 total,
-                (total + 7) / 8
+                total.div_ceil(8)
             );
         }
 
@@ -1497,7 +1541,7 @@ impl TinyEncoder {
                     continue;
                 }
 
-                let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                let _raw_strategy = ac_strategy.raw_strategy(bx, by);
                 let covered_x = ac_strategy.covered_blocks_x(bx, by);
                 let covered_y = ac_strategy.covered_blocks_y(bx, by);
                 let covered_blocks = covered_x * covered_y;
@@ -1572,7 +1616,7 @@ impl TinyEncoder {
                 "AC_group {} breakdown: {} bits ({} bytes before pad)",
                 group_idx,
                 total_bits,
-                (total_bits + 7) / 8
+                total_bits.div_ceil(8)
             );
             // Show the raw bytes for comparison
             let bytes = writer.peek_bytes();
@@ -2198,8 +2242,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated for custom coefficient ordering (64x64 = 8x8 blocks, triggers custom orders)
-        const EXPECTED_HASH: u64 = 0x45d6d2bcd23d0b19;
+        // Updated for DCT32x32 support and coeff_order strategy_code bug fix
+        const EXPECTED_HASH: u64 = 0x1fceaf4018b240bd;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2221,9 +2265,9 @@ mod tests {
 
         // Deterministic pseudo-random pattern
         let mut seed = 12345u64;
-        for i in 0..linear_rgb.len() {
+        for val in &mut linear_rgb {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            linear_rgb[i] = ((seed >> 32) as f32) / (u32::MAX as f32);
+            *val = ((seed >> 32) as f32) / (u32::MAX as f32);
         }
 
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();

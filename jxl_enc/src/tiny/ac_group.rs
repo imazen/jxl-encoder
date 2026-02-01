@@ -12,6 +12,8 @@
 //!
 //! Ported from libjxl-tiny enc_group.cc.
 
+use std::sync::LazyLock;
+
 use super::ac_context::{
     block_context, non_zero_context, zero_density_context, zero_density_contexts_offset,
 };
@@ -71,12 +73,53 @@ pub static COEFF_ORDER_16X16: [u32; 256] = [
     250, 251, 236, 221, 206, 191, 207, 222, 237, 252, 253, 238, 223, 239, 254, 255,
 ];
 
+/// Default zig-zag coefficient order for DCT32x32 (1024 coefficients).
+/// Generated at runtime via diagonal scan of the 32x32 coefficient grid.
+static COEFF_ORDER_32X32: LazyLock<Vec<u32>> = LazyLock::new(|| natural_coeff_order(32, 32));
+
+/// Generate a natural (zig-zag diagonal) coefficient order for an NxM block.
+///
+/// Scans diagonals from top-left to bottom-right, alternating direction
+/// on each diagonal. This matches the libjxl `natural_coeff_order` function.
+fn natural_coeff_order(rows: usize, cols: usize) -> Vec<u32> {
+    let size = rows * cols;
+    let mut order = Vec::with_capacity(size);
+    // Scan diagonals: d goes from 0 to (rows + cols - 2)
+    for d in 0..(rows + cols - 1) {
+        if d % 2 == 0 {
+            // Even diagonal: go from bottom-left to top-right
+            let r_start = d.min(rows - 1);
+            let r_end = if d >= cols { d - cols + 1 } else { 0 };
+            let mut r = r_start;
+            loop {
+                let c = d - r;
+                order.push((r * cols + c) as u32);
+                if r == r_end {
+                    break;
+                }
+                r -= 1;
+            }
+        } else {
+            // Odd diagonal: go from top-right to bottom-left
+            let r_start = if d >= cols { d - cols + 1 } else { 0 };
+            let r_end = d.min(rows - 1);
+            for r in r_start..=r_end {
+                let c = d - r;
+                order.push((r * cols + c) as u32);
+            }
+        }
+    }
+    debug_assert_eq!(order.len(), size);
+    order
+}
+
 /// Get coefficient order based on AC strategy (bitstream strategy code).
-/// Strategy 0 = DCT8, 4 = DCT16x16, 6/7 = DCT8x16/DCT16x8.
+/// Strategy 0 = DCT8, 4 = DCT16x16, 5 = DCT32x32, 6/7 = DCT8x16/DCT16x8.
 pub fn get_coeff_order(raw_strategy: u8) -> &'static [u32] {
     match raw_strategy {
         0 => &COEFF_ORDER_8X8,
         4 => &COEFF_ORDER_16X16,
+        5 => &COEFF_ORDER_32X32,
         6 | 7 => &COEFF_ORDER_8X16,
         _ => &COEFF_ORDER_8X8, // Default to 8x8 for unknown strategies
     }
@@ -188,6 +231,7 @@ pub fn predict_from_top_and_left(
 /// Bitstream strategy codes used in the JXL format.
 pub const AC_STRATEGY_DCT8: u8 = 0;
 pub const AC_STRATEGY_DCT16X16: u8 = 4;
+pub const AC_STRATEGY_DCT32X32: u8 = 5;
 pub const AC_STRATEGY_DCT8X16: u8 = 6;
 pub const AC_STRATEGY_DCT16X8: u8 = 7;
 
@@ -197,6 +241,7 @@ pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
     match raw_strategy {
         AC_STRATEGY_DCT8 => (1, 1, 1, 0, 0),
         AC_STRATEGY_DCT16X16 => (2, 2, 4, 2, 4),
+        AC_STRATEGY_DCT32X32 => (4, 4, 16, 4, 5),
         AC_STRATEGY_DCT8X16 => (1, 2, 2, 1, 6),
         AC_STRATEGY_DCT16X8 => (2, 1, 2, 1, 7),
         _ => (1, 1, 1, 0, 0), // Default to DCT8
