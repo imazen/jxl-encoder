@@ -326,12 +326,18 @@ impl AnsDistribution {
             return Ok(());
         }
 
-        // Build the alias table exactly like jxl-rs decoder does
-        // For log_alpha_size = 6: table_size = 64, bucket_size = 64
-        const LOG_ALPHA_SIZE: usize = 6;
-        let table_size = 1usize << LOG_ALPHA_SIZE; // 64
-        let log_bucket_size = ANS_LOG_TAB_SIZE as usize - LOG_ALPHA_SIZE; // 6
-        let bucket_size = 1u16 << log_bucket_size; // 64
+        // Build the alias table exactly like jxl-rs decoder does.
+        // Standard JXL ANS uses log_alpha_size=6 (64 buckets). We only increase
+        // it when the alphabet is too large for 64 buckets.
+        let log_alpha_size = if alphabet_size <= 64 {
+            6 // Standard value, matches decoder expectations
+        } else {
+            let min_bits = (alphabet_size - 1).ilog2() as usize + 1;
+            min_bits.min(ANS_LOG_TAB_SIZE as usize)
+        };
+        let table_size = 1usize << log_alpha_size;
+        let log_bucket_size = ANS_LOG_TAB_SIZE as usize - log_alpha_size;
+        let bucket_size = 1u16 << log_bucket_size;
 
         // Working bucket structure matching jxl-rs
         #[derive(Clone)]
