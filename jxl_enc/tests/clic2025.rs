@@ -3721,7 +3721,7 @@ fn test_enhanced_clustering_compression() {
 ///
 /// Tests 5 images from clic2025-1024 corpus at 7 distance values (0.1 to 4.0).
 /// Outputs a formatted table with SSIM2 quality and file size for each point.
-/// 
+///
 /// Run with: cargo test -p jxl_enc --test clic2025 test_comprehensive_rd_sweep -- --ignored --nocapture
 #[test]
 #[ignore]
@@ -3745,7 +3745,8 @@ fn test_comprehensive_rd_sweep() {
 
     // Load first 5 images (sorted for reproducibility)
     let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
-        Ok(e) => e.filter_map(|e| e.ok())
+        Ok(e) => e
+            .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
             .collect(),
         Err(_) => {
@@ -3755,7 +3756,7 @@ fn test_comprehensive_rd_sweep() {
     };
     entries.sort_by_key(|e| e.path());
     let entries: Vec<_> = entries.into_iter().take(5).collect();
-    
+
     if entries.is_empty() {
         eprintln!("No PNG images found in corpus, skipping test");
         return;
@@ -3771,31 +3772,44 @@ fn test_comprehensive_rd_sweep() {
     eprintln!();
 
     // Header
-    eprintln!("{:<20} {:>8} {:>10} {:>10} {:>10}", 
-              "Image", "Distance", "Size (KB)", "SSIM2", "bpp");
+    eprintln!(
+        "{:<20} {:>8} {:>10} {:>10} {:>10}",
+        "Image", "Distance", "Size (KB)", "SSIM2", "bpp"
+    );
     eprintln!("{}", "-".repeat(62));
 
     // Collect per-distance averages
-    let mut distance_stats: Vec<(f32, Vec<f64>, Vec<usize>)> = 
-        distances.iter().map(|&d| (d, Vec::new(), Vec::new())).collect();
+    let mut distance_stats: Vec<(f32, Vec<f64>, Vec<usize>)> = distances
+        .iter()
+        .map(|&d| (d, Vec::new(), Vec::new()))
+        .collect();
 
     for entry in &entries {
         let path = entry.path();
-        let name: String = path.file_stem().unwrap().to_string_lossy().chars().take(18).collect();
-        
+        let name: String = path
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .chars()
+            .take(18)
+            .collect();
+
         // Load and convert image
         let img = image::open(&path).unwrap();
         let (w, h) = img.dimensions();
         let pixels = (w * h) as usize;
         let rgb = img.to_rgb8();
-        
-        let linear_rgb: Vec<f32> = rgb.pixels().flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
-            [r, g, b]
-        }).collect();
-        
+
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                let r = (p[0] as f32 / 255.0).powf(2.2);
+                let g = (p[1] as f32 / 255.0).powf(2.2);
+                let b = (p[2] as f32 / 255.0).powf(2.2);
+                [r, g, b]
+            })
+            .collect();
+
         // Save original for SSIM2 comparison
         let orig_path = format!("{}/{}_orig.png", work_dir, name);
         rgb.save(&orig_path).unwrap();
@@ -3811,7 +3825,7 @@ fn test_comprehensive_rd_sweep() {
             let jxl_path = format!("{}/{}_{}.jxl", work_dir, name, distance);
             let dec_path = format!("{}/{}_{}_dec.png", work_dir, name, distance);
             std::fs::write(&jxl_path, &bytes).unwrap();
-            
+
             let decode_ok = std::process::Command::new(&djxl)
                 .args([&jxl_path, &dec_path])
                 .stdout(std::process::Stdio::null())
@@ -3819,10 +3833,12 @@ fn test_comprehensive_rd_sweep() {
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
-            
+
             if !decode_ok {
-                eprintln!("{:<20} {:>8.2} {:>10} {:>10} {:>10}", 
-                          name, distance, "DECODE", "FAIL", "-");
+                eprintln!(
+                    "{:<20} {:>8.2} {:>10} {:>10} {:>10}",
+                    name, distance, "DECODE", "FAIL", "-"
+                );
                 continue;
             }
 
@@ -3831,7 +3847,7 @@ fn test_comprehensive_rd_sweep() {
                 .args([&orig_path, &dec_path])
                 .output()
                 .ok();
-            
+
             let ssim2 = ssim_output.and_then(|o| {
                 if o.status.success() {
                     String::from_utf8_lossy(&o.stdout)
@@ -3845,14 +3861,18 @@ fn test_comprehensive_rd_sweep() {
 
             match ssim2 {
                 Some(score) => {
-                    eprintln!("{:<20} {:>8.2} {:>10.1} {:>10.2} {:>10.3}", 
-                              name, distance, size_kb, score, bpp);
+                    eprintln!(
+                        "{:<20} {:>8.2} {:>10.1} {:>10.2} {:>10.3}",
+                        name, distance, size_kb, score, bpp
+                    );
                     distance_stats[di].1.push(score);
                     distance_stats[di].2.push(bytes.len());
                 }
                 None => {
-                    eprintln!("{:<20} {:>8.2} {:>10.1} {:>10} {:>10.3}", 
-                              name, distance, size_kb, "ERR", bpp);
+                    eprintln!(
+                        "{:<20} {:>8.2} {:>10.1} {:>10} {:>10.3}",
+                        name, distance, size_kb, "ERR", bpp
+                    );
                 }
             }
         }
@@ -3862,29 +3882,33 @@ fn test_comprehensive_rd_sweep() {
     // Summary statistics
     eprintln!("{}", "=".repeat(62));
     eprintln!("\n=== Summary by Distance ===\n");
-    eprintln!("{:>10} {:>12} {:>12} {:>12} {:>12}", 
-              "Distance", "Avg Size", "Avg SSIM2", "Min SSIM2", "Avg bpp");
+    eprintln!(
+        "{:>10} {:>12} {:>12} {:>12} {:>12}",
+        "Distance", "Avg Size", "Avg SSIM2", "Min SSIM2", "Avg bpp"
+    );
     eprintln!("{}", "-".repeat(62));
-    
+
     let img = image::open(entries[0].path()).unwrap();
     let pixels = (img.width() * img.height()) as f64;
-    
+
     for (distance, scores, sizes) in &distance_stats {
         if !scores.is_empty() {
             let avg_size = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64 / 1024.0;
             let avg_ssim = scores.iter().sum::<f64>() / scores.len() as f64;
             let min_ssim = scores.iter().cloned().fold(f64::INFINITY, f64::min);
             let avg_bpp = sizes.iter().sum::<usize>() as f64 * 8.0 / sizes.len() as f64 / pixels;
-            eprintln!("{:>10.2} {:>10.1} KB {:>12.2} {:>12.2} {:>12.3}", 
-                      distance, avg_size, avg_ssim, min_ssim, avg_bpp);
+            eprintln!(
+                "{:>10.2} {:>10.1} KB {:>12.2} {:>12.2} {:>12.3}",
+                distance, avg_size, avg_ssim, min_ssim, avg_bpp
+            );
         }
     }
-    
+
     eprintln!("\nOutput files saved to: {}", work_dir);
 }
 
 /// Test that JXL distance parameter roughly matches Butteraugli score.
-/// 
+///
 /// The JXL distance parameter is designed so that distance=X produces
 /// approximately Butteraugli score X. This test validates that relationship.
 ///
@@ -3895,7 +3919,7 @@ fn test_comprehensive_rd_sweep() {
 #[test]
 #[ignore]
 fn test_distance_vs_butteraugli() {
-    use butteraugli::{butteraugli_linear, srgb_to_linear, ButteraugliParams};
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
     use imgref::Img;
     use rgb::RGB;
 
@@ -3924,7 +3948,11 @@ fn test_distance_vs_butteraugli() {
     let distances = [0.5f32, 1.0, 2.0, 3.0];
 
     eprintln!("\n=== Distance vs Butteraugli Score ===");
-    eprintln!("Testing {} images at distances {:?}\n", entries.len(), distances);
+    eprintln!(
+        "Testing {} images at distances {:?}\n",
+        entries.len(),
+        distances
+    );
     eprintln!(
         "{:<20} {:>10} {:>12} {:>10} {:>10}",
         "Image", "Distance", "Butteraugli", "Ratio", "Status"
@@ -3951,7 +3979,13 @@ fn test_distance_vs_butteraugli() {
         // Convert to linear RGB for encoder (using proper sRGB transfer function)
         let linear_rgb: Vec<f32> = rgb
             .pixels()
-            .flat_map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+            .flat_map(|p| {
+                [
+                    srgb_to_linear(p[0]),
+                    srgb_to_linear(p[1]),
+                    srgb_to_linear(p[2]),
+                ]
+            })
             .collect();
 
         // Create original linear RGB image for butteraugli comparison
@@ -3973,7 +4007,11 @@ fn test_distance_vs_butteraugli() {
                 Err(e) => {
                     eprintln!(
                         "{:<20} {:>10.2} {:>12} {:>10} {:>10}",
-                        name, distance, "PARSE", format!("{:?}", e), "-"
+                        name,
+                        distance,
+                        "PARSE",
+                        format!("{:?}", e),
+                        "-"
                     );
                     continue;
                 }
@@ -3984,7 +4022,11 @@ fn test_distance_vs_butteraugli() {
                 Err(e) => {
                     eprintln!(
                         "{:<20} {:>10.2} {:>12} {:>10} {:>10}",
-                        name, distance, "DECODE", format!("{:?}", e), "-"
+                        name,
+                        distance,
+                        "DECODE",
+                        format!("{:?}", e),
+                        "-"
                     );
                     continue;
                 }
@@ -4007,7 +4049,11 @@ fn test_distance_vs_butteraugli() {
                     let ratio = score / distance;
                     all_ratios.push(ratio);
 
-                    let status = if ratio > 0.5 && ratio < 2.0 { "OK" } else { "WARN" };
+                    let status = if ratio > 0.5 && ratio < 2.0 {
+                        "OK"
+                    } else {
+                        "WARN"
+                    };
                     eprintln!(
                         "{:<20} {:>10.2} {:>12.3} {:>10.2}x {:>10}",
                         name, distance, score, ratio, status
@@ -4016,7 +4062,11 @@ fn test_distance_vs_butteraugli() {
                 Err(e) => {
                     eprintln!(
                         "{:<20} {:>10.2} {:>12} {:>10} {:>10}",
-                        name, distance, "ERROR", format!("{:?}", e), "-"
+                        name,
+                        distance,
+                        "ERROR",
+                        format!("{:?}", e),
+                        "-"
                     );
                 }
             }
@@ -4050,23 +4100,26 @@ fn test_distance_vs_butteraugli() {
 /// Run with: cargo test -p jxl_enc --test clic2025 test_butteraugli_quality_gate -- --nocapture
 #[test]
 fn test_butteraugli_quality_gate() {
-    use butteraugli::{butteraugli_linear, ButteraugliParams};
+    use butteraugli::{ButteraugliParams, butteraugli_linear};
     use imgref::Img;
     use rgb::RGB;
     use std::io::Cursor;
 
     let params = ButteraugliParams::default();
-    
+
     // Test 1: Gradient image at distance=1.0 should have Butteraugli ≤ 2.0
     {
         let (w, h) = (64, 64);
-        let linear_rgb: Vec<f32> = (0..w*h).flat_map(|i| {
-            let x = (i % w) as f32 / w as f32;
-            let y = (i / w) as f32 / h as f32;
-            [x, y, 0.5]
-        }).collect();
-        
-        let orig_pixels: Vec<RGB<f32>> = linear_rgb.chunks(3)
+        let linear_rgb: Vec<f32> = (0..w * h)
+            .flat_map(|i| {
+                let x = (i % w) as f32 / w as f32;
+                let y = (i / w) as f32 / h as f32;
+                [x, y, 0.5]
+            })
+            .collect();
+
+        let orig_pixels: Vec<RGB<f32>> = linear_rgb
+            .chunks(3)
             .map(|c| RGB::new(c[0], c[1], c[2]))
             .collect();
         let orig_img = Img::new(orig_pixels, w, h);
@@ -4080,25 +4133,30 @@ fn test_butteraugli_quality_gate() {
         let render = image.render_frame(0).unwrap();
         let decoded = render.image_all_channels();
         let dec_buf = decoded.buf();
-        
-        let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+
+        let dec_pixels: Vec<RGB<f32>> = dec_buf
+            .chunks(3)
             .map(|c| RGB::new(c[0], c[1], c[2]))
             .collect();
         let dec_img = Img::new(dec_pixels, w, h);
 
         let result = butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params).unwrap();
-        
+
         eprintln!("Gradient 64x64 d=1.0: Butteraugli={:.3}", result.score);
-        assert!(result.score < 3.0, 
-                "Gradient at d=1.0 should have Butteraugli < 3.0, got {:.3}", result.score);
+        assert!(
+            result.score < 3.0,
+            "Gradient at d=1.0 should have Butteraugli < 3.0, got {:.3}",
+            result.score
+        );
     }
 
     // Test 2: Solid color should have very low Butteraugli
     {
         let (w, h) = (64, 64);
         let linear_rgb: Vec<f32> = vec![0.5, 0.3, 0.2].repeat(w * h);
-        
-        let orig_pixels: Vec<RGB<f32>> = linear_rgb.chunks(3)
+
+        let orig_pixels: Vec<RGB<f32>> = linear_rgb
+            .chunks(3)
             .map(|c| RGB::new(c[0], c[1], c[2]))
             .collect();
         let orig_img = Img::new(orig_pixels, w, h);
@@ -4111,17 +4169,21 @@ fn test_butteraugli_quality_gate() {
         let render = image.render_frame(0).unwrap();
         let decoded = render.image_all_channels();
         let dec_buf = decoded.buf();
-        
-        let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+
+        let dec_pixels: Vec<RGB<f32>> = dec_buf
+            .chunks(3)
             .map(|c| RGB::new(c[0], c[1], c[2]))
             .collect();
         let dec_img = Img::new(dec_pixels, w, h);
 
         let result = butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params).unwrap();
-        
+
         eprintln!("Solid color 64x64 d=1.0: Butteraugli={:.3}", result.score);
-        assert!(result.score < 1.0, 
-                "Solid color at d=1.0 should have Butteraugli < 1.0, got {:.3}", result.score);
+        assert!(
+            result.score < 1.0,
+            "Solid color at d=1.0 should have Butteraugli < 1.0, got {:.3}",
+            result.score
+        );
     }
 
     eprintln!("Butteraugli quality gate: PASSED");
@@ -4134,28 +4196,37 @@ fn test_butteraugli_quality_gate() {
 fn test_encode_256_crop_for_comparison() {
     use std::fs::File;
     use std::io::{Read, Write};
-    
+
     let mut f = File::open("/tmp/linear_256.bin").expect("Run Python prep script first");
     let mut buf = [0u8; 8];
     f.read_exact(&mut buf).unwrap();
     let width = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
     let height = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-    
+
     let mut linear_bytes = vec![0u8; width * height * 3 * 4];
     f.read_exact(&mut linear_bytes).unwrap();
-    
-    let linear_rgb: Vec<f32> = linear_bytes.chunks(4)
+
+    let linear_rgb: Vec<f32> = linear_bytes
+        .chunks(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
-    
-    eprintln!("Loaded {}x{} linear RGB ({} floats)", width, height, linear_rgb.len());
-    
+
+    eprintln!(
+        "Loaded {}x{} linear RGB ({} floats)",
+        width,
+        height,
+        linear_rgb.len()
+    );
+
     for dist_str in &["0.5", "1.0", "2.0", "3.0"] {
         let dist: f32 = dist_str.parse().unwrap();
         let encoder = jxl_enc::tiny::TinyEncoder::new(dist);
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
-        
-        let out_path = format!("/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl", dist_str);
+
+        let out_path = format!(
+            "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl",
+            dist_str
+        );
         let mut out = File::create(&out_path).unwrap();
         out.write_all(&bytes).unwrap();
         eprintln!("d={}: {} bytes -> {}", dist_str, bytes.len(), out_path);
@@ -4167,85 +4238,117 @@ fn test_encode_256_crop_for_comparison() {
 #[test]
 #[ignore]
 fn test_cpp_vs_rust_butteraugli() {
-    use butteraugli::{butteraugli_linear, srgb_to_linear, ButteraugliParams};
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
     use imgref::Img;
     use rgb::RGB;
     use std::io::Cursor;
 
     let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
     let crop_path = format!("{}/crop_256.png", work);
-    
+
     // Load original image
     let img = image::open(&crop_path).unwrap();
     let (w, h) = (img.width() as usize, img.height() as usize);
     let rgb = img.to_rgb8();
-    
+
     // Convert to linear RGB
-    let linear_rgb: Vec<f32> = rgb.pixels().flat_map(|p| {
-        [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])]
-    }).collect();
-    
-    let orig_pixels: Vec<RGB<f32>> = linear_rgb.chunks(3)
+    let linear_rgb: Vec<f32> = rgb
+        .pixels()
+        .flat_map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
+        .collect();
+
+    let orig_pixels: Vec<RGB<f32>> = linear_rgb
+        .chunks(3)
         .map(|c| RGB::new(c[0], c[1], c[2]))
         .collect();
     let orig_img = Img::new(orig_pixels, w, h);
-    
+
     let params = ButteraugliParams::default();
-    
+
     eprintln!("\n=== C++ vs Rust Butteraugli Comparison ===");
-    eprintln!("{:<6} | {:>10} {:>10} | {:>10} {:>10} | {:>8}", 
-              "Dist", "C++ Size", "C++ Btrgl", "Rust Size", "Rust Btrgl", "Winner");
+    eprintln!(
+        "{:<6} | {:>10} {:>10} | {:>10} {:>10} | {:>8}",
+        "Dist", "C++ Size", "C++ Btrgl", "Rust Size", "Rust Btrgl", "Winner"
+    );
     eprintln!("{}", "-".repeat(70));
-    
+
     for dist in &["0.5", "1.0", "2.0", "3.0"] {
         // Read C++ JXL and decode with jxl-oxide
         let cpp_path = format!("{}/cpp_d{}.jxl", work, dist);
         let cpp_bytes = std::fs::read(&cpp_path).unwrap_or_default();
         let cpp_size = cpp_bytes.len();
-        
+
         let cpp_btrgl = if !cpp_bytes.is_empty() {
             let reader = Cursor::new(&cpp_bytes);
             if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
                 if let Ok(render) = image.render_frame(0) {
                     let decoded = render.image_all_channels();
                     let dec_buf = decoded.buf();
-                    let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+                    let dec_pixels: Vec<RGB<f32>> = dec_buf
+                        .chunks(3)
                         .map(|c| RGB::new(c[0], c[1], c[2]))
                         .collect();
                     let dec_img = Img::new(dec_pixels, w, h);
                     butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
                         .map(|r| r.score as f32)
                         .unwrap_or(-1.0)
-                } else { -1.0 }
-            } else { -1.0 }
-        } else { -1.0 };
-        
+                } else {
+                    -1.0
+                }
+            } else {
+                -1.0
+            }
+        } else {
+            -1.0
+        };
+
         // Read Rust JXL and decode
         let rust_path = format!("{}/rust_d{}.jxl", work, dist);
         let rust_bytes = std::fs::read(&rust_path).unwrap_or_default();
         let rust_size = rust_bytes.len();
-        
+
         let rust_btrgl = if !rust_bytes.is_empty() {
             let reader = Cursor::new(&rust_bytes);
             if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
                 if let Ok(render) = image.render_frame(0) {
                     let decoded = render.image_all_channels();
                     let dec_buf = decoded.buf();
-                    let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+                    let dec_pixels: Vec<RGB<f32>> = dec_buf
+                        .chunks(3)
                         .map(|c| RGB::new(c[0], c[1], c[2]))
                         .collect();
                     let dec_img = Img::new(dec_pixels, w, h);
                     butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
                         .map(|r| r.score as f32)
                         .unwrap_or(-1.0)
-                } else { -1.0 }
-            } else { -1.0 }
-        } else { -1.0 };
-        
+                } else {
+                    -1.0
+                }
+            } else {
+                -1.0
+            }
+        } else {
+            -1.0
+        };
+
         // Determine winner (lower butteraugli + smaller size = better)
         // Use butteraugli/size ratio - lower is better
-        let cpp_ratio = if cpp_size > 0 { cpp_btrgl / (cpp_size as f32 / 1000.0) } else { f32::MAX };
-        let rust_ratio = if rust_size > 0 { rust_btrgl / (rust_size as f32 / 1000.0) } else { f32::MAX };
+        let cpp_ratio = if cpp_size > 0 {
+            cpp_btrgl / (cpp_size as f32 / 1000.0)
+        } else {
+            f32::MAX
+        };
+        let rust_ratio = if rust_size > 0 {
+            rust_btrgl / (rust_size as f32 / 1000.0)
+        } else {
+            f32::MAX
+        };
         let winner = if rust_btrgl < cpp_btrgl && rust_size <= cpp_size {
             "RUST++"
         } else if rust_btrgl < cpp_btrgl {
@@ -4255,8 +4358,501 @@ fn test_cpp_vs_rust_butteraugli() {
         } else {
             "Tie"
         };
-        
-        eprintln!("{:<6} | {:>10} {:>10.3} | {:>10} {:>10.3} | {:>8}", 
-                  dist, cpp_size, cpp_btrgl, rust_size, rust_btrgl, winner);
+
+        eprintln!(
+            "{:<6} | {:>10} {:>10.3} | {:>10} {:>10.3} | {:>8}",
+            dist, cpp_size, cpp_btrgl, rust_size, rust_btrgl, winner
+        );
+    }
+}
+
+/// Encode at d=0.9 and d=1.1 for finer comparison
+#[test]
+#[ignore]
+fn test_encode_extra_distances() {
+    use std::fs::File;
+    use std::io::{Read, Write};
+
+    let mut f = match File::open("/tmp/linear_256.bin") {
+        Ok(f) => f,
+        Err(_) => {
+            eprintln!("Run test_encode_256_crop_for_comparison first");
+            return;
+        }
+    };
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf).unwrap();
+    let width = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let height = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+
+    let mut linear_bytes = vec![0u8; width * height * 3 * 4];
+    f.read_exact(&mut linear_bytes).unwrap();
+
+    let linear_rgb: Vec<f32> = linear_bytes
+        .chunks(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+
+    for dist in [0.9f32, 1.1] {
+        let encoder = jxl_enc::tiny::TinyEncoder::new(dist);
+        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let out_path = format!(
+            "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl",
+            dist
+        );
+        std::fs::write(&out_path, &bytes).unwrap();
+        eprintln!("d={}: {} bytes", dist, bytes.len());
+    }
+}
+
+/// Compare butteraugli at finer distance granularity  
+#[test]
+#[ignore]
+fn test_cpp_vs_rust_butteraugli_fine() {
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+    use imgref::Img;
+    use rgb::RGB;
+    use std::io::Cursor;
+
+    let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
+    let crop_path = format!("{}/crop_256.png", work);
+
+    let img = image::open(&crop_path).unwrap();
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let rgb = img.to_rgb8();
+
+    let linear_rgb: Vec<f32> = rgb
+        .pixels()
+        .flat_map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
+        .collect();
+
+    let orig_pixels: Vec<RGB<f32>> = linear_rgb
+        .chunks(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = Img::new(orig_pixels, w, h);
+
+    let params = ButteraugliParams::default();
+
+    eprintln!("\n=== C++ vs Rust Butteraugli (Fine Granularity) ===");
+    eprintln!(
+        "{:<6} | {:>10} {:>10} | {:>10} {:>10} | {:>8}",
+        "Dist", "C++ Size", "C++ Btrgl", "Rust Size", "Rust Btrgl", "Winner"
+    );
+    eprintln!("{}", "-".repeat(72));
+
+    for dist in &["0.5", "0.9", "1.0", "1.1", "2.0", "3.0"] {
+        let cpp_path = format!("{}/cpp_d{}.jxl", work, dist);
+        let cpp_bytes = std::fs::read(&cpp_path).unwrap_or_default();
+        let cpp_size = cpp_bytes.len();
+
+        let cpp_btrgl = if !cpp_bytes.is_empty() {
+            let reader = Cursor::new(&cpp_bytes);
+            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+                if let Ok(render) = image.render_frame(0) {
+                    let decoded = render.image_all_channels();
+                    let dec_buf = decoded.buf();
+                    let dec_pixels: Vec<RGB<f32>> = dec_buf
+                        .chunks(3)
+                        .map(|c| RGB::new(c[0], c[1], c[2]))
+                        .collect();
+                    let dec_img = Img::new(dec_pixels, w, h);
+                    butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+                        .map(|r| r.score as f32)
+                        .unwrap_or(-1.0)
+                } else {
+                    -1.0
+                }
+            } else {
+                -1.0
+            }
+        } else {
+            -1.0
+        };
+
+        let rust_path = format!("{}/rust_d{}.jxl", work, dist);
+        let rust_bytes = std::fs::read(&rust_path).unwrap_or_default();
+        let rust_size = rust_bytes.len();
+
+        let rust_btrgl = if !rust_bytes.is_empty() {
+            let reader = Cursor::new(&rust_bytes);
+            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+                if let Ok(render) = image.render_frame(0) {
+                    let decoded = render.image_all_channels();
+                    let dec_buf = decoded.buf();
+                    let dec_pixels: Vec<RGB<f32>> = dec_buf
+                        .chunks(3)
+                        .map(|c| RGB::new(c[0], c[1], c[2]))
+                        .collect();
+                    let dec_img = Img::new(dec_pixels, w, h);
+                    butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+                        .map(|r| r.score as f32)
+                        .unwrap_or(-1.0)
+                } else {
+                    -1.0
+                }
+            } else {
+                -1.0
+            }
+        } else {
+            -1.0
+        };
+
+        let winner = if rust_btrgl < 0.0 || cpp_btrgl < 0.0 {
+            "N/A"
+        } else if rust_btrgl < cpp_btrgl && rust_size <= cpp_size {
+            "RUST++"
+        } else if rust_btrgl < cpp_btrgl {
+            "Rust"
+        } else if cpp_btrgl < rust_btrgl && cpp_size <= rust_size {
+            "C++++"
+        } else if cpp_btrgl < rust_btrgl {
+            "C++"
+        } else {
+            "Tie"
+        };
+
+        eprintln!(
+            "{:<6} | {:>10} {:>10.3} | {:>10} {:>10.3} | {:>8}",
+            dist, cpp_size, cpp_btrgl, rust_size, rust_btrgl, winner
+        );
+    }
+}
+
+/// Debug section sizes at d=1.0
+#[test]
+#[ignore]
+fn test_section_sizes_d1() {
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut f = match File::open("/tmp/linear_256.bin") {
+        Ok(f) => f,
+        Err(_) => {
+            eprintln!("Need /tmp/linear_256.bin");
+            return;
+        }
+    };
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf).unwrap();
+    let width = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let height = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+
+    let mut linear_bytes = vec![0u8; width * height * 3 * 4];
+    f.read_exact(&mut linear_bytes).unwrap();
+
+    let linear_rgb: Vec<f32> = linear_bytes
+        .chunks(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.ac_strategy_enabled = true;
+    encoder.cfl_enabled = true;
+
+    let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+    eprintln!("Rust d=1.0: {} bytes total", bytes.len());
+
+    // Parse the JXL to get section info
+    use std::io::Cursor;
+    let reader = Cursor::new(&bytes);
+    if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+        eprintln!("Parsed OK, frame count: {}", image.num_loaded_frames());
+    }
+}
+
+/// Isolate which feature causes d=1.0 butteraugli gap vs C++
+#[test]
+#[ignore]
+fn test_isolate_d1_butteraugli_gap() {
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+    use imgref::Img;
+    use rgb::RGB;
+    use std::io::Cursor;
+
+    let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
+    let crop_path = format!("{}/crop_256.png", work);
+
+    let img = image::open(&crop_path).unwrap();
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let rgb = img.to_rgb8();
+
+    let linear_rgb: Vec<f32> = rgb
+        .pixels()
+        .flat_map(|p| {
+            [
+                srgb_to_linear(p[0]),
+                srgb_to_linear(p[1]),
+                srgb_to_linear(p[2]),
+            ]
+        })
+        .collect();
+
+    let orig_pixels: Vec<RGB<f32>> = linear_rgb
+        .chunks(3)
+        .map(|c| RGB::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = Img::new(orig_pixels, w, h);
+    let params = ButteraugliParams::default();
+
+    // (name, cfl, ac_strategy)
+    let configs: Vec<(&str, bool, bool)> = vec![
+        ("bare", false, false),
+        ("cfl_only", true, false),
+        ("strat_only", false, true),
+        ("cfl+strat", true, true),
+    ];
+
+    eprintln!("\n=== Feature Isolation at d=1.0 (adaptive quant always on) ===");
+    eprintln!(
+        "{:<15} {:>8} {:>10} {:>12}",
+        "Config", "Size", "Butteraugli", "btrgl/KB"
+    );
+    eprintln!("{}", "-".repeat(50));
+
+    for (name, cfl, strat) in &configs {
+        let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        encoder.cfl_enabled = *cfl;
+        encoder.ac_strategy_enabled = *strat;
+
+        let bytes = encoder.encode(w, h, &linear_rgb).unwrap();
+        let size = bytes.len();
+
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let render = image.render_frame(0).unwrap();
+        let decoded = render.image_all_channels();
+        let dec_buf = decoded.buf();
+        let dec_pixels: Vec<RGB<f32>> = dec_buf
+            .chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let dec_img = Img::new(dec_pixels, w, h);
+
+        let btrgl = butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+            .map(|r| r.score as f32)
+            .unwrap_or(-1.0);
+
+        eprintln!(
+            "{:<15} {:>8} {:>10.3} {:>12.3}",
+            name,
+            size,
+            btrgl,
+            btrgl / (size as f32 / 1000.0)
+        );
+    }
+
+    eprintln!("\nC++ reference: 12394 bytes, butteraugli=1.746");
+
+    // Multi-distance ON/OFF gap analysis
+    eprintln!("\n=== Strategy ON vs OFF gap at multiple distances ===");
+    eprintln!(
+        "{:<8} {:>8} {:>8} {:>10} {:>10} {:>10}",
+        "Dist", "OFF sz", "ON sz", "OFF btrgl", "ON btrgl", "gap"
+    );
+    eprintln!("{}", "-".repeat(60));
+    for &dist in &[
+        0.5f32, 0.75, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.25, 1.5, 2.0, 3.0,
+    ] {
+        let mut results = vec![];
+        for strat in &[false, true] {
+            let mut enc = jxl_enc::tiny::TinyEncoder::new(dist);
+            enc.cfl_enabled = true;
+            enc.ac_strategy_enabled = *strat;
+            let bytes = enc.encode(w, h, &linear_rgb).unwrap();
+            let sz = bytes.len();
+            let reader = Cursor::new(&bytes);
+            let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+            let render = image.render_frame(0).unwrap();
+            let decoded = render.image_all_channels();
+            let dec_buf = decoded.buf();
+            let dec_pixels: Vec<RGB<f32>> = dec_buf
+                .chunks(3)
+                .map(|c| RGB::new(c[0], c[1], c[2]))
+                .collect();
+            let dec_img = Img::new(dec_pixels, w, h);
+            let btrgl = butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params)
+                .map(|r| r.score as f32)
+                .unwrap_or(-1.0);
+            results.push((sz, btrgl));
+        }
+        let gap = results[1].1 - results[0].1;
+        eprintln!(
+            "d={:<5} {:>8} {:>8} {:>10.3} {:>10.3} {:>+10.3}",
+            dist, results[0].0, results[1].0, results[0].1, results[1].1, gap
+        );
+    }
+
+    // Locate the worst-error region at d=1.0
+    eprintln!("\n=== Locating worst error region at d=1.0 ===");
+    let mut dec_off = vec![];
+    let mut dec_on = vec![];
+    for (strat, dec_buf) in [(false, &mut dec_off), (true, &mut dec_on)] {
+        let mut enc = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc.cfl_enabled = true;
+        enc.ac_strategy_enabled = strat;
+        let bytes = enc.encode(w, h, &linear_rgb).unwrap();
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let render = image.render_frame(0).unwrap();
+        let decoded = render.image_all_channels();
+        *dec_buf = decoded.buf().to_vec();
+    }
+    // Compute per-16x16-block max absolute difference increase (ON minus OFF error vs original)
+    let mut worst_blocks: Vec<(f32, usize, usize)> = vec![];
+    for by16 in (0..h).step_by(16) {
+        for bx16 in (0..w).step_by(16) {
+            let mut max_err_increase: f32 = 0.0;
+            for dy in 0..16.min(h - by16) {
+                for dx in 0..16.min(w - bx16) {
+                    let px = (by16 + dy) * w + bx16 + dx;
+                    for c in 0..3 {
+                        let orig = linear_rgb[px * 3 + c];
+                        let err_off = (dec_off[px * 3 + c] - orig).abs();
+                        let err_on = (dec_on[px * 3 + c] - orig).abs();
+                        max_err_increase = max_err_increase.max(err_on - err_off);
+                    }
+                }
+            }
+            worst_blocks.push((max_err_increase, bx16, by16));
+        }
+    }
+    worst_blocks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    eprintln!("Top 10 worst 16x16 regions (max error increase ON-OFF):");
+    for (i, (err, bx, by)) in worst_blocks.iter().take(10).enumerate() {
+        eprintln!(
+            "  #{}: block ({},{}) pixel ({},{}) err_increase={:.6}",
+            i + 1,
+            bx / 8,
+            by / 8,
+            bx,
+            by,
+            err
+        );
+    }
+
+    // Decode d=1.0 ON with djxl and compare with jxl-oxide
+    eprintln!("\n=== Decoder comparison: jxl-oxide vs djxl at d=1.0 ON ===");
+    {
+        let mut enc = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc.cfl_enabled = true;
+        enc.ac_strategy_enabled = true;
+        let bytes = enc.encode(w, h, &linear_rgb).unwrap();
+        let jxl_path = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_on.jxl";
+        std::fs::write(jxl_path, &bytes).unwrap();
+
+        // Decode with djxl to 16-bit PNG
+        let djxl_png = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_on_djxl.png";
+        let djxl_bin = std::env::var("DJXL").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home)
+        });
+        let output = std::process::Command::new(&djxl_bin)
+            .args([jxl_path, djxl_png])
+            .output()
+            .unwrap();
+        if !output.status.success() {
+            eprintln!("djxl failed: {}", String::from_utf8_lossy(&output.stderr));
+        } else {
+            // Decode with jxl-oxide
+            let reader = Cursor::new(&bytes);
+            let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+            let render = image.render_frame(0).unwrap();
+            let decoded_oxide = render.image_all_channels();
+            let oxide_buf = decoded_oxide.buf();
+
+            // Load djxl output - convert from sRGB 16-bit to linear
+            let djxl_img = image::open(djxl_png).unwrap();
+            let djxl_rgb16 = djxl_img.to_rgb16();
+
+            // Compare pixel values
+            let mut max_diff: f32 = 0.0;
+            let mut sum_diff: f64 = 0.0;
+            let mut count = 0u64;
+            let mut worst_px = (0usize, 0usize, 0usize); // (x, y, c)
+            for y in 0..h {
+                for x in 0..w {
+                    let px = y * w + x;
+                    for c in 0..3 {
+                        // jxl-oxide outputs linear RGB directly
+                        let oxide_val = oxide_buf[px * 3 + c];
+                        // djxl outputs sRGB; convert to linear
+                        let djxl_srgb =
+                            djxl_rgb16.get_pixel(x as u32, y as u32)[c] as f32 / 65535.0;
+                        let djxl_linear = srgb_to_linear_f32(djxl_srgb);
+                        let diff = (oxide_val - djxl_linear).abs();
+                        if diff > max_diff {
+                            max_diff = diff;
+                            worst_px = (x, y, c);
+                        }
+                        sum_diff += diff as f64;
+                        count += 1;
+                    }
+                }
+            }
+            eprintln!(
+                "Max pixel diff (linear): {:.6} at ({},{}) c={}",
+                max_diff, worst_px.0, worst_px.1, worst_px.2
+            );
+            eprintln!("Mean pixel diff (linear): {:.8}", sum_diff / count as f64);
+            eprintln!("(diffs > 0.01 indicate decoder disagreement)");
+        }
+
+        // Also encode OFF and compare
+        let mut enc2 = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc2.cfl_enabled = true;
+        enc2.ac_strategy_enabled = false;
+        let bytes2 = enc2.encode(w, h, &linear_rgb).unwrap();
+        let jxl_path2 = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_off.jxl";
+        std::fs::write(jxl_path2, &bytes2).unwrap();
+        let djxl_png2 = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_off_djxl.png";
+        let output2 = std::process::Command::new(&djxl_bin)
+            .args([jxl_path2, djxl_png2])
+            .output()
+            .unwrap();
+        if output2.status.success() {
+            let reader2 = Cursor::new(&bytes2);
+            let image2 = jxl_oxide::JxlImage::builder().read(reader2).unwrap();
+            let render2 = image2.render_frame(0).unwrap();
+            let decoded2 = render2.image_all_channels();
+            let oxide_buf2 = decoded2.buf();
+            let djxl_img2 = image::open(djxl_png2).unwrap();
+            let djxl_rgb16_2 = djxl_img2.to_rgb16();
+            let mut max_diff2: f32 = 0.0;
+            let mut sum_diff2: f64 = 0.0;
+            let mut count2 = 0u64;
+            for y in 0..h {
+                for x in 0..w {
+                    let px = y * w + x;
+                    for c in 0..3 {
+                        let oxide_val = oxide_buf2[px * 3 + c];
+                        let djxl_srgb =
+                            djxl_rgb16_2.get_pixel(x as u32, y as u32)[c] as f32 / 65535.0;
+                        let djxl_linear = srgb_to_linear_f32(djxl_srgb);
+                        let diff = (oxide_val - djxl_linear).abs();
+                        max_diff2 = max_diff2.max(diff);
+                        sum_diff2 += diff as f64;
+                        count2 += 1;
+                    }
+                }
+            }
+            eprintln!("\nOFF decoder comparison:");
+            eprintln!("Max pixel diff (linear): {:.6}", max_diff2);
+            eprintln!("Mean pixel diff (linear): {:.8}", sum_diff2 / count2 as f64);
+        }
+    }
+}
+
+fn srgb_to_linear_f32(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
     }
 }
