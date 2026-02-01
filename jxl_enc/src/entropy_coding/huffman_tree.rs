@@ -755,34 +755,39 @@ pub fn store_meta_huffman_tree(
 
     // Write skip count (2 bits) - this is the simple_code_or_skip field
     // Values 0, 2, 3 indicate full tree with skip; value 1 would be simple code
-    let bit_pos_start = writer.bits_written();
+    let _bit_pos_start = writer.bits_written();
     writer.write(2, skip_some as u64)?;
-    crate::trace::debug_eprintln!("  META: wrote hskip={} at bit {}", skip_some, bit_pos_start);
+    crate::trace::debug_eprintln!(
+        "  META: wrote hskip={} at bit {}",
+        skip_some,
+        _bit_pos_start
+    );
 
     // Write code length depths using static Huffman code
     // The decoder reads code lengths for symbols in storage order
-    let mut bitacc = 0usize;
-    for (idx, &symbol) in STORAGE_ORDER[skip_some..codes_to_store].iter().enumerate() {
+    let mut _bitacc = 0usize;
+    #[allow(clippy::unused_enumerate_index)]
+    for (_idx, &symbol) in STORAGE_ORDER[skip_some..codes_to_store].iter().enumerate() {
         let depth_value = code_length_depths[symbol] as usize;
         debug_assert!(depth_value <= 5, "Code length depth must be 0-5");
         let bits = DEPTH_CODE_BIT_LENGTHS[depth_value] as usize;
         let code = DEPTH_CODE_SYMBOLS[depth_value] as u64;
         writer.write(bits, code)?;
         if depth_value > 0 {
-            bitacc += 32 >> depth_value;
+            _bitacc += 32 >> depth_value;
         }
         crate::trace::debug_eprintln!(
             "  META[{}]: symbol={}, depth={}, code=0b{:0width$b} ({} bits), bitacc={}",
-            skip_some + idx,
+            skip_some + _idx,
             symbol,
             depth_value,
             code,
             bits,
-            bitacc,
+            _bitacc,
             width = bits
         );
     }
-    crate::trace::debug_eprintln!("  META: final bitacc={} (should be 32)", bitacc);
+    crate::trace::debug_eprintln!("  META: final bitacc={} (should be 32)", _bitacc);
 
     Ok(())
 }
@@ -910,13 +915,13 @@ pub fn store_compressed_tree(
 /// ```
 pub fn store_huffman_tree(depths: &[u8], writer: &mut BitWriter) -> Result<()> {
     // Debug: show raw depths for first and last few elements
-    let first_10: Vec<u8> = depths.iter().take(10).copied().collect();
-    let last_10: Vec<u8> = depths.iter().rev().take(10).rev().copied().collect();
+    let _first_10: Vec<u8> = depths.iter().take(10).copied().collect();
+    let _last_10: Vec<u8> = depths.iter().rev().take(10).rev().copied().collect();
     crate::trace::debug_eprintln!(
         "STORE_HUFF: depths len={}, first_10={:?}, last_10={:?}",
         depths.len(),
-        first_10,
-        last_10
+        _first_10,
+        _last_10
     );
 
     // RLE-compress the depth array
@@ -1097,13 +1102,13 @@ pub fn build_and_store_huffman_tree(
     let codes = convert_bit_depths_to_symbols(&depths);
 
     // Debug: print depths for non-zero symbols
-    let depths_info: Vec<(usize, u8, u16)> = nonzero
+    let _depths_info: Vec<(usize, u8, u16)> = nonzero
         .iter()
         .map(|(i, _)| (*i, depths[*i], codes[*i]))
         .collect();
     crate::trace::debug_eprintln!(
         "HUFFMAN_BUILD: depths/codes for used symbols: {:?}",
-        depths_info
+        _depths_info
     );
 
     if count <= 4 {

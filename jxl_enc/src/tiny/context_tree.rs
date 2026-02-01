@@ -372,7 +372,8 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
 
     // Build Huffman codes for each clustered histogram
     let mut prefix_codes = Vec::with_capacity(histograms.len());
-    for (i, hist) in histograms.iter().enumerate() {
+    #[allow(clippy::unused_enumerate_index)]
+    for (_i, hist) in histograms.iter().enumerate() {
         let mut depths = [0u8; ALPHABET_SIZE];
         let mut length = ALPHABET_SIZE;
         while length > 0 && hist.counts[length - 1] == 0 {
@@ -391,7 +392,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
             let depth_slice: Vec<u8> = depths.iter().take(length.min(20)).copied().collect();
             debug_log!(
                 "  context_tree BuildHuffmanCodes[{}]: length={}, depths={:?}{}",
-                i,
+                _i,
                 length,
                 depth_slice,
                 if length > 20 { ", ..." } else { "" }
@@ -426,7 +427,7 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
         .collect();
 
     // Token[1] value encodes the number of streams (1 + num_dc_groups)
-    tokens[1].value = pack_signed(1 + num_dc_groups as i32) as u32;
+    tokens[1].value = pack_signed(1 + num_dc_groups as i32);
 
     // Build entropy code for the tokens
     let (context_map, prefix_codes) = build_context_tree_entropy_code(&tokens);

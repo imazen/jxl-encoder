@@ -109,7 +109,7 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
                 let packed = pack_signed(residual);
 
                 if debug_count < 20 {
-                    let channel_idx = image
+                    let _channel_idx = image
                         .channels
                         .iter()
                         .position(|c| std::ptr::eq(c, channel))
@@ -117,7 +117,7 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
                     crate::trace::debug_eprintln!(
                         "RESIDUAL[{}]: ch={} y={} x={} pixel={}, pred={}, residual={}, packed={}",
                         debug_count,
-                        channel_idx,
+                        _channel_idx,
                         y,
                         x,
                         pixel,
@@ -396,7 +396,7 @@ fn write_sparse_lz77_histogram(
     // distance_context = context_map[1] = 0
 
     // Find the actual used symbols
-    let max_raw_symbol = sparse_counts[..K_NUM_RAW_SYMBOLS]
+    let _max_raw_symbol = sparse_counts[..K_NUM_RAW_SYMBOLS]
         .iter()
         .enumerate()
         .filter(|(_, c)| **c > 0)
@@ -414,7 +414,7 @@ fn write_sparse_lz77_histogram(
 
     crate::trace::debug_eprintln!(
         "SPARSE_HIST: max_raw={}, max_lz77={} (count at lz77={})",
-        max_raw_symbol,
+        _max_raw_symbol,
         max_lz77_symbol,
         sparse_counts.get(K_LZ77_MIN_SYMBOL).unwrap_or(&0)
     );
@@ -424,8 +424,8 @@ fn write_sparse_lz77_histogram(
     let histogram: Vec<u32> = sparse_counts.iter().map(|&c| c as u32).collect();
 
     // Count actual used symbols
-    let num_used: usize = histogram.iter().filter(|&&c| c > 0).count();
-    crate::trace::debug_eprintln!("SPARSE_HIST: {} used symbols", num_used);
+    let _num_used: usize = histogram.iter().filter(|&&c| c > 0).count();
+    crate::trace::debug_eprintln!("SPARSE_HIST: {} used symbols", _num_used);
 
     // Use the Huffman tree builder to store the prefix code
     // First write use_prefix_code = 1
@@ -535,11 +535,11 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
         histogram[r as usize] += 1;
     }
 
-    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
         "VARDCT_MODULAR: {} residuals, {} unique symbols, max={}",
         residuals.len(),
-        num_symbols,
+        _num_symbols,
         max_residual
     );
 
@@ -600,15 +600,15 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
     );
 
     // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
-    let bit_before = writer.bits_written();
+    let _bit_before = writer.bits_written();
     write_varlen_u16(writer, max_residual as u16)?;
-    let bit_after = writer.bits_written();
+    let _bit_after = writer.bits_written();
     crate::trace::debug_eprintln!(
         "VARDCT_DATA [bit {}-{}]: alphabet_size-1 = {} ({} bits written)",
-        bit_before,
-        bit_after,
+        _bit_before,
+        _bit_after,
         max_residual,
-        bit_after - bit_before
+        _bit_after - _bit_before
     );
 
     // Huffman table - IMPORTANT: We must use the codes returned by build_and_store_huffman_tree
@@ -656,11 +656,11 @@ fn write_improved_modular_stream_inner(
     // Build sparse histogram [0..18] + [224..256]
     let sparse_counts = build_sparse_histogram(&tokens);
 
-    let num_raw_used = sparse_counts[..K_NUM_RAW_SYMBOLS]
+    let _num_raw_used = sparse_counts[..K_NUM_RAW_SYMBOLS]
         .iter()
         .filter(|&&c| c > 0)
         .count();
-    let num_lz77_used = sparse_counts[K_LZ77_MIN_SYMBOL..]
+    let _num_lz77_used = sparse_counts[K_LZ77_MIN_SYMBOL..]
         .iter()
         .filter(|&&c| c > 0)
         .count();
@@ -672,8 +672,8 @@ fn write_improved_modular_stream_inner(
     crate::trace::debug_eprintln!(
         "IMPROVED: {} tokens, {} raw symbols used, {} lz77 tokens used, {} lz77 runs",
         tokens.len(),
-        num_raw_used,
-        num_lz77_used,
+        _num_raw_used,
+        _num_lz77_used,
         num_lz77_runs
     );
 
@@ -926,13 +926,13 @@ fn write_tree_histogram_for_gradient_impl(
 
     // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
     // For prefix codes, this is written AFTER IntegerConfigs, BEFORE Huffman tables
-    let alphabet_size = (max_symbol + 1) as u32;
+    let _alphabet_size = (max_symbol + 1) as u32;
     write_varlen_u16(writer, max_symbol)?;
     crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: alphabet_size-1 = {} (alphabet_size={})",
         writer.bits_written(),
         max_symbol,
-        alphabet_size
+        _alphabet_size
     );
 
     // Huffman table: skip if alphabet_size == 1 (only one possible symbol)
@@ -984,15 +984,16 @@ pub(crate) fn write_gradient_tree_tokens(
 
     // Encode: property=0, predictor, offset=0, mul_log=0, mul_bits=0
     let tokens = [0u32, TREE_PREDICTOR, 0, 0, 0];
-    let token_names = ["property", "predictor", "offset", "mul_log", "mul_bits"];
+    let _token_names = ["property", "predictor", "offset", "mul_log", "mul_bits"];
 
-    for (i, &token) in tokens.iter().enumerate() {
+    #[allow(clippy::unused_enumerate_index)]
+    for (_i, &token) in tokens.iter().enumerate() {
         let depth = depths.get(token as usize).copied().unwrap_or(0);
         let code = codes.get(token as usize).copied().unwrap_or(0);
         crate::trace::debug_eprintln!(
             "  TREE_TOKENS [bit {}]: {} = {} (depth={}, code={:0width$b})",
             writer.bits_written(),
-            token_names[i],
+            _token_names[_i],
             token,
             depth,
             code,
@@ -1057,14 +1058,14 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         histogram[r as usize] += 1;
     }
 
-    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
-    let num_zeros = histogram.first().copied().unwrap_or(0);
+    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    let _num_zeros = histogram.first().copied().unwrap_or(0);
     crate::trace::debug_eprintln!(
         "GRADIENT: {} residuals, {} unique symbols, max={}, zeros={}",
         residuals.len(),
-        num_symbols,
+        _num_symbols,
         max_residual,
-        num_zeros
+        _num_zeros
     );
 
     // === Global section ===
@@ -1179,13 +1180,13 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         &residuals[..residuals.len().min(20)]
     );
     crate::trace::debug_eprintln!("IMPROVED: code_map has {} entries", code_map.len());
-    for (&sym, &(code, depth)) in &code_map {
+    for (&_sym, &(_code, _depth)) in &code_map {
         crate::trace::debug_eprintln!(
             "  sym {} -> code {:0width$b} (depth {})",
-            sym,
-            code,
-            depth,
-            width = depth as usize
+            _sym,
+            _code,
+            _depth,
+            width = _depth as usize
         );
     }
 
@@ -1332,11 +1333,11 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
         histogram[r as usize] += 1;
     }
 
-    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
         "RCT: {} residuals, {} unique symbols, max={}",
         residuals.len(),
-        num_symbols,
+        _num_symbols,
         max_residual
     );
 
@@ -1553,11 +1554,11 @@ pub fn write_modular_stream_with_weighted(
         histogram[r as usize] += 1;
     }
 
-    let num_symbols = histogram.iter().filter(|&&c| c > 0).count();
+    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
         "WEIGHTED: {} residuals, {} unique symbols, max={}",
         residuals.len(),
-        num_symbols,
+        _num_symbols,
         max_residual
     );
 

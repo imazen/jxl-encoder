@@ -486,8 +486,7 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
     }
 
     for count_limit in (0..).map(|i| 1u32 << i) {
-        let mut tree = Vec::new();
-        tree.reserve(2 * length + 1);
+        let mut tree = Vec::with_capacity(2 * length + 1);
 
         for i in (0..length).rev() {
             if data[i] > 0 {
@@ -520,7 +519,7 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
             index_left: -1,
             index_right_or_value: -1,
         };
-        tree.push(sentinel.clone());
+        tree.push(sentinel);
         tree.push(sentinel);
 
         let mut i = 0usize;
@@ -552,7 +551,7 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
             tree[j_end].index_right_or_value = right as i16;
 
             // Add back the last sentinel node
-            tree.push(sentinel.clone());
+            tree.push(sentinel);
         }
 
         debug_assert_eq!(tree.len(), 2 * n + 1);
@@ -595,8 +594,12 @@ fn store_huffman_tree(depths: &[u8], num: usize, writer: &mut BitWriter) -> Resu
 
     let mut num_codes = 0;
     let mut code = 0usize;
-    for i in 0..CODE_LENGTH_CODES {
-        if huffman_tree_histogram[i] > 0 {
+    for (i, &hist_val) in huffman_tree_histogram
+        .iter()
+        .enumerate()
+        .take(CODE_LENGTH_CODES)
+    {
+        if hist_val > 0 {
             if num_codes == 0 {
                 code = i;
                 num_codes = 1;
@@ -709,7 +712,8 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
     let after_sizes = writer.bits_written();
 
     // Write each prefix code
-    for (idx, pc) in prefix_codes.iter().enumerate() {
+    #[allow(clippy::unused_enumerate_index)]
+    for (_idx, pc) in prefix_codes.iter().enumerate() {
         let mut num_symbol = 1usize;
         for i in 0..ALPHABET_SIZE {
             if pc.depths[i] > 0 {
@@ -731,7 +735,7 @@ pub fn write_prefix_codes(prefix_codes: &[PrefixCode], writer: &mut BitWriter) -
                     pc.depths.iter().take(num_symbol.min(16)).copied().collect();
                 debug_log!(
                     "    prefix_code[{}]: num_symbol={}, {} bits, depths={:?}{}",
-                    idx,
+                    _idx,
                     num_symbol,
                     code_bits,
                     depth_slice,
@@ -1159,11 +1163,11 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
 
     // Write context map (same format as Huffman)
     // Note: LZ77 is already written by the caller (write_dc_global or write_ac_global)
-    let cm_start = writer.bits_written();
+    let _cm_start = writer.bits_written();
     write_context_map_for_ans(code, writer)?;
 
     #[cfg(feature = "debug-tokens")]
-    eprintln!("  context_map: {} bits", writer.bits_written() - cm_start);
+    eprintln!("  context_map: {} bits", writer.bits_written() - _cm_start);
 
     // Write use_prefix_code = 0 (use ANS, not Huffman)
     writer.write(1, 0)?;
@@ -1175,7 +1179,7 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
     eprintln!("  use_prefix_code=0, log_alpha_size={}", ANS_LOG_ALPHA_SIZE);
 
     // Write HybridUint configs for each histogram
-    let cfg_start = writer.bits_written();
+    let _cfg_start = writer.bits_written();
     for _ in &code.histograms {
         write_hybrid_uint_config(writer)?;
     }
@@ -1183,27 +1187,28 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
     #[cfg(feature = "debug-tokens")]
     eprintln!(
         "  HybridUint configs: {} bits ({} histograms)",
-        writer.bits_written() - cfg_start,
+        writer.bits_written() - _cfg_start,
         code.histograms.len()
     );
 
     // Write ANS distributions
-    let hist_start = writer.bits_written();
-    for (i, histo) in code.histograms.iter().enumerate() {
-        let h_start = writer.bits_written();
+    let _hist_start = writer.bits_written();
+    #[allow(clippy::unused_enumerate_index)]
+    for (_i, histo) in code.histograms.iter().enumerate() {
+        let _h_start = writer.bits_written();
         histo.write(writer)?;
         #[cfg(feature = "debug-tokens")]
         eprintln!(
             "  histogram[{}]: {} bits",
-            i,
-            writer.bits_written() - h_start
+            _i,
+            writer.bits_written() - _h_start
         );
     }
 
     #[cfg(feature = "debug-tokens")]
     eprintln!(
         "  All histograms: {} bits",
-        writer.bits_written() - hist_start
+        writer.bits_written() - _hist_start
     );
 
     Ok(())
@@ -1291,7 +1296,8 @@ pub fn write_tokens_ans(
     }
 
     // Process tokens in reverse order
-    for (i, token) in tokens.iter().rev().enumerate() {
+    #[allow(clippy::unused_enumerate_index)]
+    for (_i, token) in tokens.iter().rev().enumerate() {
         let ctx = token.context as usize;
         let encoded = UintCoder::encode(token.value);
 
@@ -1316,10 +1322,10 @@ pub fn write_tokens_ans(
         });
 
         #[cfg(feature = "debug-tokens")]
-        if i < 5 || i >= tokens.len() - 3 {
+        if _i < 5 || _i >= tokens.len() - 3 {
             eprintln!(
                 "  token[{}]: ctx={}, val={}, tok={}, freq={}, state before=0x{:08x}",
-                tokens.len() - 1 - i,
+                tokens.len() - 1 - _i,
                 ctx,
                 token.value,
                 encoded.token,
@@ -1469,7 +1475,7 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
 
     let mut token_writer = BitWriter::new();
     write_tokens_ans(tokens, code, &mut token_writer)?;
-    let token_bits = token_writer.bits_written();
+    let _token_bits = token_writer.bits_written();
 
     // Combine header + tokens into one buffer for decoding
     let mut combined_writer = BitWriter::new();
@@ -1482,7 +1488,7 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
     let mut br = BitReader::new(&encoded_bytes);
 
     // Read context map
-    let num_histograms = code.histograms.len();
+    let _num_histograms = code.histograms.len();
     let _simple = br.read(1)?; // simple_context_map flag
     // Skip full context map decoding — we'll decode each histogram directly.
     // Instead, just skip to where the histograms start by re-reading the full header.
@@ -1498,7 +1504,7 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
     let mut ans_reader = AnsReader::init(&mut br2)?;
 
     // Decode each histogram from the full header for verification
-    let mut br_hist = BitReader::new(&encoded_bytes);
+    let _br_hist = BitReader::new(&encoded_bytes);
     // Skip context map to get to histograms...
     // Actually, let's take a simpler approach: decode histograms independently
     // and build decoder tables from the encoder's known frequencies.
@@ -1615,7 +1621,7 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
         "ANS roundtrip OK: {} tokens, header={} bits, data={} bits",
         tokens.len(),
         header_bits,
-        token_bits
+        _token_bits
     );
 
     Ok(())

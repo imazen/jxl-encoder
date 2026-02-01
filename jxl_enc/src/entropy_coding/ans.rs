@@ -23,6 +23,7 @@ pub const ANS_MAX_ALPHABET_SIZE: usize = 256;
 pub const ANS_SIGNATURE: u32 = 0x13;
 
 /// RLE marker symbol in logcount prefix code.
+#[allow(dead_code)]
 const RLE_MARKER_SYM: u8 = 13;
 
 /// Prefix code table for encoding log-frequency values (0-13).
@@ -341,6 +342,7 @@ impl AnsDistribution {
 
         // Working bucket structure matching jxl-rs
         #[derive(Clone)]
+        #[allow(dead_code)]
         struct WorkingBucket {
             dist: u16,         // Frequency of primary symbol
             alias_symbol: u16, // Alias symbol (used when pos >= cutoff)

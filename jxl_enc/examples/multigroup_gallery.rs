@@ -17,7 +17,7 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
         "  Size: {}x{} ({} groups)",
         width,
         height,
-        ((width + 255) / 256) * ((height + 255) / 256)
+        width.div_ceil(256) * height.div_ceil(256)
     );
 
     // Convert to linear RGB

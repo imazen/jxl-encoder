@@ -375,6 +375,7 @@ fn compute_huffman_data_cost(h: &Histogram, alphabet_size: usize) -> f32 {
 /// This is the key insight for correct merge cost estimation:
 /// When contexts are merged, BOTH original contexts use the merged tree,
 /// which is suboptimal for each individually.
+#[allow(dead_code)]
 fn compute_cross_coding_cost(data: &Histogram, tree: &Histogram, alphabet_size: usize) -> f32 {
     use super::huffman_tree::create_huffman_tree;
 

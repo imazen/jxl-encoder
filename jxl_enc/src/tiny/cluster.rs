@@ -55,8 +55,8 @@ impl Histogram {
         }
         let mut depths = [0u8; ALPHABET_SIZE];
         create_huffman_tree(&self.counts, ALPHABET_SIZE, 15, &mut depths);
-        for i in 0..ALPHABET_SIZE {
-            self.bit_cost += self.counts[i] as f32 * depths[i] as f32;
+        for (count, depth) in self.counts.iter().zip(depths.iter()) {
+            self.bit_cost += *count as f32 * *depth as f32;
         }
     }
 }
@@ -136,8 +136,8 @@ fn fast_cluster_histograms(
         }
         let mut best = 0;
         let mut best_dist = histogram_distance(&input_with_costs[i], &out[best]);
-        for j in 1..out.len() {
-            let dist = histogram_distance(&input_with_costs[i], &out[j]);
+        for (j, out_hist) in out.iter().enumerate().skip(1) {
+            let dist = histogram_distance(&input_with_costs[i], out_hist);
             if dist < best_dist {
                 best = j;
                 best_dist = dist;
@@ -160,8 +160,8 @@ fn histogram_reindex(symbols: &[u32], histograms: &mut Vec<Histogram>) -> Vec<u8
     let mut next_index = 0;
 
     for &symbol in symbols {
-        if !new_index.contains_key(&symbol) {
-            new_index.insert(symbol, next_index);
+        if let std::collections::hash_map::Entry::Vacant(e) = new_index.entry(symbol) {
+            e.insert(next_index);
             if next_index < histograms.len() {
                 histograms[next_index] = tmp[symbol as usize].clone();
             }
