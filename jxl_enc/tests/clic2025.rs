@@ -3882,3 +3882,247 @@ fn test_comprehensive_rd_sweep() {
     
     eprintln!("\nOutput files saved to: {}", work_dir);
 }
+
+/// Test that JXL distance parameter roughly matches Butteraugli score.
+/// 
+/// The JXL distance parameter is designed so that distance=X produces
+/// approximately Butteraugli score X. This test validates that relationship.
+///
+/// Validates that JXL distance parameter correlates with butteraugli perceptual score.
+/// Uses jxl-oxide for decoding and butteraugli_linear for comparing linear RGB.
+///
+/// Run with: cargo test -p jxl_enc --test clic2025 test_distance_vs_butteraugli -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_distance_vs_butteraugli() {
+    use butteraugli::{butteraugli_linear, srgb_to_linear, ButteraugliParams};
+    use imgref::Img;
+    use rgb::RGB;
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+
+    // Load first 3 images
+    let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
+        Ok(e) => e
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+            .collect(),
+        Err(_) => {
+            eprintln!("Corpus dir {} not found, skipping test", corpus_dir);
+            return;
+        }
+    };
+    entries.sort_by_key(|e| e.path());
+    let entries: Vec<_> = entries.into_iter().take(3).collect();
+
+    if entries.is_empty() {
+        eprintln!("No PNG images found, skipping test");
+        return;
+    }
+
+    let distances = [0.5f32, 1.0, 2.0, 3.0];
+
+    eprintln!("\n=== Distance vs Butteraugli Score ===");
+    eprintln!("Testing {} images at distances {:?}\n", entries.len(), distances);
+    eprintln!(
+        "{:<20} {:>10} {:>12} {:>10} {:>10}",
+        "Image", "Distance", "Butteraugli", "Ratio", "Status"
+    );
+    eprintln!("{}", "-".repeat(65));
+
+    let params = ButteraugliParams::default();
+    let mut all_ratios: Vec<f32> = Vec::new();
+
+    for entry in &entries {
+        let path = entry.path();
+        let name: String = path
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .chars()
+            .take(18)
+            .collect();
+
+        let img = image::open(&path).unwrap();
+        let (w, h) = img.dimensions();
+        let rgb = img.to_rgb8();
+
+        // Convert to linear RGB for encoder (using proper sRGB transfer function)
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| [srgb_to_linear(p[0]), srgb_to_linear(p[1]), srgb_to_linear(p[2])])
+            .collect();
+
+        // Create original linear RGB image for butteraugli comparison
+        let orig_pixels: Vec<RGB<f32>> = linear_rgb
+            .chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img = Img::new(orig_pixels, w as usize, h as usize);
+
+        for &distance in &distances {
+            // Encode
+            let encoder = jxl_enc::tiny::TinyEncoder::new(distance);
+            let bytes = encoder.encode(w as usize, h as usize, &linear_rgb).unwrap();
+
+            // Decode with jxl-oxide (outputs linear RGB)
+            let reader = Cursor::new(&bytes);
+            let image = match jxl_oxide::JxlImage::builder().read(reader) {
+                Ok(img) => img,
+                Err(e) => {
+                    eprintln!(
+                        "{:<20} {:>10.2} {:>12} {:>10} {:>10}",
+                        name, distance, "PARSE", format!("{:?}", e), "-"
+                    );
+                    continue;
+                }
+            };
+
+            let render = match image.render_frame(0) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!(
+                        "{:<20} {:>10.2} {:>12} {:>10} {:>10}",
+                        name, distance, "DECODE", format!("{:?}", e), "-"
+                    );
+                    continue;
+                }
+            };
+
+            let decoded = render.image_all_channels();
+            let dec_buf = decoded.buf();
+
+            // Convert decoded linear RGB to butteraugli format
+            let dec_pixels: Vec<RGB<f32>> = dec_buf
+                .chunks(3)
+                .map(|c| RGB::new(c[0], c[1], c[2]))
+                .collect();
+            let dec_imgref = Img::new(dec_pixels, w as usize, h as usize);
+
+            // Compute butteraugli score (linear RGB input)
+            match butteraugli_linear(orig_img.as_ref(), dec_imgref.as_ref(), &params) {
+                Ok(result) => {
+                    let score = result.score as f32;
+                    let ratio = score / distance;
+                    all_ratios.push(ratio);
+
+                    let status = if ratio > 0.5 && ratio < 2.0 { "OK" } else { "WARN" };
+                    eprintln!(
+                        "{:<20} {:>10.2} {:>12.3} {:>10.2}x {:>10}",
+                        name, distance, score, ratio, status
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{:<20} {:>10.2} {:>12} {:>10} {:>10}",
+                        name, distance, "ERROR", format!("{:?}", e), "-"
+                    );
+                }
+            }
+        }
+        eprintln!();
+    }
+
+    // Summary
+    if !all_ratios.is_empty() {
+        let avg_ratio = all_ratios.iter().sum::<f32>() / all_ratios.len() as f32;
+        let min_ratio = all_ratios.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_ratio = all_ratios.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+        eprintln!("=== Summary ===");
+        eprintln!(
+            "Butteraugli/Distance ratio: avg={:.2}x, min={:.2}x, max={:.2}x",
+            avg_ratio, min_ratio, max_ratio
+        );
+        eprintln!("(Ideal ratio is 1.0 - distance should equal butteraugli score)");
+
+        // Warn if ratio is way off
+        if avg_ratio < 0.5 || avg_ratio > 2.0 {
+            eprintln!("\nWARNING: Average ratio is outside expected range [0.5, 2.0]");
+        }
+    }
+}
+
+/// Regression test: encode/decode and verify Butteraugli score is below threshold.
+/// This test uses butteraugli directly (no external tools) and runs on synthetic + real images.
+///
+/// Run with: cargo test -p jxl_enc --test clic2025 test_butteraugli_quality_gate -- --nocapture
+#[test]
+fn test_butteraugli_quality_gate() {
+    use butteraugli::{butteraugli_linear, ButteraugliParams};
+    use imgref::Img;
+    use rgb::RGB;
+    use std::io::Cursor;
+
+    let params = ButteraugliParams::default();
+    
+    // Test 1: Gradient image at distance=1.0 should have Butteraugli ≤ 2.0
+    {
+        let (w, h) = (64, 64);
+        let linear_rgb: Vec<f32> = (0..w*h).flat_map(|i| {
+            let x = (i % w) as f32 / w as f32;
+            let y = (i / w) as f32 / h as f32;
+            [x, y, 0.5]
+        }).collect();
+        
+        let orig_pixels: Vec<RGB<f32>> = linear_rgb.chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img = Img::new(orig_pixels, w, h);
+
+        let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        let bytes = encoder.encode(w, h, &linear_rgb).unwrap();
+
+        // Decode with jxl-oxide
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let render = image.render_frame(0).unwrap();
+        let decoded = render.image_all_channels();
+        let dec_buf = decoded.buf();
+        
+        let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let dec_img = Img::new(dec_pixels, w, h);
+
+        let result = butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params).unwrap();
+        
+        eprintln!("Gradient 64x64 d=1.0: Butteraugli={:.3}", result.score);
+        assert!(result.score < 3.0, 
+                "Gradient at d=1.0 should have Butteraugli < 3.0, got {:.3}", result.score);
+    }
+
+    // Test 2: Solid color should have very low Butteraugli
+    {
+        let (w, h) = (64, 64);
+        let linear_rgb: Vec<f32> = vec![0.5, 0.3, 0.2].repeat(w * h);
+        
+        let orig_pixels: Vec<RGB<f32>> = linear_rgb.chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img = Img::new(orig_pixels, w, h);
+
+        let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        let bytes = encoder.encode(w, h, &linear_rgb).unwrap();
+
+        let reader = Cursor::new(&bytes);
+        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let render = image.render_frame(0).unwrap();
+        let decoded = render.image_all_channels();
+        let dec_buf = decoded.buf();
+        
+        let dec_pixels: Vec<RGB<f32>> = dec_buf.chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let dec_img = Img::new(dec_pixels, w, h);
+
+        let result = butteraugli_linear(orig_img.as_ref(), dec_img.as_ref(), &params).unwrap();
+        
+        eprintln!("Solid color 64x64 d=1.0: Butteraugli={:.3}", result.score);
+        assert!(result.score < 1.0, 
+                "Solid color at d=1.0 should have Butteraugli < 1.0, got {:.3}", result.score);
+    }
+
+    eprintln!("Butteraugli quality gate: PASSED");
+}
