@@ -4126,3 +4126,38 @@ fn test_butteraugli_quality_gate() {
 
     eprintln!("Butteraugli quality gate: PASSED");
 }
+
+/// Encode 256x256 crop for C++ vs Rust comparison
+/// Run with: cargo test -p jxl_enc --test clic2025 test_encode_256_crop_for_comparison -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_encode_256_crop_for_comparison() {
+    use std::fs::File;
+    use std::io::{Read, Write};
+    
+    let mut f = File::open("/tmp/linear_256.bin").expect("Run Python prep script first");
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf).unwrap();
+    let width = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let height = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+    
+    let mut linear_bytes = vec![0u8; width * height * 3 * 4];
+    f.read_exact(&mut linear_bytes).unwrap();
+    
+    let linear_rgb: Vec<f32> = linear_bytes.chunks(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    
+    eprintln!("Loaded {}x{} linear RGB ({} floats)", width, height, linear_rgb.len());
+    
+    for dist_str in &["0.5", "1.0", "2.0", "3.0"] {
+        let dist: f32 = dist_str.parse().unwrap();
+        let encoder = jxl_enc::tiny::TinyEncoder::new(dist);
+        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        
+        let out_path = format!("/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl", dist_str);
+        let mut out = File::create(&out_path).unwrap();
+        out.write_all(&bytes).unwrap();
+        eprintln!("d={}: {} bytes -> {}", dist_str, bytes.len(), out_path);
+    }
+}
