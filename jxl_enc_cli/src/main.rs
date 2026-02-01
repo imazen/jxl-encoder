@@ -54,6 +54,10 @@ struct Args {
     #[arg(long)]
     no_optimize_codes: bool,
 
+    /// Use ANS entropy coding instead of Huffman (requires optimize_codes)
+    #[arg(long)]
+    ans: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -111,6 +115,9 @@ fn main() {
                 let mut tiny = jxl_enc::tiny::TinyEncoder::new(distance);
                 if args.no_optimize_codes {
                     tiny.optimize_codes = false;
+                }
+                if args.ans {
+                    tiny.use_ans = true;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder

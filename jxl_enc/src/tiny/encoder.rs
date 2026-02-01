@@ -21,7 +21,10 @@ use super::dc_coding::{
     write_dc_tokens_region,
 };
 use super::dct::{dc_from_dct_8x16, dc_from_dct_16x8, dct_8x8, dct_8x16, dct_16x8};
-use super::entropy_code::{build_entropy_code_with_options, write_tokens};
+use super::entropy_code::{
+    build_entropy_code_ans_with_options, build_entropy_code_with_options,
+    write_entropy_code_ans, write_tokens, write_tokens_ans, OwnedAnsEntropyCode, OwnedEntropyCode,
+};
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
@@ -32,11 +35,78 @@ use crate::color::xyb::linear_rgb_to_xyb;
 use crate::debug_log;
 use crate::error::Result;
 
+/// Entropy code that holds either Huffman or ANS code.
+pub enum BuiltEntropyCode<'a> {
+    /// Static Huffman prefix codes (borrowed).
+    StaticHuffman(super::entropy_code::EntropyCode<'a>),
+    /// Dynamic Huffman prefix codes (owned).
+    Huffman(OwnedEntropyCode),
+    /// ANS distributions with context map.
+    Ans(OwnedAnsEntropyCode),
+}
+
+impl<'a> BuiltEntropyCode<'a> {
+    /// Write the entropy code header (context map + codes/distributions).
+    pub fn write_header(&self, writer: &mut BitWriter) -> Result<()> {
+        match self {
+            BuiltEntropyCode::StaticHuffman(code) => {
+                super::entropy_code::write_entropy_code(code, writer)
+            }
+            BuiltEntropyCode::Huffman(code) => {
+                super::entropy_code::write_entropy_code(&code.as_entropy_code(), writer)
+            }
+            BuiltEntropyCode::Ans(code) => write_entropy_code_ans(code, writer),
+        }
+    }
+
+    /// Write tokens using this entropy code.
+    pub fn write_tokens(&self, tokens: &[Token], writer: &mut BitWriter) -> Result<()> {
+        match self {
+            BuiltEntropyCode::StaticHuffman(code) => write_tokens(tokens, code, writer),
+            BuiltEntropyCode::Huffman(code) => {
+                write_tokens(tokens, &code.as_entropy_code(), writer)
+            }
+            BuiltEntropyCode::Ans(code) => write_tokens_ans(tokens, code, writer),
+        }
+    }
+
+    /// Get the underlying Huffman code for streaming token writing.
+    ///
+    /// Panics if this is an ANS code (streaming with ANS is not supported).
+    pub fn as_huffman(&self) -> super::entropy_code::EntropyCode<'_> {
+        match self {
+            BuiltEntropyCode::StaticHuffman(code) => *code,
+            BuiltEntropyCode::Huffman(code) => code.as_entropy_code(),
+            BuiltEntropyCode::Ans(_) => {
+                panic!("ANS codes cannot be used with streaming encoder")
+            }
+        }
+    }
+
+    /// Returns the number of contexts in this entropy code.
+    pub fn num_contexts(&self) -> usize {
+        match self {
+            BuiltEntropyCode::StaticHuffman(code) => code.num_contexts,
+            BuiltEntropyCode::Huffman(code) => code.context_map.len(),
+            BuiltEntropyCode::Ans(code) => code.context_map.len(),
+        }
+    }
+
+    /// Returns the number of histograms/prefix codes in this entropy code.
+    pub fn num_histograms(&self) -> usize {
+        match self {
+            BuiltEntropyCode::StaticHuffman(code) => code.num_prefix_codes,
+            BuiltEntropyCode::Huffman(code) => code.prefix_codes.len(),
+            BuiltEntropyCode::Ans(code) => code.histograms.len(),
+        }
+    }
+}
+
 /// Tiny JPEG XL encoder.
 ///
 /// This is a simplified VarDCT encoder based on libjxl-tiny that uses:
 /// - Only DCT8, DCT8x16, DCT16x8 transforms
-/// - Only Huffman entropy coding
+/// - Huffman or ANS entropy coding
 /// - Default zig-zag coefficient order
 /// - Fixed context tree for DC
 pub struct TinyEncoder {
@@ -53,6 +123,10 @@ pub struct TinyEncoder {
     /// and may not provide benefits (or may slightly increase size) when used with
     /// Huffman coding. This option is experimental.
     pub enhanced_clustering: bool,
+    /// Use ANS entropy coding instead of Huffman.
+    /// Only effective when `optimize_codes` is true (requires two-pass mode).
+    /// ANS typically produces 5-10% smaller files than Huffman.
+    pub use_ans: bool,
     /// Enable chroma-from-luma (CfL) optimization.
     /// When true (default), computes per-tile ytox/ytob values via least-squares fitting.
     /// When false, uses ytox=0, ytob=0 (no chroma decorrelation).
@@ -69,6 +143,7 @@ impl Default for TinyEncoder {
             distance: 1.0,
             optimize_codes: true,
             enhanced_clustering: false,
+            use_ans: false, // Default to Huffman for now until ANS is fully tested
             cfl_enabled: true,
             ac_strategy_enabled: true,
         }
@@ -82,6 +157,7 @@ impl TinyEncoder {
             distance,
             optimize_codes: true,
             enhanced_clustering: false,
+            use_ans: false, // Default to Huffman for now until ANS is fully tested
             cfl_enabled: true,
             ac_strategy_enabled: true,
         }
@@ -213,9 +289,9 @@ impl TinyEncoder {
             );
         }
 
-        // Get static entropy codes
-        let dc_code = get_dc_entropy_code();
-        let ac_code = get_ac_entropy_code();
+        // Get static entropy codes (wrapped in BuiltEntropyCode for uniform handling)
+        let dc_code = BuiltEntropyCode::StaticHuffman(get_dc_entropy_code());
+        let ac_code = BuiltEntropyCode::StaticHuffman(get_ac_entropy_code());
 
         // Create main writer
         let mut writer = BitWriter::with_capacity(width * height * 4);
@@ -251,6 +327,10 @@ impl TinyEncoder {
             let mut dc_global = BitWriter::new();
             self.write_dc_global(&params, num_dc_groups, &dc_code, &mut dc_global)?;
 
+            // Get borrowed Huffman codes for streaming token writing
+            let dc_huffman = dc_code.as_huffman();
+            let ac_huffman = ac_code.as_huffman();
+
             let mut dc_group = BitWriter::new();
             self.write_dc_group(
                 0,
@@ -261,7 +341,7 @@ impl TinyEncoder {
                 &quant_field,
                 &cfl_map,
                 &ac_strategy,
-                &dc_code,
+                &dc_huffman,
                 &mut dc_group,
             )?;
 
@@ -278,7 +358,7 @@ impl TinyEncoder {
                 ysize_blocks,
                 xsize_groups,
                 &ac_strategy,
-                &ac_code,
+                &ac_huffman,
                 &mut ac_group_writer,
             )?;
 
@@ -329,6 +409,8 @@ impl TinyEncoder {
         } else {
             // Multi-group: use byte-aligned sections
             let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
+            let dc_huffman = dc_code.as_huffman();
+            let ac_huffman = ac_code.as_huffman();
 
             // DC Global section
             let mut dc_global = BitWriter::new();
@@ -348,7 +430,7 @@ impl TinyEncoder {
                     &quant_field,
                     &cfl_map,
                     &ac_strategy,
-                    &dc_code,
+                    &dc_huffman,
                     &mut dc_group,
                 )?;
                 dc_group.zero_pad_to_byte();
@@ -373,7 +455,7 @@ impl TinyEncoder {
                     ysize_blocks,
                     xsize_groups,
                     &ac_strategy,
-                    &ac_code,
+                    &ac_huffman,
                     &mut ac_group_writer,
                 )?;
                 ac_group_writer.zero_pad_to_byte();
@@ -1104,7 +1186,7 @@ impl TinyEncoder {
         &self,
         params: &DistanceParams,
         num_dc_groups: usize,
-        dc_code: &super::entropy_code::EntropyCode,
+        dc_code: &BuiltEntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -1294,7 +1376,7 @@ impl TinyEncoder {
     fn write_ac_global(
         &self,
         num_groups: usize,
-        ac_code: &super::entropy_code::EntropyCode,
+        ac_code: &BuiltEntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -1324,10 +1406,10 @@ impl TinyEncoder {
             debug_log!("AC_global breakdown:");
             debug_log!("  header: {} bits", before_ac_code - start_bits);
             debug_log!(
-                "  ac_entropy_code: {} bits ({} contexts, {} prefix codes)",
+                "  ac_entropy_code: {} bits ({} contexts, {} histograms)",
                 after_ac_code - before_ac_code,
-                ac_code.num_contexts,
-                ac_code.num_prefix_codes
+                ac_code.num_contexts(),
+                ac_code.num_histograms()
             );
         }
 
@@ -1674,11 +1756,20 @@ impl TinyEncoder {
         for section in &ac_metadata_tokens_per_group {
             all_dc_tokens.extend_from_slice(section);
         }
-        let dc_owned_code = build_entropy_code_with_options(
-            &all_dc_tokens,
-            super::dc_coding::NUM_DC_CONTEXTS,
-            self.enhanced_clustering,
-        );
+        // Build entropy codes (Huffman or ANS based on config)
+        let dc_built_code = if self.use_ans {
+            BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
+                &all_dc_tokens,
+                super::dc_coding::NUM_DC_CONTEXTS,
+                self.enhanced_clustering,
+            ))
+        } else {
+            BuiltEntropyCode::Huffman(build_entropy_code_with_options(
+                &all_dc_tokens,
+                super::dc_coding::NUM_DC_CONTEXTS,
+                self.enhanced_clustering,
+            ))
+        };
 
         // Merge all AC section tokens for frequency counting
         let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
@@ -1686,14 +1777,20 @@ impl TinyEncoder {
         for section in &ac_section_tokens {
             all_ac_tokens.extend_from_slice(section);
         }
-        let ac_owned_code = build_entropy_code_with_options(
-            &all_ac_tokens,
-            super::ac_context::NUM_AC_CONTEXTS,
-            self.enhanced_clustering,
-        );
 
-        let dc_code = dc_owned_code.as_entropy_code();
-        let ac_code = ac_owned_code.as_entropy_code();
+        let ac_built_code = if self.use_ans {
+            BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
+                &all_ac_tokens,
+                super::ac_context::NUM_AC_CONTEXTS,
+                self.enhanced_clustering,
+            ))
+        } else {
+            BuiltEntropyCode::Huffman(build_entropy_code_with_options(
+                &all_ac_tokens,
+                super::ac_context::NUM_AC_CONTEXTS,
+                self.enhanced_clustering,
+            ))
+        };
 
         // ── Pass 2: Write bitstream ──
 
@@ -1712,7 +1809,7 @@ impl TinyEncoder {
         if num_sections == 4 {
             // Single-group: combine sections at the bit level
             let mut dc_global = BitWriter::new();
-            self.write_dc_global(params, num_dc_groups, &dc_code, &mut dc_global)?;
+            self.write_dc_global(params, num_dc_groups, &dc_built_code, &mut dc_global)?;
 
             let mut dc_group = BitWriter::new();
             self.write_dc_group_from_tokens(
@@ -1723,15 +1820,15 @@ impl TinyEncoder {
                 &dc_tokens_per_group[0],
                 &ac_metadata_tokens_per_group[0],
                 ac_strategy,
-                &dc_code,
+                &dc_built_code,
                 &mut dc_group,
             )?;
 
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+            self.write_ac_global(num_groups, &ac_built_code, &mut ac_global)?;
 
             let mut ac_group_writer = BitWriter::new();
-            write_tokens(&ac_section_tokens[0], &ac_code, &mut ac_group_writer)?;
+            ac_built_code.write_tokens(&ac_section_tokens[0], &mut ac_group_writer)?;
 
             let mut combined = dc_global;
             combined.append_unaligned(&dc_group)?;
@@ -1748,7 +1845,7 @@ impl TinyEncoder {
 
             // DC Global
             let mut dc_global = BitWriter::new();
-            self.write_dc_global(params, num_dc_groups, &dc_code, &mut dc_global)?;
+            self.write_dc_global(params, num_dc_groups, &dc_built_code, &mut dc_global)?;
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
@@ -1763,7 +1860,7 @@ impl TinyEncoder {
                     &dc_tokens_per_group[dc_group_idx],
                     &ac_metadata_tokens_per_group[dc_group_idx],
                     ac_strategy,
-                    &dc_code,
+                    &dc_built_code,
                     &mut dc_group,
                 )?;
                 dc_group.zero_pad_to_byte();
@@ -1772,14 +1869,14 @@ impl TinyEncoder {
 
             // AC Global
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+            self.write_ac_global(num_groups, &ac_built_code, &mut ac_global)?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
             // AC groups
             for ac_tokens in &ac_section_tokens {
                 let mut ac_group_writer = BitWriter::new();
-                write_tokens(ac_tokens, &ac_code, &mut ac_group_writer)?;
+                ac_built_code.write_tokens(ac_tokens, &mut ac_group_writer)?;
                 ac_group_writer.zero_pad_to_byte();
                 sections.push(ac_group_writer.finish());
             }
@@ -1808,7 +1905,7 @@ impl TinyEncoder {
         dc_tokens: &[Token],
         ac_metadata_tokens: &[Token],
         ac_strategy: &AcStrategyMap,
-        dc_code: &super::entropy_code::EntropyCode,
+        dc_code: &BuiltEntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
         let dc_gx = dc_group_idx % xsize_dc_groups;
@@ -1825,7 +1922,7 @@ impl TinyEncoder {
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         // Write DC tokens
-        write_tokens(dc_tokens, dc_code, writer)?;
+        dc_code.write_tokens(dc_tokens, writer)?;
 
         // AC metadata sub-header — count first blocks (distinct transforms)
         let num_blocks = region_xsize * region_ysize;
@@ -1844,18 +1941,18 @@ impl TinyEncoder {
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         // Write AC metadata tokens
-        write_tokens(ac_metadata_tokens, dc_code, writer)?;
+        dc_code.write_tokens(ac_metadata_tokens, writer)?;
 
         Ok(())
     }
 
-    /// Write entropy code (context map + prefix codes).
+    /// Write entropy code (context map + codes/distributions).
     fn write_entropy_code_header(
         &self,
-        code: &super::entropy_code::EntropyCode,
+        code: &BuiltEntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        super::entropy_code::write_entropy_code(code, writer)
+        code.write_header(writer)
     }
 }
 

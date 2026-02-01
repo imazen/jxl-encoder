@@ -57,7 +57,7 @@ impl std::fmt::Debug for PrefixCode {
 }
 
 /// An entropy code consisting of context map and prefix codes.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct EntropyCode<'a> {
     /// Context map: maps context ID -> prefix code index.
     pub context_map: &'a [u8],
@@ -1098,10 +1098,8 @@ pub fn build_entropy_code_ans_with_options(
 /// Write ANS entropy code header (context map + distributions).
 pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
     // Write context map (same format as Huffman)
+    // Note: LZ77 is already written by the caller (write_dc_global or write_ac_global)
     write_context_map_for_ans(code, writer)?;
-
-    // Write LZ77 disabled (1 bit = 0)
-    writer.write(1, 0)?;
 
     // Write use_prefix_code = 0 (use ANS, not Huffman)
     writer.write(1, 0)?;
@@ -1182,14 +1180,14 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
 fn write_hybrid_uint_config(writer: &mut BitWriter) -> Result<()> {
     // For log_alpha_size = 6:
     // split_exponent uses ceil_log2(log_alpha_size + 1) = ceil_log2(7) = 3 bits
-    // msb_in_token uses ceil_log2(log_alpha_size + 2 - split) = ceil_log2(4) = 2 bits
-    // lsb_in_token uses ceil_log2(log_alpha_size + 1 - split) = ceil_log2(3) = 2 bits
+    // msb_in_token uses ceil_log2(split_exponent + 1) = ceil_log2(5) = 3 bits
+    // lsb_in_token uses ceil_log2(split_exponent - msb_in_token + 1) = ceil_log2(3) = 2 bits
 
-    // split_exponent = 4
+    // split_exponent = 4 (3 bits)
     writer.write(3, 4)?;
-    // msb_in_token = 2
-    writer.write(2, 2)?;
-    // lsb_in_token = 0
+    // msb_in_token = 2 (3 bits, since ceil_log2(4+1) = 3)
+    writer.write(3, 2)?;
+    // lsb_in_token = 0 (2 bits, since ceil_log2(4-2+1) = 2)
     writer.write(2, 0)?;
 
     Ok(())
@@ -1213,15 +1211,24 @@ pub fn write_tokens_ans(
 
         // Get the distribution for this context
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
-        if let Some(dist) = code.distributions.get(dist_idx) {
-            // Push extra bits first (they come after the symbol in forward order)
-            encoder.push_bits(encoded.bits, encoded.nbits as u8);
+        let dist = code.distributions.get(dist_idx).unwrap_or_else(|| {
+            panic!(
+                "ANS: missing distribution at index {} for context {}",
+                dist_idx, ctx
+            )
+        });
 
-            // Push the ANS symbol
-            if let Some(info) = dist.get(encoded.token as usize) {
-                encoder.put_symbol(info);
-            }
-        }
+        // Push extra bits first (they come after the symbol in forward order)
+        encoder.push_bits(encoded.bits, encoded.nbits as u8);
+
+        // Push the ANS symbol
+        let info = dist.get(encoded.token as usize).unwrap_or_else(|| {
+            panic!(
+                "ANS: symbol {} not in distribution (ctx={}, dist_idx={})",
+                encoded.token, ctx, dist_idx
+            )
+        });
+        encoder.put_symbol(info);
     }
 
     // Finalize: writes state + reversed bits
