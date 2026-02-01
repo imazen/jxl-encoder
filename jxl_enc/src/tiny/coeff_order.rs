@@ -24,8 +24,8 @@ use crate::bit_writer::BitWriter;
 use crate::error::Result;
 
 /// Number of order buckets used by our encoder.
-/// Bucket 0 = DCT8, Bucket 4 = DCT8x16/DCT16x8.
-/// Total 13 buckets exist in the spec, but we only use 2.
+/// Bucket 0 = DCT8, Bucket 2 = DCT16x16, Bucket 3 = DCT32x32, Bucket 4 = DCT8x16/DCT16x8.
+/// Total 13 buckets exist in the spec.
 pub const NUM_ORDER_BUCKETS: usize = 13;
 
 /// Number of contexts for permutation entropy coding.
@@ -198,6 +198,10 @@ pub fn count_zero_coefficients(
     for ch in &mut counts[2] {
         *ch = vec![0i64; 256];
     }
+    // Bucket 3: DCT32x32, size 1024
+    for ch in &mut counts[3] {
+        *ch = vec![0i64; 1024];
+    }
     // Bucket 4: DCT8x16/DCT16x8, size 128
     for ch in &mut counts[4] {
         *ch = vec![0i64; 128];
@@ -210,8 +214,11 @@ pub fn count_zero_coefficients(
             }
 
             let raw_strategy = ac_strategy.raw_strategy(bx, by);
-            let bucket = strategy_bucket(raw_strategy) as usize;
-            let (cx, cy, covered_blocks, _, _) = ac_strategy_info(raw_strategy);
+            // IMPORTANT: strategy_bucket and ac_strategy_info expect bitstream
+            // strategy codes (0, 4, 5, 6, 7), NOT raw strategy codes (0-4).
+            let strategy_code = super::ac_strategy::STRATEGY_CODE_LUT[raw_strategy as usize];
+            let bucket = strategy_bucket(strategy_code) as usize;
+            let (cx, cy, covered_blocks, _, _) = ac_strategy_info(strategy_code);
             let size = covered_blocks * DCT_BLOCK_SIZE;
 
             // Ensure count vector is large enough
@@ -336,6 +343,7 @@ fn bucket_to_cx_cy(bucket: usize) -> (usize, usize) {
     match bucket {
         0 => (1, 1), // DCT8: 1x1 blocks
         2 => (2, 2), // DCT16x16: 2x2 blocks
+        3 => (4, 4), // DCT32x32: 4x4 blocks
         4 => (2, 1), // DCT8x16/DCT16x8: 2x1 blocks (after CoefficientLayout)
         _ => (0, 0), // Not supported by our encoder
     }
@@ -599,8 +607,8 @@ mod tests {
         // Tokenization should produce one token (end=0) per channel.
         let natural = natural_coeff_order(1, 1);
         let mut orders = vec![vec![Vec::new(); 3]; NUM_ORDER_BUCKETS];
-        for c in 0..3 {
-            orders[0][c] = natural.clone();
+        for order in &mut orders[0] {
+            *order = natural.clone();
         }
         let used_orders = 1u32; // bucket 0
 

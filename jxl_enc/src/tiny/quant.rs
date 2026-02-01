@@ -7,11 +7,15 @@
 //!
 //! Ported from libjxl-tiny quant_weights.cc/h.
 
+// Ported float constants from C++ - exact values are intentional for parity.
+#![allow(clippy::excessive_precision)]
+
 use super::common::DCT_BLOCK_SIZE;
+use std::sync::LazyLock;
 
 /// Number of valid AC strategies.
-/// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16
-pub const NUM_VALID_STRATEGIES: usize = 4;
+/// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32
+pub const NUM_VALID_STRATEGIES: usize = 5;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -19,35 +23,40 @@ pub const INV_DC_QUANT: [f32; 3] = [4096.0, 512.0, 256.0];
 
 /// DC quantization constants per channel (X, Y, B).
 /// DC_QUANT[c] = 1.0 / INV_DC_QUANT[c]
+#[allow(dead_code)]
 pub const DC_QUANT: [f32; 3] = [
     1.0 / 4096.0, // X channel
     1.0 / 512.0,  // Y channel
     1.0 / 256.0,  // B channel
 ];
 
-/// Total table size: 9 blocks (DCT8+DCT16X8) + 12 blocks (DCT16X16) = 21 blocks of 64 each.
+/// Total table size for strategies 0-3: 9 blocks (DCT8+DCT16X8) + 12 blocks (DCT16X16) = 21 blocks.
+/// DCT32X32 weights are generated dynamically (too large for const: 3072 floats).
 pub const TOTAL_TABLE_SIZE: usize = 21 * DCT_BLOCK_SIZE;
 
 /// Size in 8x8 blocks for each (strategy, channel) combination.
 /// Index = strategy * 3 + channel
-/// Strategies: 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16
+/// Strategies: 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32
 /// Channels: 0=X, 1=Y, 2=B
 #[rustfmt::skip]
-pub const TABLE_SIZE_IN_BLOCKS: [usize; 12] = [
-    1, 1, 1,  // DCT8: X, Y, B
-    2, 2, 2,  // DCT16X8: X, Y, B
-    2, 2, 2,  // DCT8X16: X, Y, B
-    4, 4, 4,  // DCT16X16: X, Y, B (256 coeffs = 4 blocks each)
+pub const TABLE_SIZE_IN_BLOCKS: [usize; 15] = [
+    1, 1, 1,      // DCT8: X, Y, B
+    2, 2, 2,      // DCT16X8: X, Y, B
+    2, 2, 2,      // DCT8X16: X, Y, B
+    4, 4, 4,      // DCT16X16: X, Y, B (256 coeffs = 4 blocks each)
+    16, 16, 16,   // DCT32X32: X, Y, B (1024 coeffs = 16 blocks each)
 ];
 
 /// Offset in 8x8 blocks for each (strategy, channel) combination.
 /// Index = strategy * 3 + channel
+/// DCT32X32 offsets are into QUANT_WEIGHTS_DCT32X32, not QUANT_WEIGHTS.
 #[rustfmt::skip]
-pub const TABLE_OFFSET_IN_BLOCKS: [usize; 12] = [
+pub const TABLE_OFFSET_IN_BLOCKS: [usize; 15] = [
     0, 1, 2,    // DCT8: X, Y, B
     3, 5, 7,    // DCT16X8: X, Y, B
     3, 5, 7,    // DCT8X16: X, Y, B (shares tables with DCT16X8)
     9, 13, 17,  // DCT16X16: X, Y, B
+    0, 16, 32,  // DCT32X32: offsets into separate QUANT_WEIGHTS_DCT32X32
 ];
 
 /// Pre-computed quantization weights (dequant matrix, i.e. 1/weight).
@@ -344,10 +353,114 @@ pub const QUANT_WEIGHTS: [f32; TOTAL_TABLE_SIZE] = [
     1.9999754e-1,
 ];
 
+// =============================================================================
+// Parametric weight generation for large transforms (DCT32x32+)
+// =============================================================================
+
+/// Band multiplier: converts distance_bands parameter to multiplicative factor.
+/// Matches libjxl `Mult()` in quant_weights.cc.
+fn band_mult(v: f64) -> f64 {
+    if v > 0.0 { 1.0 + v } else { 1.0 / (1.0 - v) }
+}
+
+/// Interpolate in log-space between band values.
+/// Matches libjxl `Interpolate()` / `InterpolateVec()`.
+fn interpolate_band(pos: f64, bands: &[f64]) -> f64 {
+    let len = bands.len();
+    if len == 1 {
+        return bands[0];
+    }
+    let idx = (pos as usize).min(len - 2);
+    let frac = pos - idx as f64;
+    let a = bands[idx];
+    let b = bands[idx + 1];
+    // a * pow(b/a, frac) = exp(log(a) + frac * log(b/a))
+    a * (b / a).powf(frac)
+}
+
+/// Generate quantization weights for an NxN DCT transform using the parametric formula.
+///
+/// Matches libjxl `GetQuantWeights()`. Band params are `[initial, mult1, mult2, ...]`
+/// where `bands[0] = initial` and `bands[i] = bands[i-1] * Mult(params[i])`.
+///
+/// Returns `3 * n * n` floats: X channel, then Y, then B.
+fn generate_dct_quant_weights(n: usize, band_params: &[[f64; 8]; 3], num_bands: usize) -> Vec<f32> {
+    let total = 3 * n * n;
+    let mut out = vec![0.0f32; total];
+
+    let sqrt2 = core::f64::consts::SQRT_2;
+    let scale = (num_bands as f64 - 1.0) / (sqrt2 + 1e-6);
+    let rcp = scale / (n as f64 - 1.0); // rcpcol = rcprow for square transforms
+
+    for c in 0..3 {
+        // Build band values from parameters
+        let mut bands = vec![0.0f64; num_bands];
+        bands[0] = band_params[c][0];
+        for i in 1..num_bands {
+            bands[i] = bands[i - 1] * band_mult(band_params[c][i]);
+        }
+
+        for y in 0..n {
+            let dy = y as f64 * rcp;
+            let dy2 = dy * dy;
+            for x in 0..n {
+                let dx = x as f64 * rcp;
+                let scaled_distance = (dx * dx + dy2).sqrt();
+                let weight = interpolate_band(scaled_distance, &bands);
+                out[c * n * n + y * n + x] = weight as f32;
+            }
+        }
+    }
+
+    out
+}
+
+/// DCT32x32 band parameters from libjxl quant_weights.cc:680-712.
+/// 8 distance bands per channel.
+const DCT32X32_BAND_PARAMS: [[f64; 8]; 3] = [
+    // X channel
+    [
+        15718.40830982518931456,
+        -1.025,
+        -0.98,
+        -0.9012,
+        -0.4,
+        -0.48819395464,
+        -0.421064,
+        -0.27,
+    ],
+    // Y channel
+    [
+        7305.7636810695983104,
+        -0.8041958212306401,
+        -0.7633036457487539,
+        -0.55660379990111464,
+        -0.49785304658857626,
+        -0.43699592683512467,
+        -0.40180866526242109,
+        -0.27321683125358037,
+    ],
+    // B channel
+    [
+        3803.53173721215041536,
+        -3.060733579805728,
+        -2.0413270132490346,
+        -2.0235650159727417,
+        -0.5495389509954993,
+        -0.4,
+        -0.4,
+        -0.3,
+    ],
+];
+
+/// Lazily-generated DCT32x32 quantization weights (3072 floats: 1024 per channel).
+static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> =
+    LazyLock::new(|| generate_dct_quant_weights(32, &DCT32X32_BAND_PARAMS, 8));
+
 /// Get the quantization weight table for a given strategy and channel.
 ///
 /// # Arguments
-/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16)
+/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32)
 /// * `channel` - Channel index (0=X, 1=Y, 2=B)
 ///
 /// # Returns
@@ -356,6 +469,12 @@ pub const QUANT_WEIGHTS: [f32; TOTAL_TABLE_SIZE] = [
 pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
     debug_assert!(strategy < NUM_VALID_STRATEGIES);
     debug_assert!(channel < 3);
+
+    if strategy == 4 {
+        // DCT32x32: use dynamically generated weights
+        let offset = channel * 1024;
+        return &QUANT_WEIGHTS_DCT32X32[offset..offset + 1024];
+    }
 
     let idx = strategy * 3 + channel;
     let offset = TABLE_OFFSET_IN_BLOCKS[idx] * DCT_BLOCK_SIZE;
@@ -368,6 +487,7 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
 ///
 /// This is used during encoding to multiply coefficients before quantization.
 #[inline]
+#[allow(dead_code)]
 pub fn inv_quant_weight(strategy: usize, channel: usize, coeff_idx: usize) -> f32 {
     let weights = quant_weights(strategy, channel);
     debug_assert!(coeff_idx < weights.len());
@@ -386,6 +506,7 @@ pub fn inv_quant_weight(strategy: usize, channel: usize, coeff_idx: usize) -> f3
 /// # Returns
 /// Quantized integer coefficient
 #[inline]
+#[allow(dead_code)]
 pub fn quantize_coeff(
     coeff: f32,
     strategy: usize,
@@ -410,6 +531,7 @@ pub fn quantize_coeff(
 /// # Returns
 /// Dequantized float coefficient
 #[inline]
+#[allow(dead_code)]
 pub fn dequantize_coeff(
     qcoeff: i32,
     strategy: usize,
@@ -465,6 +587,47 @@ mod tests {
         // DCT16X16 should have 256 coefficients per channel
         for c in 0..3 {
             assert_eq!(quant_weights(3, c).len(), 256);
+        }
+
+        // DCT32X32 should have 1024 coefficients per channel
+        for c in 0..3 {
+            assert_eq!(quant_weights(4, c).len(), 1024);
+        }
+    }
+
+    #[test]
+    fn test_dct32x32_weights_positive() {
+        // All DCT32x32 weights should be positive
+        for c in 0..3 {
+            let w = quant_weights(4, c);
+            for (i, &val) in w.iter().enumerate() {
+                assert!(
+                    val > 0.0,
+                    "DCT32x32 weight[ch={}, {}] = {} should be positive",
+                    c,
+                    i,
+                    val
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_dct32x32_weights_dc_largest() {
+        // DC weight (position 0) should be the largest for each channel
+        for c in 0..3 {
+            let w = quant_weights(4, c);
+            let dc = w[0];
+            for (i, &val) in w.iter().enumerate().skip(1) {
+                assert!(
+                    val <= dc * 1.01, // allow tiny floating point margin
+                    "DCT32x32 weight[ch={}, {}] = {} exceeds DC = {}",
+                    c,
+                    i,
+                    val,
+                    dc
+                );
+            }
         }
     }
 
