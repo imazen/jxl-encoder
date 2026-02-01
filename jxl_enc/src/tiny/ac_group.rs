@@ -49,11 +49,34 @@ pub static COEFF_ORDER_8X16: [u32; 128] = [
   122, 108,  94,  95, 109, 123, 124, 110, 111, 125, 126, 127,
 ];
 
-/// Get coefficient order based on AC strategy.
-/// Strategy 0 = DCT8, 6/7 = DCT8x16/DCT16x8.
+/// Default zig-zag coefficient order for DCT16x16 (256 coefficients).
+/// Natural scan order for the 16x16 coefficient grid.
+#[rustfmt::skip]
+pub static COEFF_ORDER_16X16: [u32; 256] = [
+      0,   1,  16,  17,  32,   2,   3,  18,  33,  48,  64,  49,  34,  19,   4,   5,
+     20,  35,  50,  65,  80,  96,  81,  66,  51,  36,  21,   6,   7,  22,  37,  52,
+     67,  82,  97, 112, 128, 113,  98,  83,  68,  53,  38,  23,   8,   9,  24,  39,
+     54,  69,  84,  99, 114, 129, 144, 160, 145, 130, 115, 100,  85,  70,  55,  40,
+     25,  10,  11,  26,  41,  56,  71,  86, 101, 116, 131, 146, 161, 176, 192, 177,
+    162, 147, 132, 117, 102,  87,  72,  57,  42,  27,  12,  13,  28,  43,  58,  73,
+     88, 103, 118, 133, 148, 163, 178, 193, 208, 224, 209, 194, 179, 164, 149, 134,
+    119, 104,  89,  74,  59,  44,  29,  14,  15,  30,  45,  60,  75,  90, 105, 120,
+    135, 150, 165, 180, 195, 210, 225, 240, 241, 226, 211, 196, 181, 166, 151, 136,
+    121, 106,  91,  76,  61,  46,  31,  47,  62,  77,  92, 107, 122, 137, 152, 167,
+    182, 197, 212, 227, 242, 243, 228, 213, 198, 183, 168, 153, 138, 123, 108,  93,
+     78,  63,  79,  94, 109, 124, 139, 154, 169, 184, 199, 214, 229, 244, 245, 230,
+    215, 200, 185, 170, 155, 140, 125, 110,  95, 111, 126, 141, 156, 171, 186, 201,
+    216, 231, 246, 247, 232, 217, 202, 187, 172, 157, 142, 127, 143, 158, 173, 188,
+    203, 218, 233, 248, 249, 234, 219, 204, 189, 174, 159, 175, 190, 205, 220, 235,
+    250, 251, 236, 221, 206, 191, 207, 222, 237, 252, 253, 238, 223, 239, 254, 255,
+];
+
+/// Get coefficient order based on AC strategy (bitstream strategy code).
+/// Strategy 0 = DCT8, 4 = DCT16x16, 6/7 = DCT8x16/DCT16x8.
 pub fn get_coeff_order(raw_strategy: u8) -> &'static [u32] {
     match raw_strategy {
         0 => &COEFF_ORDER_8X8,
+        4 => &COEFF_ORDER_16X16,
         6 | 7 => &COEFF_ORDER_8X16,
         _ => &COEFF_ORDER_8X8, // Default to 8x8 for unknown strategies
     }
@@ -162,8 +185,9 @@ pub fn predict_from_top_and_left(
 }
 
 /// AC strategy codes for libjxl-tiny.
-/// Only DCT8 (0), DCT8x16 (6), and DCT16x8 (7) are used.
+/// Bitstream strategy codes used in the JXL format.
 pub const AC_STRATEGY_DCT8: u8 = 0;
+pub const AC_STRATEGY_DCT16X16: u8 = 4;
 pub const AC_STRATEGY_DCT8X16: u8 = 6;
 pub const AC_STRATEGY_DCT16X8: u8 = 7;
 
@@ -172,6 +196,7 @@ pub const AC_STRATEGY_DCT16X8: u8 = 7;
 pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
     match raw_strategy {
         AC_STRATEGY_DCT8 => (1, 1, 1, 0, 0),
+        AC_STRATEGY_DCT16X16 => (2, 2, 4, 2, 4),
         AC_STRATEGY_DCT8X16 => (1, 2, 2, 1, 6),
         AC_STRATEGY_DCT16X8 => (2, 1, 2, 1, 7),
         _ => (1, 1, 1, 0, 0), // Default to DCT8
@@ -423,5 +448,9 @@ mod tests {
         // DCT16x8
         let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT16X8);
         assert_eq!((cx, cy, cb, log2cb, code), (2, 1, 2, 1, 7));
+
+        // DCT16x16
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT16X16);
+        assert_eq!((cx, cy, cb, log2cb, code), (2, 2, 4, 2, 4));
     }
 }
