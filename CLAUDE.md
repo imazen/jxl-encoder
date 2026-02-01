@@ -76,10 +76,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 
 **Tier 1: Big compression wins (target 15-25% smaller files total)**
 
-- [x] **ANS entropy coding** — Working! Use `--ans` flag. Encoder, histogram
-  serialization, alias table reverse mapping, and HybridUint integration complete.
-  Single-symbol and multi-symbol distributions both work. Verified with jxl-rs and
-  djxl decoders up to 1024x1024 images.
+- [x] **ANS entropy coding** — Working! Use `--ans` flag. 12% smaller than Huffman
+  on CLIC 2025 photos with identical quality. Verified with jxl-oxide on all 5 CLIC
+  2025 test images (up to 2048x1360). Includes debug-build invariant checks for
+  histogram serialization roundtrip and ANS symbol roundtrip.
 - [ ] **More AC strategies** — DCT16x16, DCT32x32 (~3-5% smaller on smooth content).
   Forward transforms exist in `jxl_enc_transforms` up to 32x32. Work: LLF extraction
   for larger blocks, strategy selection heuristics, nzeros bookkeeping for 4+ block
@@ -375,6 +375,36 @@ Test: `cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_quality -- --ignor
 
 ## Resolved Bugs (continued)
 
+### ANS Histogram omit_pos Mismatch (FIXED Feb 1, 2026)
+
+**Issue**: ANS encoding failed for specific multi-group CLIC 2025 images (2048x1360).
+Smaller crops and simpler images worked fine. Only triggered when DC histograms had
+many symbols with the same logcount.
+
+**Root Cause**: `rebalance_histogram()` in `ans.rs` verified that omit_pos had the
+highest logcount, but allowed TIES before omit_pos. The decoder independently
+re-derives omit_pos by scanning symbols in order and picking the FIRST symbol with
+the maximum logcount. When encoder's omit_pos=20 but decoder picks omit_pos=16
+(both logcount=8, but 16 comes first), precision bits are skipped for different
+symbols, causing a bit-stream misalignment that rotates the decoded frequency values.
+
+Example: symbols 16-20 had expected frequencies [231, 183, 175, 159, 255] but
+decoded as [255, 231, 183, 175, 159] — a rotation caused by the omit_pos offset.
+
+**Fix**: Added `logcount == omit_logcount && i < omit_pos` rejection in the
+verification check in `rebalance_histogram()`, forcing it to retry with a different
+shift value that produces an unambiguous omit_pos.
+
+**Verification infrastructure added**:
+- `verify_histogram_serialization()`: serializes each histogram, decodes with our
+  decoder, compares all frequencies (runs in debug builds)
+- `verify_ans_roundtrip()`: encodes tokens with ANS, decodes locally, compares each
+  decoded symbol (runs in debug builds)
+- Token validation in `build_entropy_code_ans_with_options()`
+
+**Impact**: All 5 CLIC 2025 test images now encode/decode correctly with ANS.
+ANS produces 12% smaller files than Huffman with identical quality.
+
 ### AC Strategy Quant Field Scale Mismatch (FIXED Jan 31, 2026)
 
 **Issue**: AC strategy selection caused 0.55 butteraugli regression at d=1.0.
@@ -578,6 +608,11 @@ The `raw_quant=1` bug is a perfect example:
 3. Synthetic images are OK for decode-only tests (does it parse without error?)
 4. **Quality thresholds MUST be validated on real photos**, not synthetic images
 5. When a synthetic test passes but real photos fail, the synthetic test is LYING
+6. **ANS/entropy tests MUST use real photos or complex real-world distributions**.
+   Gradients and other synthetic content produce degenerate histograms that let ANS
+   "cheat" — the omit_pos bug only manifested on CLIC photos with many symbols at
+   the same logcount, never on gradients. Synthetic images for ANS are only OK for
+   basic "does it parse" smoke tests, never for correctness validation.
 
 **Mandatory quality test:**
 ```bash
@@ -835,6 +870,40 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
 **Detection:**
 - If debugging commit adds tracing, tracing should have existed from the start
 - If can't explain where bytes come from, need more tracing
+
+## Proof-by-Tests Investigation Methodology (MANDATORY)
+
+**Do not guess. Build a stack of invariant tests that accumulate until the bug is proven.**
+
+The ANS omit_pos bug was found this way: Layer 1 (ANS symbol roundtrip) passed →
+Layer 2 (histogram serialization roundtrip) failed → root cause pinpointed immediately.
+Guessing would have taken days longer.
+
+### Rules
+
+1. **Layer your invariants from coarsest to finest:**
+   - Layer 0: Does it compile? Do existing tests pass?
+   - Layer 1: Does each component roundtrip in isolation? (encode → decode → compare)
+   - Layer 2: Does serialization roundtrip? (write to bits → read back → compare)
+   - Layer 3: Does the full pipeline produce valid output? (encode → external decoder)
+   - Layer 4: Is the output correct? (quality metrics on real photos)
+
+2. **Each layer MUST be a test that stays in the codebase:**
+   - Not a one-off printf. A `#[cfg(debug_assertions)]` check or a `#[test]` function.
+   - If you add a diagnostic check that finds a bug, keep it as a permanent invariant.
+   - Gate verbose output behind `#[cfg(feature = "debug-tokens")]`, not behind nothing.
+
+3. **When a layer passes, record that fact and move to the next layer:**
+   - Don't re-investigate passing layers. The test proves they work.
+   - Focus effort on the first failing layer — that's where the bug lives.
+
+4. **Never skip to guessing before exhausting invariant layers:**
+   - If you find yourself saying "maybe it's X", write a test that proves or disproves X.
+   - If you can't write a test, you don't understand the problem well enough yet.
+
+5. **Real data only for integration layers (3+):**
+   - Synthetic data hides bugs (see: ANS omit_pos, raw_quant=1).
+   - Use CLIC 2025 photos or `~/work/codec-corpus/` for any test above Layer 2.
 
 ## INVESTIGATION.md Maintenance (MANDATORY)
 
