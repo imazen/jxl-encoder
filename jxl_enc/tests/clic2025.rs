@@ -5183,3 +5183,68 @@ fn test_static_vs_optimize_codes() {
         "TOTAL", "", total_static, total_optimized, total_delta, total_pct
     );
 }
+
+/// Test ANS histogram serialization roundtrip with jxl-rs decoder.
+///
+/// Writes ANS distributions using our encoder and verifies jxl-rs can parse them.
+#[test]
+#[ignore]
+fn test_ans_histogram_roundtrip_jxl_rs() {
+    use jxl_enc::bit_writer::BitWriter;
+    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_enc::entropy_coding::histogram::Histogram;
+
+    // Test cases: various histogram shapes
+    let test_cases: Vec<(&str, Vec<i32>)> = vec![
+        ("single_symbol", vec![100, 0, 0, 0]),
+        ("two_symbols", vec![75, 25, 0, 0]),
+        ("uniform_4", vec![25, 25, 25, 25]),
+        ("skewed", vec![100, 50, 25, 10, 5, 3, 2, 1]),
+        (
+            "sparse",
+            vec![0, 0, 50, 0, 0, 30, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0],
+        ),
+    ];
+
+    for (name, counts) in test_cases {
+        let h = Histogram::from_counts(&counts);
+        let encoded =
+            ANSEncodingHistogram::from_histogram(&h, ANSHistogramStrategy::Precise).unwrap();
+
+        // Write the histogram
+        let mut writer = BitWriter::new();
+        encoded.write(&mut writer).unwrap();
+        let bytes = writer.finish_with_padding();
+
+        eprintln!(
+            "Test '{}': alphabet={}, method={}, omit_pos={}, {} bytes",
+            name, encoded.alphabet_size, encoded.method, encoded.omit_pos, bytes.len()
+        );
+        eprintln!("  Counts: {:?}", &encoded.counts[..encoded.alphabet_size]);
+        eprintln!("  Bytes: {:02x?}", &bytes[..bytes.len().min(16)]);
+
+        // Try to decode with jxl-rs
+        let mut br = jxl::bit_reader::BitReader::new(&bytes);
+        let log_alpha_size = 8; // We use alphabet size up to 256
+
+        match jxl::entropy_coding::ans::AnsCodes::decode(1, log_alpha_size, &mut br) {
+            Ok(codes) => {
+                eprintln!("  jxl-rs decoded successfully!");
+
+                // Verify single symbol case
+                if encoded.method == 1 {
+                    if let Some(sym) = codes.single_symbol(0) {
+                        eprintln!("  Single symbol: {}", sym);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("  jxl-rs decode FAILED: {:?}", e);
+                panic!(
+                    "ANS histogram '{}' failed to decode with jxl-rs: {:?}",
+                    name, e
+                );
+            }
+        }
+    }
+}
