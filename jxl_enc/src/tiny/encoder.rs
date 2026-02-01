@@ -110,12 +110,14 @@ impl TinyEncoder {
         // Number of sections: DC global + DC groups + AC global + AC groups
         let num_sections = 2 + num_dc_groups + num_groups;
 
-        // Convert to XYB
-        let (xyb_x, xyb_y, xyb_b) = self.convert_to_xyb(width, height, linear_rgb);
-
-        // Pad to block boundary
+        // Pad to block boundary dimensions
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
+
+        // Convert to XYB with edge-replicated padding to block boundaries.
+        // This allows SIMD to process full blocks without bounds checking.
+        let (xyb_x, xyb_y, xyb_b) =
+            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
 
         // Compute adaptive per-block quantization field and masking
         let (mut quant_field, masking) = compute_adaptive_quant_field(
@@ -170,15 +172,12 @@ impl TinyEncoder {
         // Adjust quant field for multi-block transforms (max over covered blocks)
         adjust_quant_field(&ac_strategy, &mut quant_field);
 
-        // Perform DCT and quantization
+        // Perform DCT and quantization (XYB data is padded to block boundaries)
         let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
             &xyb_x,
             &xyb_y,
             &xyb_b,
-            width,
-            height,
             padded_width,
-            padded_height,
             xsize_blocks,
             ysize_blocks,
             &params,
@@ -389,26 +388,64 @@ impl TinyEncoder {
         Ok(writer.finish_with_padding())
     }
 
-    /// Convert linear RGB to XYB color space.
-    fn convert_to_xyb(
+    /// Convert linear RGB to XYB color space with padding to block boundaries.
+    ///
+    /// Returns (xyb_x, xyb_y, xyb_b) arrays padded to `padded_width × padded_height`
+    /// using edge replication (last pixel value extended to the boundary).
+    /// This allows SIMD code to process full blocks without bounds checking.
+    fn convert_to_xyb_padded(
         &self,
         width: usize,
         height: usize,
+        padded_width: usize,
+        padded_height: usize,
         linear_rgb: &[f32],
     ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
-        let n = width * height;
-        let mut xyb_x = vec![0.0f32; n];
-        let mut xyb_y = vec![0.0f32; n];
-        let mut xyb_b = vec![0.0f32; n];
+        let padded_n = padded_width * padded_height;
+        let mut xyb_x = vec![0.0f32; padded_n];
+        let mut xyb_y = vec![0.0f32; padded_n];
+        let mut xyb_b = vec![0.0f32; padded_n];
 
-        for i in 0..n {
-            let r = linear_rgb[i * 3];
-            let g = linear_rgb[i * 3 + 1];
-            let b = linear_rgb[i * 3 + 2];
-            let (x, y, b_out) = linear_rgb_to_xyb(r, g, b);
-            xyb_x[i] = x;
-            xyb_y[i] = y;
-            xyb_b[i] = b_out;
+        // Convert the actual image pixels
+        for y in 0..height {
+            for x in 0..width {
+                let src_idx = y * width + x;
+                let dst_idx = y * padded_width + x;
+                let r = linear_rgb[src_idx * 3];
+                let g = linear_rgb[src_idx * 3 + 1];
+                let b = linear_rgb[src_idx * 3 + 2];
+                let (xv, yv, bv) = linear_rgb_to_xyb(r, g, b);
+                xyb_x[dst_idx] = xv;
+                xyb_y[dst_idx] = yv;
+                xyb_b[dst_idx] = bv;
+            }
+
+            // Pad right edge with last pixel value (edge replication)
+            if padded_width > width {
+                let last_x_idx = y * padded_width + (width - 1);
+                let last_x = xyb_x[last_x_idx];
+                let last_y = xyb_y[last_x_idx];
+                let last_b = xyb_b[last_x_idx];
+                for x in width..padded_width {
+                    let dst_idx = y * padded_width + x;
+                    xyb_x[dst_idx] = last_x;
+                    xyb_y[dst_idx] = last_y;
+                    xyb_b[dst_idx] = last_b;
+                }
+            }
+        }
+
+        // Pad bottom rows by copying the last row
+        if padded_height > height {
+            let last_row_start = (height - 1) * padded_width;
+            for y in height..padded_height {
+                let dst_row_start = y * padded_width;
+                for x in 0..padded_width {
+                    xyb_x[dst_row_start + x] = xyb_x[last_row_start + x];
+                    xyb_y[dst_row_start + x] = xyb_y[last_row_start + x];
+                    xyb_b[dst_row_start + x] = xyb_b[last_row_start + x];
+                }
+            }
         }
 
         (xyb_x, xyb_y, xyb_b)
@@ -505,10 +542,12 @@ impl TinyEncoder {
     }
 
     /// Apply DCT to a single channel at block position (bx, by).
+    ///
+    /// The `channel_data` must be padded to block boundaries (stride = padded_width).
+    /// No bounds checking is performed - caller must ensure data is properly padded.
     fn apply_dct(
         channel_data: &[f32],
-        width: usize,
-        height: usize,
+        stride: usize, // padded_width (row stride)
         bx: usize,
         by: usize,
         raw_strategy: u8,
@@ -518,10 +557,9 @@ impl TinyEncoder {
             0 => {
                 let mut block = [0.0f32; 64];
                 for dy in 0..8 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
                     for dx in 0..8 {
-                        let py = (by * BLOCK_DIM + dy).min(height - 1);
-                        let px = (bx * BLOCK_DIM + dx).min(width - 1);
-                        block[dy * 8 + dx] = channel_data[py * width + px];
+                        block[dy * 8 + dx] = channel_data[row_offset + dx];
                     }
                 }
                 let mut dct_out = [0.0f32; 64];
@@ -531,10 +569,9 @@ impl TinyEncoder {
             RAW_STRATEGY_DCT16X8 => {
                 let mut block = [0.0f32; 128];
                 for dy in 0..16 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
                     for dx in 0..8 {
-                        let py = (by * BLOCK_DIM + dy).min(height - 1);
-                        let px = (bx * BLOCK_DIM + dx).min(width - 1);
-                        block[dy * 8 + dx] = channel_data[py * width + px];
+                        block[dy * 8 + dx] = channel_data[row_offset + dx];
                     }
                 }
                 let mut dct_out = [0.0f32; 128];
@@ -544,10 +581,9 @@ impl TinyEncoder {
             RAW_STRATEGY_DCT8X16 => {
                 let mut block = [0.0f32; 128];
                 for dy in 0..8 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
                     for dx in 0..16 {
-                        let py = (by * BLOCK_DIM + dy).min(height - 1);
-                        let px = (bx * BLOCK_DIM + dx).min(width - 1);
-                        block[dy * 16 + dx] = channel_data[py * width + px];
+                        block[dy * 16 + dx] = channel_data[row_offset + dx];
                     }
                 }
                 let mut dct_out = [0.0f32; 128];
@@ -635,10 +671,7 @@ impl TinyEncoder {
         xyb_x: &[f32],
         xyb_y: &[f32],
         xyb_b: &[f32],
-        width: usize,
-        height: usize,
-        _padded_width: usize,
-        _padded_height: usize,
+        padded_width: usize, // stride for padded XYB data
         xsize_blocks: usize,
         ysize_blocks: usize,
         params: &DistanceParams,
@@ -716,8 +749,7 @@ impl TinyEncoder {
                 // ── Step 1: DCT Y channel ──────────────────────────────────
                 Self::apply_dct(
                     channels[1],
-                    width,
-                    height,
+                    padded_width,
                     bx,
                     by,
                     raw_strategy,
@@ -829,8 +861,7 @@ impl TinyEncoder {
                 for &c in &[0usize, 2] {
                     Self::apply_dct(
                         channels[c],
-                        width,
-                        height,
+                        padded_width,
                         bx,
                         by,
                         raw_strategy,
@@ -1859,17 +1890,29 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_to_xyb() {
+    fn test_convert_to_xyb_padded() {
         let encoder = TinyEncoder::new(1.0);
 
-        // Gray pixel
+        // Gray pixel (1x1 image -> padded to 8x8)
         let linear_rgb = vec![0.5, 0.5, 0.5];
-        let (x, y, b) = encoder.convert_to_xyb(1, 1, &linear_rgb);
+        let (x, y, b) = encoder.convert_to_xyb_padded(1, 1, 8, 8, &linear_rgb);
+
+        // Padded to 8x8 = 64 pixels
+        assert_eq!(x.len(), 64);
+        assert_eq!(y.len(), 64);
+        assert_eq!(b.len(), 64);
 
         // Gray should have X ≈ 0 (equal L and M)
         assert!(x[0].abs() < 0.01, "X should be near zero for gray");
         assert!(y[0] > 0.0, "Y should be positive");
         assert!(b[0] > 0.0, "B should be positive");
+
+        // Edge replication: all padded pixels should match the corner
+        for i in 0..64 {
+            assert!((x[i] - x[0]).abs() < 1e-6, "All padded X should match");
+            assert!((y[i] - y[0]).abs() < 1e-6, "All padded Y should match");
+            assert!((b[i] - b[0]).abs() < 1e-6, "All padded B should match");
+        }
     }
 
     #[test]
@@ -1909,5 +1952,136 @@ mod tests {
         // Check signature
         assert_eq!(bytes[0], 0xFF);
         assert_eq!(bytes[1], 0x0A);
+    }
+
+    /// Compute a simple hash of a byte slice for output locking.
+    fn hash_bytes(bytes: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Hash-locked test for 8x8 gradient image.
+    /// This test ensures the encoder output doesn't change unexpectedly.
+    #[test]
+    fn test_hash_lock_8x8_gradient() {
+        let encoder = TinyEncoder::new(1.0);
+        let width = 8;
+        let height = 8;
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+
+        // Simple gradient: R increases with x, G with y
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                linear_rgb[idx] = x as f32 / 7.0; // R
+                linear_rgb[idx + 1] = y as f32 / 7.0; // G
+                linear_rgb[idx + 2] = 0.5; // B
+            }
+        }
+
+        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let hash = hash_bytes(&bytes);
+
+        // Lock the hash - if this changes, the encoding has changed
+        const EXPECTED_HASH: u64 = 0xa4b811681eee82f6;
+        assert_eq!(
+            hash,
+            EXPECTED_HASH,
+            "8x8 gradient hash mismatch: got {:#x}, expected {:#x}. \
+             Output size: {} bytes. If intentional, update EXPECTED_HASH.",
+            hash,
+            EXPECTED_HASH,
+            bytes.len()
+        );
+    }
+
+    /// Hash-locked test for 16x16 solid color image.
+    #[test]
+    fn test_hash_lock_16x16_solid() {
+        let encoder = TinyEncoder::new(1.0);
+        let width = 16;
+        let height = 16;
+        let linear_rgb = vec![0.3f32; width * height * 3]; // gray
+
+        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let hash = hash_bytes(&bytes);
+
+        const EXPECTED_HASH: u64 = 0x9496af16f5397719;
+        assert_eq!(
+            hash,
+            EXPECTED_HASH,
+            "16x16 solid hash mismatch: got {:#x}, expected {:#x}. \
+             Output size: {} bytes. If intentional, update EXPECTED_HASH.",
+            hash,
+            EXPECTED_HASH,
+            bytes.len()
+        );
+    }
+
+    /// Hash-locked test for 64x64 checkerboard pattern.
+    #[test]
+    fn test_hash_lock_64x64_checkerboard() {
+        let encoder = TinyEncoder::new(1.0);
+        let width = 64;
+        let height = 64;
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+
+        // 8x8 checkerboard pattern
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                let checker = ((x / 8) + (y / 8)) % 2 == 0;
+                let val = if checker { 0.8 } else { 0.2 };
+                linear_rgb[idx] = val;
+                linear_rgb[idx + 1] = val;
+                linear_rgb[idx + 2] = val;
+            }
+        }
+
+        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let hash = hash_bytes(&bytes);
+
+        const EXPECTED_HASH: u64 = 0x9f2c5926cabb2651;
+        assert_eq!(
+            hash,
+            EXPECTED_HASH,
+            "64x64 checkerboard hash mismatch: got {:#x}, expected {:#x}. \
+             Output size: {} bytes. If intentional, update EXPECTED_HASH.",
+            hash,
+            EXPECTED_HASH,
+            bytes.len()
+        );
+    }
+
+    /// Hash-locked test for non-power-of-two size (tests padding).
+    #[test]
+    fn test_hash_lock_13x17_noise() {
+        let encoder = TinyEncoder::new(1.0);
+        let width = 13;
+        let height = 17;
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+
+        // Deterministic pseudo-random pattern
+        let mut seed = 12345u64;
+        for i in 0..linear_rgb.len() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            linear_rgb[i] = ((seed >> 32) as f32) / (u32::MAX as f32);
+        }
+
+        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let hash = hash_bytes(&bytes);
+
+        const EXPECTED_HASH: u64 = 0xe648bda6b13a5dd9;
+        assert_eq!(
+            hash,
+            EXPECTED_HASH,
+            "13x17 noise hash mismatch: got {:#x}, expected {:#x}. \
+             Output size: {} bytes. If intentional, update EXPECTED_HASH.",
+            hash,
+            EXPECTED_HASH,
+            bytes.len()
+        );
     }
 }
