@@ -9,6 +9,7 @@
 //! encoding implementations for compressing symbols in the JXL bitstream.
 
 pub mod ans;
+pub mod ans_decode;
 pub mod cluster;
 pub mod context_map;
 pub mod histogram;

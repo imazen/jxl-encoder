@@ -48,6 +48,9 @@ pub enum Error {
     #[error("ANS encoding error: {0}")]
     AnsEncodingError(String),
 
+    #[error("Bitstream error: {0}")]
+    Bitstream(String),
+
     #[error("Too many unique symbols: found {found}, max {max} (minimal encoder limit)")]
     TooManySymbols { found: usize, max: usize },
 

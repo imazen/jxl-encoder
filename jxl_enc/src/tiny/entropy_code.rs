@@ -13,7 +13,7 @@ use super::token::{Token, UintCoder};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Number of code length codes used in Huffman tree serialization.
 const CODE_LENGTH_CODES: usize = 18;
@@ -1065,6 +1065,8 @@ pub fn build_entropy_code_ans_with_options(
         ClusteringType::Fast
     };
 
+    // Limit to 8 clusters to use simple context map format
+    // (simple format supports max 3 bits per entry = 8 histograms)
     let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, 8)
         .expect("ANS clustering failed");
 
@@ -1097,9 +1099,25 @@ pub fn build_entropy_code_ans_with_options(
 
 /// Write ANS entropy code header (context map + distributions).
 pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
+    #[cfg(feature = "debug-tokens")]
+    {
+        eprintln!("write_entropy_code_ans:");
+        eprintln!("  num_contexts: {}", code.context_map.len());
+        eprintln!("  num_histograms: {}", code.histograms.len());
+        eprintln!("  context_map: {:?}", &code.context_map[..code.context_map.len().min(20)]);
+        for (i, h) in code.histograms.iter().enumerate() {
+            eprintln!("  histogram[{}]: alphabet_size={}, method={}, counts[..8]={:?}",
+                     i, h.alphabet_size, h.method, &h.counts[..h.counts.len().min(8)]);
+        }
+    }
+
     // Write context map (same format as Huffman)
     // Note: LZ77 is already written by the caller (write_dc_global or write_ac_global)
+    let cm_start = writer.bits_written();
     write_context_map_for_ans(code, writer)?;
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("  context_map: {} bits", writer.bits_written() - cm_start);
 
     // Write use_prefix_code = 0 (use ANS, not Huffman)
     writer.write(1, 0)?;
@@ -1107,37 +1125,53 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
     // Write log_alpha_size - 5 (we use 6, so write 1)
     writer.write(2, (ANS_LOG_ALPHA_SIZE - 5) as u64)?;
 
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("  use_prefix_code=0, log_alpha_size={}", ANS_LOG_ALPHA_SIZE);
+
     // Write HybridUint configs for each histogram
+    let cfg_start = writer.bits_written();
     for _ in &code.histograms {
         write_hybrid_uint_config(writer)?;
     }
 
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("  HybridUint configs: {} bits ({} histograms)",
+             writer.bits_written() - cfg_start, code.histograms.len());
+
     // Write ANS distributions
-    for histo in &code.histograms {
+    let hist_start = writer.bits_written();
+    for (i, histo) in code.histograms.iter().enumerate() {
+        let h_start = writer.bits_written();
         histo.write(writer)?;
+        #[cfg(feature = "debug-tokens")]
+        eprintln!("  histogram[{}]: {} bits", i, writer.bits_written() - h_start);
     }
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("  All histograms: {} bits", writer.bits_written() - hist_start);
 
     Ok(())
 }
 
 /// Write context map for ANS entropy code.
 fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
-    let num_contexts = code.context_map.len();
     let num_histograms = code.histograms.len();
 
     if num_histograms == 1 {
         // Simple context map: all contexts map to histogram 0
         writer.write(1, 1)?; // simple_context_map = true
         writer.write(2, 0)?; // nbits = 0
-    } else if num_histograms <= 4
-        && num_contexts <= 256
+    } else if num_histograms <= 8
         && code.context_map.iter().all(|&c| (c as usize) < num_histograms)
     {
         // Simple context map with multiple histograms
+        // bits_per_entry: 0 = all zeros (handled above), 1 = 2 histos, 2 = 4 histos, 3 = 8 histos
         let nbits = if num_histograms <= 2 {
             1
-        } else {
+        } else if num_histograms <= 4 {
             2
+        } else {
+            3
         };
         writer.write(1, 1)?; // simple_context_map = true
         writer.write(2, nbits as u64)?;
@@ -1146,29 +1180,11 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
             writer.write(nbits, ctx as u64)?;
         }
     } else {
-        // Complex context map - use the same encoding as Huffman
-        // This is a simplified version; full implementation would use entropy coding
-        writer.write(1, 0)?; // simple_context_map = false
-
-        // Write using flat prefix code (simplest)
-        // num_histograms - 1 using VarLenUint8
-        write_var_len_uint16((num_histograms - 1).min(255), writer)?;
-
-        // Write map entries - for now use simple encoding
-        // (Full implementation would use move-to-front + entropy coding)
-        for &ctx in &code.context_map {
-            // Write each entry as a simple integer
-            let bits_needed = if num_histograms <= 2 {
-                1
-            } else if num_histograms <= 4 {
-                2
-            } else if num_histograms <= 8 {
-                3
-            } else {
-                4
-            };
-            writer.write(bits_needed, ctx as u64)?;
-        }
+        // Complex context map is not yet implemented for ANS
+        return Err(Error::NotImplemented(format!(
+            "ANS context map with {} histograms (max 8)",
+            num_histograms
+        )));
     }
 
     Ok(())
@@ -1204,8 +1220,15 @@ pub fn write_tokens_ans(
 ) -> Result<()> {
     let mut encoder = AnsEncoder::new();
 
+    #[cfg(feature = "debug-tokens")]
+    {
+        eprintln!("write_tokens_ans: {} tokens, {} distributions, context_map len={}",
+                  tokens.len(), code.distributions.len(), code.context_map.len());
+        eprintln!("  initial state: 0x{:08x}", encoder.state());
+    }
+
     // Process tokens in reverse order
-    for token in tokens.iter().rev() {
+    for (i, token) in tokens.iter().rev().enumerate() {
         let ctx = token.context as usize;
         let encoded = UintCoder::encode(token.value);
 
@@ -1228,8 +1251,18 @@ pub fn write_tokens_ans(
                 encoded.token, ctx, dist_idx
             )
         });
+
+        #[cfg(feature = "debug-tokens")]
+        if i < 5 || i >= tokens.len() - 3 {
+            eprintln!("  token[{}]: ctx={}, val={}, tok={}, freq={}, state before=0x{:08x}",
+                      tokens.len() - 1 - i, ctx, token.value, encoded.token, info.freq, encoder.state());
+        }
+
         encoder.put_symbol(info);
     }
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("  final state: 0x{:08x}", encoder.state());
 
     // Finalize: writes state + reversed bits
     encoder.finalize(writer)?;
