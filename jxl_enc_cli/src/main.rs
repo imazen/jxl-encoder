@@ -58,6 +58,10 @@ struct Args {
     #[arg(long)]
     ans: bool,
 
+    /// Disable custom coefficient ordering
+    #[arg(long)]
+    no_custom_orders: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -118,6 +122,9 @@ fn main() {
                 }
                 if args.ans {
                     tiny.use_ans = true;
+                }
+                if args.no_custom_orders {
+                    tiny.custom_orders = false;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder

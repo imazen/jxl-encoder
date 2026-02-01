@@ -23,6 +23,7 @@ mod ac_strategy;
 mod adaptive_quant;
 mod chroma_from_luma;
 mod cluster;
+mod coeff_order;
 mod common;
 mod context_tree;
 mod dc_coding;

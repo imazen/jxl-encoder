@@ -193,6 +193,7 @@ pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
 /// * `predicted_nzeros` - Predicted nzeros from neighbors
 /// * `ac_code` - Entropy code for AC coefficients
 /// * `writer` - Bitstream writer
+#[allow(clippy::too_many_arguments)]
 pub fn tokenize_ac_coefficients(
     quantized: &[i32],
     channel: usize,
@@ -201,6 +202,7 @@ pub fn tokenize_ac_coefficients(
     predicted_nzeros: i32,
     ac_code: &EntropyCode,
     writer: &mut BitWriter,
+    custom_order: Option<&[u32]>,
 ) -> Result<()> {
     let (cx, cy, covered_blocks, log2_covered_blocks, strategy_code) =
         ac_strategy_info(raw_strategy);
@@ -232,8 +234,8 @@ pub fn tokenize_ac_coefficients(
         );
     }
 
-    // Get coefficient order
-    let order = get_coeff_order(raw_strategy);
+    // Get coefficient order (custom or default)
+    let order = custom_order.unwrap_or_else(|| get_coeff_order(raw_strategy));
 
     // Track remaining non-zeros and previous coefficient status
     let mut nzeros_left = nzeros as usize;
@@ -278,6 +280,7 @@ pub fn collect_ac_coefficients(
     raw_strategy: u8,
     nzeros: u8,
     predicted_nzeros: i32,
+    custom_order: Option<&[u32]>,
 ) -> Vec<Token> {
     let (cx, cy, covered_blocks, log2_covered_blocks, strategy_code) =
         ac_strategy_info(raw_strategy);
@@ -293,7 +296,8 @@ pub fn collect_ac_coefficients(
     // Write number of non-zeros as first token
     tokens.push(Token::new(nzero_ctx as u32, nzeros as u32));
 
-    let order = get_coeff_order(raw_strategy);
+    // Get coefficient order (custom or default)
+    let order = custom_order.unwrap_or_else(|| get_coeff_order(raw_strategy));
 
     let mut nzeros_left = nzeros as usize;
     let mut prev = if nzeros_left > size / 16 { 0 } else { 1 };
