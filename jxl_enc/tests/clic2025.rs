@@ -3430,8 +3430,9 @@ fn test_multigroup_quality() {
                 let cpp_dec = format!("{}/cpp_{}_d{:.1}_dec.png", work_dir, i, d);
                 let d_str = format!("{}", d);
                 if run(&cjxl_tiny, &[&img.pfm_path, &cpp_jxl, "-d", &d_str]) {
-                    cpp_size =
-                        std::fs::metadata(&cpp_jxl).map(|m| m.len() as usize).unwrap_or(0);
+                    cpp_size = std::fs::metadata(&cpp_jxl)
+                        .map(|m| m.len() as usize)
+                        .unwrap_or(0);
                     run(&djxl, &[&cpp_jxl, &cpp_dec]);
                     cpp_s = ssim2(&ssim_tool, &img.png_path, &cpp_dec);
                 }
@@ -3468,13 +3469,25 @@ fn test_multigroup_quality() {
                     cpp_sizes.push(cpp_size);
                     eprintln!(
                         "img{}  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2} {:>+7.2}",
-                        i, cs, cpp_size, rs, ron_size, fs, roff_size,
-                        rs - cs, rs - fs
+                        i,
+                        cs,
+                        cpp_size,
+                        rs,
+                        ron_size,
+                        fs,
+                        roff_size,
+                        rs - cs,
+                        rs - fs
                     );
                 } else {
                     eprintln!(
                         "img{}  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2}",
-                        i, rs, ron_size, fs, roff_size, rs - fs
+                        i,
+                        rs,
+                        ron_size,
+                        fs,
+                        roff_size,
+                        rs - fs
                     );
                 }
             }
@@ -3492,16 +3505,213 @@ fn test_multigroup_quality() {
                 let cpp_sz = cpp_sizes.iter().sum::<usize>() / cpp_sizes.len();
                 eprintln!(
                     "AVG   {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2} {:>+7.2}  ({:+.1}% size ON vs OFF)",
-                    cpp_avg, cpp_sz, ron_avg, ron_sz, roff_avg, roff_sz,
-                    ron_avg - cpp_avg, ron_avg - roff_avg, size_pct
+                    cpp_avg,
+                    cpp_sz,
+                    ron_avg,
+                    ron_sz,
+                    roff_avg,
+                    roff_sz,
+                    ron_avg - cpp_avg,
+                    ron_avg - roff_avg,
+                    size_pct
                 );
             } else {
                 eprintln!(
                     "AVG   {:>8.2} {:>7}B  {:>8.2} {:>7}B  {:>+7.2}  ({:+.1}% size)",
-                    ron_avg, ron_sz, roff_avg, roff_sz, ron_avg - roff_avg, size_pct
+                    ron_avg,
+                    ron_sz,
+                    roff_avg,
+                    roff_sz,
+                    ron_avg - roff_avg,
+                    size_pct
                 );
             }
         }
         eprintln!();
     }
+}
+
+/// Compare enhanced vs simple histogram clustering compression.
+///
+/// This test compares file sizes when using the enhanced clustering
+/// (pair merge refinement) vs the default simple clustering.
+///
+/// Note: The enhanced clustering was designed for ANS entropy coding and may not
+/// provide benefits with Huffman coding. This test verifies both produce valid
+/// output and documents the size difference.
+#[test]
+#[ignore]
+fn test_enhanced_clustering_compression() {
+    use std::path::PathBuf;
+
+    // Load real test images from CLIC 2025 1024x1024 crops
+    let corpus_dir =
+        PathBuf::from(std::env::var("HOME").unwrap()).join("work/codec-corpus/clic2025-1024");
+
+    let images: Vec<_> = match std::fs::read_dir(&corpus_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .is_some_and(|ext| ext == "png" || ext == "jpg")
+            })
+            .take(5) // Test with first 5 images
+            .collect(),
+        Err(_) => {
+            eprintln!("Corpus dir {:?} not found, skipping test", corpus_dir);
+            return;
+        }
+    };
+
+    if images.is_empty() {
+        eprintln!("No test images found in {:?}, skipping test", corpus_dir);
+        return;
+    }
+
+    // Find djxl for decoding - check common locations
+    let home = std::env::var("HOME").unwrap();
+    let djxl_candidates = [
+        format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home),
+        "/usr/local/bin/djxl".to_string(),
+        "/usr/bin/djxl".to_string(),
+    ];
+
+    let djxl = djxl_candidates
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .cloned()
+        .or_else(|| {
+            // Try which as a fallback
+            std::process::Command::new("which")
+                .arg("djxl")
+                .output()
+                .ok()
+                .and_then(|o| {
+                    if o.status.success() {
+                        String::from_utf8(o.stdout)
+                            .ok()
+                            .map(|s| s.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    let djxl = match djxl {
+        Some(p) => p,
+        None => {
+            eprintln!("djxl not found, skipping test");
+            return;
+        }
+    };
+
+    eprintln!("\n=== Enhanced Clustering Compression Test ===\n");
+    eprintln!(
+        "{:<30} {:>12} {:>12} {:>10}",
+        "Image", "Simple", "Enhanced", "Savings"
+    );
+    eprintln!("{}", "-".repeat(70));
+
+    let mut total_simple = 0usize;
+    let mut total_enhanced = 0usize;
+    let distances = [1.0f32];
+
+    for entry in &images {
+        let path = entry.path();
+        let name = path.file_name().unwrap().to_string_lossy();
+
+        // Load image
+        let img = image::open(&path).unwrap().to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let linear_rgb: Vec<f32> = img
+            .pixels()
+            .flat_map(|p| {
+                // sRGB to linear conversion
+                let r = (p[0] as f32 / 255.0).powf(2.2);
+                let g = (p[1] as f32 / 255.0).powf(2.2);
+                let b = (p[2] as f32 / 255.0).powf(2.2);
+                [r, g, b]
+            })
+            .collect();
+
+        for &distance in &distances {
+            // Encode with simple clustering
+            let mut enc_simple = jxl_enc::tiny::TinyEncoder::new(distance);
+            enc_simple.optimize_codes = true;
+            enc_simple.enhanced_clustering = false;
+            let bytes_simple = enc_simple.encode(w, h, &linear_rgb).unwrap();
+
+            // Encode with enhanced clustering
+            let mut enc_enhanced = jxl_enc::tiny::TinyEncoder::new(distance);
+            enc_enhanced.optimize_codes = true;
+            enc_enhanced.enhanced_clustering = true;
+            let bytes_enhanced = enc_enhanced.encode(w, h, &linear_rgb).unwrap();
+
+            let simple_size = bytes_simple.len();
+            let enhanced_size = bytes_enhanced.len();
+            let savings_pct =
+                (simple_size as f64 - enhanced_size as f64) / simple_size as f64 * 100.0;
+
+            total_simple += simple_size;
+            total_enhanced += enhanced_size;
+
+            eprintln!(
+                "{:<30} {:>10} B {:>10} B {:>+9.2}%",
+                name.chars().take(30).collect::<String>(),
+                simple_size,
+                enhanced_size,
+                savings_pct
+            );
+
+            // Verify both decode correctly
+            let work_dir = "/tmp/enhanced_clustering_test";
+            std::fs::create_dir_all(work_dir).ok();
+
+            let simple_jxl = format!("{}/simple.jxl", work_dir);
+            let enhanced_jxl = format!("{}/enhanced.jxl", work_dir);
+            let simple_dec = format!("{}/simple_dec.png", work_dir);
+            let enhanced_dec = format!("{}/enhanced_dec.png", work_dir);
+
+            std::fs::write(&simple_jxl, &bytes_simple).unwrap();
+            std::fs::write(&enhanced_jxl, &bytes_enhanced).unwrap();
+
+            let s1 = std::process::Command::new(&djxl)
+                .args([&simple_jxl, &simple_dec])
+                .output();
+            let s2 = std::process::Command::new(&djxl)
+                .args([&enhanced_jxl, &enhanced_dec])
+                .output();
+
+            assert!(
+                s1.is_ok() && s1.as_ref().unwrap().status.success(),
+                "Simple clustering output failed to decode"
+            );
+            assert!(
+                s2.is_ok() && s2.as_ref().unwrap().status.success(),
+                "Enhanced clustering output failed to decode"
+            );
+        }
+    }
+
+    eprintln!("{}", "-".repeat(70));
+    let total_savings_pct =
+        (total_simple as f64 - total_enhanced as f64) / total_simple as f64 * 100.0;
+    eprintln!(
+        "{:<30} {:>10} B {:>10} B {:>+9.2}%",
+        "TOTAL", total_simple, total_enhanced, total_savings_pct
+    );
+    eprintln!();
+
+    // The enhanced clustering was designed for ANS entropy coding, not Huffman.
+    // With Huffman coding, it may not provide benefits and might slightly increase size
+    // due to the cost model mismatch. Just verify both modes produce valid output
+    // and the size difference is within a reasonable range (±5%).
+    let savings = total_savings_pct;
+    eprintln!("Overall difference: {:.2}%", savings);
+    assert!(
+        savings.abs() < 5.0,
+        "Size difference should be within ±5%, got {:.2}%",
+        savings
+    );
 }

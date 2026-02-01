@@ -21,7 +21,7 @@ use super::dc_coding::{
     write_dc_tokens_region,
 };
 use super::dct::{dc_from_dct_8x16, dc_from_dct_16x8, dct_8x8, dct_8x16, dct_16x8};
-use super::entropy_code::{build_entropy_code, write_tokens};
+use super::entropy_code::{build_entropy_code_with_options, write_tokens};
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
@@ -46,6 +46,13 @@ pub struct TinyEncoder {
     /// When false (default), uses pre-computed static codes (streaming, single-pass).
     /// When true, uses a two-pass mode: collect tokens first, build optimal codes, then write.
     pub optimize_codes: bool,
+    /// Use enhanced histogram clustering with pair merge refinement.
+    /// Only effective when `optimize_codes` is true.
+    ///
+    /// Note: The enhanced clustering algorithm was designed for ANS entropy coding
+    /// and may not provide benefits (or may slightly increase size) when used with
+    /// Huffman coding. This option is experimental.
+    pub enhanced_clustering: bool,
     /// Enable chroma-from-luma (CfL) optimization.
     /// When true (default), computes per-tile ytox/ytob values via least-squares fitting.
     /// When false, uses ytox=0, ytob=0 (no chroma decorrelation).
@@ -61,6 +68,7 @@ impl Default for TinyEncoder {
         Self {
             distance: 1.0,
             optimize_codes: false,
+            enhanced_clustering: false,
             cfl_enabled: true,
             ac_strategy_enabled: true,
         }
@@ -73,6 +81,7 @@ impl TinyEncoder {
         Self {
             distance,
             optimize_codes: false,
+            enhanced_clustering: false,
             cfl_enabled: true,
             ac_strategy_enabled: true,
         }
@@ -1624,7 +1633,11 @@ impl TinyEncoder {
         for section in &ac_metadata_tokens_per_group {
             all_dc_tokens.extend_from_slice(section);
         }
-        let dc_owned_code = build_entropy_code(&all_dc_tokens, super::dc_coding::NUM_DC_CONTEXTS);
+        let dc_owned_code = build_entropy_code_with_options(
+            &all_dc_tokens,
+            super::dc_coding::NUM_DC_CONTEXTS,
+            self.enhanced_clustering,
+        );
 
         // Merge all AC section tokens for frequency counting
         let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
@@ -1632,7 +1645,11 @@ impl TinyEncoder {
         for section in &ac_section_tokens {
             all_ac_tokens.extend_from_slice(section);
         }
-        let ac_owned_code = build_entropy_code(&all_ac_tokens, super::ac_context::NUM_AC_CONTEXTS);
+        let ac_owned_code = build_entropy_code_with_options(
+            &all_ac_tokens,
+            super::ac_context::NUM_AC_CONTEXTS,
+            self.enhanced_clustering,
+        );
 
         let dc_code = dc_owned_code.as_entropy_code();
         let ac_code = ac_owned_code.as_entropy_code();
