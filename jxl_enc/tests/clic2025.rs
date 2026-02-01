@@ -1423,8 +1423,9 @@ fn test_compare_with_libjxl_tiny() {
         }
     }
 
-    // Encode with our encoder
-    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    // Encode with our encoder (static codes for byte-exact parity with C++)
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.optimize_codes = false;
     let bytes = encoder.encode(64, 64, &linear_rgb).unwrap();
     eprintln!("Our encoder: {} bytes", bytes.len());
 
@@ -2620,8 +2621,9 @@ fn test_compare_libjxl_tiny() {
         println!("Could not read libjxl-tiny output file");
     }
 
-    // Encode with our encoder
-    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    // Encode with our encoder (static codes for byte-exact parity with C++)
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.optimize_codes = false;
     let our_bytes = encoder.encode(size, size, &linear_rgb).expect("encode");
     println!("\nOur encoder: {} bytes", our_bytes.len());
 
@@ -4855,4 +4857,329 @@ fn srgb_to_linear_f32(c: f32) -> f32 {
     } else {
         ((c + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Compare static vs dynamic Huffman codes across CLIC 2025 images.
+///
+/// Verifies that quality metrics (SSIM2, butteraugli) are identical between modes
+/// (same quantized coefficients, only entropy coding differs) and measures file
+/// size savings from dynamic codes.
+///
+/// Source images: ~/work/codec-corpus/clic2025-1024/ (first 5 PNGs, sorted)
+#[test]
+#[ignore]
+fn test_static_vs_dynamic_sweep() {
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+    use imgref::Img;
+    use rgb::RGB;
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+
+    let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
+        Ok(e) => e
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+            .collect(),
+        Err(_) => {
+            eprintln!("Corpus dir {} not found, skipping test", corpus_dir);
+            return;
+        }
+    };
+    entries.sort_by_key(|e| e.path());
+    let entries: Vec<_> = entries.into_iter().take(5).collect();
+    assert!(!entries.is_empty(), "no PNGs in {}", corpus_dir);
+
+    let distances = [0.25f32, 0.5, 1.0, 2.0];
+    let crop_size: u32 = 256;
+    let ba_params = ButteraugliParams::default();
+
+    eprintln!("\n=== Static vs Dynamic Huffman Codes ===");
+    eprintln!(
+        "Images: {} x {}x{} crops | Distances: {:?}\n",
+        entries.len(),
+        crop_size,
+        crop_size,
+        distances
+    );
+    eprintln!(
+        "{:<8} {:>6} {:>8} {:>8} {:>8} {:>8} {:>10} {:>10} {:>8}",
+        "img", "dist", "st_size", "dy_size", "saving", "save%", "st_ssim2", "dy_ssim2", "ba_diff"
+    );
+    eprintln!("{}", "-".repeat(90));
+
+    let mut total_static_bytes: u64 = 0;
+    let mut total_dynamic_bytes: u64 = 0;
+    let mut max_ssim2_diff: f64 = 0.0;
+    let mut max_ba_diff: f64 = 0.0;
+    let mut count = 0;
+
+    for (i, entry) in entries.iter().enumerate() {
+        let img = image::open(entry.path()).unwrap();
+        let (w, h) = img.dimensions();
+        let cx = (w.saturating_sub(crop_size)) / 2;
+        let cy = (h.saturating_sub(crop_size)) / 2;
+        let cw = crop_size.min(w);
+        let ch = crop_size.min(h);
+        let cropped = img.crop_imm(cx, cy, cw, ch);
+        let rgb = cropped.to_rgb8();
+
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                [
+                    srgb_to_linear(p[0]),
+                    srgb_to_linear(p[1]),
+                    srgb_to_linear(p[2]),
+                ]
+            })
+            .collect();
+
+        let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+        let orig_linear: Vec<RGB<f32>> = linear_rgb
+            .chunks(3)
+            .map(|c| RGB::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img = Img::new(orig_linear, cw as usize, ch as usize);
+
+        for &d in &distances {
+            // Encode with static codes
+            let mut enc_static = jxl_enc::tiny::TinyEncoder::new(d);
+            enc_static.optimize_codes = false;
+            let bytes_static = enc_static
+                .encode(cw as usize, ch as usize, &linear_rgb)
+                .unwrap();
+
+            // Encode with dynamic codes
+            let mut enc_dynamic = jxl_enc::tiny::TinyEncoder::new(d);
+            enc_dynamic.optimize_codes = true;
+            let bytes_dynamic = enc_dynamic
+                .encode(cw as usize, ch as usize, &linear_rgb)
+                .unwrap();
+
+            // Decode static
+            let reader_s = Cursor::new(&bytes_static);
+            let img_s = jxl_oxide::JxlImage::builder().read(reader_s).unwrap();
+            let render_s = img_s.render_frame(0).unwrap();
+            let buf_s = render_s.image_all_channels().buf().to_vec();
+            let ws = render_s.image_all_channels().width();
+            let hs = render_s.image_all_channels().height();
+
+            // Decode dynamic
+            let reader_d = Cursor::new(&bytes_dynamic);
+            let img_d = jxl_oxide::JxlImage::builder().read(reader_d).unwrap();
+            let render_d = img_d.render_frame(0).unwrap();
+            let buf_d = render_d.image_all_channels().buf().to_vec();
+
+            // SSIM2 for static
+            let decoded_srgb_s: Vec<[u8; 3]> = buf_s
+                .chunks(3)
+                .map(|c| {
+                    [
+                        (c[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        (c[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        (c[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                    ]
+                })
+                .collect();
+            let orig_ssim = imgref::Img::new(original_srgb.clone(), cw as usize, ch as usize);
+            let dec_ssim_s = imgref::Img::new(decoded_srgb_s, ws, hs);
+            let ssim2_s = fast_ssim2::compute_ssimulacra2(orig_ssim.as_ref(), dec_ssim_s.as_ref())
+                .unwrap_or(f64::NAN);
+
+            // SSIM2 for dynamic
+            let decoded_srgb_d: Vec<[u8; 3]> = buf_d
+                .chunks(3)
+                .map(|c| {
+                    [
+                        (c[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        (c[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        (c[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                    ]
+                })
+                .collect();
+            let dec_ssim_d = imgref::Img::new(decoded_srgb_d, ws, hs);
+            let ssim2_d = fast_ssim2::compute_ssimulacra2(orig_ssim.as_ref(), dec_ssim_d.as_ref())
+                .unwrap_or(f64::NAN);
+
+            // Butteraugli for both
+            let dec_linear_s: Vec<RGB<f32>> = buf_s
+                .chunks(3)
+                .map(|c| RGB::new(c[0].max(0.0), c[1].max(0.0), c[2].max(0.0)))
+                .collect();
+            let dec_img_s = Img::new(dec_linear_s, ws, hs);
+            let ba_s = butteraugli_linear(orig_img.as_ref(), dec_img_s.as_ref(), &ba_params)
+                .map(|r| r.score as f64)
+                .unwrap_or(f64::NAN);
+
+            let dec_linear_d: Vec<RGB<f32>> = buf_d
+                .chunks(3)
+                .map(|c| RGB::new(c[0].max(0.0), c[1].max(0.0), c[2].max(0.0)))
+                .collect();
+            let dec_img_d = Img::new(dec_linear_d, ws, hs);
+            let ba_d = butteraugli_linear(orig_img.as_ref(), dec_img_d.as_ref(), &ba_params)
+                .map(|r| r.score as f64)
+                .unwrap_or(f64::NAN);
+
+            let size_s = bytes_static.len();
+            let size_d = bytes_dynamic.len();
+            let saving = size_s as i64 - size_d as i64;
+            let save_pct = if size_s > 0 {
+                saving as f64 / size_s as f64 * 100.0
+            } else {
+                0.0
+            };
+            let ssim_diff = (ssim2_s - ssim2_d).abs();
+            let ba_diff = (ba_s - ba_d).abs();
+
+            eprintln!(
+                "img{:<4} {:>6.2} {:>8} {:>8} {:>+8} {:>7.1}% {:>10.2} {:>10.2} {:>8.4}",
+                i, d, size_s, size_d, saving, save_pct, ssim2_s, ssim2_d, ba_diff
+            );
+
+            total_static_bytes += size_s as u64;
+            total_dynamic_bytes += size_d as u64;
+            if ssim_diff.is_finite() {
+                max_ssim2_diff = max_ssim2_diff.max(ssim_diff);
+            }
+            if ba_diff.is_finite() {
+                max_ba_diff = max_ba_diff.max(ba_diff);
+            }
+            count += 1;
+        }
+    }
+
+    let total_saving = total_static_bytes as i64 - total_dynamic_bytes as i64;
+    let total_save_pct = if total_static_bytes > 0 {
+        total_saving as f64 / total_static_bytes as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    eprintln!("{}", "-".repeat(90));
+    eprintln!(
+        "TOTAL: {} static, {} dynamic, {:+} saved ({:.1}%)",
+        total_static_bytes, total_dynamic_bytes, total_saving, total_save_pct
+    );
+    eprintln!(
+        "Max SSIM2 difference: {:.4} | Max butteraugli difference: {:.4}",
+        max_ssim2_diff, max_ba_diff
+    );
+    eprintln!("Measurements: {}", count);
+
+    // Quality should be identical (same quantized coefficients)
+    // Allow tiny floating-point tolerance from different entropy decode paths
+    assert!(
+        max_ssim2_diff < 0.5,
+        "SSIM2 diverged between static and dynamic codes: max diff = {:.4}",
+        max_ssim2_diff
+    );
+    assert!(
+        max_ba_diff < 0.1,
+        "Butteraugli diverged between static and dynamic codes: max diff = {:.4}",
+        max_ba_diff
+    );
+}
+
+/// Compare file sizes between static and dynamic Huffman codes.
+///
+/// Source images: ~/work/codec-corpus/clic2025-1024/ (first 5 PNGs, sorted)
+#[test]
+#[ignore]
+fn test_static_vs_optimize_codes() {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+
+    let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
+        Ok(e) => e
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+            .collect(),
+        Err(_) => {
+            eprintln!("Corpus dir {} not found, skipping test", corpus_dir);
+            return;
+        }
+    };
+    entries.sort_by_key(|e| e.path());
+    let entries: Vec<_> = entries.into_iter().take(5).collect();
+    assert!(!entries.is_empty(), "no PNGs in {}", corpus_dir);
+
+    let distances = [0.25f32, 0.5, 1.0, 2.0];
+    let crop_size: u32 = 256;
+
+    eprintln!("\n=== Static vs Optimized Huffman Code Sizes ===\n");
+    eprintln!(
+        "{:<8} {:>6} {:>10} {:>10} {:>+10} {:>8}",
+        "img", "dist", "static", "optimized", "delta", "saving%"
+    );
+    eprintln!("{}", "-".repeat(56));
+
+    let mut total_static: u64 = 0;
+    let mut total_optimized: u64 = 0;
+
+    for (i, entry) in entries.iter().enumerate() {
+        let img = image::open(entry.path()).unwrap();
+        let (w, h) = img.dimensions();
+        let cx = (w.saturating_sub(crop_size)) / 2;
+        let cy = (h.saturating_sub(crop_size)) / 2;
+        let cw = crop_size.min(w);
+        let ch = crop_size.min(h);
+        let cropped = img.crop_imm(cx, cy, cw, ch);
+        let rgb = cropped.to_rgb8();
+
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                [
+                    (p[0] as f32 / 255.0).powf(2.2),
+                    (p[1] as f32 / 255.0).powf(2.2),
+                    (p[2] as f32 / 255.0).powf(2.2),
+                ]
+            })
+            .collect();
+
+        for &d in &distances {
+            let mut enc_static = jxl_enc::tiny::TinyEncoder::new(d);
+            enc_static.optimize_codes = false;
+            let static_bytes = enc_static
+                .encode(cw as usize, ch as usize, &linear_rgb)
+                .unwrap();
+
+            let mut enc_opt = jxl_enc::tiny::TinyEncoder::new(d);
+            enc_opt.optimize_codes = true;
+            let opt_bytes = enc_opt
+                .encode(cw as usize, ch as usize, &linear_rgb)
+                .unwrap();
+
+            let s = static_bytes.len();
+            let o = opt_bytes.len();
+            let delta = s as i64 - o as i64;
+            let pct = if s > 0 {
+                delta as f64 / s as f64 * 100.0
+            } else {
+                0.0
+            };
+
+            eprintln!(
+                "img{:<4} {:>6.2} {:>10} {:>10} {:>+10} {:>7.1}%",
+                i, d, s, o, delta, pct
+            );
+
+            total_static += s as u64;
+            total_optimized += o as u64;
+        }
+    }
+
+    let total_delta = total_static as i64 - total_optimized as i64;
+    let total_pct = if total_static > 0 {
+        total_delta as f64 / total_static as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    eprintln!("{}", "-".repeat(56));
+    eprintln!(
+        "{:<8} {:>6} {:>10} {:>10} {:>+10} {:>7.1}%",
+        "TOTAL", "", total_static, total_optimized, total_delta, total_pct
+    );
 }
