@@ -57,6 +57,7 @@ C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller fil
 - [x] Dynamic Huffman codes (two-pass, histogram clustering, default-on)
 - [x] Static Huffman fallback (streaming single-pass, `--no-optimize-codes`)
 - [x] Modular encoder (lossless path, RCT, decision tree contexts)
+- [x] RGBA lossless encoding (extra channel support in frame header)
 - [x] Frame assembly, TOC, multi-group section layout
 - [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
 - [x] ANS entropy coding (`--ans` flag) with histogram clustering
@@ -119,6 +120,28 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Single uint coding scheme, no backward references
 
 ## Resolved Bugs
+
+### RGBA Frame Header Missing Extra Channel Fields (FIXED Feb 1, 2026)
+
+**Issue**: RGBA images failed with "IncompleteFrame" error from jxl-oxide decoder.
+The decoder expected more data than was provided.
+
+**Root Cause**: The frame header was missing required fields for extra channels (alpha):
+- `ec_upsampling`: one u2S(1,2,4,8) entry per extra channel
+- `ec_blending_info`: one BlendingInfo per extra channel
+
+The code had comments "// (already handled by not writing anything)" which was correct
+for RGB but wrong for RGBA.
+
+**Fix**:
+- Added `write_frame_header_with_extra_channels()` that takes num_extra_channels
+- For each extra channel, writes:
+  - `ec_upsampling = 1` (selector 0 = no upsampling)
+  - `ec_blending_info.mode = Replace` (selector 0)
+- Modified `encode_modular()` to detect alpha from `image.has_alpha`
+
+**Impact**: RGBA encoding now works for all sizes (8x8, 256x256, 512x512 tested).
+Verified with jxl-oxide decoder and pixel-level correctness checks.
 
 ### ANS Alias Table Reverse Map Bug (FIXED Feb 1, 2026)
 
