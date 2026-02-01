@@ -39,50 +39,82 @@ To build libjxl-tiny: `cd ~/work/libjxl-tiny && mkdir -p build && cd build && cm
 When adding or modifying roundtrip tests, ensure BOTH jxl-rs and djxl are tested.
 Never omit jxl-rs from decoder validation.
 
-## Current Status
+## Current Status: libjxl-tiny Parity Achieved
 
-### Completed
-- Project structure and workspace setup
-- `BitWriter` - inverse of decoder's `BitReader`
-- Basic header structures (FileHeader, FrameHeader, ColorEncoding)
-- Image buffer types
-- Forward DCT transforms (2x2, 4x4, 8x8, 16x16, 32x32)
-- Huffman encoder skeleton
-- ANS encoder skeleton
-- HybridUint encoder
+The tiny encoder (`jxl_enc/src/tiny/`) is the production encoder. It matches or beats
+C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller files
+(dynamic Huffman codes). See [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md) for port details.
 
-### In Progress: libjxl-tiny Port
+### What Works (libjxl-tiny profile)
+- [x] XYB color space conversion (linear sRGB input)
+- [x] Adaptive quantization (per-block perceptual masking, full pipeline)
+- [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
+- [x] AC strategy selection (DCT8/DCT16x8/DCT8x16 per 16x16 region)
+- [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
+- [x] DC coding with gradient predictor and fixed context tree
+- [x] AC coding with channel interleaving
+- [x] Multi-group encoding (>256x256 images)
+- [x] Dynamic Huffman codes (two-pass, histogram clustering, default-on)
+- [x] Static Huffman fallback (streaming single-pass, `--no-optimize-codes`)
+- [x] Modular encoder (lossless path, RCT, decision tree contexts)
+- [x] Frame assembly, TOC, multi-group section layout
+- [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
 
-A parallel, simplified VarDCT encoder being ported from libjxl-tiny. See [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md) for detailed progress.
+### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
-- [x] Module structure (`jxl_enc/src/tiny/`)
-- [x] Common utilities and constants
-- [x] Token and UintCoder
-- [x] Entropy code types and write_token
-- [x] AC context computation
-- [x] Static DC prefix codes (8 Huffman codes, 45 contexts)
-- [x] Static AC prefix codes (8 Huffman codes, 1980 contexts)
-- [x] Frame header writing (DistanceParams, TOC)
-- [x] DC coding with gradient predictor
-- [x] AC group encoding with channel interleaving
-- [x] Single-group roundtrip (16x16 matches libjxl-tiny byte-for-byte, SSIM2=90+ on photos)
-- [x] Multi-group encoding (>256x256 images) - SSIM2 = 83-86 on real photos
-- [x] Adaptive quantization (per-block raw_quant from perceptual masking) - fixes quality ceiling
-- [x] Chroma-from-luma (per-tile ytox/ytob from least-squares fitting)
-- [x] Adaptive AC strategy (DCT8/DCT16x8/DCT8x16 per 16x16 region) - 8% smaller files, beats C++ reference by ~2.3 SSIM2
-- [x] C++ QuantizeBlockAC thresholding (per-quadrant coefficient zeroing)
-- [x] Y roundtrip quantization (AdjustQuantBias dequant for CfL accuracy)
-- [x] x_qm_mul for X channel quantization (distance-dependent scaling)
+**DO NOT use or extend `vardct/encoder.rs`.** We spent weeks debugging this older
+VarDCT encoder and it produces tricky, hard-to-diagnose errors. It is experimental
+dead code from before the tiny port. The production encoder is `tiny/encoder.rs`.
+Any new VarDCT features (ANS, more AC strategies, etc.) should be added to the tiny
+encoder, not the vardct encoder.
 
-### TODO (Major Components)
-- [ ] Full ANS entropy encoder (port from libjxl `enc_ans.cc`)
-- [ ] Full Huffman encoder with table serialization
-- [ ] Modular encoder (lossless path)
-- [ ] Frame assembly pipeline
-- [ ] Color space transforms (RGB -> XYB)
-- [ ] Quantization
-- [ ] Context modeling
-- [ ] High-level encoder API
+### Roadmap: Upgrading Beyond libjxl-tiny
+
+Features ranked by compression impact. The tiny encoder is the base for all work.
+
+**Tier 1: Big compression wins (target 15-25% smaller files total)**
+
+- [ ] **ANS entropy coding** — Biggest single win (~5-10% smaller). Skeleton exists
+  in `entropy_coding/ans.rs`. Missing: frequency table serialization to bitstream,
+  wiring ANS into the token writer path. Clustering already supports `EntropyType::Ans`.
+- [ ] **More AC strategies** — DCT16x16, DCT32x32 (~3-5% smaller on smooth content).
+  Forward transforms exist in `jxl_enc_transforms` up to 32x32. Work: LLF extraction
+  for larger blocks, strategy selection heuristics, nzeros bookkeeping for 4+ block
+  coverage. The 2-block transform infrastructure (nzeros, raw_nzeros, covered_blocks)
+  is the template.
+- [ ] **DCT4x8, DCT8x4, DCT4x4** — Better for edges/detail (~1-3% smaller).
+- [ ] **Custom coefficient ordering** — Per-strategy scan order from coefficient
+  statistics instead of fixed zig-zag (~2-4% smaller). Self-contained optimization
+  over existing token stream.
+
+**Tier 2: Quality and specialized wins**
+
+- [ ] **Gaborish inverse** — 3x3 sharpening pre-filter, decoder reverses it. ~0.1-0.2
+  butteraugli improvement at low bitrates. Low complexity.
+- [ ] **Noise synthesis** — Strip film grain before encoding, parameterize for
+  decoder reconstruction. 10-30% savings on noisy photos. Medium complexity.
+- [ ] **Error diffusion in AC quantization** — Spreads error to neighbors for
+  smoother gradients. Modest quality improvement at high compression.
+- [ ] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks.
+
+**Tier 3: Content-specific / UX**
+
+- [ ] **Progressive encoding** — Multi-pass coefficient splitting for incremental
+  quality. Not a compression win, but important for web delivery.
+- [ ] **Splines** — Parametric encoding of smooth curves. High impact on specific
+  content (power lines, horizons). High complexity.
+- [ ] **Patches/Dictionary** — Repeated pattern detection. Huge for screenshots/UI.
+- [ ] **Dot detection** — Star fields, specular highlights. Very niche.
+
+### What libjxl-tiny Does NOT Have (confirmed in coding_tools.md)
+
+For reference, libjxl-tiny's simplifications vs full libjxl:
+- Only DCT8, DCT16x8, DCT8x16 (not 27 strategies)
+- Static Huffman only (no ANS, no histogram clustering)
+- Fixed zig-zag coefficient order (no custom orders)
+- No error diffusion in quantization
+- Default block entropy context model only
+- Single uint coding scheme, no backward references
 
 ## Resolved Bugs
 
