@@ -119,14 +119,15 @@ impl TinyEncoder {
         let (xyb_x, xyb_y, xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
 
-        // Compute adaptive per-block quantization field and masking
-        // Returns: raw_quant u8 (for encoding), masking (for strategy), float aq_map (for strategy)
+        // Compute adaptive per-block quantization field and masking.
+        // Pass padded dimensions: XYB buffers have stride=padded_width, and all
+        // modulation/extraction functions index as [py * stride + px].
         let (mut quant_field, masking, quant_field_float) = compute_adaptive_quant_field(
             &xyb_x,
             &xyb_y,
             &xyb_b,
-            width,
-            height,
+            padded_width,
+            padded_height,
             xsize_blocks,
             ysize_blocks,
             self.distance,
@@ -139,8 +140,8 @@ impl TinyEncoder {
                 &xyb_x,
                 &xyb_y,
                 &xyb_b,
-                width,
-                height,
+                padded_width,
+                padded_height,
                 xsize_blocks,
                 ysize_blocks,
             )
@@ -159,8 +160,8 @@ impl TinyEncoder {
                 &xyb_x,
                 &xyb_y,
                 &xyb_b,
-                width,
-                height,
+                padded_width,
+                padded_height,
                 xsize_blocks,
                 ysize_blocks,
                 self.distance,
@@ -2082,7 +2083,7 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0xabeb5f516c2a5d4b;
+        const EXPECTED_HASH: u64 = 0xa1475c5f3309ebb6;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2092,5 +2093,64 @@ mod tests {
             EXPECTED_HASH,
             bytes.len()
         );
+    }
+
+    /// Roundtrip quality test for non-8-aligned dimensions.
+    ///
+    /// Encodes a 100x75 gradient, decodes with jxl-oxide, and verifies:
+    /// 1. Dimensions match
+    /// 2. Output is a valid JXL file (correct signature, decodable)
+    ///
+    /// This catches stride mismatch bugs where padded XYB buffers have
+    /// stride != width, which corrupts adaptive quant, CfL, and AC strategy.
+    #[test]
+    fn test_roundtrip_non_8_aligned() {
+        for &(w, h) in &[(100, 75), (13, 17), (33, 49), (7, 9)] {
+            let mut linear_rgb = vec![0.0f32; w * h * 3];
+
+            // Smooth gradient (linear RGB)
+            for y in 0..h {
+                for x in 0..w {
+                    let idx = (y * w + x) * 3;
+                    linear_rgb[idx] = x as f32 / w.max(1) as f32;
+                    linear_rgb[idx + 1] = y as f32 / h.max(1) as f32;
+                    linear_rgb[idx + 2] = 0.3;
+                }
+            }
+
+            let encoder = TinyEncoder::new(1.0);
+            let bytes = encoder
+                .encode(w, h, &linear_rgb)
+                .unwrap_or_else(|e| panic!("encode {}x{} failed: {}", w, h, e));
+
+            // Verify JXL signature
+            assert_eq!(bytes[0], 0xFF, "{}x{}: bad signature byte 0", w, h);
+            assert_eq!(bytes[1], 0x0A, "{}x{}: bad signature byte 1", w, h);
+
+            // Decode with jxl-oxide and verify dimensions
+            let image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&bytes))
+                .unwrap_or_else(|e| panic!("jxl-oxide decode {}x{} failed: {}", w, h, e));
+            assert_eq!(
+                image.width(),
+                w as u32,
+                "{}x{}: decoded width mismatch",
+                w,
+                h
+            );
+            assert_eq!(
+                image.height(),
+                h as u32,
+                "{}x{}: decoded height mismatch",
+                w,
+                h
+            );
+
+            // Render to verify pixel data is valid
+            let render = image
+                .render_frame(0)
+                .unwrap_or_else(|e| panic!("jxl-oxide render {}x{} failed: {}", w, h, e));
+            let _pixels = render.image_all_channels();
+        }
     }
 }

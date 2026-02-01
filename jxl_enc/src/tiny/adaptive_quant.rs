@@ -150,42 +150,29 @@ fn compute_mask(out_val: f32) -> f32 {
 ///
 /// Computes sum of absolute pixel differences (right neighbor + below neighbor)
 /// in the Y channel over an 8×8 block.
-fn hf_modulation(
-    x: usize,
-    y: usize,
-    xyb_y: &[f32],
-    width: usize,
-    height: usize,
-    out_val: f32,
-) -> f32 {
+///
+/// The buffer must be padded to at least (y+8) rows and (x+8) columns with
+/// edge-replicated values, so no bounds checking is needed.
+fn hf_modulation(x: usize, y: usize, xyb_y: &[f32], stride: usize, out_val: f32) -> f32 {
     let mut sum = 0.0_f32;
 
     for dy in 0..8 {
         let py = y + dy;
-        if py >= height {
-            break;
-        }
-        let py_next = if dy == 7 {
-            py
-        } else {
-            (py + 1).min(height - 1)
-        };
+        // For dy < 7, the below-neighbor is py+1 which is within the 8-row block.
+        // For dy == 7, we use py itself (no below-neighbor at block edge).
+        let py_next = if dy == 7 { py } else { py + 1 };
 
         for dx in 0..8 {
             let px = x + dx;
-            if px >= width {
-                break;
-            }
-            let p = xyb_y[py * width + px];
+            let p = xyb_y[py * stride + px];
 
             // Right neighbor difference (skip last column)
             if dx < 7 {
-                let px_right = (px + 1).min(width - 1);
-                sum += (p - xyb_y[py * width + px_right]).abs();
+                sum += (p - xyb_y[py * stride + px + 1]).abs();
             }
 
             // Below neighbor difference
-            let pd = xyb_y[py_next * width + px];
+            let pd = xyb_y[py_next * stride + px];
             sum += (p - pd).abs();
         }
     }
@@ -195,14 +182,16 @@ fn hf_modulation(
 }
 
 /// ColorModulation: adjust quantization based on color content (red/blue coverage).
+///
+/// The buffer must be padded to at least (y+8) rows and (x+8) columns with
+/// edge-replicated values, so no bounds checking is needed.
 fn color_modulation(
     x: usize,
     y: usize,
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
-    width: usize,
-    height: usize,
+    stride: usize,
     butteraugli_target: f32,
     out_val: f32,
 ) -> f32 {
@@ -229,15 +218,9 @@ fn color_modulation(
 
     for dy in 0..8 {
         let py = y + dy;
-        if py >= height {
-            break;
-        }
         for dx in 0..8 {
             let px = x + dx;
-            if px >= width {
-                break;
-            }
-            let idx = py * width + px;
+            let idx = py * stride + px;
             let pixel_x = (xyb_x[idx] - K_RED_RAMP_START).max(0.0);
             let pixel_y = xyb_y[idx];
             let pixel_b = (xyb_b[idx] - pixel_y - K_BLUE_RAMP_START).max(0.0);
@@ -258,13 +241,15 @@ fn color_modulation(
 }
 
 /// GammaModulation: adjust quantization based on gamma approximation.
+///
+/// The buffer must be padded to at least (y+8) rows and (x+8) columns with
+/// edge-replicated values, so no bounds checking is needed.
 fn gamma_modulation(
     x: usize,
     y: usize,
     xyb_x: &[f32],
     xyb_y: &[f32],
-    width: usize,
-    height: usize,
+    stride: usize,
     out_val: f32,
 ) -> f32 {
     const K_BIAS: f32 = 0.16;
@@ -272,15 +257,9 @@ fn gamma_modulation(
 
     for dy in 0..8 {
         let py = y + dy;
-        if py >= height {
-            break;
-        }
         for dx in 0..8 {
             let px = x + dx;
-            if px >= width {
-                break;
-            }
-            let idx = py * width + px;
+            let idx = py * stride + px;
             let iny = xyb_y[idx] + K_BIAS;
             let inx = xyb_x[idx];
             let r = iny - inx;
@@ -509,12 +488,13 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 /// For each block, applies ComputeMask, HfModulation, ColorModulation,
 /// GammaModulation, then converts from exponent space to multiplicative
 /// quant field via exp2.
+///
+/// `stride` is the row stride (padded width) of the XYB buffers.
 fn per_block_modulations(
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
-    width: usize,
-    height: usize,
+    stride: usize,
     butteraugli_target: f32,
     scale: f32,
     rect_x0_blocks: usize,
@@ -548,19 +528,18 @@ fn per_block_modulations(
 
             let mut out_val = aq_map[iy * aq_map_w + ix];
             out_val = compute_mask(out_val);
-            out_val = hf_modulation(px, py, xyb_y, width, height, out_val);
+            out_val = hf_modulation(px, py, xyb_y, stride, out_val);
             out_val = color_modulation(
                 px,
                 py,
                 xyb_x,
                 xyb_y,
                 xyb_b,
-                width,
-                height,
+                stride,
                 butteraugli_target,
                 out_val,
             );
-            out_val = gamma_modulation(px, py, xyb_x, xyb_y, width, height, out_val);
+            out_val = gamma_modulation(px, py, xyb_x, xyb_y, stride, out_val);
 
             // Convert from exponent to multiplicative field: exp2(out_val * log2(e)) * mul + add
             // C++ uses: FastPow2f(out_val * 1.442695041f) * mul + add
@@ -599,12 +578,9 @@ pub fn compute_adaptive_quant_field(
     let scale = K_AC_QUANT / distance;
 
     // Process the entire image as one tile.
-    // Use padded pixel dimensions (rounded up to block boundaries) so that
-    // pre-erosion / fuzzy-erosion produce an aq_map covering all blocks.
-    // The C++ reference pads the XYB image to block boundaries; we simulate
-    // the same by using padded tile bounds and clamping pixel accesses.
-    let padded_w = xsize_blocks * 8;
-    let padded_h = ysize_blocks * 8;
+    // The caller passes padded dimensions (width = xsize_blocks * 8, height = ysize_blocks * 8),
+    // matching the edge-replicated XYB buffer stride. compute_pre_erosion keeps .min() clamping
+    // for its x±1/y±1 neighbor accesses at the buffer boundary.
     let tile_x0_pixels = 0;
     let tile_y0_pixels = 0;
 
@@ -616,8 +592,8 @@ pub fn compute_adaptive_quant_field(
         height,
         tile_x0_pixels,
         tile_y0_pixels,
-        padded_w,
-        padded_h,
+        width,
+        height,
     );
 
     // Step 2: Fuzzy erosion (3×3 min-4 weighted sum, 2x downsample)
@@ -649,13 +625,12 @@ pub fn compute_adaptive_quant_field(
         }
     }
 
-    // Step 3: Per-block modulations
+    // Step 3: Per-block modulations (stride = width = padded buffer row stride)
     per_block_modulations(
         xyb_x,
         xyb_y,
         xyb_b,
         width,
-        height,
         distance,
         scale,
         0,
@@ -864,6 +839,9 @@ mod tests {
     fn test_adaptive_quant_field_non_multiple_of_8() {
         // Regression test: dimensions not multiples of 8 caused OOB panic
         // because pre-erosion dimensions were too small for the block count.
+        //
+        // The caller (encoder.rs) pads XYB buffers to block boundaries with
+        // edge replication. This test simulates that by allocating padded buffers.
         for &(w, h) in &[
             (300, 300),
             (301, 301),
@@ -873,16 +851,17 @@ mod tests {
             (15, 33),
             (257, 129),
         ] {
-            let n = w * h;
+            let xb = (w + 7) / 8;
+            let yb = (h + 7) / 8;
+            let pw = xb * 8; // padded width
+            let ph = yb * 8; // padded height
+            let n = pw * ph;
             let xyb_x = vec![0.0_f32; n];
             let xyb_y = vec![0.5_f32; n];
             let xyb_b = vec![0.5_f32; n];
 
-            let xb = (w + 7) / 8;
-            let yb = (h + 7) / 8;
-
             let (result, _masking, _quant_float) =
-                compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
+                compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, pw, ph, xb, yb, 1.0, 8.93);
 
             assert_eq!(
                 result.len(),
