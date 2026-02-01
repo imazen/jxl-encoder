@@ -59,6 +59,7 @@ C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller fil
 - [x] Modular encoder (lossless path, RCT, decision tree contexts)
 - [x] Frame assembly, TOC, multi-group section layout
 - [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
+- [x] ANS entropy coding (`--ans` flag) with histogram clustering
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
@@ -74,9 +75,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 
 **Tier 1: Big compression wins (target 15-25% smaller files total)**
 
-- [ ] **ANS entropy coding** — Biggest single win (~5-10% smaller). Skeleton exists
-  in `entropy_coding/ans.rs`. Missing: frequency table serialization to bitstream,
-  wiring ANS into the token writer path. Clustering already supports `EntropyType::Ans`.
+- [x] **ANS entropy coding** — Working! Use `--ans` flag. Encoder, histogram
+  serialization, alias table reverse mapping, and HybridUint integration complete.
+  Single-symbol and multi-symbol distributions both work. Verified with jxl-rs and
+  djxl decoders up to 1024x1024 images.
 - [ ] **More AC strategies** — DCT16x16, DCT32x32 (~3-5% smaller on smooth content).
   Forward transforms exist in `jxl_enc_transforms` up to 32x32. Work: LLF extraction
   for larger blocks, strategy selection heuristics, nzeros bookkeeping for 4+ block
@@ -117,6 +119,29 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Single uint coding scheme, no backward references
 
 ## Resolved Bugs
+
+### ANS Alias Table Reverse Map Bug (FIXED Feb 1, 2026)
+
+**Issue**: ANS-encoded files failed with "ANS stream checksum mismatch" in jxl-rs decoder.
+DC and DC group tokens ended with wrong final state (e.g., 0x00bae80e instead of 0x00130000).
+
+**Root Causes**:
+1. **Single-symbol distributions**: jxl-rs uses a simplified alias table where offset = idx
+   (identity mapping) for single-symbol cases. Our encoder used the general alias table
+   which produced scrambled offsets, causing the encoder state to change when encoding
+   100% probability symbols (should stay constant).
+
+2. **Alias offset calculation**: For multi-symbol distributions, jxl-rs stores
+   `bucket.alias_offset = working.alias_offset - working.alias_cutoff` and computes
+   `offset = bucket.alias_offset + pos`. Our encoder used `working.alias_offset + pos`
+   directly, missing the `- alias_cutoff` adjustment.
+
+**Fix**:
+- Added special case for single-symbol: `reverse_map[r] = r` (identity)
+- Corrected alias offset: `offset = alias_offset - alias_cutoff + pos`
+
+**Impact**: ANS encoding now works for all tested images (64x64 to 1024x1024).
+Verified with both jxl-rs and djxl decoders.
 
 ### DCT Resample Scale Direction Bug (FIXED Jan 31, 2026)
 
