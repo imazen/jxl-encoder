@@ -888,21 +888,77 @@ impl OwnedEntropyCode {
 ///
 /// Returns an `OwnedEntropyCode` ready for writing.
 pub fn build_entropy_code(tokens: &[Token], num_contexts: usize) -> OwnedEntropyCode {
-    use super::cluster::{Histogram, cluster_histograms};
+    build_entropy_code_with_options(tokens, num_contexts, false)
+}
 
-    // Build per-context histograms
-    let mut histograms: Vec<Histogram> = (0..num_contexts).map(|_| Histogram::new()).collect();
+/// Build an optimal entropy code from collected tokens with optional enhanced clustering.
+///
+/// When `enhanced_clustering` is true, uses pair merge refinement. Note that the enhanced
+/// clustering algorithm was designed for ANS entropy coding and the cost model may not
+/// accurately predict Huffman code sizes. This is experimental.
+pub fn build_entropy_code_with_options(
+    tokens: &[Token],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+) -> OwnedEntropyCode {
+    use super::cluster::{Histogram as TinyHistogram, cluster_histograms};
+
+    // Build per-context histograms using tiny's histogram type
+    let mut histograms: Vec<TinyHistogram> =
+        (0..num_contexts).map(|_| TinyHistogram::new()).collect();
     for token in tokens {
         let ctx = token.context as usize;
         let encoded = UintCoder::encode(token.value);
         histograms[ctx].add(encoded.token as usize);
     }
 
-    // Cluster histograms → context_map + merged histograms
-    let context_map = cluster_histograms(&mut histograms);
+    let (context_map, clustered_histograms) = if enhanced_clustering {
+        // Use the enhanced clustering from entropy_coding::cluster
+        use crate::entropy_coding::cluster::{
+            ClusteringType, cluster_histograms as enhanced_cluster,
+        };
+        use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
+
+        // Convert tiny histograms to enhanced histogram type
+        let enhanced_histos: Vec<EnhancedHistogram> = histograms
+            .iter()
+            .map(|h| {
+                let counts: Vec<i32> = h.counts.iter().map(|&c| c as i32).collect();
+                EnhancedHistogram::from_counts(&counts)
+            })
+            .collect();
+
+        // Run enhanced clustering with pair merge refinement
+        let result = enhanced_cluster(ClusteringType::Best, &enhanced_histos, 8)
+            .expect("Enhanced clustering failed");
+
+        // Convert back to tiny histogram type for Huffman tree building
+        let out_histos: Vec<TinyHistogram> = result
+            .histograms
+            .iter()
+            .map(|h| {
+                let mut th = TinyHistogram::new();
+                for (i, &count) in h.counts.iter().enumerate() {
+                    if i < ALPHABET_SIZE {
+                        th.counts[i] = count as u32;
+                        th.total_count += count as u32;
+                    }
+                }
+                th
+            })
+            .collect();
+
+        // Convert symbols to context map
+        let ctx_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
+        (ctx_map, out_histos)
+    } else {
+        // Use the simple fast clustering
+        let context_map = cluster_histograms(&mut histograms);
+        (context_map, histograms)
+    };
 
     // Build a PrefixCode from each clustered histogram
-    let prefix_codes: Vec<PrefixCode> = histograms
+    let prefix_codes: Vec<PrefixCode> = clustered_histograms
         .iter()
         .map(|h| {
             let mut depths = [0u8; ALPHABET_SIZE];
