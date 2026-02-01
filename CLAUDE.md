@@ -262,32 +262,59 @@ SSIM2 = -40 (catastrophic). Root cause: the decoder's `DequantBlock` calls
 DC-derived values. Coefficient-level CfL on LLF is discarded. DC CfL uses
 dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder.
 
-### AC Strategy Quality vs C++ Reference (Jan 31, 2026)
+### AC Strategy Quality vs C++ Reference (Jan 31, 2026, updated)
 
-Fair apples-to-apples comparison: same 256x256 center crops from CLIC 2025, same
-decoder (djxl), same metric tool (ssimulacra2 CLI). Date: 2026-01-31.
+After fixing the quant field scale mismatch (see Resolved Bugs):
 
-After fixing the DCT resample scale direction bug (see Resolved Bugs below):
-
-**Excluding img3 (C++ outlier — scores 20-30 below other images at all distances):**
+**SSIM2 (5 crops from CLIC 2025, decoder=djxl, metric=ssimulacra2 CLI):**
 
 | Distance | C++ (SSIM2) | Rust ON | Rust OFF | Rust ON vs C++ |
 |----------|-------------|---------|----------|----------------|
-| d=0.5    | 85.57       | 87.89   | 88.13    | Rust +2.3      |
-| d=1.0    | 79.77       | 82.16   | 82.24    | Rust +2.4      |
-| d=2.0    | 68.06       | 70.64   | 70.55    | Rust +2.6      |
+| d=0.5    | 79.64       | 79.95   | 80.14    | Rust +0.31     |
+| d=1.0    | 74.51       | 75.22   | 75.40    | Rust +0.71     |
+| d=2.0    | 64.58       | 65.84   | 65.86    | Rust +1.26     |
+
+**Butteraugli (single 256x256 crop, jxl-oxide decoder):**
+
+| Config      | Size   | Butteraugli |
+|-------------|--------|-------------|
+| bare        | 13051  | 1.635       |
+| cfl_only    | 12993  | 1.628       |
+| strat_only  | 12270  | 1.746       |
+| cfl+strat   | 12230  | 1.740       |
+| C++ ref     | 12394  | 1.746       |
 
 **Conclusions:**
-- Rust ON beats C++ by ~2.3-2.6 SSIM2 at all distances
-- ON-OFF gap is 0.0-0.2 SSIM2 (strategy selection has negligible quality cost)
-- Strategy selection provides 5-8% compression benefit with near-zero quality loss
+- Rust ON beats C++ by 0.3-1.3 SSIM2 at all distances
+- Rust strat_only matches C++ butteraugli exactly (1.746)
+- Strategy ON produces 5-8% smaller files with minimal quality cost
 - C++ has a catastrophic bug on img3 (SSIM2 drops to 46-56 vs Rust's 71-88)
 - C++ cjxl_tiny crashes on multi-group images (>256x256)
 
 Test: `cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_quality -- --ignored --nocapture`
-(self-contained: loads corpus, crops, encodes both C++ and Rust, decodes with djxl, measures with ssimulacra2 CLI)
 
 ## Resolved Bugs (continued)
+
+### AC Strategy Quant Field Scale Mismatch (FIXED Jan 31, 2026)
+
+**Issue**: AC strategy selection caused 0.55 butteraugli regression at d=1.0.
+Rust strat_only=2.180 vs bare=1.635 vs C++ reference=1.746.
+
+**Root Cause**: `compute_ac_strategy` received u8 `raw_quant` values cast to f32
+(e.g. 43.0) instead of the float `aq_map` values (e.g. 6.88) that C++ passes to
+`EstimateEntropy`. Since `raw_quant = round(aq_map * inv_scale)` and `inv_scale ≈ 6.25`
+at d=1.0, the quant values were ~6.25× too large.
+
+This inflated all entropy estimates, making the base cost `3.0 * mul8x8` negligible
+relative to the entropy term. The miscalibrated cost model made bad strategy choices
+— selecting non-DCT8 transforms in blocks where DCT8 was perceptually better.
+
+**Fix**: Return float aq_map from `compute_adaptive_quant_field` alongside u8 raw_quant,
+and pass it to `compute_ac_strategy` for entropy estimation.
+
+**Impact**: strat_only butteraugli: 2.180 → 1.746 (matches C++ exactly).
+ON-OFF gap at d=1.0: +0.553 → +0.112 (5× reduction).
+SSIM2 unchanged — Rust ON still beats C++ by 0.7+ SSIM2 at d=1.0.
 
 ### Adaptive Quant OOB for Non-Multiple-of-8 Dimensions (FIXED Jan 31, 2026)
 
