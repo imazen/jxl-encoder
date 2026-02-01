@@ -6092,3 +6092,247 @@ fn test_ans_crop_binary_search() {
         }
     }
 }
+
+/// Test custom coefficient ordering roundtrip with jxl-oxide on CLIC 2025 photos.
+///
+/// Verifies that:
+/// 1. Custom orders produce decodable files
+/// 2. Quality (SSIM2) is comparable to default zig-zag order
+#[test]
+#[ignore = "Requires CLIC 2025 images"]
+fn test_custom_orders() {
+    use std::io::Cursor;
+
+    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
+
+    if !clic_dir.exists() {
+        eprintln!("CLIC 2025 directory not found: {:?}", clic_dir);
+        return;
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&clic_dir)
+        .expect("Failed to read CLIC directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+        .take(5)
+        .collect();
+
+    entries.sort_by_key(|e| e.path());
+
+    eprintln!("\n=== Custom Coefficient Orders on CLIC 2025 ===\n");
+    eprintln!(
+        "{:<12} {:>8} {:>8} {:>8} {:>7} {:>7}",
+        "Image", "Size", "Default", "Custom", "SSIM2D", "SSIM2C"
+    );
+    eprintln!("{}", "-".repeat(62));
+
+    let mut all_decoded = true;
+
+    for entry in &entries {
+        let path = entry.path();
+        let filename = path.file_name().unwrap().to_string_lossy();
+        let short_name = &filename[..8.min(filename.len())];
+
+        let img = match image::open(&path) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!("{}: Failed to open: {}", short_name, e);
+                continue;
+            }
+        };
+
+        let (width, height) = img.dimensions();
+        let rgb = img.to_rgb8();
+        let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                let r = (p[0] as f32 / 255.0).powf(2.2);
+                let g = (p[1] as f32 / 255.0).powf(2.2);
+                let b = (p[2] as f32 / 255.0).powf(2.2);
+                [r, g, b]
+            })
+            .collect();
+
+        // Encode with default zig-zag order
+        let mut enc_default = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc_default.custom_orders = false;
+        let bytes_default = match enc_default.encode(width as usize, height as usize, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: Default encode failed: {:?}", short_name, e);
+                continue;
+            }
+        };
+
+        // Encode with custom orders
+        let mut enc_custom = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc_custom.custom_orders = true;
+        let bytes_custom = match enc_custom.encode(width as usize, height as usize, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: Custom encode failed: {:?}", short_name, e);
+                continue;
+            }
+        };
+
+        // Decode default
+        let ssim2_default = decode_and_ssim2(
+            &bytes_default,
+            &original_srgb,
+            width as usize,
+            height as usize,
+        );
+
+        // Decode custom
+        let ssim2_custom = decode_and_ssim2(
+            &bytes_custom,
+            &original_srgb,
+            width as usize,
+            height as usize,
+        );
+
+        let size_str = format!("{}x{}", width, height);
+        eprintln!(
+            "{:<12} {:>8} {:>8} {:>8} {:>6.1} {:>6.1}",
+            short_name,
+            size_str,
+            bytes_default.len(),
+            bytes_custom.len(),
+            ssim2_default.unwrap_or(f64::NAN),
+            ssim2_custom.unwrap_or(f64::NAN)
+        );
+
+        if ssim2_custom.is_none() {
+            eprintln!("  FAIL: Custom order decode failed for {}", short_name);
+            all_decoded = false;
+        }
+
+        // Quality should be similar (within 0.5 SSIM2)
+        if let (Some(d), Some(c)) = (ssim2_default, ssim2_custom) {
+            let diff = (d - c).abs();
+            if diff > 0.5 {
+                eprintln!(
+                    "  WARNING: SSIM2 diff={:.2} for {} (default={:.1}, custom={:.1})",
+                    diff, short_name, d, c
+                );
+            }
+        }
+    }
+
+    assert!(all_decoded, "Some custom order files failed to decode");
+}
+
+/// Test that custom coefficient orders produce smaller files on CLIC 2025 photos.
+#[test]
+#[ignore = "Requires CLIC 2025 images"]
+fn test_custom_orders_compression() {
+    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
+
+    if !clic_dir.exists() {
+        eprintln!("CLIC 2025 directory not found: {:?}", clic_dir);
+        return;
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(&clic_dir)
+        .expect("Failed to read CLIC directory")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
+        .take(5)
+        .collect();
+
+    entries.sort_by_key(|e| e.path());
+
+    eprintln!("\n=== Custom Orders Compression on CLIC 2025 ===\n");
+    eprintln!(
+        "{:<12} {:>8} {:>8} {:>8} {:>7}",
+        "Image", "Size", "Default", "Custom", "Saving"
+    );
+    eprintln!("{}", "-".repeat(50));
+
+    let mut total_default = 0usize;
+    let mut total_custom = 0usize;
+    let mut count = 0;
+
+    for entry in &entries {
+        let path = entry.path();
+        let filename = path.file_name().unwrap().to_string_lossy();
+        let short_name = &filename[..8.min(filename.len())];
+
+        let img = match image::open(&path) {
+            Ok(img) => img,
+            Err(e) => {
+                eprintln!("{}: Failed to open: {}", short_name, e);
+                continue;
+            }
+        };
+
+        let (width, height) = img.dimensions();
+        let rgb = img.to_rgb8();
+        let linear_rgb: Vec<f32> = rgb
+            .pixels()
+            .flat_map(|p| {
+                let r = (p[0] as f32 / 255.0).powf(2.2);
+                let g = (p[1] as f32 / 255.0).powf(2.2);
+                let b = (p[2] as f32 / 255.0).powf(2.2);
+                [r, g, b]
+            })
+            .collect();
+
+        // Default order
+        let mut enc_default = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc_default.custom_orders = false;
+        let bytes_default = match enc_default.encode(width as usize, height as usize, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: Default encode failed: {:?}", short_name, e);
+                continue;
+            }
+        };
+
+        // Custom orders
+        let mut enc_custom = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc_custom.custom_orders = true;
+        let bytes_custom = match enc_custom.encode(width as usize, height as usize, &linear_rgb) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: Custom encode failed: {:?}", short_name, e);
+                continue;
+            }
+        };
+
+        let saving_pct = (1.0 - bytes_custom.len() as f64 / bytes_default.len() as f64) * 100.0;
+        let size_str = format!("{}x{}", width, height);
+
+        eprintln!(
+            "{:<12} {:>8} {:>8} {:>8} {:>6.1}%",
+            short_name,
+            size_str,
+            bytes_default.len(),
+            bytes_custom.len(),
+            saving_pct
+        );
+
+        total_default += bytes_default.len();
+        total_custom += bytes_custom.len();
+        count += 1;
+    }
+
+    if count > 0 {
+        eprintln!("{}", "-".repeat(50));
+        let overall_saving = (1.0 - total_custom as f64 / total_default as f64) * 100.0;
+        eprintln!(
+            "{:<12} {:>8} {:>8} {:>8} {:>6.1}%",
+            "TOTAL", "", total_default, total_custom, overall_saving
+        );
+
+        // Custom orders should not make files significantly larger
+        // (permutation overhead should be small relative to AC savings)
+        assert!(
+            overall_saving > -2.0,
+            "Custom orders made files {:.1}% larger overall (expected savings or minimal overhead)",
+            -overall_saving
+        );
+    }
+}

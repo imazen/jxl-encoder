@@ -420,6 +420,9 @@ pub fn build_and_write_coeff_orders(
         return Ok(());
     }
 
+    // LZ77 flag: no LZ77 for permutation data
+    writer.write(1, 0)?;
+
     if use_ans {
         let code = build_entropy_code_ans_with_options(
             tokens,
