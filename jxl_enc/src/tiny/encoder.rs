@@ -22,8 +22,9 @@ use super::dc_coding::{
 };
 use super::dct::{dc_from_dct_8x16, dc_from_dct_16x8, dct_8x8, dct_8x16, dct_16x8};
 use super::entropy_code::{
-    build_entropy_code_ans_with_options, build_entropy_code_with_options,
-    write_entropy_code_ans, write_tokens, write_tokens_ans, OwnedAnsEntropyCode, OwnedEntropyCode,
+    OwnedAnsEntropyCode, OwnedEntropyCode, build_entropy_code_ans_with_options,
+    build_entropy_code_with_options, verify_ans_roundtrip, verify_histogram_serialization,
+    write_entropy_code_ans, write_tokens, write_tokens_ans,
 };
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
 use super::quant::INV_DC_QUANT;
@@ -1792,6 +1793,17 @@ impl TinyEncoder {
             ))
         };
 
+        // ── ANS invariant verification (debug builds only) ──
+        #[cfg(debug_assertions)]
+        if self.use_ans {
+            if let BuiltEntropyCode::Ans(ref dc_ans) = dc_built_code {
+                verify_histogram_serialization(dc_ans, "DC")?;
+            }
+            if let BuiltEntropyCode::Ans(ref ac_ans) = ac_built_code {
+                verify_histogram_serialization(ac_ans, "AC")?;
+            }
+        }
+
         // ── Pass 2: Write bitstream ──
 
         let mut writer = BitWriter::with_capacity(width * height * 4);
@@ -1882,6 +1894,7 @@ impl TinyEncoder {
             }
 
             let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
+
             write_toc(&section_sizes, &mut writer)?;
             for section in sections {
                 writer.append_bytes(&section)?;

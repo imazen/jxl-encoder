@@ -135,7 +135,9 @@ impl AnsHistogram {
         let v0 = Self::read_u8(br)? as usize;
         let v1 = Self::read_u8(br)? as usize;
         if v0 == v1 {
-            return Err(Error::InvalidHistogram("two symbols are the same".to_string()));
+            return Err(Error::InvalidHistogram(
+                "two symbols are the same".to_string(),
+            ));
         }
 
         let alphabet_size = v0.max(v1) + 1;
@@ -278,6 +280,15 @@ impl AnsHistogram {
         dist[omit_pos] = SUM_PROBS - acc;
 
         Ok(alphabet_size)
+    }
+
+    /// Public alias map builder for verification/testing.
+    pub fn build_alias_map_from_freqs(
+        alphabet_size: usize,
+        log_bucket_size: usize,
+        dist: &[u16],
+    ) -> Vec<Bucket> {
+        Self::build_alias_map(alphabet_size, log_bucket_size, dist)
     }
 
     fn build_alias_map(alphabet_size: usize, log_bucket_size: usize, dist: &[u16]) -> Vec<Bucket> {
@@ -428,7 +439,11 @@ impl AnsReader {
         if self.0 == Self::CHECKSUM {
             Ok(())
         } else {
-            Err(Error::Bitstream(format!("ANS checksum mismatch: got 0x{:08x}, expected 0x{:08x}", self.0, Self::CHECKSUM)))
+            Err(Error::Bitstream(format!(
+                "ANS checksum mismatch: got 0x{:08x}, expected 0x{:08x}",
+                self.0,
+                Self::CHECKSUM
+            )))
         }
     }
 }
@@ -444,21 +459,22 @@ mod tests {
     fn test_decode_single_symbol() {
         // Create and write a single-symbol histogram
         let histo = Histogram::from_counts(&[100, 0, 0, 0]);
-        let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
-        
+        let ans_histo =
+            ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+
         let mut writer = BitWriter::new();
         ans_histo.write(&mut writer).unwrap();
         let bytes = writer.finish_with_padding();
-        
+
         println!("Single symbol histogram bytes: {:02x?}", bytes);
-        
+
         // Decode it back
         let mut br = BitReader::new(&bytes);
         let decoded = AnsHistogram::decode(&mut br, 6).unwrap();
-        
+
         println!("Decoded frequencies: {:?}", &decoded.frequencies[..4]);
         println!("Single symbol: {:?}", decoded.single_symbol);
-        
+
         // Verify
         assert_eq!(decoded.single_symbol, Some(0));
         assert_eq!(decoded.frequencies[0], 4096);
@@ -468,26 +484,27 @@ mod tests {
     fn test_decode_two_symbols() {
         // Create and write a two-symbol histogram
         let histo = Histogram::from_counts(&[100, 100, 0, 0]);
-        let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
-        
+        let ans_histo =
+            ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+
         println!("Two symbol histogram: {:?}", ans_histo.counts);
-        
+
         let mut writer = BitWriter::new();
         ans_histo.write(&mut writer).unwrap();
         let bytes = writer.finish_with_padding();
-        
+
         println!("Two symbol histogram bytes: {:02x?}", bytes);
-        
+
         // Decode it back
         let mut br = BitReader::new(&bytes);
         let decoded = AnsHistogram::decode(&mut br, 6).unwrap();
-        
+
         println!("Decoded frequencies: {:?}", &decoded.frequencies[..4]);
-        
+
         // Verify sum
         let sum: u16 = decoded.frequencies.iter().sum();
         assert_eq!(sum, 4096, "Sum should be 4096");
-        
+
         // Verify the two non-zero entries match what we wrote
         assert_eq!(decoded.frequencies[0], ans_histo.counts[0] as u16);
         assert_eq!(decoded.frequencies[1], ans_histo.counts[1] as u16);
@@ -497,33 +514,42 @@ mod tests {
     fn test_decode_general_histogram() {
         // Create and write a general histogram
         let histo = Histogram::from_counts(&[100, 50, 25, 10]);
-        let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
-        
+        let ans_histo =
+            ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+
         println!("General histogram:");
         println!("  counts: {:?}", ans_histo.counts);
-        println!("  method: {}, alphabet_size: {}, omit_pos: {}", 
-                 ans_histo.method, ans_histo.alphabet_size, ans_histo.omit_pos);
-        
+        println!(
+            "  method: {}, alphabet_size: {}, omit_pos: {}",
+            ans_histo.method, ans_histo.alphabet_size, ans_histo.omit_pos
+        );
+
         let mut writer = BitWriter::new();
         ans_histo.write(&mut writer).unwrap();
         let bytes = writer.finish_with_padding();
-        
+
         println!("  bytes ({} bytes): {:02x?}", bytes.len(), bytes);
-        
+
         // Decode it back
         let mut br = BitReader::new(&bytes);
         let decoded = AnsHistogram::decode(&mut br, 6).unwrap();
-        
-        println!("Decoded frequencies: {:?}", &decoded.frequencies[..ans_histo.alphabet_size]);
-        
+
+        println!(
+            "Decoded frequencies: {:?}",
+            &decoded.frequencies[..ans_histo.alphabet_size]
+        );
+
         // Verify sum
         let sum: u16 = decoded.frequencies.iter().sum();
         assert_eq!(sum, 4096, "Sum should be 4096");
-        
+
         // Verify frequencies match what we wrote
         for i in 0..ans_histo.alphabet_size {
-            assert_eq!(decoded.frequencies[i], ans_histo.counts[i] as u16,
-                      "Frequency mismatch at symbol {}", i);
+            assert_eq!(
+                decoded.frequencies[i], ans_histo.counts[i] as u16,
+                "Frequency mismatch at symbol {}",
+                i
+            );
         }
     }
 }

@@ -1047,8 +1047,9 @@ pub fn build_entropy_code_ans_with_options(
     use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
     // Build per-context histograms
-    let mut histograms: Vec<EnhancedHistogram> =
-        (0..num_contexts).map(|_| EnhancedHistogram::new()).collect();
+    let mut histograms: Vec<EnhancedHistogram> = (0..num_contexts)
+        .map(|_| EnhancedHistogram::new())
+        .collect();
 
     for token in tokens {
         let ctx = token.context as usize;
@@ -1072,15 +1073,23 @@ pub fn build_entropy_code_ans_with_options(
 
     let context_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
 
+    // Verify context map size matches input
+    debug_assert_eq!(
+        context_map.len(),
+        num_contexts,
+        "ANS context map size {} doesn't match num_contexts {}",
+        context_map.len(),
+        num_contexts
+    );
+
     // Build ANS histograms and distributions from clustered histograms
     let mut ans_histograms = Vec::with_capacity(result.histograms.len());
     let mut ans_distributions = Vec::with_capacity(result.histograms.len());
 
     for histo in &result.histograms {
         // Create ANS encoding histogram (normalized)
-        let ans_histo =
-            ANSEncodingHistogram::from_histogram(histo, ANSHistogramStrategy::Precise)
-                .expect("ANS histogram normalization failed");
+        let ans_histo = ANSEncodingHistogram::from_histogram(histo, ANSHistogramStrategy::Precise)
+            .expect("ANS histogram normalization failed");
 
         // Build ANS distribution for encoding
         let ans_dist = AnsDistribution::from_normalized_counts(&ans_histo.counts)
@@ -1090,11 +1099,40 @@ pub fn build_entropy_code_ans_with_options(
         ans_distributions.push(ans_dist);
     }
 
-    OwnedAnsEntropyCode {
+    let code = OwnedAnsEntropyCode {
         context_map,
         histograms: ans_histograms,
         distributions: ans_distributions,
+    };
+
+    // Validate: every token in the stream must have a valid, non-zero frequency
+    // in the distribution it maps to.
+    for (i, token) in tokens.iter().enumerate() {
+        let ctx = token.context as usize;
+        let encoded = UintCoder::encode(token.value);
+        let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+        let dist = &code.distributions[dist_idx];
+        let tok = encoded.token as usize;
+        if tok >= dist.symbols.len() {
+            panic!(
+                "ANS validation: token[{}] ctx={} val={} tok={} exceeds distribution alphabet_size={} (dist_idx={})",
+                i,
+                ctx,
+                token.value,
+                tok,
+                dist.symbols.len(),
+                dist_idx
+            );
+        }
+        if dist.symbols[tok].freq == 0 {
+            panic!(
+                "ANS validation: token[{}] ctx={} val={} tok={} has zero frequency in distribution (dist_idx={})",
+                i, ctx, token.value, tok, dist_idx
+            );
+        }
     }
+
+    code
 }
 
 /// Write ANS entropy code header (context map + distributions).
@@ -1104,10 +1142,18 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
         eprintln!("write_entropy_code_ans:");
         eprintln!("  num_contexts: {}", code.context_map.len());
         eprintln!("  num_histograms: {}", code.histograms.len());
-        eprintln!("  context_map: {:?}", &code.context_map[..code.context_map.len().min(20)]);
+        eprintln!(
+            "  context_map: {:?}",
+            &code.context_map[..code.context_map.len().min(20)]
+        );
         for (i, h) in code.histograms.iter().enumerate() {
-            eprintln!("  histogram[{}]: alphabet_size={}, method={}, counts[..8]={:?}",
-                     i, h.alphabet_size, h.method, &h.counts[..h.counts.len().min(8)]);
+            eprintln!(
+                "  histogram[{}]: alphabet_size={}, method={}, counts[..8]={:?}",
+                i,
+                h.alphabet_size,
+                h.method,
+                &h.counts[..h.counts.len().min(8)]
+            );
         }
     }
 
@@ -1135,8 +1181,11 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
     }
 
     #[cfg(feature = "debug-tokens")]
-    eprintln!("  HybridUint configs: {} bits ({} histograms)",
-             writer.bits_written() - cfg_start, code.histograms.len());
+    eprintln!(
+        "  HybridUint configs: {} bits ({} histograms)",
+        writer.bits_written() - cfg_start,
+        code.histograms.len()
+    );
 
     // Write ANS distributions
     let hist_start = writer.bits_written();
@@ -1144,11 +1193,18 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
         let h_start = writer.bits_written();
         histo.write(writer)?;
         #[cfg(feature = "debug-tokens")]
-        eprintln!("  histogram[{}]: {} bits", i, writer.bits_written() - h_start);
+        eprintln!(
+            "  histogram[{}]: {} bits",
+            i,
+            writer.bits_written() - h_start
+        );
     }
 
     #[cfg(feature = "debug-tokens")]
-    eprintln!("  All histograms: {} bits", writer.bits_written() - hist_start);
+    eprintln!(
+        "  All histograms: {} bits",
+        writer.bits_written() - hist_start
+    );
 
     Ok(())
 }
@@ -1162,7 +1218,10 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
         writer.write(1, 1)?; // simple_context_map = true
         writer.write(2, 0)?; // nbits = 0
     } else if num_histograms <= 8
-        && code.context_map.iter().all(|&c| (c as usize) < num_histograms)
+        && code
+            .context_map
+            .iter()
+            .all(|&c| (c as usize) < num_histograms)
     {
         // Simple context map with multiple histograms
         // bits_per_entry: 0 = all zeros (handled above), 1 = 2 histos, 2 = 4 histos, 3 = 8 histos
@@ -1222,8 +1281,12 @@ pub fn write_tokens_ans(
 
     #[cfg(feature = "debug-tokens")]
     {
-        eprintln!("write_tokens_ans: {} tokens, {} distributions, context_map len={}",
-                  tokens.len(), code.distributions.len(), code.context_map.len());
+        eprintln!(
+            "write_tokens_ans: {} tokens, {} distributions, context_map len={}",
+            tokens.len(),
+            code.distributions.len(),
+            code.context_map.len()
+        );
         eprintln!("  initial state: 0x{:08x}", encoder.state());
     }
 
@@ -1254,8 +1317,15 @@ pub fn write_tokens_ans(
 
         #[cfg(feature = "debug-tokens")]
         if i < 5 || i >= tokens.len() - 3 {
-            eprintln!("  token[{}]: ctx={}, val={}, tok={}, freq={}, state before=0x{:08x}",
-                      tokens.len() - 1 - i, ctx, token.value, encoded.token, info.freq, encoder.state());
+            eprintln!(
+                "  token[{}]: ctx={}, val={}, tok={}, freq={}, state before=0x{:08x}",
+                tokens.len() - 1 - i,
+                ctx,
+                token.value,
+                encoded.token,
+                info.freq,
+                encoder.state()
+            );
         }
 
         encoder.put_symbol(info);
@@ -1266,6 +1336,287 @@ pub fn write_tokens_ans(
 
     // Finalize: writes state + reversed bits
     encoder.finalize(writer)?;
+
+    Ok(())
+}
+
+/// Verify that each ANS histogram serializes and deserializes correctly.
+///
+/// Writes each histogram to bits, decodes it back with our decoder, and compares frequencies.
+pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -> Result<()> {
+    use crate::entropy_coding::ans_decode::{AnsHistogram, BitReader};
+
+    for (i, histo) in code.histograms.iter().enumerate() {
+        // Write histogram to bits
+        let mut writer = BitWriter::new();
+        histo.write(&mut writer)?;
+        writer.zero_pad_to_byte();
+        let bytes = writer.finish();
+
+        // Decode it back
+        let mut br = BitReader::new(&bytes);
+        let decoded = match AnsHistogram::decode(&mut br, ANS_LOG_ALPHA_SIZE) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!(
+                    "  {} histogram[{}]: DECODE FAILED - {} (method={}, alphabet_size={}, omit_pos={})",
+                    label, i, e, histo.method, histo.alphabet_size, histo.omit_pos
+                );
+                eprintln!(
+                    "    counts[..16]: {:?}",
+                    &histo.counts[..histo.counts.len().min(16)]
+                );
+                eprintln!("    bytes: {:02x?}", &bytes[..bytes.len().min(32)]);
+                return Err(e);
+            }
+        };
+
+        // Compare frequencies
+        let mut mismatch = false;
+        for j in 0..histo.alphabet_size {
+            let expected = histo.counts[j] as u16;
+            let got = decoded.frequencies[j];
+            if expected != got {
+                if !mismatch {
+                    eprintln!(
+                        "  {} histogram[{}]: FREQUENCY MISMATCH (method={}, alphabet_size={})",
+                        label, i, histo.method, histo.alphabet_size
+                    );
+                }
+                eprintln!("    symbol[{}]: expected={}, got={}", j, expected, got);
+                mismatch = true;
+            }
+        }
+
+        if mismatch {
+            eprintln!("    counts: {:?}", &histo.counts[..histo.alphabet_size]);
+            // Check omit_pos: what would the decoder pick vs what encoder used?
+            let mut encoder_omit_logcount = 0u32;
+            let mut encoder_omit = 0;
+            for (k, &c) in histo.counts.iter().enumerate().take(histo.alphabet_size) {
+                if c > 0 {
+                    let lc = crate::entropy_coding::ans::floor_log2_ans(c as u32) + 1;
+                    if lc > encoder_omit_logcount {
+                        encoder_omit_logcount = lc;
+                        encoder_omit = k;
+                    }
+                }
+            }
+            eprintln!(
+                "    encoder omit_pos={} (from stored histo: method={}, omit_pos={})",
+                encoder_omit, histo.method, histo.omit_pos
+            );
+            eprintln!(
+                "    encoder omit logcount={}, count at omit={}",
+                encoder_omit_logcount, histo.counts[histo.omit_pos]
+            );
+            // Check what decoder would see
+            for k in 0..histo.alphabet_size.min(40) {
+                let c = histo.counts[k];
+                if c > 0 {
+                    let lc = crate::entropy_coding::ans::floor_log2_ans(c as u32) + 1;
+                    if lc == encoder_omit_logcount {
+                        eprintln!(
+                            "    symbol[{}]: count={}, logcount={} (same as max)",
+                            k, c, lc
+                        );
+                    }
+                }
+            }
+            return Err(Error::InvalidHistogram(format!(
+                "{} histogram[{}] serialization roundtrip failed",
+                label, i
+            )));
+        }
+
+        // Histogram OK - only log when debug-tokens feature is enabled
+        #[cfg(feature = "debug-tokens")]
+        {
+            let method_desc = match histo.method {
+                0 => "flat",
+                1 => "small",
+                _ => "general",
+            };
+            eprintln!(
+                "  {} histogram[{}]: OK ({}, {} symbols, {} bytes)",
+                label,
+                i,
+                method_desc,
+                histo.alphabet_size,
+                bytes.len()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Verify ANS roundtrip: encode tokens, then decode with our local decoder.
+///
+/// Returns Ok(()) if all decoded symbols match, or Err with details of first mismatch.
+/// This is the critical invariant test for ANS encoding correctness.
+pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Result<()> {
+    use crate::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+
+    if tokens.is_empty() {
+        return Ok(());
+    }
+
+    // Step 1: Write the ANS-encoded histogram header + tokens to a buffer
+    let mut header_writer = BitWriter::new();
+    write_entropy_code_ans(code, &mut header_writer)?;
+    let header_bits = header_writer.bits_written();
+
+    let mut token_writer = BitWriter::new();
+    write_tokens_ans(tokens, code, &mut token_writer)?;
+    let token_bits = token_writer.bits_written();
+
+    // Combine header + tokens into one buffer for decoding
+    let mut combined_writer = BitWriter::new();
+    write_entropy_code_ans(code, &mut combined_writer)?;
+    write_tokens_ans(tokens, code, &mut combined_writer)?;
+    combined_writer.zero_pad_to_byte();
+    let encoded_bytes = combined_writer.finish();
+
+    // Step 2: Decode the histogram header
+    let mut br = BitReader::new(&encoded_bytes);
+
+    // Read context map
+    let num_histograms = code.histograms.len();
+    let _simple = br.read(1)?; // simple_context_map flag
+    // Skip full context map decoding — we'll decode each histogram directly.
+    // Instead, just skip to where the histograms start by re-reading the full header.
+    let mut br2 = BitReader::new(&encoded_bytes);
+
+    // We need to skip the header and go straight to the token data.
+    // The easiest way: just read past header_bits.
+    for _ in 0..header_bits {
+        br2.read(1)?;
+    }
+
+    // Step 3: Decode ANS tokens
+    let mut ans_reader = AnsReader::init(&mut br2)?;
+
+    // Decode each histogram from the full header for verification
+    let mut br_hist = BitReader::new(&encoded_bytes);
+    // Skip context map to get to histograms...
+    // Actually, let's take a simpler approach: decode histograms independently
+    // and build decoder tables from the encoder's known frequencies.
+
+    // Build decoder histograms directly from the encoder's known distributions
+    let decoder_histograms: Vec<AnsHistogram> = code
+        .distributions
+        .iter()
+        .map(|dist| {
+            // Build frequency array for the decoder
+            let mut freqs = vec![0u16; dist.symbols.len().max(64)];
+            for (i, sym) in dist.symbols.iter().enumerate() {
+                freqs[i] = sym.freq;
+            }
+
+            // Build alias map using the decoder's method
+            let log_bucket_size = 12 - 6; // LOG_SUM_PROBS - log_alpha_size
+            let bucket_size = 1u16 << log_bucket_size;
+            let bucket_mask = bucket_size as u32 - 1;
+
+            // Check for single-symbol case
+            if let Some(single_idx) = freqs.iter().position(|&f| f == 4096) {
+                let buckets = freqs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &f)| crate::entropy_coding::ans_decode::Bucket {
+                        dist: f,
+                        alias_symbol: single_idx as u8,
+                        alias_offset: bucket_size * i as u16,
+                        alias_cutoff: 0,
+                        alias_dist_xor: f ^ 4096,
+                    })
+                    .collect();
+                return AnsHistogram {
+                    buckets,
+                    log_bucket_size,
+                    bucket_mask,
+                    single_symbol: Some(single_idx as u32),
+                    frequencies: freqs,
+                };
+            }
+
+            let buckets =
+                AnsHistogram::build_alias_map_from_freqs(freqs.len(), log_bucket_size, &freqs);
+            AnsHistogram {
+                buckets,
+                log_bucket_size,
+                bucket_mask,
+                single_symbol: None,
+                frequencies: freqs,
+            }
+        })
+        .collect();
+
+    // Step 4: Decode tokens and compare
+    let mut mismatches = 0;
+    for (i, token) in tokens.iter().enumerate() {
+        let ctx = token.context as usize;
+        let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+        let decoder_hist = &decoder_histograms[dist_idx];
+
+        // Decode one ANS symbol
+        let decoded_symbol = decoder_hist.read(&mut br2, &mut ans_reader.0);
+
+        // Read extra bits (HybridUint)
+        let expected = UintCoder::encode(token.value);
+        let decoded_extra = if expected.nbits > 0 {
+            br2.read(expected.nbits as usize).unwrap_or(0) as u32
+        } else {
+            0
+        };
+
+        // Compare token (ANS symbol)
+        if decoded_symbol != expected.token {
+            if mismatches < 5 {
+                eprintln!(
+                    "ANS roundtrip MISMATCH at token[{}]: ctx={}, val={}, expected_tok={}, decoded_tok={}, state=0x{:08x}",
+                    i, ctx, token.value, expected.token, decoded_symbol, ans_reader.0
+                );
+            }
+            mismatches += 1;
+        }
+
+        // Compare extra bits
+        if decoded_extra != expected.bits {
+            if mismatches < 5 {
+                eprintln!(
+                    "ANS roundtrip extra bits MISMATCH at token[{}]: expected_bits=0x{:x}, decoded_bits=0x{:x}",
+                    i, expected.bits, decoded_extra
+                );
+            }
+            mismatches += 1;
+        }
+    }
+
+    // Step 5: Verify final state
+    if let Err(e) = ans_reader.check_final_state() {
+        return Err(Error::Bitstream(format!(
+            "ANS roundtrip final state check failed ({} token mismatches): {}",
+            mismatches, e
+        )));
+    }
+
+    if mismatches > 0 {
+        return Err(Error::Bitstream(format!(
+            "ANS roundtrip had {} mismatches out of {} tokens",
+            mismatches,
+            tokens.len()
+        )));
+    }
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "ANS roundtrip OK: {} tokens, header={} bits, data={} bits",
+        tokens.len(),
+        header_bits,
+        token_bits
+    );
 
     Ok(())
 }

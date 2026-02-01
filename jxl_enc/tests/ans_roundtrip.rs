@@ -8,7 +8,8 @@ use jxl_enc::entropy_coding::histogram::Histogram;
 fn test_single_symbol_histogram() {
     // Create a histogram with a single symbol
     let histo = Histogram::from_counts(&[100, 0, 0, 0]);
-    let encoded = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+    let encoded =
+        ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
 
     println!("Single symbol histogram:");
     println!("  counts: {:?}", encoded.counts);
@@ -30,7 +31,8 @@ fn test_single_symbol_histogram() {
 fn test_two_symbol_histogram() {
     // Create a histogram with two symbols
     let histo = Histogram::from_counts(&[100, 100, 0, 0]);
-    let encoded = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+    let encoded =
+        ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
 
     println!("Two symbol histogram:");
     println!("  counts: {:?}", encoded.counts);
@@ -56,12 +58,15 @@ fn test_two_symbol_histogram() {
 fn test_general_histogram() {
     // Create a histogram with multiple symbols
     let histo = Histogram::from_counts(&[100, 50, 25, 12, 6, 3, 2, 1, 1]);
-    let encoded = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+    let encoded =
+        ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
 
     println!("General histogram:");
     println!("  counts: {:?}", encoded.counts);
-    println!("  method: {}, alphabet_size: {}, omit_pos: {}",
-             encoded.method, encoded.alphabet_size, encoded.omit_pos);
+    println!(
+        "  method: {}, alphabet_size: {}, omit_pos: {}",
+        encoded.method, encoded.alphabet_size, encoded.omit_pos
+    );
 
     // Verify sum is 4096
     let sum: i32 = encoded.counts.iter().sum();
@@ -71,9 +76,14 @@ fn test_general_histogram() {
     let omit_count = encoded.counts[encoded.omit_pos];
     for (i, &count) in encoded.counts.iter().enumerate() {
         if i != encoded.omit_pos && count > 0 {
-            assert!(omit_count >= count,
-                   "omit_pos {} (count {}) should have highest count, but symbol {} has count {}",
-                   encoded.omit_pos, omit_count, i, count);
+            assert!(
+                omit_count >= count,
+                "omit_pos {} (count {}) should have highest count, but symbol {} has count {}",
+                encoded.omit_pos,
+                omit_count,
+                i,
+                count
+            );
         }
     }
 
@@ -105,13 +115,19 @@ fn test_flat_distribution() {
 fn test_distribution_from_histogram() {
     // Create a histogram and build both ANSEncodingHistogram and AnsDistribution
     let histo = Histogram::from_counts(&[100, 50, 25, 10]);
-    let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+    let ans_histo =
+        ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
     let dist = AnsDistribution::from_normalized_counts(&ans_histo.counts).unwrap();
 
     println!("Histogram -> Distribution:");
     println!("  ans_histo.counts: {:?}", ans_histo.counts);
     for (i, sym) in dist.symbols.iter().enumerate() {
-        println!("  dist.symbols[{}]: freq={}, reverse_map len={}", i, sym.freq, sym.reverse_map.len());
+        println!(
+            "  dist.symbols[{}]: freq={}, reverse_map len={}",
+            i,
+            sym.freq,
+            sym.reverse_map.len()
+        );
     }
 
     // Verify frequencies match
@@ -131,12 +147,13 @@ fn test_distribution_from_histogram() {
 /// (Uses raw symbols 0-3, not HybridUint encoded values)
 #[test]
 fn test_full_ans_token_roundtrip() {
-    use jxl_enc::entropy_coding::ans::{AnsEncoder, AnsDistribution};
+    use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder};
     use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
 
     // Create a simple histogram
     let histo = Histogram::from_counts(&[100, 50, 25, 10]);
-    let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+    let ans_histo =
+        ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
     let enc_dist = AnsDistribution::from_normalized_counts(&ans_histo.counts).unwrap();
 
     // Raw symbols to encode (0-3)
@@ -149,8 +166,7 @@ fn test_full_ans_token_roundtrip() {
     let mut encoder = AnsEncoder::new();
 
     for &sym in symbols.iter().rev() {
-        let info = enc_dist.get(sym)
-            .expect("Symbol not in distribution");
+        let info = enc_dist.get(sym).expect("Symbol not in distribution");
         encoder.put_symbol(info);
     }
 
@@ -162,7 +178,11 @@ fn test_full_ans_token_roundtrip() {
     encoder.finalize(&mut writer).unwrap();
 
     let encoded_bytes = writer.finish_with_padding();
-    println!("Encoded {} bytes: {:02x?}", encoded_bytes.len(), encoded_bytes);
+    println!(
+        "Encoded {} bytes: {:02x?}",
+        encoded_bytes.len(),
+        encoded_bytes
+    );
 
     // Now decode using our decoder
     // First, we need to decode the histogram (write it, then read it back)
@@ -173,12 +193,18 @@ fn test_full_ans_token_roundtrip() {
     let mut hist_br = BitReader::new(&hist_bytes);
     let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).unwrap();
 
-    println!("Decoded histogram frequencies: {:?}", &decoded_hist.frequencies[..4]);
+    println!(
+        "Decoded histogram frequencies: {:?}",
+        &decoded_hist.frequencies[..4]
+    );
 
     // Verify histogram
     for i in 0..4 {
-        assert_eq!(decoded_hist.frequencies[i], ans_histo.counts[i] as u16,
-                  "Histogram mismatch at symbol {}", i);
+        assert_eq!(
+            decoded_hist.frequencies[i], ans_histo.counts[i] as u16,
+            "Histogram mismatch at symbol {}",
+            i
+        );
     }
 
     // Now decode the symbols
@@ -192,7 +218,10 @@ fn test_full_ans_token_roundtrip() {
     for i in 0..symbols.len() {
         // Read ANS symbol
         let symbol = decoded_hist.read(&mut br, &mut ans_reader.0) as usize;
-        println!("  step {}: symbol={}, state=0x{:08x}", i, symbol, ans_reader.0);
+        println!(
+            "  step {}: symbol={}, state=0x{:08x}",
+            i, symbol, ans_reader.0
+        );
         decoded_symbols.push(symbol);
     }
 
@@ -207,8 +236,10 @@ fn test_full_ans_token_roundtrip() {
     if ans_reader.check_final_state().is_ok() {
         println!("\n✓ ANS checksum OK (final state = 0x130000)");
     } else {
-        println!("\n✗ ANS checksum FAILED (final state = 0x{:08x}, expected 0x130000)",
-                ans_reader.0);
+        println!(
+            "\n✗ ANS checksum FAILED (final state = 0x{:08x}, expected 0x130000)",
+            ans_reader.0
+        );
         // Don't fail - just report
     }
 }
