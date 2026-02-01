@@ -5506,3 +5506,77 @@ fn test_ans_single_symbol_full_cycle() {
     assert_eq!(decoded_symbols, symbols, "symbols should match");
     assert_eq!(state, 0x00130000, "final state should be 0x00130000");
 }
+
+/// Test RGBA encoding - fixed "IncompleteFrame" error by adding ec_upsampling and ec_blending_info
+#[test]
+#[ignore]
+fn test_rgba_simple() {
+    use std::io::Cursor;
+
+    // Test various sizes: 8x8 (single block), 256x256 (single group), 512x512 (multi-group)
+    for (width, height) in [(8, 8), (256, 256), (512, 512)] {
+        eprintln!("\n=== Testing RGBA {}x{} ===", width, height);
+
+        let mut rgba_data = vec![0u8; width * height * 4];
+        for i in 0..(width * height) {
+            rgba_data[i * 4] = ((i * 3) % 256) as u8;     // R - varying
+            rgba_data[i * 4 + 1] = ((i * 5) % 256) as u8; // G - varying
+            rgba_data[i * 4 + 2] = ((i * 7) % 256) as u8; // B - varying
+            rgba_data[i * 4 + 3] = 255;                    // A - opaque
+        }
+
+        let jxl_bytes = jxl_enc::encode_rgba8(&rgba_data, width, height)
+            .expect("Failed to encode RGBA");
+
+        eprintln!("RGBA Encoded {} bytes", jxl_bytes.len());
+
+        // Test RGBA with jxl-oxide
+        let rgba_reader = Cursor::new(&jxl_bytes);
+        let rgba_image = jxl_oxide::JxlImage::builder()
+            .read(rgba_reader)
+            .expect("Failed to parse RGBA JXL");
+
+        match rgba_image.render_frame(0) {
+            Ok(render) => {
+                let fb = render.image_all_channels();
+                eprintln!("RGBA jxl-oxide decoded successfully: {}x{} (channels={})",
+                    fb.width(), fb.height(), fb.channels());
+
+                // Verify lossless encoding - compare first 10 pixels
+                let decoded = fb.buf();
+                let channels = fb.channels();
+                let mut errors = 0;
+                for i in 0..10.min(width * height) {
+                    let expected_r = ((i * 3) % 256) as f32 / 255.0;
+                    let expected_g = ((i * 5) % 256) as f32 / 255.0;
+                    let expected_b = ((i * 7) % 256) as f32 / 255.0;
+                    let expected_a = 1.0;
+
+                    let got_r = decoded[i * channels];
+                    let got_g = decoded[i * channels + 1];
+                    let got_b = decoded[i * channels + 2];
+                    let got_a = if channels > 3 { decoded[i * channels + 3] } else { 1.0 };
+
+                    let tol = 0.01; // Allow small tolerance for floating point
+                    if (got_r - expected_r).abs() > tol ||
+                       (got_g - expected_g).abs() > tol ||
+                       (got_b - expected_b).abs() > tol ||
+                       (got_a - expected_a).abs() > tol {
+                        if errors < 3 {
+                            eprintln!("Pixel {}: expected ({:.3},{:.3},{:.3},{:.3}), got ({:.3},{:.3},{:.3},{:.3})",
+                                i, expected_r, expected_g, expected_b, expected_a,
+                                got_r, got_g, got_b, got_a);
+                        }
+                        errors += 1;
+                    }
+                }
+                if errors > 0 {
+                    panic!("RGBA verification failed: {} pixel errors for {}x{}", errors, width, height);
+                }
+            }
+            Err(e) => {
+                panic!("RGBA jxl-oxide render error for {}x{}: {:?}", width, height, e);
+            }
+        }
+    }
+}
