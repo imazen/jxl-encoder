@@ -136,6 +136,11 @@ pub struct TinyEncoder {
     /// When true (default), selects the best transform size per 16x16 block region.
     /// When false, uses DCT8 for all blocks.
     pub ac_strategy_enabled: bool,
+    /// Enable custom coefficient ordering.
+    /// When true (default when optimize_codes is true), reorders AC coefficients
+    /// so frequently-zero positions appear last, reducing bitstream size.
+    /// Only effective when `optimize_codes` is true (requires two-pass mode).
+    pub custom_orders: bool,
 }
 
 impl Default for TinyEncoder {
@@ -147,6 +152,7 @@ impl Default for TinyEncoder {
             use_ans: false, // Default to Huffman for now until ANS is fully tested
             cfl_enabled: true,
             ac_strategy_enabled: true,
+            custom_orders: true,
         }
     }
 }
@@ -161,6 +167,7 @@ impl TinyEncoder {
             use_ans: false, // Default to Huffman for now until ANS is fully tested
             cfl_enabled: true,
             ac_strategy_enabled: true,
+            custom_orders: true,
         }
     }
 
@@ -347,7 +354,7 @@ impl TinyEncoder {
             )?;
 
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+            self.write_ac_global(num_groups, &ac_code, 0, None, &mut ac_global)?;
 
             let mut ac_group_writer = BitWriter::new();
             self.write_ac_group(
@@ -440,7 +447,7 @@ impl TinyEncoder {
 
             // AC Global section
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_code, &mut ac_global)?;
+            self.write_ac_global(num_groups, &ac_code, 0, None, &mut ac_global)?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
@@ -1378,6 +1385,8 @@ impl TinyEncoder {
         &self,
         num_groups: usize,
         ac_code: &BuiltEntropyCode,
+        used_orders: u32,
+        coeff_order_tokens: Option<&[Token]>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -1390,8 +1399,22 @@ impl TinyEncoder {
             writer.write(num_histo_bits as usize, 0)?;
         }
 
-        writer.write(2, 3)?;
-        writer.write(13, 0)?; // all default coeff order
+        // Write used_orders via u2S(0x5F, 0x13, 0x00, U(13))
+        if used_orders == 0x5F {
+            writer.write(2, 0)?; // selector 0 = 0x5F
+        } else if used_orders == 0x13 {
+            writer.write(2, 1)?; // selector 1 = 0x13
+        } else if used_orders == 0 {
+            writer.write(2, 2)?; // selector 2 = 0
+        } else {
+            writer.write(2, 3)?; // selector 3 = U(13)
+            writer.write(13, used_orders as u64)?;
+        }
+
+        // Write permutation data if we have custom orders
+        if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
+            super::coeff_order::build_and_write_coeff_orders(tokens, self.use_ans, writer)?;
+        }
 
         writer.write(1, 0)?; // no lz77
 
@@ -1502,6 +1525,7 @@ impl TinyEncoder {
 
                     if covered_blocks == 1 {
                         // DCT8: use existing single-block path
+                        // Streaming path: no custom orders (requires two-pass)
                         tokenize_ac_coefficients(
                             &quant_ac[c][by][bx],
                             c,
@@ -1510,6 +1534,7 @@ impl TinyEncoder {
                             predicted_nz,
                             ac_code,
                             writer,
+                            None,
                         )?;
                     } else {
                         // Multi-block: assemble contiguous coefficient buffer
@@ -1532,6 +1557,7 @@ impl TinyEncoder {
                                 quant_ac[c][slot_by][slot_bx][coeff_in_block]
                             })
                             .collect();
+                        // Streaming path: no custom orders
                         tokenize_ac_coefficients(
                             &full_block,
                             c,
@@ -1540,6 +1566,7 @@ impl TinyEncoder {
                             predicted_nz,
                             ac_code,
                             writer,
+                            None,
                         )?;
                     }
                 }
@@ -1656,6 +1683,25 @@ impl TinyEncoder {
             ac_metadata_tokens_per_group.push(md_tokens);
         }
 
+        // Compute custom coefficient orders if enabled and image is large enough
+        let (custom_order_map, used_orders) =
+            if self.custom_orders && (xsize_blocks >= 5 || ysize_blocks >= 5) {
+                let zero_counts = super::coeff_order::count_zero_coefficients(
+                    quant_ac,
+                    ac_strategy,
+                    xsize_blocks,
+                    ysize_blocks,
+                );
+                let (orders, used) = super::coeff_order::compute_custom_orders(&zero_counts);
+                if used != 0 {
+                    (Some(orders), used)
+                } else {
+                    (None, 0u32)
+                }
+            } else {
+                (None, 0u32)
+            };
+
         // AC section tokens: one Vec<Token> per ac_group
         let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
         for group_idx in 0..num_groups {
@@ -1697,6 +1743,16 @@ impl TinyEncoder {
                         } else {
                             predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
                         };
+                        // Get custom order for this (bucket, channel) if available
+                        let custom_ord = custom_order_map.as_ref().and_then(|orders| {
+                            super::coeff_order::get_custom_order(
+                                orders,
+                                used_orders,
+                                raw_strategy,
+                                c,
+                            )
+                        });
+
                         if covered_blocks == 1 {
                             let block_tokens = collect_ac_coefficients(
                                 &quant_ac[c][by][bx],
@@ -1704,6 +1760,7 @@ impl TinyEncoder {
                                 strategy_code,
                                 nz,
                                 predicted_nz,
+                                custom_ord,
                             );
                             tokens.extend_from_slice(&block_tokens);
                         } else {
@@ -1733,6 +1790,7 @@ impl TinyEncoder {
                                 strategy_code,
                                 nz,
                                 predicted_nz,
+                                custom_ord,
                             );
                             tokens.extend_from_slice(&block_tokens);
                         }
@@ -1804,6 +1862,19 @@ impl TinyEncoder {
             }
         }
 
+        // ── Tokenize coefficient orders (if custom) ──
+        let coeff_order_tokens = if used_orders != 0 {
+            let tokens = super::coeff_order::tokenize_coeff_orders(
+                custom_order_map
+                    .as_ref()
+                    .expect("custom_order_map must exist when used_orders != 0"),
+                used_orders,
+            );
+            Some(tokens)
+        } else {
+            None
+        };
+
         // ── Pass 2: Write bitstream ──
 
         let mut writer = BitWriter::with_capacity(width * height * 4);
@@ -1837,7 +1908,13 @@ impl TinyEncoder {
             )?;
 
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_built_code, &mut ac_global)?;
+            self.write_ac_global(
+                num_groups,
+                &ac_built_code,
+                used_orders,
+                coeff_order_tokens.as_deref(),
+                &mut ac_global,
+            )?;
 
             let mut ac_group_writer = BitWriter::new();
             ac_built_code.write_tokens(&ac_section_tokens[0], &mut ac_group_writer)?;
@@ -1881,7 +1958,13 @@ impl TinyEncoder {
 
             // AC Global
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_built_code, &mut ac_global)?;
+            self.write_ac_global(
+                num_groups,
+                &ac_built_code,
+                used_orders,
+                coeff_order_tokens.as_deref(),
+                &mut ac_global,
+            )?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
@@ -2105,7 +2188,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        const EXPECTED_HASH: u64 = 0x3f99694fa4617120;
+        // Updated for custom coefficient ordering + u2S(0x5F,0x13,0x00,U(13)) encoding fix
+        const EXPECTED_HASH: u64 = 0x8d173579931f7abd;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2128,7 +2212,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0xdf4eb537d18c9dde;
+        // Updated for custom coefficient ordering + u2S encoding fix
+        const EXPECTED_HASH: u64 = 0xdbd35c78351ca5f9;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2163,7 +2248,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0x6aca19938f7ecbe8;
+        // Updated for custom coefficient ordering (64x64 = 8x8 blocks, triggers custom orders)
+        const EXPECTED_HASH: u64 = 0x45d6d2bcd23d0b19;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2193,7 +2279,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0x12ced6f58131b0aa;
+        // Updated for custom coefficient ordering + u2S encoding fix
+        const EXPECTED_HASH: u64 = 0xdba09efd7ba3ba1f;
         assert_eq!(
             hash,
             EXPECTED_HASH,
