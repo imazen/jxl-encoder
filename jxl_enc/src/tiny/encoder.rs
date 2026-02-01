@@ -43,8 +43,8 @@ pub struct TinyEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
     /// Use dynamic Huffman codes built from actual token frequencies.
-    /// When false (default), uses pre-computed static codes (streaming, single-pass).
-    /// When true, uses a two-pass mode: collect tokens first, build optimal codes, then write.
+    /// When true (default), uses a two-pass mode: collect tokens first, build optimal codes, then write.
+    /// When false, uses pre-computed static codes (streaming, single-pass).
     pub optimize_codes: bool,
     /// Use enhanced histogram clustering with pair merge refinement.
     /// Only effective when `optimize_codes` is true.
@@ -67,7 +67,7 @@ impl Default for TinyEncoder {
     fn default() -> Self {
         Self {
             distance: 1.0,
-            optimize_codes: false,
+            optimize_codes: true,
             enhanced_clustering: false,
             cfl_enabled: true,
             ac_strategy_enabled: true,
@@ -80,7 +80,7 @@ impl TinyEncoder {
     pub fn new(distance: f32) -> Self {
         Self {
             distance,
-            optimize_codes: false,
+            optimize_codes: true,
             enhanced_clustering: false,
             cfl_enabled: true,
             ac_strategy_enabled: true,
@@ -1995,7 +1995,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        const EXPECTED_HASH: u64 = 0xa4b811681eee82f6;
+        const EXPECTED_HASH: u64 = 0x3f99694fa4617120;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2018,7 +2018,7 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0x9496af16f5397719;
+        const EXPECTED_HASH: u64 = 0xdf4eb537d18c9dde;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2053,7 +2053,7 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0x9f2c5926cabb2651;
+        const EXPECTED_HASH: u64 = 0x6aca19938f7ecbe8;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2083,7 +2083,7 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        const EXPECTED_HASH: u64 = 0xa1475c5f3309ebb6;
+        const EXPECTED_HASH: u64 = 0x12ced6f58131b0aa;
         assert_eq!(
             hash,
             EXPECTED_HASH,
