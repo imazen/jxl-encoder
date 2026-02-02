@@ -126,6 +126,37 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 
 ## Resolved Bugs
 
+### dc_from_dct_16x16/32x32 Spatial Ordering Swap (FIXED Feb 1, 2026)
+
+**Issue**: DCT16x16 encoding produced catastrophic quality (SSIM2 = -67) for images
+larger than 16x16 (multiple DCT16x16 blocks). Single 16x16 blocks worked fine
+(SSIM2 = 72). DCT32x32 had the same class of bug.
+
+**Root Cause**: `dc_from_dct_16x16()` in `dct.rs` computed the 2x2 IDCT as
+rows→columns (no transpose between steps), but the C++ `ComputeScaledIDCT<2,2>`
+does rows→transpose→rows. Without the transpose, the off-diagonal DC values
+(dc01 and dc10) were swapped: vertical frequency produced horizontal spatial
+variation and vice versa. The encoder stores `dcs[iy*2+ix]` at position
+`(by+iy, bx+ix)`, so swapped values corrupted the DC prediction grid.
+
+`dc_from_dct_32x32()` had the same pattern: rows→columns without transpose
+for the 4x4 IDCT, producing a transposed DC grid.
+
+**Additionally**: The LLF position identification in `quantize_ac_block` used
+`idx < covered_blocks` (contiguous indices) instead of a 2D grid check. For
+DCT16x16 (cx=cy=2, stride=16), this gave LLF positions {0,1,2,3} instead of
+correct {0,1,16,17}, causing wrong coefficients to be zeroed and wrong CfL skip.
+
+**Fix**: Changed 2x2 IDCT to rows→transpose→rows pattern (renamed variables to
+match correct spatial semantics). Added 4x4 transpose between IDCT steps for
+32x32. Changed LLF check to `(idx / grid_width) < cy && (idx % grid_width) < cx`.
+
+**Proven by**: Layer 1b test sets only vertical frequency (coeffs[1]) nonzero and
+verifies the DC output has vertical (not horizontal) spatial variation.
+
+**Impact**: DCT16x16 SSIM2 at 256x256: -67 → 69.4. Gap vs DCT8: 137 → 0.8.
+DCT16x16 now beats DCT8 at some distances (kodak1: +0.87 SSIM2).
+
 ### DCT16x16 Block Context Map Mismatch (FIXED Feb 1, 2026)
 
 **Issue**: Static Huffman encoder path produced UnexpectedEof when DCT16x16 was
