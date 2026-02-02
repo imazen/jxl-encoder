@@ -677,4 +677,34 @@ mod tests {
         assert!(min_weight > 1e-5, "Min weight {} too small", min_weight);
         assert!(max_weight < 1.0, "Max weight {} too large", max_weight);
     }
+
+    /// Print weight statistics per strategy/channel for diagnostics.
+    /// Use `cargo test -p jxl_enc test_weight_stats -- --nocapture` to see output.
+    #[test]
+    fn test_weight_stats_per_strategy() {
+        let strategies = [
+            (0, "DCT8"),
+            (1, "DCT16x8"),
+            (2, "DCT8x16"),
+            (3, "DCT16x16"),
+            (4, "DCT32x32"),
+        ];
+        let channels = ["X", "Y", "B"];
+
+        for &(strat, name) in &strategies {
+            for (c, ch_name) in channels.iter().enumerate() {
+                let w = quant_weights(strat, c);
+                let min_w = w.iter().cloned().fold(f32::INFINITY, f32::min);
+                let max_w = w.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let mean_w: f32 = w.iter().sum::<f32>() / w.len() as f32;
+                // 1/weight is the quantization multiplier. Larger 1/weight = more quantization.
+                let max_inv = 1.0 / min_w;
+                let min_inv = 1.0 / max_w;
+                eprintln!(
+                    "{:>8} ch={}: {} coeffs, weight range [{:.6}, {:.6}], mean={:.6}, inv range [{:.1}, {:.1}]",
+                    name, ch_name, w.len(), min_w, max_w, mean_w, min_inv, max_inv
+                );
+            }
+        }
+    }
 }
