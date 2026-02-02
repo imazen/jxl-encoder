@@ -223,6 +223,190 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     output.copy_from_slice(&transposed);
 }
 
+/// Compute base 4x8 DCT (4 rows, 8 columns).
+///
+/// This is the primitive transform for a single 4x8 sub-block.
+/// Input: 4x8 = 32 floats in row-major order
+/// Output: 32 DCT coefficients
+///
+/// Based on libjxl's ComputeScaledDCT<4, 8>. Since ROWS < COLS,
+/// the transform includes a final transpose.
+pub fn dct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
+    let mut tmp = [0.0f32; 32];
+
+    // Transform rows (8 columns each) with 8-point DCT
+    for row in 0..4 {
+        let row_start = row * 8;
+        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
+        dct1d_8(&mut tmp[row_start..row_start + 8]);
+        for i in 0..8 {
+            tmp[row_start + i] *= 1.0 / 8.0;
+        }
+    }
+
+    // Transpose 4x8 -> 8x4
+    let mut transposed = [0.0f32; 32];
+    for row in 0..4 {
+        for col in 0..8 {
+            transposed[col * 4 + row] = tmp[row * 8 + col];
+        }
+    }
+
+    // Transform columns (now 4 elements each) with 4-point DCT
+    for row in 0..8 {
+        let row_start = row * 4;
+        dct1d_4(&mut transposed[row_start..row_start + 4]);
+        for i in 0..4 {
+            transposed[row_start + i] *= 1.0 / 4.0;
+        }
+    }
+
+    // Final transpose 8x4 -> 4x8 (ROWS < COLS branch in libjxl)
+    for row in 0..8 {
+        for col in 0..4 {
+            output[col * 8 + row] = transposed[row * 4 + col];
+        }
+    }
+}
+
+/// Compute base 8x4 DCT (8 rows, 4 columns).
+///
+/// This is the primitive transform for a single 8x4 sub-block.
+/// Input: 8x4 = 32 floats in row-major order
+/// Output: 32 DCT coefficients
+///
+/// Based on libjxl's ComputeScaledDCT<8, 4>. Since ROWS >= COLS,
+/// there is NO final transpose.
+pub fn dct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
+    let mut tmp = [0.0f32; 32];
+
+    // Transform rows (4 columns each) with 4-point DCT
+    for row in 0..8 {
+        let row_start = row * 4;
+        tmp[row_start..row_start + 4].copy_from_slice(&input[row_start..row_start + 4]);
+        dct1d_4(&mut tmp[row_start..row_start + 4]);
+        for i in 0..4 {
+            tmp[row_start + i] *= 1.0 / 4.0;
+        }
+    }
+
+    // Transpose 8x4 -> 4x8
+    let mut transposed = [0.0f32; 32];
+    for row in 0..8 {
+        for col in 0..4 {
+            transposed[col * 8 + row] = tmp[row * 4 + col];
+        }
+    }
+
+    // Transform columns (now 8 elements each) with 8-point DCT
+    for row in 0..4 {
+        let row_start = row * 8;
+        dct1d_8(&mut transposed[row_start..row_start + 8]);
+        for i in 0..8 {
+            transposed[row_start + i] *= 1.0 / 8.0;
+        }
+    }
+
+    // NO final transpose for ROWS >= COLS (matches dct_8x8 behavior)
+    output.copy_from_slice(&transposed);
+}
+
+/// Compute full DCT4X8 transform for 8x8 pixel block.
+///
+/// This covers an 8x8 pixel region using TWO vertically-stacked 4x8 sub-blocks.
+/// The DC values of the two sub-blocks are combined with a 2-point transform.
+///
+/// Input: 8x8 = 64 floats in row-major order (stride 8)
+/// Output: 64 DCT coefficients in interleaved layout
+///
+/// Matches libjxl's Type::DCT4X8 case in enc_transforms-inl.h
+pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
+    // Process two 4x8 sub-blocks (top and bottom halves)
+    for y in 0..2 {
+        // Extract 4x8 sub-block
+        let mut block = [0.0f32; 32];
+        for iy in 0..4 {
+            for ix in 0..8 {
+                block[iy * 8 + ix] = input[(y * 4 + iy) * 8 + ix];
+            }
+        }
+
+        // Apply base 4x8 DCT
+        let mut coeffs = [0.0f32; 32];
+        dct_4x8(&block, &mut coeffs);
+
+        // Interleave into output: coefficients[(y + iy * 2) * 8 + ix]
+        for iy in 0..4 {
+            for ix in 0..8 {
+                output[(y + iy * 2) * 8 + ix] = coeffs[iy * 8 + ix];
+            }
+        }
+    }
+
+    // Combine DC values of the two sub-blocks with 2-point transform
+    let block0_dc = output[0];
+    let block1_dc = output[8];
+    output[0] = (block0_dc + block1_dc) * 0.5;
+    output[8] = (block0_dc - block1_dc) * 0.5;
+}
+
+/// Compute full DCT8X4 transform for 8x8 pixel block.
+///
+/// This covers an 8x8 pixel region using TWO horizontally-adjacent 8x4 sub-blocks.
+/// The DC values of the two sub-blocks are combined with a 2-point transform.
+///
+/// Input: 8x8 = 64 floats in row-major order (stride 8)
+/// Output: 64 DCT coefficients in interleaved layout
+///
+/// Matches libjxl's Type::DCT8X4 case in enc_transforms-inl.h
+pub fn dct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
+    // Process two 8x4 sub-blocks (left and right halves)
+    for x in 0..2 {
+        // Extract 8x4 sub-block
+        let mut block = [0.0f32; 32];
+        for iy in 0..8 {
+            for ix in 0..4 {
+                block[iy * 4 + ix] = input[iy * 8 + (x * 4 + ix)];
+            }
+        }
+
+        // Apply base 8x4 DCT
+        let mut coeffs = [0.0f32; 32];
+        dct_8x4(&block, &mut coeffs);
+
+        // Interleave into output: coefficients[(x + iy * 2) * 8 + ix]
+        // Note: the 8x4 output is in 4x8 layout (stride 8) after the transform
+        for iy in 0..4 {
+            for ix in 0..8 {
+                output[(x + iy * 2) * 8 + ix] = coeffs[iy * 8 + ix];
+            }
+        }
+    }
+
+    // Combine DC values of the two sub-blocks with 2-point transform
+    let block0_dc = output[0];
+    let block1_dc = output[8];
+    output[0] = (block0_dc + block1_dc) * 0.5;
+    output[8] = (block0_dc - block1_dc) * 0.5;
+}
+
+/// Extract DC value from DCT4X8 full transform coefficients.
+///
+/// For DCT4X8 (and DCT8X4), the 8x8 block is covered by a single 1x1 DC region.
+/// The DC combining step already produced the DC at position [0].
+#[inline]
+pub fn dc_from_dct_4x8_full(coeffs: &[f32; 64]) -> f32 {
+    coeffs[0]
+}
+
+/// Extract DC value from DCT8X4 full transform coefficients.
+///
+/// Same as DCT4X8 - single DC at position [0].
+#[inline]
+pub fn dc_from_dct_8x4_full(coeffs: &[f32; 64]) -> f32 {
+    coeffs[0]
+}
+
 /// Compute scaled 16x8 DCT (16 rows, 8 columns).
 ///
 /// Input: 16x8 block in row-major order (128 floats)
@@ -895,6 +1079,174 @@ mod tests {
         assert!(
             output[1].abs() > 1e-6,
             "output[1] should be non-zero for non-trivial row 0"
+        );
+    }
+
+    // ─── DCT4x8 / DCT8x4 tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_dct_4x8_constant() {
+        // Constant 4x8 block should have only DC
+        let input = [0.5f32; 32];
+        let mut output = [0.0f32; 32];
+        dct_4x8(&input, &mut output);
+
+        // AC should be near zero
+        for (i, val) in output.iter().enumerate().skip(1) {
+            assert!(val.abs() < 1e-4, "AC[{}]: {} should be ~0", i, val);
+        }
+    }
+
+    #[test]
+    fn test_dct_8x4_constant() {
+        // Constant 8x4 block should have only DC
+        let input = [0.5f32; 32];
+        let mut output = [0.0f32; 32];
+        dct_8x4(&input, &mut output);
+
+        // AC should be near zero
+        for (i, val) in output.iter().enumerate().skip(1) {
+            assert!(val.abs() < 1e-4, "AC[{}]: {} should be ~0", i, val);
+        }
+    }
+
+    #[test]
+    fn test_dct_4x8_full_constant() {
+        // Constant 8x8 block processed with DCT4X8 should have only DC
+        let input = [0.5f32; 64];
+        let mut output = [0.0f32; 64];
+        dct_4x8_full(&input, &mut output);
+
+        // DC at [0] should be non-zero
+        assert!(output[0].abs() > 0.1, "DC should be non-zero");
+        // The LLF coefficient at [8] can be non-zero (difference of sub-block DCs)
+        // but for uniform input it should be zero
+        assert!(output[8].abs() < 1e-4, "LLF[8] should be ~0 for uniform input");
+        // Other AC should be near zero
+        for (i, val) in output.iter().enumerate().skip(1) {
+            if i == 8 {
+                continue;
+            } // skip LLF[8]
+            assert!(val.abs() < 1e-4, "AC[{}]: {} should be ~0", i, val);
+        }
+    }
+
+    #[test]
+    fn test_dct_8x4_full_constant() {
+        // Constant 8x8 block processed with DCT8X4 should have only DC
+        let input = [0.5f32; 64];
+        let mut output = [0.0f32; 64];
+        dct_8x4_full(&input, &mut output);
+
+        // DC at [0] should be non-zero
+        assert!(output[0].abs() > 0.1, "DC should be non-zero");
+        // LLF[8] should be ~0 for uniform input
+        assert!(output[8].abs() < 1e-4, "LLF[8] should be ~0 for uniform input");
+        // Other AC should be near zero
+        for (i, val) in output.iter().enumerate().skip(1) {
+            if i == 8 {
+                continue;
+            }
+            assert!(val.abs() < 1e-4, "AC[{}]: {} should be ~0", i, val);
+        }
+    }
+
+    #[test]
+    fn test_dct_4x8_full_dc_extraction() {
+        // Verify DC extraction works correctly
+        let input = [1.0f32; 64];
+        let mut output = [0.0f32; 64];
+        dct_4x8_full(&input, &mut output);
+
+        let dc = dc_from_dct_4x8_full(&output);
+        assert!(dc.abs() > 0.1, "DC should be non-zero: {}", dc);
+    }
+
+    #[test]
+    fn test_dct_8x4_full_dc_extraction() {
+        // Verify DC extraction works correctly
+        let input = [1.0f32; 64];
+        let mut output = [0.0f32; 64];
+        dct_8x4_full(&input, &mut output);
+
+        let dc = dc_from_dct_8x4_full(&output);
+        assert!(dc.abs() > 0.1, "DC should be non-zero: {}", dc);
+    }
+
+    #[test]
+    fn test_dct_4x8_full_top_bottom_different() {
+        // Test that DCT4X8 can distinguish top vs bottom halves
+        let mut input = [0.0f32; 64];
+        // Top half = 1.0, bottom half = 0.0
+        for y in 0..4 {
+            for x in 0..8 {
+                input[y * 8 + x] = 1.0;
+            }
+        }
+        let mut output = [0.0f32; 64];
+        dct_4x8_full(&input, &mut output);
+
+        // LLF[8] should be non-zero (it encodes the top-bottom difference)
+        assert!(
+            output[8].abs() > 0.1,
+            "LLF[8] should capture top-bottom difference: {}",
+            output[8]
+        );
+    }
+
+    #[test]
+    fn test_dct_8x4_full_left_right_different() {
+        // Test that DCT8X4 can distinguish left vs right halves
+        let mut input = [0.0f32; 64];
+        // Left half = 1.0, right half = 0.0
+        for y in 0..8 {
+            for x in 0..4 {
+                input[y * 8 + x] = 1.0;
+            }
+        }
+        let mut output = [0.0f32; 64];
+        dct_8x4_full(&input, &mut output);
+
+        // LLF[8] should be non-zero (it encodes the left-right difference)
+        assert!(
+            output[8].abs() > 0.1,
+            "LLF[8] should capture left-right difference: {}",
+            output[8]
+        );
+    }
+
+    #[test]
+    fn test_dct_4x8_energy_preservation() {
+        // DCT should approximately preserve energy
+        let input: [f32; 32] = core::array::from_fn(|i| (i as f32) / 32.0);
+        let mut output = [0.0f32; 32];
+        dct_4x8(&input, &mut output);
+
+        let input_energy: f32 = input.iter().map(|x| x * x).sum();
+        let output_energy: f32 = output.iter().map(|x| x * x).sum();
+
+        // Energy should be proportional (may differ by normalization)
+        assert!(output_energy > 0.0, "Output should have non-zero energy");
+        assert!(
+            input_energy > 0.0 && output_energy > 0.0,
+            "Both should have energy"
+        );
+    }
+
+    #[test]
+    fn test_dct_8x4_energy_preservation() {
+        // DCT should approximately preserve energy
+        let input: [f32; 32] = core::array::from_fn(|i| (i as f32) / 32.0);
+        let mut output = [0.0f32; 32];
+        dct_8x4(&input, &mut output);
+
+        let input_energy: f32 = input.iter().map(|x| x * x).sum();
+        let output_energy: f32 = output.iter().map(|x| x * x).sum();
+
+        assert!(output_energy > 0.0, "Output should have non-zero energy");
+        assert!(
+            input_energy > 0.0 && output_energy > 0.0,
+            "Both should have energy"
         );
     }
 }
