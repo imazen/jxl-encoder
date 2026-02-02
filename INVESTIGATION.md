@@ -48,13 +48,39 @@ The gap is NOT from missing features. Comparing e5→e7 shows only ~1 SSIM2 impr
 
 **But we're also lower quality.** The gap must be in what we quantize, not how we encode it.
 
-**New hypothesis:** The difference is in `kAcQuant`:
+**Hypothesis update — kAcQuant is NOT the issue:**
 - libjxl-tiny uses `kAcQuant = 0.8`
-- Full libjxl uses `kAcQuant = 0.765`
+- Full libjxl uses `kAcQuant = 0.765` but in a DIFFERENT formula
 
-libjxl's lower kAcQuant means **less quantization** (higher quality, larger files) at the same distance. This could partially explain why our quality is lower — we matched libjxl-tiny's more aggressive quantization, not full libjxl's gentler approach.
+#### 2026-02-02 04:45 — Key difference found: content-adaptive global_scale
 
-**Next:** Test if lowering our kAcQuant from 0.8 to 0.765 improves quality.
+**[PROVEN] libjxl uses content-adaptive global_scale, we don't.**
+
+Full libjxl (`quantizer.cc:45-73`):
+```cpp
+// Compute quant_median and quant_median_absd from the actual quant field
+scale = kGlobalScaleDenom * (quant_median - quant_median_absd) / kQuantFieldTarget;
+```
+
+Our encoder (and libjxl-tiny):
+```rust
+scale = GLOBAL_SCALE_DENOM * AC_QUANT / (distance * QUANT_FIELD_TARGET);
+```
+
+**The difference:** libjxl adapts global_scale to the **actual variance** of the per-block quant field. For images with high masking variance (lots of texture variation), `quant_median_absd` is large, which INCREASES global_scale (finer quantization, higher quality).
+
+Our encoder uses a fixed formula based only on distance — ignoring the actual content.
+
+**Impact analysis:**
+- For uniform images: Our approach and libjxl's should produce similar global_scale
+- For high-variance images (like frymire with its complex patterns): libjxl gets higher global_scale, we get lower (more aggressive quantization)
+
+**This explains why our quality gap grows at high distance** — at d=4.0, the fixed global_scale is already quite low, and ignoring content variance makes it even more aggressive on complex images.
+
+**Next steps:**
+1. Implement `SetQuantField` with median/MAD-based global_scale selection
+2. Compare global_scale values between ours and cjxl on the same image
+3. Re-test quality gap after implementing content-adaptive global_scale
 
 ---
 
