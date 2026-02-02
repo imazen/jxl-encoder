@@ -74,17 +74,49 @@ pub static COEFF_ORDER_16X16: [u32; 256] = [
 ];
 
 /// Default zig-zag coefficient order for DCT32x32 (1024 coefficients).
-/// Generated at runtime via diagonal scan of the 32x32 coefficient grid.
-static COEFF_ORDER_32X32: LazyLock<Vec<u32>> = LazyLock::new(|| natural_coeff_order(32, 32));
+/// Generated at runtime via CoefficientLayout scan: LLF positions first,
+/// then remaining AC positions in zig-zag order.
+static COEFF_ORDER_32X32: LazyLock<Vec<u32>> =
+    LazyLock::new(|| coefficient_layout_order(32, 32, 4, 4));
 
-/// Generate a natural (zig-zag diagonal) coefficient order for an NxM block.
+/// Generate a coefficient order with LLF positions first, then AC in zig-zag.
 ///
-/// Scans diagonals from top-left to bottom-right, alternating direction
-/// on each diagonal. This matches the libjxl `natural_coeff_order` function.
-fn natural_coeff_order(rows: usize, cols: usize) -> Vec<u32> {
+/// For transforms larger than 8x8, the first `llf_x * llf_y` positions must be
+/// the LLF (Lowest Low Frequency) coefficients that will be filled from DC.
+/// The remaining positions are AC coefficients scanned in zig-zag order.
+///
+/// The LLF positions in our layout (stride = `cols`) are at:
+///   `lx * cols + ly` for lx in 0..llf_x, ly in 0..llf_y
+///
+/// This matches how `tokenize_ac_coefficients` skips the first `covered_blocks`
+/// entries (treating them as LLF) and encodes the rest as AC.
+fn coefficient_layout_order(
+    rows: usize,
+    cols: usize,
+    llf_x: usize,
+    llf_y: usize,
+) -> Vec<u32> {
     let size = rows * cols;
     let mut order = Vec::with_capacity(size);
-    // Scan diagonals: d goes from 0 to (rows + cols - 2)
+
+    // Build set of LLF positions for quick lookup
+    let mut is_llf = vec![false; size];
+    for lx in 0..llf_x {
+        for ly in 0..llf_y {
+            let pos = lx * cols + ly;
+            is_llf[pos] = true;
+        }
+    }
+
+    // Phase 1: LLF positions in row-major order within the LLF region
+    for ly in 0..llf_y {
+        for lx in 0..llf_x {
+            order.push((lx * cols + ly) as u32);
+        }
+    }
+    debug_assert_eq!(order.len(), llf_x * llf_y);
+
+    // Phase 2: Remaining (non-LLF) positions in zig-zag diagonal scan
     for d in 0..(rows + cols - 1) {
         if d % 2 == 0 {
             // Even diagonal: go from bottom-left to top-right
@@ -93,7 +125,10 @@ fn natural_coeff_order(rows: usize, cols: usize) -> Vec<u32> {
             let mut r = r_start;
             loop {
                 let c = d - r;
-                order.push((r * cols + c) as u32);
+                let pos = r * cols + c;
+                if !is_llf[pos] {
+                    order.push(pos as u32);
+                }
                 if r == r_end {
                     break;
                 }
@@ -105,7 +140,10 @@ fn natural_coeff_order(rows: usize, cols: usize) -> Vec<u32> {
             let r_end = d.min(rows - 1);
             for r in r_start..=r_end {
                 let c = d - r;
-                order.push((r * cols + c) as u32);
+                let pos = r * cols + c;
+                if !is_llf[pos] {
+                    order.push(pos as u32);
+                }
             }
         }
     }
@@ -497,5 +535,72 @@ mod tests {
         // DCT16x16
         let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT16X16);
         assert_eq!((cx, cy, cb, log2cb, code), (2, 2, 4, 2, 4));
+
+        // DCT32x32
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT32X32);
+        assert_eq!((cx, cy, cb, log2cb, code), (4, 4, 16, 4, 5));
+    }
+
+    #[test]
+    fn test_coeff_order_32x32_llf_first() {
+        let order = &*COEFF_ORDER_32X32;
+        assert_eq!(order.len(), 1024);
+
+        // Build set of LLF positions (4x4 in 32x32 grid, stride 32)
+        let mut llf_positions = std::collections::HashSet::new();
+        for lx in 0..4 {
+            for ly in 0..4 {
+                llf_positions.insert((lx * 32 + ly) as u32);
+            }
+        }
+        assert_eq!(llf_positions.len(), 16);
+
+        // First 16 entries must all be LLF positions
+        for (k, &pos) in order.iter().enumerate().take(16) {
+            assert!(
+                llf_positions.contains(&pos),
+                "order[{}] = {} is not an LLF position",
+                k,
+                pos
+            );
+        }
+
+        // Entries 16..1024 must NOT be LLF positions
+        for (k, &pos) in order.iter().enumerate().skip(16) {
+            assert!(
+                !llf_positions.contains(&pos),
+                "order[{}] = {} is an LLF position but should be AC",
+                k,
+                pos
+            );
+        }
+
+        // All 1024 positions must be present exactly once
+        let mut seen = [false; 1024];
+        for &pos in order.iter() {
+            assert!(!seen[pos as usize], "duplicate position {}", pos);
+            seen[pos as usize] = true;
+        }
+        assert!(seen.iter().all(|&s| s), "not all positions covered");
+    }
+
+    #[test]
+    fn test_coeff_order_16x16_llf_first() {
+        // Verify existing 16x16 order also has LLF first (regression test)
+        let mut llf_positions = std::collections::HashSet::new();
+        for lx in 0..2 {
+            for ly in 0..2 {
+                llf_positions.insert((lx * 16 + ly) as u32);
+            }
+        }
+
+        for (k, &pos) in COEFF_ORDER_16X16.iter().enumerate().take(4) {
+            assert!(
+                llf_positions.contains(&pos),
+                "16x16 order[{}] = {} is not LLF",
+                k,
+                pos
+            );
+        }
     }
 }
