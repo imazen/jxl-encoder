@@ -272,6 +272,11 @@ impl FrameEncoder {
     }
 
     /// Encodes an RGB image using VarDCT (lossy).
+    ///
+    /// **DEPRECATED**: Use `TinyEncoder` via `Encoder::encode_lossy_rgb8()` instead.
+    /// This method uses the old VarDctEncoder which has known issues with multi-group
+    /// images. It's kept for legacy tests only.
+    #[deprecated(note = "Use Encoder::encode_lossy_rgb8() with TinyEncoder instead")]
     pub fn encode_vardct(
         &self,
         xyb_data: &[f32],

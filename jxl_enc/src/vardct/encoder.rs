@@ -1,5 +1,12 @@
 //! VarDCT frame encoder.
 //!
+//! **DEPRECATED**: This encoder is no longer used in production. The main encoder API
+//! (`encode_lossy_rgb8`) now uses `TinyEncoder` which is more reliable and produces
+//! better quality output. This code is kept for reference and for some legacy tests,
+//! but should not be used for new development.
+//!
+//! See `tiny/encoder.rs` for the production VarDCT encoder.
+//!
 //! Produces VarDCT (lossy) encoded frames from RGB images.
 
 use crate::BLOCK_DIM;
