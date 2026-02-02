@@ -63,12 +63,13 @@ pub static COMPACT_BLOCK_CONTEXT_MAP: [u8; 39] = [
 /// a LUT (e.g., code 0→order 0, code 4→order 2, code 5→order 3, code 6,7→order 4).
 static BLOCK_CONTEXT_MAP: [u8; 81] = [
     // X (c=0): decoder reads with ch_idx=1 (compact group 1)
-    //  code: 0  1  2  3  4  5  6  7  8 ...
-    2, 0, 0, 0, 2, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  code: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 ...
+    2, 0, 0, 0, 2, 2, 3, 3, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // Y (c=1): decoder reads with ch_idx=0 (compact group 0)
+    //  DCT4X8=12 and DCT8X4=13 have order_id=1, so block_ctx=0 (already correct)
     0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // B (c=2): decoder reads with ch_idx=2 (compact group 2)
-    2, 0, 0, 0, 2, 2, 3, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    2, 0, 0, 0, 2, 2, 3, 3, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 /// Get block context from channel and AC strategy code.

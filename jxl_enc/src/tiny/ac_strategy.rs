@@ -20,22 +20,31 @@ use super::dct::{dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32};
 use super::quant::quant_weights;
 
 /// Raw strategy codes matching the C++ `AcStrategy::Type` enum.
+/// Note: These are internal codes, not bitstream codes. Use STRATEGY_CODE_LUT
+/// to convert to bitstream codes.
 pub const RAW_STRATEGY_DCT8: u8 = 0;
 pub const RAW_STRATEGY_DCT16X8: u8 = 1;
 pub const RAW_STRATEGY_DCT8X16: u8 = 2;
 pub const RAW_STRATEGY_DCT16X16: u8 = 3;
 pub const RAW_STRATEGY_DCT32X32: u8 = 4;
+pub const RAW_STRATEGY_DCT4X8: u8 = 5;
+pub const RAW_STRATEGY_DCT8X4: u8 = 6;
+
+/// Number of supported raw strategies.
+pub const NUM_RAW_STRATEGIES: usize = 7;
 
 /// Strategy code as written to the bitstream (via `StrategyCode()`).
 /// These differ from raw strategy codes.
-/// DCT16X16 = bitstream code 4, DCT32X32 = bitstream code 5 (from libjxl ac_strategy.h).
-pub(crate) const STRATEGY_CODE_LUT: [u8; 5] = [0, 6, 7, 4, 5];
+/// From libjxl ac_strategy.h: DCT=0, DCT16X16=4, DCT32X32=5, DCT16X8=6, DCT8X16=7,
+/// DCT4X8=12, DCT8X4=13.
+pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] = [0, 6, 7, 4, 5, 12, 13];
 
 /// Covered blocks in X direction for each raw strategy.
-pub(crate) const COVERED_X: [usize; 5] = [1, 1, 2, 2, 4];
+/// DCT4X8 and DCT8X4 cover 1×1 blocks (single 8x8 region).
+pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1];
 
 /// Covered blocks in Y direction for each raw strategy.
-const COVERED_Y: [usize; 5] = [1, 2, 1, 2, 4];
+const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1];
 
 /// Per-block AC strategy map.
 ///
