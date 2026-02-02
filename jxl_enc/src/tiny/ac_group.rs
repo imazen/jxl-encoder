@@ -90,12 +90,7 @@ static COEFF_ORDER_32X32: LazyLock<Vec<u32>> =
 ///
 /// This matches how `tokenize_ac_coefficients` skips the first `covered_blocks`
 /// entries (treating them as LLF) and encodes the rest as AC.
-fn coefficient_layout_order(
-    rows: usize,
-    cols: usize,
-    llf_x: usize,
-    llf_y: usize,
-) -> Vec<u32> {
+fn coefficient_layout_order(rows: usize, cols: usize, llf_x: usize, llf_y: usize) -> Vec<u32> {
     let size = rows * cols;
     let mut order = Vec::with_capacity(size);
 

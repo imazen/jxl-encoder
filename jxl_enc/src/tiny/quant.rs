@@ -702,7 +702,14 @@ mod tests {
                 let min_inv = 1.0 / max_w;
                 eprintln!(
                     "{:>8} ch={}: {} coeffs, weight range [{:.6}, {:.6}], mean={:.6}, inv range [{:.1}, {:.1}]",
-                    name, ch_name, w.len(), min_w, max_w, mean_w, min_inv, max_inv
+                    name,
+                    ch_name,
+                    w.len(),
+                    min_w,
+                    max_w,
+                    mean_w,
+                    min_inv,
+                    max_inv
                 );
             }
         }
