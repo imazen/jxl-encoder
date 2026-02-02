@@ -1,95 +1,180 @@
 # Context Handoff — Feb 2, 2026
 
-## What Was Done This Session
+## Mission: Achieve libjxl Parity and Unify Encoders
 
-1. **Gaborish inverse pre-filter** (`9b49d62`, `54adacd`, `2fe481a`)
-   - Ported 5x5 symmetric sharpening kernel from `libjxl/lib/jxl/enc_gaborish.cc`
-   - New file: `jxl_enc/src/tiny/gaborish.rs` (~170 lines)
-   - Default ON, `--no-gaborish` to disable
-   - Frame header correctly signals gab=1 for all epf_iters values
-   - Fixed pre-existing bug: epf_iters==2 (d=1.5-4.0) wrote all_default=1 implying
-     gab=true but we never applied the encoder inverse
-   - Added libjxl's 0.62x distance scaling for adaptive quant when gab is off
+The goal is to close the quality gap with full libjxl (cjxl) and merge the "tiny" encoder
+into the main encoder path. The tiny encoder started as a port of libjxl-tiny but has
+evolved beyond it. The original VarDCT encoder (`jxl_enc/src/vardct/`) failed completely
+and should be abandoned.
 
-2. **Previous session**: Noise synthesis, Wiener denoising pre-filter
+## Current RD Position vs cjxl e7
 
-## Current RD Position vs libjxl e7
+Single CLIC 2025 image (1024x1024), tested Feb 2, 2026:
 
-Single CLIC 2025 image (1360x2048), our encoder defaults vs libjxl effort 7:
+| Distance | Our Size | Our SSIM2 | cjxl Size | cjxl SSIM2 | Gap |
+|----------|----------|-----------|-----------|------------|-----|
+| d=1.0    | ~514KB   | ~80.9     | ~520KB    | ~80.7      | **+0.2** |
+| d=2.0    | 143KB    | 76.1      | 162KB     | 81.2       | **-5.1** |
+| d=4.0    | 88KB     | 63.4      | 100KB     | 70.3       | **-6.9** |
 
-| Distance | cjxl-rs size | cjxl-rs SSIM2 | libjxl size | libjxl SSIM2 | Size gap |
-|----------|-------------|---------------|-------------|--------------|----------|
-| d=0.5    | 903KB       | 88.6          | 924KB       | 88.1         | **-2.2%** |
-| d=1.0    | 514KB       | 80.9          | 520KB       | 80.7         | **-1.2%** |
-| d=2.0    | 209KB       | 68.3          | 189KB       | 69.2         | +10.5%   |
-| d=4.0    | 104KB       | 52.9          | 90KB        | 55.4         | +15.5%   |
+**We match/beat cjxl at d≤1.0 but lose significantly at higher distances.**
 
-**We beat libjxl at d≤1.0. We lose at d≥2.0, gap widening with distance.**
+## Investigation Summary (Feb 2, 2026)
 
-## RD Priority Analysis for Next Session
+### What Was Tested
 
-The gap at high distances is the primary target. Here's what libjxl has that we don't,
-ranked by expected impact on the d=2.0-4.0 gap:
+1. **K_AC_QUANT constant change** (0.8294 → 0.765 to match libjxl)
+   - Result: WORSE quality (74.96 vs 76.11 SSIM2)
+   - Conclusion: Constants are NOT the issue
 
-### Priority 1: DCT4x8 / DCT8x4 / DCT4x4 (estimated 3-8% at high d)
+2. **AC_QUANT for global_scale** (0.8 → 0.39 to match libjxl Hare mode)
+   - Result: AC_QUANT cancels out with inv_scale in quantization formula
+   - Conclusion: Changing AC_QUANT alone has no effect
 
-At high compression, large blocks waste bits on detail that gets quantized to zero.
-Small transforms (4x8, 8x4, 4x4) let the encoder adapt to fine edges and textures.
-libjxl uses these heavily at d>1.5.
+3. **adjust_quant_field mean/max blending** (ported from libjxl)
+   - Result: No significant improvement
+   - Conclusion: Correctly ported but not the root cause
 
-**Complexity**: Medium. Forward transforms exist in `jxl_enc_transforms`. Need:
-- Quant weights for each strategy
-- Strategy selection in `ac_strategy.rs`
-- LLF extraction for 4x-based transforms
-- Block context map entries for the new strategy codes
+### What We Know
 
-The DCT16x16 implementation is a good template. The small transforms are simpler
-(fewer coefficients, simpler LLF).
+- **libjxl uses FIXED global_scale** in the main encoding path (`q = 0.39/distance`),
+  NOT content-adaptive median/MAD calculation
+- **The K_AC_QUANT/AC_QUANT ratio** affects quantization, but matching libjxl's
+  ratio (0.765/0.39 ≈ 1.96) produces WORSE results than our current ratio
+- **The quality gap grows with distance** — suggests the issue is in how we handle
+  coarser quantization, not the base algorithm
 
-### Priority 2: Error diffusion in AC quantization (estimated 2-5% at high d)
+### Remaining Hypotheses
 
-Currently we hard-threshold each coefficient independently. libjxl spreads quantization
-error to neighboring coefficients, which smooths gradients and avoids banding at high
-compression. This matters more as quantization gets coarser (higher distance).
+1. **Adaptive quant masking algorithm differences**
+   - Pre-erosion computation
+   - Fuzzy erosion weights
+   - Per-block modulations (ComputeMask, HfModulation, etc.)
 
-**Complexity**: Low-Medium. The core change is in `transform_and_quantize()`:
-after quantizing a coefficient, compute the error and add fractions to neighbors.
-Reference: `lib/jxl/enc_ac_strategy.cc` error diffusion logic.
+2. **Coefficient thresholding in QuantizeBlockAC**
+   - Our `quantize_coeff_ac` uses quadrant-based thresholds
+   - libjxl may use different thresholding
 
-### Priority 3: Better AC strategy cost model (estimated 1-3%)
+3. **Missing features that help at high distances**
+   - DCT4x8/DCT8x4/DCT4x4 (small blocks for edges)
+   - Error diffusion (spreads quantization error)
 
-Our `compute_ac_strategy` entropy estimation uses a simplified cost model. libjxl's
-`EstimateEntropy` is more sophisticated at higher efforts. The current cost model
-sometimes picks DCT8 when DCT16x8/8x16 would be better (or vice versa) at high d.
+## Encoder Architecture
 
-### Priority 4: DCT32x32 fix (blocked by DC extraction bug)
+### Production Encoder: `jxl_enc/src/tiny/`
 
-DCT32x32 is disabled due to a known DC extraction bug (4-point IDCT Gibbs phenomenon).
-See "Known Bugs" in CLAUDE.md. Would help for very smooth regions at high d but is
-lower priority than small transforms.
+This is the working encoder. Key files:
 
-### Deprioritized
+- `encoder.rs` — Main encode pipeline (~2500 lines)
+- `adaptive_quant.rs` — Per-block quantization field computation
+- `ac_strategy.rs` — DCT transform selection (8x8, 16x8, 8x16, 16x16)
+- `frame.rs` — Frame header, DistanceParams, global_scale
+- `quant.rs` — Quantization weights and coefficient quantization
+- `entropy_code.rs` — Huffman and ANS entropy coding
+- `dc_coding.rs` — DC coefficient encoding
+- `ac_group.rs` — AC coefficient tokenization
 
-- **Progressive encoding**: No RD impact, UX feature
-- **Splines/Patches**: Content-specific, high complexity
-- **Gaborish tuning**: The pareto tradeoff (gab ON loses ~0.5 SSIM2 vs OFF at similar
-  size) matches libjxl behavior. Not a bug, but could be revisited for pareto tuning.
+### Dead Code: `jxl_enc/src/vardct/`
 
-## Recommended Next Session Plan
+**DO NOT USE.** This was an earlier VarDCT implementation that never worked correctly.
+It produces hard-to-diagnose errors and should be removed entirely during the merge.
 
-1. **DCT4x8 + DCT8x4** — highest expected RD impact at high distances
-2. **Error diffusion** — moderate impact, low complexity
-3. Re-benchmark at d=2.0/4.0 after each to measure gap closure
+### Reference Implementations
+
+- **libjxl (C++)**: `~/work/jxl-efforts/libjxl` — PRIMARY reference
+- **libjxl-tiny (C++)**: `~/work/libjxl-tiny` — Historical, DO NOT use for quality reference
+- **jxl-rs (Rust decoder)**: `~/work/jxl-rs` — For roundtrip testing
+
+## Key Constants Comparison
+
+| Constant | Our Value | libjxl-tiny | libjxl (Hare) | Notes |
+|----------|-----------|-------------|---------------|-------|
+| K_AC_QUANT (adaptive quant) | 0.8294 | 0.8294 | 0.765 | Changing hurts quality |
+| AC_QUANT (global_scale) | 0.8 | 0.8 | 0.39 | Cancels out |
+| QUANT_FIELD_TARGET | 5.0 | 5.0 | 5.0 | Same |
+| match_gamma_offset | 0.019 | 0.019 | 0.019 | Same |
+| kXMul (pre-erosion) | 23.427 | 23.427 | 23.427 | Same |
+
+## What Works in Tiny Encoder
+
+- [x] XYB color conversion
+- [x] Adaptive quantization (per-block masking)
+- [x] Chroma-from-luma
+- [x] AC strategy selection (DCT8/DCT16x8/DCT8x16/DCT16x16)
+- [x] DC coding with gradient predictor
+- [x] AC coding with channel interleaving
+- [x] Multi-group encoding (>256x256)
+- [x] Dynamic Huffman codes
+- [x] ANS entropy coding (`--ans` flag)
+- [x] Custom coefficient ordering
+- [x] Noise synthesis (`--noise` flag)
+- [x] Gaborish inverse (default on)
+- [x] Modular encoder (lossless path)
+- [x] RGBA support
+
+## What's Missing vs Full libjxl
+
+Priority ranked by expected impact on high-distance quality gap:
+
+1. **DCT4x8/DCT8x4/DCT4x4** — Small transforms for edges/detail
+2. **Error diffusion** — Spreads quantization error to neighbors
+3. **DCT32x32 fix** — Blocked by DC extraction bug (see CLAUDE.md)
+4. **Better AC strategy cost model** — Our entropy estimation is simplified
+5. **Progressive encoding** — No RD impact, UX feature
+
+## Test Commands
+
+```bash
+# Build
+cargo build --release -p jxl_enc_cli
+
+# Run RD regression test
+just rd-regression
+
+# Encode single image
+./target/release/cjxl-rs -d 2.0 input.png output.jxl
+
+# Compare with cjxl
+cjxl -d 2.0 -e 7 input.png cjxl_output.jxl
+djxl output.jxl decoded.png
+ssimulacra2 input.png decoded.png
+```
+
+## Files to Read First
+
+1. `CLAUDE.md` — Full project docs, known bugs, resolved bugs
+2. `INVESTIGATION.md` — Detailed investigation notes
+3. `jxl_enc/src/tiny/encoder.rs` — Main encode function
+4. `jxl_enc/src/tiny/adaptive_quant.rs` — Adaptive quant pipeline
+
+## Suggested Next Steps
+
+1. **Deep dive into adaptive quant algorithm**
+   - Add debug output to compare intermediate values with libjxl
+   - Check pre-erosion, fuzzy erosion, per-block modulations
+   - Build libjxl with debug output to compare
+
+2. **Check coefficient thresholding**
+   - Compare `quantize_coeff_ac` with libjxl's QuantizeBlockAC
+   - The quadrant-based thresholds may differ
+
+3. **Implement DCT4x8/DCT8x4**
+   - Forward transforms exist in `jxl_enc_transforms`
+   - Need: quant weights, strategy selection, LLF extraction
+
+4. **Remove dead vardct code**
+   - Delete `jxl_enc/src/vardct/` directory
+   - Update module structure to make tiny encoder the main path
 
 ## Working Tree State
 
-Clean. All tests pass (550 lib tests). Commit `9b49d62`.
+Clean. All tests pass. Commit `1d1c092`.
 
-## Key Files
+## Key Insight from Investigation
 
-- `jxl_enc/src/tiny/encoder.rs` — main encode pipeline, ~2500 lines
-- `jxl_enc/src/tiny/ac_strategy.rs` — AC strategy selection
-- `jxl_enc/src/tiny/gaborish.rs` — new this session
-- `jxl_enc/src/tiny/frame.rs` — frame header writing
-- `jxl_enc_cli/src/main.rs` — CLI flags
-- `CLAUDE.md` — full project docs, known bugs, resolved bugs
+The quality gap is NOT from simple constant differences. Our K_AC_QUANT=0.8294 with
+AC_QUANT=0.8 actually produces BETTER results than matching libjxl's 0.765/0.39 ratio.
+
+The issue is somewhere in the adaptive quant algorithm implementation or coefficient
+thresholding, not the top-level parameters. A detailed comparison of intermediate
+values between our code and libjxl is needed.
