@@ -14,8 +14,9 @@ use super::common::DCT_BLOCK_SIZE;
 use std::sync::LazyLock;
 
 /// Number of valid AC strategies.
-/// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32
-pub const NUM_VALID_STRATEGIES: usize = 5;
+/// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
+/// 5 = DCT4X8, 6 = DCT8X4
+pub const NUM_VALID_STRATEGIES: usize = 7;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -36,27 +37,32 @@ pub const TOTAL_TABLE_SIZE: usize = 21 * DCT_BLOCK_SIZE;
 
 /// Size in 8x8 blocks for each (strategy, channel) combination.
 /// Index = strategy * 3 + channel
-/// Strategies: 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32
+/// Strategies: 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32, 5=DCT4X8, 6=DCT8X4
 /// Channels: 0=X, 1=Y, 2=B
 #[rustfmt::skip]
-pub const TABLE_SIZE_IN_BLOCKS: [usize; 15] = [
+pub const TABLE_SIZE_IN_BLOCKS: [usize; 21] = [
     1, 1, 1,      // DCT8: X, Y, B
     2, 2, 2,      // DCT16X8: X, Y, B
     2, 2, 2,      // DCT8X16: X, Y, B
     4, 4, 4,      // DCT16X16: X, Y, B (256 coeffs = 4 blocks each)
     16, 16, 16,   // DCT32X32: X, Y, B (1024 coeffs = 16 blocks each)
+    1, 1, 1,      // DCT4X8: X, Y, B (64 coeffs = 1 block each)
+    1, 1, 1,      // DCT8X4: X, Y, B (64 coeffs = 1 block each)
 ];
 
 /// Offset in 8x8 blocks for each (strategy, channel) combination.
 /// Index = strategy * 3 + channel
 /// DCT32X32 offsets are into QUANT_WEIGHTS_DCT32X32, not QUANT_WEIGHTS.
+/// DCT4X8 and DCT8X4 use DCT8 weights as placeholder (TODO: proper parametric weights).
 #[rustfmt::skip]
-pub const TABLE_OFFSET_IN_BLOCKS: [usize; 15] = [
+pub const TABLE_OFFSET_IN_BLOCKS: [usize; 21] = [
     0, 1, 2,    // DCT8: X, Y, B
     3, 5, 7,    // DCT16X8: X, Y, B
     3, 5, 7,    // DCT8X16: X, Y, B (shares tables with DCT16X8)
     9, 13, 17,  // DCT16X16: X, Y, B
     0, 16, 32,  // DCT32X32: offsets into separate QUANT_WEIGHTS_DCT32X32
+    0, 1, 2,    // DCT4X8: shares DCT8 weights (placeholder)
+    0, 1, 2,    // DCT8X4: shares DCT8 weights (placeholder)
 ];
 
 /// Pre-computed quantization weights (dequant matrix, i.e. 1/weight).

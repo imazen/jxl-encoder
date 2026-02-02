@@ -11,7 +11,8 @@ use super::ac_group::{
 };
 use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
-    RAW_STRATEGY_DCT32X32, adjust_quant_field_with_distance, compute_ac_strategy,
+    RAW_STRATEGY_DCT32X32, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4,
+    adjust_quant_field_with_distance, compute_ac_strategy,
 };
 
 /// Create an AC strategy map forcing a specific strategy.
@@ -26,8 +27,9 @@ use super::dc_coding::{
     write_dc_tokens_region,
 };
 use super::dct::{
-    dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_32x32, dct_8x8, dct_8x16,
-    dct_16x8, dct_16x16, dct_32x32,
+    dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_32x32,
+    dc_from_dct_4x8_full, dc_from_dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
+    dct_4x8_full, dct_8x4_full,
 };
 use super::entropy_code::{
     OwnedAnsEntropyCode, OwnedEntropyCode, build_entropy_code_ans_with_options,
@@ -827,6 +829,32 @@ impl TinyEncoder {
                 dct_32x32(&block, &mut dct_out);
                 output[..1024].copy_from_slice(&dct_out);
             }
+            RAW_STRATEGY_DCT4X8 => {
+                // DCT4X8 full: two 4x8 transforms covering 8x8 pixels
+                let mut block = [0.0f32; 64];
+                for dy in 0..8 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..8 {
+                        block[dy * 8 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 64];
+                dct_4x8_full(&block, &mut dct_out);
+                output[..64].copy_from_slice(&dct_out);
+            }
+            RAW_STRATEGY_DCT8X4 => {
+                // DCT8X4 full: two 8x4 transforms covering 8x8 pixels
+                let mut block = [0.0f32; 64];
+                for dy in 0..8 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..8 {
+                        block[dy * 8 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 64];
+                dct_8x4_full(&block, &mut dct_out);
+                output[..64].copy_from_slice(&dct_out);
+            }
             _ => unreachable!(),
         }
     }
@@ -1097,6 +1125,22 @@ impl TinyEncoder {
                                 }
                             }
                         }
+                        RAW_STRATEGY_DCT4X8 => {
+                            // DCT4X8 full covers 1×1 blocks, returns single DC
+                            let coeffs_arr: [f32; 64] = dct_coeffs[1][..64]
+                                .try_into()
+                                .expect("64 coefficients for DCT4X8");
+                            let dc = dc_from_dct_4x8_full(&coeffs_arr);
+                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                        }
+                        RAW_STRATEGY_DCT8X4 => {
+                            // DCT8X4 full covers 1×1 blocks, returns single DC
+                            let coeffs_arr: [f32; 64] = dct_coeffs[1][..64]
+                                .try_into()
+                                .expect("64 coefficients for DCT8X4");
+                            let dc = dc_from_dct_8x4_full(&coeffs_arr);
+                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -1258,6 +1302,24 @@ impl TinyEncoder {
                                             .round() as i16;
                                 }
                             }
+                        }
+                        RAW_STRATEGY_DCT4X8 => {
+                            let coeffs_arr: [f32; 64] = dct_coeffs[c][..64]
+                                .try_into()
+                                .expect("64 coefficients for DCT4X8");
+                            let dc = dc_from_dct_4x8_full(&coeffs_arr);
+                            let y_dc = quant_dc[1][by][bx] as f32;
+                            quant_dc[c][by][bx] =
+                                (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                        }
+                        RAW_STRATEGY_DCT8X4 => {
+                            let coeffs_arr: [f32; 64] = dct_coeffs[c][..64]
+                                .try_into()
+                                .expect("64 coefficients for DCT8X4");
+                            let dc = dc_from_dct_8x4_full(&coeffs_arr);
+                            let y_dc = quant_dc[1][by][bx] as f32;
+                            quant_dc[c][by][bx] =
+                                (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         _ => unreachable!(),
                     }
