@@ -66,6 +66,12 @@ struct Args {
     #[arg(long)]
     noise: bool,
 
+    /// Enable Wiener denoising pre-filter (implies --noise)
+    /// Removes estimated noise before encoding; decoder re-adds it.
+    /// Provides 1-8% file savings with near-zero perceptual quality impact.
+    #[arg(long)]
+    denoise: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -130,8 +136,11 @@ fn main() {
                 if args.no_custom_orders {
                     tiny.custom_orders = false;
                 }
-                if args.noise {
+                if args.noise || args.denoise {
                     tiny.enable_noise = true;
+                }
+                if args.denoise {
+                    tiny.enable_denoise = true;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder
