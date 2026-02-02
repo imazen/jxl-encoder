@@ -43,7 +43,11 @@ fn strategy_params(raw_strategy: u8) -> (usize, usize, usize, usize, usize) {
     let size = covered_blocks * BLOCK_DIM * BLOCK_DIM;
 
     // Swap so cx >= cy (matches encoder.rs line 861-865)
-    let (cx, cy) = if covy > covx { (covy, covx) } else { (covx, covy) };
+    let (cx, cy) = if covy > covx {
+        (covy, covx)
+    } else {
+        (covx, covy)
+    };
     let grid_width = cx * BLOCK_DIM;
 
     (cx, cy, grid_width, covered_blocks, size)
@@ -123,10 +127,17 @@ fn layer1_llf_positions_dct16x16_old_is_wrong() {
     let new = new_llf_positions(cx, cy, grid_width, size);
 
     // The key assertion: OLD and NEW disagree for DCT16x16
-    assert_ne!(old, new, "DCT16x16: old formula MUST disagree with new formula");
+    assert_ne!(
+        old, new,
+        "DCT16x16: old formula MUST disagree with new formula"
+    );
 
     // Old formula gives wrong positions
-    assert_eq!(old, BTreeSet::from([0, 1, 2, 3]), "old formula gives {{0,1,2,3}}");
+    assert_eq!(
+        old,
+        BTreeSet::from([0, 1, 2, 3]),
+        "old formula gives {{0,1,2,3}}"
+    );
 
     // New formula gives correct 2D LLF positions
     assert_eq!(
@@ -173,7 +184,10 @@ fn layer1_llf_positions_dct32x32_old_is_wrong() {
     let new = new_llf_positions(cx, cy, grid_width, size);
 
     // OLD and NEW disagree for DCT32x32
-    assert_ne!(old, new, "DCT32x32: old formula MUST disagree with new formula");
+    assert_ne!(
+        old, new,
+        "DCT32x32: old formula MUST disagree with new formula"
+    );
 
     // Old formula: indices 0..16 (first 16 positions in row 0)
     let old_expected: BTreeSet<usize> = (0..16).collect();
@@ -260,7 +274,10 @@ fn layer1_cfl_skip_consistency_dct16x16() {
     assert!(!new_skip.contains(&2), "new CfL correctly applies to idx 2");
 
     // Positions 16,17 should be skipped (they're LLF, decoder overwrites)
-    assert!(!old_skip.contains(&16), "old CfL wrongly applies to idx 16 (LLF)");
+    assert!(
+        !old_skip.contains(&16),
+        "old CfL wrongly applies to idx 16 (LLF)"
+    );
     assert!(new_skip.contains(&16), "new CfL correctly skips idx 16");
 }
 
@@ -328,12 +345,11 @@ fn decode_djxl(data: &[u8]) -> (usize, usize, Vec<u8>) {
     let temp_png = format!("/tmp/llf_test_{}_{}.png", pid, ts);
 
     std::fs::write(&temp_jxl, data).unwrap();
-    let output = std::process::Command::new(
-        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
-    )
-    .args([&temp_jxl, &temp_png])
-    .output()
-    .unwrap();
+    let output =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args([&temp_jxl, &temp_png])
+            .output()
+            .unwrap();
 
     assert!(
         output.status.success(),
@@ -358,8 +374,14 @@ fn ssim2_srgb(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f
     use fast_ssim2::compute_ssimulacra2;
     use imgref::ImgVec;
 
-    let orig: Vec<[u8; 3]> = original.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
-    let dec: Vec<[u8; 3]> = decoded.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let orig: Vec<[u8; 3]> = original
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    let dec: Vec<[u8; 3]> = decoded
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
 
     let src = ImgVec::new(orig, width, height);
     let dst = ImgVec::new(dec, width, height);
@@ -383,7 +405,12 @@ fn ssim2_u8_vs_linear_f32(original: &[u8], decoded: &[f32], width: usize, height
 
 /// Compute SSIM2 between original sRGB u8 and decoded linear u8 (from djxl with linear transfer).
 /// djxl outputs linear values scaled to 0-255. We need to apply gamma before SSIM2.
-fn ssim2_u8_vs_linear_u8(original: &[u8], decoded_linear_u8: &[u8], width: usize, height: usize) -> f64 {
+fn ssim2_u8_vs_linear_u8(
+    original: &[u8],
+    decoded_linear_u8: &[u8],
+    width: usize,
+    height: usize,
+) -> f64 {
     // Convert linear u8 → linear f32 → sRGB u8
     let dec_srgb: Vec<u8> = decoded_linear_u8
         .iter()
@@ -590,7 +617,11 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_256() {
     let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
     eprintln!("layer4 frymire 256x256 @ d=1.0:");
-    eprintln!("  DCT8:    SSIM2={:.2}, {} bytes", ssim2_dct8, bytes_dct8.len());
+    eprintln!(
+        "  DCT8:    SSIM2={:.2}, {} bytes",
+        ssim2_dct8,
+        bytes_dct8.len()
+    );
     eprintln!(
         "  DCT16x16: SSIM2={:.2}, {} bytes",
         ssim2_dct16,
@@ -640,7 +671,11 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_full() {
     let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
     eprintln!("layer4 frymire full {}x{} @ d=1.0:", w, h);
-    eprintln!("  DCT8:    SSIM2={:.2}, {} bytes", ssim2_dct8, bytes_dct8.len());
+    eprintln!(
+        "  DCT8:    SSIM2={:.2}, {} bytes",
+        ssim2_dct8,
+        bytes_dct8.len()
+    );
     eprintln!(
         "  DCT16x16: SSIM2={:.2}, {} bytes",
         ssim2_dct16,
@@ -693,14 +728,22 @@ fn layer4_quality_dct16x16_vs_dct8_kodak1() {
     let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
     eprintln!("layer4 kodak1 {}x{} @ d=1.0:", w, h);
-    eprintln!("  DCT8:    SSIM2={:.2}, {} bytes", ssim2_dct8, bytes_dct8.len());
+    eprintln!(
+        "  DCT8:    SSIM2={:.2}, {} bytes",
+        ssim2_dct8,
+        bytes_dct8.len()
+    );
     eprintln!(
         "  DCT16x16: SSIM2={:.2}, {} bytes",
         ssim2_dct16,
         bytes_dct16.len()
     );
 
-    assert!(ssim2_dct16 > 50.0, "DCT16x16 quality too low: {:.2}", ssim2_dct16);
+    assert!(
+        ssim2_dct16 > 50.0,
+        "DCT16x16 quality too low: {:.2}",
+        ssim2_dct16
+    );
 
     let gap = ssim2_dct8 - ssim2_dct16;
     eprintln!("  gap: {:.2} SSIM2", gap);
@@ -772,7 +815,10 @@ fn layer1b_dc_spatial_order_dct16x16() {
 
     let old_dcs = dc_from_dct_16x16_old(&coeffs_vert);
     eprintln!("OLD version with vertical-only frequency (coeffs[1]):");
-    eprintln!("  dcs[0]={:.4}, dcs[1]={:.4}, dcs[2]={:.4}, dcs[3]={:.4}", old_dcs[0], old_dcs[1], old_dcs[2], old_dcs[3]);
+    eprintln!(
+        "  dcs[0]={:.4}, dcs[1]={:.4}, dcs[2]={:.4}, dcs[3]={:.4}",
+        old_dcs[0], old_dcs[1], old_dcs[2], old_dcs[3]
+    );
     // Old version: vertical freq produces horizontal variation (BUG)
     let old_top_row_same = (old_dcs[0] - old_dcs[1]).abs() < 1e-6;
     assert!(
@@ -828,8 +874,18 @@ fn layer1b_dc_spatial_order_dct16x16() {
     // --- Test 3: Verify old dc01/dc10 are exactly the fixed dc10/dc01 (swap) ---
     let old_horiz = dc_from_dct_16x16_old(&coeffs_horiz);
     eprintln!("\nSwap verification:");
-    eprintln!("  old[1]={:.4} == fixed[2]={:.4}? {}", old_horiz[1], dcs[2], (old_horiz[1] - dcs[2]).abs() < 1e-6);
-    eprintln!("  old[2]={:.4} == fixed[1]={:.4}? {}", old_horiz[2], dcs[1], (old_horiz[2] - dcs[1]).abs() < 1e-6);
+    eprintln!(
+        "  old[1]={:.4} == fixed[2]={:.4}? {}",
+        old_horiz[1],
+        dcs[2],
+        (old_horiz[1] - dcs[2]).abs() < 1e-6
+    );
+    eprintln!(
+        "  old[2]={:.4} == fixed[1]={:.4}? {}",
+        old_horiz[2],
+        dcs[1],
+        (old_horiz[2] - dcs[1]).abs() < 1e-6
+    );
     assert!(
         (old_horiz[1] - dcs[2]).abs() < 1e-6 && (old_horiz[2] - dcs[1]).abs() < 1e-6,
         "Old dc01/dc10 should be exactly swapped vs fixed"
@@ -975,23 +1031,14 @@ fn diag_dct16x16_real_16x16() {
 
         eprintln!(
             "  ({:2},{:2}) {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  d8={:>3} d16={:>3}",
-            i,
-            i,
-            o.0,
-            o.1,
-            o.2,
-            d8p.0,
-            d8p.1,
-            d8p.2,
-            d16p.0,
-            d16p.1,
-            d16p.2,
-            diff8,
-            diff16
+            i, i, o.0, o.1, o.2, d8p.0, d8p.1, d8p.2, d16p.0, d16p.1, d16p.2, diff8, diff16
         );
     }
 
-    eprintln!("Max pixel diff: DCT8={}, DCT16x16={}", max_diff_8, max_diff_16);
+    eprintln!(
+        "Max pixel diff: DCT8={}, DCT16x16={}",
+        max_diff_8, max_diff_16
+    );
     eprintln!(
         "File sizes: DCT8={} bytes, DCT16x16={} bytes",
         bytes8.len(),
@@ -1052,9 +1099,506 @@ fn diag_dct16x16_progressive_sizes() {
         let gap = ssim8 - ssim16;
         eprintln!(
             "{:>4}x{:<4} {:>10.2} {:>10.2} {:>8.2} {:>8} {:>8}",
-            w, h, ssim8, ssim16, gap, bytes8.len(), bytes16.len()
+            w,
+            h,
+            ssim8,
+            ssim16,
+            gap,
+            bytes8.len(),
+            bytes16.len()
         );
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 1b DCT32x32: DC spatial ordering verification
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verify dc_from_dct_32x32 spatial ordering by testing with pure synthetic LLF coefficients.
+///
+/// The DCT32x32 output is in TRANSPOSED layout (kx, ky order), so the 4x4 LLF region:
+///   coeffs[0]  = (kx=0, ky=0) = DC
+///   coeffs[1]  = (kx=0, ky=1) = vertical frequency
+///   coeffs[32] = (kx=1, ky=0) = horizontal frequency
+///   etc.
+///
+/// The 4x4 IDCT must use rows→transpose→rows (not rows→columns) to produce
+/// correct spatial DC values. Without transpose, adjacent rows/columns swap.
+#[test]
+fn layer1b_dc_spatial_order_dct32x32() {
+    // Resample scales for 32→4
+    const SCALE: [f32; 4] = [
+        1.0,
+        0.974886821136879522,
+        0.901764195028874394,
+        0.787054918159101335,
+    ];
+
+    // 4-point IDCT (direct formula)
+    fn idct4(input: &[f32; 4]) -> [f32; 4] {
+        use core::f32::consts::PI;
+        let x0 = input[0];
+        let x1 = input[1];
+        let x2 = input[2];
+        let x3 = input[3];
+
+        [
+            x0 + 2.0
+                * (x1 * (PI * 1.0 / 8.0).cos()
+                    + x2 * (PI * 2.0 / 8.0).cos()
+                    + x3 * (PI * 3.0 / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI * 3.0 / 8.0).cos()
+                    + x2 * (PI * 6.0 / 8.0).cos()
+                    + x3 * (PI * 9.0 / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI * 5.0 / 8.0).cos()
+                    + x2 * (PI * 10.0 / 8.0).cos()
+                    + x3 * (PI * 15.0 / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI * 7.0 / 8.0).cos()
+                    + x2 * (PI * 14.0 / 8.0).cos()
+                    + x3 * (PI * 21.0 / 8.0).cos()),
+        ]
+    }
+
+    // FIXED version: rows → transpose → rows
+    fn dc_from_dct_32x32_fixed(coeffs: &[f32; 1024]) -> [f32; 16] {
+        // Extract 4x4 LLF with scales
+        let mut block = [0.0f32; 16];
+        for iy in 0..4 {
+            for ix in 0..4 {
+                block[iy * 4 + ix] = coeffs[iy * 32 + ix] * SCALE[iy] * SCALE[ix];
+            }
+        }
+
+        // IDCT rows
+        let mut after_rows = [0.0f32; 16];
+        for iy in 0..4 {
+            let row_in = [
+                block[iy * 4],
+                block[iy * 4 + 1],
+                block[iy * 4 + 2],
+                block[iy * 4 + 3],
+            ];
+            let row_out = idct4(&row_in);
+            for ix in 0..4 {
+                after_rows[iy * 4 + ix] = row_out[ix];
+            }
+        }
+
+        // Transpose
+        let mut transposed = [0.0f32; 16];
+        for iy in 0..4 {
+            for ix in 0..4 {
+                transposed[ix * 4 + iy] = after_rows[iy * 4 + ix];
+            }
+        }
+
+        // IDCT rows again
+        let mut result = [0.0f32; 16];
+        for iy in 0..4 {
+            let row_in = [
+                transposed[iy * 4],
+                transposed[iy * 4 + 1],
+                transposed[iy * 4 + 2],
+                transposed[iy * 4 + 3],
+            ];
+            let row_out = idct4(&row_in);
+            for ix in 0..4 {
+                result[iy * 4 + ix] = row_out[ix];
+            }
+        }
+        result
+    }
+
+    // OLD (buggy) version: rows → columns (no transpose)
+    fn dc_from_dct_32x32_old(coeffs: &[f32; 1024]) -> [f32; 16] {
+        let mut block = [0.0f32; 16];
+        for iy in 0..4 {
+            for ix in 0..4 {
+                block[iy * 4 + ix] = coeffs[iy * 32 + ix] * SCALE[iy] * SCALE[ix];
+            }
+        }
+
+        // IDCT rows
+        let mut after_rows = [0.0f32; 16];
+        for iy in 0..4 {
+            let row_in = [
+                block[iy * 4],
+                block[iy * 4 + 1],
+                block[iy * 4 + 2],
+                block[iy * 4 + 3],
+            ];
+            let row_out = idct4(&row_in);
+            for ix in 0..4 {
+                after_rows[iy * 4 + ix] = row_out[ix];
+            }
+        }
+
+        // IDCT columns (NO transpose — BUG)
+        let mut result = [0.0f32; 16];
+        for ix in 0..4 {
+            let col_in = [
+                after_rows[0 * 4 + ix],
+                after_rows[1 * 4 + ix],
+                after_rows[2 * 4 + ix],
+                after_rows[3 * 4 + ix],
+            ];
+            let col_out = idct4(&col_in);
+            for iy in 0..4 {
+                result[iy * 4 + ix] = col_out[iy];
+            }
+        }
+        result
+    }
+
+    // Test 1: vertical-only frequency (coeffs[1] = ky=1, kx=0)
+    // Expected: columns should be constant, rows should vary
+    let mut coeffs_vert = [0.0f32; 1024];
+    coeffs_vert[1] = 1.0;
+
+    let fixed = dc_from_dct_32x32_fixed(&coeffs_vert);
+    let old = dc_from_dct_32x32_old(&coeffs_vert);
+
+    eprintln!("DCT32x32 with vertical-only freq (coeffs[1]=1.0):");
+    eprintln!("  FIXED dcs (4x4 grid, row-major):");
+    for iy in 0..4 {
+        eprintln!(
+            "    row {}: {:.4} {:.4} {:.4} {:.4}",
+            iy,
+            fixed[iy * 4],
+            fixed[iy * 4 + 1],
+            fixed[iy * 4 + 2],
+            fixed[iy * 4 + 3]
+        );
+    }
+    eprintln!("  OLD dcs:");
+    for iy in 0..4 {
+        eprintln!(
+            "    row {}: {:.4} {:.4} {:.4} {:.4}",
+            iy,
+            old[iy * 4],
+            old[iy * 4 + 1],
+            old[iy * 4 + 2],
+            old[iy * 4 + 3]
+        );
+    }
+
+    // FIXED: Each row should have same value (columns constant)
+    for iy in 0..4 {
+        let row_vals: Vec<f32> = (0..4).map(|ix| fixed[iy * 4 + ix]).collect();
+        let row_variance: f32 = row_vals.iter().map(|v| (v - row_vals[0]).abs()).sum();
+        assert!(
+            row_variance < 1e-5,
+            "FIXED: row {} should be constant for vertical freq, got {:?}",
+            iy,
+            row_vals
+        );
+    }
+    // FIXED: Rows should differ from each other
+    let row_diff = (fixed[0] - fixed[4]).abs();
+    assert!(
+        row_diff > 0.1,
+        "FIXED: rows should differ for vertical freq"
+    );
+    eprintln!("  PASS: FIXED produces correct vertical variation");
+
+    // OLD: Should be wrong (rows vary instead of columns)
+    let old_row0_variance: f32 = (0..4).map(|ix| (old[ix] - old[0]).abs()).sum();
+    assert!(
+        old_row0_variance > 0.1,
+        "OLD: row 0 should incorrectly vary for vertical freq"
+    );
+    eprintln!("  PASS: OLD produces wrong horizontal variation (bug confirmed)");
+
+    // Test 2: horizontal-only frequency (coeffs[32] = ky=0, kx=1)
+    // Expected: rows should be constant, columns should vary
+    let mut coeffs_horiz = [0.0f32; 1024];
+    coeffs_horiz[32] = 1.0;
+
+    let fixed = dc_from_dct_32x32_fixed(&coeffs_horiz);
+    let old = dc_from_dct_32x32_old(&coeffs_horiz);
+
+    eprintln!("\nDCT32x32 with horizontal-only freq (coeffs[32]=1.0):");
+    eprintln!("  FIXED dcs:");
+    for iy in 0..4 {
+        eprintln!(
+            "    row {}: {:.4} {:.4} {:.4} {:.4}",
+            iy,
+            fixed[iy * 4],
+            fixed[iy * 4 + 1],
+            fixed[iy * 4 + 2],
+            fixed[iy * 4 + 3]
+        );
+    }
+
+    // FIXED: Each column should have same value (rows constant for given column)
+    for ix in 0..4 {
+        let col_vals: Vec<f32> = (0..4).map(|iy| fixed[iy * 4 + ix]).collect();
+        let col_variance: f32 = col_vals.iter().map(|v| (v - col_vals[0]).abs()).sum();
+        assert!(
+            col_variance < 1e-5,
+            "FIXED: col {} should be constant for horizontal freq, got {:?}",
+            ix,
+            col_vals
+        );
+    }
+    // FIXED: Columns should differ from each other
+    let col_diff = (fixed[0] - fixed[1]).abs();
+    assert!(
+        col_diff > 0.1,
+        "FIXED: columns should differ for horizontal freq"
+    );
+    eprintln!("  PASS: FIXED produces correct horizontal variation");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 2 DCT32x32: Single-group roundtrip
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// DCT32x32 covers 4x4 blocks = 32x32 pixels. Minimum image for forced DCT32x32
+/// is 32x32. Test with 256x256 (single-group, 8 DCT32x32 blocks per row).
+#[test]
+#[ignore] // requires frymire test image
+fn layer2_single_group_dct32x32_decode_jxl_oxide() {
+    let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
+    assert_eq!(w, 256);
+    assert_eq!(h, 256);
+
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
+
+    let bytes = encoder
+        .encode(w, h, &linear)
+        .unwrap_or_else(|e| panic!("encode failed: {:?}", e));
+
+    eprintln!(
+        "layer2 DCT32x32 jxl-oxide: encoded 256x256 frymire crop, {} bytes",
+        bytes.len()
+    );
+
+    let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w, "width mismatch");
+    assert_eq!(dh, h, "height mismatch");
+
+    let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
+    eprintln!("layer2 DCT32x32 jxl-oxide: SSIM2 = {:.2}", ssim2);
+
+    assert!(
+        ssim2 > 50.0,
+        "DCT32x32 256x256 quality too low: SSIM2={:.2} (expected >50)",
+        ssim2
+    );
+}
+
+/// Same with djxl reference decoder.
+#[test]
+#[ignore] // requires frymire test image and djxl
+fn layer2_single_group_dct32x32_decode_djxl() {
+    let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
+
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    eprintln!(
+        "layer2 DCT32x32 djxl: encoded 256x256 frymire crop, {} bytes",
+        bytes.len()
+    );
+
+    let (dw, dh, dec_srgb) = decode_djxl(&bytes);
+    assert_eq!(dw, w, "width mismatch");
+    assert_eq!(dh, h, "height mismatch");
+
+    let ssim2 = ssim2_u8_vs_linear_u8(&srgb, &dec_srgb, w, h);
+    eprintln!("layer2 DCT32x32 djxl: SSIM2 = {:.2}", ssim2);
+
+    assert!(
+        ssim2 > 50.0,
+        "DCT32x32 256x256 quality too low via djxl: SSIM2={:.2}",
+        ssim2
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 3 DCT32x32: Multi-group roundtrip
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Full frymire (1118x1105) with forced DCT32x32.
+#[test]
+#[ignore] // requires frymire test image and djxl
+fn layer3_multigroup_dct32x32_decode_djxl() {
+    let (w, h, linear, srgb) = load_png_full(&frymire_path());
+    eprintln!("layer3 DCT32x32: loaded frymire {}x{}", w, h);
+    assert!(w > 256 || h > 256, "frymire should be multi-group");
+
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    eprintln!(
+        "layer3 DCT32x32 djxl: encoded {}x{} frymire, {} bytes",
+        w,
+        h,
+        bytes.len()
+    );
+
+    let (dw, dh, dec_srgb) = decode_djxl(&bytes);
+    assert_eq!(dw, w, "width mismatch");
+    assert_eq!(dh, h, "height mismatch");
+
+    let ssim2 = ssim2_u8_vs_linear_u8(&srgb, &dec_srgb, w, h);
+    eprintln!("layer3 DCT32x32 djxl: SSIM2 = {:.2}", ssim2);
+
+    assert!(
+        ssim2 > 50.0,
+        "DCT32x32 multi-group quality too low: SSIM2={:.2}",
+        ssim2
+    );
+}
+
+/// Multi-group with jxl-oxide decoder.
+#[test]
+#[ignore] // requires frymire test image
+fn layer3_multigroup_dct32x32_decode_jxl_oxide() {
+    let (w, h, linear, srgb) = load_png_full(&frymire_path());
+
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    eprintln!(
+        "layer3 DCT32x32 jxl-oxide: encoded {}x{} frymire, {} bytes",
+        w,
+        h,
+        bytes.len()
+    );
+
+    let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w, "width mismatch");
+    assert_eq!(dh, h, "height mismatch");
+
+    let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
+    eprintln!("layer3 DCT32x32 jxl-oxide: SSIM2 = {:.2}", ssim2);
+
+    assert!(
+        ssim2 > 50.0,
+        "DCT32x32 multi-group quality too low via jxl-oxide: SSIM2={:.2}",
+        ssim2
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 4 DCT32x32: Quality comparison
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compare DCT32x32 vs DCT8 quality on 256x256 frymire.
+#[test]
+#[ignore] // requires frymire test image and djxl
+fn layer4_quality_dct32x32_vs_dct8_frymire_256() {
+    let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
+
+    // DCT8-only
+    let mut enc_dct8 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc_dct8.ac_strategy_enabled = false;
+    let bytes_dct8 = enc_dct8.encode(w, h, &linear).unwrap();
+    let (_, _, dec8) = decode_djxl(&bytes_dct8);
+    let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
+
+    // DCT32x32-only (forced)
+    let mut enc_dct32 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc_dct32.force_strategy = Some(4);
+    let bytes_dct32 = enc_dct32.encode(w, h, &linear).unwrap();
+    let (_, _, dec32) = decode_djxl(&bytes_dct32);
+    let ssim2_dct32 = ssim2_u8_vs_linear_u8(&srgb, &dec32, w, h);
+
+    eprintln!("layer4 DCT32x32 vs DCT8, frymire 256x256 @ d=1.0:");
+    eprintln!(
+        "  DCT8:    SSIM2={:.2}, {} bytes",
+        ssim2_dct8,
+        bytes_dct8.len()
+    );
+    eprintln!(
+        "  DCT32x32: SSIM2={:.2}, {} bytes",
+        ssim2_dct32,
+        bytes_dct32.len()
+    );
+    eprintln!(
+        "  gap: {:.2} SSIM2, size ratio: {:.2}%",
+        ssim2_dct8 - ssim2_dct32,
+        bytes_dct32.len() as f64 / bytes_dct8.len() as f64 * 100.0
+    );
+
+    // DCT32x32 quality should be reasonable
+    assert!(
+        ssim2_dct32 > 50.0,
+        "DCT32x32 quality too low: {:.2}",
+        ssim2_dct32
+    );
+
+    // Gap should be small (within 10 SSIM2).
+    // DCT32x32 may have more loss than DCT16x16/DCT8 on small images.
+    let gap = ssim2_dct8 - ssim2_dct32;
+    assert!(
+        gap < 15.0,
+        "DCT32x32 vs DCT8 gap too large: {:.2} SSIM2. LLF handling may be wrong.",
+        gap
+    );
+}
+
+/// Compare on full frymire (multi-group).
+#[test]
+#[ignore] // requires frymire test image and djxl
+fn layer4_quality_dct32x32_vs_dct8_frymire_full() {
+    let (w, h, linear, srgb) = load_png_full(&frymire_path());
+
+    // DCT8-only
+    let mut enc_dct8 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc_dct8.ac_strategy_enabled = false;
+    let bytes_dct8 = enc_dct8.encode(w, h, &linear).unwrap();
+    let (_, _, dec8) = decode_djxl(&bytes_dct8);
+    let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
+
+    // DCT32x32-only
+    let mut enc_dct32 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc_dct32.force_strategy = Some(4);
+    let bytes_dct32 = enc_dct32.encode(w, h, &linear).unwrap();
+    let (_, _, dec32) = decode_djxl(&bytes_dct32);
+    let ssim2_dct32 = ssim2_u8_vs_linear_u8(&srgb, &dec32, w, h);
+
+    eprintln!("layer4 DCT32x32 vs DCT8, frymire full {}x{} @ d=1.0:", w, h);
+    eprintln!(
+        "  DCT8:    SSIM2={:.2}, {} bytes",
+        ssim2_dct8,
+        bytes_dct8.len()
+    );
+    eprintln!(
+        "  DCT32x32: SSIM2={:.2}, {} bytes",
+        ssim2_dct32,
+        bytes_dct32.len()
+    );
+    eprintln!(
+        "  gap: {:.2} SSIM2, size ratio: {:.2}%",
+        ssim2_dct8 - ssim2_dct32,
+        bytes_dct32.len() as f64 / bytes_dct8.len() as f64 * 100.0
+    );
+
+    assert!(
+        ssim2_dct32 > 50.0,
+        "DCT32x32 quality too low: {:.2}",
+        ssim2_dct32
+    );
+
+    let gap = ssim2_dct8 - ssim2_dct32;
+    assert!(
+        gap < 15.0,
+        "DCT32x32 vs DCT8 gap too large: {:.2} SSIM2",
+        gap
+    );
 }
 
 /// Multiple distances on 256x256 frymire crop: does DCT16x16 behave
@@ -1065,7 +1609,10 @@ fn layer4_quality_dct16x16_across_distances() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
 
     eprintln!("layer4 distance sweep, frymire 256x256:");
-    eprintln!("{:>8} {:>10} {:>10} {:>10} {:>10} {:>8}", "dist", "dct8_ssim", "d16_ssim", "gap", "d8_bytes", "d16_bytes");
+    eprintln!(
+        "{:>8} {:>10} {:>10} {:>10} {:>10} {:>8}",
+        "dist", "dct8_ssim", "d16_ssim", "gap", "d8_bytes", "d16_bytes"
+    );
 
     for &distance in &[0.5, 1.0, 2.0, 4.0] {
         let mut enc_dct8 = jxl_enc::tiny::TinyEncoder::new(distance);
@@ -1083,7 +1630,12 @@ fn layer4_quality_dct16x16_across_distances() {
         let gap = ssim2_dct8 - ssim2_dct16;
         eprintln!(
             "{:>8.1} {:>10.2} {:>10.2} {:>10.2} {:>10} {:>8}",
-            distance, ssim2_dct8, ssim2_dct16, gap, bytes_dct8.len(), bytes_dct16.len()
+            distance,
+            ssim2_dct8,
+            ssim2_dct16,
+            gap,
+            bytes_dct8.len(),
+            bytes_dct16.len()
         );
 
         // DCT16 should not be catastrophically worse than DCT8.

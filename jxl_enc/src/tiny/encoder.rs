@@ -13,6 +13,11 @@ use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
     RAW_STRATEGY_DCT32X32, adjust_quant_field, compute_ac_strategy,
 };
+
+/// Create an AC strategy map forcing a specific strategy.
+fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> AcStrategyMap {
+    AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, raw_strategy)
+}
 use super::adaptive_quant::compute_adaptive_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
 use super::common::*;
@@ -146,6 +151,10 @@ pub struct TinyEncoder {
     /// so frequently-zero positions appear last, reducing bitstream size.
     /// Only effective when `optimize_codes` is true (requires two-pass mode).
     pub custom_orders: bool,
+    /// Force a specific AC strategy for all blocks (for testing).
+    /// When Some(strategy), uses that raw strategy code for all blocks that fit.
+    /// None (default) uses normal strategy selection based on `ac_strategy_enabled`.
+    pub force_strategy: Option<u8>,
 }
 
 impl Default for TinyEncoder {
@@ -158,6 +167,7 @@ impl Default for TinyEncoder {
             cfl_enabled: true,
             ac_strategy_enabled: true,
             custom_orders: true,
+            force_strategy: None,
         }
     }
 }
@@ -173,6 +183,7 @@ impl TinyEncoder {
             cfl_enabled: true,
             ac_strategy_enabled: true,
             custom_orders: true,
+            force_strategy: None,
         }
     }
 
@@ -241,8 +252,11 @@ impl TinyEncoder {
             )
         };
 
-        // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16)
-        let ac_strategy = if !self.ac_strategy_enabled {
+        // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
+        let ac_strategy = if let Some(forced) = self.force_strategy {
+            // Force a specific strategy for all blocks that fit
+            force_strategy_map(xsize_blocks, ysize_blocks, forced)
+        } else if !self.ac_strategy_enabled {
             AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
         } else {
             compute_ac_strategy(
