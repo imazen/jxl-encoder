@@ -31,7 +31,30 @@ The gap is NOT from missing features. Comparing e5→e7 shows only ~1 SSIM2 impr
 
 ### Investigation Log
 
-(Updates below)
+#### 2026-02-02 04:30 — Initial findings
+
+**DistanceParams match libjxl-tiny exactly.** At d=2.0: global_scale=3670, quant_dc=10.
+
+**File size comparison at d=2.0 on img10 (512x768):**
+- libjxl-tiny: 53,895 bytes
+- Our encoder: 37,782 bytes (-30% vs tiny)
+- cjxl e7: 43,487 bytes (-13% vs e7)
+
+**Quality comparison:**
+- Our encoder: SSIM2 76.4
+- cjxl e7: SSIM2 79.4
+
+**Key insight:** We produce 30% smaller files than libjxl-tiny with identical DistanceParams. This isn't from DistanceParams differences — it's from our entropy coding (ANS + dynamic Huffman clustering) being more efficient.
+
+**But we're also lower quality.** The gap must be in what we quantize, not how we encode it.
+
+**New hypothesis:** The difference is in `kAcQuant`:
+- libjxl-tiny uses `kAcQuant = 0.8`
+- Full libjxl uses `kAcQuant = 0.765`
+
+libjxl's lower kAcQuant means **less quantization** (higher quality, larger files) at the same distance. This could partially explain why our quality is lower — we matched libjxl-tiny's more aggressive quantization, not full libjxl's gentler approach.
+
+**Next:** Test if lowering our kAcQuant from 0.8 to 0.765 improves quality.
 
 ---
 
