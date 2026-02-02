@@ -35,7 +35,9 @@ use super::entropy_code::{
     write_tokens, write_tokens_ans,
 };
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
-use super::noise::{NoiseParams, estimate_noise_params, noise_quality_coef, write_noise_params};
+use super::noise::{
+    NoiseParams, denoise_xyb, estimate_noise_params, noise_quality_coef, write_noise_params,
+};
 use super::quant::INV_DC_QUANT;
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use super::token::Token;
@@ -224,12 +226,12 @@ impl TinyEncoder {
 
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.
-        let (xyb_x, xyb_y, xyb_b) =
+        let (mut xyb_x, mut xyb_y, mut xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
 
         // Estimate noise parameters (if enabled)
+        let quality_coef = noise_quality_coef(self.distance);
         let noise_params = if self.enable_noise {
-            let quality_coef = noise_quality_coef(self.distance);
             estimate_noise_params(
                 &xyb_x,
                 &xyb_y,
@@ -241,6 +243,20 @@ impl TinyEncoder {
         } else {
             None
         };
+
+        // Denoise XYB planes if noise was detected. The decoder will add noise back
+        // from the encoded parameters, so removing it here saves bits in DCT/quantization.
+        if let Some(ref noise) = noise_params {
+            denoise_xyb(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                padded_width,
+                padded_height,
+                noise,
+                quality_coef,
+            );
+        }
 
         // Compute adaptive per-block quantization field and masking.
         // Pass padded dimensions: XYB buffers have stride=padded_width, and all
