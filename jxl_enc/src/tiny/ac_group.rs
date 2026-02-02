@@ -146,15 +146,24 @@ fn coefficient_layout_order(rows: usize, cols: usize, llf_x: usize, llf_y: usize
     order
 }
 
-/// Get coefficient order based on AC strategy (bitstream strategy code).
-/// Strategy 0 = DCT8, 4 = DCT16x16, 5 = DCT32x32, 6/7 = DCT8x16/DCT16x8.
-pub fn get_coeff_order(raw_strategy: u8) -> &'static [u32] {
-    match raw_strategy {
-        0 => &COEFF_ORDER_8X8,
-        4 => &COEFF_ORDER_16X16,
-        5 => &COEFF_ORDER_32X32,
-        6 | 7 => &COEFF_ORDER_8X16,
-        _ => &COEFF_ORDER_8X8, // Default to 8x8 for unknown strategies
+/// Get coefficient order based on AC strategy (bitstream code).
+///
+/// Bitstream strategy codes:
+/// - 0 = DCT8 (8x8, 64 coeffs)
+/// - 4 = DCT16X16 (16x16, 256 coeffs)
+/// - 5 = DCT32X32 (32x32, 1024 coeffs)
+/// - 6 = DCT8X16 (8x16, 128 coeffs)
+/// - 7 = DCT16X8 (16x8, 128 coeffs)
+/// - 12 = DCT4X8 (8x8 with 4x8 sub-blocks, 64 coeffs)
+/// - 13 = DCT8X4 (8x8 with 8x4 sub-blocks, 64 coeffs)
+pub fn get_coeff_order(strategy_code: u8) -> &'static [u32] {
+    match strategy_code {
+        0 => &COEFF_ORDER_8X8,       // DCT8
+        4 => &COEFF_ORDER_16X16,     // DCT16X16
+        5 => &COEFF_ORDER_32X32,     // DCT32X32
+        6 | 7 => &COEFF_ORDER_8X16,  // DCT8X16, DCT16X8
+        12 | 13 => &COEFF_ORDER_8X8, // DCT4X8, DCT8X4 (64 coeffs like DCT8)
+        _ => &COEFF_ORDER_8X8,       // Default to 8x8 for unknown strategies
     }
 }
 
@@ -260,25 +269,23 @@ pub fn predict_from_top_and_left(
     }
 }
 
-/// AC strategy codes for libjxl-tiny.
-/// Bitstream strategy codes used in the JXL format.
-pub const AC_STRATEGY_DCT8: u8 = 0;
-pub const AC_STRATEGY_DCT16X16: u8 = 4;
-pub const AC_STRATEGY_DCT32X32: u8 = 5;
-pub const AC_STRATEGY_DCT8X16: u8 = 6;
-pub const AC_STRATEGY_DCT16X8: u8 = 7;
+use super::ac_strategy::{COVERED_X, STRATEGY_CODE_LUT};
 
 /// Get block size info for AC strategy.
 /// Returns (cx, cy, covered_blocks, log2_covered_blocks, strategy_code).
+///
+/// Uses RAW strategy codes (0-6) as input, returns bitstream strategy code.
 pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
-    match raw_strategy {
-        AC_STRATEGY_DCT8 => (1, 1, 1, 0, 0),
-        AC_STRATEGY_DCT16X16 => (2, 2, 4, 2, 4),
-        AC_STRATEGY_DCT32X32 => (4, 4, 16, 4, 5),
-        AC_STRATEGY_DCT8X16 => (1, 2, 2, 1, 6),
-        AC_STRATEGY_DCT16X8 => (2, 1, 2, 1, 7),
-        _ => (1, 1, 1, 0, 0), // Default to DCT8
-    }
+    // Covered blocks from the lookup tables
+    let covered_y: [usize; 7] = [1, 2, 1, 2, 4, 1, 1];
+
+    let cx = COVERED_X[raw_strategy as usize];
+    let cy = covered_y[raw_strategy as usize];
+    let covered_blocks = cx * cy;
+    let log2_covered_blocks = covered_blocks.trailing_zeros() as usize;
+    let strategy_code = STRATEGY_CODE_LUT[raw_strategy as usize];
+
+    (cx, cy, covered_blocks, log2_covered_blocks, strategy_code)
 }
 
 /// Tokenize AC coefficients for a single block/transform.
@@ -338,7 +345,8 @@ pub fn tokenize_ac_coefficients(
     }
 
     // Get coefficient order (custom or default)
-    let order = custom_order.unwrap_or_else(|| get_coeff_order(raw_strategy));
+    // NOTE: get_coeff_order takes bitstream strategy_code, not raw_strategy
+    let order = custom_order.unwrap_or_else(|| get_coeff_order(strategy_code));
 
     // Track remaining non-zeros and previous coefficient status
     let mut nzeros_left = nzeros as usize;
@@ -400,7 +408,8 @@ pub fn collect_ac_coefficients(
     tokens.push(Token::new(nzero_ctx as u32, nzeros as u32));
 
     // Get coefficient order (custom or default)
-    let order = custom_order.unwrap_or_else(|| get_coeff_order(raw_strategy));
+    // NOTE: get_coeff_order takes bitstream strategy_code, not raw_strategy
+    let order = custom_order.unwrap_or_else(|| get_coeff_order(strategy_code));
 
     let mut nzeros_left = nzeros as usize;
     let mut prev = if nzeros_left > size / 16 { 0 } else { 1 };
@@ -515,25 +524,38 @@ mod tests {
 
     #[test]
     fn test_ac_strategy_info() {
-        // DCT8
-        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT8);
+        use crate::tiny::ac_strategy::{
+            RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8, RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16,
+            RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
+        };
+
+        // DCT8: raw=0, bitstream=0, 1x1 blocks
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT8);
         assert_eq!((cx, cy, cb, log2cb, code), (1, 1, 1, 0, 0));
 
-        // DCT8x16
-        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT8X16);
+        // DCT16X8: raw=1, bitstream=6, 1x2 blocks
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT16X8);
         assert_eq!((cx, cy, cb, log2cb, code), (1, 2, 2, 1, 6));
 
-        // DCT16x8
-        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT16X8);
+        // DCT8X16: raw=2, bitstream=7, 2x1 blocks
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT8X16);
         assert_eq!((cx, cy, cb, log2cb, code), (2, 1, 2, 1, 7));
 
-        // DCT16x16
-        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT16X16);
+        // DCT16X16: raw=3, bitstream=4, 2x2 blocks
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT16X16);
         assert_eq!((cx, cy, cb, log2cb, code), (2, 2, 4, 2, 4));
 
-        // DCT32x32
-        let (cx, cy, cb, log2cb, code) = ac_strategy_info(AC_STRATEGY_DCT32X32);
+        // DCT32X32: raw=4, bitstream=5, 4x4 blocks
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT32X32);
         assert_eq!((cx, cy, cb, log2cb, code), (4, 4, 16, 4, 5));
+
+        // DCT4X8: raw=5, bitstream=12, 1x1 blocks (64 coeffs)
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT4X8);
+        assert_eq!((cx, cy, cb, log2cb, code), (1, 1, 1, 0, 12));
+
+        // DCT8X4: raw=6, bitstream=13, 1x1 blocks (64 coeffs)
+        let (cx, cy, cb, log2cb, code) = ac_strategy_info(RAW_STRATEGY_DCT8X4);
+        assert_eq!((cx, cy, cb, log2cb, code), (1, 1, 1, 0, 13));
     }
 
     #[test]

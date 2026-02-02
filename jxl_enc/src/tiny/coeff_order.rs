@@ -214,11 +214,11 @@ pub fn count_zero_coefficients(
             }
 
             let raw_strategy = ac_strategy.raw_strategy(bx, by);
-            // IMPORTANT: strategy_bucket and ac_strategy_info expect bitstream
-            // strategy codes (0, 4, 5, 6, 7), NOT raw strategy codes (0-4).
             let strategy_code = super::ac_strategy::STRATEGY_CODE_LUT[raw_strategy as usize];
+            // strategy_bucket expects bitstream strategy code
             let bucket = strategy_bucket(strategy_code) as usize;
-            let (cx, cy, covered_blocks, _, _) = ac_strategy_info(strategy_code);
+            // ac_strategy_info expects raw strategy codes (0-6)
+            let (cx, cy, covered_blocks, _, _) = ac_strategy_info(raw_strategy);
             let size = covered_blocks * DCT_BLOCK_SIZE;
 
             // Ensure count vector is large enough

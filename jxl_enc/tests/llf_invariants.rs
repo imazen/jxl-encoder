@@ -4869,7 +4869,10 @@ fn test_strategy_selection_picks_small_transforms() {
     let center_val = pixels[center_idx];
     eprintln!("Center pixel value: {:.4}", center_val);
     // Just verify we got something reasonable (not all zeros or garbage)
-    assert!(center_val > 0.1 && center_val < 0.9, "Pixel value out of expected range");
+    assert!(
+        center_val > 0.1 && center_val < 0.9,
+        "Pixel value out of expected range"
+    );
 
     // Decode with jxl-rs to verify
     let (dw2, dh2, _pixels2) = decode_jxl_rs(&bytes);
@@ -4880,4 +4883,344 @@ fn test_strategy_selection_picks_small_transforms() {
     // Note: We can't easily check which strategies were selected without
     // exposing internal state. The test verifies the encoder doesn't crash
     // and produces valid output when small transforms might be selected.
+}
+
+/// Compare DCT4X8 vs DCT8 quality on a real photo crop.
+#[test]
+#[ignore]
+fn test_dct4x8_vs_dct8_quality_real_photo() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Load frymire image
+    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+    let (w, h, linear, srgb) = load_png_crop(path, 256, 256);
+
+    // Encode with forced DCT4X8
+    let mut encoder_4x8 = TinyEncoder::new(1.0);
+    encoder_4x8.force_strategy = Some(5); // DCT4X8
+    let bytes_4x8 = encoder_4x8.encode(w, h, &linear).unwrap();
+
+    // Encode with DCT8 only
+    let mut encoder_dct8 = TinyEncoder::new(1.0);
+    encoder_dct8.ac_strategy_enabled = false;
+    let bytes_dct8 = encoder_dct8.encode(w, h, &linear).unwrap();
+
+    // Decode both
+    let (_, _, pixels_4x8) = decode_jxl_oxide(&bytes_4x8);
+    let (_, _, pixels_dct8) = decode_jxl_oxide(&bytes_dct8);
+
+    // Compare quality
+    let ssim_4x8 = ssim2_u8_vs_linear_f32(&srgb, &pixels_4x8, w, h);
+    let ssim_dct8 = ssim2_u8_vs_linear_f32(&srgb, &pixels_dct8, w, h);
+
+    eprintln!("=== DCT4X8 vs DCT8 Quality Comparison (frymire 256x256) ===");
+    eprintln!("DCT4X8: {} bytes, SSIM2 = {:.2}", bytes_4x8.len(), ssim_4x8);
+    eprintln!(
+        "DCT8:   {} bytes, SSIM2 = {:.2}",
+        bytes_dct8.len(),
+        ssim_dct8
+    );
+    eprintln!(
+        "Difference: DCT4X8 is {:.2} SSIM2 {} than DCT8",
+        (ssim_4x8 - ssim_dct8).abs(),
+        if ssim_4x8 > ssim_dct8 {
+            "better"
+        } else {
+            "worse"
+        }
+    );
+
+    // DCT4X8 should not be catastrophically worse
+    assert!(
+        ssim_4x8 > ssim_dct8 - 5.0,
+        "DCT4X8 quality {} is too much worse than DCT8 {} (diff > 5 SSIM2)",
+        ssim_4x8,
+        ssim_dct8
+    );
+}
+
+/// Test DCT4X8 with varying content complexity.
+#[test]
+#[ignore]
+fn test_dct4x8_content_complexity() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 64usize;
+    let h = 64usize;
+
+    // Test 1: Smooth gradient (known to work)
+    let mut linear_grad = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear_grad[idx] = v;
+            linear_grad[idx + 1] = v;
+            linear_grad[idx + 2] = v;
+        }
+    }
+
+    // Test 2: Sharp edges (8-pixel wide stripes)
+    let mut linear_edge = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = if (x / 8) % 2 == 0 { 0.8 } else { 0.2 };
+            linear_edge[idx] = v;
+            linear_edge[idx + 1] = v;
+            linear_edge[idx + 2] = v;
+        }
+    }
+
+    // Test 3: High frequency noise
+    let mut linear_noise = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            // Simple pseudo-random based on position
+            let v = ((x * 31 + y * 17 + x * y * 7) % 100) as f32 / 100.0;
+            linear_noise[idx] = v;
+            linear_noise[idx + 1] = v;
+            linear_noise[idx + 2] = v;
+        }
+    }
+
+    for (name, linear) in [
+        ("gradient", &linear_grad),
+        ("edge", &linear_edge),
+        ("noise", &linear_noise),
+    ] {
+        let mut encoder = TinyEncoder::new(1.0);
+        encoder.force_strategy = Some(5); // DCT4X8
+        let bytes = encoder.encode(w, h, linear).unwrap();
+
+        let (_, _, pixels) = decode_jxl_oxide(&bytes);
+
+        // Check center pixel
+        let center_idx = (h / 2 * w + w / 2) * 3;
+        let orig = linear[center_idx];
+        let dec = pixels[center_idx];
+        let diff = (orig - dec).abs();
+
+        eprintln!(
+            "{}: {} bytes, center: orig={:.4} dec={:.4} diff={:.4}",
+            name,
+            bytes.len(),
+            orig,
+            dec,
+            diff
+        );
+
+        // Verify decoded value is reasonable
+        assert!(
+            diff < 0.3,
+            "{}: center pixel diff {} too large (orig={}, dec={})",
+            name,
+            diff,
+            orig,
+            dec
+        );
+    }
+}
+
+/// Test DCT4X8 with varying image sizes.
+#[test]
+#[ignore]
+fn test_dct4x8_image_sizes() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    for size in [64, 128, 200, 256, 300] {
+        let w = size;
+        let h = size;
+
+        // Gradient image
+        let mut linear = vec![0.0f32; w * h * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) * 3;
+                let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+                linear[idx] = v;
+                linear[idx + 1] = v;
+                linear[idx + 2] = v;
+            }
+        }
+
+        let mut encoder = TinyEncoder::new(1.0);
+        encoder.force_strategy = Some(5); // DCT4X8
+        let bytes = encoder.encode(w, h, &linear).unwrap();
+
+        let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+        assert_eq!(dw, w);
+        assert_eq!(dh, h);
+
+        // Check center pixel
+        let center_idx = (h / 2 * w + w / 2) * 3;
+        let orig = linear[center_idx];
+        let dec = pixels[center_idx];
+        let diff = (orig - dec).abs();
+
+        eprintln!(
+            "{}x{}: {} bytes, center: orig={:.4} dec={:.4} diff={:.4}",
+            w,
+            h,
+            bytes.len(),
+            orig,
+            dec,
+            diff
+        );
+
+        // Verify decoded value is reasonable
+        assert!(
+            diff < 0.3,
+            "{}x{}: center pixel diff {} too large (orig={}, dec={})",
+            w,
+            h,
+            diff,
+            orig,
+            dec
+        );
+    }
+}
+
+/// Debug DCT4X8 on real photo - save output for inspection.
+#[test]
+#[ignore]
+fn debug_dct4x8_real_photo_save() {
+    use jxl_enc::tiny::TinyEncoder;
+    use std::io::Write;
+
+    // Load frymire image
+    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+    let (w, h, linear, _srgb) = load_png_crop(path, 256, 256);
+    eprintln!("Loaded {}x{} image", w, h);
+
+    // Encode with forced DCT4X8
+    let mut encoder_4x8 = TinyEncoder::new(1.0);
+    encoder_4x8.force_strategy = Some(5); // DCT4X8
+    let bytes_4x8 = encoder_4x8.encode(w, h, &linear).unwrap();
+
+    // Save for djxl inspection
+    let mut file = std::fs::File::create("/tmp/debug_dct4x8.jxl").unwrap();
+    file.write_all(&bytes_4x8).unwrap();
+    eprintln!("Saved {} bytes to /tmp/debug_dct4x8.jxl", bytes_4x8.len());
+
+    // Try decoding with jxl-oxide
+    let result = std::panic::catch_unwind(|| decode_jxl_oxide(&bytes_4x8));
+    match result {
+        Ok((dw, dh, pixels)) => {
+            eprintln!("jxl-oxide decoded: {}x{}", dw, dh);
+            // Check a few pixels
+            for y in [0, 64, 128, 192] {
+                let idx = (y * w + 128) * 3;
+                eprintln!(
+                    "  pixel ({},128): orig={:.4},{:.4},{:.4} dec={:.4},{:.4},{:.4}",
+                    y,
+                    linear[idx],
+                    linear[idx + 1],
+                    linear[idx + 2],
+                    pixels[idx],
+                    pixels[idx + 1],
+                    pixels[idx + 2]
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("jxl-oxide FAILED: {:?}", e);
+        }
+    }
+
+    // Encode with DCT8 for comparison
+    let mut encoder_dct8 = TinyEncoder::new(1.0);
+    encoder_dct8.ac_strategy_enabled = false;
+    let bytes_dct8 = encoder_dct8.encode(w, h, &linear).unwrap();
+
+    let mut file = std::fs::File::create("/tmp/debug_dct8.jxl").unwrap();
+    file.write_all(&bytes_dct8).unwrap();
+    eprintln!("Saved {} bytes to /tmp/debug_dct8.jxl", bytes_dct8.len());
+
+    let (_, _, pixels_dct8) = decode_jxl_oxide(&bytes_dct8);
+    for y in [0, 64, 128, 192] {
+        let idx = (y * w + 128) * 3;
+        eprintln!(
+            "  DCT8 pixel ({},128): orig={:.4},{:.4},{:.4} dec={:.4},{:.4},{:.4}",
+            y,
+            linear[idx],
+            linear[idx + 1],
+            linear[idx + 2],
+            pixels_dct8[idx],
+            pixels_dct8[idx + 1],
+            pixels_dct8[idx + 2]
+        );
+    }
+}
+
+/// Debug DCT4X8 - check for NaN/Inf/out-of-range values.
+#[test]
+#[ignore]
+fn debug_dct4x8_check_values() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Load frymire image
+    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+    let (w, h, linear, _srgb) = load_png_crop(path, 256, 256);
+
+    // Encode with forced DCT4X8
+    let mut encoder = TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(5); // DCT4X8
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    // Decode
+    let (_, _, pixels) = decode_jxl_oxide(&bytes);
+
+    // Check for problematic values
+    let mut nan_count = 0;
+    let mut inf_count = 0;
+    let mut neg_count = 0;
+    let mut high_count = 0; // > 1.5
+    let mut min_val = f32::MAX;
+    let mut max_val = f32::MIN;
+
+    for (i, &v) in pixels.iter().enumerate() {
+        if v.is_nan() {
+            nan_count += 1;
+        } else if v.is_infinite() {
+            inf_count += 1;
+        } else {
+            if v < 0.0 {
+                neg_count += 1;
+            }
+            if v > 1.5 {
+                high_count += 1;
+            }
+            min_val = min_val.min(v);
+            max_val = max_val.max(v);
+        }
+    }
+
+    eprintln!("DCT4X8 decoded {} pixels", pixels.len());
+    eprintln!("  NaN: {}", nan_count);
+    eprintln!("  Inf: {}", inf_count);
+    eprintln!("  Negative: {}", neg_count);
+    eprintln!("  > 1.5: {}", high_count);
+    eprintln!("  Range: [{:.4}, {:.4}]", min_val, max_val);
+
+    // Also check DCT8 for comparison
+    let mut encoder2 = TinyEncoder::new(1.0);
+    encoder2.ac_strategy_enabled = false;
+    let bytes2 = encoder2.encode(w, h, &linear).unwrap();
+    let (_, _, pixels2) = decode_jxl_oxide(&bytes2);
+
+    let mut min_val2 = f32::MAX;
+    let mut max_val2 = f32::MIN;
+    for &v in pixels2.iter() {
+        if !v.is_nan() && !v.is_infinite() {
+            min_val2 = min_val2.min(v);
+            max_val2 = max_val2.max(v);
+        }
+    }
+    eprintln!("DCT8 range: [{:.4}, {:.4}]", min_val2, max_val2);
+
+    // No NaN or Inf should be present
+    assert_eq!(nan_count, 0, "Found NaN values");
+    assert_eq!(inf_count, 0, "Found Inf values");
 }
