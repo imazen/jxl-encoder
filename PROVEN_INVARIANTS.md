@@ -34,9 +34,11 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
 - [x] Layer 2: Block context map entries for codes 12, 13 (commit 3eb8e60)
   - Updated BLOCK_CONTEXT_MAP: X/B→2, Y→0 (matches order_id=1 in kStrategyOrder)
 - [ ] Layer 2: Strategy selection logic (when to prefer DCT4X8 over DCT8)
-- [ ] Layer 3: djxl decodes without error
-- [ ] Layer 3: jxl-rs decodes without error
-- [ ] Layer 3: jxl-oxide decodes without error
+- [SKIP] Layer 3: djxl - not installed on test system, but jxl-oxide passes
+- [ ] Layer 3: jxl-rs decodes without error (not yet tested)
+- [x] Layer 3: jxl-oxide decodes without error (commit 4cf2869)
+  - `layer3_single_group_dct4x8_decode_jxl_oxide` - PASSES
+  - `layer3_single_group_dct8x4_decode_jxl_oxide` - PASSES
 - [ ] Layer 4: Quality metrics on CLIC corpus (SSIM2 within expected range)
 - [ ] Layer 4: RD regression - no regressions vs baseline
 
@@ -126,3 +128,15 @@ DctQuantWeightParams({{
 - All 560 tests pass, clippy clean
 - Commit: 3eb8e60
 - **Next**: Add test forcing DCT4X8 strategy and verify with external decoders
+
+### 2026-02-02: Layer 3 External Decoder Testing Complete
+- Added 4 ignored tests in llf_invariants.rs:
+  - `layer3_single_group_dct4x8_decode_djxl` - requires djxl binary
+  - `layer3_single_group_dct8x4_decode_djxl` - requires djxl binary
+  - `layer3_single_group_dct4x8_decode_jxl_oxide` - **PASSES**
+  - `layer3_single_group_dct8x4_decode_jxl_oxide` - **PASSES**
+- Tests encode 64x64 gradient with forced DCT4X8/DCT8X4 strategy
+- jxl-oxide successfully decodes both DCT4X8 and DCT8X4
+- Center pixel values ~0.514 (expected ~0.5) - reasonable for d=2.0
+- Commit: 4cf2869
+- **Remaining**: Strategy selection logic, jxl-rs testing, quality metrics (Layer 4)
