@@ -54,9 +54,9 @@ struct Args {
     #[arg(long)]
     no_optimize_codes: bool,
 
-    /// Use ANS entropy coding instead of Huffman (requires optimize_codes)
+    /// Use Huffman instead of ANS entropy coding (ANS is default, 4-10% smaller)
     #[arg(long)]
-    ans: bool,
+    no_ans: bool,
 
     /// Disable custom coefficient ordering
     #[arg(long)]
@@ -120,8 +120,8 @@ fn main() {
                 if args.no_optimize_codes {
                     tiny.optimize_codes = false;
                 }
-                if args.ans {
-                    tiny.use_ans = true;
+                if args.no_ans {
+                    tiny.use_ans = false;
                 }
                 if args.no_custom_orders {
                     tiny.custom_orders = false;
