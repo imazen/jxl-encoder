@@ -537,3 +537,46 @@ Minor difference, likely not the main quality gap cause.
 1. Test kDampenRampStart=2.0 alone on CLIC 2025 images at d=2.0 and d=4.0
 2. Compare RD curves before and after
 3. If successful, commit and add to regression tests
+
+### Testing Results (Feb 2, 2026)
+
+#### [RULED OUT] kDampenRampStart change (7.0 → 2.0)
+
+Tested at d=8.0 where dampen difference is largest:
+- Baseline (start=7.0): 168KB, SSIM2=40.59
+- With change (start=2.0): 166KB, SSIM2=40.05 (WORSE)
+
+The change made quality WORSE at high distances. libjxl-tiny's choice was intentional.
+
+#### [RULED OUT] kGam sign change alone (-0.1076 → +0.1006)
+
+Small improvement at d=2.0/4.0 (+0.2-0.3 SSIM2) but caused REGRESSIONS at d=0.25/0.5:
+- img10 d=0.25: butteraugli 0.695 (was 0.522) - 33% worse
+- frymire d=0.5: butteraugli 3.636 (was 2.826) - 29% worse
+
+#### [RULED OUT] All full libjxl constants together
+
+Changed: SG_MUL, SG_V_OFFSET, K_INV_LOG2E, K_GAM, MaskingSqrt constants
+Result: Similar regressions as kGam-only change.
+
+The libjxl-tiny constants are tuned together for their simplified pipeline.
+Changing them to full libjxl values breaks quality at low distances while
+providing minimal improvement at high distances.
+
+### Conclusion
+
+The adaptive quant constants are NOT the cause of the quality gap at d≥2.0.
+The libjxl-tiny constants were tuned as a set for their simplified pipeline.
+
+The quality gap is likely due to:
+1. **Missing features**: DCT4x8/8x4/4x4, error diffusion, better AC strategy cost model
+2. **Algorithm-level differences**: Not fixable by constant swaps
+3. **Pipeline design**: libjxl-tiny was designed for simplicity, not parity with full libjxl
+
+### Recommendation
+
+Accept the ~3-5 SSIM2 gap at d≥2.0 vs cjxl e7 for now.
+Focus on:
+1. Merging tiny encoder into main API
+2. Adding missing features (DCT4x8, error diffusion) which may help the gap
+3. Not breaking the excellent d≤1.0 quality where we match/beat cjxl
