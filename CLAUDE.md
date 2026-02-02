@@ -1034,6 +1034,51 @@ Guessing would have taken days longer.
    - Synthetic data hides bugs (see: ANS omit_pos, raw_quant=1).
    - Use CLIC 2025 photos or `~/work/codec-corpus/` for any test above Layer 2.
 
+## Invariant Preservation Across Sessions (MANDATORY)
+
+**Every finding and proof-narrowing of invariants MUST be committed to `PROVEN_INVARIANTS.md`.**
+
+Context compaction loses knowledge. The only way to preserve it is to write it down and commit it.
+
+### Rules
+
+1. **Commit findings immediately:**
+   - When a layer passes, record it in `PROVEN_INVARIANTS.md` with the test name
+   - When a layer fails, record what was ruled out
+   - Include the commit hash where the test was added
+
+2. **Format for PROVEN_INVARIANTS.md:**
+   ```markdown
+   ## Feature: DCT4x8/DCT8x4
+
+   ### Proven Layers
+   - [x] Layer 1: Transform roundtrip (`test_dct_4x8_roundtrip`, commit abc123)
+   - [x] Layer 1: Quant weights match libjxl (`test_dct4x8_quant_weights`, commit def456)
+   - [ ] Layer 2: Tokenization roundtrip (IN PROGRESS)
+   - [ ] Layer 3: External decoders
+   - [ ] Layer 4: Quality on real photos
+
+   ### Ruled Out
+   - Transpose bug: verified output layout matches C++ (see test_dct4x8_layout)
+   - DC extraction: spatial ordering confirmed correct (see test_dc_from_dct_4x8)
+
+   ### Open Questions
+   - Strategy selection threshold needs tuning after Layer 4
+   ```
+
+3. **After context compaction:**
+   - FIRST action: `cat PROVEN_INVARIANTS.md`
+   - Resume from the first unchecked layer
+   - Do NOT re-investigate proven layers
+
+4. **Commit atomically:**
+   - Each layer proven = one commit with test + PROVEN_INVARIANTS.md update
+   - Message format: `test: prove Layer N for <feature> - <what was proven>`
+
+5. **Never delete from PROVEN_INVARIANTS.md:**
+   - Mark completed features as `[COMPLETE]` but keep the record
+   - Failed approaches are valuable - they prevent re-investigation
+
 ## INVESTIGATION.md Maintenance (MANDATORY)
 
 **INVESTIGATION.md is the single source of truth for all debugging investigations. NEVER delete from it.**
