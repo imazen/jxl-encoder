@@ -13,3 +13,7 @@ User requested fix for known bug where `adaptive_quant.rs:541` panicked with ind
 User requested CfL port from libjxl-tiny's enc_chroma_from_luma.cc. Plan was pre-approved. Implementation adds per-tile ytox/ytob computation via least-squares fitting of DCT coefficients weighted by inverse quant matrices. All 488 tests pass, including roundtrip decoder tests.
 
 A/B comparison on 5 clic2025-1024 images confirmed CfL provides ~1.3% average file size reduction at equivalent quality across all distance levels. Quality deltas are within noise (<0.2 SSIM2). This is expected: CfL is a lossless decorrelation, not a quality improvement.
+
+## 2026-02-02: Noise synthesis implementation
+
+User requested noise synthesis for the tiny encoder. Plan was pre-approved. Ported from libjxl enc_noise.cc + enc_optimize.h. Implementation adds noise estimation (SAD-based flat patch detection, Laplacian noise measurement, SCG optimizer for 8-point LUT fitting), bitstream encoding (8×10-bit LUT in LfGlobal before dequant DC), frame header ENABLE_NOISE flag, and --noise CLI flag (opt-in, matching libjxl default). Verified with djxl (1024x1024 CLIC photo) and jxl-oxide (5 roundtrip tests). All 545 tests pass.
