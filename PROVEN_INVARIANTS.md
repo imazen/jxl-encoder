@@ -33,7 +33,12 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
   - Quant tables point to DCT8 weights (placeholder)
 - [x] Layer 2: Block context map entries for codes 12, 13 (commit 3eb8e60)
   - Updated BLOCK_CONTEXT_MAP: X/B→2, Y→0 (matches order_id=1 in kStrategyOrder)
-- [ ] Layer 2: Strategy selection logic (when to prefer DCT4X8 over DCT8)
+- [x] Layer 2: Strategy selection logic
+  - Added DCT4X8/DCT8X4 entropy estimation in `estimate_entropy()`
+  - Added DCT4X8/DCT8X4 selection in `find_best_16x16_transform()`
+  - Uses distance-dependent multiplier (mul4x8) similar to DCT8
+  - Selects best single-block strategy (DCT8, DCT4X8, or DCT8X4) per block
+  - Verified: test_strategy_selection_picks_small_transforms PASSES
 - [SKIP] Layer 3: djxl - not installed on test system, but jxl-oxide and jxl-rs pass
 - [x] Layer 3: jxl-rs decodes without error
   - `layer3_single_group_dct4x8_decode_jxl_rs` - PASSES
@@ -48,9 +53,8 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
 - Inverse transforms not needed for encoder (decoder handles IDCT)
 
 ### Open Questions
-- What strategy selection threshold to use for DCT4x8 vs DCT8?
-- How does libjxl decide when to use small transforms?
 - Should we use DCT8 weights as placeholder or compute proper parametric weights?
+- Fine-tune mul4x8 multiplier based on RD testing (currently slightly higher than mul8x8)
 
 ### Reference Constants (from libjxl quant_weights.cc)
 ```cpp

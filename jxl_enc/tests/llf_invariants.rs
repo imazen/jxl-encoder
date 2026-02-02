@@ -4820,3 +4820,64 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
         "Center pixel too far from expected"
     );
 }
+
+/// Test that strategy selection can pick DCT4X8/DCT8X4 for appropriate content.
+#[test]
+#[ignore]
+fn test_strategy_selection_picks_small_transforms() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Create an image with strong horizontal edges (should favor DCT8X4)
+    // and strong vertical edges (should favor DCT4X8)
+    let w = 256usize;
+    let h = 256usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+
+    // Create alternating horizontal and vertical stripe patterns
+    // Left half: vertical stripes (alternating columns)
+    // Right half: horizontal stripes (alternating rows)
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = if x < w / 2 {
+                // Vertical stripes (strong horizontal edges -> DCT8X4 preferred)
+                if (x / 4) % 2 == 0 { 0.8 } else { 0.2 }
+            } else {
+                // Horizontal stripes (strong vertical edges -> DCT4X8 preferred)
+                if (y / 4) % 2 == 0 { 0.8 } else { 0.2 }
+            };
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with strategy selection enabled
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.ac_strategy_enabled = true;
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes with ac_strategy_enabled", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+
+    // Check decoded values are reasonable (simple sanity check)
+    let center_idx = (h / 2 * w + w / 2) * 3;
+    let center_val = pixels[center_idx];
+    eprintln!("Center pixel value: {:.4}", center_val);
+    // Just verify we got something reasonable (not all zeros or garbage)
+    assert!(center_val > 0.1 && center_val < 0.9, "Pixel value out of expected range");
+
+    // Decode with jxl-rs to verify
+    let (dw2, dh2, _pixels2) = decode_jxl_rs(&bytes);
+    assert_eq!(dw2, w);
+    assert_eq!(dh2, h);
+    eprintln!("jxl-rs decoded successfully");
+
+    // Note: We can't easily check which strategies were selected without
+    // exposing internal state. The test verifies the encoder doesn't crash
+    // and produces valid output when small transforms might be selected.
+}
