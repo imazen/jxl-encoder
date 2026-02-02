@@ -62,6 +62,7 @@ C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller fil
 - [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
 - [x] ANS entropy coding (`--ans` flag) with histogram clustering
 - [x] Custom coefficient ordering (default-on, `--no-custom-orders` to disable)
+- [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
@@ -99,8 +100,8 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 
 - [ ] **Gaborish inverse** — 3x3 sharpening pre-filter, decoder reverses it. ~0.1-0.2
   butteraugli improvement at low bitrates. Low complexity.
-- [ ] **Noise synthesis** — Strip film grain before encoding, parameterize for
-  decoder reconstruction. 10-30% savings on noisy photos. Medium complexity.
+- [x] **Noise synthesis** — Working! Use `--noise` flag. Estimates noise from XYB
+  image, encodes 8-point LUT (80 bits). Verified with djxl and jxl-oxide.
 - [ ] **Error diffusion in AC quantization** — Spreads error to neighbors for
   smoother gradients. Modest quality improvement at high compression.
 - [ ] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks.
