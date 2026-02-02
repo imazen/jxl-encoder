@@ -127,12 +127,25 @@ impl DistanceParams {
 }
 
 /// Write the frame header.
-pub fn write_frame_header(x_qm_scale: u32, epf_iters: u32, writer: &mut BitWriter) -> Result<()> {
+///
+/// When `enable_noise` is true, sets the ENABLE_NOISE flag (bit 0) in addition
+/// to SKIP_ADAPTIVE_LF_SMOOTHING (bit 7). Flags value: 128 without noise, 129 with.
+pub fn write_frame_header(
+    x_qm_scale: u32,
+    epf_iters: u32,
+    enable_noise: bool,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    // Flags: SKIP_ADAPTIVE_LF_SMOOTHING (0x80) | optional ENABLE_NOISE (0x01)
+    let flags: u64 = 128 | if enable_noise { 1 } else { 0 };
+    // U64 encoding: flags is in range [17, 272], so selector=2, data=flags-17
+    let flags_data = flags - 17;
+
     writer.write(1, 0)?; // not all default
     writer.write(2, 0)?; // regular frame
     writer.write(1, 0)?; // vardct (not modular)
-    writer.write(2, 2)?; // flags selector bits (17 .. 272)
-    writer.write(8, 111)?; // skip adaptive dc flag (128)
+    writer.write(2, 2)?; // flags U64 selector (17 .. 272)
+    writer.write(8, flags_data)?; // flags value
     writer.write(2, 0)?; // no upsampling
     writer.write(3, x_qm_scale as u64)?;
     writer.write(3, 2)?; // b_qm_scale

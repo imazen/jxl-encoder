@@ -520,3 +520,206 @@ fn test_optimize_codes_boundary_256() {
         bytes.len() as i64 - static_bytes.len() as i64
     );
 }
+
+/// Test noise synthesis encoding: encode with enable_noise=true and verify
+/// jxl-oxide can decode the result (full render, not just parse).
+#[test]
+fn test_noise_synthesis_roundtrip_oxide() {
+    use std::io::Cursor;
+
+    // LCG for deterministic noise-like content
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*seed >> 33) as f32) / (u32::MAX as f32 / 2.0)
+    }
+
+    // Create a 64x64 noisy image (enough for noise estimation to work)
+    let (w, h) = (64, 64);
+    let mut linear_rgb = Vec::with_capacity(w * h * 3);
+    let mut seed = 42u64;
+    for _ in 0..(w * h) {
+        let val = 0.2 + lcg(&mut seed) * 0.6;
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+    }
+
+    // Encode with noise enabled
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.enable_noise = true;
+    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+
+    // Decode with jxl-oxide (full render)
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("jxl-oxide parse failed");
+    let frame = image.render_frame(0).expect("jxl-oxide render failed");
+    let fb = frame.image_all_channels();
+    assert_eq!(fb.width(), w);
+    assert_eq!(fb.height(), h);
+
+    eprintln!(
+        "Noise synthesis roundtrip ({}x{}): {} bytes, decoded OK with jxl-oxide",
+        w,
+        h,
+        bytes.len()
+    );
+}
+
+/// Test noise synthesis with ANS entropy coding (two-pass path).
+#[test]
+fn test_noise_synthesis_ans_roundtrip() {
+    use std::io::Cursor;
+
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*seed >> 33) as f32) / (u32::MAX as f32 / 2.0)
+    }
+
+    let (w, h) = (64, 64);
+    let mut linear_rgb = Vec::with_capacity(w * h * 3);
+    let mut seed = 42u64;
+    for _ in 0..(w * h) {
+        let val = 0.2 + lcg(&mut seed) * 0.6;
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.enable_noise = true;
+    encoder.use_ans = true;
+    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("jxl-oxide parse failed");
+    let frame = image.render_frame(0).expect("jxl-oxide render failed");
+    assert_eq!(frame.image_all_channels().width(), w);
+
+    eprintln!(
+        "Noise synthesis ANS roundtrip ({}x{}): {} bytes, decoded OK",
+        w,
+        h,
+        bytes.len()
+    );
+}
+
+/// Test noise synthesis with static Huffman codes (single-pass path).
+#[test]
+fn test_noise_synthesis_static_huffman_roundtrip() {
+    use std::io::Cursor;
+
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*seed >> 33) as f32) / (u32::MAX as f32 / 2.0)
+    }
+
+    let (w, h) = (64, 64);
+    let mut linear_rgb = Vec::with_capacity(w * h * 3);
+    let mut seed = 42u64;
+    for _ in 0..(w * h) {
+        let val = 0.2 + lcg(&mut seed) * 0.6;
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.enable_noise = true;
+    encoder.optimize_codes = false; // Static Huffman (single-pass)
+    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("jxl-oxide parse failed");
+    let frame = image.render_frame(0).expect("jxl-oxide render failed");
+    assert_eq!(frame.image_all_channels().width(), w);
+
+    eprintln!(
+        "Noise synthesis static Huffman roundtrip ({}x{}): {} bytes, decoded OK",
+        w,
+        h,
+        bytes.len()
+    );
+}
+
+/// Test that enabling noise on an image where noise estimation returns None
+/// (e.g. clean smooth image) still produces a valid file without noise flag.
+#[test]
+fn test_noise_synthesis_clean_image_no_noise_detected() {
+    use std::io::Cursor;
+
+    // Solid color: no noise to detect
+    let (w, h) = (64, 64);
+    let linear_rgb: Vec<f32> = vec![0.5; w * h * 3];
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.enable_noise = true; // Enabled, but estimation should return None
+    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("jxl-oxide parse failed");
+    let frame = image.render_frame(0).expect("jxl-oxide render failed");
+    assert_eq!(frame.image_all_channels().width(), w);
+
+    eprintln!(
+        "Noise synthesis on clean image ({}x{}): {} bytes, decoded OK (noise params: none expected)",
+        w,
+        h,
+        bytes.len()
+    );
+}
+
+/// Test noise synthesis on a multi-group image (>256x256).
+#[test]
+fn test_noise_synthesis_multigroup() {
+    use std::io::Cursor;
+
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((*seed >> 33) as f32) / (u32::MAX as f32 / 2.0)
+    }
+
+    let (w, h) = (300, 300);
+    let mut linear_rgb = Vec::with_capacity(w * h * 3);
+    let mut seed = 42u64;
+    for _ in 0..(w * h) {
+        let val = 0.2 + lcg(&mut seed) * 0.6;
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+        linear_rgb.push(val);
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.enable_noise = true;
+    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+
+    let reader = Cursor::new(&bytes);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("jxl-oxide parse failed");
+    let frame = image.render_frame(0).expect("jxl-oxide render failed");
+    assert_eq!(frame.image_all_channels().width(), w);
+    assert_eq!(frame.image_all_channels().height(), h);
+
+    eprintln!(
+        "Noise synthesis multigroup ({}x{}): {} bytes, decoded OK",
+        w,
+        h,
+        bytes.len()
+    );
+}

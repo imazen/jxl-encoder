@@ -35,6 +35,7 @@ use super::entropy_code::{
     write_tokens, write_tokens_ans,
 };
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
+use super::noise::{NoiseParams, estimate_noise_params, noise_quality_coef, write_noise_params};
 use super::quant::INV_DC_QUANT;
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use super::token::Token;
@@ -155,6 +156,11 @@ pub struct TinyEncoder {
     /// When Some(strategy), uses that raw strategy code for all blocks that fit.
     /// None (default) uses normal strategy selection based on `ac_strategy_enabled`.
     pub force_strategy: Option<u8>,
+    /// Enable noise synthesis.
+    /// When true, estimates noise parameters from the image and encodes them
+    /// in the frame header. The decoder regenerates noise during rendering.
+    /// Off by default (matching libjxl's default).
+    pub enable_noise: bool,
 }
 
 impl Default for TinyEncoder {
@@ -168,6 +174,7 @@ impl Default for TinyEncoder {
             ac_strategy_enabled: true,
             custom_orders: true,
             force_strategy: None,
+            enable_noise: false,
         }
     }
 }
@@ -184,6 +191,7 @@ impl TinyEncoder {
             ac_strategy_enabled: true,
             custom_orders: true,
             force_strategy: None,
+            enable_noise: false,
         }
     }
 
@@ -218,6 +226,21 @@ impl TinyEncoder {
         // This allows SIMD to process full blocks without bounds checking.
         let (xyb_x, xyb_y, xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
+
+        // Estimate noise parameters (if enabled)
+        let noise_params = if self.enable_noise {
+            let quality_coef = noise_quality_coef(self.distance);
+            estimate_noise_params(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                quality_coef,
+            )
+        } else {
+            None
+        };
 
         // Compute adaptive per-block quantization field and masking.
         // Pass padded dimensions: XYB buffers have stride=padded_width, and all
@@ -313,6 +336,7 @@ impl TinyEncoder {
                 &quant_field,
                 &cfl_map,
                 &ac_strategy,
+                &noise_params,
             );
         }
 
@@ -339,7 +363,12 @@ impl TinyEncoder {
         );
 
         // Write frame header
-        write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
+        write_frame_header(
+            params.x_qm_scale,
+            params.epf_iters,
+            noise_params.is_some(),
+            &mut writer,
+        )?;
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "After frame header: bit {} (byte {})",
@@ -352,7 +381,13 @@ impl TinyEncoder {
         if num_sections == 4 {
             // Write sections to individual BitWriters (no padding)
             let mut dc_global = BitWriter::new();
-            self.write_dc_global(&params, num_dc_groups, &dc_code, &mut dc_global)?;
+            self.write_dc_global(
+                &params,
+                num_dc_groups,
+                &dc_code,
+                &noise_params,
+                &mut dc_global,
+            )?;
 
             // Get borrowed Huffman codes for streaming token writing
             let dc_huffman = dc_code.as_huffman();
@@ -441,7 +476,13 @@ impl TinyEncoder {
 
             // DC Global section
             let mut dc_global = BitWriter::new();
-            self.write_dc_global(&params, num_dc_groups, &dc_code, &mut dc_global)?;
+            self.write_dc_global(
+                &params,
+                num_dc_groups,
+                &dc_code,
+                &noise_params,
+                &mut dc_global,
+            )?;
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
@@ -1309,25 +1350,34 @@ impl TinyEncoder {
         Ok(())
     }
 
-    /// Write DC global section.
+    /// Write DC global section (LfGlobal).
     ///
-    /// This follows the libjxl-tiny WriteDCGlobal pattern:
-    /// 1. Default dequant DC
-    /// 2. Quant scales
-    /// 3. Non-default BlockCtxMap + compact block context map
-    /// 4. Default DC cmap
-    /// 5. Context tree for modular stream
-    /// 6. No LZ77
-    /// 7. DC entropy code
+    /// Decoder order (from jxl-rs frame/decode.rs):
+    /// 0. Patches (if enabled) — not used
+    /// 1. Splines (if enabled) — not used
+    /// 2. **Noise params** (if ENABLE_NOISE flag set) — 8 × 10-bit LUT values
+    /// 3. Default dequant DC (LfQuantFactors)
+    /// 4. Quant scales (QuantizerParams)
+    /// 5. Non-default BlockCtxMap + compact block context map
+    /// 6. Default DC cmap (ColorCorrelationParams)
+    /// 7. Context tree for modular stream
+    /// 8. No LZ77
+    /// 9. DC entropy code
     fn write_dc_global(
         &self,
         params: &DistanceParams,
         num_dc_groups: usize,
         dc_code: &BuiltEntropyCode,
+        noise_params: &Option<NoiseParams>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
+
+        // Write noise parameters before dequant DC (decoder expects this order)
+        if let Some(ref noise) = *noise_params {
+            write_noise_params(noise, writer)?;
+        }
 
         writer.write(1, 1)?; // default dequant dc
 
@@ -1730,6 +1780,7 @@ impl TinyEncoder {
         quant_field: &[u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
+        noise_params: &Option<NoiseParams>,
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
@@ -1956,12 +2007,23 @@ impl TinyEncoder {
         self.write_file_header(width, height, &mut writer)?;
 
         // Write frame header
-        write_frame_header(params.x_qm_scale, params.epf_iters, &mut writer)?;
+        write_frame_header(
+            params.x_qm_scale,
+            params.epf_iters,
+            noise_params.is_some(),
+            &mut writer,
+        )?;
 
         if num_sections == 4 {
             // Single-group: combine sections at the bit level
             let mut dc_global = BitWriter::new();
-            self.write_dc_global(params, num_dc_groups, &dc_built_code, &mut dc_global)?;
+            self.write_dc_global(
+                params,
+                num_dc_groups,
+                &dc_built_code,
+                noise_params,
+                &mut dc_global,
+            )?;
 
             let mut dc_group = BitWriter::new();
             self.write_dc_group_from_tokens(
@@ -2003,7 +2065,13 @@ impl TinyEncoder {
 
             // DC Global
             let mut dc_global = BitWriter::new();
-            self.write_dc_global(params, num_dc_groups, &dc_built_code, &mut dc_global)?;
+            self.write_dc_global(
+                params,
+                num_dc_groups,
+                &dc_built_code,
+                noise_params,
+                &mut dc_global,
+            )?;
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
