@@ -459,9 +459,87 @@ const DCT32X32_BAND_PARAMS: [[f64; 8]; 3] = [
     ],
 ];
 
+/// DCT4X8 band parameters from jxl-oxide dequant.rs:44-48.
+/// 4 distance bands per channel.
+const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
+    // X channel
+    [2198.0505, -0.96269625, -0.7619425, -0.65511405],
+    // Y channel
+    [764.36554, -0.926302, -0.967523, -0.2784529],
+    // B channel
+    [527.10754, -1.4594386, -1.4500821, -1.5843723],
+];
+
 /// Lazily-generated DCT32x32 quantization weights (3072 floats: 1024 per channel).
 static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> =
     LazyLock::new(|| generate_dct_quant_weights(32, &DCT32X32_BAND_PARAMS, 8));
+
+/// Generate DCT4X8 quantization weights using parametric formula.
+/// Matches jxl-oxide's dequant.rs:279-294.
+///
+/// Process:
+/// 1. Generate 8x4 weight matrix using parametric bands
+/// 2. Duplicate each row to get 8x8 (matching interleaved coefficient layout)
+/// 3. Reciprocate to match QUANT_WEIGHTS convention (encoder uses 1/weight)
+fn generate_dct4x8_weights() -> Vec<f32> {
+    let mut weights = Vec::with_capacity(192);
+    let sqrt2 = core::f64::consts::SQRT_2;
+
+    for params in &DCT4X8_BAND_PARAMS {
+        // Build bands from parameters
+        let mut bands = vec![params[0]];
+        let mut last = params[0];
+        for &v in &params[1..] {
+            last *= band_mult(v);
+            bands.push(last);
+        }
+
+        // Generate 8x4 matrix (width=8, height=4)
+        let width = 8usize;
+        let height = 4usize;
+        let mut mat_8x4 = vec![0.0f64; width * height];
+
+        for y in 0..height {
+            let dy = y as f64 / (height - 1).max(1) as f64;
+            for x in 0..width {
+                let dx = x as f64 / (width - 1).max(1) as f64;
+                let distance = (dx * dx + dy * dy).sqrt();
+                let scaled = distance * (bands.len() - 1) as f64 / (sqrt2 + 1e-6);
+                let weight = interpolate_band(scaled, &bands);
+                mat_8x4[y * width + x] = weight;
+            }
+        }
+
+        // Duplicate rows to get 8x8 matrix (matching interleaved layout)
+        // Original rows: [row0, row1, row2, row3]
+        // Duplicated:    [row0, row0, row1, row1, row2, row2, row3, row3]
+        // Also reciprocate to match QUANT_WEIGHTS convention (encoder multiplies by 1/weight)
+        for row in 0..height {
+            // First copy of row (at position row*2)
+            for x in 0..width {
+                // Reciprocate: parametric generates dequant weights, we need quant weights
+                weights.push((1.0 / mat_8x4[row * width + x]) as f32);
+            }
+            // Second copy of row (at position row*2+1)
+            for x in 0..width {
+                weights.push((1.0 / mat_8x4[row * width + x]) as f32);
+            }
+        }
+    }
+
+    weights
+}
+
+/// Lazily-generated DCT4X8 quantization weights (192 floats: 64 per channel).
+///
+/// Uses parametric formula matching jxl-oxide decoder. The decoder expects
+/// row-interleaved coefficients, so weights are row-duplicated from an 8x4 base.
+static QUANT_WEIGHTS_DCT4X8: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_weights);
+
+/// Lazily-generated DCT8X4 quantization weights (192 floats: 64 per channel).
+///
+/// Same parametric formula as DCT4X8.
+static QUANT_WEIGHTS_DCT8X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_weights);
 
 /// Get the quantization weight table for a given strategy and channel.
 ///
@@ -480,6 +558,18 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
         // DCT32x32: use dynamically generated weights
         let offset = channel * 1024;
         return &QUANT_WEIGHTS_DCT32X32[offset..offset + 1024];
+    }
+
+    if strategy == 5 {
+        // DCT4X8: use special weights with boosted position 8
+        let offset = channel * DCT_BLOCK_SIZE;
+        return &QUANT_WEIGHTS_DCT4X8[offset..offset + DCT_BLOCK_SIZE];
+    }
+
+    if strategy == 6 {
+        // DCT8X4: use special weights with boosted position 8
+        let offset = channel * DCT_BLOCK_SIZE;
+        return &QUANT_WEIGHTS_DCT8X4[offset..offset + DCT_BLOCK_SIZE];
     }
 
     let idx = strategy * 3 + channel;
@@ -687,6 +777,46 @@ mod tests {
     /// Print weight statistics per strategy/channel for diagnostics.
     /// Use `cargo test -p jxl_enc test_weight_stats -- --nocapture` to see output.
     #[test]
+    fn test_dct4x8_position8_weight() {
+        // Check DCT4X8 weights, especially position 8 (DC difference)
+        let channels = ["X", "Y", "B"];
+        for (c, ch_name) in channels.iter().enumerate() {
+            let w = quant_weights(5, c); // 5 = DCT4X8
+            eprintln!(
+                "DCT4X8 {}: pos0={:.6}, pos8={:.6}, ratio={:.6}",
+                ch_name,
+                w[0],
+                w[8],
+                w[0] / w[8]
+            );
+
+            // Compare with DCT8
+            let dct8_w = quant_weights(0, c);
+            eprintln!(
+                "  DCT8 {}: pos0={:.6}, pos8={:.6}",
+                ch_name, dct8_w[0], dct8_w[8]
+            );
+        }
+
+        // DCT4X8 weights should be in similar range to DCT8 weights
+        // (they use similar parametric formulas, just different params)
+        for c in 0..3 {
+            let dct4x8 = quant_weights(5, c);
+            let dct8 = quant_weights(0, c);
+            // Position 8 in DCT4X8 should be similar magnitude to position 0 (both are DC-like)
+            let ratio = dct4x8[8] / dct8[0];
+            assert!(
+                (0.1..10.0).contains(&ratio),
+                "DCT4X8[8] / DCT8[0] ratio for channel {} is out of range: {} ({}:{})",
+                c,
+                ratio,
+                dct4x8[8],
+                dct8[0]
+            );
+        }
+    }
+
+    #[test]
     fn test_weight_stats_per_strategy() {
         let strategies = [
             (0, "DCT8"),
@@ -694,6 +824,8 @@ mod tests {
             (2, "DCT8x16"),
             (3, "DCT16x16"),
             (4, "DCT32x32"),
+            (5, "DCT4X8"),
+            (6, "DCT8X4"),
         ];
         let channels = ["X", "Y", "B"];
 

@@ -1121,7 +1121,10 @@ mod tests {
         assert!(output[0].abs() > 0.1, "DC should be non-zero");
         // The LLF coefficient at [8] can be non-zero (difference of sub-block DCs)
         // but for uniform input it should be zero
-        assert!(output[8].abs() < 1e-4, "LLF[8] should be ~0 for uniform input");
+        assert!(
+            output[8].abs() < 1e-4,
+            "LLF[8] should be ~0 for uniform input"
+        );
         // Other AC should be near zero
         for (i, val) in output.iter().enumerate().skip(1) {
             if i == 8 {
@@ -1141,7 +1144,10 @@ mod tests {
         // DC at [0] should be non-zero
         assert!(output[0].abs() > 0.1, "DC should be non-zero");
         // LLF[8] should be ~0 for uniform input
-        assert!(output[8].abs() < 1e-4, "LLF[8] should be ~0 for uniform input");
+        assert!(
+            output[8].abs() < 1e-4,
+            "LLF[8] should be ~0 for uniform input"
+        );
         // Other AC should be near zero
         for (i, val) in output.iter().enumerate().skip(1) {
             if i == 8 {

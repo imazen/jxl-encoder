@@ -10,8 +10,8 @@ use super::ac_group::{
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::ac_strategy::{
-    AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
-    RAW_STRATEGY_DCT32X32, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4,
+    AcStrategyMap, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16,
+    RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
     adjust_quant_field_with_distance, compute_ac_strategy,
 };
 
@@ -27,9 +27,9 @@ use super::dc_coding::{
     write_dc_tokens_region,
 };
 use super::dct::{
-    dc_from_dct_8x16, dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_32x32,
-    dc_from_dct_4x8_full, dc_from_dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
-    dct_4x8_full, dct_8x4_full,
+    dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16, dc_from_dct_16x8,
+    dc_from_dct_16x16, dc_from_dct_32x32, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8,
+    dct_16x16, dct_32x32,
 };
 use super::entropy_code::{
     OwnedAnsEntropyCode, OwnedEntropyCode, build_entropy_code_ans_with_options,
@@ -1786,12 +1786,12 @@ impl TinyEncoder {
                     continue;
                 }
 
-                let _raw_strategy = ac_strategy.raw_strategy(bx, by);
+                let raw_strategy = ac_strategy.raw_strategy(bx, by);
                 let covered_x = ac_strategy.covered_blocks_x(bx, by);
                 let covered_y = ac_strategy.covered_blocks_y(bx, by);
                 let covered_blocks = covered_x * covered_y;
                 let size = covered_blocks * DCT_BLOCK_SIZE;
-                let strategy_code = ac_strategy.strategy_code(bx, by);
+                let _strategy_code = ac_strategy.strategy_code(bx, by);
 
                 // Process channels in order: Y (1), X (0), B (2)
                 for &c in &[1usize, 0, 2] {
@@ -1815,12 +1815,13 @@ impl TinyEncoder {
                     };
 
                     if covered_blocks == 1 {
-                        // DCT8: use existing single-block path
+                        // DCT8/DCT4X8/DCT8X4: use existing single-block path
                         // Streaming path: no custom orders (requires two-pass)
+                        // tokenize_ac_coefficients expects raw_strategy, not bitstream code
                         tokenize_ac_coefficients(
                             &quant_ac[c][by][bx],
                             c,
-                            strategy_code,
+                            raw_strategy,
                             nz,
                             predicted_nz,
                             ac_code,
@@ -1839,10 +1840,11 @@ impl TinyEncoder {
                             })
                             .collect();
                         // Streaming path: no custom orders
+                        // tokenize_ac_coefficients expects raw_strategy, not bitstream code
                         tokenize_ac_coefficients(
                             &full_block,
                             c,
-                            strategy_code,
+                            raw_strategy,
                             nz,
                             predicted_nz,
                             ac_code,
@@ -1972,6 +1974,7 @@ impl TinyEncoder {
                     let covered_y = ac_strategy.covered_blocks_y(bx, by);
                     let covered_blocks = covered_x * covered_y;
                     let size = covered_blocks * DCT_BLOCK_SIZE;
+                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
                     let strategy_code = ac_strategy.strategy_code(bx, by);
 
                     for &c in &[1usize, 0, 2] {
@@ -2005,10 +2008,11 @@ impl TinyEncoder {
                         });
 
                         if covered_blocks == 1 {
+                            // collect_ac_coefficients expects raw_strategy, not bitstream code
                             let block_tokens = collect_ac_coefficients(
                                 &quant_ac[c][by][bx],
                                 c,
-                                strategy_code,
+                                raw_strategy,
                                 nz,
                                 predicted_nz,
                                 custom_ord,
@@ -2025,10 +2029,11 @@ impl TinyEncoder {
                                     quant_ac[c][slot_by][slot_bx][coeff_in_block]
                                 })
                                 .collect();
+                            // collect_ac_coefficients expects raw_strategy, not bitstream code
                             let block_tokens = collect_ac_coefficients(
                                 &full_block,
                                 c,
-                                strategy_code,
+                                raw_strategy,
                                 nz,
                                 predicted_nz,
                                 custom_ord,

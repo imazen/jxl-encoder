@@ -398,7 +398,7 @@ fn extract_block_32x32(plane: &[f32], stride: usize, bx: usize, by: usize, out: 
 /// * `(bx0, by0)` - Tile origin in block coordinates
 /// * `(cx, cy)` - Position within tile (in 8×8 blocks, must be even)
 /// * `stride` - Row stride (padded width) of the XYB buffers
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn find_best_16x16_transform(
     xyb: [&[f32]; 3],
     stride: usize,
@@ -433,10 +433,9 @@ fn find_best_16x16_transform(
     let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
 
     // DCT4X8/DCT8X4: small transforms for edges/high-frequency content.
-    // Same base cost as DCT8, but slightly higher multiplier to avoid overuse.
-    // These are better when there's strong directional frequency content.
+    // Re-enabled after fixing parametric quantization weights (row-interleaved layout).
     let k4x8mul1: f32 = -0.50 * 0.75;
-    let k4x8mul2: f32 = 1.10 * 0.75;
+    let k4x8mul2: f32 = 0.88; // Match DCT16X16 base cost
     let k4x8base: f32 = 1.3;
     let mul4x8 = k4x8mul2 + k4x8mul1 / (distance + k4x8base);
 

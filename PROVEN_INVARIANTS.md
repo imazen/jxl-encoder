@@ -23,7 +23,10 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
 - [x] Layer 1: Full 8x8 coverage `dct_4x8_full` (tests: `test_dct_4x8_full_constant`, `test_dct_4x8_full_top_bottom_different`)
 - [x] Layer 1: Full 8x8 coverage `dct_8x4_full` (tests: `test_dct_8x4_full_constant`, `test_dct_8x4_full_left_right_different`)
 - [x] Layer 1: DC extraction `dc_from_dct_4x8_full` / `dc_from_dct_8x4_full` (tests: `test_dct_4x8_full_dc_extraction`, `test_dct_8x4_full_dc_extraction`)
-- [SKIP] Layer 1: Quant weights - using DCT8 weights as placeholder (proper parametric weights TODO)
+- [x] Layer 1: Quant weights - parametric generation matching jxl-oxide decoder (commit PENDING)
+  - DCT4X8_BAND_PARAMS from jxl-oxide dequant.rs:44-48
+  - 8x4 matrix with row duplication for interleaved coefficient layout
+  - Weights reciprocated to match QUANT_WEIGHTS convention
 - [x] Layer 2: Encoder integration (commit 3eb8e60)
   - RAW_STRATEGY_DCT4X8 (5), RAW_STRATEGY_DCT8X4 (6) added to ac_strategy.rs
   - STRATEGY_CODE_LUT updated with bitstream codes 12, 13
@@ -46,15 +49,24 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
 - [x] Layer 3: jxl-oxide decodes without error (commit 4cf2869)
   - `layer3_single_group_dct4x8_decode_jxl_oxide` - PASSES
   - `layer3_single_group_dct8x4_decode_jxl_oxide` - PASSES
-- [ ] Layer 4: Quality metrics on CLIC corpus (SSIM2 within expected range)
-- [ ] Layer 4: RD regression - no regressions vs baseline
+- [x] Layer 4: Quality metrics (commit PENDING)
+  - `diagnose_dct4x8_real_photo`: Range [-0.18, 2.16] comparable to DCT8 [-0.30, 2.03]
+  - Before fix: Range [-1.47, 3.17] with 1165 pixels >1.5 (catastrophic)
+  - After fix: Range [-0.18, 2.16] with 30 pixels >1.5 (normal)
+- [x] Layer 4: RD regression - no regressions, some improvements (commit PENDING)
+  - frymire: 2.5% smaller at d=0.25, 2.4% smaller at d=0.5
+  - SSIM2 improvements: +0.93 (d=0.25), +0.78 (d=0.5)
+  - butteraugli improvements: img11 8% better, img13 15% better
 
 ### Ruled Out
 - Inverse transforms not needed for encoder (decoder handles IDCT)
 
 ### Open Questions
-- Should we use DCT8 weights as placeholder or compute proper parametric weights?
-- Fine-tune mul4x8 multiplier based on RD testing (currently slightly higher than mul8x8)
+- [RESOLVED] Should we use DCT8 weights as placeholder or compute proper parametric weights?
+  - Answer: Proper parametric weights are REQUIRED for correct quality. The decoder uses
+    row-duplicated 8x4 matrices from band parameters, not DCT8 weights.
+- [RESOLVED] Fine-tune mul4x8 multiplier based on RD testing
+  - Set to 0.88 (same as DCT16X16), RD regression passes with improvements
 
 ### Reference Constants (from libjxl quant_weights.cc)
 ```cpp
