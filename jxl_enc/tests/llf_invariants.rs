@@ -334,6 +334,96 @@ fn decode_jxl_oxide(data: &[u8]) -> (usize, usize, Vec<f32>) {
     (w, h, pixels)
 }
 
+/// Decode with jxl-rs (primary Rust decoder for roundtrip tests).
+fn decode_jxl_rs(data: &[u8]) -> (usize, usize, Vec<f32>) {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = data;
+
+    // Create decoder
+    let options = JxlDecoderOptions::default();
+    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+
+    // Process header
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during header");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs header decode error: {:?}", e),
+        }
+    };
+
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    let channels = 3; // RGB output
+
+    // Set output format to RGB f32
+    let format = JxlPixelFormat {
+        color_type: JxlColorType::Rgb,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![],
+    };
+    decoder.set_pixel_format(format);
+
+    // Process to frame info
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input before frame");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame info decode error: {:?}", e),
+        }
+    };
+
+    // Create output buffer
+    let mut output_image = Image::<f32>::new((width * channels, height))
+        .expect("jxl-rs: failed to create output buffer");
+
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * channels, height),
+            })
+            .into_raw(),
+    )];
+
+    // Decode frame
+    loop {
+        match decoder.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during frame decode");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame decode error: {:?}", e),
+        }
+    }
+
+    // Extract pixels
+    let mut pixels = Vec::with_capacity(width * height * channels);
+    for y in 0..height {
+        pixels.extend_from_slice(output_image.row(y));
+    }
+
+    (width, height, pixels)
+}
+
 /// Decode with djxl (libjxl reference decoder, gold standard).
 fn decode_djxl(data: &[u8]) -> (usize, usize, Vec<u8>) {
     let pid = std::process::id();
@@ -4636,6 +4726,90 @@ fn layer3_single_group_dct8x4_decode_jxl_oxide() {
     assert_eq!(dw, w);
     assert_eq!(dh, h);
     eprintln!("jxl-oxide decoded DCT8X4 successfully: {}x{}", dw, dh);
+
+    // Basic sanity check on decoded values
+    let center_idx = (h / 2 * w + w / 2) * 3;
+    let center_val = pixels[center_idx];
+    eprintln!("Center pixel value: {:.4} (expected ~0.5)", center_val);
+    assert!(
+        (center_val - 0.5).abs() < 0.2,
+        "Center pixel too far from expected"
+    );
+}
+
+/// Layer 3 test: Force DCT4X8 and verify jxl-rs decodes.
+#[test]
+#[ignore]
+fn layer3_single_group_dct4x8_decode_jxl_rs() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // 64x64 gradient image
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("DCT4X8: {} bytes encoded", bytes.len());
+
+    // Decode with jxl-rs
+    let (dw, dh, pixels) = decode_jxl_rs(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    eprintln!("jxl-rs decoded DCT4X8 successfully: {}x{}", dw, dh);
+
+    // Basic sanity check on decoded values
+    let center_idx = (h / 2 * w + w / 2) * 3;
+    let center_val = pixels[center_idx];
+    eprintln!("Center pixel value: {:.4} (expected ~0.5)", center_val);
+    assert!(
+        (center_val - 0.5).abs() < 0.2,
+        "Center pixel too far from expected"
+    );
+}
+
+/// Layer 3 test: Force DCT8X4 and verify jxl-rs decodes.
+#[test]
+#[ignore]
+fn layer3_single_group_dct8x4_decode_jxl_rs() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // 64x64 gradient image
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("DCT8X4: {} bytes encoded", bytes.len());
+
+    // Decode with jxl-rs
+    let (dw, dh, pixels) = decode_jxl_rs(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    eprintln!("jxl-rs decoded DCT8X4 successfully: {}x{}", dw, dh);
 
     // Basic sanity check on decoded values
     let center_idx = (h / 2 * w + w / 2) * 3;
