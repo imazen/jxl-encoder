@@ -58,6 +58,7 @@ impl DistanceParams {
     /// from the median and MAD (median absolute deviation) of the quant field.
     /// For high-variance images, MAD is large, so (median - MAD) is smaller,
     /// giving a smaller global_scale (finer quantization, better quality).
+    #[allow(dead_code)]
     pub fn compute_from_quant_field(distance: f32, quant_field: &[f32]) -> Self {
         if quant_field.is_empty() {
             return Self::compute(distance);
@@ -77,7 +78,10 @@ impl DistanceParams {
         #[cfg(feature = "debug-tokens")]
         eprintln!(
             "[adaptive] d={:.2} median={:.4} mad={:.4} (median-mad)={:.4}",
-            distance, quant_median, quant_median_absd, quant_median - quant_median_absd
+            distance,
+            quant_median,
+            quant_median_absd,
+            quant_median - quant_median_absd
         );
         Self::compute_internal(distance, Some((quant_median, quant_median_absd)))
     }
@@ -107,7 +111,8 @@ impl DistanceParams {
 
         #[cfg(feature = "debug-tokens")]
         {
-            let expected_scale = (GLOBAL_SCALE_DENOM as f32) * AC_QUANT / (distance * QUANT_FIELD_TARGET);
+            let expected_scale =
+                (GLOBAL_SCALE_DENOM as f32) * AC_QUANT / (distance * QUANT_FIELD_TARGET);
             eprintln!(
                 "[global_scale] d={:.2} expected={:.0} actual={} inv_scale={:.4}",
                 distance, expected_scale, global_scale, inv_scale

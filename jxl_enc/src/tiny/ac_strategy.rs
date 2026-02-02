@@ -759,6 +759,7 @@ pub fn adjust_quant_field_with_distance(
 
 /// Adjust the quant field for non-8×8 transforms (legacy, max-only version).
 /// Use `adjust_quant_field_with_distance` for better quality at high distances.
+#[allow(dead_code)]
 pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
     // Use max-only behavior (mean_max_mixer = 1.0, equivalent to d < 1.54)
     adjust_quant_field_with_distance(ac_strategy, quant_field, 0.0);

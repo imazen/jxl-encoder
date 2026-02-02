@@ -13,6 +13,17 @@ use crate::frame::{FrameEncoder, FrameEncoderOptions};
 use crate::headers::{ColorEncoding, FileHeader};
 use crate::modular::ModularImage;
 
+/// sRGB to linear conversion (exact IEC 61966-2-1 transfer function).
+#[inline]
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = c as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// JPEG XL encoder options.
 #[derive(Debug, Clone)]
 pub struct EncoderOptions {
@@ -22,6 +33,18 @@ pub struct EncoderOptions {
     pub effort: u8,
     /// Use modular mode for all encoding.
     pub force_modular: bool,
+    /// Use ANS entropy coding instead of Huffman (4-10% smaller, default true).
+    pub use_ans: bool,
+    /// Optimize Huffman/ANS codes (two-pass, default true).
+    pub optimize_codes: bool,
+    /// Use custom coefficient ordering (default true).
+    pub custom_orders: bool,
+    /// Enable noise synthesis (estimates and encodes noise params).
+    pub enable_noise: bool,
+    /// Enable Wiener denoising pre-filter (implies enable_noise).
+    pub enable_denoise: bool,
+    /// Enable gaborish inverse pre-filter (default true).
+    pub enable_gaborish: bool,
 }
 
 impl Default for EncoderOptions {
@@ -30,6 +53,12 @@ impl Default for EncoderOptions {
             distance: 0.0, // Lossless by default
             effort: 7,
             force_modular: false,
+            use_ans: true,
+            optimize_codes: true,
+            custom_orders: true,
+            enable_noise: false,
+            enable_denoise: false,
+            enable_gaborish: true,
         }
     }
 }
@@ -39,8 +68,7 @@ impl EncoderOptions {
     pub fn lossless() -> Self {
         Self {
             distance: 0.0,
-            effort: 7,
-            force_modular: false,
+            ..Default::default()
         }
     }
 
@@ -48,8 +76,7 @@ impl EncoderOptions {
     pub fn lossy(distance: f32) -> Self {
         Self {
             distance,
-            effort: 7,
-            force_modular: false,
+            ..Default::default()
         }
     }
 }
@@ -90,6 +117,10 @@ impl Encoder {
 
     /// Encodes an RGB8 image to JXL format with lossy compression.
     ///
+    /// Uses the TinyEncoder (VarDCT) for lossy encoding. This encoder supports
+    /// images of any size and produces high-quality output matching libjxl at
+    /// low distances (d≤1.0).
+    ///
     /// # Arguments
     /// * `data` - RGB8 pixel data in row-major order (R,G,B,R,G,B,...)
     /// * `width` - Image width in pixels
@@ -102,67 +133,30 @@ impl Encoder {
         height: usize,
         distance: f32,
     ) -> Result<Vec<u8>> {
-        use crate::color::xyb::srgb_image_to_xyb;
+        use crate::tiny::TinyEncoder;
 
-        // Multi-group VarDCT (>256x256) is broken - produces garbage output
-        #[cfg(feature = "safe-mode")]
-        if width > 256 || height > 256 {
-            return Err(crate::error::Error::InvalidInput(format!(
-                "Image {}x{} exceeds safe-mode limit of 256x256. Multi-group VarDCT encoding \
-                 is broken and produces garbage output. Use --no-default-features to disable \
-                 this check for debugging, or resize your image to fit within 256x256.",
-                width, height
-            )));
-        }
+        // Convert sRGB u8 to linear f32
+        let linear_rgb: Vec<f32> = data
+            .chunks(3)
+            .flat_map(|px| {
+                [
+                    srgb_to_linear(px[0]),
+                    srgb_to_linear(px[1]),
+                    srgb_to_linear(px[2]),
+                ]
+            })
+            .collect();
 
-        // Convert u8 to f32
-        let data_f32: Vec<f32> = data.iter().map(|&x| x as f32).collect();
+        // Configure TinyEncoder with options
+        let mut encoder = TinyEncoder::new(distance);
+        encoder.use_ans = self.options.use_ans;
+        encoder.optimize_codes = self.options.optimize_codes;
+        encoder.custom_orders = self.options.custom_orders;
+        encoder.enable_noise = self.options.enable_noise || self.options.enable_denoise;
+        encoder.enable_denoise = self.options.enable_denoise;
+        encoder.enable_gaborish = self.options.enable_gaborish;
 
-        // Separate RGB channels
-        let num_pixels = width * height;
-        let mut r = vec![0.0f32; num_pixels];
-        let mut g = vec![0.0f32; num_pixels];
-        let mut b = vec![0.0f32; num_pixels];
-        for i in 0..num_pixels {
-            r[i] = data_f32[i * 3];
-            g[i] = data_f32[i * 3 + 1];
-            b[i] = data_f32[i * 3 + 2];
-        }
-
-        // Convert to XYB color space
-        let mut x_out = vec![0.0f32; num_pixels];
-        let mut y_out = vec![0.0f32; num_pixels];
-        let mut b_out = vec![0.0f32; num_pixels];
-        srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
-
-        // Interleave XYB channels back for VarDCT encoding
-        let mut xyb_data = vec![0.0f32; num_pixels * 3];
-        for i in 0..num_pixels {
-            xyb_data[i * 3] = x_out[i];
-            xyb_data[i * 3 + 1] = y_out[i];
-            xyb_data[i * 3 + 2] = b_out[i];
-        }
-
-        let mut writer = BitWriter::new();
-
-        // Write file header (for lossy, uses XYB color encoding)
-        let file_header = FileHeader::new_rgb_lossy(width as u32, height as u32);
-        file_header.write(&mut writer)?;
-
-        // Byte align before frame
-        writer.zero_pad_to_byte();
-
-        // Encode VarDCT frame
-        let frame_options = FrameEncoderOptions {
-            use_modular: false,
-            effort: self.options.effort,
-        };
-        let frame_encoder = FrameEncoder::new(width, height, frame_options);
-        let color_encoding = ColorEncoding::srgb();
-        frame_encoder.encode_vardct(&xyb_data, distance, &color_encoding, &mut writer)?;
-
-        let bytes = writer.finish_with_padding();
-        Ok(bytes)
+        encoder.encode(width, height, &linear_rgb)
     }
 
     /// Encodes a ModularImage to JXL format.
