@@ -59,6 +59,24 @@ impl AcStrategyMap {
         }
     }
 
+    /// Create a new map forcing a specific strategy for all blocks that fit.
+    /// Blocks that don't fit the strategy (e.g., at image edges) use DCT8.
+    pub fn force_strategy(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> Self {
+        let mut map = Self::new_dct8(xsize_blocks, ysize_blocks);
+        let cx = COVERED_X[raw_strategy as usize];
+        let cy = COVERED_Y[raw_strategy as usize];
+
+        for by in (0..ysize_blocks).step_by(cy) {
+            for bx in (0..xsize_blocks).step_by(cx) {
+                // Only set if the full coverage fits
+                if bx + cx <= xsize_blocks && by + cy <= ysize_blocks {
+                    map.set(bx, by, raw_strategy);
+                }
+            }
+        }
+        map
+    }
+
     /// Get the raw strategy at (bx, by).
     #[inline]
     pub fn raw_strategy(&self, bx: usize, by: usize) -> u8 {
