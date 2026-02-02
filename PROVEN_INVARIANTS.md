@@ -154,6 +154,35 @@ const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
 
 ---
 
+## Feature: Error Diffusion [COMPLETE]
+
+Target: Add error diffusion to spread quantization error to neighboring coefficients.
+This helps preserve smooth gradients at high compression levels (d > 2.0).
+
+### Proven Layers
+- [x] Layer 1: Implementation
+  - Added `error_diffusion` field to TinyEncoder (default: false)
+  - Modified quantize_ac_block to process in zigzag order when enabled
+  - Propagates 1/4 of error to next coefficient in zigzag order
+- [x] Layer 3: jxl-oxide decodes without error
+  - `test_error_diffusion_jxl_oxide_decode` - 64x64 gradient - PASSES
+- [x] Layer 3: jxl-rs decodes without error
+  - `test_error_diffusion_jxl_rs_decode` - 64x64 gradient - PASSES
+- [x] Layer 3: Multi-group support
+  - `test_error_diffusion_multigroup` - 512x512 gradient - PASSES
+- [ ] Layer 4: Quality metrics (TODO - compare gradients with/without)
+
+### Notes
+libjxl has an `error_diffusion` parameter but doesn't actually implement it
+(the parameter is accepted but the diffusion logic was never added). This is
+a novel implementation for this encoder.
+
+### Test Files
+- `jxl_enc/tests/dct4x8_diagnostic.rs`: test_error_diffusion_* functions
+- `jxl_enc/src/tiny/encoder.rs`: quantize_ac_block with error_diffusion parameter
+
+---
+
 ## Completed Features
 
 (Move features here when all layers are proven and merged)
