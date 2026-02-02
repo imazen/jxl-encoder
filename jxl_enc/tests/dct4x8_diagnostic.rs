@@ -45,6 +45,107 @@ fn decode_with_jxl_oxide(data: &[u8]) -> (usize, usize, Vec<f32>) {
     (w, h, pixels)
 }
 
+fn decode_with_jxl_rs(data: &[u8]) -> Option<(usize, usize, Vec<f32>)> {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = data;
+
+    // Create decoder
+    let options = JxlDecoderOptions::default();
+    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+
+    // Process header
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    eprintln!("jxl-rs: unexpected end of input during header");
+                    return None;
+                }
+                decoder = fallback;
+            }
+            Err(e) => {
+                eprintln!("jxl-rs header decode error: {:?}", e);
+                return None;
+            }
+        }
+    };
+
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    let channels = 3; // RGB output
+
+    // Set output format to RGB f32
+    let format = JxlPixelFormat {
+        color_type: JxlColorType::Rgb,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![],
+    };
+    decoder.set_pixel_format(format);
+
+    // Process to frame info
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    eprintln!("jxl-rs: unexpected end of input before frame");
+                    return None;
+                }
+                decoder = fallback;
+            }
+            Err(e) => {
+                eprintln!("jxl-rs frame info decode error: {:?}", e);
+                return None;
+            }
+        }
+    };
+
+    // Create output buffer
+    let mut output_image = Image::<f32>::new((width * channels, height))
+        .expect("jxl-rs: failed to create output buffer");
+
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * channels, height),
+            })
+            .into_raw(),
+    )];
+
+    // Decode frame
+    loop {
+        match decoder.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    eprintln!("jxl-rs: unexpected end of input during frame decode");
+                    return None;
+                }
+                decoder = fallback;
+            }
+            Err(e) => {
+                eprintln!("jxl-rs frame decode error: {:?}", e);
+                return None;
+            }
+        }
+    }
+
+    // Extract pixels
+    let mut pixels = Vec::with_capacity(width * height * channels);
+    for y in 0..height {
+        pixels.extend_from_slice(output_image.row(y));
+    }
+
+    Some((width, height, pixels))
+}
+
 fn analyze_pixels(pixels: &[f32], name: &str) {
     let mut min_val = f32::INFINITY;
     let mut max_val = f32::NEG_INFINITY;
@@ -441,4 +542,176 @@ fn diagnose_coefficient_layout() {
     println!();
     println!("Expected DC = average = 0.5");
     println!("Expected DC diff = (1.0 - 0.0) * 0.5 = 0.5");
+}
+
+// ============================================================================
+// DCT4X4 Tests - Verify decoder compatibility
+// ============================================================================
+
+/// Test DCT4X4 decodes correctly with jxl-oxide
+#[test]
+fn test_dct4x4_jxl_oxide_decode() {
+    let w = 64usize;
+    let h = 64usize;
+
+    // Create image with 2x2 quadrant pattern (exactly what DCT4X4 encodes well)
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            // Quadrant pattern: different values in each 4x4 sub-block of each 8x8 block
+            let qx = (x % 8) / 4;
+            let qy = (y % 8) / 4;
+            let v = match (qx, qy) {
+                (0, 0) => 0.2,
+                (1, 0) => 0.4,
+                (0, 1) => 0.6,
+                _ => 0.8, // (1, 1) and any other case
+            };
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with DCT4X4
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(7); // DCT4X4
+    let bytes = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+
+    // Decode with jxl-oxide
+    let (dec_w, dec_h, _dec_pixels) = decode_with_jxl_oxide(&bytes);
+
+    assert_eq!(dec_w, w, "Width mismatch");
+    assert_eq!(dec_h, h, "Height mismatch");
+    println!(
+        "DCT4X4 jxl-oxide decode: {} bytes, {}x{}",
+        bytes.len(),
+        dec_w,
+        dec_h
+    );
+}
+
+/// Test DCT4X4 decodes correctly with jxl-rs
+#[test]
+fn test_dct4x4_jxl_rs_decode() {
+    let w = 64usize;
+    let h = 64usize;
+
+    // Create simple gradient image
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w + h) as f32;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with DCT4X4
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(7); // DCT4X4
+    let bytes = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+
+    // Decode with jxl-rs
+    let result = decode_with_jxl_rs(&bytes);
+    assert!(result.is_some(), "jxl-rs failed to decode DCT4X4 image");
+
+    let (dec_w, dec_h, _dec_pixels) = result.unwrap();
+    assert_eq!(dec_w, w, "Width mismatch");
+    assert_eq!(dec_h, h, "Height mismatch");
+    println!(
+        "DCT4X4 jxl-rs decode: {} bytes, {}x{}",
+        bytes.len(),
+        dec_w,
+        dec_h
+    );
+}
+
+/// Test DCT4X4 on a larger multi-group image
+#[test]
+fn test_dct4x4_multigroup() {
+    let w = 512usize;
+    let h = 512usize;
+
+    // Create checkerboard pattern
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = if ((x / 4) + (y / 4)) % 2 == 0 {
+                0.3
+            } else {
+                0.7
+            };
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with DCT4X4
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(7); // DCT4X4
+    let bytes = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+
+    // Decode with both decoders
+    let (dec_w, dec_h, _) = decode_with_jxl_oxide(&bytes);
+    assert_eq!(dec_w, w, "Width mismatch (jxl-oxide)");
+    assert_eq!(dec_h, h, "Height mismatch (jxl-oxide)");
+
+    let result = decode_with_jxl_rs(&bytes);
+    assert!(
+        result.is_some(),
+        "jxl-rs failed to decode DCT4X4 multi-group image"
+    );
+
+    println!(
+        "DCT4X4 multi-group decode: {} bytes, {}x{}",
+        bytes.len(),
+        w,
+        h
+    );
+}
+
+/// Quality diagnostic for DCT4X4 on real photos
+#[test]
+#[ignore]
+fn diagnose_dct4x4_real_photo() {
+    let path = std::env::var("CLIC_IMAGE").unwrap_or_else(|_| {
+        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png".to_string()
+    });
+
+    if !std::path::Path::new(&path).exists() {
+        eprintln!("Test image not found: {}", path);
+        return;
+    }
+
+    let (w, h, linear, _srgb) = load_png_crop(&path, 256, 256);
+    println!("Loaded {}x{} real photo crop", w, h);
+
+    // Analyze input
+    analyze_pixels(&linear, "Input linear RGB");
+
+    // Encode with DCT4X4
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(7); // DCT4X4
+    let bytes_4x4 = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+    println!("\nDCT4X4 encoded: {} bytes", bytes_4x4.len());
+
+    // Decode
+    let (dec_w, dec_h, dec_pixels) = decode_with_jxl_oxide(&bytes_4x4);
+    println!("Decoded: {}x{}", dec_w, dec_h);
+    analyze_pixels(&dec_pixels, "DCT4X4 decoded");
+
+    // Compare with DCT8
+    let mut encoder2 = TinyEncoder::new(2.0);
+    encoder2.ac_strategy_enabled = false;
+    let bytes_dct8 = encoder2.encode(w, h, &linear).expect("DCT8 encode failed");
+    println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
+
+    let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
+    analyze_pixels(&dec8_pixels, "DCT8 decoded");
 }
