@@ -66,7 +66,7 @@ features (DCT4x8, error diffusion) and quantization calibration differences.
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT16x8/DCT8x16/DCT16x16 per 16x16 region)
+- [x] AC strategy selection (DCT8/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16 per 16x16 region)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
 - [x] AC coding with channel interleaving
@@ -105,7 +105,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 - [ ] **DCT32x32** — Same pattern as DCT16x16 but 4×4 coverage (1024 coefficients).
   Forward transform exists in `jxl_enc_transforms`. Work: 32x32 quant weights,
   strategy selection, LLF extraction (4×4 region).
-- [ ] **DCT4x8, DCT8x4, DCT4x4** — Better for edges/detail (~1-3% smaller).
+- [x] **DCT4x8, DCT8x4** — Working! Better for edges/detail. Parametric quantization
+  weights generated from band params (row-interleaved for decoder). Strategy selection
+  enabled with `k4x8mul2 = 0.88` multiplier. Verified with jxl-rs and jxl-oxide.
+- [ ] **DCT4x4** — Same pattern as DCT4x8 but 4x4 coverage. Forward transform exists.
 - [x] **Custom coefficient ordering** — Working! Default-on in two-pass mode.
   Per-strategy scan order from coefficient statistics. Sorts positions by zero
   count so zeros cluster at end of scan. Verified on all 5 CLIC 2025 images
