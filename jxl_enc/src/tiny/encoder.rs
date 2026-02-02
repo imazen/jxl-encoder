@@ -1748,11 +1748,13 @@ impl TinyEncoder {
                             predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
                         };
                         // Get custom order for this (bucket, channel) if available
+                        // IMPORTANT: get_custom_order's strategy_bucket() expects
+                        // bitstream strategy codes (0,4,5,6,7), not raw (0-4).
                         let custom_ord = custom_order_map.as_ref().and_then(|orders| {
                             super::coeff_order::get_custom_order(
                                 orders,
                                 used_orders,
-                                raw_strategy,
+                                strategy_code,
                                 c,
                             )
                         });
