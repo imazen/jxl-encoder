@@ -52,30 +52,54 @@ The gap is NOT from missing features. Comparing e5→e7 shows only ~1 SSIM2 impr
 - libjxl-tiny uses `kAcQuant = 0.8`
 - Full libjxl uses `kAcQuant = 0.765` but in a DIFFERENT formula
 
-#### 2026-02-02 04:45 — Key difference found: content-adaptive global_scale
+#### 2026-02-02 04:45 — Initial hypothesis: content-adaptive global_scale
 
-**[PROVEN] libjxl uses content-adaptive global_scale, we don't.**
+~~**[PROVEN] libjxl uses content-adaptive global_scale, we don't.**~~
 
-Full libjxl (`quantizer.cc:45-73`):
+**[RULED OUT] — See 05:10 update below.**
+
+#### 2026-02-02 05:10 — Correction: global_scale is NOT content-adaptive in main path
+
+**[PROVEN] libjxl's main encoding path uses FIXED global_scale, not content-adaptive.**
+
+Reading `enc_heuristics.cc` carefully:
+
 ```cpp
-// Compute quant_median and quant_median_absd from the actual quant field
-scale = kGlobalScaleDenom * (quant_median - quant_median_absd) / kQuantFieldTarget;
+// For Hare mode (effort 5) or slower with adaptive quant:
+float q = 0.39 / cparams.butteraugli_distance;
+quantizer.ComputeGlobalScaleAndQuant(quant_dc, q, 0);  // MAD=0 (fixed)
+
+// Then later, just converts using the already-set global_scale:
+quantizer.SetQuantFieldRect(initial_quant_field, r, &raw_quant_field);
 ```
 
-Our encoder (and libjxl-tiny):
-```rust
-scale = GLOBAL_SCALE_DENOM * AC_QUANT / (distance * QUANT_FIELD_TARGET);
+The `SetQuantField` with median/MAD calculation exists (`quantizer.cc:90`) but is only called
+from `enc_adaptive_quantization.cc` for specific refinement loops, NOT the main encoding path.
+
+**Key insight:** In the main encoding path, libjxl uses a FIXED formula `q = 0.39/distance`
+with MAD=0, very similar to our approach. The difference is the constant:
+- Our encoder: AC_QUANT = 0.8 (from libjxl-tiny)
+- libjxl Hare: q = 0.39
+
+But wait — **AC_QUANT cancels out!** Tracing the quantization:
+```
+qac = params.scale * raw_quant
+    = (global_scale / 65536) * (quant_field_float * inv_scale)
+    = (global_scale / 65536) * (quant_field_float * 65536 / global_scale)
+    = quant_field_float
 ```
 
-**The difference:** libjxl adapts global_scale to the **actual variance** of the per-block quant field. For images with high masking variance (lots of texture variation), `quant_median_absd` is large, which INCREASES global_scale (finer quantization, higher quality).
+Changing AC_QUANT (and thus global_scale) proportionally changes inv_scale, which
+proportionally changes raw_quant, and the two cancel out in the final qac value!
 
-Our encoder uses a fixed formula based only on distance — ignoring the actual content.
+**Tested this hypothesis:** Changed AC_QUANT from 0.8 to 0.39. Result: almost no change
+in file size (140KB vs 141KB) or quality (75.7 vs 76.0). Confirms the cancellation.
 
-**Impact analysis:**
-- For uniform images: Our approach and libjxl's should produce similar global_scale
-- For high-variance images (like frymire with its complex patterns): libjxl gets higher global_scale, we get lower (more aggressive quantization)
-
-**This explains why our quality gap grows at high distance** — at d=4.0, the fixed global_scale is already quite low, and ignoring content variance makes it even more aggressive on complex images.
+**Real cause of quality gap must be elsewhere:**
+- K_AC_QUANT in adaptive_quant.rs (ours: 0.8294, libjxl: 0.765)
+- Adaptive quantization masking algorithm differences
+- AC strategy cost model
+- Missing features (DCT4x8, error diffusion)
 
 **Next steps:**
 1. Implement `SetQuantField` with median/MAD-based global_scale selection
