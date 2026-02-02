@@ -4464,3 +4464,185 @@ fn test_layer2_strategies_comparison() {
         ssim2
     );
 }
+
+// =============================================================================
+// DCT4X8/DCT8X4 Layer 3 Tests
+// =============================================================================
+
+/// Layer 3 test: Force DCT4X8 strategy and verify djxl decodes without error.
+#[test]
+#[ignore]
+fn layer3_single_group_dct4x8_decode_djxl() {
+    use jxl_enc::tiny::TinyEncoder;
+    use std::fs;
+    use std::io::Write;
+
+    // 64x64 gradient image - fits in single group, multiple 8x8 blocks
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    // Save to file
+    let path = "/tmp/test_dct4x8_layer3.jxl";
+    let mut file = fs::File::create(path).unwrap();
+    file.write_all(&bytes).unwrap();
+    eprintln!("DCT4X8: {} bytes saved to {}", bytes.len(), path);
+
+    // Decode with djxl
+    let output = std::process::Command::new("djxl")
+        .arg(path)
+        .arg("/tmp/test_dct4x8_layer3.png")
+        .output()
+        .expect("djxl failed to run");
+
+    if !output.status.success() {
+        eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
+        panic!("djxl failed with status {}", output.status);
+    }
+    eprintln!("djxl decoded DCT4X8 successfully");
+}
+
+/// Layer 3 test: Force DCT8X4 strategy and verify djxl decodes without error.
+#[test]
+#[ignore]
+fn layer3_single_group_dct8x4_decode_djxl() {
+    use jxl_enc::tiny::TinyEncoder;
+    use std::fs;
+    use std::io::Write;
+
+    // 64x64 gradient image
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    // Save to file
+    let path = "/tmp/test_dct8x4_layer3.jxl";
+    let mut file = fs::File::create(path).unwrap();
+    file.write_all(&bytes).unwrap();
+    eprintln!("DCT8X4: {} bytes saved to {}", bytes.len(), path);
+
+    // Decode with djxl
+    let output = std::process::Command::new("djxl")
+        .arg(path)
+        .arg("/tmp/test_dct8x4_layer3.png")
+        .output()
+        .expect("djxl failed to run");
+
+    if !output.status.success() {
+        eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
+        panic!("djxl failed with status {}", output.status);
+    }
+    eprintln!("djxl decoded DCT8X4 successfully");
+}
+
+/// Layer 3 test: Force DCT4X8 and verify jxl-oxide decodes.
+#[test]
+#[ignore]
+fn layer3_single_group_dct4x8_decode_jxl_oxide() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // 64x64 gradient image
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("DCT4X8: {} bytes encoded", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    eprintln!("jxl-oxide decoded DCT4X8 successfully: {}x{}", dw, dh);
+
+    // Basic sanity check on decoded values
+    let center_idx = (h / 2 * w + w / 2) * 3;
+    let center_val = pixels[center_idx];
+    eprintln!("Center pixel value: {:.4} (expected ~0.5)", center_val);
+    assert!(
+        (center_val - 0.5).abs() < 0.2,
+        "Center pixel too far from expected"
+    );
+}
+
+/// Layer 3 test: Force DCT8X4 and verify jxl-oxide decodes.
+#[test]
+#[ignore]
+fn layer3_single_group_dct8x4_decode_jxl_oxide() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // 64x64 gradient image
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("DCT8X4: {} bytes encoded", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    eprintln!("jxl-oxide decoded DCT8X4 successfully: {}x{}", dw, dh);
+
+    // Basic sanity check on decoded values
+    let center_idx = (h / 2 * w + w / 2) * 3;
+    let center_val = pixels[center_idx];
+    eprintln!("Center pixel value: {:.4} (expected ~0.5)", center_val);
+    assert!(
+        (center_val - 0.5).abs() < 0.2,
+        "Center pixel too far from expected"
+    );
+}
