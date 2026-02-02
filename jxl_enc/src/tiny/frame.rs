@@ -130,10 +130,15 @@ impl DistanceParams {
 ///
 /// When `enable_noise` is true, sets the ENABLE_NOISE flag (bit 0) in addition
 /// to SKIP_ADAPTIVE_LF_SMOOTHING (bit 7). Flags value: 128 without noise, 129 with.
+///
+/// When `enable_gaborish` is true, signals gab=1 in the loop filter so the
+/// decoder applies its 3x3 Gabor-like blur. The encoder must have applied
+/// the inverse sharpening pre-filter to compensate.
 pub fn write_frame_header(
     x_qm_scale: u32,
     epf_iters: u32,
     enable_noise: bool,
+    enable_gaborish: bool,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // Flags: SKIP_ADAPTIVE_LF_SMOOTHING (0x80) | optional ENABLE_NOISE (0x01)
@@ -155,11 +160,15 @@ pub fn write_frame_header(
     writer.write(1, 1)?; // last frame
     writer.write(2, 0)?; // no name
 
-    if epf_iters == 2 {
-        writer.write(1, 1)?; // default loop filter
+    // Loop filter: all_default=1 means gab=true, epf_iters=2
+    if enable_gaborish && epf_iters == 2 {
+        writer.write(1, 1)?; // all_default (gab=true, epf_iters=2)
     } else {
-        writer.write(1, 0)?; // not default loop filter
-        writer.write(1, 0)?; // no gaborish
+        writer.write(1, 0)?; // not all default
+        writer.write(1, enable_gaborish as u64)?; // gab
+        if enable_gaborish {
+            writer.write(1, 0)?; // gab_custom=false (use default decoder weights)
+        }
         writer.write(2, epf_iters as u64)?;
         if epf_iters > 0 {
             writer.write(1, 0)?; // default epf sharpness
