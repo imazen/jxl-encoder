@@ -16,7 +16,7 @@
 
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
-use super::dct::{dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32};
+use super::dct::{dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32};
 use super::quant::quant_weights;
 
 /// Raw strategy codes matching the C++ `AcStrategy::Type` enum.
@@ -221,6 +221,22 @@ fn estimate_entropy(
                 dct_32x32(&input, &mut output);
                 block[offset..offset + 1024].copy_from_slice(&output);
             }
+            RAW_STRATEGY_DCT4X8 => {
+                // 1 wide × 1 tall: 8×8 pixel region, two 4×8 transforms side by side
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 64];
+                dct_4x8_full(&input, &mut output);
+                block[offset..offset + 64].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT8X4 => {
+                // 1 wide × 1 tall: 8×8 pixel region, two 8×4 transforms stacked
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 64];
+                dct_8x4_full(&input, &mut output);
+                block[offset..offset + 64].copy_from_slice(&output);
+            }
             _ => unreachable!(),
         }
     }
@@ -416,19 +432,39 @@ fn find_best_16x16_transform(
     let k16x16base: f32 = 1.8;
     let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
 
+    // DCT4X8/DCT8X4: small transforms for edges/high-frequency content.
+    // Same base cost as DCT8, but slightly higher multiplier to avoid overuse.
+    // These are better when there's strong directional frequency content.
+    let k4x8mul1: f32 = -0.50 * 0.75;
+    let k4x8mul2: f32 = 1.10 * 0.75;
+    let k4x8base: f32 = 1.3;
+    let mul4x8 = k4x8mul2 + k4x8mul1 / (distance + k4x8base);
+
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
 
-    // Evaluate four 8×8 blocks
+    // Evaluate four 8×8 blocks with DCT8, DCT4X8, and DCT8X4
+    // Track entropy and best strategy for each block
     let mut entropy = [[0.0f32; 2]; 2];
-    for (dy, entropy_row) in entropy.iter_mut().enumerate() {
-        for (dx, entropy_val) in entropy_row.iter_mut().enumerate() {
-            let e = estimate_entropy(
+    let mut best_single_strategy = [[RAW_STRATEGY_DCT8; 2]; 2];
+    for (dy, (entropy_row, strat_row)) in entropy
+        .iter_mut()
+        .zip(best_single_strategy.iter_mut())
+        .enumerate()
+    {
+        for (dx, (entropy_val, best_strat)) in
+            entropy_row.iter_mut().zip(strat_row.iter_mut()).enumerate()
+        {
+            let block_x = abs_bx + dx;
+            let block_y = abs_by + dy;
+
+            // DCT8
+            let e8 = estimate_entropy(
                 RAW_STRATEGY_DCT8,
                 xyb,
                 stride,
-                abs_bx + dx,
-                abs_by + dy,
+                block_x,
+                block_y,
                 distance,
                 quant_field,
                 xsize_blocks,
@@ -436,7 +472,52 @@ fn find_best_16x16_transform(
                 ytox,
                 ytob,
             );
-            *entropy_val = 3.0 * mul8x8 + mul8x8 * e;
+            let cost8 = 3.0 * mul8x8 + mul8x8 * e8;
+
+            // DCT4X8 (two 4×8 transforms side by side)
+            let e4x8 = estimate_entropy(
+                RAW_STRATEGY_DCT4X8,
+                xyb,
+                stride,
+                block_x,
+                block_y,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+            );
+            let cost4x8 = 3.0 * mul4x8 + mul4x8 * e4x8;
+
+            // DCT8X4 (two 8×4 transforms stacked)
+            let e8x4 = estimate_entropy(
+                RAW_STRATEGY_DCT8X4,
+                xyb,
+                stride,
+                block_x,
+                block_y,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+            );
+            let cost8x4 = 3.0 * mul4x8 + mul4x8 * e8x4;
+
+            // Pick the best single-block strategy
+            *entropy_val = cost8;
+            *best_strat = RAW_STRATEGY_DCT8;
+
+            if cost4x8 < *entropy_val {
+                *entropy_val = cost4x8;
+                *best_strat = RAW_STRATEGY_DCT4X8;
+            }
+            if cost8x4 < *entropy_val {
+                *entropy_val = cost8x4;
+                *best_strat = RAW_STRATEGY_DCT8X4;
+            }
         }
     }
 
@@ -516,21 +597,30 @@ fn find_best_16x16_transform(
             ytob,
         );
 
-    // Compare all options: four 8x8, 16x8 split, 8x16 split, or one 16x16
-    let cost_all_8x8 = entropy[0][0] + entropy[0][1] + entropy[1][0] + entropy[1][1];
+    // Compare all options: four single-block, 16x8 split, 8x16 split, or one 16x16
+    let cost_all_single = entropy[0][0] + entropy[0][1] + entropy[1][0] + entropy[1][1];
     let cost16x8 = (entropy_16x8_left).min(entropy[0][0] + entropy[1][0])
         + (entropy_16x8_right).min(entropy[0][1] + entropy[1][1]);
     let cost8x16 = (entropy_8x16_top).min(entropy[0][0] + entropy[0][1])
         + (entropy_8x16_bottom).min(entropy[1][0] + entropy[1][1]);
     let cost16x16 = entropy_16x16;
 
-    // Find best non-DCT8 cost (minimum of 16x8, 8x16, 16x16)
+    // Find best non-single-block cost (minimum of 16x8, 8x16, 16x16)
     let best_rect = cost16x8.min(cost8x16);
     let best_large = best_rect.min(cost16x16);
 
-    // Only use a non-DCT8 strategy if it beats four DCT8 blocks
-    if best_large >= cost_all_8x8 {
-        return; // Keep all four as DCT8
+    // Only use a non-single-block strategy if it beats four single-block transforms
+    if best_large >= cost_all_single {
+        // Keep all four as their best single-block strategy (DCT8, DCT4X8, or DCT8X4)
+        for dy in 0..2 {
+            for dx in 0..2 {
+                let strat = best_single_strategy[dy][dx];
+                if strat != RAW_STRATEGY_DCT8 {
+                    ac_strategy.set(abs_bx + dx, abs_by + dy, strat);
+                }
+            }
+        }
+        return;
     }
 
     if cost16x16 <= best_rect {
@@ -540,17 +630,49 @@ fn find_best_16x16_transform(
         // Try 16x8 for each column
         if entropy_16x8_left < entropy[0][0] + entropy[1][0] {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X8);
+        } else {
+            // Use best single-block for both blocks in left column
+            for dy in 0..2 {
+                let strat = best_single_strategy[dy][0];
+                if strat != RAW_STRATEGY_DCT8 {
+                    ac_strategy.set(abs_bx, abs_by + dy, strat);
+                }
+            }
         }
         if entropy_16x8_right < entropy[0][1] + entropy[1][1] {
             ac_strategy.set(abs_bx + 1, abs_by, RAW_STRATEGY_DCT16X8);
+        } else {
+            // Use best single-block for both blocks in right column
+            for dy in 0..2 {
+                let strat = best_single_strategy[dy][1];
+                if strat != RAW_STRATEGY_DCT8 {
+                    ac_strategy.set(abs_bx + 1, abs_by + dy, strat);
+                }
+            }
         }
     } else {
         // Try 8x16 for each row
         if entropy_8x16_top < entropy[0][0] + entropy[0][1] {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT8X16);
+        } else {
+            // Use best single-block for both blocks in top row
+            for dx in 0..2 {
+                let strat = best_single_strategy[0][dx];
+                if strat != RAW_STRATEGY_DCT8 {
+                    ac_strategy.set(abs_bx + dx, abs_by, strat);
+                }
+            }
         }
         if entropy_8x16_bottom < entropy[1][0] + entropy[1][1] {
             ac_strategy.set(abs_bx, abs_by + 1, RAW_STRATEGY_DCT8X16);
+        } else {
+            // Use best single-block for both blocks in bottom row
+            for dx in 0..2 {
+                let strat = best_single_strategy[1][dx];
+                if strat != RAW_STRATEGY_DCT8 {
+                    ac_strategy.set(abs_bx + dx, abs_by + 1, strat);
+                }
+            }
         }
     }
 }
