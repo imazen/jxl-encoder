@@ -86,10 +86,10 @@ impl DistanceParams {
     fn compute_internal(distance: f32, _quant_stats: Option<(f32, f32)>) -> Self {
         const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
         const GLOBAL_SCALE_NUMERATOR: i32 = 4096;
-        // Note: AC_QUANT cancels out with inv_scale in the quantization formula.
-        // Changing this alone has no effect on quality - it only affects global_scale
-        // encoding in the bitstream. To change quantization behavior, modify K_AC_QUANT
-        // in adaptive_quant.rs instead.
+        // libjxl-tiny and our baseline use AC_QUANT = 0.8. Testing with libjxl's
+        // 0.39 (combined with K_AC_QUANT=0.765) produced worse results. The quality
+        // gap vs cjxl is likely in other parts of the adaptive quant algorithm,
+        // not these constants.
         const AC_QUANT: f32 = 0.8;
         const QUANT_FIELD_TARGET: f32 = 5.0;
 

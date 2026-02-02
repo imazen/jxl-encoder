@@ -689,10 +689,32 @@ fn find_best_32x32_transform(
 
 /// Adjust the quant field for non-8×8 transforms.
 ///
-/// For multi-block transforms, all covered blocks get the maximum quant value.
-/// Port of C++ `AdjustQuantField`.
-pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
+/// For multi-block transforms, all covered blocks get a weighted blend of max and mean.
+/// At low distances (d ≤ 1.54), uses max. At high distances, blends toward mean.
+/// This improves quality at high distances by not over-quantizing.
+///
+/// Port of C++ `AdjustQuantField` from enc_adaptive_quantization.cc.
+pub fn adjust_quant_field_with_distance(
+    ac_strategy: &AcStrategyMap,
+    quant_field: &mut [u8],
+    butteraugli_target: f32,
+) {
     let xsize_blocks = ac_strategy.xsize_blocks;
+
+    // At low distances use max, at high distances blend toward mean.
+    // libjxl constants from enc_adaptive_quantization.cc:1207-1215
+    const K_LIMIT: f32 = 1.54138;
+    const K_MUL: f32 = 0.56391;
+    const K_MIN: f32 = 0.0;
+
+    let mut mean_max_mixer = 1.0_f32;
+    if butteraugli_target > K_LIMIT {
+        mean_max_mixer -= (butteraugli_target - K_LIMIT) * K_MUL;
+        if mean_max_mixer < K_MIN {
+            mean_max_mixer = K_MIN;
+        }
+    }
+
     for by in 0..ac_strategy.ysize_blocks {
         for bx in 0..ac_strategy.xsize_blocks {
             if !ac_strategy.is_first(bx, by) {
@@ -703,21 +725,43 @@ pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
             if cx == 1 && cy == 1 {
                 continue;
             }
-            // Find max quant in covered region
+
+            // Compute max and mean of covered region
             let mut max_q = 0u8;
+            let mut sum = 0u32;
             for iy in 0..cy {
                 for ix in 0..cx {
-                    max_q = max_q.max(quant_field[(by + iy) * xsize_blocks + bx + ix]);
+                    let q = quant_field[(by + iy) * xsize_blocks + bx + ix];
+                    max_q = max_q.max(q);
+                    sum += q as u32;
                 }
             }
-            // Set all covered blocks to max
+            let mean = sum as f32 / (cx * cy) as f32;
+
+            // Blend max and mean (for 4+ block transforms)
+            let blended = if cx * cy >= 4 {
+                let max_f = max_q as f32;
+                max_f * mean_max_mixer + mean * (1.0 - mean_max_mixer)
+            } else {
+                max_q as f32
+            };
+            let blended_q = blended.round().clamp(1.0, 255.0) as u8;
+
+            // Set all covered blocks to blended value
             for iy in 0..cy {
                 for ix in 0..cx {
-                    quant_field[(by + iy) * xsize_blocks + bx + ix] = max_q;
+                    quant_field[(by + iy) * xsize_blocks + bx + ix] = blended_q;
                 }
             }
         }
     }
+}
+
+/// Adjust the quant field for non-8×8 transforms (legacy, max-only version).
+/// Use `adjust_quant_field_with_distance` for better quality at high distances.
+pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
+    // Use max-only behavior (mean_max_mixer = 1.0, equivalent to d < 1.54)
+    adjust_quant_field_with_distance(ac_strategy, quant_field, 0.0);
 }
 
 // ─── Top-level API ──────────────────────────────────────────────────────────

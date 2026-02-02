@@ -11,7 +11,7 @@ use super::ac_group::{
 };
 use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
-    RAW_STRATEGY_DCT32X32, adjust_quant_field, compute_ac_strategy,
+    RAW_STRATEGY_DCT32X32, adjust_quant_field_with_distance, compute_ac_strategy,
 };
 
 /// Create an AC strategy map forcing a specific strategy.
@@ -355,8 +355,9 @@ impl TinyEncoder {
             )
         };
 
-        // Adjust quant field for multi-block transforms (max over covered blocks)
-        adjust_quant_field(&ac_strategy, &mut quant_field);
+        // Adjust quant field for multi-block transforms.
+        // At low distances uses max, at high distances blends toward mean for better quality.
+        adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
 
         // Perform DCT and quantization (XYB data is padded to block boundaries)
         let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
