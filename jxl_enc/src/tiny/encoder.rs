@@ -859,6 +859,11 @@ impl TinyEncoder {
                 }
 
                 let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                #[cfg(feature = "debug-dc")]
+                eprintln!(
+                    "Block (by={}, bx={}): raw_strategy={}",
+                    by, bx, raw_strategy
+                );
                 let covered_x = ac_strategy.covered_blocks_x(bx, by);
                 let covered_y = ac_strategy.covered_blocks_y(bx, by);
                 let covered_blocks = covered_x * covered_y;
@@ -927,10 +932,33 @@ impl TinyEncoder {
                                 .expect("256 coefficients for DCT16x16");
                             let dcs = dc_from_dct_16x16(&coeffs_arr);
                             // dcs = [dc00, dc01, dc10, dc11] in row-major 2x2
+                            #[cfg(feature = "debug-dc")]
+                            eprintln!(
+                                "DCT16x16 block (by={}, bx={}): dcs=[{:.4}, {:.4}, {:.4}, {:.4}], LLF=[{:.6}, {:.6}, {:.6}, {:.6}]",
+                                by,
+                                bx,
+                                dcs[0],
+                                dcs[1],
+                                dcs[2],
+                                dcs[3],
+                                coeffs_arr[0],
+                                coeffs_arr[1],
+                                coeffs_arr[16],
+                                coeffs_arr[17]
+                            );
                             for iy in 0..2 {
                                 for ix in 0..2 {
-                                    quant_dc[1][by + iy][bx + ix] =
-                                        (dcs[iy * 2 + ix] * inv_factor).round() as i16;
+                                    let qdc = (dcs[iy * 2 + ix] * inv_factor).round() as i16;
+                                    #[cfg(feature = "debug-dc")]
+                                    eprintln!(
+                                        "  quant_dc[1][{}][{}] = {} (raw dc={:.4}, inv_factor={:.4})",
+                                        by + iy,
+                                        bx + ix,
+                                        qdc,
+                                        dcs[iy * 2 + ix],
+                                        inv_factor
+                                    );
+                                    quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
                             }
                         }
@@ -939,11 +967,33 @@ impl TinyEncoder {
                                 .try_into()
                                 .expect("1024 coefficients for DCT32x32");
                             let dcs = dc_from_dct_32x32(&coeffs_arr);
+                            #[cfg(feature = "debug-dc")]
+                            eprintln!(
+                                "DCT32x32 block (by={}, bx={}): dcs[0..4]=[{:.4}, {:.4}, {:.4}, {:.4}], LLF=[{:.6}, {:.6}, {:.6}, {:.6}]",
+                                by,
+                                bx,
+                                dcs[0],
+                                dcs[1],
+                                dcs[2],
+                                dcs[3],
+                                coeffs_arr[0],
+                                coeffs_arr[1],
+                                coeffs_arr[32],
+                                coeffs_arr[33]
+                            );
                             // dcs = 16 DC values in row-major 4x4
                             for iy in 0..4 {
                                 for ix in 0..4 {
-                                    quant_dc[1][by + iy][bx + ix] =
-                                        (dcs[iy * 4 + ix] * inv_factor).round() as i16;
+                                    let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
+                                    #[cfg(feature = "debug-dc")]
+                                    eprintln!(
+                                        "  quant_dc[1][{}][{}] = {} (raw dc={:.4})",
+                                        by + iy,
+                                        bx + ix,
+                                        qdc,
+                                        dcs[iy * 4 + ix]
+                                    );
+                                    quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
                             }
                         }
@@ -1033,6 +1083,7 @@ impl TinyEncoder {
                 // AFTER DequantLane, overwriting LLF positions with DC-derived
                 // values. So coefficient-level CfL on LLF is discarded by the
                 // decoder. We skip LLF here; DC CfL uses dc_cfl_factor instead.
+                #[allow(clippy::needless_range_loop)] // k used for LLF check and indexing two arrays
                 for k in 0..size {
                     let is_llf = (k / block_width) < cy && (k % block_width) < cx;
                     if !is_llf {
@@ -1744,7 +1795,6 @@ impl TinyEncoder {
                     if !ac_strategy.is_first(bx, by) {
                         continue;
                     }
-                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
                     let covered_x = ac_strategy.covered_blocks_x(bx, by);
                     let covered_y = ac_strategy.covered_blocks_y(bx, by);
                     let covered_blocks = covered_x * covered_y;
@@ -2266,8 +2316,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated for DCT32x32 support and coeff_order strategy_code bug fix
-        const EXPECTED_HASH: u64 = 0x1fceaf4018b240bd;
+        // Updated: DCT32x32 selection disabled due to dc_from_dct_32x32 bug
+        const EXPECTED_HASH: u64 = 0x45d6d2bcd23d0b19;
         assert_eq!(
             hash,
             EXPECTED_HASH,
