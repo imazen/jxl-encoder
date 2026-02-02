@@ -728,21 +728,28 @@ impl TinyEncoder {
         _block_width: usize,
         _block_height: usize,
         covered_x: usize,
-        covered_y: usize,
-        covered_blocks: usize,
+        _covered_y: usize,
+        _covered_blocks: usize,
         size: usize,
         _raw_strategy: u8,
         bx: usize,
         by: usize,
         quant_ac: &mut [Vec<[i32; DCT_BLOCK_SIZE]>],
     ) {
-        // C++ QuantizeBlockAC uses (ysize, xsize) = (covered_y, covered_x)
-        // for the coefficient grid, with stride = xsize * 8.
-        // This determines quadrant boundaries for thresholding.
-        let grid_width = covered_x * BLOCK_DIM;
-        let grid_height = covered_y * BLOCK_DIM;
+        // C++ QuantizeBlockAC uses post-swap (cx, cy) for the coefficient grid:
+        // stride = cx * 8 (block_width), height = cy * 8 (block_height).
+        // After swap, cx >= cy. Both DCT16x8 and DCT8x16 have grid_width=16.
+        let grid_width = _block_width;
+        let grid_height = _block_height;
+        let cx = _block_width / BLOCK_DIM;
+        let cy = _block_height / BLOCK_DIM;
         for idx in 0..size {
-            let qval = if idx < covered_blocks {
+            // LLF positions are at (y, x) where y < cy and x < cx in the grid.
+            // For DCT8 this is just index 0.
+            // For DCT16x16 (cx=cy=2, stride=16) this is {0, 1, 16, 17}.
+            // For DCT16x8 (cx=2, cy=1, stride=16) this is {0, 1}.
+            let is_llf = (idx / grid_width) < cy && (idx % grid_width) < cx;
+            let qval = if is_llf {
                 0 // LLF handled separately
             } else {
                 let y = idx / grid_width;
@@ -757,8 +764,8 @@ impl TinyEncoder {
                     x,
                     grid_height,
                     grid_width,
-                    covered_x,
-                    covered_y,
+                    cx,
+                    cy,
                 )
             };
 
@@ -960,15 +967,16 @@ impl TinyEncoder {
                 {
                     let weights = super::quant::quant_weights(raw_strategy as usize, 1);
                     let inv_qac = 1.0 / qac;
-                    // Use C++ convention: grid = (covered_y * 8, covered_x * 8)
-                    let grid_w = covered_x * BLOCK_DIM;
-                    let grid_h = covered_y * BLOCK_DIM;
+                    // Use post-swap dimensions for grid (matches C++ and quantize_ac_block)
                     for idx in 0..size {
-                        let q = if idx < covered_blocks {
+                        // LLF positions: (y, x) where y < cy and x < cx in the grid
+                        let is_llf =
+                            (idx / block_width) < cy && (idx % block_width) < cx;
+                        let q = if is_llf {
                             // LLF: not stored in quant_ac, compute inline
                             // C++ QuantizeBlockAC quantizes all positions including LLF
-                            let y = idx / grid_w;
-                            let x = idx % grid_w;
+                            let y = idx / block_width;
+                            let x = idx % block_width;
                             Self::quantize_coeff_ac(
                                 dct_coeffs[1][idx],
                                 1.0 / weights[idx],
@@ -977,10 +985,10 @@ impl TinyEncoder {
                                 1,
                                 y,
                                 x,
-                                grid_h,
-                                grid_w,
-                                covered_x,
-                                covered_y,
+                                block_height,
+                                block_width,
+                                cx,
+                                cy,
                             )
                         } else {
                             let block_slot = idx / DCT_BLOCK_SIZE;
@@ -1012,11 +1020,13 @@ impl TinyEncoder {
                 // AFTER DequantLane, overwriting LLF positions with DC-derived
                 // values. So coefficient-level CfL on LLF is discarded by the
                 // decoder. We skip LLF here; DC CfL uses dc_cfl_factor instead.
-                let llf_count = covered_blocks;
-                #[allow(clippy::needless_range_loop)]
-                for k in llf_count..size {
-                    dct_coeffs[0][k] -= x_factor * dct_coeffs[1][k];
-                    dct_coeffs[2][k] -= b_factor * dct_coeffs[1][k];
+                for k in 0..size {
+                    let is_llf =
+                        (k / block_width) < cy && (k % block_width) < cx;
+                    if !is_llf {
+                        dct_coeffs[0][k] -= x_factor * dct_coeffs[1][k];
+                        dct_coeffs[2][k] -= b_factor * dct_coeffs[1][k];
+                    }
                 }
 
                 // ── Step 7: Extract X/B DC + quantize X/B AC ───────────────
@@ -2275,8 +2285,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated for DCT16x16 block context map fix
-        const EXPECTED_HASH: u64 = 0xddcf4e4af8343646;
+        // Updated for dc_from_dct_16x16 spatial ordering fix (dc01/dc10 swap)
+        const EXPECTED_HASH: u64 = 0x1b8ef45e229df7eb;
         assert_eq!(
             hash,
             EXPECTED_HASH,

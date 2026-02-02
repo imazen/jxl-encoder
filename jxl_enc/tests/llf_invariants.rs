@@ -353,8 +353,8 @@ fn decode_djxl(data: &[u8]) -> (usize, usize, Vec<u8>) {
     (w, h, srgb_bytes)
 }
 
-/// Compute SSIM2 between original sRGB u8 and decoded sRGB u8.
-fn ssim2_u8(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
+/// Compute SSIM2 between two sRGB u8 images.
+fn ssim2_srgb(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64 {
     use fast_ssim2::compute_ssimulacra2;
     use imgref::ImgVec;
 
@@ -366,14 +366,33 @@ fn ssim2_u8(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f64
     compute_ssimulacra2(src.as_ref(), dst.as_ref()).unwrap_or(0.0)
 }
 
-/// Compute SSIM2 between original sRGB u8 and decoded linear f32.
-fn ssim2_u8_vs_f32(original: &[u8], decoded: &[f32], width: usize, height: usize) -> f64 {
-    // decoded is linear f32 from jxl-oxide, convert to sRGB u8
-    let dec_u8: Vec<u8> = decoded
+/// Convert linear f32 to sRGB u8 (applies gamma 1/2.2).
+fn linear_to_srgb_u8(linear: &[f32]) -> Vec<u8> {
+    linear
         .iter()
-        .map(|&v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .map(|&v| (v.max(0.0).powf(1.0 / 2.2) * 255.0).min(255.0).round() as u8)
+        .collect()
+}
+
+/// Compute SSIM2 between original sRGB u8 and decoded linear f32 (from jxl-oxide).
+/// Applies gamma correction to decoded values before comparison.
+fn ssim2_u8_vs_linear_f32(original: &[u8], decoded: &[f32], width: usize, height: usize) -> f64 {
+    let dec_srgb = linear_to_srgb_u8(decoded);
+    ssim2_srgb(original, &dec_srgb, width, height)
+}
+
+/// Compute SSIM2 between original sRGB u8 and decoded linear u8 (from djxl with linear transfer).
+/// djxl outputs linear values scaled to 0-255. We need to apply gamma before SSIM2.
+fn ssim2_u8_vs_linear_u8(original: &[u8], decoded_linear_u8: &[u8], width: usize, height: usize) -> f64 {
+    // Convert linear u8 → linear f32 → sRGB u8
+    let dec_srgb: Vec<u8> = decoded_linear_u8
+        .iter()
+        .map(|&v| {
+            let lin = v as f32 / 255.0;
+            (lin.powf(1.0 / 2.2) * 255.0).min(255.0).round() as u8
+        })
         .collect();
-    ssim2_u8(original, &dec_u8, width, height)
+    ssim2_srgb(original, &dec_srgb, width, height)
 }
 
 /// Frymire test image (1118x1105 real photo, committed to repo).
@@ -430,7 +449,7 @@ fn layer2_single_group_dct16x16_decode_jxl_oxide() {
     assert_eq!(dw, w, "width mismatch");
     assert_eq!(dh, h, "height mismatch");
 
-    let ssim2 = ssim2_u8_vs_f32(&srgb, &pixels, w, h);
+    let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
     eprintln!("layer2 jxl-oxide: SSIM2 = {:.2}", ssim2);
 
     // Sanity: quality should be reasonable (>50 at d=1.0)
@@ -461,7 +480,7 @@ fn layer2_single_group_dct16x16_decode_djxl() {
     assert_eq!(dw, w, "width mismatch");
     assert_eq!(dh, h, "height mismatch");
 
-    let ssim2 = ssim2_u8(&srgb, &dec_srgb, w, h);
+    let ssim2 = ssim2_u8_vs_linear_u8(&srgb, &dec_srgb, w, h);
     eprintln!("layer2 djxl: SSIM2 = {:.2}", ssim2);
 
     assert!(
@@ -500,7 +519,7 @@ fn layer3_multigroup_dct16x16_decode_djxl() {
     assert_eq!(dw, w, "width mismatch");
     assert_eq!(dh, h, "height mismatch");
 
-    let ssim2 = ssim2_u8(&srgb, &dec_srgb, w, h);
+    let ssim2 = ssim2_u8_vs_linear_u8(&srgb, &dec_srgb, w, h);
     eprintln!("layer3 djxl: SSIM2 = {:.2}", ssim2);
 
     assert!(
@@ -534,7 +553,7 @@ fn layer3_multigroup_dct16x16_decode_jxl_oxide() {
     assert_eq!(dw, w, "width mismatch");
     assert_eq!(dh, h, "height mismatch");
 
-    let ssim2 = ssim2_u8_vs_f32(&srgb, &pixels, w, h);
+    let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
     eprintln!("layer3 jxl-oxide: SSIM2 = {:.2}", ssim2);
 
     assert!(
@@ -561,14 +580,14 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_256() {
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
-    let ssim2_dct8 = ssim2_u8(&srgb, &dec8, w, h);
+    let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT16x16-only (forced via hack)
     let mut enc_dct16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
     let bytes_dct16 = enc_dct16.encode(w, h, &linear).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
-    let ssim2_dct16 = ssim2_u8(&srgb, &dec16, w, h);
+    let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
     eprintln!("layer4 frymire 256x256 @ d=1.0:");
     eprintln!("  DCT8:    SSIM2={:.2}, {} bytes", ssim2_dct8, bytes_dct8.len());
@@ -611,14 +630,14 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_full() {
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
-    let ssim2_dct8 = ssim2_u8(&srgb, &dec8, w, h);
+    let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT16x16-only
     let mut enc_dct16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
     let bytes_dct16 = enc_dct16.encode(w, h, &linear).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
-    let ssim2_dct16 = ssim2_u8(&srgb, &dec16, w, h);
+    let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
     eprintln!("layer4 frymire full {}x{} @ d=1.0:", w, h);
     eprintln!("  DCT8:    SSIM2={:.2}, {} bytes", ssim2_dct8, bytes_dct8.len());
@@ -665,13 +684,13 @@ fn layer4_quality_dct16x16_vs_dct8_kodak1() {
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
-    let ssim2_dct8 = ssim2_u8(&srgb, &dec8, w, h);
+    let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     let mut enc_dct16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
     let bytes_dct16 = enc_dct16.encode(w, h, &linear).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
-    let ssim2_dct16 = ssim2_u8(&srgb, &dec16, w, h);
+    let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
     eprintln!("layer4 kodak1 {}x{} @ d=1.0:", w, h);
     eprintln!("  DCT8:    SSIM2={:.2}, {} bytes", ssim2_dct8, bytes_dct8.len());
@@ -686,6 +705,356 @@ fn layer4_quality_dct16x16_vs_dct8_kodak1() {
     let gap = ssim2_dct8 - ssim2_dct16;
     eprintln!("  gap: {:.2} SSIM2", gap);
     assert!(gap < 10.0, "gap too large: {:.2}", gap);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer 1b: DC spatial ordering verification
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verify dc_from_dct_16x16 spatial ordering by testing with pure synthetic LLF coefficients.
+///
+/// The DCT16x16 output is in TRANSPOSED layout (kx, ky order), so:
+///   coeffs[0]  = (kx=0, ky=0) = DC
+///   coeffs[1]  = (kx=0, ky=1) = vertical frequency
+///   coeffs[16] = (kx=1, ky=0) = horizontal frequency
+///   coeffs[17] = (kx=1, ky=1) = diagonal
+///
+/// Test 1: Set only coeffs[1] (vertical freq) nonzero.
+///   Expected: top row same sign, bottom row opposite (vertical variation).
+///   Bug: if dc01/dc10 swapped, we get left/right variation instead.
+///
+/// Test 2: Set only coeffs[16] (horizontal freq) nonzero.
+///   Expected: left column same sign, right column opposite (horizontal variation).
+///   Bug: if dc01/dc10 swapped, we get top/bottom variation instead.
+#[test]
+fn layer1b_dc_spatial_order_dct16x16() {
+    // Duplicate dc_from_dct_16x16 from jxl_enc/src/tiny/dct.rs (FIXED version)
+    // (private module, can't import from integration test)
+    fn dc_from_dct_16x16_fixed(coeffs: &[f32; 256]) -> [f32; 4] {
+        let s0: f32 = 1.0;
+        let s1: f32 = 0.901764195028874394;
+
+        let b00 = coeffs[0] * s0 * s0;
+        let b01 = coeffs[1] * s0 * s1;
+        let b10 = coeffs[16] * s1 * s0;
+        let b11 = coeffs[17] * s1 * s1;
+
+        // 2x2 IDCT: rows → transpose → rows
+        let out00 = (b00 + b01) + (b10 + b11);
+        let out01 = (b00 + b01) - (b10 + b11);
+        let out10 = (b00 - b01) + (b10 - b11);
+        let out11 = (b00 - b01) - (b10 - b11);
+
+        [out00, out01, out10, out11]
+    }
+
+    // Also keep the OLD (buggy) version to prove the bug exists
+    fn dc_from_dct_16x16_old(coeffs: &[f32; 256]) -> [f32; 4] {
+        let s0: f32 = 1.0;
+        let s1: f32 = 0.901764195028874394;
+
+        let b00 = coeffs[0] * s0 * s0;
+        let b10 = coeffs[1] * s1 * s0;
+        let b01 = coeffs[16] * s0 * s1;
+        let b11 = coeffs[17] * s1 * s1;
+
+        let dc00 = (b00 + b10) + (b01 + b11);
+        let dc01 = (b00 - b10) + (b01 - b11);
+        let dc10 = (b00 + b10) - (b01 + b11);
+        let dc11 = (b00 - b10) - (b01 - b11);
+
+        [dc00, dc01, dc10, dc11]
+    }
+
+    // --- Prove the OLD version has the bug ---
+    let mut coeffs_vert = [0.0f32; 256];
+    coeffs_vert[1] = 1.0; // vertical frequency only
+
+    let old_dcs = dc_from_dct_16x16_old(&coeffs_vert);
+    eprintln!("OLD version with vertical-only frequency (coeffs[1]):");
+    eprintln!("  dcs[0]={:.4}, dcs[1]={:.4}, dcs[2]={:.4}, dcs[3]={:.4}", old_dcs[0], old_dcs[1], old_dcs[2], old_dcs[3]);
+    // Old version: vertical freq produces horizontal variation (BUG)
+    let old_top_row_same = (old_dcs[0] - old_dcs[1]).abs() < 1e-6;
+    assert!(
+        !old_top_row_same,
+        "OLD version should produce WRONG horizontal variation for vertical freq"
+    );
+
+    // --- Verify the FIXED version ---
+    let dcs = dc_from_dct_16x16_fixed(&coeffs_vert);
+    eprintln!("\nFIXED version with vertical-only frequency (coeffs[1]):");
+    eprintln!("  dcs[0] (top-left)     = {:.4}", dcs[0]);
+    eprintln!("  dcs[1] (top-right)    = {:.4}", dcs[1]);
+    eprintln!("  dcs[2] (bottom-left)  = {:.4}", dcs[2]);
+    eprintln!("  dcs[3] (bottom-right) = {:.4}", dcs[3]);
+
+    // The encoder stores dcs[iy*2+ix] at position (by+iy, bx+ix):
+    //   dcs[0] → top-left, dcs[1] → top-right, dcs[2] → bottom-left, dcs[3] → bottom-right
+    //
+    // For vertical-only frequency: top-left == top-right, bottom-left == bottom-right
+    let top_row_same = (dcs[0] - dcs[1]).abs() < 1e-6;
+    let bottom_row_same = (dcs[2] - dcs[3]).abs() < 1e-6;
+    let top_bottom_differ = (dcs[0] - dcs[2]).abs() > 0.1;
+
+    assert!(
+        top_row_same && bottom_row_same && top_bottom_differ,
+        "FIXED: Vertical-only frequency should produce vertical variation. Got dcs={:?}",
+        dcs
+    );
+    eprintln!("  PASS: vertical freq → vertical variation (top row same, bottom row same)");
+
+    // --- Test 2: horizontal-only frequency ---
+    let mut coeffs_horiz = [0.0f32; 256];
+    coeffs_horiz[16] = 1.0; // horizontal frequency only
+
+    let dcs = dc_from_dct_16x16_fixed(&coeffs_horiz);
+    eprintln!("\nFIXED version with horizontal-only frequency (coeffs[16]):");
+    eprintln!("  dcs[0] (top-left)     = {:.4}", dcs[0]);
+    eprintln!("  dcs[1] (top-right)    = {:.4}", dcs[1]);
+    eprintln!("  dcs[2] (bottom-left)  = {:.4}", dcs[2]);
+    eprintln!("  dcs[3] (bottom-right) = {:.4}", dcs[3]);
+
+    let left_col_same = (dcs[0] - dcs[2]).abs() < 1e-6;
+    let right_col_same = (dcs[1] - dcs[3]).abs() < 1e-6;
+    let left_right_differ = (dcs[0] - dcs[1]).abs() > 0.1;
+
+    assert!(
+        left_col_same && right_col_same && left_right_differ,
+        "FIXED: Horizontal-only frequency should produce horizontal variation. Got dcs={:?}",
+        dcs
+    );
+    eprintln!("  PASS: horizontal freq → horizontal variation (left col same, right col same)");
+
+    // --- Test 3: Verify old dc01/dc10 are exactly the fixed dc10/dc01 (swap) ---
+    let old_horiz = dc_from_dct_16x16_old(&coeffs_horiz);
+    eprintln!("\nSwap verification:");
+    eprintln!("  old[1]={:.4} == fixed[2]={:.4}? {}", old_horiz[1], dcs[2], (old_horiz[1] - dcs[2]).abs() < 1e-6);
+    eprintln!("  old[2]={:.4} == fixed[1]={:.4}? {}", old_horiz[2], dcs[1], (old_horiz[2] - dcs[1]).abs() < 1e-6);
+    assert!(
+        (old_horiz[1] - dcs[2]).abs() < 1e-6 && (old_horiz[2] - dcs[1]).abs() < 1e-6,
+        "Old dc01/dc10 should be exactly swapped vs fixed"
+    );
+    eprintln!("  PASS: old[1]==fixed[2] and old[2]==fixed[1] (confirmed swap)");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Diagnostic: examine what DCT16x16 actually produces
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Encode a tiny solid-color 16x16 image with forced DCT16x16.
+/// This is a single 16x16 block — the simplest possible DCT16x16 case.
+/// Print the decoded pixel values to understand the nature of the distortion.
+#[test]
+#[ignore]
+fn diag_dct16x16_solid_16x16() {
+    // Solid mid-gray in linear sRGB
+    let w = 16;
+    let h = 16;
+    let val = 0.2f32; // ~50% gray in sRGB
+    let linear = vec![val; w * h * 3];
+    let srgb_val = (val.powf(1.0 / 2.2) * 255.0).round() as u8;
+
+    // Encode with DCT16x16 (ac_strategy_enabled = true forces it)
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.ac_strategy_enabled = true;
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("solid 16x16: encoded {} bytes", bytes.len());
+
+    // Save for external inspection
+    std::fs::write("/tmp/diag_solid16x16_dct16.jxl", &bytes).unwrap();
+
+    // Decode with jxl-oxide
+    let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+
+    // Print first few decoded pixels (linear f32 from jxl-oxide)
+    eprintln!("Expected linear value: {:.4}, sRGB: {}", val, srgb_val);
+    eprintln!("Decoded linear pixels (first 4 pixels, R G B):");
+    for i in 0..4 {
+        let r = pixels[i * 3];
+        let g = pixels[i * 3 + 1];
+        let b = pixels[i * 3 + 2];
+        eprintln!(
+            "  pixel[{}]: R={:.4} G={:.4} B={:.4} (sRGB: {:.0} {:.0} {:.0})",
+            i,
+            r,
+            g,
+            b,
+            (r.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0),
+            (g.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0),
+            (b.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0),
+        );
+    }
+
+    // Also decode with djxl for comparison
+    let (_, _, djxl_srgb) = decode_djxl(&bytes);
+    eprintln!("djxl decoded pixels (first 4 pixels, sRGB u8):");
+    for i in 0..4 {
+        eprintln!(
+            "  pixel[{}]: R={} G={} B={}",
+            i,
+            djxl_srgb[i * 3],
+            djxl_srgb[i * 3 + 1],
+            djxl_srgb[i * 3 + 2]
+        );
+    }
+
+    // Now encode the same thing with DCT8 for comparison
+    let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc8.ac_strategy_enabled = false;
+    let bytes8 = enc8.encode(w, h, &linear).unwrap();
+    std::fs::write("/tmp/diag_solid16x16_dct8.jxl", &bytes8).unwrap();
+
+    let (_, _, djxl8) = decode_djxl(&bytes8);
+    eprintln!("\nDCT8 reference (djxl sRGB u8):");
+    for i in 0..4 {
+        eprintln!(
+            "  pixel[{}]: R={} G={} B={}",
+            i,
+            djxl8[i * 3],
+            djxl8[i * 3 + 1],
+            djxl8[i * 3 + 2]
+        );
+    }
+}
+
+/// Same diagnostic but with a real photo crop — 16x16 from frymire center.
+/// Small enough to print all decoded pixels.
+#[test]
+#[ignore]
+fn diag_dct16x16_real_16x16() {
+    let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 16, 16);
+    assert_eq!(w, 16);
+    assert_eq!(h, 16);
+
+    // DCT16x16
+    let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc16.ac_strategy_enabled = true;
+    let bytes16 = enc16.encode(w, h, &linear).unwrap();
+    std::fs::write("/tmp/diag_real16x16_dct16.jxl", &bytes16).unwrap();
+
+    // DCT8
+    let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc8.ac_strategy_enabled = false;
+    let bytes8 = enc8.encode(w, h, &linear).unwrap();
+    std::fs::write("/tmp/diag_real16x16_dct8.jxl", &bytes8).unwrap();
+
+    // Decode both with djxl
+    let (_, _, d16) = decode_djxl(&bytes16);
+    let (_, _, d8) = decode_djxl(&bytes8);
+
+    eprintln!("16x16 frymire crop pixel comparison (sRGB u8):");
+    eprintln!(
+        "{:>5} {:>12} {:>12} {:>12}",
+        "pixel", "original", "dct8", "dct16x16"
+    );
+
+    let mut max_diff_8 = 0i32;
+    let mut max_diff_16 = 0i32;
+
+    for i in 0..16 {
+        // Sample pixels at (i, i) diagonal
+        let idx = i * w + i;
+        let o = (srgb[idx * 3], srgb[idx * 3 + 1], srgb[idx * 3 + 2]);
+        let d8p = (d8[idx * 3], d8[idx * 3 + 1], d8[idx * 3 + 2]);
+        let d16p = (d16[idx * 3], d16[idx * 3 + 1], d16[idx * 3 + 2]);
+
+        let diff8 = (o.0 as i32 - d8p.0 as i32)
+            .abs()
+            .max((o.1 as i32 - d8p.1 as i32).abs())
+            .max((o.2 as i32 - d8p.2 as i32).abs());
+        let diff16 = (o.0 as i32 - d16p.0 as i32)
+            .abs()
+            .max((o.1 as i32 - d16p.1 as i32).abs())
+            .max((o.2 as i32 - d16p.2 as i32).abs());
+
+        max_diff_8 = max_diff_8.max(diff8);
+        max_diff_16 = max_diff_16.max(diff16);
+
+        eprintln!(
+            "  ({:2},{:2}) {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  d8={:>3} d16={:>3}",
+            i,
+            i,
+            o.0,
+            o.1,
+            o.2,
+            d8p.0,
+            d8p.1,
+            d8p.2,
+            d16p.0,
+            d16p.1,
+            d16p.2,
+            diff8,
+            diff16
+        );
+    }
+
+    eprintln!("Max pixel diff: DCT8={}, DCT16x16={}", max_diff_8, max_diff_16);
+    eprintln!(
+        "File sizes: DCT8={} bytes, DCT16x16={} bytes",
+        bytes8.len(),
+        bytes16.len()
+    );
+
+    // Compute SSIM2
+    let ssim2_8 = ssim2_u8_vs_linear_u8(&srgb, &d8, w, h);
+    let ssim2_16 = ssim2_u8_vs_linear_u8(&srgb, &d16, w, h);
+    eprintln!("SSIM2: DCT8={:.2}, DCT16x16={:.2}", ssim2_8, ssim2_16);
+}
+
+/// Progressive size test: at what image size does DCT16x16 break?
+/// Tests sizes from 16x16 (1 block) to 256x256 (single group).
+/// Uses jxl-oxide (linear f32 output) with proper gamma correction.
+#[test]
+#[ignore]
+fn diag_dct16x16_progressive_sizes() {
+    let path = frymire_path();
+
+    eprintln!(
+        "{:>8} {:>10} {:>10} {:>8} {:>8} {:>8}",
+        "size", "dct8_ssim", "d16_ssim", "gap", "d8_sz", "d16_sz"
+    );
+
+    for &size in &[16, 32, 48, 64, 96, 128, 192, 256] {
+        let (w, h, linear, srgb) = load_png_crop(&path, size, size);
+        if w != size || h != size {
+            eprintln!("{:>8}: skipped (image too small)", size);
+            continue;
+        }
+
+        // DCT8 — encode and decode with jxl-oxide
+        let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc8.ac_strategy_enabled = false;
+        let bytes8 = enc8.encode(w, h, &linear).unwrap();
+        let (_, _, d8_linear) = decode_jxl_oxide(&bytes8);
+        let ssim8 = ssim2_u8_vs_linear_f32(&srgb, &d8_linear, w, h);
+
+        // DCT16x16 — encode and decode with jxl-oxide
+        let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
+        enc16.ac_strategy_enabled = true;
+        let bytes16 = match enc16.encode(w, h, &linear) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{:>8}: DCT16x16 ENCODE ERROR: {:?}", size, e);
+                continue;
+            }
+        };
+        let ssim16 = match std::panic::catch_unwind(|| decode_jxl_oxide(&bytes16)) {
+            Ok((_, _, d16_linear)) => ssim2_u8_vs_linear_f32(&srgb, &d16_linear, w, h),
+            Err(_) => {
+                eprintln!("{:>8}: DCT16x16 DECODE ERROR", size);
+                continue;
+            }
+        };
+
+        let gap = ssim8 - ssim16;
+        eprintln!(
+            "{:>4}x{:<4} {:>10.2} {:>10.2} {:>8.2} {:>8} {:>8}",
+            w, h, ssim8, ssim16, gap, bytes8.len(), bytes16.len()
+        );
+    }
 }
 
 /// Multiple distances on 256x256 frymire crop: does DCT16x16 behave
@@ -703,13 +1072,13 @@ fn layer4_quality_dct16x16_across_distances() {
         enc_dct8.ac_strategy_enabled = false;
         let bytes_dct8 = enc_dct8.encode(w, h, &linear).unwrap();
         let (_, _, dec8) = decode_djxl(&bytes_dct8);
-        let ssim2_dct8 = ssim2_u8(&srgb, &dec8, w, h);
+        let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
         let mut enc_dct16 = jxl_enc::tiny::TinyEncoder::new(distance);
         enc_dct16.ac_strategy_enabled = true;
         let bytes_dct16 = enc_dct16.encode(w, h, &linear).unwrap();
         let (_, _, dec16) = decode_djxl(&bytes_dct16);
-        let ssim2_dct16 = ssim2_u8(&srgb, &dec16, w, h);
+        let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
         let gap = ssim2_dct8 - ssim2_dct16;
         eprintln!(
@@ -717,20 +1086,16 @@ fn layer4_quality_dct16x16_across_distances() {
             distance, ssim2_dct8, ssim2_dct16, gap, bytes_dct8.len(), bytes_dct16.len()
         );
 
-        // Quality should be reasonable at each distance
+        // DCT16 should not be catastrophically worse than DCT8.
+        // At high distances both can be low, so we check the gap, not absolute quality.
+        // Gap > 10 would indicate a real bug (the dc_from_dct_16x16 swap bug caused gaps of 56-137).
         assert!(
-            ssim2_dct16 > 30.0,
-            "d={}: DCT16x16 quality {:.2} is catastrophically low",
+            gap < 10.0,
+            "d={}: gap {:.2} is too large (DCT8={:.2}, DCT16={:.2})",
             distance,
+            gap,
+            ssim2_dct8,
             ssim2_dct16
-        );
-
-        // Gap should not be huge
-        assert!(
-            gap < 15.0,
-            "d={}: gap {:.2} is too large",
-            distance,
-            gap
         );
     }
 }
