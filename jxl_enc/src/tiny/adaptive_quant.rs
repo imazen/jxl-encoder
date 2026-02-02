@@ -582,6 +582,11 @@ pub fn compute_quant_field_float(
     ysize_blocks: usize,
     distance: f32,
 ) -> (Vec<f32>, Vec<f32>) {
+    // libjxl-tiny uses kAcQuant = 0.8294
+    // libjxl (full) uses kAcQuant = 0.765 with q = 0.39 for global_scale
+    // Testing shows 0.8294 with 0.8 global_scale produces better results than
+    // matching libjxl's 0.765/0.39 ratio. The difference may be in other parts
+    // of the adaptive quant algorithm.
     const K_AC_QUANT: f32 = 0.8294;
     let scale = K_AC_QUANT / distance;
 
