@@ -970,8 +970,7 @@ impl TinyEncoder {
                     // Use post-swap dimensions for grid (matches C++ and quantize_ac_block)
                     for idx in 0..size {
                         // LLF positions: (y, x) where y < cy and x < cx in the grid
-                        let is_llf =
-                            (idx / block_width) < cy && (idx % block_width) < cx;
+                        let is_llf = (idx / block_width) < cy && (idx % block_width) < cx;
                         let q = if is_llf {
                             // LLF: not stored in quant_ac, compute inline
                             // C++ QuantizeBlockAC quantizes all positions including LLF
@@ -1021,8 +1020,7 @@ impl TinyEncoder {
                 // values. So coefficient-level CfL on LLF is discarded by the
                 // decoder. We skip LLF here; DC CfL uses dc_cfl_factor instead.
                 for k in 0..size {
-                    let is_llf =
-                        (k / block_width) < cy && (k % block_width) < cx;
+                    let is_llf = (k / block_width) < cy && (k % block_width) < cx;
                     if !is_llf {
                         dct_coeffs[0][k] -= x_factor * dct_coeffs[1][k];
                         dct_coeffs[2][k] -= b_factor * dct_coeffs[1][k];
