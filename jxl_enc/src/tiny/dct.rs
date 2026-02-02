@@ -345,39 +345,47 @@ pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 }
 
 /// Extract DC values from 16x16 DCT coefficients.
-/// Returns 4 DC values (for the 4 covered 8x8 blocks) in order [dc00, dc01, dc10, dc11].
+/// Returns 4 DC values in spatial order: `[top-left, top-right, bottom-left, bottom-right]`.
+///
+/// The caller stores `dcs[iy * 2 + ix]` at position `(by + iy, bx + ix)`, so:
+///   dcs[0] → (by, bx), dcs[1] → (by, bx+1), dcs[2] → (by+1, bx), dcs[3] → (by+1, bx+1).
 ///
 /// The LLF region is 2x2 coefficients at positions [0, 1, 16, 17] in the 16x16 layout
 /// (stride 16). We apply `DCTTotalResampleScale<16, 2>` to each dimension, then a
 /// 2x2 IDCT to get the 4 DC values.
 ///
-/// C++ uses `ReinterpretingIDCT<16, 16, 2, 2, 2, 2>` with the ROWS >= COLS branch
-/// (since ROWS=COLS=2), which reads LLF in (y, x) = (0..LF_COLS, 0..LF_ROWS) order.
+/// C++ uses `ReinterpretingIDCT<16, 16, 2, 2, 2, 2>` → `ComputeScaledIDCT<2, 2>`.
+/// The IDCT steps (ROWS >= COLS branch): IDCT rows → transpose → IDCT rows.
+/// The transpose between steps swaps off-diagonal elements.
 pub fn dc_from_dct_16x16(coeffs: &[f32; 256]) -> [f32; 4] {
     let s0 = DCT_RESAMPLE_SCALE_16_TO_2[0]; // 1.0
     let s1 = DCT_RESAMPLE_SCALE_16_TO_2[1]; // 0.9018...
 
     // Read LLF 2x2 from positions [0, 1, 16, 17] and apply resample scales.
-    // C++ ROWS >= COLS branch: block[y * ROWS + x] = input[y * stride + x] * scale_col[y] * scale_row[x]
-    // For 16x16 (ROWS=COLS=2): scale_col = scale_row = DCTTotalResampleScale<16,2>
+    // C++ ROWS >= COLS: block[y * ROWS + x] = input[y * stride + x] * scale_col[y] * scale_row[x]
     let b00 = coeffs[0] * s0 * s0;
-    let b10 = coeffs[1] * s1 * s0; // block[0*2+1]  = input[0*16+1] * s0 * s1 -- but C++ has [y*R+x] = [y*stride+x]*s_c(y)*s_r(x)
-    let b01 = coeffs[16] * s0 * s1; // block[1*2+0] = input[1*16+0] * s1 * s0
+    let b01 = coeffs[1] * s0 * s1;
+    let b10 = coeffs[16] * s1 * s0;
     let b11 = coeffs[17] * s1 * s1;
 
-    // 2x2 IDCT (ComputeScaledIDCT<2,2>):
-    // For 2-point IDCT: [a, b] -> [a+b, a-b]
-    // Apply to rows then columns:
-    // Row 0: [b00+b10, b00-b10]
-    // Row 1: [b01+b11, b01-b11]
-    // Column 0: [(b00+b10)+(b01+b11), (b00+b10)-(b01+b11)]
-    // Column 1: [(b00-b10)+(b01-b11), (b00-b10)-(b01-b11)]
-    let dc00 = (b00 + b10) + (b01 + b11);
-    let dc01 = (b00 - b10) + (b01 - b11);
-    let dc10 = (b00 + b10) - (b01 + b11);
-    let dc11 = (b00 - b10) - (b01 - b11);
+    // 2x2 IDCT (ComputeScaledIDCT<2,2>, ROWS >= COLS):
+    // Step 1 — IDCT rows (length 2): [a, b] → [a+b, a-b]
+    //   Row 0: [b00+b01, b00-b01]
+    //   Row 1: [b10+b11, b10-b11]
+    // Step 2 — Transpose 2×2:
+    //   [b00+b01, b10+b11]
+    //   [b00-b01, b10-b11]
+    // Step 3 — IDCT rows (length 2):
+    //   out[0,0] = (b00+b01) + (b10+b11)
+    //   out[0,1] = (b00+b01) - (b10+b11)
+    //   out[1,0] = (b00-b01) + (b10-b11)
+    //   out[1,1] = (b00-b01) - (b10-b11)
+    let out00 = (b00 + b01) + (b10 + b11); // top-left
+    let out01 = (b00 + b01) - (b10 + b11); // top-right
+    let out10 = (b00 - b01) + (b10 - b11); // bottom-left
+    let out11 = (b00 - b01) - (b10 - b11); // bottom-right
 
-    [dc00, dc01, dc10, dc11]
+    [out00, out01, out10, out11]
 }
 
 /// Extract DC value from 8x8 DCT coefficients.
@@ -589,7 +597,8 @@ fn idct1d_4(input: &[f32; 4], output: &mut [f32; 4]) {
 /// C++ uses `ReinterpretingIDCT<32, 32, 4, 4, 4, 4>` with the ROWS >= COLS branch
 /// (since ROWS=COLS=4).
 pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
-    // Step 1: Extract 4x4 LLF and apply resample scales
+    // Step 1: Extract 4x4 LLF and apply resample scales.
+    // C++ ROWS >= COLS: block[y * ROWS + x] = input[y * stride + x] * scale_col[y] * scale_row[x]
     let mut block = [0.0f32; 16];
     for iy in 0..4 {
         for ix in 0..4 {
@@ -599,8 +608,12 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
         }
     }
 
-    // Step 2: 4x4 IDCT via row-wise then column-wise 4-point IDCT
-    // Row-wise
+    // Step 2: 4x4 IDCT matching C++ ComputeScaledIDCT<4,4> (ROWS >= COLS):
+    //   IDCT rows → transpose → IDCT rows.
+    // The transpose between steps is critical — without it, the output is transposed
+    // and DC values end up at wrong spatial positions.
+
+    // IDCT rows
     let mut after_rows = [0.0f32; 16];
     for iy in 0..4 {
         let row_in: [f32; 4] = [
@@ -616,19 +629,27 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
         }
     }
 
-    // Column-wise
+    // Transpose 4x4
+    let mut transposed = [0.0f32; 16];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            transposed[ix * 4 + iy] = after_rows[iy * 4 + ix];
+        }
+    }
+
+    // IDCT rows (on transposed data = columns of original)
     let mut result = [0.0f32; 16];
-    for ix in 0..4 {
-        let col_in: [f32; 4] = [
-            after_rows[ix],
-            after_rows[4 + ix],
-            after_rows[8 + ix],
-            after_rows[12 + ix],
+    for iy in 0..4 {
+        let row_in: [f32; 4] = [
+            transposed[iy * 4],
+            transposed[iy * 4 + 1],
+            transposed[iy * 4 + 2],
+            transposed[iy * 4 + 3],
         ];
-        let mut col_out = [0.0f32; 4];
-        idct1d_4(&col_in, &mut col_out);
-        for iy in 0..4 {
-            result[iy * 4 + ix] = col_out[iy];
+        let mut row_out = [0.0f32; 4];
+        idct1d_4(&row_in, &mut row_out);
+        for ix in 0..4 {
+            result[iy * 4 + ix] = row_out[ix];
         }
     }
 
