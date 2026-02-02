@@ -23,9 +23,17 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
 - [x] Layer 1: Full 8x8 coverage `dct_4x8_full` (tests: `test_dct_4x8_full_constant`, `test_dct_4x8_full_top_bottom_different`)
 - [x] Layer 1: Full 8x8 coverage `dct_8x4_full` (tests: `test_dct_8x4_full_constant`, `test_dct_8x4_full_left_right_different`)
 - [x] Layer 1: DC extraction `dc_from_dct_4x8_full` / `dc_from_dct_8x4_full` (tests: `test_dct_4x8_full_dc_extraction`, `test_dct_8x4_full_dc_extraction`)
-- [ ] Layer 1: Quant weights match libjxl reference values
-- [ ] Layer 2: Coefficient tokenization roundtrip
-- [ ] Layer 2: Block context map entries correct (strategy codes 12, 13)
+- [SKIP] Layer 1: Quant weights - using DCT8 weights as placeholder (proper parametric weights TODO)
+- [x] Layer 2: Encoder integration (commit 3eb8e60)
+  - RAW_STRATEGY_DCT4X8 (5), RAW_STRATEGY_DCT8X4 (6) added to ac_strategy.rs
+  - STRATEGY_CODE_LUT updated with bitstream codes 12, 13
+  - COVERED_X/COVERED_Y arrays updated (both cover 1×1)
+  - apply_dct cases for dct_4x8_full, dct_8x4_full
+  - DC extraction for Y and X/B channels
+  - Quant tables point to DCT8 weights (placeholder)
+- [x] Layer 2: Block context map entries for codes 12, 13 (commit 3eb8e60)
+  - Updated BLOCK_CONTEXT_MAP: X/B→2, Y→0 (matches order_id=1 in kStrategyOrder)
+- [ ] Layer 2: Strategy selection logic (when to prefer DCT4X8 over DCT8)
 - [ ] Layer 3: djxl decodes without error
 - [ ] Layer 3: jxl-rs decodes without error
 - [ ] Layer 3: jxl-oxide decodes without error
@@ -64,13 +72,14 @@ DctQuantWeightParams({{
 ```
 
 ### Next Steps (TODO)
-1. Add quant weights for DCT4X8/DCT8X4 (can start with DCT8 weights as placeholder)
-2. Add RAW_STRATEGY_DCT4X8 (5) and RAW_STRATEGY_DCT8X4 (6) constants
-3. Update STRATEGY_CODE_LUT with bitstream codes 12 and 13
-4. Add block context map entries for strategies 12, 13
-5. Update encoder to call dct_4x8_full/dct_8x4_full
+1. ~~Add quant weights for DCT4X8/DCT8X4~~ (using DCT8 as placeholder)
+2. ~~Add RAW_STRATEGY_DCT4X8 (5) and RAW_STRATEGY_DCT8X4 (6) constants~~ (done)
+3. ~~Update STRATEGY_CODE_LUT with bitstream codes 12 and 13~~ (done)
+4. ~~Add block context map entries for strategies 12, 13~~ (done)
+5. ~~Update encoder to call dct_4x8_full/dct_8x4_full~~ (done)
 6. Add strategy selection logic (when to prefer DCT4X8 over DCT8)
-7. Test with external decoders (Layer 3)
+7. Test with external decoders (Layer 3) - force DCT4X8 strategy and verify djxl/jxl-oxide decode
+8. [Optional] Implement proper parametric quant weights from libjxl constants
 
 ---
 
@@ -102,3 +111,18 @@ DctQuantWeightParams({{
 - Recorded libjxl reference constants for DCT4X8 band parameters
 - Remaining work is primarily integration, not algorithm research
 - All existing tests pass, no regressions
+
+### 2026-02-02: Layer 2 Encoder Integration Complete
+- Added RAW_STRATEGY_DCT4X8 (5), RAW_STRATEGY_DCT8X4 (6) to ac_strategy.rs
+- Updated STRATEGY_CODE_LUT: `[0, 6, 7, 4, 5, 12, 13]`
+- Updated COVERED_X/COVERED_Y: both strategies cover 1×1 blocks
+- Updated BLOCK_CONTEXT_MAP for strategy codes 12, 13:
+  - Looked up kStrategyOrder in libjxl: codes 12,13 → order_id=1
+  - COMPACT_BLOCK_CONTEXT_MAP at order_id=1: Y→0, X→2, B→2
+  - Set BLOCK_CONTEXT_MAP[12], [13] for each channel accordingly
+- Added apply_dct cases calling dct_4x8_full, dct_8x4_full
+- Added DC extraction for Y channel and X/B channels
+- Using DCT8 quant weights as placeholder (proper parametric weights TODO)
+- All 560 tests pass, clippy clean
+- Commit: 3eb8e60
+- **Next**: Add test forcing DCT4X8 strategy and verify with external decoders
