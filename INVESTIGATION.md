@@ -455,3 +455,85 @@ fn test_lossy_multigroup_300x300() {
 2. **Multiple APIs**: `encode_rgb8()` vs `encode_lossy_rgb8()` - easy to confuse
 3. **Buggy verification tools**: Created Python script that had parsing bugs
 4. **Trusting tools over code**: Should read source, not trust ad-hoc scripts
+
+## 2026-02-02: Implementation Differences Between libjxl-tiny and Full libjxl
+
+### Status: ACTIVE
+
+### Summary
+
+The tiny encoder was ported from libjxl-tiny, which has deliberate simplifications vs full libjxl.
+These simplifications hurt quality at d≥2.0. The key differences are documented below.
+
+### Findings
+
+#### [PROVEN] kDampenRampStart difference (CRITICAL)
+
+```
+libjxl-tiny:  kDampenRampStart = 7.0
+libjxl full:  kDampenRampStart = 2.0
+```
+
+**Impact**: Dampening reduces the effect of adaptive quant modulations at high distances.
+At d=4.0:
+- libjxl full: dampen = 1 - (4.0 - 2.0) / (14.0 - 2.0) = 0.833 (16.7% reduced)
+- Our code: dampen = 1.0 (no reduction)
+
+This means our adaptive quant has FULL effect even at high distances where it should be reduced.
+The dampen factor blends toward a uniform `base_level` at high distances.
+
+#### [PROVEN] kGam/kGamma sign difference (CRITICAL)
+
+```
+libjxl-tiny:  kGam = -0.15526878 * 0.693147 ≈ -0.1076 (NEGATIVE)
+libjxl full:  kGamma = +0.1005613337192697 (POSITIVE)
+```
+
+**Impact**: GammaModulation adjusts quantization based on local luminance ratio.
+The sign difference means the adjustment goes in OPPOSITE directions:
+- Positive kGamma: high luminance ratio → MORE bits
+- Negative kGam: high luminance ratio → FEWER bits
+
+#### [PROVEN] kSGVOffset difference
+
+```
+libjxl-tiny:  kSGVOffset = 7.14672470003
+libjxl full:  kSGVOffset = 7.7825991679894591
+```
+
+**Impact**: Used in RatioOfDerivativesOfCubicRootToSimpleGamma calculation.
+Affects the gamma ratio computation but likely less impactful than the sign difference.
+
+#### [PROVEN] GammaModulation accumulation difference
+
+libjxl-tiny: Averages (ratio_r + ratio_g)/2 per pixel, then divides by 64
+libjxl full: Adds ratio_r and ratio_g separately (128 terms), then multiplies by (0.5/64)
+
+The normalization is equivalent, but the sign difference on kGamma is the key issue.
+
+#### [PROVEN] MaskingSqrt constants differ
+
+```
+libjxl-tiny:  kLogOffset = 26.481471032459346, kMul = 211.50759899638012
+libjxl full:  kLogOffset = 27.505837037000106, kMul = 211.66567973503678
+```
+
+Minor difference, likely not the main quality gap cause.
+
+### Recommended Fixes (Priority Order)
+
+1. **Change kDampenRampStart from 7.0 to 2.0** - This will dampen adaptive quant modulations
+   earlier, making the quant field more uniform at high distances. This is the most likely
+   fix for the d≥2.0 quality gap.
+
+2. **Change kGam sign from negative to positive** - This changes GammaModulation behavior
+   fundamentally. Need to test carefully as libjxl-tiny's choice may have been intentional
+   for their simplified pipeline.
+
+3. Update kSGVOffset and MaskingSqrt constants to match full libjxl.
+
+### Next Steps
+
+1. Test kDampenRampStart=2.0 alone on CLIC 2025 images at d=2.0 and d=4.0
+2. Compare RD curves before and after
+3. If successful, commit and add to regression tests
