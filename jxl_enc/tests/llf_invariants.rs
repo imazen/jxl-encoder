@@ -1656,61 +1656,78 @@ fn layer4_quality_dct16x16_across_distances() {
 #[test]
 #[ignore]
 fn diag_dct32x32_constant_block() {
-    use jxl_enc::tiny::dct::{dct_32x32, dc_from_dct_32x32};
-    
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
     // Create a 32x32 block with all values = 0.5
     let constant_val = 0.5f32;
     let mut input = [constant_val; 1024];
-    
+
     // Apply forward DCT
     let mut coeffs = [0.0f32; 1024];
     dct_32x32(&input, &mut coeffs);
-    
+
     // Print key coefficients
     eprintln!("DCT32x32 of constant block (all 0.5):");
     eprintln!("  DC (coeffs[0]) = {:.6}", coeffs[0]);
     eprintln!("  coeffs[1] = {:.6}", coeffs[1]);
     eprintln!("  coeffs[32] = {:.6}", coeffs[32]);
     eprintln!("  coeffs[33] = {:.6}", coeffs[33]);
-    eprintln!("  First row (4 elements): {:.4} {:.4} {:.4} {:.4}", 
-              coeffs[0], coeffs[1], coeffs[2], coeffs[3]);
+    eprintln!(
+        "  First row (4 elements): {:.4} {:.4} {:.4} {:.4}",
+        coeffs[0], coeffs[1], coeffs[2], coeffs[3]
+    );
     eprintln!("  LLF 4x4 (rows 0-3, cols 0-3):");
     for iy in 0..4 {
-        eprintln!("    row {}: {:.6} {:.6} {:.6} {:.6}",
-                  iy, coeffs[iy*32], coeffs[iy*32+1], coeffs[iy*32+2], coeffs[iy*32+3]);
+        eprintln!(
+            "    row {}: {:.6} {:.6} {:.6} {:.6}",
+            iy,
+            coeffs[iy * 32],
+            coeffs[iy * 32 + 1],
+            coeffs[iy * 32 + 2],
+            coeffs[iy * 32 + 3]
+        );
     }
-    
+
     // Extract DC values
     let dcs = dc_from_dct_32x32(&coeffs);
     eprintln!("  DC values from LLF (4x4):");
     for iy in 0..4 {
-        eprintln!("    row {}: {:.6} {:.6} {:.6} {:.6}",
-                  iy, dcs[iy*4], dcs[iy*4+1], dcs[iy*4+2], dcs[iy*4+3]);
+        eprintln!(
+            "    row {}: {:.6} {:.6} {:.6} {:.6}",
+            iy,
+            dcs[iy * 4],
+            dcs[iy * 4 + 1],
+            dcs[iy * 4 + 2],
+            dcs[iy * 4 + 3]
+        );
     }
-    
+
     // For a constant input, DC should be proportional to the input value
     // and all DC values should be approximately equal
     let dc_mean = dcs.iter().sum::<f32>() / 16.0;
     let dc_var = dcs.iter().map(|d| (d - dc_mean).powi(2)).sum::<f32>() / 16.0;
     eprintln!("  DC mean = {:.6}, variance = {:.6}", dc_mean, dc_var);
-    
+
     // The DC should be 0.5 * 32 = 16.0 (sum of 32 elements, each 0.5, divided by 32, times 32)
     // Actually for DCT, the DC is sum/sqrt(N) * scaling factors
     // For our DCT32: output[0] = sum * (1/32)^2 = sum / 1024
     // sum = 32*32*0.5 = 512, so coeffs[0] = 512/1024 = 0.5
     eprintln!("  Expected coeffs[0] ≈ 0.5 (for constant 0.5 input)");
-    
+
     // For a constant input, all AC coefficients should be 0
     let ac_sum: f32 = (1..1024).map(|i| coeffs[i].abs()).sum();
-    eprintln!("  Sum of abs(AC coefficients) = {:.6} (should be ~0)", ac_sum);
+    eprintln!(
+        "  Sum of abs(AC coefficients) = {:.6} (should be ~0)",
+        ac_sum
+    );
 }
 
-// Diagnostic: check if DCT32x32 forward+IDCT roundtrips correctly  
+// Diagnostic: check if DCT32x32 forward+IDCT roundtrips correctly
 #[test]
 #[ignore]
 fn diag_dct32x32_forward_idct_roundtrip() {
-    use jxl_enc::tiny::dct::{dct_32x32, dc_from_dct_32x32};
-    
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
     // Create a gradient pattern - values increase along x and y
     let mut input = [0.0f32; 1024];
     for y in 0..32 {
@@ -1718,25 +1735,31 @@ fn diag_dct32x32_forward_idct_roundtrip() {
             input[y * 32 + x] = (x as f32 + y as f32) / 64.0;
         }
     }
-    
+
     // Apply forward DCT
     let mut coeffs = [0.0f32; 1024];
     dct_32x32(&input, &mut coeffs);
-    
+
     // Print some key coefficients
     eprintln!("DCT32x32 of gradient:");
     eprintln!("  coeffs[0] (DC) = {:.6}", coeffs[0]);
     eprintln!("  coeffs[1] = {:.6}", coeffs[1]);
     eprintln!("  coeffs[32] = {:.6}", coeffs[32]);
-    
+
     // Extract DC values
     let dcs = dc_from_dct_32x32(&coeffs);
     eprintln!("  DC values from LLF (4x4):");
     for iy in 0..4 {
-        eprintln!("    row {}: {:.6} {:.6} {:.6} {:.6}",
-                  iy, dcs[iy*4], dcs[iy*4+1], dcs[iy*4+2], dcs[iy*4+3]);
+        eprintln!(
+            "    row {}: {:.6} {:.6} {:.6} {:.6}",
+            iy,
+            dcs[iy * 4],
+            dcs[iy * 4 + 1],
+            dcs[iy * 4 + 2],
+            dcs[iy * 4 + 3]
+        );
     }
-    
+
     // Compute expected 8x8 block averages
     eprintln!("  Expected 8x8 block averages:");
     for by in 0..4 {
@@ -1761,8 +1784,8 @@ fn diag_dct32x32_forward_idct_roundtrip() {
 #[test]
 #[ignore]
 fn diag_dct32x32_llf_detail() {
-    use jxl_enc::tiny::dct::{dct_32x32, dc_from_dct_32x32};
-    
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
     // Create a gradient pattern - values increase along x and y
     let mut input = [0.0f32; 1024];
     for y in 0..32 {
@@ -1770,38 +1793,57 @@ fn diag_dct32x32_llf_detail() {
             input[y * 32 + x] = (x as f32 + y as f32) / 64.0;
         }
     }
-    
+
     // Apply forward DCT
     let mut coeffs = [0.0f32; 1024];
     dct_32x32(&input, &mut coeffs);
-    
+
     // Print LLF 4x4 coefficients
     eprintln!("DCT32x32 gradient LLF (4x4 corner, before scaling):");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, coeffs[iy*32], coeffs[iy*32+1], coeffs[iy*32+2], coeffs[iy*32+3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy,
+            coeffs[iy * 32],
+            coeffs[iy * 32 + 1],
+            coeffs[iy * 32 + 2],
+            coeffs[iy * 32 + 3]
+        );
     }
-    
+
     // Apply resample scales (32 -> 4)
-    const SCALE: [f32; 4] = [1.0, 0.974886821136879522, 0.901764195028874394, 0.787054918159101335];
+    const SCALE: [f32; 4] = [
+        1.0,
+        0.974886821136879522,
+        0.901764195028874394,
+        0.787054918159101335,
+    ];
     eprintln!("\nAfter applying resample scales:");
     for iy in 0..4 {
         let mut row = [0.0f32; 4];
         for ix in 0..4 {
-            row[ix] = coeffs[iy*32+ix] * SCALE[iy] * SCALE[ix];
+            row[ix] = coeffs[iy * 32 + ix] * SCALE[iy] * SCALE[ix];
         }
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, row[0], row[1], row[2], row[3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy, row[0], row[1], row[2], row[3]
+        );
     }
-    
+
     // Extract DC values
     let dcs = dc_from_dct_32x32(&coeffs);
     eprintln!("\nDC values from dc_from_dct_32x32:");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, dcs[iy*4], dcs[iy*4+1], dcs[iy*4+2], dcs[iy*4+3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy,
+            dcs[iy * 4],
+            dcs[iy * 4 + 1],
+            dcs[iy * 4 + 2],
+            dcs[iy * 4 + 3]
+        );
     }
-    
+
     // Expected 8x8 block averages (ground truth)
     eprintln!("\nExpected 8x8 block averages:");
     for by in 0..4 {
@@ -1817,10 +1859,12 @@ fn diag_dct32x32_llf_detail() {
             }
             row[bx] = sum / 64.0;
         }
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  by, row[0], row[1], row[2], row[3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            by, row[0], row[1], row[2], row[3]
+        );
     }
-    
+
     // Compute error
     eprintln!("\nError (dc_from_dct - expected):");
     let mut total_error = 0.0f32;
@@ -1830,16 +1874,18 @@ fn diag_dct32x32_llf_detail() {
             let mut sum = 0.0f32;
             for dy in 0..8 {
                 for dx in 0..8 {
-                    sum += input[(by*8+dy) * 32 + bx*8+dx];
+                    sum += input[(by * 8 + dy) * 32 + bx * 8 + dx];
                 }
             }
             let expected = sum / 64.0;
-            let error = dcs[by*4+bx] - expected;
+            let error = dcs[by * 4 + bx] - expected;
             row[bx] = error;
             total_error += error.abs();
         }
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  by, row[0], row[1], row[2], row[3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            by, row[0], row[1], row[2], row[3]
+        );
     }
     eprintln!("\nTotal absolute error: {:.6}", total_error);
 }
@@ -1848,13 +1894,23 @@ fn diag_dct32x32_llf_detail() {
 #[test]
 #[ignore]
 fn diag_dct32x32_roundtrip_verification() {
-    use jxl_enc::tiny::dct::{dct_32x32, dc_from_dct_32x32};
-    
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
     // Resample scales for 32 -> 4 (from C++)
-    const SCALE_32_TO_4: [f32; 4] = [1.0, 0.974886821136879522, 0.901764195028874394, 0.787054918159101335];
+    const SCALE_32_TO_4: [f32; 4] = [
+        1.0,
+        0.974886821136879522,
+        0.901764195028874394,
+        0.787054918159101335,
+    ];
     // Inverse scales for 4 -> 32
-    const SCALE_4_TO_32: [f32; 4] = [1.0, 1.0257549441917856, 1.1089312359806676, 1.2706084147018952];
-    
+    const SCALE_4_TO_32: [f32; 4] = [
+        1.0,
+        1.0257549441917856,
+        1.1089312359806676,
+        1.2706084147018952,
+    ];
+
     // 4-point DCT-II (forward)
     fn dct1d_4(input: &[f32; 4]) -> [f32; 4] {
         use core::f32::consts::PI;
@@ -1864,11 +1920,11 @@ fn diag_dct32x32_roundtrip_verification() {
             for n in 0..4 {
                 sum += input[n] * (PI * k as f32 * (2.0 * n as f32 + 1.0) / 8.0).cos();
             }
-            output[k] = sum / 4.0;  // Normalize by N
+            output[k] = sum / 4.0; // Normalize by N
         }
         output
     }
-    
+
     // Create a gradient pattern
     let mut input = [0.0f32; 1024];
     for y in 0..32 {
@@ -1876,7 +1932,7 @@ fn diag_dct32x32_roundtrip_verification() {
             input[y * 32 + x] = (x as f32 + y as f32) / 64.0;
         }
     }
-    
+
     // Compute expected 8x8 block averages
     let mut expected_dc = [[0.0f32; 4]; 4];
     for by in 0..4 {
@@ -1884,30 +1940,37 @@ fn diag_dct32x32_roundtrip_verification() {
             let mut sum = 0.0f32;
             for dy in 0..8 {
                 for dx in 0..8 {
-                    sum += input[(by*8+dy) * 32 + bx*8+dx];
+                    sum += input[(by * 8 + dy) * 32 + bx * 8 + dx];
                 }
             }
             expected_dc[by][bx] = sum / 64.0;
         }
     }
-    
+
     eprintln!("Expected 8x8 block averages (DC grid):");
     for by in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  by, expected_dc[by][0], expected_dc[by][1], expected_dc[by][2], expected_dc[by][3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            by, expected_dc[by][0], expected_dc[by][1], expected_dc[by][2], expected_dc[by][3]
+        );
     }
-    
+
     // Apply 4x4 DCT to expected_dc to get expected LLF
     // First DCT rows
     let mut after_rows = [[0.0f32; 4]; 4];
     for iy in 0..4 {
-        let row: [f32; 4] = [expected_dc[iy][0], expected_dc[iy][1], expected_dc[iy][2], expected_dc[iy][3]];
+        let row: [f32; 4] = [
+            expected_dc[iy][0],
+            expected_dc[iy][1],
+            expected_dc[iy][2],
+            expected_dc[iy][3],
+        ];
         let dct_row = dct1d_4(&row);
         for ix in 0..4 {
             after_rows[iy][ix] = dct_row[ix];
         }
     }
-    
+
     // Transpose
     let mut transposed = [[0.0f32; 4]; 4];
     for iy in 0..4 {
@@ -1915,23 +1978,30 @@ fn diag_dct32x32_roundtrip_verification() {
             transposed[ix][iy] = after_rows[iy][ix];
         }
     }
-    
+
     // DCT columns (now rows after transpose)
     let mut expected_llf = [[0.0f32; 4]; 4];
     for iy in 0..4 {
-        let row: [f32; 4] = [transposed[iy][0], transposed[iy][1], transposed[iy][2], transposed[iy][3]];
+        let row: [f32; 4] = [
+            transposed[iy][0],
+            transposed[iy][1],
+            transposed[iy][2],
+            transposed[iy][3],
+        ];
         let dct_row = dct1d_4(&row);
         for ix in 0..4 {
             expected_llf[iy][ix] = dct_row[ix];
         }
     }
-    
+
     eprintln!("\nExpected LLF (from DCT4x4 of DC grid):");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, expected_llf[iy][0], expected_llf[iy][1], expected_llf[iy][2], expected_llf[iy][3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy, expected_llf[iy][0], expected_llf[iy][1], expected_llf[iy][2], expected_llf[iy][3]
+        );
     }
-    
+
     // Apply inverse resample scales (to go from DC-domain to DCT32-domain)
     eprintln!("\nExpected LLF with inverse scales (should match dct_32x32 output):");
     for iy in 0..4 {
@@ -1939,37 +2009,53 @@ fn diag_dct32x32_roundtrip_verification() {
         for ix in 0..4 {
             row[ix] = expected_llf[iy][ix] * SCALE_4_TO_32[iy] * SCALE_4_TO_32[ix];
         }
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, row[0], row[1], row[2], row[3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy, row[0], row[1], row[2], row[3]
+        );
     }
-    
+
     // Now apply forward DCT32x32 and get actual LLF
     let mut coeffs = [0.0f32; 1024];
     dct_32x32(&input, &mut coeffs);
-    
+
     eprintln!("\nActual LLF from dct_32x32:");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, coeffs[iy*32], coeffs[iy*32+1], coeffs[iy*32+2], coeffs[iy*32+3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy,
+            coeffs[iy * 32],
+            coeffs[iy * 32 + 1],
+            coeffs[iy * 32 + 2],
+            coeffs[iy * 32 + 3]
+        );
     }
-    
+
     // Apply forward resample scales
     eprintln!("\nActual LLF with forward scales (input to IDCT):");
     for iy in 0..4 {
         let mut row = [0.0f32; 4];
         for ix in 0..4 {
-            row[ix] = coeffs[iy*32+ix] * SCALE_32_TO_4[iy] * SCALE_32_TO_4[ix];
+            row[ix] = coeffs[iy * 32 + ix] * SCALE_32_TO_4[iy] * SCALE_32_TO_4[ix];
         }
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, row[0], row[1], row[2], row[3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy, row[0], row[1], row[2], row[3]
+        );
     }
-    
+
     // Finally, dc_from_dct_32x32 output
     let dcs = dc_from_dct_32x32(&coeffs);
     eprintln!("\ndc_from_dct_32x32 output:");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, dcs[iy*4], dcs[iy*4+1], dcs[iy*4+2], dcs[iy*4+3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy,
+            dcs[iy * 4],
+            dcs[iy * 4 + 1],
+            dcs[iy * 4 + 2],
+            dcs[iy * 4 + 3]
+        );
     }
 }
 
@@ -1978,10 +2064,15 @@ fn diag_dct32x32_roundtrip_verification() {
 #[ignore]
 fn diag_dct32x32_sqrt2_correction() {
     use jxl_enc::tiny::dct::dct_32x32;
-    
-    const SCALE_32_TO_4: [f32; 4] = [1.0, 0.974886821136879522, 0.901764195028874394, 0.787054918159101335];
+
+    const SCALE_32_TO_4: [f32; 4] = [
+        1.0,
+        0.974886821136879522,
+        0.901764195028874394,
+        0.787054918159101335,
+    ];
     const SQRT2: f32 = 1.4142135623730951;
-    
+
     // 4-point IDCT
     fn idct1d_4(input: &[f32; 4]) -> [f32; 4] {
         use core::f32::consts::PI;
@@ -1990,13 +2081,23 @@ fn diag_dct32x32_sqrt2_correction() {
         let x2 = input[2];
         let x3 = input[3];
         [
-            x0 + 2.0 * (x1 * (PI/8.0).cos() + x2 * (PI/4.0).cos() + x3 * (3.0*PI/8.0).cos()),
-            x0 + 2.0 * (x1 * (3.0*PI/8.0).cos() + x2 * (3.0*PI/4.0).cos() + x3 * (9.0*PI/8.0).cos()),
-            x0 + 2.0 * (x1 * (5.0*PI/8.0).cos() + x2 * (5.0*PI/4.0).cos() + x3 * (15.0*PI/8.0).cos()),
-            x0 + 2.0 * (x1 * (7.0*PI/8.0).cos() + x2 * (7.0*PI/4.0).cos() + x3 * (21.0*PI/8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI / 8.0).cos() + x2 * (PI / 4.0).cos() + x3 * (3.0 * PI / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (3.0 * PI / 8.0).cos()
+                    + x2 * (3.0 * PI / 4.0).cos()
+                    + x3 * (9.0 * PI / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (5.0 * PI / 8.0).cos()
+                    + x2 * (5.0 * PI / 4.0).cos()
+                    + x3 * (15.0 * PI / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (7.0 * PI / 8.0).cos()
+                    + x2 * (7.0 * PI / 4.0).cos()
+                    + x3 * (21.0 * PI / 8.0).cos()),
         ]
     }
-    
+
     // Fixed dc_from_dct_32x32 with sqrt(2) correction on AC coefficients
     fn dc_from_dct_32x32_fixed(coeffs: &[f32; 1024]) -> [f32; 16] {
         let mut block = [0.0f32; 16];
@@ -2011,15 +2112,22 @@ fn diag_dct32x32_sqrt2_correction() {
                 block[iy * 4 + ix] = val;
             }
         }
-        
+
         // IDCT rows
         let mut after_rows = [0.0f32; 16];
         for iy in 0..4 {
-            let row = [block[iy*4], block[iy*4+1], block[iy*4+2], block[iy*4+3]];
+            let row = [
+                block[iy * 4],
+                block[iy * 4 + 1],
+                block[iy * 4 + 2],
+                block[iy * 4 + 3],
+            ];
             let out = idct1d_4(&row);
-            for ix in 0..4 { after_rows[iy*4+ix] = out[ix]; }
+            for ix in 0..4 {
+                after_rows[iy * 4 + ix] = out[ix];
+            }
         }
-        
+
         // Transpose
         let mut transposed = [0.0f32; 16];
         for iy in 0..4 {
@@ -2027,17 +2135,24 @@ fn diag_dct32x32_sqrt2_correction() {
                 transposed[ix * 4 + iy] = after_rows[iy * 4 + ix];
             }
         }
-        
+
         // IDCT rows again
         let mut result = [0.0f32; 16];
         for iy in 0..4 {
-            let row = [transposed[iy*4], transposed[iy*4+1], transposed[iy*4+2], transposed[iy*4+3]];
+            let row = [
+                transposed[iy * 4],
+                transposed[iy * 4 + 1],
+                transposed[iy * 4 + 2],
+                transposed[iy * 4 + 3],
+            ];
             let out = idct1d_4(&row);
-            for ix in 0..4 { result[iy*4+ix] = out[ix]; }
+            for ix in 0..4 {
+                result[iy * 4 + ix] = out[ix];
+            }
         }
         result
     }
-    
+
     // Create gradient
     let mut input = [0.0f32; 1024];
     for y in 0..32 {
@@ -2045,14 +2160,14 @@ fn diag_dct32x32_sqrt2_correction() {
             input[y * 32 + x] = (x as f32 + y as f32) / 64.0;
         }
     }
-    
+
     // Forward DCT
     let mut coeffs = [0.0f32; 1024];
     dct_32x32(&input, &mut coeffs);
-    
+
     // Extract DC with sqrt(2) correction
     let dcs_fixed = dc_from_dct_32x32_fixed(&coeffs);
-    
+
     // Expected block averages
     eprintln!("Expected 8x8 block averages:");
     for by in 0..4 {
@@ -2061,21 +2176,29 @@ fn diag_dct32x32_sqrt2_correction() {
             let mut sum = 0.0f32;
             for dy in 0..8 {
                 for dx in 0..8 {
-                    sum += input[(by*8+dy)*32 + bx*8+dx];
+                    sum += input[(by * 8 + dy) * 32 + bx * 8 + dx];
                 }
             }
             row[bx] = sum / 64.0;
         }
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  by, row[0], row[1], row[2], row[3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            by, row[0], row[1], row[2], row[3]
+        );
     }
-    
+
     eprintln!("\nDC from fixed dc_from_dct_32x32 (with sqrt2 correction):");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, dcs_fixed[iy*4], dcs_fixed[iy*4+1], dcs_fixed[iy*4+2], dcs_fixed[iy*4+3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy,
+            dcs_fixed[iy * 4],
+            dcs_fixed[iy * 4 + 1],
+            dcs_fixed[iy * 4 + 2],
+            dcs_fixed[iy * 4 + 3]
+        );
     }
-    
+
     // Compute error
     let mut total_error = 0.0f32;
     for by in 0..4 {
@@ -2083,11 +2206,11 @@ fn diag_dct32x32_sqrt2_correction() {
             let mut sum = 0.0f32;
             for dy in 0..8 {
                 for dx in 0..8 {
-                    sum += input[(by*8+dy)*32 + bx*8+dx];
+                    sum += input[(by * 8 + dy) * 32 + bx * 8 + dx];
                 }
             }
             let expected = sum / 64.0;
-            total_error += (dcs_fixed[by*4+bx] - expected).abs();
+            total_error += (dcs_fixed[by * 4 + bx] - expected).abs();
         }
     }
     eprintln!("\nTotal absolute error with sqrt2 fix: {:.6}", total_error);
@@ -2098,63 +2221,68 @@ fn diag_dct32x32_sqrt2_correction() {
 #[ignore]
 fn diag_dct32x32_butterfly_idct() {
     use jxl_enc::tiny::dct::dct_32x32;
-    
-    const SCALE_32_TO_4: [f32; 4] = [1.0, 0.974886821136879522, 0.901764195028874394, 0.787054918159101335];
+
+    const SCALE_32_TO_4: [f32; 4] = [
+        1.0,
+        0.974886821136879522,
+        0.901764195028874394,
+        0.787054918159101335,
+    ];
     const SQRT2: f32 = 1.4142135623730951;
-    
+
     // 2-point IDCT (matches C++)
     fn idct2(a: f32, b: f32) -> (f32, f32) {
         (a + b, a - b)
     }
-    
+
     // 4-point IDCT using butterfly decomposition (matching C++)
     fn idct4_butterfly(input: &[f32; 4]) -> [f32; 4] {
         let x0 = input[0];
         let x1 = input[1];
         let x2 = input[2];
         let x3 = input[3];
-        
+
         // ForwardEvenOdd: split into even and odd
         let even = [x0, x2];
         let odd = [x1, x3];
-        
+
         // IDCT2 on even
         let (e0, e1) = idct2(even[0], even[1]);
-        
+
         // BTranspose on odd (inverse of B transform)
         // B transform: b[0] = sqrt(2)*a[0] + a[1]; b[1] = a[1]
         // BTranspose: a[0] = (b[0] - b[1]) / sqrt(2); a[1] = b[1]
         let o0 = (odd[0] - odd[1]) / SQRT2;
         let o1 = odd[1];
-        
+
         // Wait, that's wrong. Let me reconsider...
         // Actually for 2-point B transform, it's simpler
         // The B transform adds adjacent elements: b[k] = a[k] + a[k+1] (with sqrt(2) on first)
         // For 2 elements, this is just: b[0] = sqrt(2)*a[0] + a[1], but a[1] is just a[1]
         // Actually let me check the C++ code more carefully
-        
+
         // For now, let's use the WC multiplier approach
         use core::f32::consts::PI;
         let wc1 = 2.0 * (PI / 8.0).cos(); // = 2*cos(pi/8) = 1.8478
         let wc3 = 2.0 * (3.0 * PI / 8.0).cos(); // = 2*cos(3pi/8) = 0.7654
-        
+
         // Apply WC multiply (reverse of DCT WC step)
         let o0_wc = odd[0] / wc1;
         let o1_wc = odd[1] / wc3;
-        
+
         // IDCT2 on WC-modified odd
         let (o0_out, o1_out) = idct2(o0_wc, o1_wc);
-        
+
         // MultiplyAndAdd (reverse of AddReverse/SubReverse)
         // DCT did: even[k] = x[k] + x[N-1-k], odd[k] = x[k] - x[N-1-k]
         // So: x[k] = (even[k] + odd[k]) / 2
         //     x[N-1-k] = (even[k] - odd[k]) / 2
         // But IDCT inverts this...
         // Actually it's: out[k] = even[k] + odd[k], out[N-1-k] = even[k] - odd[k] for interleaving
-        
+
         [e0 + o0_out, e1 + o1_out, e1 - o1_out, e0 - o0_out]
     }
-    
+
     // Fixed dc_from_dct_32x32 with butterfly IDCT
     fn dc_from_dct_32x32_butterfly(coeffs: &[f32; 1024]) -> [f32; 16] {
         let mut block = [0.0f32; 16];
@@ -2162,22 +2290,29 @@ fn diag_dct32x32_butterfly_idct() {
             for ix in 0..4 {
                 let scale = SCALE_32_TO_4[iy] * SCALE_32_TO_4[ix];
                 let mut val = coeffs[iy * 32 + ix] * scale;
-                // Divide AC by sqrt(2) 
+                // Divide AC by sqrt(2)
                 if iy > 0 || ix > 0 {
                     val /= SQRT2;
                 }
                 block[iy * 4 + ix] = val;
             }
         }
-        
+
         // IDCT rows using butterfly
         let mut after_rows = [0.0f32; 16];
         for iy in 0..4 {
-            let row = [block[iy*4], block[iy*4+1], block[iy*4+2], block[iy*4+3]];
+            let row = [
+                block[iy * 4],
+                block[iy * 4 + 1],
+                block[iy * 4 + 2],
+                block[iy * 4 + 3],
+            ];
             let out = idct4_butterfly(&row);
-            for ix in 0..4 { after_rows[iy*4+ix] = out[ix]; }
+            for ix in 0..4 {
+                after_rows[iy * 4 + ix] = out[ix];
+            }
         }
-        
+
         // Transpose
         let mut transposed = [0.0f32; 16];
         for iy in 0..4 {
@@ -2185,17 +2320,24 @@ fn diag_dct32x32_butterfly_idct() {
                 transposed[ix * 4 + iy] = after_rows[iy * 4 + ix];
             }
         }
-        
+
         // IDCT rows again using butterfly
         let mut result = [0.0f32; 16];
         for iy in 0..4 {
-            let row = [transposed[iy*4], transposed[iy*4+1], transposed[iy*4+2], transposed[iy*4+3]];
+            let row = [
+                transposed[iy * 4],
+                transposed[iy * 4 + 1],
+                transposed[iy * 4 + 2],
+                transposed[iy * 4 + 3],
+            ];
             let out = idct4_butterfly(&row);
-            for ix in 0..4 { result[iy*4+ix] = out[ix]; }
+            for ix in 0..4 {
+                result[iy * 4 + ix] = out[ix];
+            }
         }
         result
     }
-    
+
     // Create gradient
     let mut input = [0.0f32; 1024];
     for y in 0..32 {
@@ -2203,28 +2345,38 @@ fn diag_dct32x32_butterfly_idct() {
             input[y * 32 + x] = (x as f32 + y as f32) / 64.0;
         }
     }
-    
+
     // Forward DCT
     let mut coeffs = [0.0f32; 1024];
     dct_32x32(&input, &mut coeffs);
-    
+
     // Extract DC with butterfly IDCT
     let dcs = dc_from_dct_32x32_butterfly(&coeffs);
-    
+
     eprintln!("DC from butterfly IDCT:");
     for iy in 0..4 {
-        eprintln!("  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
-                  iy, dcs[iy*4], dcs[iy*4+1], dcs[iy*4+2], dcs[iy*4+3]);
+        eprintln!(
+            "  row {}: {:10.6} {:10.6} {:10.6} {:10.6}",
+            iy,
+            dcs[iy * 4],
+            dcs[iy * 4 + 1],
+            dcs[iy * 4 + 2],
+            dcs[iy * 4 + 3]
+        );
     }
-    
+
     // Expected and error
     let mut total_error = 0.0f32;
     for by in 0..4 {
         for bx in 0..4 {
             let mut sum = 0.0f32;
-            for dy in 0..8 { for dx in 0..8 { sum += input[(by*8+dy)*32 + bx*8+dx]; } }
+            for dy in 0..8 {
+                for dx in 0..8 {
+                    sum += input[(by * 8 + dy) * 32 + bx * 8 + dx];
+                }
+            }
             let expected = sum / 64.0;
-            total_error += (dcs[by*4+bx] - expected).abs();
+            total_error += (dcs[by * 4 + bx] - expected).abs();
         }
     }
     eprintln!("\nTotal error with butterfly: {:.6}", total_error);
@@ -2236,7 +2388,7 @@ fn diag_dct32x32_butterfly_idct() {
 fn diag_save_dct16x16_file() {
     use std::fs;
     use std::io::Write;
-    
+
     // Create a simple 32x32 checkerboard
     let w = 32;
     let h = 32;
@@ -2251,26 +2403,26 @@ fn diag_save_dct16x16_file() {
             linear[idx + 2] = val;
         }
     }
-    
+
     // Encode with forced DCT16x16
     let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
     encoder.force_strategy = Some(3); // RAW_STRATEGY_DCT16X16
-    
+
     let bytes = encoder.encode(w, h, &linear).unwrap();
-    
+
     // Save to file
     let path = "/tmp/test_dct16x16.jxl";
     let mut file = fs::File::create(path).unwrap();
     file.write_all(&bytes).unwrap();
     eprintln!("Saved {} bytes to {}", bytes.len(), path);
-    
+
     // Try to decode with djxl
     let output = std::process::Command::new("djxl")
         .arg(path)
         .arg("/tmp/test_dct16x16.png")
         .output()
         .expect("djxl failed to run");
-    
+
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
         panic!("djxl failed with status {}", output.status);
@@ -2284,64 +2436,81 @@ fn diag_save_dct16x16_file() {
 #[ignore]
 fn diag_dct16x16_decode_compare() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 16, 16);
-    
+
     // DCT8 encoding
     let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear).unwrap();
-    
-    // DCT16x16 encoding  
+
+    // DCT16x16 encoding
     let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear).unwrap();
-    
+
     // Decode with jxl-oxide
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
-    
+
     // Convert decoded linear f32 to sRGB u8 for comparison
     fn linear_to_srgb_u8(v: f32) -> u8 {
-        (v.clamp(0.0, 1.0).powf(1.0/2.2) * 255.0).round() as u8
+        (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
     }
-    
+
     eprintln!("16x16 frymire crop - jxl-oxide decoder:");
-    eprintln!("{:>5} {:>12} {:>12} {:>12}", "pixel", "original", "dct8", "dct16x16");
-    
+    eprintln!(
+        "{:>5} {:>12} {:>12} {:>12}",
+        "pixel", "original", "dct8", "dct16x16"
+    );
+
     let mut sum_diff8 = 0u32;
     let mut sum_diff16 = 0u32;
-    
+
     for y in 0..4 {
         for x in 0..4 {
-            let idx = y * 4 * w + x * 4;  // Sample every 4th pixel
-            let o = (srgb[idx*3], srgb[idx*3+1], srgb[idx*3+2]);
+            let idx = y * 4 * w + x * 4; // Sample every 4th pixel
+            let o = (srgb[idx * 3], srgb[idx * 3 + 1], srgb[idx * 3 + 2]);
             let d8 = (
-                linear_to_srgb_u8(dec8[idx*3]),
-                linear_to_srgb_u8(dec8[idx*3+1]),
-                linear_to_srgb_u8(dec8[idx*3+2]),
+                linear_to_srgb_u8(dec8[idx * 3]),
+                linear_to_srgb_u8(dec8[idx * 3 + 1]),
+                linear_to_srgb_u8(dec8[idx * 3 + 2]),
             );
             let d16 = (
-                linear_to_srgb_u8(dec16[idx*3]),
-                linear_to_srgb_u8(dec16[idx*3+1]),
-                linear_to_srgb_u8(dec16[idx*3+2]),
+                linear_to_srgb_u8(dec16[idx * 3]),
+                linear_to_srgb_u8(dec16[idx * 3 + 1]),
+                linear_to_srgb_u8(dec16[idx * 3 + 2]),
             );
-            
-            let diff8 = (o.0 as i32 - d8.0 as i32).abs() 
-                + (o.1 as i32 - d8.1 as i32).abs() 
+
+            let diff8 = (o.0 as i32 - d8.0 as i32).abs()
+                + (o.1 as i32 - d8.1 as i32).abs()
                 + (o.2 as i32 - d8.2 as i32).abs();
             let diff16 = (o.0 as i32 - d16.0 as i32).abs()
                 + (o.1 as i32 - d16.1 as i32).abs()
                 + (o.2 as i32 - d16.2 as i32).abs();
-            
+
             sum_diff8 += diff8 as u32;
             sum_diff16 += diff16 as u32;
-            
-            eprintln!("  ({:2},{:2}) {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  d8={:>3} d16={:>3}",
-                y*4, x*4, o.0, o.1, o.2, d8.0, d8.1, d8.2, d16.0, d16.1, d16.2, diff8, diff16);
+
+            eprintln!(
+                "  ({:2},{:2}) {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  d8={:>3} d16={:>3}",
+                y * 4,
+                x * 4,
+                o.0,
+                o.1,
+                o.2,
+                d8.0,
+                d8.1,
+                d8.2,
+                d16.0,
+                d16.1,
+                d16.2,
+                diff8,
+                diff16
+            );
         }
     }
-    
+
     eprintln!("Total diffs: DCT8={}, DCT16={}", sum_diff8, sum_diff16);
-    
+
     // Compute SSIM2
     let ssim8 = ssim2_u8_vs_linear_f32(&srgb, &dec8, w, h);
     let ssim16 = ssim2_u8_vs_linear_f32(&srgb, &dec16, w, h);
@@ -2355,35 +2524,41 @@ fn diag_dct16x16_decode_compare() {
 #[ignore]
 fn diag_dct16x16_32x32_compare() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 32, 32);
-    
+
     // DCT8 encoding
     let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear).unwrap();
-    
+
     // DCT16x16 encoding
     let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear).unwrap();
-    
+
     // Save for inspection
     std::fs::write("/tmp/frymire_32x32_dct8.jxl", &bytes8).unwrap();
     std::fs::write("/tmp/frymire_32x32_dct16.jxl", &bytes16).unwrap();
     eprintln!("Saved /tmp/frymire_32x32_dct8.jxl ({} bytes)", bytes8.len());
-    eprintln!("Saved /tmp/frymire_32x32_dct16.jxl ({} bytes)", bytes16.len());
-    
+    eprintln!(
+        "Saved /tmp/frymire_32x32_dct16.jxl ({} bytes)",
+        bytes16.len()
+    );
+
     // Decode with jxl-oxide
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
-    
+
     // Convert decoded linear f32 to sRGB u8 for comparison
     fn linear_to_srgb_u8(v: f32) -> u8 {
-        (v.clamp(0.0, 1.0).powf(1.0/2.2) * 255.0).round() as u8
+        (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
     }
-    
+
     eprintln!("32x32 frymire crop - jxl-oxide decoder:");
-    eprintln!("{:>5} {:>12} {:>12} {:>12}", "pixel", "original", "dct8", "dct16x16");
-    
+    eprintln!(
+        "{:>5} {:>12} {:>12} {:>12}",
+        "pixel", "original", "dct8", "dct16x16"
+    );
+
     // Sample corners and center
     for (name, y, x) in [
         ("top-left", 0usize, 0usize),
@@ -2393,29 +2568,31 @@ fn diag_dct16x16_32x32_compare() {
         ("bottom-right", 24, 24),
     ] {
         let idx = y * w + x;
-        let o = (srgb[idx*3], srgb[idx*3+1], srgb[idx*3+2]);
+        let o = (srgb[idx * 3], srgb[idx * 3 + 1], srgb[idx * 3 + 2]);
         let d8 = (
-            linear_to_srgb_u8(dec8[idx*3]),
-            linear_to_srgb_u8(dec8[idx*3+1]),
-            linear_to_srgb_u8(dec8[idx*3+2]),
+            linear_to_srgb_u8(dec8[idx * 3]),
+            linear_to_srgb_u8(dec8[idx * 3 + 1]),
+            linear_to_srgb_u8(dec8[idx * 3 + 2]),
         );
         let d16 = (
-            linear_to_srgb_u8(dec16[idx*3]),
-            linear_to_srgb_u8(dec16[idx*3+1]),
-            linear_to_srgb_u8(dec16[idx*3+2]),
+            linear_to_srgb_u8(dec16[idx * 3]),
+            linear_to_srgb_u8(dec16[idx * 3 + 1]),
+            linear_to_srgb_u8(dec16[idx * 3 + 2]),
         );
-        
-        let diff8 = (o.0 as i32 - d8.0 as i32).abs() 
-            + (o.1 as i32 - d8.1 as i32).abs() 
+
+        let diff8 = (o.0 as i32 - d8.0 as i32).abs()
+            + (o.1 as i32 - d8.1 as i32).abs()
             + (o.2 as i32 - d8.2 as i32).abs();
         let diff16 = (o.0 as i32 - d16.0 as i32).abs()
             + (o.1 as i32 - d16.1 as i32).abs()
             + (o.2 as i32 - d16.2 as i32).abs();
-        
-        eprintln!("  {:12} {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  d8={:>3} d16={:>3}",
-            name, o.0, o.1, o.2, d8.0, d8.1, d8.2, d16.0, d16.1, d16.2, diff8, diff16);
+
+        eprintln!(
+            "  {:12} {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  {:>3},{:>3},{:>3}  d8={:>3} d16={:>3}",
+            name, o.0, o.1, o.2, d8.0, d8.1, d8.2, d16.0, d16.1, d16.2, diff8, diff16
+        );
     }
-    
+
     // Compute SSIM2
     let ssim8 = ssim2_u8_vs_linear_f32(&srgb, &dec8, w, h);
     let ssim16 = ssim2_u8_vs_linear_f32(&srgb, &dec16, w, h);
@@ -2436,40 +2613,44 @@ fn diag_dct16x16_nzeros() {
             let v = if (x + y) % 2 == 0 { 0.8 } else { 0.2 };
             let idx = (y * w + x) * 3;
             linear[idx] = v;
-            linear[idx+1] = v;
-            linear[idx+2] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
         }
     }
-    
+
     // First, try DCT8 to see expected nzeros
     let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear).unwrap();
-    
+
     // Then DCT16x16
     let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear).unwrap();
-    
+
     eprintln!("Checkerboard 32x32:");
     eprintln!("  DCT8 file:   {} bytes", bytes8.len());
     eprintln!("  DCT16x16 file: {} bytes", bytes16.len());
-    
+
     // Decode both
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
-    
+
     let ssim8 = ssim2_u8_vs_linear_f32(&linear_to_srgb_u8(&linear), &dec8, w, h);
     let ssim16 = ssim2_u8_vs_linear_f32(&linear_to_srgb_u8(&linear), &dec16, w, h);
     eprintln!("  DCT8 SSIM2:   {:.2}", ssim8);
     eprintln!("  DCT16x16 SSIM2: {:.2}", ssim16);
-    
+
     // Check specific pixel values
     eprintln!("\nCenter 4x4 region (linear f32):");
     for dy in 0..4 {
         for dx in 0..4 {
-            let idx = ((h/2 + dy - 2) * w + (w/2 + dx - 2)) * 3;
-            let expected = if ((w/2 + dx - 2) + (h/2 + dy - 2)) % 2 == 0 { 0.8 } else { 0.2 };
+            let idx = ((h / 2 + dy - 2) * w + (w / 2 + dx - 2)) * 3;
+            let expected = if ((w / 2 + dx - 2) + (h / 2 + dy - 2)) % 2 == 0 {
+                0.8
+            } else {
+                0.2
+            };
             let d8 = dec8[idx];
             let d16 = dec16[idx];
             eprint!("({:.2}/{:.2}/{:.2}) ", expected, d8, d16);
@@ -2490,27 +2671,32 @@ fn diag_dct16x16_gradient() {
             let v = x as f32 / w as f32; // horizontal gradient 0 to 1
             let idx = (y * w + x) * 3;
             linear[idx] = v;
-            linear[idx+1] = v;
-            linear[idx+2] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
         }
     }
-    
+
     let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear).unwrap();
-    
+
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
-    
+
     eprintln!("Horizontal gradient 32x32 with DCT16x16:");
     eprintln!("File size: {} bytes", bytes16.len());
-    
+
     // Check values along first row
     eprintln!("First row (original vs decoded):");
     for x in [0, 8, 16, 24, 31] {
         let expected = x as f32 / w as f32;
         let decoded = dec16[(0 * w + x) * 3];
-        eprintln!("  x={:2}: expected={:.3}, decoded={:.3}, diff={:.3}", 
-            x, expected, decoded, (expected - decoded).abs());
+        eprintln!(
+            "  x={:2}: expected={:.3}, decoded={:.3}, diff={:.3}",
+            x,
+            expected,
+            decoded,
+            (expected - decoded).abs()
+        );
     }
 }
 
@@ -2519,12 +2705,12 @@ fn diag_dct16x16_gradient() {
 #[ignore]
 fn diag_dct16x16_iteration() {
     use jxl_enc::tiny::TinyEncoder;
-    
+
     // Create a small test where each 8x8 block has a distinct DC value
     let w = 32usize;
     let h = 32usize;
     let mut linear = vec![0.0f32; w * h * 3];
-    
+
     // Set each 8x8 block to a different brightness
     for by in 0..4 {
         for bx in 0..4 {
@@ -2535,26 +2721,26 @@ fn diag_dct16x16_iteration() {
                     let py = by * 8 + dy;
                     let idx = (py * w + px) * 3;
                     linear[idx] = block_val;
-                    linear[idx+1] = block_val;
-                    linear[idx+2] = block_val;
+                    linear[idx + 1] = block_val;
+                    linear[idx + 2] = block_val;
                 }
             }
         }
     }
-    
+
     // DCT8
     let mut enc8 = TinyEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear).unwrap();
-    
+
     // DCT16x16
     let mut enc16 = TinyEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear).unwrap();
-    
+
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
-    
+
     eprintln!("32x32 block pattern (each 8x8 block = different brightness):");
     eprintln!("Expected block values (4x4 grid, values 0/16 to 15/16):");
     for by in 0..4 {
@@ -2563,7 +2749,7 @@ fn diag_dct16x16_iteration() {
         }
         eprintln!();
     }
-    
+
     eprintln!("\nDCT8 decoded center of each block:");
     for by in 0..4 {
         for bx in 0..4 {
@@ -2574,7 +2760,7 @@ fn diag_dct16x16_iteration() {
         }
         eprintln!();
     }
-    
+
     eprintln!("\nDCT16x16 decoded center of each block:");
     for by in 0..4 {
         for bx in 0..4 {
@@ -2585,8 +2771,12 @@ fn diag_dct16x16_iteration() {
         }
         eprintln!();
     }
-    
-    eprintln!("\nFile sizes: DCT8={}, DCT16={}", bytes8.len(), bytes16.len());
+
+    eprintln!(
+        "\nFile sizes: DCT8={}, DCT16={}",
+        bytes8.len(),
+        bytes16.len()
+    );
 }
 
 /// DIAGNOSTIC: Trace DC values through the DCT16x16 pipeline.
@@ -2597,7 +2787,7 @@ fn diag_dct16x16_dc_trace() {
     let w = 32usize;
     let h = 32usize;
     let mut linear = vec![0.0f32; w * h * 3];
-    
+
     // Each block (by, bx) has value (by * 4 + bx) / 16.0
     for by in 0..4 {
         for bx in 0..4 {
@@ -2609,13 +2799,13 @@ fn diag_dct16x16_dc_trace() {
                     let idx = (py * w + px) * 3;
                     // Only set Y channel for simplicity
                     linear[idx] = block_val;
-                    linear[idx+1] = block_val;
-                    linear[idx+2] = block_val;
+                    linear[idx + 1] = block_val;
+                    linear[idx + 2] = block_val;
                 }
             }
         }
     }
-    
+
     eprintln!("32x32 image with uniform 8x8 blocks:");
     eprintln!("Input block values (4x4):");
     for by in 0..4 {
@@ -2624,10 +2814,10 @@ fn diag_dct16x16_dc_trace() {
         }
         eprintln!();
     }
-    
+
     // Test dc_from_dct_16x16 directly
     eprintln!("\nTesting dc_from_dct_16x16 for first DCT16x16 block (covers 8x8 blocks 0,1,4,5):");
-    
+
     // Extract the first 16x16 spatial block
     let mut block16x16 = [0.0f32; 256];
     for sy in 0..16 {
@@ -2636,41 +2826,57 @@ fn diag_dct16x16_dc_trace() {
             block16x16[sy * 16 + sx] = v;
         }
     }
-    
+
     eprintln!("Input spatial values (corners of 16x16):");
-    eprintln!("  (0,0)={:.3} (0,15)={:.3} (15,0)={:.3} (15,15)={:.3}",
-        block16x16[0], block16x16[15], block16x16[15*16], block16x16[15*16+15]);
-    
+    eprintln!(
+        "  (0,0)={:.3} (0,15)={:.3} (15,0)={:.3} (15,15)={:.3}",
+        block16x16[0],
+        block16x16[15],
+        block16x16[15 * 16],
+        block16x16[15 * 16 + 15]
+    );
+
     // Do forward DCT
     let mut dct_coeffs = [0.0f32; 256];
     jxl_enc::tiny::dct::dct_16x16(&block16x16, &mut dct_coeffs);
-    
+
     eprintln!("DCT coefficients (LLF 2x2 region):");
-    eprintln!("  coeff[0]={:.6} coeff[1]={:.6}", dct_coeffs[0], dct_coeffs[1]);
-    eprintln!("  coeff[16]={:.6} coeff[17]={:.6}", dct_coeffs[16], dct_coeffs[17]);
-    
+    eprintln!(
+        "  coeff[0]={:.6} coeff[1]={:.6}",
+        dct_coeffs[0], dct_coeffs[1]
+    );
+    eprintln!(
+        "  coeff[16]={:.6} coeff[17]={:.6}",
+        dct_coeffs[16], dct_coeffs[17]
+    );
+
     // Extract DC values
     let dcs = jxl_enc::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
-    
+
     eprintln!("Extracted DC values:");
     eprintln!("  dcs[0]={:.6} (top-left 8x8)", dcs[0]);
     eprintln!("  dcs[1]={:.6} (top-right 8x8)", dcs[1]);
     eprintln!("  dcs[2]={:.6} (bottom-left 8x8)", dcs[2]);
     eprintln!("  dcs[3]={:.6} (bottom-right 8x8)", dcs[3]);
-    
+
     // Expected: averages of each 8x8 block
     eprintln!("\nExpected DC values (block averages):");
-    eprintln!("  top-left: {:.6}", 0.0);      // block (0,0)
-    eprintln!("  top-right: {:.6}", 1.0/16.0); // block (0,1)
-    eprintln!("  bottom-left: {:.6}", 4.0/16.0); // block (1,0)
-    eprintln!("  bottom-right: {:.6}", 5.0/16.0); // block (1,1)
-    
+    eprintln!("  top-left: {:.6}", 0.0); // block (0,0)
+    eprintln!("  top-right: {:.6}", 1.0 / 16.0); // block (0,1)
+    eprintln!("  bottom-left: {:.6}", 4.0 / 16.0); // block (1,0)
+    eprintln!("  bottom-right: {:.6}", 5.0 / 16.0); // block (1,1)
+
     // Now test the third DCT16x16 block (by=2, bx=0)
     eprintln!("\n\nTesting dc_from_dct_16x16 for THIRD DCT16x16 block (by=2, bx=0):");
     eprintln!("This covers 8x8 blocks: (2,0), (2,1), (3,0), (3,1)");
-    eprintln!("Expected block values: {:.3}, {:.3}, {:.3}, {:.3}",
-        8.0/16.0, 9.0/16.0, 12.0/16.0, 13.0/16.0);
-    
+    eprintln!(
+        "Expected block values: {:.3}, {:.3}, {:.3}, {:.3}",
+        8.0 / 16.0,
+        9.0 / 16.0,
+        12.0 / 16.0,
+        13.0 / 16.0
+    );
+
     // Extract the third 16x16 spatial block (starting at by=2, bx=0)
     for sy in 0..16 {
         for sx in 0..16 {
@@ -2678,15 +2884,15 @@ fn diag_dct16x16_dc_trace() {
             block16x16[sy * 16 + sx] = v;
         }
     }
-    
+
     jxl_enc::tiny::dct::dct_16x16(&block16x16, &mut dct_coeffs);
     let dcs3 = jxl_enc::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
-    
+
     eprintln!("Extracted DC values for third block:");
-    eprintln!("  dcs[0]={:.6} (expected {:.6})", dcs3[0], 8.0/16.0);
-    eprintln!("  dcs[1]={:.6} (expected {:.6})", dcs3[1], 9.0/16.0);
-    eprintln!("  dcs[2]={:.6} (expected {:.6})", dcs3[2], 12.0/16.0);
-    eprintln!("  dcs[3]={:.6} (expected {:.6})", dcs3[3], 13.0/16.0);
+    eprintln!("  dcs[0]={:.6} (expected {:.6})", dcs3[0], 8.0 / 16.0);
+    eprintln!("  dcs[1]={:.6} (expected {:.6})", dcs3[1], 9.0 / 16.0);
+    eprintln!("  dcs[2]={:.6} (expected {:.6})", dcs3[2], 12.0 / 16.0);
+    eprintln!("  dcs[3]={:.6} (expected {:.6})", dcs3[3], 13.0 / 16.0);
 }
 
 /// DIAGNOSTIC: Test dc_from_dct_16x16 with uniform blocks.
@@ -2698,12 +2904,14 @@ fn diag_dct16x16_uniform() {
         let mut dct_coeffs = [0.0f32; 256];
         jxl_enc::tiny::dct::dct_16x16(&block, &mut dct_coeffs);
         let dcs = jxl_enc::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
-        
-        eprintln!("Uniform v={:.2}: dcs=[{:.4}, {:.4}, {:.4}, {:.4}] (all should be {:.4})",
-            v, dcs[0], dcs[1], dcs[2], dcs[3], v);
+
+        eprintln!(
+            "Uniform v={:.2}: dcs=[{:.4}, {:.4}, {:.4}, {:.4}] (all should be {:.4})",
+            v, dcs[0], dcs[1], dcs[2], dcs[3], v
+        );
     }
     eprintln!();
-    
+
     // Test where quadrants have different values
     let mut block = [0.0f32; 256];
     // Top-left quadrant (0-7, 0-7): 0.0
@@ -2720,14 +2928,17 @@ fn diag_dct16x16_uniform() {
             block[y * 16 + x] = 1.0;
         }
     }
-    
+
     let mut dct_coeffs = [0.0f32; 256];
     jxl_enc::tiny::dct::dct_16x16(&block, &mut dct_coeffs);
     let dcs = jxl_enc::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
-    
+
     eprintln!("Quadrant pattern (TL=0, TR=1, BL=0, BR=1):");
     eprintln!("  Expected: 0.0, 1.0, 0.0, 1.0");
-    eprintln!("  Got:      {:.4}, {:.4}, {:.4}, {:.4}", dcs[0], dcs[1], dcs[2], dcs[3]);
+    eprintln!(
+        "  Got:      {:.4}, {:.4}, {:.4}, {:.4}",
+        dcs[0], dcs[1], dcs[2], dcs[3]
+    );
 }
 
 /// DIAGNOSTIC: Verify DCT16x16 coefficient layout matches expected frequency positions.
@@ -2742,15 +2953,18 @@ fn diag_dct16x16_layout() {
             block_h[y * 16 + x] = x as f32 / 16.0;
         }
     }
-    
+
     let mut dct_h = [0.0f32; 256];
     jxl_enc::tiny::dct::dct_16x16(&block_h, &mut dct_h);
-    
+
     eprintln!("Horizontal gradient (x-variation only):");
     eprintln!("  coeff[0] (DC) = {:.6}", dct_h[0]);
-    eprintln!("  coeff[1] (should have energy if fx=1,fy=0) = {:.6}", dct_h[1]);
+    eprintln!(
+        "  coeff[1] (should have energy if fx=1,fy=0) = {:.6}",
+        dct_h[1]
+    );
     eprintln!("  coeff[16] (should be ~0 if fy=0) = {:.6}", dct_h[16]);
-    
+
     // Create an image with only vertical variation (y-gradient)
     // This should produce energy at fx=0, fy=1 (vertical frequency)
     let mut block_v = [0.0f32; 256];
@@ -2759,30 +2973,59 @@ fn diag_dct16x16_layout() {
             block_v[y * 16 + x] = y as f32 / 16.0;
         }
     }
-    
+
     let mut dct_v = [0.0f32; 256];
     jxl_enc::tiny::dct::dct_16x16(&block_v, &mut dct_v);
-    
+
     eprintln!("\nVertical gradient (y-variation only):");
     eprintln!("  coeff[0] (DC) = {:.6}", dct_v[0]);
     eprintln!("  coeff[1] (should be ~0 if fx=0) = {:.6}", dct_v[1]);
-    eprintln!("  coeff[16] (should have energy if fx=0,fy=1) = {:.6}", dct_v[16]);
-    
+    eprintln!(
+        "  coeff[16] (should have energy if fx=0,fy=1) = {:.6}",
+        dct_v[16]
+    );
+
     // Now test dc_from_dct_16x16 with these
     let dcs_h = jxl_enc::tiny::dct::dc_from_dct_16x16(&dct_h);
     let dcs_v = jxl_enc::tiny::dct::dc_from_dct_16x16(&dct_v);
-    
+
     eprintln!("\nHorizontal gradient DC extraction:");
     eprintln!("  Should have horizontal variation (left vs right):");
-    eprintln!("  dcs = [{:.4}, {:.4}, {:.4}, {:.4}]", dcs_h[0], dcs_h[1], dcs_h[2], dcs_h[3]);
-    eprintln!("  left column: avg({:.4}, {:.4}) = {:.4}", dcs_h[0], dcs_h[2], (dcs_h[0]+dcs_h[2])/2.0);
-    eprintln!("  right column: avg({:.4}, {:.4}) = {:.4}", dcs_h[1], dcs_h[3], (dcs_h[1]+dcs_h[3])/2.0);
-    
+    eprintln!(
+        "  dcs = [{:.4}, {:.4}, {:.4}, {:.4}]",
+        dcs_h[0], dcs_h[1], dcs_h[2], dcs_h[3]
+    );
+    eprintln!(
+        "  left column: avg({:.4}, {:.4}) = {:.4}",
+        dcs_h[0],
+        dcs_h[2],
+        (dcs_h[0] + dcs_h[2]) / 2.0
+    );
+    eprintln!(
+        "  right column: avg({:.4}, {:.4}) = {:.4}",
+        dcs_h[1],
+        dcs_h[3],
+        (dcs_h[1] + dcs_h[3]) / 2.0
+    );
+
     eprintln!("\nVertical gradient DC extraction:");
     eprintln!("  Should have vertical variation (top vs bottom):");
-    eprintln!("  dcs = [{:.4}, {:.4}, {:.4}, {:.4}]", dcs_v[0], dcs_v[1], dcs_v[2], dcs_v[3]);
-    eprintln!("  top row: avg({:.4}, {:.4}) = {:.4}", dcs_v[0], dcs_v[1], (dcs_v[0]+dcs_v[1])/2.0);
-    eprintln!("  bottom row: avg({:.4}, {:.4}) = {:.4}", dcs_v[2], dcs_v[3], (dcs_v[2]+dcs_v[3])/2.0);
+    eprintln!(
+        "  dcs = [{:.4}, {:.4}, {:.4}, {:.4}]",
+        dcs_v[0], dcs_v[1], dcs_v[2], dcs_v[3]
+    );
+    eprintln!(
+        "  top row: avg({:.4}, {:.4}) = {:.4}",
+        dcs_v[0],
+        dcs_v[1],
+        (dcs_v[0] + dcs_v[1]) / 2.0
+    );
+    eprintln!(
+        "  bottom row: avg({:.4}, {:.4}) = {:.4}",
+        dcs_v[2],
+        dcs_v[3],
+        (dcs_v[2] + dcs_v[3]) / 2.0
+    );
 }
 
 /// DIAGNOSTIC: Check which transforms are being processed for 32x32 DCT16x16.
@@ -2790,22 +3033,22 @@ fn diag_dct16x16_layout() {
 #[ignore]
 fn diag_dct16x16_transform_coverage() {
     use jxl_enc::tiny::TinyEncoder;
-    
+
     // Patch TinyEncoder to print transform positions - we'll do this by examining the strategy map
     let w = 32usize;
     let h = 32usize;
     let linear = vec![0.5f32; w * h * 3];
-    
+
     let mut enc = TinyEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
-    
+
     // Run encoding
     let bytes = enc.encode(w, h, &linear).unwrap();
     eprintln!("Encoded 32x32 with DCT16x16: {} bytes", bytes.len());
-    
+
     // We can't easily inspect internal state, but we can check if the file decodes correctly
     let (_, _, dec) = decode_jxl_oxide(&bytes);
-    
+
     // All pixels should be 0.5
     let mut max_err = 0.0f32;
     for i in 0..dec.len() {
@@ -2813,7 +3056,7 @@ fn diag_dct16x16_transform_coverage() {
         max_err = max_err.max(err);
     }
     eprintln!("Max error from expected 0.5: {:.6}", max_err);
-    
+
     // Check specific positions
     eprintln!("\nDecoded values at 8x8 block centers:");
     for by in 0..4 {
@@ -2834,32 +3077,32 @@ fn diag_dct16x16_two_values() {
     let w = 32usize;
     let h = 32usize;
     let mut linear = vec![0.0f32; w * h * 3];
-    
+
     // Top half = 0.25, bottom half = 0.75
     for y in 0..h {
         let v = if y < 16 { 0.25 } else { 0.75 };
         for x in 0..w {
             let idx = (y * w + x) * 3;
             linear[idx] = v;
-            linear[idx+1] = v;
-            linear[idx+2] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
         }
     }
-    
+
     let mut enc8 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear).unwrap();
-    
+
     let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear).unwrap();
-    
+
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
-    
+
     eprintln!("Two-value pattern (top=0.25, bottom=0.75):");
     eprintln!("File sizes: DCT8={}, DCT16={}", bytes8.len(), bytes16.len());
-    
+
     eprintln!("\nDCT8 decoded at block centers:");
     for by in 0..4 {
         for bx in 0..4 {
@@ -2871,7 +3114,7 @@ fn diag_dct16x16_two_values() {
         }
         eprintln!();
     }
-    
+
     eprintln!("\nDCT16 decoded at block centers:");
     for by in 0..4 {
         for bx in 0..4 {
@@ -2883,4 +3126,1341 @@ fn diag_dct16x16_two_values() {
         }
         eprintln!();
     }
+}
+
+/// Trace DC extraction for two-value pattern
+#[test]
+#[ignore]
+fn trace_two_value_dc_extraction() {
+    use jxl_enc::tiny::dct::{dc_from_dct_8x8, dc_from_dct_16x16, dct_8x8, dct_16x16};
+
+    let w = 32usize;
+    let h = 32usize;
+
+    // Top half = 0.25, bottom half = 0.75 (in linear RGB, 0.5 mean)
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Convert to XYB (simplified - just use Y channel for grayscale)
+    // For grayscale input, Y ≈ linear value
+    eprintln!("=== Two-value pattern DC extraction ===\n");
+
+    // First DCT16x16 block covers (0,0)-(15,15) - entirely in top half, all 0.25
+    eprintln!("First DCT16x16 block (0,0)-(15,15): all pixels = 0.25");
+    let mut block16 = [0.0f32; 256];
+    for iy in 0..16 {
+        for ix in 0..16 {
+            block16[iy * 16 + ix] = 0.25; // entire block is 0.25
+        }
+    }
+    let mut coeffs16 = [0.0f32; 256];
+    dct_16x16(&block16, &mut coeffs16);
+    eprintln!(
+        "  DCT coeffs: [0]={:.6}, [1]={:.6}, [16]={:.6}, [17]={:.6}",
+        coeffs16[0], coeffs16[1], coeffs16[16], coeffs16[17]
+    );
+    let dcs = dc_from_dct_16x16(&coeffs16);
+    eprintln!(
+        "  DC from IDCT: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        dcs[0], dcs[1], dcs[2], dcs[3]
+    );
+    eprintln!("  All should be close to 0.25*8=2.0 (DCT normalization)");
+
+    // For comparison, DCT8 on same 0.25 block
+    let mut block8 = [0.25f32; 64];
+    let mut coeffs8 = [0.0f32; 64];
+    dct_8x8(&block8, &mut coeffs8);
+    let dc8 = dc_from_dct_8x8(&coeffs8);
+    eprintln!("  DCT8 DC for same content: {:.6}", dc8);
+
+    // Second DCT16x16 block covers (0,16)-(15,31) - top-right quadrant
+    // Still entirely top half, all 0.25
+    eprintln!("\nSecond DCT16x16 block (0,16)-(15,31): all pixels = 0.25");
+    // Same as first block
+    let dcs2 = dc_from_dct_16x16(&coeffs16);
+    eprintln!(
+        "  DC from IDCT: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        dcs2[0], dcs2[1], dcs2[2], dcs2[3]
+    );
+
+    // Third DCT16x16 block covers (16,0)-(31,15) - bottom-left quadrant
+    // Entirely bottom half, all 0.75
+    eprintln!("\nThird DCT16x16 block (16,0)-(31,15): all pixels = 0.75");
+    let mut block16_bottom = [0.75f32; 256];
+    let mut coeffs16_bottom = [0.0f32; 256];
+    dct_16x16(&block16_bottom, &mut coeffs16_bottom);
+    eprintln!(
+        "  DCT coeffs: [0]={:.6}, [1]={:.6}, [16]={:.6}, [17]={:.6}",
+        coeffs16_bottom[0], coeffs16_bottom[1], coeffs16_bottom[16], coeffs16_bottom[17]
+    );
+    let dcs3 = dc_from_dct_16x16(&coeffs16_bottom);
+    eprintln!(
+        "  DC from IDCT: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        dcs3[0], dcs3[1], dcs3[2], dcs3[3]
+    );
+    eprintln!("  All should be close to 0.75*8=6.0 (DCT normalization)");
+
+    // DCT8 on 0.75 block
+    let block8_bottom = [0.75f32; 64];
+    let mut coeffs8_bottom = [0.0f32; 64];
+    dct_8x8(&block8_bottom, &mut coeffs8_bottom);
+    let dc8_bottom = dc_from_dct_8x8(&coeffs8_bottom);
+    eprintln!("  DCT8 DC for same content: {:.6}", dc8_bottom);
+
+    // Now the interesting one: DCT16x16 block that SPANS the boundary
+    // This is where the bug would manifest - but 32x32 image has no such block!
+    // Block (0,0)-(15,15) is all top, (16,16)-(31,31) is all bottom
+    // Actually for y=0..16, it's top half; y=16..32 is bottom half
+    // So blocks at by=0 span y=0..15 (all top)
+    // Blocks at by=1 span y=16..31 (all bottom)
+    // NO block spans the boundary!
+
+    eprintln!("\n=== But wait! In 32x32 with DCT16x16, blocks don't cross the boundary! ===");
+    eprintln!("by=0: y=0-15 (top half, all 0.25)");
+    eprintln!("by=1: y=16-31 (bottom half, all 0.75)");
+    eprintln!("Each DCT16x16 block is uniform - no frequency content!");
+
+    // So where does the error come from?
+    // Answer: DC prediction! Each DC block stores 4 values, and prediction
+    // operates on the DC grid. If prediction is wrong, all downstream values are wrong.
+
+    eprintln!("\n=== Testing encoder with DC prediction ===");
+
+    let mut enc16 = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc16.ac_strategy_enabled = true;
+    let bytes = enc16.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dw, _dh, dec) = decode_jxl_oxide(&bytes);
+
+    eprintln!("\nDecoded values at 8x8 block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let expected = if by < 2 { 0.25 } else { 0.75 };
+            let decoded = dec[(py * dw + px) * 3];
+            eprint!("{:.4}({:.2}) ", decoded, expected);
+        }
+        eprintln!();
+    }
+}
+
+/// Detailed DC trace for DCT16x16
+#[test]
+#[ignore]
+fn trace_dct16x16_dc_detailed() {
+    use jxl_enc::tiny::dct::{dc_from_dct_16x16, dct_16x16};
+
+    // Create a simple 32x32 image with two values
+    // Top half = 0.25 (in linear sRGB), bottom half = 0.75
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== DCT16x16 DC detailed trace ===");
+    eprintln!("Input: 32x32 image, top half = 0.25, bottom half = 0.75\n");
+
+    // Trace what dc_from_dct_16x16 produces for the first block
+    let mut block = [0.0f32; 256];
+    for iy in 0..16 {
+        for ix in 0..16 {
+            block[iy * 16 + ix] = 0.25; // top-left 16x16, all 0.25
+        }
+    }
+    let mut coeffs = [0.0f32; 256];
+    dct_16x16(&block, &mut coeffs);
+
+    eprintln!("First DCT16x16 block (uniform 0.25):");
+    eprintln!(
+        "  LLF coeffs: [0]={:.6} [1]={:.6} [16]={:.6} [17]={:.6}",
+        coeffs[0], coeffs[1], coeffs[16], coeffs[17]
+    );
+
+    let dcs = dc_from_dct_16x16(&coeffs);
+    eprintln!(
+        "  dc_from_dct_16x16 output: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        dcs[0], dcs[1], dcs[2], dcs[3]
+    );
+
+    // Now encode and see what DC tokens are generated
+    eprintln!("\n=== Encoding with TinyEncoder ===");
+    let mut enc = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc.ac_strategy_enabled = true;
+
+    // Enable debug output if available
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    // Decode
+    let (dw, dh, dec) = decode_jxl_oxide(&bytes);
+    eprintln!("Decoded {}x{}", dw, dh);
+
+    // Show decoded DC-like values (center of each 8x8 block)
+    eprintln!("\nDecoded block centers (Y channel proxy):");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let expected = if by < 2 { 0.25 } else { 0.75 };
+            let val = dec[(py * dw + px) * 3]; // R channel
+            eprint!("{:.4} ", val);
+        }
+        eprintln!(" (expected: {:.2})", if by < 2 { 0.25 } else { 0.75 });
+    }
+
+    // Also try decoding with djxl for comparison
+    use std::io::Write;
+    let tmp_jxl = "/tmp/dct16_trace.jxl";
+    let tmp_ppm = "/tmp/dct16_trace.ppm";
+    std::fs::write(tmp_jxl, &bytes).unwrap();
+
+    let status = std::process::Command::new("djxl")
+        .args(&[tmp_jxl, tmp_ppm])
+        .status();
+    if let Ok(s) = status {
+        if s.success() {
+            eprintln!("\ndjxl decoding succeeded");
+            // Read the PPM and show values
+            if let Ok(ppm_data) = std::fs::read(tmp_ppm) {
+                // Skip PPM header, find the data
+                let mut skip = 0;
+                let mut newlines = 0;
+                for (i, &b) in ppm_data.iter().enumerate() {
+                    if b == b'\n' {
+                        newlines += 1;
+                        if newlines == 3 {
+                            skip = i + 1;
+                            break;
+                        }
+                    }
+                }
+                eprintln!("\ndjxl decoded block centers:");
+                for by in 0..4 {
+                    for bx in 0..4 {
+                        let px = bx * 8 + 4;
+                        let py = by * 8 + 4;
+                        let idx = (py * w + px) * 3 + skip;
+                        if idx < ppm_data.len() {
+                            let r = ppm_data[idx] as f32 / 255.0;
+                            eprint!("{:.4} ", r);
+                        }
+                    }
+                    eprintln!(" (expected: {:.2})", if by < 2 { 0.25 } else { 0.75 });
+                }
+            }
+        } else {
+            eprintln!("djxl failed");
+        }
+    }
+}
+
+/// Trace exact quant_dc values for two-value pattern
+#[test]
+#[ignore]
+fn trace_quant_dc_values() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+
+    // Top half = 0.25, bottom half = 0.75
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== Checking with DCT8 only (reference) ===");
+    let mut enc8 = TinyEncoder::new(1.0);
+    enc8.ac_strategy_enabled = false;
+    let bytes8 = enc8.encode(w, h, &linear).unwrap();
+    let (_, _, dec8) = decode_jxl_oxide(&bytes8);
+
+    eprintln!("DCT8 decoded block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec8[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+
+    eprintln!("\n=== Checking with DCT16x16 ===");
+    let mut enc16 = TinyEncoder::new(1.0);
+    enc16.ac_strategy_enabled = true;
+    let bytes16 = enc16.encode(w, h, &linear).unwrap();
+    let (_, _, dec16) = decode_jxl_oxide(&bytes16);
+
+    eprintln!("DCT16 decoded block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec16[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+
+    // The key question: what's different between DCT8 and DCT16 encoding
+    // that causes the different decoded values?
+    //
+    // For uniform input:
+    // - DCT8: coeff[0] = block_average, all others = 0
+    //   DC stored is just coeff[0]
+    // - DCT16: coeff[0] = 16x16_average, all others = 0
+    //   DC stored are 4 values from dc_from_dct_16x16, all equal to coeff[0]
+    //
+    // Both should produce same decoded values!
+    // Unless... the decoder does something different.
+
+    eprintln!("\n=== Hypothesis: decoder's LowestFrequenciesFromDC ===");
+    eprintln!("The decoder takes DC values and reconstructs LLF coefficients.");
+    eprintln!("For DCT8, DC is just stored as-is.");
+    eprintln!("For DCT16, decoder does 2x2 DCT on the 4 DC values to get LLF.");
+    eprintln!("\nIf all 4 DC values are the same (V), the 2x2 DCT produces:");
+    eprintln!("  LLF[0,0] = (V+V) + (V+V) = 4V");
+    eprintln!("  LLF[0,1] = (V+V) - (V+V) = 0");
+    eprintln!("  LLF[1,0] = (V-V) + (V-V) = 0");
+    eprintln!("  LLF[1,1] = (V-V) - (V-V) = 0");
+    eprintln!("This is correct! LLF[0,0] should be 4*block_average for DCT16.");
+    eprintln!("\nBut wait - what scale factors does the decoder use?");
+}
+
+/// Compare C++ libjxl-tiny output with our encoder
+#[test]
+#[ignore]
+fn compare_cpp_output() {
+    // Decode C++ output
+    let cpp_bytes = std::fs::read("/tmp/test_cpp.jxl")
+        .expect("Run cjxl_tiny first: ~/work/libjxl-tiny/build/encoder/cjxl_tiny /tmp/test_two_value.pfm /tmp/test_cpp.jxl -d 1.0");
+
+    eprintln!("=== Comparing C++ vs Rust encoder ===\n");
+    eprintln!("C++ file size: {} bytes", cpp_bytes.len());
+
+    let (w, h, cpp_dec) = decode_jxl_oxide(&cpp_bytes);
+    eprintln!("C++ decoded {}x{}", w, h);
+
+    eprintln!("\nC++ decoded block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = cpp_dec[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!(" (expected: {:.2})", if by < 2 { 0.25 } else { 0.75 });
+    }
+
+    // Now our encoder
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let mut enc = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc.ac_strategy_enabled = true;
+    let rust_bytes = enc.encode(w, h, &linear).unwrap();
+    eprintln!("\nRust file size: {} bytes", rust_bytes.len());
+
+    let (_, _, rust_dec) = decode_jxl_oxide(&rust_bytes);
+
+    eprintln!("\nRust decoded block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = rust_dec[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!(" (expected: {:.2})", if by < 2 { 0.25 } else { 0.75 });
+    }
+}
+
+/// Force DCT16x16 and trace DC values
+#[test]
+#[ignore]
+fn force_dct16x16_trace() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== Forcing DCT16x16 for all blocks ===\n");
+
+    let mut enc = TinyEncoder::new(1.0);
+    enc.force_strategy = Some(3); // RAW_STRATEGY_DCT16X16
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    let (dw, _, dec) = decode_jxl_oxide(&bytes);
+
+    eprintln!("\nDecoded block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec[(py * dw + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!(" (expected: {:.2})", if by < 2 { 0.25 } else { 0.75 });
+    }
+}
+
+/// Check what strategies are being selected
+#[test]
+#[ignore]
+fn check_selected_strategies() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== With ac_strategy_enabled = true ===");
+    let mut enc = TinyEncoder::new(1.0);
+    enc.ac_strategy_enabled = true;
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+    let (_, _, dec) = decode_jxl_oxide(&bytes);
+    eprintln!("Decoded block centers (ac_strategy_enabled):");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+
+    eprintln!("\n=== With force_strategy = DCT16x16 ===");
+    let mut enc2 = TinyEncoder::new(1.0);
+    enc2.force_strategy = Some(3);
+    let bytes2 = enc2.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes2.len());
+    let (_, _, dec2) = decode_jxl_oxide(&bytes2);
+    eprintln!("Decoded block centers (force DCT16x16):");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec2[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+
+    eprintln!("\n=== With ac_strategy_enabled = false (DCT8 only) ===");
+    let mut enc3 = TinyEncoder::new(1.0);
+    enc3.ac_strategy_enabled = false;
+    let bytes3 = enc3.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes3.len());
+    let (_, _, dec3) = decode_jxl_oxide(&bytes3);
+    eprintln!("Decoded block centers (DCT8 only):");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec3[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+}
+
+/// Verify dc_from_dct_32x32 produces uniform output for uniform input
+#[test]
+#[ignore]
+fn test_dc_from_dct_32x32_uniform() {
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
+    // Create uniform 32x32 block
+    let mut input = [0.5f32; 1024];
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&input, &mut coeffs);
+
+    eprintln!("Uniform input (all 0.5):");
+    eprintln!(
+        "  LLF: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        coeffs[0], coeffs[1], coeffs[2], coeffs[3]
+    );
+    eprintln!(
+        "  LLF: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        coeffs[32], coeffs[33], coeffs[34], coeffs[35]
+    );
+
+    let dcs = dc_from_dct_32x32(&coeffs);
+    eprintln!("  DC values:");
+    for row in 0..4 {
+        eprint!("    Row {}: ", row);
+        for col in 0..4 {
+            eprint!("{:.6} ", dcs[row * 4 + col]);
+        }
+        eprintln!();
+    }
+    eprintln!("  Expected: all ≈ 0.5");
+
+    // Now test step function (top=0.3, bottom=0.7)
+    eprintln!("\nStep function input (top=0.3, bottom=0.7):");
+    for y in 0..32 {
+        let v = if y < 16 { 0.3 } else { 0.7 };
+        for x in 0..32 {
+            input[y * 32 + x] = v;
+        }
+    }
+    dct_32x32(&input, &mut coeffs);
+
+    eprintln!(
+        "  LLF: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        coeffs[0], coeffs[1], coeffs[2], coeffs[3]
+    );
+    eprintln!(
+        "  LLF: [{:.6}, {:.6}, {:.6}, {:.6}]",
+        coeffs[32], coeffs[33], coeffs[34], coeffs[35]
+    );
+
+    let dcs = dc_from_dct_32x32(&coeffs);
+    eprintln!("  DC values:");
+    for row in 0..4 {
+        eprint!("    Row {}: ", row);
+        for col in 0..4 {
+            eprint!("{:.6} ", dcs[row * 4 + col]);
+        }
+        eprintln!();
+    }
+    eprintln!("  Expected: rows 0-1 ≈ 0.3, rows 2-3 ≈ 0.7");
+}
+
+/// Verify dc_from_dct_16x16 with step function
+#[test]
+#[ignore]
+fn test_dc_from_dct_16x16_step() {
+    use jxl_enc::tiny::dct::{dc_from_dct_16x16, dct_16x16};
+
+    // Step function: top half = 0.3, bottom half = 0.7
+    let mut input = [0.0f32; 256];
+    for y in 0..16 {
+        let v = if y < 8 { 0.3 } else { 0.7 };
+        for x in 0..16 {
+            input[y * 16 + x] = v;
+        }
+    }
+    let mut coeffs = [0.0f32; 256];
+    dct_16x16(&input, &mut coeffs);
+
+    eprintln!("DCT16x16 step function (top=0.3, bottom=0.7):");
+    eprintln!("  LLF: [{:.6}, {:.6}]", coeffs[0], coeffs[1]);
+    eprintln!("       [{:.6}, {:.6}]", coeffs[16], coeffs[17]);
+
+    let dcs = dc_from_dct_16x16(&coeffs);
+    eprintln!("  DC values:");
+    eprintln!("    Row 0: {:.6} {:.6}", dcs[0], dcs[1]);
+    eprintln!("    Row 1: {:.6} {:.6}", dcs[2], dcs[3]);
+    eprintln!("  Expected: row 0 ≈ 0.3, row 1 ≈ 0.7");
+}
+
+/// Verify roundtrip: LLF -> IDCT -> DC -> DCT -> LLF
+#[test]
+#[ignore]
+fn test_llf_dc_roundtrip_32x32() {
+    use jxl_enc::tiny::dct::{DCT_RESAMPLE_SCALE_32_TO_4, dc_from_dct_32x32, dct_32x32};
+
+    // Create step function input
+    let mut input = [0.0f32; 1024];
+    for y in 0..32 {
+        let v = if y < 16 { 0.3 } else { 0.7 };
+        for x in 0..32 {
+            input[y * 32 + x] = v;
+        }
+    }
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&input, &mut coeffs);
+
+    // Original LLF (4x4 top-left of coefficients)
+    eprintln!("=== Original LLF from encoder (first 2x2 of 4x4) ===");
+    let orig_llf = [
+        [coeffs[0], coeffs[1], coeffs[2], coeffs[3]],
+        [coeffs[32], coeffs[33], coeffs[34], coeffs[35]],
+        [coeffs[64], coeffs[65], coeffs[66], coeffs[67]],
+        [coeffs[96], coeffs[97], coeffs[98], coeffs[99]],
+    ];
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.6}, {:.6}, {:.6}, {:.6}]",
+            orig_llf[row][0], orig_llf[row][1], orig_llf[row][2], orig_llf[row][3]
+        );
+    }
+
+    // DC values from dc_from_dct_32x32
+    let dcs = dc_from_dct_32x32(&coeffs);
+    eprintln!("\n=== DC values from dc_from_dct_32x32 (4x4) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.6}, {:.6}, {:.6}, {:.6}]",
+            dcs[row * 4],
+            dcs[row * 4 + 1],
+            dcs[row * 4 + 2],
+            dcs[row * 4 + 3]
+        );
+    }
+
+    // Now simulate decoder: DCT on DC values, then apply scale[4,32]
+    // First need 4x4 DCT
+    let dct_4_to_32_scales = [
+        1.0f32,
+        1.025760096781116015,
+        1.108937353592731823,
+        1.270559368765487251,
+    ];
+
+    // 4x4 DCT on DC values (matching decoder's ComputeScaledDCT<4,4>)
+    // For simplicity, use direct formula
+    let n = 4;
+    let mut dct_out = [[0.0f32; 4]; 4];
+    for u in 0..n {
+        for v in 0..n {
+            let mut sum = 0.0f32;
+            for y in 0..n {
+                for x in 0..n {
+                    let cos_u = ((2 * y + 1) as f32 * u as f32 * std::f32::consts::PI
+                        / (2.0 * n as f32))
+                        .cos();
+                    let cos_v = ((2 * x + 1) as f32 * v as f32 * std::f32::consts::PI
+                        / (2.0 * n as f32))
+                        .cos();
+                    sum += dcs[y * 4 + x] * cos_u * cos_v;
+                }
+            }
+            // DCT normalization: sum / (N*N) (matching our dct_32x32 scaling of 1/32 per dimension)
+            dct_out[u][v] = sum / ((n * n) as f32);
+        }
+    }
+
+    eprintln!("\n=== 4x4 DCT of DC values (before resample scale) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.6}, {:.6}, {:.6}, {:.6}]",
+            dct_out[row][0], dct_out[row][1], dct_out[row][2], dct_out[row][3]
+        );
+    }
+
+    // Apply scale[4,32]
+    let mut reconstructed_llf = [[0.0f32; 4]; 4];
+    for u in 0..4 {
+        for v in 0..4 {
+            reconstructed_llf[u][v] = dct_out[u][v] * dct_4_to_32_scales[u] * dct_4_to_32_scales[v];
+        }
+    }
+
+    eprintln!("\n=== Reconstructed LLF (after scale[4,32]) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.6}, {:.6}, {:.6}, {:.6}]",
+            reconstructed_llf[row][0],
+            reconstructed_llf[row][1],
+            reconstructed_llf[row][2],
+            reconstructed_llf[row][3]
+        );
+    }
+
+    // Compare
+    eprintln!("\n=== Error (reconstructed - original) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.6}, {:.6}, {:.6}, {:.6}]",
+            reconstructed_llf[row][0] - orig_llf[row][0],
+            reconstructed_llf[row][1] - orig_llf[row][1],
+            reconstructed_llf[row][2] - orig_llf[row][2],
+            reconstructed_llf[row][3] - orig_llf[row][3]
+        );
+    }
+}
+
+/// Test 4x4 DCT/IDCT roundtrip
+#[test]
+#[ignore]
+fn test_4x4_dct_idct_roundtrip() {
+    use jxl_enc::tiny::dct::DCT_RESAMPLE_SCALE_32_TO_4;
+
+    // Create asymmetric 4x4 input (not symmetric, so we can see transpose issues)
+    let input = [
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
+        [9.0, 10.0, 11.0, 12.0],
+        [13.0, 14.0, 15.0, 16.0],
+    ];
+
+    eprintln!("=== Input 4x4 ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.1}, {:.1}, {:.1}, {:.1}]",
+            input[row][0], input[row][1], input[row][2], input[row][3]
+        );
+    }
+
+    // Simulate encoder dc_from_dct: apply scale, then IDCT
+    // (pretend input is the LLF region of a 32x32 DCT)
+    let dct_32_to_4_scales = DCT_RESAMPLE_SCALE_32_TO_4;
+
+    let mut scaled_input = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            scaled_input[iy][ix] = input[iy][ix] * dct_32_to_4_scales[iy] * dct_32_to_4_scales[ix];
+        }
+    }
+
+    // 4x4 IDCT (rows → transpose → rows)
+    fn idct1d_4(input: &[f32; 4]) -> [f32; 4] {
+        let n = 4;
+        let mut output = [0.0f32; 4];
+        for k in 0..n {
+            let mut sum = 0.0f32;
+            for u in 0..n {
+                let cos_val =
+                    ((2 * k + 1) as f32 * u as f32 * std::f32::consts::PI / (2.0 * n as f32)).cos();
+                sum += input[u] * cos_val;
+            }
+            // IDCT-III doesn't need 1/N scaling for inverse to work
+            output[k] = sum;
+        }
+        output
+    }
+
+    // IDCT rows
+    let mut after_rows = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        let row_in = [
+            scaled_input[iy][0],
+            scaled_input[iy][1],
+            scaled_input[iy][2],
+            scaled_input[iy][3],
+        ];
+        let row_out = idct1d_4(&row_in);
+        for ix in 0..4 {
+            after_rows[iy][ix] = row_out[ix];
+        }
+    }
+
+    // Transpose
+    let mut transposed = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            transposed[ix][iy] = after_rows[iy][ix];
+        }
+    }
+
+    // IDCT rows (on transposed data)
+    let mut dc_values = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        let row_in = [
+            transposed[iy][0],
+            transposed[iy][1],
+            transposed[iy][2],
+            transposed[iy][3],
+        ];
+        let row_out = idct1d_4(&row_in);
+        for ix in 0..4 {
+            dc_values[iy][ix] = row_out[ix];
+        }
+    }
+
+    eprintln!("\n=== DC values (after IDCT with scale[32,4]) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.4}, {:.4}, {:.4}, {:.4}]",
+            dc_values[row][0], dc_values[row][1], dc_values[row][2], dc_values[row][3]
+        );
+    }
+
+    // Simulate decoder: DCT then apply scale
+    fn dct1d_4(input: &[f32; 4]) -> [f32; 4] {
+        let n = 4;
+        let mut output = [0.0f32; 4];
+        for u in 0..n {
+            let mut sum = 0.0f32;
+            for k in 0..n {
+                let cos_val =
+                    ((2 * k + 1) as f32 * u as f32 * std::f32::consts::PI / (2.0 * n as f32)).cos();
+                sum += input[k] * cos_val;
+            }
+            // Normalize by 1/N per dimension, so 1/N for 1D
+            output[u] = sum / (n as f32);
+        }
+        output
+    }
+
+    // DCT rows
+    let mut dct_after_rows = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        let row_in = [
+            dc_values[iy][0],
+            dc_values[iy][1],
+            dc_values[iy][2],
+            dc_values[iy][3],
+        ];
+        let row_out = dct1d_4(&row_in);
+        for ix in 0..4 {
+            dct_after_rows[iy][ix] = row_out[ix];
+        }
+    }
+
+    // Transpose
+    let mut dct_transposed = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            dct_transposed[ix][iy] = dct_after_rows[iy][ix];
+        }
+    }
+
+    // DCT rows (on transposed data)
+    let mut dct_output = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        let row_in = [
+            dct_transposed[iy][0],
+            dct_transposed[iy][1],
+            dct_transposed[iy][2],
+            dct_transposed[iy][3],
+        ];
+        let row_out = dct1d_4(&row_in);
+        for ix in 0..4 {
+            dct_output[iy][ix] = row_out[ix];
+        }
+    }
+
+    eprintln!("\n=== After decoder DCT (before scale[4,32]) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.4}, {:.4}, {:.4}, {:.4}]",
+            dct_output[row][0], dct_output[row][1], dct_output[row][2], dct_output[row][3]
+        );
+    }
+
+    // Apply scale[4,32]
+    let dct_4_to_32_scales = [
+        1.0f32,
+        1.025760096781116015,
+        1.108937353592731823,
+        1.270559368765487251,
+    ];
+
+    let mut reconstructed = [[0.0f32; 4]; 4];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            reconstructed[iy][ix] =
+                dct_output[iy][ix] * dct_4_to_32_scales[iy] * dct_4_to_32_scales[ix];
+        }
+    }
+
+    eprintln!("\n=== Reconstructed LLF (after scale[4,32]) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.4}, {:.4}, {:.4}, {:.4}]",
+            reconstructed[row][0],
+            reconstructed[row][1],
+            reconstructed[row][2],
+            reconstructed[row][3]
+        );
+    }
+
+    eprintln!("\n=== Error (reconstructed - input) ===");
+    for row in 0..4 {
+        eprintln!(
+            "  [{:.4}, {:.4}, {:.4}, {:.4}]",
+            reconstructed[row][0] - input[row][0],
+            reconstructed[row][1] - input[row][1],
+            reconstructed[row][2] - input[row][2],
+            reconstructed[row][3] - input[row][3]
+        );
+    }
+}
+
+/// Test DCT32x32 with uniform blocks (64x64 image, step at y=32)
+#[test]
+#[ignore]
+fn test_dct32x32_uniform_blocks() {
+    // 64x64 image with top half = 0.25, bottom half = 0.75
+    // Each DCT32x32 block (32x32 pixels) will be entirely uniform
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 32 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== 64x64 image with step at y=32 ===");
+    eprintln!("Each DCT32x32 block is uniform (top: 0.25, bottom: 0.75)\n");
+
+    let mut enc = jxl_enc::tiny::TinyEncoder::new(1.0);
+    enc.force_strategy = Some(4); // DCT32x32
+    enc.optimize_codes = false; // Use static Huffman for simpler debugging
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    let (dw, dh, dec) = decode_jxl_oxide(&bytes);
+    eprintln!("Decoded {}x{}", dw, dh);
+
+    eprintln!("\nDecoded values at 8x8 block centers:");
+    for by in 0..8 {
+        for bx in 0..8 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let expected = if by < 4 { 0.25 } else { 0.75 };
+            let val = dec[(py * dw + px) * 3];
+            eprint!("{:.3} ", val);
+        }
+        eprintln!(" (expected: {:.2})", if by < 4 { 0.25 } else { 0.75 });
+    }
+}
+
+/// Test each strategy individually on the two-value image
+#[test]
+#[ignore]
+fn test_each_strategy_quality() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let strategies = [
+        (0, "DCT8"),
+        (1, "DCT16x8"),
+        (2, "DCT8x16"),
+        (3, "DCT16x16"),
+        // (4, "DCT32x32"),  // Skip - requires 64x64 minimum
+    ];
+
+    for (strat, name) in &strategies {
+        let mut enc = TinyEncoder::new(1.0);
+        enc.force_strategy = Some(*strat);
+        let bytes = enc.encode(w, h, &linear).unwrap();
+        let (_, _, dec) = decode_jxl_oxide(&bytes);
+
+        eprintln!("\n=== {} (strategy {}) ===", name, strat);
+        eprintln!("Encoded {} bytes", bytes.len());
+        eprintln!("Decoded block centers:");
+
+        let mut max_err = 0.0f32;
+        for by in 0..4 {
+            for bx in 0..4 {
+                let px = bx * 8 + 4;
+                let py = by * 8 + 4;
+                let val = dec[(py * w + px) * 3];
+                let expected = if py < 16 { 0.25 } else { 0.75 };
+                let err = (val - expected).abs();
+                max_err = max_err.max(err);
+                eprint!("{:.4} ", val);
+            }
+            let expected = if by < 2 { 0.25 } else { 0.75 };
+            eprintln!(" (expected: {:.2})", expected);
+        }
+        eprintln!("Max error: {:.4}", max_err);
+
+        // Assert reasonable quality
+        assert!(
+            max_err < 0.05,
+            "{} has max error {:.4}, expected < 0.05",
+            name,
+            max_err
+        );
+    }
+}
+/// Test with uniform image to isolate edge effects
+#[test]
+#[ignore]
+fn test_uniform_image_with_strategy_selection() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 32usize;
+    let h = 32usize;
+    // Uniform value 0.5
+    let linear = vec![0.5f32; w * h * 3];
+
+    eprintln!("=== Uniform image (0.5) with ac_strategy_enabled = true ===");
+    let mut enc = TinyEncoder::new(1.0);
+    enc.ac_strategy_enabled = true;
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    let (_, _, dec) = decode_jxl_oxide(&bytes);
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    let mut max_err = 0.0f32;
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec[(py * w + px) * 3];
+            let err = (val - 0.5).abs();
+            max_err = max_err.max(err);
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+    eprintln!("Max error: {:.4} (expected 0.5 everywhere)", max_err);
+
+    eprintln!("\n=== Same with ac_strategy_enabled = false ===");
+    let mut enc2 = TinyEncoder::new(1.0);
+    enc2.ac_strategy_enabled = false;
+    let bytes2 = enc2.encode(w, h, &linear).unwrap();
+    let (_, _, dec2) = decode_jxl_oxide(&bytes2);
+    eprintln!("Encoded {} bytes", bytes2.len());
+
+    let mut max_err2 = 0.0f32;
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec2[(py * w + px) * 3];
+            let err = (val - 0.5).abs();
+            max_err2 = max_err2.max(err);
+            eprint!("{:.4} ", val);
+        }
+        eprintln!();
+    }
+    eprintln!("Max error: {:.4}", max_err2);
+
+    // Both should have similar quality
+    assert!(
+        max_err < 0.02,
+        "Strategy selection introduces error: {:.4}",
+        max_err
+    );
+}
+
+/// Test with DCT32x32 on the two-value image to see if that's the issue
+#[test]
+#[ignore]
+fn test_dct32x32_two_value_image() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Need 64x64 to fit a DCT32x32
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 32 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== 64x64 two-value image with force_strategy = DCT32x32 ===");
+    let mut enc = TinyEncoder::new(1.0);
+    enc.force_strategy = Some(4); // DCT32x32
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    let (_, _, dec) = decode_jxl_oxide(&bytes);
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    eprintln!("Decoded pixel values (sampled):");
+    let mut sum_top = 0.0f32;
+    let mut sum_bot = 0.0f32;
+    let mut cnt = 0;
+    for by in 0..8 {
+        for bx in 0..8 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec[(py * w + px) * 3];
+            if py < 32 {
+                sum_top += val;
+            } else {
+                sum_bot += val;
+            }
+            cnt += 1;
+            eprint!("{:.3} ", val);
+        }
+        let expected = if by < 4 { 0.25 } else { 0.75 };
+        eprintln!(" (expected: {:.2})", expected);
+    }
+    eprintln!("Average top: {:.4} (expected 0.25)", sum_top / 32.0);
+    eprintln!("Average bot: {:.4} (expected 0.75)", sum_bot / 32.0);
+
+    eprintln!("\n=== Same with ac_strategy_enabled = true ===");
+    let mut enc2 = TinyEncoder::new(1.0);
+    enc2.ac_strategy_enabled = true;
+    let bytes2 = enc2.encode(w, h, &linear).unwrap();
+    let (_, _, dec2) = decode_jxl_oxide(&bytes2);
+    eprintln!("Encoded {} bytes", bytes2.len());
+
+    eprintln!("Decoded pixel values (sampled):");
+    let mut sum_top2 = 0.0f32;
+    let mut sum_bot2 = 0.0f32;
+    for by in 0..8 {
+        for bx in 0..8 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec2[(py * w + px) * 3];
+            if py < 32 {
+                sum_top2 += val;
+            } else {
+                sum_bot2 += val;
+            }
+            eprint!("{:.3} ", val);
+        }
+        let expected = if by < 4 { 0.25 } else { 0.75 };
+        eprintln!(" (expected: {:.2})", expected);
+    }
+    eprintln!("Average top: {:.4} (expected 0.25)", sum_top2 / 32.0);
+    eprintln!("Average bot: {:.4} (expected 0.75)", sum_bot2 / 32.0);
+
+    eprintln!("\n=== Same with DCT8 only ===");
+    let mut enc3 = TinyEncoder::new(1.0);
+    enc3.ac_strategy_enabled = false;
+    let bytes3 = enc3.encode(w, h, &linear).unwrap();
+    let (_, _, dec3) = decode_jxl_oxide(&bytes3);
+    eprintln!("Encoded {} bytes", bytes3.len());
+
+    let mut sum_top3 = 0.0f32;
+    let mut sum_bot3 = 0.0f32;
+    for by in 0..8 {
+        for bx in 0..8 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec3[(py * w + px) * 3];
+            if py < 32 {
+                sum_top3 += val;
+            } else {
+                sum_bot3 += val;
+            }
+        }
+    }
+    eprintln!("Average top: {:.4} (expected 0.25)", sum_top3 / 32.0);
+    eprintln!("Average bot: {:.4} (expected 0.75)", sum_bot3 / 32.0);
+}
+
+/// Test DCT32x32 on 32x32 two-value image (single DCT32 covers entire image)
+#[test]
+#[ignore]
+fn test_dct32x32_on_32x32_two_value() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    eprintln!("=== 32x32 two-value with force_strategy = DCT32x32 ===");
+    let mut enc = TinyEncoder::new(1.0);
+    enc.force_strategy = Some(4); // DCT32x32
+    let bytes = enc.encode(w, h, &linear).unwrap();
+    let (_, _, dec) = decode_jxl_oxide(&bytes);
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    eprintln!("Decoded block centers:");
+    for by in 0..4 {
+        for bx in 0..4 {
+            let px = bx * 8 + 4;
+            let py = by * 8 + 4;
+            let val = dec[(py * w + px) * 3];
+            eprint!("{:.4} ", val);
+        }
+        eprintln!(" (expected: {:.2})", if by < 2 { 0.25 } else { 0.75 });
+    }
+
+    // Compare to individual strategies
+    let configs = [
+        (Some(0), "DCT8"),
+        (Some(3), "DCT16x16"),
+        (Some(4), "DCT32x32"),
+        (None, "ac_strategy_enabled"),
+    ];
+
+    for (force_strat, name) in configs.iter() {
+        let mut enc = TinyEncoder::new(1.0);
+        if let Some(s) = force_strat {
+            enc.force_strategy = Some(*s);
+        } else {
+            enc.ac_strategy_enabled = true;
+        }
+        let bytes = enc.encode(w, h, &linear).unwrap();
+        let (_, _, dec) = decode_jxl_oxide(&bytes);
+
+        let mut max_err = 0.0f32;
+        for y in 0..h {
+            let expected = if y < 16 { 0.25 } else { 0.75 };
+            for x in 0..w {
+                let val = dec[(y * w + x) * 3];
+                let err = (val - expected).abs();
+                max_err = max_err.max(err);
+            }
+        }
+        eprintln!("{}: max_err = {:.4}", name, max_err);
+    }
+}
+
+/// Test DCT16x16 on 16x16 image with edge inside the block
+#[test]
+#[ignore]
+fn test_dct16x16_with_internal_edge() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // 16x16 image with edge at y=8 (inside single DCT16x16 block)
+    let w = 16usize;
+    let h = 16usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        let v = if y < 8 { 0.25 } else { 0.75 };
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    let configs: [(u8, &str); 2] = [(0, "DCT8"), (3, "DCT16x16")];
+
+    for (force_strat, name) in configs.iter() {
+        let mut enc = TinyEncoder::new(1.0);
+        enc.force_strategy = Some(*force_strat);
+        let bytes = enc.encode(w, h, &linear).unwrap();
+        let (_, _, dec) = decode_jxl_oxide(&bytes);
+
+        eprintln!("=== {} on 16x16 with edge at y=8 ===", name);
+        eprintln!("Encoded {} bytes", bytes.len());
+
+        // Sample all 4 quadrants
+        let tl = dec[(2 * w + 2) * 3]; // top-left
+        let tr = dec[(2 * w + 14) * 3]; // top-right
+        let bl = dec[(12 * w + 2) * 3]; // bottom-left
+        let br = dec[(12 * w + 14) * 3]; // bottom-right
+
+        eprintln!("  TL={:.4} TR={:.4} (expected 0.25)", tl, tr);
+        eprintln!("  BL={:.4} BR={:.4} (expected 0.75)", bl, br);
+
+        let err_tl = (tl - 0.25).abs();
+        let err_bl = (bl - 0.75).abs();
+        let max_err = err_tl.max(err_bl);
+        eprintln!("  Max error: {:.4}", max_err);
+    }
+}
+
+/// Test layer2 with different forced strategies to isolate DCT32x32 issue
+#[test]
+#[ignore]
+fn test_layer2_strategies_comparison() {
+    let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
+    assert_eq!(w, 256);
+    assert_eq!(h, 256);
+
+    let strategies: [(Option<u8>, &str); 5] = [
+        (Some(0), "DCT8"),
+        (Some(1), "DCT16x8"),
+        (Some(2), "DCT8x16"),
+        (Some(3), "DCT16x16"),
+        (Some(4), "DCT32x32"),
+    ];
+
+    for (force_strat, name) in strategies.iter() {
+        let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+        if let Some(s) = force_strat {
+            encoder.force_strategy = Some(*s);
+        }
+
+        let bytes = match encoder.encode(w, h, &linear) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}: encode failed: {:?}", name, e);
+                continue;
+            }
+        };
+
+        let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
+        assert_eq!(dw, w);
+        assert_eq!(dh, h);
+
+        let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
+        eprintln!("{}: {} bytes, SSIM2 = {:.2}", name, bytes.len(), ssim2);
+    }
+
+    // Also test with ac_strategy_enabled
+    eprintln!("\n--- With ac_strategy_enabled ---");
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    encoder.ac_strategy_enabled = true;
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    let (_, _, pixels) = decode_jxl_oxide(&bytes);
+    let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
+    eprintln!(
+        "ac_strategy_enabled: {} bytes, SSIM2 = {:.2}",
+        bytes.len(),
+        ssim2
+    );
 }
