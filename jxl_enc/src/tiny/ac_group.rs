@@ -156,14 +156,15 @@ fn coefficient_layout_order(rows: usize, cols: usize, llf_x: usize, llf_y: usize
 /// - 7 = DCT16X8 (16x8, 128 coeffs)
 /// - 12 = DCT4X8 (8x8 with 4x8 sub-blocks, 64 coeffs)
 /// - 13 = DCT8X4 (8x8 with 8x4 sub-blocks, 64 coeffs)
+/// - 3 = DCT4X4 (8x8 with 4x4 sub-blocks, 64 coeffs)
 pub fn get_coeff_order(strategy_code: u8) -> &'static [u32] {
     match strategy_code {
-        0 => &COEFF_ORDER_8X8,       // DCT8
-        4 => &COEFF_ORDER_16X16,     // DCT16X16
-        5 => &COEFF_ORDER_32X32,     // DCT32X32
-        6 | 7 => &COEFF_ORDER_8X16,  // DCT8X16, DCT16X8
-        12 | 13 => &COEFF_ORDER_8X8, // DCT4X8, DCT8X4 (64 coeffs like DCT8)
-        _ => &COEFF_ORDER_8X8,       // Default to 8x8 for unknown strategies
+        0 => &COEFF_ORDER_8X8,           // DCT8
+        3 | 12 | 13 => &COEFF_ORDER_8X8, // DCT4X4, DCT4X8, DCT8X4 (64 coeffs like DCT8)
+        4 => &COEFF_ORDER_16X16,         // DCT16X16
+        5 => &COEFF_ORDER_32X32,         // DCT32X32
+        6 | 7 => &COEFF_ORDER_8X16,      // DCT8X16, DCT16X8
+        _ => &COEFF_ORDER_8X8,           // Default to 8x8 for unknown strategies
     }
 }
 
@@ -274,10 +275,11 @@ use super::ac_strategy::{COVERED_X, STRATEGY_CODE_LUT};
 /// Get block size info for AC strategy.
 /// Returns (cx, cy, covered_blocks, log2_covered_blocks, strategy_code).
 ///
-/// Uses RAW strategy codes (0-6) as input, returns bitstream strategy code.
+/// Uses RAW strategy codes (0-7) as input, returns bitstream strategy code.
 pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
     // Covered blocks from the lookup tables
-    let covered_y: [usize; 7] = [1, 2, 1, 2, 4, 1, 1];
+    // 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32, 5=DCT4X8, 6=DCT8X4, 7=DCT4X4
+    let covered_y: [usize; 8] = [1, 2, 1, 2, 4, 1, 1, 1];
 
     let cx = COVERED_X[raw_strategy as usize];
     let cy = covered_y[raw_strategy as usize];

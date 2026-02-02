@@ -16,7 +16,9 @@
 
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
-use super::dct::{dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32};
+use super::dct::{
+    dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
+};
 use super::quant::quant_weights;
 
 /// Raw strategy codes matching the C++ `AcStrategy::Type` enum.
@@ -29,22 +31,23 @@ pub const RAW_STRATEGY_DCT16X16: u8 = 3;
 pub const RAW_STRATEGY_DCT32X32: u8 = 4;
 pub const RAW_STRATEGY_DCT4X8: u8 = 5;
 pub const RAW_STRATEGY_DCT8X4: u8 = 6;
+pub const RAW_STRATEGY_DCT4X4: u8 = 7;
 
 /// Number of supported raw strategies.
-pub const NUM_RAW_STRATEGIES: usize = 7;
+pub const NUM_RAW_STRATEGIES: usize = 8;
 
 /// Strategy code as written to the bitstream (via `StrategyCode()`).
 /// These differ from raw strategy codes.
-/// From libjxl ac_strategy.h: DCT=0, DCT16X16=4, DCT32X32=5, DCT16X8=6, DCT8X16=7,
+/// From libjxl ac_strategy.h: DCT=0, DCT4X4=3, DCT16X16=4, DCT32X32=5, DCT16X8=6, DCT8X16=7,
 /// DCT4X8=12, DCT8X4=13.
-pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] = [0, 6, 7, 4, 5, 12, 13];
+pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] = [0, 6, 7, 4, 5, 12, 13, 3];
 
 /// Covered blocks in X direction for each raw strategy.
-/// DCT4X8 and DCT8X4 cover 1×1 blocks (single 8x8 region).
-pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1];
+/// DCT4X8, DCT8X4, and DCT4X4 cover 1×1 blocks (single 8x8 region).
+pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1, 1];
 
 /// Covered blocks in Y direction for each raw strategy.
-const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1];
+const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1, 1];
 
 /// Per-block AC strategy map.
 ///
@@ -235,6 +238,14 @@ fn estimate_entropy(
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 64];
                 dct_8x4_full(&input, &mut output);
+                block[offset..offset + 64].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT4X4 => {
+                // 1 wide × 1 tall: 8×8 pixel region, four 4×4 transforms in 2×2 grid
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 64];
+                dct_4x4_full(&input, &mut output);
                 block[offset..offset + 64].copy_from_slice(&output);
             }
             _ => unreachable!(),
@@ -439,6 +450,13 @@ fn find_best_16x16_transform(
     let k4x8base: f32 = 1.3;
     let mul4x8 = k4x8mul2 + k4x8mul1 / (distance + k4x8base);
 
+    // DCT4X4: smallest transform for high-frequency/texture content.
+    // Similar tuning to DCT4X8 but slightly more aggressive (smaller multiplier).
+    let k4x4mul1: f32 = -0.45 * 0.75;
+    let k4x4mul2: f32 = 0.85; // Slightly lower than DCT4X8 to encourage usage
+    let k4x4base: f32 = 1.2;
+    let mul4x4 = k4x4mul2 + k4x4mul1 / (distance + k4x4base);
+
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
 
@@ -505,6 +523,22 @@ fn find_best_16x16_transform(
             );
             let cost8x4 = 3.0 * mul4x8 + mul4x8 * e8x4;
 
+            // DCT4X4 (four 4×4 transforms in 2×2 grid)
+            let e4x4 = estimate_entropy(
+                RAW_STRATEGY_DCT4X4,
+                xyb,
+                stride,
+                block_x,
+                block_y,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+            );
+            let cost4x4 = 3.0 * mul4x4 + mul4x4 * e4x4;
+
             // Pick the best single-block strategy
             *entropy_val = cost8;
             *best_strat = RAW_STRATEGY_DCT8;
@@ -516,6 +550,10 @@ fn find_best_16x16_transform(
             if cost8x4 < *entropy_val {
                 *entropy_val = cost8x4;
                 *best_strat = RAW_STRATEGY_DCT8X4;
+            }
+            if cost4x4 < *entropy_val {
+                *entropy_val = cost4x4;
+                *best_strat = RAW_STRATEGY_DCT4X4;
             }
         }
     }

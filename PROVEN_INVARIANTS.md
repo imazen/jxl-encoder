@@ -103,6 +103,57 @@ DctQuantWeightParams({{
 
 ---
 
+## Feature: DCT4X4 [COMPLETE]
+
+Target: Add DCT4X4 transform for fine detail encoding (four 4x4 sub-blocks per 8x8).
+Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
+Bitstream code: 3 (AcStrategyType::DCT4X4)
+Raw strategy code: 7 (RAW_STRATEGY_DCT4X4)
+
+### Proven Layers
+- [x] Layer 1: Forward transform `dct_4x4` (4-point transform, no final transpose for square)
+- [x] Layer 1: Full 8x8 coverage `dct_4x4_full` (four 4x4 sub-blocks in 2x2 grid)
+  - Interleaved layout: `output[(y + iy*2)*8 + x + ix*2]`
+  - DC combining: 2x2 DCT on four sub-block DCs
+- [x] Layer 1: DC extraction `dc_from_dct_4x4_full` (returns coeffs[0])
+- [x] Layer 2: Quant weights - parametric generation from DCT4_BAND_PARAMS
+  - 4x4 base matrix replicated 2x2 to 8x8
+  - LLF adjustments at positions 1,8 (÷params[0]) and 9 (÷params[1])
+  - Weights reciprocated to match QUANT_WEIGHTS convention
+- [x] Layer 2: Strategy codes and selection
+  - RAW_STRATEGY_DCT4X4 (7) added to ac_strategy.rs
+  - STRATEGY_CODE_LUT updated: code 3 for DCT4X4
+  - COVERED_X/COVERED_Y: 1×1 coverage
+  - Strategy selection logic with distance-dependent multiplier
+- [x] Layer 2: Block context map
+  - order_id=1 (same as DCT4X8, DCT8X4)
+  - X/B channels: block_ctx=2, Y channel: block_ctx=0
+  - BLOCK_CONTEXT_MAP[3] entries updated for all channels
+- [x] Layer 3: jxl-oxide decodes without error
+  - `test_dct4x4_jxl_oxide_decode` - 64x64 quadrant pattern - PASSES
+- [x] Layer 3: jxl-rs decodes without error
+  - `test_dct4x4_jxl_rs_decode` - 64x64 gradient - PASSES
+- [x] Layer 3: Multi-group support
+  - `test_dct4x4_multigroup` - 512x512 checkerboard - PASSES
+- [ ] Layer 4: Quality metrics (TODO - run RD regression with DCT4X4 enabled)
+
+### Reference Constants
+```rust
+// DCT4 band parameters (from jxl-oxide dequant.rs and libjxl)
+const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
+    [2200.0, 0.0, 0.0, 0.0],      // X channel
+    [392.0, 0.0, 0.0, 0.0],       // Y channel
+    [112.0, -0.25, -0.25, -0.5],  // B channel
+];
+// Bitstream code 3, order_id 1
+```
+
+### Test Files
+- `jxl_enc/tests/dct4x8_diagnostic.rs`: test_dct4x4_* functions
+- `jxl_enc/src/tiny/dct.rs`: dct_4x4, dct_4x4_full, dc_from_dct_4x4_full
+
+---
+
 ## Completed Features
 
 (Move features here when all layers are proven and merged)

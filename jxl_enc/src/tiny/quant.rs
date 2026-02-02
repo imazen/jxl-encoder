@@ -15,8 +15,8 @@ use std::sync::LazyLock;
 
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
-/// 5 = DCT4X8, 6 = DCT8X4
-pub const NUM_VALID_STRATEGIES: usize = 7;
+/// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4
+pub const NUM_VALID_STRATEGIES: usize = 8;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -541,6 +541,103 @@ static QUANT_WEIGHTS_DCT4X8: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_
 /// Same parametric formula as DCT4X8.
 static QUANT_WEIGHTS_DCT8X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_weights);
 
+/// DCT4X4 band parameters from jxl-oxide dequant.rs:49-53.
+/// 4 distance bands per channel.
+const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
+    // X channel
+    [2200.0, 0.0, 0.0, 0.0],
+    // Y channel
+    [392.0, 0.0, 0.0, 0.0],
+    // B channel
+    [112.0, -0.25, -0.25, -0.5],
+];
+
+/// DCT4X4 LLF multiplier parameters from jxl-oxide dequant.rs:257-277.
+/// params[0] is used for LLF positions 1 and 8.
+/// params[1] is used for LLF position 9.
+const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
+    // X channel
+    [1.0, 1.0],
+    // Y channel
+    [1.0, 1.0],
+    // B channel
+    [1.0, 1.0],
+];
+
+/// Generate DCT4X4 quantization weights using parametric formula.
+/// Matches jxl-oxide's dequant.rs:257-277 (Dct4 case).
+///
+/// Process:
+/// 1. Generate 4x4 weight matrix using parametric bands
+/// 2. Replicate each weight to a 2x2 region in the 8x8 output
+/// 3. Apply LLF divisors to positions 1, 8, 9
+/// 4. Reciprocate to match QUANT_WEIGHTS convention (encoder uses 1/weight)
+fn generate_dct4x4_weights() -> Vec<f32> {
+    let mut weights = Vec::with_capacity(192);
+    let sqrt2 = core::f64::consts::SQRT_2;
+
+    for (c, params) in DCT4_BAND_PARAMS.iter().enumerate() {
+        // Build bands from parameters
+        let mut bands = vec![params[0]];
+        let mut last = params[0];
+        for &v in &params[1..] {
+            last *= band_mult(v);
+            bands.push(last);
+        }
+
+        // Generate 4x4 base matrix
+        let size = 4usize;
+        let mut mat_4x4 = vec![0.0f64; size * size];
+
+        for y in 0..size {
+            let dy = y as f64 / (size - 1).max(1) as f64;
+            for x in 0..size {
+                let dx = x as f64 / (size - 1).max(1) as f64;
+                let distance = (dx * dx + dy * dy).sqrt();
+                let scaled = distance * (bands.len() - 1) as f64 / (sqrt2 + 1e-6);
+                let weight = interpolate_band(scaled, &bands);
+                mat_4x4[y * size + x] = weight;
+            }
+        }
+
+        // Build 8x8 output by replicating each 4x4 weight to a 2x2 region
+        // Layout: mat_4x4[y*4+x] maps to output positions:
+        //   [y*16 + x*2], [y*16 + x*2 + 1], [(y*2+1)*8 + x*2], [(y*2+1)*8 + x*2 + 1]
+        let mut channel_weights = vec![0.0f64; 64];
+        for y in 0..4 {
+            for x in 0..4 {
+                let w = mat_4x4[y * 4 + x];
+                // Top-left of 2x2
+                channel_weights[y * 16 + x * 2] = w;
+                // Top-right of 2x2
+                channel_weights[y * 16 + x * 2 + 1] = w;
+                // Bottom-left of 2x2
+                channel_weights[(y * 2 + 1) * 8 + x * 2] = w;
+                // Bottom-right of 2x2
+                channel_weights[(y * 2 + 1) * 8 + x * 2 + 1] = w;
+            }
+        }
+
+        // Apply LLF divisors (jxl-oxide divides positions 1, 8 by params[0], position 9 by params[1])
+        channel_weights[1] /= DCT4_LLF_PARAMS[c][0];
+        channel_weights[8] /= DCT4_LLF_PARAMS[c][0];
+        channel_weights[9] /= DCT4_LLF_PARAMS[c][1];
+
+        // Reciprocate: parametric generates dequant weights, we need quant weights
+        for w in &channel_weights {
+            weights.push((1.0 / w) as f32);
+        }
+    }
+
+    weights
+}
+
+/// Lazily-generated DCT4X4 quantization weights (192 floats: 64 per channel).
+///
+/// Uses parametric formula matching jxl-oxide decoder. The decoder expects
+/// 2x2-replicated coefficients, so weights are replicated from a 4x4 base.
+static QUANT_WEIGHTS_DCT4X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x4_weights);
+
 /// Get the quantization weight table for a given strategy and channel.
 ///
 /// # Arguments
@@ -570,6 +667,12 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
         // DCT8X4: use special weights with boosted position 8
         let offset = channel * DCT_BLOCK_SIZE;
         return &QUANT_WEIGHTS_DCT8X4[offset..offset + DCT_BLOCK_SIZE];
+    }
+
+    if strategy == 7 {
+        // DCT4X4: use 2x2 replicated weights with LLF adjustments
+        let offset = channel * DCT_BLOCK_SIZE;
+        return &QUANT_WEIGHTS_DCT4X4[offset..offset + DCT_BLOCK_SIZE];
     }
 
     let idx = strategy * 3 + channel;

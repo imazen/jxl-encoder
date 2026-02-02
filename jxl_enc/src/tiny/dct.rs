@@ -407,6 +407,105 @@ pub fn dc_from_dct_8x4_full(coeffs: &[f32; 64]) -> f32 {
     coeffs[0]
 }
 
+/// Compute base 4x4 DCT.
+///
+/// Input: 4x4 = 16 floats in row-major order (stride 4)
+/// Output: 16 DCT coefficients
+///
+/// Based on libjxl's ComputeScaledDCT<4, 4>. Since ROWS == COLS (square),
+/// there is NO final transpose.
+pub fn dct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
+    let mut tmp = [0.0f32; 16];
+
+    // Transform rows with 4-point DCT
+    for row in 0..4 {
+        let row_start = row * 4;
+        tmp[row_start..row_start + 4].copy_from_slice(&input[row_start..row_start + 4]);
+        dct1d_4(&mut tmp[row_start..row_start + 4]);
+        for i in 0..4 {
+            tmp[row_start + i] *= 1.0 / 4.0;
+        }
+    }
+
+    // Transpose 4x4
+    let mut transposed = [0.0f32; 16];
+    for row in 0..4 {
+        for col in 0..4 {
+            transposed[col * 4 + row] = tmp[row * 4 + col];
+        }
+    }
+
+    // Transform columns (now rows after transpose) with 4-point DCT
+    for row in 0..4 {
+        let row_start = row * 4;
+        dct1d_4(&mut transposed[row_start..row_start + 4]);
+        for i in 0..4 {
+            transposed[row_start + i] *= 1.0 / 4.0;
+        }
+    }
+
+    // No final transpose for square blocks (ROWS >= COLS in libjxl)
+    // Output is in transposed layout
+    output.copy_from_slice(&transposed);
+}
+
+/// Compute full DCT4X4 transform for 8x8 pixel block.
+///
+/// This covers an 8x8 pixel region using FOUR 4x4 sub-blocks arranged in a 2x2 grid.
+/// The DC values of the four sub-blocks are combined with a 2x2 DCT.
+///
+/// Input: 8x8 = 64 floats in row-major order (stride 8)
+/// Output: 64 DCT coefficients in interleaved layout
+///
+/// Matches libjxl's Type::DCT4X4 case in enc_transforms-inl.h
+pub fn dct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
+    // Process four 4x4 sub-blocks in 2x2 grid
+    for y in 0..2 {
+        for x in 0..2 {
+            // Extract 4x4 sub-block
+            let mut block = [0.0f32; 16];
+            for iy in 0..4 {
+                for ix in 0..4 {
+                    block[iy * 4 + ix] = input[(y * 4 + iy) * 8 + (x * 4 + ix)];
+                }
+            }
+
+            // Apply base 4x4 DCT
+            let mut coeffs = [0.0f32; 16];
+            dct_4x4(&block, &mut coeffs);
+
+            // Interleave into output: coefficients[(y + iy * 2) * 8 + x + ix * 2]
+            for iy in 0..4 {
+                for ix in 0..4 {
+                    output[(y + iy * 2) * 8 + x + ix * 2] = coeffs[iy * 4 + ix];
+                }
+            }
+        }
+    }
+
+    // Combine DC values of the four sub-blocks with 2x2 DCT
+    // Sub-block DCs are at positions: (0,0)->0, (0,1)->1, (1,0)->8, (1,1)->9
+    let block00 = output[0];
+    let block01 = output[1];
+    let block10 = output[8];
+    let block11 = output[9];
+
+    // 2x2 DCT: same as libjxl's DC combining
+    output[0] = (block00 + block01 + block10 + block11) * 0.25;
+    output[1] = (block00 + block01 - block10 - block11) * 0.25;
+    output[8] = (block00 - block01 + block10 - block11) * 0.25;
+    output[9] = (block00 - block01 - block10 + block11) * 0.25;
+}
+
+/// Extract DC value from DCT4X4 full transform coefficients.
+///
+/// For DCT4X4, the 8x8 block has a 2x2 LLF region at positions [0,1,8,9].
+/// The DC (average) is at position [0].
+#[inline]
+pub fn dc_from_dct_4x4_full(coeffs: &[f32; 64]) -> f32 {
+    coeffs[0]
+}
+
 /// Compute scaled 16x8 DCT (16 rows, 8 columns).
 ///
 /// Input: 16x8 block in row-major order (128 floats)
