@@ -17,3 +17,11 @@ A/B comparison on 5 clic2025-1024 images confirmed CfL provides ~1.3% average fi
 ## 2026-02-02: Noise synthesis implementation
 
 User requested noise synthesis for the tiny encoder. Plan was pre-approved. Ported from libjxl enc_noise.cc + enc_optimize.h. Implementation adds noise estimation (SAD-based flat patch detection, Laplacian noise measurement, SCG optimizer for 8-point LUT fitting), bitstream encoding (8×10-bit LUT in LfGlobal before dequant DC), frame header ENABLE_NOISE flag, and --noise CLI flag (opt-in, matching libjxl default). Verified with djxl (1024x1024 CLIC photo) and jxl-oxide (5 roundtrip tests). All 545 tests pass.
+
+## 2026-02-02: Gaborish inverse implementation
+
+User requested gaborish inverse pre-filter for the tiny encoder. Plan was pre-approved. Ported from libjxl enc_gaborish.cc. Implementation adds 5x5 symmetric sharpening kernel (butteraugli-optimized, NOT mathematical inverse of decoder blur) applied to XYB channels after denoise and before adaptive quant. Signals gab=1 in frame header so decoder applies its 3x3 blur post-filter. Default-on (matching libjxl VarDCT), --no-gaborish CLI flag to disable.
+
+Also fixed a pre-existing bug: when epf_iters==2 (distances 1.5-4.0), the frame header wrote all_default=1 which implies gab=true, but no encoder-side inverse was applied. The decoder was blurring our output without compensation.
+
+Quality results on CLIC 2025 at d=1.0: ON=80.9 SSIM2/1.85 butteraugli/513KB, OFF=76.4 SSIM2/2.39 butteraugli/344KB. Significant quality improvement (+4.5 SSIM2, -0.54 butteraugli) at cost of ~49% larger files. Verified with djxl and jxl-oxide. All 550 tests pass.

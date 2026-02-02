@@ -72,6 +72,11 @@ struct Args {
     #[arg(long)]
     denoise: bool,
 
+    /// Disable gaborish inverse pre-filter (on by default).
+    /// Without gaborish, the decoder skips its 3x3 blur post-filter.
+    #[arg(long)]
+    no_gaborish: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -141,6 +146,9 @@ fn main() {
                 }
                 if args.denoise {
                     tiny.enable_denoise = true;
+                }
+                if args.no_gaborish {
+                    tiny.enable_gaborish = false;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder

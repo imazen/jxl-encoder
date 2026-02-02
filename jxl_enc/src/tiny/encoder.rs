@@ -35,6 +35,7 @@ use super::entropy_code::{
     write_tokens, write_tokens_ans,
 };
 use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
+use super::gaborish::gaborish_inverse;
 use super::noise::{
     NoiseParams, denoise_xyb, estimate_noise_params, noise_quality_coef, write_noise_params,
 };
@@ -169,6 +170,12 @@ pub struct TinyEncoder {
     /// Provides 1-8% file size savings with near-zero Butteraugli quality impact.
     /// Off by default (libjxl does not have a denoising pre-filter).
     pub enable_denoise: bool,
+    /// Enable gaborish inverse pre-filter.
+    /// When true (default), applies a 5x5 sharpening kernel to XYB before DCT
+    /// and signals gab=1 in the frame header. The decoder applies a 3x3 blur
+    /// to compensate, reducing blocking artifacts.
+    /// Matches the libjxl VarDCT encoder default.
+    pub enable_gaborish: bool,
 }
 
 impl Default for TinyEncoder {
@@ -184,6 +191,7 @@ impl Default for TinyEncoder {
             force_strategy: None,
             enable_noise: false,
             enable_denoise: false,
+            enable_gaborish: true,
         }
     }
 }
@@ -202,6 +210,7 @@ impl TinyEncoder {
             force_strategy: None,
             enable_noise: false,
             enable_denoise: false,
+            enable_gaborish: true,
         }
     }
 
@@ -271,6 +280,18 @@ impl TinyEncoder {
         } else {
             None
         };
+
+        // Apply gaborish inverse (5x5 sharpening) before adaptive quant.
+        // The decoder will apply a 3x3 blur to compensate.
+        if self.enable_gaborish {
+            gaborish_inverse(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                padded_width,
+                padded_height,
+            );
+        }
 
         // Compute adaptive per-block quantization field and masking.
         // Pass padded dimensions: XYB buffers have stride=padded_width, and all
@@ -397,6 +418,7 @@ impl TinyEncoder {
             params.x_qm_scale,
             params.epf_iters,
             noise_params.is_some(),
+            self.enable_gaborish,
             &mut writer,
         )?;
         #[cfg(feature = "debug-tokens")]
@@ -2041,6 +2063,7 @@ impl TinyEncoder {
             params.x_qm_scale,
             params.epf_iters,
             noise_params.is_some(),
+            self.enable_gaborish,
             &mut writer,
         )?;
 
@@ -2355,8 +2378,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: ANS is now default (was Huffman)
-        const EXPECTED_HASH: u64 = 0xaf35e0d9055346c8;
+        // Updated: gaborish inverse enabled by default
+        const EXPECTED_HASH: u64 = 0x53a52433cdc811d4;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2379,8 +2402,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: ANS is now default (was Huffman)
-        const EXPECTED_HASH: u64 = 0xa822ef2562297a8c;
+        // Updated: gaborish inverse enabled by default
+        const EXPECTED_HASH: u64 = 0xea5d762e171b78dc;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2415,8 +2438,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: ANS is now default (was Huffman)
-        const EXPECTED_HASH: u64 = 0x856339fb992ed8e2;
+        // Updated: gaborish inverse enabled by default
+        const EXPECTED_HASH: u64 = 0x6db9f8107ab85117;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2446,8 +2469,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: ANS is now default (was Huffman)
-        const EXPECTED_HASH: u64 = 0x38d4d1318223483d;
+        // Updated: gaborish inverse enabled by default
+        const EXPECTED_HASH: u64 = 0x5ed333833314fda9;
         assert_eq!(
             hash,
             EXPECTED_HASH,
