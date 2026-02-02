@@ -100,8 +100,14 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 **Tier 2: Quality and specialized wins**
 
 - [x] **Gaborish inverse** — Working! Default-on, `--no-gaborish` to disable.
-  5x5 sharpening pre-filter, decoder applies 3x3 blur to compensate. On CLIC 2025
-  at d=1.0: +4.5 SSIM2 (76.4→80.9), -0.54 butteraugli (2.39→1.85), +49% file size.
+  5x5 sharpening pre-filter, decoder applies 3x3 blur to compensate. Includes
+  libjxl's 0.62x distance scaling for adaptive quant when gab is off.
+  CLIC 2025 d=1.0: gab_on=514KB/80.9 SSIM2/1.85 bfly, gab_off=538KB/81.4/1.77.
+  libjxl comparison: gab_on(e5)=518KB/80.7/2.02, gab_off(e4)=551KB/81.8/1.78.
+  **Pareto note**: Gab ON loses ~0.5 SSIM2 and ~0.08 butteraugli vs gab OFF on
+  this image. libjxl shows similar pattern. The tradeoff is perceptual artifact
+  reduction (blocking, ringing) which metrics don't fully capture. Revisit if
+  pareto efficiency is a concern — may need per-image or per-distance tuning.
   Verified with djxl and jxl-oxide.
 - [x] **Noise synthesis** — Working! Use `--noise` flag. Estimates noise from XYB
   image, encodes 8-point LUT (80 bits). Verified with djxl and jxl-oxide.
