@@ -391,7 +391,41 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-(none)
+### DCT32x32 DC Extraction Bug (WORKAROUND IN PLACE)
+
+**Status**: DCT32x32 selection is DISABLED in `ac_strategy.rs` until fixed.
+
+**Symptom**: Multi-block DCT32x32 encoding produces catastrophic quality (SSIM2 = -67).
+Single 16x16 blocks work fine (SSIM2 = 72+), but 256x256 images with DCT32x32 fail.
+
+**Root Cause**: `dc_from_dct_32x32()` in `dct.rs` uses a 4-point IDCT to convert the
+4x4 LLF region to DC values. The 4-point IDCT cannot accurately represent step
+functions at position 2 (mid-point). When the 4x4 LLF region has multiple non-zero
+coefficients (especially position [0,1], [1,0], [1,1]), the IDCT produces DC values
+outside the expected range, including negative values for what should be positive
+block averages.
+
+**Evidence** (from `diag_dct32x32_forward_idct_roundtrip` test):
+```
+Expected 8x8 block averages:
+  row 0: 0.109375 0.234375 0.359375 0.484375
+  row 3: 0.484375 0.609375 0.734375 0.859375
+DC values from dc_from_dct_32x32 (WRONG):
+  row 0: -0.050761 0.133005 0.300610 0.484375
+  row 3: 0.484375 0.668140 0.835746 1.019511
+```
+
+**Why DCT16x16 works**: The 2-point IDCT exactly represents step functions (position
+0 = average, position 1 = half-difference). DCT32x32's 4-point IDCT has Gibbs
+phenomenon at the mid-point discontinuity.
+
+**Workaround**: `find_best_32x32_transform()` now returns false immediately after
+running the 16x16 evaluations, never selecting DCT32x32. The four DCT16x16 (or
+smaller) transforms are used instead.
+
+**Fix Required**: The `dc_from_dct_32x32()` function needs a different approach to
+DC extraction that doesn't rely on a simple 4-point IDCT. Possibly needs the full
+8x8 IDCT approach used by larger transforms, or a different mathematical formulation.
 
 ## Investigation Notes
 

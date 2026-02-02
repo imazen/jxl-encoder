@@ -554,7 +554,7 @@ fn find_best_16x16_transform(
 /// Returns true if DCT32x32 was selected.
 ///
 /// Only call when `bx + 3 < xsize_blocks && by + 3 < ysize_blocks`.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, unreachable_code)]
 fn find_best_32x32_transform(
     xyb: [&[f32]; 3],
     stride: usize,
@@ -615,6 +615,13 @@ fn find_best_32x32_transform(
             );
         }
     }
+
+    // WORKAROUND: Disable DCT32x32 selection - dc_from_dct_32x32 produces wrong
+    // DC values for multi-block images (4-point IDCT cannot represent step functions
+    // at position 2). See CLAUDE.md "Known Bugs" for details. Fall back to the four
+    // 16x16 evaluations which work correctly.
+    let _ = entropy_32x32; // suppress unused warning
+    return false;
 
     // Compute the combined cost of the four 16x16 sub-evaluations.
     // We need to re-estimate using whatever strategies were selected.
