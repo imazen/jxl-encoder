@@ -1,5 +1,46 @@
 # INVESTIGATION.md
 
+## 2026-02-02: Quantization Calibration Gap vs libjxl
+
+### Status: ACTIVE
+
+### Problem Statement
+
+At the same distance parameter, our encoder produces 10-15% smaller files but 1-6 SSIM2 points worse quality compared to cjxl. The gap grows with distance:
+
+| Distance | Size vs e7  | Quality vs e5 | Notes |
+|----------|-------------|---------------|-------|
+| d=1.0    | -13% smaller| -1.2 SSIM2    | Close |
+| d=2.0    | -13% smaller| -2.4 SSIM2    | Gap growing |
+| d=4.0    | -10% smaller| -3.5 SSIM2    | Significant |
+
+Comparison baseline: cjxl e5 (Hare) has similar feature set to ours (DCT8 + some larger blocks, no error diffusion/splines/patches).
+
+### Key Observation
+
+The gap is NOT from missing features. Comparing e5→e7 shows only ~1 SSIM2 improvement from advanced features (error diffusion, splines, patches) at d=1.0. The gap we see vs e5 must be from quantization calibration differences.
+
+### Hypotheses (to investigate)
+
+1. **[THREAD] global_scale calibration** — `DistanceParams::compute()` may produce different `global_scale` than libjxl
+2. **[THREAD] quant_dc calibration** — DC quantization step might differ
+3. **[THREAD] Adaptive quantization masking** — Per-block `raw_quant` values differ in distribution
+4. **[THREAD] AC strategy cost model** — We merge blocks too aggressively, picking larger transforms when smaller would preserve detail
+5. **[THREAD] Coefficient thresholding** — `QuantizeBlockAC` threshold zeros too many coefficients
+6. **[THREAD] Gaborish interaction** — Our sharpening kernel differs subtly from libjxl's
+
+### Investigation Log
+
+(Updates below)
+
+---
+
+### Frymire Bug (Separate Issue)
+
+Frymire (1118x1105) shows catastrophic 13 SSIM2 gap at d=1.0 (74 vs 87) with 23% smaller files. This is NOT the same calibration issue — it's a specific bug with that image. Will investigate separately after general calibration gap is understood.
+
+---
+
 ## 2026-01-30: Tiny Encoder Quality Ceiling — SSIM2 Plateaus at ~82.5
 
 ### Status: RESOLVED (adaptive quantization ported, commit b7b80fd)
