@@ -2,31 +2,40 @@
 
 ## Project Overview
 
-This is a work-in-progress Rust implementation of a JPEG XL encoder, being ported from libjxl (C++ reference implementation).
+This is a work-in-progress Rust implementation of a JPEG XL encoder.
+
+**Reference Target: Full libjxl** — We started by porting libjxl-tiny as a stepping stone,
+but now target full libjxl quality and feature parity. libjxl-tiny was useful for initial
+correctness verification, but is no longer the reference for quality comparisons or new features.
 
 ## Reference Implementations
 
-- **libjxl (C++)**: `~/work/jxl-efforts/libjxl` - The reference encoder/decoder
-- **libjxl-tiny (C++)**: `~/work/libjxl-tiny` - Simplified encoder being ported
-  - Tracking document: [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md)
-  - Port location: `jxl_enc/src/tiny/`
+- **libjxl (C++)**: `~/work/jxl-efforts/libjxl` - **PRIMARY** reference encoder/decoder
+  - Use cjxl for quality comparisons and RD benchmarks
+  - Use djxl for decode verification
+- **libjxl-tiny (C++)**: `~/work/libjxl-tiny` - Historical stepping stone (DO NOT USE FOR REFERENCE)
+  - Was used for initial port verification, now superseded
+  - See [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md) for historical port details
 - **jxl-rs (Rust decoder)**: `~/work/jxl-rs` - **PRIMARY** Rust decoder for roundtrip tests
   - GitHub: https://github.com/lilith/jxl-rs (more conformant and complete)
 - **jxl-oxide (Rust decoder)**: `~/work/jxl-efforts/jxl-oxide` - Alternative Rust decoder
 
-## CRITICAL: libjxl-tiny vs cjxl (full libjxl)
+## IMPORTANT: Reference Target is libjxl, NOT libjxl-tiny
 
-**NEVER compare libjxl-tiny output with cjxl output. They are completely different encoders.**
+**libjxl-tiny was a stepping stone. It is no longer the reference for quality or features.**
 
-- **libjxl-tiny** uses: 32-bit float samples, specific file header format, static Huffman codes, simplified VarDCT
-- **cjxl (full libjxl)** uses: different sample format, different header structure, ANS entropy coding, full feature set
+Quality comparisons should use cjxl (full libjxl) as the baseline. libjxl-tiny produces
+lower quality at the same distance parameter due to different quantization constants and
+lack of advanced features (error diffusion, better cost models, etc.).
 
-When debugging the tiny encoder port:
-1. **ONLY compare against libjxl-tiny output** (build it first if needed)
-2. **NEVER use cjxl as a reference** for byte-level comparison
-3. Both produce valid JXL, but the bitstreams are structurally different
+**DO NOT:**
+- Compare our output with libjxl-tiny for quality assessment
+- Use libjxl-tiny constants or algorithms without checking full libjxl
 
-To build libjxl-tiny: `cd ~/work/libjxl-tiny && mkdir -p build && cd build && cmake -GNinja -DBUILD_TESTING=OFF .. && ninja`
+**DO:**
+- Compare RD curves against cjxl at effort 5-7 (Hare/Wombat/Squirrel)
+- Read full libjxl source for algorithm details
+- Use djxl for decode verification (works for both)
 
 ## IMPORTANT: Decoder Testing Priority
 
@@ -39,13 +48,21 @@ To build libjxl-tiny: `cd ~/work/libjxl-tiny && mkdir -p build && cd build && cm
 When adding or modifying roundtrip tests, ensure BOTH jxl-rs and djxl are tested.
 Never omit jxl-rs from decoder validation.
 
-## Current Status: libjxl-tiny Parity Achieved
+## Current Status: Approaching libjxl Quality
 
-The tiny encoder (`jxl_enc/src/tiny/`) is the production encoder. It matches or beats
-C++ libjxl-tiny on every axis: +0.3-1.3 SSIM2 better quality, 14-26% smaller files
-(dynamic Huffman codes). See [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md) for port details.
+The tiny encoder (`jxl_enc/src/tiny/`) is the production encoder. It started as a port
+of libjxl-tiny but now targets full libjxl quality. Current RD position vs cjxl e7:
 
-### What Works (libjxl-tiny profile)
+| Distance | Our Size | Our SSIM2 | cjxl Size | cjxl SSIM2 | Gap |
+|----------|----------|-----------|-----------|------------|-----|
+| d=1.0    | 514KB    | 80.9      | 520KB     | 80.7       | **+0.2 SSIM2** |
+| d=2.0    | 209KB    | 68.3      | 189KB     | 69.2       | -0.9 SSIM2 |
+| d=4.0    | 104KB    | 52.9      | 90KB      | 55.4       | -2.5 SSIM2 |
+
+We match or beat cjxl at d≤1.0, but lose at higher distances. The gap is due to missing
+features (DCT4x8, error diffusion) and quantization calibration differences.
+
+### What Works
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)

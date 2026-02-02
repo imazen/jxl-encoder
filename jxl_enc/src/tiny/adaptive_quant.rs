@@ -557,8 +557,121 @@ fn per_block_modulations(
 
 /// Compute the adaptive quantization field for the entire image.
 ///
+/// Compute the float quant field and masking without converting to u8.
+///
+/// Returns `(quant_field_float, masking)`:
+/// - `quant_field_float`: Per-block float quant values for content-adaptive global_scale
+/// - `masking`: Per-block masking values for AC strategy selection
+///
+/// Use `quantize_quant_field()` to convert float field to u8 raw_quant after
+/// computing global_scale from the float field statistics.
+///
+/// # Arguments
+/// * `xyb_x`, `xyb_y`, `xyb_b` - XYB color planes, flat row-major `[y * width + x]`
+/// * `width`, `height` - image dimensions in pixels
+/// * `xsize_blocks`, `ysize_blocks` - image dimensions in 8×8 blocks
+/// * `distance` - butteraugli target distance
+#[allow(clippy::too_many_arguments)]
+pub fn compute_quant_field_float(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    width: usize,
+    height: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    distance: f32,
+) -> (Vec<f32>, Vec<f32>) {
+    const K_AC_QUANT: f32 = 0.8294;
+    let scale = K_AC_QUANT / distance;
+
+    // Process the entire image as one tile.
+    let tile_x0_pixels = 0;
+    let tile_y0_pixels = 0;
+
+    // Step 1: Compute pre-erosion (4x downsample of local differences)
+    let (pre_erosion, pre_erosion_w, pre_erosion_h) = compute_pre_erosion(
+        xyb_x,
+        xyb_y,
+        width,
+        height,
+        tile_x0_pixels,
+        tile_y0_pixels,
+        width,
+        height,
+    );
+
+    // Step 2: Fuzzy erosion (3×3 min-4 weighted sum, 2x downsample)
+    let from_x0 = if tile_x0_pixels > 0 { 1 } else { 0 };
+    let from_y0 = if tile_y0_pixels > 0 { 1 } else { 0 };
+    let erosion_region_w = (xsize_blocks * 2).min(pre_erosion_w.saturating_sub(from_x0));
+    let erosion_region_h = (ysize_blocks * 2).min(pre_erosion_h.saturating_sub(from_y0));
+
+    let (mut aq_map, aq_map_w, _aq_map_h) = fuzzy_erosion(
+        &pre_erosion,
+        pre_erosion_w,
+        pre_erosion_h,
+        from_x0,
+        from_y0,
+        erosion_region_w,
+        erosion_region_h,
+    );
+
+    // Step 2.5: Compute masking field for AC strategy use (snapshot before modulations)
+    let mut masking = vec![0.0f32; xsize_blocks * ysize_blocks];
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            masking[by * xsize_blocks + bx] =
+                compute_mask_for_ac_strategy_use(aq_map[by * aq_map_w + bx]);
+        }
+    }
+
+    // Step 3: Per-block modulations
+    per_block_modulations(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        width,
+        distance,
+        scale,
+        0,
+        0,
+        xsize_blocks,
+        ysize_blocks,
+        &mut aq_map,
+        aq_map_w,
+    );
+
+    // Step 4: Extract compact float quant field
+    let mut quant_field_float = vec![0.0f32; xsize_blocks * ysize_blocks];
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            quant_field_float[by * xsize_blocks + bx] = aq_map[by * aq_map_w + bx];
+        }
+    }
+
+    (quant_field_float, masking)
+}
+
+/// Convert float quant field to u8 raw_quant values.
+///
+/// raw_quant = clamp(round(quant_field * inv_scale + 0.5), 1, 255)
+pub fn quantize_quant_field(quant_field_float: &[f32], inv_scale: f32) -> Vec<u8> {
+    quant_field_float
+        .iter()
+        .map(|&qf| {
+            let val = (qf * inv_scale + 0.5).round() as i32;
+            clamp(val, 1, 255) as u8
+        })
+        .collect()
+}
+
 /// Returns a flat buffer of `u8` values, indexed as `[by * xsize_blocks + bx]`.
 /// Each value is the per-block raw_quant in range [1, 255].
+///
+/// This is a convenience wrapper that calls `compute_quant_field_float()` then
+/// `quantize_quant_field()`. For content-adaptive global_scale, use those two
+/// functions separately.
 ///
 /// # Arguments
 /// * `xyb_x`, `xyb_y`, `xyb_b` - XYB color planes, flat row-major `[y * width + x]`
@@ -578,89 +691,17 @@ pub fn compute_adaptive_quant_field(
     distance: f32,
     inv_scale: f32,
 ) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
-    // Returns (raw_quant_u8, masking, quant_field_float)
-    // quant_field_float contains the float aq_map values that C++ passes
-    // to EstimateEntropy. These are NOT the same as raw_quant cast to f32!
-    // raw_quant = clamp(round(aq_map * inv_scale), 1, 255)
-    const K_AC_QUANT: f32 = 0.8294;
-    let scale = K_AC_QUANT / distance;
-
-    // Process the entire image as one tile.
-    // The caller passes padded dimensions (width = xsize_blocks * 8, height = ysize_blocks * 8),
-    // matching the edge-replicated XYB buffer stride. compute_pre_erosion keeps .min() clamping
-    // for its x±1/y±1 neighbor accesses at the buffer boundary.
-    let tile_x0_pixels = 0;
-    let tile_y0_pixels = 0;
-
-    // Step 1: Compute pre-erosion (4x downsample of local differences)
-    let (pre_erosion, pre_erosion_w, pre_erosion_h) = compute_pre_erosion(
-        xyb_x,
-        xyb_y,
-        width,
-        height,
-        tile_x0_pixels,
-        tile_y0_pixels,
-        width,
-        height,
-    );
-
-    // Step 2: Fuzzy erosion (3×3 min-4 weighted sum, 2x downsample)
-    // The from_rect in C++ is computed based on padding:
-    // from_rect starts at (1,1) if padded, (0,0) otherwise
-    // Region is 2 * xsize_blocks × 2 * ysize_blocks
-    let from_x0 = if tile_x0_pixels > 0 { 1 } else { 0 };
-    let from_y0 = if tile_y0_pixels > 0 { 1 } else { 0 };
-    let erosion_region_w = (xsize_blocks * 2).min(pre_erosion_w.saturating_sub(from_x0));
-    let erosion_region_h = (ysize_blocks * 2).min(pre_erosion_h.saturating_sub(from_y0));
-
-    let (mut aq_map, aq_map_w, _aq_map_h) = fuzzy_erosion(
-        &pre_erosion,
-        pre_erosion_w,
-        pre_erosion_h,
-        from_x0,
-        from_y0,
-        erosion_region_w,
-        erosion_region_h,
-    );
-
-    // Step 2.5: Compute masking field for AC strategy use (snapshot before modulations)
-    // In C++, this is: mask[y][x] = ComputeMaskForAcStrategyUse(aq_map[y][x])
-    let mut masking = vec![0.0f32; xsize_blocks * ysize_blocks];
-    for by in 0..ysize_blocks {
-        for bx in 0..xsize_blocks {
-            masking[by * xsize_blocks + bx] =
-                compute_mask_for_ac_strategy_use(aq_map[by * aq_map_w + bx]);
-        }
-    }
-
-    // Step 3: Per-block modulations (stride = width = padded buffer row stride)
-    per_block_modulations(
+    let (quant_field_float, masking) = compute_quant_field_float(
         xyb_x,
         xyb_y,
         xyb_b,
         width,
-        distance,
-        scale,
-        0,
-        0,
+        height,
         xsize_blocks,
         ysize_blocks,
-        &mut aq_map,
-        aq_map_w,
+        distance,
     );
-
-    // Step 4: Extract compact float quant field and convert to raw_quant u8
-    let mut quant_field_float = vec![0.0f32; xsize_blocks * ysize_blocks];
-    let mut raw_quant_field = vec![0u8; xsize_blocks * ysize_blocks];
-    for by in 0..ysize_blocks {
-        for bx in 0..xsize_blocks {
-            let qf = aq_map[by * aq_map_w + bx];
-            quant_field_float[by * xsize_blocks + bx] = qf;
-            let val = (qf * inv_scale + 0.5).round() as i32;
-            raw_quant_field[by * xsize_blocks + bx] = clamp(val, 1, 255) as u8;
-        }
-    }
-
+    let raw_quant_field = quantize_quant_field(&quant_field_float, inv_scale);
     (raw_quant_field, masking, quant_field_float)
 }
 

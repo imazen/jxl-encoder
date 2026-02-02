@@ -221,9 +221,6 @@ impl TinyEncoder {
     pub fn encode(&self, width: usize, height: usize, linear_rgb: &[f32]) -> Result<Vec<u8>> {
         assert_eq!(linear_rgb.len(), width * height * 3);
 
-        // Compute distance parameters
-        let params = DistanceParams::compute(self.distance);
-
         // Calculate dimensions
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
         let ysize_blocks = div_ceil(height, BLOCK_DIM);
@@ -292,6 +289,9 @@ impl TinyEncoder {
                 padded_height,
             );
         }
+
+        // Compute distance parameters (fixed formula matching libjxl effort 5+)
+        let params = DistanceParams::compute(self.distance);
 
         // Compute adaptive per-block quantization field and masking.
         // Pass padded dimensions: XYB buffers have stride=padded_width, and all
