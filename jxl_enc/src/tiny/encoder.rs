@@ -1083,7 +1083,8 @@ impl TinyEncoder {
                 // AFTER DequantLane, overwriting LLF positions with DC-derived
                 // values. So coefficient-level CfL on LLF is discarded by the
                 // decoder. We skip LLF here; DC CfL uses dc_cfl_factor instead.
-                #[allow(clippy::needless_range_loop)] // k used for LLF check and indexing two arrays
+                #[allow(clippy::needless_range_loop)]
+                // k used for LLF check and indexing two arrays
                 for k in 0..size {
                     let is_llf = (k / block_width) < cy && (k % block_width) < cx;
                     if !is_llf {
