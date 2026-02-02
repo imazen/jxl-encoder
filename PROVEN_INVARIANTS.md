@@ -34,8 +34,10 @@ Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_transforms.cc`
 - [x] Layer 2: Block context map entries for codes 12, 13 (commit 3eb8e60)
   - Updated BLOCK_CONTEXT_MAP: X/B→2, Y→0 (matches order_id=1 in kStrategyOrder)
 - [ ] Layer 2: Strategy selection logic (when to prefer DCT4X8 over DCT8)
-- [SKIP] Layer 3: djxl - not installed on test system, but jxl-oxide passes
-- [ ] Layer 3: jxl-rs decodes without error (not yet tested)
+- [SKIP] Layer 3: djxl - not installed on test system, but jxl-oxide and jxl-rs pass
+- [x] Layer 3: jxl-rs decodes without error
+  - `layer3_single_group_dct4x8_decode_jxl_rs` - PASSES
+  - `layer3_single_group_dct8x4_decode_jxl_rs` - PASSES
 - [x] Layer 3: jxl-oxide decodes without error (commit 4cf2869)
   - `layer3_single_group_dct4x8_decode_jxl_oxide` - PASSES
   - `layer3_single_group_dct8x4_decode_jxl_oxide` - PASSES
