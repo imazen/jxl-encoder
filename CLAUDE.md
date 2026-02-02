@@ -642,6 +642,9 @@ cargo clippy -- -D warnings
 
 # Format
 cargo fmt
+
+# RD regression test (6 images x 2 distances, ~3 min debug)
+just rd-regression
 ```
 
 ## Pre-Commit Checklist
@@ -650,6 +653,9 @@ Run before every commit:
 ```bash
 cargo fmt && cargo clippy -- -D warnings && cargo test
 ```
+
+Run `just rd-regression` after any change to encoding, quantization, or entropy coding
+to verify no quality/size regressions.
 
 ## Workspace Structure
 
