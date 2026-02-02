@@ -6359,7 +6359,7 @@ fn test_custom_orders_compression() {
 #[test]
 #[ignore]
 fn test_rd_regression() {
-    use butteraugli::{butteraugli_linear, srgb_to_linear, ButteraugliParams};
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
     use imgref::Img;
     use rgb::RGB;
     use std::io::Cursor;
@@ -6420,33 +6420,81 @@ fn test_rd_regression() {
     let baselines = [
         // frymire
         ImageBaselines {
-            d025: Baseline { size: 921535, butteraugli: 1.497, ssim2: 83.36 },
-            d050: Baseline { size: 668375, butteraugli: 2.826, ssim2: 78.11 },
+            d025: Baseline {
+                size: 921535,
+                butteraugli: 1.497,
+                ssim2: 83.36,
+            },
+            d050: Baseline {
+                size: 668375,
+                butteraugli: 2.826,
+                ssim2: 78.11,
+            },
         },
         // img10
         ImageBaselines {
-            d025: Baseline { size: 180535, butteraugli: 0.522, ssim2: 88.36 },
-            d050: Baseline { size: 117243, butteraugli: 0.920, ssim2: 86.32 },
+            d025: Baseline {
+                size: 180535,
+                butteraugli: 0.522,
+                ssim2: 88.36,
+            },
+            d050: Baseline {
+                size: 117243,
+                butteraugli: 0.920,
+                ssim2: 86.32,
+            },
         },
         // img11
         ImageBaselines {
-            d025: Baseline { size: 197149, butteraugli: 0.513, ssim2: 83.73 },
-            d050: Baseline { size: 134366, butteraugli: 0.874, ssim2: 81.87 },
+            d025: Baseline {
+                size: 197149,
+                butteraugli: 0.513,
+                ssim2: 83.73,
+            },
+            d050: Baseline {
+                size: 134366,
+                butteraugli: 0.874,
+                ssim2: 81.87,
+            },
         },
         // img12
         ImageBaselines {
-            d025: Baseline { size: 166672, butteraugli: 0.576, ssim2: 89.10 },
-            d050: Baseline { size: 106776, butteraugli: 0.875, ssim2: 87.51 },
+            d025: Baseline {
+                size: 166672,
+                butteraugli: 0.576,
+                ssim2: 89.10,
+            },
+            d050: Baseline {
+                size: 106776,
+                butteraugli: 0.875,
+                ssim2: 87.51,
+            },
         },
         // img13
         ImageBaselines {
-            d025: Baseline { size: 264188, butteraugli: 0.507, ssim2: 84.85 },
-            d050: Baseline { size: 198962, butteraugli: 0.907, ssim2: 82.92 },
+            d025: Baseline {
+                size: 264188,
+                butteraugli: 0.507,
+                ssim2: 84.85,
+            },
+            d050: Baseline {
+                size: 198962,
+                butteraugli: 0.907,
+                ssim2: 82.92,
+            },
         },
         // img14
         ImageBaselines {
-            d025: Baseline { size: 224554, butteraugli: 0.600, ssim2: 81.54 },
-            d050: Baseline { size: 159643, butteraugli: 0.917, ssim2: 79.90 },
+            d025: Baseline {
+                size: 224554,
+                butteraugli: 0.600,
+                ssim2: 81.54,
+            },
+            d050: Baseline {
+                size: 159643,
+                butteraugli: 0.917,
+                ssim2: 79.90,
+            },
         },
     ];
 
@@ -6468,33 +6516,69 @@ fn test_rd_regression() {
     let e7_baselines = [
         // frymire
         E7ImageBaselines {
-            d025: E7Baseline { size: 987654, butteraugli: 0.640 },
-            d050: E7Baseline { size: 690000, butteraugli: 1.180 },
+            d025: E7Baseline {
+                size: 987654,
+                butteraugli: 0.640,
+            },
+            d050: E7Baseline {
+                size: 690000,
+                butteraugli: 1.180,
+            },
         },
         // img10
         E7ImageBaselines {
-            d025: E7Baseline { size: 199000, butteraugli: 0.480 },
-            d050: E7Baseline { size: 131000, butteraugli: 0.850 },
+            d025: E7Baseline {
+                size: 199000,
+                butteraugli: 0.480,
+            },
+            d050: E7Baseline {
+                size: 131000,
+                butteraugli: 0.850,
+            },
         },
         // img11
         E7ImageBaselines {
-            d025: E7Baseline { size: 214000, butteraugli: 0.470 },
-            d050: E7Baseline { size: 148000, butteraugli: 0.870 },
+            d025: E7Baseline {
+                size: 214000,
+                butteraugli: 0.470,
+            },
+            d050: E7Baseline {
+                size: 148000,
+                butteraugli: 0.870,
+            },
         },
         // img12
         E7ImageBaselines {
-            d025: E7Baseline { size: 180000, butteraugli: 0.540 },
-            d050: E7Baseline { size: 119000, butteraugli: 0.840 },
+            d025: E7Baseline {
+                size: 180000,
+                butteraugli: 0.540,
+            },
+            d050: E7Baseline {
+                size: 119000,
+                butteraugli: 0.840,
+            },
         },
         // img13
         E7ImageBaselines {
-            d025: E7Baseline { size: 283000, butteraugli: 0.430 },
-            d050: E7Baseline { size: 213000, butteraugli: 0.860 },
+            d025: E7Baseline {
+                size: 283000,
+                butteraugli: 0.430,
+            },
+            d050: E7Baseline {
+                size: 213000,
+                butteraugli: 0.860,
+            },
         },
         // img14
         E7ImageBaselines {
-            d025: E7Baseline { size: 245000, butteraugli: 0.640 },
-            d050: E7Baseline { size: 177000, butteraugli: 1.030 },
+            d025: E7Baseline {
+                size: 245000,
+                butteraugli: 0.640,
+            },
+            d050: E7Baseline {
+                size: 177000,
+                butteraugli: 1.030,
+            },
         },
     ];
 
@@ -6514,8 +6598,7 @@ fn test_rd_regression() {
         eprintln!("--- Distance {:.2} ---\n", dist);
         eprintln!(
             "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6}",
-            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base",
-            "e7 Size", "e7 Bfly"
+            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base", "e7 Size", "e7 Bfly"
         );
         eprintln!("{}", "-".repeat(100));
 
@@ -6535,8 +6618,7 @@ fn test_rd_regression() {
             let rgb = img.to_rgb8();
 
             // Original sRGB for SSIM2
-            let original_srgb: Vec<[u8; 3]> =
-                rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+            let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
 
             // Linear RGB for encoder + butteraugli
             let linear_rgb: Vec<f32> = rgb
@@ -6600,17 +6682,10 @@ fn test_rd_regression() {
                 .map(|c| RGB::new(c[0], c[1], c[2]))
                 .collect();
             let dec_imgref = Img::new(dec_pixels, w as usize, h as usize);
-            let bfly = match butteraugli_linear(
-                orig_img.as_ref(),
-                dec_imgref.as_ref(),
-                &params,
-            ) {
+            let bfly = match butteraugli_linear(orig_img.as_ref(), dec_imgref.as_ref(), &params) {
                 Ok(result) => result.score,
                 Err(e) => {
-                    let msg = format!(
-                        "{} d={}: butteraugli failed: {:?}",
-                        image.name, dist, e
-                    );
+                    let msg = format!("{} d={}: butteraugli failed: {:?}", image.name, dist, e);
                     eprintln!("{}", msg);
                     failures.push(msg);
                     continue;
@@ -6674,7 +6749,12 @@ fn test_rd_regression() {
             if size > size_limit {
                 failures.push(format!(
                     "{} d={}: size {} > limit {} (baseline {} * {:.0}%)",
-                    image.name, dist, size, size_limit, base.size, size_margin * 100.0
+                    image.name,
+                    dist,
+                    size,
+                    size_limit,
+                    base.size,
+                    size_margin * 100.0
                 ));
             }
 
@@ -6741,10 +6821,7 @@ fn test_rd_regression() {
 
     if failures.is_empty() {
         eprintln!("All images within regression thresholds.");
-        eprintln!(
-            "  Size: < baseline * {:.0}%",
-            size_margin * 100.0
-        );
+        eprintln!("  Size: < baseline * {:.0}%", size_margin * 100.0);
         eprintln!(
             "  Butteraugli: < baseline * {:.0}%",
             butteraugli_margin * 100.0

@@ -170,6 +170,7 @@ fn main() {
                     distance,
                     effort: args.effort,
                     force_modular: true,
+                    ..Default::default()
                 };
                 let encoder = Encoder::with_options(options);
                 encoder.encode_rgb8(&data, width as usize, height as usize)
@@ -180,6 +181,7 @@ fn main() {
                 distance,
                 effort: args.effort,
                 force_modular: distance == 0.0,
+                ..Default::default()
             };
             let encoder = Encoder::with_options(options);
             encoder.encode_rgba8(&data, width as usize, height as usize)
@@ -189,6 +191,7 @@ fn main() {
                 distance,
                 effort: args.effort,
                 force_modular: distance == 0.0,
+                ..Default::default()
             };
             let encoder = Encoder::with_options(options);
             encoder.encode_gray8(&data, width as usize, height as usize)
