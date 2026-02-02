@@ -583,140 +583,29 @@ pub fn estimate_noise_params(
     if params.has_any() { Some(params) } else { None }
 }
 
-/// Interpolate the noise LUT to get noise standard deviation at a given intensity.
-fn interpolate_noise_lut(params: &NoiseParams, intensity: f32) -> f32 {
-    let (idx, frac) = index_and_frac(intensity);
-    if idx >= NUM_NOISE_POINTS - 1 {
-        return params.lut[NUM_NOISE_POINTS - 1];
-    }
-    params.lut[idx] * (1.0 - frac) + params.lut[idx + 1] * frac
-}
-
-/// Apply denoising to XYB planes based on estimated noise parameters.
-///
-/// Uses a per-pixel Wiener filter with 5x5 local statistics. The noise variance
-/// at each pixel is estimated from the noise LUT (keyed on Y channel intensity).
-/// This removes noise before encoding; the decoder adds it back from the parameters.
-///
-/// The `quality_coef` is the same value used during noise estimation. The noise LUT
-/// stores `raw_noise * quality_coef * 1.4`, but for denoising we use a fraction of
-/// the raw noise level to avoid stripping image detail alongside noise.
-pub fn denoise_xyb(
-    xyb_x: &mut [f32],
-    xyb_y: &mut [f32],
-    xyb_b: &mut [f32],
-    width: usize,
-    height: usize,
-    params: &NoiseParams,
-    quality_coef: f32,
-) {
-    // The LUT stores raw_noise * quality_coef * 1.4. We denoise conservatively:
-    // only target ~25% of the raw noise to avoid destroying fine texture.
-    // Even partial noise removal saves significant bits because noise energy
-    // is disproportionately expensive in DCT/entropy coding.
-    const DENOISE_FRACTION: f32 = 0.25;
-    let denoise_scale = DENOISE_FRACTION / (quality_coef * 1.4);
-
-    // Work on copies to avoid reading modified values during filtering
-    let orig_x = xyb_x.to_vec();
-    let orig_y = xyb_y.to_vec();
-    let orig_b = xyb_b.to_vec();
-
-    denoise_channel(
-        xyb_x,
-        &orig_x,
-        &orig_y,
-        width,
-        height,
-        params,
-        denoise_scale,
-    );
-    denoise_channel(
-        xyb_y,
-        &orig_y,
-        &orig_y,
-        width,
-        height,
-        params,
-        denoise_scale,
-    );
-    denoise_channel(
-        xyb_b,
-        &orig_b,
-        &orig_y,
-        width,
-        height,
-        params,
-        denoise_scale,
-    );
-}
-
-fn denoise_channel(
-    dest: &mut [f32],
-    orig: &[f32],
-    y_channel: &[f32],
-    width: usize,
-    height: usize,
-    params: &NoiseParams,
-    denoise_scale: f32,
-) {
-    const RADIUS: usize = 2; // 5x5 window
-    const EPS: f32 = 1e-10;
-
-    for py in 0..height {
-        for px in 0..width {
-            let idx = py * width + px;
-            let y_val = y_channel[idx];
-
-            // Look up noise sigma from LUT, scaled back to raw noise level
-            let sigma = interpolate_noise_lut(params, y_val.abs()) * denoise_scale;
-            let noise_var = sigma * sigma;
-
-            if noise_var < EPS {
-                continue; // No noise estimated at this intensity
-            }
-
-            // Compute local mean and variance in 5x5 window
-            let y_start = py.saturating_sub(RADIUS);
-            let y_end = (py + RADIUS + 1).min(height);
-            let x_start = px.saturating_sub(RADIUS);
-            let x_end = (px + RADIUS + 1).min(width);
-
-            let mut sum = 0.0f32;
-            let mut sum_sq = 0.0f32;
-            let mut count = 0.0f32;
-
-            for ny in y_start..y_end {
-                for nx in x_start..x_end {
-                    let v = orig[ny * width + nx];
-                    sum += v;
-                    sum_sq += v * v;
-                    count += 1.0;
-                }
-            }
-
-            let mean = sum / count;
-            let variance = ((sum_sq / count) - mean * mean).max(0.0);
-
-            // Wiener shrinkage: signal_var / (signal_var + noise_var)
-            let signal_var = (variance - noise_var).max(0.0);
-            let wiener = signal_var / (signal_var + noise_var);
-
-            dest[idx] = mean + (orig[idx] - mean) * wiener;
-        }
-    }
-}
-
 /// Compute the quality coefficient for noise synthesis from encoding distance.
 ///
-/// Matches libjxl's `kMinButteraugliForNoise` ramp: noise is reduced at lower
-/// distances (higher quality) to avoid visible artifacts.
+/// Matches libjxl's `enc_frame.cc` lines 696-709 exactly:
+/// - d < 1.0: quality_coef = 1.0 (full noise)
+/// - d = 1.0: quality_coef = 0.25
+/// - d in (1.0, 1.6): linear ramp from 0.25 to 1.0
+/// - d >= 1.6: quality_coef = 1.0 (full noise)
 pub fn noise_quality_coef(distance: f32) -> f32 {
-    // libjxl uses quality_coef = (distance - 1.0) / 0.6, clamped to [0, 1]
-    // At d=1.0: coef=0, at d=1.6: coef=1.0
-    // But we want some noise even at d=1.0, so use a floor of 0.25
-    let coef = (distance - 1.0) / 0.6;
-    coef.clamp(0.0, 1.0).max(0.25)
+    const RAMPUP_START: f32 = 1.0;
+    const RAMPUP_RANGE: f32 = 0.6;
+    const LEVEL_AT_START: f32 = 0.25;
+
+    let rampup = (distance - RAMPUP_START) / RAMPUP_RANGE;
+    if rampup < 0.0 {
+        // Below d=1.0: full noise (matches kNoiseRampupStart = 1.0)
+        1.0
+    } else if rampup < 1.0 {
+        // Ramp from 0.25 to 1.0
+        LEVEL_AT_START + (1.0 - LEVEL_AT_START) * rampup
+    } else {
+        // Above d=1.6: full noise
+        1.0
+    }
 }
 
 #[cfg(test)]
@@ -845,163 +734,27 @@ mod tests {
 
     #[test]
     fn test_noise_quality_coef() {
-        // At d=1.0, coef should be 0.25 (floor)
+        // Matches libjxl enc_frame.cc:696-709 exactly
+
+        // At d=1.0, coef should be 0.25 (start of ramp)
         let coef = noise_quality_coef(1.0);
         assert!((coef - 0.25).abs() < 1e-6);
 
-        // At d=1.6, coef should be 1.0
+        // At d=1.6, coef should be 1.0 (end of ramp)
         let coef = noise_quality_coef(1.6);
         assert!((coef - 1.0).abs() < 1e-6);
 
-        // At d=2.0, coef should be clamped to 1.0
+        // At d=2.0, coef should be 1.0 (saturated)
         let coef = noise_quality_coef(2.0);
         assert!((coef - 1.0).abs() < 1e-6);
 
-        // At d=0.5, coef should be 0.25 (floor)
+        // At d=0.5, coef should be 1.0 (below ramp start → full noise)
         let coef = noise_quality_coef(0.5);
-        assert!((coef - 0.25).abs() < 1e-6);
+        assert!((coef - 1.0).abs() < 1e-6);
 
-        // At d=1.3, coef = (1.3-1.0)/0.6 = 0.5
+        // At d=1.3, coef = 0.25 + 0.75 * 0.5 = 0.625
         let coef = noise_quality_coef(1.3);
-        assert!((coef - 0.5).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_interpolate_noise_lut() {
-        let params = NoiseParams {
-            lut: [0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1, 0.05],
-        };
-        // At intensity 0.0 → index 0 → 0.1
-        let v = interpolate_noise_lut(&params, 0.0);
-        assert!((v - 0.1).abs() < 1e-6);
-        // At intensity 0.5 → index 3 → 0.4
-        let v = interpolate_noise_lut(&params, 0.5);
-        assert!((v - 0.4).abs() < 1e-6);
-        // At intensity 1.0 → index 6 → 0.1
-        let v = interpolate_noise_lut(&params, 1.0);
-        assert!((v - 0.1).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_denoise_xyb_reduces_noise() {
-        // Create a smooth gradient with added noise
-        let w = 64;
-        let h = 64;
-        let n = w * h;
-        let mut xyb_x = vec![0.0f32; n];
-        let mut xyb_y = vec![0.0f32; n];
-        let mut xyb_b = vec![0.0f32; n];
-
-        // Simple LCG PRNG for deterministic noise
-        let mut rng_state = 12345u32;
-        let mut next_f32 = || -> f32 {
-            rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-            ((rng_state >> 16) as f32 / 32768.0) - 1.0 // [-1, 1]
-        };
-
-        // Smooth gradient + noise in Y channel
-        let noise_sigma = 0.05;
-        for py in 0..h {
-            for px in 0..w {
-                let idx = py * w + px;
-                let base = 0.3 + 0.4 * (px as f32 / w as f32);
-                xyb_y[idx] = base + noise_sigma * next_f32();
-                xyb_x[idx] = 0.01 * next_f32();
-                xyb_b[idx] = base * 1.1 + noise_sigma * 0.5 * next_f32();
-            }
-        }
-
-        let orig_y = xyb_y.clone();
-
-        // Noise params representing encoded LUT values. In the real encoder,
-        // LUT = raw_noise * quality_coef * 1.4. With quality_coef=1.0 and raw noise
-        // of ~0.05, the LUT would store 0.07. Use that for a realistic test.
-        let params = NoiseParams {
-            lut: [0.07; NUM_NOISE_POINTS],
-        };
-
-        // quality_coef=1.0 with DENOISE_FRACTION=0.25 gives conservative denoising:
-        // effective_sigma = 0.07 * 0.25/1.4 = 0.0125 (targeting 25% of raw noise)
-        denoise_xyb(&mut xyb_x, &mut xyb_y, &mut xyb_b, w, h, &params, 1.0);
-
-        // Compute variance of (denoised - true_gradient) vs (original - true_gradient)
-        // in the interior (avoid border effects)
-        let mut orig_err_sq = 0.0f64;
-        let mut denoise_err_sq = 0.0f64;
-        let mut count = 0usize;
-        for py in 4..(h - 4) {
-            for px in 4..(w - 4) {
-                let idx = py * w + px;
-                let true_val = 0.3 + 0.4 * (px as f32 / w as f32);
-                orig_err_sq += (orig_y[idx] as f64 - true_val as f64).powi(2);
-                denoise_err_sq += (xyb_y[idx] as f64 - true_val as f64).powi(2);
-                count += 1;
-            }
-        }
-
-        let orig_rmse = (orig_err_sq / count as f64).sqrt();
-        let denoise_rmse = (denoise_err_sq / count as f64).sqrt();
-
-        // Conservative denoising should still measurably reduce error (at least 2%)
-        assert!(
-            denoise_rmse < orig_rmse * 0.98,
-            "Denoising didn't help at all: orig_rmse={:.6}, denoise_rmse={:.6}",
-            orig_rmse,
-            denoise_rmse,
-        );
-    }
-
-    #[test]
-    fn test_denoise_preserves_edges() {
-        // Image with a sharp step edge: left half dark, right half bright
-        let w = 64;
-        let h = 64;
-        let n = w * h;
-        let mut xyb_x = vec![0.0f32; n];
-        let mut xyb_y = vec![0.0f32; n];
-        let mut xyb_b = vec![0.0f32; n];
-
-        for py in 0..h {
-            for px in 0..w {
-                let idx = py * w + px;
-                let val = if px < w / 2 { 0.2 } else { 0.8 };
-                xyb_y[idx] = val;
-                xyb_b[idx] = val;
-            }
-        }
-
-        let orig_y = xyb_y.clone();
-
-        let params = NoiseParams {
-            lut: [0.05; NUM_NOISE_POINTS],
-        };
-
-        denoise_xyb(&mut xyb_x, &mut xyb_y, &mut xyb_b, w, h, &params, 1.0);
-
-        // Pixels far from the edge should be unchanged (no noise to remove from clean signal)
-        // The local variance in flat regions equals 0, so wiener = 0 → denoised = mean = original
-        for py in 4..(h - 4) {
-            // Check pixel at x=10 (far left, flat region)
-            let idx = py * w + 10;
-            assert!(
-                (xyb_y[idx] - orig_y[idx]).abs() < 0.01,
-                "Flat region modified too much at ({}, {}): {} vs {}",
-                10,
-                py,
-                xyb_y[idx],
-                orig_y[idx],
-            );
-            // Check pixel at x=54 (far right, flat region)
-            let idx = py * w + 54;
-            assert!(
-                (xyb_y[idx] - orig_y[idx]).abs() < 0.01,
-                "Flat region modified too much at ({}, {}): {} vs {}",
-                54,
-                py,
-                xyb_y[idx],
-                orig_y[idx],
-            );
-        }
+        assert!((coef - 0.625).abs() < 1e-6);
     }
 
     #[test]
