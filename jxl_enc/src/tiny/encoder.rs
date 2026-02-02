@@ -296,6 +296,13 @@ impl TinyEncoder {
         // Compute adaptive per-block quantization field and masking.
         // Pass padded dimensions: XYB buffers have stride=padded_width, and all
         // modulation/extraction functions index as [py * stride + px].
+        // When gaborish is off, scale distance by 0.62 for the quant field only
+        // (not global_scale/quant_dc). This matches libjxl enc_heuristics.cc:1119.
+        let distance_for_iqf = if self.enable_gaborish {
+            self.distance
+        } else {
+            self.distance * 0.62
+        };
         let (mut quant_field, masking, quant_field_float) = compute_adaptive_quant_field(
             &xyb_x,
             &xyb_y,
@@ -304,7 +311,7 @@ impl TinyEncoder {
             padded_height,
             xsize_blocks,
             ysize_blocks,
-            self.distance,
+            distance_for_iqf,
             params.inv_scale,
         );
 
