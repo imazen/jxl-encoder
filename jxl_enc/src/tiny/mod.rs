@@ -32,6 +32,7 @@ pub mod debug_log;
 mod encoder;
 mod entropy_code;
 mod frame;
+pub(crate) mod noise;
 mod quant;
 mod static_codes;
 mod token;

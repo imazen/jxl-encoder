@@ -62,6 +62,10 @@ struct Args {
     #[arg(long)]
     no_custom_orders: bool,
 
+    /// Enable noise synthesis (estimates and encodes noise parameters)
+    #[arg(long)]
+    noise: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -125,6 +129,9 @@ fn main() {
                 }
                 if args.no_custom_orders {
                     tiny.custom_orders = false;
+                }
+                if args.noise {
+                    tiny.enable_noise = true;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder
