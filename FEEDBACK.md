@@ -25,3 +25,7 @@ User requested gaborish inverse pre-filter for the tiny encoder. Plan was pre-ap
 Also fixed a pre-existing bug: when epf_iters==2 (distances 1.5-4.0), the frame header wrote all_default=1 which implies gab=true, but no encoder-side inverse was applied. The decoder was blurring our output without compensation.
 
 Quality results on CLIC 2025 at d=1.0: ON=80.9 SSIM2/1.85 butteraugli/513KB, OFF=76.4 SSIM2/2.39 butteraugli/344KB. Significant quality improvement (+4.5 SSIM2, -0.54 butteraugli) at cost of ~49% larger files. Verified with djxl and jxl-oxide. All 550 tests pass.
+
+## 2026-02-02: RD regression test
+
+User requested an RD regression test to track encoder quality/size over time. Added `test_rd_regression` to `jxl_enc/tests/clic2025.rs` — encodes 6 committed test images (frymire + 5 CLIC baselines) at d=0.25 and d=0.5, measures butteraugli + SSIM2 in-process, asserts per-image thresholds (5% size, 10% butteraugli, 1.0 SSIM2). Also displays libjxl e7 context for directional comparison. Created justfile with `rd-regression` target. Baselines measured in-process differ from external CLI measurements (different sRGB transfer functions), so baselines were recorded from actual test output at commit b11fa1c.
