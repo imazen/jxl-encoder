@@ -715,3 +715,180 @@ fn diagnose_dct4x4_real_photo() {
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
     analyze_pixels(&dec8_pixels, "DCT8 decoded");
 }
+
+// ============================================================================
+// Error Diffusion Tests
+// ============================================================================
+
+/// Test that error diffusion produces valid output decodable by jxl-oxide
+#[test]
+fn test_error_diffusion_jxl_oxide_decode() {
+    let w = 64usize;
+    let h = 64usize;
+
+    // Create smooth gradient (where error diffusion helps most)
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / ((w + h) as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with error diffusion enabled
+    let mut encoder = TinyEncoder::new(4.0); // High compression to stress error diffusion
+    encoder.error_diffusion = true;
+    let bytes = encoder
+        .encode(w, h, &linear)
+        .expect("Encode with error diffusion failed");
+
+    // Decode with jxl-oxide
+    let (dec_w, dec_h, _dec_pixels) = decode_with_jxl_oxide(&bytes);
+
+    assert_eq!(dec_w, w, "Width mismatch");
+    assert_eq!(dec_h, h, "Height mismatch");
+    println!(
+        "Error diffusion jxl-oxide decode: {} bytes, {}x{}",
+        bytes.len(),
+        dec_w,
+        dec_h
+    );
+}
+
+/// Test that error diffusion produces valid output decodable by jxl-rs
+#[test]
+fn test_error_diffusion_jxl_rs_decode() {
+    let w = 64usize;
+    let h = 64usize;
+
+    // Create smooth gradient
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / ((w + h) as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with error diffusion enabled
+    let mut encoder = TinyEncoder::new(4.0);
+    encoder.error_diffusion = true;
+    let bytes = encoder
+        .encode(w, h, &linear)
+        .expect("Encode with error diffusion failed");
+
+    // Decode with jxl-rs
+    let result = decode_with_jxl_rs(&bytes);
+    assert!(
+        result.is_some(),
+        "jxl-rs failed to decode error diffusion image"
+    );
+
+    let (dec_w, dec_h, _dec_pixels) = result.unwrap();
+    assert_eq!(dec_w, w, "Width mismatch");
+    assert_eq!(dec_h, h, "Height mismatch");
+    println!(
+        "Error diffusion jxl-rs decode: {} bytes, {}x{}",
+        bytes.len(),
+        dec_w,
+        dec_h
+    );
+}
+
+/// Test error diffusion on a multi-group image
+#[test]
+fn test_error_diffusion_multigroup() {
+    let w = 512usize;
+    let h = 512usize;
+
+    // Create smooth gradient
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / ((w + h) as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with error diffusion enabled
+    let mut encoder = TinyEncoder::new(4.0);
+    encoder.error_diffusion = true;
+    let bytes = encoder
+        .encode(w, h, &linear)
+        .expect("Encode with error diffusion failed");
+
+    // Decode with both decoders
+    let (dec_w, dec_h, _) = decode_with_jxl_oxide(&bytes);
+    assert_eq!(dec_w, w, "Width mismatch (jxl-oxide)");
+    assert_eq!(dec_h, h, "Height mismatch (jxl-oxide)");
+
+    let result = decode_with_jxl_rs(&bytes);
+    assert!(
+        result.is_some(),
+        "jxl-rs failed to decode error diffusion multi-group image"
+    );
+
+    println!(
+        "Error diffusion multi-group: {} bytes, {}x{}",
+        bytes.len(),
+        w,
+        h
+    );
+}
+
+/// Compare error diffusion ON vs OFF on a real photo
+#[test]
+#[ignore]
+fn diagnose_error_diffusion_quality() {
+    let path = std::env::var("CLIC_IMAGE").unwrap_or_else(|_| {
+        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png".to_string()
+    });
+
+    if !std::path::Path::new(&path).exists() {
+        eprintln!("Test image not found: {}", path);
+        return;
+    }
+
+    let (w, h, linear, _srgb) = load_png_crop(&path, 256, 256);
+    println!("Loaded {}x{} real photo crop", w, h);
+
+    for distance in [2.0, 4.0, 8.0] {
+        println!("\n=== Distance {} ===", distance);
+
+        // Encode without error diffusion
+        let mut encoder_off = TinyEncoder::new(distance);
+        encoder_off.error_diffusion = false;
+        let bytes_off = encoder_off
+            .encode(w, h, &linear)
+            .expect("Encode failed (off)");
+
+        // Encode with error diffusion
+        let mut encoder_on = TinyEncoder::new(distance);
+        encoder_on.error_diffusion = true;
+        let bytes_on = encoder_on
+            .encode(w, h, &linear)
+            .expect("Encode failed (on)");
+
+        let (_, _, pixels_off) = decode_with_jxl_oxide(&bytes_off);
+        let (_, _, pixels_on) = decode_with_jxl_oxide(&bytes_on);
+
+        analyze_pixels(&pixels_off, "Error diffusion OFF");
+        analyze_pixels(&pixels_on, "Error diffusion ON");
+
+        println!(
+            "Size: OFF={} bytes, ON={} bytes, diff={:.2}%",
+            bytes_off.len(),
+            bytes_on.len(),
+            (bytes_on.len() as f32 - bytes_off.len() as f32) / bytes_off.len() as f32 * 100.0
+        );
+    }
+}

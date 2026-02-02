@@ -21,6 +21,7 @@ fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8
 }
 use super::adaptive_quant::compute_adaptive_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
+use super::coeff_order::natural_coeff_order;
 use super::common::*;
 use super::dc_coding::{
     collect_ac_metadata_tokens_region, collect_dc_tokens_region, write_ac_metadata_tokens_region,
@@ -177,6 +178,11 @@ pub struct TinyEncoder {
     /// to compensate, reducing blocking artifacts.
     /// Matches the libjxl VarDCT encoder default.
     pub enable_gaborish: bool,
+    /// Enable error diffusion in AC quantization.
+    /// When true, spreads quantization error to neighboring coefficients in
+    /// zigzag order, helping preserve smooth gradients at high compression.
+    /// Off by default (modest quality improvement, slight performance cost).
+    pub error_diffusion: bool,
 }
 
 impl Default for TinyEncoder {
@@ -193,6 +199,7 @@ impl Default for TinyEncoder {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
+            error_diffusion: false,
         }
     }
 }
@@ -212,6 +219,7 @@ impl TinyEncoder {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
+            error_diffusion: false,
         }
     }
 
@@ -873,6 +881,8 @@ impl TinyEncoder {
     }
 
     /// Quantize AC coefficients with thresholding and store in quant_ac slots.
+    /// When error_diffusion is true, processes coefficients in zigzag order
+    /// and propagates quantization error to subsequent coefficients.
     #[allow(clippy::too_many_arguments)]
     fn quantize_ac_block(
         dct_coeffs: &[f32],
@@ -890,6 +900,7 @@ impl TinyEncoder {
         bx: usize,
         by: usize,
         quant_ac: &mut [Vec<[i32; DCT_BLOCK_SIZE]>],
+        error_diffusion: bool,
     ) {
         // C++ QuantizeBlockAC uses post-swap (cx, cy) for the coefficient grid:
         // stride = cx * 8 (block_width), height = cy * 8 (block_height).
@@ -898,20 +909,83 @@ impl TinyEncoder {
         let grid_height = _block_height;
         let cx = _block_width / BLOCK_DIM;
         let cy = _block_height / BLOCK_DIM;
-        for idx in 0..size {
-            // LLF positions are at (y, x) where y < cy and x < cx in the grid.
-            // For DCT8 this is just index 0.
-            // For DCT16x16 (cx=cy=2, stride=16) this is {0, 1, 16, 17}.
-            // For DCT16x8 (cx=2, cy=1, stride=16) this is {0, 1}.
-            let is_llf = (idx / grid_width) < cy && (idx % grid_width) < cx;
-            let qval = if is_llf {
-                0 // LLF handled separately
-            } else {
+
+        if !error_diffusion {
+            // Standard quantization without error diffusion
+            for idx in 0..size {
+                // LLF positions are at (y, x) where y < cy and x < cx in the grid.
+                // For DCT8 this is just index 0.
+                // For DCT16x16 (cx=cy=2, stride=16) this is {0, 1, 16, 17}.
+                // For DCT16x8 (cx=2, cy=1, stride=16) this is {0, 1}.
+                let is_llf = (idx / grid_width) < cy && (idx % grid_width) < cx;
+                let qval = if is_llf {
+                    0 // LLF handled separately
+                } else {
+                    let y = idx / grid_width;
+                    let x = idx % grid_width;
+                    Self::quantize_coeff_ac(
+                        dct_coeffs[idx],
+                        1.0 / weights[idx],
+                        qac,
+                        qm_multiplier,
+                        channel,
+                        y,
+                        x,
+                        grid_height,
+                        grid_width,
+                        cx,
+                        cy,
+                    )
+                };
+
+                let block_slot = idx / DCT_BLOCK_SIZE;
+                let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                let slot_by = by + block_slot / covered_x;
+                let slot_bx = bx + block_slot % covered_x;
+                quant_ac[slot_by][slot_bx][coeff_in_block] = qval;
+            }
+        } else {
+            // Error diffusion: process in zigzag order, propagate error to next coefficient
+            let zigzag = natural_coeff_order(cx, cy);
+
+            // Accumulated error to add to next coefficient (in zigzag order)
+            // Using separate accumulators for different frequency bands
+            let mut accumulated_error: f32 = 0.0;
+            const ERROR_DIFFUSION_FACTOR: f32 = 0.25; // Propagate 1/4 of error
+
+            // Create a mutable copy of coefficients to apply error correction
+            let mut corrected_coeffs = dct_coeffs.to_vec();
+
+            for (zigzag_pos, &flat_idx) in zigzag.iter().enumerate() {
+                let idx = flat_idx as usize;
+                if idx >= size {
+                    continue;
+                }
+
+                let is_llf = (idx / grid_width) < cy && (idx % grid_width) < cx;
+
+                if is_llf {
+                    // LLF handled separately, no error diffusion
+                    let block_slot = idx / DCT_BLOCK_SIZE;
+                    let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                    let slot_by = by + block_slot / covered_x;
+                    let slot_bx = bx + block_slot % covered_x;
+                    quant_ac[slot_by][slot_bx][coeff_in_block] = 0;
+                    continue;
+                }
+
+                // Add accumulated error to this coefficient
+                corrected_coeffs[idx] += accumulated_error * weights[idx];
+
                 let y = idx / grid_width;
                 let x = idx % grid_width;
-                Self::quantize_coeff_ac(
-                    dct_coeffs[idx],
-                    1.0 / weights[idx],
+                let inv_weight = 1.0 / weights[idx];
+                let scaled_coeff = corrected_coeffs[idx] * inv_weight * qac * qm_multiplier;
+
+                // Quantize
+                let qval = Self::quantize_coeff_ac(
+                    corrected_coeffs[idx],
+                    inv_weight,
                     qac,
                     qm_multiplier,
                     channel,
@@ -921,14 +995,25 @@ impl TinyEncoder {
                     grid_width,
                     cx,
                     cy,
-                )
-            };
+                );
 
-            let block_slot = idx / DCT_BLOCK_SIZE;
-            let coeff_in_block = idx % DCT_BLOCK_SIZE;
-            let slot_by = by + block_slot / covered_x;
-            let slot_bx = bx + block_slot % covered_x;
-            quant_ac[slot_by][slot_bx][coeff_in_block] = qval;
+                // Compute quantization error
+                // error = (original_scaled - quantized) / (qac * qm_multiplier)
+                // This error is in the normalized coefficient domain
+                let dequant_val = qval as f32;
+                let error = (scaled_coeff - dequant_val) / (qac * qm_multiplier);
+
+                // Accumulate error for next coefficient (only if not at the end)
+                if zigzag_pos + 1 < zigzag.len() {
+                    accumulated_error = error * ERROR_DIFFUSION_FACTOR;
+                }
+
+                let block_slot = idx / DCT_BLOCK_SIZE;
+                let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                let slot_by = by + block_slot / covered_x;
+                let slot_bx = bx + block_slot % covered_x;
+                quant_ac[slot_by][slot_bx][coeff_in_block] = qval;
+            }
         }
     }
 
@@ -1186,6 +1271,7 @@ impl TinyEncoder {
                         bx,
                         by,
                         &mut quant_ac[c],
+                        self.error_diffusion,
                     );
                 }
 
@@ -1372,6 +1458,7 @@ impl TinyEncoder {
                         bx,
                         by,
                         &mut quant_ac[c],
+                        self.error_diffusion,
                     );
                 }
 
