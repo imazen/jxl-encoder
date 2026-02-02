@@ -101,10 +101,44 @@ in file size (140KB vs 141KB) or quality (75.7 vs 76.0). Confirms the cancellati
 - AC strategy cost model
 - Missing features (DCT4x8, error diffusion)
 
+#### 2026-02-02 05:15 — Testing K_AC_QUANT changes
+
+**[TESTED] Changing K_AC_QUANT to 0.765 (libjxl) produces WORSE results:**
+
+With K_AC_QUANT=0.765 and AC_QUANT=0.39 (matching libjxl ratio):
+- File size: 133KB (smaller than baseline 143KB)
+- SSIM2: 74.96 (worse than baseline 76.11)
+
+The K_AC_QUANT/AC_QUANT ratio does affect quantization, but matching libjxl's
+constants doesn't help. The quality difference must be in the adaptive quant
+algorithm itself, not just the constants.
+
+**[FIXED] Ported libjxl's AdjustQuantField mean/max blending:**
+
+libjxl blends between max and mean for multi-block quant values based on distance:
+- d ≤ 1.54: use max
+- d > 2.82: use mean
+- In between: linear interpolation
+
+This helps at high distances but didn't close the gap significantly.
+
+**Current quality gap vs cjxl e7:**
+
+| Distance | Our Size | Our SSIM2 | cjxl Size | cjxl SSIM2 | Gap |
+|----------|----------|-----------|-----------|------------|-----|
+| d=2.0    | 143KB    | 76.1      | 162KB     | 81.2       | -5.1 |
+| d=4.0    | 88KB     | 63.4      | 100KB     | 70.3       | -6.9 |
+
+**Root cause is NOT K_AC_QUANT constants.** Must be in:
+1. The adaptive quant masking computation itself (pre-erosion, fuzzy erosion, modulations)
+2. Coefficient thresholding in QuantizeBlockAC
+3. Missing features (DCT4x8, error diffusion, splines)
+
 **Next steps:**
-1. Implement `SetQuantField` with median/MAD-based global_scale selection
-2. Compare global_scale values between ours and cjxl on the same image
-3. Re-test quality gap after implementing content-adaptive global_scale
+1. Compare pre-erosion/fuzzy erosion output between our code and libjxl
+2. Check coefficient thresholding differences in QuantizeBlockAC
+3. Consider implementing DCT4x8/DCT8x4 (helps at high distances)
+4. Consider implementing error diffusion
 
 ---
 
