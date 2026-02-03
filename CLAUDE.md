@@ -169,9 +169,12 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - Full libjxl uses truncation (`(int)(val + noff)`) vs our round+threshold approach
 
 **D. Entropy Coding**
-- LZ77 explicitly disabled (`encoder.rs:1794`)
+- LZ77 RLE implemented (`--lz77` flag, ANS-only, two-pass only) but never activates
+  on photographic content — the RLE-only method finds insufficient runs of identical
+  tokens. Full libjxl uses backward-reference LZ77 with hash chains (not just RLE)
+  for the 1-3% savings on photos. Our RLE is correct but limited to graphics/text.
 - Block context map is hardcoded, not content-adaptive
-- Est. impact: 1-3% on natural photos
+- Est. remaining impact: 1-3% from backward-reference LZ77 on natural photos
 
 **E. Other**
 - No splines, patches/dictionary, dots detection
@@ -181,7 +184,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 **Priority path:**
 1. IDENTITY + DCT2x2 strategies (medium effort, significant quality win)
 2. AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
-3. LZ77 backward references (medium effort, 1-3% file savings)
+3. Backward-reference LZ77 (high effort, 1-3% file savings — RLE already done but doesn't help photos)
 4. AFV corner DCT (high effort, 0.5-1%)
 5. Consider truncation quantization approach (matches C++ behavior)
 
@@ -223,6 +226,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
 - [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
 - [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
+- [x] LZ77 RLE (`--lz77` flag, opt-in, ANS two-pass only — correct but rarely activates on photos)
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
@@ -297,7 +301,7 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Fixed zig-zag coefficient order (no custom orders) — **we have custom orders**
 - No error diffusion in quantization — **we have error diffusion**
 - Default block entropy context model only
-- Single uint coding scheme, no backward references
+- Single uint coding scheme, no backward references — **we have LZ77 RLE (doesn't help photos)**
 
 ## Resolved Bugs
 
