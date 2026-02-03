@@ -3397,7 +3397,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: AdjustQuantBlockAC enabled
+        // Hash updated: IDENTITY/DCT2X2 auto-selection enabled, DCT2X2 forward transform fixed.
+        // Checkerboard at d=1.0 doesn't trigger IDENTITY/DCT2X2 selection so hash unchanged.
         const EXPECTED_HASH: u64 = 0xeb59aa6dda4a7f48;
         assert_eq!(
             hash,

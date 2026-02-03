@@ -19,6 +19,7 @@ use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_non
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
     dct2x2_transform, idct_8x8, idct_8x16, idct_16x8, idct_16x16, identity_transform,
+    inverse_dct2x2_transform, inverse_identity_transform,
 };
 use super::quant::quant_weights;
 
@@ -145,16 +146,16 @@ impl AcStrategyMap {
         self.data.iter().filter(|&&v| (v & 1) != 0).count()
     }
 
-    /// Return strategy histogram: [DCT8, DCT16x8, DCT8x16, DCT16x16, DCT32x32, DCT4x8, DCT8x4, DCT4x4]
+    /// Return strategy histogram indexed by raw strategy code.
     /// Counts first blocks only (number of times each transform was selected).
     #[cfg(feature = "debug-ac-strategy")]
-    pub fn strategy_histogram(&self) -> [usize; 8] {
-        let mut counts = [0usize; 8];
+    pub fn strategy_histogram(&self) -> [usize; 10] {
+        let mut counts = [0usize; 10];
         for &v in &self.data {
             if (v & 1) != 0 {
                 // is_first block
                 let raw = v >> 1;
-                if (raw as usize) < 8 {
+                if (raw as usize) < 10 {
                     counts[raw as usize] += 1;
                 }
             }
@@ -165,8 +166,9 @@ impl AcStrategyMap {
     /// Print strategy histogram with names.
     #[cfg(feature = "debug-ac-strategy")]
     pub fn print_histogram(&self) {
-        const NAMES: [&str; 8] = [
+        const NAMES: [&str; 10] = [
             "DCT8", "DCT16x8", "DCT8x16", "DCT16x16", "DCT32x32", "DCT4x8", "DCT8x4", "DCT4x4",
+            "IDENTITY", "DCT2X2",
         ];
         let hist = self.strategy_histogram();
         let total: usize = hist.iter().sum();
@@ -174,7 +176,7 @@ impl AcStrategyMap {
         for (i, &count) in hist.iter().enumerate() {
             if count > 0 {
                 let pct = 100.0 * count as f64 / total as f64;
-                eprintln!("  {:8}: {:6} ({:5.1}%)", NAMES[i], count, pct);
+                eprintln!("  {:10}: {:6} ({:5.1}%)", NAMES[i], count, pct);
             }
         }
     }
@@ -728,7 +730,20 @@ fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
             // Simple fallback: just use the coefficients directly scaled
             error_coeffs[..1024].to_vec()
         }
-        _ => vec![0.0f32; 64],
+        RAW_STRATEGY_IDENTITY => {
+            let mut output = [0.0f32; 64];
+            inverse_identity_transform(&error_coeffs[..64], &mut output);
+            output.to_vec()
+        }
+        RAW_STRATEGY_DCT2X2 => {
+            let mut output = [0.0f32; 64];
+            inverse_dct2x2_transform(&error_coeffs[..64], &mut output);
+            output.to_vec()
+        }
+        _ => unreachable!(
+            "unknown strategy {} in apply_idct_for_strategy",
+            raw_strategy
+        ),
     }
 }
 
@@ -879,10 +894,14 @@ fn find_best_16x16_transform(
     // These are applied INSIDE EstimateEntropy to the entropy portion only,
     // NOT as post-hoc cost multipliers (which would incorrectly scale loss too).
 
-    // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0
-    let _favor_2x2_adjust = if distance < 5.0 {
-        let weight = ((5.0 - distance) / 5.0_f32).powi(2);
-        -0.4 * weight // negative = reduces entropy_mul = lower cost
+    // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0.
+    // libjxl uses -0.4 but its cost model has many more corrections (AdjustQuantBlockAC,
+    // iterative rate control, 27 strategies) that prevent over-selection. Without those,
+    // the full bonus causes 30%+ IDENTITY selection at d<0.5, producing 8-12% larger files.
+    // Disable the bonus until the cost model is more complete.
+    let favor_2x2_adjust = 0.0f32;
+    let _favor_weight = if distance < 5.0 {
+        ((5.0 - distance) / 5.0_f32).powi(2)
     } else {
         0.0
     };
@@ -956,12 +975,12 @@ fn find_best_16x16_transform(
             let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
 
             // IDENTITY (kFavor2X2 bonus at low distance)
-            let e_identity = eval(RAW_STRATEGY_IDENTITY, 0.0);
+            let e_identity = eval(RAW_STRATEGY_IDENTITY, favor_2x2_adjust);
             let base_cost_identity = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
             let cost_identity = base_cost_identity + mul8x8 * e_identity;
 
-            // DCT2X2
-            let e_dct2 = eval(RAW_STRATEGY_DCT2X2, 0.0);
+            // DCT2X2 (kFavor2X2 bonus at low distance)
+            let e_dct2 = eval(RAW_STRATEGY_DCT2X2, favor_2x2_adjust);
             let base_cost_dct2 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
             let cost_dct2 = base_cost_dct2 + mul8x8 * e_dct2;
 
@@ -981,16 +1000,11 @@ fn find_best_16x16_transform(
                 *entropy_val = cost4x4;
                 *best_strat = RAW_STRATEGY_DCT4X4;
             }
-            // TODO: Re-enable after fixing quality regression.
-            // IDENTITY and DCT2X2 produce significantly worse quality (~10 SSIM2)
-            // when selected. Need to investigate transform/quant weight correctness.
-            #[allow(clippy::overly_complex_bool_expr)]
-            if false && cost_identity < *entropy_val {
+            if cost_identity < *entropy_val {
                 *entropy_val = cost_identity;
                 *best_strat = RAW_STRATEGY_IDENTITY;
             }
-            #[allow(clippy::overly_complex_bool_expr)]
-            if false && cost_dct2 < *entropy_val {
+            if cost_dct2 < *entropy_val {
                 *entropy_val = cost_dct2;
                 *best_strat = RAW_STRATEGY_DCT2X2;
             }
