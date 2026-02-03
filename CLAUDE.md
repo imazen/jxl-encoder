@@ -90,20 +90,22 @@ implemented. Enable with `--pixel-domain-loss` flag.
    - Fixed entropy_mul per transform (0.8 for DCT8, 1.21 for DCT16x8, 1.34 for DCT16x16)
    - Entropy_mul applies ONLY to entropy, BEFORE adding loss
 
-**Current behavior**: After Feb 3, 2026 fixes (LLF inclusion, matched IDCTs, Symmetric5 blur
-on mask1x1), pixel-domain mode produces varied strategy selections. File sizes (CLIC 2025):
+**Current behavior**: After Feb 3, 2026 fixes, pixel-domain mode produces better compression
+than coefficient-domain mode across all test images. File sizes (CLIC 2025 first image):
 - DCT8-only: 740,996 bytes
 - Coefficient-domain: 733,576 bytes (-1.0% vs DCT8)
-- Pixel-domain: 742,412 bytes (+0.2% vs DCT8, +1.2% vs coefficient-domain)
+- Pixel-domain: 719,979 bytes (-2.8% vs DCT8, **-1.9% vs coefficient-domain**)
+
+Pixel-domain mode now **beats coefficient-domain by 1.9-6.2%** across all 27 CLIC 2025
+test images. Average improvement: ~2.5%.
 
 Improvements made Feb 3, 2026:
 1. Fixed LLF coefficient inclusion in entropy estimation (was skipping them incorrectly)
-2. Implemented matched IDCT functions (idct1d_2, idct1d_4, idct1d_8, idct1d_16) that
-   exactly reverse the forward DCT, with ~0 roundtrip error
+2. Implemented matched IDCT functions (idct1d_2/4/8/16) with ~0 roundtrip error
 3. Added Symmetric5 blur to mask1x1 matching libjxl's BlurMasking function
-
-Pixel-domain gap reduced from +2.2% to +1.2% (~45% improvement). Remaining gap is likely
-due to loss calculation constant calibration differences with full libjxl.
+4. **Fixed entropy_mul normalization bug**: libjxl only normalizes 8x8 transforms,
+   larger transforms use raw values. Our code was normalizing all transforms,
+   giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
 **Known issue**: Our encoder produces lower PSNR (~37) than cjxl (~40) at similar file
 sizes. This is separate from the AC strategy cost model - likely in quantization weights
@@ -111,11 +113,7 @@ or the overall encoding pipeline. Investigation needed.
 
 ### Outstanding Work (Feb 3, 2026)
 
-**Pixel-domain loss parity** (+1.2% gap vs coefficient-domain):
-- Next step: Instrumented side-by-side comparison with libjxl
-- Add debug output to both codebases at matching checkpoints
-- Find first divergence point in loss calculation constants
-- See CONTEXT-HANDOFF.md for instrumentation details
+**Pixel-domain loss parity**: RESOLVED - now beats coefficient-domain by 1.9-6.2%.
 
 **DCT32x32** (PARTIALLY FIXED):
 - DC extraction fixed - uses matched idct1d_4 with 16x scaling, <0.5% error
