@@ -412,8 +412,12 @@ fn generate_dct_quant_weights(n: usize, band_params: &[[f64; 8]; 3], num_bands: 
             for x in 0..n {
                 let dx = x as f64 * rcp;
                 let scaled_distance = (dx * dx + dy2).sqrt();
-                let weight = interpolate_band(scaled_distance, &bands);
-                out[c * n * n + y * n + x] = weight as f32;
+                // The band parameters produce dequant (inverse) weights.
+                // libjxl stores dequant weights in inv_table and 1/weights in table.
+                // For encoding we need the quant weights, so invert here.
+                let dequant_weight = interpolate_band(scaled_distance, &bands);
+                let quant_weight = 1.0 / dequant_weight;
+                out[c * n * n + y * n + x] = quant_weight as f32;
             }
         }
     }
@@ -812,15 +816,17 @@ mod tests {
     }
 
     #[test]
-    fn test_dct32x32_weights_dc_largest() {
-        // DC weight (position 0) should be the largest for each channel
+    fn test_dct32x32_weights_dc_smallest() {
+        // DC weight (position 0) should be the SMALLEST for each channel.
+        // Quant weights are inverse of dequant weights. DC has highest dequant
+        // weight (preserve DC best), so lowest quant weight.
         for c in 0..3 {
             let w = quant_weights(4, c);
             let dc = w[0];
             for (i, &val) in w.iter().enumerate().skip(1) {
                 assert!(
-                    val <= dc * 1.01, // allow tiny floating point margin
-                    "DCT32x32 weight[ch={}, {}] = {} exceeds DC = {}",
+                    val >= dc * 0.99, // allow tiny floating point margin
+                    "DCT32x32 weight[ch={}, {}] = {} is less than DC = {}",
                     c,
                     i,
                     val,
