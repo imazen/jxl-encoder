@@ -29,3 +29,7 @@ Quality results on CLIC 2025 at d=1.0: ON=80.9 SSIM2/1.85 butteraugli/513KB, OFF
 ## 2026-02-02: RD regression test
 
 User requested an RD regression test to track encoder quality/size over time. Added `test_rd_regression` to `jxl_enc/tests/clic2025.rs` — encodes 6 committed test images (frymire + 5 CLIC baselines) at d=0.25 and d=0.5, measures butteraugli + SSIM2 in-process, asserts per-image thresholds (5% size, 10% butteraugli, 1.0 SSIM2). Also displays libjxl e7 context for directional comparison. Created justfile with `rd-regression` target. Baselines measured in-process differ from external CLI measurements (different sRGB transfer functions), so baselines were recorded from actual test output at commit b11fa1c.
+
+## 2026-02-03: Port full libjxl parametric quantization weights
+
+User requested porting full libjxl's default parametric quantization weights for DCT8, DCT16X16, and DCT16X8 strategies. The encoder was using libjxl-tiny's hardcoded 1,344-float weight table for strategies 0-3 while signaling all_default=true in the frame header, creating a quantizer/dequantizer mismatch. Replaced with parametric generation from libjxl quant_weights.cc band parameters. Net -158 lines (removed 457 lines of hardcoded data, added 299 lines of parametric code). All 566 lib tests pass, all dual-decode tests pass.
