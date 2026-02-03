@@ -322,9 +322,12 @@ fn load_png_full(path: &str) -> (usize, usize, Vec<f32>, Vec<u8>) {
 
 /// Decode with jxl-oxide (single and multi-group).
 fn decode_jxl_oxide(data: &[u8]) -> (usize, usize, Vec<f32>) {
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(Cursor::new(data))
         .unwrap_or_else(|e| panic!("jxl-oxide parse failed: {:?}", e));
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let w = image.width() as usize;
     let h = image.height() as usize;
     let render = image
