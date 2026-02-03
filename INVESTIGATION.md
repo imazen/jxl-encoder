@@ -580,3 +580,45 @@ Focus on:
 1. Merging tiny encoder into main API
 2. Adding missing features (DCT4x8, error diffusion) which may help the gap
 3. Not breaking the excellent d≤1.0 quality where we match/beat cjxl
+
+### 2026-02-02 17:45 — Full libjxl constants experiment: FAILED
+
+**HYPOTHESIS TESTED**: Updating all adaptive quantization constants and algorithms
+to match full libjxl (instead of libjxl-tiny) would improve quality at d≥2.0.
+
+**CHANGES MADE** (then reverted):
+1. kAcQuant: 0.8294 → 0.765
+2. kDampenRampStart: 7.0 → 2.0
+3. base_level: 0.5 → 0.48
+4. kGamma: -0.1076 → +0.1006 (SIGN FLIP!)
+5. kSGVOffset: 7.147 → 7.783
+6. kSGmul: 226.048 → 226.772
+7. MaskingSqrt constants updated
+8. ComputeMask constants updated
+9. HfModulation: completely rewritten with valmin clamp
+10. ColorModulation → BlueModulation: completely different algorithm
+11. FuzzyErosion: distance-dependent weights, no center term
+12. Pre-erosion: Y channel only, added limit=0.2 clamp
+
+**RESULTS**:
+- Baseline (libjxl-tiny): d=1.0 SSIM2=85.00, d=2.0 SSIM2=76.70
+- Full libjxl constants: d=1.0 SSIM2=84.40 (-0.6), d=2.0 SSIM2=75.39 (-1.3)
+
+**CONCLUSION**: The full libjxl constants make quality WORSE in isolation.
+
+**WHY THIS FAILED**:
+The full libjxl constants are tuned to work as part of a complete system including:
+- Error diffusion in the main quantization loop (not just as an option)
+- Splines and patches for content-adaptive encoding
+- Full AC strategy selection (27 strategies, not just DCT8/4x8/8x4/4x4/16x16)
+- Different coefficient ordering logic
+
+Without these features, the constants produce a worse RD tradeoff than libjxl-tiny's
+deliberately simplified constants.
+
+**RECOMMENDATION**:
+Accept the ~3 SSIM2 gap at d≥2.0 vs cjxl e7 as inherent to our simplified pipeline.
+Focus on:
+1. Adding more AC strategies (DCT32x32 when DC extraction is fixed)
+2. Better coefficient thresholding in QuantizeBlockAC
+3. Content-adaptive quality (splines/patches) — major architectural work
