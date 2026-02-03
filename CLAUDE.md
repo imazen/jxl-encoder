@@ -128,7 +128,7 @@ or the overall encoding pipeline. Investigation needed.
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 27 commits ahead of origin/main
+**Unpushed**: 36 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
@@ -227,6 +227,32 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Single uint coding scheme, no backward references
 
 ## Resolved Bugs
+
+### Rectangular Transform Coefficient Storage Mapping (FIXED Feb 3, 2026)
+
+**Issue**: DCT16x8 and DCT8x16 transforms caused index-out-of-bounds panics when encoding
+64x64 checkerboard images. The test `test_hash_lock_64x64_checkerboard` panicked with
+"index out of bounds: the len is 8 but the index is 8".
+
+**Root Cause**: For rectangular transforms like DCT16x8:
+- Physical block coverage: 1×2 (1 column × 2 rows of 8x8 blocks)
+- Coefficient layout after cx/cy swap: 16×8 (stride=16)
+
+When mapping coefficient slot indices to physical block storage, the code used
+`slot_x = x / 8` from the coefficient layout, but for DCT16x8 this gives slot_x=1
+for x≥8, while the physical blocks only span 1 column (slot_x must be 0).
+
+**Fix**: Added `transpose_slots` flag when `covered_y > covered_x`. For these transforms,
+coefficient slot_x maps to physical row offset, and slot_y maps to column offset.
+
+Applied to 5 locations:
+- `quantize_ac_block` (normal and error diffusion paths)
+- Y roundtrip reading
+- nzeros counting (step 8)
+- `write_ac_group` assembly
+- `collect_ac_coefficients` (two-pass)
+
+**Impact**: All encoder tests pass. DCT4x8 quality test shows +2.85 SSIM2 vs DCT8.
 
 ### dc_from_dct_16x16/32x32 Spatial Ordering Swap (FIXED Feb 1, 2026)
 
@@ -497,36 +523,35 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 **Status**: DCT32x32 is BROKEN for single-group images (≤256x256).
 
-**Symptom**: Forced DCT32x32 encoding of 256x256 images produces SSIM2 = -64 (catastrophic).
-The decoded pixels are ~4x too dark. djxl decodes without errors but produces wrong values.
+**Symptom**: Forced DCT32x32 encoding of 256x256 images produces SSIM2 = -48 (catastrophic).
+The decoded pixels converge to average values instead of preserving spatial variation.
+djxl decodes without errors but produces wrong values.
+
+**Fixes applied Feb 3, 2026**:
+1. Inverted DCT32x32 quant weights (were dequant, should be quant = 1/dequant)
+2. Fixed rectangular transform (DCT16x8/DCT8x16) coefficient storage mapping
+
+**Current state after fixes**:
+- AC coefficients are being encoded (546 nonzero, was 0 before quant weight fix)
+- File sizes reasonable (8700 bytes for 256x256 at d=3.0, was 1926 before)
+- DC extraction verified correct (production matches reference IDCT)
+- Quality still poor: SSIM2 = -48
+
+**Still doesn't work**: Single-group (256x256) with 100% forced DCT32x32 produces decoded
+pixels that converge to average values:
+- Original sRGB first 4 pixels: (0,0,0), (0,0,0), (130,194,89), (130,194,89) (black, black, green, green)
+- Decoded sRGB first 4: (79,118,67), (79,117,66), (78,115,65), (78,113,64) (all ~average)
 
 **Works**: DCT32x32 on multi-group images (>256x256) appears to work correctly. The full
 frymire image (1118x1105) at d=3.0 with 83.6% DCT32x32 decodes correctly via djxl.
 
-**Doesn't Work**: Single-group (256x256) with 100% forced DCT32x32 produces decoded
-pixels that are ~4x darker than original:
-- Original center crop: first pixels = (0,0,0), (0,0,0), (130,194,89), (130,194,89)
-- Decoded via djxl: (15,35,10), (15,35,11), (16,36,11), (17,37,11)
-- Expected average for mixed black/green: ~(65,97,44) but got (15-17, 35-37, 10-11)
-
-**DC extraction verified correct**: The `dc_from_dct_32x32()` function passes all unit
-tests. Uniform 0.5 input produces DC = 0.5. Step function produces correct interpolated
-values. The `* 16.0` scaling factor is correct.
-
-**Investigation Notes**:
-- File sizes are reasonable (1926 bytes for 256x256 at d=3.0)
-- djxl decodes without errors (valid bitstream)
-- The decoded image has correct dimensions (256x256)
-- Issue might be in:
-  1. DC-to-LLF reconstruction scaling (decoder's ReinterpretingDCT<32,32,4,4,4,4>)
-  2. Single-group vs multi-group DC group handling
-  3. AC strategy metadata encoding for DCT32x32
+**Remaining investigation areas**:
+1. Coefficient ordering for DCT32x32 (COEFF_ORDER_32X32 validation)
+2. LLF coefficient handling in single-group vs multi-group
+3. AC strategy metadata for DCT32x32 in single-group frames
 
 **Workaround**: DCT32x32 is only enabled at d >= 3.0 and is naturally selected alongside
-other strategies. The mixed-strategy case works; forced 100% DCT32x32 fails.
-
-**Tests Updated**: Layer2 DCT32x32 tests now use d=3.0 (matching production threshold).
-Tests still fail with SSIM2 = -64.
+other strategies. The mixed-strategy case works; forced 100% DCT32x32 single-group fails.
 
 ## Investigation Notes
 
