@@ -330,7 +330,7 @@ pub fn tokenize_ac_coefficients(
     let nz_token = Token::new(nzero_ctx as u32, nzeros as u32);
     #[cfg(feature = "debug-tokens")]
     let bits_before = writer.bits_written();
-    write_token(&nz_token, ac_code, writer)?;
+    write_token(&nz_token, ac_code, None, writer)?;
     #[cfg(feature = "debug-tokens")]
     {
         let bits_after = writer.bits_written();
@@ -370,7 +370,7 @@ pub fn tokenize_ac_coefficients(
         // Encode coefficient
         let u_coef = pack_signed(coef);
         let token = Token::new(ctx as u32, u_coef);
-        write_token(&token, ac_code, writer)?;
+        write_token(&token, ac_code, None, writer)?;
 
         // Update tracking
         if coef != 0 {

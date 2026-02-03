@@ -9,11 +9,30 @@
 
 #![allow(dead_code)]
 
-use super::token::{Token, UintCoder};
+use super::lz77::Lz77Params;
+use super::token::{Lz77UintCoder, Token, UintCoder};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::error::{Error, Result};
+
+use super::token::EncodedUint;
+
+/// Encode a token's value, using the LZ77 uint config when `is_lz77_length` is set.
+/// Returns (encoded_uint, symbol_for_histogram) where symbol_for_histogram includes
+/// the min_symbol offset for LZ77 length tokens.
+#[inline]
+fn encode_token_value(token: &Token, lz77: Option<&Lz77Params>) -> (EncodedUint, u32) {
+    if token.is_lz77_length {
+        let lz77 = lz77.expect("LZ77 length token without LZ77 params");
+        let encoded = Lz77UintCoder::encode(token.value);
+        let sym = encoded.token + lz77.min_symbol;
+        (encoded, sym)
+    } else {
+        let encoded = UintCoder::encode(token.value);
+        (encoded, encoded.token)
+    }
+}
 
 /// Number of code length codes used in Huffman tree serialization.
 const CODE_LENGTH_CODES: usize = 18;
@@ -83,18 +102,24 @@ impl<'a> EntropyCode<'a> {
 
 /// Write a token using the given entropy code.
 ///
-/// This encodes the value using the UintCoder, looks up the prefix code
-/// via the context map, and writes the Huffman code followed by extra bits.
+/// This encodes the value using the UintCoder (or Lz77UintCoder for LZ77 length tokens),
+/// looks up the prefix code via the context map, and writes the Huffman code followed
+/// by extra bits.
 #[inline]
-pub fn write_token(token: &Token, code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
-    let encoded = UintCoder::encode(token.value);
+pub fn write_token(
+    token: &Token,
+    code: &EntropyCode,
+    lz77: Option<&Lz77Params>,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let (encoded, sym) = encode_token_value(token, lz77);
 
     // Look up the prefix code index from the context map
     let prefix_idx = code.context_map[token.context as usize] as usize;
     let pc = &code.prefix_codes[prefix_idx];
 
     // Get the Huffman code for this token
-    let tok = encoded.token as usize;
+    let tok = sym as usize;
     let depth = pc.depths[tok] as usize;
     let bits = pc.bits[tok] as u64;
 
@@ -892,7 +917,7 @@ impl OwnedEntropyCode {
 ///
 /// Returns an `OwnedEntropyCode` ready for writing.
 pub fn build_entropy_code(tokens: &[Token], num_contexts: usize) -> OwnedEntropyCode {
-    build_entropy_code_with_options(tokens, num_contexts, false)
+    build_entropy_code_with_options(tokens, num_contexts, false, None)
 }
 
 /// Build an optimal entropy code from collected tokens with optional enhanced clustering.
@@ -900,10 +925,13 @@ pub fn build_entropy_code(tokens: &[Token], num_contexts: usize) -> OwnedEntropy
 /// When `enhanced_clustering` is true, uses pair merge refinement. Note that the enhanced
 /// clustering algorithm was designed for ANS entropy coding and the cost model may not
 /// accurately predict Huffman code sizes. This is experimental.
+///
+/// When `lz77` is Some, LZ77 length tokens use Lz77UintCoder and are offset by min_symbol.
 pub fn build_entropy_code_with_options(
     tokens: &[Token],
     num_contexts: usize,
     enhanced_clustering: bool,
+    lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {
     use super::cluster::{Histogram as TinyHistogram, cluster_histograms};
 
@@ -912,8 +940,8 @@ pub fn build_entropy_code_with_options(
         (0..num_contexts).map(|_| TinyHistogram::new()).collect();
     for token in tokens {
         let ctx = token.context as usize;
-        let encoded = UintCoder::encode(token.value);
-        histograms[ctx].add(encoded.token as usize);
+        let (_encoded, sym) = encode_token_value(token, lz77);
+        histograms[ctx].add(sym as usize);
     }
 
     let (context_map, clustered_histograms) = if enhanced_clustering {
@@ -991,9 +1019,14 @@ pub fn build_entropy_code_with_options(
 }
 
 /// Write pre-collected tokens using the given entropy code.
-pub fn write_tokens(tokens: &[Token], code: &EntropyCode, writer: &mut BitWriter) -> Result<()> {
+pub fn write_tokens(
+    tokens: &[Token],
+    code: &EntropyCode,
+    lz77: Option<&Lz77Params>,
+    writer: &mut BitWriter,
+) -> Result<()> {
     for token in tokens {
-        write_token(token, code, writer)?;
+        write_token(token, code, lz77, writer)?;
     }
     Ok(())
 }
@@ -1020,6 +1053,8 @@ pub struct OwnedAnsEntropyCode {
     pub histograms: Vec<ANSEncodingHistogram>,
     /// ANS distributions for runtime encoding.
     pub distributions: Vec<AnsDistribution>,
+    /// Log2 of alphabet size. 6 for normal, 8 when LZ77 is enabled.
+    pub log_alpha_size: usize,
 }
 
 impl OwnedAnsEntropyCode {
@@ -1036,14 +1071,17 @@ impl OwnedAnsEntropyCode {
 /// 3. Normalizes each cluster histogram to sum to 4096.
 /// 4. Builds ANS distributions for encoding.
 pub fn build_entropy_code_ans(tokens: &[Token], num_contexts: usize) -> OwnedAnsEntropyCode {
-    build_entropy_code_ans_with_options(tokens, num_contexts, false)
+    build_entropy_code_ans_with_options(tokens, num_contexts, false, None)
 }
 
 /// Build an ANS entropy code with optional enhanced clustering.
+///
+/// When `lz77` is Some, LZ77 length tokens use Lz77UintCoder and are offset by min_symbol.
 pub fn build_entropy_code_ans_with_options(
     tokens: &[Token],
     num_contexts: usize,
     enhanced_clustering: bool,
+    lz77: Option<&Lz77Params>,
 ) -> OwnedAnsEntropyCode {
     use crate::entropy_coding::cluster::{
         ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
@@ -1057,9 +1095,9 @@ pub fn build_entropy_code_ans_with_options(
 
     for token in tokens {
         let ctx = token.context as usize;
-        let encoded = UintCoder::encode(token.value);
+        let (_encoded, sym) = encode_token_value(token, lz77);
         if ctx < histograms.len() {
-            histograms[ctx].add(encoded.token as usize);
+            histograms[ctx].add(sym as usize);
         }
     }
 
@@ -1103,20 +1141,29 @@ pub fn build_entropy_code_ans_with_options(
         ans_distributions.push(ans_dist);
     }
 
+    // Use log_alpha_size=8 when LZ77 is enabled (symbols up to 255),
+    // otherwise log_alpha_size=6 (symbols up to 63).
+    let log_alpha_size = if lz77.is_some_and(|p| p.enabled) {
+        8
+    } else {
+        ANS_LOG_ALPHA_SIZE
+    };
+
     let code = OwnedAnsEntropyCode {
         context_map,
         histograms: ans_histograms,
         distributions: ans_distributions,
+        log_alpha_size,
     };
 
     // Validate: every token in the stream must have a valid, non-zero frequency
     // in the distribution it maps to.
     for (i, token) in tokens.iter().enumerate() {
         let ctx = token.context as usize;
-        let encoded = UintCoder::encode(token.value);
+        let (_encoded, sym) = encode_token_value(token, lz77);
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let dist = &code.distributions[dist_idx];
-        let tok = encoded.token as usize;
+        let tok = sym as usize;
         if tok >= dist.symbols.len() {
             panic!(
                 "ANS validation: token[{}] ctx={} val={} tok={} exceeds distribution alphabet_size={} (dist_idx={})",
@@ -1172,16 +1219,17 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
     // Write use_prefix_code = 0 (use ANS, not Huffman)
     writer.write(1, 0)?;
 
-    // Write log_alpha_size - 5 (we use 6, so write 1)
-    writer.write(2, (ANS_LOG_ALPHA_SIZE - 5) as u64)?;
+    // Write log_alpha_size - 5
+    let las = code.log_alpha_size;
+    writer.write(2, (las - 5) as u64)?;
 
     #[cfg(feature = "debug-tokens")]
-    eprintln!("  use_prefix_code=0, log_alpha_size={}", ANS_LOG_ALPHA_SIZE);
+    eprintln!("  use_prefix_code=0, log_alpha_size={}", las);
 
     // Write HybridUint configs for each histogram
     let _cfg_start = writer.bits_written();
     for _ in &code.histograms {
-        write_hybrid_uint_config(writer)?;
+        write_hybrid_uint_config(las, writer)?;
     }
 
     #[cfg(feature = "debug-tokens")]
@@ -1257,20 +1305,41 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
 /// Write HybridUint config (split_exponent, msb_in_token, lsb_in_token).
 ///
 /// Uses the same config as our UintCoder: split=4, msb=2, lsb=0.
-fn write_hybrid_uint_config(writer: &mut BitWriter) -> Result<()> {
-    // For log_alpha_size = 6:
-    // split_exponent uses ceil_log2(log_alpha_size + 1) = ceil_log2(7) = 3 bits
-    // msb_in_token uses ceil_log2(split_exponent + 1) = ceil_log2(5) = 3 bits
-    // lsb_in_token uses ceil_log2(split_exponent - msb_in_token + 1) = ceil_log2(3) = 2 bits
+fn write_hybrid_uint_config(log_alpha_size: usize, writer: &mut BitWriter) -> Result<()> {
+    let split_exponent = 4u32;
+    let msb_in_token = 2u32;
+    let lsb_in_token = 0u32;
 
-    // split_exponent = 4 (3 bits)
-    writer.write(3, 4)?;
-    // msb_in_token = 2 (3 bits, since ceil_log2(4+1) = 3)
-    writer.write(3, 2)?;
-    // lsb_in_token = 0 (2 bits, since ceil_log2(4-2+1) = 2)
-    writer.write(2, 0)?;
+    // CeilLog2Nonzero(log_alpha_size + 1) bits for split_exponent
+    let se_bits = ceil_log2_nonzero_usize(log_alpha_size + 1);
+    writer.write(se_bits, split_exponent as u64)?;
+
+    if split_exponent as usize == log_alpha_size {
+        // msb/lsb don't matter when split_exponent == log_alpha_size
+        return Ok(());
+    }
+
+    // CeilLog2Nonzero(split_exponent + 1) bits for msb_in_token
+    let msb_bits = ceil_log2_nonzero_usize(split_exponent as usize + 1);
+    writer.write(msb_bits, msb_in_token as u64)?;
+
+    // CeilLog2Nonzero(split_exponent - msb_in_token + 1) bits for lsb_in_token
+    let lsb_bits = ceil_log2_nonzero_usize((split_exponent - msb_in_token) as usize + 1);
+    writer.write(lsb_bits, lsb_in_token as u64)?;
 
     Ok(())
+}
+
+/// CeilLog2Nonzero for usize, matching libjxl.
+fn ceil_log2_nonzero_usize(x: usize) -> usize {
+    debug_assert!(x > 0);
+    let x = x as u32;
+    let floor = 31 - x.leading_zeros();
+    if x.is_power_of_two() {
+        floor as usize
+    } else {
+        (floor + 1) as usize
+    }
 }
 
 /// Write tokens using ANS entropy coding.
@@ -1280,6 +1349,7 @@ fn write_hybrid_uint_config(writer: &mut BitWriter) -> Result<()> {
 pub fn write_tokens_ans(
     tokens: &[Token],
     code: &OwnedAnsEntropyCode,
+    lz77: Option<&Lz77Params>,
     writer: &mut BitWriter,
 ) -> Result<()> {
     let mut encoder = AnsEncoder::new();
@@ -1299,7 +1369,7 @@ pub fn write_tokens_ans(
     #[allow(clippy::unused_enumerate_index)]
     for (_i, token) in tokens.iter().rev().enumerate() {
         let ctx = token.context as usize;
-        let encoded = UintCoder::encode(token.value);
+        let (encoded, sym) = encode_token_value(token, lz77);
 
         // Get the distribution for this context
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
@@ -1314,10 +1384,10 @@ pub fn write_tokens_ans(
         encoder.push_bits(encoded.bits, encoded.nbits as u8);
 
         // Push the ANS symbol
-        let info = dist.get(encoded.token as usize).unwrap_or_else(|| {
+        let info = dist.get(sym as usize).unwrap_or_else(|| {
             panic!(
                 "ANS: symbol {} not in distribution (ctx={}, dist_idx={})",
-                encoded.token, ctx, dist_idx
+                sym, ctx, dist_idx
             )
         });
 
@@ -1328,7 +1398,7 @@ pub fn write_tokens_ans(
                 tokens.len() - 1 - _i,
                 ctx,
                 token.value,
-                encoded.token,
+                sym,
                 info.freq,
                 encoder.state()
             );
@@ -1361,7 +1431,7 @@ pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -
 
         // Decode it back
         let mut br = BitReader::new(&bytes);
-        let decoded = match AnsHistogram::decode(&mut br, ANS_LOG_ALPHA_SIZE) {
+        let decoded = match AnsHistogram::decode(&mut br, code.log_alpha_size) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!(
@@ -1474,13 +1544,13 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
     let header_bits = header_writer.bits_written();
 
     let mut token_writer = BitWriter::new();
-    write_tokens_ans(tokens, code, &mut token_writer)?;
+    write_tokens_ans(tokens, code, None, &mut token_writer)?;
     let _token_bits = token_writer.bits_written();
 
     // Combine header + tokens into one buffer for decoding
     let mut combined_writer = BitWriter::new();
     write_entropy_code_ans(code, &mut combined_writer)?;
-    write_tokens_ans(tokens, code, &mut combined_writer)?;
+    write_tokens_ans(tokens, code, None, &mut combined_writer)?;
     combined_writer.zero_pad_to_byte();
     let encoded_bytes = combined_writer.finish();
 
