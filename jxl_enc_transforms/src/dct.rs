@@ -303,11 +303,7 @@ pub fn idct8(input: &[f32; 64], output: &mut [f32; 64]) {
     for row in 0..8 {
         let row_start = row * 8;
         let mut row_out = [0.0f32; 8];
-        idct_1d_generic(
-            &input[row_start..row_start + 8],
-            &mut row_out,
-            8,
-        );
+        idct_1d_generic(&input[row_start..row_start + 8], &mut row_out, 8);
         temp[row_start..row_start + 8].copy_from_slice(&row_out);
     }
 
@@ -330,11 +326,7 @@ pub fn idct16(input: &[f32; 256], output: &mut [f32; 256]) {
     for row in 0..16 {
         let row_start = row * 16;
         let mut row_out = vec![0.0f32; 16];
-        idct_1d_generic(
-            &input[row_start..row_start + 16],
-            &mut row_out,
-            16,
-        );
+        idct_1d_generic(&input[row_start..row_start + 16], &mut row_out, 16);
         temp[row_start..row_start + 16].copy_from_slice(&row_out);
     }
 
@@ -359,11 +351,7 @@ pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     for row in 0..16 {
         let row_start = row * 8;
         let mut row_out = [0.0f32; 8];
-        idct_1d_generic(
-            &input[row_start..row_start + 8],
-            &mut row_out,
-            8,
-        );
+        idct_1d_generic(&input[row_start..row_start + 8], &mut row_out, 8);
         temp[row_start..row_start + 8].copy_from_slice(&row_out);
     }
 
@@ -388,11 +376,7 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     for row in 0..8 {
         let row_start = row * 16;
         let mut row_out = vec![0.0f32; 16];
-        idct_1d_generic(
-            &input[row_start..row_start + 16],
-            &mut row_out,
-            16,
-        );
+        idct_1d_generic(&input[row_start..row_start + 16], &mut row_out, 16);
         temp[row_start..row_start + 16].copy_from_slice(&row_out);
     }
 
@@ -457,10 +441,7 @@ pub fn idct4(input: &[f32; 16], output: &mut [f32; 16]) {
     for row in 0..4 {
         let row_start = row * 4;
         let mut row_out = [0.0f32; 4];
-        idct4_1d(
-            &input[row_start..row_start + 4],
-            &mut row_out,
-        );
+        idct4_1d(&input[row_start..row_start + 4], &mut row_out);
         temp[row_start..row_start + 4].copy_from_slice(&row_out);
     }
 
@@ -484,11 +465,7 @@ pub fn idct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
     for row in 0..4 {
         let row_start = row * 8;
         let mut row_out = [0.0f32; 8];
-        idct_1d_generic(
-            &input[row_start..row_start + 8],
-            &mut row_out,
-            8,
-        );
+        idct_1d_generic(&input[row_start..row_start + 8], &mut row_out, 8);
         temp[row_start..row_start + 8].copy_from_slice(&row_out);
     }
 
@@ -514,10 +491,7 @@ pub fn idct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
     for row in 0..8 {
         let row_start = row * 4;
         let mut row_out = [0.0f32; 4];
-        idct4_1d(
-            &input[row_start..row_start + 4],
-            &mut row_out,
-        );
+        idct4_1d(&input[row_start..row_start + 4], &mut row_out);
         temp[row_start..row_start + 4].copy_from_slice(&row_out);
     }
 

@@ -671,9 +671,6 @@ pub fn dc_from_dct_16x16(coeffs: &[f32; 256]) -> [f32; 4] {
     [out00, out01, out10, out11]
 }
 
-/// Extract DC value from 8x8 DCT coefficients.
-/// For DCT8, DC is just the [0,0] coefficient.
-#[inline]
 // ============================================================================
 // Inverse DCT (IDCT) implementations for pixel-domain loss calculation
 // ============================================================================
@@ -690,10 +687,12 @@ pub fn dc_from_dct_16x16(coeffs: &[f32; 256]) -> [f32; 4] {
 /// where c[0] = 0.5, c[n] = 1.0 for n > 0.
 ///
 /// This is NOT normalized - it produces raw DCT-III output.
+#[allow(clippy::needless_range_loop)]
 fn idct1d_8_ref(input: &[f32], output: &mut [f32]) {
     let n = 8usize;
     let pi = core::f32::consts::PI;
 
+    // Explicit indices for mathematical clarity (k, j are frequency/position indices)
     for k in 0..n {
         let mut sum = 0.5 * input[0]; // c[0] = 0.5
         for j in 1..n {
@@ -831,9 +830,11 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 }
 
 /// Generic N-point 1D IDCT reference implementation.
+#[allow(clippy::needless_range_loop)]
 fn idct1d_n_ref(input: &[f32], output: &mut [f32], n: usize) {
     let pi = core::f32::consts::PI;
 
+    // Explicit indices for mathematical clarity (k, j are frequency/position indices)
     for k in 0..n {
         let mut sum = 0.5 * input[0];
         for j in 1..n {
@@ -844,6 +845,9 @@ fn idct1d_n_ref(input: &[f32], output: &mut [f32], n: usize) {
     }
 }
 
+/// Extract DC value from 8x8 DCT coefficients.
+/// For DCT8, DC is just the [0,0] coefficient.
+#[inline]
 pub fn dc_from_dct_8x8(coeffs: &[f32; 64]) -> f32 {
     coeffs[0]
 }
@@ -1536,7 +1540,10 @@ mod tests {
 
         eprintln!("DCT of constant 1.0:");
         eprintln!("  DC = {}", coeffs[0]);
-        eprintln!("  AC[1] = {}, AC[8] = {}, AC[9] = {}", coeffs[1], coeffs[8], coeffs[9]);
+        eprintln!(
+            "  AC[1] = {}, AC[8] = {}, AC[9] = {}",
+            coeffs[1], coeffs[8], coeffs[9]
+        );
         // DC should be 1.0 (sum / 64 = 64/64 = 1), AC should be ~0
 
         let mut reconstructed = [0.0f32; 64];
@@ -1547,12 +1554,15 @@ mod tests {
 
         // Try to find the scale factor
         if coeffs[0] != 0.0 {
-            let raw_scale = 1.0 / reconstructed[0];  // what we need to multiply by
+            let raw_scale = 1.0 / reconstructed[0]; // what we need to multiply by
             eprintln!("Scale factor needed to get 1.0: {}", raw_scale);
         }
 
         // Expected: all 1.0
-        let max_err = reconstructed.iter().map(|&x| (x - 1.0).abs()).fold(0.0f32, f32::max);
+        let max_err = reconstructed
+            .iter()
+            .map(|&x| (x - 1.0).abs())
+            .fold(0.0f32, f32::max);
         eprintln!("Max error from expected 1.0: {}", max_err);
     }
 
@@ -1568,12 +1578,18 @@ mod tests {
         dct_8x8(&input, &mut coeffs);
 
         eprintln!("DCT of impulse at (0,0) scaled to 64:");
-        eprintln!("  [0] = {}, [1] = {}, [8] = {}", coeffs[0], coeffs[1], coeffs[8]);
+        eprintln!(
+            "  [0] = {}, [1] = {}, [8] = {}",
+            coeffs[0], coeffs[1], coeffs[8]
+        );
 
         let mut reconstructed = [0.0f32; 64];
         idct_8x8(&coeffs, &mut reconstructed);
 
-        eprintln!("IDCT reconstructed [0] = {}, should be 64", reconstructed[0]);
+        eprintln!(
+            "IDCT reconstructed [0] = {}, should be 64",
+            reconstructed[0]
+        );
         eprintln!("Scale factor: {}", reconstructed[0] / input[0]);
     }
 
@@ -1598,7 +1614,10 @@ mod tests {
             max_err = max_err.max(err);
         }
         eprintln!("Roundtrip max error: {}", max_err);
-        eprintln!("Input[0]: {}, Reconstructed[0]: {}", input[0], reconstructed[0]);
+        eprintln!(
+            "Input[0]: {}, Reconstructed[0]: {}",
+            input[0], reconstructed[0]
+        );
         eprintln!("Scale factor needed: {}", reconstructed[0] / input[0]);
         assert!(
             max_err < 1e-3,

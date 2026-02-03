@@ -163,14 +163,14 @@ const CHANNEL_MUL: [f64; 3] = [
 /// From libjxl enc_ac_strategy.cc:1111-1113
 /// These are SCALED by distance before use via `compute_scaled_constants()`.
 const K_INFO_LOSS_MULTIPLIER_BASE: f32 = 1.2;
-const K_COST_DELTA_BASE: f32 = 10.833_273_3;
-const K_ZEROS_MUL_BASE: f32 = 9.308_905_9;
+const K_COST_DELTA_BASE: f32 = 10.833_274;
+const K_ZEROS_MUL_BASE: f32 = 9.308_906;
 
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1119-1123
-const K_BIAS: f32 = 0.137_317_43;
-const K_POW_INFO_LOSS: f32 = 0.336_778_07;
-const K_POW_ZEROS_MUL: f32 = 0.509_909_27;
-const K_POW_COST_DELTA: f32 = 0.367_029_41;
+const K_BIAS: f32 = 0.137_317_4;
+const K_POW_INFO_LOSS: f32 = 0.336_778_1;
+const K_POW_ZEROS_MUL: f32 = 0.509_909_3;
+const K_POW_COST_DELTA: f32 = 0.367_029_4;
 
 /// Compute distance-scaled constants for full libjxl cost model.
 /// At d=1.0, returns the base values. At higher distances, increases all values.
@@ -215,25 +215,6 @@ fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
     raw / RAW_ENTROPY_MUL_DCT8
 }
 
-/// Estimate the coded entropy of a block under a given transform strategy.
-///
-/// Port of C++ `EstimateEntropy`. Returns a cost that combines:
-/// - Estimated bits for coding the quantized coefficients
-/// - Information loss penalty weighted by masking
-///
-/// # Arguments
-/// * `raw_strategy` - 0=DCT8, 1=DCT16X8, 2=DCT8X16
-/// * `xyb` - The three XYB channel planes (padded to block boundaries)
-/// * `stride` - Row stride (padded width) of the XYB buffers
-/// * `bx`, `by` - Block coordinates of the top-left 8×8 block
-/// * `distance` - Butteraugli target distance
-/// * `quant_field` - Per-block quant values (flat, indexed by*xblocks+bx)
-/// * `xsize_blocks` - Image width in blocks
-/// * `masking` - Per-block masking field (flat, indexed by*xblocks+bx)
-/// * `ytox`, `ytob` - CfL parameters for this tile
-/// * `mask1x1` - Optional per-pixel masking field for pixel-domain loss
-/// * `mask1x1_stride` - Width of mask1x1 field (image width in pixels)
-#[allow(clippy::too_many_arguments)]
 /// Estimate entropy using coefficient-domain loss (libjxl-tiny style).
 ///
 /// This is a convenience wrapper that calls `estimate_entropy_with_mask` with
@@ -275,6 +256,7 @@ fn estimate_entropy(
 /// When `mask1x1` is Some, uses full libjxl pixel-domain loss model with:
 /// - Distance-scaled constants
 /// - Fixed entropy multiplier per transform type
+///
 /// When `mask1x1` is None, uses coefficient-domain loss (libjxl-tiny style).
 #[allow(clippy::too_many_arguments)]
 fn estimate_entropy_with_mask(
@@ -432,31 +414,56 @@ fn estimate_entropy_full(
     // Load QF and masking: take max over covered blocks
     let mut quant = 0.0f32;
     let mut mask_val = 0.0f32;
-    let mut quant_norm16 = 0.0f32;
     for iy in 0..cy {
         for ix in 0..cx {
             let idx = (by + iy) * xsize_blocks + bx + ix;
             quant = quant.max(quant_field[idx]);
             mask_val = mask_val.max(masking[idx]);
-
-            // Compute quant_norm16 for pixel-domain loss
-            if use_pixel_domain {
-                let qval = quant_field[idx];
-                // qval^16 = (qval^2)^8
-                let q2 = qval * qval;
-                let q4 = q2 * q2;
-                let q8 = q4 * q4;
-                let q16 = q8 * q8;
-                quant_norm16 += q16;
-            }
         }
     }
 
-    // Normalize quant_norm16
-    if use_pixel_domain {
-        quant_norm16 /= num_blocks as f32;
-        quant_norm16 = quant_norm16.powf(1.0 / 16.0);
-    }
+    // Compute quant_norm16 for pixel-domain loss
+    // libjxl uses different computation based on block count:
+    // - 1 block (DCT8): single quant value
+    // - 2 blocks (DCT16x8, DCT8x16): MAX of the two quant values
+    // - 4+ blocks (DCT16x16, DCT32x32): 16th norm
+    // Reference: lib/jxl/enc_ac_strategy.cc:383-410
+    let quant_norm16 = if use_pixel_domain {
+        if num_blocks == 1 {
+            // Single block: use the quant value directly
+            quant_field[by * xsize_blocks + bx]
+        } else if num_blocks == 2 {
+            // Two blocks: use MAX of the two quant values (NOT 16th norm!)
+            let q1 = quant_field[by * xsize_blocks + bx];
+            let q2 = if cy == 2 {
+                // DCT8x16: blocks are vertically stacked
+                quant_field[(by + 1) * xsize_blocks + bx]
+            } else {
+                // DCT16x8: blocks are horizontally adjacent
+                quant_field[by * xsize_blocks + bx + 1]
+            };
+            q1.max(q2)
+        } else {
+            // 4+ blocks: use 16th norm
+            let mut norm_sum = 0.0f32;
+            for iy in 0..cy {
+                for ix in 0..cx {
+                    let idx = (by + iy) * xsize_blocks + bx + ix;
+                    let qval = quant_field[idx];
+                    // qval^16 = (qval^2)^8
+                    let q2 = qval * qval;
+                    let q4 = q2 * q2;
+                    let q8 = q4 * q4;
+                    let q16 = q8 * q8;
+                    norm_sum += q16;
+                }
+            }
+            norm_sum /= num_blocks as f32;
+            norm_sum.powf(1.0 / 16.0)
+        }
+    } else {
+        0.0 // Not used in coefficient-domain mode
+    };
 
     let cmap_factors = [ytox_ratio(ytox), 0.0f32, ytob_ratio(ytob)];
 
@@ -514,16 +521,22 @@ fn estimate_entropy_full(
             }
 
             let q = rval.abs();
-            if q >= 1.5 {
+            // K_COST2 threshold only in coefficient-domain mode (libjxl-tiny style)
+            // Full libjxl pixel-domain mode doesn't have this threshold
+            if !use_pixel_domain && q >= 1.5 {
                 entropy_sum += K_COST2;
             }
-            // Full libjxl uses sqrt(q), libjxl-tiny uses q.sqrt() * K_COST_DELTA
+            // Full libjxl uses sqrt(q) * cost_delta, libjxl-tiny similar
             entropy_sum += q.sqrt() * k_cost_delta;
             if q != 0.0 {
                 nzeros_sum += 1.0;
             }
         }
-        entropy_sum += nzeros_sum * cost_of_1;
+        // cost_of_1 term only in coefficient-domain mode (libjxl-tiny style)
+        // Full libjxl pixel-domain mode doesn't have this per-nzero term
+        if !use_pixel_domain {
+            entropy_sum += nzeros_sum * cost_of_1;
+        }
         entropy += entropy_sum;
 
         let num_nzeros = nzeros_sum as usize;
@@ -646,12 +659,8 @@ fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
         RAW_STRATEGY_DCT32X32 => {
             // 32 wide × 32 tall - use 8x8 IDCT as fallback
             // (DCT32x32 is disabled anyway due to DC extraction bug)
-            let mut output = vec![0.0f32; 1024];
             // Simple fallback: just use the coefficients directly scaled
-            for i in 0..1024 {
-                output[i] = error_coeffs[i];
-            }
-            output
+            error_coeffs[..1024].to_vec()
         }
         _ => vec![0.0f32; 64],
     }

@@ -999,11 +999,7 @@ mod tests {
         // For uniform image, mask should be high (1.0 / 0.01 = 100 when diff=0)
         // due to log1p(0) = 0
         let first = mask[w + 1]; // skip edge pixels
-        assert!(
-            first > 50.0,
-            "uniform mask should be high, got {}",
-            first
-        );
+        assert!(first > 50.0, "uniform mask should be high, got {}", first);
     }
 
     #[test]
