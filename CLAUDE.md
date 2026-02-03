@@ -48,14 +48,17 @@ lack of advanced features (error diffusion, better cost models, etc.).
 When adding or modifying roundtrip tests, ensure BOTH jxl-rs and djxl are tested.
 Never omit jxl-rs from decoder validation.
 
-## Current Status: Algorithmically Matches libjxl-tiny
+## Current Status: Full libjxl Parametric Quantization Weights
 
-The tiny encoder (`jxl_enc/src/tiny/`) matches libjxl-tiny's algorithm exactly.
-RD curves are competitive with cjxl when comparing at equal file sizes.
+The tiny encoder (`jxl_enc/src/tiny/`) now uses full libjxl's default parametric
+quantization weights for all strategies (DCT8, DCT16X8/DCT8X16, DCT16X16,
+DCT32X32, DCT4X8, DCT8X4, DCT4X4). This matches what the decoder expects when
+`all_default=true` is signaled in the frame header.
 
-**Distance calibration**: Our distance parameter produces ~15% smaller files than
-cjxl at the same value due to different quantization constants. This is expected
-since we use libjxl-tiny's constants, not full libjxl's.
+Previously, strategies 0-3 used libjxl-tiny's hardcoded 1,344-float weight table,
+creating a quantizer/dequantizer mismatch that caused ~1.3 SSIM2 quality gap at
+equal file sizes vs cjxl. This was fixed Feb 3, 2026 by porting the band parameters
+from libjxl quant_weights.cc and generating weights parametrically.
 
 ### Full libjxl Algorithm Features (IMPLEMENTED)
 
@@ -120,9 +123,8 @@ Improvements made Feb 3, 2026:
 
 **At equal file sizes** (~815KB via d=0.94): Our SSIM2=85.75 vs cjxl 87.05 → **1.3 SSIM2 gap**
 
-**Root causes of gap**:
-1. **Quantization weights**: libjxl-tiny uses hardcoded weights; full libjxl uses parametric
-   weights that adapt to distance. This explains the widening gap at high distances.
+**Root causes of remaining gap** (after quantization weight fix):
+1. ~~**Quantization weights**: FIXED - now uses full libjxl parametric weights~~
 2. **AC strategies**: We have 8 strategies; full libjxl has 27 (missing: IDENTITY, DCT2X2,
    AFV, larger rectangular transforms, DCT64+)
 3. **Cost model**: Simplified libjxl-tiny cost model vs full pixel-domain loss with all
@@ -130,8 +132,10 @@ Improvements made Feb 3, 2026:
 
 **Path to closing gap**:
 - Quick wins: Implement DCT2X2, IDENTITY strategies
-- Medium effort: Port parametric quantization weights from full libjxl
 - High effort: AFV (corner DCT), full 27-strategy support
+
+Note: RD curve numbers above were measured BEFORE the quantization weight fix.
+Re-measurement needed to establish new baseline.
 
 ### Outstanding Work (Feb 3, 2026)
 
@@ -147,7 +151,7 @@ Improvements made Feb 3, 2026:
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 40 commits ahead of origin/main
+**Unpushed**: 42 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
