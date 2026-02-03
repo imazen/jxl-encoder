@@ -825,9 +825,7 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     // Copy input to tmp and apply IDCT to each row
     for row in 0..8 {
         let row_start = row * 8;
-        for i in 0..8 {
-            tmp[row_start + i] = input[row_start + i];
-        }
+        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
         idct1d_8(&mut tmp[row_start..row_start + 8]);
     }
 
@@ -838,9 +836,7 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     // Apply IDCT to each row of transposed
     for row in 0..8 {
         let row_start = row * 8;
-        for i in 0..8 {
-            output[row_start + i] = transposed[row_start + i];
-        }
+        output[row_start..row_start + 8].copy_from_slice(&transposed[row_start..row_start + 8]);
         idct1d_8(&mut output[row_start..row_start + 8]);
     }
 }
@@ -852,9 +848,7 @@ pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     // Copy input and apply IDCT to each row
     for row in 0..16 {
         let row_start = row * 16;
-        for i in 0..16 {
-            tmp[row_start + i] = input[row_start + i];
-        }
+        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
         idct1d_16(&mut tmp[row_start..row_start + 16]);
     }
 
@@ -865,9 +859,7 @@ pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     // Apply IDCT to each row (now columns)
     for row in 0..16 {
         let row_start = row * 16;
-        for i in 0..16 {
-            output[row_start + i] = transposed[row_start + i];
-        }
+        output[row_start..row_start + 16].copy_from_slice(&transposed[row_start..row_start + 16]);
         idct1d_16(&mut output[row_start..row_start + 16]);
     }
 }
@@ -879,9 +871,7 @@ pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     // Apply 8-point IDCT to each row
     for row in 0..16 {
         let row_start = row * 8;
-        for i in 0..8 {
-            tmp[row_start + i] = input[row_start + i];
-        }
+        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
         idct1d_8(&mut tmp[row_start..row_start + 8]);
     }
 
@@ -905,9 +895,7 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     // Apply 16-point IDCT to each row
     for row in 0..8 {
         let row_start = row * 16;
-        for i in 0..16 {
-            tmp[row_start + i] = input[row_start + i];
-        }
+        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
         idct1d_16(&mut tmp[row_start..row_start + 16]);
     }
 
@@ -1150,62 +1138,41 @@ fn idct1d_4_ref(input: &[f32; 4], output: &mut [f32; 4]) {
 /// (since ROWS=COLS=4).
 pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
     // Step 1: Extract 4x4 LLF and apply resample scales.
-    // C++ ROWS >= COLS: block[y * ROWS + x] = input[y * stride + x] * scale_col[y] * scale_row[x]
+    // The forward DCT32x32 scaled by 1/1024. The 4x4 IDCT will apply 4*4=16 scaling,
+    // so we need an additional 1024/16 = 64 to get back to spatial values.
     let mut block = [0.0f32; 16];
     for iy in 0..4 {
         for ix in 0..4 {
             block[iy * 4 + ix] = coeffs[iy * 32 + ix]
                 * DCT_RESAMPLE_SCALE_32_TO_4[iy]
-                * DCT_RESAMPLE_SCALE_32_TO_4[ix];
+                * DCT_RESAMPLE_SCALE_32_TO_4[ix]
+                * 16.0; // Compensate for forward/inverse scaling mismatch
         }
     }
 
     // Step 2: 4x4 IDCT matching C++ ComputeScaledIDCT<4,4> (ROWS >= COLS):
     //   IDCT rows → transpose → IDCT rows.
-    // The transpose between steps is critical — without it, the output is transposed
-    // and DC values end up at wrong spatial positions.
+    // Using matched idct1d_4 that exactly reverses our forward dct1d_4.
 
-    // IDCT rows
-    let mut after_rows = [0.0f32; 16];
+    // IDCT rows (in-place)
     for iy in 0..4 {
-        let row_in: [f32; 4] = [
-            block[iy * 4],
-            block[iy * 4 + 1],
-            block[iy * 4 + 2],
-            block[iy * 4 + 3],
-        ];
-        let mut row_out = [0.0f32; 4];
-        idct1d_4_ref(&row_in, &mut row_out);
-        for ix in 0..4 {
-            after_rows[iy * 4 + ix] = row_out[ix];
-        }
+        idct1d_4(&mut block[iy * 4..(iy + 1) * 4]);
     }
 
     // Transpose 4x4
     let mut transposed = [0.0f32; 16];
     for iy in 0..4 {
         for ix in 0..4 {
-            transposed[ix * 4 + iy] = after_rows[iy * 4 + ix];
+            transposed[ix * 4 + iy] = block[iy * 4 + ix];
         }
     }
 
     // IDCT rows (on transposed data = columns of original)
-    let mut result = [0.0f32; 16];
     for iy in 0..4 {
-        let row_in: [f32; 4] = [
-            transposed[iy * 4],
-            transposed[iy * 4 + 1],
-            transposed[iy * 4 + 2],
-            transposed[iy * 4 + 3],
-        ];
-        let mut row_out = [0.0f32; 4];
-        idct1d_4_ref(&row_in, &mut row_out);
-        for ix in 0..4 {
-            result[iy * 4 + ix] = row_out[ix];
-        }
+        idct1d_4(&mut transposed[iy * 4..(iy + 1) * 4]);
     }
 
-    result
+    transposed
 }
 
 #[cfg(test)]

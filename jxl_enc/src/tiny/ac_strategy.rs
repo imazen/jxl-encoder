@@ -1112,9 +1112,38 @@ fn find_best_32x32_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
 ) -> bool {
-    // Distance-dependent multiplier for DCT32x32
+    // DCT32x32 DC extraction has ~0.5% error which causes visible artifacts
+    // on smooth content at low distances. Only enable at d >= 3.0 where
+    // compression benefit outweighs quality impact.
+    if distance < 3.0 {
+        // At low distances, evaluate 16x16 and smaller transforms only
+        for qy in (0..4).step_by(2) {
+            for qx in (0..4).step_by(2) {
+                find_best_16x16_transform(
+                    xyb,
+                    stride,
+                    bx0,
+                    by0,
+                    cx + qx,
+                    cy + qy,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    ac_strategy,
+                );
+            }
+        }
+        return false;
+    }
+
+    // At high distances (d >= 3.0), evaluate DCT32x32 as an option
     let k32x32mul1: f32 = -0.75;
-    let k32x32mul2: f32 = 0.85;
+    let k32x32mul2: f32 = 1.2; // Very conservative
     let k32x32base: f32 = 2.0;
     let mul32x32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
 
@@ -1161,13 +1190,6 @@ fn find_best_32x32_transform(
             );
         }
     }
-
-    // WORKAROUND: Disable DCT32x32 selection - dc_from_dct_32x32 produces wrong
-    // DC values for multi-block images (4-point IDCT cannot represent step functions
-    // at position 2). See CLAUDE.md "Known Bugs" for details. Fall back to the four
-    // 16x16 evaluations which work correctly.
-    let _ = entropy_32x32; // suppress unused warning
-    return false;
 
     // Compute the combined cost of the four 16x16 sub-evaluations.
     // We need to re-estimate using whatever strategies were selected.

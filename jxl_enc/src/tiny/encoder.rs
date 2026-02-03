@@ -2652,7 +2652,7 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: gaborish inverse enabled by default
+        // DCT32x32 only enabled at d>=3.0; this test uses d=1.0
         const EXPECTED_HASH: u64 = 0x6db9f8107ab85117;
         assert_eq!(
             hash,
