@@ -1154,7 +1154,9 @@ fn find_best_32x32_transform(
     // DCT32x32 DC extraction has ~0.5% error which causes visible artifacts
     // on smooth content at low distances. Only enable at d >= 3.0 where
     // compression benefit outweighs quality impact.
-    if distance < 3.0 {
+    // FIXME: DCT32x32 is currently producing wrong pixel values in many cases
+    // (SSIM2 = -48 for forced DCT32x32 on 256x256). Disabled until fixed.
+    if distance < 100.0 {
         // At low distances, evaluate 16x16 and smaller transforms only
         for qy in (0..4).step_by(2) {
             for qx in (0..4).step_by(2) {
