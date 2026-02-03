@@ -3,9 +3,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Quantization weights and matrices for the tiny encoder.
+//! Quantization weights and matrices for the encoder.
 //!
-//! Ported from libjxl-tiny quant_weights.cc/h.
+//! All weights are generated parametrically from libjxl's default band parameters
+//! (quant_weights.cc). This matches what the decoder expects when the frame header
+//! signals `all_default=true`.
 
 // Ported float constants from C++ - exact values are intentional for parity.
 #![allow(clippy::excessive_precision)]
@@ -31,336 +33,8 @@ pub const DC_QUANT: [f32; 3] = [
     1.0 / 256.0,  // B channel
 ];
 
-/// Total table size for strategies 0-3: 9 blocks (DCT8+DCT16X8) + 12 blocks (DCT16X16) = 21 blocks.
-/// DCT32X32 weights are generated dynamically (too large for const: 3072 floats).
-pub const TOTAL_TABLE_SIZE: usize = 21 * DCT_BLOCK_SIZE;
-
-/// Size in 8x8 blocks for each (strategy, channel) combination.
-/// Index = strategy * 3 + channel
-/// Strategies: 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32, 5=DCT4X8, 6=DCT8X4
-/// Channels: 0=X, 1=Y, 2=B
-#[rustfmt::skip]
-pub const TABLE_SIZE_IN_BLOCKS: [usize; 21] = [
-    1, 1, 1,      // DCT8: X, Y, B
-    2, 2, 2,      // DCT16X8: X, Y, B
-    2, 2, 2,      // DCT8X16: X, Y, B
-    4, 4, 4,      // DCT16X16: X, Y, B (256 coeffs = 4 blocks each)
-    16, 16, 16,   // DCT32X32: X, Y, B (1024 coeffs = 16 blocks each)
-    1, 1, 1,      // DCT4X8: X, Y, B (64 coeffs = 1 block each)
-    1, 1, 1,      // DCT8X4: X, Y, B (64 coeffs = 1 block each)
-];
-
-/// Offset in 8x8 blocks for each (strategy, channel) combination.
-/// Index = strategy * 3 + channel
-/// DCT32X32 offsets are into QUANT_WEIGHTS_DCT32X32, not QUANT_WEIGHTS.
-/// DCT4X8, DCT8X4, DCT4X4 have separate tables with proper parametric weights.
-#[rustfmt::skip]
-pub const TABLE_OFFSET_IN_BLOCKS: [usize; 21] = [
-    0, 1, 2,    // DCT8: X, Y, B
-    3, 5, 7,    // DCT16X8: X, Y, B
-    3, 5, 7,    // DCT8X16: X, Y, B (shares tables with DCT16X8)
-    9, 13, 17,  // DCT16X16: X, Y, B (256 coeffs = 4 blocks each)
-    0, 16, 32,  // DCT32X32: offsets into separate QUANT_WEIGHTS_DCT32X32
-    0, 0, 0,    // DCT4X8: uses QUANT_WEIGHTS_DCT4X8 (not this table)
-    0, 0, 0,    // DCT8X4: uses QUANT_WEIGHTS_DCT8X4 (not this table)
-];
-
-/// Pre-computed quantization weights (dequant matrix, i.e. 1/weight).
-/// 1344 floats = 21 blocks * 64 coefficients per block.
-///
-/// Layout:
-/// - Block 0 (offset 0): DCT8 X channel (64 coeffs)
-/// - Block 1 (offset 64): DCT8 Y channel (64 coeffs)
-/// - Block 2 (offset 128): DCT8 B channel (64 coeffs)
-/// - Blocks 3-4 (offset 192): DCT16X8/DCT8X16 X channel (128 coeffs)
-/// - Blocks 5-6 (offset 320): DCT16X8/DCT8X16 Y channel (128 coeffs)
-/// - Blocks 7-8 (offset 448): DCT16X8/DCT8X16 B channel (128 coeffs)
-/// - Blocks 9-12 (offset 576): DCT16X16 X channel (256 coeffs)
-/// - Blocks 13-16 (offset 832): DCT16X16 Y channel (256 coeffs)
-/// - Blocks 17-20 (offset 1088): DCT16X16 B channel (256 coeffs)
-#[rustfmt::skip]
-pub const QUANT_WEIGHTS: [f32; TOTAL_TABLE_SIZE] = [
-    // Copied directly from libjxl-tiny quant_weights.cc
-    3.1746033e-04, 3.1746057e-04, 3.1854658e-04, 3.7755401e-04, 4.4749113e-04,
-    5.3038419e-04, 6.2863121e-04, 7.4507861e-04, 3.1746057e-04, 3.1746062e-04,
-    3.3158599e-04, 3.8811122e-04, 4.5695182e-04, 5.3938502e-04, 6.3753547e-04,
-    7.5413194e-04, 3.1854658e-04, 3.3158599e-04, 3.6670428e-04, 4.1847790e-04,
-    4.8487642e-04, 5.6626293e-04, 6.6427846e-04, 7.8140449e-04, 3.7755401e-04,
-    3.8811122e-04, 4.1847790e-04, 4.6632939e-04, 5.3038419e-04, 6.1082945e-04,
-    7.0903177e-04, 8.2727504e-04, 4.4749113e-04, 4.5695182e-04, 4.8487642e-04,
-    5.3038419e-04, 5.9302151e-04, 6.7320757e-04, 7.7229418e-04, 9.4286882e-04,
-    5.3038419e-04, 5.3938502e-04, 5.6626293e-04, 6.1082945e-04, 6.7320757e-04,
-    7.5413194e-04, 8.5507357e-04, 1.2723245e-03, 6.2863121e-04, 6.3753547e-04,
-    6.6427846e-04, 7.0903177e-04, 7.7229418e-04, 8.5507357e-04, 1.1923184e-03,
-    1.7919940e-03, 7.4507861e-04, 7.5413194e-04, 7.8140449e-04, 8.2727504e-04,
-    9.4286882e-04, 1.2723245e-03, 1.7919940e-03, 2.6133191e-03, 1.7857145e-03,
-    1.7857157e-03, 1.7904768e-03, 2.0441783e-03, 2.3338278e-03, 2.6645192e-03,
-    3.0420676e-03, 3.4731133e-03, 1.7857157e-03, 1.7857160e-03, 1.8473724e-03,
-    2.0886122e-03, 2.3722122e-03, 2.6997121e-03, 3.0756146e-03, 3.5059757e-03,
-    1.7904768e-03, 1.8473724e-03, 1.9982266e-03, 2.2149722e-03, 2.4845072e-03,
-    2.8040458e-03, 3.1757555e-03, 3.6044519e-03, 2.0441783e-03, 2.0886122e-03,
-    2.2149722e-03, 2.4100873e-03, 2.6645192e-03, 2.9746795e-03, 3.3413812e-03,
-    3.7683977e-03, 2.3338278e-03, 2.3722122e-03, 2.4845072e-03, 2.6645192e-03,
-    2.9068382e-03, 3.2089923e-03, 3.5716419e-03, 3.9980840e-03, 2.6645192e-03,
-    2.6997121e-03, 2.8040458e-03, 2.9746795e-03, 3.2089923e-03, 3.5059757e-03,
-    3.8667743e-03, 4.2947000e-03, 3.0420676e-03, 3.0756146e-03, 3.1757555e-03,
-    3.3413812e-03, 3.5716419e-03, 3.8667743e-03, 4.2286036e-03, 4.6607289e-03,
-    3.4731133e-03, 3.5059757e-03, 3.6044519e-03, 3.7683977e-03, 3.9980840e-03,
-    4.2947000e-03, 4.6607289e-03, 5.1001739e-03, 1.9531252e-03, 3.4018266e-03,
-    5.9007513e-03, 8.3743408e-03, 1.1718751e-02, 1.1718759e-02, 1.1968765e-02,
-    1.6986061e-02, 3.4018266e-03, 4.2808522e-03, 6.4091417e-03, 8.8638803e-03,
-    1.1718752e-02, 1.1718759e-02, 1.2320629e-02, 1.7413978e-02, 5.9007513e-03,
-    6.4091417e-03, 7.8861341e-03, 1.0351914e-02, 1.1718754e-02, 1.1718762e-02,
-    1.3408982e-02, 1.8736197e-02, 8.3743408e-03, 8.8638803e-03, 1.0351914e-02,
-    1.1718752e-02, 1.1718759e-02, 1.1718766e-02, 1.5336527e-02, 2.1072537e-02,
-    1.1718751e-02, 1.1718752e-02, 1.1718754e-02, 1.1718759e-02, 1.1718764e-02,
-    1.3782934e-02, 1.8288977e-02, 2.5368163e-02, 1.1718759e-02, 1.1718759e-02,
-    1.1718762e-02, 1.1718766e-02, 1.3782934e-02, 1.7413978e-02, 2.2557227e-02,
-    3.4232263e-02, 1.1968765e-02, 1.2320629e-02, 1.3408982e-02, 1.5336527e-02,
-    1.8288977e-02, 2.2557227e-02, 3.2079678e-02, 4.8214123e-02, 1.6986061e-02,
-    1.7413978e-02, 1.8736197e-02, 2.1072537e-02, 2.5368163e-02, 3.4232263e-02,
-    4.8214123e-02, 7.0312120e-02, 1.3810680e-04, 1.6047071e-04, 1.8645605e-04,
-    2.1664926e-04, 2.5173181e-04, 2.9249521e-04, 3.3985957e-04, 3.9489369e-04,
-    4.1871337e-04, 4.4087201e-04, 4.6420316e-04, 4.8876996e-04, 5.1463587e-04,
-    5.4187077e-04, 5.7054684e-04, 6.0074159e-04, 1.9049694e-04, 1.9694651e-04,
-    2.1442315e-04, 2.4016941e-04, 2.7289384e-04, 3.1245520e-04, 3.5932945e-04,
-    4.0429863e-04, 4.2484730e-04, 4.4662904e-04, 4.6966935e-04, 4.9400958e-04,
-    5.1969837e-04, 5.4679497e-04, 5.7536521e-04, 6.0547784e-04, 2.6276117e-04,
-    2.6734054e-04, 2.8085473e-04, 3.0283103e-04, 3.3291124e-04, 3.7106971e-04,
-    4.0540050e-04, 4.2322354e-04, 4.4259510e-04, 4.6344541e-04, 4.8574654e-04,
-    5.0949713e-04, 5.3471868e-04, 5.6144706e-04, 5.8973121e-04, 6.1962701e-04,
-    3.6243827e-04, 3.6666830e-04, 3.7935356e-04, 3.9960333e-04, 4.0956112e-04,
-    4.2183659e-04, 4.3620329e-04, 4.5248115e-04, 4.7053859e-04, 4.9028790e-04,
-    5.1167433e-04, 5.3467450e-04, 5.5928703e-04, 5.8552966e-04, 6.1343284e-04,
-    6.4304151e-04, 4.3123538e-04, 4.3253010e-04, 4.3638589e-04, 4.4272337e-04,
-    4.5142765e-04, 4.6236772e-04, 4.7541404e-04, 4.9045112e-04, 5.0738233e-04,
-    5.2613625e-04, 5.4666388e-04, 5.6893763e-04, 5.9295003e-04, 6.1870721e-04,
-    6.4623309e-04, 6.7556335e-04, 4.8162136e-04, 4.8277923e-04, 4.8623976e-04,
-    4.9196521e-04, 4.9989921e-04, 5.0997391e-04, 5.2211789e-04, 5.3626322e-04,
-    5.5235048e-04, 5.7033246e-04, 5.9017621e-04, 6.1186077e-04, 6.3538179e-04,
-    6.6074729e-04, 6.8797835e-04, 7.5214857e-04, 5.3789350e-04, 5.3897168e-04,
-    5.4219965e-04, 5.4755906e-04, 5.5502116e-04, 5.6455150e-04, 5.7611306e-04,
-    5.8966759e-04, 6.0518348e-04, 6.2263483e-04, 6.4200454e-04, 6.6328526e-04,
-    6.8647927e-04, 7.3936180e-04, 8.0337300e-04, 8.7534159e-04, 6.0074159e-04,
-    6.0177385e-04, 6.0486794e-04, 6.1001495e-04, 6.1720144e-04, 6.2641077e-04,
-    6.3762552e-04, 6.5082888e-04, 6.6600717e-04, 6.8315107e-04, 7.1794738e-04,
-    7.6673855e-04, 8.2213664e-04, 8.8475435e-04, 9.5529074e-04, 1.0345384e-03,
-    6.9053401e-04, 7.7444571e-04, 8.6855399e-04, 9.7409816e-04, 1.0924696e-03,
-    1.2252233e-03, 1.3741088e-03, 1.5410866e-03, 1.7283577e-03, 1.9383827e-03,
-    2.1739292e-03, 2.3783136e-03, 2.5041751e-03, 2.6366978e-03, 2.7762330e-03,
-    2.9231580e-03, 8.8290084e-04, 9.0565201e-04, 9.6644071e-04, 1.0539154e-03,
-    1.1619731e-03, 1.2886107e-03, 1.4338633e-03, 1.5988132e-03, 1.7851711e-03,
-    1.9951246e-03, 2.2312698e-03, 2.4038092e-03, 2.5288085e-03, 2.6606584e-03,
-    2.7996788e-03, 2.9462043e-03, 1.1288587e-03, 1.1438611e-03, 1.1877866e-03,
-    1.2581701e-03, 1.3525900e-03, 1.4695247e-03, 1.6085195e-03, 1.7700332e-03,
-    1.9552717e-03, 2.1660449e-03, 2.3636019e-03, 2.4791702e-03, 2.6018962e-03,
-    2.7319542e-03, 2.8695827e-03, 3.0150530e-03, 1.4433329e-03, 1.4561869e-03,
-    1.4945272e-03, 1.5578135e-03, 1.6454635e-03, 1.7571596e-03, 1.8930284e-03,
-    2.0537286e-03, 2.2404641e-03, 2.3856999e-03, 2.4897642e-03, 2.6016813e-03,
-    2.7214440e-03, 2.8491386e-03, 2.9849128e-03, 3.1289863e-03, 1.8454153e-03,
-    1.8577600e-03, 1.8947916e-03, 1.9565322e-03, 2.0431101e-03, 2.1548597e-03,
-    2.2924175e-03, 2.3864941e-03, 2.4688798e-03, 2.5601350e-03, 2.6600207e-03,
-    2.7684029e-03, 2.8852450e-03, 3.0105773e-03, 3.1445161e-03, 3.2872346e-03,
-    2.3435291e-03, 2.3491632e-03, 2.3660017e-03, 2.3938618e-03, 2.4324679e-03,
-    2.4814904e-03, 2.5405819e-03, 2.6094120e-03, 2.6876912e-03, 2.7751899e-03,
-    2.8717481e-03, 2.9772632e-03, 3.0917146e-03, 3.2151414e-03, 3.3476453e-03,
-    3.4893905e-03, 2.6173447e-03, 2.6225911e-03, 2.6382981e-03, 2.6643763e-03,
-    2.7006865e-03, 2.7470603e-03, 2.8033180e-03, 2.8692731e-03, 2.9447721e-03,
-    3.0296890e-03, 3.1239407e-03, 3.2274905e-03, 3.3403505e-03, 3.4625907e-03,
-    3.5943130e-03, 3.7356857e-03, 2.9231580e-03, 2.9281813e-03, 2.9432368e-03,
-    2.9682817e-03, 3.0032503e-03, 3.0480621e-03, 3.1026325e-03, 3.1668788e-03,
-    3.2407353e-03, 3.3241559e-03, 3.4171303e-03, 3.5196650e-03, 3.6318223e-03,
-    3.7536959e-03, 3.8854245e-03, 4.0271855e-03, 1.9729543e-03, 2.5272998e-03,
-    3.2374004e-03, 4.1470206e-03, 4.8498721e-03, 5.1065302e-03, 5.3767711e-03,
-    5.6613120e-03, 6.3208523e-03, 7.0889443e-03, 7.9503711e-03, 8.9164926e-03,
-    9.9999988e-03, 1.1215170e-02, 1.2578006e-02, 1.5967883e-02, 3.3539708e-03,
-    3.5433732e-03, 4.0769530e-03, 4.7721486e-03, 4.9862624e-03, 5.2236770e-03,
-    5.4806760e-03, 5.8470899e-03, 6.5286267e-03, 7.2964565e-03, 8.1600742e-03,
-    9.1304630e-03, 1.0220082e-02, 1.1443083e-02, 1.2854187e-02, 1.6610704e-02,
-    4.9218577e-03, 4.9511627e-03, 5.0357706e-03, 5.1678251e-03, 5.3387447e-03,
-    5.5415547e-03, 5.8825868e-03, 6.4732647e-03, 7.1507092e-03, 7.9215374e-03,
-    8.7942975e-03, 9.7792931e-03, 1.0888627e-02, 1.2136214e-02, 1.4550334e-02,
-    1.8655479e-02, 5.4969229e-03, 5.5188821e-03, 5.5837538e-03, 5.6971479e-03,
-    6.0176966e-03, 6.4261849e-03, 6.9230762e-03, 7.5107799e-03, 8.1936987e-03,
-    8.9781955e-03, 9.8724691e-03, 1.0886625e-02, 1.2032620e-02, 1.4036770e-02,
-    1.7736901e-02, 2.2478340e-02, 6.7489492e-03, 6.7940955e-03, 6.9295247e-03,
-    7.1553192e-03, 7.4719470e-03, 7.8806318e-03, 8.3836997e-03, 8.9848433e-03,
-    9.6892491e-03, 1.0503774e-02, 1.1436986e-02, 1.2499244e-02, 1.4953869e-02,
-    1.8516723e-02, 2.3044668e-02, 2.8803868e-02, 8.6290650e-03, 8.6752698e-03,
-    8.8141672e-03, 9.0466458e-03, 9.3743140e-03, 9.7996546e-03, 1.0326200e-02,
-    1.0958694e-02, 1.1703256e-02, 1.2567491e-02, 1.4605597e-02, 1.7509630e-02,
-    2.1164555e-02, 2.5766177e-02, 3.1564441e-02, 4.4291977e-02, 1.1032925e-02,
-    1.1082166e-02, 1.1230315e-02, 1.1478675e-02, 1.1829470e-02, 1.2285955e-02,
-    1.2938387e-02, 1.4542448e-02, 1.6570158e-02, 1.9115077e-02, 2.2296766e-02,
-    2.6267400e-02, 3.1220267e-02, 4.1523870e-02, 5.6756895e-02, 7.8389272e-02,
-    1.5967883e-02, 1.6106272e-02, 1.6526788e-02, 1.7245775e-02, 1.8291343e-02,
-    1.9704822e-02, 2.1542856e-02, 2.3880199e-02, 2.6813647e-02, 3.0466938e-02,
-    3.7175436e-02, 4.7613274e-02, 6.1909460e-02, 8.1609353e-02, 1.0892317e-01,
-    1.4702357e-01,
-    // ── DCT16X16 weights (generated from libjxl quant_weights.cc:647-676) ──
-    // X channel (256 coeffs)
-    1.11149726e-4, 1.4067748e-4, 1.7804951e-4, 2.2534968e-4, 2.6950374e-4,
-    3.0192477e-4, 3.38246e-4, 3.7893665e-4, 4.2034825e-4, 4.6593315e-4,
-    5.1646144e-4, 5.806575e-4, 6.6728704e-4, 7.668411e-4, 8.8124786e-4,
-    1.0505507e-3, 1.4067748e-4, 1.5509769e-4, 1.8823238e-4, 2.341319e-4,
-    2.7329903e-4, 3.0534004e-4, 3.4144102e-4, 3.820082e-4, 4.2305133e-4,
-    4.6859766e-4, 5.1912037e-4, 5.8433175e-4, 6.711579e-4, 7.7094743e-4,
-    8.8562985e-4, 1.0569295e-3, 1.7804951e-4, 1.8823238e-4, 2.1642244e-4,
-    2.5769448e-4, 2.8435257e-4, 3.1542816e-4, 3.5094924e-4, 3.9031918e-4,
-    4.311401e-4, 4.7658503e-4, 5.271001e-4, 5.9540325e-4, 6.8282476e-4,
-    7.833254e-4, 8.988392e-4, 1.0762133e-3, 2.2534968e-4, 2.341319e-4,
-    2.5769448e-4, 2.7703537e-4, 3.0192477e-4, 3.318126e-4, 3.6658204e-4,
-    4.0404414e-4, 4.4456378e-4, 4.898826e-4, 5.404132e-4, 6.140207e-4,
-    7.0245215e-4, 8.041544e-4, 9.280119e-4, 1.1088485e-3, 2.6950374e-4,
-    2.7329903e-4, 2.8435257e-4, 3.0192477e-4, 3.2531488e-4, 3.5409548e-4,
-    3.8755577e-4, 4.2305133e-4, 4.632674e-4, 5.084869e-4, 5.6240556e-4,
-    6.404404e-4, 7.303218e-4, 8.337384e-4, 9.698238e-4, 1.1555927e-3,
-    3.0192477e-4, 3.0534004e-4, 3.1542816e-4, 3.318126e-4, 3.5409548e-4,
-    3.820082e-4, 4.122159e-4, 4.472412e-4, 4.8722417e-4, 5.32423e-4,
-    5.9540325e-4, 6.7503785e-4, 7.6684117e-4, 8.7251567e-4, 1.025279e-3,
-    1.217538e-3, 3.38246e-4, 3.4144102e-4, 3.5094924e-4, 3.6658204e-4,
-    3.8755577e-4, 4.122159e-4, 4.4188404e-4, 4.7658503e-4, 5.1646144e-4,
-    5.660401e-4, 6.3664035e-4, 7.183211e-4, 8.125561e-4, 9.280119e-4,
-    1.0957196e-3, 1.2961419e-3, 3.7893665e-4, 3.820082e-4, 3.9031918e-4,
-    4.0404414e-4, 4.2305133e-4, 4.472412e-4, 4.7658503e-4, 5.111448e-4,
-    5.5154826e-4, 6.140207e-4, 6.867317e-4, 7.7094743e-4, 8.681654e-4,
-    1.0065793e-3, 1.182865e-3, 1.393267e-3, 4.2034825e-4, 4.2305133e-4,
-    4.311401e-4, 4.4456378e-4, 4.632674e-4, 4.8722417e-4, 5.1646144e-4,
-    5.5154826e-4, 6.0654874e-4, 6.711579e-4, 7.464559e-4, 8.337384e-4,
-    9.457918e-4, 1.1022717e-3, 1.2888621e-3, 1.511238e-3, 4.6593315e-4,
-    4.6859766e-4, 4.7658503e-4, 4.898826e-4, 5.084869e-4, 5.32423e-4,
-    5.660401e-4, 6.140207e-4, 6.711579e-4, 7.383697e-4, 8.167722e-4,
-    9.104396e-4, 1.050551e-3, 1.217538e-3, 1.4163482e-3, 1.6529046e-3,
-    5.1646144e-4, 5.1912037e-4, 5.271001e-4, 5.404132e-4, 5.6240556e-4,
-    5.9540325e-4, 6.3664035e-4, 6.867317e-4, 7.464559e-4, 8.167722e-4,
-    8.988392e-4, 1.025279e-3, 1.1760083e-3, 1.3553592e-3, 1.5685258e-3,
-    1.8801723e-3, 5.806575e-4, 5.8433175e-4, 5.9540325e-4, 6.140207e-4,
-    6.404404e-4, 6.7503785e-4, 7.183211e-4, 7.7094743e-4, 8.337384e-4,
-    9.104396e-4, 1.025279e-3, 1.1623721e-3, 1.3255314e-3, 1.5193339e-3,
-    1.7693845e-3, 2.1974905e-3, 6.6728704e-4, 6.711579e-4, 6.8282476e-4,
-    7.0245215e-4, 7.303218e-4, 7.6684117e-4, 8.125561e-4, 8.681654e-4,
-    9.457918e-4, 1.050551e-3, 1.1760083e-3, 1.3255314e-3, 1.5031719e-3,
-    1.7159708e-3, 2.102765e-3, 2.5929168e-3, 7.668411e-4, 7.7094743e-4,
-    7.833254e-4, 8.041544e-4, 8.337384e-4, 8.7251567e-4, 9.280119e-4,
-    1.0065793e-3, 1.1022717e-3, 1.217538e-3, 1.3553592e-3, 1.5193339e-3,
-    1.7159708e-3, 2.0719266e-3, 2.5203177e-3, 3.0860456e-3, 8.8124786e-4,
-    8.8562985e-4, 8.988392e-4, 9.280119e-4, 9.698238e-4, 1.025279e-3,
-    1.0957196e-3, 1.182865e-3, 1.2888621e-3, 1.4163482e-3, 1.5685258e-3,
-    1.7693845e-3, 2.102765e-3, 2.5203177e-3, 3.0439915e-3, 3.7018396e-3,
-    1.0505507e-3, 1.0569295e-3, 1.0762133e-3, 1.1088485e-3, 1.1555927e-3,
-    1.217538e-3, 1.2961419e-3, 1.393267e-3, 1.511238e-3, 1.6529046e-3,
-    1.8801723e-3, 2.1974905e-3, 2.5929168e-3, 3.0860456e-3, 3.7018396e-3,
-    4.467824e-3,
-    // Y channel (256 coeffs)
-    3.133339e-4, 3.6250416e-4, 4.193905e-4, 4.8520378e-4, 5.6701916e-4,
-    6.703592e-4, 7.9253316e-4, 9.3697343e-4, 1.0452843e-3, 1.1609495e-3,
-    1.2894134e-3, 1.4218425e-3, 1.5506021e-3, 1.6910218e-3, 1.844158e-3,
-    1.9946338e-3, 3.6250416e-4, 3.8506588e-4, 4.340732e-4, 4.96818e-4,
-    5.7882693e-4, 6.8156497e-4, 8.0359104e-4, 9.481882e-4, 1.0521364e-3,
-    1.1677173e-3, 1.2961805e-3, 1.4274446e-3, 1.5562035e-3, 1.6966613e-3,
-    1.8498693e-3, 1.9997589e-3, 4.193905e-4, 4.340732e-4, 4.7321955e-4,
-    5.307835e-4, 6.136584e-4, 7.150112e-4, 8.367886e-4, 9.692205e-4,
-    1.072646e-3, 1.1880095e-3, 1.316493e-3, 1.4442457e-3, 1.5730127e-3,
-    1.7135924e-3, 1.8670217e-3, 2.0151453e-3, 4.8520378e-4, 4.96818e-4,
-    5.307835e-4, 5.9052743e-4, 6.703592e-4, 7.7041716e-4, 8.9229987e-4,
-    1.0039725e-3, 1.106699e-3, 1.2218071e-3, 1.3503951e-3, 1.4722347e-3,
-    1.6010494e-3, 1.741857e-3, 1.8924737e-3, 2.0408267e-3, 5.6701916e-4,
-    5.7882693e-4, 6.136584e-4, 6.703592e-4, 7.482855e-4, 8.4786845e-4,
-    9.622266e-4, 1.0521364e-3, 1.1541793e-3, 1.2691219e-3, 1.3938135e-3,
-    1.5114113e-3, 1.6403581e-3, 1.7815332e-3, 1.9281604e-3, 2.0768638e-3,
-    6.703592e-4, 6.8156497e-4, 7.150112e-4, 7.7041716e-4, 8.4786845e-4,
-    9.481882e-4, 1.0246742e-3, 1.1134937e-3, 1.2150487e-3, 1.330046e-3,
-    1.4442457e-3, 1.5618056e-3, 1.6910221e-3, 1.832745e-3, 1.974151e-3,
-    2.1233486e-3, 7.9253316e-4, 8.0359104e-4, 8.367886e-4, 8.9229987e-4,
-    9.622266e-4, 1.0246742e-3, 1.0998995e-3, 1.1880095e-3, 1.2894134e-3,
-    1.399422e-3, 1.5058143e-3, 1.6235025e-3, 1.7531802e-3, 1.8924737e-3,
-    2.0305484e-3, 2.1804145e-3, 9.3697343e-4, 9.481882e-4, 9.692205e-4,
-    1.0039725e-3, 1.0521364e-3, 1.1134937e-3, 1.1880095e-3, 1.2758843e-3,
-    1.3769777e-3, 1.4722347e-3, 1.5786176e-3, 1.6966613e-3, 1.8270429e-3,
-    1.9588065e-3, 2.097502e-3, 2.2482376e-3, 1.0452843e-3, 1.0521364e-3,
-    1.072646e-3, 1.106699e-3, 1.1541793e-3, 1.2150487e-3, 1.2894134e-3,
-    1.3769777e-3, 1.4610405e-3, 1.5562035e-3, 1.6628563e-3, 1.7815332e-3,
-    1.9077598e-3, 2.0356867e-3, 2.1752147e-3, 2.3270498e-3, 1.1609495e-3,
-    1.1677173e-3, 1.1880095e-3, 1.2218071e-3, 1.2691219e-3, 1.330046e-3,
-    1.399422e-3, 1.4722347e-3, 1.5562035e-3, 1.6516036e-3, 1.7588455e-3,
-    1.877199e-3, 1.994634e-3, 2.1233486e-3, 2.2639513e-3, 2.417142e-3,
-    1.2894134e-3, 1.2961805e-3, 1.316493e-3, 1.3503951e-3, 1.3938135e-3,
-    1.4442457e-3, 1.5058143e-3, 1.5786176e-3, 1.6628563e-3, 1.7588455e-3,
-    1.8670217e-3, 1.974151e-3, 2.0923393e-3, 2.2221007e-3, 2.364044e-3,
-    2.530572e-3, 1.4218425e-3, 1.4274446e-3, 1.4442457e-3, 1.4722347e-3,
-    1.5114113e-3, 1.5618056e-3, 1.6235025e-3, 1.6966613e-3, 1.7815332e-3,
-    1.877199e-3, 1.974151e-3, 2.08202e-3, 2.2012375e-3, 2.3323263e-3,
-    2.4800596e-3, 2.6650454e-3, 1.5506021e-3, 1.5562035e-3, 1.5730127e-3,
-    1.6010494e-3, 1.6403581e-3, 1.6910221e-3, 1.7531802e-3, 1.8270429e-3,
-    1.9077598e-3, 1.994634e-3, 2.0923393e-3, 2.2012375e-3, 2.3217765e-3,
-    2.4549493e-3, 2.6263432e-3, 2.8155446e-3, 1.6910218e-3, 1.6966613e-3,
-    1.7135924e-3, 1.741857e-3, 1.7815332e-3, 1.832745e-3, 1.8924737e-3,
-    1.9588065e-3, 2.0356867e-3, 2.1233486e-3, 2.2221007e-3, 2.3323263e-3,
-    2.4549493e-3, 2.6134923e-3, 2.789124e-3, 2.983087e-3, 1.844158e-3,
-    1.8498693e-3, 1.8670217e-3, 1.8924737e-3, 1.9281604e-3, 1.974151e-3,
-    2.0305484e-3, 2.097502e-3, 2.1752147e-3, 2.2639513e-3, 2.364044e-3,
-    2.4800596e-3, 2.6263432e-3, 2.789124e-3, 2.9695292e-3, 3.1688286e-3,
-    1.9946338e-3, 1.9997589e-3, 2.0151453e-3, 2.0408267e-3, 2.0768638e-3,
-    2.1233486e-3, 2.1804145e-3, 2.2482376e-3, 2.3270498e-3, 2.417142e-3,
-    2.530572e-3, 2.6650454e-3, 2.8155446e-3, 2.983087e-3, 3.1688286e-3,
-    3.3729947e-3,
-    // B channel (256 coeffs)
-    8.639279e-4, 1.184635e-3, 1.6243953e-3, 2.227403e-3, 2.9591909e-3,
-    3.7906428e-3, 4.8557105e-3, 6.2200334e-3, 7.0505594e-3, 7.917555e-3,
-    8.891163e-3, 9.924241e-3, 1.0974444e-2, 1.21357795e-2, 1.3420011e-2,
-    1.6979022e-2, 1.184635e-3, 1.3501318e-3, 1.7500814e-3, 2.344489e-3,
-    3.050786e-3, 3.884735e-3, 4.9562487e-3, 6.330461e-3, 7.101651e-3,
-    7.968576e-3, 8.942742e-3, 9.9696275e-3, 1.1020456e-2, 1.2182752e-2,
-    1.3468247e-2, 1.7125245e-2, 1.6243953e-3, 1.7500814e-3, 2.1099632e-3,
-    2.6838235e-3, 3.3261853e-3, 4.1699754e-3, 5.262056e-3, 6.4858133e-3,
-    7.254786e-3, 8.121739e-3, 9.097736e-3, 1.0105911e-2, 1.1158698e-2,
-    1.2323929e-2, 1.3613258e-2, 1.7569529e-2, 2.227403e-3, 2.344489e-3,
-    2.6838235e-3, 3.1424367e-3, 3.7906428e-3, 4.6566473e-3, 5.7864613e-3,
-    6.743277e-3, 7.5097186e-3, 8.377447e-3, 9.35698e-3, 1.0333514e-2,
-    1.1389802e-2, 1.2560107e-2, 1.4243334e-2, 1.8328987e-2, 2.9591909e-3,
-    3.050786e-3, 3.3261853e-3, 3.7906428e-3, 4.4601653e-3, 5.3654327e-3,
-    6.434114e-3, 7.101651e-3, 7.866548e-3, 8.736671e-3, 9.6975975e-3,
-    1.0653253e-2, 1.1714912e-2, 1.2892675e-2, 1.5160855e-2, 1.9433057e-2,
-    3.7906428e-3, 3.884735e-3, 4.1699754e-3, 4.6566473e-3, 5.3654327e-3,
-    6.330461e-3, 6.897097e-3, 7.5606857e-3, 8.326254e-3, 9.20129e-3,
-    1.0105911e-2, 1.1066504e-2, 1.213578e-2, 1.332369e-2, 1.6403353e-2,
-    2.0925002e-2, 4.8557105e-3, 4.9562487e-3, 5.262056e-3, 5.7864613e-3,
-    6.434114e-3, 6.897097e-3, 7.458749e-3, 8.121739e-3, 8.891163e-3,
-    9.7428905e-3, 1.0607491e-2, 1.1575349e-2, 1.2654895e-2, 1.4243334e-2,
-    1.8022327e-2, 2.2864068e-2, 6.2200334e-3, 6.330461e-3, 6.4858133e-3,
-    6.743277e-3, 7.101651e-3, 7.5606857e-3, 8.121739e-3, 8.788129e-3,
-    9.561812e-3, 1.0333514e-2, 1.1204847e-2, 1.2182752e-2, 1.3275602e-2,
-    1.5981166e-2, 2.0085903e-2, 2.5328407e-2, 7.0505594e-3, 7.101651e-3,
-    7.254786e-3, 7.5097186e-3, 7.866548e-3, 8.326254e-3, 8.891163e-3,
-    9.561812e-3, 1.02424e-2, 1.1020456e-2, 1.1901552e-2, 1.2892675e-2,
-    1.4631435e-2, 1.8175175e-2, 2.2682372e-2, 2.8419115e-2, 7.917555e-3,
-    7.968576e-3, 8.121739e-3, 8.377447e-3, 8.736671e-3, 9.20129e-3,
-    9.7428905e-3, 1.0333514e-2, 1.1020456e-2, 1.1808151e-2, 1.2702357e-2,
-    1.3862794e-2, 1.697903e-2, 2.0925002e-2, 2.5924837e-2, 3.2265313e-2,
-    8.891163e-3, 8.942742e-3, 9.097736e-3, 9.35698e-3, 9.6975975e-3,
-    1.0105911e-2, 1.0607491e-2, 1.1204847e-2, 1.1901552e-2, 1.2702357e-2,
-    1.3613258e-2, 1.6403353e-2, 1.992117e-2, 2.4357773e-2, 2.9957144e-2,
-    4.035409e-2, 9.924241e-3, 9.9696275e-3, 1.0105911e-2, 1.0333514e-2,
-    1.0653253e-2, 1.1066504e-2, 1.1575349e-2, 1.2182752e-2, 1.2892675e-2,
-    1.3862794e-2, 1.6403353e-2, 1.9594748e-2, 2.360192e-2, 2.8635012e-2,
-    3.60672e-2, 5.3844005e-2, 1.0974444e-2, 1.1020456e-2, 1.1158698e-2,
-    1.1389802e-2, 1.1714912e-2, 1.213578e-2, 1.2654895e-2, 1.3275602e-2,
-    1.4631435e-2, 1.697903e-2, 1.992117e-2, 2.360192e-2, 2.8204475e-2,
-    3.407958e-2, 4.9630567e-2, 7.311874e-2, 1.21357795e-2, 1.2182752e-2,
-    1.2323929e-2, 1.2560107e-2, 1.2892675e-2, 1.332369e-2, 1.4243334e-2,
-    1.5981166e-2, 1.8175175e-2, 2.0925002e-2, 2.4357773e-2, 2.8635012e-2,
-    3.407958e-2, 4.829294e-2, 6.937789e-2, 1.0089249e-1, 1.3420011e-2,
-    1.3468247e-2, 1.3613258e-2, 1.4243334e-2, 1.5160855e-2, 1.6403353e-2,
-    1.8022327e-2, 2.0085903e-2, 2.2682372e-2, 2.5924837e-2, 2.9957144e-2,
-    3.60672e-2, 4.9630567e-2, 6.937789e-2, 9.836469e-2, 1.4124702e-1,
-    1.6979022e-2, 1.7125245e-2, 1.7569529e-2, 1.8328987e-2, 1.9433057e-2,
-    2.0925002e-2, 2.2864068e-2, 2.5328407e-2, 2.8419115e-2, 3.2265313e-2,
-    4.035409e-2, 5.3844005e-2, 7.311874e-2, 1.0089249e-1, 1.4124702e-1,
-    1.9999754e-1,
-];
-
 // =============================================================================
-// Parametric weight generation for large transforms (DCT32x32+)
+// Parametric weight generation
 // =============================================================================
 
 /// Band multiplier: converts distance_bands parameter to multiplicative factor.
@@ -384,46 +58,117 @@ fn interpolate_band(pos: f64, bands: &[f64]) -> f64 {
     a * (b / a).powf(frac)
 }
 
-/// Generate quantization weights for an NxN DCT transform using the parametric formula.
+/// Generate quantization weights for a ROWS x COLS DCT transform using the parametric formula.
 ///
-/// Matches libjxl `GetQuantWeights()`. Band params are `[initial, mult1, mult2, ...]`
-/// where `bands[0] = initial` and `bands[i] = bands[i-1] * Mult(params[i])`.
+/// Matches libjxl `GetQuantWeights(ROWS, COLS, ...)` in quant_weights.cc.
+/// Band params are `[initial, mult1, mult2, ...]` where `bands[0] = initial`
+/// and `bands[i] = bands[i-1] * Mult(params[i])`.
 ///
-/// Returns `3 * n * n` floats: X channel, then Y, then B.
-fn generate_dct_quant_weights(n: usize, band_params: &[[f64; 8]; 3], num_bands: usize) -> Vec<f32> {
-    let total = 3 * n * n;
+/// Returns `3 * rows * cols` floats: X channel, then Y, then B.
+/// These are **quant** weights (1/dequant), matching what the encoder needs.
+fn generate_dct_quant_weights_rect(
+    rows: usize,
+    cols: usize,
+    band_params: &[&[f64]; 3],
+    num_bands: usize,
+) -> Vec<f32> {
+    let num = rows * cols;
+    let total = 3 * num;
     let mut out = vec![0.0f32; total];
 
     let sqrt2 = core::f64::consts::SQRT_2;
     let scale = (num_bands as f64 - 1.0) / (sqrt2 + 1e-6);
-    let rcp = scale / (n as f64 - 1.0); // rcpcol = rcprow for square transforms
+    let rcpcol = scale / (cols as f64 - 1.0);
+    let rcprow = scale / (rows as f64 - 1.0);
 
     for c in 0..3 {
         // Build band values from parameters
+        let params = band_params[c];
         let mut bands = vec![0.0f64; num_bands];
-        bands[0] = band_params[c][0];
+        bands[0] = params[0];
         for i in 1..num_bands {
-            bands[i] = bands[i - 1] * band_mult(band_params[c][i]);
+            bands[i] = bands[i - 1] * band_mult(params[i]);
         }
 
-        for y in 0..n {
-            let dy = y as f64 * rcp;
+        for y in 0..rows {
+            let dy = y as f64 * rcprow;
             let dy2 = dy * dy;
-            for x in 0..n {
-                let dx = x as f64 * rcp;
+            for x in 0..cols {
+                let dx = x as f64 * rcpcol;
                 let scaled_distance = (dx * dx + dy2).sqrt();
-                // The band parameters produce dequant (inverse) weights.
-                // libjxl stores dequant weights in inv_table and 1/weights in table.
-                // For encoding we need the quant weights, so invert here.
                 let dequant_weight = interpolate_band(scaled_distance, &bands);
                 let quant_weight = 1.0 / dequant_weight;
-                out[c * n * n + y * n + x] = quant_weight as f32;
+                out[c * num + y * cols + x] = quant_weight as f32;
             }
         }
     }
 
     out
 }
+
+// =============================================================================
+// Band parameters from libjxl quant_weights.cc (default library values)
+// =============================================================================
+
+/// DCT8 band parameters from libjxl quant_weights.cc:535-561.
+/// 6 distance bands per channel.
+const DCT8_PARAMS: [[f64; 6]; 3] = [
+    // X channel
+    [3150.0, 0.0, -0.4, -0.4, -0.4, -2.0],
+    // Y channel
+    [560.0, 0.0, -0.3, -0.3, -0.3, -0.3],
+    // B channel
+    [512.0, -2.0, -1.0, 0.0, -1.0, -2.0],
+];
+
+/// DCT16x16 band parameters from libjxl quant_weights.cc:647-676.
+/// 7 distance bands per channel.
+const DCT16X16_PARAMS: [[f64; 7]; 3] = [
+    // X channel
+    [
+        8996.8725711814115328,
+        -1.3000777393353804,
+        -0.49424529824571225,
+        -0.439093774457103443,
+        -0.6350101832695744,
+        -0.90177264050827612,
+        -1.6162099239887414,
+    ],
+    // Y channel
+    [
+        3191.48366296844234752,
+        -0.67424582104194355,
+        -0.80745813428471001,
+        -0.44925837484843441,
+        -0.35865440981033403,
+        -0.31322389111877305,
+        -0.37615025315725483,
+    ],
+    // B channel
+    [
+        1157.50408145487200256,
+        -2.0531423165804414,
+        -1.4,
+        -0.50687130033378396,
+        -0.42708730624733904,
+        -1.4856834539296244,
+        -4.9209142884401604,
+    ],
+];
+
+/// DCT16x8 (8 rows x 16 cols) band parameters from libjxl quant_weights.cc:716-745.
+/// 7 distance bands per channel.
+///
+/// Note: libjxl names this "DCT8X16" in the QuantTable enum (column-major naming),
+/// but the GetQuantWeights call uses (ROWS=8, COLS=16).
+const DCT16X8_PARAMS: [[f64; 7]; 3] = [
+    // X channel
+    [7240.7734393502, -0.7, -0.7, -0.2, -0.2, -0.2, -0.5],
+    // Y channel
+    [1448.15468787004, -0.5, -0.5, -0.5, -0.2, -0.2, -0.2],
+    // B channel
+    [506.854140754517, -1.4, -0.2, -0.5, -0.5, -1.5, -3.6],
+];
 
 /// DCT32x32 band parameters from libjxl quant_weights.cc:680-712.
 /// 8 distance bands per channel.
@@ -474,9 +219,84 @@ const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
     [527.10754, -1.4594386, -1.4500821, -1.5843723],
 ];
 
-/// Lazily-generated DCT32x32 quantization weights (3072 floats: 1024 per channel).
-static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> =
-    LazyLock::new(|| generate_dct_quant_weights(32, &DCT32X32_BAND_PARAMS, 8));
+/// DCT4X4 band parameters from jxl-oxide dequant.rs:49-53.
+/// 4 distance bands per channel.
+const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
+    // X channel
+    [2200.0, 0.0, 0.0, 0.0],
+    // Y channel
+    [392.0, 0.0, 0.0, 0.0],
+    // B channel
+    [112.0, -0.25, -0.25, -0.5],
+];
+
+/// DCT4X4 LLF multiplier parameters from jxl-oxide dequant.rs:257-277.
+/// params[0] is used for LLF positions 1 and 8.
+/// params[1] is used for LLF position 9.
+const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
+    // X channel
+    [1.0, 1.0],
+    // Y channel
+    [1.0, 1.0],
+    // B channel
+    [1.0, 1.0],
+];
+
+// =============================================================================
+// Lazily-generated weight tables
+// =============================================================================
+
+/// DCT8 quantization weights (192 floats: 64 per channel).
+/// Generated from libjxl's default DCT8 band parameters.
+static QUANT_WEIGHTS_DCT8: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        8,
+        8,
+        &[&DCT8_PARAMS[0], &DCT8_PARAMS[1], &DCT8_PARAMS[2]],
+        6,
+    )
+});
+
+/// DCT16x16 quantization weights (768 floats: 256 per channel).
+/// Generated from libjxl's default DCT16x16 band parameters.
+static QUANT_WEIGHTS_DCT16X16: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        16,
+        16,
+        &[
+            &DCT16X16_PARAMS[0],
+            &DCT16X16_PARAMS[1],
+            &DCT16X16_PARAMS[2],
+        ],
+        7,
+    )
+});
+
+/// DCT16x8 quantization weights (384 floats: 128 per channel).
+/// Generated from libjxl's default DCT8X16 band parameters.
+/// GetQuantWeights(ROWS=8, COLS=16, ...) produces 8x16 = 128 values per channel.
+static QUANT_WEIGHTS_DCT16X8: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        8,
+        16,
+        &[&DCT16X8_PARAMS[0], &DCT16X8_PARAMS[1], &DCT16X8_PARAMS[2]],
+        7,
+    )
+});
+
+/// DCT32x32 quantization weights (3072 floats: 1024 per channel).
+static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        32,
+        32,
+        &[
+            &DCT32X32_BAND_PARAMS[0],
+            &DCT32X32_BAND_PARAMS[1],
+            &DCT32X32_BAND_PARAMS[2],
+        ],
+        8,
+    )
+});
 
 /// Generate DCT4X8 quantization weights using parametric formula.
 /// Matches jxl-oxide's dequant.rs:279-294.
@@ -484,7 +304,7 @@ static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> =
 /// Process:
 /// 1. Generate 8x4 weight matrix using parametric bands
 /// 2. Duplicate each row to get 8x8 (matching interleaved coefficient layout)
-/// 3. Reciprocate to match QUANT_WEIGHTS convention (encoder uses 1/weight)
+/// 3. Reciprocate to match encoder convention (encoder uses 1/weight)
 fn generate_dct4x8_weights() -> Vec<f32> {
     let mut weights = Vec::with_capacity(192);
     let sqrt2 = core::f64::consts::SQRT_2;
@@ -517,7 +337,7 @@ fn generate_dct4x8_weights() -> Vec<f32> {
         // Duplicate rows to get 8x8 matrix (matching interleaved layout)
         // Original rows: [row0, row1, row2, row3]
         // Duplicated:    [row0, row0, row1, row1, row2, row2, row3, row3]
-        // Also reciprocate to match QUANT_WEIGHTS convention (encoder multiplies by 1/weight)
+        // Also reciprocate to match encoder convention (encoder multiplies by 1/weight)
         for row in 0..height {
             // First copy of row (at position row*2)
             for x in 0..width {
@@ -545,29 +365,6 @@ static QUANT_WEIGHTS_DCT4X8: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_
 /// Same parametric formula as DCT4X8.
 static QUANT_WEIGHTS_DCT8X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_weights);
 
-/// DCT4X4 band parameters from jxl-oxide dequant.rs:49-53.
-/// 4 distance bands per channel.
-const DCT4_BAND_PARAMS: [[f64; 4]; 3] = [
-    // X channel
-    [2200.0, 0.0, 0.0, 0.0],
-    // Y channel
-    [392.0, 0.0, 0.0, 0.0],
-    // B channel
-    [112.0, -0.25, -0.25, -0.5],
-];
-
-/// DCT4X4 LLF multiplier parameters from jxl-oxide dequant.rs:257-277.
-/// params[0] is used for LLF positions 1 and 8.
-/// params[1] is used for LLF position 9.
-const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
-    // X channel
-    [1.0, 1.0],
-    // Y channel
-    [1.0, 1.0],
-    // B channel
-    [1.0, 1.0],
-];
-
 /// Generate DCT4X4 quantization weights using parametric formula.
 /// Matches jxl-oxide's dequant.rs:257-277 (Dct4 case).
 ///
@@ -575,7 +372,7 @@ const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
 /// 1. Generate 4x4 weight matrix using parametric bands
 /// 2. Replicate each weight to a 2x2 region in the 8x8 output
 /// 3. Apply LLF divisors to positions 1, 8, 9
-/// 4. Reciprocate to match QUANT_WEIGHTS convention (encoder uses 1/weight)
+/// 4. Reciprocate to match encoder convention (encoder uses 1/weight)
 fn generate_dct4x4_weights() -> Vec<f32> {
     let mut weights = Vec::with_capacity(192);
     let sqrt2 = core::f64::consts::SQRT_2;
@@ -645,7 +442,8 @@ static QUANT_WEIGHTS_DCT4X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x4_
 /// Get the quantization weight table for a given strategy and channel.
 ///
 /// # Arguments
-/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32)
+/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32,
+///   5=DCT4X8, 6=DCT8X4, 7=DCT4X4)
 /// * `channel` - Channel index (0=X, 1=Y, 2=B)
 ///
 /// # Returns
@@ -655,35 +453,44 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
     debug_assert!(strategy < NUM_VALID_STRATEGIES);
     debug_assert!(channel < 3);
 
-    if strategy == 4 {
-        // DCT32x32: use dynamically generated weights
-        let offset = channel * 1024;
-        return &QUANT_WEIGHTS_DCT32X32[offset..offset + 1024];
+    match strategy {
+        0 => {
+            // DCT8: 64 coefficients per channel
+            let offset = channel * 64;
+            &QUANT_WEIGHTS_DCT8[offset..offset + 64]
+        }
+        1 | 2 => {
+            // DCT16X8 / DCT8X16: 128 coefficients per channel (share same weights)
+            let offset = channel * 128;
+            &QUANT_WEIGHTS_DCT16X8[offset..offset + 128]
+        }
+        3 => {
+            // DCT16X16: 256 coefficients per channel
+            let offset = channel * 256;
+            &QUANT_WEIGHTS_DCT16X16[offset..offset + 256]
+        }
+        4 => {
+            // DCT32X32: 1024 coefficients per channel
+            let offset = channel * 1024;
+            &QUANT_WEIGHTS_DCT32X32[offset..offset + 1024]
+        }
+        5 => {
+            // DCT4X8: 64 coefficients per channel
+            let offset = channel * DCT_BLOCK_SIZE;
+            &QUANT_WEIGHTS_DCT4X8[offset..offset + DCT_BLOCK_SIZE]
+        }
+        6 => {
+            // DCT8X4: 64 coefficients per channel
+            let offset = channel * DCT_BLOCK_SIZE;
+            &QUANT_WEIGHTS_DCT8X4[offset..offset + DCT_BLOCK_SIZE]
+        }
+        7 => {
+            // DCT4X4: 64 coefficients per channel
+            let offset = channel * DCT_BLOCK_SIZE;
+            &QUANT_WEIGHTS_DCT4X4[offset..offset + DCT_BLOCK_SIZE]
+        }
+        _ => unreachable!("Invalid strategy: {}", strategy),
     }
-
-    if strategy == 5 {
-        // DCT4X8: use special weights with boosted position 8
-        let offset = channel * DCT_BLOCK_SIZE;
-        return &QUANT_WEIGHTS_DCT4X8[offset..offset + DCT_BLOCK_SIZE];
-    }
-
-    if strategy == 6 {
-        // DCT8X4: use special weights with boosted position 8
-        let offset = channel * DCT_BLOCK_SIZE;
-        return &QUANT_WEIGHTS_DCT8X4[offset..offset + DCT_BLOCK_SIZE];
-    }
-
-    if strategy == 7 {
-        // DCT4X4: use 2x2 replicated weights with LLF adjustments
-        let offset = channel * DCT_BLOCK_SIZE;
-        return &QUANT_WEIGHTS_DCT4X4[offset..offset + DCT_BLOCK_SIZE];
-    }
-
-    let idx = strategy * 3 + channel;
-    let offset = TABLE_OFFSET_IN_BLOCKS[idx] * DCT_BLOCK_SIZE;
-    let size = TABLE_SIZE_IN_BLOCKS[idx] * DCT_BLOCK_SIZE;
-
-    &QUANT_WEIGHTS[offset..offset + size]
 }
 
 /// Get the inverse quantization weight (1/weight) for a coefficient.
@@ -701,7 +508,7 @@ pub fn inv_quant_weight(strategy: usize, channel: usize, coeff_idx: usize) -> f3
 ///
 /// # Arguments
 /// * `coeff` - The DCT coefficient to quantize
-/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16)
+/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, etc.)
 /// * `channel` - Channel index (0=X, 1=Y, 2=B)
 /// * `coeff_idx` - Index of coefficient in the block
 /// * `global_scale` - Global quantization scale factor
@@ -726,7 +533,7 @@ pub fn quantize_coeff(
 ///
 /// # Arguments
 /// * `qcoeff` - The quantized coefficient
-/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16)
+/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, etc.)
 /// * `channel` - Channel index (0=X, 1=Y, 2=B)
 /// * `coeff_idx` - Index of coefficient in the block
 /// * `inv_global_scale` - Inverse global quantization scale factor (1/global_scale)
@@ -752,11 +559,14 @@ mod tests {
 
     #[test]
     fn test_table_sizes() {
-        // Verify total size matches
-        assert_eq!(QUANT_WEIGHTS.len(), TOTAL_TABLE_SIZE);
-        // 9 blocks (DCT8+DCT16X8) + 12 blocks (DCT16X16) = 21 blocks
-        assert_eq!(TOTAL_TABLE_SIZE, 21 * 64);
-        assert_eq!(TOTAL_TABLE_SIZE, 1344);
+        // DCT8: 64 per channel, 192 total
+        assert_eq!(QUANT_WEIGHTS_DCT8.len(), 192);
+        // DCT16X8: 128 per channel, 384 total
+        assert_eq!(QUANT_WEIGHTS_DCT16X8.len(), 384);
+        // DCT16X16: 256 per channel, 768 total
+        assert_eq!(QUANT_WEIGHTS_DCT16X16.len(), 768);
+        // DCT32X32: 1024 per channel, 3072 total
+        assert_eq!(QUANT_WEIGHTS_DCT32X32.len(), 3072);
     }
 
     #[test]
@@ -796,51 +606,69 @@ mod tests {
         for c in 0..3 {
             assert_eq!(quant_weights(4, c).len(), 1024);
         }
-    }
 
-    #[test]
-    fn test_dct32x32_weights_positive() {
-        // All DCT32x32 weights should be positive
-        for c in 0..3 {
-            let w = quant_weights(4, c);
-            for (i, &val) in w.iter().enumerate() {
-                assert!(
-                    val > 0.0,
-                    "DCT32x32 weight[ch={}, {}] = {} should be positive",
-                    c,
-                    i,
-                    val
-                );
+        // DCT4X8, DCT8X4, DCT4X4 should have 64 coefficients per channel
+        for strategy in 5..8 {
+            for c in 0..3 {
+                assert_eq!(quant_weights(strategy, c).len(), 64);
             }
         }
     }
 
     #[test]
-    fn test_dct32x32_weights_dc_smallest() {
+    fn test_all_weights_positive() {
+        let strategies = [
+            (0, "DCT8", 64),
+            (1, "DCT16X8", 128),
+            (2, "DCT8X16", 128),
+            (3, "DCT16X16", 256),
+            (4, "DCT32X32", 1024),
+            (5, "DCT4X8", 64),
+            (6, "DCT8X4", 64),
+            (7, "DCT4X4", 64),
+        ];
+
+        for &(strat, name, expected_len) in &strategies {
+            for c in 0..3 {
+                let w = quant_weights(strat, c);
+                assert_eq!(w.len(), expected_len, "{} ch={} wrong length", name, c);
+                for (i, &val) in w.iter().enumerate() {
+                    assert!(
+                        val > 0.0,
+                        "{} weight[ch={}, {}] = {} should be positive",
+                        name,
+                        c,
+                        i,
+                        val
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_dc_smallest_weight() {
         // DC weight (position 0) should be the SMALLEST for each channel.
         // Quant weights are inverse of dequant weights. DC has highest dequant
         // weight (preserve DC best), so lowest quant weight.
-        for c in 0..3 {
-            let w = quant_weights(4, c);
-            let dc = w[0];
-            for (i, &val) in w.iter().enumerate().skip(1) {
-                assert!(
-                    val >= dc * 0.99, // allow tiny floating point margin
-                    "DCT32x32 weight[ch={}, {}] = {} is less than DC = {}",
-                    c,
-                    i,
-                    val,
-                    dc
-                );
-            }
-        }
-    }
+        let strategies = [(0, "DCT8"), (3, "DCT16X16"), (4, "DCT32X32")];
 
-    #[test]
-    fn test_quant_weights_positive() {
-        // All weights should be positive
-        for &w in &QUANT_WEIGHTS {
-            assert!(w > 0.0, "Quantization weight {} should be positive", w);
+        for &(strat, name) in &strategies {
+            for c in 0..3 {
+                let w = quant_weights(strat, c);
+                let dc = w[0];
+                for (i, &val) in w.iter().enumerate().skip(1) {
+                    assert!(
+                        val >= dc * 0.99, // allow tiny floating point margin
+                        "{} weight[ch={}, {}] = {} is less than DC = {}",
+                        name,
+                        c,
+                        i,
+                        val,
+                        dc
+                    );
+                }
+            }
         }
     }
 
@@ -857,7 +685,7 @@ mod tests {
             let dq = dequantize_coeff(q, 0, 0, 0, inv_scale);
 
             // Should be close to original after roundtrip (within quantization error)
-            let weight = QUANT_WEIGHTS[0];
+            let weight = quant_weights(0, 0)[0];
             let expected_error = weight / 2.0; // Max quantization error is half a step
             assert!(
                 (dq - val).abs() <= expected_error + 1e-6,
@@ -872,19 +700,33 @@ mod tests {
 
     #[test]
     fn test_weight_ranges() {
-        // Weights should be in reasonable range (from examining the data)
-        let min_weight = QUANT_WEIGHTS.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max_weight = QUANT_WEIGHTS
-            .iter()
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max);
+        // All parametric weights should be in a reasonable range
+        for strat in 0..NUM_VALID_STRATEGIES {
+            for c in 0..3 {
+                let w = quant_weights(strat, c);
+                let min_weight = w.iter().cloned().fold(f32::INFINITY, f32::min);
+                let max_weight = w.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
 
-        assert!(min_weight > 1e-5, "Min weight {} too small", min_weight);
-        assert!(max_weight < 1.0, "Max weight {} too large", max_weight);
+                assert!(
+                    min_weight > 1e-7,
+                    "strat={} ch={}: min weight {} too small",
+                    strat,
+                    c,
+                    min_weight
+                );
+                assert!(
+                    max_weight < 1.0,
+                    "strat={} ch={}: max weight {} too large",
+                    strat,
+                    c,
+                    max_weight
+                );
+            }
+        }
     }
 
     /// Print weight statistics per strategy/channel for diagnostics.
-    /// Use `cargo test -p jxl_enc test_weight_stats -- --nocapture` to see output.
+    /// Use `cargo test -p jxl_enc --lib test_dct4x8_position8_weight -- --nocapture` to see output.
     #[test]
     fn test_dct4x8_position8_weight() {
         // Check DCT4X8 weights, especially position 8 (DC difference)
