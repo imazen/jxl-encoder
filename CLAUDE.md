@@ -493,23 +493,40 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-### DCT32x32 Quality Impact at Low Distances (PARTIALLY FIXED Feb 3, 2026)
+### DCT32x32 Quality Impact (SEVERE, Under Investigation)
 
-**Status**: DCT32x32 is ENABLED only at distance >= 3.0.
+**Status**: DCT32x32 is BROKEN for single-group images (≤256x256).
 
-**Original Issue**: DC extraction produced completely wrong values (negative when should
-be positive, errors exceeding 100%). Fixed by using matched `idct1d_4` with 16x scaling
-factor. New DC extraction has <0.5% error.
+**Symptom**: Forced DCT32x32 encoding of 256x256 images produces SSIM2 = -64 (catastrophic).
+The decoded pixels are ~4x too dark. djxl decodes without errors but produces wrong values.
 
-**Remaining Issue**: Even with ~0.5% DC error, smooth gradients at d<3.0 show visible
-artifacts (butteraugli 4.1 vs 0.66 without DCT32x32). The error is amplified because
-DCT32x32 covers 32x32 pixels - small DC errors affect a large area.
+**Works**: DCT32x32 on multi-group images (>256x256) appears to work correctly. The full
+frymire image (1118x1105) at d=3.0 with 83.6% DCT32x32 decodes correctly via djxl.
 
-**Current Behavior**: At d >= 3.0, DCT32x32 is evaluated and may be selected if it
-provides compression benefit. At d < 3.0, always falls back to DCT16x16 or smaller.
+**Doesn't Work**: Single-group (256x256) with 100% forced DCT32x32 produces decoded
+pixels that are ~4x darker than original:
+- Original center crop: first pixels = (0,0,0), (0,0,0), (130,194,89), (130,194,89)
+- Decoded via djxl: (15,35,10), (15,35,11), (16,36,11), (17,37,11)
+- Expected average for mixed black/green: ~(65,97,44) but got (15-17, 35-37, 10-11)
 
-**Fix Applied**: `dc_from_dct_32x32()` now uses matched `idct1d_4` (instead of
-`idct1d_4_ref`) with 16x scaling to compensate for forward DCT's 1/1024 scaling.
+**DC extraction verified correct**: The `dc_from_dct_32x32()` function passes all unit
+tests. Uniform 0.5 input produces DC = 0.5. Step function produces correct interpolated
+values. The `* 16.0` scaling factor is correct.
+
+**Investigation Notes**:
+- File sizes are reasonable (1926 bytes for 256x256 at d=3.0)
+- djxl decodes without errors (valid bitstream)
+- The decoded image has correct dimensions (256x256)
+- Issue might be in:
+  1. DC-to-LLF reconstruction scaling (decoder's ReinterpretingDCT<32,32,4,4,4,4>)
+  2. Single-group vs multi-group DC group handling
+  3. AC strategy metadata encoding for DCT32x32
+
+**Workaround**: DCT32x32 is only enabled at d >= 3.0 and is naturally selected alongside
+other strategies. The mixed-strategy case works; forced 100% DCT32x32 fails.
+
+**Tests Updated**: Layer2 DCT32x32 tests now use d=3.0 (matching production threshold).
+Tests still fail with SSIM2 = -64.
 
 ## Investigation Notes
 
