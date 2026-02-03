@@ -77,6 +77,14 @@ struct Args {
     #[arg(long)]
     no_gaborish: bool,
 
+    /// Force DCT8 only (disable AC strategy selection)
+    #[arg(long)]
+    dct8_only: bool,
+
+    /// Enable error diffusion in AC quantization
+    #[arg(long)]
+    error_diffusion: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -149,6 +157,12 @@ fn main() {
                 }
                 if args.no_gaborish {
                     tiny.enable_gaborish = false;
+                }
+                if args.dct8_only {
+                    tiny.force_strategy = Some(0); // RAW_STRATEGY_DCT8 = 0
+                }
+                if args.error_diffusion {
+                    tiny.error_diffusion = true;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder
