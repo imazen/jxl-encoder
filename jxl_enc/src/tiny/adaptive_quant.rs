@@ -503,6 +503,7 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 ///
 /// # Returns
 /// Per-pixel mask field of size `width * height`, row-major layout.
+/// After computing the raw mask, applies libjxl's Symmetric5 blur.
 pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
     const MATCH_GAMMA_OFFSET: f32 = 0.019;
     const K_MUL: f32 = 1.0;
@@ -536,7 +537,101 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
         }
     }
 
+    // Apply Symmetric5 blur (matches libjxl's BlurMasking in enc_adaptive_quantization.cc)
+    symmetric5_blur_mask1x1(&mut mask1x1, width, height);
+
     mask1x1
+}
+
+/// Apply Symmetric5 blur to mask1x1, matching libjxl's BlurMasking function.
+///
+/// The 5x5 kernel uses 6 unique weights with 8-fold symmetry:
+/// - c (center): 1.0
+/// - r (4 adjacent, distance 1 h/v): 0.364911248
+/// - d (4 diagonal, distance 1): 0.05
+/// - R (4 far h/v, distance 2): 0.1688888021
+/// - L (8 knight-move): 0.221069183
+/// - D (4 far diagonal, distance 2): 0.306563504
+///
+/// Kernel layout (lower-right quadrant indices):
+/// ```text
+/// D L R L D
+/// L d r d L
+/// R r c r R
+/// L d r d L
+/// D L R L D
+/// ```
+fn symmetric5_blur_mask1x1(mask: &mut [f32], width: usize, height: usize) {
+    // libjxl weights from enc_adaptive_quantization.cc
+    const W_R: f32 = 0.364911248; // kFilterMask1x1[0]
+    const W_D: f32 = 0.05; // kFilterMask1x1[1]
+    const W_R2: f32 = 0.1688888021; // kFilterMask1x1[2] (far h/v)
+    const W_L: f32 = 0.221069183; // kFilterMask1x1[3] (knight-move)
+    const W_D2: f32 = 0.306563504; // kFilterMask1x1[4] (far diagonal)
+
+    // Normalization sum: center (1.0) + 4*r + 4*d + 4*R + 4*D + 8*L
+    let sum = 1.0 + 4.0 * (W_R + W_D + W_R2 + W_D2 + 2.0 * W_L);
+    let inv_sum = 1.0 / sum;
+
+    // Normalized weights
+    let c = inv_sum;
+    let r = inv_sum * W_R;
+    let d = inv_sum * W_D;
+    let r2 = inv_sum * W_R2;
+    let l = inv_sum * W_L;
+    let d2 = inv_sum * W_D2;
+
+    // Create output buffer
+    let mut output = vec![0.0_f32; width * height];
+
+    for y in 0..height {
+        for x in 0..width {
+            // Compute clamped indices for 5x5 neighborhood
+            let ym2 = y.saturating_sub(2);
+            let ym1 = y.saturating_sub(1);
+            let yp1 = (y + 1).min(height - 1);
+            let yp2 = (y + 2).min(height - 1);
+
+            let xm2 = x.saturating_sub(2);
+            let xm1 = x.saturating_sub(1);
+            let xp1 = (x + 1).min(width - 1);
+            let xp2 = (x + 2).min(width - 1);
+
+            // Helper to fetch pixel
+            let get = |py: usize, px: usize| mask[py * width + px];
+
+            // Apply symmetric 5x5 kernel
+            let mut val = c * get(y, x); // center
+
+            // 4 adjacent (r)
+            val += r * (get(ym1, x) + get(yp1, x) + get(y, xm1) + get(y, xp1));
+
+            // 4 diagonal (d)
+            val += d * (get(ym1, xm1) + get(ym1, xp1) + get(yp1, xm1) + get(yp1, xp1));
+
+            // 4 far h/v (R/r2)
+            val += r2 * (get(ym2, x) + get(yp2, x) + get(y, xm2) + get(y, xp2));
+
+            // 4 far diagonal (D/d2)
+            val += d2 * (get(ym2, xm2) + get(ym2, xp2) + get(yp2, xm2) + get(yp2, xp2));
+
+            // 8 knight-move (L)
+            val += l
+                * (get(ym2, xm1)
+                    + get(ym2, xp1)
+                    + get(ym1, xm2)
+                    + get(ym1, xp2)
+                    + get(yp1, xm2)
+                    + get(yp1, xp2)
+                    + get(yp2, xm1)
+                    + get(yp2, xp1));
+
+            output[y * width + x] = val;
+        }
+    }
+
+    // Copy result back
+    mask.copy_from_slice(&output);
 }
 
 /// PerBlockModulations: apply all modulations and convert exponent to multiplier.
