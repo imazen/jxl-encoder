@@ -2891,8 +2891,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: IDENTITY and DCT2X2 strategies added
-        const EXPECTED_HASH: u64 = 0xfc8e51b4f6f56158;
+        // Hash updated: pixel-domain loss enabled by default
+        const EXPECTED_HASH: u64 = 0xc5708424bed8441c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
