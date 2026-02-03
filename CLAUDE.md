@@ -117,10 +117,10 @@ or the overall encoding pipeline. Investigation needed.
 - Find first divergence point in loss calculation constants
 - See CONTEXT-HANDOFF.md for instrumentation details
 
-**DCT32x32 disabled** (DC extraction bug):
-- `dc_from_dct_32x32()` produces wrong values for multi-block images
-- Workaround: Strategy selection never picks DCT32x32
-- Fix: Need different DC extraction approach (not simple 4-point IDCT)
+**DCT32x32** (PARTIALLY FIXED):
+- DC extraction fixed - uses matched idct1d_4 with 16x scaling, <0.5% error
+- Only enabled at d >= 3.0 where compression benefit outweighs quality impact
+- At d < 3.0, ~0.5% DC error causes visible artifacts on smooth gradients
 
 **Quality gap at d≥2.0** (~3-5 SSIM2 vs cjxl e7):
 - Investigated and ruled out as fixable by constant tuning
@@ -130,7 +130,7 @@ or the overall encoding pipeline. Investigation needed.
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 24 commits ahead of origin/main
+**Unpushed**: 27 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
@@ -495,41 +495,23 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-### DCT32x32 DC Extraction Bug (WORKAROUND IN PLACE)
+### DCT32x32 Quality Impact at Low Distances (PARTIALLY FIXED Feb 3, 2026)
 
-**Status**: DCT32x32 selection is DISABLED in `ac_strategy.rs` until fixed.
+**Status**: DCT32x32 is ENABLED only at distance >= 3.0.
 
-**Symptom**: Multi-block DCT32x32 encoding produces catastrophic quality (SSIM2 = -67).
-Single 16x16 blocks work fine (SSIM2 = 72+), but 256x256 images with DCT32x32 fail.
+**Original Issue**: DC extraction produced completely wrong values (negative when should
+be positive, errors exceeding 100%). Fixed by using matched `idct1d_4` with 16x scaling
+factor. New DC extraction has <0.5% error.
 
-**Root Cause**: `dc_from_dct_32x32()` in `dct.rs` uses a 4-point IDCT to convert the
-4x4 LLF region to DC values. The 4-point IDCT cannot accurately represent step
-functions at position 2 (mid-point). When the 4x4 LLF region has multiple non-zero
-coefficients (especially position [0,1], [1,0], [1,1]), the IDCT produces DC values
-outside the expected range, including negative values for what should be positive
-block averages.
+**Remaining Issue**: Even with ~0.5% DC error, smooth gradients at d<3.0 show visible
+artifacts (butteraugli 4.1 vs 0.66 without DCT32x32). The error is amplified because
+DCT32x32 covers 32x32 pixels - small DC errors affect a large area.
 
-**Evidence** (from `diag_dct32x32_forward_idct_roundtrip` test):
-```
-Expected 8x8 block averages:
-  row 0: 0.109375 0.234375 0.359375 0.484375
-  row 3: 0.484375 0.609375 0.734375 0.859375
-DC values from dc_from_dct_32x32 (WRONG):
-  row 0: -0.050761 0.133005 0.300610 0.484375
-  row 3: 0.484375 0.668140 0.835746 1.019511
-```
+**Current Behavior**: At d >= 3.0, DCT32x32 is evaluated and may be selected if it
+provides compression benefit. At d < 3.0, always falls back to DCT16x16 or smaller.
 
-**Why DCT16x16 works**: The 2-point IDCT exactly represents step functions (position
-0 = average, position 1 = half-difference). DCT32x32's 4-point IDCT has Gibbs
-phenomenon at the mid-point discontinuity.
-
-**Workaround**: `find_best_32x32_transform()` now returns false immediately after
-running the 16x16 evaluations, never selecting DCT32x32. The four DCT16x16 (or
-smaller) transforms are used instead.
-
-**Fix Required**: The `dc_from_dct_32x32()` function needs a different approach to
-DC extraction that doesn't rely on a simple 4-point IDCT. Possibly needs the full
-8x8 IDCT approach used by larger transforms, or a different mathematical formulation.
+**Fix Applied**: `dc_from_dct_32x32()` now uses matched `idct1d_4` (instead of
+`idct1d_4_ref`) with 16x scaling to compensate for forward DCT's 1/1024 scaling.
 
 ## Investigation Notes
 
