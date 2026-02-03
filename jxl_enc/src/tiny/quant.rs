@@ -17,8 +17,8 @@ use std::sync::LazyLock;
 
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
-/// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4
-pub const NUM_VALID_STRATEGIES: usize = 8;
+/// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4, 8 = IDENTITY, 9 = DCT2X2
+pub const NUM_VALID_STRATEGIES: usize = 10;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -439,11 +439,106 @@ fn generate_dct4x4_weights() -> Vec<f32> {
 /// 2x2-replicated coefficients, so weights are replicated from a 4x4 base.
 static QUANT_WEIGHTS_DCT4X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x4_weights);
 
+// =============================================================================
+// IDENTITY weights (quant_weights.cc:80-90, 564-579)
+// =============================================================================
+
+/// IDENTITY quantization weights from libjxl defaults.
+/// 3 weights per channel: [DC, AC_pos1_pos8, AC_pos9].
+/// All other positions use the DC weight.
+const IDENTITY_WEIGHTS: [[f32; 3]; 3] = [
+    [280.0, 3160.0, 3160.0], // X channel
+    [60.0, 864.0, 864.0],    // Y channel
+    [18.0, 200.0, 200.0],    // B channel
+];
+
+/// Generate 64-position IDENTITY quant weights for all 3 channels (192 floats).
+/// These are **quant** weights (1/dequant), matching the encoder convention.
+fn generate_identity_weights() -> Vec<f32> {
+    let mut weights = vec![0.0f32; 3 * 64];
+    for (c, ch_weights) in IDENTITY_WEIGHTS.iter().enumerate() {
+        let start = c * 64;
+        let dequant0 = ch_weights[0];
+        let dequant1 = ch_weights[1];
+        let dequant2 = ch_weights[2];
+        // Fill all positions with DC weight (1/dequant)
+        for w in &mut weights[start..start + 64] {
+            *w = 1.0 / dequant0;
+        }
+        // Override specific positions
+        weights[start + 1] = 1.0 / dequant1;
+        weights[start + 8] = 1.0 / dequant1;
+        weights[start + 9] = 1.0 / dequant2;
+    }
+    weights
+}
+
+static QUANT_WEIGHTS_IDENTITY: LazyLock<Vec<f32>> = LazyLock::new(generate_identity_weights);
+
+// =============================================================================
+// DCT2X2 weights (quant_weights.cc:48-77, 583-607)
+// =============================================================================
+
+/// DCT2X2 dequantization weights from libjxl defaults.
+/// 6 weights per channel for hierarchical frequency bands.
+const DCT2_WEIGHTS: [[f32; 6]; 3] = [
+    [3840.0, 2560.0, 1280.0, 640.0, 480.0, 300.0], // X channel
+    [960.0, 640.0, 320.0, 180.0, 140.0, 120.0],    // Y channel
+    [640.0, 320.0, 128.0, 64.0, 32.0, 16.0],       // B channel
+];
+
+/// Generate 64-position DCT2X2 quant weights for all 3 channels (192 floats).
+/// Matches libjxl GetQuantWeightsDCT2() mapping from 6 band weights to 64 positions.
+fn generate_dct2x2_weights() -> Vec<f32> {
+    let mut weights = vec![0.0f32; 3 * 64];
+    for (c, band_weights) in DCT2_WEIGHTS.iter().enumerate() {
+        let start = c * 64;
+        let w = band_weights;
+        // Position 0 (DC) is handled separately by the encoder via INV_DC_QUANT.
+        // Mark with 0xBAD sentinel matching libjxl (quant = 1/0xBAD ≈ 0.00002).
+        weights[start] = 1.0 / 0xBAD as f32;
+        // Positions 1, 8 → band 0
+        weights[start + 1] = 1.0 / w[0];
+        weights[start + 8] = 1.0 / w[0];
+        // Position 9 → band 1
+        weights[start + 9] = 1.0 / w[1];
+        // 2x2 regions: positions (y*8+x) for y∈{0,1}, x∈{2,3} and y∈{2,3}, x∈{0,1} → band 2
+        for y in 0..2usize {
+            for x in 0..2usize {
+                weights[start + y * 8 + x + 2] = 1.0 / w[2];
+                weights[start + (y + 2) * 8 + x] = 1.0 / w[2];
+            }
+        }
+        // Positions (y+2)*8 + (x+2) for y∈{0,1}, x∈{0,1} → band 3
+        for y in 0..2usize {
+            for x in 0..2usize {
+                weights[start + (y + 2) * 8 + x + 2] = 1.0 / w[3];
+            }
+        }
+        // Positions y*8+x+4 and (y+4)*8+x for y∈{0..4}, x∈{0..4} → band 4
+        for y in 0..4usize {
+            for x in 0..4usize {
+                weights[start + y * 8 + x + 4] = 1.0 / w[4];
+                weights[start + (y + 4) * 8 + x] = 1.0 / w[4];
+            }
+        }
+        // Bottom-right 4x4: (y+4)*8 + (x+4) for y∈{0..4}, x∈{0..4} → band 5
+        for y in 0..4usize {
+            for x in 0..4usize {
+                weights[start + (y + 4) * 8 + x + 4] = 1.0 / w[5];
+            }
+        }
+    }
+    weights
+}
+
+static QUANT_WEIGHTS_DCT2X2: LazyLock<Vec<f32>> = LazyLock::new(generate_dct2x2_weights);
+
 /// Get the quantization weight table for a given strategy and channel.
 ///
 /// # Arguments
 /// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32,
-///   5=DCT4X8, 6=DCT8X4, 7=DCT4X4)
+///   5=DCT4X8, 6=DCT8X4, 7=DCT4X4, 8=IDENTITY, 9=DCT2X2)
 /// * `channel` - Channel index (0=X, 1=Y, 2=B)
 ///
 /// # Returns
@@ -488,6 +583,16 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
             // DCT4X4: 64 coefficients per channel
             let offset = channel * DCT_BLOCK_SIZE;
             &QUANT_WEIGHTS_DCT4X4[offset..offset + DCT_BLOCK_SIZE]
+        }
+        8 => {
+            // IDENTITY: 64 coefficients per channel
+            let offset = channel * 64;
+            &QUANT_WEIGHTS_IDENTITY[offset..offset + 64]
+        }
+        9 => {
+            // DCT2X2: 64 coefficients per channel
+            let offset = channel * 64;
+            &QUANT_WEIGHTS_DCT2X2[offset..offset + 64]
         }
         _ => unreachable!("Invalid strategy: {}", strategy),
     }

@@ -723,3 +723,78 @@ fn test_noise_synthesis_multigroup() {
         bytes.len()
     );
 }
+
+/// Test that forced IDENTITY strategy produces valid decodable output.
+#[test]
+fn test_identity_strategy_roundtrip() {
+    use super::ac_strategy::RAW_STRATEGY_IDENTITY;
+    use std::io::Cursor;
+
+    let mut encoder = TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(RAW_STRATEGY_IDENTITY);
+
+    let w = 64;
+    let h = 64;
+    let mut pixels = vec![0.0f32; w * h * 3];
+    // Checkerboard pattern
+    for y in 0..h {
+        for x in 0..w {
+            let val = if (x / 8 + y / 8) % 2 == 0 { 0.8 } else { 0.2 };
+            let idx = (y * w + x) * 3;
+            pixels[idx] = val;
+            pixels[idx + 1] = val;
+            pixels[idx + 2] = val;
+        }
+    }
+
+    let bytes = encoder
+        .encode(w, h, &pixels)
+        .expect("IDENTITY encode failed");
+    eprintln!("IDENTITY 64x64: {} bytes", bytes.len());
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed for IDENTITY");
+    let frame = image
+        .render_frame(0)
+        .expect("jxl-oxide render failed for IDENTITY");
+    assert_eq!(frame.image_all_channels().width(), w);
+    assert_eq!(frame.image_all_channels().height(), h);
+    eprintln!("IDENTITY roundtrip OK");
+}
+
+/// Test that forced DCT2X2 strategy produces valid decodable output.
+#[test]
+fn test_dct2x2_strategy_roundtrip() {
+    use super::ac_strategy::RAW_STRATEGY_DCT2X2;
+    use std::io::Cursor;
+
+    let mut encoder = TinyEncoder::new(1.0);
+    encoder.force_strategy = Some(RAW_STRATEGY_DCT2X2);
+
+    let w = 64;
+    let h = 64;
+    let mut pixels = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let val = if (x / 8 + y / 8) % 2 == 0 { 0.8 } else { 0.2 };
+            let idx = (y * w + x) * 3;
+            pixels[idx] = val;
+            pixels[idx + 1] = val;
+            pixels[idx + 2] = val;
+        }
+    }
+
+    let bytes = encoder.encode(w, h, &pixels).expect("DCT2X2 encode failed");
+    eprintln!("DCT2X2 64x64: {} bytes", bytes.len());
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed for DCT2X2");
+    let frame = image
+        .render_frame(0)
+        .expect("jxl-oxide render failed for DCT2X2");
+    assert_eq!(frame.image_all_channels().width(), w);
+    assert_eq!(frame.image_all_channels().height(), h);
+    eprintln!("DCT2X2 roundtrip OK");
+}

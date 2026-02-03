@@ -18,7 +18,7 @@ use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
-    idct_8x8, idct_8x16, idct_16x8, idct_16x16,
+    dct2x2_transform, idct_8x8, idct_8x16, idct_16x8, idct_16x16, identity_transform,
 };
 use super::quant::quant_weights;
 
@@ -33,22 +33,24 @@ pub const RAW_STRATEGY_DCT32X32: u8 = 4;
 pub const RAW_STRATEGY_DCT4X8: u8 = 5;
 pub const RAW_STRATEGY_DCT8X4: u8 = 6;
 pub const RAW_STRATEGY_DCT4X4: u8 = 7;
+pub const RAW_STRATEGY_IDENTITY: u8 = 8;
+pub const RAW_STRATEGY_DCT2X2: u8 = 9;
 
 /// Number of supported raw strategies.
-pub const NUM_RAW_STRATEGIES: usize = 8;
+pub const NUM_RAW_STRATEGIES: usize = 10;
 
 /// Strategy code as written to the bitstream (via `StrategyCode()`).
 /// These differ from raw strategy codes.
-/// From libjxl ac_strategy.h: DCT=0, DCT4X4=3, DCT16X16=4, DCT32X32=5, DCT16X8=6, DCT8X16=7,
-/// DCT4X8=12, DCT8X4=13.
-pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] = [0, 6, 7, 4, 5, 12, 13, 3];
+/// From libjxl ac_strategy.h: DCT=0, IDENTITY=1, DCT2X2=2, DCT4X4=3, DCT16X16=4,
+/// DCT32X32=5, DCT16X8=6, DCT8X16=7, DCT4X8=12, DCT8X4=13.
+pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] = [0, 6, 7, 4, 5, 12, 13, 3, 1, 2];
 
 /// Covered blocks in X direction for each raw strategy.
-/// DCT4X8, DCT8X4, and DCT4X4 cover 1×1 blocks (single 8x8 region).
-pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1, 1];
+/// IDENTITY, DCT2X2, DCT4X8, DCT8X4, and DCT4X4 cover 1×1 blocks.
+pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1, 1, 1, 1];
 
 /// Covered blocks in Y direction for each raw strategy.
-const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1, 1];
+const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1, 1, 1, 1];
 
 /// Per-block AC strategy map.
 ///
@@ -222,6 +224,8 @@ fn compute_scaled_constants(distance: f32) -> (f32, f32, f32) {
 const RAW_ENTROPY_MUL_DCT8: f32 = 0.8;
 const RAW_ENTROPY_MUL_DCT4X4: f32 = 1.08;
 const RAW_ENTROPY_MUL_DCT4X8: f32 = 0.859_316_37;
+const RAW_ENTROPY_MUL_IDENTITY: f32 = 1.0428;
+const RAW_ENTROPY_MUL_DCT2X2: f32 = 0.95;
 const RAW_ENTROPY_MUL_DCT16X8: f32 = 1.21;
 const RAW_ENTROPY_MUL_DCT16X16: f32 = 1.34;
 const RAW_ENTROPY_MUL_DCT32X32: f32 = 1.48;
@@ -246,6 +250,8 @@ fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
         RAW_STRATEGY_DCT8 => 1.0,
         RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => RAW_ENTROPY_MUL_DCT4X8 / RAW_ENTROPY_MUL_DCT8,
         RAW_STRATEGY_DCT4X4 => RAW_ENTROPY_MUL_DCT4X4 / RAW_ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_IDENTITY => RAW_ENTROPY_MUL_IDENTITY / RAW_ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_DCT2X2 => RAW_ENTROPY_MUL_DCT2X2 / RAW_ENTROPY_MUL_DCT8,
         // Larger transforms: use RAW values (libjxl TryMergeAcs uses raw entropy_mul)
         RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => RAW_ENTROPY_MUL_DCT16X8,
         RAW_STRATEGY_DCT16X16 => RAW_ENTROPY_MUL_DCT16X16,
@@ -444,6 +450,18 @@ fn estimate_entropy_full(
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 64];
                 dct_4x4_full(&input, &mut output);
+                block[offset..offset + 64].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_IDENTITY => {
+                let mut output = [0.0f32; 64];
+                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
+                identity_transform(&xyb_c[pixel_offset..], stride, &mut output);
+                block[offset..offset + 64].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT2X2 => {
+                let mut output = [0.0f32; 64];
+                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
+                dct2x2_transform(&xyb_c[pixel_offset..], stride, &mut output);
                 block[offset..offset + 64].copy_from_slice(&output);
             }
             _ => unreachable!(),
@@ -940,21 +958,96 @@ fn find_best_16x16_transform(
             let base_cost_4x4 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x4 };
             let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
 
+            // IDENTITY (pixel differences from reference pixel per 4x4 sub-block)
+            let e_identity = estimate_entropy_with_mask(
+                RAW_STRATEGY_IDENTITY,
+                xyb,
+                stride,
+                block_x,
+                block_y,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+            );
+            let base_cost_identity = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
+            let mut cost_identity = base_cost_identity + mul8x8 * e_identity;
+
+            // DCT2X2 (hierarchical 2x2 DCT)
+            let e_dct2 = estimate_entropy_with_mask(
+                RAW_STRATEGY_DCT2X2,
+                xyb,
+                stride,
+                block_x,
+                block_y,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+            );
+            let base_cost_dct2 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
+            let mut cost_dct2 = base_cost_dct2 + mul8x8 * e_dct2;
+
+            // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0
+            // From libjxl enc_ac_strategy.cc:588-591
+            if distance < 5.0 {
+                let weight = ((5.0 - distance) / 5.0_f32).powi(2);
+                let favor = 0.4 * weight;
+                // In pixel-domain mode, entropy_mul is already applied internally.
+                // Apply the bonus as a fraction of the total cost.
+                cost_identity *= 1.0 - favor;
+                cost_dct2 *= 1.0 - favor;
+            }
+
+            // kAvoidEntropyOfTransforms: penalty for DCT4X8/DCT8X4/DCT4X4 at distance > 4.0
+            // From libjxl enc_ac_strategy.cc:592-600
+            let mut cost4x8_adj = cost4x8;
+            let mut cost8x4_adj = cost8x4;
+            let mut cost4x4_adj = cost4x4;
+            if distance > 4.0 {
+                let avoid = 0.5_f32;
+                let mul = if distance < 12.0 {
+                    (12.0 - 4.0) / (distance - 4.0)
+                } else {
+                    1.0
+                };
+                let penalty = 1.0 + avoid * mul;
+                cost4x8_adj *= penalty;
+                cost8x4_adj *= penalty;
+                cost4x4_adj *= penalty;
+            }
+
             // Pick the best single-block strategy
             *entropy_val = cost8;
             *best_strat = RAW_STRATEGY_DCT8;
 
-            if cost4x8 < *entropy_val {
-                *entropy_val = cost4x8;
+            if cost4x8_adj < *entropy_val {
+                *entropy_val = cost4x8_adj;
                 *best_strat = RAW_STRATEGY_DCT4X8;
             }
-            if cost8x4 < *entropy_val {
-                *entropy_val = cost8x4;
+            if cost8x4_adj < *entropy_val {
+                *entropy_val = cost8x4_adj;
                 *best_strat = RAW_STRATEGY_DCT8X4;
             }
-            if cost4x4 < *entropy_val {
-                *entropy_val = cost4x4;
+            if cost4x4_adj < *entropy_val {
+                *entropy_val = cost4x4_adj;
                 *best_strat = RAW_STRATEGY_DCT4X4;
+            }
+            if cost_identity < *entropy_val {
+                *entropy_val = cost_identity;
+                *best_strat = RAW_STRATEGY_IDENTITY;
+            }
+            if cost_dct2 < *entropy_val {
+                *entropy_val = cost_dct2;
+                *best_strat = RAW_STRATEGY_DCT2X2;
             }
         }
     }

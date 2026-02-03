@@ -278,8 +278,9 @@ use super::ac_strategy::{COVERED_X, STRATEGY_CODE_LUT};
 /// Uses RAW strategy codes (0-7) as input, returns bitstream strategy code.
 pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
     // Covered blocks from the lookup tables
-    // 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32, 5=DCT4X8, 6=DCT8X4, 7=DCT4X4
-    let covered_y: [usize; 8] = [1, 2, 1, 2, 4, 1, 1, 1];
+    // 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32, 5=DCT4X8, 6=DCT8X4, 7=DCT4X4,
+    // 8=IDENTITY, 9=DCT2X2
+    let covered_y: [usize; 10] = [1, 2, 1, 2, 4, 1, 1, 1, 1, 1];
 
     let cx = COVERED_X[raw_strategy as usize];
     let cy = covered_y[raw_strategy as usize];
