@@ -230,17 +230,23 @@ pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
 /// WARNING: jxl-oxide has a multi-group VarDCT decoder bug.
 /// For images >256x256, use decode_with_djxl() instead.
 pub fn decode_with_jxl_oxide(data: &[u8]) -> Result<DecodedImage> {
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(data))
         .map_err(|e| {
             crate::error::Error::InvalidInput(format!("jxl-oxide decode failed: {:?}", e))
         })?;
 
+    // Request linear sRGB output so decoded pixels are in linear RGB space,
+    // matching our encoder's internal representation.
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+
     let width = image.width() as usize;
     let height = image.height() as usize;
     let channels = image.pixel_format().channels();
 
-    // Render to get actual pixels
+    // Render to get actual pixels (linear f32)
     let render = image.render_frame(0).map_err(|e| {
         crate::error::Error::InvalidInput(format!("jxl-oxide render failed: {:?}", e))
     })?;

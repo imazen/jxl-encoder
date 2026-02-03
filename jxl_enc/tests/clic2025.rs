@@ -46,13 +46,16 @@ fn test_clic_image_with_ssim2(path: &str) -> Option<f64> {
 
     // Decode with jxl-oxide
     let reader = Cursor::new(&bytes);
-    let image = match jxl_oxide::JxlImage::builder().read(reader) {
+    let mut image = match jxl_oxide::JxlImage::builder().read(reader) {
         Ok(img) => img,
         Err(e) => {
             eprintln!("{}: PARSE ERROR: {:?}", filename, e);
             return None;
         }
     };
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
 
     let render = match image.render_frame(0) {
         Ok(r) => r,
@@ -256,9 +259,12 @@ fn test_clic2025_small_crop() {
 
     // Decode
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
 
     // Extract decoded pixels
@@ -362,9 +368,12 @@ fn test_save_multigroup_comparison() {
 
     // Decode
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
 
     // Extract decoded pixels
@@ -506,9 +515,12 @@ fn test_exact_multiples() {
             .expect("Encode failed");
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
 
         let fb = render.image_all_channels();
@@ -594,13 +606,16 @@ fn test_multigroup_sizes() {
         };
 
         let reader = Cursor::new(&bytes);
-        let image = match jxl_oxide::JxlImage::builder().read(reader) {
+        let mut image = match jxl_oxide::JxlImage::builder().read(reader) {
             Ok(img) => img,
             Err(e) => {
                 eprintln!("{}x{}: PARSE ERROR: {:?}", cw, ch, e);
                 continue;
             }
         };
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
 
         let render = match image.render_frame(0) {
             Ok(r) => r,
@@ -691,9 +706,12 @@ fn test_djxl_vs_jxl_oxide() {
 
     // Decode with jxl-oxide
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
     let fb = render.image_all_channels();
     let oxide_decoded = fb.buf();
@@ -915,9 +933,12 @@ fn test_compare_working_vs_broken() {
 
         // Decode and check
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
         let fb = render.image_all_channels();
         let decoded = fb.buf();
@@ -1060,9 +1081,12 @@ fn test_per_group_corruption() {
         .expect("Encode failed");
 
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
 
     let fb = render.image_all_channels();
@@ -1162,9 +1186,12 @@ fn test_real_photo_value_stats() {
             .expect("Encode failed");
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
 
         let fb = render.image_all_channels();
@@ -1227,9 +1254,12 @@ fn test_noise_multigroup() {
 
         // Decode
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
 
         let fb = render.image_all_channels();
@@ -1293,9 +1323,12 @@ fn test_gradient_multigroup() {
 
         // Decode
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
 
         let fb = render.image_all_channels();
@@ -1366,9 +1399,12 @@ fn test_solid_color_multigroup() {
 
         // Decode
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
 
         let fb = render.image_all_channels();
@@ -1502,13 +1538,16 @@ fn test_compare_with_libjxl_tiny() {
     // Decode both
     let decode = |data: &[u8], name: &str| -> Option<Vec<f32>> {
         let reader = Cursor::new(data);
-        let image = match jxl_oxide::JxlImage::builder().read(reader) {
+        let mut image = match jxl_oxide::JxlImage::builder().read(reader) {
             Ok(img) => img,
             Err(e) => {
                 eprintln!("{}: parse error: {:?}", name, e);
                 return None;
             }
         };
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = match image.render_frame(0) {
             Ok(r) => r,
             Err(e) => {
@@ -1635,13 +1674,16 @@ fn test_single_block_noise() {
 
     // Decode
     let reader = Cursor::new(&bytes);
-    let image = match jxl_oxide::JxlImage::builder().read(reader) {
+    let mut image = match jxl_oxide::JxlImage::builder().read(reader) {
         Ok(img) => img,
         Err(e) => {
             eprintln!("PARSE ERROR: {:?}", e);
             return;
         }
     };
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
 
     let render = match image.render_frame(0) {
         Ok(r) => r,
@@ -1727,9 +1769,12 @@ fn test_compare_checkerboard() {
 
     // Decode our output
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("render failed");
     let ours = render.image_all_channels().buf().to_vec();
 
@@ -1747,9 +1792,12 @@ fn test_compare_checkerboard() {
     eprintln!("libjxl-tiny: {} bytes", ref_bytes.len());
 
     let reader = Cursor::new(&ref_bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("render failed");
     let ref_dec = render.image_all_channels().buf().to_vec();
 
@@ -1804,9 +1852,12 @@ fn test_dark_values_multigroup() {
             .expect("Encode failed");
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
         let decoded = render.image_all_channels().buf().to_vec();
 
@@ -1866,9 +1917,12 @@ fn test_color_multigroup() {
             .expect("Encode failed");
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
         let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2074,9 +2128,12 @@ fn test_high_contrast_multigroup() {
             .expect("Encode failed");
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).expect("Render failed");
         let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2128,9 +2185,12 @@ fn test_bright_block_trace() {
     eprintln!("Encoded to {} bytes", bytes.len());
 
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
     let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2150,7 +2210,10 @@ fn test_bright_block_trace() {
         .encode(size as usize, size as usize, &dark_rgb)
         .expect("Encode");
     let reader2 = Cursor::new(&bytes2);
-    let image2 = jxl_oxide::JxlImage::builder().read(reader2).expect("Parse");
+    let mut image2 = jxl_oxide::JxlImage::builder().read(reader2).expect("Parse");
+    image2.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render2 = image2.render_frame(0).expect("Render");
     let decoded2 = render2.image_all_channels().buf().to_vec();
 
@@ -2204,9 +2267,12 @@ fn test_high_contrast_checkerboard() {
     eprintln!("Encoded to {} bytes", bytes.len());
 
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
     let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2278,9 +2344,12 @@ fn test_full_range_random_8x8() {
     eprintln!("Encoded to {} bytes", bytes.len());
 
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("Render failed");
     let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2344,7 +2413,10 @@ fn test_grayscale_vs_color_random() {
         .unwrap();
 
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).unwrap();
     let gray_dec = render.image_all_channels().buf().to_vec();
 
@@ -2382,7 +2454,10 @@ fn test_grayscale_vs_color_random() {
         .unwrap();
 
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).unwrap();
     let color_dec = render.image_all_channels().buf().to_vec();
 
@@ -2441,7 +2516,10 @@ fn test_gradient_16x16_debug() {
 
     // Decode with jxl-oxide to verify
     let reader = std::io::Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("render");
     let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2494,7 +2572,10 @@ fn test_random_16x16_debug() {
 
     // Decode with jxl-oxide
     let reader = std::io::Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("render");
     let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2544,7 +2625,10 @@ fn test_random_ac_coeffs() {
 
     // Decode and check
     let reader = std::io::Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("render");
     let decoded = render.image_all_channels().buf().to_vec();
 
@@ -2602,7 +2686,10 @@ fn test_compare_libjxl_tiny() {
     if let Ok(bytes) = std::fs::read("/tmp/jxl_debug/random_8x8_tiny.jxl") {
         let reader = Cursor::new(&bytes);
         match jxl_oxide::JxlImage::builder().read(reader) {
-            Ok(image) => {
+            Ok(mut image) => {
+                image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                    jxl_oxide::RenderingIntent::Relative,
+                ));
                 match image.render_frame(0) {
                     Ok(render) => {
                         let buf = render.image_all_channels().buf().to_vec();
@@ -2645,7 +2732,10 @@ fn test_compare_libjxl_tiny() {
     println!("\nOur encoder: {} bytes", our_bytes.len());
 
     let reader = Cursor::new(&our_bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).expect("parse");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).expect("render");
     let buf = render.image_all_channels().buf().to_vec();
 
@@ -2753,7 +2843,10 @@ fn encode_and_measure_ssim2_cfl(
     let file_size = bytes.len();
 
     let reader = std::io::Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).ok()?;
     let fb = render.image_all_channels();
     let decoded_linear = fb.buf();
@@ -2924,7 +3017,10 @@ fn encode_and_measure_ssim2_strategy(
     let file_size = bytes.len();
 
     let reader = std::io::Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).ok()?;
     let fb = render.image_all_channels();
     let decoded_linear = fb.buf();
@@ -4021,7 +4117,7 @@ fn test_distance_vs_butteraugli() {
 
             // Decode with jxl-oxide (outputs linear RGB)
             let reader = Cursor::new(&bytes);
-            let image = match jxl_oxide::JxlImage::builder().read(reader) {
+            let mut image = match jxl_oxide::JxlImage::builder().read(reader) {
                 Ok(img) => img,
                 Err(e) => {
                     eprintln!(
@@ -4035,6 +4131,9 @@ fn test_distance_vs_butteraugli() {
                     continue;
                 }
             };
+            image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
 
             let render = match image.render_frame(0) {
                 Ok(r) => r,
@@ -4148,7 +4247,10 @@ fn test_butteraugli_quality_gate() {
 
         // Decode with jxl-oxide
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).unwrap();
         let decoded = render.image_all_channels();
         let dec_buf = decoded.buf();
@@ -4184,7 +4286,10 @@ fn test_butteraugli_quality_gate() {
         let bytes = encoder.encode(w, h, &linear_rgb).unwrap();
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).unwrap();
         let decoded = render.image_all_channels();
         let dec_buf = decoded.buf();
@@ -4305,7 +4410,10 @@ fn test_cpp_vs_rust_butteraugli() {
 
         let cpp_btrgl = if !cpp_bytes.is_empty() {
             let reader = Cursor::new(&cpp_bytes);
-            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+            if let Ok(mut image) = jxl_oxide::JxlImage::builder().read(reader) {
+                image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                    jxl_oxide::RenderingIntent::Relative,
+                ));
                 if let Ok(render) = image.render_frame(0) {
                     let decoded = render.image_all_channels();
                     let dec_buf = decoded.buf();
@@ -4334,7 +4442,10 @@ fn test_cpp_vs_rust_butteraugli() {
 
         let rust_btrgl = if !rust_bytes.is_empty() {
             let reader = Cursor::new(&rust_bytes);
-            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+            if let Ok(mut image) = jxl_oxide::JxlImage::builder().read(reader) {
+                image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                    jxl_oxide::RenderingIntent::Relative,
+                ));
                 if let Ok(render) = image.render_frame(0) {
                     let decoded = render.image_all_channels();
                     let dec_buf = decoded.buf();
@@ -4473,7 +4584,10 @@ fn test_cpp_vs_rust_butteraugli_fine() {
 
         let cpp_btrgl = if !cpp_bytes.is_empty() {
             let reader = Cursor::new(&cpp_bytes);
-            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+            if let Ok(mut image) = jxl_oxide::JxlImage::builder().read(reader) {
+                image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                    jxl_oxide::RenderingIntent::Relative,
+                ));
                 if let Ok(render) = image.render_frame(0) {
                     let decoded = render.image_all_channels();
                     let dec_buf = decoded.buf();
@@ -4501,7 +4615,10 @@ fn test_cpp_vs_rust_butteraugli_fine() {
 
         let rust_btrgl = if !rust_bytes.is_empty() {
             let reader = Cursor::new(&rust_bytes);
-            if let Ok(image) = jxl_oxide::JxlImage::builder().read(reader) {
+            if let Ok(mut image) = jxl_oxide::JxlImage::builder().read(reader) {
+                image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                    jxl_oxide::RenderingIntent::Relative,
+                ));
                 if let Ok(render) = image.render_frame(0) {
                     let decoded = render.image_all_channels();
                     let dec_buf = decoded.buf();
@@ -4644,7 +4761,10 @@ fn test_isolate_d1_butteraugli_gap() {
         let size = bytes.len();
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).unwrap();
         let decoded = render.image_all_channels();
         let dec_buf = decoded.buf();
@@ -4687,7 +4807,10 @@ fn test_isolate_d1_butteraugli_gap() {
             let bytes = enc.encode(w, h, &linear_rgb).unwrap();
             let sz = bytes.len();
             let reader = Cursor::new(&bytes);
-            let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+            let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+            image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
             let render = image.render_frame(0).unwrap();
             let decoded = render.image_all_channels();
             let dec_buf = decoded.buf();
@@ -4718,7 +4841,10 @@ fn test_isolate_d1_butteraugli_gap() {
         enc.ac_strategy_enabled = strat;
         let bytes = enc.encode(w, h, &linear_rgb).unwrap();
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
         let render = image.render_frame(0).unwrap();
         let decoded = render.image_all_channels();
         *dec_buf = decoded.buf().to_vec();
@@ -4781,7 +4907,10 @@ fn test_isolate_d1_butteraugli_gap() {
         } else {
             // Decode with jxl-oxide
             let reader = Cursor::new(&bytes);
-            let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+            let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+            image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
             let render = image.render_frame(0).unwrap();
             let decoded_oxide = render.image_all_channels();
             let oxide_buf = decoded_oxide.buf();
@@ -4837,7 +4966,10 @@ fn test_isolate_d1_butteraugli_gap() {
             .unwrap();
         if output2.status.success() {
             let reader2 = Cursor::new(&bytes2);
-            let image2 = jxl_oxide::JxlImage::builder().read(reader2).unwrap();
+            let mut image2 = jxl_oxide::JxlImage::builder().read(reader2).unwrap();
+            image2.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
             let render2 = image2.render_frame(0).unwrap();
             let decoded2 = render2.image_all_channels();
             let oxide_buf2 = decoded2.buf();
@@ -4976,7 +5108,10 @@ fn test_static_vs_dynamic_sweep() {
 
             // Decode static
             let reader_s = Cursor::new(&bytes_static);
-            let img_s = jxl_oxide::JxlImage::builder().read(reader_s).unwrap();
+            let mut img_s = jxl_oxide::JxlImage::builder().read(reader_s).unwrap();
+            img_s.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
             let render_s = img_s.render_frame(0).unwrap();
             let buf_s = render_s.image_all_channels().buf().to_vec();
             let ws = render_s.image_all_channels().width();
@@ -4984,7 +5119,10 @@ fn test_static_vs_dynamic_sweep() {
 
             // Decode dynamic
             let reader_d = Cursor::new(&bytes_dynamic);
-            let img_d = jxl_oxide::JxlImage::builder().read(reader_d).unwrap();
+            let mut img_d = jxl_oxide::JxlImage::builder().read(reader_d).unwrap();
+            img_d.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
             let render_d = img_d.render_frame(0).unwrap();
             let buf_d = render_d.image_all_channels().buf().to_vec();
 
@@ -5600,9 +5738,12 @@ fn test_rgba_simple() {
 
         // Test RGBA with jxl-oxide
         let rgba_reader = Cursor::new(&jxl_bytes);
-        let rgba_image = jxl_oxide::JxlImage::builder()
+        let mut rgba_image = jxl_oxide::JxlImage::builder()
             .read(rgba_reader)
             .expect("Failed to parse RGBA JXL");
+        rgba_image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
 
         match rgba_image.render_frame(0) {
             Ok(render) => {
@@ -5824,7 +5965,10 @@ fn decode_and_ssim2(
     use std::io::Cursor;
 
     let reader = Cursor::new(bytes);
-    let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = image.render_frame(0).ok()?;
     let fb = render.image_all_channels();
     let decoded = fb.buf();
@@ -5887,9 +6031,12 @@ fn test_ans_multigroup_gradient() {
 
         // Decode with jxl-oxide
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Failed to parse ANS JXL");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
 
         match image.render_frame(0) {
             Ok(render) => {
@@ -5952,9 +6099,12 @@ fn test_ans_failing_image() {
 
     // Try decode with jxl-oxide
     let reader = Cursor::new(&bytes);
-    let image = jxl_oxide::JxlImage::builder()
+    let mut image = jxl_oxide::JxlImage::builder()
         .read(reader)
         .expect("Failed to parse JXL");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
 
     eprintln!("Parsed, attempting render...");
     match image.render_frame(0) {
@@ -6012,7 +6162,10 @@ fn test_ans_vs_huffman_debug() {
 
     // Verify Huffman works
     let reader = Cursor::new(&bytes_huff);
-    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     match image.render_frame(0) {
         Ok(_) => eprintln!("Huffman: decode OK"),
         Err(e) => eprintln!("Huffman: decode FAILED: {:?}", e),
@@ -6029,7 +6182,10 @@ fn test_ans_vs_huffman_debug() {
 
     // Check ANS
     let reader = Cursor::new(&bytes_ans);
-    let image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     match image.render_frame(0) {
         Ok(_) => eprintln!("ANS: decode OK"),
         Err(e) => {
@@ -6091,9 +6247,12 @@ fn test_ans_crop_binary_search() {
             .expect("ANS encode failed");
 
         let reader = Cursor::new(&bytes);
-        let image = jxl_oxide::JxlImage::builder()
+        let mut image = jxl_oxide::JxlImage::builder()
             .read(reader)
             .expect("Failed to parse JXL");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
 
         let result = image.render_frame(0);
         let status = match &result {
@@ -6413,7 +6572,8 @@ fn test_rd_regression() {
         d050: Baseline,
     }
 
-    // Our encoder baselines (measured at commit b11fa1c via this test)
+    // Our encoder baselines (measured at commit 42520f3 via this test)
+    // After parametric quant weight port + jxl-oxide linear output fix.
     // SSIM2: in-process fast-ssim2 on sRGB u8 (gamma 2.2 roundtrip from jxl-oxide linear output).
     // Butteraugli: in-process butteraugli crate on linear RGB (srgb_to_linear for original).
     // Sizes are deterministic and match byte-for-byte at this commit.
@@ -6421,79 +6581,79 @@ fn test_rd_regression() {
         // frymire
         ImageBaselines {
             d025: Baseline {
-                size: 921535,
-                butteraugli: 1.497,
-                ssim2: 83.36,
+                size: 925671,
+                butteraugli: 1.499,
+                ssim2: 84.33,
             },
             d050: Baseline {
-                size: 668375,
-                butteraugli: 2.826,
-                ssim2: 78.11,
+                size: 674397,
+                butteraugli: 2.824,
+                ssim2: 79.00,
             },
         },
         // img10
         ImageBaselines {
             d025: Baseline {
-                size: 180535,
+                size: 189947,
                 butteraugli: 0.522,
-                ssim2: 88.36,
+                ssim2: 88.35,
             },
             d050: Baseline {
-                size: 117243,
+                size: 125752,
                 butteraugli: 0.920,
-                ssim2: 86.32,
+                ssim2: 86.31,
             },
         },
         // img11
         ImageBaselines {
             d025: Baseline {
-                size: 197149,
-                butteraugli: 0.513,
+                size: 204873,
+                butteraugli: 0.472,
                 ssim2: 83.73,
             },
             d050: Baseline {
-                size: 134366,
-                butteraugli: 0.874,
-                ssim2: 81.87,
+                size: 140972,
+                butteraugli: 0.887,
+                ssim2: 81.90,
             },
         },
         // img12
         ImageBaselines {
             d025: Baseline {
-                size: 166672,
+                size: 174609,
                 butteraugli: 0.576,
-                ssim2: 89.10,
+                ssim2: 89.11,
             },
             d050: Baseline {
-                size: 106776,
+                size: 113171,
                 butteraugli: 0.875,
-                ssim2: 87.51,
+                ssim2: 87.38,
             },
         },
         // img13
         ImageBaselines {
             d025: Baseline {
-                size: 264188,
+                size: 274209,
                 butteraugli: 0.507,
                 ssim2: 84.85,
             },
             d050: Baseline {
-                size: 198962,
-                butteraugli: 0.907,
+                size: 208225,
+                butteraugli: 0.753,
                 ssim2: 82.92,
             },
         },
         // img14
         ImageBaselines {
             d025: Baseline {
-                size: 224554,
+                size: 234852,
                 butteraugli: 0.600,
-                ssim2: 81.54,
+                ssim2: 81.58,
             },
             d050: Baseline {
-                size: 159643,
+                size: 169280,
                 butteraugli: 0.917,
-                ssim2: 79.90,
+                ssim2: 79.94,
             },
         },
     ];
@@ -6653,7 +6813,7 @@ fn test_rd_regression() {
 
             // Decode with jxl-oxide
             let reader = Cursor::new(&bytes);
-            let jxl_image = match jxl_oxide::JxlImage::builder().read(reader) {
+            let mut jxl_image = match jxl_oxide::JxlImage::builder().read(reader) {
                 Ok(img) => img,
                 Err(e) => {
                     let msg = format!("{} d={}: parse failed: {:?}", image.name, dist, e);
@@ -6662,6 +6822,9 @@ fn test_rd_regression() {
                     continue;
                 }
             };
+            jxl_image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
 
             let render = match jxl_image.render_frame(0) {
                 Ok(r) => r,

@@ -34,9 +34,12 @@ fn load_png_crop(path: &str, crop_w: usize, crop_h: usize) -> (usize, usize, Vec
 }
 
 fn decode_with_jxl_oxide(data: &[u8]) -> (usize, usize, Vec<f32>) {
-    let img = jxl_oxide::JxlImage::builder()
+    let mut img = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(data))
         .expect("Failed to parse JXL");
+    img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
     let render = img.render_frame(0).expect("Failed to render");
     let buf = render.image_all_channels();
     let w = buf.width();
