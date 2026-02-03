@@ -110,63 +110,77 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 3, 2026)
+### Quality Gap vs Full libjxl (Feb 3, 2026 — Updated Analysis)
 
-**RD Regression Baselines** (in-process, jxl-oxide linear decode, 6 images):
+**Key finding**: Our DCT8 quantization matches cjxl effort 1 (Lightning) within 0-2 SSIM2.
+The large gap vs cjxl e7 (5-15 SSIM2) is from missing features (27 strategies, advanced
+cost model), not from a quantization bug.
 
-| Image | d=0.25 Size | d=0.25 SSIM2 | d=0.5 Size | d=0.5 SSIM2 |
-|-------|-------------|-------------|------------|------------|
-| frymire (1118x1105) | 926KB | 84.33 | 674KB | 79.00 |
-| img10 | 190KB | 88.35 | 126KB | 86.31 |
-| img11 | 205KB | 83.73 | 141KB | 81.90 |
-| img12 | 175KB | 89.11 | 113KB | 87.38 |
-| img13 | 274KB | 84.85 | 208KB | 82.92 |
-| img14 | 235KB | 81.58 | 169KB | 79.94 |
+**RD Comparison — frymire.png (1118x1105), no gaborish, DCT8+Huffman**:
 
-### Remaining Gaps vs Full libjxl (Feb 3, 2026)
+| d | cjxl e1 Size | cjxl e1 SSIM2 | Ours Size | Ours SSIM2 | Gap |
+|---|-------------|---------------|-----------|------------|-----|
+| 1.0 | 637KB | 77.49 | 583KB | 77.29 | **0.20** |
+| 2.0 | 433KB | 66.79 | 428KB | 66.89 | **-0.10** (we win) |
+| 3.0 | 362KB | 59.94 | 339KB | 57.81 | **2.13** |
+
+**RD Comparison — frymire.png, no gaborish, our best vs cjxl e7**:
+
+| d | cjxl e7 Size | cjxl e7 SSIM2 | Ours pixel+adapt | Ours SSIM2 | Gap |
+|---|-------------|---------------|------------------|------------|-----|
+| 0.5 | 706KB | 88.76 | 676KB | 85.29 | 3.47 |
+| 1.0 | 543KB | 84.09 | 498KB | 78.69 | 5.40 |
+| 3.0 | 333KB | 72.14 | 288KB | 56.64 | 15.5 |
+
+The gap grows with distance because cjxl e7 has sophisticated features:
+- 27 AC strategies (vs our 8): major advantage on varied content
+- Truncation quantization vs our round+threshold: different rounding behavior
+- Content-adaptive global_scale: better range utilization
+- Advanced cost model (AdjustQuantBlockAC): per-block quant tuning
+
+**What's confirmed correct**:
+- Parametric quantization weights match decoder expectations (all strategies)
+- AdjustQuantBias constants match decoder (kDefaultQuantBias)
+- Quantization formula matches C++ (val = coeff * inv_dequant_matrix * qac * qm_mul)
+- IDCT roundtrip error < 1e-6 for all sizes (fixed Feb 3, 2026)
+- Weight tables are pure parametric without bias (confirmed via jxl-oxide source)
+
+### Remaining Gaps vs Full libjxl
 
 **A. AC Strategies — 8 of 27 implemented**
 - Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32
 - Missing (impactful on photos): IDENTITY (code 1), DCT2x2 (code 2), AFV0-3 (code 8-11)
-- Missing (large transforms): DCT32x16, DCT16x32, DCT64x32, DCT32x64, DCT64x64, DCT128x128, DCT256x256
-- Est. impact: 2-5% compression on natural photos
+- Missing (large transforms): DCT32x16, DCT16x32, DCT64x32, DCT32x64, DCT64x64, etc.
+- Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
-**B. Quantization Constants — libjxl-tiny heritage**
-- Uses `AC_QUANT = 0.8` from libjxl-tiny (`frame.rs:97`)
-- Full libjxl uses `AC_QUANT = 0.39` + `K_AC_QUANT = 0.765`
-- Content-adaptive `compute_from_quant_field` exists but is dead code (`frame.rs:55`)
-- Previous test of libjxl constants made quality worse, but that was BEFORE parametric
-  weight fix — worth re-testing
-- Est. impact: 0.5-2% at d > 1.0
+**B. Quantization Calibration**
+- Our files are ~8-14% smaller at the same distance (more aggressive quantization)
+- Uses `AC_QUANT = 0.8` from libjxl-tiny, full libjxl uses 0.765 (8% difference)
+- Uses `K_AC_QUANT = 0.8294`, full libjxl uses 0.765 (similar effect)
+- Fixed global_scale formula, full libjxl uses content-adaptive (median-MAD)
+- Impact: calibration only affects file-size-to-quality tradeoff, not RD efficiency
 
-**C. Entropy Coding — No LZ77 in VarDCT**
+**C. Cost Model**
+- Missing: AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
+- Missing: C++ threshold adjustment (`-0.00744 * xsize * ysize` for X/B on multi-block)
+- Full libjxl uses truncation (`(int)(val + noff)`) vs our round+threshold approach
+
+**D. Entropy Coding**
 - LZ77 explicitly disabled (`encoder.rs:1794`)
-- Block context map is hardcoded (`ac_context.rs:64`), not content-adaptive
+- Block context map is hardcoded, not content-adaptive
 - Est. impact: 1-3% on natural photos
 
-**D. Content Detectors — None**
-- No splines (10-30% on curve-heavy content)
-- No patches/dictionary (5-40% on screenshots/UI)
-- No dots detection (2-5% on speckle-heavy images)
-- Near zero impact on natural photos in our test set
-
-**E. EPF — Functional but Uniform**
-- EPF iterations set correctly by distance (`frame.rs:138-142`)
-- Missing: per-block `epf_sharpness` map (uniform filter strength everywhere)
-- Est. impact: 0.1-0.5 SSIM2 at d > 1.0
-
-**F. Other Minor Gaps**
-- DC coding: fixed context tree, no modular optimization (< 0.5%)
-- CfL: fixed 64x64 tiles, no variable tile size (< 0.5%)
-- No progressive encoding (UX only, no compression benefit)
-- Coefficient ordering: implemented, no entropy-based refinement (< 0.1%)
+**E. Other**
+- No splines, patches/dictionary, dots detection
+- EPF iterations correct but missing per-block epf_sharpness map
+- DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
-1. Re-test AC_QUANT=0.39 + K_AC_QUANT=0.765 (low effort, may close 0.5-2%)
-2. IDENTITY + DCT2x2 strategies (medium effort, 1-2%)
-3. LZ77 backward references (medium effort, 1-3%)
+1. IDENTITY + DCT2x2 strategies (medium effort, significant quality win)
+2. Match K_AC_QUANT to 0.765 and content-adaptive global_scale (calibration)
+3. LZ77 backward references (medium effort, 1-3% file savings)
 4. AFV corner DCT (high effort, 0.5-1%)
-5. Per-block EPF sharpness (medium effort, perceptual quality)
+5. Consider truncation quantization approach (matches C++ behavior)
 
 ### Outstanding Work
 
@@ -182,7 +196,7 @@ Improvements made Feb 3, 2026:
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 45 commits ahead of origin/main
+**Unpushed**: 48 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
