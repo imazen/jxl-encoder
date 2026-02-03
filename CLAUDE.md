@@ -228,6 +228,37 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 
 ## Resolved Bugs
 
+### Color/Brightness Bug - Transfer Function Mismatch (FIXED Feb 3, 2026)
+
+**Issue**: ALL encoder output was noticeably darker than the original input and
+reference cjxl output at the same distance setting.
+
+**Root Cause**: The file header color encoding was signaling `TransferFunction::Linear`
+(value 8) instead of `TransferFunction::Srgb` (value 13). This caused decoders to
+misinterpret the XYB-encoded data, applying incorrect gamma decoding.
+
+In `write_file_header()` in `tiny/encoder.rs`, the u2S encoding for transfer function was:
+```rust
+// WRONG: wrote Linear (8 = 2 + 6)
+writer.write(2, 2)?; // selector 2
+writer.write(4, 6)?; // value 6 -> 2+6 = 8 = Linear
+```
+
+**Fix**: Changed the transfer function encoding to signal sRGB:
+```rust
+// CORRECT: write Srgb (13 = 2 + 11)
+writer.write(2, 2)?; // selector 2
+writer.write(4, 11)?; // value 11 -> 2+11 = 13 = Srgb
+```
+
+**Verification**:
+- jxlinfo now shows "Transfer function: sRGB" instead of "Linear"
+- Decoded grayscale 128 pixels now match input (was darker before)
+- CLIC 2025 photo SSIM2 = 85.24 (vs reference 86.81) - correct brightness
+
+**Impact**: All encodes now produce correct brightness. The remaining ~1.5 SSIM2 gap
+vs reference cjxl is due to libjxl-tiny's simpler cost model, not brightness issues.
+
 ### Rectangular Transform Coefficient Storage Mapping (FIXED Feb 3, 2026)
 
 **Issue**: DCT16x8 and DCT8x16 transforms caused index-out-of-bounds panics when encoding
@@ -518,32 +549,6 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
    before quantizing (matching `quantize_block_8x8`'s approach).
 
 ## Known Bugs (ACTIVE)
-
-### Color/Brightness Bug (SEVERE, Newly Discovered Feb 3, 2026)
-
-**Status**: ALL encoder output is darker than reference cjxl.
-
-**Symptom**: Decoded images from our encoder are noticeably darker than both the
-original input and reference cjxl output at the same distance setting.
-
-**Evidence** (visual comparison at `/mnt/v/output/jxl-encoder-rs/dct32x32-bug/`):
-- Original 256x256: Bright, vibrant colors
-- cjxl d=3.0 decode: Matches original
-- Our d=3.0 decode: **Darker**
-- Our d=1.0 decode: **Still darker** (proves it's not quantization)
-
-**File sizes**: Our files are 26% smaller than cjxl at same distance, suggesting
-possible over-quantization, but darkness persists even at d=1.0.
-
-**Likely cause**: Color space conversion bug in:
-1. sRGB → linear input conversion
-2. linear → XYB conversion
-3. DC/coefficient scaling
-
-**Impact**: Affects ALL encodes, not just DCT32x32. The DCT32x32 SSIM2=-48 issue
-is partly caused by this plus a separate spatial averaging problem.
-
-**See**: `CONTEXT-HANDOFF.md` for full investigation details.
 
 ### DCT32x32 Quality Impact (SEVERE, Under Investigation)
 
