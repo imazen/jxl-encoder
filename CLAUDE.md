@@ -107,28 +107,47 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-**Known issue**: Our encoder produces lower PSNR (~37) than cjxl (~40) at similar file
-sizes. This is separate from the AC strategy cost model - likely in quantization weights
-or the overall encoding pipeline. Investigation needed.
+### Quality Gap vs Full libjxl (Feb 3, 2026 Analysis)
+
+**RD Curve Comparison** (CLIC 2025 1360x2048 photo):
+
+| Distance | Our Size | Our SSIM2 | cjxl e7 Size | cjxl SSIM2 | Gap |
+|----------|----------|-----------|--------------|------------|-----|
+| 0.5 | 1158KB | 89.86 | 1242KB | 90.91 | 1.05 |
+| 1.0 | 788KB | 85.24 | 815KB | 87.05 | 1.81 |
+| 2.0 | 511KB | 76.96 | 517KB | 79.29 | 2.33 |
+| 3.0 | 378KB | 68.82 | 389KB | 72.59 | 3.77 |
+
+**At equal file sizes** (~815KB via d=0.94): Our SSIM2=85.75 vs cjxl 87.05 → **1.3 SSIM2 gap**
+
+**Root causes of gap**:
+1. **Quantization weights**: libjxl-tiny uses hardcoded weights; full libjxl uses parametric
+   weights that adapt to distance. This explains the widening gap at high distances.
+2. **AC strategies**: We have 8 strategies; full libjxl has 27 (missing: IDENTITY, DCT2X2,
+   AFV, larger rectangular transforms, DCT64+)
+3. **Cost model**: Simplified libjxl-tiny cost model vs full pixel-domain loss with all
+   27 strategies
+
+**Path to closing gap**:
+- Quick wins: Implement DCT2X2, IDENTITY strategies
+- Medium effort: Port parametric quantization weights from full libjxl
+- High effort: AFV (corner DCT), full 27-strategy support
 
 ### Outstanding Work (Feb 3, 2026)
 
 **Pixel-domain loss parity**: RESOLVED - now beats coefficient-domain by 1.9-6.2%.
+
+**Color/Brightness bug**: RESOLVED - transfer function was signaling Linear instead of Srgb.
 
 **DCT32x32** (PARTIALLY FIXED):
 - DC extraction fixed - uses matched idct1d_4 with 16x scaling, <0.5% error
 - Only enabled at d >= 3.0 where compression benefit outweighs quality impact
 - At d < 3.0, ~0.5% DC error causes visible artifacts on smooth gradients
 
-**Quality gap at d≥2.0** (~3-5 SSIM2 vs cjxl e7):
-- Investigated and ruled out as fixable by constant tuning
-- libjxl-tiny constants are tuned together for simplified pipeline
-- Accept gap or implement missing features (splines, patches, full 27 strategies)
-
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 36 commits ahead of origin/main
+**Unpushed**: 40 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
