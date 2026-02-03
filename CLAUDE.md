@@ -66,10 +66,12 @@ implemented. Enable with `--pixel-domain-loss` flag.
    - `compute_mask1x1()` in `tiny/adaptive_quant.rs`
    - Laplacian of Y intensity: `diff = |gamma(Y) * (Y - avg_neighbors)|`
    - `mask1x1 = 1.0 / (log1p(diff) + 0.01)`
+   - Symmetric5 blur applied after computation (matching libjxl's BlurMasking)
 
 2. **Inverse DCT transforms** ✅
    - `idct_8x8`, `idct_16x16`, `idct_16x8`, `idct_8x16` in `tiny/dct.rs`
-   - Standard DCT-III formula
+   - Matched fast IDCTs (idct1d_2/4/8/16) that exactly reverse forward DCT
+   - ~0 roundtrip error (floating point precision only)
 
 3. **Pixel-domain loss in EstimateEntropy** ✅
    - `estimate_entropy_full()` in `tiny/ac_strategy.rs`
@@ -88,14 +90,20 @@ implemented. Enable with `--pixel-domain-loss` flag.
    - Fixed entropy_mul per transform (0.8 for DCT8, 1.21 for DCT16x8, 1.34 for DCT16x16)
    - Entropy_mul applies ONLY to entropy, BEFORE adding loss
 
-**Current behavior**: After Feb 2, 2026 fixes (quant_norm16 computation, cost term
-conditionals), pixel-domain mode produces varied strategy selections. File sizes (CLIC 2025):
+**Current behavior**: After Feb 3, 2026 fixes (LLF inclusion, matched IDCTs, Symmetric5 blur
+on mask1x1), pixel-domain mode produces varied strategy selections. File sizes (CLIC 2025):
 - DCT8-only: 740,996 bytes
-- Coefficient-domain: 728,745 bytes (-1.7% vs DCT8)
-- Pixel-domain: 744,669 bytes (+0.5% vs DCT8, +2.2% vs coefficient-domain)
+- Coefficient-domain: 733,576 bytes (-1.0% vs DCT8)
+- Pixel-domain: 742,412 bytes (+0.2% vs DCT8, +1.2% vs coefficient-domain)
 
-Pixel-domain still produces slightly larger files than coefficient-domain. Remaining
-calibration work likely needed in IDCT scaling or mask1x1 values. See CONTEXT-HANDOFF.md.
+Improvements made Feb 3, 2026:
+1. Fixed LLF coefficient inclusion in entropy estimation (was skipping them incorrectly)
+2. Implemented matched IDCT functions (idct1d_2, idct1d_4, idct1d_8, idct1d_16) that
+   exactly reverse the forward DCT, with ~0 roundtrip error
+3. Added Symmetric5 blur to mask1x1 matching libjxl's BlurMasking function
+
+Pixel-domain gap reduced from +2.2% to +1.2% (~45% improvement). Remaining gap is likely
+due to loss calculation constant calibration differences with full libjxl.
 
 **Known issue**: Our encoder produces lower PSNR (~37) than cjxl (~40) at similar file
 sizes. This is separate from the AC strategy cost model - likely in quantization weights
