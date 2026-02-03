@@ -727,11 +727,13 @@ pub fn compute_quant_field_float(
     ysize_blocks: usize,
     distance: f32,
 ) -> (Vec<f32>, Vec<f32>) {
-    // libjxl-tiny uses kAcQuant = 0.8294
-    // libjxl (full) uses kAcQuant = 0.765 with q = 0.39 for global_scale
-    // Testing shows 0.8294 with 0.8 global_scale produces better results than
-    // matching libjxl's 0.765/0.39 ratio. The difference may be in other parts
-    // of the adaptive quant algorithm.
+    // libjxl-tiny uses kAcQuant = 0.8294, full libjxl uses 0.765.
+    // K_AC_QUANT is a pure scaling factor: it changes distance-to-size mapping
+    // but NOT RD efficiency. At equal file sizes, different K_AC_QUANT values
+    // give the same SSIM2 (tested: 0.700 at d=0.85 ≈ 0.8294 at d=1.0 ≈ 75.3 SSIM2
+    // at ~470KB). The 26-29% file size gap vs cjxl comes from pipeline differences
+    // (AdjustQuantBlockAC, iterative rate control, more AC strategies), not from
+    // this constant.
     const K_AC_QUANT: f32 = 0.8294;
     let scale = K_AC_QUANT / distance;
 
