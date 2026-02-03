@@ -761,6 +761,43 @@ fn idct1d_8(mem: &mut [f32]) {
     }
 }
 
+/// Fast 1D IDCT for N=16 (exactly reverses dct1d_16).
+fn idct1d_16(mem: &mut [f32]) {
+    // Reverse step 7 (interleave): deinterleave
+    let mut tmp = [0.0f32; 16];
+    for i in 0..8 {
+        tmp[i] = mem[2 * i];
+        tmp[8 + i] = mem[2 * i + 1];
+    }
+
+    // Reverse step 6 (B transform):
+    // Forward: tmp[8] = sqrt2*tmp[8] + tmp[9]; tmp[8+i] += tmp[8+i+1] for i in 1..7
+    // Reverse: tmp[8+i] -= tmp[8+i+1] for i in (1..7).rev(); tmp[8] = (tmp[8] - tmp[9]) / sqrt2
+    for i in (1..7).rev() {
+        tmp[8 + i] -= tmp[8 + i + 1];
+    }
+    tmp[8] = (tmp[8] - tmp[9]) / SQRT2;
+
+    // Reverse step 5: idct on second half
+    idct1d_8(&mut tmp[8..16]);
+
+    // Reverse step 4: divide by WcMultipliers
+    for i in 0..8 {
+        tmp[8 + i] /= WC_MULTIPLIERS_16[i];
+    }
+
+    // Reverse step 3: idct on first half
+    idct1d_8(&mut tmp[0..8]);
+
+    // Reverse steps 1-2: combine AddReverse/SubReverse
+    // Forward: even[i] = mem[i] + mem[15-i], odd[i] = mem[i] - mem[15-i]
+    // Inverse: mem[i] = (even[i] + odd[i])/2, mem[15-i] = (even[i] - odd[i])/2
+    for i in 0..8 {
+        mem[i] = (tmp[i] + tmp[8 + i]) * 0.5;
+        mem[15 - i] = (tmp[i] - tmp[8 + i]) * 0.5;
+    }
+}
+
 /// Reference 8-point 1D IDCT (formula-based, for use in larger IDCTs).
 /// Input and output are separate arrays.
 #[allow(clippy::needless_range_loop)]
@@ -808,19 +845,17 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     }
 }
 
-/// Compute 16x16 inverse DCT (reference implementation).
+/// Compute 16x16 inverse DCT (exactly reverses dct_16x16).
 pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     let mut tmp = [0.0f32; 256];
 
-    // Apply IDCT to each row
+    // Copy input and apply IDCT to each row
     for row in 0..16 {
         let row_start = row * 16;
-        let row_in = &input[row_start..row_start + 16];
-        let mut row_out = [0.0f32; 16];
-        idct1d_n_ref(row_in, &mut row_out, 16);
         for i in 0..16 {
-            tmp[row_start + i] = row_out[i] * 16.0;
+            tmp[row_start + i] = input[row_start + i];
         }
+        idct1d_16(&mut tmp[row_start..row_start + 16]);
     }
 
     // Transpose
@@ -830,62 +865,61 @@ pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     // Apply IDCT to each row (now columns)
     for row in 0..16 {
         let row_start = row * 16;
-        let row_in = &transposed[row_start..row_start + 16];
-        let mut row_out = [0.0f32; 16];
-        idct1d_n_ref(row_in, &mut row_out, 16);
         for i in 0..16 {
-            output[row_start + i] = row_out[i] * 16.0;
+            output[row_start + i] = transposed[row_start + i];
         }
+        idct1d_16(&mut output[row_start..row_start + 16]);
     }
 }
 
-/// Compute 16x8 inverse DCT (16 rows x 8 cols).
+/// Compute 16x8 inverse DCT (16 rows x 8 cols, exactly reverses dct_16x8).
 pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Apply 8-point IDCT to each row
     for row in 0..16 {
         let row_start = row * 8;
-        let mut row_out = [0.0f32; 8];
-        idct1d_8_ref(&input[row_start..row_start + 8], &mut row_out);
         for i in 0..8 {
-            tmp[row_start + i] = row_out[i] * 8.0;
+            tmp[row_start + i] = input[row_start + i];
         }
+        idct1d_8(&mut tmp[row_start..row_start + 8]);
     }
 
-    // Apply 16-point IDCT to each column
+    // Apply 16-point IDCT to each column (in-place via temporary column buffer)
     for col in 0..8 {
-        let col_in: Vec<f32> = (0..16).map(|row| tmp[row * 8 + col]).collect();
-        let mut col_out = [0.0f32; 16];
-        idct1d_n_ref(&col_in, &mut col_out, 16);
+        let mut col_buf = [0.0f32; 16];
         for row in 0..16 {
-            output[row * 8 + col] = col_out[row] * 16.0;
+            col_buf[row] = tmp[row * 8 + col];
+        }
+        idct1d_16(&mut col_buf);
+        for row in 0..16 {
+            output[row * 8 + col] = col_buf[row];
         }
     }
 }
 
-/// Compute 8x16 inverse DCT (8 rows x 16 cols).
+/// Compute 8x16 inverse DCT (8 rows x 16 cols, exactly reverses dct_8x16).
 pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Apply 16-point IDCT to each row
     for row in 0..8 {
         let row_start = row * 16;
-        let row_in = &input[row_start..row_start + 16];
-        let mut row_out = [0.0f32; 16];
-        idct1d_n_ref(row_in, &mut row_out, 16);
         for i in 0..16 {
-            tmp[row_start + i] = row_out[i] * 16.0;
+            tmp[row_start + i] = input[row_start + i];
         }
+        idct1d_16(&mut tmp[row_start..row_start + 16]);
     }
 
-    // Apply 8-point IDCT to each column
+    // Apply 8-point IDCT to each column (in-place via temporary column buffer)
     for col in 0..16 {
-        let col_in: Vec<f32> = (0..8).map(|row| tmp[row * 16 + col]).collect();
-        let mut col_out = [0.0f32; 8];
-        idct1d_8_ref(&col_in, &mut col_out);
+        let mut col_buf = [0.0f32; 8];
         for row in 0..8 {
-            output[row * 16 + col] = col_out[row] * 8.0;
+            col_buf[row] = tmp[row * 16 + col];
+        }
+        idct1d_8(&mut col_buf);
+        for row in 0..8 {
+            output[row * 16 + col] = col_buf[row];
         }
     }
 }
