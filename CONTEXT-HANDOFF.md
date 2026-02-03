@@ -1,175 +1,72 @@
 # Context Handoff: Pixel-Domain Loss Parity with libjxl
 
 **Date**: Feb 2, 2026
-**Status**: Partial fix applied, further calibration needed to match libjxl
+**Status**: Multiple fixes applied, ~2% file size gap remains vs coefficient-domain
 
 ## What Was Done This Session
 
-Two fixes were applied to `jxl_enc/src/tiny/ac_strategy.rs`:
+Three fixes applied to `jxl_enc/src/tiny/ac_strategy.rs`:
 
-1. **Normalized entropy_mul by DCT8's base value (0.8)** (lines 188-215)
-   - libjxl divides all entropy_mul values by DCT8's base (0.8)
-   - DCT8: 0.8/0.8 = 1.0, DCT16X8: 1.21/0.8 = 1.5125, DCT16X16: 1.34/0.8 = 1.675
-   - Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_ac_strategy.cc:584`
+1. **Fixed quant_norm16 computation** (lines 417-456)
+   - libjxl uses different computation based on block count:
+     - 1 block (DCT8): single quant value directly
+     - 2 blocks (DCT16x8, DCT8x16): MAX of two quant values (NOT 16th norm!)
+     - 4+ blocks (DCT16x16+): 16th norm
+   - Reference: `lib/jxl/enc_ac_strategy.cc:383-410`
 
-2. **Fixed X channel penalty timing** (lines 574-582)
-   - Penalty now applies to TOTAL accumulated loss after adding X channel
-   - Reference: `~/work/jxl-efforts/libjxl/lib/jxl/enc_ac_strategy.cc:500-501`
+2. **Made K_COST2 threshold conditional** (lines 524-528)
+   - `if q >= 1.5 { entropy_sum += K_COST2 }` is libjxl-tiny only
+   - Full libjxl pixel-domain mode doesn't have this threshold
+   - Now: `if !use_pixel_domain && q >= 1.5 { ... }`
 
-## Current Problem
+3. **Made cost_of_1 term conditional** (lines 535-539)
+   - `entropy_sum += nzeros_sum * cost_of_1` is libjxl-tiny only
+   - Full libjxl pixel-domain mode doesn't have this per-nzero term
+   - Now: `if !use_pixel_domain { entropy_sum += nzeros_sum * cost_of_1 }`
 
-Pixel-domain mode produces **larger** files than coefficient-domain:
-- DCT8-only: 740,996 bytes
-- Coefficient-domain: 728,745 bytes (-1.7%)
-- Pixel-domain: 745,295 bytes (+0.6%)
+## Current Results
 
-This suggests the loss term is overweighted, causing strategies to be selected
-that increase file size without quality benefit.
+File sizes at d=1.0 on CLIC 2025 test image (1360x2048):
+- **pixel-domain: 744,669 bytes** (+2.2% vs coefficient-domain)
+- coefficient-domain: 728,745 bytes (baseline)
+- DCT8-only: 740,996 bytes (+1.7% vs coefficient-domain)
 
-## libjxl Reference Code
+Pixel-domain produces larger files than coefficient-domain. The gap narrowed
+from ~16.5KB to ~16KB but the fundamental issue remains.
 
-The key function is `EstimateEntropy` in `enc_ac_strategy.cc:364-512`. Critical flow:
+## Remaining Investigation Areas
 
-```cpp
-// Line 418-440: Compute quantization error and store for IDCT
-for (size_t i = 0; i < num_blocks * kDCTBlockSize; i += Lanes(df)) {
-    const auto val = Mul(Sub(in, in_y), Mul(im, quant));  // quantize
-    const auto rval = Round(val);
-    const auto diff = Sub(val, rval);
-    const auto m = Load(df, matrix + i);  // dequant matrix
-    Store(Mul(m, diff), df, &mem[i]);     // error * matrix for IDCT
-    entropy_v = Add(Sqrt(Abs(rval)), entropy_v);  // sqrt(|q|)
-}
+### 1. IDCT Scaling Mismatch (HIGHEST PRIORITY)
 
-// Line 442-480: IDCT of error, then per-pixel masking with 8th power
-TransformToPixels(acs.Strategy(), &mem[0], block, ...);
-for (pixels) {
-    auto in = Load(df8, block + pixel_offset);
-    auto masku = Add(Load(df8, mask1x1_ptr), masku_off);
-    in = Mul(masku, in);   // mask * error
-    in = Mul(in, in);      // ^2
-    in = Mul(in, in);      // ^4
-    in = Mul(in, in);      // ^8
-    lossc = Add(lossc, in);
-}
-lossc = Mul(Set(df8, kChannelMul[c]), lossc);
-loss = Add(loss, lossc);
+Our IDCT functions may have different scaling than libjxl's TransformToPixels.
+This would cause the loss term magnitude to be wrong.
 
-// Line 486-489: Entropy from sqrt(|q|) * cost_delta
-entropy += config.cost_delta * GetLane(SumOfLanes(df, entropy_v));
-
-// Line 496-502: X channel penalty on BOTH entropy AND loss
-if (c == 0 && num_blocks >= 2) {
-    float w = 1.0 + std::min(3.0, num_blocks / 8.0);
-    entropy *= w;
-    loss = Mul(loss, Set(df8, w));
-}
-
-// Line 503-509: Final computation
-float loss_scalar = pow(GetLane(SumOfLanes(df8, loss)) / (num_blocks * kDCTBlockSize),
-                        1.0f / 8.0f) * (num_blocks * kDCTBlockSize) / quant_norm16;
-entropy *= entropy_mul;  // NORMALIZED entropy_mul
-entropy += config.info_loss_multiplier * loss_scalar;
-```
-
-## HIGH PRIORITY BUG: quant_norm16 for 2-Block Transforms
-
-**This is likely the main remaining calibration issue.**
-
-libjxl uses different quant_norm16 computation based on block count (lines 383-410):
-
-```cpp
-if (num_blocks == 1) {
-    quant_norm16 = config.Quant(x/8, y/8);
-} else if (num_blocks == 2) {
-    quant_norm16 = std::max(q1, q2);  // ← MAX, not 16th norm!
-} else {
-    // 4+ blocks: use 16th norm
-    for (blocks) {
-        qval *= qval; qval *= qval; qval *= qval;  // qval^8
-        quant_norm16 += qval * qval;  // qval^16
-    }
-    quant_norm16 /= num_blocks;
-    quant_norm16 = FastPowf(quant_norm16, 1.0f / 16.0f);
-}
-```
-
-**Our code** (lines 434-454) always uses the 16th norm, even for 2-block transforms!
-
-### Fix Required
-
-In `estimate_entropy_full` around line 430, change the quant_norm16 computation:
-
+**Verify by:**
 ```rust
-// Current (WRONG for 2-block):
-for iy in 0..cy {
-    for ix in 0..cx {
-        let qval = quant_field[idx];
-        let q16 = qval.powi(16);
-        quant_norm16 += q16;
-    }
-}
-quant_norm16 /= num_blocks as f32;
-quant_norm16 = quant_norm16.powf(1.0 / 16.0);
+// Add debug output in estimate_entropy_full
+eprintln!("Block ({},{}) strategy={}: pixel_loss={:.2e}, entropy={:.2}",
+    bx, by, strategy_name, total_pixel_loss, entropy);
 ```
 
-Should be:
+Compare against libjxl's loss values for the same blocks.
 
-```rust
-// Matches libjxl behavior
-if use_pixel_domain {
-    if num_blocks == 1 {
-        quant_norm16 = quant_field[by * xsize_blocks + bx];
-    } else if num_blocks == 2 {
-        // Use MAX for 2-block transforms (DCT16x8, DCT8x16)
-        let q1 = quant_field[by * xsize_blocks + bx];
-        let q2 = if cy == 2 {
-            quant_field[(by + 1) * xsize_blocks + bx]
-        } else {
-            quant_field[by * xsize_blocks + bx + 1]
-        };
-        quant_norm16 = q1.max(q2);
-    } else {
-        // 4+ blocks: use 16th norm
-        for iy in 0..cy {
-            for ix in 0..cx {
-                let idx = (by + iy) * xsize_blocks + bx + ix;
-                let qval = quant_field[idx];
-                let q2 = qval * qval;
-                let q4 = q2 * q2;
-                let q8 = q4 * q4;
-                let q16 = q8 * q8;
-                quant_norm16 += q16;
-            }
-        }
-        quant_norm16 /= num_blocks as f32;
-        quant_norm16 = quant_norm16.powf(1.0 / 16.0);
-    }
-}
-```
+### 2. Loss vs Entropy Weighting
 
-## Other Areas to Verify (Lower Priority)
+The ratio `k_info_loss_mul * loss_scalar` vs `entropy` may be different.
+At d=1.0, both k_info_loss_mul and cost_delta should equal their base values.
 
-### 1. IDCT Output Layout
-Our IDCT functions may output in different layout than libjxl's `TransformToPixels`.
-libjxl outputs in:
-```
-block[(iy * 8 + dy) * (covered_blocks_x * 8) + (ix * 8 + dx)]
-```
+**Check:**
+- Our entropy values match libjxl's for DCT8 blocks?
+- Our loss_scalar values match libjxl's for the same input?
 
-**Files**:
-- Our code: `jxl_enc/src/tiny/dct.rs` (idct_8x8, idct_16x8, idct_8x16, idct_16x16)
-- libjxl: `lib/jxl/enc_transforms.cc` (TransformToPixels)
+### 3. Mask1x1 Values
 
-### 2. Error Coefficient Computation
-Verify our `weights[i]` matches libjxl's dequant matrix values.
+The mask1x1 computation might differ from libjxl. The mask values directly
+scale the pixel error, so any difference would affect loss.
 
-### 3. Add Debug Logging
-```rust
-#[cfg(feature = "debug-strategy")]
-eprintln!("Strategy {} ({},{}): entropy={:.2}, loss={:.2}, quant_norm16={:.4}",
-    strategy_name, bx, by, entropy, loss_scalar, quant_norm16);
-```
+**Files to compare:**
+- Our: `jxl_enc/src/tiny/adaptive_quant.rs` (`compute_mask1x1`)
+- libjxl: `lib/jxl/enc_adaptive_quantization.cc`
 
 ## Test Commands
 
@@ -186,25 +83,33 @@ TEST_IMG=~/work/codec-corpus/clic2025/validation/02809272b4ca9b08af45771501b7412
 # Compare sizes (goal: pixel ≤ coeff < dct8)
 ls -la /tmp/*.jxl
 
-# Run unit tests
-cargo test -p jxl_enc tiny::ac_strategy -- --nocapture
-
-# Run roundtrip tests
-cargo test -p jxl_enc test_roundtrip -- --nocapture
+# Run tests
+cargo test -p jxl_enc
 ```
 
-## Files to Modify
+## Files Modified
 
-1. `jxl_enc/src/tiny/ac_strategy.rs` - Fix quant_norm16 computation (HIGH PRIORITY)
-2. `jxl_enc/src/tiny/dct.rs` - Verify IDCT layout if needed (LOW PRIORITY)
+- `jxl_enc/src/tiny/ac_strategy.rs` - Main entropy estimation logic
+- `jxl_enc/src/tiny/dct.rs` - IDCT implementations (clippy fixes only)
 
-## Reference Files in libjxl
+## libjxl Reference
 
-- `lib/jxl/enc_ac_strategy.cc` - EstimateEntropy function (lines 364-512)
-- `lib/jxl/enc_transforms.cc` - TransformToPixels (IDCT)
-- `lib/jxl/quant_weights.h` - Quantization weight matrices
+Key function: `EstimateEntropy` in `lib/jxl/enc_ac_strategy.cc:364-512`
+
+Flow:
+1. Transform pixels to DCT coefficients
+2. For each coefficient: quantize, store error * dequant_matrix
+3. IDCT error to pixel domain
+4. Per-pixel masking with 8th power -> loss
+5. entropy += cost_delta * sum(sqrt(|q|))
+6. entropy += zeros_mul * (CeilLog2Nonzero(nbits + 17) + nbits)
+7. X channel penalty (c==0 && num_blocks>=2): entropy *= w, loss *= w
+8. loss_scalar = (sum(loss)/n)^(1/8) * n / quant_norm16
+9. entropy *= entropy_mul
+10. entropy += info_loss_mul * loss_scalar
 
 ## Recent Commits
 
+- `11d9572` - fix: improve pixel-domain loss parity with libjxl
 - `09c953d` - docs: update pixel-domain loss status after partial fix
-- `0ca040e` - fix: normalize entropy_mul and fix X channel penalty timing in pixel-domain loss
+- `0ca040e` - fix: normalize entropy_mul and fix X channel penalty timing
