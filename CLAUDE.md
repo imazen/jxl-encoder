@@ -110,7 +110,7 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 3, 2026 Analysis)
+### Quality Gap vs Full libjxl (Feb 3, 2026)
 
 **RD Regression Baselines** (in-process, jxl-oxide linear decode, 6 images):
 
@@ -123,18 +123,52 @@ Improvements made Feb 3, 2026:
 | img13 | 274KB | 84.85 | 208KB | 82.92 |
 | img14 | 235KB | 81.58 | 169KB | 79.94 |
 
-**Root causes of remaining gap** vs cjxl:
-1. ~~**Quantization weights**: FIXED - now uses full libjxl parametric weights~~
-2. **AC strategies**: We have 8 strategies; full libjxl has 27 (missing: IDENTITY, DCT2X2,
-   AFV, larger rectangular transforms, DCT64+)
-3. **Cost model**: Simplified libjxl-tiny cost model vs full pixel-domain loss with all
-   27 strategies
+### Remaining Gaps vs Full libjxl (Feb 3, 2026)
 
-**Path to closing gap**:
-- Quick wins: Implement DCT2X2, IDENTITY strategies
-- High effort: AFV (corner DCT), full 27-strategy support
+**A. AC Strategies — 8 of 27 implemented**
+- Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32
+- Missing (impactful on photos): IDENTITY (code 1), DCT2x2 (code 2), AFV0-3 (code 8-11)
+- Missing (large transforms): DCT32x16, DCT16x32, DCT64x32, DCT32x64, DCT64x64, DCT128x128, DCT256x256
+- Est. impact: 2-5% compression on natural photos
 
-### Outstanding Work (Feb 3, 2026)
+**B. Quantization Constants — libjxl-tiny heritage**
+- Uses `AC_QUANT = 0.8` from libjxl-tiny (`frame.rs:97`)
+- Full libjxl uses `AC_QUANT = 0.39` + `K_AC_QUANT = 0.765`
+- Content-adaptive `compute_from_quant_field` exists but is dead code (`frame.rs:55`)
+- Previous test of libjxl constants made quality worse, but that was BEFORE parametric
+  weight fix — worth re-testing
+- Est. impact: 0.5-2% at d > 1.0
+
+**C. Entropy Coding — No LZ77 in VarDCT**
+- LZ77 explicitly disabled (`encoder.rs:1794`)
+- Block context map is hardcoded (`ac_context.rs:64`), not content-adaptive
+- Est. impact: 1-3% on natural photos
+
+**D. Content Detectors — None**
+- No splines (10-30% on curve-heavy content)
+- No patches/dictionary (5-40% on screenshots/UI)
+- No dots detection (2-5% on speckle-heavy images)
+- Near zero impact on natural photos in our test set
+
+**E. EPF — Functional but Uniform**
+- EPF iterations set correctly by distance (`frame.rs:138-142`)
+- Missing: per-block `epf_sharpness` map (uniform filter strength everywhere)
+- Est. impact: 0.1-0.5 SSIM2 at d > 1.0
+
+**F. Other Minor Gaps**
+- DC coding: fixed context tree, no modular optimization (< 0.5%)
+- CfL: fixed 64x64 tiles, no variable tile size (< 0.5%)
+- No progressive encoding (UX only, no compression benefit)
+- Coefficient ordering: implemented, no entropy-based refinement (< 0.1%)
+
+**Priority path:**
+1. Re-test AC_QUANT=0.39 + K_AC_QUANT=0.765 (low effort, may close 0.5-2%)
+2. IDENTITY + DCT2x2 strategies (medium effort, 1-2%)
+3. LZ77 backward references (medium effort, 1-3%)
+4. AFV corner DCT (high effort, 0.5-1%)
+5. Per-block EPF sharpness (medium effort, perceptual quality)
+
+### Outstanding Work
 
 **Pixel-domain loss parity**: RESOLVED - now beats coefficient-domain by 1.9-6.2%.
 
