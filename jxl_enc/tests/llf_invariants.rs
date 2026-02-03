@@ -1,3 +1,22 @@
+#![allow(
+    clippy::excessive_precision,
+    clippy::needless_range_loop,
+    clippy::collapsible_if,
+    clippy::manual_memcpy,
+    clippy::approx_constant,
+    clippy::no_effect,
+    clippy::erasing_op,
+    clippy::needless_borrow,
+    clippy::needless_borrows_for_generic_args,
+    clippy::manual_range_contains,
+    clippy::manual_range_patterns,
+    clippy::manual_is_multiple_of,
+    clippy::identity_op,
+    unused_variables,
+    unused_imports,
+    unused_mut,
+    unused_assignments
+)]
 //! Layered invariant tests for LLF (Lowest-Low-Frequency) position identification.
 //!
 //! These tests systematically prove that LLF coefficient positions are correctly

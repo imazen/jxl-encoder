@@ -1,3 +1,11 @@
+#![allow(
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_range_contains,
+    unused_imports,
+    unused_variables,
+    unused_mut
+)]
 // Diagnostic test to understand DCT4X8 encoding issues on real photos
 //
 // The bug: DCT4X8 produces catastrophic quality on real photos but works on synthetic images.

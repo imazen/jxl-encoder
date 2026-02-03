@@ -418,7 +418,7 @@ impl TinyEncoder {
             xsize_blocks,
             ysize_blocks,
             &params,
-            &quant_field,
+            &mut quant_field,
             &cfl_map,
             &ac_strategy,
         );
@@ -720,39 +720,19 @@ impl TinyEncoder {
         (xyb_x, xyb_y, xyb_b)
     }
 
-    /// Quantize a single AC coefficient with thresholding.
+    /// Compute default dead-zone thresholds for a given channel and coverage.
     ///
-    /// Ported from libjxl-tiny QuantizeBlockAC. Small coefficients below a
-    /// threshold are zeroed out. The threshold depends on:
-    /// - Channel (X gets +0.08 on upper thresholds, B uses flat 0.75)
-    /// - Quadrant position within the block (4 quadrants)
-    /// - Multi-block coverage (slight threshold reduction)
-    ///
-    /// `qm_multiplier` is typically 1.0, but for X channel it's `x_qm_mul`.
+    /// Returns [f32; 4] thresholds for the 4 quadrants of a block.
+    /// These match libjxl-tiny's QuantizeBlockAC initial thresholds.
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn quantize_coeff_ac(
-        coef: f32,
-        inv_weight: f32, // 1/weight (InvMatrix in C++)
-        qac: f32,        // scale * quant_ac
-        qm_multiplier: f32,
-        c: usize,
-        y_in_block: usize,
-        x_in_block: usize,
-        block_height: usize,
-        block_width: usize,
-        covered_x: usize,
-        covered_y: usize,
-    ) -> i32 {
+    fn default_thresholds(c: usize, covered_x: usize, covered_y: usize) -> [f32; 4] {
         let mut thres = [0.58f32, 0.635, 0.66, 0.7];
         if c == 0 {
-            // X channel
             for t in thres[1..4].iter_mut() {
                 *t += 0.08;
             }
         }
         if c == 2 {
-            // B channel
             for t in thres[1..4].iter_mut() {
                 *t = 0.75;
             }
@@ -764,17 +744,278 @@ impl TinyEncoder {
                 *t -= adj;
             }
         }
+        thres
+    }
 
+    /// Quantize a single AC coefficient with thresholding.
+    ///
+    /// Ported from libjxl-tiny QuantizeBlockAC. Small coefficients below a
+    /// threshold are zeroed out. The threshold depends on:
+    /// - Quadrant position within the block (4 quadrants)
+    ///
+    /// `thresholds` are the pre-computed dead-zone thresholds for the 4 quadrants.
+    /// `qm_multiplier` is typically 1.0, but for X channel it's `x_qm_mul`.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_coeff_ac(
+        coef: f32,
+        inv_weight: f32, // 1/weight (InvMatrix in C++)
+        qac: f32,        // scale * quant_ac
+        qm_multiplier: f32,
+        thresholds: &[f32; 4],
+        y_in_block: usize,
+        x_in_block: usize,
+        block_height: usize,
+        block_width: usize,
+    ) -> i32 {
         // Quadrant selection: which of the 4 quadrants does this coeff fall in
         let y_half = if y_in_block >= block_height / 2 { 2 } else { 0 };
         let x_half = if x_in_block >= block_width / 2 { 1 } else { 0 };
-        let thr = thres[y_half + x_half];
+        let thr = thresholds[y_half + x_half];
 
         let val = inv_weight * qac * qm_multiplier * coef;
         if val.abs() < thr {
             0
         } else {
             val.round() as i32
+        }
+    }
+
+    /// Adjust per-block quantization and thresholds based on coefficient analysis.
+    ///
+    /// Ported from libjxl enc_group.cc:104-328. Only applies to DCT8+ strategies
+    /// (skips IDENTITY, DCT2X2, DCT4X4, DCT4X8, DCT8X4). Implements 6 heuristics:
+    ///
+    /// 1. Threshold reduction for multi-block transforms
+    /// 2. Sparse block Y-channel quant boost + threshold adjustment (B)
+    /// 3. High-frequency corner quant increase (C)
+    /// 4. DCT8 flatness detection quant boost (D)
+    /// 5. Large transform error correction (E)
+    /// 6. Activity-based quant reduction + threshold adjustment (F)
+    #[allow(clippy::too_many_arguments)]
+    fn adjust_quant_block_ac(
+        block_coeffs: &[f32],
+        weights: &[f32],
+        qac: f32,
+        qm_multiplier: f32,
+        c: usize,
+        raw_strategy: u8,
+        block_width: usize,
+        block_height: usize,
+        xsize: usize, // cx (8x8 blocks in x)
+        ysize: usize, // cy (8x8 blocks in y)
+        thresholds: &mut [f32; 4],
+        quant: &mut i32,
+    ) {
+        const QUANT_MAX: i32 = 256;
+
+        // Skip partial block kinds (small transforms)
+        match raw_strategy {
+            RAW_STRATEGY_IDENTITY
+            | RAW_STRATEGY_DCT2X2
+            | RAW_STRATEGY_DCT4X4
+            | RAW_STRATEGY_DCT4X8
+            | RAW_STRATEGY_DCT8X4 => return,
+            _ => {}
+        }
+
+        // (1) Threshold reduction for large transforms
+        if xsize > 1 || ysize > 1 {
+            let adj = (0.003 * (xsize * ysize) as f32).clamp(0.0, 0.08);
+            for t in thresholds.iter_mut() {
+                *t -= adj;
+                if *t < 0.54 {
+                    *t = 0.54;
+                }
+            }
+        }
+
+        // Pre-scan: compute statistics over non-LLF coefficients
+        let mut sum_of_highest_freq: f32 = 0.0;
+        let mut sum_of_error: f32 = 0.0;
+        let mut sum_of_vals: f32 = 0.0;
+        let mut hf_nonzeros = [0.0f32; 4];
+        let mut hf_max_error = [0.0f32; 4];
+
+        for y in 0..block_height {
+            for x in 0..block_width {
+                let pos = y * block_width + x;
+                // Skip LLF positions
+                if x < xsize && y < ysize {
+                    continue;
+                }
+                let hfix = (if y >= block_height / 2 { 2 } else { 0 })
+                    + (if x >= block_width / 2 { 1 } else { 0 });
+
+                // Match our quantize_coeff_ac formula: val = (1/weight) * qac * qm_mul * coef
+                let inv_w = 1.0 / weights[pos];
+                let val = block_coeffs[pos] * inv_w * qac * qm_multiplier;
+                let v = if val.abs() < thresholds[hfix] {
+                    0.0
+                } else {
+                    val.round()
+                };
+                let error = (val - v).abs();
+                sum_of_error += error;
+                sum_of_vals += v.abs();
+
+                if c == 1 && v == 0.0 && hf_max_error[hfix] < error {
+                    hf_max_error[hfix] = error;
+                }
+                if v != 0.0 {
+                    hf_nonzeros[hfix] += v.abs();
+                    let in_corner = y >= 7 * ysize && x >= 7 * xsize;
+                    let on_border = y == block_height - 1 || x == block_width - 1;
+                    let in_larger_corner = x >= 4 * xsize && y >= 4 * ysize;
+                    if in_corner || (on_border && in_larger_corner) {
+                        sum_of_highest_freq += val.abs();
+                    }
+                }
+            }
+        }
+
+        // (2) Sparse block Y-channel handling (B heuristic)
+        if c == 1 && (sum_of_vals * 8.0) < (xsize * ysize) as f32 {
+            const K_LIMIT: [f64; 4] = [0.46, 0.46, 0.46, 0.46];
+            const K_MUL: [f64; 4] = [0.9999, 0.9999, 0.9999, 0.9999];
+
+            let orig_quant = *quant;
+            let mut new_quant = *quant;
+            for i in 1..4 {
+                if hf_nonzeros[i] == 0.0 && (hf_max_error[i] as f64) > K_LIMIT[i] {
+                    new_quant = orig_quant + 1;
+                    break;
+                }
+            }
+            *quant = new_quant;
+
+            if hf_nonzeros[3] == 0.0 && (hf_max_error[3] as f64) > K_LIMIT[3] {
+                thresholds[3] = (K_MUL[3] * hf_max_error[3] as f64 * new_quant as f64
+                    / orig_quant as f64) as f32;
+            } else if (hf_nonzeros[1] == 0.0 && (hf_max_error[1] as f64) > K_LIMIT[1])
+                || (hf_nonzeros[2] == 0.0 && (hf_max_error[2] as f64) > K_LIMIT[2])
+            {
+                let max_err = hf_max_error[1].max(hf_max_error[2]);
+                thresholds[1] =
+                    (K_MUL[1] * max_err as f64 * new_quant as f64 / orig_quant as f64) as f32;
+                thresholds[2] = thresholds[1];
+            } else if hf_nonzeros[0] == 0.0 && (hf_max_error[0] as f64) > K_LIMIT[0] {
+                thresholds[0] = (K_MUL[0] * hf_max_error[0] as f64 * new_quant as f64
+                    / orig_quant as f64) as f32;
+            }
+        }
+
+        // (3) High-frequency corner penalty (C heuristic)
+        {
+            let all = hf_nonzeros[0] + hf_nonzeros[1] + hf_nonzeros[2] + hf_nonzeros[3] + 1.0;
+            let mul = [70.0f32, 30.0, 60.0];
+            if mul[c] * sum_of_highest_freq >= all {
+                *quant += (mul[c] * sum_of_highest_freq / all) as i32;
+                if *quant >= QUANT_MAX {
+                    *quant = QUANT_MAX - 1;
+                }
+            }
+        }
+
+        // (4) DCT8 flatness detection (D heuristic)
+        if raw_strategy == 0 {
+            // DCT8: if block is very flat (few nonzeros), increase quant to reduce blocking
+            if hf_nonzeros[0] + hf_nonzeros[1] + hf_nonzeros[2] + hf_nonzeros[3] < 11.0 {
+                *quant += 1;
+                if *quant >= QUANT_MAX {
+                    *quant = QUANT_MAX - 1;
+                }
+            }
+        }
+
+        // (5) Large transform error correction (E heuristic)
+        {
+            #[allow(clippy::excessive_precision)]
+            const K_MUL1: [[f64; 3]; 4] = [
+                [
+                    0.22080615753848404,
+                    0.45797479824262011,
+                    0.29859235095977965,
+                ],
+                [
+                    0.70109486510286834,
+                    0.16185281305512639,
+                    0.14387691730035473,
+                ],
+                [
+                    0.114985964456218638,
+                    0.44656840441027695,
+                    0.10587658215149048,
+                ],
+                [
+                    0.46849665264409396,
+                    0.41239077937781954,
+                    0.088667407767185444,
+                ],
+            ];
+            #[allow(clippy::excessive_precision)]
+            const K_MUL2: [[f64; 3]; 4] = [
+                [0.27450281941822197, 1.1255766549984996, 0.98950459134128388],
+                [0.4652168675598285, 0.40945807983455818, 0.36581899811751367],
+                [0.28034972424715715, 0.9182653201929738, 1.5581531543057416],
+                [0.26873118114033728, 0.68863712390392484, 1.2082185408666786],
+            ];
+            const K_QUANT_NORMALIZER: f64 = 2.294_270_834_328_472;
+
+            // Only applies to DCT16X16 and larger
+            let is_large = matches!(
+                raw_strategy,
+                RAW_STRATEGY_DCT16X16
+                    | RAW_STRATEGY_DCT32X32
+                    | RAW_STRATEGY_DCT16X8
+                    | RAW_STRATEGY_DCT8X16
+            );
+            if is_large {
+                // Map strategy to table index
+                let ix = match raw_strategy {
+                    RAW_STRATEGY_DCT16X16 => 0,
+                    RAW_STRATEGY_DCT32X32 => 2,
+                    // DCT16X8 and DCT8X16 use default index 3
+                    _ => 3,
+                };
+
+                let norm_error = sum_of_error as f64 * K_QUANT_NORMALIZER;
+                let norm_vals = sum_of_vals as f64 * K_QUANT_NORMALIZER;
+                let area = (xsize * ysize * BLOCK_DIM * BLOCK_DIM) as f64;
+                let threshold = K_MUL1[ix][c] * area + K_MUL2[ix][c] * norm_vals;
+
+                if norm_error > threshold {
+                    let step = (norm_error / threshold) as i32;
+                    let step = step.clamp(0, 2);
+                    *quant += step;
+                    if *quant >= QUANT_MAX {
+                        *quant = QUANT_MAX - 1;
+                    }
+                }
+            }
+        }
+
+        // (6) Activity-based quant reduction (F heuristic)
+        {
+            let div = (xsize * ysize) as i32;
+            let mut activity = (hf_nonzeros[0] as i32 + div / 2) / div;
+            let orig_qp_limit = (*quant / 2).max(4);
+            for hf_nz in &hf_nonzeros[1..4] {
+                activity = activity.min((*hf_nz as i32 + div / 2) / div);
+            }
+            if activity >= 15 {
+                activity = 15;
+            }
+            let mut qp = *quant - activity;
+            if c == 1 {
+                for t in thresholds[1..4].iter_mut() {
+                    *t += 0.01 * activity as f32;
+                }
+            }
+            if qp < orig_qp_limit {
+                qp = orig_qp_limit;
+            }
+            *quant = qp;
         }
     }
 
@@ -947,7 +1188,7 @@ impl TinyEncoder {
         weights: &[f32],
         qac: f32,
         qm_multiplier: f32,
-        channel: usize,
+        thresholds: &[f32; 4],
         _block_width: usize,
         _block_height: usize,
         covered_x: usize,
@@ -994,13 +1235,11 @@ impl TinyEncoder {
                         1.0 / weights[idx],
                         qac,
                         qm_multiplier,
-                        channel,
+                        thresholds,
                         y,
                         x,
                         grid_height,
                         grid_width,
-                        cx,
-                        cy,
                     )
                 };
 
@@ -1031,7 +1270,7 @@ impl TinyEncoder {
                 quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = qval;
             }
             #[cfg(feature = "debug-tokens")]
-            if _raw_strategy == 4 && channel == 1 && bx == 0 && by == 0 {
+            if _raw_strategy == 4 && bx == 0 && by == 0 {
                 eprintln!(
                     "[DCT32x32 quantize debug] Y at (0,0): {} nonzero AC coeffs stored (qac={:.4})",
                     debug_nonzero_count, qac
@@ -1109,13 +1348,11 @@ impl TinyEncoder {
                     inv_weight,
                     qac,
                     qm_multiplier,
-                    channel,
+                    thresholds,
                     y,
                     x,
                     grid_height,
                     grid_width,
-                    cx,
-                    cy,
                 );
 
                 // Compute quantization error
@@ -1168,7 +1405,7 @@ impl TinyEncoder {
         xsize_blocks: usize,
         ysize_blocks: usize,
         params: &DistanceParams,
-        quant_field: &[u8],
+        quant_field: &mut [u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
     ) -> (
@@ -1239,7 +1476,6 @@ impl TinyEncoder {
                 let block_width = cx * BLOCK_DIM;
                 let block_height = cy * BLOCK_DIM;
 
-                let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
                 let x_qm_mul = 1.25f32.powf(params.x_qm_scale as f32 - 2.0);
 
                 let mut dct_coeffs: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; size]);
@@ -1391,6 +1627,62 @@ impl TinyEncoder {
                     }
                 }
 
+                // ── Step 2b: DCT X and B channels (before AdjustQuantBlockAC) ──
+                // libjxl DCTs all 3 channels before running AdjustQuantBlockAC.
+                // X/B coefficients here are pre-CfL (CfL subtraction happens later in Step 6).
+                for &c in &[0usize, 2] {
+                    Self::apply_dct(
+                        channels[c],
+                        padded_width,
+                        bx,
+                        by,
+                        raw_strategy,
+                        &mut dct_coeffs[c],
+                    );
+                }
+
+                // ── Step 2c: AdjustQuantBlockAC ──────────────────────────────
+                // Ported from libjxl enc_group.cc. Adjusts per-block quant and
+                // Y thresholds based on coefficient statistics across all 3 channels.
+                // Takes max quant adjustment across channels, saves Y thresholds.
+                let mut thresholds_y;
+                let qac;
+                {
+                    let quant_idx = by * xsize_blocks + bx;
+                    let mut quant_int = quant_field[quant_idx] as i32;
+                    let orig_qac = params.scale * quant_int as f32;
+                    thresholds_y = [0.58f32, 0.64, 0.64, 0.64];
+                    let mut max_quant = quant_int;
+                    for &c in &[1usize, 0, 2] {
+                        let mut thres = [0.58f32, 0.64, 0.64, 0.64];
+                        let mut quant_c = quant_int;
+                        let qm_mul = if c == 0 { x_qm_mul } else { 1.0 };
+                        let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
+                        Self::adjust_quant_block_ac(
+                            &dct_coeffs[c],
+                            weights_c,
+                            orig_qac,
+                            qm_mul,
+                            c,
+                            raw_strategy,
+                            block_width,
+                            block_height,
+                            cx,
+                            cy,
+                            &mut thres,
+                            &mut quant_c,
+                        );
+                        if c == 1 {
+                            thresholds_y = thres;
+                        }
+                        max_quant = max_quant.max(quant_c);
+                    }
+                    quant_int = max_quant;
+                    // Write adjusted quant back (decoder sees this in AC metadata)
+                    quant_field[quant_idx] = quant_int.clamp(1, 255) as u8;
+                    qac = params.scale * quant_int as f32;
+                }
+
                 // ── Step 3: Quantize Y AC with thresholding ────────────────
                 {
                     let c = 1;
@@ -1400,7 +1692,7 @@ impl TinyEncoder {
                         weights,
                         qac,
                         1.0, // no x_qm_mul for Y
-                        c,
+                        &thresholds_y,
                         block_width,
                         block_height,
                         covered_x,
@@ -1436,13 +1728,11 @@ impl TinyEncoder {
                                 1.0 / weights[idx],
                                 qac,
                                 1.0,
-                                1,
+                                &thresholds_y,
                                 y,
                                 x,
                                 block_height,
                                 block_width,
-                                cx,
-                                cy,
                             )
                         } else {
                             // Use flat layout: idx indexes into a grid of block_width x block_height
@@ -1467,19 +1757,8 @@ impl TinyEncoder {
                     }
                 }
 
-                // ── Step 5: DCT X and B channels ───────────────────────────
-                for &c in &[0usize, 2] {
-                    Self::apply_dct(
-                        channels[c],
-                        padded_width,
-                        bx,
-                        by,
-                        raw_strategy,
-                        &mut dct_coeffs[c],
-                    );
-                }
-
-                // ── Step 6: CfL on AC coefficients using roundtripped Y ───
+                // ── Step 5: CfL on AC coefficients using roundtripped Y ───
+                // X/B DCTs were done in Step 2b (before AdjustQuantBlockAC).
                 // C++ applies CfL to ALL positions (0..size) including DC/LLF,
                 // but the decoder's DequantBlock calls LowestFrequenciesFromDC
                 // AFTER DequantLane, overwriting LLF positions with DC-derived
@@ -1599,13 +1878,16 @@ impl TinyEncoder {
                     }
 
                     // Quantize AC with thresholding
+                    // libjxl uses [0.58, 0.62, 0.62, 0.62] for X/B channels
+                    // (different from libjxl-tiny's per-channel adjustments)
+                    let thresholds_xb = Self::default_thresholds(c, covered_x, covered_y);
                     let weights = super::quant::quant_weights(raw_strategy as usize, c);
                     Self::quantize_ac_block(
                         &dct_coeffs[c],
                         weights,
                         qac,
                         qm_multiplier,
-                        c,
+                        &thresholds_xb,
                         block_width,
                         block_height,
                         covered_x,
@@ -2891,8 +3173,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: pixel-domain loss enabled by default
-        const EXPECTED_HASH: u64 = 0xc5708424bed8441c;
+        // Hash updated: AdjustQuantBlockAC enabled
+        const EXPECTED_HASH: u64 = 0xeb59aa6dda4a7f48;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2922,8 +3204,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: pixel-domain loss enabled by default
-        const EXPECTED_HASH: u64 = 0x3309fded97ebb612;
+        // Hash updated: AdjustQuantBlockAC enabled
+        const EXPECTED_HASH: u64 = 0xb18bf6d930df77ac;
         assert_eq!(
             hash,
             EXPECTED_HASH,

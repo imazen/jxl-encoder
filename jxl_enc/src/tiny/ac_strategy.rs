@@ -880,7 +880,7 @@ fn find_best_16x16_transform(
     // NOT as post-hoc cost multipliers (which would incorrectly scale loss too).
 
     // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0
-    let favor_2x2_adjust = if distance < 5.0 {
+    let _favor_2x2_adjust = if distance < 5.0 {
         let weight = ((5.0 - distance) / 5.0_f32).powi(2);
         -0.4 * weight // negative = reduces entropy_mul = lower cost
     } else {
@@ -984,10 +984,12 @@ fn find_best_16x16_transform(
             // TODO: Re-enable after fixing quality regression.
             // IDENTITY and DCT2X2 produce significantly worse quality (~10 SSIM2)
             // when selected. Need to investigate transform/quant weight correctness.
+            #[allow(clippy::overly_complex_bool_expr)]
             if false && cost_identity < *entropy_val {
                 *entropy_val = cost_identity;
                 *best_strat = RAW_STRATEGY_IDENTITY;
             }
+            #[allow(clippy::overly_complex_bool_expr)]
             if false && cost_dct2 < *entropy_val {
                 *entropy_val = cost_dct2;
                 *best_strat = RAW_STRATEGY_DCT2X2;
