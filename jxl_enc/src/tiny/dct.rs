@@ -3,12 +3,13 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Forward DCT transforms ported from libjxl-tiny.
+//! Forward DCT transforms ported from libjxl-tiny and libjxl.
 //!
 //! Implements the "Lowest Complexity Self Recursive Radix-2 DCT II/III
 //! Algorithms" by Siriani M. Perera and Jianhua Liu.
 //!
-//! This is a scalar implementation that matches libjxl-tiny's output.
+//! Also includes IDENTITY and DCT2X2 transforms from full libjxl
+//! (enc_transforms-inl.h).
 
 // Ported float constants from C++ - exact values are intentional for parity.
 #![allow(clippy::excessive_precision)]
@@ -1192,6 +1193,136 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
     }
 
     transposed
+}
+
+// =============================================================================
+// IDENTITY transform (libjxl enc_transforms-inl.h:464-494)
+// =============================================================================
+
+/// IDENTITY forward transform: stores pixel differences relative to reference
+/// pixel (1,1) in each 4x4 sub-block, with DC averaging.
+///
+/// The 8x8 block is divided into four 4x4 sub-blocks. For each sub-block:
+/// 1. Compute block_dc = average of 16 pixels
+/// 2. Store AC: pixel[iy][ix] - pixel[1][1] (reference pixel)
+/// 3. Merge the four sub-block DCs with 2x2 Hadamard (×0.25)
+///
+/// Input: `pixels` is 8x8 with given `stride`.
+/// Output: `coefficients[0..64]` in stride-8 layout.
+pub fn identity_transform(pixels: &[f32], stride: usize, coefficients: &mut [f32]) {
+    debug_assert!(coefficients.len() >= 64);
+
+    // Process 2x2 grid of 4x4 sub-blocks
+    for y in 0..2usize {
+        for x in 0..2usize {
+            // Compute block DC (average of 16 pixels)
+            let mut block_dc = 0.0f32;
+            for iy in 0..4 {
+                for ix in 0..4 {
+                    block_dc += pixels[(y * 4 + iy) * stride + x * 4 + ix];
+                }
+            }
+            block_dc *= 1.0 / 16.0;
+
+            // Reference pixel: (1,1) in each 4x4 sub-block
+            let ref_pixel = pixels[(y * 4 + 1) * stride + x * 4 + 1];
+
+            // Store AC coefficients: pixel - reference pixel
+            // Coefficient layout: interleaved at (y + iy*2, x + ix*2) positions
+            for iy in 0..4usize {
+                for ix in 0..4usize {
+                    if ix == 1 && iy == 1 {
+                        continue; // Skip ref pixel position
+                    }
+                    coefficients[(y + iy * 2) * 8 + x + ix * 2] =
+                        pixels[(y * 4 + iy) * stride + x * 4 + ix] - ref_pixel;
+                }
+            }
+
+            // Copy corner coefficient, then store DC at (y, x)
+            coefficients[(y + 2) * 8 + x + 2] = coefficients[y * 8 + x];
+            coefficients[y * 8 + x] = block_dc;
+        }
+    }
+
+    // Merge 2x2 block DCs with Hadamard transform (×0.25)
+    let block00 = coefficients[0];
+    let block01 = coefficients[1];
+    let block10 = coefficients[8];
+    let block11 = coefficients[9];
+    coefficients[0] = (block00 + block01 + block10 + block11) * 0.25;
+    coefficients[1] = (block00 + block01 - block10 - block11) * 0.25;
+    coefficients[8] = (block00 - block01 + block10 - block11) * 0.25;
+    coefficients[9] = (block00 - block01 - block10 + block11) * 0.25;
+}
+
+// =============================================================================
+// DCT2X2 transform (libjxl enc_transforms-inl.h:556-560)
+// =============================================================================
+
+/// DCT2TopBlock: hierarchical 2x2 DCT at scale S.
+///
+/// Processes S/2 × S/2 pairs of 2x2 values, applies Hadamard transform (×0.25),
+/// and stores results in four quadrants.
+///
+/// Input/output are in stride-8 layout.
+fn dct2_top_block<const S: usize>(block: &[f32; 64], out: &mut [f32; 64]) {
+    let num_2x2 = S / 2;
+    let mut temp = [0.0f32; 64];
+
+    for y in 0..num_2x2 {
+        for x in 0..num_2x2 {
+            let c00 = block[y * 2 * 8 + x * 2];
+            let c01 = block[y * 2 * 8 + x * 2 + 1];
+            let c10 = block[(y * 2 + 1) * 8 + x * 2];
+            let c11 = block[(y * 2 + 1) * 8 + x * 2 + 1];
+
+            let r00 = (c00 + c01 + c10 + c11) * 0.25;
+            let r01 = (c00 + c01 - c10 - c11) * 0.25;
+            let r10 = (c00 - c01 + c10 - c11) * 0.25;
+            let r11 = (c00 - c01 - c10 + c11) * 0.25;
+
+            temp[y * 8 + x] = r00;
+            temp[y * 8 + num_2x2 + x] = r01;
+            temp[(y + num_2x2) * 8 + x] = r10;
+            temp[(y + num_2x2) * 8 + num_2x2 + x] = r11;
+        }
+    }
+
+    // Copy S×S region from temp to output
+    for y in 0..S {
+        for x in 0..S {
+            out[y * 8 + x] = temp[y * 8 + x];
+        }
+    }
+}
+
+/// DCT2X2 forward transform: hierarchical 2x2 DCT applied three times.
+///
+/// 1. DCT2TopBlock<8>: Process 4×4 grid of 2×2 pixel pairs
+/// 2. DCT2TopBlock<4>: Process 2×2 grid of 2×2 coefficient pairs
+/// 3. DCT2TopBlock<2>: Process 1×1 grid of 2×2 coefficient pairs
+///
+/// Input: `pixels` is 8x8 with given `stride`.
+/// Output: `coefficients[0..64]` in stride-8 layout.
+pub fn dct2x2_transform(pixels: &[f32], stride: usize, coefficients: &mut [f32]) {
+    debug_assert!(coefficients.len() >= 64);
+
+    // Copy pixels into stride-8 buffer
+    let mut buf = [0.0f32; 64];
+    for y in 0..8 {
+        for x in 0..8 {
+            buf[y * 8 + x] = pixels[y * stride + x];
+        }
+    }
+
+    // Three passes of hierarchical 2x2 DCT
+    let mut tmp = [0.0f32; 64];
+    dct2_top_block::<8>(&buf, &mut tmp);
+    dct2_top_block::<4>(&tmp, &mut buf);
+    dct2_top_block::<2>(&buf, &mut tmp);
+
+    coefficients[..64].copy_from_slice(&tmp);
 }
 
 #[cfg(test)]

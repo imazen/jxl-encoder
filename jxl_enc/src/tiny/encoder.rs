@@ -10,9 +10,10 @@ use super::ac_group::{
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::ac_strategy::{
-    AcStrategyMap, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4,
-    RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
-    adjust_quant_field_with_distance, compute_ac_strategy,
+    AcStrategyMap, RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8,
+    RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
+    RAW_STRATEGY_DCT32X32, RAW_STRATEGY_IDENTITY, adjust_quant_field_with_distance,
+    compute_ac_strategy,
 };
 
 /// Create an AC strategy map forcing a specific strategy.
@@ -30,7 +31,8 @@ use super::dc_coding::{
 use super::dct::{
     dc_from_dct_4x4_full, dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16,
     dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_32x32, dct_4x4_full, dct_4x8_full,
-    dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
+    dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32, dct2x2_transform,
+    identity_transform,
 };
 use super::entropy_code::{
     OwnedAnsEntropyCode, OwnedEntropyCode, build_entropy_code_ans_with_options,
@@ -922,6 +924,16 @@ impl TinyEncoder {
                 dct_4x4_full(&block, &mut dct_out);
                 output[..64].copy_from_slice(&dct_out);
             }
+            RAW_STRATEGY_IDENTITY => {
+                // IDENTITY: pixel differences from reference pixel per 4x4 sub-block
+                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
+                identity_transform(&channel_data[pixel_offset..], stride, &mut output[..64]);
+            }
+            RAW_STRATEGY_DCT2X2 => {
+                // DCT2X2: hierarchical 2x2 DCT
+                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
+                dct2x2_transform(&channel_data[pixel_offset..], stride, &mut output[..64]);
+            }
             _ => unreachable!(),
         }
     }
@@ -1371,6 +1383,10 @@ impl TinyEncoder {
                             let dc = dc_from_dct_4x4_full(&coeffs_arr);
                             quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
                         }
+                        RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
+                            // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
+                            quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -1568,6 +1584,13 @@ impl TinyEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT4X4");
                             let dc = dc_from_dct_4x4_full(&coeffs_arr);
+                            let y_dc = quant_dc[1][by][bx] as f32;
+                            quant_dc[c][by][bx] =
+                                (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                        }
+                        RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
+                            // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
+                            let dc = dct_coeffs[c][0];
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -2868,8 +2891,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: pixel-domain loss enabled by default
-        const EXPECTED_HASH: u64 = 0xc5708424bed8441c;
+        // Hash updated: IDENTITY and DCT2X2 strategies added
+        const EXPECTED_HASH: u64 = 0xfc8e51b4f6f56158;
         assert_eq!(
             hash,
             EXPECTED_HASH,
