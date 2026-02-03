@@ -95,6 +95,11 @@ struct Args {
     #[arg(long)]
     no_pixel_domain_loss: bool,
 
+    /// Enable LZ77 RLE backward references for entropy coding.
+    /// Compresses runs of identical tokens before entropy coding (ANS only).
+    #[arg(long)]
+    lz77: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -179,6 +184,9 @@ fn main() {
                 }
                 if args.no_pixel_domain_loss {
                     tiny.pixel_domain_loss = false;
+                }
+                if args.lz77 {
+                    tiny.enable_lz77 = true;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder

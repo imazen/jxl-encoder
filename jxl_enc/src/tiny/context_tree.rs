@@ -452,7 +452,7 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
 
     // Write all the tokens
     for token in &tokens {
-        write_token(token, &code, writer)?;
+        write_token(token, &code, None, writer)?;
     }
 
     Ok(())

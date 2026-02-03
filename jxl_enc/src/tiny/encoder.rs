@@ -77,13 +77,18 @@ impl<'a> BuiltEntropyCode<'a> {
     }
 
     /// Write tokens using this entropy code.
-    pub fn write_tokens(&self, tokens: &[Token], writer: &mut BitWriter) -> Result<()> {
+    pub fn write_tokens(
+        &self,
+        tokens: &[Token],
+        lz77: Option<&super::lz77::Lz77Params>,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
         match self {
-            BuiltEntropyCode::StaticHuffman(code) => write_tokens(tokens, code, writer),
+            BuiltEntropyCode::StaticHuffman(code) => write_tokens(tokens, code, lz77, writer),
             BuiltEntropyCode::Huffman(code) => {
-                write_tokens(tokens, &code.as_entropy_code(), writer)
+                write_tokens(tokens, &code.as_entropy_code(), lz77, writer)
             }
-            BuiltEntropyCode::Ans(code) => write_tokens_ans(tokens, code, writer),
+            BuiltEntropyCode::Ans(code) => write_tokens_ans(tokens, code, lz77, writer),
         }
     }
 
@@ -192,6 +197,12 @@ pub struct TinyEncoder {
     /// When false (default), uses coefficient-domain loss (libjxl-tiny style).
     /// Note: Requires `ac_strategy_enabled` to have any effect.
     pub pixel_domain_loss: bool,
+    /// Enable LZ77 RLE backward references in entropy coding.
+    /// When true, scans token streams for consecutive identical values and
+    /// compresses runs using LZ77 length+distance tokens. Only effective with
+    /// two-pass mode (optimize_codes=true) and ANS (use_ans=true).
+    /// Off by default until verified.
+    pub enable_lz77: bool,
 }
 
 impl Default for TinyEncoder {
@@ -210,6 +221,7 @@ impl Default for TinyEncoder {
             enable_gaborish: true,
             error_diffusion: false,
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
+            enable_lz77: false,
         }
     }
 }
@@ -231,6 +243,7 @@ impl TinyEncoder {
             enable_gaborish: true,
             error_diffusion: false,
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
+            enable_lz77: false,
         }
     }
 
@@ -496,6 +509,7 @@ impl TinyEncoder {
                 num_dc_groups,
                 &dc_code,
                 &noise_params,
+                None,
                 &mut dc_global,
             )?;
 
@@ -518,7 +532,7 @@ impl TinyEncoder {
             )?;
 
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_code, 0, None, &mut ac_global)?;
+            self.write_ac_global(num_groups, &ac_code, 0, None, None, &mut ac_global)?;
 
             let mut ac_group_writer = BitWriter::new();
             self.write_ac_group(
@@ -591,6 +605,7 @@ impl TinyEncoder {
                 num_dc_groups,
                 &dc_code,
                 &noise_params,
+                None,
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
@@ -617,7 +632,7 @@ impl TinyEncoder {
 
             // AC Global section
             let mut ac_global = BitWriter::new();
-            self.write_ac_global(num_groups, &ac_code, 0, None, &mut ac_global)?;
+            self.write_ac_global(num_groups, &ac_code, 0, None, None, &mut ac_global)?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
@@ -2045,25 +2060,85 @@ impl TinyEncoder {
         Ok(())
     }
 
+    /// Write LZ77 header: either `Bool(false)` (1 bit) or `Bool(true)` + params.
+    ///
+    /// Serialization format (from libjxl `dec_ans.cc:308-316`):
+    ///
+    /// ```text
+    /// Bool(enabled)
+    /// if enabled:
+    ///   U32(Val(224), Val(512), Val(4096), BitsOffset(15,8))  // min_symbol
+    ///   U32(Val(3), Val(4), BitsOffset(2,5), BitsOffset(8,9)) // min_length
+    ///   EncodeUintConfig(length_uint_config, log_alpha_size=8)
+    /// ```
+    fn write_lz77_header(
+        lz77: Option<&super::lz77::Lz77Params>,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        if let Some(params) = lz77 {
+            writer.write(1, 1)?; // lz77 enabled
+
+            // min_symbol: U32(Val(224), Val(512), Val(4096), BitsOffset(15,8))
+            match params.min_symbol {
+                224 => writer.write(2, 0)?,  // selector 0 = Val(224)
+                512 => writer.write(2, 1)?,  // selector 1 = Val(512)
+                4096 => writer.write(2, 2)?, // selector 2 = Val(4096)
+                v => {
+                    writer.write(2, 3)?; // selector 3 = BitsOffset(15, 8)
+                    writer.write(15, (v - 8) as u64)?;
+                }
+            }
+
+            // min_length: U32(Val(3), Val(4), BitsOffset(2,5), BitsOffset(8,9))
+            match params.min_length {
+                3 => writer.write(2, 0)?, // selector 0 = Val(3)
+                4 => writer.write(2, 1)?, // selector 1 = Val(4)
+                v @ 5..=8 => {
+                    writer.write(2, 2)?; // selector 2 = BitsOffset(2, 5)
+                    writer.write(2, (v - 5) as u64)?;
+                }
+                v => {
+                    writer.write(2, 3)?; // selector 3 = BitsOffset(8, 9)
+                    writer.write(8, (v - 9) as u64)?;
+                }
+            }
+
+            // length_uint_config: HybridUintConfig(0, 0, 0)
+            // EncodeUintConfig with log_alpha_size = 8:
+            //   write(CeilLog2Nonzero(8 + 1), split_exponent=0) → write(4, 0)
+            //   since split_exponent(0) != log_alpha_size(8):
+            //     write(CeilLog2Nonzero(0 + 1), msb_in_token=0) → write(1, 0)
+            //     write(CeilLog2Nonzero(0 - 0 + 1), lsb_in_token=0) → write(1, 0)
+            writer.write(4, 0)?; // split_exponent = 0
+            writer.write(1, 0)?; // msb_in_token = 0
+            writer.write(1, 0)?; // lsb_in_token = 0
+        } else {
+            writer.write(1, 0)?; // no lz77
+        }
+        Ok(())
+    }
+
     /// Write DC global section (LfGlobal).
     ///
-    /// Decoder order (from jxl-rs frame/decode.rs):
-    /// 0. Patches (if enabled) — not used
-    /// 1. Splines (if enabled) — not used
-    /// 2. **Noise params** (if ENABLE_NOISE flag set) — 8 × 10-bit LUT values
-    /// 3. Default dequant DC (LfQuantFactors)
-    /// 4. Quant scales (QuantizerParams)
-    /// 5. Non-default BlockCtxMap + compact block context map
-    /// 6. Default DC cmap (ColorCorrelationParams)
-    /// 7. Context tree for modular stream
-    /// 8. No LZ77
-    /// 9. DC entropy code
+    /// Decoder order (from jxl-rs `frame/decode.rs`):
+    ///
+    /// 1. Patches (if enabled) — not used
+    /// 2. Splines (if enabled) — not used
+    /// 3. Noise params (if ENABLE_NOISE flag set) — 8 × 10-bit LUT values
+    /// 4. Default dequant DC (LfQuantFactors)
+    /// 5. Quant scales (QuantizerParams)
+    /// 6. Non-default BlockCtxMap + compact block context map
+    /// 7. Default DC cmap (ColorCorrelationParams)
+    /// 8. Context tree for modular stream
+    /// 9. LZ77 params (disabled or enabled with RLE config)
+    /// 10. DC entropy code
     fn write_dc_global(
         &self,
         params: &DistanceParams,
         num_dc_groups: usize,
         dc_code: &BuiltEntropyCode,
         noise_params: &Option<NoiseParams>,
+        dc_lz77_params: Option<&super::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -2102,7 +2177,8 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         let after_ctx_tree = writer.bits_written();
 
-        writer.write(1, 0)?; // no lz77
+        // Write LZ77 params
+        Self::write_lz77_header(dc_lz77_params, writer)?;
 
         #[cfg(feature = "debug-tokens")]
         let after_lz77 = writer.bits_written();
@@ -2127,7 +2203,7 @@ impl TinyEncoder {
                 "  context_tree: {} bits",
                 after_ctx_tree - after_block_ctx - 1
             );
-            debug_log!("  lz77: 1 bit (no=0)");
+            debug_log!("  lz77: {} bits", after_lz77 - after_ctx_tree);
             debug_log!("  dc_entropy_code: {} bits", after_dc_code - after_lz77);
             debug_log!(
                 "  total bits: {}, bytes before pad: {}",
@@ -2261,6 +2337,7 @@ impl TinyEncoder {
         ac_code: &BuiltEntropyCode,
         used_orders: u32,
         coeff_order_tokens: Option<&[Token]>,
+        ac_lz77_params: Option<&super::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -2290,7 +2367,8 @@ impl TinyEncoder {
             super::coeff_order::build_and_write_coeff_orders(tokens, self.use_ans, writer)?;
         }
 
-        writer.write(1, 0)?; // no lz77
+        // Write LZ77 params
+        Self::write_lz77_header(ac_lz77_params, writer)?;
 
         #[cfg(feature = "debug-tokens")]
         let before_ac_code = writer.bits_written();
@@ -2703,9 +2781,131 @@ impl TinyEncoder {
             ac_section_tokens.push(tokens);
         }
 
+        // ── Apply LZ77 RLE if enabled (ANS only, before building codes) ──
+
+        let use_lz77 = self.enable_lz77 && self.use_ans;
+        let mut dc_lz77_params: Option<super::lz77::Lz77Params> = None;
+        let mut ac_lz77_params: Option<super::lz77::Lz77Params> = None;
+
+        if use_lz77 {
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "[LZ77] Attempting LZ77 RLE on DC ({} groups) and AC ({} groups)",
+                num_dc_groups, num_groups
+            );
+
+            // Apply LZ77 to DC token streams (each DC group independently)
+            let dc_num_ctx = super::dc_coding::NUM_DC_CONTEXTS;
+            let merged_dc = {
+                let mut m = Vec::new();
+                for section in &dc_tokens_per_group {
+                    m.extend_from_slice(section);
+                }
+                for section in &ac_metadata_tokens_per_group {
+                    m.extend_from_slice(section);
+                }
+                m
+            };
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "[LZ77] DC merged tokens: {}, num_contexts: {}",
+                merged_dc.len(),
+                dc_num_ctx
+            );
+
+            if let Some((lz77_tokens, params)) =
+                super::lz77::apply_lz77_rle(&merged_dc, dc_num_ctx, false)
+            {
+                #[cfg(feature = "debug-tokens")]
+                eprintln!(
+                    "[LZ77] DC LZ77 ACTIVATED: {} -> {} tokens",
+                    merged_dc.len(),
+                    lz77_tokens.len()
+                );
+                // Re-split LZ77 tokens back into per-group
+                // For now, store merged LZ77 tokens and use single-group split
+                dc_lz77_params = Some(params);
+                // Replace per-group tokens with LZ77 versions
+                // (apply per-group independently for correct splitting)
+                let mut new_dc_per_group = Vec::with_capacity(num_dc_groups);
+                let mut new_md_per_group = Vec::with_capacity(num_dc_groups);
+                for i in 0..num_dc_groups {
+                    if let Some((lz77_dc, _)) =
+                        super::lz77::apply_lz77_rle(&dc_tokens_per_group[i], dc_num_ctx, false)
+                    {
+                        new_dc_per_group.push(lz77_dc);
+                    } else {
+                        new_dc_per_group.push(dc_tokens_per_group[i].clone());
+                    }
+                    if let Some((lz77_md, _)) = super::lz77::apply_lz77_rle(
+                        &ac_metadata_tokens_per_group[i],
+                        dc_num_ctx,
+                        false,
+                    ) {
+                        new_md_per_group.push(lz77_md);
+                    } else {
+                        new_md_per_group.push(ac_metadata_tokens_per_group[i].clone());
+                    }
+                }
+                dc_tokens_per_group = new_dc_per_group;
+                ac_metadata_tokens_per_group = new_md_per_group;
+                let _ = lz77_tokens; // merged version not needed, per-group applied
+            } else {
+                #[cfg(feature = "debug-tokens")]
+                eprintln!("[LZ77] DC LZ77 not beneficial (threshold not met)");
+            }
+
+            // Apply LZ77 to AC token streams (each AC group independently)
+            let ac_num_ctx = super::ac_context::NUM_AC_CONTEXTS;
+            let merged_ac = {
+                let mut m = Vec::new();
+                for section in &ac_section_tokens {
+                    m.extend_from_slice(section);
+                }
+                m
+            };
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "[LZ77] AC merged tokens: {}, num_contexts: {}",
+                merged_ac.len(),
+                ac_num_ctx
+            );
+
+            if let Some((_lz77_tokens, params)) =
+                super::lz77::apply_lz77_rle(&merged_ac, ac_num_ctx, false)
+            {
+                #[cfg(feature = "debug-tokens")]
+                eprintln!(
+                    "[LZ77] AC LZ77 ACTIVATED: {} -> {} tokens",
+                    merged_ac.len(),
+                    _lz77_tokens.len()
+                );
+                ac_lz77_params = Some(params);
+                let mut new_ac_sections = Vec::with_capacity(num_groups);
+                for tokens in &ac_section_tokens {
+                    if let Some((lz77_ac, _)) =
+                        super::lz77::apply_lz77_rle(tokens, ac_num_ctx, false)
+                    {
+                        new_ac_sections.push(lz77_ac);
+                    } else {
+                        new_ac_sections.push(tokens.clone());
+                    }
+                }
+                ac_section_tokens = new_ac_sections;
+            } else {
+                #[cfg(feature = "debug-tokens")]
+                eprintln!("[LZ77] AC LZ77 not beneficial (threshold not met)");
+            }
+        }
+
         // ── Build optimal codes ──
 
         // Merge all DC section tokens (DC + AC metadata) for frequency counting
+        let dc_num_contexts = if dc_lz77_params.is_some() {
+            super::dc_coding::NUM_DC_CONTEXTS + 1 // +1 for LZ77 distance context
+        } else {
+            super::dc_coding::NUM_DC_CONTEXTS
+        };
         let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
             + ac_metadata_tokens_per_group
                 .iter()
@@ -2722,18 +2922,25 @@ impl TinyEncoder {
         let dc_built_code = if self.use_ans {
             BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
                 &all_dc_tokens,
-                super::dc_coding::NUM_DC_CONTEXTS,
+                dc_num_contexts,
                 self.enhanced_clustering,
+                dc_lz77_params.as_ref(),
             ))
         } else {
             BuiltEntropyCode::Huffman(build_entropy_code_with_options(
                 &all_dc_tokens,
-                super::dc_coding::NUM_DC_CONTEXTS,
+                dc_num_contexts,
                 self.enhanced_clustering,
+                dc_lz77_params.as_ref(),
             ))
         };
 
         // Merge all AC section tokens for frequency counting
+        let ac_num_contexts = if ac_lz77_params.is_some() {
+            super::ac_context::NUM_AC_CONTEXTS + 1 // +1 for LZ77 distance context
+        } else {
+            super::ac_context::NUM_AC_CONTEXTS
+        };
         let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
         let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
         for section in &ac_section_tokens {
@@ -2743,14 +2950,16 @@ impl TinyEncoder {
         let ac_built_code = if self.use_ans {
             BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
                 &all_ac_tokens,
-                super::ac_context::NUM_AC_CONTEXTS,
+                ac_num_contexts,
                 self.enhanced_clustering,
+                ac_lz77_params.as_ref(),
             ))
         } else {
             BuiltEntropyCode::Huffman(build_entropy_code_with_options(
                 &all_ac_tokens,
-                super::ac_context::NUM_AC_CONTEXTS,
+                ac_num_contexts,
                 self.enhanced_clustering,
+                ac_lz77_params.as_ref(),
             ))
         };
 
@@ -2810,6 +3019,7 @@ impl TinyEncoder {
                 num_dc_groups,
                 &dc_built_code,
                 noise_params,
+                dc_lz77_params.as_ref(),
                 &mut dc_global,
             )?;
 
@@ -2823,6 +3033,7 @@ impl TinyEncoder {
                 &ac_metadata_tokens_per_group[0],
                 ac_strategy,
                 &dc_built_code,
+                dc_lz77_params.as_ref(),
                 &mut dc_group,
             )?;
 
@@ -2832,11 +3043,16 @@ impl TinyEncoder {
                 &ac_built_code,
                 used_orders,
                 coeff_order_tokens.as_deref(),
+                ac_lz77_params.as_ref(),
                 &mut ac_global,
             )?;
 
             let mut ac_group_writer = BitWriter::new();
-            ac_built_code.write_tokens(&ac_section_tokens[0], &mut ac_group_writer)?;
+            ac_built_code.write_tokens(
+                &ac_section_tokens[0],
+                ac_lz77_params.as_ref(),
+                &mut ac_group_writer,
+            )?;
 
             let mut combined = dc_global;
             combined.append_unaligned(&dc_group)?;
@@ -2858,6 +3074,7 @@ impl TinyEncoder {
                 num_dc_groups,
                 &dc_built_code,
                 noise_params,
+                dc_lz77_params.as_ref(),
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
@@ -2875,6 +3092,7 @@ impl TinyEncoder {
                     &ac_metadata_tokens_per_group[dc_group_idx],
                     ac_strategy,
                     &dc_built_code,
+                    dc_lz77_params.as_ref(),
                     &mut dc_group,
                 )?;
                 dc_group.zero_pad_to_byte();
@@ -2888,6 +3106,7 @@ impl TinyEncoder {
                 &ac_built_code,
                 used_orders,
                 coeff_order_tokens.as_deref(),
+                ac_lz77_params.as_ref(),
                 &mut ac_global,
             )?;
             ac_global.zero_pad_to_byte();
@@ -2896,7 +3115,11 @@ impl TinyEncoder {
             // AC groups
             for ac_tokens in &ac_section_tokens {
                 let mut ac_group_writer = BitWriter::new();
-                ac_built_code.write_tokens(ac_tokens, &mut ac_group_writer)?;
+                ac_built_code.write_tokens(
+                    ac_tokens,
+                    ac_lz77_params.as_ref(),
+                    &mut ac_group_writer,
+                )?;
                 ac_group_writer.zero_pad_to_byte();
                 sections.push(ac_group_writer.finish());
             }
@@ -2927,6 +3150,7 @@ impl TinyEncoder {
         ac_metadata_tokens: &[Token],
         ac_strategy: &AcStrategyMap,
         dc_code: &BuiltEntropyCode,
+        dc_lz77_params: Option<&super::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         let dc_gx = dc_group_idx % xsize_dc_groups;
@@ -2943,7 +3167,7 @@ impl TinyEncoder {
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         // Write DC tokens
-        dc_code.write_tokens(dc_tokens, writer)?;
+        dc_code.write_tokens(dc_tokens, dc_lz77_params, writer)?;
 
         // AC metadata sub-header — count first blocks (distinct transforms)
         let num_blocks = region_xsize * region_ysize;
@@ -2962,7 +3186,7 @@ impl TinyEncoder {
         writer.write(4, 3)?; // use global tree, default wp, no transforms
 
         // Write AC metadata tokens
-        dc_code.write_tokens(ac_metadata_tokens, writer)?;
+        dc_code.write_tokens(ac_metadata_tokens, dc_lz77_params, writer)?;
 
         Ok(())
     }

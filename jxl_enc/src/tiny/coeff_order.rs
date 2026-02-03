@@ -432,14 +432,15 @@ pub fn build_and_write_coeff_orders(
             tokens,
             NUM_PERMUTATION_CONTEXTS,
             false, // no enhanced clustering for permutation
+            None,  // no LZ77 for permutation data
         );
         write_entropy_code_ans(&code, writer)?;
-        write_tokens_ans(tokens, &code, writer)?;
+        write_tokens_ans(tokens, &code, None, writer)?;
     } else {
-        let code = build_entropy_code_with_options(tokens, NUM_PERMUTATION_CONTEXTS, false);
+        let code = build_entropy_code_with_options(tokens, NUM_PERMUTATION_CONTEXTS, false, None);
         let ec = code.as_entropy_code();
         super::entropy_code::write_entropy_code(&ec, writer)?;
-        write_tokens(tokens, &ec, writer)?;
+        write_tokens(tokens, &ec, None, writer)?;
     }
 
     Ok(())

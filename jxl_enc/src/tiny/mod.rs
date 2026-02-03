@@ -33,6 +33,7 @@ mod encoder;
 mod entropy_code;
 mod frame;
 mod gaborish;
+mod lz77;
 pub(crate) mod noise;
 mod quant;
 mod static_codes;

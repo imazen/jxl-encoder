@@ -798,3 +798,91 @@ fn test_dct2x2_strategy_roundtrip() {
     assert_eq!(frame.image_all_channels().height(), h);
     eprintln!("DCT2X2 roundtrip OK");
 }
+
+#[test]
+fn test_lz77_rle_roundtrip() {
+    use std::io::Cursor;
+
+    // Use a large image with mostly-solid regions to trigger LZ77 RLE.
+    // 512x512 at high distance produces many zero-valued AC tokens.
+    let w = 512;
+    let h = 512;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for i in 0..(w * h) {
+        linear_rgb[i * 3] = 0.3;
+        linear_rgb[i * 3 + 1] = 0.5;
+        linear_rgb[i * 3 + 2] = 0.2;
+    }
+    // Add a small stripe for variation
+    for y in 0..h {
+        for x in 0..w {
+            if y < 4 || x < 4 {
+                let idx = (y * w + x) * 3;
+                linear_rgb[idx] = 0.9;
+                linear_rgb[idx + 1] = 0.1;
+                linear_rgb[idx + 2] = 0.05;
+            }
+        }
+    }
+
+    // Encode WITHOUT LZ77 at high distance (more zero AC coefficients = more runs)
+    let mut enc_no_lz77 = TinyEncoder::new(4.0);
+    enc_no_lz77.use_ans = true;
+    enc_no_lz77.optimize_codes = true;
+    enc_no_lz77.enable_lz77 = false;
+    let bytes_no_lz77 = enc_no_lz77
+        .encode(w, h, &linear_rgb)
+        .expect("encode without LZ77 failed");
+
+    // Encode WITH LZ77
+    let mut enc_lz77 = TinyEncoder::new(4.0);
+    enc_lz77.use_ans = true;
+    enc_lz77.optimize_codes = true;
+    enc_lz77.enable_lz77 = true;
+    let bytes_lz77 = enc_lz77
+        .encode(w, h, &linear_rgb)
+        .expect("encode with LZ77 failed");
+
+    eprintln!(
+        "LZ77 test: no_lz77={} bytes, lz77={} bytes (delta={})",
+        bytes_no_lz77.len(),
+        bytes_lz77.len(),
+        bytes_no_lz77.len() as i64 - bytes_lz77.len() as i64,
+    );
+
+    // Decode LZ77-encoded file with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes_lz77))
+        .expect("jxl-oxide parse failed for LZ77 encoded file");
+    let frame = image
+        .render_frame(0)
+        .expect("jxl-oxide render failed for LZ77 encoded file");
+    assert_eq!(frame.image_all_channels().width(), w);
+    assert_eq!(frame.image_all_channels().height(), h);
+
+    // Also decode the non-LZ77 version and verify pixel equality
+    // (LZ77 is a lossless token-stream transformation, so decoded pixels must match)
+    let image_ref = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes_no_lz77))
+        .expect("jxl-oxide parse failed for non-LZ77 reference");
+    let frame_ref = image_ref
+        .render_frame(0)
+        .expect("jxl-oxide render failed for non-LZ77 reference");
+
+    let lz77_buf = frame.image_all_channels();
+    let ref_buf = frame_ref.image_all_channels();
+    let lz77_pixels = lz77_buf.buf();
+    let ref_pixels = ref_buf.buf();
+    assert_eq!(lz77_pixels.len(), ref_pixels.len());
+    for (i, (&l, &r)) in lz77_pixels.iter().zip(ref_pixels.iter()).enumerate() {
+        assert!(
+            (l - r).abs() < 1e-6,
+            "pixel {} differs: lz77={}, ref={}",
+            i,
+            l,
+            r
+        );
+    }
+
+    eprintln!("LZ77 RLE roundtrip OK — pixels match non-LZ77 reference");
+}

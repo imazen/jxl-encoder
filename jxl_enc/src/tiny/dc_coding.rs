@@ -240,7 +240,7 @@ pub fn write_dc_tokens_region(
                             pack_signed(residual)
                         );
                     }
-                    write_token(&token, dc_code, writer)?;
+                    write_token(&token, dc_code, None, writer)?;
                     let after = writer.bits_written();
                     if dc_debug_count < DC_DEBUG_LIMIT {
                         debug_log!("    -> wrote {} bits", after - before);
@@ -252,7 +252,7 @@ pub fn write_dc_tokens_region(
                     }
                 }
                 #[cfg(not(feature = "debug-tokens"))]
-                write_token(&token, dc_code, writer)?;
+                write_token(&token, dc_code, None, writer)?;
             }
         }
     }
@@ -601,7 +601,7 @@ pub fn write_ac_metadata_tokens_region(
                 let guess = clamped_gradient(top as i32, left as i32, topleft as i32);
                 let residual = actual - guess;
                 let token = Token::new(ctx_id, pack_signed(residual));
-                write_token(&token, dc_code, writer)?;
+                write_token(&token, dc_code, None, writer)?;
             }
         }
     }
@@ -630,7 +630,7 @@ pub fn write_ac_metadata_tokens_region(
                 10
             };
             let token = Token::new(ctx_id, pack_signed(cur));
-            write_token(&token, dc_code, writer)?;
+            write_token(&token, dc_code, None, writer)?;
             left_acs = cur;
         }
     }
@@ -662,7 +662,7 @@ pub fn write_ac_metadata_tokens_region(
                 6
             };
             let token = Token::new(ctx_id, pack_signed(residual));
-            write_token(&token, dc_code, writer)?;
+            write_token(&token, dc_code, None, writer)?;
             left_qf = cur;
         }
     }
@@ -676,7 +676,7 @@ pub fn write_ac_metadata_tokens_region(
     let nblocks = region_xsize_blocks * region_ysize_blocks;
     for _ in 0..nblocks {
         let token = Token::new(0, pack_signed(4)); // EPF default value 4
-        write_token(&token, dc_code, writer)?;
+        write_token(&token, dc_code, None, writer)?;
     }
 
     #[cfg(feature = "debug-tokens")]

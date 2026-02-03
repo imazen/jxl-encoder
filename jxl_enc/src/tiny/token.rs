@@ -17,13 +17,30 @@ use super::common::floor_log2_nonzero;
 pub struct Token {
     pub context: u32,
     pub value: u32,
+    /// When true, this token encodes an LZ77 length value using the LZ77 HybridUintConfig
+    /// and the encoded symbol is offset by min_symbol in the histogram.
+    pub is_lz77_length: bool,
 }
 
 impl Token {
     /// Create a new token with the given context and value.
     #[inline]
     pub const fn new(context: u32, value: u32) -> Self {
-        Self { context, value }
+        Self {
+            context,
+            value,
+            is_lz77_length: false,
+        }
+    }
+
+    /// Create a new LZ77 length token.
+    #[inline]
+    pub const fn lz77_length(context: u32, value: u32) -> Self {
+        Self {
+            context,
+            value,
+            is_lz77_length: true,
+        }
     }
 }
 
@@ -73,6 +90,41 @@ impl UintCoder {
             let nbits = n - 2;
             let bits = value & ((1u32 << nbits) - 1);
 
+            EncodedUint { token, nbits, bits }
+        }
+    }
+}
+
+/// LZ77 uint coder using HybridUintConfig(0, 0, 0).
+///
+/// With split_exponent=0, split_token=1:
+/// - value 0: token=0, nbits=0, bits=0
+/// - value >= 1: token = 1 + floor_log2(value), nbits = floor_log2(value),
+///   bits = value - (1 << floor_log2(value))
+pub struct Lz77UintCoder;
+
+impl Lz77UintCoder {
+    /// Encode a value using HybridUintConfig(0, 0, 0).
+    #[inline]
+    pub fn encode(value: u32) -> EncodedUint {
+        if value == 0 {
+            EncodedUint {
+                token: 0,
+                nbits: 0,
+                bits: 0,
+            }
+        } else {
+            let n = floor_log2_nonzero(value);
+            let m = value - (1 << n);
+            // split_token=1, split_exponent=0, msb_in_token=0, lsb_in_token=0
+            // token = split_token + ((n - split_exponent) << (msb + lsb)) + ...
+            // = 1 + (n - 0) << 0 + (m >> (n - 0)) << 0 + (m & 0)
+            // = 1 + n   (since msb=lsb=0, the m terms contribute nothing to token)
+            let token = 1 + n;
+            // nbits = n - msb - lsb = n
+            let nbits = n;
+            // bits = (value >> lsb) & ((1 << nbits) - 1) = value & ((1 << n) - 1) = m
+            let bits = m;
             EncodedUint { token, nbits, bits }
         }
     }
@@ -152,5 +204,50 @@ mod tests {
         let m = (top_bits << e.nbits) + e.bits;
         let reconstructed = (1u32 << n) + m;
         assert_eq!(reconstructed, 65535);
+    }
+
+    #[test]
+    fn test_lz77_uint_coder() {
+        // value 0: token=0, nbits=0
+        let e = Lz77UintCoder::encode(0);
+        assert_eq!(e.token, 0);
+        assert_eq!(e.nbits, 0);
+        assert_eq!(e.bits, 0);
+
+        // value 1: n=0, token=1+0=1, nbits=0, bits=0
+        let e = Lz77UintCoder::encode(1);
+        assert_eq!(e.token, 1);
+        assert_eq!(e.nbits, 0);
+        assert_eq!(e.bits, 0);
+
+        // value 2: n=1, m=0, token=2, nbits=1, bits=0
+        let e = Lz77UintCoder::encode(2);
+        assert_eq!(e.token, 2);
+        assert_eq!(e.nbits, 1);
+        assert_eq!(e.bits, 0);
+
+        // value 3: n=1, m=1, token=2, nbits=1, bits=1
+        let e = Lz77UintCoder::encode(3);
+        assert_eq!(e.token, 2);
+        assert_eq!(e.nbits, 1);
+        assert_eq!(e.bits, 1);
+
+        // value 7: n=2, m=3, token=3, nbits=2, bits=3
+        let e = Lz77UintCoder::encode(7);
+        assert_eq!(e.token, 3);
+        assert_eq!(e.nbits, 2);
+        assert_eq!(e.bits, 3);
+
+        // Verify roundtrip reconstruction for a range of values
+        for v in 0..1000 {
+            let e = Lz77UintCoder::encode(v);
+            let reconstructed = if e.token == 0 {
+                0
+            } else {
+                let n = e.token - 1;
+                (1u32 << n) + e.bits
+            };
+            assert_eq!(reconstructed, v, "roundtrip failed for value {}", v);
+        }
     }
 }
