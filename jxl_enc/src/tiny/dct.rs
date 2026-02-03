@@ -1551,8 +1551,8 @@ mod tests {
     fn test_dct_16x16_roundtrip() {
         // Test DCT16x16 → IDCT16x16 roundtrip with pseudo-random data
         let mut input = [0.0f32; 256];
-        for i in 0..256 {
-            input[i] = ((i as f32 * 0.7 + 3.14).sin() * 100.0).round() / 100.0;
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = ((i as f32 * 0.7 + 3.14).sin() * 100.0).round() / 100.0;
         }
         let mut dct_output = [0.0f32; 256];
         dct_16x16(&input, &mut dct_output);
