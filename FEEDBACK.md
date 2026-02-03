@@ -33,3 +33,5 @@ User requested an RD regression test to track encoder quality/size over time. Ad
 ## 2026-02-03: Port full libjxl parametric quantization weights
 
 User requested porting full libjxl's default parametric quantization weights for DCT8, DCT16X16, and DCT16X8 strategies. The encoder was using libjxl-tiny's hardcoded 1,344-float weight table for strategies 0-3 while signaling all_default=true in the frame header, creating a quantizer/dequantizer mismatch. Replaced with parametric generation from libjxl quant_weights.cc band parameters. Net -158 lines (removed 457 lines of hardcoded data, added 299 lines of parametric code). All 566 lib tests pass, all dual-decode tests pass.
+
+Also fixed a pre-existing bug in all jxl-oxide decode sites: after the transfer function fix (Linear→Srgb), jxl-oxide defaulted to sRGB gamma output, but test code treated output as linear RGB. This produced garbage in-process metrics (butteraugli 49-60, SSIM2 -31 to -52). Fixed by calling request_color_encoding(srgb_linear) on all 55 jxl-oxide decode sites. Updated RD regression baselines. Frymire SSIM2 improved from 83.36→84.33 at d=0.25.
