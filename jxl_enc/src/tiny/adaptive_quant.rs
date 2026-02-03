@@ -489,6 +489,56 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
     K_MUL / (out_val + K_OFFSET)
 }
 
+/// Compute per-pixel (1x1) masking field for pixel-domain loss calculation.
+///
+/// This implements libjxl's 1x1 Laplacian masking from `enc_adaptive_quantization.cc:500-521`.
+/// The mask is used in `EstimateEntropy` to weight pixel-domain quantization error.
+///
+/// Algorithm for each pixel (x, y):
+/// 1. Compute base = 0.25 * (Y[y-1,x] + Y[y+1,x] + Y[y,x-1] + Y[y,x+1])
+/// 2. Compute gammac = RatioOfDerivatives(Y[x,y] + 0.019, invert=false)
+/// 3. diff = abs(gammac * (Y[x,y] - base))
+/// 4. diff = log1p(diff)
+/// 5. mask1x1[y,x] = 1.0 / (diff + 0.01)
+///
+/// # Returns
+/// Per-pixel mask field of size `width * height`, row-major layout.
+pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
+    const MATCH_GAMMA_OFFSET: f32 = 0.019;
+    const K_MUL: f32 = 1.0;
+    const K_OFFSET: f32 = 0.01;
+
+    let mut mask1x1 = vec![0.0_f32; width * height];
+
+    for y in 0..height {
+        // Clamped neighbor indices for edge handling
+        let y1 = if y > 0 { y - 1 } else { 0 };
+        let y2 = if y + 1 < height { y + 1 } else { y };
+
+        for x in 0..width {
+            let x1 = if x > 0 { x - 1 } else { 0 };
+            let x2 = if x + 1 < width { x + 1 } else { x };
+
+            // Average of 4 neighbors (cross pattern)
+            let base = 0.25
+                * (xyb_y[y1 * width + x]
+                    + xyb_y[y2 * width + x]
+                    + xyb_y[y * width + x1]
+                    + xyb_y[y * width + x2]);
+
+            let pixel_val = xyb_y[y * width + x];
+            let gammac = ratio_of_derivatives(pixel_val + MATCH_GAMMA_OFFSET, false);
+
+            let diff = (gammac * (pixel_val - base)).abs();
+            let diff = (1.0 + diff).ln(); // log1p(diff)
+
+            mask1x1[y * width + x] = K_MUL / (diff + K_OFFSET);
+        }
+    }
+
+    mask1x1
+}
+
 /// PerBlockModulations: apply all modulations and convert exponent to multiplier.
 ///
 /// For each block, applies ComputeMask, HfModulation, ColorModulation,
@@ -930,5 +980,60 @@ mod tests {
                 assert!(v >= 1, "quant value {} out of range for {}x{}", v, w, h);
             }
         }
+    }
+
+    #[test]
+    fn test_compute_mask1x1_uniform() {
+        // A uniform image should produce uniform mask (high values since no edges)
+        let w = 16;
+        let h = 16;
+        let xyb_y = vec![0.5_f32; w * h];
+
+        let mask = compute_mask1x1(&xyb_y, w, h);
+
+        assert_eq!(mask.len(), w * h);
+        // All values should be positive and finite
+        for &v in &mask {
+            assert!(v > 0.0 && v.is_finite(), "mask value {} invalid", v);
+        }
+        // For uniform image, mask should be high (1.0 / 0.01 = 100 when diff=0)
+        // due to log1p(0) = 0
+        let first = mask[w + 1]; // skip edge pixels
+        assert!(
+            first > 50.0,
+            "uniform mask should be high, got {}",
+            first
+        );
+    }
+
+    #[test]
+    fn test_compute_mask1x1_edges() {
+        // Image with edges should have lower mask values at edge locations
+        let w = 16;
+        let h = 16;
+        let mut xyb_y = vec![0.2_f32; w * h];
+
+        // Create a vertical edge at x=8
+        for y in 0..h {
+            for x in 8..w {
+                xyb_y[y * w + x] = 0.8;
+            }
+        }
+
+        let mask = compute_mask1x1(&xyb_y, w, h);
+
+        // Interior of uniform regions (left side)
+        let interior_left = mask[4 * w + 4];
+        // At the edge (x=8)
+        let at_edge = mask[8 * w + 8];
+
+        // Edge location should have LOWER mask value (more masking needed)
+        // because diff is larger, log1p(diff) is larger, so 1/(diff+offset) is smaller
+        assert!(
+            at_edge < interior_left,
+            "edge mask {} should be < interior mask {}",
+            at_edge,
+            interior_left
+        );
     }
 }
