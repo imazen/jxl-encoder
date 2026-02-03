@@ -1456,7 +1456,8 @@ fn layer2_single_group_dct32x32_decode_jxl_oxide() {
     assert_eq!(w, 256);
     assert_eq!(h, 256);
 
-    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    // Use d=3.0 because DCT32x32 is disabled at d<3.0 due to DC extraction error
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder
@@ -1464,13 +1465,22 @@ fn layer2_single_group_dct32x32_decode_jxl_oxide() {
         .unwrap_or_else(|e| panic!("encode failed: {:?}", e));
 
     eprintln!(
-        "layer2 DCT32x32 jxl-oxide: encoded 256x256 frymire crop, {} bytes",
+        "layer2 DCT32x32 jxl-oxide: encoded 256x256 frymire crop at d=3.0, {} bytes",
         bytes.len()
     );
+    // Save for manual inspection
+    std::fs::write("/tmp/test_dct32x32_forced.jxl", &bytes).unwrap();
+    eprintln!("Saved to /tmp/test_dct32x32_forced.jxl");
 
     let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
     assert_eq!(dw, w, "width mismatch");
     assert_eq!(dh, h, "height mismatch");
+
+    // Debug: show first few decoded values
+    eprintln!("First 12 decoded linear values: {:?}", &pixels[0..12]);
+    let dec_srgb = linear_to_srgb_u8(&pixels);
+    eprintln!("First 12 original sRGB: {:?}", &srgb[0..12]);
+    eprintln!("First 12 decoded sRGB:  {:?}", &dec_srgb[0..12]);
 
     let ssim2 = ssim2_u8_vs_linear_f32(&srgb, &pixels, w, h);
     eprintln!("layer2 DCT32x32 jxl-oxide: SSIM2 = {:.2}", ssim2);
@@ -1488,13 +1498,14 @@ fn layer2_single_group_dct32x32_decode_jxl_oxide() {
 fn layer2_single_group_dct32x32_decode_djxl() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
 
-    let mut encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    // Use d=3.0 because DCT32x32 is disabled at d<3.0 due to DC extraction error
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder.encode(w, h, &linear).unwrap();
 
     eprintln!(
-        "layer2 DCT32x32 djxl: encoded 256x256 frymire crop, {} bytes",
+        "layer2 DCT32x32 djxl: encoded 256x256 frymire crop at d=3.0, {} bytes",
         bytes.len()
     );
 
