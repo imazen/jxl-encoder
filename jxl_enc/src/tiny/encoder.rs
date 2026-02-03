@@ -19,7 +19,7 @@ use super::ac_strategy::{
 fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> AcStrategyMap {
     AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, raw_strategy)
 }
-use super::adaptive_quant::compute_adaptive_quant_field;
+use super::adaptive_quant::{compute_adaptive_quant_field, compute_mask1x1};
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
 use super::coeff_order::natural_coeff_order;
 use super::common::*;
@@ -183,6 +183,13 @@ pub struct TinyEncoder {
     /// zigzag order, helping preserve smooth gradients at high compression.
     /// Off by default (modest quality improvement, slight performance cost).
     pub error_diffusion: bool,
+    /// Enable pixel-domain loss calculation in AC strategy selection.
+    /// When true, uses full libjxl's pixel-domain loss model (IDCT error,
+    /// per-pixel masking, 8th power norm). This provides better distance
+    /// calibration matching cjxl's output.
+    /// When false (default), uses coefficient-domain loss (libjxl-tiny style).
+    /// Note: Requires `ac_strategy_enabled` to have any effect.
+    pub pixel_domain_loss: bool,
 }
 
 impl Default for TinyEncoder {
@@ -200,6 +207,7 @@ impl Default for TinyEncoder {
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false,
+            pixel_domain_loss: false, // Off by default; opt-in for full libjxl cost model
         }
     }
 }
@@ -220,6 +228,7 @@ impl TinyEncoder {
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false,
+            pixel_domain_loss: false,
         }
     }
 
@@ -342,6 +351,14 @@ impl TinyEncoder {
             )
         };
 
+        // Compute per-pixel mask for pixel-domain loss (full libjxl cost model)
+        // Only compute if AC strategy selection is enabled
+        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
+            Some(compute_mask1x1(&xyb_y, padded_width, padded_height))
+        } else {
+            None
+        };
+
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
         let ac_strategy = if let Some(forced) = self.force_strategy {
             // Force a specific strategy for all blocks that fit
@@ -361,6 +378,8 @@ impl TinyEncoder {
                 &quant_field_float,
                 &masking,
                 &cfl_map,
+                mask1x1.as_deref(),
+                padded_width,
             )
         };
 
