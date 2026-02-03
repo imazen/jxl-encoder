@@ -519,6 +519,32 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
+### Color/Brightness Bug (SEVERE, Newly Discovered Feb 3, 2026)
+
+**Status**: ALL encoder output is darker than reference cjxl.
+
+**Symptom**: Decoded images from our encoder are noticeably darker than both the
+original input and reference cjxl output at the same distance setting.
+
+**Evidence** (visual comparison at `/mnt/v/output/jxl-encoder-rs/dct32x32-bug/`):
+- Original 256x256: Bright, vibrant colors
+- cjxl d=3.0 decode: Matches original
+- Our d=3.0 decode: **Darker**
+- Our d=1.0 decode: **Still darker** (proves it's not quantization)
+
+**File sizes**: Our files are 26% smaller than cjxl at same distance, suggesting
+possible over-quantization, but darkness persists even at d=1.0.
+
+**Likely cause**: Color space conversion bug in:
+1. sRGB → linear input conversion
+2. linear → XYB conversion
+3. DC/coefficient scaling
+
+**Impact**: Affects ALL encodes, not just DCT32x32. The DCT32x32 SSIM2=-48 issue
+is partly caused by this plus a separate spatial averaging problem.
+
+**See**: `CONTEXT-HANDOFF.md` for full investigation details.
+
 ### DCT32x32 Quality Impact (SEVERE, Under Investigation)
 
 **Status**: DCT32x32 is BROKEN for single-group images (≤256x256).
