@@ -53,16 +53,16 @@ pub const TABLE_SIZE_IN_BLOCKS: [usize; 21] = [
 /// Offset in 8x8 blocks for each (strategy, channel) combination.
 /// Index = strategy * 3 + channel
 /// DCT32X32 offsets are into QUANT_WEIGHTS_DCT32X32, not QUANT_WEIGHTS.
-/// DCT4X8 and DCT8X4 use DCT8 weights as placeholder (TODO: proper parametric weights).
+/// DCT4X8, DCT8X4, DCT4X4 have separate tables with proper parametric weights.
 #[rustfmt::skip]
 pub const TABLE_OFFSET_IN_BLOCKS: [usize; 21] = [
     0, 1, 2,    // DCT8: X, Y, B
     3, 5, 7,    // DCT16X8: X, Y, B
     3, 5, 7,    // DCT8X16: X, Y, B (shares tables with DCT16X8)
-    9, 13, 17,  // DCT16X16: X, Y, B
+    9, 13, 17,  // DCT16X16: X, Y, B (256 coeffs = 4 blocks each)
     0, 16, 32,  // DCT32X32: offsets into separate QUANT_WEIGHTS_DCT32X32
-    0, 1, 2,    // DCT4X8: shares DCT8 weights (placeholder)
-    0, 1, 2,    // DCT8X4: shares DCT8 weights (placeholder)
+    0, 0, 0,    // DCT4X8: uses QUANT_WEIGHTS_DCT4X8 (not this table)
+    0, 0, 0,    // DCT8X4: uses QUANT_WEIGHTS_DCT8X4 (not this table)
 ];
 
 /// Pre-computed quantization weights (dequant matrix, i.e. 1/weight).
