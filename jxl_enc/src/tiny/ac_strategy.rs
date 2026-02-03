@@ -18,7 +18,7 @@ use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_32x32,
-    idct_8x8, idct_16x16, idct_16x8, idct_8x16,
+    idct_8x8, idct_8x16, idct_16x8, idct_16x16,
 };
 use super::quant::quant_weights;
 
@@ -182,26 +182,37 @@ fn compute_scaled_constants(distance: f32) -> (f32, f32, f32) {
     (info_loss_mul, cost_delta, zeros_mul)
 }
 
-/// Fixed entropy multipliers per transform type (from libjxl FindBest8x8Transform).
-/// These multiply ONLY the entropy part, not the loss.
-const ENTROPY_MUL_DCT8: f32 = 0.8;
-const ENTROPY_MUL_DCT4X4: f32 = 1.08;
-const ENTROPY_MUL_DCT4X8: f32 = 0.859_316_37;
-const ENTROPY_MUL_DCT16X8: f32 = 1.21;
-const ENTROPY_MUL_DCT16X16: f32 = 1.34;
-const ENTROPY_MUL_DCT32X32: f32 = 1.48;
+/// Raw (unnormalized) entropy multipliers per transform type (from libjxl FindBest8x8Transform).
+/// These are NORMALIZED by dividing by DCT8's value (0.8) before use.
+/// See libjxl enc_ac_strategy.cc:584: `float entropy_mul = tx.entropy_mul / kTransforms8x8[0].entropy_mul;`
+const RAW_ENTROPY_MUL_DCT8: f32 = 0.8;
+const RAW_ENTROPY_MUL_DCT4X4: f32 = 1.08;
+const RAW_ENTROPY_MUL_DCT4X8: f32 = 0.859_316_37;
+const RAW_ENTROPY_MUL_DCT16X8: f32 = 1.21;
+const RAW_ENTROPY_MUL_DCT16X16: f32 = 1.34;
+const RAW_ENTROPY_MUL_DCT32X32: f32 = 1.48;
 
-/// Get the fixed entropy multiplier for a raw strategy (full libjxl mode).
+/// Get the NORMALIZED entropy multiplier for a raw strategy (full libjxl mode).
+///
+/// libjxl normalizes entropy_mul by dividing by DCT8's value (0.8), so:
+/// - DCT8: 0.8 / 0.8 = 1.0
+/// - DCT4X8: 0.859 / 0.8 = 1.074
+/// - DCT4X4: 1.08 / 0.8 = 1.35
+/// - DCT16X8: 1.21 / 0.8 = 1.5125
+/// - DCT16X16: 1.34 / 0.8 = 1.675
+/// - DCT32X32: 1.48 / 0.8 = 1.85
 fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
-    match raw_strategy {
-        RAW_STRATEGY_DCT8 => ENTROPY_MUL_DCT8,
-        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => ENTROPY_MUL_DCT4X8,
-        RAW_STRATEGY_DCT4X4 => ENTROPY_MUL_DCT4X4,
-        RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => ENTROPY_MUL_DCT16X8,
-        RAW_STRATEGY_DCT16X16 => ENTROPY_MUL_DCT16X16,
-        RAW_STRATEGY_DCT32X32 => ENTROPY_MUL_DCT32X32,
-        _ => ENTROPY_MUL_DCT8,
-    }
+    let raw = match raw_strategy {
+        RAW_STRATEGY_DCT8 => RAW_ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => RAW_ENTROPY_MUL_DCT4X8,
+        RAW_STRATEGY_DCT4X4 => RAW_ENTROPY_MUL_DCT4X4,
+        RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => RAW_ENTROPY_MUL_DCT16X8,
+        RAW_STRATEGY_DCT16X16 => RAW_ENTROPY_MUL_DCT16X16,
+        RAW_STRATEGY_DCT32X32 => RAW_ENTROPY_MUL_DCT32X32,
+        _ => RAW_ENTROPY_MUL_DCT8,
+    };
+    // Normalize by DCT8's value (libjxl enc_ac_strategy.cc:584)
+    raw / RAW_ENTROPY_MUL_DCT8
 }
 
 /// Estimate the coded entropy of a block under a given transform strategy.
@@ -563,13 +574,15 @@ fn estimate_entropy_full(
             // Apply channel multiplier
             channel_loss *= CHANNEL_MUL[c];
 
-            // X channel penalty for large transforms
+            total_pixel_loss += channel_loss;
+
+            // X channel penalty for large transforms - applied to TOTAL loss accumulator
+            // (not per-channel). This matches libjxl enc_ac_strategy.cc:500-501
+            // IMPORTANT: Apply AFTER adding channel_loss, so it multiplies entire accumulator
             if c == 0 && num_blocks >= 2 {
                 let w = 1.0 + (num_blocks as f64 / 8.0).min(3.0);
-                channel_loss *= w;
+                total_pixel_loss *= w;
             }
-
-            total_pixel_loss += channel_loss;
         }
     }
 
@@ -587,8 +600,7 @@ fn estimate_entropy_full(
         // Coefficient-domain loss (libjxl-tiny style)
         // In this mode, entropy_mul is 1.0 and caller applies multipliers externally
         let infoloss2 = (num_blocks as f32 * info_loss2_sum).sqrt();
-        let info_loss_score =
-            k_info_loss_mul * info_loss_sum + K_INFO_LOSS_MULTIPLIER2 * infoloss2;
+        let info_loss_score = k_info_loss_mul * info_loss_sum + K_INFO_LOSS_MULTIPLIER2 * infoloss2;
         entropy += mask_val * info_loss_score;
     }
 
@@ -1584,17 +1596,33 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            ENTROPY_MUL_DCT8, // Use fixed entropy_mul for pixel-domain
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT8), // Normalized entropy_mul for DCT8 = 1.0
         );
 
         eprintln!("Coefficient-domain entropy: {}", ent_coeff);
         eprintln!("Pixel-domain entropy: {}", ent_pixel);
 
         // Both should be finite and non-negative
-        assert!(ent_coeff.is_finite(), "coeff entropy should be finite: {}", ent_coeff);
-        assert!(ent_coeff >= 0.0, "coeff entropy should be non-negative: {}", ent_coeff);
-        assert!(ent_pixel.is_finite(), "pixel entropy should be finite: {}", ent_pixel);
-        assert!(ent_pixel >= 0.0, "pixel entropy should be non-negative: {}", ent_pixel);
+        assert!(
+            ent_coeff.is_finite(),
+            "coeff entropy should be finite: {}",
+            ent_coeff
+        );
+        assert!(
+            ent_coeff >= 0.0,
+            "coeff entropy should be non-negative: {}",
+            ent_coeff
+        );
+        assert!(
+            ent_pixel.is_finite(),
+            "pixel entropy should be finite: {}",
+            ent_pixel
+        );
+        assert!(
+            ent_pixel >= 0.0,
+            "pixel entropy should be non-negative: {}",
+            ent_pixel
+        );
 
         // They should be different (pixel-domain uses different constants and loss calculation)
         // The difference magnitude depends on the specific test data
@@ -1634,7 +1662,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            ENTROPY_MUL_DCT8,
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT8),
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
         assert!(ent_dct8.is_finite() && ent_dct8 >= 0.0);
@@ -1654,7 +1682,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            ENTROPY_MUL_DCT16X8,
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
         assert!(ent_dct16x8.is_finite() && ent_dct16x8 >= 0.0);
@@ -1674,7 +1702,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            ENTROPY_MUL_DCT16X8,
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
         assert!(ent_dct8x16.is_finite() && ent_dct8x16 >= 0.0);
@@ -1694,7 +1722,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            ENTROPY_MUL_DCT16X16,
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16),
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);
         assert!(ent_dct16x16.is_finite() && ent_dct16x16 >= 0.0);
