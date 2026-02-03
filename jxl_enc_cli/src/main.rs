@@ -81,6 +81,11 @@ struct Args {
     #[arg(long)]
     dct8_only: bool,
 
+    /// Force a specific AC strategy (0=DCT8, 1=DCT16x8, 2=DCT8x16, 3=DCT16x16,
+    /// 4=DCT32x32, 5=DCT4x8, 6=DCT8x4, 7=DCT4x4)
+    #[arg(long)]
+    force_strategy: Option<u8>,
+
     /// Enable error diffusion in AC quantization
     #[arg(long)]
     error_diffusion: bool,
@@ -164,6 +169,9 @@ fn main() {
                 }
                 if args.dct8_only {
                     tiny.force_strategy = Some(0); // RAW_STRATEGY_DCT8 = 0
+                }
+                if let Some(s) = args.force_strategy {
+                    tiny.force_strategy = Some(s);
                 }
                 if args.error_diffusion {
                     tiny.error_diffusion = true;
