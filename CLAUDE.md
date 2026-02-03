@@ -128,7 +128,6 @@ or the overall encoding pipeline. Investigation needed.
 - Accept gap or implement missing features (splines, patches, full 27 strategies)
 
 **Minor TODOs**:
-- `quant.rs`: DCT4X8/DCT8X4 use DCT8 weights as placeholder (proper parametric weights TODO)
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
 **Unpushed**: 24 commits ahead of origin/main
