@@ -57,36 +57,44 @@ RD curves are competitive with cjxl when comparing at equal file sizes.
 cjxl at the same value due to different quantization constants. This is expected
 since we use libjxl-tiny's constants, not full libjxl's.
 
-### Algorithmic Differences vs Full libjxl
+### Full libjxl Algorithm Features (IMPLEMENTED)
 
-To achieve algorithm parity with full libjxl, we need to implement:
+All five major algorithmic components for matching full libjxl's cost model are now
+implemented. Enable with `--pixel-domain-loss` flag.
 
-1. **Per-pixel (1x1) masking field** (not yet implemented)
+1. **Per-pixel (1x1) masking field** ✅
+   - `compute_mask1x1()` in `tiny/adaptive_quant.rs`
    - Laplacian of Y intensity: `diff = |gamma(Y) * (Y - avg_neighbors)|`
    - `mask1x1 = 1.0 / (log1p(diff) + 0.01)`
-   - Location: `enc_adaptive_quantization.cc:500-521`
 
-2. **Inverse DCT transforms** (not yet implemented)
-   - Need inverse for all strategies (DCT8, DCT16x8, DCT8x16, DCT16x16, etc.)
-   - Used to transform quantization error back to pixel domain
+2. **Inverse DCT transforms** ✅
+   - `idct_8x8`, `idct_16x16`, `idct_16x8`, `idct_8x16` in `tiny/dct.rs`
+   - Standard DCT-III formula
 
-3. **Pixel-domain loss in EstimateEntropy** (not yet implemented)
-   - Inverse-transform the coefficient-domain quantization error
-   - Apply per-pixel 1x1 masking with channel offsets [12.0, 0.0, 4.0]
-   - Compute 8th power norm: `loss = sum((mask * error)^8)`
-   - Channel multipliers: [8.2^8, 1.0, 1.03^8]
-   - Final: `loss_scalar = (sum/n)^(1/8) * n / quant_norm16`
-   - Location: `enc_ac_strategy.cc:446-509`
+3. **Pixel-domain loss in EstimateEntropy** ✅
+   - `estimate_entropy_full()` in `tiny/ac_strategy.rs`
+   - IDCT of quantization error → per-pixel masking → 8th power norm
+   - Channel offsets [12.0, 0.0, 4.0], multipliers [8.2^8, 1.0, 1.03^8]
 
-4. **X channel penalty for large transforms** (trivial to add)
+4. **X channel penalty for large transforms** ✅
+   - Applied in `estimate_entropy_full()` when mask1x1 is provided
    - `if c == 0 && num_blocks >= 2: entropy *= 1.0 + min(3.0, num_blocks/8.0)`
-   - Location: `enc_ac_strategy.cc:497-500`
 
-5. **Update constants** (requires items 1-3 first)
-   - `info_loss_multiplier`: 138.0 → 1.2
-   - `cost_delta`: 5.335 → 10.833
-   - `zeros_mul`: 7.565 → 9.309
-   - These are tuned for pixel-domain loss; changing without implementation makes things worse
+5. **Distance-scaled constants and fixed entropy_mul** ✅
+   - Constants scaled by `ratio = (distance + 0.137) / 1.137`:
+     - `info_loss_mul = 1.2 * ratio^0.337`
+     - `zeros_mul = 9.309 * ratio^0.510`
+     - `cost_delta = 10.833 * ratio^0.367`
+   - Fixed entropy_mul per transform (0.8 for DCT8, 1.21 for DCT16x8, 1.34 for DCT16x16)
+   - Entropy_mul applies ONLY to entropy, BEFORE adding loss
+
+**Current behavior**: Pixel-domain mode produces 5-6% larger files than coefficient-domain
+mode at the same distance. This confirms strategy selection is affected, but quality
+comparison (via butteraugli/SSIMULACRA2) is needed to determine if it's a net improvement.
+
+**Known issue**: Our encoder produces lower PSNR (~37) than cjxl (~40) at similar file
+sizes. This is separate from the AC strategy cost model - likely in quantization weights
+or the overall encoding pipeline. Investigation needed.
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
