@@ -88,9 +88,11 @@ implemented. Enable with `--pixel-domain-loss` flag.
    - Fixed entropy_mul per transform (0.8 for DCT8, 1.21 for DCT16x8, 1.34 for DCT16x16)
    - Entropy_mul applies ONLY to entropy, BEFORE adding loss
 
-**Current behavior**: Pixel-domain mode produces 5-6% larger files than coefficient-domain
-mode at the same distance. This confirms strategy selection is affected, but quality
-comparison (via butteraugli/SSIMULACRA2) is needed to determine if it's a net improvement.
+**Current behavior**: After Feb 2, 2026 fixes (entropy_mul normalization, X channel penalty
+timing), pixel-domain mode now selects varied strategies. File size comparison (CLIC 2025):
+- DCT8-only: 740,996 bytes, Coefficient-domain: 728,745 bytes, Pixel-domain: 745,295 bytes
+- Pixel-domain is +0.6% larger than DCT8-only, while coefficient-domain is -1.7% smaller
+- This suggests the pixel-domain loss calculation may still be overweighted
 
 **Known issue**: Our encoder produces lower PSNR (~37) than cjxl (~40) at similar file
 sizes. This is separate from the AC strategy cost model - likely in quantization weights
@@ -1240,29 +1242,34 @@ When ANS is implemented, enhanced clustering SHOULD help because:
 
 **Test:** `cargo test -p jxl_enc --test clic2025 test_enhanced_clustering_compression -- --ignored`
 
-### Pixel-Domain Loss Bug (Identified Feb 2, 2026)
+### Pixel-Domain Loss Partial Fix (Feb 2, 2026)
 
-**Status**: BROKEN - do not use `--pixel-domain-loss` flag
+**Status**: Partially working - strategy selection now occurs, but cost model needs tuning
 
-**Symptom**: Pixel-domain loss mode produces identical output to `--dct8-only` mode.
-All transform selection is disabled - DCT8 is selected for every block.
+**Previous symptom**: Pixel-domain loss mode produced identical output to `--dct8-only` mode.
 
-**Root Cause**: The pixel-domain loss computation produces values that don't properly
-compensate for the entropy_mul penalty of larger transforms:
-- DCT16x8 total cost is 3.24x DCT8's cost (should be ~2x for 2 blocks)
-- This makes DCT8 always win the comparison: 2×DCT8 (11726) < DCT16x8 (18991)
+**Fixes applied** (commit 0ca040e):
+1. **Normalized entropy_mul by DCT8's base value (0.8)** - libjxl divides all entropy_mul
+   values by DCT8's value, so DCT8 gets entropy_mul=1.0, not 0.8. This was giving DCT8
+   a 20% unfair advantage. Now: DCT8=1.0, DCT16X8=1.5125, DCT16X16=1.675.
 
-**Technical details**:
-- entropy_mul values are correct (DCT8: 0.8, DCT16x8: 1.21, matching libjxl)
-- The bug is in how `estimate_entropy_full` computes the loss term
-- The loss should be LOWER for larger transforms (better energy compaction)
-- But our computation produces HIGHER loss for larger transforms
+2. **Fixed X channel penalty timing** - The penalty `w = 1 + min(3, num_blocks/8)` must
+   be applied to the TOTAL accumulated loss, not the per-channel loss. This matches
+   libjxl enc_ac_strategy.cc:500-501.
 
-**Workaround**: Use default coefficient-domain mode (don't pass `--pixel-domain-loss`)
+**Current behavior**: Pixel-domain mode now selects varied strategies (different file
+size than DCT8-only), but produces slightly larger files than coefficient-domain:
+- DCT8-only:          740,996 bytes (baseline)
+- Coefficient-domain:  728,745 bytes (-1.7%)
+- Pixel-domain:        745,295 bytes (+0.6%)
 
-**Investigation needed**:
-1. Add debug logging to see entropy vs loss breakdown
-2. Compare against libjxl's `EstimateEntropy` output
-3. Verify IDCT functions produce correct pixel-domain errors
-4. Check mask1x1 computation and quant_norm16 normalization
+**Remaining issues**:
+- Pixel-domain produces LARGER files than coefficient-domain
+- This suggests the loss calculation may still have calibration issues
+- The loss term may be overweighted, causing too-aggressive strategy selection
+
+**Next steps for further improvement**:
+1. Add debug logging to compare entropy vs loss breakdown against libjxl
+2. Verify IDCT output layout matches libjxl's TransformToPixels
+3. Check if quant_norm16 computation differs from libjxl's behavior
 
