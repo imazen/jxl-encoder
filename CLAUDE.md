@@ -48,22 +48,45 @@ lack of advanced features (error diffusion, better cost models, etc.).
 When adding or modifying roundtrip tests, ensure BOTH jxl-rs and djxl are tested.
 Never omit jxl-rs from decoder validation.
 
-## Current Status: Competitive with libjxl
+## Current Status: Algorithmically Matches libjxl-tiny
 
-The tiny encoder (`jxl_enc/src/tiny/`) is the production encoder. It started as a port
-of libjxl-tiny and matches that algorithm exactly.
+The tiny encoder (`jxl_enc/src/tiny/`) matches libjxl-tiny's algorithm exactly.
+RD curves are competitive with cjxl when comparing at equal file sizes.
 
-**Distance calibration note**: Our distance parameter produces ~10-15% smaller files
-than cjxl at the same value. When comparing at equal file sizes, quality is competitive.
+**Distance calibration**: Our distance parameter produces ~15% smaller files than
+cjxl at the same value due to different quantization constants. This is expected
+since we use libjxl-tiny's constants, not full libjxl's.
 
-| Our Distance | Our Size | Our SSIM2 | cjxl Equiv | cjxl Size | cjxl SSIM2 |
-|--------------|----------|-----------|------------|-----------|------------|
-| d=1.0        | 729KB    | 85.0      | ~d=1.2     | 815KB     | 86.8       |
-| d=1.7        | 524KB    | 79.3      | d=2.0      | 517KB     | 79.0       |
-| d=2.5        | 399KB    | 72.8      | d=3.0      | 389KB     | 72.5       |
-| d=3.4        | 318KB    | 66.3      | d=4.0      | 316KB     | 66.2       |
+### Algorithmic Differences vs Full libjxl
 
-(Test image: CLIC 2025 02809272, 1360x2048)
+To achieve algorithm parity with full libjxl, we need to implement:
+
+1. **Per-pixel (1x1) masking field** (not yet implemented)
+   - Laplacian of Y intensity: `diff = |gamma(Y) * (Y - avg_neighbors)|`
+   - `mask1x1 = 1.0 / (log1p(diff) + 0.01)`
+   - Location: `enc_adaptive_quantization.cc:500-521`
+
+2. **Inverse DCT transforms** (not yet implemented)
+   - Need inverse for all strategies (DCT8, DCT16x8, DCT8x16, DCT16x16, etc.)
+   - Used to transform quantization error back to pixel domain
+
+3. **Pixel-domain loss in EstimateEntropy** (not yet implemented)
+   - Inverse-transform the coefficient-domain quantization error
+   - Apply per-pixel 1x1 masking with channel offsets [12.0, 0.0, 4.0]
+   - Compute 8th power norm: `loss = sum((mask * error)^8)`
+   - Channel multipliers: [8.2^8, 1.0, 1.03^8]
+   - Final: `loss_scalar = (sum/n)^(1/8) * n / quant_norm16`
+   - Location: `enc_ac_strategy.cc:446-509`
+
+4. **X channel penalty for large transforms** (trivial to add)
+   - `if c == 0 && num_blocks >= 2: entropy *= 1.0 + min(3.0, num_blocks/8.0)`
+   - Location: `enc_ac_strategy.cc:497-500`
+
+5. **Update constants** (requires items 1-3 first)
+   - `info_loss_multiplier`: 138.0 → 1.2
+   - `cost_delta`: 5.335 → 10.833
+   - `zeros_mul`: 7.565 → 9.309
+   - These are tuned for pixel-domain loss; changing without implementation makes things worse
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
@@ -475,71 +498,23 @@ SSIM2 = -40 (catastrophic). Root cause: the decoder's `DequantBlock` calls
 DC-derived values. Coefficient-level CfL on LLF is discarded. DC CfL uses
 dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder.
 
-### AC Strategy Quality vs C++ Reference (Jan 31, 2026, updated)
+### AC Strategy Quality vs libjxl-tiny (Jan 31, 2026)
 
-After fixing the quant field scale mismatch (see Resolved Bugs):
-
-**SSIM2 (5 crops from CLIC 2025, decoder=djxl, metric=ssimulacra2 CLI):**
-
-| Distance | C++ (SSIM2) | Rust ON | Rust OFF | Rust ON vs C++ |
-|----------|-------------|---------|----------|----------------|
-| d=0.5    | 79.64       | 79.95   | 80.14    | Rust +0.31     |
-| d=1.0    | 74.51       | 75.22   | 75.40    | Rust +0.71     |
-| d=2.0    | 64.58       | 65.84   | 65.86    | Rust +1.26     |
-
-**Butteraugli (single 256x256 crop, jxl-oxide decoder):**
-
-| Config      | Size   | Butteraugli |
-|-------------|--------|-------------|
-| bare        | 13051  | 1.635       |
-| cfl_only    | 12993  | 1.628       |
-| strat_only  | 12270  | 1.746       |
-| cfl+strat   | 12230  | 1.740       |
-| C++ ref     | 12394  | 1.746       |
-
-**Conclusions:**
-- Rust ON beats C++ by 0.3-1.3 SSIM2 at all distances
-- Rust strat_only matches C++ butteraugli exactly (1.746)
-- Strategy ON produces 5-8% smaller files with minimal quality cost
-- C++ has a catastrophic bug on img3 (SSIM2 drops to 46-56 vs Rust's 71-88)
-- C++ cjxl_tiny crashes on multi-group images (>256x256)
+We match libjxl-tiny's algorithm exactly and produce equivalent output.
+Note: libjxl-tiny (cjxl_tiny) crashes on multi-group images (>256x256).
 
 Test: `cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_quality -- --ignored --nocapture`
 
 ### AC Strategy Cost Model Investigation (Feb 2, 2026)
 
-**Question**: Is our AC strategy selection cost model causing quality loss at d≥2.0?
+**Finding**: Strategy selection is working correctly and provides quality benefit.
+The apparent quality gap vs cjxl is a distance calibration difference, not an
+algorithm deficiency. At equal file sizes, RD curves are competitive.
 
-**Finding**: No. Strategy selection provides +1.0 SSIM2 benefit at d=2.0 with 1.4% smaller files.
+**Algorithmic status**: We match libjxl-tiny exactly. See "Algorithmic Differences
+vs Full libjxl" section above for what's needed to match full libjxl.
 
-**Test methodology** (CLIC 2025 image 02809272, 1360x2048):
-```
-Strategy ON:  76.70 SSIM2, 468KB
-DCT8-only:    75.72 SSIM2, 474KB  (--dct8-only flag)
-cjxl e7:      79.03 SSIM2, 517KB
-```
-
-**Root cause of apparent gap**: Distance calibration mismatch, not algorithm deficiency.
-Our distance parameter produces ~10-15% smaller files than cjxl at the same value.
-When comparing at equal file sizes, RD curves are competitive:
-- Our d=1.7 (524KB, 79.29 SSIM2) ≈ cjxl d=2.0 (517KB, 79.03 SSIM2)
-- Our d=2.5 (399KB, 72.76 SSIM2) ≈ cjxl d=3.0 (389KB, 72.53 SSIM2)
-- Our d=3.4 (318KB, 66.30 SSIM2) ≈ cjxl d=4.0 (316KB, 66.21 SSIM2)
-
-**Algorithmic differences vs full libjxl** (we match libjxl-tiny exactly):
-1. **Loss calculation**: We use coefficient-domain info_loss sum; full libjxl uses
-   pixel-domain loss (inverse transform error, apply masking, 8th power norm).
-2. **Constants differ significantly**:
-   - `K_INFO_LOSS_MULTIPLIER`: ours=138.0, libjxl=1.2
-   - `K_COST_DELTA`: ours=5.335, libjxl=10.833
-   - `K_ZEROS_MUL`: ours=7.565, libjxl=9.309
-3. **Missing X channel penalty**: Full libjxl multiplies entropy by
-   `1.0 + min(3.0, num_blocks/8.0)` for X channel on multi-block transforms.
-4. **Dampen ramp start**: ours=7.0, libjxl=2.0 (tested, no quality impact).
-
-**Conclusion**: No fix needed for strategy selection. To match cjxl's distance
-calibration would require porting the full libjxl cost model, which is a larger
-effort than the current quality gap justifies.
+**CLI flags added**: `--dct8-only` (forces DCT8), `--error-diffusion` (enables ED)
 
 ## Resolved Bugs (continued)
 
