@@ -1239,3 +1239,30 @@ When ANS is implemented, enhanced clustering SHOULD help because:
 - The pair merge refinement cost model (`EntropyType::Ans`) is designed for this
 
 **Test:** `cargo test -p jxl_enc --test clic2025 test_enhanced_clustering_compression -- --ignored`
+
+### Pixel-Domain Loss Bug (Identified Feb 2, 2026)
+
+**Status**: BROKEN - do not use `--pixel-domain-loss` flag
+
+**Symptom**: Pixel-domain loss mode produces identical output to `--dct8-only` mode.
+All transform selection is disabled - DCT8 is selected for every block.
+
+**Root Cause**: The pixel-domain loss computation produces values that don't properly
+compensate for the entropy_mul penalty of larger transforms:
+- DCT16x8 total cost is 3.24x DCT8's cost (should be ~2x for 2 blocks)
+- This makes DCT8 always win the comparison: 2×DCT8 (11726) < DCT16x8 (18991)
+
+**Technical details**:
+- entropy_mul values are correct (DCT8: 0.8, DCT16x8: 1.21, matching libjxl)
+- The bug is in how `estimate_entropy_full` computes the loss term
+- The loss should be LOWER for larger transforms (better energy compaction)
+- But our computation produces HIGHER loss for larger transforms
+
+**Workaround**: Use default coefficient-domain mode (don't pass `--pixel-domain-loss`)
+
+**Investigation needed**:
+1. Add debug logging to see entropy vs loss breakdown
+2. Compare against libjxl's `EstimateEntropy` output
+3. Verify IDCT functions produce correct pixel-domain errors
+4. Check mask1x1 computation and quant_norm16 normalization
+
