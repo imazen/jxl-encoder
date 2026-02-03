@@ -155,11 +155,13 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - Missing (large transforms): DCT32x16, DCT16x32, DCT64x32, DCT32x64, DCT64x64, etc.
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
-**B. Quantization Calibration**
-- Our files are ~26-29% smaller at the same distance (more aggressive quantization)
-- Uses `K_AC_QUANT = 0.8294`, full libjxl uses 0.765 (8% difference)
+**B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
+- Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
+- `K_AC_QUANT` (0.8294 vs libjxl's 0.765) is a pure scaling factor — changes distance-to-size
+  mapping but NOT RD efficiency. Tested: at equal file sizes (~470KB), 0.700/d=0.85 and
+  0.8294/d=1.0 give identical SSIM2 (75.28 vs 75.34). The file size gap comes from
+  AdjustQuantBlockAC, iterative rate control, and more AC strategies, not K_AC_QUANT.
 - Content-adaptive global_scale is implemented (median-MAD of quant field)
-- Impact: calibration only affects file-size-to-quality tradeoff, not RD efficiency
 
 **C. Cost Model**
 - Missing: AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
@@ -178,7 +180,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 
 **Priority path:**
 1. IDENTITY + DCT2x2 strategies (medium effort, significant quality win)
-2. Match K_AC_QUANT to 0.765 and content-adaptive global_scale (calibration)
+2. AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
 3. LZ77 backward references (medium effort, 1-3% file savings)
 4. AFV corner DCT (high effort, 0.5-1%)
 5. Consider truncation quantization approach (matches C++ behavior)
