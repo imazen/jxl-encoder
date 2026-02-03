@@ -109,6 +109,30 @@ due to loss calculation constant calibration differences with full libjxl.
 sizes. This is separate from the AC strategy cost model - likely in quantization weights
 or the overall encoding pipeline. Investigation needed.
 
+### Outstanding Work (Feb 3, 2026)
+
+**Pixel-domain loss parity** (+1.2% gap vs coefficient-domain):
+- Next step: Instrumented side-by-side comparison with libjxl
+- Add debug output to both codebases at matching checkpoints
+- Find first divergence point in loss calculation constants
+- See CONTEXT-HANDOFF.md for instrumentation details
+
+**DCT32x32 disabled** (DC extraction bug):
+- `dc_from_dct_32x32()` produces wrong values for multi-block images
+- Workaround: Strategy selection never picks DCT32x32
+- Fix: Need different DC extraction approach (not simple 4-point IDCT)
+
+**Quality gap at d≥2.0** (~3-5 SSIM2 vs cjxl e7):
+- Investigated and ruled out as fixable by constant tuning
+- libjxl-tiny constants are tuned together for simplified pipeline
+- Accept gap or implement missing features (splines, patches, full 27 strategies)
+
+**Minor TODOs**:
+- `quant.rs`: DCT4X8/DCT8X4 use DCT8 weights as placeholder (proper parametric weights TODO)
+- `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
+
+**Unpushed**: 24 commits ahead of origin/main
+
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
