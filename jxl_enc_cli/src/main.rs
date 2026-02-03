@@ -90,9 +90,10 @@ struct Args {
     #[arg(long)]
     error_diffusion: bool,
 
-    /// Enable pixel-domain loss in AC strategy selection (full libjxl cost model)
+    /// Disable pixel-domain loss in AC strategy selection.
+    /// Pixel-domain loss (full libjxl cost model) is on by default.
     #[arg(long)]
-    pixel_domain_loss: bool,
+    no_pixel_domain_loss: bool,
 
     /// Be quiet (minimal output)
     #[arg(long)]
@@ -176,8 +177,8 @@ fn main() {
                 if args.error_diffusion {
                     tiny.error_diffusion = true;
                 }
-                if args.pixel_domain_loss {
-                    tiny.pixel_domain_loss = true;
+                if args.no_pixel_domain_loss {
+                    tiny.pixel_domain_loss = false;
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder

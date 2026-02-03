@@ -207,7 +207,7 @@ impl Default for TinyEncoder {
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false,
-            pixel_domain_loss: false, // Off by default; opt-in for full libjxl cost model
+            pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
         }
     }
 }
@@ -228,7 +228,7 @@ impl TinyEncoder {
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false,
-            pixel_domain_loss: false,
+            pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
         }
     }
 
@@ -2868,9 +2868,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // DCT32x32 only enabled at d>=3.0; this test uses d=1.0
-        // Hash updated: content-adaptive global_scale from quant field median/MAD
-        const EXPECTED_HASH: u64 = 0x46f3ed33dd5b947a;
+        // Hash updated: pixel-domain loss enabled by default
+        const EXPECTED_HASH: u64 = 0xc5708424bed8441c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2900,8 +2899,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: content-adaptive global_scale from quant field median/MAD
-        const EXPECTED_HASH: u64 = 0x4118f1efe8fedc9a;
+        // Hash updated: pixel-domain loss enabled by default
+        const EXPECTED_HASH: u64 = 0x3309fded97ebb612;
         assert_eq!(
             hash,
             EXPECTED_HASH,
