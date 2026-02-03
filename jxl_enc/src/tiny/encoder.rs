@@ -669,6 +669,13 @@ impl TinyEncoder {
                 let g = linear_rgb[src_idx * 3 + 1];
                 let b = linear_rgb[src_idx * 3 + 2];
                 let (xv, yv, bv) = linear_rgb_to_xyb(r, g, b);
+                #[cfg(feature = "debug-dc")]
+                if x == 0 && y == 0 {
+                    eprintln!(
+                        "XYB[0,0]: linear_rgb=({:.6},{:.6},{:.6}) -> XYB=({:.6},{:.6},{:.6})",
+                        r, g, b, xv, yv, bv
+                    );
+                }
                 xyb_x[dst_idx] = xv;
                 xyb_y[dst_idx] = yv;
                 xyb_b[dst_idx] = bv;
@@ -1007,7 +1014,10 @@ impl TinyEncoder {
             }
             #[cfg(feature = "debug-tokens")]
             if _raw_strategy == 4 && channel == 1 && bx == 0 && by == 0 {
-                eprintln!("[DCT32x32 quantize debug] Y at (0,0): {} nonzero AC coeffs stored (qac={:.4})", debug_nonzero_count, qac);
+                eprintln!(
+                    "[DCT32x32 quantize debug] Y at (0,0): {} nonzero AC coeffs stored (qac={:.4})",
+                    debug_nonzero_count, qac
+                );
                 // Show first few AC coefficients and their quantized values
                 let mut shown = 0;
                 for idx in 16..size {
@@ -1020,7 +1030,10 @@ impl TinyEncoder {
                         let w = weights[idx];
                         let inv_w = 1.0 / w;
                         let val = inv_w * qac * qm_multiplier * coef;
-                        eprintln!("  [{}] coef={:.6}, weight={:.6}, inv_w={:.4}, val={:.4}", idx, coef, w, inv_w, val);
+                        eprintln!(
+                            "  [{}] coef={:.6}, weight={:.6}, inv_w={:.4}, val={:.4}",
+                            idx, coef, w, inv_w, val
+                        );
                         shown += 1;
                     }
                 }
@@ -1229,6 +1242,14 @@ impl TinyEncoder {
                     let inv_factor = INV_DC_QUANT[1] * params.scale_dc;
                     match raw_strategy {
                         0 => {
+                            #[cfg(feature = "debug-dc")]
+                            eprintln!(
+                                "DCT8 Y DC: dct[0]={:.6}, inv_factor={:.4}, scale_dc={:.6}, quant_dc={}",
+                                dct_coeffs[1][0],
+                                inv_factor,
+                                params.scale_dc,
+                                (dct_coeffs[1][0] * inv_factor).round() as i16
+                            );
                             quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT16X8 => {
@@ -1656,7 +1677,7 @@ impl TinyEncoder {
         // xyb_encoded = 1 (required for VarDCT)
         writer.write(1, 1)?;
 
-        // Color encoding - sRGB primaries/white, Linear transfer
+        // Color encoding - sRGB primaries/white, sRGB transfer function
         writer.write(1, 0)?; // not all default
         writer.write(1, 0)?; // no ICC profile
         writer.write(2, 0)?; // color_space = RGB (0)
@@ -1664,9 +1685,9 @@ impl TinyEncoder {
         writer.write(2, 1)?; // primaries = sRGB (1)
         writer.write(1, 0)?; // no gamma (use transfer function)
         // TransferFunction: U32(0, 1, 2+Read(4), 18+Read(6))
-        // For Linear (value 8): selector=2, extra=6 (8 = 2 + 6)
+        // For Srgb (value 13): selector=2, extra=11 (13 = 2 + 11)
         writer.write(2, 2)?; // selector 2
-        writer.write(4, 6)?; // value 6 -> transfer_function = 2+6 = 8 = Linear
+        writer.write(4, 11)?; // value 11 -> transfer_function = 2+11 = 13 = Srgb
         writer.write(2, 1)?; // rendering_intent = relative (1)
 
         // Extensions
@@ -2110,7 +2131,10 @@ impl TinyEncoder {
                         if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
                             // Debug: count nonzeros in full_block for DCT32x32
                             let nz_count = full_block.iter().filter(|&&v| v != 0).count();
-                            eprintln!("[DCT32x32 debug] full_block for Y at (0,0): {} nonzeros out of {}", nz_count, size);
+                            eprintln!(
+                                "[DCT32x32 debug] full_block for Y at (0,0): {} nonzeros out of {}",
+                                nz_count, size
+                            );
                             if nz_count > 0 && nz_count <= 20 {
                                 for (i, &v) in full_block.iter().enumerate() {
                                     if v != 0 {
@@ -2338,7 +2362,10 @@ impl TinyEncoder {
                             if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
                                 // Debug: count nonzeros in full_block for DCT32x32
                                 let nz_count = full_block.iter().filter(|&&v| v != 0).count();
-                                eprintln!("[DCT32x32 two-pass debug] full_block for Y at (0,0): {} nonzeros out of {}", nz_count, size);
+                                eprintln!(
+                                    "[DCT32x32 two-pass debug] full_block for Y at (0,0): {} nonzeros out of {}",
+                                    nz_count, size
+                                );
                                 if nz_count > 0 && nz_count <= 20 {
                                     for (i, &v) in full_block.iter().enumerate() {
                                         if v != 0 {
@@ -2775,8 +2802,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: gaborish inverse enabled by default
-        const EXPECTED_HASH: u64 = 0x53a52433cdc811d4;
+        // Updated: fixed transfer function from Linear to Srgb
+        const EXPECTED_HASH: u64 = 0x5d2dcdcf901758c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2799,8 +2826,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: gaborish inverse enabled by default
-        const EXPECTED_HASH: u64 = 0xea5d762e171b78dc;
+        // Updated: fixed transfer function from Linear to Srgb
+        const EXPECTED_HASH: u64 = 0x5b873cf5cbba1fb7;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2836,9 +2863,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // DCT32x32 only enabled at d>=3.0; this test uses d=1.0
-        // Hash updated after fixing rectangular transform (DCT16x8/DCT8x16) coefficient
-        // storage mapping: coef_slot -> phys_block mapping was wrong when covered_y > covered_x
-        const EXPECTED_HASH: u64 = 0x26e0e5386f7985e4;
+        // Hash updated after fixing transfer function from Linear to Srgb
+        const EXPECTED_HASH: u64 = 0xbce913b04532725b;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2868,8 +2894,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: gaborish inverse enabled by default
-        const EXPECTED_HASH: u64 = 0x5ed333833314fda9;
+        // Updated: fixed transfer function from Linear to Srgb
+        const EXPECTED_HASH: u64 = 0x71614402b13f249e;
         assert_eq!(
             hash,
             EXPECTED_HASH,
