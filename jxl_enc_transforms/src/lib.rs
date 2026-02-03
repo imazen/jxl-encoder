@@ -21,9 +21,9 @@
 pub mod dct;
 
 // Forward DCT exports
+pub use dct::{dct_4x8, dct_8x4, dct_8x16, dct_16x8};
 pub use dct::{dct2, dct4, dct8, dct16, dct32};
-pub use dct::{dct_4x8, dct_8x4, dct_16x8, dct_8x16};
 
 // Inverse DCT exports
+pub use dct::{idct_4x8, idct_8x4, idct_8x16, idct_16x8};
 pub use dct::{idct4, idct8, idct16};
-pub use dct::{idct_4x8, idct_8x4, idct_16x8, idct_8x16};
