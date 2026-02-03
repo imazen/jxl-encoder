@@ -142,6 +142,40 @@ impl AcStrategyMap {
     pub fn count_first_blocks(&self) -> usize {
         self.data.iter().filter(|&&v| (v & 1) != 0).count()
     }
+
+    /// Return strategy histogram: [DCT8, DCT16x8, DCT8x16, DCT16x16, DCT32x32, DCT4x8, DCT8x4, DCT4x4]
+    /// Counts first blocks only (number of times each transform was selected).
+    #[cfg(feature = "debug-ac-strategy")]
+    pub fn strategy_histogram(&self) -> [usize; 8] {
+        let mut counts = [0usize; 8];
+        for &v in &self.data {
+            if (v & 1) != 0 {
+                // is_first block
+                let raw = v >> 1;
+                if (raw as usize) < 8 {
+                    counts[raw as usize] += 1;
+                }
+            }
+        }
+        counts
+    }
+
+    /// Print strategy histogram with names.
+    #[cfg(feature = "debug-ac-strategy")]
+    pub fn print_histogram(&self) {
+        const NAMES: [&str; 8] = [
+            "DCT8", "DCT16x8", "DCT8x16", "DCT16x16", "DCT32x32", "DCT4x8", "DCT8x4", "DCT4x4",
+        ];
+        let hist = self.strategy_histogram();
+        let total: usize = hist.iter().sum();
+        eprintln!("Strategy histogram (total {} transforms):", total);
+        for (i, &count) in hist.iter().enumerate() {
+            if count > 0 {
+                let pct = 100.0 * count as f64 / total as f64;
+                eprintln!("  {:8}: {:6} ({:5.1}%)", NAMES[i], count, pct);
+            }
+        }
+    }
 }
 
 // ─── Entropy estimation ─────────────────────────────────────────────────────
@@ -192,27 +226,32 @@ const RAW_ENTROPY_MUL_DCT16X8: f32 = 1.21;
 const RAW_ENTROPY_MUL_DCT16X16: f32 = 1.34;
 const RAW_ENTROPY_MUL_DCT32X32: f32 = 1.48;
 
-/// Get the NORMALIZED entropy multiplier for a raw strategy (full libjxl mode).
+/// Get the entropy multiplier for a raw strategy (full libjxl mode).
 ///
-/// libjxl normalizes entropy_mul by dividing by DCT8's value (0.8), so:
+/// CRITICAL: libjxl only normalizes 8x8 transforms in FindBest8x8Transform.
+/// Larger transforms use RAW values in TryMergeAcs.
+///
+/// 8x8 transforms (normalized by DCT8's 0.8):
 /// - DCT8: 0.8 / 0.8 = 1.0
 /// - DCT4X8: 0.859 / 0.8 = 1.074
 /// - DCT4X4: 1.08 / 0.8 = 1.35
-/// - DCT16X8: 1.21 / 0.8 = 1.5125
-/// - DCT16X16: 1.34 / 0.8 = 1.675
-/// - DCT32X32: 1.48 / 0.8 = 1.85
+///
+/// Larger transforms (RAW values, NOT normalized):
+/// - DCT16X8: 1.21
+/// - DCT16X16: 1.34
+/// - DCT32X32: 1.48
 fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
-    let raw = match raw_strategy {
-        RAW_STRATEGY_DCT8 => RAW_ENTROPY_MUL_DCT8,
-        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => RAW_ENTROPY_MUL_DCT4X8,
-        RAW_STRATEGY_DCT4X4 => RAW_ENTROPY_MUL_DCT4X4,
+    match raw_strategy {
+        // 8x8 transforms: normalize by DCT8's 0.8 (so DCT8 = 1.0)
+        RAW_STRATEGY_DCT8 => 1.0,
+        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => RAW_ENTROPY_MUL_DCT4X8 / RAW_ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_DCT4X4 => RAW_ENTROPY_MUL_DCT4X4 / RAW_ENTROPY_MUL_DCT8,
+        // Larger transforms: use RAW values (libjxl TryMergeAcs uses raw entropy_mul)
         RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => RAW_ENTROPY_MUL_DCT16X8,
         RAW_STRATEGY_DCT16X16 => RAW_ENTROPY_MUL_DCT16X16,
         RAW_STRATEGY_DCT32X32 => RAW_ENTROPY_MUL_DCT32X32,
-        _ => RAW_ENTROPY_MUL_DCT8,
-    };
-    // Normalize by DCT8's value (libjxl enc_ac_strategy.cc:584)
-    raw / RAW_ENTROPY_MUL_DCT8
+        _ => 1.0,
+    }
 }
 
 /// Estimate entropy using coefficient-domain loss (libjxl-tiny style).

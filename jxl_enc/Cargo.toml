@@ -21,6 +21,8 @@ trace-bitstream = []
 debug-tokens = []
 # Debug DC extraction for DCT16x16/32x32
 debug-dc = []
+# Print AC strategy selection histogram
+debug-ac-strategy = []
 # Safe mode prevents encoding images > 256x256 (multi-group VarDCT is broken)
 # Enabled by default to prevent garbage output. Disable with --no-default-features
 # to allow multi-group encoding for debugging/development.
