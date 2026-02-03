@@ -1331,6 +1331,102 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_dct1d_8_roundtrip_scaling() {
+        // Check 1D DCT8 → IDCT8 scaling for comparison
+        let orig = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let mut forward = orig;
+        dct1d_8(&mut forward);
+        let mut inverse = forward;
+        idct1d_8(&mut inverse);
+        let ratio = inverse[0] / orig[0];
+        eprintln!("1D DCT8 raw roundtrip scale factor: {:.6}", ratio);
+
+        let mut forward2 = orig;
+        dct1d_8(&mut forward2);
+        for v in forward2.iter_mut() {
+            *v *= 1.0 / 8.0;
+        }
+        let mut inverse2 = forward2;
+        idct1d_8(&mut inverse2);
+        let max_err = orig
+            .iter()
+            .zip(inverse2.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("1D DCT8 roundtrip (with 1/8 scale): max_err={:.6}", max_err);
+    }
+
+    #[test]
+    fn test_dct1d_16_roundtrip_scaling() {
+        // Check 1D DCT16 → IDCT16 scaling
+        let orig = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ];
+        let mut forward = orig;
+        dct1d_16(&mut forward);
+        // Apply 1/16 scaling (like dct_16x16 does)
+        for v in forward.iter_mut() {
+            *v *= 1.0 / 16.0;
+        }
+        let mut inverse = forward;
+        idct1d_16(&mut inverse);
+        let max_err = orig
+            .iter()
+            .zip(inverse.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!(
+            "1D DCT16 roundtrip (with 1/16 scale): max_err={:.6}",
+            max_err
+        );
+        eprintln!("  orig[0..4]: {:?}", &orig[..4]);
+        eprintln!("  back[0..4]: {:.6?}", &inverse[..4]);
+
+        // Also test without scaling
+        let mut forward2 = orig;
+        dct1d_16(&mut forward2);
+        let mut inverse2 = forward2;
+        idct1d_16(&mut inverse2);
+        let ratio = inverse2[0] / orig[0];
+        eprintln!(
+            "1D DCT16 roundtrip (raw, no scale): scale_factor={:.6}",
+            ratio
+        );
+        eprintln!("  orig[0..4]: {:?}", &orig[..4]);
+        eprintln!("  back[0..4]: {:.6?}", &inverse2[..4]);
+    }
+
+    #[test]
+    fn test_dct_16x16_roundtrip() {
+        // Test DCT16x16 → IDCT16x16 roundtrip with pseudo-random data
+        let mut input = [0.0f32; 256];
+        for i in 0..256 {
+            input[i] = ((i as f32 * 0.7 + 3.14).sin() * 100.0).round() / 100.0;
+        }
+        let mut dct_output = [0.0f32; 256];
+        dct_16x16(&input, &mut dct_output);
+        let mut roundtrip = [0.0f32; 256];
+        idct_16x16(&dct_output, &mut roundtrip);
+        let max_err = input
+            .iter()
+            .zip(roundtrip.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!("DCT16x16 roundtrip max error: {:.6}", max_err);
+        eprintln!("  input[0..4]: {:.4?}", &input[..4]);
+        eprintln!("  roundtrip[0..4]: {:.4?}", &roundtrip[..4]);
+        // Check ratio
+        if input[0].abs() > 0.01 {
+            eprintln!("  scale_factor[0]: {:.6}", roundtrip[0] / input[0]);
+        }
+        assert!(
+            max_err < 1e-4,
+            "DCT16x16 roundtrip max error: {} (should be < 1e-4)",
+            max_err
+        );
+    }
+
     // ─── DCT32 tests ──────────────────────────────────────────────────
 
     #[test]
