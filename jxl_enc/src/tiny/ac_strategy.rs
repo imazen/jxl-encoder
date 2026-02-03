@@ -293,6 +293,7 @@ fn estimate_entropy(
         ytob,
         None,
         0,
+        0.0,
     )
 }
 
@@ -303,6 +304,10 @@ fn estimate_entropy(
 /// - Fixed entropy multiplier per transform type
 ///
 /// When `mask1x1` is None, uses coefficient-domain loss (libjxl-tiny style).
+///
+/// `entropy_mul_adjust`: additive adjustment to entropy_mul. In libjxl,
+/// kFavor2X2AtHighQuality and kAvoidEntropyOfTransforms modify entropy_mul
+/// before passing to EstimateEntropy. Pass 0.0 for no adjustment.
 #[allow(clippy::too_many_arguments)]
 fn estimate_entropy_with_mask(
     raw_strategy: u8,
@@ -318,13 +323,17 @@ fn estimate_entropy_with_mask(
     ytob: i8,
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
+    entropy_mul_adjust: f32,
 ) -> f32 {
     // In pixel-domain mode, use fixed entropy_mul values per transform
     // In coefficient-domain mode, entropy_mul is applied outside by the caller (mul8x8 etc.)
     let entropy_mul = if mask1x1.is_some() {
-        entropy_mul_for_strategy(raw_strategy)
+        (entropy_mul_for_strategy(raw_strategy) + entropy_mul_adjust).max(0.01)
     } else {
-        1.0 // Caller handles multiplier in coefficient-domain mode
+        // Coefficient-domain: entropy_mul is 1.0, caller handles multiplier.
+        // Still apply adjustment for kFavor2X2/kAvoidEntropy since the
+        // returned estimate gets multiplied by the caller's multiplier.
+        (1.0 + entropy_mul_adjust).max(0.01)
     };
 
     estimate_entropy_full(
@@ -866,10 +875,34 @@ fn find_best_16x16_transform(
     // In pixel-domain mode, this is 0 since costs are already calibrated
     let base_cost_8x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
 
+    // Entropy_mul adjustments from libjxl enc_ac_strategy.cc:585-600.
+    // These are applied INSIDE EstimateEntropy to the entropy portion only,
+    // NOT as post-hoc cost multipliers (which would incorrectly scale loss too).
+
+    // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0
+    let favor_2x2_adjust = if distance < 5.0 {
+        let weight = ((5.0 - distance) / 5.0_f32).powi(2);
+        -0.4 * weight // negative = reduces entropy_mul = lower cost
+    } else {
+        0.0
+    };
+
+    // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0
+    let avoid_transforms_adjust = if distance > 4.0 {
+        let mul = if distance < 12.0 {
+            (12.0 - 4.0) / (distance - 4.0)
+        } else {
+            1.0
+        };
+        0.5 * mul // positive = increases entropy_mul = higher cost
+    } else {
+        0.0
+    };
+
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
 
-    // Evaluate four 8×8 blocks with DCT8, DCT4X8, and DCT8X4
+    // Evaluate four 8×8 blocks with DCT8, DCT4X8, DCT8X4, DCT4X4, IDENTITY, DCT2X2
     // Track entropy and best strategy for each block
     let mut entropy = [[0.0f32; 2]; 2];
     let mut best_single_strategy = [[RAW_STRATEGY_DCT8; 2]; 2];
@@ -884,168 +917,78 @@ fn find_best_16x16_transform(
             let block_x = abs_bx + dx;
             let block_y = abs_by + dy;
 
-            // DCT8
-            let e8 = estimate_entropy_with_mask(
-                RAW_STRATEGY_DCT8,
-                xyb,
-                stride,
-                block_x,
-                block_y,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-            );
+            // Helper: evaluate a single-block strategy with entropy_mul adjustment
+            let eval = |strategy: u8, adjust: f32| -> f32 {
+                estimate_entropy_with_mask(
+                    strategy,
+                    xyb,
+                    stride,
+                    block_x,
+                    block_y,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    adjust,
+                )
+            };
+
+            // DCT8 (no adjustment)
+            let e8 = eval(RAW_STRATEGY_DCT8, 0.0);
             let cost8 = base_cost_8x8 + mul8x8 * e8;
 
-            // DCT4X8 (two 4×8 transforms side by side)
-            let e4x8 = estimate_entropy_with_mask(
-                RAW_STRATEGY_DCT4X8,
-                xyb,
-                stride,
-                block_x,
-                block_y,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-            );
+            // DCT4X8 (kAvoidEntropy penalty at high distance)
+            let e4x8 = eval(RAW_STRATEGY_DCT4X8, avoid_transforms_adjust);
             let base_cost_4x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x8 };
             let cost4x8 = base_cost_4x8 + mul4x8 * e4x8;
 
-            // DCT8X4 (two 8×4 transforms stacked)
-            let e8x4 = estimate_entropy_with_mask(
-                RAW_STRATEGY_DCT8X4,
-                xyb,
-                stride,
-                block_x,
-                block_y,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-            );
+            // DCT8X4
+            let e8x4 = eval(RAW_STRATEGY_DCT8X4, avoid_transforms_adjust);
             let cost8x4 = base_cost_4x8 + mul4x8 * e8x4;
 
-            // DCT4X4 (four 4×4 transforms in 2×2 grid)
-            let e4x4 = estimate_entropy_with_mask(
-                RAW_STRATEGY_DCT4X4,
-                xyb,
-                stride,
-                block_x,
-                block_y,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-            );
+            // DCT4X4
+            let e4x4 = eval(RAW_STRATEGY_DCT4X4, avoid_transforms_adjust);
             let base_cost_4x4 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x4 };
             let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
 
-            // IDENTITY (pixel differences from reference pixel per 4x4 sub-block)
-            let e_identity = estimate_entropy_with_mask(
-                RAW_STRATEGY_IDENTITY,
-                xyb,
-                stride,
-                block_x,
-                block_y,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-            );
+            // IDENTITY (kFavor2X2 bonus at low distance)
+            let e_identity = eval(RAW_STRATEGY_IDENTITY, 0.0);
             let base_cost_identity = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
-            let mut cost_identity = base_cost_identity + mul8x8 * e_identity;
+            let cost_identity = base_cost_identity + mul8x8 * e_identity;
 
-            // DCT2X2 (hierarchical 2x2 DCT)
-            let e_dct2 = estimate_entropy_with_mask(
-                RAW_STRATEGY_DCT2X2,
-                xyb,
-                stride,
-                block_x,
-                block_y,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-            );
+            // DCT2X2
+            let e_dct2 = eval(RAW_STRATEGY_DCT2X2, 0.0);
             let base_cost_dct2 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
-            let mut cost_dct2 = base_cost_dct2 + mul8x8 * e_dct2;
-
-            // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0
-            // From libjxl enc_ac_strategy.cc:588-591
-            if distance < 5.0 {
-                let weight = ((5.0 - distance) / 5.0_f32).powi(2);
-                let favor = 0.4 * weight;
-                // In pixel-domain mode, entropy_mul is already applied internally.
-                // Apply the bonus as a fraction of the total cost.
-                cost_identity *= 1.0 - favor;
-                cost_dct2 *= 1.0 - favor;
-            }
-
-            // kAvoidEntropyOfTransforms: penalty for DCT4X8/DCT8X4/DCT4X4 at distance > 4.0
-            // From libjxl enc_ac_strategy.cc:592-600
-            let mut cost4x8_adj = cost4x8;
-            let mut cost8x4_adj = cost8x4;
-            let mut cost4x4_adj = cost4x4;
-            if distance > 4.0 {
-                let avoid = 0.5_f32;
-                let mul = if distance < 12.0 {
-                    (12.0 - 4.0) / (distance - 4.0)
-                } else {
-                    1.0
-                };
-                let penalty = 1.0 + avoid * mul;
-                cost4x8_adj *= penalty;
-                cost8x4_adj *= penalty;
-                cost4x4_adj *= penalty;
-            }
+            let cost_dct2 = base_cost_dct2 + mul8x8 * e_dct2;
 
             // Pick the best single-block strategy
             *entropy_val = cost8;
             *best_strat = RAW_STRATEGY_DCT8;
 
-            if cost4x8_adj < *entropy_val {
-                *entropy_val = cost4x8_adj;
+            if cost4x8 < *entropy_val {
+                *entropy_val = cost4x8;
                 *best_strat = RAW_STRATEGY_DCT4X8;
             }
-            if cost8x4_adj < *entropy_val {
-                *entropy_val = cost8x4_adj;
+            if cost8x4 < *entropy_val {
+                *entropy_val = cost8x4;
                 *best_strat = RAW_STRATEGY_DCT8X4;
             }
-            if cost4x4_adj < *entropy_val {
-                *entropy_val = cost4x4_adj;
+            if cost4x4 < *entropy_val {
+                *entropy_val = cost4x4;
                 *best_strat = RAW_STRATEGY_DCT4X4;
             }
-            if cost_identity < *entropy_val {
+            // TODO: Re-enable after fixing quality regression.
+            // IDENTITY and DCT2X2 produce significantly worse quality (~10 SSIM2)
+            // when selected. Need to investigate transform/quant weight correctness.
+            if false && cost_identity < *entropy_val {
                 *entropy_val = cost_identity;
                 *best_strat = RAW_STRATEGY_IDENTITY;
             }
-            if cost_dct2 < *entropy_val {
+            if false && cost_dct2 < *entropy_val {
                 *entropy_val = cost_dct2;
                 *best_strat = RAW_STRATEGY_DCT2X2;
             }
@@ -1068,6 +1011,7 @@ fn find_best_16x16_transform(
             ytob,
             mask1x1,
             mask1x1_stride,
+            0.0,
         );
     let entropy_16x8_right = mul16x8
         * estimate_entropy_with_mask(
@@ -1084,6 +1028,7 @@ fn find_best_16x16_transform(
             ytob,
             mask1x1,
             mask1x1_stride,
+            0.0,
         );
 
     // Evaluate two DCT8X16 options (top row, bottom row)
@@ -1102,6 +1047,7 @@ fn find_best_16x16_transform(
             ytob,
             mask1x1,
             mask1x1_stride,
+            0.0,
         );
     let entropy_8x16_bottom = mul16x8
         * estimate_entropy_with_mask(
@@ -1118,6 +1064,7 @@ fn find_best_16x16_transform(
             ytob,
             mask1x1,
             mask1x1_stride,
+            0.0,
         );
 
     // Evaluate DCT16x16 (one transform covering the entire 2x2 region)
@@ -1136,6 +1083,7 @@ fn find_best_16x16_transform(
             ytob,
             mask1x1,
             mask1x1_stride,
+            0.0,
         );
 
     // Compare all options: four single-block, 16x8 split, 8x16 split, or one 16x16
@@ -1300,6 +1248,7 @@ fn find_best_32x32_transform(
             ytob,
             mask1x1,
             mask1x1_stride,
+            0.0,
         );
 
     // Run four 16x16 evaluations (each covers 2×2 blocks)
@@ -1374,6 +1323,7 @@ fn find_best_32x32_transform(
                 ytob,
                 mask1x1,
                 mask1x1_stride,
+                0.0,
             );
             cost_sub += base + mul * e;
         }
