@@ -724,13 +724,12 @@ fn idct1d_4(mem: &mut [f32]) {
     mem[2] = (e1 - o1) * 0.5;
 }
 
-/// Fast 1D IDCT for N=8 (exactly reverses dct1d_8).
-fn idct1d_8(mem: &mut [f32]) {
-    // Reverse step 8: scale by 8 (forward scaled by 1/8)
-    for x in mem.iter_mut().take(8) {
-        *x *= 8.0;
-    }
-
+/// Core 1D IDCT for N=8 without the N scaling factor.
+///
+/// This reverses the dct1d_8 butterfly operations only, without compensating
+/// for the 1/N scaling applied by the 2D wrapper (dct_8x8). Used internally
+/// by idct1d_16 which applies its own scaling.
+fn idct1d_8_core(mem: &mut [f32]) {
     // Reverse step 7 (interleave)
     let mut tmp = [0.0f32; 8];
     for i in 0..4 {
@@ -761,8 +760,28 @@ fn idct1d_8(mem: &mut [f32]) {
     }
 }
 
+/// Fast 1D IDCT for N=8 (exactly reverses dct1d_8).
+///
+/// Includes the *= 8 scaling to compensate for the 1/8 applied by dct_8x8.
+fn idct1d_8(mem: &mut [f32]) {
+    // Scale by N to compensate for 1/N in forward transform
+    for x in mem.iter_mut().take(8) {
+        *x *= 8.0;
+    }
+    idct1d_8_core(mem);
+}
+
 /// Fast 1D IDCT for N=16 (exactly reverses dct1d_16).
+///
+/// Includes *= 16 scaling to compensate for the 1/16 applied by dct_16x16.
+/// Uses idct1d_8_core (without 8x scaling) for the recursive sub-transforms
+/// since the scaling is handled at this level.
 fn idct1d_16(mem: &mut [f32]) {
+    // Scale by N to compensate for 1/N in forward transform
+    for x in mem.iter_mut().take(16) {
+        *x *= 16.0;
+    }
+
     // Reverse step 7 (interleave): deinterleave
     let mut tmp = [0.0f32; 16];
     for i in 0..8 {
@@ -778,16 +797,16 @@ fn idct1d_16(mem: &mut [f32]) {
     }
     tmp[8] = (tmp[8] - tmp[9]) / SQRT2;
 
-    // Reverse step 5: idct on second half
-    idct1d_8(&mut tmp[8..16]);
+    // Reverse step 5: idct on second half (use core without 8x scaling)
+    idct1d_8_core(&mut tmp[8..16]);
 
     // Reverse step 4: divide by WcMultipliers
     for i in 0..8 {
         tmp[8 + i] /= WC_MULTIPLIERS_16[i];
     }
 
-    // Reverse step 3: idct on first half
-    idct1d_8(&mut tmp[0..8]);
+    // Reverse step 3: idct on first half (use core without 8x scaling)
+    idct1d_8_core(&mut tmp[0..8]);
 
     // Reverse steps 1-2: combine AddReverse/SubReverse
     // Forward: even[i] = mem[i] + mem[15-i], odd[i] = mem[i] - mem[15-i]

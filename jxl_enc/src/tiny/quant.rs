@@ -767,6 +767,88 @@ mod tests {
         }
     }
 
+    /// Compare dequant weights at equivalent frequencies between DCT8 and DCT16x16.
+    /// DCT16 position (2y, 2x) corresponds to DCT8 position (y, x).
+    #[test]
+    fn test_dct16_vs_dct8_equivalent_frequencies() {
+        let channels = ["X", "Y", "B"];
+        for (c, ch_name) in channels.iter().enumerate() {
+            let w8 = quant_weights(0, c);
+            let w16 = quant_weights(3, c);
+
+            eprintln!(
+                "=== Channel {} equivalent frequency dequant weights ===",
+                ch_name
+            );
+            eprintln!(
+                "{:>10} {:>12} {:>12} {:>8}",
+                "DCT8(y,x)", "DCT8_dequant", "DCT16_dequant", "ratio"
+            );
+
+            for y8 in 0..8 {
+                for x8 in 0..8 {
+                    let idx8 = y8 * 8 + x8;
+                    let y16 = y8 * 2;
+                    let x16 = x8 * 2;
+                    let idx16 = y16 * 16 + x16;
+
+                    let dequant8 = 1.0 / w8[idx8];
+                    let dequant16 = 1.0 / w16[idx16];
+                    let ratio = dequant16 / dequant8;
+
+                    if y8 < 4 && x8 < 4 {
+                        eprintln!(
+                            "  ({},{})     {:>12.2} {:>12.2} {:>8.3}",
+                            y8, x8, dequant8, dequant16, ratio
+                        );
+                    }
+                }
+            }
+
+            // Summary: average ratio for all 64 equivalent positions
+            let mut total_ratio = 0.0f64;
+            for y8 in 0..8 {
+                for x8 in 0..8 {
+                    let dequant8 = 1.0 / w8[y8 * 8 + x8] as f64;
+                    let dequant16 = 1.0 / w16[y8 * 2 * 16 + x8 * 2] as f64;
+                    total_ratio += dequant16 / dequant8;
+                }
+            }
+            eprintln!(
+                "  Average dequant16/dequant8 ratio: {:.4}",
+                total_ratio / 64.0
+            );
+        }
+
+        // Also show the unique frequencies that DCT16 has but DCT8 doesn't
+        // (odd positions like (1,0), (0,1), etc.)
+        eprintln!("\n=== DCT16 extra frequencies (Y channel) ===");
+        let w16 = quant_weights(3, 1);
+        let mut extra_dequant_sum = 0.0f64;
+        let mut extra_count = 0;
+        for y in 0..16 {
+            for x in 0..16 {
+                if y % 2 != 0 || x % 2 != 0 {
+                    let dequant = 1.0 / w16[y * 16 + x] as f64;
+                    extra_dequant_sum += dequant;
+                    extra_count += 1;
+                }
+            }
+        }
+        let w8 = quant_weights(0, 1);
+        let mut base_dequant_sum = 0.0f64;
+        for y in 0..8 {
+            for x in 0..8 {
+                base_dequant_sum += 1.0 / w8[y * 8 + x] as f64;
+            }
+        }
+        eprintln!(
+            "DCT8 avg dequant: {:.2}, DCT16 extra freq avg dequant: {:.2}",
+            base_dequant_sum / 64.0,
+            extra_dequant_sum / extra_count as f64
+        );
+    }
+
     #[test]
     fn test_weight_stats_per_strategy() {
         let strategies = [
