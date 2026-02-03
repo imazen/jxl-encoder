@@ -19,7 +19,7 @@ use super::ac_strategy::{
 fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> AcStrategyMap {
     AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, raw_strategy)
 }
-use super::adaptive_quant::{compute_adaptive_quant_field, compute_mask1x1};
+use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float, quantize_quant_field};
 use super::chroma_from_luma::{CflMap, compute_cfl_map, ytob_ratio, ytox_ratio};
 use super::coeff_order::natural_coeff_order;
 use super::common::*;
@@ -308,9 +308,6 @@ impl TinyEncoder {
             );
         }
 
-        // Compute distance parameters (fixed formula matching libjxl effort 5+)
-        let params = DistanceParams::compute(self.distance);
-
         // Compute adaptive per-block quantization field and masking.
         // Pass padded dimensions: XYB buffers have stride=padded_width, and all
         // modulation/extraction functions index as [py * stride + px].
@@ -321,7 +318,9 @@ impl TinyEncoder {
         } else {
             self.distance * 0.62
         };
-        let (mut quant_field, masking, quant_field_float) = compute_adaptive_quant_field(
+
+        // Step 1: Compute float quant field (independent of global_scale)
+        let (quant_field_float, masking) = compute_quant_field_float(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -330,8 +329,15 @@ impl TinyEncoder {
             xsize_blocks,
             ysize_blocks,
             distance_for_iqf,
-            params.inv_scale,
         );
+
+        // Step 2: Compute distance params with content-adaptive global_scale.
+        // Uses median and MAD of the quant field to adapt quantization precision
+        // to image content (matches libjxl ComputeGlobalScaleAndQuant).
+        let params = DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
+
+        // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
+        let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
 
         // Compute per-tile chroma-from-luma map
         let cfl_map = if self.cfl_enabled {
@@ -2863,8 +2869,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // DCT32x32 only enabled at d>=3.0; this test uses d=1.0
-        // Hash updated after fixing transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0xbce913b04532725b;
+        // Hash updated: content-adaptive global_scale from quant field median/MAD
+        const EXPECTED_HASH: u64 = 0x46f3ed33dd5b947a;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -2894,8 +2900,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0x71614402b13f249e;
+        // Hash updated: content-adaptive global_scale from quant field median/MAD
+        const EXPECTED_HASH: u64 = 0x4118f1efe8fedc9a;
         assert_eq!(
             hash,
             EXPECTED_HASH,

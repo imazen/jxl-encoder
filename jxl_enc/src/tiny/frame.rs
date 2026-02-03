@@ -87,20 +87,26 @@ impl DistanceParams {
     }
 
     /// Internal implementation shared by both compute methods.
-    fn compute_internal(distance: f32, _quant_stats: Option<(f32, f32)>) -> Self {
+    fn compute_internal(distance: f32, quant_stats: Option<(f32, f32)>) -> Self {
         const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
         const GLOBAL_SCALE_NUMERATOR: i32 = 4096;
-        // libjxl-tiny and our baseline use AC_QUANT = 0.8. Testing with libjxl's
-        // 0.39 (combined with K_AC_QUANT=0.765) produced worse results. The quality
-        // gap vs cjxl is likely in other parts of the adaptive quant algorithm,
-        // not these constants.
         const AC_QUANT: f32 = 0.8;
         const QUANT_FIELD_TARGET: f32 = 5.0;
 
         let qdc = quant_dc(distance);
 
-        // Fixed formula for global_scale (libjxl enc_heuristics.cc uses this, not median/MAD)
-        let scale = (GLOBAL_SCALE_DENOM as f32) * AC_QUANT / (distance * QUANT_FIELD_TARGET);
+        // Compute global_scale from quant field content when available.
+        // libjxl's ComputeGlobalScaleAndQuant uses (median - MAD) of the quant
+        // field to adapt quantization precision to image content. For high-variance
+        // images, MAD is large so global_scale is smaller (coarser discretization
+        // but better range), which preserves the adaptive quant field's variation.
+        let scale = if let Some((quant_median, quant_median_absd)) = quant_stats {
+            // Content-adaptive: matches libjxl quantizer.cc:ComputeGlobalScaleAndQuant
+            (GLOBAL_SCALE_DENOM as f32) * (quant_median - quant_median_absd) / QUANT_FIELD_TARGET
+        } else {
+            // Fixed formula fallback (libjxl-tiny style)
+            (GLOBAL_SCALE_DENOM as f32) * AC_QUANT / (distance * QUANT_FIELD_TARGET)
+        };
         let scale = clamp(scale, 1.0, (1 << 15) as f32);
 
         let scaled_quant_dc = (qdc * (GLOBAL_SCALE_NUMERATOR as f32) * 1.6) as i32;
@@ -111,12 +117,23 @@ impl DistanceParams {
 
         #[cfg(feature = "debug-tokens")]
         {
-            let expected_scale =
-                (GLOBAL_SCALE_DENOM as f32) * AC_QUANT / (distance * QUANT_FIELD_TARGET);
+            let mode = if quant_stats.is_some() {
+                "adaptive"
+            } else {
+                "fixed"
+            };
             eprintln!(
-                "[global_scale] d={:.2} expected={:.0} actual={} inv_scale={:.4}",
-                distance, expected_scale, global_scale, inv_scale
+                "[global_scale] d={:.2} mode={} global_scale={} inv_scale={:.4}",
+                distance, mode, global_scale, inv_scale
             );
+            if let Some((median, mad)) = quant_stats {
+                eprintln!(
+                    "[global_scale] median={:.4} mad={:.4} (median-mad)={:.4}",
+                    median,
+                    mad,
+                    median - mad
+                );
+            }
         }
 
         let quant_dc = clamp((qdc / scale + 0.5) as i32, 1, 1 << 16);

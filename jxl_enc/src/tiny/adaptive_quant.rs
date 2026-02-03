@@ -829,7 +829,7 @@ pub fn quantize_quant_field(quant_field_float: &[f32], inv_scale: f32) -> Vec<u8
 /// * `xsize_blocks`, `ysize_blocks` - image dimensions in 8×8 blocks
 /// * `distance` - butteraugli target distance
 /// * `inv_scale` - 1.0 / (global_scale / 65536)
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 pub fn compute_adaptive_quant_field(
     xyb_x: &[f32],
     xyb_y: &[f32],
