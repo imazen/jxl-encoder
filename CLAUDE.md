@@ -59,14 +59,15 @@ of libjxl-tiny but now targets full libjxl quality. Current RD position vs cjxl 
 | d=2.0    | 209KB    | 68.3      | 189KB     | 69.2       | -0.9 SSIM2 |
 | d=4.0    | 104KB    | 52.9      | 90KB      | 55.4       | -2.5 SSIM2 |
 
-We match or beat cjxl at d≤1.0, but lose at higher distances. The gap is due to missing
-features (DCT4x8, error diffusion) and quantization calibration differences.
+We match or beat cjxl at d≤1.0, but lose at higher distances. The gap is due to
+quantization calibration differences and missing larger transforms (DCT32x32).
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16 per 16x16 region)
+- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16 per 16x16 region)
+- [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
 - [x] AC coding with channel interleaving
@@ -108,7 +109,8 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 - [x] **DCT4x8, DCT8x4** — Working! Better for edges/detail. Parametric quantization
   weights generated from band params (row-interleaved for decoder). Strategy selection
   enabled with `k4x8mul2 = 0.88` multiplier. Verified with jxl-rs and jxl-oxide.
-- [ ] **DCT4x4** — Same pattern as DCT4x8 but 4x4 coverage. Forward transform exists.
+- [x] **DCT4x4** — Working! Four 4x4 sub-blocks in 2x2 grid per 8x8 block. Parametric
+  quantization weights from DCT4_BAND_PARAMS. Verified with jxl-rs and jxl-oxide.
 - [x] **Custom coefficient ordering** — Working! Default-on in two-pass mode.
   Per-strategy scan order from coefficient statistics. Sorts positions by zero
   count so zeros cluster at end of scan. Verified on all 5 CLIC 2025 images
@@ -131,8 +133,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   Verified with djxl and jxl-oxide.
 - [x] **Noise synthesis** — Working! Use `--noise` flag. Estimates noise from XYB
   image, encodes 8-point LUT (80 bits). Verified with djxl and jxl-oxide.
-- [ ] **Error diffusion in AC quantization** — Spreads error to neighbors for
-  smoother gradients. Modest quality improvement at high compression.
+- [x] **Error diffusion in AC quantization** — Working! Opt-in via `encoder.error_diffusion = true`.
+  Processes coefficients in zigzag order, propagates 1/4 error to next coefficient.
+  Helps preserve smooth gradients at high compression (d > 2.0). Note: libjxl has the
+  parameter but never implemented the actual diffusion - this is a novel implementation.
 - [ ] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks.
 
 **Tier 3: Content-specific / UX**
@@ -150,7 +154,7 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Only DCT8, DCT16x8, DCT8x16 (not 27 strategies)
 - Static Huffman only (no ANS, no histogram clustering) — **we have ANS**
 - Fixed zig-zag coefficient order (no custom orders) — **we have custom orders**
-- No error diffusion in quantization
+- No error diffusion in quantization — **we have error diffusion**
 - Default block entropy context model only
 - Single uint coding scheme, no backward references
 
