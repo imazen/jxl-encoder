@@ -13,6 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 debug-tokens = ["jxl_enc/debug-tokens"]
+debug-ac-strategy = ["jxl_enc/debug-ac-strategy"]
 
 [dependencies]
 jxl_enc = { path = "../jxl_enc", version = "0.1.0" }

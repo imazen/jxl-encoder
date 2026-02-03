@@ -383,6 +383,20 @@ impl TinyEncoder {
             )
         };
 
+        // Debug: print strategy histogram if enabled
+        #[cfg(feature = "debug-ac-strategy")]
+        {
+            eprintln!(
+                "AC strategy mode: {}",
+                if mask1x1.is_some() {
+                    "pixel-domain"
+                } else {
+                    "coefficient-domain"
+                }
+            );
+            ac_strategy.print_histogram();
+        }
+
         // Adjust quant field for multi-block transforms.
         // At low distances uses max, at high distances blends toward mean for better quality.
         adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
