@@ -682,19 +682,94 @@ pub fn dc_from_dct_16x16(coeffs: &[f32; 256]) -> [f32; 4] {
 // If exact roundtrip is needed, the scaling factor should be calibrated
 // empirically or a matched IDCT algorithm should be implemented.
 
-/// Reference 1D IDCT (DCT-III) for N=8.
-/// Uses the standard formula: x[k] = sum_{n=0}^{N-1} c[n] * X[n] * cos(pi*n*(2k+1)/(2N))
-/// where c[0] = 0.5, c[n] = 1.0 for n > 0.
-///
-/// This is NOT normalized - it produces raw DCT-III output.
+/// Fast 1D IDCT for N=2 (exactly reverses dct1d_2).
+/// Forward: [a, b] → [a+b, a-b]
+/// Inverse: [x, y] → [(x+y)/2, (x-y)/2]
+#[inline]
+fn idct1d_2(mem: &mut [f32]) {
+    let x = mem[0];
+    let y = mem[1];
+    mem[0] = (x + y) * 0.5;
+    mem[1] = (x - y) * 0.5;
+}
+
+/// Fast 1D IDCT for N=4 (exactly reverses dct1d_4).
+fn idct1d_4(mem: &mut [f32]) {
+    // Reverse step 7 (interleave): tmp = [mem[0], mem[2], mem[1], mem[3]]
+    let mut tmp = [mem[0], mem[2], mem[1], mem[3]];
+
+    // Reverse step 6 (B transform): original was tmp[2] = sqrt2*tmp[2] + tmp[3]
+    tmp[2] = (tmp[2] - tmp[3]) / SQRT2;
+
+    // Reverse step 5: idct on second half
+    idct1d_2(&mut tmp[2..4]);
+
+    // Reverse step 4: divide by WcMultipliers
+    tmp[2] /= WC_MULTIPLIERS_4[0];
+    tmp[3] /= WC_MULTIPLIERS_4[1];
+
+    // Reverse step 3: idct on first half
+    idct1d_2(&mut tmp[0..2]);
+
+    // Reverse steps 1-2: combine even/odd
+    // Forward: e0 = a+d, e1 = b+c, o0 = a-d, o1 = b-c
+    // Inverse: a = (e0+o0)/2, d = (e0-o0)/2, b = (e1+o1)/2, c = (e1-o1)/2
+    let e0 = tmp[0];
+    let e1 = tmp[1];
+    let o0 = tmp[2];
+    let o1 = tmp[3];
+    mem[0] = (e0 + o0) * 0.5;
+    mem[3] = (e0 - o0) * 0.5;
+    mem[1] = (e1 + o1) * 0.5;
+    mem[2] = (e1 - o1) * 0.5;
+}
+
+/// Fast 1D IDCT for N=8 (exactly reverses dct1d_8).
+fn idct1d_8(mem: &mut [f32]) {
+    // Reverse step 8: scale by 8 (forward scaled by 1/8)
+    for x in mem.iter_mut().take(8) {
+        *x *= 8.0;
+    }
+
+    // Reverse step 7 (interleave)
+    let mut tmp = [0.0f32; 8];
+    for i in 0..4 {
+        tmp[i] = mem[2 * i];
+        tmp[4 + i] = mem[2 * i + 1];
+    }
+
+    // Reverse step 6 (B transform)
+    tmp[6] -= tmp[7];
+    tmp[5] -= tmp[6];
+    tmp[4] = (tmp[4] - tmp[5]) / SQRT2;
+
+    // Reverse step 5: idct on second half
+    idct1d_4(&mut tmp[4..8]);
+
+    // Reverse step 4: divide by WcMultipliers
+    for i in 0..4 {
+        tmp[4 + i] /= WC_MULTIPLIERS_8[i];
+    }
+
+    // Reverse step 3: idct on first half
+    idct1d_4(&mut tmp[0..4]);
+
+    // Reverse steps 1-2: combine even/odd
+    for i in 0..4 {
+        mem[i] = (tmp[i] + tmp[4 + i]) * 0.5;
+        mem[7 - i] = (tmp[i] - tmp[4 + i]) * 0.5;
+    }
+}
+
+/// Reference 8-point 1D IDCT (formula-based, for use in larger IDCTs).
+/// Input and output are separate arrays.
 #[allow(clippy::needless_range_loop)]
 fn idct1d_8_ref(input: &[f32], output: &mut [f32]) {
     let n = 8usize;
     let pi = core::f32::consts::PI;
 
-    // Explicit indices for mathematical clarity (k, j are frequency/position indices)
     for k in 0..n {
-        let mut sum = 0.5 * input[0]; // c[0] = 0.5
+        let mut sum = 0.5 * input[0];
         for j in 1..n {
             let angle = pi * (j as f32) * ((2 * k + 1) as f32) / (2.0 * n as f32);
             sum += input[j] * angle.cos();
@@ -703,47 +778,33 @@ fn idct1d_8_ref(input: &[f32], output: &mut [f32]) {
     }
 }
 
-/// Compute 8x8 inverse DCT.
+/// Compute 8x8 inverse DCT (exactly reverses dct_8x8).
 ///
-/// This is the inverse of dct_8x8. Empirically calibrated scaling:
-/// - The idct1d_8_ref produces output scaled by 0.5 for DC
-/// - Total correction factor is 1/16 to match dct_8x8's 1/64 scaling
-/// - Roundtrip: dct_8x8 scales by 1/64, idct_8x8 should scale by 64
-/// - But idct1d_8_ref * 2 passes gives 4x output, so we need 64/4 = 16
-///   But empirically 1/16 works, so total scale = 4/64 = 1/16
+/// This uses the fast matched IDCT that exactly reverses our forward DCT algorithm.
+/// Roundtrip error is essentially zero (floating point precision only).
 pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut tmp = [0.0f32; 64];
 
-    // Input is in transposed layout from forward DCT.
-    // Apply IDCT to each row (which are columns spatially)
+    // Copy input to tmp and apply IDCT to each row
     for row in 0..8 {
         let row_start = row * 8;
-        let mut row_in = [0.0f32; 8];
-        row_in.copy_from_slice(&input[row_start..row_start + 8]);
-        let mut row_out = [0.0f32; 8];
-        idct1d_8_ref(&row_in, &mut row_out);
-        tmp[row_start..row_start + 8].copy_from_slice(&row_out);
+        for i in 0..8 {
+            tmp[row_start + i] = input[row_start + i];
+        }
+        idct1d_8(&mut tmp[row_start..row_start + 8]);
     }
 
     // Transpose
     let mut transposed = [0.0f32; 64];
     transpose::<8, 8>(&tmp, &mut transposed);
 
-    // Apply IDCT to each row
+    // Apply IDCT to each row of transposed
     for row in 0..8 {
         let row_start = row * 8;
-        let mut row_in = [0.0f32; 8];
-        row_in.copy_from_slice(&transposed[row_start..row_start + 8]);
-        let mut row_out = [0.0f32; 8];
-        idct1d_8_ref(&row_in, &mut row_out);
-        output[row_start..row_start + 8].copy_from_slice(&row_out);
-    }
-
-    // Apply correction factor: dct_8x8 scales by 1/64, our IDCT produces 1/64x
-    // output due to the c[0]=0.5 factor (twice), so we need to multiply by 64*4=256?
-    // Actually empirically: output is 64x too small, so multiply by 64.
-    for x in output.iter_mut() {
-        *x *= 4.0; // 0.5 * 0.5 * 4 = 1 per 1D IDCT, times 2 passes: need 4x
+        for i in 0..8 {
+            output[row_start + i] = transposed[row_start + i];
+        }
+        idct1d_8(&mut output[row_start..row_start + 8]);
     }
 }
 
@@ -992,11 +1053,11 @@ pub fn dct_32x32(input: &[f32; 1024], output: &mut [f32; 1024]) {
     output.copy_from_slice(&transposed);
 }
 
-/// 4-point inverse DCT (type-III).
+/// 4-point inverse DCT (type-III) - reference implementation.
 ///
 /// Direct formula implementation for the 4-point IDCT used in DC extraction.
 /// Input: 4 frequency-domain coefficients, Output: 4 spatial-domain values.
-fn idct1d_4(input: &[f32; 4], output: &mut [f32; 4]) {
+fn idct1d_4_ref(input: &[f32; 4], output: &mut [f32; 4]) {
     // The unnormalized type-III DCT of length 4:
     // X[k] = x[0] + sum_{n=1..3} x[n] * 2 * cos(pi * n * (2k+1) / 8) for k=0..3
     //
@@ -1080,7 +1141,7 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
             block[iy * 4 + 3],
         ];
         let mut row_out = [0.0f32; 4];
-        idct1d_4(&row_in, &mut row_out);
+        idct1d_4_ref(&row_in, &mut row_out);
         for ix in 0..4 {
             after_rows[iy * 4 + ix] = row_out[ix];
         }
@@ -1104,7 +1165,7 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
             transposed[iy * 4 + 3],
         ];
         let mut row_out = [0.0f32; 4];
-        idct1d_4(&row_in, &mut row_out);
+        idct1d_4_ref(&row_in, &mut row_out);
         for ix in 0..4 {
             result[iy * 4 + ix] = row_out[ix];
         }

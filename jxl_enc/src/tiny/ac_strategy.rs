@@ -508,10 +508,10 @@ fn estimate_entropy_full(
                 error_coeffs[i] = weights[i] * diff;
             }
 
-            // Skip LLF coefficients for entropy calculation
-            if i < num_blocks {
-                continue;
-            }
+            // NOTE: We do NOT skip LLF coefficients here.
+            // Both libjxl and libjxl-tiny process ALL coefficients (including LLF)
+            // in entropy estimation. The LLF coefficients contribute to entropy_v
+            // and nzeros_v in the reference implementations.
 
             let diff_abs = diff.abs();
             if !use_pixel_domain {
