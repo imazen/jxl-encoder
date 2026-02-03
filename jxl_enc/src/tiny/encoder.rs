@@ -926,7 +926,7 @@ impl TinyEncoder {
         _block_width: usize,
         _block_height: usize,
         covered_x: usize,
-        _covered_y: usize,
+        covered_y: usize,
         _covered_blocks: usize,
         size: usize,
         _raw_strategy: u8,
@@ -943,8 +943,16 @@ impl TinyEncoder {
         let cx = _block_width / BLOCK_DIM;
         let cy = _block_height / BLOCK_DIM;
 
+        // For rectangular transforms like DCT16x8, the coefficient layout (16×8) differs
+        // from physical block coverage (1×2). We need to transpose the slot mapping when
+        // the physical coverage is "tall" (covered_y > covered_x) but coefficient layout
+        // is "wide" (cx > cy).
+        let transpose_slots = covered_y > covered_x;
+
         if !error_diffusion {
             // Standard quantization without error diffusion
+            #[cfg(feature = "debug-tokens")]
+            let mut debug_nonzero_count = 0usize;
             for idx in 0..size {
                 // LLF positions are at (y, x) where y < cy and x < cx in the grid.
                 // For DCT8 this is just index 0.
@@ -971,11 +979,51 @@ impl TinyEncoder {
                     )
                 };
 
-                let block_slot = idx / DCT_BLOCK_SIZE;
-                let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                let slot_by = by + block_slot / covered_x;
-                let slot_bx = bx + block_slot % covered_x;
-                quant_ac[slot_by][slot_bx][coeff_in_block] = qval;
+                #[cfg(feature = "debug-tokens")]
+                if qval != 0 {
+                    debug_nonzero_count += 1;
+                }
+
+                // Store in flat layout: idx = y * grid_width + x in the transform grid.
+                // Map to 8x8 block slots for storage.
+                let y = idx / grid_width;
+                let x = idx % grid_width;
+                let coef_slot_y = y / BLOCK_DIM;
+                let coef_slot_x = x / BLOCK_DIM;
+                let pos_y = y % BLOCK_DIM;
+                let pos_x = x % BLOCK_DIM;
+                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+
+                // Map coefficient slot to physical block offset.
+                // For DCT16x8: coefficient layout is 16×8 (2 cols × 1 row of slots)
+                //              physical coverage is 1×2 (1 col × 2 rows of blocks)
+                // So coef_slot_x maps to physical row offset, coef_slot_y to col offset.
+                let (phys_row_off, phys_col_off) = if transpose_slots {
+                    (coef_slot_x, coef_slot_y)
+                } else {
+                    (coef_slot_y, coef_slot_x)
+                };
+                quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = qval;
+            }
+            #[cfg(feature = "debug-tokens")]
+            if _raw_strategy == 4 && channel == 1 && bx == 0 && by == 0 {
+                eprintln!("[DCT32x32 quantize debug] Y at (0,0): {} nonzero AC coeffs stored (qac={:.4})", debug_nonzero_count, qac);
+                // Show first few AC coefficients and their quantized values
+                let mut shown = 0;
+                for idx in 16..size {
+                    if shown >= 5 {
+                        break;
+                    }
+                    let is_llf = (idx / grid_width) < cy && (idx % grid_width) < cx;
+                    if !is_llf {
+                        let coef = dct_coeffs[idx];
+                        let w = weights[idx];
+                        let inv_w = 1.0 / w;
+                        let val = inv_w * qac * qm_multiplier * coef;
+                        eprintln!("  [{}] coef={:.6}, weight={:.6}, inv_w={:.4}, val={:.4}", idx, coef, w, inv_w, val);
+                        shown += 1;
+                    }
+                }
             }
         } else {
             // Error diffusion: process in zigzag order, propagate error to next coefficient
@@ -999,11 +1047,20 @@ impl TinyEncoder {
 
                 if is_llf {
                     // LLF handled separately, no error diffusion
-                    let block_slot = idx / DCT_BLOCK_SIZE;
-                    let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                    let slot_by = by + block_slot / covered_x;
-                    let slot_bx = bx + block_slot % covered_x;
-                    quant_ac[slot_by][slot_bx][coeff_in_block] = 0;
+                    // Use flat layout mapping
+                    let y = idx / grid_width;
+                    let x = idx % grid_width;
+                    let coef_slot_y = y / BLOCK_DIM;
+                    let coef_slot_x = x / BLOCK_DIM;
+                    let pos_y = y % BLOCK_DIM;
+                    let pos_x = x % BLOCK_DIM;
+                    let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                    let (phys_row_off, phys_col_off) = if transpose_slots {
+                        (coef_slot_x, coef_slot_y)
+                    } else {
+                        (coef_slot_y, coef_slot_x)
+                    };
+                    quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = 0;
                     continue;
                 }
 
@@ -1041,11 +1098,18 @@ impl TinyEncoder {
                     accumulated_error = error * ERROR_DIFFUSION_FACTOR;
                 }
 
-                let block_slot = idx / DCT_BLOCK_SIZE;
-                let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                let slot_by = by + block_slot / covered_x;
-                let slot_bx = bx + block_slot % covered_x;
-                quant_ac[slot_by][slot_bx][coeff_in_block] = qval;
+                // Store in flat layout: y, x already computed above
+                let coef_slot_y = y / BLOCK_DIM;
+                let coef_slot_x = x / BLOCK_DIM;
+                let pos_y = y % BLOCK_DIM;
+                let pos_x = x % BLOCK_DIM;
+                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                let (phys_row_off, phys_col_off) = if transpose_slots {
+                    (coef_slot_x, coef_slot_y)
+                } else {
+                    (coef_slot_y, coef_slot_x)
+                };
+                quant_ac[by + phys_row_off][bx + phys_col_off][pos_in_8x8] = qval;
             }
         }
     }
@@ -1338,11 +1402,22 @@ impl TinyEncoder {
                                 cy,
                             )
                         } else {
-                            let block_slot = idx / DCT_BLOCK_SIZE;
-                            let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                            let slot_by = by + block_slot / covered_x;
-                            let slot_bx = bx + block_slot % covered_x;
-                            quant_ac[1][slot_by][slot_bx][coeff_in_block]
+                            // Use flat layout: idx indexes into a grid of block_width x block_height
+                            let y = idx / block_width;
+                            let x = idx % block_width;
+                            let coef_slot_y = y / BLOCK_DIM;
+                            let coef_slot_x = x / BLOCK_DIM;
+                            let pos_y = y % BLOCK_DIM;
+                            let pos_x = x % BLOCK_DIM;
+                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                            // Same transpose_slots logic as quantize_ac_block
+                            let transpose_slots = covered_y > covered_x;
+                            let (phys_row_off, phys_col_off) = if transpose_slots {
+                                (coef_slot_x, coef_slot_y)
+                            } else {
+                                (coef_slot_y, coef_slot_x)
+                            };
+                            quant_ac[1][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
                         };
                         let adj = Self::adjust_quant_bias(q, 1);
                         dct_coeffs[1][idx] = adj * weights[idx] * inv_qac;
@@ -1496,18 +1571,35 @@ impl TinyEncoder {
                 }
 
                 // ── Step 8: Count non-zeros for all 3 channels ─────────────
+                let transpose_slots = covered_y > covered_x;
                 for c in 0..3 {
                     if covered_blocks == 1 {
                         num_nonzero_8x8_except_dc(&quant_ac[c][by][bx], &mut nzeros[c][by][bx]);
                         raw_nzeros[c][by][bx] = nzeros[c][by][bx];
                     } else {
+                        // Build flat block in cx*8 × cy*8 layout (stride = cx*8).
+                        // num_nonzero_except_llf expects block[y * stride + x] for y,x in 0..cy*8, 0..cx*8.
+                        // The 8x8 block storage uses quant_ac[slot_by][slot_bx][pos_in_8x8].
+                        let stride = cx * BLOCK_DIM;
                         let full_block: Vec<i32> = (0..size)
                             .map(|idx| {
-                                let block_slot = idx / DCT_BLOCK_SIZE;
-                                let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                                let slot_by = by + block_slot / covered_x;
-                                let slot_bx = bx + block_slot % covered_x;
-                                quant_ac[c][slot_by][slot_bx][coeff_in_block]
+                                // idx = y * stride + x in the flat layout
+                                let y = idx / stride;
+                                let x = idx % stride;
+                                // Which 8x8 block slot in coefficient space
+                                let coef_slot_y = y / BLOCK_DIM;
+                                let coef_slot_x = x / BLOCK_DIM;
+                                // Position within the 8x8 block
+                                let pos_y = y % BLOCK_DIM;
+                                let pos_x = x % BLOCK_DIM;
+                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                                // Map to physical block offset
+                                let (phys_row_off, phys_col_off) = if transpose_slots {
+                                    (coef_slot_x, coef_slot_y)
+                                } else {
+                                    (coef_slot_y, coef_slot_x)
+                                };
+                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
                             })
                             .collect();
                         let flat_len = (covered_y - 1) * xsize_blocks + covered_x;
@@ -1979,16 +2071,54 @@ impl TinyEncoder {
                             None,
                         )?;
                     } else {
-                        // Multi-block: assemble contiguous coefficient buffer
+                        // Multi-block: assemble contiguous coefficient buffer in flat layout.
+                        // tokenize_ac_coefficients uses COEFF_ORDER which indexes into a flat
+                        // cx*8 × cy*8 layout (stride = cx*8), not 8x8 block slots.
+                        //
+                        // NOTE: For rectangular transforms, cx >= cy after swap, so stride = cx * 8.
+                        // covered_x may differ from cx for DCT16x8/DCT8x16.
+                        let (cx, _cy) = if covered_y > covered_x {
+                            (covered_y, covered_x)
+                        } else {
+                            (covered_x, covered_y)
+                        };
+                        let transpose_slots = covered_y > covered_x;
+                        let stride = cx * BLOCK_DIM;
                         let full_block: Vec<i32> = (0..size)
                             .map(|idx| {
-                                let block_slot = idx / DCT_BLOCK_SIZE;
-                                let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                                let slot_by = by + block_slot / covered_x;
-                                let slot_bx = bx + block_slot % covered_x;
-                                quant_ac[c][slot_by][slot_bx][coeff_in_block]
+                                // idx = y * stride + x in the flat layout
+                                let y = idx / stride;
+                                let x = idx % stride;
+                                // Which 8x8 block slot in coefficient space
+                                let coef_slot_y = y / BLOCK_DIM;
+                                let coef_slot_x = x / BLOCK_DIM;
+                                // Position within the 8x8 block
+                                let pos_y = y % BLOCK_DIM;
+                                let pos_x = x % BLOCK_DIM;
+                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                                // Map to physical block offset
+                                let (phys_row_off, phys_col_off) = if transpose_slots {
+                                    (coef_slot_x, coef_slot_y)
+                                } else {
+                                    (coef_slot_y, coef_slot_x)
+                                };
+                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
                             })
                             .collect();
+
+                        #[cfg(feature = "debug-tokens")]
+                        if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
+                            // Debug: count nonzeros in full_block for DCT32x32
+                            let nz_count = full_block.iter().filter(|&&v| v != 0).count();
+                            eprintln!("[DCT32x32 debug] full_block for Y at (0,0): {} nonzeros out of {}", nz_count, size);
+                            if nz_count > 0 && nz_count <= 20 {
+                                for (i, &v) in full_block.iter().enumerate() {
+                                    if v != 0 {
+                                        eprintln!("  [{:4}] = {}", i, v);
+                                    }
+                                }
+                            }
+                        }
                         // Streaming path: no custom orders
                         // tokenize_ac_coefficients expects raw_strategy, not bitstream code
                         tokenize_ac_coefficients(
@@ -2169,16 +2299,55 @@ impl TinyEncoder {
                             );
                             tokens.extend_from_slice(&block_tokens);
                         } else {
-                            // Assemble contiguous buffer
+                            // Assemble contiguous buffer in flat layout.
+                            // collect_ac_coefficients uses COEFF_ORDER which indexes into a flat
+                            // cx*8 × cy*8 layout (stride = cx*8), not 8x8 block slots.
+                            //
+                            // NOTE: For rectangular transforms, cx >= cy after swap, so stride = cx * 8.
+                            // covered_x may differ from cx for DCT16x8/DCT8x16.
+                            let (cx, _cy) = if covered_y > covered_x {
+                                (covered_y, covered_x)
+                            } else {
+                                (covered_x, covered_y)
+                            };
+                            let transpose_slots = covered_y > covered_x;
+                            let stride = cx * BLOCK_DIM;
                             let full_block: Vec<i32> = (0..size)
                                 .map(|idx| {
-                                    let block_slot = idx / DCT_BLOCK_SIZE;
-                                    let coeff_in_block = idx % DCT_BLOCK_SIZE;
-                                    let slot_by = by + block_slot / covered_x;
-                                    let slot_bx = bx + block_slot % covered_x;
-                                    quant_ac[c][slot_by][slot_bx][coeff_in_block]
+                                    // idx = y * stride + x in the flat layout
+                                    let y = idx / stride;
+                                    let x = idx % stride;
+                                    // Which 8x8 block slot in coefficient space
+                                    let coef_slot_y = y / BLOCK_DIM;
+                                    let coef_slot_x = x / BLOCK_DIM;
+                                    // Position within the 8x8 block
+                                    let pos_y = y % BLOCK_DIM;
+                                    let pos_x = x % BLOCK_DIM;
+                                    let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                                    // Map to physical block offset
+                                    let (phys_row_off, phys_col_off) = if transpose_slots {
+                                        (coef_slot_x, coef_slot_y)
+                                    } else {
+                                        (coef_slot_y, coef_slot_x)
+                                    };
+                                    quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
                                 })
                                 .collect();
+
+                            #[cfg(feature = "debug-tokens")]
+                            if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
+                                // Debug: count nonzeros in full_block for DCT32x32
+                                let nz_count = full_block.iter().filter(|&&v| v != 0).count();
+                                eprintln!("[DCT32x32 two-pass debug] full_block for Y at (0,0): {} nonzeros out of {}", nz_count, size);
+                                if nz_count > 0 && nz_count <= 20 {
+                                    for (i, &v) in full_block.iter().enumerate() {
+                                        if v != 0 {
+                                            eprintln!("  [{:4}] = {}", i, v);
+                                        }
+                                    }
+                                }
+                            }
+
                             // collect_ac_coefficients expects raw_strategy, not bitstream code
                             let block_tokens = collect_ac_coefficients(
                                 &full_block,
@@ -2667,7 +2836,9 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // DCT32x32 only enabled at d>=3.0; this test uses d=1.0
-        const EXPECTED_HASH: u64 = 0x6db9f8107ab85117;
+        // Hash updated after fixing rectangular transform (DCT16x8/DCT8x16) coefficient
+        // storage mapping: coef_slot -> phys_block mapping was wrong when covered_y > covered_x
+        const EXPECTED_HASH: u64 = 0x26e0e5386f7985e4;
         assert_eq!(
             hash,
             EXPECTED_HASH,
