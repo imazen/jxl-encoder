@@ -112,18 +112,18 @@ Improvements made Feb 3, 2026:
 
 ### Quality Gap vs Full libjxl (Feb 3, 2026 Analysis)
 
-**RD Curve Comparison** (CLIC 2025 1360x2048 photo):
+**RD Regression Baselines** (in-process, jxl-oxide linear decode, 6 images):
 
-| Distance | Our Size | Our SSIM2 | cjxl e7 Size | cjxl SSIM2 | Gap |
-|----------|----------|-----------|--------------|------------|-----|
-| 0.5 | 1158KB | 89.86 | 1242KB | 90.91 | 1.05 |
-| 1.0 | 788KB | 85.24 | 815KB | 87.05 | 1.81 |
-| 2.0 | 511KB | 76.96 | 517KB | 79.29 | 2.33 |
-| 3.0 | 378KB | 68.82 | 389KB | 72.59 | 3.77 |
+| Image | d=0.25 Size | d=0.25 SSIM2 | d=0.5 Size | d=0.5 SSIM2 |
+|-------|-------------|-------------|------------|------------|
+| frymire (1118x1105) | 926KB | 84.33 | 674KB | 79.00 |
+| img10 | 190KB | 88.35 | 126KB | 86.31 |
+| img11 | 205KB | 83.73 | 141KB | 81.90 |
+| img12 | 175KB | 89.11 | 113KB | 87.38 |
+| img13 | 274KB | 84.85 | 208KB | 82.92 |
+| img14 | 235KB | 81.58 | 169KB | 79.94 |
 
-**At equal file sizes** (~815KB via d=0.94): Our SSIM2=85.75 vs cjxl 87.05 → **1.3 SSIM2 gap**
-
-**Root causes of remaining gap** (after quantization weight fix):
+**Root causes of remaining gap** vs cjxl:
 1. ~~**Quantization weights**: FIXED - now uses full libjxl parametric weights~~
 2. **AC strategies**: We have 8 strategies; full libjxl has 27 (missing: IDENTITY, DCT2X2,
    AFV, larger rectangular transforms, DCT64+)
@@ -133,9 +133,6 @@ Improvements made Feb 3, 2026:
 **Path to closing gap**:
 - Quick wins: Implement DCT2X2, IDENTITY strategies
 - High effort: AFV (corner DCT), full 27-strategy support
-
-Note: RD curve numbers above were measured BEFORE the quantization weight fix.
-Re-measurement needed to establish new baseline.
 
 ### Outstanding Work (Feb 3, 2026)
 
@@ -151,7 +148,7 @@ Re-measurement needed to establish new baseline.
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 42 commits ahead of origin/main
+**Unpushed**: 45 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
@@ -862,6 +859,20 @@ Key files to port from `libjxl/lib/jxl/`:
 
 **CRITICAL**: All roundtrip validation tests MUST include jxl-rs. Do not create tests
 that only use jxl-oxide or only use djxl - always include jxl-rs as well.
+
+**CRITICAL: jxl-oxide linear output**: When using jxl-oxide for metric computation
+(butteraugli, SSIM2), ALWAYS request linear output:
+```rust
+let mut image = jxl_oxide::JxlImage::builder().read(reader)?;
+image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+    jxl_oxide::RenderingIntent::Relative,
+));
+```
+Without this, jxl-oxide applies sRGB gamma (because our file header signals Srgb
+transfer function), producing sRGB f32 values. Feeding sRGB to butteraugli_linear()
+or double-gamma-encoding for SSIM2 produces garbage metrics (butteraugli 49-60,
+SSIM2 -30 to -50). This bug was silently present from the transfer function fix
+(d8c34ff) until caught in a334b28.
 
 ### CRITICAL: No Synthetic-Only Quality Tests
 
