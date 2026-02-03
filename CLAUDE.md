@@ -88,11 +88,14 @@ implemented. Enable with `--pixel-domain-loss` flag.
    - Fixed entropy_mul per transform (0.8 for DCT8, 1.21 for DCT16x8, 1.34 for DCT16x16)
    - Entropy_mul applies ONLY to entropy, BEFORE adding loss
 
-**Current behavior**: After Feb 2, 2026 fixes (entropy_mul normalization, X channel penalty
-timing), pixel-domain mode now selects varied strategies. File size comparison (CLIC 2025):
-- DCT8-only: 740,996 bytes, Coefficient-domain: 728,745 bytes, Pixel-domain: 745,295 bytes
-- Pixel-domain is +0.6% larger than DCT8-only, while coefficient-domain is -1.7% smaller
-- This suggests the pixel-domain loss calculation may still be overweighted
+**Current behavior**: After Feb 2, 2026 fixes (quant_norm16 computation, cost term
+conditionals), pixel-domain mode produces varied strategy selections. File sizes (CLIC 2025):
+- DCT8-only: 740,996 bytes
+- Coefficient-domain: 728,745 bytes (-1.7% vs DCT8)
+- Pixel-domain: 744,669 bytes (+0.5% vs DCT8, +2.2% vs coefficient-domain)
+
+Pixel-domain still produces slightly larger files than coefficient-domain. Remaining
+calibration work likely needed in IDCT scaling or mask1x1 values. See CONTEXT-HANDOFF.md.
 
 **Known issue**: Our encoder produces lower PSNR (~37) than cjxl (~40) at similar file
 sizes. This is separate from the AC strategy cost model - likely in quantization weights
