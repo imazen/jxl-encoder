@@ -63,7 +63,7 @@ from libjxl quant_weights.cc and generating weights parametrically.
 ### Full libjxl Algorithm Features (IMPLEMENTED)
 
 All five major algorithmic components for matching full libjxl's cost model are now
-implemented. Enable with `--pixel-domain-loss` flag.
+implemented and enabled by default. Use `--no-pixel-domain-loss` to disable.
 
 1. **Per-pixel (1x1) masking field** ✅
    - `compute_mask1x1()` in `tiny/adaptive_quant.rs`
@@ -93,14 +93,10 @@ implemented. Enable with `--pixel-domain-loss` flag.
    - Fixed entropy_mul per transform (0.8 for DCT8, 1.21 for DCT16x8, 1.34 for DCT16x16)
    - Entropy_mul applies ONLY to entropy, BEFORE adding loss
 
-**Current behavior**: After Feb 3, 2026 fixes, pixel-domain mode produces better compression
-than coefficient-domain mode across all test images. File sizes (CLIC 2025 first image):
-- DCT8-only: 740,996 bytes
-- Coefficient-domain: 733,576 bytes (-1.0% vs DCT8)
-- Pixel-domain: 719,979 bytes (-2.8% vs DCT8, **-1.9% vs coefficient-domain**)
-
-Pixel-domain mode now **beats coefficient-domain by 1.9-6.2%** across all 27 CLIC 2025
-test images. Average improvement: ~2.5%.
+**Current behavior**: Pixel-domain loss is default-on and provides +0.2 to +1.9 SSIM2
+improvement over coefficient-domain mode at all distances (d=0.5 to d=5.0).
+The previous "gab+pixel-domain catastrophe" at d≥3.0 was caused by broken DCT32x32
+output, not by cost model issues. DCT32x32 is now disabled until fixed.
 
 Improvements made Feb 3, 2026:
 1. Fixed LLF coefficient inclusion in entropy estimation (was skipping them incorrectly)
@@ -112,38 +108,44 @@ Improvements made Feb 3, 2026:
 
 ### Quality Gap vs Full libjxl (Feb 3, 2026 — Updated Analysis)
 
-**Key finding**: Our DCT8 quantization matches cjxl effort 1 (Lightning) within 0-2 SSIM2.
-The large gap vs cjxl e7 (5-15 SSIM2) is from missing features (27 strategies, advanced
-cost model), not from a quantization bug.
+**RD Comparison — frymire.png (1118x1105), all defaults (gab ON, pixel-domain, ANS)**:
 
-**RD Comparison — frymire.png (1118x1105), no gaborish, DCT8+Huffman**:
+| d | Ours Size | Ours SSIM2 | cjxl e1 Size | e1 SSIM2 | cjxl e7 Size | e7 SSIM2 |
+|---|-----------|-----------|--------------|----------|--------------|----------|
+| 0.5 | 650KB | 83.19 | 877KB | 84.10 | 706KB | 88.76 |
+| 1.0 | 470KB | 75.34 | 637KB | 77.49 | 624KB | 84.32 |
+| 2.0 | 331KB | 64.35 | 433KB | 66.79 | 440KB | 78.23 |
+| 3.0 | 257KB | 53.96 | 362KB | 59.94 | 356KB | 72.61 |
 
-| d | cjxl e1 Size | cjxl e1 SSIM2 | Ours Size | Ours SSIM2 | Gap |
-|---|-------------|---------------|-----------|------------|-----|
-| 1.0 | 637KB | 77.49 | 583KB | 77.29 | **0.20** |
-| 2.0 | 433KB | 66.79 | 428KB | 66.89 | **-0.10** (we win) |
-| 3.0 | 362KB | 59.94 | 339KB | 57.81 | **2.13** |
+Our files are 26-29% smaller at the same distance parameter (different K_AC_QUANT:
+0.8294 vs libjxl's 0.765). Fair comparison should be at equal file sizes, not equal
+distance values.
 
-**RD Comparison — frymire.png, no gaborish, our best vs cjxl e7**:
+**Pixel-domain loss improvement** (SSIM2 delta over coefficient-domain, frymire.png):
+- d=0.5: +1.93, d=1.0: +1.13, d=2.0: +0.55, d=3.0: +0.21, d=4.0: +0.40, d=5.0: +0.66
 
-| d | cjxl e7 Size | cjxl e7 SSIM2 | Ours pixel+adapt | Ours SSIM2 | Gap |
-|---|-------------|---------------|------------------|------------|-----|
-| 0.5 | 706KB | 88.76 | 676KB | 85.29 | 3.47 |
-| 1.0 | 543KB | 84.09 | 498KB | 78.69 | 5.40 |
-| 3.0 | 333KB | 72.14 | 288KB | 56.64 | 15.5 |
+**Gaborish SSIM2 impact** (equal distance, frymire.png, pixel-domain):
+- d=0.5: -1.23 SSIM2 / -0.5% size
+- d=1.0: -1.49 SSIM2 / -2.6% size
+- d=2.0: -2.07 SSIM2 / -5.3% size
+- d=3.0: -2.46 SSIM2 / -6.9% size
+At equal file sizes, gab helps modestly (+0.6 SSIM2 at d=3.0).
 
-The gap grows with distance because cjxl e7 has sophisticated features:
-- 27 AC strategies (vs our 8): major advantage on varied content
-- Truncation quantization vs our round+threshold: different rounding behavior
-- Content-adaptive global_scale: better range utilization
-- Advanced cost model (AdjustQuantBlockAC): per-block quant tuning
+**cjxl effort level progression at d=3.0** (frymire.png):
+- e1 (DCT8+Huffman): 362KB / 59.94
+- e4 (multi-strategy, no gab): 337KB / 60.04
+- e5 (+gab, +adaptive quant, +pixel-domain): 331KB / 66.46
+- e7 (full 27 strategies): 356KB / 72.61
+The e4→e5 jump (+6.4 SSIM2) includes adaptive InitialQuantField, non-aligned
+transform search, 32x32 search, and full CfL mode — not just gaborish.
 
 **What's confirmed correct**:
 - Parametric quantization weights match decoder expectations (all strategies)
 - AdjustQuantBias constants match decoder (kDefaultQuantBias)
 - Quantization formula matches C++ (val = coeff * inv_dequant_matrix * qac * qm_mul)
-- IDCT roundtrip error < 1e-6 for all sizes (fixed Feb 3, 2026)
+- IDCT roundtrip error < 1e-6 for all sizes
 - Weight tables are pure parametric without bias (confirmed via jxl-oxide source)
+- Content-adaptive global_scale from quant field median/MAD (matches libjxl)
 
 ### Remaining Gaps vs Full libjxl
 
@@ -154,10 +156,9 @@ The gap grows with distance because cjxl e7 has sophisticated features:
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
 **B. Quantization Calibration**
-- Our files are ~8-14% smaller at the same distance (more aggressive quantization)
-- Uses `AC_QUANT = 0.8` from libjxl-tiny, full libjxl uses 0.765 (8% difference)
-- Uses `K_AC_QUANT = 0.8294`, full libjxl uses 0.765 (similar effect)
-- Fixed global_scale formula, full libjxl uses content-adaptive (median-MAD)
+- Our files are ~26-29% smaller at the same distance (more aggressive quantization)
+- Uses `K_AC_QUANT = 0.8294`, full libjxl uses 0.765 (8% difference)
+- Content-adaptive global_scale is implemented (median-MAD of quant field)
 - Impact: calibration only affects file-size-to-quality tradeoff, not RD efficiency
 
 **C. Cost Model**
@@ -188,15 +189,16 @@ The gap grows with distance because cjxl e7 has sophisticated features:
 
 **Color/Brightness bug**: RESOLVED - transfer function was signaling Linear instead of Srgb.
 
-**DCT32x32** (PARTIALLY FIXED):
-- DC extraction fixed - uses matched idct1d_4 with 16x scaling, <0.5% error
-- Only enabled at d >= 3.0 where compression benefit outweighs quality impact
-- At d < 3.0, ~0.5% DC error causes visible artifacts on smooth gradients
+**DCT32x32** (DISABLED):
+- Produces catastrophically wrong output (SSIM2=-48 for forced 256x256)
+- Was enabled at d >= 3.0, but even 0.9% selection rate corrupts ~10% of pixels
+- Disabled via `distance < 100.0` guard in `ac_strategy.rs:1157`
+- Root cause still unknown; needs investigation before re-enabling
 
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 
-**Unpushed**: 48 commits ahead of origin/main
+**Unpushed**: 51 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
@@ -218,6 +220,7 @@ The gap grows with distance because cjxl e7 has sophisticated features:
 - [x] Custom coefficient ordering (default-on, `--no-custom-orders` to disable)
 - [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
 - [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
+- [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
@@ -239,9 +242,9 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   histogram serialization roundtrip and ANS symbol roundtrip.
 - [x] **DCT16x16** — Working. 2×2 block coverage (256 coefficients), 7-band quant
   weights, distance-dependent strategy selection. Verified with jxl-oxide and djxl.
-- [ ] **DCT32x32** — Same pattern as DCT16x16 but 4×4 coverage (1024 coefficients).
-  Forward transform exists in `jxl_enc_transforms`. Work: 32x32 quant weights,
-  strategy selection, LLF extraction (4×4 region).
+- [ ] **DCT32x32** — DISABLED. Produces wrong output (SSIM2=-48 for forced 256x256).
+  Forward transform, quant weights, and strategy selection exist but output is
+  catastrophically wrong. Needs root cause investigation before re-enabling.
 - [x] **DCT4x8, DCT8x4** — Working! Better for edges/detail. Parametric quantization
   weights generated from band params (row-interleaved for decoder). Strategy selection
   enabled with `k4x8mul2 = 0.88` multiplier. Verified with jxl-rs and jxl-oxide.
@@ -618,39 +621,30 @@ per-block quantization field. This is now fixed - line 74 uses `quant_field.get(
 
 ## Known Bugs (ACTIVE)
 
-### DCT32x32 Quality Impact (SEVERE, Under Investigation)
+### DCT32x32 Output Corruption (SEVERE, DISABLED)
 
-**Status**: DCT32x32 is BROKEN for single-group images (≤256x256).
+**Status**: DCT32x32 is DISABLED via `distance < 100.0` guard in `ac_strategy.rs:1157`.
 
 **Symptom**: Forced DCT32x32 encoding of 256x256 images produces SSIM2 = -48 (catastrophic).
 The decoded pixels converge to average values instead of preserving spatial variation.
 djxl decodes without errors but produces wrong values.
 
-**Fixes applied Feb 3, 2026**:
+**Impact when enabled**: Even 0.9% DCT32x32 selection (121 of 14104 transforms) covers
+~10% of image pixels with wrong values, causing SSIM2 to drop by ~18 points. This was
+the root cause of the "gab+pixel-domain catastrophe at d≥3.0" — a sharp quality cliff
+at exactly the d=3.0 DCT32x32 enable threshold.
+
+**Fixes applied Feb 3, 2026** (did not resolve):
 1. Inverted DCT32x32 quant weights (were dequant, should be quant = 1/dequant)
 2. Fixed rectangular transform (DCT16x8/DCT8x16) coefficient storage mapping
-
-**Current state after fixes**:
-- AC coefficients are being encoded (546 nonzero, was 0 before quant weight fix)
-- File sizes reasonable (8700 bytes for 256x256 at d=3.0, was 1926 before)
-- DC extraction verified correct (production matches reference IDCT)
-- Quality still poor: SSIM2 = -48
-
-**Still doesn't work**: Single-group (256x256) with 100% forced DCT32x32 produces decoded
-pixels that converge to average values:
-- Original sRGB first 4 pixels: (0,0,0), (0,0,0), (130,194,89), (130,194,89) (black, black, green, green)
-- Decoded sRGB first 4: (79,118,67), (79,117,66), (78,115,65), (78,113,64) (all ~average)
-
-**Works**: DCT32x32 on multi-group images (>256x256) appears to work correctly. The full
-frymire image (1118x1105) at d=3.0 with 83.6% DCT32x32 decodes correctly via djxl.
+3. DC extraction verified correct (production matches reference IDCT)
+4. AC coefficients are being encoded (546 nonzero, file sizes reasonable)
 
 **Remaining investigation areas**:
 1. Coefficient ordering for DCT32x32 (COEFF_ORDER_32X32 validation)
 2. LLF coefficient handling in single-group vs multi-group
 3. AC strategy metadata for DCT32x32 in single-group frames
-
-**Workaround**: DCT32x32 is only enabled at d >= 3.0 and is naturally selected alongside
-other strategies. The mixed-strategy case works; forced 100% DCT32x32 single-group fails.
+4. Multi-group DCT32x32 appears to work (frymire 1118x1105 at d=3.0 decodes via djxl)
 
 ## Investigation Notes
 
