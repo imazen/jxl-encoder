@@ -5235,3 +5235,1049 @@ fn debug_dct4x8_check_values() {
     assert_eq!(nan_count, 0, "Found NaN values");
     assert_eq!(inf_count, 0, "Found Inf values");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DCT32x32: Production vs Reference IDCT comparison
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compare production `dc_from_dct_32x32()` (uses butterfly idct1d_4)
+/// against reference implementation (uses direct DCT-III formula).
+///
+/// This test identifies if the butterfly IDCT produces different numerical
+/// results than the known-correct direct formula.
+#[test]
+fn test_dc_from_dct_32x32_production_vs_reference() {
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, DCT_RESAMPLE_SCALE_32_TO_4};
+
+    // Reference 4-point IDCT using direct DCT-III formula
+    fn idct4_reference(input: &[f32; 4]) -> [f32; 4] {
+        use core::f32::consts::PI;
+        let x0 = input[0];
+        let x1 = input[1];
+        let x2 = input[2];
+        let x3 = input[3];
+
+        [
+            x0 + 2.0
+                * (x1 * (PI * 1.0 / 8.0).cos()
+                    + x2 * (PI * 2.0 / 8.0).cos()
+                    + x3 * (PI * 3.0 / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI * 3.0 / 8.0).cos()
+                    + x2 * (PI * 6.0 / 8.0).cos()
+                    + x3 * (PI * 9.0 / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI * 5.0 / 8.0).cos()
+                    + x2 * (PI * 10.0 / 8.0).cos()
+                    + x3 * (PI * 15.0 / 8.0).cos()),
+            x0 + 2.0
+                * (x1 * (PI * 7.0 / 8.0).cos()
+                    + x2 * (PI * 14.0 / 8.0).cos()
+                    + x3 * (PI * 21.0 / 8.0).cos()),
+        ]
+    }
+
+    /// Reference dc_from_dct_32x32 using direct IDCT formula (known correct)
+    fn dc_from_dct_32x32_reference(coeffs: &[f32; 1024]) -> [f32; 16] {
+        // Extract 4x4 LLF with resample scales
+        let mut block = [0.0f32; 16];
+        for iy in 0..4 {
+            for ix in 0..4 {
+                block[iy * 4 + ix] = coeffs[iy * 32 + ix]
+                    * DCT_RESAMPLE_SCALE_32_TO_4[iy]
+                    * DCT_RESAMPLE_SCALE_32_TO_4[ix]
+                    * 16.0; // Same scaling as production
+            }
+        }
+
+        // IDCT rows
+        let mut after_rows = [0.0f32; 16];
+        for iy in 0..4 {
+            let row_in = [
+                block[iy * 4],
+                block[iy * 4 + 1],
+                block[iy * 4 + 2],
+                block[iy * 4 + 3],
+            ];
+            let row_out = idct4_reference(&row_in);
+            for ix in 0..4 {
+                after_rows[iy * 4 + ix] = row_out[ix];
+            }
+        }
+
+        // Transpose
+        let mut transposed = [0.0f32; 16];
+        for iy in 0..4 {
+            for ix in 0..4 {
+                transposed[ix * 4 + iy] = after_rows[iy * 4 + ix];
+            }
+        }
+
+        // IDCT rows again
+        let mut result = [0.0f32; 16];
+        for iy in 0..4 {
+            let row_in = [
+                transposed[iy * 4],
+                transposed[iy * 4 + 1],
+                transposed[iy * 4 + 2],
+                transposed[iy * 4 + 3],
+            ];
+            let row_out = idct4_reference(&row_in);
+            for ix in 0..4 {
+                result[iy * 4 + ix] = row_out[ix];
+            }
+        }
+        result
+    }
+
+    // Test 1: Uniform DC only
+    eprintln!("=== Test 1: Uniform DC only (coeffs[0] = 1.0) ===");
+    let mut coeffs = [0.0f32; 1024];
+    coeffs[0] = 1.0;
+
+    let production = dc_from_dct_32x32(&coeffs);
+    let reference = dc_from_dct_32x32_reference(&coeffs);
+
+    eprintln!("Production DC values: all = {:.6}", production[0]);
+    eprintln!("Reference DC values:  all = {:.6}", reference[0]);
+
+    // Calculate ratio
+    let scale_factor = reference[0] / production[0];
+    eprintln!("Scale factor (ref/prod): {:.6}", scale_factor);
+
+    // Test 2: Vertical frequency (coeffs[1] = ky=1, kx=0)
+    eprintln!("\n=== Test 2: Vertical frequency (coeffs[1] = 1.0) ===");
+    let mut coeffs = [0.0f32; 1024];
+    coeffs[1] = 1.0;
+
+    let production = dc_from_dct_32x32(&coeffs);
+    let reference = dc_from_dct_32x32_reference(&coeffs);
+
+    eprintln!("Production DC values:");
+    for iy in 0..4 {
+        eprintln!(
+            "  row {}: [{:.4}, {:.4}, {:.4}, {:.4}]",
+            iy,
+            production[iy * 4],
+            production[iy * 4 + 1],
+            production[iy * 4 + 2],
+            production[iy * 4 + 3]
+        );
+    }
+    eprintln!("Reference DC values:");
+    for iy in 0..4 {
+        eprintln!(
+            "  row {}: [{:.4}, {:.4}, {:.4}, {:.4}]",
+            iy,
+            reference[iy * 4],
+            reference[iy * 4 + 1],
+            reference[iy * 4 + 2],
+            reference[iy * 4 + 3]
+        );
+    }
+
+    // Check if spatial patterns match (up to scale)
+    // For vertical frequency, each row should be constant
+    eprintln!("\nRow constancy check (should be ~0 for vertical freq):");
+    for iy in 0..4 {
+        let prod_row: Vec<f32> = (0..4).map(|ix| production[iy * 4 + ix]).collect();
+        let ref_row: Vec<f32> = (0..4).map(|ix| reference[iy * 4 + ix]).collect();
+        let prod_var: f32 = prod_row.iter().map(|v| (v - prod_row[0]).abs()).sum();
+        let ref_var: f32 = ref_row.iter().map(|v| (v - ref_row[0]).abs()).sum();
+        eprintln!("  Row {}: prod_var={:.6}, ref_var={:.6}", iy, prod_var, ref_var);
+        
+        // Assert row constancy
+        assert!(prod_var < 1e-5, "Production row {} not constant: {:?}", iy, prod_row);
+        assert!(ref_var < 1e-5, "Reference row {} not constant: {:?}", iy, ref_row);
+    }
+
+    // Check row-to-row variation (should have different values between rows)
+    let prod_row_diff = (production[0] - production[4]).abs();
+    let ref_row_diff = (reference[0] - reference[4]).abs();
+    eprintln!("Row 0 vs Row 1 diff: prod={:.6}, ref={:.6}", prod_row_diff, ref_row_diff);
+    assert!(prod_row_diff > 0.01, "Production should have row-to-row variation");
+    assert!(ref_row_diff > 0.01, "Reference should have row-to-row variation");
+
+    // Normalize and compare patterns
+    let prod_mean: f32 = production.iter().sum::<f32>() / 16.0;
+    let ref_mean: f32 = reference.iter().sum::<f32>() / 16.0;
+    let prod_std: f32 = (production.iter().map(|x| (x - prod_mean).powi(2)).sum::<f32>() / 16.0).sqrt();
+    let ref_std: f32 = (reference.iter().map(|x| (x - ref_mean).powi(2)).sum::<f32>() / 16.0).sqrt();
+
+    eprintln!("\nNormalized comparison:");
+    eprintln!("  Production: mean={:.6}, std={:.6}", prod_mean, prod_std);
+    eprintln!("  Reference:  mean={:.6}, std={:.6}", ref_mean, ref_std);
+
+    if prod_std > 1e-6 && ref_std > 1e-6 {
+        let prod_norm: Vec<f32> = production.iter().map(|x| (x - prod_mean) / prod_std).collect();
+        let ref_norm: Vec<f32> = reference.iter().map(|x| (x - ref_mean) / ref_std).collect();
+
+        let mut max_norm_diff = 0.0f32;
+        for i in 0..16 {
+            let diff = (prod_norm[i] - ref_norm[i]).abs();
+            if diff > max_norm_diff {
+                max_norm_diff = diff;
+            }
+        }
+        eprintln!("  Max normalized difference: {:.6}", max_norm_diff);
+
+        // Patterns should match after normalization
+        assert!(
+            max_norm_diff < 0.01,
+            "IDCT produces different PATTERN: max_norm_diff = {}",
+            max_norm_diff
+        );
+    }
+
+    eprintln!("\n=== CONCLUSION ===");
+    eprintln!("Scale factor between reference and production: {:.6}", scale_factor);
+    eprintln!("The butterfly IDCT produces the correct PATTERN but different SCALE.");
+    eprintln!("To fix: dc_from_dct_32x32 should use the direct IDCT formula,");
+    eprintln!("or multiply the result by {:.1}.", scale_factor);
+}
+
+/// Verify dc_from_dct_32x32 with uniform input
+#[test]
+fn test_dc_from_dct_32x32_uniform_input() {
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
+    // Uniform 32x32 input with value 0.5
+    let input = [0.5f32; 1024];
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&input, &mut coeffs);
+
+    eprintln!("Uniform input (all 0.5):");
+    eprintln!("  coeffs[0] (DC) = {:.6}", coeffs[0]);
+    eprintln!("  Expected DC = 0.5 (block average)");
+
+    let dcs = dc_from_dct_32x32(&coeffs);
+    eprintln!("  dc_from_dct_32x32 output[0] = {:.6}", dcs[0]);
+    eprintln!("  All DC values should be 0.5 (the block average)");
+
+    // Check all DC values are close to 0.5
+    for (i, &dc) in dcs.iter().enumerate() {
+        let err = (dc - 0.5).abs();
+        if err > 0.01 {
+            eprintln!("  ERROR: dc[{}] = {:.6}, expected 0.5, err = {:.6}", i, dc, err);
+        }
+    }
+
+    let max_err = dcs.iter().map(|&dc| (dc - 0.5).abs()).fold(0.0f32, f32::max);
+    eprintln!("  Max error: {:.6}", max_err);
+
+    // This currently fails because of the 16x scale factor bug
+    // After fix, this assertion should pass
+    assert!(max_err < 0.01, "DC values should be ~0.5 for uniform 0.5 input, got {:?}", dcs);
+}
+
+/// Verify dc_from_dct_32x32 with step function input
+#[test]
+fn test_dc_from_dct_32x32_step_input() {
+    use jxl_enc::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+
+    // Step function: top half = 0.25, bottom half = 0.75
+    let mut input = [0.0f32; 1024];
+    for y in 0..32 {
+        let v = if y < 16 { 0.25 } else { 0.75 };
+        for x in 0..32 {
+            input[y * 32 + x] = v;
+        }
+    }
+
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&input, &mut coeffs);
+
+    eprintln!("Step function input (top=0.25, bottom=0.75):");
+    eprintln!("  LLF coeffs:");
+    for iy in 0..4 {
+        eprintln!(
+            "    row {}: [{:.6}, {:.6}, {:.6}, {:.6}]",
+            iy,
+            coeffs[iy * 32],
+            coeffs[iy * 32 + 1],
+            coeffs[iy * 32 + 2],
+            coeffs[iy * 32 + 3]
+        );
+    }
+
+    let dcs = dc_from_dct_32x32(&coeffs);
+    eprintln!("  DC values (4x4 grid):");
+    for iy in 0..4 {
+        eprintln!(
+            "    row {}: [{:.6}, {:.6}, {:.6}, {:.6}]  expected: {:.2}",
+            iy,
+            dcs[iy * 4],
+            dcs[iy * 4 + 1],
+            dcs[iy * 4 + 2],
+            dcs[iy * 4 + 3],
+            if iy < 2 { 0.25 } else { 0.75 }
+        );
+    }
+
+    // Check expected values
+    // Rows 0-1 should be ~0.25 (top half of image)
+    // Rows 2-3 should be ~0.75 (bottom half of image)
+    let mut max_err = 0.0f32;
+    for iy in 0..4 {
+        let expected = if iy < 2 { 0.25 } else { 0.75 };
+        for ix in 0..4 {
+            let err = (dcs[iy * 4 + ix] - expected).abs();
+            if err > max_err {
+                max_err = err;
+                eprintln!("  Error at [{},{}]: got {:.6}, expected {:.2}, err {:.6}",
+                    iy, ix, dcs[iy * 4 + ix], expected, err);
+            }
+        }
+    }
+    eprintln!("  Max error: {:.6}", max_err);
+
+    // Allow some error due to edge effects in the step function
+    assert!(max_err < 0.1, "DC values should match expected, max_err = {}", max_err);
+}
+
+
+/// Debug test: check what AC coefficients are actually encoded for DCT32x32
+#[test]
+#[ignore]
+fn test_dct32x32_ac_coeff_debug() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Create simple 32x32 test pattern: left half black, right half white
+    let w = 32usize;
+    let h = 32usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let v = if x < 16 { 0.1 } else { 0.9 };
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;     // R (becomes X after XYB)
+            linear[idx + 1] = v; // G (becomes Y)
+            linear[idx + 2] = v; // B
+        }
+    }
+
+    // Encode with forced DCT32x32
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.force_strategy = Some(4); // DCT32x32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dec_w, dec_h, decoded) = decode_jxl_oxide(&bytes);
+    eprintln!("Decoded image: {}x{}", dec_w, dec_h);
+
+    // Sample some pixel values (in linear RGB)
+    eprintln!("Pixel samples (linear RGB Y channel estimate):");
+    for y in [0, 8, 16, 24, 31] {
+        for x in [0, 8, 15, 16, 24, 31] {
+            let idx = (y * w + x) * 3;
+            let v = decoded[idx + 1]; // Green channel approximates Y
+            eprintln!("  ({:2}, {:2}): {:.4}", x, y, v);
+        }
+    }
+
+    // Check if horizontal variation is preserved
+    let left_avg: f32 = (0..16).map(|x| decoded[(16 * w + x) * 3 + 1]).sum::<f32>() / 16.0;
+    let right_avg: f32 = (16..32).map(|x| decoded[(16 * w + x) * 3 + 1]).sum::<f32>() / 16.0;
+    eprintln!("Row 16: left avg = {:.4}, right avg = {:.4}", left_avg, right_avg);
+    eprintln!("Expected: left ~0.1, right ~0.9");
+
+    // If all converging to average (~0.5), that's the bug
+    assert!(right_avg > left_avg + 0.3, "Horizontal variation lost: left={:.4}, right={:.4}", left_avg, right_avg);
+}
+
+/// Debug test: 64x64 with forced DCT32x32
+#[test]
+#[ignore]
+fn test_dct32x32_64x64_debug() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Create 64x64 test pattern: top-left=black, bottom-right=white
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let v = if y < 32 && x < 32 { 0.1 } else { 0.9 };
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with forced DCT32x32
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.force_strategy = Some(4); // DCT32x32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("64x64 encoded {} bytes", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dec_w, dec_h, decoded) = decode_jxl_oxide(&bytes);
+    eprintln!("Decoded image: {}x{}", dec_w, dec_h);
+
+    // Sample center of each quadrant
+    let samples = [
+        (16, 16, "top-left (expected ~0.1)"),
+        (48, 16, "top-right (expected ~0.9)"),
+        (16, 48, "bottom-left (expected ~0.9)"),
+        (48, 48, "bottom-right (expected ~0.9)"),
+    ];
+    for (x, y, label) in samples {
+        let idx = (y * w + x) * 3;
+        let v = decoded[idx + 1];
+        eprintln!("  ({:2}, {:2}): {:.4} - {}", x, y, v, label);
+    }
+
+    // Check quadrant averages
+    let tl: f32 = (0..32).flat_map(|y| (0..32).map(move |x| (y, x)))
+        .map(|(y, x)| decoded[(y * w + x) * 3 + 1])
+        .sum::<f32>() / (32.0 * 32.0);
+    let tr: f32 = (0..32).flat_map(|y| (32..64).map(move |x| (y, x)))
+        .map(|(y, x)| decoded[(y * w + x) * 3 + 1])
+        .sum::<f32>() / (32.0 * 32.0);
+    let bl: f32 = (32..64).flat_map(|y| (0..32).map(move |x| (y, x)))
+        .map(|(y, x)| decoded[(y * w + x) * 3 + 1])
+        .sum::<f32>() / (32.0 * 32.0);
+    let br: f32 = (32..64).flat_map(|y| (32..64).map(move |x| (y, x)))
+        .map(|(y, x)| decoded[(y * w + x) * 3 + 1])
+        .sum::<f32>() / (32.0 * 32.0);
+
+    eprintln!("Quadrant averages:");
+    eprintln!("  Top-left:     {:.4} (expected ~0.1)", tl);
+    eprintln!("  Top-right:    {:.4} (expected ~0.9)", tr);
+    eprintln!("  Bottom-left:  {:.4} (expected ~0.9)", bl);
+    eprintln!("  Bottom-right: {:.4} (expected ~0.9)", br);
+
+    // Top-left should be significantly darker than others
+    assert!(tr > tl + 0.3, "Quadrant variation lost");
+}
+
+/// Debug test: 256x256 with forced DCT32x32 - this should reveal the bug
+#[test]
+#[ignore]
+fn test_dct32x32_256x256_debug() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Create 256x256 test pattern: top-left=black, bottom-right=white
+    let w = 256usize;
+    let h = 256usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let v = if y < 128 && x < 128 { 0.1 } else { 0.9 };
+            let idx = (y * w + x) * 3;
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with forced DCT32x32
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.force_strategy = Some(4); // DCT32x32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("256x256 encoded {} bytes", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dec_w, dec_h, decoded) = decode_jxl_oxide(&bytes);
+    eprintln!("Decoded image: {}x{}", dec_w, dec_h);
+
+    // Sample center of each quadrant
+    let samples = [
+        (64, 64, "top-left (expected ~0.1)"),
+        (192, 64, "top-right (expected ~0.9)"),
+        (64, 192, "bottom-left (expected ~0.9)"),
+        (192, 192, "bottom-right (expected ~0.9)"),
+    ];
+    for (x, y, label) in samples {
+        let idx = (y * w + x) * 3;
+        let v = decoded[idx + 1];
+        eprintln!("  ({:3}, {:3}): {:.4} - {}", x, y, v, label);
+    }
+
+    // Check quadrant averages
+    let tl: f32 = (0..128).flat_map(|y| (0..128).map(move |x| (y, x)))
+        .map(|(y, x)| decoded[(y * w + x) * 3 + 1])
+        .sum::<f32>() / (128.0 * 128.0);
+    let tr: f32 = (0..128).flat_map(|y| (128..256).map(move |x| (y, x)))
+        .map(|(y, x)| decoded[(y * w + x) * 3 + 1])
+        .sum::<f32>() / (128.0 * 128.0);
+
+    eprintln!("Quadrant averages:");
+    eprintln!("  Top-left:  {:.4} (expected ~0.1)", tl);
+    eprintln!("  Top-right: {:.4} (expected ~0.9)", tr);
+
+    // Top-left should be significantly darker than top-right
+    let diff = tr - tl;
+    eprintln!("  Difference: {:.4} (expected ~0.8)", diff);
+    
+    assert!(diff > 0.3, "Quadrant variation lost: tl={:.4}, tr={:.4}, diff={:.4}", tl, tr, diff);
+}
+
+/// Debug test: frymire crop with detailed pixel analysis
+#[test]
+#[ignore]
+fn test_dct32x32_frymire_detailed_debug() {
+    let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
+    assert_eq!(w, 256);
+    assert_eq!(h, 256);
+
+    // Show some original pixel values
+    eprintln!("Original linear values (first 3 pixels RGB):");
+    for i in 0..3 {
+        eprintln!("  pixel {}: R={:.4}, G={:.4}, B={:.4}",
+            i, linear[i*3], linear[i*3+1], linear[i*3+2]);
+    }
+    eprintln!("Original sRGB values (first 3 pixels):");
+    for i in 0..3 {
+        eprintln!("  pixel {}: R={}, G={}, B={}",
+            i, srgb[i*3], srgb[i*3+1], srgb[i*3+2]);
+    }
+
+    // Encode with forced DCT32x32
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(3.0);
+    encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("\nEncoded {} bytes", bytes.len());
+
+    // Decode with jxl-oxide
+    let (dw, dh, decoded) = decode_jxl_oxide(&bytes);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+
+    eprintln!("\nDecoded linear values (first 3 pixels RGB):");
+    for i in 0..3 {
+        eprintln!("  pixel {}: R={:.4}, G={:.4}, B={:.4}",
+            i, decoded[i*3], decoded[i*3+1], decoded[i*3+2]);
+    }
+
+    // Check overall statistics
+    let orig_min = linear.iter().cloned().fold(f32::MAX, f32::min);
+    let orig_max = linear.iter().cloned().fold(f32::MIN, f32::max);
+    let orig_avg = linear.iter().sum::<f32>() / linear.len() as f32;
+
+    let dec_min = decoded.iter().cloned().fold(f32::MAX, f32::min);
+    let dec_max = decoded.iter().cloned().fold(f32::MIN, f32::max);
+    let dec_avg = decoded.iter().sum::<f32>() / decoded.len() as f32;
+
+    eprintln!("\nOriginal stats: min={:.4}, max={:.4}, avg={:.4}", orig_min, orig_max, orig_avg);
+    eprintln!("Decoded stats:  min={:.4}, max={:.4}, avg={:.4}", dec_min, dec_max, dec_avg);
+
+    // If decoded values have collapsed range, that's the bug
+    let orig_range = orig_max - orig_min;
+    let dec_range = dec_max - dec_min;
+    eprintln!("Range: original={:.4}, decoded={:.4}, ratio={:.4}", orig_range, dec_range, dec_range / orig_range);
+
+    // Compare with DCT8-only encoding
+    let mut encoder8 = jxl_enc::tiny::TinyEncoder::new(3.0);
+    encoder8.ac_strategy_enabled = false; // DCT8 only
+    let bytes8 = encoder8.encode(w, h, &linear).unwrap();
+    let (_, _, decoded8) = decode_jxl_oxide(&bytes8);
+
+    let dec8_min = decoded8.iter().cloned().fold(f32::MAX, f32::min);
+    let dec8_max = decoded8.iter().cloned().fold(f32::MIN, f32::max);
+    let dec8_avg = decoded8.iter().sum::<f32>() / decoded8.len() as f32;
+    let dec8_range = dec8_max - dec8_min;
+
+    eprintln!("\nDCT8 stats:     min={:.4}, max={:.4}, avg={:.4}, range={:.4}", dec8_min, dec8_max, dec8_avg, dec8_range);
+
+    // DCT32x32 should have similar range to DCT8
+    assert!(dec_range > orig_range * 0.3, "DCT32x32 range collapsed: {:.4} vs original {:.4}", dec_range, orig_range);
+}
+
+/// Debug test: frymire crop pattern analysis
+#[test]
+#[ignore]
+fn test_dct32x32_frymire_pattern_debug() {
+    let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 256, 256);
+
+    // Show first 8x8 block in detail
+    eprintln!("Original linear Y values (8x8 block at top-left):");
+    for y in 0..8 {
+        eprint!("  row {}: ", y);
+        for x in 0..8 {
+            let idx = (y * w + x) * 3;
+            let g = linear[idx + 1]; // Green channel ~ Y
+            eprint!("{:.2} ", g);
+        }
+        eprintln!();
+    }
+
+    // Encode with forced DCT32x32
+    let mut encoder = jxl_enc::tiny::TinyEncoder::new(3.0);
+    encoder.force_strategy = Some(4);
+
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    let (_, _, decoded) = decode_jxl_oxide(&bytes);
+
+    eprintln!("\nDecoded linear Y values (8x8 block at top-left):");
+    for y in 0..8 {
+        eprint!("  row {}: ", y);
+        for x in 0..8 {
+            let idx = (y * w + x) * 3;
+            let g = decoded[idx + 1];
+            eprint!("{:.2} ", g);
+        }
+        eprintln!();
+    }
+
+    // Also show middle of image for comparison
+    eprintln!("\nOriginal linear Y values (8x8 block at center):");
+    for y in 0..8 {
+        eprint!("  row {}: ", y);
+        for x in 0..8 {
+            let idx = ((128 + y) * w + (128 + x)) * 3;
+            let g = linear[idx + 1];
+            eprint!("{:.2} ", g);
+        }
+        eprintln!();
+    }
+
+    eprintln!("\nDecoded linear Y values (8x8 block at center):");
+    for y in 0..8 {
+        eprint!("  row {}: ", y);
+        for x in 0..8 {
+            let idx = ((128 + y) * w + (128 + x)) * 3;
+            let g = decoded[idx + 1];
+            eprint!("{:.2} ", g);
+        }
+        eprintln!();
+    }
+}
+
+/// Debug test: check AC coefficient encoding for DCT32x32
+#[test]
+#[ignore]
+fn test_dct32x32_nzeros_debug() {
+    use jxl_enc::tiny::TinyEncoder;
+    use jxl_enc::tiny::dct::dct_32x32;
+
+    let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 256, 256);
+
+    // Extract first 32x32 block from Y channel and transform
+    let mut block = [0.0f32; 1024];
+    for y in 0..32 {
+        for x in 0..32 {
+            // Approximate Y from linear RGB: Y ≈ 0.2126*R + 0.7152*G + 0.0722*B
+            let idx = (y * w + x) * 3;
+            block[y * 32 + x] = 0.2126 * linear[idx] + 0.7152 * linear[idx + 1] + 0.0722 * linear[idx + 2];
+        }
+    }
+
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&block, &mut coeffs);
+
+    // Count non-zero LLF and AC coefficients
+    let mut llf_nz = 0;
+    let mut ac_nz = 0;
+    let llf_thresh = 0.001;
+    let ac_thresh = 0.001;
+
+    for y in 0..4 {
+        for x in 0..4 {
+            if coeffs[y * 32 + x].abs() > llf_thresh {
+                llf_nz += 1;
+            }
+        }
+    }
+
+    for y in 0..32 {
+        for x in 0..32 {
+            if y < 4 && x < 4 {
+                continue; // Skip LLF
+            }
+            if coeffs[y * 32 + x].abs() > ac_thresh {
+                ac_nz += 1;
+            }
+        }
+    }
+
+    eprintln!("First 32x32 block DCT analysis:");
+    eprintln!("  LLF non-zeros (of 16): {}", llf_nz);
+    eprintln!("  AC non-zeros (of 1008): {}", ac_nz);
+
+    // Show LLF values
+    eprintln!("  LLF values (4x4):");
+    for y in 0..4 {
+        eprint!("    ");
+        for x in 0..4 {
+            eprint!("{:8.4} ", coeffs[y * 32 + x]);
+        }
+        eprintln!();
+    }
+
+    // Show some AC values (first few diagonals)
+    eprintln!("  AC values (first diagonal):");
+    for d in 4..8 {
+        eprint!("    diag {}: ", d);
+        for y in 0..=d.min(31) {
+            let x = d - y;
+            if x < 32 && !(y < 4 && x < 4) {
+                eprint!("{:6.3} ", coeffs[y * 32 + x]);
+            }
+        }
+        eprintln!();
+    }
+
+    // The AC coefficients should be significant for a real photo
+    assert!(ac_nz > 100, "Too few AC non-zeros: {} (expected >100 for real photo)", ac_nz);
+}
+
+
+/// Debug test: compare file sizes DCT32x32 vs DCT8
+#[test]
+#[ignore]
+fn test_dct32x32_vs_dct8_filesize() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 256, 256);
+
+    // Encode with DCT8 only
+    let mut encoder8 = TinyEncoder::new(3.0);
+    encoder8.ac_strategy_enabled = false;
+    let bytes8 = encoder8.encode(w, h, &linear).unwrap();
+
+    // Encode with DCT32x32 only
+    let mut encoder32 = TinyEncoder::new(3.0);
+    encoder32.force_strategy = Some(4);
+    let bytes32 = encoder32.encode(w, h, &linear).unwrap();
+
+    eprintln!("File sizes for 256x256 frymire at d=3.0:");
+    eprintln!("  DCT8:    {} bytes", bytes8.len());
+    eprintln!("  DCT32x32: {} bytes", bytes32.len());
+    eprintln!("  Ratio:   {:.2}x", bytes32.len() as f64 / bytes8.len() as f64);
+
+    // DCT32x32 can be smaller than DCT8 (larger blocks = better energy compaction
+    // at high distances for smooth areas). At d=3.0 on photos, expect ~30-60% of DCT8.
+    // If DCT32x32 is < 25% of DCT8, something is wrong (coefficients being dropped).
+    assert!(bytes32.len() > bytes8.len() / 4,
+        "DCT32x32 file suspiciously small: {} vs DCT8 {}", bytes32.len(), bytes8.len());
+}
+
+/// Debug test to trace AC coefficient writing for DCT32x32
+#[test]
+#[ignore]
+fn test_dct32x32_ac_trace() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Just 64x64 = 8x8 blocks = 4 DCT32x32 transforms
+    let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 64, 64);
+
+    eprintln!("Image: {}x{}", w, h);
+    eprintln!("Blocks: {}x{} = {}", w / 8, h / 8, (w / 8) * (h / 8));
+    eprintln!("Expected DCT32x32 transforms: {} (each covers 4x4 blocks)", (w / 32) * (h / 32));
+
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.force_strategy = Some(4); // DCT32x32
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+
+    eprintln!("Output size: {} bytes", bytes.len());
+
+    // For comparison, encode with DCT8
+    let mut encoder8 = TinyEncoder::new(3.0);
+    encoder8.ac_strategy_enabled = false;
+    let bytes8 = encoder8.encode(w, h, &linear).unwrap();
+
+    eprintln!("DCT8 size: {} bytes", bytes8.len());
+    eprintln!("Ratio: {:.2}x", bytes.len() as f64 / bytes8.len() as f64);
+
+    // Verify that forced strategy is actually set
+    // Can't directly access the strategy map, but file size should tell us something
+}
+
+/// Debug: examine the encoding process for DCT32x32 to find where coefficients are lost
+#[test]
+#[ignore]
+fn test_dct32x32_coeff_storage_debug() {
+    use jxl_enc::tiny::dct::{dct_32x32};
+
+    // Create a simple 32x32 pattern that should have nonzero AC coefficients
+    let mut pixels = [0.0f32; 32 * 32];
+    for y in 0..32 {
+        for x in 0..32 {
+            // Checkerboard pattern should have lots of AC
+            pixels[y * 32 + x] = if (x + y) % 2 == 0 { 0.8 } else { 0.2 };
+        }
+    }
+
+    // Do the DCT
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&pixels, &mut coeffs);
+
+    // Count nonzeros
+    let nonzero_count = coeffs.iter().filter(|&&c| c.abs() > 0.01).count();
+    eprintln!("After DCT: {} nonzero coefficients out of 1024", nonzero_count);
+
+    // The DC is at position 0, LLF is 4x4 = 16 positions
+    let dc = coeffs[0];
+    eprintln!("DC = {:.4}", dc);
+
+    // Check some AC coefficients
+    eprintln!("First few AC coefficients:");
+    for i in 0..32 {
+        eprintln!("  coeffs[{}] = {:.4}", i, coeffs[i]);
+    }
+
+    // With checkerboard, AC should be substantial
+    let ac_sum: f32 = coeffs[16..].iter().map(|c| c.abs()).sum();
+    eprintln!("Sum of |AC| (excluding LLF 16): {:.2}", ac_sum);
+
+    assert!(nonzero_count > 100, "Checkerboard should have many nonzero AC coefficients");
+}
+
+/// Debug: show where nonzero coefficients are for checkerboard
+#[test]
+#[ignore]
+fn test_dct32x32_checkerboard_frequencies() {
+    use jxl_enc::tiny::dct::dct_32x32;
+
+    // Checkerboard pattern
+    let mut pixels = [0.0f32; 32 * 32];
+    for y in 0..32 {
+        for x in 0..32 {
+            pixels[y * 32 + x] = if (x + y) % 2 == 0 { 0.8 } else { 0.2 };
+        }
+    }
+
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&pixels, &mut coeffs);
+
+    // Find and print all nonzero coefficients
+    eprintln!("Nonzero coefficients (idx, value, (ky,kx)):");
+    for (idx, &c) in coeffs.iter().enumerate() {
+        if c.abs() > 0.001 {
+            let ky = idx / 32;
+            let kx = idx % 32;
+            eprintln!("  coeffs[{}] = {:.4}  (ky={}, kx={})", idx, c, ky, kx);
+        }
+    }
+}
+
+/// Debug: manually trace the encoding of a simple DCT32x32 block
+#[test]
+#[ignore]
+fn test_dct32x32_manual_trace() {
+    use jxl_enc::tiny::dct::{dct_32x32, dc_from_dct_32x32};
+
+    // Simple gradient pattern
+    let mut pixels = [0.0f32; 1024];
+    for y in 0..32 {
+        for x in 0..32 {
+            pixels[y * 32 + x] = (x as f32 + y as f32) / 62.0; // 0.0 to 1.0
+        }
+    }
+
+    // Forward DCT
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&pixels, &mut coeffs);
+
+    eprintln!("=== After DCT ===");
+    let nonzero_before_quant = coeffs.iter().filter(|&&c| c.abs() > 0.001).count();
+    eprintln!("Nonzero coeffs (>0.001): {}", nonzero_before_quant);
+
+    // Simulate quantization at d=3.0 with typical quant value
+    let qac = 3.0 * 4.0; // rough approximation
+    let mut quant_coeffs = [0i32; 1024];
+    for i in 0..1024 {
+        quant_coeffs[i] = (coeffs[i] * qac).round() as i32;
+    }
+
+    eprintln!("\n=== After Quantization (qac={}) ===", qac);
+    let nonzero_after_quant = quant_coeffs.iter().filter(|&&c| c != 0).count();
+    eprintln!("Nonzero quantized coeffs: {}", nonzero_after_quant);
+
+    // Show first nonzero coefficients
+    eprintln!("\nFirst 20 nonzero quantized coefficients:");
+    let mut found = 0;
+    for (idx, &c) in quant_coeffs.iter().enumerate() {
+        if c != 0 && found < 20 {
+            let ky = idx / 32;
+            let kx = idx % 32;
+            eprintln!("  [{:4}] = {:4} (ky={:2}, kx={:2})", idx, c, ky, kx);
+            found += 1;
+        }
+    }
+
+    // The DC and LLF region (first 4x4 = 16 coefficients in flat layout)
+    eprintln!("\nLLF region (4x4):");
+    for ky in 0..4 {
+        for kx in 0..4 {
+            let idx = ky * 32 + kx;
+            eprint!("{:6} ", quant_coeffs[idx]);
+        }
+        eprintln!();
+    }
+
+    assert!(nonzero_after_quant > 10, "Gradient should have some nonzero AC coefficients");
+}
+
+/// Debug: trace with actual photo content
+#[test]
+#[ignore]
+fn test_dct32x32_photo_trace() {
+    use jxl_enc::tiny::dct::dct_32x32;
+
+    let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 32, 32);
+    eprintln!("Loaded {}x{} crop", w, h);
+
+    // Take Y channel (brightness)
+    let mut pixels = [0.0f32; 1024];
+    for i in 0..1024 {
+        // Linear RGB to Y: approximate Y = 0.2126*R + 0.7152*G + 0.0722*B
+        let r = linear[i * 3];
+        let g = linear[i * 3 + 1];
+        let b = linear[i * 3 + 2];
+        pixels[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    eprintln!("Pixel range: {:.4} to {:.4}", 
+        pixels.iter().cloned().fold(f32::INFINITY, f32::min),
+        pixels.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+
+    // Forward DCT
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&pixels, &mut coeffs);
+
+    eprintln!("\n=== After DCT ===");
+    let nonzero_before_quant = coeffs.iter().filter(|&&c| c.abs() > 0.001).count();
+    eprintln!("Nonzero coeffs (>0.001): {}", nonzero_before_quant);
+
+    // Simulate quantization at d=3.0
+    // Use actual quant weights for Y channel DCT32x32
+    let qac = 3.0 * 4.0;
+    let mut quant_coeffs = [0i32; 1024];
+    for i in 0..1024 {
+        quant_coeffs[i] = (coeffs[i] * qac).round() as i32;
+    }
+
+    eprintln!("\n=== After Quantization (qac={}) ===", qac);
+    let nonzero_after_quant = quant_coeffs.iter().filter(|&&c| c != 0).count();
+    eprintln!("Nonzero quantized coeffs: {}", nonzero_after_quant);
+
+    // Count AC (non-LLF) nonzeros
+    // LLF is 4x4 region at positions ky<4 && kx<4
+    let mut ac_nonzeros = 0;
+    for idx in 0..1024 {
+        let ky = idx / 32;
+        let kx = idx % 32;
+        if ky >= 4 || kx >= 4 {
+            if quant_coeffs[idx] != 0 {
+                ac_nonzeros += 1;
+            }
+        }
+    }
+    eprintln!("AC (non-LLF) nonzeros: {}", ac_nonzeros);
+
+    // Show first 20 AC nonzeros
+    eprintln!("\nFirst 20 AC nonzero coefficients:");
+    let mut found = 0;
+    for idx in 0..1024 {
+        let ky = idx / 32;
+        let kx = idx % 32;
+        if (ky >= 4 || kx >= 4) && quant_coeffs[idx] != 0 && found < 20 {
+            eprintln!("  [{:4}] = {:4} (ky={:2}, kx={:2})", idx, quant_coeffs[idx], ky, kx);
+            found += 1;
+        }
+    }
+
+    eprintln!("\nLLF region (4x4):");
+    for ky in 0..4 {
+        for kx in 0..4 {
+            let idx = ky * 32 + kx;
+            eprint!("{:6} ", quant_coeffs[idx]);
+        }
+        eprintln!();
+    }
+
+    assert!(ac_nonzeros > 50, "Photo should have substantial AC content: got {}", ac_nonzeros);
+}
+
+/// Debug: trace with actual photo content and correct quantization
+#[test]
+#[ignore]
+fn test_dct32x32_photo_correct_quant() {
+    use jxl_enc::tiny::dct::dct_32x32;
+
+    let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 32, 32);
+    eprintln!("Loaded {}x{} crop", w, h);
+
+    // Take Y channel (brightness)
+    let mut pixels = [0.0f32; 1024];
+    for i in 0..1024 {
+        let r = linear[i * 3];
+        let g = linear[i * 3 + 1];
+        let b = linear[i * 3 + 2];
+        pixels[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    eprintln!("Pixel range: {:.4} to {:.4}", 
+        pixels.iter().cloned().fold(f32::INFINITY, f32::min),
+        pixels.iter().cloned().fold(f32::NEG_INFINITY, f32::max));
+
+    // Forward DCT
+    let mut coeffs = [0.0f32; 1024];
+    dct_32x32(&pixels, &mut coeffs);
+
+    eprintln!("\n=== After DCT ===");
+    let nonzero_before_quant = coeffs.iter().filter(|&&c| c.abs() > 0.001).count();
+    eprintln!("Nonzero coeffs (>0.001): {}", nonzero_before_quant);
+
+    // Correct quantization: scale = global_scale / 65536 ≈ 2482 / 65536 ≈ 0.0379
+    // qac = scale * quant_field ≈ 0.0379 * 5 ≈ 0.19
+    // But we also need quant weights!
+    // Quantized value = coeff * (1/weight) * qac
+    
+    // For Y channel DCT32x32, the quant weights at high frequencies are large
+    // Let's use a simpler approximation: qac = 0.2 (typical for d=3.0)
+    let qac = 0.2;
+    let mut quant_coeffs = [0i32; 1024];
+    for i in 0..1024 {
+        // Simplified: no per-coeff weights for this test
+        quant_coeffs[i] = (coeffs[i] * qac).round() as i32;
+    }
+
+    eprintln!("\n=== After Quantization (qac={}) ===", qac);
+    let nonzero_after_quant = quant_coeffs.iter().filter(|&&c| c != 0).count();
+    eprintln!("Nonzero quantized coeffs: {}", nonzero_after_quant);
+
+    // Count AC (non-LLF) nonzeros
+    let mut ac_nonzeros = 0;
+    for idx in 0..1024 {
+        let ky = idx / 32;
+        let kx = idx % 32;
+        if ky >= 4 || kx >= 4 {
+            if quant_coeffs[idx] != 0 {
+                ac_nonzeros += 1;
+            }
+        }
+    }
+    eprintln!("AC (non-LLF) nonzeros: {}", ac_nonzeros);
+
+    // Show some AC nonzeros
+    eprintln!("\nFirst 30 AC nonzero coefficients:");
+    let mut found = 0;
+    for idx in 0..1024 {
+        let ky = idx / 32;
+        let kx = idx % 32;
+        if (ky >= 4 || kx >= 4) && quant_coeffs[idx] != 0 && found < 30 {
+            eprintln!("  [{:4}] = {:4} (ky={:2}, kx={:2})", idx, quant_coeffs[idx], ky, kx);
+            found += 1;
+        }
+    }
+
+    eprintln!("\n=== With correct quant weights (simulated) ===");
+    // Actually, qac is divided by weight, so smaller weights = more precision
+    // At high frequencies, weights are large (0.1-1.0 range typically)
+    // So quantized = coeff / weight * qac
+    // For illustration, if weight=0.5 at position i: quantized = coeff * 2 * qac
+    
+    // This test shows that even at d=3.0, a 32x32 block of a photo should have
+    // many nonzero AC coefficients if quantization is correct.
+}
+
+// Note: test_dct32x32_quant_weights_check removed - quant module is private
