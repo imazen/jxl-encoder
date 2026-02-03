@@ -159,11 +159,50 @@ const CHANNEL_MUL: [f64; 3] = [
     1.26677008064,    // B channel: 1.03^8
 ];
 
-/// Entropy estimation constants for full libjxl pixel-domain loss model.
+/// Base entropy estimation constants for full libjxl pixel-domain loss model.
 /// From libjxl enc_ac_strategy.cc:1111-1113
-const K_INFO_LOSS_MULTIPLIER_FULL: f32 = 1.2;
-const K_COST_DELTA_FULL: f32 = 10.833_273_3;
-const K_ZEROS_MUL_FULL: f32 = 9.308_905_9;
+/// These are SCALED by distance before use via `compute_scaled_constants()`.
+const K_INFO_LOSS_MULTIPLIER_BASE: f32 = 1.2;
+const K_COST_DELTA_BASE: f32 = 10.833_273_3;
+const K_ZEROS_MUL_BASE: f32 = 9.308_905_9;
+
+/// Distance scaling exponents from libjxl enc_ac_strategy.cc:1119-1123
+const K_BIAS: f32 = 0.137_317_43;
+const K_POW_INFO_LOSS: f32 = 0.336_778_07;
+const K_POW_ZEROS_MUL: f32 = 0.509_909_27;
+const K_POW_COST_DELTA: f32 = 0.367_029_41;
+
+/// Compute distance-scaled constants for full libjxl cost model.
+/// At d=1.0, returns the base values. At higher distances, increases all values.
+fn compute_scaled_constants(distance: f32) -> (f32, f32, f32) {
+    let ratio = (distance + K_BIAS) / (1.0 + K_BIAS);
+    let info_loss_mul = K_INFO_LOSS_MULTIPLIER_BASE * ratio.powf(K_POW_INFO_LOSS);
+    let zeros_mul = K_ZEROS_MUL_BASE * ratio.powf(K_POW_ZEROS_MUL);
+    let cost_delta = K_COST_DELTA_BASE * ratio.powf(K_POW_COST_DELTA);
+    (info_loss_mul, cost_delta, zeros_mul)
+}
+
+/// Fixed entropy multipliers per transform type (from libjxl FindBest8x8Transform).
+/// These multiply ONLY the entropy part, not the loss.
+const ENTROPY_MUL_DCT8: f32 = 0.8;
+const ENTROPY_MUL_DCT4X4: f32 = 1.08;
+const ENTROPY_MUL_DCT4X8: f32 = 0.859_316_37;
+const ENTROPY_MUL_DCT16X8: f32 = 1.21;
+const ENTROPY_MUL_DCT16X16: f32 = 1.34;
+const ENTROPY_MUL_DCT32X32: f32 = 1.48;
+
+/// Get the fixed entropy multiplier for a raw strategy (full libjxl mode).
+fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
+    match raw_strategy {
+        RAW_STRATEGY_DCT8 => ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => ENTROPY_MUL_DCT4X8,
+        RAW_STRATEGY_DCT4X4 => ENTROPY_MUL_DCT4X4,
+        RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => ENTROPY_MUL_DCT16X8,
+        RAW_STRATEGY_DCT16X16 => ENTROPY_MUL_DCT16X16,
+        RAW_STRATEGY_DCT32X32 => ENTROPY_MUL_DCT32X32,
+        _ => ENTROPY_MUL_DCT8,
+    }
+}
 
 /// Estimate the coded entropy of a block under a given transform strategy.
 ///
@@ -222,7 +261,9 @@ fn estimate_entropy(
 
 /// Estimate entropy with optional pixel-domain loss.
 ///
-/// When `mask1x1` is Some, uses full libjxl pixel-domain loss model.
+/// When `mask1x1` is Some, uses full libjxl pixel-domain loss model with:
+/// - Distance-scaled constants
+/// - Fixed entropy multiplier per transform type
 /// When `mask1x1` is None, uses coefficient-domain loss (libjxl-tiny style).
 #[allow(clippy::too_many_arguments)]
 fn estimate_entropy_with_mask(
@@ -240,6 +281,14 @@ fn estimate_entropy_with_mask(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
 ) -> f32 {
+    // In pixel-domain mode, use fixed entropy_mul values per transform
+    // In coefficient-domain mode, entropy_mul is applied outside by the caller (mul8x8 etc.)
+    let entropy_mul = if mask1x1.is_some() {
+        entropy_mul_for_strategy(raw_strategy)
+    } else {
+        1.0 // Caller handles multiplier in coefficient-domain mode
+    };
+
     estimate_entropy_full(
         raw_strategy,
         xyb,
@@ -254,13 +303,19 @@ fn estimate_entropy_with_mask(
         ytob,
         mask1x1,
         mask1x1_stride,
+        entropy_mul,
     )
 }
 
 /// Estimate entropy with optional pixel-domain loss calculation.
 ///
-/// When `mask1x1` is Some, uses full libjxl pixel-domain loss model.
+/// When `mask1x1` is Some, uses full libjxl pixel-domain loss model with
+/// distance-scaled constants.
 /// When `mask1x1` is None, uses coefficient-domain loss (libjxl-tiny style).
+///
+/// `entropy_mul` multiplies ONLY the entropy part, not the loss. In full libjxl
+/// mode, this is a fixed value per transform type. In libjxl-tiny mode, this
+/// is 1.0 and the caller applies multipliers externally.
 #[allow(clippy::too_many_arguments)]
 fn estimate_entropy_full(
     raw_strategy: u8,
@@ -276,6 +331,7 @@ fn estimate_entropy_full(
     ytob: i8,
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
+    entropy_mul: f32,
 ) -> f32 {
     let cx = COVERED_X[raw_strategy as usize];
     let cy = COVERED_Y[raw_strategy as usize];
@@ -286,10 +342,12 @@ fn estimate_entropy_full(
     let use_pixel_domain = mask1x1.is_some();
 
     // Entropy estimation constants
+    // In pixel-domain mode: use distance-scaled constants
+    // In coefficient-domain mode: use libjxl-tiny static constants
     let (k_info_loss_mul, k_cost_delta, k_zeros_mul) = if use_pixel_domain {
-        (K_INFO_LOSS_MULTIPLIER_FULL, K_COST_DELTA_FULL, K_ZEROS_MUL_FULL)
+        compute_scaled_constants(distance)
     } else {
-        // libjxl-tiny style constants
+        // libjxl-tiny style constants (not distance-scaled)
         (138.0_f32, 5.335_918_5_f32, 7.565_053_4_f32)
     };
     const K_INFO_LOSS_MULTIPLIER2: f32 = 50.468_4;
@@ -515,14 +573,19 @@ fn estimate_entropy_full(
         }
     }
 
-    // Compute final loss score
+    // Compute final cost: entropy * entropy_mul + loss
+    // CRITICAL: entropy_mul applies ONLY to entropy, not to loss!
+    // This matches libjxl enc_ac_strategy.cc:508-509
     if use_pixel_domain {
         // Pixel-domain loss: (sum/n)^(1/8) * n / quant_norm16
         let n = (num_blocks * DCT_BLOCK_SIZE) as f64;
         let loss_scalar = (total_pixel_loss / n).powf(1.0 / 8.0) * n / quant_norm16 as f64;
+        // Apply entropy_mul to entropy, then add loss
+        entropy *= entropy_mul;
         entropy += k_info_loss_mul * loss_scalar as f32;
     } else {
         // Coefficient-domain loss (libjxl-tiny style)
+        // In this mode, entropy_mul is 1.0 and caller applies multipliers externally
         let infoloss2 = (num_blocks as f32 * info_loss2_sum).sqrt();
         let info_loss_score =
             k_info_loss_mul * info_loss_sum + K_INFO_LOSS_MULTIPLIER2 * infoloss2;
@@ -683,37 +746,47 @@ fn find_best_16x16_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
 ) {
-    // Distance-dependent multipliers (from C++)
-    let k8x8mul1: f32 = -0.55 * 0.75;
-    let k8x8mul2: f32 = 1.073_575_8 * 0.75;
-    let k8x8base: f32 = 1.4;
-    let mul8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
+    // In pixel-domain mode (mask1x1.is_some()), entropy_mul is applied internally
+    // by estimate_entropy_full using fixed values per transform. External multipliers
+    // are 1.0. In coefficient-domain mode, use libjxl-tiny distance-dependent multipliers.
+    let use_pixel_domain = mask1x1.is_some();
 
-    let k8x16mul1: f32 = -0.55;
-    let k8x16mul2: f32 = 0.901_958_8;
-    let k8x16base: f32 = 1.6;
-    let mul16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
+    // Distance-dependent multipliers (from libjxl-tiny) - only used in coefficient-domain mode
+    let (mul8x8, mul16x8, mul16x16, mul4x8, mul4x4) = if use_pixel_domain {
+        // In pixel-domain mode, entropy_mul is handled internally. No external multiplier.
+        (1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32)
+    } else {
+        let k8x8mul1: f32 = -0.55 * 0.75;
+        let k8x8mul2: f32 = 1.073_575_8 * 0.75;
+        let k8x8base: f32 = 1.4;
+        let m8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
 
-    // DCT16x16: larger transform favored at higher distances, penalized at low distances.
-    // Tuning: slightly more aggressive than DCT16x8 since it covers 4 blocks.
-    let k16x16mul1: f32 = -0.65;
-    let k16x16mul2: f32 = 0.88;
-    let k16x16base: f32 = 1.8;
-    let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
+        let k8x16mul1: f32 = -0.55;
+        let k8x16mul2: f32 = 0.901_958_8;
+        let k8x16base: f32 = 1.6;
+        let m16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
 
-    // DCT4X8/DCT8X4: small transforms for edges/high-frequency content.
-    // Re-enabled after fixing parametric quantization weights (row-interleaved layout).
-    let k4x8mul1: f32 = -0.50 * 0.75;
-    let k4x8mul2: f32 = 0.88; // Match DCT16X16 base cost
-    let k4x8base: f32 = 1.3;
-    let mul4x8 = k4x8mul2 + k4x8mul1 / (distance + k4x8base);
+        let k16x16mul1: f32 = -0.65;
+        let k16x16mul2: f32 = 0.88;
+        let k16x16base: f32 = 1.8;
+        let m16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
 
-    // DCT4X4: smallest transform for high-frequency/texture content.
-    // Similar tuning to DCT4X8 but slightly more aggressive (smaller multiplier).
-    let k4x4mul1: f32 = -0.45 * 0.75;
-    let k4x4mul2: f32 = 0.85; // Slightly lower than DCT4X8 to encourage usage
-    let k4x4base: f32 = 1.2;
-    let mul4x4 = k4x4mul2 + k4x4mul1 / (distance + k4x4base);
+        let k4x8mul1: f32 = -0.50 * 0.75;
+        let k4x8mul2: f32 = 0.88;
+        let k4x8base: f32 = 1.3;
+        let m4x8 = k4x8mul2 + k4x8mul1 / (distance + k4x8base);
+
+        let k4x4mul1: f32 = -0.45 * 0.75;
+        let k4x4mul2: f32 = 0.85;
+        let k4x4base: f32 = 1.2;
+        let m4x4 = k4x4mul2 + k4x4mul1 / (distance + k4x4base);
+
+        (m8x8, m16x8, m16x16, m4x8, m4x4)
+    };
+
+    // Base cost added for DCT8 transforms (from libjxl-tiny)
+    // In pixel-domain mode, this is 0 since costs are already calibrated
+    let base_cost_8x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
@@ -749,7 +822,7 @@ fn find_best_16x16_transform(
                 mask1x1,
                 mask1x1_stride,
             );
-            let cost8 = 3.0 * mul8x8 + mul8x8 * e8;
+            let cost8 = base_cost_8x8 + mul8x8 * e8;
 
             // DCT4X8 (two 4×8 transforms side by side)
             let e4x8 = estimate_entropy_with_mask(
@@ -767,7 +840,8 @@ fn find_best_16x16_transform(
                 mask1x1,
                 mask1x1_stride,
             );
-            let cost4x8 = 3.0 * mul4x8 + mul4x8 * e4x8;
+            let base_cost_4x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x8 };
+            let cost4x8 = base_cost_4x8 + mul4x8 * e4x8;
 
             // DCT8X4 (two 8×4 transforms stacked)
             let e8x4 = estimate_entropy_with_mask(
@@ -785,7 +859,7 @@ fn find_best_16x16_transform(
                 mask1x1,
                 mask1x1_stride,
             );
-            let cost8x4 = 3.0 * mul4x8 + mul4x8 * e8x4;
+            let cost8x4 = base_cost_4x8 + mul4x8 * e8x4;
 
             // DCT4X4 (four 4×4 transforms in 2×2 grid)
             let e4x4 = estimate_entropy_with_mask(
@@ -803,7 +877,8 @@ fn find_best_16x16_transform(
                 mask1x1,
                 mask1x1_stride,
             );
-            let cost4x4 = 3.0 * mul4x4 + mul4x4 * e4x4;
+            let base_cost_4x4 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x4 };
+            let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
 
             // Pick the best single-block strategy
             *entropy_val = cost8;
@@ -1491,6 +1566,7 @@ mod tests {
             0,
             None,
             0,
+            1.0, // entropy_mul = 1.0 for coefficient-domain (caller applies mul8x8)
         );
 
         // Calculate pixel-domain loss (with mask1x1)
@@ -1508,6 +1584,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
+            ENTROPY_MUL_DCT8, // Use fixed entropy_mul for pixel-domain
         );
 
         eprintln!("Coefficient-domain entropy: {}", ent_coeff);
@@ -1557,6 +1634,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
+            ENTROPY_MUL_DCT8,
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
         assert!(ent_dct8.is_finite() && ent_dct8 >= 0.0);
@@ -1576,6 +1654,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
+            ENTROPY_MUL_DCT16X8,
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
         assert!(ent_dct16x8.is_finite() && ent_dct16x8 >= 0.0);
@@ -1595,6 +1674,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
+            ENTROPY_MUL_DCT16X8,
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
         assert!(ent_dct8x16.is_finite() && ent_dct8x16 >= 0.0);
@@ -1614,6 +1694,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
+            ENTROPY_MUL_DCT16X16,
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);
         assert!(ent_dct16x16.is_finite() && ent_dct16x16 >= 0.0);
