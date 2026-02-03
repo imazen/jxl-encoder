@@ -6572,8 +6572,7 @@ fn test_rd_regression() {
         d050: Baseline,
     }
 
-    // Our encoder baselines (measured at commit 42520f3 via this test)
-    // After parametric quant weight port + jxl-oxide linear output fix.
+    // Our encoder baselines (IDENTITY/DCT2X2 auto-selection enabled, DCT2X2 forward fixed).
     // SSIM2: in-process fast-ssim2 on sRGB u8 (gamma 2.2 roundtrip from jxl-oxide linear output).
     // Butteraugli: in-process butteraugli crate on linear RGB (srgb_to_linear for original).
     // Sizes are deterministic and match byte-for-byte at this commit.
@@ -6581,79 +6580,79 @@ fn test_rd_regression() {
         // frymire
         ImageBaselines {
             d025: Baseline {
-                size: 925671,
-                butteraugli: 1.499,
-                ssim2: 84.33,
+                size: 894061,
+                butteraugli: 1.495,
+                ssim2: 85.44,
             },
             d050: Baseline {
-                size: 674397,
-                butteraugli: 2.824,
-                ssim2: 79.00,
+                size: 651820,
+                butteraugli: 2.085,
+                ssim2: 80.83,
             },
         },
         // img10
         ImageBaselines {
             d025: Baseline {
-                size: 189947,
-                butteraugli: 0.522,
-                ssim2: 88.35,
+                size: 195491,
+                butteraugli: 0.569,
+                ssim2: 88.45,
             },
             d050: Baseline {
-                size: 125752,
-                butteraugli: 0.920,
-                ssim2: 86.31,
+                size: 125391,
+                butteraugli: 0.869,
+                ssim2: 86.61,
             },
         },
         // img11
         ImageBaselines {
             d025: Baseline {
-                size: 204873,
-                butteraugli: 0.472,
-                ssim2: 83.73,
+                size: 209735,
+                butteraugli: 0.486,
+                ssim2: 83.77,
             },
             d050: Baseline {
-                size: 140972,
-                butteraugli: 0.887,
-                ssim2: 81.90,
+                size: 142582,
+                butteraugli: 0.832,
+                ssim2: 82.04,
             },
         },
         // img12
         ImageBaselines {
             d025: Baseline {
-                size: 174609,
-                butteraugli: 0.576,
-                ssim2: 89.11,
+                size: 177418,
+                butteraugli: 0.553,
+                ssim2: 89.28,
             },
             d050: Baseline {
-                size: 113171,
-                butteraugli: 0.875,
-                ssim2: 87.38,
+                size: 112745,
+                butteraugli: 0.892,
+                ssim2: 87.36,
             },
         },
         // img13
         ImageBaselines {
             d025: Baseline {
-                size: 274209,
-                butteraugli: 0.507,
-                ssim2: 84.85,
+                size: 277563,
+                butteraugli: 0.451,
+                ssim2: 85.26,
             },
             d050: Baseline {
-                size: 208225,
-                butteraugli: 0.753,
-                ssim2: 82.92,
+                size: 206950,
+                butteraugli: 0.899,
+                ssim2: 83.19,
             },
         },
         // img14
         ImageBaselines {
             d025: Baseline {
-                size: 234852,
-                butteraugli: 0.600,
-                ssim2: 81.58,
+                size: 236454,
+                butteraugli: 0.485,
+                ssim2: 81.59,
             },
             d050: Baseline {
-                size: 169280,
-                butteraugli: 0.917,
-                ssim2: 79.94,
+                size: 167575,
+                butteraugli: 0.815,
+                ssim2: 80.05,
             },
         },
     ];

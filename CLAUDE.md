@@ -149,9 +149,11 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 8 of 27 implemented**
-- Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32
-- Missing (impactful on photos): IDENTITY (code 1), DCT2x2 (code 2), AFV0-3 (code 8-11)
+**A. AC Strategies — 10 of 27 implemented**
+- Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32, IDENTITY, DCT2X2
+- IDENTITY auto-selects ~4-6% on natural photos at d=1.0, improves SSIM2/butteraugli
+- DCT2X2 rarely selected without kFavor2X2 bonus (disabled — our cost model is not complete enough)
+- Missing (impactful on photos): AFV0-3 (code 8-11)
 - Missing (large transforms): DCT32x16, DCT16x32, DCT64x32, DCT32x64, DCT64x64, etc.
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
@@ -182,11 +184,10 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
-1. IDENTITY + DCT2x2 strategies (medium effort, significant quality win)
-2. AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
-3. Backward-reference LZ77 (high effort, 1-3% file savings — RLE already done but doesn't help photos)
-4. AFV corner DCT (high effort, 0.5-1%)
-5. Consider truncation quantization approach (matches C++ behavior)
+1. AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
+2. Backward-reference LZ77 (high effort, 1-3% file savings — RLE already done but doesn't help photos)
+3. AFV corner DCT (high effort, 0.5-1%)
+4. Consider truncation quantization approach (matches C++ behavior)
 
 ### Outstanding Work
 
@@ -209,7 +210,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16 per 16x16 region)
+- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/IDENTITY/DCT2X2 per 16x16 region)
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
