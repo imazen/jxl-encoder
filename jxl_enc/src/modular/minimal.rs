@@ -362,8 +362,8 @@ mod tests {
         let mut writer = BitWriter::new();
         write_minimal_modular_stream(&image, &mut writer).unwrap();
 
-        let bytes = writer.finish_with_padding();
-        crate::trace::debug_eprintln!("Encoded 16-symbol image: {} bytes", bytes.len());
+        let _bytes = writer.finish_with_padding();
+        crate::trace::debug_eprintln!("Encoded 16-symbol image: {} bytes", _bytes.len());
     }
 
     #[test]
@@ -376,7 +376,7 @@ mod tests {
         let mut writer = BitWriter::new();
         write_minimal_modular_stream(&image, &mut writer).unwrap();
 
-        let bytes = writer.finish_with_padding();
-        crate::trace::debug_eprintln!("Encoded 256-symbol image: {} bytes", bytes.len());
+        let _bytes = writer.finish_with_padding();
+        crate::trace::debug_eprintln!("Encoded 256-symbol image: {} bytes", _bytes.len());
     }
 }
