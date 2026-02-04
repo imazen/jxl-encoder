@@ -27,6 +27,7 @@ mod coeff_order;
 mod common;
 mod context_tree;
 mod dc_coding;
+mod dc_tree_learn;
 pub mod dct;
 pub mod debug_log;
 mod encoder;
