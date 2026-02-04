@@ -199,7 +199,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
   tokens. Full libjxl uses backward-reference LZ77 with hash chains (not just RLE)
   for the 1-3% savings on photos. Our RLE is correct but limited to graphics/text.
 - Content-adaptive block context map (default-on in two-pass, QF-based splitting,
-  0.8-1.0% savings on large images, verified with jxl-rs and djxl)
+  ~0.5% average savings on large images, verified with jxl-rs and djxl)
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
