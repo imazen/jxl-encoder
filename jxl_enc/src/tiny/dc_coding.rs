@@ -109,6 +109,14 @@ const GRAD_RANGE_MAX: i64 = 1023;
 /// Number of DC contexts.
 pub const NUM_DC_CONTEXTS: usize = 45;
 
+/// Number of AC metadata contexts (contexts 0-10).
+/// These are used for: EPF (0), YtoB (1), YtoX (2), quant field (3-6), AC strategy (7-10).
+pub const NUM_AC_METADATA_CONTEXTS: usize = 11;
+
+/// First context ID for DC values (after AC metadata contexts).
+/// When using the default GRADIENT_CONTEXT_LUT, DC values use contexts 11-44.
+pub const DC_CONTEXT_OFFSET: usize = NUM_AC_METADATA_CONTEXTS;
+
 /// Encode DC coefficients using gradient predictor and entropy coding.
 ///
 /// DC coefficients are organized as [channel][y][x] where channel order is:
