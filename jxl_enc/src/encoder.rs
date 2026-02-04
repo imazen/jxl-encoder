@@ -45,6 +45,9 @@ pub struct EncoderOptions {
     pub enable_denoise: bool,
     /// Enable gaborish inverse pre-filter (default true).
     pub enable_gaborish: bool,
+    /// Enable content-adaptive MA tree learning for modular encoding.
+    /// Off by default (uses fixed gradient tree).
+    pub use_tree_learning: bool,
 }
 
 impl Default for EncoderOptions {
@@ -59,6 +62,7 @@ impl Default for EncoderOptions {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
+            use_tree_learning: false,
         }
     }
 }
@@ -181,6 +185,7 @@ impl Encoder {
             use_modular: self.options.distance == 0.0 || self.options.force_modular,
             effort: self.options.effort,
             use_ans: self.options.use_ans,
+            use_tree_learning: self.options.use_tree_learning,
         };
 
         let frame_encoder = FrameEncoder::new(image.width(), image.height(), frame_options);
