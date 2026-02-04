@@ -536,7 +536,7 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
             break;
         }
 
-        tree.sort_by(|a, b| a.total_count.cmp(&b.total_count));
+        tree.sort_by_key(|a| a.total_count);
 
         // Add sentinels
         let sentinel = HuffmanNode {
