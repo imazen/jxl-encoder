@@ -2012,4 +2012,53 @@ mod tests {
             "ANS RCT+weighted stream should produce non-empty output"
         );
     }
+
+    /// Compare ANS vs Huffman file sizes for a lossless encode.
+    #[test]
+    fn test_ans_vs_huffman_size() {
+        use crate::encoder::{Encoder, EncoderOptions};
+
+        // Create a non-trivial 32x32 RGB image
+        let mut data = vec![0u8; 32 * 32 * 3];
+        for y in 0..32 {
+            for x in 0..32 {
+                let idx = (y * 32 + x) * 3;
+                data[idx] = ((x * 8 + y * 2) % 256) as u8;
+                data[idx + 1] = ((y * 8 + x * 3) % 256) as u8;
+                data[idx + 2] = (((x + y) * 5) % 256) as u8;
+            }
+        }
+
+        // Encode with Huffman
+        let huf_opts = EncoderOptions {
+            use_ans: false,
+            ..EncoderOptions::default()
+        };
+        let huf_encoded = Encoder::with_options(huf_opts)
+            .encode_rgb8(&data, 32, 32)
+            .unwrap();
+
+        // Encode with ANS
+        let ans_opts = EncoderOptions {
+            use_ans: true,
+            ..EncoderOptions::default()
+        };
+        let ans_encoded = Encoder::with_options(ans_opts)
+            .encode_rgb8(&data, 32, 32)
+            .unwrap();
+
+        eprintln!(
+            "32x32 RGB: Huffman={} bytes, ANS={} bytes, savings={:.1}%",
+            huf_encoded.len(),
+            ans_encoded.len(),
+            (1.0 - ans_encoded.len() as f64 / huf_encoded.len() as f64) * 100.0
+        );
+
+        // ANS should not be significantly larger than Huffman
+        // (for small images the overhead can make ANS larger, but it should be close)
+        assert!(
+            ans_encoded.len() <= huf_encoded.len() + huf_encoded.len() / 5,
+            "ANS should not be >20% larger than Huffman"
+        );
+    }
 }
