@@ -1521,3 +1521,57 @@ size than DCT8-only), but produces slightly larger files than coefficient-domain
 2. Verify IDCT output layout matches libjxl's TransformToPixels
 3. Check if quant_norm16 computation differs from libjxl's behavior
 
+
+### DC Tree Learning Architecture Issue (Feb 4, 2026)
+
+**Status**: Blocked - requires fundamental architecture understanding
+
+**Issue**: DC tree learning produces files that fail to decode with UnexpectedEof/InvalidAnsStream.
+The tree_tokens_with_ac_metadata_prefix creates 11 dummy leaves for AC metadata contexts (0-10),
+but these don't have correct property routing for AC metadata samples.
+
+**Root cause analysis**:
+1. The MA (Meta-Adaptive) tree determines context IDs at DECODE time, not encode time
+2. For DC values: encoder uses `GRADIENT_CONTEXT_LUT[gradient]` → contexts 11-44
+3. For AC metadata: encoder uses FIXED context IDs 0-10 (EPF=0, CfL=1-2, QF=3-6, ACS=7-10)
+4. At decode time, decoder evaluates tree with sample properties → gets context + predictor
+5. Decoder must get SAME context that encoder used, based on property evaluation
+
+**The fundamental problem**:
+- Encoder writes AC metadata to contexts 0-10 directly
+- Decoder evaluates tree with AC metadata sample properties
+- Tree must return contexts 0-10 when evaluated with AC metadata properties
+- Our simple prefix tree returns contexts based on property 1 (group_id), which doesn't
+  correctly distinguish AC metadata from DC samples
+
+**Static tree structure** (45 leaves, 313 tokens):
+- First decision: `property 1 <= 1 + num_dc_groups` (routes based on group/stream ID)
+- Complex nested structure to route different sample types to contexts 0-44
+- AC metadata contexts (0-10) reached via specific property combinations
+- DC contexts (11-44) reached via gradient property (property 9) evaluation
+
+**Attempted fixes**:
+1. Property 0 (channel) check: Failed - both DC and AC metadata have channel 0,1,2
+2. Property 1 (group_id) check with dummy leaves: Failed - leaves exist but decoder
+   evaluates tree and doesn't hit them correctly
+
+**Required understanding** (not yet investigated):
+- What exact properties do AC metadata samples have? (channel, stream_idx, y, x, etc.)
+- How does the static tree route EPF→ctx0, YtoB→ctx1, YtoX→ctx2, etc.?
+- Can we extract just the DC subtree and keep the AC metadata routing?
+
+**Potential solutions**:
+1. **Keep static tree prefix**: Parse static tree to find DC subtree root, replace only DC portion
+   - Complex: requires understanding tree structure and splice points
+2. **Separate entropy codes**: Use different entropy code for AC metadata vs DC
+   - Requires bitstream structure changes
+3. **Full tree learning**: Learn tree that routes BOTH AC metadata AND DC correctly
+   - Requires understanding all property combinations
+
+**Files involved**:
+- `dc_tree_learn.rs`: Tree learning, `tree_tokens_with_ac_metadata_prefix()`
+- `context_tree.rs`: Static tree tokens, `write_learned_context_tree()`
+- `dc_coding.rs`: `NUM_AC_METADATA_CONTEXTS`, `DC_CONTEXT_OFFSET`
+- `encoder.rs`: Integration, passes wrapped tokens to DC global section
+
+**Test status**: `test_dc_tree_learning` is #[ignore] - produces files that fail decode
