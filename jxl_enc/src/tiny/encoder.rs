@@ -198,12 +198,18 @@ pub struct TinyEncoder {
     /// When false (default), uses coefficient-domain loss (libjxl-tiny style).
     /// Note: Requires `ac_strategy_enabled` to have any effect.
     pub pixel_domain_loss: bool,
-    /// Enable LZ77 RLE backward references in entropy coding.
-    /// When true, scans token streams for consecutive identical values and
-    /// compresses runs using LZ77 length+distance tokens. Only effective with
-    /// two-pass mode (optimize_codes=true) and ANS (use_ans=true).
+    /// Enable LZ77 backward references in entropy coding.
+    /// When true, compresses token streams using LZ77 length+distance tokens.
+    /// Only effective with two-pass mode (optimize_codes=true) and ANS (use_ans=true).
     /// Off by default until verified.
     pub enable_lz77: bool,
+    /// LZ77 method to use when enable_lz77 is true.
+    ///
+    /// - `Rle`: Only matches consecutive identical values (fast, limited on photos)
+    /// - `Greedy`: Hash chain backward references (slower, 1-3% better on photos)
+    ///
+    /// Default: `Greedy` (best compression)
+    pub lz77_method: super::lz77::Lz77Method,
 }
 
 impl Default for TinyEncoder {
@@ -223,6 +229,7 @@ impl Default for TinyEncoder {
             error_diffusion: false,
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,
+            lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
         }
     }
 }
@@ -245,6 +252,7 @@ impl TinyEncoder {
             error_diffusion: false,
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,
+            lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
         }
     }
 
@@ -2825,17 +2833,25 @@ impl TinyEncoder {
             ac_section_tokens.push(tokens);
         }
 
-        // ── Apply LZ77 RLE if enabled (ANS only, before building codes) ──
+        // ── Apply LZ77 if enabled (ANS only, before building codes) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
         let mut dc_lz77_params: Option<super::lz77::Lz77Params> = None;
         let mut ac_lz77_params: Option<super::lz77::Lz77Params> = None;
 
+        // Distance multiplier for special distance codes.
+        // For VarDCT streams, libjxl uses 0 (no special 2D distance codes).
+        // Non-zero multiplier enables 120 special distance codes for 2D patterns
+        // (e.g., "previous row" = width), but requires proper signaling.
+        // TODO: Enable non-zero multiplier once we verify decoder compatibility.
+        let dc_distance_multiplier = 0i32;
+        let ac_distance_multiplier = 0i32;
+
         if use_lz77 {
             #[cfg(feature = "debug-tokens")]
             eprintln!(
-                "[LZ77] Attempting LZ77 RLE on DC ({} groups) and AC ({} groups)",
-                num_dc_groups, num_groups
+                "[LZ77] Attempting LZ77 {:?} on DC ({} groups) and AC ({} groups)",
+                self.lz77_method, num_dc_groups, num_groups
             );
 
             // Apply LZ77 to DC token streams (each DC group independently)
@@ -2857,9 +2873,13 @@ impl TinyEncoder {
                 dc_num_ctx
             );
 
-            if let Some((lz77_tokens, params)) =
-                super::lz77::apply_lz77_rle(&merged_dc, dc_num_ctx, false)
-            {
+            if let Some((lz77_tokens, params)) = super::lz77::apply_lz77(
+                &merged_dc,
+                dc_num_ctx,
+                false,
+                self.lz77_method,
+                dc_distance_multiplier,
+            ) {
                 #[cfg(feature = "debug-tokens")]
                 eprintln!(
                     "[LZ77] DC LZ77 ACTIVATED: {} -> {} tokens",
@@ -2874,17 +2894,23 @@ impl TinyEncoder {
                 let mut new_dc_per_group = Vec::with_capacity(num_dc_groups);
                 let mut new_md_per_group = Vec::with_capacity(num_dc_groups);
                 for i in 0..num_dc_groups {
-                    if let Some((lz77_dc, _)) =
-                        super::lz77::apply_lz77_rle(&dc_tokens_per_group[i], dc_num_ctx, false)
-                    {
+                    if let Some((lz77_dc, _)) = super::lz77::apply_lz77(
+                        &dc_tokens_per_group[i],
+                        dc_num_ctx,
+                        false,
+                        self.lz77_method,
+                        dc_distance_multiplier,
+                    ) {
                         new_dc_per_group.push(lz77_dc);
                     } else {
                         new_dc_per_group.push(dc_tokens_per_group[i].clone());
                     }
-                    if let Some((lz77_md, _)) = super::lz77::apply_lz77_rle(
+                    if let Some((lz77_md, _)) = super::lz77::apply_lz77(
                         &ac_metadata_tokens_per_group[i],
                         dc_num_ctx,
                         false,
+                        self.lz77_method,
+                        dc_distance_multiplier,
                     ) {
                         new_md_per_group.push(lz77_md);
                     } else {
@@ -2915,9 +2941,13 @@ impl TinyEncoder {
                 ac_num_ctx
             );
 
-            if let Some((_lz77_tokens, params)) =
-                super::lz77::apply_lz77_rle(&merged_ac, ac_num_ctx, false)
-            {
+            if let Some((_lz77_tokens, params)) = super::lz77::apply_lz77(
+                &merged_ac,
+                ac_num_ctx,
+                false,
+                self.lz77_method,
+                ac_distance_multiplier,
+            ) {
                 #[cfg(feature = "debug-tokens")]
                 eprintln!(
                     "[LZ77] AC LZ77 ACTIVATED: {} -> {} tokens",
@@ -2927,9 +2957,13 @@ impl TinyEncoder {
                 ac_lz77_params = Some(params);
                 let mut new_ac_sections = Vec::with_capacity(num_groups);
                 for tokens in &ac_section_tokens {
-                    if let Some((lz77_ac, _)) =
-                        super::lz77::apply_lz77_rle(tokens, ac_num_ctx, false)
-                    {
+                    if let Some((lz77_ac, _)) = super::lz77::apply_lz77(
+                        tokens,
+                        ac_num_ctx,
+                        false,
+                        self.lz77_method,
+                        ac_distance_multiplier,
+                    ) {
                         new_ac_sections.push(lz77_ac);
                     } else {
                         new_ac_sections.push(tokens.clone());
