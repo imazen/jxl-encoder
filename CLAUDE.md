@@ -216,11 +216,17 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 **Priority path:**
 1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
 2. AFV corner DCT (high effort, 0.5-1%)
-3. DC tree learning — INFRASTRUCTURE DONE (Feb 4, 2026)
-   - `dc_tree_learn.rs`: DcTreeSamples, learn_dc_tree, collect_dc_tokens_with_tree
-   - Flag added: `TinyEncoder.dc_tree_learning` (off by default)
-   - Pending: bitstream integration (encoding learned tree tokens)
-   - Estimated impact: 0.3-1.0% DC stream compression
+3. ~~DC tree learning~~ — ABANDONED (Feb 4, 2026)
+   - Infrastructure exists in `dc_tree_learn.rs` but is not worth completing
+   - **Root cause of failure**: The MA tree routes both AC metadata (contexts 0-10) and DC
+     (contexts 11-44) based on sample properties. Property 1 (stream_id) distinguishes them:
+     VarDCTDC has stream_id=1, ACMetadata has stream_id=3. Our prefix tree used channel
+     property which doesn't distinguish them. Fixing requires parsing the static tree and
+     splicing in the learned DC subtree while preserving AC metadata routing — significant
+     complexity for modest gains.
+   - **Expected impact**: ~1.2% overall file size (DC is ~12% of file, tree learning helps ~10%)
+   - **Not worth it**: Better to focus on higher-impact improvements (iterative rate control,
+     more AC strategies) than solving this complex tree routing problem
 4. ~~Backward-reference LZ77~~ — DONE (hash chain matching implemented, `--lz77-method greedy`)
    - RLE and Greedy methods both work, decoder-validated with jxl-oxide
    - Greedy rarely activates on VarDCT (threshold not met), mainly helps modular/graphics
@@ -1522,56 +1528,30 @@ size than DCT8-only), but produces slightly larger files than coefficient-domain
 3. Check if quant_norm16 computation differs from libjxl's behavior
 
 
-### DC Tree Learning Architecture Issue (Feb 4, 2026)
+### DC Tree Learning — ABANDONED (Feb 4, 2026)
 
-**Status**: Blocked - requires fundamental architecture understanding
+**Status**: Abandoned — not worth the complexity for ~1.2% overall gain
 
 **Issue**: DC tree learning produces files that fail to decode with UnexpectedEof/InvalidAnsStream.
-The tree_tokens_with_ac_metadata_prefix creates 11 dummy leaves for AC metadata contexts (0-10),
-but these don't have correct property routing for AC metadata samples.
 
-**Root cause analysis**:
-1. The MA (Meta-Adaptive) tree determines context IDs at DECODE time, not encode time
-2. For DC values: encoder uses `GRADIENT_CONTEXT_LUT[gradient]` → contexts 11-44
-3. For AC metadata: encoder uses FIXED context IDs 0-10 (EPF=0, CfL=1-2, QF=3-6, ACS=7-10)
-4. At decode time, decoder evaluates tree with sample properties → gets context + predictor
-5. Decoder must get SAME context that encoder used, based on property evaluation
+**Root cause** (fully analyzed Feb 4, 2026):
+The MA tree routes both AC metadata (contexts 0-10) and DC (contexts 11-44) based on sample
+properties. The key property is **property 1 (stream_id)**:
+- For `num_dc_groups=1`: VarDCTDC has stream_id=1, ACMetadata has stream_id=3
+- Static tree's first split: `property 1 <= 2` routes DC left, AC metadata right
 
-**The fundamental problem**:
-- Encoder writes AC metadata to contexts 0-10 directly
-- Decoder evaluates tree with AC metadata sample properties
-- Tree must return contexts 0-10 when evaluated with AC metadata properties
-- Our simple prefix tree returns contexts based on property 1 (group_id), which doesn't
-  correctly distinguish AC metadata from DC samples
+Our prefix tree used `property 0 (channel) <= -1`, but ALL samples have channel ≥ 0, so they
+all go to the right subtree and the AC metadata leaves are never reached by decoder.
 
-**Static tree structure** (45 leaves, 313 tokens):
-- First decision: `property 1 <= 1 + num_dc_groups` (routes based on group/stream ID)
-- Complex nested structure to route different sample types to contexts 0-44
-- AC metadata contexts (0-10) reached via specific property combinations
-- DC contexts (11-44) reached via gradient property (property 9) evaluation
+**Why not worth fixing**:
+1. Expected gain: ~1.2% overall file size (DC is ~12% of file, tree learning helps ~10%)
+2. Fix complexity: Would need to parse static tree structure, extract AC metadata subtree,
+   and splice in learned DC tree while preserving exact property routing
+3. Better alternatives: Iterative rate control (2-5%), more AC strategies (5-15%), etc.
 
-**Attempted fixes**:
-1. Property 0 (channel) check: Failed - both DC and AC metadata have channel 0,1,2
-2. Property 1 (group_id) check with dummy leaves: Failed - leaves exist but decoder
-   evaluates tree and doesn't hit them correctly
-
-**Required understanding** (not yet investigated):
-- What exact properties do AC metadata samples have? (channel, stream_idx, y, x, etc.)
-- How does the static tree route EPF→ctx0, YtoB→ctx1, YtoX→ctx2, etc.?
-- Can we extract just the DC subtree and keep the AC metadata routing?
-
-**Potential solutions**:
-1. **Keep static tree prefix**: Parse static tree to find DC subtree root, replace only DC portion
-   - Complex: requires understanding tree structure and splice points
-2. **Separate entropy codes**: Use different entropy code for AC metadata vs DC
-   - Requires bitstream structure changes
-3. **Full tree learning**: Learn tree that routes BOTH AC metadata AND DC correctly
-   - Requires understanding all property combinations
+**Decision**: Keep the static gradient-based context tree (34 contexts via GRADIENT_CONTEXT_LUT).
+It already provides good context separation. The `dc_tree_learn.rs` infrastructure remains
+for potential future use but is disabled by default.
 
 **Files involved**:
-- `dc_tree_learn.rs`: Tree learning, `tree_tokens_with_ac_metadata_prefix()`
-- `context_tree.rs`: Static tree tokens, `write_learned_context_tree()`
-- `dc_coding.rs`: `NUM_AC_METADATA_CONTEXTS`, `DC_CONTEXT_OFFSET`
-- `encoder.rs`: Integration, passes wrapped tokens to DC global section
-
-**Test status**: `test_dc_tree_learning` is #[ignore] - produces files that fail decode
+- `dc_tree_learn.rs`: Tree learning infrastructure (kept but unused)
