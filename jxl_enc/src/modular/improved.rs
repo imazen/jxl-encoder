@@ -1557,6 +1557,188 @@ pub fn write_modular_stream_with_rct_weighted(
     Ok(())
 }
 
+// ===== Tree-learned modular encoding =====
+
+/// Write an arbitrary MA tree to the bitstream.
+///
+/// The tree is serialized in BFS order using 6 token contexts:
+/// - SPLIT_VAL_CONTEXT (0): splitval (signed via pack_signed)
+/// - PROPERTY_CONTEXT (1): property+1 for split nodes, 0 for leaf nodes
+/// - PREDICTOR_CONTEXT (2): predictor index
+/// - OFFSET_CONTEXT (3): predictor offset (signed via pack_signed)
+/// - MULTIPLIER_LOG_CONTEXT (4): multiplier log component
+/// - MULTIPLIER_BITS_CONTEXT (5): multiplier bits component
+///
+/// Layout: lz77.enabled=0 + context_map (6 contexts → 1 histogram) +
+///         use_prefix_code=1 + IntegerConfig + alphabet_size + Huffman table + tokens
+pub fn write_tree(
+    writer: &mut BitWriter,
+    tree: &super::tree::Tree,
+) -> Result<()> {
+    use super::tree::collect_tree_tokens;
+
+    let tokens = collect_tree_tokens(tree);
+
+    // Build histogram of all token values across all contexts.
+    // Tree tokens use raw symbol encoding (no HybridUint).
+    let mut max_symbol: u32 = 0;
+    for t in &tokens {
+        let val = if t.is_signed {
+            pack_signed(t.value)
+        } else {
+            t.value as u32
+        };
+        max_symbol = max_symbol.max(val);
+    }
+
+    let histogram_size = (max_symbol + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for t in &tokens {
+        let val = if t.is_signed {
+            pack_signed(t.value)
+        } else {
+            t.value as u32
+        };
+        histogram[val as usize] += 1;
+    }
+
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+
+    // Context map: 6 contexts all map to histogram 0
+    writer.write(1, 1)?; // is_simple = 1
+    writer.write(2, 0)?; // bits_per_entry = 0
+
+    // use_prefix_code = 1
+    writer.write(1, 1)?;
+
+    // IntegerConfig: raw symbols (split_exponent = log_alphabet_size = 15)
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(
+        writer,
+        LOG_ALPHABET_SIZE_PREFIX,
+        LOG_ALPHABET_SIZE_PREFIX,
+        0,
+        0,
+    )?;
+
+    // alphabet_size - 1
+    write_varlen_u16(writer, max_symbol as u16)?;
+
+    // Huffman table
+    let (depths, codes) = if histogram_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram[..histogram_size], writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
+
+    // Write tokens
+    for t in &tokens {
+        let val = if t.is_signed {
+            pack_signed(t.value)
+        } else {
+            t.value as u32
+        };
+        let depth = depths.get(val as usize).copied().unwrap_or(0);
+        let code = codes.get(val as usize).copied().unwrap_or(0);
+        if depth > 0 {
+            writer.write(depth as usize, code as u64)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Write a modular stream using a learned MA tree with multi-context ANS.
+///
+/// This is the single-group version. For multi-group, see section.rs.
+///
+/// Layout:
+/// - dc_quant.all_default = 1
+/// - has_tree = 1
+/// - Tree (write_tree)
+/// - lz77.enabled = 0 for data
+/// - Multi-context ANS histogram (write_entropy_code_ans)
+/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0 or 1)
+/// - ANS-encoded residuals (write_tokens_ans)
+/// - byte padding
+pub fn write_modular_stream_with_tree(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    max_nodes: usize,
+    split_threshold: f64,
+    rct: bool,
+) -> Result<()> {
+    use super::rct::{RctType, forward_rct};
+    use super::tree::count_contexts;
+    use super::tree_learn::{TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples};
+    use crate::tiny::entropy_code::{build_entropy_code_ans, write_entropy_code_ans};
+
+    // Optionally apply RCT
+    let (work_image, rct_type) = if rct && image.channels.len() >= 3 {
+        let mut transformed = image.clone();
+        let rct_type = RctType::YCOCG;
+        forward_rct(&mut transformed.channels, 0, rct_type)?;
+        (transformed, Some(rct_type))
+    } else {
+        (image.clone(), None)
+    };
+
+    // Step 1: Gather samples
+    let mut samples = TreeSamples::new();
+    gather_samples(&mut samples, &work_image, 0);
+
+    // Step 2: Learn tree
+    let tree = compute_best_tree(&mut samples, max_nodes, split_threshold);
+    let num_contexts = count_contexts(&tree) as usize;
+
+    crate::trace::debug_eprintln!(
+        "TREE_LEARN: {} nodes, {} leaves/contexts",
+        tree.len(),
+        num_contexts
+    );
+
+    // Step 3: Collect residuals with learned tree
+    let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
+
+    // Step 4: Build multi-context ANS code
+    let code = build_entropy_code_ans(&tokens, num_contexts);
+
+    // Step 5: Write bitstream
+    // dc_quant.all_default = true
+    writer.write(1, 1)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Write the learned tree
+    write_tree(writer, &tree)?;
+
+    // Write lz77.enabled = 0 for data entropy code
+    writer.write(1, 0)?;
+
+    // Write multi-context ANS data histogram
+    // write_entropy_code_ans writes: context_map + use_prefix_code=0 + log_alpha + configs + distributions
+    write_entropy_code_ans(&code, writer)?;
+
+    // GroupHeader
+    writer.write(1, 1)?; // use_global_tree = true
+    writer.write(1, 1)?; // wp_header.all_default = true
+
+    if let Some(rct_type) = rct_type {
+        writer.write(2, 1)?; // num_transforms = 1
+        write_rct_transform(writer, 0, rct_type)?;
+    } else {
+        writer.write(2, 0)?; // num_transforms = 0
+    }
+
+    // Write ANS tokens
+    write_tokens_ans(&tokens, &code, None, writer)?;
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
 // ===== Multi-group support =====
 // These functions are now in the section module for better organization
 
