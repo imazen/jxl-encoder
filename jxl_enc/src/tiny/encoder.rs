@@ -213,9 +213,10 @@ pub struct TinyEncoder {
     /// Enable DC tree learning.
     /// When true, learns an optimal context tree for DC coding from image content
     /// instead of using the fixed GRADIENT_CONTEXT_LUT.
-    /// Only effective with two-pass mode (optimize_codes=true).
-    /// Provides 0.3-1.0% DC stream compression improvement.
-    /// Off by default (experimental).
+    /// **DISABLED/BROKEN**: The learned tree doesn't correctly route AC metadata
+    /// samples to contexts 0-10. Fixing requires parsing the static tree structure
+    /// and splicing in the learned DC subtree while preserving AC metadata routing.
+    /// Expected gain (~1.2% overall) doesn't justify the complexity. See CLAUDE.md.
     pub dc_tree_learning: bool,
 }
 
@@ -3734,8 +3735,15 @@ mod tests {
     }
 
     /// Test DC tree learning produces valid output.
+    ///
+    /// **BROKEN**: The learned tree doesn't correctly route AC metadata samples
+    /// to contexts 0-10. The decoder evaluates the tree with sample properties
+    /// (including stream_id) and must arrive at the same context the encoder used.
+    /// Our prefix tree used property 0 (channel) which doesn't distinguish
+    /// AC metadata (stream_id=3) from DC (stream_id=1). Fixing requires parsing
+    /// the static tree and splicing in learned DC subtree - not worth ~1.2% gain.
     #[test]
-    #[ignore] // DC tree learning integration not yet complete
+    #[ignore] // BROKEN: Learned tree misroutes AC metadata. See CLAUDE.md for analysis.
     fn test_dc_tree_learning() {
         let width = 64;
         let height = 64;
