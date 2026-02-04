@@ -116,10 +116,18 @@ fn dct_4x8_simple(pixels: &[f32; 32], coeffs: &mut [f32; 32]) {
 }
 
 /// Raw AFV strategy codes.
-pub const RAW_STRATEGY_AFV0: u8 = 8;
-pub const RAW_STRATEGY_AFV1: u8 = 9;
-pub const RAW_STRATEGY_AFV2: u8 = 10;
-pub const RAW_STRATEGY_AFV3: u8 = 11;
+/// Note: These are internal indices, not bitstream codes.
+/// Bitstream codes for AFV0-3 are 14-17 respectively.
+pub const RAW_STRATEGY_AFV0: u8 = 12;
+pub const RAW_STRATEGY_AFV1: u8 = 13;
+pub const RAW_STRATEGY_AFV2: u8 = 14;
+pub const RAW_STRATEGY_AFV3: u8 = 15;
+
+/// Bitstream codes for AFV strategies.
+pub const STRATEGY_CODE_AFV0: u8 = 14;
+pub const STRATEGY_CODE_AFV1: u8 = 15;
+pub const STRATEGY_CODE_AFV2: u8 = 16;
+pub const STRATEGY_CODE_AFV3: u8 = 17;
 
 /// Convert raw strategy code to AFV kind (0-3).
 /// Returns None if not an AFV strategy.

@@ -38,25 +38,30 @@ pub const RAW_STRATEGY_IDENTITY: u8 = 8;
 pub const RAW_STRATEGY_DCT2X2: u8 = 9;
 pub const RAW_STRATEGY_DCT32X16: u8 = 10;
 pub const RAW_STRATEGY_DCT16X32: u8 = 11;
+pub const RAW_STRATEGY_AFV0: u8 = 12;
+pub const RAW_STRATEGY_AFV1: u8 = 13;
+pub const RAW_STRATEGY_AFV2: u8 = 14;
+pub const RAW_STRATEGY_AFV3: u8 = 15;
 
 /// Number of supported raw strategies.
-pub const NUM_RAW_STRATEGIES: usize = 12;
+pub const NUM_RAW_STRATEGIES: usize = 16;
 
 /// Strategy code as written to the bitstream (via `StrategyCode()`).
 /// These differ from raw strategy codes.
 /// From libjxl ac_strategy.h: DCT=0, IDENTITY=1, DCT2X2=2, DCT4X4=3, DCT16X16=4,
-/// DCT32X32=5, DCT16X8=6, DCT8X16=7, DCT32X16=10, DCT16X32=11, DCT4X8=12, DCT8X4=13.
+/// DCT32X32=5, DCT16X8=6, DCT8X16=7, DCT32X16=10, DCT16X32=11, DCT4X8=12, DCT8X4=13,
+/// AFV0=14, AFV1=15, AFV2=16, AFV3=17.
 pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] =
-    [0, 6, 7, 4, 5, 12, 13, 3, 1, 2, 10, 11];
+    [0, 6, 7, 4, 5, 12, 13, 3, 1, 2, 10, 11, 14, 15, 16, 17];
 
 /// Covered blocks in X direction for each raw strategy.
-/// IDENTITY, DCT2X2, DCT4X8, DCT8X4, and DCT4X4 cover 1×1 blocks.
+/// IDENTITY, DCT2X2, DCT4X8, DCT8X4, DCT4X4, and AFV0-3 cover 1×1 blocks.
 /// DCT32X16 (32 rows × 16 cols): 2 cols × 4 rows of 8×8 blocks
 /// DCT16X32 (16 rows × 32 cols): 4 cols × 2 rows of 8×8 blocks
-pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1, 1, 1, 1, 2, 4];
+pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1];
 
 /// Covered blocks in Y direction for each raw strategy.
-pub(crate) const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1, 1, 1, 1, 4, 2];
+pub(crate) const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1, 1, 1, 1, 4, 2, 1, 1, 1, 1];
 
 /// Per-block AC strategy map.
 ///
