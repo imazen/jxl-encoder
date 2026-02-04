@@ -103,10 +103,17 @@ pub enum GlobalModularState {
         /// Maximum HybridUint token value.
         max_token: u32,
     },
-    /// ANS entropy coding state.
+    /// ANS entropy coding state (single-context gradient tree).
     Ans {
         /// The ANS entropy code (distributions, context map, etc.)
         code: OwnedAnsEntropyCode,
+    },
+    /// ANS entropy coding with learned MA tree (multi-context).
+    AnsWithTree {
+        /// The ANS entropy code (multiple distributions, context map).
+        code: OwnedAnsEntropyCode,
+        /// The learned MA tree for per-pixel predictor/context selection.
+        tree: super::tree::Tree,
     },
 }
 
@@ -234,6 +241,80 @@ pub fn write_global_modular_section(
     }
 }
 
+/// Writes the global modular section with a learned MA tree for multi-group encoding.
+///
+/// This writes:
+/// - dc_quant.all_default = 1
+/// - has_tree = 1
+/// - Learned tree (write_tree)
+/// - lz77.enabled = 0
+/// - Multi-context ANS data histogram (write_entropy_code_ans)
+/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0)
+pub fn write_global_modular_section_with_tree(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    max_nodes: usize,
+    split_threshold: f64,
+) -> Result<GlobalModularState> {
+    use super::improved::write_tree;
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
+    };
+    use crate::tiny::entropy_code::{build_entropy_code_ans, write_entropy_code_ans};
+
+    // Step 1: Gather samples from all groups
+    let mut samples = TreeSamples::new();
+    for (group_idx, group_image) in images.iter().enumerate() {
+        gather_samples(&mut samples, group_image, group_idx as u32);
+    }
+
+    // Step 2: Learn tree
+    let tree = compute_best_tree(&mut samples, max_nodes, split_threshold);
+    let num_contexts = count_contexts(&tree) as usize;
+
+    crate::trace::debug_eprintln!(
+        "GLOBAL_MODULAR_TREE: {} nodes, {} leaves/contexts from {} samples",
+        tree.len(),
+        num_contexts,
+        samples.num_samples
+    );
+
+    // Step 3: Collect residuals from all groups with tree
+    let mut all_tokens = Vec::new();
+    for (group_idx, group_image) in images.iter().enumerate() {
+        let group_tokens = collect_residuals_with_tree(group_image, &tree, group_idx as u32);
+        all_tokens.extend(group_tokens);
+    }
+
+    // Step 4: Build multi-context ANS code
+    let code = build_entropy_code_ans(&all_tokens, num_contexts);
+
+    // Step 5: Write bitstream
+    // dc_quant.all_default = true
+    writer.write(1, 1)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Write the learned tree
+    write_tree(writer, &tree)?;
+
+    // lz77.enabled = 0 for data
+    writer.write(1, 0)?;
+
+    // Multi-context ANS data histogram
+    write_entropy_code_ans(&code, writer)?;
+
+    // GroupHeader (global modular group)
+    writer.write(1, 1)?; // use_global_tree = true
+    writer.write(1, 1)?; // wp_params.default_wp = true
+    writer.write(2, 0)?; // nb_transforms = 0
+
+    writer.zero_pad_to_byte();
+
+    Ok(GlobalModularState::AnsWithTree { code, tree })
+}
+
 /// Collect packed residuals from a group image using gradient prediction.
 fn collect_group_residuals(group_image: &ModularImage) -> Vec<u32> {
     let mut residuals = Vec::new();
@@ -324,6 +405,12 @@ pub fn write_group_modular_section(
             // Collect residuals for this group and encode with ANS
             let residuals = collect_group_residuals(group_image);
             let tokens: Vec<AnsToken> = residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+            write_tokens_ans(&tokens, code, None, writer)?;
+        }
+        GlobalModularState::AnsWithTree { code, tree } => {
+            // Collect residuals using the learned tree (multi-context)
+            let tokens =
+                super::tree_learn::collect_residuals_with_tree(group_image, tree, 0);
             write_tokens_ans(&tokens, code, None, writer)?;
         }
     }
