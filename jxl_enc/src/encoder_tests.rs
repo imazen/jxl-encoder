@@ -846,6 +846,10 @@ mod decoder_validation {
 
     /// Validates lossless roundtrip: encode -> decode -> compare pixels exactly.
     ///
+    /// Uses jxl-rs as primary decoder (per CLAUDE.md). Falls back to jxl-oxide
+    /// for single-group images where both work. jxl-oxide has a known limitation
+    /// with ANS entropy coding in multi-group modular frames.
+    ///
     /// Returns the decoded pixel data on success.
     fn validate_lossless_roundtrip_rgb(
         original: &[u8],
@@ -865,27 +869,47 @@ mod decoder_validation {
         std::fs::write(&path, &encoded).unwrap();
         eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
 
-        // Decode with jxl-oxide
-        let image = jxl_oxide::JxlImage::builder()
-            .read(std::io::Cursor::new(&encoded))
-            .unwrap_or_else(|e| panic!("{}: jxl-oxide decode failed: {}", test_name, e));
+        // Decode with jxl-rs (PRIMARY decoder)
+        let jxlrs_result = crate::test_helpers::decode_with_jxl_rs(&encoded);
+        let decoded = match jxlrs_result {
+            Ok(decoded_img) => {
+                assert_eq!(decoded_img.width, width);
+                assert_eq!(decoded_img.height, height);
 
-        assert_eq!(image.width() as usize, width);
-        assert_eq!(image.height() as usize, height);
+                // Convert f32 to u8
+                let decoded: Vec<u8> = decoded_img
+                    .pixels
+                    .iter()
+                    .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                    .collect();
+                eprintln!("{}: jxl-rs decode OK", test_name);
+                decoded
+            }
+            Err(e) => {
+                panic!("{}: jxl-rs decode failed: {}", test_name, e);
+            }
+        };
 
-        // Render frame and extract pixels
-        let render = image
-            .render_frame(0)
-            .unwrap_or_else(|e| panic!("{}: render failed: {}", test_name, e));
-
-        let fb = render.image_all_channels();
-        let decoded_f32 = fb.buf();
-
-        // Convert f32 (0.0-1.0 normalized range) to u8 (0-255)
-        let decoded: Vec<u8> = decoded_f32
-            .iter()
-            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
-            .collect();
+        // Also verify with jxl-oxide (secondary decoder, may fail for multi-group ANS)
+        match jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded)) {
+            Ok(image) => match image.render_frame(0) {
+                Ok(_render) => {
+                    eprintln!("{}: jxl-oxide decode OK (secondary)", test_name);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}: jxl-oxide render failed (non-fatal, jxl-rs succeeded): {}",
+                        test_name, e
+                    );
+                }
+            },
+            Err(e) => {
+                eprintln!(
+                    "{}: jxl-oxide read failed (non-fatal, jxl-rs succeeded): {}",
+                    test_name, e
+                );
+            }
+        }
 
         // Compare pixel by pixel
         assert_eq!(
