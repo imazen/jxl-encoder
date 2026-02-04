@@ -309,9 +309,11 @@ pub fn collect_tree_tokens(tree: &Tree) -> Vec<TreeToken> {
                 is_signed: true,
             });
 
-            // Queue children (left first to maintain BFS order)
-            queue.push_back(node.lchild);
+            // Queue children: rchild first (value > splitval = decoder's "left"/first BFS child),
+            // then lchild (value <= splitval = decoder's "right"/second BFS child).
+            // jxl-rs reads first BFS child as "left" (property > splitval).
             queue.push_back(node.rchild);
+            queue.push_back(node.lchild);
         }
     }
 
