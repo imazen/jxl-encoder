@@ -95,10 +95,16 @@ struct Args {
     #[arg(long)]
     no_pixel_domain_loss: bool,
 
-    /// Enable LZ77 RLE backward references for entropy coding.
-    /// Compresses runs of identical tokens before entropy coding (ANS only).
+    /// Enable LZ77 backward references for entropy coding.
+    /// Compresses token streams before entropy coding (ANS only).
     #[arg(long)]
     lz77: bool,
+
+    /// LZ77 method to use (requires --lz77).
+    /// - rle: Only matches consecutive identical tokens (fast, limited on photos)
+    /// - greedy: Hash chain backward references (default, slower but better compression)
+    #[arg(long, value_name = "METHOD", default_value = "greedy")]
+    lz77_method: String,
 
     /// Enable content-adaptive MA tree learning for lossless encoding.
     /// Learns optimal predictors and entropy contexts per image region.
@@ -193,6 +199,14 @@ fn main() {
                 }
                 if args.lz77 {
                     tiny.enable_lz77 = true;
+                    tiny.lz77_method = match args.lz77_method.to_lowercase().as_str() {
+                        "rle" => jxl_enc::tiny::Lz77Method::Rle,
+                        "greedy" => jxl_enc::tiny::Lz77Method::Greedy,
+                        other => {
+                            eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
+                            jxl_enc::tiny::Lz77Method::Greedy
+                        }
+                    };
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder
