@@ -1803,8 +1803,8 @@ mod tests {
         let mut writer = BitWriter::new();
         write_simple_modular_stream(&image, &mut writer, false).unwrap();
 
-        let bytes = writer.finish_with_padding();
-        crate::trace::debug_eprintln!("Gradient stream: {} bytes", bytes.len());
+        let _bytes = writer.finish_with_padding();
+        crate::trace::debug_eprintln!("Gradient stream: {} bytes", _bytes.len());
     }
 
     #[test]
@@ -1900,9 +1900,9 @@ mod tests {
         let mut writer = BitWriter::new();
         write_improved_modular_stream(&image, &mut writer, false).unwrap();
 
-        let bytes = writer.finish_with_padding();
-        crate::trace::debug_eprintln!("LZ77 stream: {} bytes", bytes.len());
-        crate::trace::debug_eprintln!("Raw bytes: {:02x?}", &bytes[..bytes.len().min(50)]);
+        let _bytes = writer.finish_with_padding();
+        crate::trace::debug_eprintln!("LZ77 stream: {} bytes", _bytes.len());
+        crate::trace::debug_eprintln!("Raw bytes: {:02x?}", &_bytes[.._bytes.len().min(50)]);
 
         // Now let's trace through what the decoder expects:
         crate::trace::debug_eprintln!("\n=== EXPECTED DECODER INTERPRETATION ===");
