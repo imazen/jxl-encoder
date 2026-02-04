@@ -17,8 +17,9 @@ use std::sync::LazyLock;
 
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
-/// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4, 8 = IDENTITY, 9 = DCT2X2
-pub const NUM_VALID_STRATEGIES: usize = 10;
+/// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4, 8 = IDENTITY, 9 = DCT2X2,
+/// 10 = DCT32X16, 11 = DCT16X32
+pub const NUM_VALID_STRATEGIES: usize = 12;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -208,6 +209,44 @@ const DCT32X32_BAND_PARAMS: [[f64; 8]; 3] = [
     ],
 ];
 
+/// DCT16X32 band parameters from jxl-rs quant_weights.rs:561-590 (Dct16x32 case).
+/// 8 distance bands per channel. Used for both DCT32X16 and DCT16X32.
+const DCT16X32_BAND_PARAMS: [[f64; 8]; 3] = [
+    // X channel
+    [
+        13844.97076442300573,
+        -0.97113799999999995,
+        -0.658,
+        -0.42026,
+        -0.22712,
+        -0.2206,
+        -0.226,
+        -0.6,
+    ],
+    // Y channel
+    [
+        4798.964084220744293,
+        -0.61125308982767057,
+        -0.83770786552491361,
+        -0.79014862079498627,
+        -0.2692727459704829,
+        -0.38272769465388551,
+        -0.22924222653091453,
+        -0.20719098826199578,
+    ],
+    // B channel
+    [
+        1807.236946760964614,
+        -1.2,
+        -1.2,
+        -0.7,
+        -0.7,
+        -0.7,
+        -0.4,
+        -0.5,
+    ],
+];
+
 /// DCT4X8 band parameters from jxl-oxide dequant.rs:44-48.
 /// 4 distance bands per channel.
 const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
@@ -293,6 +332,21 @@ static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> = LazyLock::new(|| {
             &DCT32X32_BAND_PARAMS[0],
             &DCT32X32_BAND_PARAMS[1],
             &DCT32X32_BAND_PARAMS[2],
+        ],
+        8,
+    )
+});
+
+/// DCT16x32/DCT32x16 quantization weights (1536 floats: 512 per channel).
+/// Used for both DCT32X16 (raw strategy 10) and DCT16X32 (raw strategy 11).
+static QUANT_WEIGHTS_DCT16X32: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        16,
+        32,
+        &[
+            &DCT16X32_BAND_PARAMS[0],
+            &DCT16X32_BAND_PARAMS[1],
+            &DCT16X32_BAND_PARAMS[2],
         ],
         8,
     )
@@ -593,6 +647,11 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
             // DCT2X2: 64 coefficients per channel
             let offset = channel * 64;
             &QUANT_WEIGHTS_DCT2X2[offset..offset + 64]
+        }
+        10 | 11 => {
+            // DCT32X16 / DCT16X32: 512 coefficients per channel (share same weights)
+            let offset = channel * 512;
+            &QUANT_WEIGHTS_DCT16X32[offset..offset + 512]
         }
         _ => unreachable!("Invalid strategy: {}", strategy),
     }

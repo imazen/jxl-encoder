@@ -299,13 +299,16 @@ static BLOCK_CONTEXT_MAP: [u8; 81] = [
     // X (c=0): decoder reads with ch_idx=1 (compact group 1)
     //  code: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 ...
     //  IDENTITY=1, DCT2X2=2, DCT4X4=3 all have order_id=1 → compact[14]=2
-    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  DCT32X16=10, DCT16X32=11 have order_id=6 → compact[19]=3
+    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 3, 3, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // Y (c=1): decoder reads with ch_idx=0 (compact group 0)
     //  IDENTITY=1, DCT2X2=2, DCT4X8=12, DCT8X4=13, DCT4X4=3 all have order_id=1 → compact[1]=0
-    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  DCT32X16=10, DCT16X32=11 have order_id=6 → compact[6]=1
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // B (c=2): decoder reads with ch_idx=2 (compact group 2)
     //  IDENTITY=1, DCT2X2=2, DCT4X4=3 all have order_id=1 → compact[27]=2
-    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  DCT32X16=10, DCT16X32=11 have order_id=6 → compact[32]=3
+    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 3, 3, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 /// Get block context from channel and AC strategy code.
