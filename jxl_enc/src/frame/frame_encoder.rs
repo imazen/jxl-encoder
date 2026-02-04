@@ -181,8 +181,13 @@ impl FrameEncoder {
 
         // Step 2: Write LfGlobal section (tree + histogram)
         let mut lf_global_writer = BitWriter::new();
-        let global_state =
-            write_global_modular_section(&histogram, max_token, &mut lf_global_writer)?;
+        let global_state = write_global_modular_section(
+            &all_residuals,
+            &histogram,
+            max_token,
+            &mut lf_global_writer,
+            self.options.use_ans,
+        )?;
         let lf_global_data = lf_global_writer.finish();
 
         crate::trace::debug_eprintln!(
