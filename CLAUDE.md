@@ -166,7 +166,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - Content-adaptive global_scale is implemented (median-MAD of quant field)
 
 **C. Cost Model**
-- Missing: AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
+- AdjustQuantBlockAC: IMPLEMENTED (per-block quant field adjustment, `encoder.rs:811-1034`)
 - Missing: C++ threshold adjustment (`-0.00744 * xsize * ysize` for X/B on multi-block)
 - Full libjxl uses truncation (`(int)(val + noff)`) vs our round+threshold approach
 
@@ -180,7 +180,8 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
   on photographic content — the RLE-only method finds insufficient runs of identical
   tokens. Full libjxl uses backward-reference LZ77 with hash chains (not just RLE)
   for the 1-3% savings on photos. Our RLE is correct but limited to graphics/text.
-- Block context map is hardcoded, not content-adaptive
+- Content-adaptive block context map (default-on in two-pass, QF-based splitting,
+  0.8-1.0% savings on large images, verified with jxl-rs and djxl)
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
@@ -190,10 +191,9 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
-1. AdjustQuantBlockAC (per-block quant field adjustment for larger transforms)
-2. Backward-reference LZ77 (high effort, 1-3% file savings — RLE already done but doesn't help photos)
-3. AFV corner DCT (high effort, 0.5-1%)
-4. Consider truncation quantization approach (matches C++ behavior)
+1. Backward-reference LZ77 (high effort, 1-3% file savings — RLE already done but doesn't help photos)
+2. AFV corner DCT (high effort, 0.5-1%)
+3. Consider truncation quantization approach (matches C++ behavior)
 
 ### Outstanding Work
 
@@ -236,6 +236,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
 - [x] LZ77 RLE (`--lz77` flag, opt-in, ANS two-pass only — correct but rarely activates on photos)
 - [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
+- [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
