@@ -4816,9 +4816,8 @@ fn layer3_single_group_dct8x4_decode_jxl_oxide() {
 }
 
 /// Layer 3 test: Force DCT4X8 and verify jxl-rs decodes.
-/// Note: jxl-rs has a known decoder bug for DCT4x8 that produces wrong pixel values
-/// (0.7449 instead of ~0.5). djxl and jxl-oxide decode correctly.
-/// This test verifies decoding succeeds; pixel accuracy is verified by djxl tests.
+/// Note: jxl-rs outputs sRGB (not linear), so center pixel is ~0.74 (sRGB) not ~0.5 (linear).
+/// This is expected behavior - jxl-rs doesn't have API to request linear output.
 #[test]
 #[ignore]
 fn layer3_single_group_dct4x8_decode_jxl_rs() {
@@ -4850,19 +4849,24 @@ fn layer3_single_group_dct4x8_decode_jxl_rs() {
     assert_eq!(dh, h);
     eprintln!("jxl-rs decoded DCT4X8 successfully: {}x{}", dw, dh);
 
+    // jxl-rs outputs sRGB, so linear 0.5 → sRGB ~0.73
     let center_idx = (h / 2 * w + w / 2) * 3;
     let center_val = pixels[center_idx];
+    let expected_srgb = 0.5f32.powf(1.0 / 2.2); // ~0.73
     eprintln!(
-        "Center pixel value: {:.4} (known jxl-rs decoder bug: expected ~0.5, gets ~0.74)",
-        center_val
+        "Center pixel value: {:.4} (expected sRGB ~{:.2})",
+        center_val, expected_srgb
     );
-    // Just verify we got some reasonable pixel value (not NaN or infinite)
-    assert!(center_val.is_finite(), "Decoded pixel should be finite");
+    assert!(
+        (center_val - expected_srgb).abs() < 0.1,
+        "jxl-rs sRGB output should be ~{:.2}, got {:.4}",
+        expected_srgb, center_val
+    );
 }
 
 /// Layer 3 test: Force DCT8X4 and verify jxl-rs decodes.
-/// Note: jxl-rs has a known decoder bug for DCT8x4 that produces wrong pixel values.
-/// djxl and jxl-oxide decode correctly. This test verifies decoding succeeds.
+/// Note: jxl-rs outputs sRGB (not linear), so center pixel is ~0.74 (sRGB) not ~0.5 (linear).
+/// This is expected behavior - jxl-rs doesn't have API to request linear output.
 #[test]
 #[ignore]
 fn layer3_single_group_dct8x4_decode_jxl_rs() {
@@ -4894,14 +4898,105 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
     assert_eq!(dh, h);
     eprintln!("jxl-rs decoded DCT8X4 successfully: {}x{}", dw, dh);
 
+    // jxl-rs outputs sRGB, so linear 0.5 → sRGB ~0.73
     let center_idx = (h / 2 * w + w / 2) * 3;
     let center_val = pixels[center_idx];
+    let expected_srgb = 0.5f32.powf(1.0 / 2.2); // ~0.73
     eprintln!(
-        "Center pixel value: {:.4} (known jxl-rs decoder bug: expected ~0.5, gets ~0.74)",
-        center_val
+        "Center pixel value: {:.4} (expected sRGB ~{:.2})",
+        center_val, expected_srgb
     );
-    // Just verify we got some reasonable pixel value (not NaN or infinite)
-    assert!(center_val.is_finite(), "Decoded pixel should be finite");
+    assert!(
+        (center_val - expected_srgb).abs() < 0.1,
+        "jxl-rs sRGB output should be ~{:.2}, got {:.4}",
+        expected_srgb, center_val
+    );
+}
+
+/// Verify all three decoders produce consistent results for DCT4x8.
+///
+/// Note: Different decoders output different color spaces by default:
+/// - jxl-oxide: explicitly requests linear RGB (via `srgb_linear`)
+/// - djxl: outputs sRGB (default for PNG output)
+/// - jxl-rs: outputs sRGB (no API to request linear)
+///
+/// For a linear input value of ~0.5:
+/// - Linear output: ~0.51 (jxl-oxide)
+/// - sRGB output: ~0.73 (djxl, jxl-rs) because 0.5^(1/2.2) ≈ 0.73
+///
+/// All decoders are correct - they just output different color spaces.
+#[test]
+#[ignore]
+fn test_dct4x8_decoder_colorspace_comparison() {
+    use jxl_enc::tiny::TinyEncoder;
+
+    // Create 64x64 diagonal gradient: value = (x + y) / 126, range 0.0 to 1.0
+    let w = 64usize;
+    let h = 64usize;
+    let mut linear = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = (x as f32 + y as f32) / (w as f32 + h as f32 - 2.0);
+            linear[idx] = v;
+            linear[idx + 1] = v;
+            linear[idx + 2] = v;
+        }
+    }
+
+    // Encode with forced DCT4x8
+    let mut encoder = TinyEncoder::new(2.0);
+    encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
+    let bytes = encoder.encode(w, h, &linear).unwrap();
+    eprintln!("Encoded {} bytes", bytes.len());
+
+    // Decode with jxl-oxide (requests linear)
+    let (_, _, oxide_pixels) = decode_jxl_oxide(&bytes);
+    let oxide_center = oxide_pixels[(h / 2 * w + w / 2) * 3];
+
+    // Decode with djxl (outputs sRGB)
+    let (_, _, djxl_pixels) = decode_djxl(&bytes);
+    let djxl_center = djxl_pixels[(h / 2 * w + w / 2) * 3] as f32 / 255.0;
+
+    // Decode with jxl-rs (outputs sRGB)
+    let (_, _, jxl_rs_pixels) = decode_jxl_rs(&bytes);
+    let jxl_rs_center = jxl_rs_pixels[(h / 2 * w + w / 2) * 3];
+
+    eprintln!("jxl-oxide (linear): {:.4}", oxide_center);
+    eprintln!("djxl (sRGB):        {:.4}", djxl_center);
+    eprintln!("jxl-rs (sRGB):      {:.4}", jxl_rs_center);
+
+    // Expected: linear ~0.5, sRGB ~0.73
+    let expected_linear: f32 = 0.5;
+    let expected_srgb = expected_linear.powf(1.0 / 2.2); // ~0.73
+
+    // jxl-oxide should output linear
+    assert!(
+        (oxide_center - expected_linear).abs() < 0.1,
+        "jxl-oxide should output linear: got {:.4}, expected ~{:.4}",
+        oxide_center, expected_linear
+    );
+
+    // djxl and jxl-rs should output sRGB and agree with each other
+    assert!(
+        (djxl_center - expected_srgb).abs() < 0.1,
+        "djxl should output sRGB: got {:.4}, expected ~{:.4}",
+        djxl_center, expected_srgb
+    );
+    assert!(
+        (jxl_rs_center - expected_srgb).abs() < 0.1,
+        "jxl-rs should output sRGB: got {:.4}, expected ~{:.4}",
+        jxl_rs_center, expected_srgb
+    );
+
+    // djxl and jxl-rs should agree closely (same color space)
+    assert!(
+        (djxl_center - jxl_rs_center).abs() < 0.02,
+        "djxl and jxl-rs should agree: djxl={:.4}, jxl-rs={:.4}",
+        djxl_center, jxl_rs_center
+    );
+
+    eprintln!("All decoders produce expected values for their color space.");
 }
 
 /// Test that strategy selection can pick DCT4X8/DCT8X4 for appropriate content.
