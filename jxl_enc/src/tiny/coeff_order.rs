@@ -33,7 +33,7 @@ pub const NUM_PERMUTATION_CONTEXTS: usize = 8;
 
 /// Strategy code to order bucket mapping.
 /// Matches libjxl's kStrategyOrder for the strategies we support.
-const STRATEGY_TO_BUCKET: [u8; 27] = [
+pub const STRATEGY_TO_BUCKET: [u8; 27] = [
     0, 1, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 1, 1, 1, 1, 1, 1, 7, 8, 8, 9, 10, 10, 11, 12, 12,
 ];
 
