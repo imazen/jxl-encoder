@@ -628,23 +628,19 @@ fn partition_indices(
 /// Collect residuals using a learned tree for encoding.
 ///
 /// For each pixel: gather neighbors → compute spec properties → traverse tree →
-/// predict using leaf's predictor → pack_signed → HybridUint(4,2,0) encode →
-/// produce AnsToken with context = leaf.context_id.
+/// predict using leaf's predictor → pack_signed → produce AnsToken with
+/// context = leaf.context_id and value = raw packed residual.
 ///
-/// This function uses the ENCODING HybridUint config {4,2,0} (not the gathering {4,1,2}).
+/// The raw packed residual is stored as the token value. The HybridUint encoding
+/// is applied later by `build_entropy_code_ans` (for histogram building) and
+/// `write_tokens_ans` (for bitstream writing) — both use UintCoder which implements
+/// HybridUint {4,2,0}.
 pub fn collect_residuals_with_tree(
     image: &ModularImage,
     tree: &Tree,
     group_id: u32,
 ) -> Vec<crate::tiny::token::Token> {
     use crate::tiny::token::Token as AnsToken;
-
-    let encoding_config = HybridUintConfig {
-        split_exponent: 4,
-        split: 16,
-        msb_in_token: 2,
-        lsb_in_token: 0,
-    };
 
     let mut tokens = Vec::new();
 
@@ -681,10 +677,9 @@ pub fn collect_residuals_with_tree(
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
 
-                // Encode through HybridUint {4,2,0}
-                let (token, _extra_bits, _num_extra) = encoding_config.encode(packed);
-
-                tokens.push(AnsToken::new(leaf.context_id, token));
+                // Store raw packed residual — UintCoder (HybridUint {4,2,0}) encoding
+                // is applied by build_entropy_code_ans and write_tokens_ans
+                tokens.push(AnsToken::new(leaf.context_id, packed));
             }
         }
     }

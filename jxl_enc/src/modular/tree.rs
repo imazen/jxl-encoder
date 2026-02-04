@@ -377,13 +377,27 @@ pub fn count_contexts(tree: &Tree) -> u32 {
         .unwrap_or(1)
 }
 
-/// Assign context IDs to leaf nodes sequentially.
+/// Assign context IDs to leaf nodes sequentially in BFS order.
+///
+/// The decoder assigns context IDs to leaves in the order it encounters them
+/// during BFS deserialization (rchild first, then lchild — matching
+/// `collect_tree_tokens`). We must use the same traversal order here so that
+/// context IDs in the encoder match what the decoder derives.
 pub fn assign_sequential_contexts(tree: &mut Tree) {
     let mut next_context = 0u32;
-    for node in tree.iter_mut() {
-        if node.property < 0 {
-            node.context_id = next_context;
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(0usize);
+
+    while let Some(idx) = queue.pop_front() {
+        if tree[idx].property < 0 {
+            tree[idx].context_id = next_context;
             next_context += 1;
+        } else {
+            let rchild = tree[idx].rchild;
+            let lchild = tree[idx].lchild;
+            // Same child order as collect_tree_tokens: rchild first, lchild second
+            queue.push_back(rchild);
+            queue.push_back(lchild);
         }
     }
 }
