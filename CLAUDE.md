@@ -223,11 +223,11 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 **Color/Brightness bug**: RESOLVED - transfer function was signaling Linear instead of Srgb.
 
 **DCT32x32** (RESOLVED - NOT A BUG):
+- Enabled at d>=3.0 in strategy selection
 - Works correctly on smooth content (smaller files + better quality than DCT8)
 - Previous "bug" was forcing DCT32x32 on high-contrast content (frymire black/green edges)
 - Expected behavior: DCT32x32 averages 32x32 blocks, can't represent sharp edges within block
 - Strategy selection correctly avoids DCT32x32 for high-contrast content
-- Can be re-enabled by lowering the `distance < 100.0` guard in `ac_strategy.rs:1214`
 
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
@@ -280,11 +280,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   histogram serialization roundtrip and ANS symbol roundtrip.
 - [x] **DCT16x16** — Working. 2×2 block coverage (256 coefficients), 7-band quant
   weights, distance-dependent strategy selection. Verified with jxl-oxide and djxl.
-- [x] **DCT32x32** — Working! Excellent for smooth content (2376 bytes/MAE 1.67 vs
-  DCT8's 3627 bytes/MAE 2.09 on gradients). Currently disabled via guard at d<100
-  in `ac_strategy.rs:1214`. Can be re-enabled; strategy selection correctly avoids
-  DCT32x32 for high-contrast edges. "Forced" DCT32x32 on edges produces expected
-  blur (averages 32x32 block), not a bug.
+- [x] **DCT32x32** — Working! Enabled at d>=3.0. Excellent for smooth content
+  (2376 bytes/MAE 1.67 vs DCT8's 3627 bytes/MAE 2.09 on gradients). Strategy
+  selection correctly avoids DCT32x32 for high-contrast edges. "Forced" DCT32x32
+  on edges produces expected blur (averages 32x32 block), not a bug.
 - [x] **DCT4x8, DCT8x4** — Working! Better for edges/detail. Parametric quantization
   weights generated from band params (row-interleaved for decoder). Strategy selection
   enabled with `k4x8mul2 = 0.88` multiplier. Verified with jxl-rs and jxl-oxide.
@@ -359,9 +358,10 @@ are the weighted average of the block's black (44%) and green (56%) pixels.
 When auto-strategy is enabled (not forced), frymire encodes with MAE 8.35 (correct)
 vs forced DCT32x32's MAE 29.00 (averaged/blurry).
 
-**Status**: DCT32x32 can be re-enabled by lowering the `distance < 100.0` guard in
-`ac_strategy.rs:1214`. The guard was added because forced-strategy tests failed,
-but those tests were inappropriately forcing DCT32x32 on pathological content.
+**Status**: DCT32x32 is enabled at d>=3.0 in strategy selection. The guard at d<3.0
+prevents evaluation at low distances where smaller transforms are more beneficial.
+Previous test failures were due to tests inappropriately forcing DCT32x32 on
+pathological high-contrast content (frymire). Tests now use smooth gradient content.
 
 ### Color/Brightness Bug - Transfer Function Mismatch (FIXED Feb 3, 2026)
 
