@@ -171,12 +171,17 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - Full libjxl uses truncation (`(int)(val + noff)`) vs our round+threshold approach
 
 **D. Entropy Coding**
+- ANS now default for both VarDCT and modular lossless paths
+- Modular ANS: 0.5-1.7% savings on photos, 19-57% on graphics (single-context)
+  Larger savings expected with multi-context tree learning (not yet implemented)
+- HybridUint {4,2,0} for modular (was raw split=15, now matches libjxl default)
 - LZ77 RLE implemented (`--lz77` flag, ANS-only, two-pass only) but never activates
   on photographic content — the RLE-only method finds insufficient runs of identical
   tokens. Full libjxl uses backward-reference LZ77 with hash chains (not just RLE)
   for the 1-3% savings on photos. Our RLE is correct but limited to graphics/text.
 - Block context map is hardcoded, not content-adaptive
-- Est. remaining impact: 1-3% from backward-reference LZ77 on natural photos
+- jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
+  (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
 **E. Other**
 - No splines, patches/dictionary, dots detection
@@ -218,11 +223,12 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - [x] Multi-group encoding (>256x256 images)
 - [x] Dynamic Huffman codes (two-pass, histogram clustering, default-on)
 - [x] Static Huffman fallback (streaming single-pass, `--no-optimize-codes`)
-- [x] Modular encoder (lossless path, RCT, decision tree contexts)
+- [x] Modular encoder (lossless path, RCT, decision tree contexts, HybridUint {4,2,0})
 - [x] RGBA lossless encoding (extra channel support in frame header)
 - [x] Frame assembly, TOC, multi-group section layout
 - [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
-- [x] ANS entropy coding (`--ans` flag) with histogram clustering
+- [x] ANS entropy coding (default-on, `--no-ans` for Huffman) — VarDCT and modular paths
+- [x] ANS for modular lossless (single-group and multi-group, 0.5-1.7% on photos, 19-57% on graphics)
 - [x] Custom coefficient ordering (default-on, `--no-custom-orders` to disable)
 - [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
 - [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
