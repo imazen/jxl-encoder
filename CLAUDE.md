@@ -164,12 +164,16 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 10 of 27 implemented**
-- Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32, IDENTITY, DCT2X2
+**A. AC Strategies — 12 of 27 implemented**
+- Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32, IDENTITY, DCT2X2,
+  DCT32x16, DCT16x32
 - IDENTITY auto-selects ~4-6% on natural photos at d=1.0, improves SSIM2/butteraugli
 - DCT2X2 rarely selected without kFavor2X2 bonus (disabled — our cost model is not complete enough)
+- DCT32x16/DCT16x32: IMPLEMENTED but selection disabled pending LZ77 backref interaction fix
+  (InvalidAnsStream decoder errors when both are enabled). Infrastructure complete:
+  forward DCT, DC extraction, quantization weights, coefficient orders, strategy selection.
 - Missing (impactful on photos): AFV0-3 (code 8-11)
-- Missing (large transforms): DCT32x16, DCT16x32, DCT64x32, DCT32x64, DCT64x64, etc.
+- Missing (large transforms): DCT64x32, DCT32x64, DCT64x64, etc.
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
@@ -242,7 +246,8 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/IDENTITY/DCT2X2 per 16x16 region)
+- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/IDENTITY/DCT2X2 per 16x16 region)
+- [ ] DCT32x16/DCT16x32: infrastructure complete but selection disabled (LZ77 interaction issue)
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
