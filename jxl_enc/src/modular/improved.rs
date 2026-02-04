@@ -1571,10 +1571,7 @@ pub fn write_modular_stream_with_rct_weighted(
 ///
 /// Layout: lz77.enabled=0 + context_map (6 contexts → 1 histogram) +
 ///         use_prefix_code=1 + IntegerConfig + alphabet_size + Huffman table + tokens
-pub fn write_tree(
-    writer: &mut BitWriter,
-    tree: &super::tree::Tree,
-) -> Result<()> {
+pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()> {
     use super::tree::collect_tree_tokens;
 
     let tokens = collect_tree_tokens(tree);
@@ -1672,7 +1669,9 @@ pub fn write_modular_stream_with_tree(
 ) -> Result<()> {
     use super::rct::{RctType, forward_rct};
     use super::tree::count_contexts;
-    use super::tree_learn::{TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples};
+    use super::tree_learn::{
+        TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
+    };
     use crate::tiny::entropy_code::{build_entropy_code_ans, write_entropy_code_ans};
 
     // Optionally apply RCT
@@ -1699,21 +1698,6 @@ pub fn write_modular_stream_with_tree(
         num_contexts
     );
 
-    // Debug: print tree structure
-    for (i, node) in tree.iter().enumerate() {
-        if node.property == -1 {
-            eprintln!(
-                "  node[{}]: LEAF ctx={} pred={:?} offset={} mul={}",
-                i, node.context_id, node.predictor, node.predictor_offset, node.multiplier
-            );
-        } else {
-            eprintln!(
-                "  node[{}]: SPLIT prop={} splitval={} lchild={} rchild={}",
-                i, node.property, node.splitval, node.lchild, node.rchild
-            );
-        }
-    }
-
     // Step 3: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
 
@@ -1726,12 +1710,8 @@ pub fn write_modular_stream_with_tree(
     // has_tree = true
     writer.write(1, 1)?;
 
-    eprintln!("  [bit {}] after dc_quant + has_tree", writer.bits_written());
-
     // Write the learned tree
     write_tree(writer, &tree)?;
-
-    eprintln!("  [bit {}] after write_tree", writer.bits_written());
 
     // Write ANS data histogram.
     // JXL spec: context map is only written when num_contexts > 1.
@@ -1739,15 +1719,11 @@ pub fn write_modular_stream_with_tree(
     // write_ans_modular_header includes lz77.enabled=0 itself.
     if num_contexts > 1 {
         writer.write(1, 0)?; // lz77.enabled = 0
-        eprintln!("  [bit {}] after lz77.enabled=0 (multi-context path, {} contexts, {} histograms, context_map={:?})",
-            writer.bits_written(), num_contexts, code.histograms.len(), &code.context_map);
         write_entropy_code_ans(&code, writer)?;
-        eprintln!("  [bit {}] after write_entropy_code_ans", writer.bits_written());
     } else {
         // write_ans_modular_header writes lz77.enabled=0 + omits context map
         use super::section::write_ans_modular_header;
         write_ans_modular_header(writer, &code)?;
-        eprintln!("  [bit {}] after write_ans_modular_header (single-context)", writer.bits_written());
     }
 
     // GroupHeader
@@ -1760,28 +1736,16 @@ pub fn write_modular_stream_with_tree(
     } else {
         writer.write(2, 0)?; // num_transforms = 0
     }
-    eprintln!("  [bit {}] after GroupHeader", writer.bits_written());
 
-    // Verify ANS roundtrip before writing
-    if num_contexts > 1 {
-        eprintln!("  Running verify_ans_roundtrip on {} tokens...", tokens.len());
-        if let Err(e) = crate::tiny::entropy_code::verify_ans_roundtrip(&tokens, &code) {
-            eprintln!("  ANS ROUNDTRIP VERIFICATION FAILED: {}", e);
-        } else {
-            eprintln!("  verify_ans_roundtrip passed");
-        }
-
-        if let Err(e) = crate::tiny::entropy_code::verify_histogram_serialization(&code, "tree_learning_data") {
-            eprintln!("  HISTOGRAM VERIFICATION FAILED: {}", e);
-        } else {
-            eprintln!("  verify_histogram_serialization passed");
-        }
+    // Debug: verify ANS encoding correctness
+    #[cfg(debug_assertions)]
+    if num_contexts > 1 && crate::tiny::entropy_code::verify_ans_roundtrip(&tokens, &code).is_err()
+    {
+        eprintln!("ANS ROUNDTRIP VERIFICATION FAILED for tree learning data");
     }
 
     // Write ANS tokens
     write_tokens_ans(&tokens, &code, None, writer)?;
-
-    eprintln!("  [bit {}] after write_tokens_ans ({} tokens)", writer.bits_written(), tokens.len());
 
     writer.zero_pad_to_byte();
     Ok(())

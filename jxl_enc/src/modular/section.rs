@@ -132,7 +132,10 @@ fn ceil_log2_nonzero(x: u32) -> u32 {
 ///
 /// For modular with a single-leaf MA tree (num_dist=1), the context map is NOT written.
 /// Layout: lz77.enabled=0 + use_prefix_code=0 + log_alpha_size + HybridUint config + ANS distribution
-pub(super) fn write_ans_modular_header(writer: &mut BitWriter, code: &OwnedAnsEntropyCode) -> Result<()> {
+pub(super) fn write_ans_modular_header(
+    writer: &mut BitWriter,
+    code: &OwnedAnsEntropyCode,
+) -> Result<()> {
     assert_eq!(
         code.histograms.len(),
         1,
@@ -413,8 +416,7 @@ pub fn write_group_modular_section(
         }
         GlobalModularState::AnsWithTree { code, tree } => {
             // Collect residuals using the learned tree (multi-context)
-            let tokens =
-                super::tree_learn::collect_residuals_with_tree(group_image, tree, 0);
+            let tokens = super::tree_learn::collect_residuals_with_tree(group_image, tree, 0);
             write_tokens_ans(&tokens, code, None, writer)?;
         }
     }
