@@ -15,25 +15,33 @@ use super::common::pack_signed;
 use super::dc_coding::clamped_gradient;
 
 /// Number of properties used in DC tree learning.
-/// Properties:
-/// 0 = Channel (0=X, 1=Y, 2=B in encoding order)
-/// 1 = Gradient property: 512 + top + left - topleft, clamped to [0, 1023]
-/// 2 = |top|
-/// 3 = |left|
-/// 4 = top
-/// 5 = left
-/// 6 = top - left (edge direction indicator)
-const NUM_DC_PROPERTIES: usize = 7;
+/// Must match jxl-rs decoder's property buffer layout:
+/// - 0: channel (static, set by caller)
+/// - 1: group_id/stream (static, typically 0 for DC)
+/// - 2: y position
+/// - 3: x position
+/// - 4: |top|
+/// - 5: |left|
+/// - 6: top
+/// - 7: left
+/// - 8: local gradient (left - prev_left, maintained across row)
+/// - 9: gradient (left + top - topleft) ← PRIMARY SPLIT PROPERTY
+/// - 10: left - topleft (FFV1)
+/// - 11: topleft - top (FFV1)
+/// - 12: top - topright (FFV1)
+/// - 13: top - toptop (FFV1)
+/// - 14: left - leftleft (FFV1)
+const NUM_DC_PROPERTIES: usize = 15;
 
 /// Properties to consider for splits.
-/// Skip channel for now (single tree for all channels in initial implementation).
+/// Property 9 (gradient) is the most effective for DC coding.
 const SPLIT_PROPERTIES: &[usize] = &[
-    1, // Gradient property (most important for DC)
-    2, // |top|
-    3, // |left|
-    4, // top
-    5, // left
-    6, // top - left
+    9,  // gradient (left + top - topleft) - most important
+    4,  // |top|
+    5,  // |left|
+    6,  // top
+    7,  // left
+    10, // left - topleft (FFV1)
 ];
 
 /// Maximum tree depth to prevent overfitting.
@@ -102,33 +110,67 @@ impl DcTreeSamples {
 
 /// Compute properties for a DC value given its neighbors.
 #[inline]
+/// Compute DC properties matching jxl-rs decoder's property buffer layout.
+///
+/// # Arguments
+/// * `channel_idx` - Channel index in encoding order (0=Y, 1=X, 2=B after reorder)
+/// * `x` - X position in block coordinates
+/// * `y` - Y position in block coordinates
+/// * `top` - DC value of block above
+/// * `left` - DC value of block to the left
+/// * `topleft` - DC value of block diagonally above-left
+/// * `topright` - DC value of block diagonally above-right
+/// * `toptop` - DC value of block two rows above
+/// * `leftleft` - DC value of block two columns left
+/// * `prev_local_grad` - Previous local gradient (for property 8)
+///
+/// Returns (properties, new_local_grad) where new_local_grad should be passed
+/// as prev_local_grad for the next pixel in the row.
 pub fn compute_dc_properties(
     channel_idx: u32,
+    x: usize,
+    y: usize,
     top: i32,
     left: i32,
     topleft: i32,
-) -> [i32; NUM_DC_PROPERTIES] {
+    topright: i32,
+    toptop: i32,
+    leftleft: i32,
+    prev_local_grad: i32,
+) -> ([i32; NUM_DC_PROPERTIES], i32) {
     let mut props = [0i32; NUM_DC_PROPERTIES];
 
-    // Channel (in encoding order: Y=0, X=1, B=2 → actually 1, 0, 2)
+    // Static properties
     props[0] = channel_idx as i32;
+    props[1] = 0; // group_id/stream, typically 0 for DC
 
-    // Gradient property: 512 + top + left - topleft, clamped to [0, 1023]
-    let grad_raw = 512i64 + top as i64 + left as i64 - topleft as i64;
-    props[1] = grad_raw.clamp(0, 1023) as i32;
+    // Position
+    props[2] = y as i32;
+    props[3] = x as i32;
 
-    // Absolute values
-    props[2] = top.abs();
-    props[3] = left.abs();
+    // Absolute neighbors
+    props[4] = top.wrapping_abs();
+    props[5] = left.wrapping_abs();
 
-    // Raw values
-    props[4] = top;
-    props[5] = left;
+    // Raw neighbors
+    props[6] = top;
+    props[7] = left;
 
-    // Edge direction
-    props[6] = top - left;
+    // Local gradient (left - prev_local_grad) - maintained across row
+    let local_grad = left.wrapping_add(top).wrapping_sub(topleft);
+    props[8] = left.wrapping_sub(prev_local_grad);
 
-    props
+    // Gradient (left + top - topleft) - PRIMARY SPLIT PROPERTY
+    props[9] = local_grad;
+
+    // FFV1 context properties
+    props[10] = left.wrapping_sub(topleft);
+    props[11] = topleft.wrapping_sub(top);
+    props[12] = top.wrapping_sub(topright);
+    props[13] = top.wrapping_sub(toptop);
+    props[14] = left.wrapping_sub(leftleft);
+
+    (props, local_grad)
 }
 
 /// Gather DC samples from quantized DC values.
@@ -149,10 +191,12 @@ pub fn gather_dc_samples(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>;
         let channel = &quant_dc[c];
 
         for y in 0..height {
+            let mut prev_local_grad = 0i32;
+
             for x in 0..width {
                 let dc_val = channel[y][x] as i32;
 
-                // Get neighbors
+                // Get neighbors with edge handling matching jxl-rs decoder
                 let left = if x > 0 {
                     channel[y][x - 1] as i32
                 } else if y > 0 {
@@ -173,13 +217,44 @@ pub fn gather_dc_samples(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>;
                     left
                 };
 
+                let topright = if y > 0 && x + 1 < width {
+                    channel[y - 1][x + 1] as i32
+                } else {
+                    top
+                };
+
+                let toptop = if y > 1 {
+                    channel[y - 2][x] as i32
+                } else {
+                    top
+                };
+
+                let leftleft = if x > 1 {
+                    channel[y][x - 2] as i32
+                } else {
+                    left
+                };
+
                 // Compute prediction and residual
                 let prediction = clamped_gradient(top, left, topleft);
                 let residual = dc_val - prediction;
 
                 // Compute properties and add sample
-                let props = compute_dc_properties(enc_idx as u32, top, left, topleft);
+                let (props, new_local_grad) = compute_dc_properties(
+                    enc_idx as u32,
+                    x,
+                    y,
+                    top,
+                    left,
+                    topleft,
+                    topright,
+                    toptop,
+                    leftleft,
+                    prev_local_grad,
+                );
                 samples.add_sample(residual, props);
+
+                prev_local_grad = new_local_grad;
             }
         }
     }
@@ -443,23 +518,23 @@ fn tree_to_tokens_recursive(tree: &DcTree, idx: usize, tokens: &mut Vec<(u32, u3
     let node = &tree[idx];
 
     if node.property < 0 {
-        // Leaf node: emit predictor (gradient=4), multiplier=1, offset=0
-        // Context 1 = parent_property (use 0 for leaf marker)
-        tokens.push((1, 0)); // property = -1 encoded as 0 in context 1
-        // Context 2 = predictor (gradient = 4)
-        tokens.push((2, 4));
-        // Context 3 = offset
+        // Leaf node: emit predictor, multiplier, offset
+        // Context 1: property = 0 signals leaf node (decoder subtracts 1, gets -1)
+        tokens.push((1, 0));
+        // Context 2: predictor (5 = Gradient, matching DC prediction)
+        tokens.push((2, 5));
+        // Context 3: offset (0)
         tokens.push((3, 0));
-        // Context 4 = multiplier (implicit 1)
+        // Context 4: multiplier log (0 for multiplier=1 since (0+1)<<0 = 1)
         tokens.push((4, 0));
-        // Context 5 = unused
+        // Context 5: multiplier bits (0)
         tokens.push((5, 0));
     } else {
         // Internal node: emit property and splitval
-        // Context 1 = property (1-6 for our properties, offset by 1 to distinguish from leaf)
+        // Context 1: property+1 (decoder subtracts 1 to get actual property index)
         let prop_token = (node.property + 1) as u32;
         tokens.push((1, prop_token));
-        // Context 0 = splitval (encoded as HybridUint)
+        // Context 0: splitval (packed signed: positive*2, negative*2+1)
         let splitval_token = if node.splitval >= 0 {
             (node.splitval as u32) * 2
         } else {
@@ -479,19 +554,42 @@ mod tests {
 
     #[test]
     fn test_compute_dc_properties() {
-        // Test gradient property computation
-        let props = compute_dc_properties(0, 100, 100, 100);
-        // Gradient: 512 + 100 + 100 - 100 = 612
-        assert_eq!(props[1], 612);
+        // Test gradient property (property 9 = left + top - topleft)
+        let (props, _) = compute_dc_properties(
+            0,    // channel
+            5,    // x
+            3,    // y
+            100,  // top
+            100,  // left
+            100,  // topleft
+            100,  // topright
+            100,  // toptop
+            100,  // leftleft
+            0,    // prev_local_grad
+        );
+        // Gradient: 100 + 100 - 100 = 100
+        assert_eq!(props[9], 100);
 
-        // Edge case: gradient at boundaries
-        let props = compute_dc_properties(0, -512, -512, 512);
-        // Gradient: 512 + (-512) + (-512) - 512 = -1024 → clamped to 0
-        assert_eq!(props[1], 0);
+        // Test position properties
+        assert_eq!(props[2], 3); // y
+        assert_eq!(props[3], 5); // x
 
-        let props = compute_dc_properties(0, 512, 512, -512);
-        // Gradient: 512 + 512 + 512 - (-512) = 2048 → clamped to 1023
-        assert_eq!(props[1], 1023);
+        // Test absolute values
+        assert_eq!(props[4], 100); // |top|
+        assert_eq!(props[5], 100); // |left|
+
+        // Test raw values
+        assert_eq!(props[6], 100); // top
+        assert_eq!(props[7], 100); // left
+
+        // Test FFV1 properties
+        let (props2, _) = compute_dc_properties(0, 0, 0, 200, 150, 100, 180, 200, 120, 0);
+        // Gradient: 150 + 200 - 100 = 250
+        assert_eq!(props2[9], 250);
+        // FFV1 left - topleft: 150 - 100 = 50
+        assert_eq!(props2[10], 50);
+        // FFV1 topleft - top: 100 - 200 = -100
+        assert_eq!(props2[11], -100);
     }
 
     #[test]
@@ -544,11 +642,11 @@ mod tests {
 
     #[test]
     fn test_get_dc_context() {
-        // Create a simple 2-leaf tree that splits on gradient property
+        // Create a simple 2-leaf tree that splits on gradient property (property 9)
         let tree = vec![
             DcTreeNode {
-                property: 1, // Gradient
-                splitval: 512,
+                property: 9, // Gradient (left + top - topleft)
+                splitval: 150,
                 lchild: 1,
                 rchild: 2,
                 context_id: 0,
@@ -565,14 +663,16 @@ mod tests {
             },
         ];
 
-        // Gradient <= 512 should go to context 0
-        let props_low = compute_dc_properties(0, 100, 100, 200);
-        // Gradient: 512 + 100 + 100 - 200 = 512
+        // Gradient <= 150 should go to context 0
+        // top=100, left=100, topleft=100 => gradient = 100 + 100 - 100 = 100
+        let (props_low, _) = compute_dc_properties(0, 0, 0, 100, 100, 100, 100, 100, 100, 0);
+        assert_eq!(props_low[9], 100);
         assert_eq!(get_dc_context(&tree, &props_low), 0);
 
-        // Gradient > 512 should go to context 1
-        let props_high = compute_dc_properties(0, 200, 200, 100);
-        // Gradient: 512 + 200 + 200 - 100 = 812
+        // Gradient > 150 should go to context 1
+        // top=200, left=100, topleft=50 => gradient = 100 + 200 - 50 = 250
+        let (props_high, _) = compute_dc_properties(0, 0, 0, 200, 100, 50, 200, 200, 100, 0);
+        assert_eq!(props_high[9], 250);
         assert_eq!(get_dc_context(&tree, &props_high), 1);
     }
 
@@ -620,10 +720,12 @@ pub fn collect_dc_tokens_with_tree(
         let channel = &quant_dc[c];
 
         for y in start_by..end_by {
+            let mut prev_local_grad = 0i32;
+
             for x in start_bx..end_bx {
                 let dc_val = channel[y][x] as i32;
 
-                // Get neighbors
+                // Get neighbors with proper edge handling
                 let left = if x > start_bx {
                     channel[y][x - 1] as i32
                 } else if y > start_by {
@@ -644,15 +746,46 @@ pub fn collect_dc_tokens_with_tree(
                     left
                 };
 
+                let topright = if y > start_by && x + 1 < end_bx {
+                    channel[y - 1][x + 1] as i32
+                } else {
+                    top
+                };
+
+                let toptop = if y > start_by + 1 {
+                    channel[y - 2][x] as i32
+                } else {
+                    top
+                };
+
+                let leftleft = if x > start_bx + 1 {
+                    channel[y][x - 2] as i32
+                } else {
+                    left
+                };
+
                 // Compute prediction and residual
                 let prediction = clamped_gradient(top, left, topleft);
                 let residual = dc_val - prediction;
 
                 // Compute properties and get context from tree
-                let props = compute_dc_properties(enc_idx as u32, top, left, topleft);
+                let (props, new_local_grad) = compute_dc_properties(
+                    enc_idx as u32,
+                    x - start_bx,
+                    y - start_by,
+                    top,
+                    left,
+                    topleft,
+                    topright,
+                    toptop,
+                    leftleft,
+                    prev_local_grad,
+                );
                 let ctx_id = get_dc_context(tree, &props);
 
                 tokens.push(Token::new(ctx_id, pack_signed(residual)));
+
+                prev_local_grad = new_local_grad;
             }
         }
     }
