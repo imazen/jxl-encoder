@@ -1922,6 +1922,7 @@ mod tests {
             use_modular: true,
             effort: 7,
             use_ans: true,
+            use_tree_learning: false,
         };
         let frame_encoder = FrameEncoder::new(4, 4, frame_options);
         let color_encoding = ColorEncoding::srgb();
@@ -1987,6 +1988,7 @@ mod tests {
                 use_modular: true,
                 effort: 7,
                 use_ans: false,
+                use_tree_learning: false,
             };
             let frame_encoder = FrameEncoder::new(4, 2, frame_options);
             let color_encoding = ColorEncoding::srgb();
@@ -2008,6 +2010,7 @@ mod tests {
             use_modular: true,
             effort: 7,
             use_ans: true,
+            use_tree_learning: false,
         };
         let frame_encoder = FrameEncoder::new(4, 2, frame_options);
         let color_encoding = ColorEncoding::srgb();
@@ -2071,6 +2074,7 @@ mod tests {
             use_modular: true,
             effort: 7,
             use_ans: true,
+            use_tree_learning: false,
         };
         let frame_encoder = FrameEncoder::new(8, 8, frame_options);
         let color_encoding = ColorEncoding::srgb();

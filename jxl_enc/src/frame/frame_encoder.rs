@@ -17,7 +17,9 @@ use crate::modular::channel::ModularImage;
 use crate::modular::improved::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
     write_group_modular_section, write_improved_modular_stream,
+    write_modular_stream_with_tree,
 };
+use crate::modular::section::write_global_modular_section_with_tree;
 use crate::vardct::tokenize::Token;
 use crate::vardct::transform::{
     TransformedDataWithStrategy, transform_xyb_image, transform_xyb_image_with_strategy,
@@ -33,6 +35,8 @@ pub struct FrameEncoderOptions {
     pub effort: u8,
     /// Use ANS entropy coding instead of Huffman for modular.
     pub use_ans: bool,
+    /// Use content-adaptive MA tree learning for modular encoding.
+    pub use_tree_learning: bool,
 }
 
 impl Default for FrameEncoderOptions {
@@ -41,6 +45,7 @@ impl Default for FrameEncoderOptions {
             use_modular: true, // Default to lossless
             effort: 7,
             use_ans: false,
+            use_tree_learning: false,
         }
     }
 }
@@ -103,7 +108,19 @@ impl FrameEncoder {
         if num_groups == 1 {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
-            write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+
+            if self.options.use_tree_learning && self.options.use_ans {
+                write_modular_stream_with_tree(
+                    image,
+                    &mut section_writer,
+                    256,  // max_nodes
+                    1.0,  // split_threshold
+                    image.channels.len() >= 3, // RCT for RGB
+                )?;
+            } else {
+                write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+            }
+
             let section_data = section_writer.finish();
             let section_size = section_data.len();
 
@@ -148,46 +165,52 @@ impl FrameEncoder {
             num_lf_groups
         );
 
-        // Step 1: Extract each group and collect residuals using LOCAL coordinates.
-        // This is critical: we must use the same coordinate system that
-        // write_group_modular_section uses, otherwise the residuals won't match
-        // the Huffman codes we build.
-        let mut all_residuals = Vec::new();
-        let mut max_residual: u32 = 0;
+        // Step 1: Extract each group image
         let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
-
         for group_idx in 0..num_groups {
             let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
             let group_image = image.extract_region(x_start, y_start, x_end, y_end)?;
-
-            // Collect residuals from this group using LOCAL coordinates (0-based within group)
-            let (group_residuals, group_max) = collect_all_residuals(&group_image);
-            all_residuals.extend(group_residuals);
-            max_residual = max_residual.max(group_max);
-
-            // Store for later encoding
             group_images.push(group_image);
         }
 
-        let (histogram, max_token) = build_histogram_from_residuals(&all_residuals, max_residual);
-
-        crate::trace::debug_eprintln!(
-            "MULTI_GROUP: {} total residuals, max_raw={}, max_token={}, {} unique tokens",
-            all_residuals.len(),
-            max_residual,
-            max_token,
-            histogram.iter().filter(|&&c| c > 0).count()
-        );
-
         // Step 2: Write LfGlobal section (tree + histogram)
         let mut lf_global_writer = BitWriter::new();
-        let global_state = write_global_modular_section(
-            &all_residuals,
-            &histogram,
-            max_token,
-            &mut lf_global_writer,
-            self.options.use_ans,
-        )?;
+        let global_state = if self.options.use_tree_learning && self.options.use_ans {
+            // Tree learning path: gather samples, learn tree, build multi-context ANS
+            write_global_modular_section_with_tree(
+                &group_images,
+                &mut lf_global_writer,
+                256,  // max_nodes
+                1.0,  // split_threshold
+            )?
+        } else {
+            // Standard path: collect residuals with gradient predictor
+            let mut all_residuals = Vec::new();
+            let mut max_residual: u32 = 0;
+            for group_image in &group_images {
+                let (group_residuals, group_max) = collect_all_residuals(group_image);
+                all_residuals.extend(group_residuals);
+                max_residual = max_residual.max(group_max);
+            }
+            let (histogram, max_token) =
+                build_histogram_from_residuals(&all_residuals, max_residual);
+
+            crate::trace::debug_eprintln!(
+                "MULTI_GROUP: {} total residuals, max_raw={}, max_token={}, {} unique tokens",
+                all_residuals.len(),
+                max_residual,
+                max_token,
+                histogram.iter().filter(|&&c| c > 0).count()
+            );
+
+            write_global_modular_section(
+                &all_residuals,
+                &histogram,
+                max_token,
+                &mut lf_global_writer,
+                self.options.use_ans,
+            )?
+        };
         let lf_global_data = lf_global_writer.finish();
 
         crate::trace::debug_eprintln!(

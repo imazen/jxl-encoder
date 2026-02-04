@@ -100,6 +100,12 @@ struct Args {
     #[arg(long)]
     lz77: bool,
 
+    /// Enable content-adaptive MA tree learning for lossless encoding.
+    /// Learns optimal predictors and entropy contexts per image region.
+    /// ANS-only (requires ANS, will be forced on). Off by default.
+    #[arg(long)]
+    tree_learning: bool,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -208,7 +214,8 @@ fn main() {
                     distance,
                     effort: args.effort,
                     force_modular: true,
-                    use_ans: !args.no_ans,
+                    use_ans: !args.no_ans || args.tree_learning,
+                    use_tree_learning: args.tree_learning,
                     ..Default::default()
                 };
                 let encoder = Encoder::with_options(options);
@@ -220,7 +227,8 @@ fn main() {
                 distance,
                 effort: args.effort,
                 force_modular: distance == 0.0,
-                use_ans: !args.no_ans,
+                use_ans: !args.no_ans || args.tree_learning,
+                use_tree_learning: args.tree_learning,
                 ..Default::default()
             };
             let encoder = Encoder::with_options(options);
@@ -231,7 +239,8 @@ fn main() {
                 distance,
                 effort: args.effort,
                 force_modular: distance == 0.0,
-                use_ans: !args.no_ans,
+                use_ans: !args.no_ans || args.tree_learning,
+                use_tree_learning: args.tree_learning,
                 ..Default::default()
             };
             let encoder = Encoder::with_options(options);
