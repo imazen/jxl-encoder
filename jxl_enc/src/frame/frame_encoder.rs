@@ -166,19 +166,20 @@ impl FrameEncoder {
             group_images.push(group_image);
         }
 
-        let histogram = build_histogram_from_residuals(&all_residuals, max_residual);
+        let (histogram, max_token) = build_histogram_from_residuals(&all_residuals, max_residual);
 
         crate::trace::debug_eprintln!(
-            "MULTI_GROUP: {} total residuals, max={}, {} unique symbols",
+            "MULTI_GROUP: {} total residuals, max_raw={}, max_token={}, {} unique tokens",
             all_residuals.len(),
             max_residual,
+            max_token,
             histogram.iter().filter(|&&c| c > 0).count()
         );
 
         // Step 2: Write LfGlobal section (tree + histogram)
         let mut lf_global_writer = BitWriter::new();
         let global_state =
-            write_global_modular_section(&histogram, max_residual, &mut lf_global_writer)?;
+            write_global_modular_section(&histogram, max_token, &mut lf_global_writer)?;
         let lf_global_data = lf_global_writer.finish();
 
         crate::trace::debug_eprintln!(
