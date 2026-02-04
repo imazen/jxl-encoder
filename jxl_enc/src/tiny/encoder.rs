@@ -2735,7 +2735,10 @@ impl TinyEncoder {
         // ── Pass 1: Collect tokens per section ──
 
         // DC tree learning: learn optimal context tree if enabled
-        // Returns (tree, num_contexts, tokens) where num_contexts is the number of leaf nodes
+        // Returns (tree, num_contexts, tokens) where:
+        // - tree: the learned tree for context evaluation
+        // - num_contexts: total number of contexts (AC metadata + DC)
+        // - tokens: tree tokens WITH AC metadata prefix for proper decoder context creation
         let (learned_dc_tree, learned_dc_num_contexts, learned_tree_tokens) =
             if self.dc_tree_learning && num_dc_groups == 1 {
                 // Learn tree from DC samples
@@ -2744,10 +2747,21 @@ impl TinyEncoder {
 
                 if samples.num_samples > 0 {
                     let max_token = 64; // Reasonable max for DC residual tokens
-                    let (tree, num_contexts) =
+                    let (tree, dc_num_contexts) =
                         super::dc_tree_learn::learn_dc_tree(&samples, max_token);
-                    let tokens = super::dc_tree_learn::tree_to_tokens(&tree);
-                    (Some(tree), Some(num_contexts as usize), Some(tokens))
+                    let dc_tree_tokens = super::dc_tree_learn::tree_to_tokens(&tree);
+
+                    // Wrap with AC metadata prefix to ensure decoder creates enough contexts.
+                    // This creates a tree structure where:
+                    // - Leaves 0-10 are for AC metadata (unreachable by DC samples)
+                    // - Leaves 11+ are for DC (from learned tree)
+                    let (wrapped_tokens, total_contexts) =
+                        super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                            &dc_tree_tokens,
+                            dc_num_contexts,
+                        );
+
+                    (Some(tree), Some(total_contexts as usize), Some(wrapped_tokens))
                 } else {
                     (None, None, None)
                 }
@@ -3109,8 +3123,9 @@ impl TinyEncoder {
         //   AC metadata contexts (0-10) + learned tree contexts (11+)
         // The decoder's MaConfig::parse reads Decoder::parse(ctx) where ctx is the number of tree leaves.
         let base_dc_contexts = if let Some(learned_ctx) = learned_dc_num_contexts {
-            // AC metadata (11) + learned tree contexts
-            super::dc_coding::NUM_AC_METADATA_CONTEXTS + learned_ctx
+            // learned_ctx already includes AC metadata contexts (11) + DC tree contexts
+            // from tree_tokens_with_ac_metadata_prefix
+            learned_ctx
         } else {
             super::dc_coding::NUM_DC_CONTEXTS
         };
@@ -3747,9 +3762,11 @@ mod tests {
         let mut encoder_learned = TinyEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
         encoder_learned.use_ans = false; // Use Huffman to avoid ANS issues
+        std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
         let bytes_learned = encoder_learned
             .encode(width, height, &linear_rgb)
             .expect("learned encode failed");
+        std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
 
         eprintln!(
             "DC tree learning: baseline={} bytes, learned={} bytes (delta={:.2}%)",
