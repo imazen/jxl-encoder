@@ -139,6 +139,21 @@ At equal file sizes, gab helps modestly (+0.6 SSIM2 at d=3.0).
 The e4→e5 jump (+6.4 SSIM2) includes adaptive InitialQuantField, non-aligned
 transform search, 32x32 search, and full CfL mode — not just gaborish.
 
+**Gap vs cjxl e5 by distance** (CLIC2025 1024x1024, Feb 4, 2026):
+| Distance | Ours | e1 | e5 | Gap vs e1 | Gap vs e5 |
+|----------|------|-----|-----|-----------|-----------|
+| 0.5 | 363KB | N/A | 359KB | N/A | +1.2% |
+| 1.0 | 207KB | 242KB | 202KB | -14% | +2.6% |
+| 2.0 | 90KB | 107KB | 72KB | -16% | +24% |
+| 3.0 | 54KB | 68KB | 44KB | -21% | +22% |
+| 5.0 | 33KB | N/A | 26KB | N/A | +26% |
+
+At low distances (d<=1.0), we're within 3% of cjxl e5 and 14-16% better than e1.
+At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
+- Iterative rate control (e5 reallocates bits across blocks)
+- More AC strategies (DCT32x16, DCT16x32, etc.)
+- DCT32x32 is now enabled at d>=3.0 but doesn't close the gap alone
+
 **What's confirmed correct**:
 - Parametric quantization weights match decoder expectations (all strategies)
 - AdjustQuantBias constants match decoder (kDefaultQuantBias)
