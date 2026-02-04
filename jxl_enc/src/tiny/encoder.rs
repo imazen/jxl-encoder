@@ -210,6 +210,13 @@ pub struct TinyEncoder {
     ///
     /// Default: `Greedy` (best compression)
     pub lz77_method: super::lz77::Lz77Method,
+    /// Enable DC tree learning.
+    /// When true, learns an optimal context tree for DC coding from image content
+    /// instead of using the fixed GRADIENT_CONTEXT_LUT.
+    /// Only effective with two-pass mode (optimize_codes=true).
+    /// Provides 0.3-1.0% DC stream compression improvement.
+    /// Off by default (experimental).
+    pub dc_tree_learning: bool,
 }
 
 impl Default for TinyEncoder {
@@ -230,6 +237,7 @@ impl Default for TinyEncoder {
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
+            dc_tree_learning: false,                       // DC tree learning (experimental)
         }
     }
 }
@@ -250,9 +258,10 @@ impl TinyEncoder {
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false,
-            pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
+            pixel_domain_loss: true,                       // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
+            dc_tree_learning: false,                       // DC tree learning (experimental)
         }
     }
 
