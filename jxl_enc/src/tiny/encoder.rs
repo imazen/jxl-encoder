@@ -530,6 +530,7 @@ impl TinyEncoder {
                 &noise_params,
                 None,
                 &block_ctx_map,
+                None, // No learned tree in single-pass mode
                 &mut dc_global,
             )?;
 
@@ -630,6 +631,7 @@ impl TinyEncoder {
                 &noise_params,
                 None,
                 &block_ctx_map,
+                None, // No learned tree in single-pass mode
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
@@ -2251,6 +2253,7 @@ impl TinyEncoder {
         noise_params: &Option<NoiseParams>,
         dc_lz77_params: Option<&super::lz77::Lz77Params>,
         block_ctx_map: &BlockCtxMap,
+        learned_tree_tokens: Option<&[(u32, u32)]>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -2289,7 +2292,11 @@ impl TinyEncoder {
         writer.write(1, 1)?; // default DC cmap
 
         // Write context tree for modular stream DC header
-        super::context_tree::write_context_tree(num_dc_groups, writer)?;
+        if let Some(tree_tokens) = learned_tree_tokens {
+            super::context_tree::write_learned_context_tree(tree_tokens, num_dc_groups, writer)?;
+        } else {
+            super::context_tree::write_context_tree(num_dc_groups, writer)?;
+        }
 
         #[cfg(feature = "debug-tokens")]
         let after_ctx_tree = writer.bits_written();
@@ -2727,6 +2734,25 @@ impl TinyEncoder {
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
+        // DC tree learning: learn optimal context tree if enabled
+        let (learned_dc_tree, learned_tree_tokens) = if self.dc_tree_learning && num_dc_groups == 1
+        {
+            // Learn tree from DC samples
+            let mut samples = super::dc_tree_learn::DcTreeSamples::new();
+            super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
+
+            if samples.num_samples > 0 {
+                let max_token = 64; // Reasonable max for DC residual tokens
+                let (tree, _num_contexts) = super::dc_tree_learn::learn_dc_tree(&samples, max_token);
+                let tokens = super::dc_tree_learn::tree_to_tokens(&tree);
+                (Some(tree), Some(tokens))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
         // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
         let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
         let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
@@ -2740,7 +2766,14 @@ impl TinyEncoder {
             let region_xsize = end_bx - start_bx;
             let region_ysize = end_by - start_by;
 
-            let dc_tokens = collect_dc_tokens_region(quant_dc, start_bx, start_by, end_bx, end_by);
+            // Collect DC tokens using learned tree if available, else use fixed LUT
+            let dc_tokens = if let Some(ref tree) = learned_dc_tree {
+                super::dc_tree_learn::collect_dc_tokens_with_tree(
+                    quant_dc, tree, start_bx, start_by, end_bx, end_by,
+                )
+            } else {
+                collect_dc_tokens_region(quant_dc, start_bx, start_by, end_bx, end_by)
+            };
             let md_tokens = collect_ac_metadata_tokens_region(
                 region_xsize,
                 region_ysize,
@@ -3190,6 +3223,7 @@ impl TinyEncoder {
                 noise_params,
                 dc_lz77_params.as_ref(),
                 &block_ctx_map,
+                learned_tree_tokens.as_deref(),
                 &mut dc_global,
             )?;
 
@@ -3246,6 +3280,7 @@ impl TinyEncoder {
                 noise_params,
                 dc_lz77_params.as_ref(),
                 &block_ctx_map,
+                learned_tree_tokens.as_deref(),
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
