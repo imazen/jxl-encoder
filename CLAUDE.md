@@ -173,7 +173,8 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 **D. Entropy Coding**
 - ANS now default for both VarDCT and modular lossless paths
 - Modular ANS: 0.5-1.7% savings on photos, 19-57% on graphics (single-context)
-  Larger savings expected with multi-context tree learning (not yet implemented)
+- Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in)
+  Learns per-pixel predictor/context selection, multi-context ANS encoding
 - HybridUint {4,2,0} for modular (was raw split=15, now matches libjxl default)
 - LZ77 RLE implemented (`--lz77` flag, ANS-only, two-pass only) but never activates
   on photographic content — the RLE-only method finds insufficient runs of identical
@@ -234,6 +235,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
 - [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
 - [x] LZ77 RLE (`--lz77` flag, opt-in, ANS two-pass only — correct but rarely activates on photos)
+- [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
@@ -689,6 +691,34 @@ vs Full libjxl" section above for what's needed to match full libjxl.
 **CLI flags added**: `--dct8-only` (forces DCT8), `--error-diffusion` (enables ED)
 
 ## Resolved Bugs (continued)
+
+### Modular Neighbor Edge Handling Mismatch (FIXED Feb 3, 2026)
+
+**Issue**: Tree learning modular encoding produced wrong pixels for images >= 64x64.
+64x64: decoded but 124 pixels wrong (max_diff=31). 128x128: SectionTooShort error.
+32x32 worked fine.
+
+**Root Cause**: `Neighbors::gather` in `predictor.rs` returned 0 for all out-of-bounds
+pixel accesses. The jxl-rs decoder (`PredictionData::get_rows` in `predict.rs:96-125`)
+uses clamped/mirrored values instead:
+- x=0, y>0: left = top_row[0] (not 0)
+- y=0: top = left (not 0)
+- x=0, y>0: topleft = left (not 0)
+- x+1>=width, y>0: topright = top (not 0)
+- x<=1: leftleft = left (not 0)
+- y<=1: toptop = top (not 0)
+
+This caused wrong predictions at image edges, producing wrong residuals. For small
+images (32x32), the errors were absorbed by the entropy coder. For larger images,
+accumulated errors caused decoder misalignment (SectionTooShort).
+
+**Fix**: Rewrote both `Neighbors::gather` and `Neighbors::gather_fast` to match the
+decoder's exact edge handling from `PredictionData::get_rows`.
+
+**Impact**: All 12 tree learning tests pass (gray 48/64/128, rgb 32/64/128/300x300).
+Also affects the single-context gradient path in `section.rs` which uses the same
+`Neighbors` — though those tests already passed because that path uses a simpler
+gather that happened to match the decoder for the gradient-only case.
 
 ### ANS Histogram omit_pos Mismatch (FIXED Feb 1, 2026)
 
