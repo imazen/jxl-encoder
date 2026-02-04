@@ -98,6 +98,16 @@ pub static COEFF_ORDER_16X16: [u32; 256] = [
 static COEFF_ORDER_32X32: LazyLock<Vec<u32>> =
     LazyLock::new(|| coefficient_layout_order(32, 32, 4, 4));
 
+/// Default zig-zag coefficient order for DCT32x16 (512 coefficients).
+/// DCT32x16: 32 rows × 16 cols, LLF region is 4×2 (4 rows × 2 cols).
+static COEFF_ORDER_32X16: LazyLock<Vec<u32>> =
+    LazyLock::new(|| coefficient_layout_order(32, 16, 4, 2));
+
+/// Default zig-zag coefficient order for DCT16x32 (512 coefficients).
+/// DCT16x32: 16 rows × 32 cols, LLF region is 2×4 (2 rows × 4 cols).
+static COEFF_ORDER_16X32: LazyLock<Vec<u32>> =
+    LazyLock::new(|| coefficient_layout_order(16, 32, 2, 4));
+
 /// Generate a coefficient order with LLF positions first, then AC in zig-zag.
 ///
 /// For transforms larger than 8x8, the first `llf_x * llf_y` positions must be
@@ -183,6 +193,8 @@ pub fn get_coeff_order(strategy_code: u8) -> &'static [u32] {
         4 => &COEFF_ORDER_16X16,         // DCT16X16
         5 => &COEFF_ORDER_32X32,         // DCT32X32
         6 | 7 => &COEFF_ORDER_8X16,      // DCT8X16, DCT16X8
+        10 => &COEFF_ORDER_32X16,        // DCT32X16
+        11 => &COEFF_ORDER_16X32,        // DCT16X32
         _ => &COEFF_ORDER_8X8,           // Default to 8x8 for unknown strategies
     }
 }
@@ -289,20 +301,15 @@ pub fn predict_from_top_and_left(
     }
 }
 
-use super::ac_strategy::{COVERED_X, STRATEGY_CODE_LUT};
+use super::ac_strategy::{COVERED_X, COVERED_Y, STRATEGY_CODE_LUT};
 
 /// Get block size info for AC strategy.
 /// Returns (cx, cy, covered_blocks, log2_covered_blocks, strategy_code).
 ///
-/// Uses RAW strategy codes (0-7) as input, returns bitstream strategy code.
+/// Uses RAW strategy codes (0-11) as input, returns bitstream strategy code.
 pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
-    // Covered blocks from the lookup tables
-    // 0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32, 5=DCT4X8, 6=DCT8X4, 7=DCT4X4,
-    // 8=IDENTITY, 9=DCT2X2
-    let covered_y: [usize; 10] = [1, 2, 1, 2, 4, 1, 1, 1, 1, 1];
-
     let cx = COVERED_X[raw_strategy as usize];
-    let cy = covered_y[raw_strategy as usize];
+    let cy = COVERED_Y[raw_strategy as usize];
     let covered_blocks = cx * cy;
     let log2_covered_blocks = covered_blocks.trailing_zeros() as usize;
     let strategy_code = STRATEGY_CODE_LUT[raw_strategy as usize];

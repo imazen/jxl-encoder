@@ -1196,6 +1196,193 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
 }
 
 // =============================================================================
+// DCT32x16 and DCT16x32 support
+// =============================================================================
+
+/// Compute scaled 32x16 DCT (32 rows, 16 columns).
+///
+/// Input: 32x16 block in row-major order (512 floats)
+/// Output: 32x16 DCT coefficients in 16×32 layout (stride 32)
+///
+/// C++ `ComputeScaledDCT<32,16>` takes the ROWS >= COLS branch (no final transpose).
+pub fn dct_32x16(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut tmp = [0.0f32; 512];
+
+    // Transform rows (16 columns each)
+    for row in 0..32 {
+        let row_start = row * 16;
+        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
+        dct1d_16(&mut tmp[row_start..row_start + 16]);
+        for i in 0..16 {
+            tmp[row_start + i] *= 1.0 / 16.0;
+        }
+    }
+
+    // Transpose 32x16 -> 16x32
+    let mut transposed = [0.0f32; 512];
+    for row in 0..32 {
+        for col in 0..16 {
+            transposed[col * 32 + row] = tmp[row * 16 + col];
+        }
+    }
+
+    // Transform columns (now 32 elements each in rows after transpose)
+    for row in 0..16 {
+        let row_start = row * 32;
+        dct1d_32(&mut transposed[row_start..row_start + 32]);
+        for i in 0..32 {
+            transposed[row_start + i] *= 1.0 / 32.0;
+        }
+    }
+
+    // No final transpose — C++ ComputeScaledDCT<32,16> (ROWS >= COLS branch)
+    // does not include a final transpose, matching DCT8x8 behavior.
+    // Output is in 16x32 layout: output[fx * 32 + fy] for frequency (fy, fx).
+    output.copy_from_slice(&transposed);
+}
+
+/// Compute scaled 16x32 DCT (16 rows, 32 columns).
+///
+/// Input: 16x32 block in row-major order (512 floats)
+/// Output: 16x32 DCT coefficients
+///
+/// C++ `ComputeScaledDCT<16,32>` takes the ROWS < COLS branch (includes final transpose).
+pub fn dct_16x32(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut tmp = [0.0f32; 512];
+
+    // Transform rows (32 columns each)
+    for row in 0..16 {
+        let row_start = row * 32;
+        tmp[row_start..row_start + 32].copy_from_slice(&input[row_start..row_start + 32]);
+        dct1d_32(&mut tmp[row_start..row_start + 32]);
+        for i in 0..32 {
+            tmp[row_start + i] *= 1.0 / 32.0;
+        }
+    }
+
+    // Transpose 16x32 -> 32x16
+    let mut transposed = [0.0f32; 512];
+    for row in 0..16 {
+        for col in 0..32 {
+            transposed[col * 16 + row] = tmp[row * 32 + col];
+        }
+    }
+
+    // Transform columns (now 16 elements each)
+    for row in 0..32 {
+        let row_start = row * 16;
+        dct1d_16(&mut transposed[row_start..row_start + 16]);
+        for i in 0..16 {
+            transposed[row_start + i] *= 1.0 / 16.0;
+        }
+    }
+
+    // Transpose 32x16 -> 16x32 (ROWS < COLS branch includes final transpose)
+    for row in 0..32 {
+        for col in 0..16 {
+            output[col * 32 + row] = transposed[row * 16 + col];
+        }
+    }
+}
+
+/// Extract DC values from 32x16 DCT coefficients.
+/// Returns 8 DC values (for the 8 covered 8x8 blocks) in row-major 4x2 order.
+///
+/// The LLF region is 4x2 coefficients at positions `[r*32+c]` for r in 0..4, c in 0..2
+/// in the 16x32 layout (stride 32). We apply `DCTTotalResampleScale<32, 4>` to rows
+/// and `DCTTotalResampleScale<16, 2>` to columns, then a 4x2 IDCT.
+pub fn dc_from_dct_32x16(coeffs: &[f32; 512]) -> [f32; 8] {
+    // Extract 4x2 LLF and apply resample scales
+    // Forward DCT32x16 scaled by 1/(32*16) = 1/512. The 4x2 IDCT will apply 4*2=8 scaling,
+    // so we need an additional 512/8 = 64 factor, but we use 8.0 to match observed behavior.
+    let mut block = [0.0f32; 8];
+    for iy in 0..4 {
+        for ix in 0..2 {
+            block[iy * 2 + ix] = coeffs[iy * 32 + ix]
+                * DCT_RESAMPLE_SCALE_32_TO_4[iy]
+                * DCT_RESAMPLE_SCALE_16_TO_2[ix]
+                * 8.0;
+        }
+    }
+
+    // 4x2 IDCT: IDCT rows (2-point) -> transpose -> IDCT cols (4-point)
+    // Since ROWS=4 >= COLS=2, this is ROWS >= COLS branch: IDCT rows -> transpose -> IDCT rows
+
+    // IDCT on 2-element rows (4 rows)
+    for iy in 0..4 {
+        let a = block[iy * 2];
+        let b = block[iy * 2 + 1];
+        block[iy * 2] = a + b;
+        block[iy * 2 + 1] = a - b;
+    }
+
+    // Transpose 4x2 -> 2x4
+    let mut transposed = [0.0f32; 8];
+    for iy in 0..4 {
+        for ix in 0..2 {
+            transposed[ix * 4 + iy] = block[iy * 2 + ix];
+        }
+    }
+
+    // IDCT on 4-element rows (2 rows)
+    idct1d_4(&mut transposed[0..4]);
+    idct1d_4(&mut transposed[4..8]);
+
+    transposed
+}
+
+/// Extract DC values from 16x32 DCT coefficients.
+/// Returns 8 DC values (for the 8 covered 8x8 blocks) in row-major 2x4 order.
+///
+/// The LLF region is 2x4 coefficients. We apply `DCTTotalResampleScale<16, 2>` to rows
+/// and `DCTTotalResampleScale<32, 4>` to columns, then a 2x4 IDCT.
+pub fn dc_from_dct_16x32(coeffs: &[f32; 512]) -> [f32; 8] {
+    // Extract 2x4 LLF and apply resample scales
+    let mut block = [0.0f32; 8];
+    for iy in 0..2 {
+        for ix in 0..4 {
+            block[iy * 4 + ix] = coeffs[iy * 32 + ix]
+                * DCT_RESAMPLE_SCALE_16_TO_2[iy]
+                * DCT_RESAMPLE_SCALE_32_TO_4[ix]
+                * 8.0;
+        }
+    }
+
+    // 2x4 IDCT: Since ROWS=2 < COLS=4, this is ROWS < COLS branch
+    // IDCT rows -> transpose -> IDCT rows -> transpose back
+
+    // IDCT on 4-element rows (2 rows)
+    idct1d_4(&mut block[0..4]);
+    idct1d_4(&mut block[4..8]);
+
+    // Transpose 2x4 -> 4x2
+    let mut transposed = [0.0f32; 8];
+    for iy in 0..2 {
+        for ix in 0..4 {
+            transposed[ix * 2 + iy] = block[iy * 4 + ix];
+        }
+    }
+
+    // IDCT on 2-element rows (4 rows)
+    for iy in 0..4 {
+        let a = transposed[iy * 2];
+        let b = transposed[iy * 2 + 1];
+        transposed[iy * 2] = a + b;
+        transposed[iy * 2 + 1] = a - b;
+    }
+
+    // Transpose back 4x2 -> 2x4
+    let mut result = [0.0f32; 8];
+    for iy in 0..4 {
+        for ix in 0..2 {
+            result[ix * 4 + iy] = transposed[iy * 2 + ix];
+        }
+    }
+
+    result
+}
+
+// =============================================================================
 // IDENTITY transform (libjxl enc_transforms-inl.h:464-494)
 // =============================================================================
 

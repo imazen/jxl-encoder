@@ -1065,7 +1065,7 @@ mod tests {
         }
 
         let _result_no_mult = apply_lz77_backref(&tokens, 1, false, 0);
-        let result_with_mult = apply_lz77_backref(&tokens, 1, false, image_width as i32);
+        let result_with_mult = apply_lz77_backref(&tokens, 1, false, image_width);
 
         // Both should find matches; with multiplier might be more efficient
         // but the main test is that it doesn't crash and produces valid output
