@@ -132,7 +132,7 @@ fn ceil_log2_nonzero(x: u32) -> u32 {
 ///
 /// For modular with a single-leaf MA tree (num_dist=1), the context map is NOT written.
 /// Layout: lz77.enabled=0 + use_prefix_code=0 + log_alpha_size + HybridUint config + ANS distribution
-fn write_ans_modular_header(writer: &mut BitWriter, code: &OwnedAnsEntropyCode) -> Result<()> {
+pub(super) fn write_ans_modular_header(writer: &mut BitWriter, code: &OwnedAnsEntropyCode) -> Result<()> {
     assert_eq!(
         code.histograms.len(),
         1,
@@ -299,11 +299,15 @@ pub fn write_global_modular_section_with_tree(
     // Write the learned tree
     write_tree(writer, &tree)?;
 
-    // lz77.enabled = 0 for data
-    writer.write(1, 0)?;
-
-    // Multi-context ANS data histogram
-    write_entropy_code_ans(&code, writer)?;
+    // Write ANS data histogram.
+    // JXL spec: context map is only written when num_contexts > 1.
+    if num_contexts > 1 {
+        writer.write(1, 0)?; // lz77.enabled = 0
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        // write_ans_modular_header writes lz77.enabled=0 + omits context map
+        write_ans_modular_header(writer, &code)?;
+    }
 
     // GroupHeader (global modular group)
     writer.write(1, 1)?; // use_global_tree = true

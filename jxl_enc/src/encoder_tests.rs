@@ -3337,4 +3337,257 @@ mod dual_decoder_butteraugli_tests {
 
         println!("PASS: SSIM2 {:.2} >= {:.2}", ssim2, MIN_SSIM2);
     }
+
+}
+
+mod tree_learning_tests {
+    use crate::encoder::{Encoder, EncoderOptions};
+
+    /// Helper: encode RGB with tree learning enabled, decode with jxl-rs, verify lossless.
+    fn validate_tree_learning_roundtrip_rgb(
+        original: &[u8],
+        width: usize,
+        height: usize,
+        test_name: &str,
+    ) {
+        assert_eq!(original.len(), width * height * 3);
+
+        let options = EncoderOptions {
+            distance: 0.0,
+            force_modular: true,
+            use_ans: true,
+            use_tree_learning: true,
+            ..Default::default()
+        };
+        let encoder = Encoder::with_options(options);
+        let encoded = encoder
+            .encode_rgb8(original, width, height)
+            .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
+
+        let path = format!("/tmp/{}.jxl", test_name);
+        std::fs::write(&path, &encoded).unwrap();
+        eprintln!(
+            "{}: Saved {} bytes to {}",
+            test_name,
+            encoded.len(),
+            path
+        );
+
+        // Decode with jxl-rs (PRIMARY decoder)
+        let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
+            .unwrap_or_else(|e| panic!("{}: jxl-rs decode failed: {}", test_name, e));
+
+        assert_eq!(decoded_img.width, width, "{}: width mismatch", test_name);
+        assert_eq!(decoded_img.height, height, "{}: height mismatch", test_name);
+
+        let decoded: Vec<u8> = decoded_img
+            .pixels
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        assert_eq!(
+            decoded.len(),
+            original.len(),
+            "{}: decoded size mismatch",
+            test_name
+        );
+
+        let mut max_diff: i32 = 0;
+        let mut diff_count = 0;
+        for (i, (&orig, &dec)) in original.iter().zip(decoded.iter()).enumerate() {
+            let diff = (orig as i32 - dec as i32).abs();
+            if diff > 0 {
+                diff_count += 1;
+                max_diff = max_diff.max(diff);
+                if diff_count <= 5 {
+                    let pixel = i / 3;
+                    let channel = i % 3;
+                    eprintln!(
+                        "{}: pixel {} ch {} differs: {} vs {} (diff={})",
+                        test_name, pixel, channel, orig, dec, diff
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            max_diff, 0,
+            "{}: lossless roundtrip failed! {} pixels differ, max_diff={}",
+            test_name, diff_count, max_diff
+        );
+
+        eprintln!(
+            "{}: PASSED tree learning roundtrip ({}x{}, {} bytes)",
+            test_name, width, height, encoded.len()
+        );
+    }
+
+    /// Helper: encode grayscale with tree learning enabled, decode with jxl-rs, verify lossless.
+    fn validate_tree_learning_roundtrip_gray(
+        original: &[u8],
+        width: usize,
+        height: usize,
+        test_name: &str,
+    ) {
+        assert_eq!(original.len(), width * height);
+
+        let options = EncoderOptions {
+            distance: 0.0,
+            force_modular: true,
+            use_ans: true,
+            use_tree_learning: true,
+            ..Default::default()
+        };
+        let encoder = Encoder::with_options(options);
+        let encoded = encoder
+            .encode_gray8(original, width, height)
+            .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
+
+        let path = format!("/tmp/{}.jxl", test_name);
+        std::fs::write(&path, &encoded).unwrap();
+        eprintln!(
+            "{}: Saved {} bytes to {}",
+            test_name,
+            encoded.len(),
+            path
+        );
+
+        // Decode with jxl-rs (PRIMARY decoder)
+        let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
+            .unwrap_or_else(|e| panic!("{}: jxl-rs decode failed: {}", test_name, e));
+
+        assert_eq!(decoded_img.width, width, "{}: width mismatch", test_name);
+        assert_eq!(decoded_img.height, height, "{}: height mismatch", test_name);
+
+        // jxl-rs returns all channels; for grayscale just take first component per pixel
+        let decoded: Vec<u8> = decoded_img
+            .pixels
+            .iter()
+            .step_by(decoded_img.channels)
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        assert_eq!(
+            decoded.len(),
+            original.len(),
+            "{}: decoded size mismatch ({} vs {})",
+            test_name,
+            decoded.len(),
+            original.len()
+        );
+
+        let mut max_diff: i32 = 0;
+        let mut diff_count = 0;
+        for (i, (&orig, &dec)) in original.iter().zip(decoded.iter()).enumerate() {
+            let diff = (orig as i32 - dec as i32).abs();
+            if diff > 0 {
+                diff_count += 1;
+                max_diff = max_diff.max(diff);
+                if diff_count <= 5 {
+                    eprintln!(
+                        "{}: pixel {} differs: {} vs {} (diff={})",
+                        test_name, i, orig, dec, diff
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            max_diff, 0,
+            "{}: lossless roundtrip failed! {} pixels differ, max_diff={}",
+            test_name, diff_count, max_diff
+        );
+
+        eprintln!(
+            "{}: PASSED tree learning roundtrip ({}x{}, {} bytes)",
+            test_name, width, height, encoded.len()
+        );
+    }
+
+    #[test]
+    fn test_tree_learning_gray_constant_8x8() {
+        // Constant image: tree learning should produce a valid single-leaf tree
+        let data = vec![128u8; 8 * 8];
+        validate_tree_learning_roundtrip_gray(&data, 8, 8, "tree_gray_const_8x8");
+    }
+
+    #[test]
+    fn test_tree_learning_gray_gradient_8x8() {
+        let data: Vec<u8> = (0..64).map(|i| (i * 4) as u8).collect();
+        validate_tree_learning_roundtrip_gray(&data, 8, 8, "tree_gray_grad_8x8");
+    }
+
+    /// Minimal multi-context test: left/right split
+    #[test]
+    fn test_tree_learning_gray_leftright_8x8() {
+        let mut data = vec![0u8; 8 * 8];
+        for y in 0..8 {
+            for x in 0..8 {
+                data[y * 8 + x] = if x < 4 { 0 } else { 200 };
+            }
+        }
+        validate_tree_learning_roundtrip_gray(&data, 8, 8, "tree_gray_leftright_8x8");
+    }
+
+    #[test]
+    fn test_tree_learning_gray_32x32() {
+        // Larger grayscale with varied content to exercise tree splitting
+        let mut data = vec![0u8; 32 * 32];
+        for y in 0..32 {
+            for x in 0..32 {
+                data[y * 32 + x] = ((x * 8 + y * 3) % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_gray(&data, 32, 32, "tree_gray_32x32");
+    }
+
+    #[test]
+    fn test_tree_learning_rgb_checkerboard_8x8() {
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                if (x + y) % 2 == 0 {
+                    data[idx] = 255;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 0;
+                } else {
+                    data[idx] = 0;
+                    data[idx + 1] = 0;
+                    data[idx + 2] = 255;
+                }
+            }
+        }
+        validate_tree_learning_roundtrip_rgb(&data, 8, 8, "tree_rgb_checker_8x8");
+    }
+
+    #[test]
+    fn test_tree_learning_rgb_gradient_128x128() {
+        let mut data = vec![0u8; 128 * 128 * 3];
+        for y in 0..128 {
+            for x in 0..128 {
+                let idx = (y * 128 + x) * 3;
+                data[idx] = (x * 2) as u8;
+                data[idx + 1] = (y * 2) as u8;
+                data[idx + 2] = ((x + y) % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_rgb(&data, 128, 128, "tree_rgb_grad_128x128");
+    }
+
+    #[test]
+    fn test_tree_learning_rgb_multigroup_300x300() {
+        // Multi-group image: 300x300 requires 4 groups (2x2)
+        let mut data = vec![0u8; 300 * 300 * 3];
+        for y in 0..300 {
+            for x in 0..300 {
+                let idx = (y * 300 + x) * 3;
+                data[idx] = ((x + y) % 256) as u8;
+                data[idx + 1] = (x % 256) as u8;
+                data[idx + 2] = (y % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_rgb(&data, 300, 300, "tree_rgb_multi_300x300");
+    }
 }

@@ -1,119 +1,127 @@
-# Context Handoff: LZ77 RLE Implementation Complete
+# Context Handoff — Tree Learning Roundtrip Tests
 
-## What Was Done
+**Date**: 2026-02-03
+**Task**: Implementing content-adaptive MA tree learning for modular encoding (plan: `fizzy-doodling-marble.md`)
 
-Implemented LZ77 RLE backward references for entropy coding across 11 files
-(commit `8c1c4f3`). The implementation is complete, correct, passes all 579 tests,
-and matches libjxl's `ApplyLZ77_RLE` algorithm.
+## Overall Progress
 
-### Files Changed
+Tasks 1-5 are COMPLETE and committed. Task 6 (roundtrip tests) is IN PROGRESS.
 
-| File | Change |
-|------|--------|
-| `jxl_enc/src/tiny/lz77.rs` | **NEW** — `Lz77Params`, `SymbolCostEstimator`, `apply_lz77_rle()`, threshold logic |
-| `jxl_enc/src/tiny/token.rs` | Added `is_lz77_length` to `Token`, `Lz77UintCoder` for HybridUintConfig(0,0,0) |
-| `jxl_enc/src/tiny/mod.rs` | Registered `lz77` module |
-| `jxl_enc/src/tiny/entropy_code.rs` | `encode_token_value()`, lz77 param on all histogram/write functions, `log_alpha_size` field |
-| `jxl_enc/src/tiny/encoder.rs` | `write_lz77_header()`, two-pass LZ77 integration, `enable_lz77` field |
-| `jxl_enc/src/tiny/{ac_group,dc_coding,context_tree,coeff_order}.rs` | Pass `None` for new lz77 params |
-| `jxl_enc/src/tiny/tests.rs` | `test_lz77_rle_roundtrip` — 512x512 roundtrip with jxl-oxide |
-| `jxl_enc_cli/src/main.rs` | `--lz77` CLI flag |
+| Step | Status | Commit |
+|------|--------|--------|
+| 1. Fix BFS child ordering in collect_tree_tokens | DONE | `74d0a74` |
+| 2. Create tree_learn.rs (TreeSamples, gather_samples) | DONE | `73b5665` |
+| 3. Implement compute_best_tree | DONE | `73b5665` |
+| 4. Add write_tree + multi-context encoding | DONE | `0584a4c` |
+| 5. Wire --tree-learning through CLI/FrameEncoder | DONE | `6b848a0` |
+| 6. Roundtrip tests | **IN PROGRESS** | uncommitted |
 
-## Key Finding: LZ77 RLE Never Activates on Photos
+## Current Test Results
 
-The implementation is correct but **LZ77 RLE never meets the activation threshold
-on photographic content**. This is expected — it matches libjxl behavior where RLE
-is the simplest/least effective LZ77 method.
+**4 of 6 tree learning tests PASS, 2 FAIL** (run with `--release`):
 
-### Why It Doesn't Activate
+| Test | Result | Tree | Notes |
+|------|--------|------|-------|
+| gray_constant_8x8 | PASS | 1 leaf | Single-context path |
+| gray_gradient_8x8 | PASS | 1 leaf | Single-context path |
+| gray_32x32 | PASS | Multi-leaf | After BFS context fix |
+| rgb_checkerboard_8x8 | PASS | 13 nodes, 7 leaves, 3 histos | Multi-context path works |
+| **rgb_gradient_128x128** | **FAIL** | 171 nodes, 86 leaves, 4 histos | SectionTooShort |
+| **rgb_multigroup_300x300** | **FAIL** | Large tree | SectionTooShort (98 bytes for 300x300 RGB!) |
 
-1. **Threshold**: `bit_decrease > total_symbols * 0.2 + 16` — requires ~20% savings
-2. **Photographic tokens have high entropy** — consecutive identical values are rare
-3. **High context count** (45 DC, 1980 AC) — runs only count within same context
-4. **Low per-token cost** for dominant values — even replacing 200 identical tokens
-   saves only ~24 bits when each token costs <1 bit (high probability)
+Run tests: `cargo test -p jxl_enc --lib --release "tree_learning_tests" -- --nocapture`
 
-### What libjxl Does Differently
+## Bugs Found and Fixed (Uncommitted)
 
-Full libjxl (`enc_lz77.cc`) has three LZ77 methods:
-- `kRLE` (what we implemented) — consecutive identical values only
-- `kLZ77` — hash-chain backward references (finds non-adjacent repeats)
-- `kOptimal` — dynamic programming optimal parse
+### Bug 1: Double HybridUint Encoding (tree_learn.rs)
+`collect_residuals_with_tree` applied HybridUint{4,2,0}.encode() to packed residuals before storing in AnsToken. But `build_entropy_code_ans` and `write_tokens_ans` ALSO apply UintCoder::encode (same HybridUint{4,2,0}) to Token.value. Double-encoded.
+**Fix**: Store raw packed residuals in AnsToken.value (matching non-tree path in section.rs:407).
 
-The 1-3% savings on photos come from `kLZ77`/`kOptimal`, NOT from `kRLE`.
-Implementing backward-reference LZ77 would require:
-- Hash table for pattern matching (`enc_lz77.cc:32-109`)
-- Distance histogram from hash matches
-- More complex token emission (non-zero distance values)
-- Much higher implementation complexity (~300-500 lines)
+### Bug 2: Context Map Written for num_contexts=1 (improved.rs, section.rs)
+`write_entropy_code_ans` always writes a context map. JXL spec: context map omitted when num_dist <= 1. jxl-rs decoder line 512: `if num_contexts > 1 { decode_context_map() }`.
+**Fix**: Branch on num_contexts: multi-context uses `write_entropy_code_ans`; single-context uses `write_ans_modular_header` (in section.rs, made pub(super)).
 
-## Remaining Gaps (Prioritized)
+### Bug 3: Double lz77.enabled=0 (improved.rs, section.rs)
+`write_modular_stream_with_tree` wrote lz77=0, then `write_ans_modular_header` wrote lz77=0 again. `write_entropy_code_ans` does NOT write lz77 (caller handles it).
+**Fix**: lz77=0 only in multi-context branch; single-context branch lets `write_ans_modular_header` handle it.
 
-### High Impact — Quality
+### Bug 4: BFS Context Ordering (tree.rs)
+`assign_sequential_contexts` iterated nodes in storage order (0, 1, 2, ...), but the decoder assigns context IDs in BFS order (rchild first, then lchild). For single-leaf trees this doesn't matter; for multi-leaf trees context IDs were completely scrambled.
+**Fix**: Changed `assign_sequential_contexts` to BFS traversal with same child ordering as `collect_tree_tokens` (rchild first, lchild second).
 
-1. **More AC strategies** — Only 8 of 27 implemented. The e1→e7 quality jump
-   (77→84 SSIM2 at d=1.0) is mostly from this. Missing: AFV0-3, DCT32x16,
-   DCT16x32, DCT64x32, DCT32x64, DCT64x64, etc.
+## Active Bug: SectionTooShort on Large Trees
 
-2. **DCT32x32 broken** — DISABLED. Produces SSIM2=-48. Root cause unknown.
-   Coefficients encode, file sizes are reasonable, but decoded pixels converge
-   to averages. See CLAUDE.md "Known Bugs" section.
-
-3. **AdjustQuantBlockAC tuning** — Implemented (commit `a839992`) but may need
-   further calibration vs libjxl. Per-block quant field adjustment for larger
-   transforms affects multi-strategy selection quality.
-
-### Medium Impact — Compression
-
-4. **Backward-reference LZ77** — High effort, 1-3% savings on photos. Would require
-   hash-chain implementation. RLE infrastructure is now in place, so the token
-   handling, histogram building, and serialization all work — just need the matching
-   algorithm in `lz77.rs`.
-
-5. **Content-adaptive block context map** — Currently hardcoded. libjxl derives it
-   from image statistics. Est. 0.5-1% savings.
-
-### Lower Impact
-
-6. **AFV corner DCT** (codes 8-11) — High effort, 0.5-1% quality improvement
-7. **Truncation quantization** — matches C++ `(int)(val + noff)` behavior
-8. **Per-block EPF sharpness** — missing from edge-preserving filter
-9. **Progressive encoding** — not compression but important for web delivery
-
-## LZ77 Architecture for Future Work
-
-The current architecture cleanly separates:
-- **Token-stream transformation** (`lz77.rs`) — produces LZ77 length+distance tokens
-- **Histogram building** (`entropy_code.rs:encode_token_value`) — dispatches between
-  `UintCoder` and `Lz77UintCoder` based on `is_lz77_length`
-- **Serialization** (`encoder.rs:write_lz77_header`) — writes LZ77 params per spec
-- **Integration** (`encoder.rs:encode_two_pass`) — applies to merged stream for
-  threshold, then per-group for correct section splitting
-
-To add backward-reference LZ77:
-1. Add new function `apply_lz77_backref()` in `lz77.rs`
-2. Use same `Lz77Params` and `Token::lz77_length()` — no changes to serialization
-3. Distance tokens would have `value > 0` (not just 0 for RLE)
-4. Histogram building and writing already handle arbitrary distance values
-
-## Test Commands
-
-```bash
-# Full test suite (579 tests)
-cargo test -p jxl_enc --lib
-
-# LZ77-specific test
-cargo test -p jxl_enc --lib test_lz77_rle_roundtrip -- --nocapture
-
-# LZ77 unit tests
-cargo test -p jxl_enc --lib tiny::lz77 -- --nocapture
-
-# Debug LZ77 decisions (needs debug-tokens feature)
-cargo test -p jxl_enc --lib --features debug-tokens test_lz77_rle_roundtrip -- --nocapture
-
-# CLI with LZ77
-cargo run --release -p jxl_enc_cli -- input.png output.jxl -d 2.0 --lz77
-
-# RD regression (verify no quality changes)
-just rd-regression
+The rgb_gradient_128x128 produces 171 tree nodes, 86 leaf contexts, clustered to 4 histograms.
+Debug output for the failing 128x128:
 ```
+[bit 2] after dc_quant + has_tree
+[bit 1966] after write_tree (171 nodes)
+[bit 1967] after lz77.enabled=0
+[bit 2497] after write_entropy_code_ans (86 contexts, 4 histograms)
+[bit 2510] after GroupHeader
+[bit 4046] after write_tokens_ans (49152 tokens)
+```
+File is 517 bytes. Both jxl-rs and djxl reject it.
+
+The multigroup 300x300 is only 98 bytes for a 300x300 RGB image — suspiciously tiny, suggesting the multigroup tree learning path barely encodes anything.
+
+### Possible Causes (Not Yet Investigated)
+
+1. **write_tree Huffman encoding for large alphabets**: Tree has ~510 distinct symbol values (pack_signed of split values up to 255). Huffman table for 510 symbols may be incorrectly encoded.
+
+2. **Tree token count mismatch**: If `collect_tree_tokens` produces different tokens than decoder expects, decoder reads past tree boundary.
+
+3. **Property index mapping**: Tree uses properties [0, 3, 4, 5, 6, 7] (from CANDIDATE_PROPERTIES). The decoder's property numbering must match exactly. Our properties are: channel(0), group_id(1), y(2), x(3), |N-NW|(4), |N-W|(5), N(6), FloorLog2(|N|)(7), N-NE(8), |N-NN|(9), W-WW(10), W-NW(11), NW-NNW(12), N-NW(13), N+NE-2NN(14), WP max error(15).
+
+4. **Context map encoding**: 86 contexts with 4 histograms uses simple context map (nbits=2, 86 entries). Verify decoder reads exactly 86 entries.
+
+5. **Multigroup-specific**: 300x300 at 98 bytes suggests `write_global_modular_section_with_tree` or `write_group_modular_section` with AnsWithTree variant has an encoding issue.
+
+### Suggested Next Steps
+
+1. Create a minimal failing test: handcraft a 3-leaf tree on a 128x128 image. If it fails, the issue is in multi-context data path. If it passes, the issue is in large tree serialization.
+
+2. Verify tree serialization for the passing 13-node checkerboard vs the failing 171-node gradient. Specifically check `write_tree` -> `build_and_store_huffman_tree` for large alphabets.
+
+3. Reduce `max_nodes` parameter (default 256) to something small like 8 to force a small tree on the 128x128 test and see if that passes.
+
+4. Check the `write_tree` token encoding — verify that the 6 tree contexts are handled correctly. The tree uses single-histogram (all 6 contexts map to histogram 0), but if the decoder expects different formatting for multi-context tree encoding, that would explain the issue.
+
+## Dirty Files (Uncommitted)
+
+```
+jxl_enc/src/modular/tree.rs        — BFS assign_sequential_contexts
+jxl_enc/src/modular/tree_learn.rs  — Remove double HybridUint encoding
+jxl_enc/src/modular/improved.rs    — Context map branch + lz77 fix + debug prints
+jxl_enc/src/modular/section.rs     — pub(super) write_ans_modular_header + context map/lz77 fix
+jxl_enc/src/encoder_tests.rs       — 6 tree learning roundtrip tests
+```
+
+All changes are working-tree modifications on top of commit `6b848a0`.
+
+## Key Code Paths
+
+### Single-group tree learning
+`improved.rs::write_modular_stream_with_tree()` (line ~1666)
+- gather_samples -> compute_best_tree -> collect_residuals_with_tree -> build_entropy_code_ans
+- write dc_quant + has_tree
+- write_tree (tree's own EntropyCode with Huffman, line 1574)
+- write data EntropyCode (lz77 + context_map + ANS distributions)
+- write GroupHeader
+- write_tokens_ans
+
+### Multi-group tree learning
+`section.rs::write_global_modular_section_with_tree()` (line ~253)
+- Same but gathers samples from ALL groups, writes tree + distributions globally
+- Each group: `write_group_modular_section()` with `GlobalModularState::AnsWithTree`
+
+### Tree serialization
+`tree.rs::collect_tree_tokens()` (line 252) — BFS with rchild first, lchild second
+`improved.rs::write_tree()` (line 1574) — Huffman prefix code, raw symbols (split_exp=15)
+
+### Context assignment
+`tree.rs::assign_sequential_contexts()` (line 381) — NOW uses BFS order matching collect_tree_tokens
+
+## Debug Prints
+
+`write_modular_stream_with_tree` in improved.rs currently has `eprintln!` statements showing tree structure, bit positions, and context/histogram info. These should be removed or gated behind a feature flag before final commit.

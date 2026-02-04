@@ -124,6 +124,7 @@ impl FrameEncoder {
             let section_data = section_writer.finish();
             let section_size = section_data.len();
 
+            eprintln!("FRAME_ENCODER: section_size = {} bytes", section_size);
             crate::trace::debug_eprintln!("DEBUG: section_size = {} bytes", section_size);
 
             // Write TOC
