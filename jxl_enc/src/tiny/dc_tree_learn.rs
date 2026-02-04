@@ -692,6 +692,69 @@ mod tests {
     }
 }
 
+/// Create tree tokens with AC metadata prefix.
+///
+/// Wraps the learned DC tree with a prefix that creates 11 leaves for AC metadata contexts (0-10).
+/// The resulting tree structure:
+/// - Root: check property 0 (channel), split at -1
+/// - Left subtree (channel <= -1, unreachable by DC): 11 leaves for AC metadata
+/// - Right subtree (channel > -1, all DC): learned DC tree
+///
+/// This ensures the decoder creates at least 11 + learned_leaves contexts,
+/// with AC metadata using fixed contexts 0-10 and DC using contexts 11+.
+///
+/// Returns (tokens, total_num_contexts).
+pub fn tree_tokens_with_ac_metadata_prefix(
+    learned_tree_tokens: &[(u32, u32)],
+    learned_num_contexts: u32,
+) -> (Vec<(u32, u32)>, u32) {
+    use super::common::pack_signed;
+    use super::dc_coding::NUM_AC_METADATA_CONTEXTS;
+
+    let mut tokens = Vec::new();
+
+    // Root decision: property 0 (channel), split at -1
+    // This routes all DC samples (channel 0, 1, 2) to the right subtree
+    // DC channels are 0, 1, 2 so channel > -1 is always true for DC
+    tokens.push((1, 1)); // property = 0 (channel)
+    tokens.push((0, pack_signed(-1))); // splitval = -1
+
+    // Left subtree: Create a tree structure with 11 leaves for AC metadata (unreachable by DC).
+    // Use a left-skewed tree: each internal node has a leaf on left and subtree on right.
+    // This produces leaves with context IDs 0-10 in order.
+    for i in 0..NUM_AC_METADATA_CONTEXTS {
+        if i < NUM_AC_METADATA_CONTEXTS - 1 {
+            // Internal node with leaf on left, subtree on right
+            // Decision on property 0 with split at -2 (always true for DC, doesn't matter for unreachable subtree)
+            tokens.push((1, 1)); // property = 0
+            tokens.push((0, pack_signed(-2))); // splitval = -2
+
+            // Left child: leaf (context i)
+            tokens.push((1, 0)); // property = -1 (leaf marker)
+            tokens.push((2, 0)); // predictor = 0 (Zero)
+            tokens.push((3, 0)); // offset = 0
+            tokens.push((4, 0)); // mul_log = 0
+            tokens.push((5, 0)); // mul_bits = 0
+
+            // Right child is the next node (or leaf for last one)
+        } else {
+            // Last leaf (context 10)
+            tokens.push((1, 0)); // property = -1 (leaf marker)
+            tokens.push((2, 0)); // predictor = 0 (Zero)
+            tokens.push((3, 0)); // offset = 0
+            tokens.push((4, 0)); // mul_log = 0
+            tokens.push((5, 0)); // mul_bits = 0
+        }
+    }
+
+    // Right subtree: learned DC tree
+    // These leaves get contexts 11+
+    tokens.extend_from_slice(learned_tree_tokens);
+
+    let total_contexts = (NUM_AC_METADATA_CONTEXTS as u32) + learned_num_contexts;
+    (tokens, total_contexts)
+}
+
 /// Collect DC tokens using a learned tree for context assignment.
 ///
 /// This is the learned-tree version of `collect_dc_tokens_region()` from dc_coding.rs.
