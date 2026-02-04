@@ -5,11 +5,11 @@
 
 //! Main tiny encoder implementation.
 
+use super::ac_context::BlockCtxMap;
 use super::ac_group::{
     collect_ac_coefficients, num_nonzero_8x8_except_dc, num_nonzero_except_llf,
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
-use super::ac_context::BlockCtxMap;
 use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8,
     RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
@@ -212,7 +212,7 @@ impl Default for TinyEncoder {
             distance: 1.0,
             optimize_codes: true,
             enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
-            use_ans: true, // ANS produces 4-10% smaller files than Huffman
+            use_ans: true,             // ANS produces 4-10% smaller files than Huffman
             cfl_enabled: true,
             ac_strategy_enabled: true,
             custom_orders: true,
@@ -234,7 +234,7 @@ impl TinyEncoder {
             distance,
             optimize_codes: true,
             enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
-            use_ans: true, // ANS produces 4-10% smaller files than Huffman
+            use_ans: true,             // ANS produces 4-10% smaller files than Huffman
             cfl_enabled: true,
             ac_strategy_enabled: true,
             custom_orders: true,
@@ -539,7 +539,7 @@ impl TinyEncoder {
 
             let mut ac_group_writer = BitWriter::new();
             self.write_ac_group(
-                 0,
+                0,
                 &quant_ac,
                 &nzeros,
                 &raw_nzeros,
@@ -2172,7 +2172,9 @@ impl TinyEncoder {
         #[cfg(feature = "debug-tokens")]
         let after_quant = writer.bits_written();
         // BlockCtxMap
-        if block_ctx_map.qf_thresholds.is_empty() && block_ctx_map.num_ctxs == super::ac_context::NUM_BLOCK_CTXS {
+        if block_ctx_map.qf_thresholds.is_empty()
+            && block_ctx_map.num_ctxs == super::ac_context::NUM_BLOCK_CTXS
+        {
             // Default map: write non-default flag + hardcoded compact map
             writer.write(1, 0)?; // non-default BlockCtxMap
             writer.write(16, 0)?; // no dc ctx, no qft
@@ -2501,7 +2503,7 @@ impl TinyEncoder {
                             ac_code,
                             writer,
                             None,
-                            )?;
+                        )?;
                     } else {
                         // Multi-block: assemble contiguous coefficient buffer in flat layout.
                         // tokenize_ac_coefficients uses COEFF_ORDER which indexes into a flat
@@ -2569,7 +2571,7 @@ impl TinyEncoder {
                             ac_code,
                             writer,
                             None,
-                            )?;
+                        )?;
                     }
                 }
             }
@@ -2747,7 +2749,7 @@ impl TinyEncoder {
                                 block_ctx,
                                 block_ctx_map.num_ctxs,
                                 custom_ord,
-                                );
+                            );
                             tokens.extend_from_slice(&block_tokens);
                         } else {
                             // Assemble contiguous buffer in flat layout.
@@ -2806,7 +2808,6 @@ impl TinyEncoder {
                             let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                             let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
 
-
                             let block_tokens = collect_ac_coefficients(
                                 &full_block,
                                 raw_strategy,
@@ -2815,12 +2816,12 @@ impl TinyEncoder {
                                 block_ctx,
                                 block_ctx_map.num_ctxs,
                                 custom_ord,
-                                );
+                            );
                             tokens.extend_from_slice(&block_tokens);
-                            }
                         }
                     }
                 }
+            }
             ac_section_tokens.push(tokens);
         }
 

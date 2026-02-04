@@ -204,10 +204,7 @@ pub fn compute_block_ctx_map(
                     next += 1;
                     cut = tot * next / num_qf_segments;
                 }
-            } else if next > qf_thresholds.len() + 1
-                && j as usize - 1 == last_cut
-                && j != 0
-            {
+            } else if next > qf_thresholds.len() + 1 && j as usize - 1 == last_cut && j != 0 {
                 qf_thresholds.push(j);
             }
         }

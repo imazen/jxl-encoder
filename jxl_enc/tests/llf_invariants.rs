@@ -517,12 +517,7 @@ fn ssim2_u8_vs_linear_f32(original: &[u8], decoded: &[f32], width: usize, height
 
 /// Compute SSIM2 between original sRGB u8 and decoded linear u8 (from djxl with linear transfer).
 /// djxl outputs linear values scaled to 0-255. We need to apply gamma before SSIM2.
-fn ssim2_u8_vs_linear_u8(
-    original: &[u8],
-    decoded_u8: &[u8],
-    width: usize,
-    height: usize,
-) -> f64 {
+fn ssim2_u8_vs_linear_u8(original: &[u8], decoded_u8: &[u8], width: usize, height: usize) -> f64 {
     // djxl outputs sRGB by default, so compare directly without gamma correction.
     // The original comment was wrong - djxl does NOT output linear values
     // unless explicitly told to with --output_format=... flags.
@@ -2582,11 +2577,12 @@ fn diag_save_dct16x16_file() {
     eprintln!("Saved {} bytes to {}", bytes.len(), path);
 
     // Try to decode with djxl
-    let output = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-        .arg(path)
-        .arg("/tmp/test_dct16x16.png")
-        .output()
-        .expect("djxl failed to run");
+    let output =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .arg(path)
+            .arg("/tmp/test_dct16x16.png")
+            .output()
+            .expect("djxl failed to run");
 
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -3498,9 +3494,10 @@ fn trace_dct16x16_dc_detailed() {
     let tmp_ppm = "/tmp/dct16_trace.ppm";
     std::fs::write(tmp_jxl, &bytes).unwrap();
 
-    let status = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-        .args(&[tmp_jxl, tmp_ppm])
-        .status();
+    let status =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args(&[tmp_jxl, tmp_ppm])
+            .status();
     if let Ok(s) = status {
         if s.success() {
             eprintln!("\ndjxl decoding succeeded");
@@ -4671,11 +4668,12 @@ fn layer3_single_group_dct4x8_decode_djxl() {
     eprintln!("DCT4X8: {} bytes saved to {}", bytes.len(), path);
 
     // Decode with djxl
-    let output = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-        .arg(path)
-        .arg("/tmp/test_dct4x8_layer3.png")
-        .output()
-        .expect("djxl failed to run");
+    let output =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .arg(path)
+            .arg("/tmp/test_dct4x8_layer3.png")
+            .output()
+            .expect("djxl failed to run");
 
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -4718,11 +4716,12 @@ fn layer3_single_group_dct8x4_decode_djxl() {
     eprintln!("DCT8X4: {} bytes saved to {}", bytes.len(), path);
 
     // Decode with djxl
-    let output = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-        .arg(path)
-        .arg("/tmp/test_dct8x4_layer3.png")
-        .output()
-        .expect("djxl failed to run");
+    let output =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .arg(path)
+            .arg("/tmp/test_dct8x4_layer3.png")
+            .output()
+            .expect("djxl failed to run");
 
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -4860,7 +4859,8 @@ fn layer3_single_group_dct4x8_decode_jxl_rs() {
     assert!(
         (center_val - expected_srgb).abs() < 0.1,
         "jxl-rs sRGB output should be ~{:.2}, got {:.4}",
-        expected_srgb, center_val
+        expected_srgb,
+        center_val
     );
 }
 
@@ -4909,7 +4909,8 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
     assert!(
         (center_val - expected_srgb).abs() < 0.1,
         "jxl-rs sRGB output should be ~{:.2}, got {:.4}",
-        expected_srgb, center_val
+        expected_srgb,
+        center_val
     );
 }
 
@@ -4974,26 +4975,30 @@ fn test_dct4x8_decoder_colorspace_comparison() {
     assert!(
         (oxide_center - expected_linear).abs() < 0.1,
         "jxl-oxide should output linear: got {:.4}, expected ~{:.4}",
-        oxide_center, expected_linear
+        oxide_center,
+        expected_linear
     );
 
     // djxl and jxl-rs should output sRGB and agree with each other
     assert!(
         (djxl_center - expected_srgb).abs() < 0.1,
         "djxl should output sRGB: got {:.4}, expected ~{:.4}",
-        djxl_center, expected_srgb
+        djxl_center,
+        expected_srgb
     );
     assert!(
         (jxl_rs_center - expected_srgb).abs() < 0.1,
         "jxl-rs should output sRGB: got {:.4}, expected ~{:.4}",
-        jxl_rs_center, expected_srgb
+        jxl_rs_center,
+        expected_srgb
     );
 
     // djxl and jxl-rs should agree closely (same color space)
     assert!(
         (djxl_center - jxl_rs_center).abs() < 0.02,
         "djxl and jxl-rs should agree: djxl={:.4}, jxl-rs={:.4}",
-        djxl_center, jxl_rs_center
+        djxl_center,
+        jxl_rs_center
     );
 
     eprintln!("All decoders produce expected values for their color space.");
@@ -6520,7 +6525,10 @@ fn test_dct32x32_photo_trace() {
 
     // Smooth content produces mostly low-frequency energy (DC/LLF).
     // AC content may be minimal, which is expected for DCT32x32 on smooth content.
-    eprintln!("AC nonzeros: {} (smooth content may have few AC coefficients)", ac_nonzeros);
+    eprintln!(
+        "AC nonzeros: {} (smooth content may have few AC coefficients)",
+        ac_nonzeros
+    );
 }
 
 /// Debug: trace with actual photo content and correct quantization
