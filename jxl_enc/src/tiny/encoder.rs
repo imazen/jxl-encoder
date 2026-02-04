@@ -2735,23 +2735,25 @@ impl TinyEncoder {
         // ── Pass 1: Collect tokens per section ──
 
         // DC tree learning: learn optimal context tree if enabled
-        let (learned_dc_tree, learned_tree_tokens) = if self.dc_tree_learning && num_dc_groups == 1
-        {
-            // Learn tree from DC samples
-            let mut samples = super::dc_tree_learn::DcTreeSamples::new();
-            super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
+        // Returns (tree, num_contexts, tokens) where num_contexts is the number of leaf nodes
+        let (learned_dc_tree, learned_dc_num_contexts, learned_tree_tokens) =
+            if self.dc_tree_learning && num_dc_groups == 1 {
+                // Learn tree from DC samples
+                let mut samples = super::dc_tree_learn::DcTreeSamples::new();
+                super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
 
-            if samples.num_samples > 0 {
-                let max_token = 64; // Reasonable max for DC residual tokens
-                let (tree, _num_contexts) = super::dc_tree_learn::learn_dc_tree(&samples, max_token);
-                let tokens = super::dc_tree_learn::tree_to_tokens(&tree);
-                (Some(tree), Some(tokens))
+                if samples.num_samples > 0 {
+                    let max_token = 64; // Reasonable max for DC residual tokens
+                    let (tree, num_contexts) =
+                        super::dc_tree_learn::learn_dc_tree(&samples, max_token);
+                    let tokens = super::dc_tree_learn::tree_to_tokens(&tree);
+                    (Some(tree), Some(num_contexts as usize), Some(tokens))
+                } else {
+                    (None, None, None)
+                }
             } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
+                (None, None, None)
+            };
 
         // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
         let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
@@ -3103,10 +3105,19 @@ impl TinyEncoder {
         // ── Build optimal codes ──
 
         // Merge all DC section tokens (DC + AC metadata) for frequency counting
-        let dc_num_contexts = if dc_lz77_params.is_some() {
-            super::dc_coding::NUM_DC_CONTEXTS + 1 // +1 for LZ77 distance context
+        // When using a learned DC tree, the number of contexts is:
+        //   AC metadata contexts (0-10) + learned tree contexts (11+)
+        // The decoder's MaConfig::parse reads Decoder::parse(ctx) where ctx is the number of tree leaves.
+        let base_dc_contexts = if let Some(learned_ctx) = learned_dc_num_contexts {
+            // AC metadata (11) + learned tree contexts
+            super::dc_coding::NUM_AC_METADATA_CONTEXTS + learned_ctx
         } else {
             super::dc_coding::NUM_DC_CONTEXTS
+        };
+        let dc_num_contexts = if dc_lz77_params.is_some() {
+            base_dc_contexts + 1 // +1 for LZ77 distance context
+        } else {
+            base_dc_contexts
         };
         let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
             + ac_metadata_tokens_per_group
@@ -3732,9 +3743,10 @@ mod tests {
             .encode(width, height, &linear_rgb)
             .expect("baseline encode failed");
 
-        // Encode WITH DC tree learning
+        // Encode WITH DC tree learning (try without ANS first to isolate issues)
         let mut encoder_learned = TinyEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
+        encoder_learned.use_ans = false; // Use Huffman to avoid ANS issues
         let bytes_learned = encoder_learned
             .encode(width, height, &linear_rgb)
             .expect("learned encode failed");

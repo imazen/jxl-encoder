@@ -781,7 +781,9 @@ pub fn collect_dc_tokens_with_tree(
                     leftleft,
                     prev_local_grad,
                 );
-                let ctx_id = get_dc_context(tree, &props);
+                let tree_ctx = get_dc_context(tree, &props);
+                // Offset the context to not conflict with AC metadata contexts (0-10)
+                let ctx_id = tree_ctx + super::dc_coding::DC_CONTEXT_OFFSET as u32;
 
                 tokens.push(Token::new(ctx_id, pack_signed(residual)));
 
@@ -867,4 +869,51 @@ fn extract_dc_region(
     }
 
     result
+}
+
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+    use crate::tiny::context_tree::{write_learned_context_tree, write_context_tree};
+    use crate::bit_writer::BitWriter;
+
+    #[test]
+    fn test_compare_static_vs_learned_tree_encoding() {
+        // Test with single DC group
+        let num_dc_groups = 1;
+        
+        // Create a simple learned tree (single leaf)
+        let tree = vec![DcTreeNode {
+            property: -1,
+            context_id: 0,
+            ..Default::default()
+        }];
+        let learned_tokens = tree_to_tokens(&tree);
+        eprintln!("Learned tree tokens ({} tokens):", learned_tokens.len());
+        for (i, (ctx, val)) in learned_tokens.iter().enumerate() {
+            eprintln!("  token[{}]: ctx={}, val={}", i, ctx, val);
+        }
+        
+        // Write learned tree
+        let mut learned_writer = BitWriter::new();
+        let learned_result = write_learned_context_tree(&learned_tokens, num_dc_groups, &mut learned_writer);
+        eprintln!("\nLearned tree encoding result: {:?}", learned_result);
+        eprintln!("Learned bits written: {}", learned_writer.bits_written());
+        learned_writer.zero_pad_to_byte();
+        let learned_bytes = learned_writer.finish();
+        eprintln!("Learned bytes (first 30): {:02x?}", &learned_bytes[..learned_bytes.len().min(30)]);
+
+        // Write static tree for comparison
+        let mut static_writer = BitWriter::new();
+        let static_result = write_context_tree(num_dc_groups, &mut static_writer);
+        eprintln!("\nStatic tree encoding result: {:?}", static_result);
+        eprintln!("Static bits written: {}", static_writer.bits_written());
+        static_writer.zero_pad_to_byte();
+        let static_bytes = static_writer.finish();
+        eprintln!("Static bytes (first 30): {:02x?}", &static_bytes[..static_bytes.len().min(30)]);
+        
+        // The encoding itself should succeed
+        assert!(learned_result.is_ok());
+        assert!(static_result.is_ok());
+    }
 }
