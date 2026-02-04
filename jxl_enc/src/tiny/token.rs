@@ -55,6 +55,12 @@ pub struct EncodedUint {
     pub bits: u32,
 }
 
+impl From<EncodedUint> for (u32, u32) {
+    fn from(e: EncodedUint) -> (u32, u32) {
+        (e.token, e.nbits)
+    }
+}
+
 /// Uint coder for entropy coding.
 ///
 /// Encoding scheme (from libjxl-tiny):

@@ -834,11 +834,12 @@ fn test_lz77_rle_roundtrip() {
         .encode(w, h, &linear_rgb)
         .expect("encode without LZ77 failed");
 
-    // Encode WITH LZ77
+    // Encode WITH LZ77 (RLE mode for this test)
     let mut enc_lz77 = TinyEncoder::new(4.0);
     enc_lz77.use_ans = true;
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
+    enc_lz77.lz77_method = super::lz77::Lz77Method::Rle; // Explicit RLE for roundtrip test
     let bytes_lz77 = enc_lz77
         .encode(w, h, &linear_rgb)
         .expect("encode with LZ77 failed");
@@ -885,4 +886,107 @@ fn test_lz77_rle_roundtrip() {
     }
 
     eprintln!("LZ77 RLE roundtrip OK — pixels match non-LZ77 reference");
+}
+
+/// Test LZ77 with greedy backward references (hash chain matching).
+/// This finds matches at arbitrary distances, not just consecutive identical values.
+#[test]
+fn test_lz77_backref_roundtrip() {
+    use std::io::Cursor;
+
+    // Use an image with repeating patterns that backref can find but RLE cannot.
+    // A striped pattern repeats at a regular distance.
+    let w = 256;
+    let h = 256;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            // Vertical stripes that repeat every 8 pixels
+            let stripe = (x / 8) % 4;
+            match stripe {
+                0 => {
+                    linear_rgb[idx] = 0.8;
+                    linear_rgb[idx + 1] = 0.2;
+                    linear_rgb[idx + 2] = 0.1;
+                }
+                1 => {
+                    linear_rgb[idx] = 0.2;
+                    linear_rgb[idx + 1] = 0.7;
+                    linear_rgb[idx + 2] = 0.3;
+                }
+                2 => {
+                    linear_rgb[idx] = 0.1;
+                    linear_rgb[idx + 1] = 0.3;
+                    linear_rgb[idx + 2] = 0.9;
+                }
+                _ => {
+                    linear_rgb[idx] = 0.5;
+                    linear_rgb[idx + 1] = 0.5;
+                    linear_rgb[idx + 2] = 0.5;
+                }
+            }
+        }
+    }
+
+    // Encode WITHOUT LZ77
+    let mut enc_no_lz77 = TinyEncoder::new(3.0);
+    enc_no_lz77.use_ans = true;
+    enc_no_lz77.optimize_codes = true;
+    enc_no_lz77.enable_lz77 = false;
+    let bytes_no_lz77 = enc_no_lz77
+        .encode(w, h, &linear_rgb)
+        .expect("encode without LZ77 failed");
+
+    // Encode WITH LZ77 greedy backref
+    let mut enc_lz77 = TinyEncoder::new(3.0);
+    enc_lz77.use_ans = true;
+    enc_lz77.optimize_codes = true;
+    enc_lz77.enable_lz77 = true;
+    enc_lz77.lz77_method = super::lz77::Lz77Method::Greedy;
+    let bytes_lz77 = enc_lz77
+        .encode(w, h, &linear_rgb)
+        .expect("encode with LZ77 backref failed");
+
+    eprintln!(
+        "LZ77 backref test: no_lz77={} bytes, lz77={} bytes (delta={})",
+        bytes_no_lz77.len(),
+        bytes_lz77.len(),
+        bytes_no_lz77.len() as i64 - bytes_lz77.len() as i64,
+    );
+
+    // Decode LZ77-encoded file with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes_lz77))
+        .expect("jxl-oxide parse failed for LZ77 backref encoded file");
+    let frame = image
+        .render_frame(0)
+        .expect("jxl-oxide render failed for LZ77 backref encoded file");
+    assert_eq!(frame.image_all_channels().width(), w);
+    assert_eq!(frame.image_all_channels().height(), h);
+
+    // Also decode the non-LZ77 version and verify pixel equality
+    let image_ref = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes_no_lz77))
+        .expect("jxl-oxide parse failed for non-LZ77 reference");
+    let frame_ref = image_ref
+        .render_frame(0)
+        .expect("jxl-oxide render failed for non-LZ77 reference");
+
+    let lz77_buf = frame.image_all_channels();
+    let ref_buf = frame_ref.image_all_channels();
+    let lz77_pixels = lz77_buf.buf();
+    let ref_pixels = ref_buf.buf();
+    assert_eq!(lz77_pixels.len(), ref_pixels.len());
+    for (i, (&l, &r)) in lz77_pixels.iter().zip(ref_pixels.iter()).enumerate() {
+        assert!(
+            (l - r).abs() < 1e-6,
+            "pixel {} differs: lz77={}, ref={}",
+            i,
+            l,
+            r
+        );
+    }
+
+    eprintln!("LZ77 backref roundtrip OK — pixels match non-LZ77 reference");
 }

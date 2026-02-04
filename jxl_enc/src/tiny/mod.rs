@@ -5,14 +5,14 @@
 
 //! "Tiny" JPEG XL encoder - a simplified VarDCT encoder.
 //!
-//! This is a port of [libjxl-tiny](https://github.com/libjxl/libjxl-tiny), a simplified
-//! JPEG XL encoder aimed at photographic images. It uses a subset of encoding tools:
+//! This started as a port of [libjxl-tiny](https://github.com/libjxl/libjxl-tiny), a simplified
+//! JPEG XL encoder aimed at photographic images. It now includes additional features:
 //!
-//! - Only DCT8, DCT8x16, and DCT16x8 transforms
+//! - DCT8, DCT4x4, DCT4x8, DCT8x4, DCT8x16, DCT16x8, DCT16x16, DCT32x32 transforms
 //! - Huffman or ANS entropy coding (`use_ans` flag)
 //! - Custom or default zig-zag coefficient order (`custom_orders` flag)
 //! - Fixed context tree for DC coding
-//! - No LZ77 backward references
+//! - LZ77 backward references with RLE or hash chain matching (`enable_lz77`, `lz77_method`)
 //!
 //! This provides a simpler encoding path that's easier to get correct while still
 //! producing valid JPEG XL bitstreams.
@@ -35,6 +35,8 @@ mod frame;
 mod gaborish;
 mod lz77;
 pub(crate) mod noise;
+
+pub use lz77::Lz77Method;
 mod quant;
 mod static_codes;
 pub(crate) mod token;
