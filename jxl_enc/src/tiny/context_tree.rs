@@ -7,6 +7,7 @@
 //!
 //! Ported from libjxl-tiny enc_frame.cc
 
+use super::ac_context::BlockCtxMap;
 use super::cluster::{Histogram, cluster_histograms};
 use super::common::pack_signed;
 use super::entropy_code::{
@@ -554,6 +555,140 @@ pub fn write_block_context_map(writer: &mut BitWriter) -> Result<()> {
     Ok(())
 }
 
+/// Write a U32-coded QF threshold value.
+///
+/// Matches libjxl's kQFThresholdDist: Bits(2), BitsOffset(3,4), BitsOffset(5,12), BitsOffset(8,44).
+/// The decoder reads the value and adds 1, so we write `qf_threshold - 1`.
+fn write_qf_threshold(value: u32, writer: &mut BitWriter) -> Result<()> {
+    // Decoder does: read + 1, so encode value - 1
+    let v = value - 1;
+    if v < 4 {
+        // Selector 0: Bits(2), value 0-3
+        writer.write(2, 0)?; // selector
+        writer.write(2, v as u64)?;
+    } else if v < 12 {
+        // Selector 1: BitsOffset(3, 4), value 4-11
+        writer.write(2, 1)?;
+        writer.write(3, (v - 4) as u64)?;
+    } else if v < 44 {
+        // Selector 2: BitsOffset(5, 12), value 12-43
+        writer.write(2, 2)?;
+        writer.write(5, (v - 12) as u64)?;
+    } else {
+        // Selector 3: BitsOffset(8, 44), value 44-299
+        writer.write(2, 3)?;
+        writer.write(8, (v - 44) as u64)?;
+    }
+    Ok(())
+}
+
+/// Write an adaptive block context map (non-default).
+///
+/// This writes the full BlockCtxMap header:
+/// 1. Non-default flag (0)
+/// 2. DC thresholds (all empty = 0 count each)
+/// 3. QF thresholds count + values
+/// 4. Entropy-coded context map
+pub fn write_block_ctx_map_adaptive(ctx_map: &BlockCtxMap, writer: &mut BitWriter) -> Result<()> {
+    #[cfg(feature = "debug-tokens")]
+    let start_bits = writer.bits_written();
+
+    // Non-default BlockCtxMap
+    writer.write(1, 0)?;
+
+    // DC thresholds: 3 channels, 0 thresholds each (4 bits per count)
+    writer.write(4, 0)?; // dc_threshold[0] count
+    writer.write(4, 0)?; // dc_threshold[1] count
+    writer.write(4, 0)?; // dc_threshold[2] count
+
+    // QF thresholds
+    writer.write(4, ctx_map.qf_thresholds.len() as u64)?;
+    for &t in &ctx_map.qf_thresholds {
+        write_qf_threshold(t, writer)?;
+    }
+
+    #[cfg(feature = "debug-tokens")]
+    {
+        debug_log!(
+            "  write_block_ctx_map_adaptive: {} qf_thresholds={:?}, {} ctxs, map_len={}",
+            ctx_map.qf_thresholds.len(),
+            ctx_map.qf_thresholds,
+            ctx_map.num_ctxs,
+            ctx_map.ctx_map.len()
+        );
+    }
+
+    // Write context map using existing entropy-coded format
+    write_context_map_from_slice(&ctx_map.ctx_map, writer)?;
+
+    #[cfg(feature = "debug-tokens")]
+    {
+        let total = writer.bits_written() - start_bits;
+        debug_log!("  write_block_ctx_map_adaptive total: {} bits", total);
+    }
+
+    Ok(())
+}
+
+/// Write an entropy-coded context map from a byte slice.
+///
+/// Same format as `write_block_context_map` but works with any slice.
+fn write_context_map_from_slice(map: &[u8], writer: &mut BitWriter) -> Result<()> {
+    // Check if all values are 0 (simple case)
+    let max_val = *map.iter().max().unwrap_or(&0);
+    if max_val == 0 {
+        writer.write(3, 1)?; // simple code, 0 bits per entry
+        return Ok(());
+    }
+
+    // Not simple: write 0, no MTF, no LZ77
+    writer.write(3, 0)?;
+
+    // Build tokens from context map
+    let tokens: Vec<Token> = map.iter().map(|&v| Token::new(0, v as u32)).collect();
+
+    // Build histogram for context map values
+    let mut histogram = [0u32; ALPHABET_SIZE];
+    for t in &tokens {
+        let encoded = UintCoder::encode(t.value);
+        histogram[encoded.token as usize] += 1;
+    }
+
+    // Create a single prefix code for the context map
+    let mut ctxmap_depths = [0u8; ALPHABET_SIZE];
+    let mut length = ALPHABET_SIZE;
+    while length > 0 && histogram[length - 1] == 0 {
+        length -= 1;
+    }
+    create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
+
+    let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
+    convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
+
+    let ctxmap_code = PrefixCode {
+        depths: ctxmap_depths,
+        bits: ctxmap_bits,
+    };
+
+    // Write the prefix code for the context map
+    write_prefix_codes(&[ctxmap_code], writer)?;
+
+    // Write the context map tokens
+    for t in &tokens {
+        let encoded = UintCoder::encode(t.value);
+        let tok = encoded.token as usize;
+        let depth = ctxmap_code.depths[tok] as usize;
+        let bits = ctxmap_code.bits[tok] as u64;
+
+        let data = bits | ((encoded.bits as u64) << depth);
+        let total_bits = depth + encoded.nbits as usize;
+
+        writer.write(total_bits, data)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +731,41 @@ mod tests {
         let result = write_block_context_map(&mut writer);
         assert!(result.is_ok());
         // Should have written something
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_block_ctx_map_adaptive_default() {
+        // Writing the default map as adaptive should succeed
+        let map = BlockCtxMap::default();
+        let mut writer = BitWriter::new();
+        let result = write_block_ctx_map_adaptive(&map, &mut writer);
+        assert!(result.is_ok());
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_block_ctx_map_adaptive_with_qf() {
+        // Write a map with 1 QF threshold
+        use super::super::coeff_order::NUM_ORDER_BUCKETS;
+        let num_qf_segs = 2;
+        let section_size = NUM_ORDER_BUCKETS * num_qf_segs;
+        let mut ctx_map = vec![0u8; section_size * 3];
+        // Set some non-zero contexts
+        for (i, val) in ctx_map[..section_size].iter_mut().enumerate() {
+            *val = (i % 3) as u8;
+        }
+        for (i, val) in ctx_map[section_size..].iter_mut().enumerate() {
+            *val = 3 + ((section_size + i) % 2) as u8;
+        }
+        let map = BlockCtxMap {
+            qf_thresholds: vec![10],
+            ctx_map,
+            num_ctxs: 5,
+        };
+        let mut writer = BitWriter::new();
+        let result = write_block_ctx_map_adaptive(&map, &mut writer);
+        assert!(result.is_ok());
         assert!(writer.bits_written() > 0);
     }
 }

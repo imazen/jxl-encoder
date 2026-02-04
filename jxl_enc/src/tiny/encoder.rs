@@ -9,6 +9,7 @@ use super::ac_group::{
     collect_ac_coefficients, num_nonzero_8x8_except_dc, num_nonzero_except_llf,
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
+use super::ac_context::BlockCtxMap;
 use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8,
     RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
@@ -503,6 +504,7 @@ impl TinyEncoder {
         // (no byte padding between sections, only at the end)
         if num_sections == 4 {
             // Write sections to individual BitWriters (no padding)
+            let block_ctx_map = super::ac_context::BlockCtxMap::default();
             let mut dc_global = BitWriter::new();
             self.write_dc_global(
                 &params,
@@ -510,6 +512,7 @@ impl TinyEncoder {
                 &dc_code,
                 &noise_params,
                 None,
+                &block_ctx_map,
                 &mut dc_global,
             )?;
 
@@ -536,14 +539,16 @@ impl TinyEncoder {
 
             let mut ac_group_writer = BitWriter::new();
             self.write_ac_group(
-                0,
+                 0,
                 &quant_ac,
                 &nzeros,
                 &raw_nzeros,
                 xsize_blocks,
                 ysize_blocks,
                 xsize_groups,
+                &quant_field,
                 &ac_strategy,
+                &block_ctx_map,
                 &ac_huffman,
                 &mut ac_group_writer,
             )?;
@@ -599,6 +604,7 @@ impl TinyEncoder {
             let ac_huffman = ac_code.as_huffman();
 
             // DC Global section
+            let block_ctx_map = super::ac_context::BlockCtxMap::default();
             let mut dc_global = BitWriter::new();
             self.write_dc_global(
                 &params,
@@ -606,6 +612,7 @@ impl TinyEncoder {
                 &dc_code,
                 &noise_params,
                 None,
+                &block_ctx_map,
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
@@ -647,7 +654,9 @@ impl TinyEncoder {
                     xsize_blocks,
                     ysize_blocks,
                     xsize_groups,
+                    &quant_field,
                     &ac_strategy,
+                    &block_ctx_map,
                     &ac_huffman,
                     &mut ac_group_writer,
                 )?;
@@ -2132,6 +2141,7 @@ impl TinyEncoder {
     /// 8. Context tree for modular stream
     /// 9. LZ77 params (disabled or enabled with RLE config)
     /// 10. DC entropy code
+    #[allow(clippy::too_many_arguments)]
     fn write_dc_global(
         &self,
         params: &DistanceParams,
@@ -2139,6 +2149,7 @@ impl TinyEncoder {
         dc_code: &BuiltEntropyCode,
         noise_params: &Option<NoiseParams>,
         dc_lz77_params: Option<&super::lz77::Lz77Params>,
+        block_ctx_map: &BlockCtxMap,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -2158,13 +2169,16 @@ impl TinyEncoder {
 
         #[cfg(feature = "debug-tokens")]
         let after_quant = writer.bits_written();
-
-        // BlockCtxMap - non-default, write compact map
-        writer.write(1, 0)?; // non-default BlockCtxMap
-        writer.write(16, 0)?; // no dc ctx, no qft
-
-        // Write compact block context map
-        super::context_tree::write_block_context_map(writer)?;
+        // BlockCtxMap
+        if block_ctx_map.qf_thresholds.is_empty() && block_ctx_map.num_ctxs == super::ac_context::NUM_BLOCK_CTXS {
+            // Default map: write non-default flag + hardcoded compact map
+            writer.write(1, 0)?; // non-default BlockCtxMap
+            writer.write(16, 0)?; // no dc ctx, no qft
+            super::context_tree::write_block_context_map(writer)?;
+        } else {
+            // Adaptive map: write full header with QF thresholds and context map
+            super::context_tree::write_block_ctx_map_adaptive(block_ctx_map, writer)?;
+        }
 
         #[cfg(feature = "debug-tokens")]
         let after_block_ctx = writer.bits_written();
@@ -2403,7 +2417,9 @@ impl TinyEncoder {
         xsize_blocks: usize,
         ysize_blocks: usize,
         xsize_groups: usize,
+        quant_field: &[u8],
         ac_strategy: &AcStrategyMap,
+        block_ctx_map: &BlockCtxMap,
         ac_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -2470,16 +2486,20 @@ impl TinyEncoder {
                         // DCT8/DCT4X8/DCT8X4: use existing single-block path
                         // Streaming path: no custom orders (requires two-pass)
                         // tokenize_ac_coefficients expects raw_strategy, not bitstream code
+                        let strategy_code = ac_strategy.strategy_code(bx, by);
+                        let qf_val = quant_field[by * xsize_blocks + bx] as u32;
+                        let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
                         tokenize_ac_coefficients(
                             &quant_ac[c][by][bx],
-                            c,
                             raw_strategy,
                             nz,
                             predicted_nz,
+                            block_ctx,
+                            block_ctx_map.num_ctxs,
                             ac_code,
                             writer,
                             None,
-                        )?;
+                            )?;
                     } else {
                         // Multi-block: assemble contiguous coefficient buffer in flat layout.
                         // tokenize_ac_coefficients uses COEFF_ORDER which indexes into a flat
@@ -2534,16 +2554,20 @@ impl TinyEncoder {
                         }
                         // Streaming path: no custom orders
                         // tokenize_ac_coefficients expects raw_strategy, not bitstream code
+                        let strategy_code_2 = ac_strategy.strategy_code(bx, by);
+                        let qf_val = quant_field[by * xsize_blocks + bx] as u32;
+                        let block_ctx = block_ctx_map.block_context(c, strategy_code_2, qf_val);
                         tokenize_ac_coefficients(
                             &full_block,
-                            c,
                             raw_strategy,
                             nz,
                             predicted_nz,
+                            block_ctx,
+                            block_ctx_map.num_ctxs,
                             ac_code,
                             writer,
                             None,
-                        )?;
+                            )?;
                     }
                 }
             }
@@ -2647,6 +2671,15 @@ impl TinyEncoder {
                 (None, 0u32)
             };
 
+        // Compute content-adaptive block context map
+        let block_ctx_map = super::ac_context::compute_block_ctx_map(
+            quant_field,
+            ac_strategy,
+            params.distance,
+            xsize_blocks,
+            ysize_blocks,
+        );
+
         // AC section tokens: one Vec<Token> per ac_group
         let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
         for group_idx in 0..num_groups {
@@ -2702,14 +2735,17 @@ impl TinyEncoder {
 
                         if covered_blocks == 1 {
                             // collect_ac_coefficients expects raw_strategy, not bitstream code
+                            let qf_val = quant_field[by * xsize_blocks + bx] as u32;
+                            let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
                             let block_tokens = collect_ac_coefficients(
                                 &quant_ac[c][by][bx],
-                                c,
                                 raw_strategy,
                                 nz,
                                 predicted_nz,
+                                block_ctx,
+                                block_ctx_map.num_ctxs,
                                 custom_ord,
-                            );
+                                );
                             tokens.extend_from_slice(&block_tokens);
                         } else {
                             // Assemble contiguous buffer in flat layout.
@@ -2765,19 +2801,24 @@ impl TinyEncoder {
                             }
 
                             // collect_ac_coefficients expects raw_strategy, not bitstream code
+                            let qf_val = quant_field[by * xsize_blocks + bx] as u32;
+                            let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
+
+
                             let block_tokens = collect_ac_coefficients(
                                 &full_block,
-                                c,
                                 raw_strategy,
                                 nz,
                                 predicted_nz,
+                                block_ctx,
+                                block_ctx_map.num_ctxs,
                                 custom_ord,
-                            );
+                                );
                             tokens.extend_from_slice(&block_tokens);
+                            }
                         }
                     }
                 }
-            }
             ac_section_tokens.push(tokens);
         }
 
@@ -2856,7 +2897,7 @@ impl TinyEncoder {
             }
 
             // Apply LZ77 to AC token streams (each AC group independently)
-            let ac_num_ctx = super::ac_context::NUM_AC_CONTEXTS;
+            let ac_num_ctx = block_ctx_map.num_ac_contexts();
             let merged_ac = {
                 let mut m = Vec::new();
                 for section in &ac_section_tokens {
@@ -2937,9 +2978,9 @@ impl TinyEncoder {
 
         // Merge all AC section tokens for frequency counting
         let ac_num_contexts = if ac_lz77_params.is_some() {
-            super::ac_context::NUM_AC_CONTEXTS + 1 // +1 for LZ77 distance context
+            block_ctx_map.num_ac_contexts() + 1 // +1 for LZ77 distance context
         } else {
-            super::ac_context::NUM_AC_CONTEXTS
+            block_ctx_map.num_ac_contexts()
         };
         let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
         let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
@@ -3020,6 +3061,7 @@ impl TinyEncoder {
                 &dc_built_code,
                 noise_params,
                 dc_lz77_params.as_ref(),
+                &block_ctx_map,
                 &mut dc_global,
             )?;
 
@@ -3075,6 +3117,7 @@ impl TinyEncoder {
                 &dc_built_code,
                 noise_params,
                 dc_lz77_params.as_ref(),
+                &block_ctx_map,
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();

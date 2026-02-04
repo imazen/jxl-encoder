@@ -14,9 +14,7 @@
 
 use std::sync::LazyLock;
 
-use super::ac_context::{
-    block_context, non_zero_context, zero_density_context, zero_density_contexts_offset,
-};
+use super::ac_context::{NON_ZERO_BUCKETS, ZERO_DENSITY_CONTEXT_COUNT, zero_density_context};
 use super::common::{DCT_BLOCK_SIZE, pack_signed};
 use super::entropy_code::{EntropyCode, write_token};
 use super::token::Token;
@@ -24,6 +22,27 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::error::Result;
+
+/// Compute non-zero context from predicted non-zeros, block context, and num_ctxs.
+/// Same formula as BlockCtxMap::non_zero_context but standalone.
+#[inline]
+fn nz_context(non_zeros: usize, block_ctx: usize, num_ctxs: usize) -> usize {
+    let nz_bucket = if non_zeros < 8 {
+        non_zeros
+    } else if non_zeros >= 64 {
+        36
+    } else {
+        4 + non_zeros / 2
+    };
+    nz_bucket * num_ctxs + block_ctx
+}
+
+/// Compute zero density contexts offset from block context and num_ctxs.
+/// Same formula as BlockCtxMap::zero_density_contexts_offset but standalone.
+#[inline]
+fn zd_offset(block_ctx: usize, num_ctxs: usize) -> usize {
+    num_ctxs * NON_ZERO_BUCKETS + ZERO_DENSITY_CONTEXT_COUNT * block_ctx
+}
 
 /// Default zig-zag coefficient order for DCT8 (8x8).
 /// Excludes DC at position 0, so indices 1-63 map to AC coefficients.
@@ -300,19 +319,21 @@ pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
 ///
 /// # Arguments
 /// * `quantized` - Quantized coefficients in natural order (not zig-zag)
-/// * `channel` - Channel index (0=X, 1=Y, 2=B)
 /// * `raw_strategy` - AC strategy code
 /// * `nzeros` - Number of non-zero AC coefficients (already computed)
 /// * `predicted_nzeros` - Predicted nzeros from neighbors
+/// * `block_ctx` - Block context ID (from BlockCtxMap)
+/// * `num_ctxs` - Total number of block contexts (from BlockCtxMap)
 /// * `ac_code` - Entropy code for AC coefficients
 /// * `writer` - Bitstream writer
 #[allow(clippy::too_many_arguments)]
 pub fn tokenize_ac_coefficients(
     quantized: &[i32],
-    channel: usize,
     raw_strategy: u8,
     nzeros: u8,
     predicted_nzeros: i32,
+    block_ctx: usize,
+    num_ctxs: usize,
     ac_code: &EntropyCode,
     writer: &mut BitWriter,
     custom_order: Option<&[u32]>,
@@ -321,10 +342,9 @@ pub fn tokenize_ac_coefficients(
         ac_strategy_info(raw_strategy);
     let size = cx * cy * DCT_BLOCK_SIZE;
 
-    // Get block context and compute contexts
-    let block_ctx = block_context(channel, strategy_code);
-    let nzero_ctx = non_zero_context(predicted_nzeros as usize, block_ctx);
-    let histo_offset = zero_density_contexts_offset(block_ctx);
+    // Compute contexts from block_ctx and num_ctxs
+    let nzero_ctx = nz_context(predicted_nzeros as usize, block_ctx, num_ctxs);
+    let histo_offset = zd_offset(block_ctx, num_ctxs);
 
     // Write number of non-zeros as first token
     let nz_token = Token::new(nzero_ctx as u32, nzeros as u32);
@@ -390,19 +410,19 @@ pub fn tokenize_ac_coefficients(
 /// Same logic as `tokenize_ac_coefficients()` but returns a `Vec<Token>`.
 pub fn collect_ac_coefficients(
     quantized: &[i32],
-    channel: usize,
     raw_strategy: u8,
     nzeros: u8,
     predicted_nzeros: i32,
+    block_ctx: usize,
+    num_ctxs: usize,
     custom_order: Option<&[u32]>,
 ) -> Vec<Token> {
     let (cx, cy, covered_blocks, log2_covered_blocks, strategy_code) =
         ac_strategy_info(raw_strategy);
     let size = cx * cy * DCT_BLOCK_SIZE;
 
-    let block_ctx = block_context(channel, strategy_code);
-    let nzero_ctx = non_zero_context(predicted_nzeros as usize, block_ctx);
-    let histo_offset = zero_density_contexts_offset(block_ctx);
+    let nzero_ctx = nz_context(predicted_nzeros as usize, block_ctx, num_ctxs);
+    let histo_offset = zd_offset(block_ctx, num_ctxs);
 
     // Capacity: 1 nzeros token + up to nzeros coefficient tokens
     let mut tokens = Vec::with_capacity(1 + nzeros as usize);
