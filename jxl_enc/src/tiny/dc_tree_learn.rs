@@ -980,3 +980,37 @@ mod debug_tests {
         assert!(static_result.is_ok());
     }
 }
+
+    #[test]
+    fn test_wrapped_tree_tokens() {
+        use super::*;
+        
+        // Single-leaf learned tree
+        let tree = vec![DcTreeNode {
+            property: -1,
+            context_id: 0,
+            ..Default::default()
+        }];
+        let learned_tokens = tree_to_tokens(&tree);
+        eprintln!("Unwrapped tokens ({}):", learned_tokens.len());
+        for (i, (ctx, val)) in learned_tokens.iter().enumerate() {
+            eprintln!("  [{}]: ctx={}, val={}", i, ctx, val);
+        }
+        
+        // Wrap with AC metadata prefix
+        let (wrapped_tokens, total_contexts) = tree_tokens_with_ac_metadata_prefix(&learned_tokens, 1);
+        eprintln!("\nWrapped tokens ({}, {} contexts):", wrapped_tokens.len(), total_contexts);
+        for (i, (ctx, val)) in wrapped_tokens.iter().enumerate() {
+            eprintln!("  [{}]: ctx={}, val={}", i, ctx, val);
+        }
+        
+        // Expected structure:
+        // - Root decision: 2 tokens
+        // - 10 decision+leaf pairs: 10 * 7 = 70 tokens
+        // - 1 final leaf: 5 tokens  
+        // - learned tree: 5 tokens
+        // Total: 2 + 70 + 5 + 5 = 82 tokens
+        eprintln!("\nExpected: 2 (root) + 70 (10 decision+leaf) + 5 (final leaf) + 5 (learned) = 82");
+        assert_eq!(wrapped_tokens.len(), 82);
+        assert_eq!(total_contexts, 12); // 11 AC metadata + 1 DC
+    }
