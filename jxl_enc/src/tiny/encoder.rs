@@ -3706,4 +3706,63 @@ mod tests {
             let _pixels = render.image_all_channels();
         }
     }
+
+    /// Test DC tree learning produces valid output.
+    #[test]
+    #[ignore] // DC tree learning integration not yet complete
+    fn test_dc_tree_learning() {
+        let width = 64;
+        let height = 64;
+
+        // Create a gradient image
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                linear_rgb[idx] = x as f32 / width as f32;
+                linear_rgb[idx + 1] = y as f32 / height as f32;
+                linear_rgb[idx + 2] = 0.5;
+            }
+        }
+
+        // Encode WITHOUT DC tree learning (baseline)
+        let mut encoder_baseline = TinyEncoder::new(1.0);
+        encoder_baseline.dc_tree_learning = false;
+        let bytes_baseline = encoder_baseline
+            .encode(width, height, &linear_rgb)
+            .expect("baseline encode failed");
+
+        // Encode WITH DC tree learning
+        let mut encoder_learned = TinyEncoder::new(1.0);
+        encoder_learned.dc_tree_learning = true;
+        let bytes_learned = encoder_learned
+            .encode(width, height, &linear_rgb)
+            .expect("learned encode failed");
+
+        eprintln!(
+            "DC tree learning: baseline={} bytes, learned={} bytes (delta={:.2}%)",
+            bytes_baseline.len(),
+            bytes_learned.len(),
+            (bytes_learned.len() as f64 / bytes_baseline.len() as f64 - 1.0) * 100.0
+        );
+
+        // Verify both produce valid JXL signature
+        assert_eq!(bytes_baseline[0], 0xFF);
+        assert_eq!(bytes_baseline[1], 0x0A);
+        assert_eq!(bytes_learned[0], 0xFF);
+        assert_eq!(bytes_learned[1], 0x0A);
+
+        // Decode the learned version with jxl-oxide to verify it's valid
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes_learned))
+            .expect("jxl-oxide decode of learned version failed");
+        assert_eq!(image.width(), width as u32);
+        assert_eq!(image.height(), height as u32);
+
+        // Render to verify pixel data is valid
+        let render = image
+            .render_frame(0)
+            .expect("jxl-oxide render of learned version failed");
+        let _pixels = render.image_all_channels();
+    }
 }
