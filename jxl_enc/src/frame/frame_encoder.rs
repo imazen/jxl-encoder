@@ -31,6 +31,8 @@ pub struct FrameEncoderOptions {
     pub use_modular: bool,
     /// Effort level (1-10, higher = better compression, slower).
     pub effort: u8,
+    /// Use ANS entropy coding instead of Huffman for modular.
+    pub use_ans: bool,
 }
 
 impl Default for FrameEncoderOptions {
@@ -38,6 +40,7 @@ impl Default for FrameEncoderOptions {
         Self {
             use_modular: true, // Default to lossless
             effort: 7,
+            use_ans: false,
         }
     }
 }
@@ -100,7 +103,7 @@ impl FrameEncoder {
         if num_groups == 1 {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
-            write_improved_modular_stream(image, &mut section_writer)?;
+            write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
             let section_data = section_writer.finish();
             let section_size = section_data.len();
 

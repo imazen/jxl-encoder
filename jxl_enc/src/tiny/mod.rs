@@ -30,14 +30,14 @@ mod dc_coding;
 pub mod dct;
 pub mod debug_log;
 mod encoder;
-mod entropy_code;
+pub(crate) mod entropy_code;
 mod frame;
 mod gaborish;
 mod lz77;
 pub(crate) mod noise;
 mod quant;
 mod static_codes;
-mod token;
+pub(crate) mod token;
 
 pub use encoder::TinyEncoder;
 
