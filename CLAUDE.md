@@ -216,7 +216,11 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 **Priority path:**
 1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
 2. AFV corner DCT (high effort, 0.5-1%)
-3. DC tree learning (extend modular tree learning to VarDCT DC stream, 0.3-1.0%)
+3. DC tree learning — INFRASTRUCTURE DONE (Feb 4, 2026)
+   - `dc_tree_learn.rs`: DcTreeSamples, learn_dc_tree, collect_dc_tokens_with_tree
+   - Flag added: `TinyEncoder.dc_tree_learning` (off by default)
+   - Pending: bitstream integration (encoding learned tree tokens)
+   - Estimated impact: 0.3-1.0% DC stream compression
 4. ~~Backward-reference LZ77~~ — DONE (hash chain matching implemented, `--lz77-method greedy`)
    - RLE and Greedy methods both work, decoder-validated with jxl-oxide
    - Greedy rarely activates on VarDCT (threshold not met), mainly helps modular/graphics
