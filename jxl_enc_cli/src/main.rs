@@ -208,6 +208,7 @@ fn main() {
                     distance,
                     effort: args.effort,
                     force_modular: true,
+                    use_ans: !args.no_ans,
                     ..Default::default()
                 };
                 let encoder = Encoder::with_options(options);
@@ -219,6 +220,7 @@ fn main() {
                 distance,
                 effort: args.effort,
                 force_modular: distance == 0.0,
+                use_ans: !args.no_ans,
                 ..Default::default()
             };
             let encoder = Encoder::with_options(options);
@@ -229,6 +231,7 @@ fn main() {
                 distance,
                 effort: args.effort,
                 force_modular: distance == 0.0,
+                use_ans: !args.no_ans,
                 ..Default::default()
             };
             let encoder = Encoder::with_options(options);
