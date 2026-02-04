@@ -895,16 +895,14 @@ fn find_best_16x16_transform(
     // NOT as post-hoc cost multipliers (which would incorrectly scale loss too).
 
     // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0.
-    // libjxl uses -0.4 but its cost model has many more corrections (AdjustQuantBlockAC,
-    // iterative rate control, 27 strategies) that prevent over-selection. Without those,
-    // the full bonus causes 30%+ IDENTITY selection at d<0.5, producing 8-12% larger files.
-    // Disable the bonus until the cost model is more complete.
-    let favor_2x2_adjust = 0.0f32;
-    let _favor_weight = if distance < 5.0 {
+    // Matches libjxl enc_ac_strategy.cc:585-590: -0.4 * ((5-d)/5)^2
+    // AdjustQuantBlockAC is now implemented, which prevents over-selection.
+    let favor_weight = if distance < 5.0 {
         ((5.0 - distance) / 5.0_f32).powi(2)
     } else {
         0.0
     };
+    let favor_2x2_adjust = -0.15 * favor_weight; // Reduced from libjxl's -0.4 (needs iterative rate control for full value)
 
     // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0
     let avoid_transforms_adjust = if distance > 4.0 {
