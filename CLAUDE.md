@@ -194,7 +194,7 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
-1. Fix DCT32x32 (code exists, bug unknown — 1-3% at d>=2.0)
+1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
 2. AFV corner DCT (high effort, 0.5-1%)
 3. DC tree learning (extend modular tree learning to VarDCT DC stream, 0.3-1.0%)
 4. Backward-reference LZ77 (high effort, 1-3% on photos — RLE already done but doesn't help)
