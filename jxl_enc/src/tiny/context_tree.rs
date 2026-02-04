@@ -459,6 +459,84 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
     Ok(())
 }
 
+/// Write a learned context tree for modular stream DC coding.
+///
+/// This is the learned-tree version of `write_context_tree`. Instead of using
+/// the static `CONTEXT_TREE_TOKENS`, it uses tokens generated from a learned
+/// DC tree via `tree_to_tokens`.
+///
+/// # Arguments
+/// * `tree_tokens` - Tokens from `dc_tree_learn::tree_to_tokens()`
+/// * `num_dc_groups` - Number of DC groups (for multi-group images)
+/// * `writer` - Bitstream writer
+pub fn write_learned_context_tree(
+    tree_tokens: &[(u32, u32)],
+    num_dc_groups: usize,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    // For multi-group images, we need to wrap the learned tree with a group split.
+    // The static tree uses property 1 (stream/group) with splitval = 1 + num_dc_groups
+    // to route different DC groups to their respective subtrees.
+    //
+    // For now, we support single DC group (num_dc_groups == 1) only.
+    // Multi-group support would require duplicating the learned tree per group.
+    if num_dc_groups > 1 {
+        // Fall back to static tree for multi-group
+        return write_context_tree(num_dc_groups, writer);
+    }
+
+    // Convert tree tokens to Token objects
+    let tokens: Vec<Token> = tree_tokens
+        .iter()
+        .map(|&(ctx, val)| Token::new(ctx, val))
+        .collect();
+
+    if tokens.is_empty() {
+        // Empty tree - write a simple single-context tree
+        let simple_tree = vec![
+            Token::new(1, 0), // leaf marker
+            Token::new(2, 5), // predictor = Gradient
+            Token::new(3, 0), // offset = 0
+            Token::new(4, 0), // mul_log = 0
+            Token::new(5, 0), // mul_bits = 0
+        ];
+        return write_learned_context_tree_inner(&simple_tree, writer);
+    }
+
+    write_learned_context_tree_inner(&tokens, writer)
+}
+
+/// Inner function to write context tree tokens to bitstream.
+fn write_learned_context_tree_inner(tokens: &[Token], writer: &mut BitWriter) -> Result<()> {
+    // Build entropy code for the tokens
+    let (context_map, prefix_codes) = build_context_tree_entropy_code(tokens);
+
+    #[cfg(feature = "debug-tokens")]
+    {
+        debug_log!(
+            "learned_context_tree: {} tokens, {} contexts, {} prefix codes",
+            tokens.len(),
+            context_map.len(),
+            prefix_codes.len()
+        );
+    }
+
+    // Write tree header
+    writer.write(1, 1)?; // not an empty tree
+    writer.write(1, 0)?; // no lz77
+
+    // Write the entropy code (context map + prefix codes)
+    let code = EntropyCode::new(&context_map, &prefix_codes);
+    write_entropy_code(&code, writer)?;
+
+    // Write all the tokens
+    for token in tokens {
+        write_token(token, &code, None, writer)?;
+    }
+
+    Ok(())
+}
+
 /// Write the compact block context map.
 ///
 /// This is written as a context map in the DC global section.
