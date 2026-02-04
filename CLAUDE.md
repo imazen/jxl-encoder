@@ -194,10 +194,11 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in)
   Learns per-pixel predictor/context selection, multi-context ANS encoding
 - HybridUint {4,2,0} for modular (was raw split=15, now matches libjxl default)
-- LZ77 RLE implemented (`--lz77` flag, ANS-only, two-pass only) but never activates
-  on photographic content — the RLE-only method finds insufficient runs of identical
-  tokens. Full libjxl uses backward-reference LZ77 with hash chains (not just RLE)
-  for the 1-3% savings on photos. Our RLE is correct but limited to graphics/text.
+- LZ77 with RLE and backward-reference methods (`--lz77` flag, ANS-only, two-pass only)
+  - RLE method: matches consecutive identical tokens (fast, limited on photos)
+  - Greedy method: hash chain backward references (default when enabled)
+  - Both methods decoder-validated with jxl-oxide, rarely activate on VarDCT photos
+    (threshold not met), mainly helps modular/graphics content
 - Content-adaptive block context map (default-on in two-pass, QF-based splitting,
   ~0.5% average savings on large images, verified with jxl-rs and djxl)
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
@@ -212,7 +213,10 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
 2. AFV corner DCT (high effort, 0.5-1%)
 3. DC tree learning (extend modular tree learning to VarDCT DC stream, 0.3-1.0%)
-4. Backward-reference LZ77 (high effort, 1-3% on photos — RLE already done but doesn't help)
+4. ~~Backward-reference LZ77~~ — DONE (hash chain matching implemented, `--lz77-method greedy`)
+   - RLE and Greedy methods both work, decoder-validated with jxl-oxide
+   - Greedy rarely activates on VarDCT (threshold not met), mainly helps modular/graphics
+   - Special distance codes disabled until decoder compatibility verified
 5. Iterative rate control (high effort, 2-5% RD improvement)
 6. Increase kFavor2X2 to full -0.4 after iterative rate control is implemented
 
@@ -256,7 +260,10 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
 - [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
 - [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
-- [x] LZ77 RLE (`--lz77` flag, opt-in, ANS two-pass only — correct but rarely activates on photos)
+- [x] LZ77 backward references (`--lz77` flag, opt-in, ANS two-pass only)
+  - RLE method: `--lz77-method rle` (consecutive identical tokens only)
+  - Greedy method: `--lz77-method greedy` (hash chain matching, default when enabled)
+  - Both decoder-validated, rarely activate on VarDCT photos (threshold not met)
 - [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 
@@ -334,7 +341,7 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Fixed zig-zag coefficient order (no custom orders) — **we have custom orders**
 - No error diffusion in quantization — **we have error diffusion**
 - Default block entropy context model only
-- Single uint coding scheme, no backward references — **we have LZ77 RLE (doesn't help photos)**
+- Single uint coding scheme, no backward references — **we have LZ77 RLE and Greedy backref**
 
 ## Resolved Bugs
 
