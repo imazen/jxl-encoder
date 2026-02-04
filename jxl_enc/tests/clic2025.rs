@@ -6559,7 +6559,7 @@ fn test_rd_regression() {
         },
     ];
 
-    // --- Baseline data (commit b11fa1c, 2026-02-02) ---
+    // Our encoder baselines (adaptive block context map enabled, commit 66d0fd1, 2026-02-03).
     // Per-image: (size, butteraugli, ssim2)
     struct Baseline {
         size: usize,
@@ -6580,12 +6580,12 @@ fn test_rd_regression() {
         // frymire
         ImageBaselines {
             d025: Baseline {
-                size: 894061,
+                size: 884832,
                 butteraugli: 1.495,
                 ssim2: 85.44,
             },
             d050: Baseline {
-                size: 651820,
+                size: 646516,
                 butteraugli: 2.085,
                 ssim2: 80.83,
             },
@@ -6593,12 +6593,12 @@ fn test_rd_regression() {
         // img10
         ImageBaselines {
             d025: Baseline {
-                size: 195491,
+                size: 194947,
                 butteraugli: 0.569,
                 ssim2: 88.45,
             },
             d050: Baseline {
-                size: 125391,
+                size: 125214,
                 butteraugli: 0.869,
                 ssim2: 86.61,
             },
@@ -6606,12 +6606,12 @@ fn test_rd_regression() {
         // img11
         ImageBaselines {
             d025: Baseline {
-                size: 209735,
+                size: 210058,
                 butteraugli: 0.486,
                 ssim2: 83.77,
             },
             d050: Baseline {
-                size: 142582,
+                size: 142995,
                 butteraugli: 0.832,
                 ssim2: 82.04,
             },
@@ -6619,12 +6619,12 @@ fn test_rd_regression() {
         // img12
         ImageBaselines {
             d025: Baseline {
-                size: 177418,
+                size: 177610,
                 butteraugli: 0.553,
                 ssim2: 89.28,
             },
             d050: Baseline {
-                size: 112745,
+                size: 113183,
                 butteraugli: 0.892,
                 ssim2: 87.36,
             },
@@ -6632,12 +6632,12 @@ fn test_rd_regression() {
         // img13
         ImageBaselines {
             d025: Baseline {
-                size: 277563,
+                size: 278421,
                 butteraugli: 0.451,
                 ssim2: 85.26,
             },
             d050: Baseline {
-                size: 206950,
+                size: 207427,
                 butteraugli: 0.899,
                 ssim2: 83.19,
             },
@@ -6645,12 +6645,12 @@ fn test_rd_regression() {
         // img14
         ImageBaselines {
             d025: Baseline {
-                size: 236454,
+                size: 237814,
                 butteraugli: 0.485,
                 ssim2: 81.59,
             },
             d050: Baseline {
-                size: 167575,
+                size: 168136,
                 butteraugli: 0.815,
                 ssim2: 80.05,
             },
