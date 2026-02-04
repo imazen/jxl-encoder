@@ -3337,7 +3337,6 @@ mod dual_decoder_butteraugli_tests {
 
         println!("PASS: SSIM2 {:.2} >= {:.2}", ssim2, MIN_SSIM2);
     }
-
 }
 
 mod tree_learning_tests {
@@ -3366,12 +3365,7 @@ mod tree_learning_tests {
 
         let path = format!("/tmp/{}.jxl", test_name);
         std::fs::write(&path, &encoded).unwrap();
-        eprintln!(
-            "{}: Saved {} bytes to {}",
-            test_name,
-            encoded.len(),
-            path
-        );
+        eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
 
         // Decode with jxl-rs (PRIMARY decoder)
         let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
@@ -3419,7 +3413,10 @@ mod tree_learning_tests {
 
         eprintln!(
             "{}: PASSED tree learning roundtrip ({}x{}, {} bytes)",
-            test_name, width, height, encoded.len()
+            test_name,
+            width,
+            height,
+            encoded.len()
         );
     }
 
@@ -3446,12 +3443,7 @@ mod tree_learning_tests {
 
         let path = format!("/tmp/{}.jxl", test_name);
         std::fs::write(&path, &encoded).unwrap();
-        eprintln!(
-            "{}: Saved {} bytes to {}",
-            test_name,
-            encoded.len(),
-            path
-        );
+        eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
 
         // Decode with jxl-rs (PRIMARY decoder)
         let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
@@ -3501,7 +3493,10 @@ mod tree_learning_tests {
 
         eprintln!(
             "{}: PASSED tree learning roundtrip ({}x{}, {} bytes)",
-            test_name, width, height, encoded.len()
+            test_name,
+            width,
+            height,
+            encoded.len()
         );
     }
 
@@ -3543,6 +3538,39 @@ mod tree_learning_tests {
     }
 
     #[test]
+    fn test_tree_learning_gray_gradient_128x128() {
+        let mut data = vec![0u8; 128 * 128];
+        for y in 0..128 {
+            for x in 0..128 {
+                data[y * 128 + x] = ((x * 2 + y * 3) % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_gray(&data, 128, 128, "tree_gray_grad_128x128");
+    }
+
+    #[test]
+    fn test_tree_learning_gray_gradient_48x48() {
+        let mut data = vec![0u8; 48 * 48];
+        for y in 0..48 {
+            for x in 0..48 {
+                data[y * 48 + x] = ((x * 8 + y * 3) % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_gray(&data, 48, 48, "tree_gray_grad_48x48");
+    }
+
+    #[test]
+    fn test_tree_learning_gray_gradient_64x64() {
+        let mut data = vec![0u8; 64 * 64];
+        for y in 0..64 {
+            for x in 0..64 {
+                data[y * 64 + x] = ((x * 4 + y * 3) % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_gray(&data, 64, 64, "tree_gray_grad_64x64");
+    }
+
+    #[test]
     fn test_tree_learning_rgb_checkerboard_8x8() {
         let mut data = vec![0u8; 8 * 8 * 3];
         for y in 0..8 {
@@ -3560,6 +3588,36 @@ mod tree_learning_tests {
             }
         }
         validate_tree_learning_roundtrip_rgb(&data, 8, 8, "tree_rgb_checker_8x8");
+    }
+
+    #[test]
+    fn test_tree_learning_rgb_gradient_32x32_rgb() {
+        let size = 32;
+        let mut data = vec![0u8; size * size * 3];
+        for y in 0..size {
+            for x in 0..size {
+                let idx = (y * size + x) * 3;
+                data[idx] = (x * 8) as u8;
+                data[idx + 1] = (y * 8) as u8;
+                data[idx + 2] = ((x + y) * 4 % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_rgb(&data, size, size, "tree_rgb_grad_32x32");
+    }
+
+    #[test]
+    fn test_tree_learning_rgb_gradient_64x64() {
+        let size = 64;
+        let mut data = vec![0u8; size * size * 3];
+        for y in 0..size {
+            for x in 0..size {
+                let idx = (y * size + x) * 3;
+                data[idx] = (x * 4) as u8;
+                data[idx + 1] = (y * 4) as u8;
+                data[idx + 2] = ((x + y) * 2 % 256) as u8;
+            }
+        }
+        validate_tree_learning_roundtrip_rgb(&data, size, size, "tree_rgb_grad_64x64");
     }
 
     #[test]

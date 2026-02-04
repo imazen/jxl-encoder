@@ -16,8 +16,7 @@ use crate::heuristics::HeuristicLevel;
 use crate::modular::channel::ModularImage;
 use crate::modular::improved::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section, write_improved_modular_stream,
-    write_modular_stream_with_tree,
+    write_group_modular_section, write_improved_modular_stream, write_modular_stream_with_tree,
 };
 use crate::modular::section::write_global_modular_section_with_tree;
 use crate::vardct::tokenize::Token;
@@ -113,8 +112,8 @@ impl FrameEncoder {
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
-                    256,  // max_nodes
-                    1.0,  // split_threshold
+                    256,                       // max_nodes
+                    1.0,                       // split_threshold
                     image.channels.len() >= 3, // RCT for RGB
                 )?;
             } else {
@@ -124,8 +123,7 @@ impl FrameEncoder {
             let section_data = section_writer.finish();
             let section_size = section_data.len();
 
-            eprintln!("FRAME_ENCODER: section_size = {} bytes", section_size);
-            crate::trace::debug_eprintln!("DEBUG: section_size = {} bytes", section_size);
+            crate::trace::debug_eprintln!("FRAME_ENCODER: section_size = {} bytes", section_size);
 
             // Write TOC
             self.write_toc(writer, section_size)?;
@@ -181,8 +179,8 @@ impl FrameEncoder {
             write_global_modular_section_with_tree(
                 &group_images,
                 &mut lf_global_writer,
-                256,  // max_nodes
-                1.0,  // split_threshold
+                256, // max_nodes
+                1.0, // split_threshold
             )?
         } else {
             // Standard path: collect residuals with gradient predictor

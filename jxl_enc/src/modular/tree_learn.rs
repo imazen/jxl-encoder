@@ -10,7 +10,7 @@
 //! Port of libjxl's `FindBestSplit` algorithm from `enc_ma.cc`.
 
 use super::channel::{Channel, ModularImage};
-use super::predictor::{Neighbors, Predictor, WeightedPredictorState, pack_signed};
+use super::predictor::{Neighbors, Predictor, pack_signed};
 use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts};
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
@@ -67,6 +67,12 @@ pub struct TreeSamples {
     /// Spec-matching property values: props[property_idx][sample_idx].
     /// These are the actual (unquantized) property values.
     props: Vec<Vec<i32>>,
+}
+
+impl Default for TreeSamples {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TreeSamples {
@@ -127,11 +133,7 @@ fn compute_spec_properties(
 }
 
 /// Gather samples from all channels in an image for tree learning.
-pub fn gather_samples(
-    samples: &mut TreeSamples,
-    image: &ModularImage,
-    group_id: u32,
-) {
+pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id: u32) {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         gather_channel_samples(samples, channel, ch_idx as u32, group_id);
     }
@@ -183,8 +185,13 @@ fn gather_channel_samples(
             }
 
             // Store property values
-            for p in 0..NUM_PROPERTIES {
-                samples.props[p].push(props[p]);
+            for (prop_list, &val) in samples
+                .props
+                .iter_mut()
+                .zip(props.iter())
+                .take(NUM_PROPERTIES)
+            {
+                prop_list.push(val);
             }
             samples.num_samples += 1;
         }
@@ -232,11 +239,7 @@ struct SplitCandidate {
 /// 2. For each property and threshold, compute entropy of left/right partitions.
 /// 3. Split on the (property, threshold) that reduces entropy most.
 /// 4. Repeat until no beneficial split or max_nodes reached.
-pub fn compute_best_tree(
-    samples: &mut TreeSamples,
-    max_nodes: usize,
-    threshold: f64,
-) -> Tree {
+pub fn compute_best_tree(samples: &mut TreeSamples, max_nodes: usize, threshold: f64) -> Tree {
     let n = samples.num_samples;
     if n == 0 {
         // Empty samples: return single gradient leaf
@@ -298,12 +301,7 @@ pub fn compute_best_tree(
         }
 
         // Find best split across all properties and thresholds
-        let best_split = find_best_split(
-            samples,
-            range,
-            histogram_size,
-            candidate.base_bits,
-        );
+        let best_split = find_best_split(samples, range, histogram_size, candidate.base_bits);
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -335,12 +333,8 @@ pub fn compute_best_tree(
                 // rchild = samples with property > splitval
                 let rchild_range = &indices[abs_mid..candidate.end];
                 let rchild_pred = split.right_predictor;
-                let rchild_bits = compute_predictor_entropy(
-                    samples,
-                    rchild_range,
-                    rchild_pred,
-                    histogram_size,
-                );
+                let rchild_bits =
+                    compute_predictor_entropy(samples, rchild_range, rchild_pred, histogram_size);
                 stack.push(SplitCandidate {
                     node_idx: rchild_idx,
                     start: abs_mid,
@@ -352,12 +346,8 @@ pub fn compute_best_tree(
                 // lchild = samples with property <= splitval
                 let lchild_range = &indices[candidate.start..abs_mid];
                 let lchild_pred = split.left_predictor;
-                let lchild_bits = compute_predictor_entropy(
-                    samples,
-                    lchild_range,
-                    lchild_pred,
-                    histogram_size,
-                );
+                let lchild_bits =
+                    compute_predictor_entropy(samples, lchild_range, lchild_pred, histogram_size);
                 stack.push(SplitCandidate {
                     node_idx: lchild_idx,
                     start: candidate.start,
@@ -459,11 +449,7 @@ fn find_best_split(
 
 /// Compute threshold candidates for a property. Returns sorted unique values,
 /// subsampled to at most MAX_QUANT_BUCKETS if there are too many.
-fn compute_thresholds(
-    samples: &TreeSamples,
-    indices: &[usize],
-    prop_idx: usize,
-) -> Vec<i32> {
+fn compute_thresholds(samples: &TreeSamples, indices: &[usize], prop_idx: usize) -> Vec<i32> {
     let props = &samples.props[prop_idx];
     let mut values: Vec<i32> = indices.iter().map(|&i| props[i]).collect();
     values.sort_unstable();
@@ -487,11 +473,7 @@ fn compute_thresholds(
     } else {
         // Subsample: pick evenly spaced thresholds
         let step = values.len() / MAX_QUANT_BUCKETS;
-        values
-            .iter()
-            .step_by(step.max(1))
-            .copied()
-            .collect()
+        values.iter().step_by(step.max(1)).copied().collect()
     }
 }
 
@@ -517,18 +499,26 @@ fn count_split(
         let pval = props[idx];
         if pval <= splitval {
             left_total += 1;
-            for p in 0..num_pred {
-                let tok = samples.residual_tokens[p][idx] as usize;
+            for (counts, tokens) in left_counts
+                .iter_mut()
+                .zip(samples.residual_tokens.iter())
+                .take(num_pred)
+            {
+                let tok = tokens[idx] as usize;
                 if tok < histogram_size {
-                    left_counts[p][tok] += 1;
+                    counts[tok] += 1;
                 }
             }
         } else {
             right_total += 1;
-            for p in 0..num_pred {
-                let tok = samples.residual_tokens[p][idx] as usize;
+            for (counts, tokens) in right_counts
+                .iter_mut()
+                .zip(samples.residual_tokens.iter())
+                .take(num_pred)
+            {
+                let tok = tokens[idx] as usize;
                 if tok < histogram_size {
-                    right_counts[p][tok] += 1;
+                    counts[tok] += 1;
                 }
             }
         }
@@ -559,11 +549,7 @@ fn best_predictor_from_counts(
 }
 
 /// Find the best predictor for the given sample indices.
-fn find_best_predictor(
-    samples: &TreeSamples,
-    indices: &[usize],
-    histogram_size: usize,
-) -> usize {
+fn find_best_predictor(samples: &TreeSamples, indices: &[usize], histogram_size: usize) -> usize {
     let num_pred = samples.num_predictors();
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
@@ -651,7 +637,7 @@ pub fn collect_residuals_with_tree(
             continue;
         }
 
-        let mut prev_gradient: i32 = 0;
+        let mut prev_gradient: i32;
 
         for y in 0..height {
             prev_gradient = 0;
@@ -690,7 +676,10 @@ pub fn collect_residuals_with_tree(
 /// Traverse a tree using spec-matching property values.
 ///
 /// Our tree convention: lchild = property <= splitval, rchild = property > splitval.
-fn traverse_with_spec_props<'a>(tree: &'a Tree, props: &[i32; NUM_PROPERTIES]) -> &'a PropertyDecisionNode {
+fn traverse_with_spec_props<'a>(
+    tree: &'a Tree,
+    props: &[i32; NUM_PROPERTIES],
+) -> &'a PropertyDecisionNode {
     let mut idx = 0;
     loop {
         let node = &tree[idx];
@@ -717,7 +706,11 @@ mod tests {
         let counts = [100u32, 100, 100, 100];
         let total = 400;
         let bits = estimate_bits(&counts, total);
-        assert!((bits - 800.0).abs() < 0.01, "expected 800 bits, got {}", bits);
+        assert!(
+            (bits - 800.0).abs() < 0.01,
+            "expected 800 bits, got {}",
+            bits
+        );
     }
 
     #[test]
@@ -727,7 +720,11 @@ mod tests {
         let total = 100;
         let bits = estimate_bits(&counts, total);
         // With prob floor, -100 * log2(1.0) = 0
-        assert!(bits < 1.0, "single symbol should have near-zero entropy, got {}", bits);
+        assert!(
+            bits < 1.0,
+            "single symbol should have near-zero entropy, got {}",
+            bits
+        );
     }
 
     #[test]

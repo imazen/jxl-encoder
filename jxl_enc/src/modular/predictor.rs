@@ -142,43 +142,100 @@ pub struct Neighbors {
 }
 
 impl Neighbors {
-    /// Gathers neighbor values from a channel.
+    /// Gathers neighbor values from a channel, matching the JXL spec's edge handling.
+    ///
+    /// Edge clamping rules (from jxl-rs PredictionData::get_rows):
+    /// - left: x>0 ? row[x-1] : (y>0 ? top_row[0] : 0)
+    /// - top: y>0 ? top_row[x] : left
+    /// - topleft: x>0 && y>0 ? top_row[x-1] : left
+    /// - topright: x+1 < width && y>0 ? top_row[x+1] : top
+    /// - leftleft: x>1 ? row[x-2] : left
+    /// - toptop: y>1 ? toptop_row[x] : top
     #[inline]
     pub fn gather(channel: &Channel, x: usize, y: usize) -> Self {
-        let x = x as isize;
-        let y = y as isize;
+        let width = channel.width();
+
+        let w = if x > 0 {
+            channel.get(x - 1, y)
+        } else if y > 0 {
+            channel.get(0, y - 1)
+        } else {
+            0
+        };
+
+        let n = if y > 0 { channel.get(x, y - 1) } else { w };
+
+        let nw = if x > 0 && y > 0 {
+            channel.get(x - 1, y - 1)
+        } else {
+            w
+        };
+
+        let ne = if x + 1 < width && y > 0 {
+            channel.get(x + 1, y - 1)
+        } else {
+            n
+        };
+
+        let ww = if x > 1 { channel.get(x - 2, y) } else { w };
+
+        let nn = if y > 1 { channel.get(x, y - 2) } else { n };
 
         Self {
-            n: channel.get_clamped(x, y - 1),
-            w: channel.get_clamped(x - 1, y),
-            nw: channel.get_clamped(x - 1, y - 1),
-            ne: channel.get_clamped(x + 1, y - 1),
-            nn: channel.get_clamped(x, y - 2),
-            ww: channel.get_clamped(x - 2, y),
+            n,
+            w,
+            nw,
+            ne,
+            nn,
+            ww,
         }
     }
 
-    /// Gathers neighbors with explicit row pointers for speed.
-    /// Assumes y >= 1 for valid top row access.
+    /// Gathers neighbors with explicit row pointers for speed, matching JXL spec edge handling.
     #[inline]
     pub fn gather_fast(
         row: &[i32],
         prev_row: Option<&[i32]>,
         prev_prev_row: Option<&[i32]>,
         x: usize,
-        width: usize,
+        _width: usize,
     ) -> Self {
-        let w = if x > 0 { row[x - 1] } else { 0 };
-        let ww = if x > 1 { row[x - 2] } else { 0 };
-
-        let (n, nw, ne, nn) = if let Some(prev) = prev_row {
-            let n = prev[x];
-            let nw = if x > 0 { prev[x - 1] } else { 0 };
-            let ne = if x + 1 < width { prev[x + 1] } else { 0 };
-            let nn = prev_prev_row.map_or(0, |pp| pp[x]);
-            (n, nw, ne, nn)
+        let w = if x > 0 {
+            row[x - 1]
+        } else if let Some(prev) = prev_row {
+            prev[0]
         } else {
-            (0, 0, 0, 0)
+            0
+        };
+
+        let n = if let Some(prev) = prev_row {
+            prev[x]
+        } else {
+            w
+        };
+
+        let nw = if x > 0 {
+            if let Some(prev) = prev_row {
+                prev[x - 1]
+            } else {
+                w
+            }
+        } else {
+            w
+        };
+
+        let ne = if let Some(prev) = prev_row {
+            if x + 1 < prev.len() { prev[x + 1] } else { n }
+        } else {
+            n
+        };
+
+        let ww = if x > 1 { row[x - 2] } else { w };
+
+        let nn = if let Some(pp) = prev_prev_row {
+            pp[x]
+        } else {
+            n
         };
 
         Self {
