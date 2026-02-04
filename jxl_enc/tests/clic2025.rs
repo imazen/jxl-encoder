@@ -6559,7 +6559,7 @@ fn test_rd_regression() {
         },
     ];
 
-    // Our encoder baselines (adaptive block context map enabled, commit 66d0fd1, 2026-02-03).
+    // Our encoder baselines (full libjxl thresholds, enhanced clustering, kFavor2X2, 2026-02-03).
     // Per-image: (size, butteraugli, ssim2)
     struct Baseline {
         size: usize,
@@ -6572,87 +6572,87 @@ fn test_rd_regression() {
         d050: Baseline,
     }
 
-    // Our encoder baselines (IDENTITY/DCT2X2 auto-selection enabled, DCT2X2 forward fixed).
+    // Baselines updated for: full libjxl dead-zone thresholds, X/B multi-block threshold,
+    // enhanced histogram clustering (ANS), kFavor2X2 at -0.15.
     // SSIM2: in-process fast-ssim2 on sRGB u8 (gamma 2.2 roundtrip from jxl-oxide linear output).
     // Butteraugli: in-process butteraugli crate on linear RGB (srgb_to_linear for original).
-    // Sizes are deterministic and match byte-for-byte at this commit.
     let baselines = [
         // frymire
         ImageBaselines {
             d025: Baseline {
-                size: 884832,
-                butteraugli: 1.495,
-                ssim2: 85.44,
+                size: 896361,
+                butteraugli: 1.497,
+                ssim2: 86.03,
             },
             d050: Baseline {
-                size: 646516,
-                butteraugli: 2.085,
-                ssim2: 80.83,
+                size: 656600,
+                butteraugli: 1.550,
+                ssim2: 81.74,
             },
         },
         // img10
         ImageBaselines {
             d025: Baseline {
-                size: 194947,
+                size: 195591,
                 butteraugli: 0.569,
-                ssim2: 88.45,
+                ssim2: 88.53,
             },
             d050: Baseline {
-                size: 125214,
+                size: 125468,
                 butteraugli: 0.869,
-                ssim2: 86.61,
+                ssim2: 86.59,
             },
         },
         // img11
         ImageBaselines {
             d025: Baseline {
-                size: 210058,
+                size: 210957,
                 butteraugli: 0.486,
-                ssim2: 83.77,
+                ssim2: 83.82,
             },
             d050: Baseline {
-                size: 142995,
+                size: 143218,
                 butteraugli: 0.832,
-                ssim2: 82.04,
+                ssim2: 82.07,
             },
         },
         // img12
         ImageBaselines {
             d025: Baseline {
-                size: 177610,
+                size: 178624,
                 butteraugli: 0.553,
-                ssim2: 89.28,
+                ssim2: 89.22,
             },
             d050: Baseline {
-                size: 113183,
+                size: 113747,
                 butteraugli: 0.892,
-                ssim2: 87.36,
+                ssim2: 87.27,
             },
         },
         // img13
         ImageBaselines {
             d025: Baseline {
-                size: 278421,
+                size: 279753,
                 butteraugli: 0.451,
-                ssim2: 85.26,
+                ssim2: 85.30,
             },
             d050: Baseline {
-                size: 207427,
+                size: 207673,
                 butteraugli: 0.899,
-                ssim2: 83.19,
+                ssim2: 83.24,
             },
         },
         // img14
         ImageBaselines {
             d025: Baseline {
-                size: 237814,
+                size: 238986,
                 butteraugli: 0.485,
-                ssim2: 81.59,
+                ssim2: 81.63,
             },
             d050: Baseline {
-                size: 168136,
+                size: 168530,
                 butteraugli: 0.815,
-                ssim2: 80.05,
+                ssim2: 80.06,
             },
         },
     ];

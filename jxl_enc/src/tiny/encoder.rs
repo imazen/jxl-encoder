@@ -211,7 +211,7 @@ impl Default for TinyEncoder {
         Self {
             distance: 1.0,
             optimize_codes: true,
-            enhanced_clustering: false,
+            enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
             use_ans: true, // ANS produces 4-10% smaller files than Huffman
             cfl_enabled: true,
             ac_strategy_enabled: true,
@@ -233,7 +233,7 @@ impl TinyEncoder {
         Self {
             distance,
             optimize_codes: true,
-            enhanced_clustering: false,
+            enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
             use_ans: true, // ANS produces 4-10% smaller files than Huffman
             cfl_enabled: true,
             ac_strategy_enabled: true,
@@ -747,25 +747,27 @@ impl TinyEncoder {
     /// Compute default dead-zone thresholds for a given channel and coverage.
     ///
     /// Returns [f32; 4] thresholds for the 4 quadrants of a block.
-    /// These match libjxl-tiny's QuantizeBlockAC initial thresholds.
+    /// Matches full libjxl enc_group.cc:58-72 (> kHare speed tier).
     #[inline]
     fn default_thresholds(c: usize, covered_x: usize, covered_y: usize) -> [f32; 4] {
-        let mut thres = [0.58f32, 0.635, 0.66, 0.7];
-        if c == 0 {
-            for t in thres[1..4].iter_mut() {
-                *t += 0.08;
-            }
-        }
-        if c == 2 {
-            for t in thres[1..4].iter_mut() {
-                *t = 0.75;
-            }
-        }
-        if covered_x > 1 || covered_y > 1 {
-            let adj = (0.003 * (covered_x * covered_y) as f32)
-                .clamp(0.0, if c > 0 { 0.08 } else { 0.12 });
+        // Full libjxl values (enc_group.cc:58-65, > kHare speed):
+        //   Y (c=1): {0.56, 0.62, 0.62, 0.62}
+        //   X (c=0): {0.58, 0.62, 0.62, 0.62}
+        //   B (c=2): {0.58, 0.62, 0.62, 0.62}
+        let mut thres = if c == 1 {
+            [0.56f32, 0.62, 0.62, 0.62]
+        } else {
+            [0.58f32, 0.62, 0.62, 0.62]
+        };
+        // X/B multi-block threshold reduction (enc_group.cc:66-72)
+        // For c != 1 (X and B channels) with coverage >= 4 blocks
+        if c != 1 && covered_x * covered_y >= 4 {
+            let adj = 0.00744 * (covered_x * covered_y) as f32;
             for t in thres.iter_mut() {
                 *t -= adj;
+                if *t < 0.5 {
+                    *t = 0.5;
+                }
             }
         }
         thres
@@ -3380,8 +3382,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0x5d2dcdcf901758c;
+        // Updated: full libjxl thresholds, enhanced clustering, kFavor2X2
+        const EXPECTED_HASH: u64 = 0x64cf72edb237d564;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -3440,8 +3442,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: IDENTITY/DCT2X2 auto-selection enabled, DCT2X2 forward transform fixed.
-        // Checkerboard at d=1.0 doesn't trigger IDENTITY/DCT2X2 selection so hash unchanged.
+        // Hash updated: full libjxl thresholds, enhanced clustering
+        // (kFavor2X2 at -0.15 doesn't affect this image at d=1.0)
         const EXPECTED_HASH: u64 = 0xeb59aa6dda4a7f48;
         assert_eq!(
             hash,
@@ -3472,8 +3474,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: AdjustQuantBlockAC enabled
-        const EXPECTED_HASH: u64 = 0xb18bf6d930df77ac;
+        // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
+        const EXPECTED_HASH: u64 = 0x1e9fdc465d6304f2;
         assert_eq!(
             hash,
             EXPECTED_HASH,

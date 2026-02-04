@@ -167,10 +167,13 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 
 **C. Cost Model**
 - AdjustQuantBlockAC: IMPLEMENTED (per-block quant field adjustment, `encoder.rs:811-1034`)
-- Missing: C++ threshold adjustment (`-0.00744 * xsize * ysize` for X/B on multi-block)
-- Full libjxl uses truncation (`(int)(val + noff)`) vs our round+threshold approach
+- Dead-zone thresholds: UPDATED to full libjxl values (Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62})
+- X/B multi-block threshold: IMPLEMENTED (-0.00744 * xsize*ysize for c!=1, coverage>=4)
+- kFavor2X2: IMPLEMENTED at -0.15 (libjxl uses -0.4, reduced to avoid over-selection without iterative rate control)
+- Note: libjxl uses Round() with thresholds, same as us (previous "truncation" claim was wrong)
 
 **D. Entropy Coding**
+- Enhanced histogram clustering: ENABLED by default (pair-merge refinement, benefits ANS header savings)
 - ANS now default for both VarDCT and modular lossless paths
 - Modular ANS: 0.5-1.7% savings on photos, 19-57% on graphics (single-context)
 - Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in)
@@ -191,9 +194,12 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 - DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
-1. Backward-reference LZ77 (high effort, 1-3% file savings — RLE already done but doesn't help photos)
+1. Fix DCT32x32 (code exists, bug unknown — 1-3% at d>=2.0)
 2. AFV corner DCT (high effort, 0.5-1%)
-3. Consider truncation quantization approach (matches C++ behavior)
+3. DC tree learning (extend modular tree learning to VarDCT DC stream, 0.3-1.0%)
+4. Backward-reference LZ77 (high effort, 1-3% on photos — RLE already done but doesn't help)
+5. Iterative rate control (high effort, 2-5% RD improvement)
+6. Increase kFavor2X2 to full -0.4 after iterative rate control is implemented
 
 ### Outstanding Work
 
