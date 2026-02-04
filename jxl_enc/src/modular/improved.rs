@@ -15,10 +15,10 @@ use crate::bit_writer::BitWriter;
 use crate::entropy_coding::huffman_tree::{
     build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
 };
+use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::error::Result;
 use crate::modular::channel::ModularImage;
 use crate::modular::rct::{RctType, forward_rct};
-use std::collections::HashMap;
 
 // LZ77 constants (from zune-jpegxl)
 const K_NUM_RAW_SYMBOLS: usize = 19;
@@ -61,6 +61,101 @@ enum Token {
     Raw(u32),
     /// An LZ77 run of zeros (count includes the K_LZ77_MIN_LENGTH offset)
     Lz77Run(usize),
+}
+
+/// Default HybridUint config for modular data: split_exponent=4, msb_in_token=2, lsb_in_token=0.
+/// This reduces the token alphabet from hundreds of symbols (raw) to ~36 tokens + extra bits.
+const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
+    split_exponent: 4,
+    split: 16, // 1 << 4
+    msb_in_token: 2,
+    lsb_in_token: 0,
+};
+
+/// Pre-encoded residual: the HybridUint token and its extra bits.
+struct EncodedResidual {
+    token: u32,
+    extra_bits: u32,
+    num_extra: u32,
+}
+
+/// Encode a list of packed residuals through HybridUint, returning encoded tokens
+/// and the maximum token value (for histogram sizing).
+fn encode_residuals_hybrid(residuals: &[u32]) -> (Vec<EncodedResidual>, u32) {
+    let mut encoded = Vec::with_capacity(residuals.len());
+    let mut max_token: u32 = 0;
+    for &r in residuals {
+        let (token, extra_bits, num_extra) = MODULAR_HYBRID_UINT.encode(r);
+        max_token = max_token.max(token);
+        encoded.push(EncodedResidual {
+            token,
+            extra_bits,
+            num_extra,
+        });
+    }
+    (encoded, max_token)
+}
+
+/// Build a histogram from HybridUint-encoded tokens.
+fn build_token_histogram(encoded: &[EncodedResidual], max_token: u32) -> Vec<u32> {
+    let size = (max_token + 1) as usize;
+    let mut histogram = vec![0u32; size];
+    for e in encoded {
+        histogram[e.token as usize] += 1;
+    }
+    histogram
+}
+
+/// Write the data histogram header using HybridUint config {4,2,0} and Huffman prefix codes.
+/// Returns (depths, codes) for encoding tokens.
+pub(crate) fn write_hybrid_data_histogram(
+    writer: &mut BitWriter,
+    histogram: &[u32],
+    max_token: u32,
+) -> Result<(Vec<u8>, Vec<u16>)> {
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+    // use_prefix_code = 1
+    writer.write(1, 1)?;
+
+    // IntegerConfig with HybridUint {4, 2, 0}
+    // When use_prefix_code=1, decoder uses log_alphabet_size=15 for parsing IntegerConfig.
+    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    write_integer_config(writer, LOG_ALPHABET_SIZE_PREFIX, 4, 2, 0)?;
+
+    // alphabet_size - 1
+    write_varlen_u16(writer, max_token as u16)?;
+
+    // Huffman table
+    let histogram_size = (max_token + 1) as usize;
+    let (depths, codes) = if histogram_size > 1 {
+        let table = build_and_store_huffman_tree(&histogram[..histogram_size], writer)?;
+        (table.depths, table.codes)
+    } else {
+        (vec![0u8; histogram_size], vec![0u16; histogram_size])
+    };
+
+    Ok((depths, codes))
+}
+
+/// Encode HybridUint residuals using Huffman codes + extra bits.
+fn write_hybrid_residuals(
+    writer: &mut BitWriter,
+    encoded: &[EncodedResidual],
+    depths: &[u8],
+    codes: &[u16],
+) -> Result<()> {
+    for e in encoded {
+        let depth = depths.get(e.token as usize).copied().unwrap_or(0);
+        let code = codes.get(e.token as usize).copied().unwrap_or(0);
+        if depth > 0 {
+            writer.write(depth as usize, code as u64)?;
+        }
+        if e.num_extra > 0 {
+            writer.write(e.num_extra as usize, e.extra_bits as u64)?;
+        }
+    }
+    Ok(())
 }
 
 /// Collect residuals using gradient prediction and identify LZ77 runs.
@@ -528,119 +623,28 @@ pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWrit
         }
     }
 
-    // Build histogram
-    let histogram_size = (max_residual + 1) as usize;
-    let mut histogram = vec![0u32; histogram_size];
-    for &r in &residuals {
-        histogram[r as usize] += 1;
-    }
+    // Encode residuals through HybridUint {4,2,0}
+    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+    let histogram = build_token_histogram(&encoded, max_token);
 
-    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
-        "VARDCT_MODULAR: {} residuals, {} unique symbols, max={}",
+        "VARDCT_MODULAR: {} residuals, max_raw={}, max_token={}",
         residuals.len(),
-        _num_symbols,
-        max_residual
+        max_residual,
+        max_token
     );
 
     // === Write Tree (local tree since GroupHeader has use_global_tree=false) ===
-    // For VarDCT modular substreams, tree uses allow_lz77=false, so we use the no-lz77 version
     let (tree_depths, tree_codes) = write_tree_histogram_no_lz77(writer)?;
     write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-    // === Write Data Histogram ===
-    // For a single-leaf tree, num_contexts = 1 (all pixels use the same context).
-    // When num_contexts = 1, context_map is NOT written (implicit single histogram).
-    // Our gradient predictor uses a single-leaf tree, so num_contexts = 1.
+    // === Write Data Histogram with HybridUint {4,2,0} ===
+    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
-    crate::trace::debug_eprintln!(
-        "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: Before lz77.enabled",
-        writer.bits_written(),
-        writer.bits_written() / 8,
-        writer.bits_written() % 8
-    );
-
-    // lz77.enabled = 0
-    writer.write(1, 0)?;
-    crate::trace::debug_eprintln!(
-        "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: After lz77.enabled=0",
-        writer.bits_written(),
-        writer.bits_written() / 8,
-        writer.bits_written() % 8
-    );
-
-    // Context map: NOT written for single-leaf tree (num_contexts = 1)
-
-    // use_prefix_code = 1
-    writer.write(1, 1)?;
-    crate::trace::debug_eprintln!(
-        "VARDCT_DATA [bit {}, byte {}, bit_in_byte {}]: After use_prefix_code=1",
-        writer.bits_written(),
-        writer.bits_written() / 8,
-        writer.bits_written() % 8
-    );
-
-    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
-    // for parsing IntegerConfig, regardless of actual alphabet size.
-    // VarDCT writes residuals directly as Huffman symbols (not hybrid uint).
-    // Use split_exponent = 15 for raw symbol encoding with prefix codes.
-    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
-    write_integer_config(
-        writer,
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
-    )?;
-    crate::trace::debug_eprintln!(
-        "VARDCT_DATA [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
-        writer.bits_written(),
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX
-    );
-
-    // alphabet_size - 1 using VarLenUint16 encoding (matches libjxl)
-    let _bit_before = writer.bits_written();
-    write_varlen_u16(writer, max_residual as u16)?;
-    let _bit_after = writer.bits_written();
-    crate::trace::debug_eprintln!(
-        "VARDCT_DATA [bit {}-{}]: alphabet_size-1 = {} ({} bits written)",
-        _bit_before,
-        _bit_after,
-        max_residual,
-        _bit_after - _bit_before
-    );
-
-    // Huffman table - IMPORTANT: We must use the codes returned by build_and_store_huffman_tree
-    // because those are the actual codes written to the bitstream. The decoder will use those
-    // codes, so we must encode with the same codes.
-    let (depths, codes) = if histogram_size > 1 {
-        let table = build_and_store_huffman_tree(&histogram, writer)?;
-        (table.depths, table.codes)
-    } else {
-        // Single symbol - no bits needed
-        (vec![0u8; histogram_size], vec![0u16; histogram_size])
-    };
-
-    // === Write Data (residuals) ===
-    let code_map: HashMap<u32, (u16, u8)> = depths
-        .iter()
-        .zip(codes.iter())
-        .enumerate()
-        .filter(|(_, (d, _))| **d > 0)
-        .map(|(i, (d, c))| (i as u32, (*c, *d)))
-        .collect();
-
-    for &r in &residuals {
-        if let Some(&(code, depth)) = code_map.get(&r)
-            && depth > 0
-        {
-            writer.write(depth as usize, code as u64)?;
-        }
-    }
+    // === Write Data (residuals with HybridUint tokens + extra bits) ===
+    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
 
     // Note: NO byte padding here - VarDCT modular substreams are continuous
-    // (DC is followed by HF metadata without byte alignment)
     crate::trace::debug_eprintln!("VARDCT_MODULAR [bit {}]: Done", writer.bits_written());
     Ok(())
 }
@@ -1051,171 +1055,41 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         }
     }
 
-    // Build histogram
-    let histogram_size = (max_residual + 1) as usize;
-    let mut histogram = vec![0u32; histogram_size];
-    for &r in &residuals {
-        histogram[r as usize] += 1;
-    }
+    // Encode residuals through HybridUint {4,2,0} to reduce token alphabet
+    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+    let histogram = build_token_histogram(&encoded, max_token);
 
-    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
-    let _num_zeros = histogram.first().copied().unwrap_or(0);
     crate::trace::debug_eprintln!(
-        "GRADIENT: {} residuals, {} unique symbols, max={}, zeros={}",
+        "GRADIENT: {} residuals, max_raw={}, max_token={}, {} unique tokens",
         residuals.len(),
-        _num_symbols,
         max_residual,
-        _num_zeros
+        max_token,
+        histogram.iter().filter(|&&c| c > 0).count()
     );
 
     // === Global section ===
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: Starting modular stream",
-        writer.bits_written()
-    );
     writer.write(1, 1)?; // dc_quant.all_default = true
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: dc_quant.all_default = 1",
-        writer.bits_written()
-    );
     writer.write(1, 1)?; // has_tree = true
-    crate::trace::debug_eprintln!("IMPROVED [bit {}]: has_tree = 1", writer.bits_written());
 
     if USE_ZERO_PREDICTOR {
-        // Tree histogram for Zero predictor (single symbol, no explicit tree tokens)
         write_tree_histogram_for_zero(writer)?;
-        // No tree tokens needed - all implicit zeros
     } else {
-        // Tree histogram (supports symbols 0-5 for Gradient predictor)
         let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-        // Tree tokens for single leaf with Gradient predictor
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
     }
 
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: Starting data histogram",
-        writer.bits_written()
-    );
-    // Data histogram
-    writer.write(1, 0)?; // lz77.enabled = 0
-    crate::trace::debug_eprintln!("IMPROVED [bit {}]: lz77.enabled = 0", writer.bits_written());
-    writer.write(1, 1)?; // use_prefix_code = 1
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: use_prefix_code = 1",
-        writer.bits_written()
-    );
-
-    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
-    // for parsing IntegerConfig, regardless of actual alphabet size.
-    // Use raw symbols (split_exponent = 15) to encode residuals directly.
-    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
-    write_integer_config(
-        writer,
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
-    )?;
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: IntegerConfig (log_alpha={}, split_exp={}, raw symbols)",
-        writer.bits_written(),
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX
-    );
-
-    // alphabet_size-1 using VarLenUint16 encoding
-    write_varlen_u16(writer, max_residual as u16)?;
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: alphabet_size-1 = {}",
-        writer.bits_written(),
-        max_residual
-    );
-
-    // Build and store Huffman table - IMPORTANT: use the codes returned by build_and_store_huffman_tree
-    let (depths, codes) = if histogram_size > 1 {
-        crate::trace::debug_eprintln!(
-            "IMPROVED [bit {}]: Starting Huffman table (histogram_size={})",
-            writer.bits_written(),
-            histogram_size
-        );
-        let table = build_and_store_huffman_tree(&histogram, writer)?;
-        crate::trace::debug_eprintln!(
-            "IMPROVED [bit {}]: After Huffman table",
-            writer.bits_written()
-        );
-        (table.depths, table.codes)
-    } else {
-        // Single symbol - no bits needed
-        (vec![0u8; histogram_size], vec![0u16; histogram_size])
-    };
+    // Data histogram with HybridUint {4,2,0}
+    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
     // GroupHeader
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: Writing GroupHeader",
-        writer.bits_written()
-    );
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
     writer.write(2, 0)?; // num_transforms = 0
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: After GroupHeader",
-        writer.bits_written()
-    );
 
-    // Encode residuals using the codes from the stored Huffman table
-    let code_map: HashMap<u32, (u16, u8)> = depths
-        .iter()
-        .zip(codes.iter())
-        .enumerate()
-        .filter(|(_, (d, _))| **d > 0)
-        .map(|(i, (d, c))| (i as u32, (*c, *d)))
-        .collect();
+    // Encode residuals using HybridUint tokens + extra bits
+    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
 
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: Starting residual encoding",
-        writer.bits_written()
-    );
-    crate::trace::debug_eprintln!(
-        "IMPROVED: First 20 residuals: {:?}",
-        &residuals[..residuals.len().min(20)]
-    );
-    crate::trace::debug_eprintln!("IMPROVED: code_map has {} entries", code_map.len());
-    for (&_sym, &(_code, _depth)) in &code_map {
-        crate::trace::debug_eprintln!(
-            "  sym {} -> code {:0width$b} (depth {})",
-            _sym,
-            _code,
-            _depth,
-            width = _depth as usize
-        );
-    }
-
-    for (i, &r) in residuals.iter().enumerate() {
-        if let Some(&(code, depth)) = code_map.get(&r) {
-            if depth > 0 {
-                if i < 10 {
-                    crate::trace::debug_eprintln!(
-                        "  residual[{}] = {} -> code {:0width$b} (depth {})",
-                        i,
-                        r,
-                        code,
-                        depth,
-                        width = depth as usize
-                    );
-                }
-                writer.write(depth as usize, code as u64)?;
-            }
-        } else {
-            crate::trace::debug_eprintln!("  WARNING: residual[{}] = {} has no code!", i, r);
-        }
-    }
-
-    crate::trace::debug_eprintln!("IMPROVED [bit {}]: Before padding", writer.bits_written());
     writer.zero_pad_to_byte();
-    crate::trace::debug_eprintln!(
-        "IMPROVED [bit {}]: After padding (done)",
-        writer.bits_written()
-    );
     Ok(())
 }
 
@@ -1326,88 +1200,35 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
         }
     }
 
-    // Build histogram
-    let histogram_size = (max_residual + 1) as usize;
-    let mut histogram = vec![0u32; histogram_size];
-    for &r in &residuals {
-        histogram[r as usize] += 1;
-    }
+    // Encode residuals through HybridUint {4,2,0}
+    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+    let histogram = build_token_histogram(&encoded, max_token);
 
-    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
-        "RCT: {} residuals, {} unique symbols, max={}",
+        "RCT: {} residuals, max_raw={}, max_token={}",
         residuals.len(),
-        _num_symbols,
-        max_residual
+        max_residual,
+        max_token
     );
 
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    // Tree histogram (Gradient predictor)
     let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
     write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-    // Data histogram
-    writer.write(1, 0)?; // lz77.enabled = 0
-    writer.write(1, 1)?; // use_prefix_code = 1
-
-    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
-    // for parsing IntegerConfig, regardless of actual alphabet size.
-    // RCT uses raw symbols - set split_exponent = 15.
-    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
-    write_integer_config(
-        writer,
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
-    )?;
-
-    // alphabet_size-1 using VarLenUint16 encoding
-    write_varlen_u16(writer, max_residual as u16)?;
-
-    // Build and store Huffman table - use the codes returned
-    let (depths, codes) = if histogram_size > 1 {
-        let table = build_and_store_huffman_tree(&histogram, writer)?;
-        (table.depths, table.codes)
-    } else {
-        (vec![0u8; histogram_size], vec![0u16; histogram_size])
-    };
+    // Data histogram with HybridUint {4,2,0}
+    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
     // GroupHeader with 1 transform
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
-
-    // num_transforms = 1: U32(Val(0), Val(1), BitsOffset(4, 2), BitsOffset(8, 18), 0)
-    // Val(1) at selector 1 = 2 bits "01"
-    writer.write(2, 1)?;
-
-    // Write the RCT transform descriptor
+    writer.write(2, 1)?; // num_transforms = 1
     write_rct_transform(writer, 0, rct_type)?;
 
-    crate::trace::debug_eprintln!(
-        "RCT [bit {}]: After GroupHeader with transform",
-        writer.bits_written()
-    );
-
-    // Encode residuals using stored Huffman codes
-    let code_map: HashMap<u32, (u16, u8)> = depths
-        .iter()
-        .zip(codes.iter())
-        .enumerate()
-        .filter(|(_, (d, _))| **d > 0)
-        .map(|(i, (d, c))| (i as u32, (*c, *d)))
-        .collect();
-
-    for &r in &residuals {
-        if let Some(&(code, depth)) = code_map.get(&r)
-            && depth > 0
-        {
-            writer.write(depth as usize, code as u64)?;
-        }
-    }
+    // Encode residuals using HybridUint tokens + extra bits
+    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1547,77 +1368,34 @@ pub fn write_modular_stream_with_weighted(
         }
     }
 
-    // Build histogram
-    let histogram_size = (max_residual + 1) as usize;
-    let mut histogram = vec![0u32; histogram_size];
-    for &r in &residuals {
-        histogram[r as usize] += 1;
-    }
+    // Encode residuals through HybridUint {4,2,0}
+    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+    let histogram = build_token_histogram(&encoded, max_token);
 
-    let _num_symbols = histogram.iter().filter(|&&c| c > 0).count();
     crate::trace::debug_eprintln!(
-        "WEIGHTED: {} residuals, {} unique symbols, max={}",
+        "WEIGHTED: {} residuals, max_raw={}, max_token={}",
         residuals.len(),
-        _num_symbols,
-        max_residual
+        max_residual,
+        max_token
     );
 
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    // Tree histogram (Weighted predictor)
     write_tree_histogram_for_weighted(writer)?;
     write_weighted_tree_tokens(writer)?;
 
-    // Data histogram
-    writer.write(1, 0)?; // lz77.enabled = 0
-    writer.write(1, 1)?; // use_prefix_code = 1
-
-    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
-    // for parsing IntegerConfig, regardless of actual alphabet size.
-    // Weighted predictor uses raw symbols - set split_exponent = 15.
-    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
-    write_integer_config(
-        writer,
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
-    )?;
-
-    // alphabet_size-1 using VarLenUint16 encoding
-    write_varlen_u16(writer, max_residual as u16)?;
-
-    // Build and store Huffman table - use the codes returned
-    let (depths, codes) = if histogram_size > 1 {
-        let table = build_and_store_huffman_tree(&histogram, writer)?;
-        (table.depths, table.codes)
-    } else {
-        (vec![0u8; histogram_size], vec![0u16; histogram_size])
-    };
+    // Data histogram with HybridUint {4,2,0}
+    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
     // GroupHeader
     writer.write(1, 1)?; // use_global_tree = true
-    write_wp_header(writer, &params)?; // wp_header
+    write_wp_header(writer, &params)?;
     writer.write(2, 0)?; // num_transforms = 0
 
-    // Encode residuals using stored Huffman codes
-    let code_map: HashMap<u32, (u16, u8)> = depths
-        .iter()
-        .zip(codes.iter())
-        .enumerate()
-        .filter(|(_, (d, _))| **d > 0)
-        .map(|(i, (d, c))| (i as u32, (*c, *d)))
-        .collect();
-
-    for &r in &residuals {
-        if let Some(&(code, depth)) = code_map.get(&r)
-            && depth > 0
-        {
-            writer.write(depth as usize, code as u64)?;
-        }
-    }
+    // Encode residuals using HybridUint tokens + extra bits
+    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1670,78 +1448,35 @@ pub fn write_modular_stream_with_rct_weighted(
         }
     }
 
-    // Build histogram
-    let histogram_size = (max_residual + 1) as usize;
-    let mut histogram = vec![0u32; histogram_size];
-    for &r in &residuals {
-        histogram[r as usize] += 1;
-    }
+    // Encode residuals through HybridUint {4,2,0}
+    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+    let histogram = build_token_histogram(&encoded, max_token);
 
     crate::trace::debug_eprintln!(
-        "RCT+WEIGHTED: {} residuals, {} unique symbols, max={}",
+        "RCT+WEIGHTED: {} residuals, max_raw={}, max_token={}",
         residuals.len(),
-        histogram.iter().filter(|&&c| c > 0).count(),
-        max_residual
+        max_residual,
+        max_token
     );
 
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    // Tree histogram (Weighted predictor)
     write_tree_histogram_for_weighted(writer)?;
     write_weighted_tree_tokens(writer)?;
 
-    // Data histogram
-    writer.write(1, 0)?; // lz77.enabled = 0
-    writer.write(1, 1)?; // use_prefix_code = 1
-
-    // IntegerConfig: When use_prefix_code=1, the decoder uses log_alphabet_size=15
-    // for parsing IntegerConfig, regardless of actual alphabet size.
-    // RCT+Weighted uses raw symbols - set split_exponent = 15.
-    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
-    write_integer_config(
-        writer,
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
-    )?;
-
-    // alphabet_size-1 using VarLenUint16 encoding
-    write_varlen_u16(writer, max_residual as u16)?;
-
-    // Build and store Huffman table - use the codes returned
-    let (depths, codes) = if histogram_size > 1 {
-        let table = build_and_store_huffman_tree(&histogram, writer)?;
-        (table.depths, table.codes)
-    } else {
-        (vec![0u8; histogram_size], vec![0u16; histogram_size])
-    };
+    // Data histogram with HybridUint {4,2,0}
+    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
     // GroupHeader with RCT transform
     writer.write(1, 1)?; // use_global_tree = true
-    write_wp_header(writer, &params)?; // wp_header
-    // num_transforms = 1
-    writer.write(2, 1)?;
+    write_wp_header(writer, &params)?;
+    writer.write(2, 1)?; // num_transforms = 1
     write_rct_transform(writer, 0, rct_type)?;
 
-    // Encode residuals using stored Huffman codes
-    let code_map: HashMap<u32, (u16, u8)> = depths
-        .iter()
-        .zip(codes.iter())
-        .enumerate()
-        .filter(|(_, (d, _))| **d > 0)
-        .map(|(i, (d, c))| (i as u32, (*c, *d)))
-        .collect();
-
-    for &r in &residuals {
-        if let Some(&(code, depth)) = code_map.get(&r)
-            && depth > 0
-        {
-            writer.write(depth as usize, code as u64)?;
-        }
-    }
+    // Encode residuals using HybridUint tokens + extra bits
+    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
 
     writer.zero_pad_to_byte();
     Ok(())
