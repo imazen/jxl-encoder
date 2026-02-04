@@ -17,6 +17,7 @@ pub mod rct;
 pub mod section;
 pub mod token;
 pub mod tree;
+pub mod tree_learn;
 
 pub use channel::{Channel, ModularImage};
 pub use encoder::{EncodedModularData, ModularEncoder, ModularEncoderOptions};
