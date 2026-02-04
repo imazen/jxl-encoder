@@ -19,6 +19,8 @@ use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::error::Result;
 use crate::modular::channel::ModularImage;
 use crate::modular::rct::{RctType, forward_rct};
+use crate::tiny::entropy_code::{OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans};
+use crate::tiny::token::Token as AnsToken;
 
 // LZ77 constants (from zune-jpegxl)
 const K_NUM_RAW_SYMBOLS: usize = 19;
@@ -155,6 +157,83 @@ fn write_hybrid_residuals(
             writer.write(e.num_extra as usize, e.extra_bits as u64)?;
         }
     }
+    Ok(())
+}
+
+/// Build ANS tokens from packed residuals (all context 0, single-context modular stream).
+fn build_ans_tokens(residuals: &[u32]) -> Vec<AnsToken> {
+    residuals.iter().map(|&r| AnsToken::new(0, r)).collect()
+}
+
+/// Build the ANS entropy code for modular residuals.
+/// Returns (tokens, code) for separate header/token writing.
+fn build_ans_modular_code(residuals: &[u32]) -> (Vec<AnsToken>, OwnedAnsEntropyCode) {
+    let tokens = build_ans_tokens(residuals);
+    let code = build_entropy_code_ans(&tokens, 1); // 1 context for single-leaf tree
+    (tokens, code)
+}
+
+/// Write ANS data histogram header for a single-context modular stream.
+///
+/// For modular with a single-leaf MA tree (num_dist=1), the context map is NOT written
+/// (the spec skips it when num_dist=1). This differs from VarDCT which has multiple contexts
+/// and always writes a context map via write_entropy_code_ans.
+///
+/// Layout: lz77.enabled=0 + use_prefix_code=0 + log_alpha_size + HybridUint config + ANS distribution
+fn write_ans_modular_header(writer: &mut BitWriter, code: &OwnedAnsEntropyCode) -> Result<()> {
+    assert_eq!(
+        code.histograms.len(),
+        1,
+        "modular ANS header only supports single-distribution (single-leaf tree)"
+    );
+
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+
+    // NO context map for num_dist=1 (spec: context map is only written when num_dist > 1)
+
+    // use_prefix_code = 0 (ANS, not Huffman)
+    writer.write(1, 0)?;
+
+    // log_alpha_size - 5 (2 bits)
+    let las = code.log_alpha_size;
+    writer.write(2, (las - 5) as u64)?;
+
+    // HybridUint config for the single histogram: {4, 2, 0}
+    // CeilLog2Nonzero(log_alpha_size + 1) bits for split_exponent
+    let se_bits = ceil_log2_nonzero(las as u32 + 1);
+    writer.write(se_bits as usize, 4)?; // split_exponent = 4
+
+    // msb_in_token: CeilLog2Nonzero(split_exponent + 1) = CeilLog2Nonzero(5) = 3 bits
+    writer.write(3, 2)?; // msb_in_token = 2
+
+    // lsb_in_token: CeilLog2Nonzero(split_exponent - msb_in_token + 1) = CeilLog2Nonzero(3) = 2 bits
+    writer.write(2, 0)?; // lsb_in_token = 0
+
+    // Write the single ANS distribution
+    code.histograms[0].write(writer)?;
+
+    Ok(())
+}
+
+/// CeilLog2Nonzero matching the JXL spec. Returns number of bits needed to represent values 0..x.
+fn ceil_log2_nonzero(x: u32) -> u32 {
+    debug_assert!(x > 0);
+    let floor = 31 - x.leading_zeros();
+    if x.is_power_of_two() {
+        floor
+    } else {
+        floor + 1
+    }
+}
+
+/// Write ANS-encoded tokens.
+fn write_ans_modular_tokens(
+    writer: &mut BitWriter,
+    tokens: &[AnsToken],
+    code: &OwnedAnsEntropyCode,
+) -> Result<()> {
+    write_tokens_ans(tokens, code, None, writer)?;
     Ok(())
 }
 
@@ -582,8 +661,12 @@ fn write_sparse_lz77_histogram(
 ///
 /// For VarDCT subbitstreams, set `skip_group_header = true` since the GroupHeader
 /// is written separately before calling this function.
-pub fn write_improved_modular_stream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
-    write_improved_modular_stream_inner(image, writer, false)
+pub fn write_improved_modular_stream(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+) -> Result<()> {
+    write_improved_modular_stream_inner(image, writer, false, use_ans)
 }
 
 /// Writes a modular substream for VarDCT (GroupHeader already written by caller).
@@ -653,6 +736,7 @@ fn write_improved_modular_stream_inner(
     image: &ModularImage,
     writer: &mut BitWriter,
     _skip_group_header: bool,
+    use_ans: bool,
 ) -> Result<()> {
     // Collect residuals with gradient prediction
     let tokens = collect_residuals_with_prediction(image);
@@ -683,7 +767,7 @@ fn write_improved_modular_stream_inner(
 
     // If no LZ77 runs, fall back to simple encoding
     if num_lz77_runs == 0 {
-        return write_simple_modular_stream(image, writer);
+        return write_simple_modular_stream(image, writer, use_ans);
     }
 
     // === Global section (LfGlobal) ===
@@ -1017,10 +1101,13 @@ pub(crate) fn write_gradient_tree_tokens(
 const USE_ZERO_PREDICTOR: bool = false;
 
 /// Simpler stream without LZ77 but with gradient prediction.
-pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
+pub fn write_simple_modular_stream(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+) -> Result<()> {
     // Collect residuals with gradient prediction
     let mut residuals = Vec::new();
-    let mut max_residual: u32 = 0;
 
     for channel in &image.channels {
         let width = channel.width();
@@ -1031,10 +1118,8 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
                 let pixel = channel.get(x, y);
 
                 let prediction = if USE_ZERO_PREDICTOR {
-                    // Zero predictor: predict 0 always
                     0
                 } else {
-                    // Get neighbors (matching jxl-rs decoder)
                     let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
                     let top = if y > 0 { channel.get(x, y - 1) } else { left };
                     let topleft = if x > 0 && y > 0 {
@@ -1042,30 +1127,15 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
                     } else {
                         left
                     };
-                    // Predict using clamped gradient (predictor 5)
                     predict_gradient(left, top, topleft)
                 };
 
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
-
                 residuals.push(packed);
-                max_residual = max_residual.max(packed);
             }
         }
     }
-
-    // Encode residuals through HybridUint {4,2,0} to reduce token alphabet
-    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
-    let histogram = build_token_histogram(&encoded, max_token);
-
-    crate::trace::debug_eprintln!(
-        "GRADIENT: {} residuals, max_raw={}, max_token={}, {} unique tokens",
-        residuals.len(),
-        max_residual,
-        max_token,
-        histogram.iter().filter(|&&c| c > 0).count()
-    );
 
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
@@ -1078,16 +1148,30 @@ pub fn write_simple_modular_stream(image: &ModularImage, writer: &mut BitWriter)
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
     }
 
-    // Data histogram with HybridUint {4,2,0}
-    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+    if use_ans {
+        // ANS entropy coding path
+        let (tokens, code) = build_ans_modular_code(&residuals);
+        write_ans_modular_header(writer, &code)?;
 
-    // GroupHeader
-    writer.write(1, 1)?; // use_global_tree = true
-    writer.write(1, 1)?; // wp_header.all_default = true
-    writer.write(2, 0)?; // num_transforms = 0
+        // GroupHeader
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 0)?; // num_transforms = 0
 
-    // Encode residuals using HybridUint tokens + extra bits
-    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+        write_ans_modular_tokens(writer, &tokens, &code)?;
+    } else {
+        // Huffman path with HybridUint {4,2,0}
+        let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+        let histogram = build_token_histogram(&encoded, max_token);
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        // GroupHeader
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 0)?; // num_transforms = 0
+
+        write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+    }
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1153,11 +1237,14 @@ fn write_rct_transform(writer: &mut BitWriter, begin_c: usize, rct_type: RctType
 /// 3. Encodes the transformed data
 ///
 /// YCoCg improves compression by 15-20% for typical RGB images.
-pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
+pub fn write_modular_stream_with_rct(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+) -> Result<()> {
     // Only apply RCT to RGB images (3+ channels)
     if image.channels.len() < 3 {
-        // Fall back to simple encoding for grayscale
-        return write_simple_modular_stream(image, writer);
+        return write_simple_modular_stream(image, writer, use_ans);
     }
 
     // Clone the image and apply forward RCT
@@ -1200,17 +1287,6 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
         }
     }
 
-    // Encode residuals through HybridUint {4,2,0}
-    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
-    let histogram = build_token_histogram(&encoded, max_token);
-
-    crate::trace::debug_eprintln!(
-        "RCT: {} residuals, max_raw={}, max_token={}",
-        residuals.len(),
-        max_residual,
-        max_token
-    );
-
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
@@ -1218,17 +1294,30 @@ pub fn write_modular_stream_with_rct(image: &ModularImage, writer: &mut BitWrite
     let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
     write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-    // Data histogram with HybridUint {4,2,0}
-    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+    if use_ans {
+        let (tokens, code) = build_ans_modular_code(&residuals);
+        write_ans_modular_header(writer, &code)?;
 
-    // GroupHeader with 1 transform
-    writer.write(1, 1)?; // use_global_tree = true
-    writer.write(1, 1)?; // wp_header.all_default = true
-    writer.write(2, 1)?; // num_transforms = 1
-    write_rct_transform(writer, 0, rct_type)?;
+        // GroupHeader with 1 transform
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 1)?; // num_transforms = 1
+        write_rct_transform(writer, 0, rct_type)?;
 
-    // Encode residuals using HybridUint tokens + extra bits
-    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+        write_ans_modular_tokens(writer, &tokens, &code)?;
+    } else {
+        let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+        let histogram = build_token_histogram(&encoded, max_token);
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        // GroupHeader with 1 transform
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 1)?; // num_transforms = 1
+        write_rct_transform(writer, 0, rct_type)?;
+
+        write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+    }
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1331,6 +1420,7 @@ fn write_wp_header(
 pub fn write_modular_stream_with_weighted(
     image: &ModularImage,
     writer: &mut BitWriter,
+    use_ans: bool,
 ) -> Result<()> {
     use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
 
@@ -1338,7 +1428,6 @@ pub fn write_modular_stream_with_weighted(
 
     // Collect residuals with weighted prediction
     let mut residuals = Vec::new();
-    let mut max_residual: u32 = 0;
 
     for channel in &image.channels {
         let width = channel.width();
@@ -1348,36 +1437,17 @@ pub fn write_modular_stream_with_weighted(
         for y in 0..height {
             for x in 0..width {
                 let pixel = channel.get(x, y);
-
-                // Gather neighbors
                 let neighbors = Neighbors::gather(channel, x, y);
-
-                // Get weighted prediction
                 let prediction = wp_state.predict(x, y, width, &neighbors);
 
-                // Compute residual
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
-
                 residuals.push(packed);
-                max_residual = max_residual.max(packed);
 
-                // Update predictor state with actual value
                 wp_state.update_errors(pixel, x, y, width);
             }
         }
     }
-
-    // Encode residuals through HybridUint {4,2,0}
-    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
-    let histogram = build_token_histogram(&encoded, max_token);
-
-    crate::trace::debug_eprintln!(
-        "WEIGHTED: {} residuals, max_raw={}, max_token={}",
-        residuals.len(),
-        max_residual,
-        max_token
-    );
 
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
@@ -1386,16 +1456,26 @@ pub fn write_modular_stream_with_weighted(
     write_tree_histogram_for_weighted(writer)?;
     write_weighted_tree_tokens(writer)?;
 
-    // Data histogram with HybridUint {4,2,0}
-    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+    if use_ans {
+        let (tokens, code) = build_ans_modular_code(&residuals);
+        write_ans_modular_header(writer, &code)?;
 
-    // GroupHeader
-    writer.write(1, 1)?; // use_global_tree = true
-    write_wp_header(writer, &params)?;
-    writer.write(2, 0)?; // num_transforms = 0
+        writer.write(1, 1)?; // use_global_tree = true
+        write_wp_header(writer, &params)?;
+        writer.write(2, 0)?; // num_transforms = 0
 
-    // Encode residuals using HybridUint tokens + extra bits
-    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+        write_ans_modular_tokens(writer, &tokens, &code)?;
+    } else {
+        let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+        let histogram = build_token_histogram(&encoded, max_token);
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        writer.write(1, 1)?; // use_global_tree = true
+        write_wp_header(writer, &params)?;
+        writer.write(2, 0)?; // num_transforms = 0
+
+        write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+    }
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1407,15 +1487,14 @@ pub fn write_modular_stream_with_weighted(
 pub fn write_modular_stream_with_rct_weighted(
     image: &ModularImage,
     writer: &mut BitWriter,
+    use_ans: bool,
 ) -> Result<()> {
     use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
 
-    // Only apply RCT to RGB images (3+ channels)
     if image.channels.len() < 3 {
-        return write_modular_stream_with_weighted(image, writer);
+        return write_modular_stream_with_weighted(image, writer, use_ans);
     }
 
-    // Clone the image and apply forward RCT
     let mut transformed = image.clone();
     let rct_type = RctType::YCOCG;
     forward_rct(&mut transformed.channels, 0, rct_type)?;
@@ -1424,7 +1503,6 @@ pub fn write_modular_stream_with_rct_weighted(
 
     // Collect residuals with weighted prediction on transformed channels
     let mut residuals = Vec::new();
-    let mut max_residual: u32 = 0;
 
     for channel in &transformed.channels {
         let width = channel.width();
@@ -1438,26 +1516,12 @@ pub fn write_modular_stream_with_rct_weighted(
                 let prediction = wp_state.predict(x, y, width, &neighbors);
 
                 let residual = pixel - prediction;
-                let packed = pack_signed(residual);
-
-                residuals.push(packed);
-                max_residual = max_residual.max(packed);
+                residuals.push(pack_signed(residual));
 
                 wp_state.update_errors(pixel, x, y, width);
             }
         }
     }
-
-    // Encode residuals through HybridUint {4,2,0}
-    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
-    let histogram = build_token_histogram(&encoded, max_token);
-
-    crate::trace::debug_eprintln!(
-        "RCT+WEIGHTED: {} residuals, max_raw={}, max_token={}",
-        residuals.len(),
-        max_residual,
-        max_token
-    );
 
     // === Global section ===
     writer.write(1, 1)?; // dc_quant.all_default = true
@@ -1466,17 +1530,28 @@ pub fn write_modular_stream_with_rct_weighted(
     write_tree_histogram_for_weighted(writer)?;
     write_weighted_tree_tokens(writer)?;
 
-    // Data histogram with HybridUint {4,2,0}
-    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+    if use_ans {
+        let (tokens, code) = build_ans_modular_code(&residuals);
+        write_ans_modular_header(writer, &code)?;
 
-    // GroupHeader with RCT transform
-    writer.write(1, 1)?; // use_global_tree = true
-    write_wp_header(writer, &params)?;
-    writer.write(2, 1)?; // num_transforms = 1
-    write_rct_transform(writer, 0, rct_type)?;
+        writer.write(1, 1)?; // use_global_tree = true
+        write_wp_header(writer, &params)?;
+        writer.write(2, 1)?; // num_transforms = 1
+        write_rct_transform(writer, 0, rct_type)?;
 
-    // Encode residuals using HybridUint tokens + extra bits
-    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+        write_ans_modular_tokens(writer, &tokens, &code)?;
+    } else {
+        let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+        let histogram = build_token_histogram(&encoded, max_token);
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        writer.write(1, 1)?; // use_global_tree = true
+        write_wp_header(writer, &params)?;
+        writer.write(2, 1)?; // num_transforms = 1
+        write_rct_transform(writer, 0, rct_type)?;
+
+        write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+    }
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1532,7 +1607,7 @@ mod tests {
         let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
 
         let mut writer = BitWriter::new();
-        write_simple_modular_stream(&image, &mut writer).unwrap();
+        write_simple_modular_stream(&image, &mut writer, false).unwrap();
 
         let bytes = writer.finish_with_padding();
         crate::trace::debug_eprintln!("Gradient stream: {} bytes", bytes.len());
@@ -1553,7 +1628,7 @@ mod tests {
         let image = ModularImage::from_rgb8(&data, 4, 4).unwrap();
 
         let mut writer = BitWriter::new();
-        write_modular_stream_with_rct(&image, &mut writer).unwrap();
+        write_modular_stream_with_rct(&image, &mut writer, false).unwrap();
 
         let bytes = writer.finish_with_padding();
         crate::trace::debug_eprintln!("RCT stream: {} bytes", bytes.len());
@@ -1584,7 +1659,7 @@ mod tests {
         let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
 
         let mut writer = BitWriter::new();
-        write_modular_stream_with_weighted(&image, &mut writer).unwrap();
+        write_modular_stream_with_weighted(&image, &mut writer, false).unwrap();
 
         let bytes = writer.finish_with_padding();
         crate::trace::debug_eprintln!("Weighted stream: {} bytes", bytes.len());
@@ -1606,7 +1681,7 @@ mod tests {
         let image = ModularImage::from_rgb8(&data, 4, 4).unwrap();
 
         let mut writer = BitWriter::new();
-        write_modular_stream_with_rct_weighted(&image, &mut writer).unwrap();
+        write_modular_stream_with_rct_weighted(&image, &mut writer, false).unwrap();
 
         let bytes = writer.finish_with_padding();
         crate::trace::debug_eprintln!("RCT+Weighted stream: {} bytes", bytes.len());
@@ -1629,7 +1704,7 @@ mod tests {
         crate::trace::debug_eprintln!("\n=== LZ77 BIT TRACE TEST ===");
 
         let mut writer = BitWriter::new();
-        write_improved_modular_stream(&image, &mut writer).unwrap();
+        write_improved_modular_stream(&image, &mut writer, false).unwrap();
 
         let bytes = writer.finish_with_padding();
         crate::trace::debug_eprintln!("LZ77 stream: {} bytes", bytes.len());
@@ -1643,5 +1718,298 @@ mod tests {
         crate::trace::debug_eprintln!("Bit 2: lz77.enabled = 0");
         crate::trace::debug_eprintln!("Bits 3-5: context_map (is_simple=1, bits_per_entry=0)");
         // ... etc
+    }
+
+    #[test]
+    fn test_ans_roundtrip_gray() {
+        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use crate::headers::{ColorEncoding, FileHeader};
+
+        let data: Vec<u8> = vec![
+            100, 101, 102, 103, 101, 102, 103, 104, 102, 103, 104, 105, 103, 104, 105, 106,
+        ];
+        let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
+
+        // Build full JXL bitstream with ANS modular
+        let mut writer = BitWriter::new();
+        let file_header = FileHeader::new_gray(4, 4);
+        file_header.write(&mut writer).unwrap();
+        writer.zero_pad_to_byte();
+
+        let frame_options = FrameEncoderOptions {
+            use_modular: true,
+            effort: 7,
+            use_ans: true,
+        };
+        let frame_encoder = FrameEncoder::new(4, 4, frame_options);
+        let color_encoding = ColorEncoding::srgb();
+        frame_encoder
+            .encode_modular(&image, &color_encoding, &mut writer)
+            .unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("ANS modular gray 4x4: {} bytes", bytes.len());
+
+        // Decode with jxl-oxide
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes))
+            .unwrap_or_else(|e| panic!("jxl-oxide parse failed: {}", e));
+
+        assert_eq!(jxl_image.width(), 4);
+        assert_eq!(jxl_image.height(), 4);
+
+        let render = jxl_image
+            .render_frame(0)
+            .unwrap_or_else(|e| panic!("jxl-oxide render failed: {}", e));
+
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf();
+        let decoded: Vec<u8> = decoded_f32
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        assert_eq!(
+            decoded.len(),
+            data.len(),
+            "decoded size mismatch: {} vs {}",
+            decoded.len(),
+            data.len()
+        );
+
+        for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+            assert_eq!(
+                orig, dec,
+                "pixel {} differs: orig={} decoded={}",
+                i, orig, dec
+            );
+        }
+    }
+
+    #[test]
+    fn test_ans_roundtrip_gray_varied() {
+        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use crate::headers::{ColorEncoding, FileHeader};
+
+        let data = vec![0u8, 64, 128, 192, 255, 100, 50, 200];
+        let image = ModularImage::from_gray8(&data, 4, 2).unwrap();
+
+        // First write with Huffman to get reference bytes
+        {
+            let mut writer = BitWriter::new();
+            let file_header = FileHeader::new_gray(4, 2);
+            file_header.write(&mut writer).unwrap();
+            writer.zero_pad_to_byte();
+
+            let frame_options = FrameEncoderOptions {
+                use_modular: true,
+                effort: 7,
+                use_ans: false,
+            };
+            let frame_encoder = FrameEncoder::new(4, 2, frame_options);
+            let color_encoding = ColorEncoding::srgb();
+            frame_encoder
+                .encode_modular(&image, &color_encoding, &mut writer)
+                .unwrap();
+            let huf_bytes = writer.finish_with_padding();
+            eprintln!("Huffman modular gray varied 4x2: {} bytes", huf_bytes.len());
+            eprintln!("Huffman bytes: {:02x?}", &huf_bytes);
+        }
+
+        // Now write with ANS
+        let mut writer = BitWriter::new();
+        let file_header = FileHeader::new_gray(4, 2);
+        file_header.write(&mut writer).unwrap();
+        writer.zero_pad_to_byte();
+
+        let frame_options = FrameEncoderOptions {
+            use_modular: true,
+            effort: 7,
+            use_ans: true,
+        };
+        let frame_encoder = FrameEncoder::new(4, 2, frame_options);
+        let color_encoding = ColorEncoding::srgb();
+        frame_encoder
+            .encode_modular(&image, &color_encoding, &mut writer)
+            .unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("ANS modular gray varied 4x2: {} bytes", bytes.len());
+        eprintln!("ANS bytes: {:02x?}", &bytes);
+
+        // Save for external debugging
+        std::fs::write("/tmp/ans_modular_varied.jxl", &bytes).ok();
+
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes))
+            .unwrap_or_else(|e| panic!("jxl-oxide parse failed: {}", e));
+
+        let render = jxl_image
+            .render_frame(0)
+            .unwrap_or_else(|e| panic!("jxl-oxide render failed: {}", e));
+
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf();
+        let decoded: Vec<u8> = decoded_f32
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+            assert_eq!(
+                orig, dec,
+                "pixel {} differs: orig={} decoded={}",
+                i, orig, dec
+            );
+        }
+    }
+
+    #[test]
+    fn test_ans_roundtrip_rgb_gradient() {
+        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use crate::headers::{ColorEncoding, FileHeader};
+
+        let mut data = vec![0u8; 8 * 8 * 3];
+        for y in 0..8 {
+            for x in 0..8 {
+                let idx = (y * 8 + x) * 3;
+                data[idx] = (x * 32) as u8;
+                data[idx + 1] = (y * 32) as u8;
+                data[idx + 2] = ((x + y) * 16) as u8;
+            }
+        }
+        let image = ModularImage::from_rgb8(&data, 8, 8).unwrap();
+
+        let mut writer = BitWriter::new();
+        let file_header = FileHeader::new_rgb(8, 8);
+        file_header.write(&mut writer).unwrap();
+        writer.zero_pad_to_byte();
+
+        let frame_options = FrameEncoderOptions {
+            use_modular: true,
+            effort: 7,
+            use_ans: true,
+        };
+        let frame_encoder = FrameEncoder::new(8, 8, frame_options);
+        let color_encoding = ColorEncoding::srgb();
+        frame_encoder
+            .encode_modular(&image, &color_encoding, &mut writer)
+            .unwrap();
+
+        let bytes = writer.finish_with_padding();
+        eprintln!("ANS modular RGB gradient 8x8: {} bytes", bytes.len());
+
+        let jxl_image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes))
+            .unwrap_or_else(|e| panic!("jxl-oxide parse failed: {}", e));
+
+        let render = jxl_image
+            .render_frame(0)
+            .unwrap_or_else(|e| panic!("jxl-oxide render failed: {}", e));
+
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf();
+        let decoded: Vec<u8> = decoded_f32
+            .iter()
+            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+            .collect();
+
+        assert_eq!(decoded.len(), data.len());
+        let mut max_diff = 0i32;
+        for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+            let diff = (orig as i32 - dec as i32).abs();
+            if diff > max_diff {
+                max_diff = diff;
+                eprintln!(
+                    "pixel {} ch {}: orig={} decoded={} diff={}",
+                    i / 3,
+                    i % 3,
+                    orig,
+                    dec,
+                    diff
+                );
+            }
+        }
+        assert_eq!(max_diff, 0, "lossless roundtrip should have zero diff");
+    }
+
+    #[test]
+    fn test_ans_simple_stream() {
+        let data: Vec<u8> = vec![
+            100, 101, 102, 103, 101, 102, 103, 104, 102, 103, 104, 105, 103, 104, 105, 106,
+        ];
+        let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_simple_modular_stream(&image, &mut writer, true).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        assert!(
+            !bytes.is_empty(),
+            "ANS stream should produce non-empty output"
+        );
+    }
+
+    #[test]
+    fn test_ans_rct_stream() {
+        let mut data = Vec::new();
+        for y in 0..4 {
+            for x in 0..4 {
+                let base = (y * 4 + x) * 10;
+                data.push(base as u8);
+                data.push((base + 5) as u8);
+                data.push((base + 10) as u8);
+            }
+        }
+        let image = ModularImage::from_rgb8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_modular_stream_with_rct(&image, &mut writer, true).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        assert!(
+            !bytes.is_empty(),
+            "ANS RCT stream should produce non-empty output"
+        );
+    }
+
+    #[test]
+    fn test_ans_weighted_stream() {
+        let data: Vec<u8> = vec![
+            100, 101, 102, 103, 101, 102, 103, 104, 102, 103, 104, 105, 103, 104, 105, 106,
+        ];
+        let image = ModularImage::from_gray8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_modular_stream_with_weighted(&image, &mut writer, true).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        assert!(
+            !bytes.is_empty(),
+            "ANS weighted stream should produce non-empty output"
+        );
+    }
+
+    #[test]
+    fn test_ans_rct_weighted_stream() {
+        let mut data = Vec::new();
+        for y in 0..4 {
+            for x in 0..4 {
+                let base = (y * 4 + x) * 10;
+                data.push(base as u8);
+                data.push((base + 5) as u8);
+                data.push((base + 10) as u8);
+            }
+        }
+        let image = ModularImage::from_rgb8(&data, 4, 4).unwrap();
+
+        let mut writer = BitWriter::new();
+        write_modular_stream_with_rct_weighted(&image, &mut writer, true).unwrap();
+
+        let bytes = writer.finish_with_padding();
+        assert!(
+            !bytes.is_empty(),
+            "ANS RCT+weighted stream should produce non-empty output"
+        );
     }
 }

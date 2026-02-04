@@ -180,6 +180,7 @@ impl Encoder {
         let frame_options = FrameEncoderOptions {
             use_modular: self.options.distance == 0.0 || self.options.force_modular,
             effort: self.options.effort,
+            use_ans: self.options.use_ans,
         };
 
         let frame_encoder = FrameEncoder::new(image.width(), image.height(), frame_options);
