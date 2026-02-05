@@ -172,8 +172,9 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - DCT32x16/DCT16x32: IMPLEMENTED but selection disabled pending LZ77 backref interaction fix
   (InvalidAnsStream decoder errors when both are enabled). Infrastructure complete:
   forward DCT, DC extraction, quantization weights, coefficient orders, strategy selection.
-- AFV0-3: IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl. Selection not yet enabled
-  (needs integration with strategy search). Quantization weights from libjxl AFV_WEIGHTS/AFV_FREQS.
+- AFV0-3: IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl. Auto-selection causes quality
+  regression (butteraugli 27 vs 1.5 baseline) — likely cost model calibration issue. Forced encoding
+  works correctly. DC extraction fixed to use coefficients[0] (same as IDENTITY).
 - Missing (large transforms): DCT64x32, DCT32x64, DCT64x64, etc.
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
@@ -257,7 +258,8 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
 - [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/IDENTITY/DCT2X2 per 16x16 region)
 - [ ] DCT32x16/DCT16x32: infrastructure complete but selection disabled (LZ77 interaction issue)
-- [x] AFV0-3: transform, DC extraction, quantization weights complete (selection not yet integrated)
+- [x] AFV0-3: transform, DC extraction, quantization weights complete. Auto-selection disabled
+  (cost model issue causes quality regression when mixed with other strategies)
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
