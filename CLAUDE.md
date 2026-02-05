@@ -205,7 +205,9 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - LZ77 with RLE and backward-reference methods (`--lz77` flag, ANS-only, two-pass only)
   - RLE method: matches consecutive identical tokens (fast, limited on photos)
   - Greedy method: hash chain backward references (default when enabled)
-  - Both methods decoder-validated with jxl-oxide, rarely activate on VarDCT photos
+  - Both methods decoder-validated with jxl-rs, jxl-oxide, and djxl
+  - Greedy backref uses correct per-subimage dist_multiplier (xsize_blocks for DC,
+    max(channel_widths) for AC metadata) matching decoder's SPECIAL_DISTANCES table
     (threshold not met), mainly helps modular/graphics content
 - Content-adaptive block context map (default-on in two-pass, QF-based splitting,
   ~0.5% average savings on large images, verified with jxl-rs and djxl)
@@ -230,9 +232,10 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
    - Verified with jxl-oxide, djxl, and jxl-rs
    - Impact on 64x64 gradient: -18.9% file size (482 → 391 bytes)
 4. ~~Backward-reference LZ77~~ — DONE (hash chain matching implemented, `--lz77-method greedy`)
-   - RLE and Greedy methods both work, decoder-validated with jxl-oxide
-   - Greedy rarely activates on VarDCT (threshold not met), mainly helps modular/graphics
-   - Special distance codes disabled until decoder compatibility verified
+   - RLE and Greedy methods both work, decoder-validated with jxl-rs, jxl-oxide, and djxl
+   - Fixed Feb 5, 2026: LZ77 header bit count (CeilLog2Nonzero(1)=0 for msb/lsb) and
+     distance multiplier (must match decoder's per-subimage max(channel_widths))
+   - Special distance codes now correctly enabled for DC stream (dist_multiplier=xsize_blocks)
 5. Iterative rate control (high effort, 2-5% RD improvement)
 6. Increase kFavor2X2 to full -0.4 after iterative rate control is implemented
 
@@ -364,6 +367,35 @@ For reference, libjxl-tiny's simplifications vs full libjxl:
 - Single uint coding scheme, no backward references — **we have LZ77 RLE and Greedy backref**
 
 ## Resolved Bugs
+
+### LZ77 Backward Reference Decoder Failures (FIXED Feb 5, 2026)
+
+**Issue**: LZ77 greedy backref mode (`--lz77-method greedy`) produced files rejected by
+all three decoders: jxl-oxide (`InvalidPrefixHistogram`), jxl-rs (`Huffman alphabet too large`),
+djxl (`Failed to decode`). RLE mode worked fine.
+
+**Root Causes**:
+
+1. **LZ77 header HybridUint bit count**: When writing `length_uint_config` with
+   `split_exponent=0`, the encoder wrote 2 extra bits (1 each for `msb_in_token` and
+   `lsb_in_token`). Per the spec, `CeilLog2Nonzero(0+1) = CeilLog2Nonzero(1) = 0`,
+   meaning 0 bits are needed for both fields. The 2-bit misalignment caused decoders to
+   misparse the entropy code header (reading ANS data as Huffman prefix code).
+
+2. **Distance multiplier mismatch**: The encoder used `distance_multiplier=0` for all LZ77
+   tokens, but the decoder computes `dist_multiplier = max(channel_widths)` per modular
+   subimage. For DC, this is `xsize_blocks` (e.g. 32 for a 256px image). When non-zero,
+   distance symbols 0-119 are interpreted via the SPECIAL_DISTANCES table (2D offsets like
+   "previous row"), not as raw 1D distances. The encoder's raw distances were decoded as
+   2D special distances, producing wrong copy offsets and corrupted pixels.
+
+**Fix**: Removed extra header bits. Set per-group distance multipliers:
+- DC tokens: `group_dc_width` (= group's xsize_blocks)
+- AC metadata tokens: `max(epf_w, num_ac_blocks, qf_w)` (matching decoder's channel widths)
+- AC VarDCT coefficients: 0 (decoder passes 0 for non-modular AC data)
+
+**Verification**: LZ77 backref roundtrip test passes — pixel-exact match between LZ77
+and non-LZ77 output, verified with jxl-rs, jxl-oxide, and djxl.
 
 ### DCT32x32 "Output Corruption" - Not a Bug (RESOLVED Feb 4, 2026)
 
