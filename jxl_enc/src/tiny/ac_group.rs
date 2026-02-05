@@ -186,16 +186,18 @@ fn coefficient_layout_order(rows: usize, cols: usize, llf_x: usize, llf_y: usize
 /// - 12 = DCT4X8 (8x8 with 4x8 sub-blocks, 64 coeffs)
 /// - 13 = DCT8X4 (8x8 with 8x4 sub-blocks, 64 coeffs)
 /// - 3 = DCT4X4 (8x8 with 4x4 sub-blocks, 64 coeffs)
+/// - 14-17 = AFV0-AFV3 (8x8 hybrid transform, 64 coeffs)
 pub fn get_coeff_order(strategy_code: u8) -> &'static [u32] {
     match strategy_code {
-        0 => &COEFF_ORDER_8X8,           // DCT8
-        3 | 12 | 13 => &COEFF_ORDER_8X8, // DCT4X4, DCT4X8, DCT8X4 (64 coeffs like DCT8)
-        4 => &COEFF_ORDER_16X16,         // DCT16X16
-        5 => &COEFF_ORDER_32X32,         // DCT32X32
-        6 | 7 => &COEFF_ORDER_8X16,      // DCT8X16, DCT16X8
-        10 => &COEFF_ORDER_32X16,        // DCT32X16
-        11 => &COEFF_ORDER_16X32,        // DCT16X32
-        _ => &COEFF_ORDER_8X8,           // Default to 8x8 for unknown strategies
+        0 => &COEFF_ORDER_8X8,                 // DCT8
+        3 | 12 | 13 => &COEFF_ORDER_8X8,       // DCT4X4, DCT4X8, DCT8X4 (64 coeffs like DCT8)
+        14..=17 => &COEFF_ORDER_8X8,            // AFV0-AFV3 (64 coeffs like DCT8)
+        4 => &COEFF_ORDER_16X16,               // DCT16X16
+        5 => &COEFF_ORDER_32X32,               // DCT32X32
+        6 | 7 => &COEFF_ORDER_8X16,            // DCT8X16, DCT16X8
+        10 => &COEFF_ORDER_32X16,              // DCT32X16
+        11 => &COEFF_ORDER_16X32,              // DCT16X32
+        _ => &COEFF_ORDER_8X8,                 // Default to 8x8 for unknown strategies
     }
 }
 
