@@ -164,15 +164,16 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 12 of 27 implemented**
+**A. AC Strategies — 16 of 27 implemented**
 - Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32, IDENTITY, DCT2X2,
-  DCT32x16, DCT16x32
+  DCT32x16, DCT16x32, AFV0, AFV1, AFV2, AFV3
 - IDENTITY auto-selects ~4-6% on natural photos at d=1.0, improves SSIM2/butteraugli
 - DCT2X2 rarely selected without kFavor2X2 bonus (disabled — our cost model is not complete enough)
 - DCT32x16/DCT16x32: IMPLEMENTED but selection disabled pending LZ77 backref interaction fix
   (InvalidAnsStream decoder errors when both are enabled). Infrastructure complete:
   forward DCT, DC extraction, quantization weights, coefficient orders, strategy selection.
-- Missing (impactful on photos): AFV0-3 (code 8-11)
+- AFV0-3: IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl. Selection not yet enabled
+  (needs integration with strategy search). Quantization weights from libjxl AFV_WEIGHTS/AFV_FREQS.
 - Missing (large transforms): DCT64x32, DCT32x64, DCT64x64, etc.
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
@@ -215,7 +216,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 **Priority path:**
 1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
-2. AFV corner DCT (high effort, 0.5-1%)
+2. ~~AFV corner DCT~~ — DONE (Feb 4, 2026, all 4 variants verified with decoders)
 3. ~~DC tree learning~~ — DONE (Feb 4, 2026)
    - `dc_tree_learn.rs`: Learns optimal context tree from DC statistics
    - `TinyEncoder.dc_tree_learning` flag (off by default, opt-in feature)
@@ -256,6 +257,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
 - [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/IDENTITY/DCT2X2 per 16x16 region)
 - [ ] DCT32x16/DCT16x32: infrastructure complete but selection disabled (LZ77 interaction issue)
+- [x] AFV0-3: transform, DC extraction, quantization weights complete (selection not yet integrated)
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
@@ -335,7 +337,8 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   Processes coefficients in zigzag order, propagates 1/4 error to next coefficient.
   Helps preserve smooth gradients at high compression (d > 2.0). Note: libjxl has the
   parameter but never implemented the actual diffusion - this is a novel implementation.
-- [ ] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks.
+- [x] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks. Working! All 4 variants
+  (AFV0-3) verified with jxl-oxide and djxl. Selection not yet integrated with strategy search.
 
 **Tier 3: Content-specific / UX**
 
