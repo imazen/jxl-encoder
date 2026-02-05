@@ -1495,15 +1495,12 @@ fn find_best_32x32_transform(
         best_cost = entropy_32x32;
         best_choice = 1;
     }
-    // TODO: DCT32x16/DCT16x32 currently disabled due to coefficient order issues
-    // that cause decoder errors when combined with certain encoding modes (e.g., LZ77).
-    // Re-enable after investigating and fixing the coefficient layout.
-    let _enable_32x16 = false;
-    if _enable_32x16 && entropy_32x16_total < best_cost {
+    // DCT32x16/DCT16x32 now enabled (fixed pixel extraction bug Feb 4, 2026)
+    if entropy_32x16_total < best_cost {
         best_cost = entropy_32x16_total;
         best_choice = 2;
     }
-    if _enable_32x16 && entropy_16x32_total < best_cost {
+    if entropy_16x32_total < best_cost {
         // best_cost = entropy_16x32_total; // Not needed, just using best_choice
         best_choice = 3;
     }

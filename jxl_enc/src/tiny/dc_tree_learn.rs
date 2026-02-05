@@ -737,7 +737,12 @@ const NUM_AC_META_CONTEXTS: u32 = 11;
 pub fn tree_tokens_with_ac_metadata_prefix(
     dc_tree: &DcTree,
     learned_num_contexts: u32,
-) -> (Vec<(u32, u32)>, u32, Vec<u32>, [u32; NUM_AC_META_CONTEXTS as usize]) {
+) -> (
+    Vec<(u32, u32)>,
+    u32,
+    Vec<u32>,
+    [u32; NUM_AC_META_CONTEXTS as usize],
+) {
     use super::common::pack_signed;
     use std::collections::VecDeque;
 
@@ -1077,6 +1082,7 @@ pub fn learn_and_collect_dc_tokens(
 }
 
 /// Extract a region of DC values for sample gathering.
+#[allow(clippy::needless_range_loop)]
 fn extract_dc_region(
     quant_dc: &[Vec<Vec<i16>>; 3],
     start_bx: usize,
@@ -1112,8 +1118,8 @@ mod debug_tests {
 
     #[test]
     fn test_static_tokens_through_learned_path() {
-        use crate::tiny::context_tree::CONTEXT_TREE_TOKENS;
         use crate::tiny::common::pack_signed;
+        use crate::tiny::context_tree::CONTEXT_TREE_TOKENS;
         let num_dc_groups = 1;
 
         // Get the static tokens with num_dc_groups adjustment
@@ -1174,12 +1180,26 @@ fn test_wrapped_tree_tokens() {
     // All contexts (DC and AC meta) should be unique and within [0, total)
     let mut all_ctxs = std::collections::HashSet::new();
     for &bfs in &dc_remap {
-        assert!(bfs < total_contexts, "DC ctx {} >= total {}", bfs, total_contexts);
+        assert!(
+            bfs < total_contexts,
+            "DC ctx {} >= total {}",
+            bfs,
+            total_contexts
+        );
         assert!(all_ctxs.insert(bfs), "Duplicate DC BFS context {}", bfs);
     }
     for &bfs in &ac_map {
-        assert!(bfs < total_contexts, "AC meta ctx {} >= total {}", bfs, total_contexts);
-        assert!(all_ctxs.insert(bfs), "Duplicate AC meta BFS context {}", bfs);
+        assert!(
+            bfs < total_contexts,
+            "AC meta ctx {} >= total {}",
+            bfs,
+            total_contexts
+        );
+        assert!(
+            all_ctxs.insert(bfs),
+            "Duplicate AC meta BFS context {}",
+            bfs
+        );
     }
 }
 
@@ -1210,8 +1230,7 @@ fn test_wrapped_tree_tokens_depth1_dc() {
         },
     ];
 
-    let (_, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 2);
+    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 2);
     eprintln!(
         "Depth-1 DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
@@ -1223,12 +1242,34 @@ fn test_wrapped_tree_tokens_depth1_dc() {
     // All contexts should be unique and within [0, total)
     let mut all_ctxs = std::collections::HashSet::new();
     for (i, &bfs) in dc_remap.iter().enumerate() {
-        assert!(bfs < total_contexts, "DC remap[{}]={} >= total {}", i, bfs, total_contexts);
-        assert!(all_ctxs.insert(bfs), "Duplicate DC ctx {} at remap[{}]", bfs, i);
+        assert!(
+            bfs < total_contexts,
+            "DC remap[{}]={} >= total {}",
+            i,
+            bfs,
+            total_contexts
+        );
+        assert!(
+            all_ctxs.insert(bfs),
+            "Duplicate DC ctx {} at remap[{}]",
+            bfs,
+            i
+        );
     }
     for (i, &bfs) in ac_map.iter().enumerate() {
-        assert!(bfs < total_contexts, "AC meta ctx {} >= total {} at map[{}]", bfs, total_contexts, i);
-        assert!(all_ctxs.insert(bfs), "Duplicate AC meta ctx {} at map[{}]", bfs, i);
+        assert!(
+            bfs < total_contexts,
+            "AC meta ctx {} >= total {} at map[{}]",
+            bfs,
+            total_contexts,
+            i
+        );
+        assert!(
+            all_ctxs.insert(bfs),
+            "Duplicate AC meta ctx {} at map[{}]",
+            bfs,
+            i
+        );
     }
 }
 
@@ -1257,8 +1298,7 @@ fn test_wrapped_tree_tokens_deep_dc() {
         });
     }
 
-    let (_, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 32);
+    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 32);
     eprintln!(
         "Deep DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
@@ -1271,10 +1311,25 @@ fn test_wrapped_tree_tokens_deep_dc() {
     let mut dc_set = std::collections::HashSet::new();
     for (i, &bfs) in dc_remap.iter().enumerate() {
         assert!(bfs >= 11, "DC remap[{}]={} < 11", i, bfs);
-        assert!(bfs < total_contexts, "DC remap[{}]={} >= total {}", i, bfs, total_contexts);
-        assert!(dc_set.insert(bfs), "Duplicate DC BFS context {} at remap[{}]", bfs, i);
+        assert!(
+            bfs < total_contexts,
+            "DC remap[{}]={} >= total {}",
+            i,
+            bfs,
+            total_contexts
+        );
+        assert!(
+            dc_set.insert(bfs),
+            "Duplicate DC BFS context {} at remap[{}]",
+            bfs,
+            i
+        );
     }
     for i in 0..11u32 {
-        assert_eq!(ac_map[i as usize], i, "AC meta {} not at expected BFS position", i);
+        assert_eq!(
+            ac_map[i as usize], i,
+            "AC meta {} not at expected BFS position",
+            i
+        );
     }
 }
