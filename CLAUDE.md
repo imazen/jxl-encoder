@@ -172,9 +172,12 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - DCT32x16/DCT16x32: IMPLEMENTED but selection disabled pending LZ77 backref interaction fix
   (InvalidAnsStream decoder errors when both are enabled). Infrastructure complete:
   forward DCT, DC extraction, quantization weights, coefficient orders, strategy selection.
-- AFV0-3: IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl. Auto-selection causes quality
-  regression (butteraugli 27 vs 1.5 baseline) — likely cost model calibration issue. Forced encoding
-  works correctly. DC extraction fixed to use coefficients[0] (same as IDENTITY).
+- AFV0-3: IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl. Forced encoding works correctly.
+  Auto-selection DISABLED in pixel-domain mode (default) — root cause: pixel-domain loss uses standard
+  8x8 IDCT to reconstruct pixels, but AFV has a different inverse transform (inverse AFV4x4 + inverse
+  DCT4x4 + inverse DCT4x8). Wrong IDCT produces meaningless loss values, causing 35-43% underestimated
+  costs for AFV. TODO: Implement proper inverse AFV transform for pixel-domain loss.
+  Auto-selection works in coefficient-domain mode (`--no-pixel-domain-loss`).
 - Missing (large transforms): DCT64x32, DCT32x64, DCT64x64, etc.
 - Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
 
