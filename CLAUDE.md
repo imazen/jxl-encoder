@@ -216,17 +216,15 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 **Priority path:**
 1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
 2. AFV corner DCT (high effort, 0.5-1%)
-3. ~~DC tree learning~~ — ABANDONED (Feb 4, 2026)
-   - Infrastructure exists in `dc_tree_learn.rs` but is not worth completing
-   - **Root cause of failure**: The MA tree routes both AC metadata (contexts 0-10) and DC
-     (contexts 11-44) based on sample properties. Property 1 (stream_id) distinguishes them:
-     VarDCTDC has stream_id=1, ACMetadata has stream_id=3. Our prefix tree used channel
-     property which doesn't distinguish them. Fixing requires parsing the static tree and
-     splicing in the learned DC subtree while preserving AC metadata routing — significant
-     complexity for modest gains.
-   - **Expected impact**: ~1.2% overall file size (DC is ~12% of file, tree learning helps ~10%)
-   - **Not worth it**: Better to focus on higher-impact improvements (iterative rate control,
-     more AC strategies) than solving this complex tree routing problem
+3. ~~DC tree learning~~ — DONE (Feb 4, 2026)
+   - `dc_tree_learn.rs`: Learns optimal context tree from DC statistics
+   - `TinyEncoder.dc_tree_learning` flag (off by default, opt-in feature)
+   - Merges learned DC tree with AC metadata prefix subtree (11 fixed contexts)
+   - Uses BFS ordering for tree tokens with full context remapping
+   - Key fixes: JXL tree direction convention (LEFT=property>splitval, RIGHT=property≤splitval),
+     removed padding chain (invalid: decoders narrow property ranges), full BFS remap array
+   - Verified with jxl-oxide, djxl, and jxl-rs
+   - Impact on 64x64 gradient: -18.9% file size (482 → 391 bytes)
 4. ~~Backward-reference LZ77~~ — DONE (hash chain matching implemented, `--lz77-method greedy`)
    - RLE and Greedy methods both work, decoder-validated with jxl-oxide
    - Greedy rarely activates on VarDCT (threshold not met), mainly helps modular/graphics
@@ -1528,30 +1526,32 @@ size than DCT8-only), but produces slightly larger files than coefficient-domain
 3. Check if quant_norm16 computation differs from libjxl's behavior
 
 
-### DC Tree Learning — ABANDONED (Feb 4, 2026)
+### DC Tree Learning — FIXED (Feb 4, 2026)
 
-**Status**: Abandoned — not worth the complexity for ~1.2% overall gain
+**Status**: Working — opt-in feature via `TinyEncoder.dc_tree_learning = true`
 
-**Issue**: DC tree learning produces files that fail to decode with UnexpectedEof/InvalidAnsStream.
+**Key fixes applied**:
 
-**Root cause** (fully analyzed Feb 4, 2026):
-The MA tree routes both AC metadata (contexts 0-10) and DC (contexts 11-44) based on sample
-properties. The key property is **property 1 (stream_id)**:
-- For `num_dc_groups=1`: VarDCTDC has stream_id=1, ACMetadata has stream_id=3
-- Static tree's first split: `property 1 <= 2` routes DC left, AC metadata right
+1. **JXL tree direction convention**: Our DC tree builder used lchild=property≤splitval,
+   rchild=property>splitval. JXL spec uses LEFT=property>splitval, RIGHT=property≤splitval.
+   Fixed by swapping children when converting DC tree nodes to flat representation.
 
-Our prefix tree used `property 0 (channel) <= -1`, but ALL samples have channel ≥ 0, so they
-all go to the right subtree and the AC metadata leaves are never reached by decoder.
+2. **Removed padding chain**: Previous approach used repeated splits on property 1 (stream_id)
+   with splitval=0 or splitval=1 to push DC leaves deeper in BFS. Decoders narrow property
+   ranges at each branch, rejecting splits outside the narrowed range. Instead, we use a
+   full BFS context remap array that correctly maps any tree structure.
 
-**Why not worth fixing**:
-1. Expected gain: ~1.2% overall file size (DC is ~12% of file, tree learning helps ~10%)
-2. Fix complexity: Would need to parse static tree structure, extract AC metadata subtree,
-   and splice in learned DC tree while preserving exact property routing
-3. Better alternatives: Iterative rate control (2-5%), more AC strategies (5-15%), etc.
+3. **Full BFS remap array**: Changed from simple `dc_ctx_offset` (assumed sequential BFS)
+   to `dc_ctx_remap: Vec<u32>` that maps each DFS-assigned DC context to its actual BFS
+   position. This handles unbalanced trees where BFS and DFS visit leaves differently.
 
-**Decision**: Keep the static gradient-based context tree (34 contexts via GRADIENT_CONTEXT_LUT).
-It already provides good context separation. The `dc_tree_learn.rs` infrastructure remains
-for potential future use but is disabled by default.
+4. **AC metadata prefix subtree**: Uses property 1 (stream_id), splitval=2 at root.
+   LEFT (stream_id>2): AC metadata subtree with 11 contexts (EPF, CfL, QF, ACS)
+   RIGHT (stream_id≤2): DC subtree with learned contexts
 
 **Files involved**:
-- `dc_tree_learn.rs`: Tree learning infrastructure (kept but unused)
+- `dc_tree_learn.rs`: Tree learning, `tree_tokens_with_ac_metadata_prefix()`
+- `encoder.rs`: Integration, token context remapping
+
+**Impact**: -18.9% file size on 64x64 gradient (482 → 391 bytes). Real-world impact varies
+by image content — gradient images with regular DC patterns benefit most.

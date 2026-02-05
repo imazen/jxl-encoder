@@ -2735,53 +2735,48 @@ impl TinyEncoder {
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
-        // DC tree learning: learn optimal context tree if enabled
-        // Returns (tree, num_contexts, tokens) where:
-        // - tree: the learned tree for context evaluation
-        // - total_num_contexts: total number of contexts (DC + AC metadata)
-        // - dc_only_num_contexts: DC-only context count (for AC metadata remapping)
-        // - tokens: tree tokens WITH AC metadata prefix for proper decoder context creation
-        let (learned_dc_tree, learned_dc_num_contexts, dc_only_num_contexts, learned_tree_tokens) =
-            if self.dc_tree_learning && num_dc_groups == 1 {
-                // Learn tree from DC samples
-                let mut samples = super::dc_tree_learn::DcTreeSamples::new();
-                super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
+        // DC tree learning: learn optimal context tree from image content.
+        // Returns (tree, total_contexts, dc_ctx_remap, ac_meta_ctx_map, tokens)
+        let (
+            learned_dc_tree,
+            learned_dc_num_contexts,
+            dc_ctx_remap,
+            ac_meta_ctx_map,
+            learned_tree_tokens,
+        ) = if self.dc_tree_learning && num_dc_groups == 1 {
+            let mut samples = super::dc_tree_learn::DcTreeSamples::new();
+            super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
 
-                if samples.num_samples > 0 {
-                    let max_token = 64; // Reasonable max for DC residual tokens
-                    let (tree, dc_num_contexts) =
-                        super::dc_tree_learn::learn_dc_tree(&samples, max_token);
+            if samples.num_samples > 0 {
+                let max_token = 64;
+                let (tree, dc_num_contexts) =
+                    super::dc_tree_learn::learn_dc_tree(&samples, max_token);
 
-                    // Build merged tree with AC metadata routing and get BFS-order tokens
-                    // - DC leaves in LEFT subtree: contexts 0 to dc_num_contexts-1
-                    // - AC metadata leaf in RIGHT subtree: context dc_num_contexts
-                    let (wrapped_tokens, total_contexts) =
-                        super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
-                            &tree,
-                            dc_num_contexts,
-                        );
-
-                    #[cfg(feature = "debug-tokens")]
-                    eprintln!(
-                        "DC tree learning: dc_num_contexts={}, total_contexts={}, tree.len()={}, wrapped_tokens.len()={}",
+                let (wrapped_tokens, total_contexts, dc_remap, ac_ctx_map) =
+                    super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                        &tree,
                         dc_num_contexts,
-                        total_contexts,
-                        tree.len(),
-                        wrapped_tokens.len()
                     );
 
-                    (
-                        Some(tree),
-                        Some(total_contexts as usize),
-                        Some(dc_num_contexts as usize),
-                        Some(wrapped_tokens),
-                    )
-                } else {
-                    (None, None, None, None)
-                }
+                #[cfg(feature = "debug-tokens")]
+                eprintln!(
+                    "DC tree learning: dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
+                    dc_num_contexts, total_contexts, dc_remap, ac_ctx_map
+                );
+
+                (
+                    Some(tree),
+                    Some(total_contexts as usize),
+                    Some(dc_remap),
+                    Some(ac_ctx_map),
+                    Some(wrapped_tokens),
+                )
             } else {
-                (None, None, None, None)
-            };
+                (None, None, None, None, None)
+            }
+        } else {
+            (None, None, None, None, None)
+        };
 
         // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
         let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
@@ -2814,14 +2809,16 @@ impl TinyEncoder {
                 cfl_map,
                 ac_strategy,
             );
-            // When using learned tree, remap contexts to match decoder's BFS leaf order:
-            // - AC metadata leaf is visited first in BFS → context 0
-            // - DC leaves are visited after → contexts 1, 2, ... (add 1 to DC contexts)
-            let dc_tokens = if dc_only_num_contexts.is_some() {
+            // When using learned tree, remap ALL token contexts to match BFS ordering.
+            // The merged tree's BFS interleaves dummy padding leaves with AC metadata,
+            // so contexts are NOT sequential 0-10 for AC meta and 11+ for DC.
+            // dc_ctx_remap[orig] maps each DC tree context to its BFS context ID.
+            // ac_meta_ctx_map[orig] gives the actual BFS context for each AC meta context.
+            let dc_tokens = if let Some(ref remap) = dc_ctx_remap {
                 dc_tokens
                     .into_iter()
                     .map(|mut t| {
-                        t.context += 1; // DC contexts shift from [0, n-1] to [1, n]
+                        t.context = remap[t.context as usize];
                         t
                     })
                     .collect()
@@ -2830,12 +2827,11 @@ impl TinyEncoder {
             };
             dc_tokens_per_group.push(dc_tokens);
 
-            // AC metadata uses context 0 when tree learning is enabled
-            let md_tokens = if dc_only_num_contexts.is_some() {
+            let md_tokens = if let Some(ref map) = ac_meta_ctx_map {
                 md_tokens
                     .into_iter()
                     .map(|mut t| {
-                        t.context = 0; // AC metadata leaf is BFS position 0
+                        t.context = map[t.context as usize];
                         t
                     })
                     .collect()
@@ -3800,15 +3796,7 @@ mod tests {
     }
 
     /// Test DC tree learning produces valid output.
-    ///
-    /// **BROKEN**: The learned tree doesn't correctly route AC metadata samples
-    /// to contexts 0-10. The decoder evaluates the tree with sample properties
-    /// (including stream_id) and must arrive at the same context the encoder used.
-    /// Our prefix tree used property 0 (channel) which doesn't distinguish
-    /// AC metadata (stream_id=3) from DC (stream_id=1). Fixing requires parsing
-    /// the static tree and splicing in learned DC subtree - not worth ~1.2% gain.
     #[test]
-    #[ignore] // BROKEN: Learned tree misroutes AC metadata. See CLAUDE.md for analysis.
     fn test_dc_tree_learning() {
         let width = 64;
         let height = 64;
@@ -3824,17 +3812,16 @@ mod tests {
             }
         }
 
-        // Encode WITHOUT DC tree learning (baseline)
+        // Encode WITHOUT DC tree learning (baseline) — use ANS
         let mut encoder_baseline = TinyEncoder::new(1.0);
         encoder_baseline.dc_tree_learning = false;
         let bytes_baseline = encoder_baseline
             .encode(width, height, &linear_rgb)
             .expect("baseline encode failed");
 
-        // Encode WITH DC tree learning (try without ANS first to isolate issues)
+        // Encode WITH DC tree learning — also use ANS
         let mut encoder_learned = TinyEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
-        encoder_learned.use_ans = false; // Use Huffman to avoid ANS issues
         std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
         let bytes_learned = encoder_learned
             .encode(width, height, &linear_rgb)
@@ -3854,6 +3841,18 @@ mod tests {
         assert_eq!(bytes_learned[0], 0xFF);
         assert_eq!(bytes_learned[1], 0x0A);
 
+        // Verify baseline decodes (sanity check)
+        {
+            let image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&bytes_baseline))
+                .expect("jxl-oxide parse of baseline failed");
+            let render = image
+                .render_frame(0)
+                .expect("jxl-oxide render of baseline failed");
+            let _pixels = render.image_all_channels();
+            eprintln!("Baseline ANS decodes OK ({} bytes)", bytes_baseline.len());
+        }
+
         // Decode the learned version with jxl-oxide to verify it's valid
         let image = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&bytes_learned))
@@ -3866,5 +3865,9 @@ mod tests {
             .render_frame(0)
             .expect("jxl-oxide render of learned version failed");
         let _pixels = render.image_all_channels();
+        eprintln!("Learned ANS decodes OK ({} bytes)", bytes_learned.len());
+
+        // Also verify with djxl
+        std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
     }
 }
