@@ -1222,12 +1222,12 @@ impl TinyEncoder {
                 dct2x2_transform(&channel_data[pixel_offset..], stride, &mut output[..64]);
             }
             RAW_STRATEGY_DCT32X16 => {
-                // DCT32X16: 32x16 transform (4×2 blocks)
+                // DCT32X16: 32x16 transform (4 rows × 2 cols of 8x8 blocks = 32 rows × 16 cols)
                 let mut block = [0.0f32; 512];
-                for dy in 0..16 {
+                for dy in 0..32 {
                     let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..32 {
-                        block[dy * 32 + dx] = channel_data[row_offset + dx];
+                    for dx in 0..16 {
+                        block[dy * 16 + dx] = channel_data[row_offset + dx];
                     }
                 }
                 let mut dct_out = [0.0f32; 512];
@@ -1235,12 +1235,12 @@ impl TinyEncoder {
                 output[..512].copy_from_slice(&dct_out);
             }
             RAW_STRATEGY_DCT16X32 => {
-                // DCT16X32: 16x32 transform (2×4 blocks)
+                // DCT16X32: 16x32 transform (2 rows × 4 cols of 8x8 blocks = 16 rows × 32 cols)
                 let mut block = [0.0f32; 512];
-                for dy in 0..32 {
+                for dy in 0..16 {
                     let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..16 {
-                        block[dy * 16 + dx] = channel_data[row_offset + dx];
+                    for dx in 0..32 {
+                        block[dy * 32 + dx] = channel_data[row_offset + dx];
                     }
                 }
                 let mut dct_out = [0.0f32; 512];

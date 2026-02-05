@@ -990,3 +990,53 @@ fn test_lz77_backref_roundtrip() {
 
     eprintln!("LZ77 backref roundtrip OK — pixels match non-LZ77 reference");
 }
+
+#[test]
+#[ignore] // Decoder integration test
+fn test_dct32x16_16x32_roundtrip() {
+    use std::io::Cursor;
+
+    // Create 64x64 gradient in linear RGB - large enough for 32x32 strategy evaluation
+    let width = 64;
+    let height = 64;
+    let mut linear_rgb = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let r = x as f32 / width as f32;
+            let g = y as f32 / height as f32;
+            let b = 0.5f32;
+            linear_rgb.extend_from_slice(&[r, g, b]);
+        }
+    }
+
+    // Test at d=3.0 where 32x16/16x32 would be considered
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.use_ans = true;
+    encoder.enable_gaborish = false; // Disable gab for simpler testing
+
+    let encoded = encoder
+        .encode(width, height, &linear_rgb)
+        .expect("encode should succeed");
+    eprintln!(
+        "DCT32x16/DCT16x32 test: encoded {} bytes at d=3.0",
+        encoded.len()
+    );
+
+    // Save for inspection
+    let output_path = "/mnt/v/output/jxl-encoder-rs/tiny/test_dct32x16_64x64.jxl";
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/tiny");
+    let _ = std::fs::write(output_path, &encoded);
+
+    // Verify decode with jxl-oxide
+    let cursor = Cursor::new(&encoded);
+    let image = jxl_oxide::JxlImage::builder()
+        .read(cursor)
+        .expect("jxl-oxide parse");
+    eprintln!("jxl-oxide: parsed {}x{}", image.width(), image.height());
+    assert_eq!(image.width(), width as u32);
+    assert_eq!(image.height(), height as u32);
+
+    // Render to get actual pixels - if this succeeds, the bitstream is valid
+    let _render = image.render_frame(0).expect("render frame");
+    eprintln!("Rendered frame successfully!");
+}
