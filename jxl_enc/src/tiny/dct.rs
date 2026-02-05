@@ -932,6 +932,87 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     }
 }
 
+/// Compute 4x4 inverse DCT (exactly reverses dct_4x4).
+/// Input layout: 4 rows x 4 cols, stride 4.
+pub fn idct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
+    let mut tmp = [0.0f32; 16];
+
+    // Apply 4-point IDCT to each row
+    // Scale by 4 to compensate for the 1/4 scaling in forward transform
+    for row in 0..4 {
+        let row_start = row * 4;
+        for i in 0..4 {
+            tmp[row_start + i] = input[row_start + i] * 4.0;
+        }
+        idct1d_4(&mut tmp[row_start..row_start + 4]);
+    }
+
+    // Transpose
+    for row in 0..4 {
+        for col in 0..4 {
+            output[col * 4 + row] = tmp[row * 4 + col];
+        }
+    }
+
+    // Apply 4-point IDCT to each row of transposed (now columns)
+    // Scale by 4 to compensate for the 1/4 scaling in forward transform
+    for row in 0..4 {
+        let row_start = row * 4;
+        for i in 0..4 {
+            output[row_start + i] *= 4.0;
+        }
+        idct1d_4(&mut output[row_start..row_start + 4]);
+    }
+}
+
+/// Compute 4x8 inverse DCT (exactly reverses dct_4x8).
+/// Input layout: 4 rows x 8 cols, stride 8.
+///
+/// dct_4x8 does:
+///   1. 8-point DCT on rows, then *= 1/8
+///   2. Transpose 4x8 -> 8x4
+///   3. 4-point DCT on rows of transposed, then *= 1/4
+///   4. Transpose 8x4 -> 4x8
+///
+/// So idct_4x8 must reverse these steps:
+///   1. Transpose 4x8 -> 8x4
+///   2. *= 4, then 4-point IDCT on rows
+///   3. Transpose 8x4 -> 4x8
+///   4. 8-point IDCT on rows (includes internal *= 8)
+pub fn idct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
+    // Step 1: Transpose 4x8 -> 8x4
+    let mut transposed = [0.0f32; 32];
+    for row in 0..4 {
+        for col in 0..8 {
+            transposed[col * 4 + row] = input[row * 8 + col];
+        }
+    }
+
+    // Step 2: *= 4, then 4-point IDCT on each row
+    for row in 0..8 {
+        let row_start = row * 4;
+        for i in 0..4 {
+            transposed[row_start + i] *= 4.0;
+        }
+        idct1d_4(&mut transposed[row_start..row_start + 4]);
+    }
+
+    // Step 3: Transpose 8x4 -> 4x8
+    let mut tmp = [0.0f32; 32];
+    for row in 0..8 {
+        for col in 0..4 {
+            tmp[col * 8 + row] = transposed[row * 4 + col];
+        }
+    }
+
+    // Step 4: 8-point IDCT on each row (includes internal *= 8)
+    for row in 0..4 {
+        let row_start = row * 8;
+        output[row_start..row_start + 8].copy_from_slice(&tmp[row_start..row_start + 8]);
+        idct1d_8(&mut output[row_start..row_start + 8]);
+    }
+}
+
 /// Generic N-point 1D IDCT reference implementation.
 #[allow(clippy::needless_range_loop)]
 fn idct1d_n_ref(input: &[f32], output: &mut [f32], n: usize) {

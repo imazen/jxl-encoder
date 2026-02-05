@@ -733,13 +733,21 @@ fn estimate_entropy_full(
 /// Returns pixel-domain error in row-major layout.
 fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
     match raw_strategy {
-        RAW_STRATEGY_DCT8 | RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
-        | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-            // All these use 8x8 pixel output (AFV uses 8x8 IDCT as approximation)
+        RAW_STRATEGY_DCT8 | RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4 => {
+            // All these use 8x8 pixel output with standard 8x8 IDCT
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&error_coeffs[..64]);
             let mut output = [0.0f32; 64];
             idct_8x8(&input, &mut output);
+            output.to_vec()
+        }
+        RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+            // AFV has a hybrid inverse transform (AFV4x4 + DCT4x4 + DCT4x8)
+            let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
+            let mut input = [0.0f32; 64];
+            input.copy_from_slice(&error_coeffs[..64]);
+            let mut output = [0.0f32; 64];
+            super::afv::inverse_afv_transform(&input, afv_kind, &mut output);
             output.to_vec()
         }
         RAW_STRATEGY_DCT16X8 => {
@@ -1087,39 +1095,31 @@ fn find_best_16x16_transform(
             // AFV0-3 corner DCT (kAvoidEntropy penalty at high distance)
             // libjxl evaluates all 4 AFV variants and picks the best one
             // AFV uses mul8x8 since it covers 1×1 blocks like DCT8
-            //
-            // DISABLED in pixel-domain mode: We don't have the proper inverse AFV transform,
-            // so pixel-domain loss uses 8x8 IDCT which gives wrong loss values. AFV can
-            // still be forced via AcStrategyMap::force_strategy().
-            //
-            // TODO: Implement proper inverse AFV transform for pixel-domain loss.
-            if !use_pixel_domain {
-                let base_cost_afv = 3.0 * mul8x8;
-                let e_afv0 = eval(RAW_STRATEGY_AFV0, avoid_transforms_adjust);
-                let e_afv1 = eval(RAW_STRATEGY_AFV1, avoid_transforms_adjust);
-                let e_afv2 = eval(RAW_STRATEGY_AFV2, avoid_transforms_adjust);
-                let e_afv3 = eval(RAW_STRATEGY_AFV3, avoid_transforms_adjust);
-                let cost_afv0 = base_cost_afv + mul8x8 * e_afv0;
-                let cost_afv1 = base_cost_afv + mul8x8 * e_afv1;
-                let cost_afv2 = base_cost_afv + mul8x8 * e_afv2;
-                let cost_afv3 = base_cost_afv + mul8x8 * e_afv3;
+            let base_cost_afv = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
+            let e_afv0 = eval(RAW_STRATEGY_AFV0, avoid_transforms_adjust);
+            let e_afv1 = eval(RAW_STRATEGY_AFV1, avoid_transforms_adjust);
+            let e_afv2 = eval(RAW_STRATEGY_AFV2, avoid_transforms_adjust);
+            let e_afv3 = eval(RAW_STRATEGY_AFV3, avoid_transforms_adjust);
+            let cost_afv0 = base_cost_afv + mul8x8 * e_afv0;
+            let cost_afv1 = base_cost_afv + mul8x8 * e_afv1;
+            let cost_afv2 = base_cost_afv + mul8x8 * e_afv2;
+            let cost_afv3 = base_cost_afv + mul8x8 * e_afv3;
 
-                if cost_afv0 < *entropy_val {
-                    *entropy_val = cost_afv0;
-                    *best_strat = RAW_STRATEGY_AFV0;
-                }
-                if cost_afv1 < *entropy_val {
-                    *entropy_val = cost_afv1;
-                    *best_strat = RAW_STRATEGY_AFV1;
-                }
-                if cost_afv2 < *entropy_val {
-                    *entropy_val = cost_afv2;
-                    *best_strat = RAW_STRATEGY_AFV2;
-                }
-                if cost_afv3 < *entropy_val {
-                    *entropy_val = cost_afv3;
-                    *best_strat = RAW_STRATEGY_AFV3;
-                }
+            if cost_afv0 < *entropy_val {
+                *entropy_val = cost_afv0;
+                *best_strat = RAW_STRATEGY_AFV0;
+            }
+            if cost_afv1 < *entropy_val {
+                *entropy_val = cost_afv1;
+                *best_strat = RAW_STRATEGY_AFV1;
+            }
+            if cost_afv2 < *entropy_val {
+                *entropy_val = cost_afv2;
+                *best_strat = RAW_STRATEGY_AFV2;
+            }
+            if cost_afv3 < *entropy_val {
+                *entropy_val = cost_afv3;
+                *best_strat = RAW_STRATEGY_AFV3;
             }
         }
     }
