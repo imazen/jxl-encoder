@@ -696,6 +696,140 @@ impl TinyEncoder {
         Ok(writer.finish_with_padding())
     }
 
+    /// Encode with iterative rate control for improved distance targeting.
+    ///
+    /// This method:
+    /// 1. Computes precomputed state (XYB, CfL, masking, AC strategy) once
+    /// 2. Loops: encode → decode → butteraugli → adjust quant field
+    /// 3. Returns when converged (within 5% of target) or max iterations reached
+    ///
+    /// Typically converges in 2-4 iterations. Each iteration costs ~50% of a
+    /// full encode since XYB conversion, CfL, masking, and AC strategy are reused.
+    ///
+    /// Returns the encoded bytes. Use `encode_with_rate_control_config` for
+    /// iteration count and custom configuration.
+    ///
+    /// Requires the `rate-control` feature.
+    #[cfg(feature = "rate-control")]
+    pub fn encode_with_rate_control(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+    ) -> Result<Vec<u8>> {
+        let config = super::rate_control::RateControlConfig::default();
+        let (encoded, _iters) =
+            self.encode_with_rate_control_config(width, height, linear_rgb, &config)?;
+        Ok(encoded)
+    }
+
+    /// Encode with iterative rate control and custom configuration.
+    ///
+    /// Returns `(encoded_bytes, iteration_count)`.
+    ///
+    /// Requires the `rate-control` feature.
+    #[cfg(feature = "rate-control")]
+    pub fn encode_with_rate_control_config(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        config: &super::rate_control::RateControlConfig,
+    ) -> Result<(Vec<u8>, usize)> {
+        // Compute precomputed state
+        let precomputed = super::precomputed::EncoderPrecomputed::compute(
+            width,
+            height,
+            linear_rgb,
+            self.distance,
+            self.cfl_enabled,
+            self.ac_strategy_enabled,
+            self.pixel_domain_loss,
+            self.enable_noise,
+            self.enable_denoise,
+            self.enable_gaborish,
+            self.force_strategy,
+        );
+
+        // Run rate control loop
+        super::rate_control::encode_with_rate_control(self, &precomputed, config)
+    }
+
+    /// Encode from precomputed state with a specific quant field.
+    ///
+    /// This is the core encoding function used by rate control iterations.
+    /// It skips XYB conversion, CfL, masking, and AC strategy computation,
+    /// using the values from `precomputed` instead.
+    ///
+    /// Requires the `rate-control` feature.
+    #[cfg(feature = "rate-control")]
+    pub fn encode_from_precomputed(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &[u8],
+    ) -> Result<Vec<u8>> {
+        let width = precomputed.width;
+        let height = precomputed.height;
+        let xsize_blocks = precomputed.xsize_blocks;
+        let ysize_blocks = precomputed.ysize_blocks;
+        let padded_width = precomputed.padded_width;
+
+        // Calculate group dimensions
+        let xsize_groups = div_ceil(width, GROUP_DIM);
+        let ysize_groups = div_ceil(height, GROUP_DIM);
+        let xsize_dc_groups = div_ceil(width, DC_GROUP_DIM);
+        let ysize_dc_groups = div_ceil(height, DC_GROUP_DIM);
+        let num_groups = xsize_groups * ysize_groups;
+        let num_dc_groups = xsize_dc_groups * ysize_dc_groups;
+        let num_sections = 2 + num_dc_groups + num_groups;
+
+        // Copy and adjust quant field for multi-block transforms
+        let mut quant_field = quant_field.to_vec();
+        adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
+
+        // Compute distance params from precomputed quant field
+        let params =
+            DistanceParams::compute_from_quant_field(self.distance, &precomputed.quant_field_float);
+
+        // Perform DCT and quantization using precomputed XYB data
+        let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
+            &precomputed.xyb_x,
+            &precomputed.xyb_y,
+            &precomputed.xyb_b,
+            padded_width,
+            xsize_blocks,
+            ysize_blocks,
+            &params,
+            &mut quant_field,
+            &precomputed.cfl_map,
+            &precomputed.ac_strategy,
+        );
+
+        // Use two-pass mode for rate control (required for ANS)
+        self.encode_two_pass(
+            width,
+            height,
+            &params,
+            xsize_blocks,
+            ysize_blocks,
+            xsize_groups,
+            ysize_groups,
+            xsize_dc_groups,
+            ysize_dc_groups,
+            num_groups,
+            num_dc_groups,
+            num_sections,
+            &quant_dc,
+            &quant_ac,
+            &nzeros,
+            &raw_nzeros,
+            &quant_field,
+            &precomputed.cfl_map,
+            &precomputed.ac_strategy,
+            &precomputed.noise_params,
+        )
+    }
+
     /// Convert linear RGB to XYB color space with padding to block boundaries.
     ///
     /// Returns (xyb_x, xyb_y, xyb_b) arrays padded to `padded_width × padded_height`

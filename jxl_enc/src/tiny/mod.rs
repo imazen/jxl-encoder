@@ -37,6 +37,12 @@ mod frame;
 mod gaborish;
 mod lz77;
 pub(crate) mod noise;
+#[cfg(feature = "rate-control")]
+mod precomputed;
+#[cfg(feature = "rate-control")]
+pub mod rate_control;
+#[cfg(feature = "rate-control")]
+mod tile_distmap;
 
 pub use lz77::Lz77Method;
 mod quant;
@@ -44,6 +50,10 @@ mod static_codes;
 pub(crate) mod token;
 
 pub use encoder::TinyEncoder;
+#[cfg(feature = "rate-control")]
+pub use precomputed::EncoderPrecomputed;
+#[cfg(feature = "rate-control")]
+pub use rate_control::RateControlConfig;
 
 #[cfg(test)]
 mod tests;
