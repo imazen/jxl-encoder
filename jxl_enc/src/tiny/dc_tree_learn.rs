@@ -3,6 +3,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// Module contains experimental/WIP code with some unused items and complex types.
+// Allow various clippy warnings that don't affect correctness.
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::let_and_return)]
+
 //! DC coefficient tree learning for VarDCT encoding.
 //!
 //! Learns an optimal context tree for DC coding based on image content,

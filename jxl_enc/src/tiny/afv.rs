@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file.
 
 #![allow(clippy::approx_constant)]
+#![allow(clippy::excessive_precision)]
 
 //! AFV (Adaptive Frequency Variable) transforms for corner DCT.
 //!
@@ -120,19 +121,30 @@ fn dct_4x8_simple(pixels: &[f32; 32], coeffs: &mut [f32; 32]) {
 /// Raw AFV strategy codes.
 /// Note: These are internal indices, not bitstream codes.
 /// Bitstream codes for AFV0-3 are 14-17 respectively.
+/// Used by ac_strategy.rs for strategy selection.
+#[allow(dead_code)]
 pub const RAW_STRATEGY_AFV0: u8 = 12;
+#[allow(dead_code)]
 pub const RAW_STRATEGY_AFV1: u8 = 13;
+#[allow(dead_code)]
 pub const RAW_STRATEGY_AFV2: u8 = 14;
+#[allow(dead_code)]
 pub const RAW_STRATEGY_AFV3: u8 = 15;
 
 /// Bitstream codes for AFV strategies.
+/// Used by STRATEGY_CODE_LUT in ac_strategy.rs.
+#[allow(dead_code)]
 pub const STRATEGY_CODE_AFV0: u8 = 14;
+#[allow(dead_code)]
 pub const STRATEGY_CODE_AFV1: u8 = 15;
+#[allow(dead_code)]
 pub const STRATEGY_CODE_AFV2: u8 = 16;
+#[allow(dead_code)]
 pub const STRATEGY_CODE_AFV3: u8 = 17;
 
 /// Convert raw strategy code to AFV kind (0-3).
 /// Returns None if not an AFV strategy.
+#[allow(dead_code)]
 pub fn afv_kind_from_strategy(raw_strategy: u8) -> Option<usize> {
     match raw_strategy {
         RAW_STRATEGY_AFV0 => Some(0),
