@@ -227,10 +227,9 @@ pub fn afv_transform_from_pixels(pixels: &[f32], afv_kind: usize, coefficients: 
 /// Extract DC value from AFV coefficients.
 /// The DC is stored in a combined format - we need to decode it.
 pub fn dc_from_afv(coefficients: &[f32; 64]) -> f32 {
-    // The decoder extracts:
-    // dcs[0] = (coefficients[0] + coefficients[8] + coefficients[1]) * 4.0
-    // This is the DC for the AFV corner
-    (coefficients[0] + coefficients[8] + coefficients[1]) * 4.0
+    // DC extraction for AFV is the same as IDENTITY: just coefficients[0]
+    // Reference: libjxl enc_transforms-inl.h:791-796 (DCFromLowestFrequencies)
+    coefficients[0]
 }
 
 #[cfg(test)]
