@@ -238,7 +238,7 @@ impl Default for TinyEncoder {
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
-            dc_tree_learning: false,                       // DC tree learning (experimental)
+            dc_tree_learning: false,                      // DC tree learning (experimental)
         }
     }
 }
@@ -259,10 +259,10 @@ impl TinyEncoder {
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false,
-            pixel_domain_loss: true,                       // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
+            pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
-            dc_tree_learning: false,                       // DC tree learning (experimental)
+            dc_tree_learning: false,                      // DC tree learning (experimental)
         }
     }
 
@@ -2738,9 +2738,10 @@ impl TinyEncoder {
         // DC tree learning: learn optimal context tree if enabled
         // Returns (tree, num_contexts, tokens) where:
         // - tree: the learned tree for context evaluation
-        // - num_contexts: total number of contexts (AC metadata + DC)
+        // - total_num_contexts: total number of contexts (DC + AC metadata)
+        // - dc_only_num_contexts: DC-only context count (for AC metadata remapping)
         // - tokens: tree tokens WITH AC metadata prefix for proper decoder context creation
-        let (learned_dc_tree, learned_dc_num_contexts, learned_tree_tokens) =
+        let (learned_dc_tree, learned_dc_num_contexts, dc_only_num_contexts, learned_tree_tokens) =
             if self.dc_tree_learning && num_dc_groups == 1 {
                 // Learn tree from DC samples
                 let mut samples = super::dc_tree_learn::DcTreeSamples::new();
@@ -2750,24 +2751,36 @@ impl TinyEncoder {
                     let max_token = 64; // Reasonable max for DC residual tokens
                     let (tree, dc_num_contexts) =
                         super::dc_tree_learn::learn_dc_tree(&samples, max_token);
-                    let dc_tree_tokens = super::dc_tree_learn::tree_to_tokens(&tree);
 
-                    // Wrap with AC metadata prefix to ensure decoder creates enough contexts.
-                    // This creates a tree structure where:
-                    // - Leaves 0-10 are for AC metadata (unreachable by DC samples)
-                    // - Leaves 11+ are for DC (from learned tree)
+                    // Build merged tree with AC metadata routing and get BFS-order tokens
+                    // - DC leaves in LEFT subtree: contexts 0 to dc_num_contexts-1
+                    // - AC metadata leaf in RIGHT subtree: context dc_num_contexts
                     let (wrapped_tokens, total_contexts) =
                         super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
-                            &dc_tree_tokens,
+                            &tree,
                             dc_num_contexts,
                         );
 
-                    (Some(tree), Some(total_contexts as usize), Some(wrapped_tokens))
+                    #[cfg(feature = "debug-tokens")]
+                    eprintln!(
+                        "DC tree learning: dc_num_contexts={}, total_contexts={}, tree.len()={}, wrapped_tokens.len()={}",
+                        dc_num_contexts,
+                        total_contexts,
+                        tree.len(),
+                        wrapped_tokens.len()
+                    );
+
+                    (
+                        Some(tree),
+                        Some(total_contexts as usize),
+                        Some(dc_num_contexts as usize),
+                        Some(wrapped_tokens),
+                    )
                 } else {
-                    (None, None, None)
+                    (None, None, None, None)
                 }
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
 
         // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
@@ -2801,8 +2814,60 @@ impl TinyEncoder {
                 cfl_map,
                 ac_strategy,
             );
+            // When using learned tree, remap contexts to match decoder's BFS leaf order:
+            // - AC metadata leaf is visited first in BFS → context 0
+            // - DC leaves are visited after → contexts 1, 2, ... (add 1 to DC contexts)
+            let dc_tokens = if dc_only_num_contexts.is_some() {
+                dc_tokens
+                    .into_iter()
+                    .map(|mut t| {
+                        t.context += 1; // DC contexts shift from [0, n-1] to [1, n]
+                        t
+                    })
+                    .collect()
+            } else {
+                dc_tokens
+            };
             dc_tokens_per_group.push(dc_tokens);
+
+            // AC metadata uses context 0 when tree learning is enabled
+            let md_tokens = if dc_only_num_contexts.is_some() {
+                md_tokens
+                    .into_iter()
+                    .map(|mut t| {
+                        t.context = 0; // AC metadata leaf is BFS position 0
+                        t
+                    })
+                    .collect()
+            } else {
+                md_tokens
+            };
             ac_metadata_tokens_per_group.push(md_tokens);
+        }
+
+        // Debug: show token context distribution
+        if self.dc_tree_learning {
+            let dc_ctx_max = dc_tokens_per_group
+                .iter()
+                .flat_map(|t| t.iter())
+                .map(|t| t.context)
+                .max()
+                .unwrap_or(0);
+            let ac_md_ctx_max = ac_metadata_tokens_per_group
+                .iter()
+                .flat_map(|t| t.iter())
+                .map(|t| t.context)
+                .max()
+                .unwrap_or(0);
+            let dc_count: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum();
+            let md_count: usize = ac_metadata_tokens_per_group.iter().map(|t| t.len()).sum();
+            eprintln!(
+                "Tokens: DC {} (max_ctx={}), AC_metadata {} (max_ctx={})",
+                dc_count, dc_ctx_max, md_count, ac_md_ctx_max
+            );
+            if let Some(total) = learned_dc_num_contexts {
+                eprintln!("Total contexts expected: {}", total);
+            }
         }
 
         // Compute custom coefficient orders if enabled and image is large enough

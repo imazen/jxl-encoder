@@ -152,11 +152,7 @@ pub fn afv_kind_from_strategy(raw_strategy: u8) -> Option<usize> {
 /// - (even, even) positions: AFV 4x4 coefficients
 /// - (odd, even) positions: DCT 4x4 coefficients
 /// - (any, odd) positions: DCT 4x8 coefficients
-pub fn afv_transform_from_pixels(
-    pixels: &[f32],
-    afv_kind: usize,
-    coefficients: &mut [f32; 64],
-) {
+pub fn afv_transform_from_pixels(pixels: &[f32], afv_kind: usize, coefficients: &mut [f32; 64]) {
     let afv_x = afv_kind & 1;
     let afv_y = afv_kind / 2;
 
@@ -255,7 +251,9 @@ mod tests {
             assert!(
                 coeffs[i].abs() < dc_mag,
                 "AC coeffs[{}] = {} should be smaller than DC = {}",
-                i, coeffs[i], coeffs[0]
+                i,
+                coeffs[i],
+                coeffs[0]
             );
         }
 

@@ -223,11 +223,7 @@ pub fn gather_dc_samples(samples: &mut DcTreeSamples, quant_dc: &[Vec<Vec<i16>>;
                     top
                 };
 
-                let toptop = if y > 1 {
-                    channel[y - 2][x] as i32
-                } else {
-                    top
-                };
+                let toptop = if y > 1 { channel[y - 2][x] as i32 } else { top };
 
                 let leftleft = if x > 1 {
                     channel[y][x - 2] as i32
@@ -273,6 +269,8 @@ pub struct DcTreeNode {
     pub rchild: usize,
     /// Context ID (for leaf nodes).
     pub context_id: u32,
+    /// Predictor for leaf nodes (0=Zero, 5=Gradient, etc.)
+    pub predictor: u32,
 }
 
 impl Default for DcTreeNode {
@@ -283,6 +281,7 @@ impl Default for DcTreeNode {
             lchild: 0,
             rchild: 0,
             context_id: 0,
+            predictor: 5, // Default: Gradient (matches DC prediction)
         }
     }
 }
@@ -308,11 +307,7 @@ fn estimate_bits(counts: &[u32], total: u32) -> f64 {
 }
 
 /// Estimate entropy cost for a subset of samples.
-fn estimate_subset_cost(
-    samples: &DcTreeSamples,
-    indices: &[usize],
-    max_token: u32,
-) -> f64 {
+fn estimate_subset_cost(samples: &DcTreeSamples, indices: &[usize], max_token: u32) -> f64 {
     if indices.is_empty() {
         return 0.0;
     }
@@ -370,10 +365,8 @@ fn find_best_split(
             let splitval = values[split_idx - 1];
 
             // Partition samples
-            let (left, right): (Vec<usize>, Vec<usize>) = indices
-                .iter()
-                .copied()
-                .partition(|&i| props[i] <= splitval);
+            let (left, right): (Vec<usize>, Vec<usize>) =
+                indices.iter().copied().partition(|&i| props[i] <= splitval);
 
             if left.len() < MIN_SAMPLES_PER_LEAF || right.len() < MIN_SAMPLES_PER_LEAF {
                 continue;
@@ -478,7 +471,14 @@ pub fn learn_dc_tree(samples: &DcTreeSamples, max_token: u32) -> (DcTree, u32) {
     let mut next_context = 0u32;
     let indices: Vec<usize> = (0..samples.num_samples).collect();
 
-    build_tree_recursive(samples, &indices, 0, &mut tree, &mut next_context, max_token);
+    build_tree_recursive(
+        samples,
+        &indices,
+        0,
+        &mut tree,
+        &mut next_context,
+        max_token,
+    );
 
     (tree, next_context)
 }
@@ -508,44 +508,67 @@ pub fn get_dc_context(tree: &DcTree, props: &[i32; NUM_DC_PROPERTIES]) -> u32 {
 /// - Leaf node: (predictor, multiplier, offset) but for DC we just use context
 ///
 /// Format: sequence of (context, value) tokens that describe the tree structure.
+///
+/// IMPORTANT: Tokens must be in BFS (breadth-first/level-order) order, NOT DFS.
+/// The decoder computes child indices assuming BFS order.
 pub fn tree_to_tokens(tree: &DcTree) -> Vec<(u32, u32)> {
+    use super::common::pack_signed;
+    use std::collections::VecDeque;
+
     let mut tokens = Vec::new();
-    tree_to_tokens_recursive(tree, 0, &mut tokens);
-    tokens
-}
+    let mut queue = VecDeque::new();
+    queue.push_back(0usize);
 
-fn tree_to_tokens_recursive(tree: &DcTree, idx: usize, tokens: &mut Vec<(u32, u32)>) {
-    let node = &tree[idx];
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("tree_to_tokens: tree has {} nodes", tree.len());
+    #[cfg(feature = "debug-tokens")]
+    let mut leaf_count = 0;
 
-    if node.property < 0 {
-        // Leaf node: emit predictor, multiplier, offset
-        // Context 1: property = 0 signals leaf node (decoder subtracts 1, gets -1)
-        tokens.push((1, 0));
-        // Context 2: predictor (5 = Gradient, matching DC prediction)
-        tokens.push((2, 5));
-        // Context 3: offset (0)
-        tokens.push((3, 0));
-        // Context 4: multiplier log (0 for multiplier=1 since (0+1)<<0 = 1)
-        tokens.push((4, 0));
-        // Context 5: multiplier bits (0)
-        tokens.push((5, 0));
-    } else {
-        // Internal node: emit property and splitval
-        // Context 1: property+1 (decoder subtracts 1 to get actual property index)
-        let prop_token = (node.property + 1) as u32;
-        tokens.push((1, prop_token));
-        // Context 0: splitval (packed signed: positive*2, negative*2+1)
-        let splitval_token = if node.splitval >= 0 {
-            (node.splitval as u32) * 2
+    while let Some(idx) = queue.pop_front() {
+        let node = &tree[idx];
+
+        if node.property < 0 {
+            // Leaf node: emit predictor, multiplier, offset
+            #[cfg(feature = "debug-tokens")]
+            {
+                eprintln!(
+                    "  BFS node {}: LEAF (context_id={}, predictor={}, leaf_order={})",
+                    idx, node.context_id, node.predictor, leaf_count
+                );
+                leaf_count += 1;
+            }
+            // Context 1: property = 0 signals leaf node (decoder subtracts 1, gets -1)
+            tokens.push((1, 0));
+            // Context 2: predictor (use node's predictor field)
+            tokens.push((2, node.predictor));
+            // Context 3: offset (0)
+            tokens.push((3, 0));
+            // Context 4: multiplier log (0 for multiplier=1 since (0+1)<<0 = 1)
+            tokens.push((4, 0));
+            // Context 5: multiplier bits (0)
+            tokens.push((5, 0));
         } else {
-            ((-node.splitval) as u32) * 2 + 1
-        };
-        tokens.push((0, splitval_token));
+            // Internal node: emit property and splitval
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "  BFS node {}: INTERNAL (prop={}, split={}, left={}, right={})",
+                idx, node.property, node.splitval, node.lchild, node.rchild
+            );
+            // Context 1: property+1 (decoder subtracts 1 to get actual property index)
+            let prop_token = (node.property + 1) as u32;
+            tokens.push((1, prop_token));
+            // Context 0: splitval (packed signed)
+            tokens.push((0, pack_signed(node.splitval)));
 
-        // Recurse to children
-        tree_to_tokens_recursive(tree, node.lchild, tokens);
-        tree_to_tokens_recursive(tree, node.rchild, tokens);
+            // Queue children for BFS traversal (left first, then right)
+            queue.push_back(node.lchild);
+            queue.push_back(node.rchild);
+        }
     }
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!("  Total: {} tokens, {} leaves", tokens.len(), leaf_count);
+    tokens
 }
 
 #[cfg(test)]
@@ -556,16 +579,16 @@ mod tests {
     fn test_compute_dc_properties() {
         // Test gradient property (property 9 = left + top - topleft)
         let (props, _) = compute_dc_properties(
-            0,    // channel
-            5,    // x
-            3,    // y
-            100,  // top
-            100,  // left
-            100,  // topleft
-            100,  // topright
-            100,  // toptop
-            100,  // leftleft
-            0,    // prev_local_grad
+            0,   // channel
+            5,   // x
+            3,   // y
+            100, // top
+            100, // left
+            100, // topleft
+            100, // topright
+            100, // toptop
+            100, // leftleft
+            0,   // prev_local_grad
         );
         // Gradient: 100 + 100 - 100 = 100
         assert_eq!(props[9], 100);
@@ -650,6 +673,7 @@ mod tests {
                 lchild: 1,
                 rchild: 2,
                 context_id: 0,
+                predictor: 0, // Not used for internal nodes
             },
             DcTreeNode {
                 property: -1,
@@ -692,66 +716,78 @@ mod tests {
     }
 }
 
-/// Create tree tokens with AC metadata prefix.
+/// Create tree tokens with proper stream_id routing for DC and AC metadata.
 ///
-/// Wraps the learned DC tree with a prefix that creates 11 leaves for AC metadata contexts (0-10).
-/// The resulting tree structure:
-/// - Root: check property 0 (channel), split at -1
-/// - Left subtree (channel <= -1, unreachable by DC): 11 leaves for AC metadata
-/// - Right subtree (channel > -1, all DC): learned DC tree
+/// Uses libjxl's MergeTrees approach:
+/// - Root: split on property 1 (stream_id) <= 1
+/// - LEFT subtree (stream_id <= 1): learned DC tree (for DC samples with stream_id=1)
+/// - RIGHT subtree (stream_id > 1): single AC metadata leaf (for AC metadata with stream_id=3)
 ///
-/// This ensures the decoder creates at least 11 + learned_leaves contexts,
-/// with AC metadata using fixed contexts 0-10 and DC using contexts 11+.
+/// In preorder traversal, DC leaves come first (contexts 0 to dc_num_contexts-1),
+/// then AC metadata leaf (context dc_num_contexts).
+///
+/// Build a merged tree with AC metadata routing and return tokens in BFS order.
+///
+/// Stream IDs for VarDCT frame (single DC group):
+/// - VarDCTDC(0) = 1 + 0 = 1
+/// - LFMeta(0) = 1 + num_lf_groups * 2 = 1 + 1 * 2 = 3
+///
+/// The merged tree structure:
+/// - Root: splits on property 1 (stream_id) with splitval=1
+///   - Left (stream_id <= 1): DC subtree
+///   - Right (stream_id > 1): AC metadata leaf
 ///
 /// Returns (tokens, total_num_contexts).
 pub fn tree_tokens_with_ac_metadata_prefix(
-    learned_tree_tokens: &[(u32, u32)],
+    dc_tree: &DcTree,
     learned_num_contexts: u32,
 ) -> (Vec<(u32, u32)>, u32) {
-    use super::common::pack_signed;
-    use super::dc_coding::NUM_AC_METADATA_CONTEXTS;
+    // Build merged tree by copying DC tree and adding root + AC metadata leaf
+    // New tree layout:
+    // - Node 0: New root (stream_id split)
+    // - Node 1: AC metadata leaf (right child of root, before DC nodes for BFS)
+    // - Node 2+: DC tree nodes (shifted by 2, with child indices adjusted)
 
-    let mut tokens = Vec::new();
+    let mut merged_tree = Vec::with_capacity(dc_tree.len() + 2);
 
-    // Root decision: property 0 (channel), split at -1
-    // This routes all DC samples (channel 0, 1, 2) to the right subtree
-    // DC channels are 0, 1, 2 so channel > -1 is always true for DC
-    tokens.push((1, 1)); // property = 0 (channel)
-    tokens.push((0, pack_signed(-1))); // splitval = -1
+    // Node 0: New root - splits on stream_id (property 1) at value 1
+    // Left child (DC) at index 2, Right child (AC metadata) at index 1
+    // Note: BFS order means right child (leaf) comes before left subtree children
+    merged_tree.push(DcTreeNode {
+        property: 1, // stream_id property
+        splitval: 1,
+        lchild: 2, // DC tree root (shifted)
+        rchild: 1, // AC metadata leaf
+        context_id: 0,
+        predictor: 0, // Not used for internal nodes
+    });
 
-    // Left subtree: Create a tree structure with 11 leaves for AC metadata (unreachable by DC).
-    // Use a left-skewed tree: each internal node has a leaf on left and subtree on right.
-    // This produces leaves with context IDs 0-10 in order.
-    for i in 0..NUM_AC_METADATA_CONTEXTS {
-        if i < NUM_AC_METADATA_CONTEXTS - 1 {
-            // Internal node with leaf on left, subtree on right
-            // Decision on property 0 with split at -2 (always true for DC, doesn't matter for unreachable subtree)
-            tokens.push((1, 1)); // property = 0
-            tokens.push((0, pack_signed(-2))); // splitval = -2
+    // Node 1: AC metadata leaf (right child of root)
+    // Use predictor 5 (Gradient) to match how CfL AC metadata is encoded (gradient prediction)
+    // Note: ACS and QF use different prediction schemes, so this is an approximation.
+    // A full fix would require separate contexts per AC metadata type.
+    merged_tree.push(DcTreeNode {
+        property: -1,                     // leaf
+        context_id: learned_num_contexts, // Context after all DC contexts (not used by decoder)
+        predictor: 5,                     // Gradient predictor
+        ..Default::default()
+    });
 
-            // Left child: leaf (context i)
-            tokens.push((1, 0)); // property = -1 (leaf marker)
-            tokens.push((2, 0)); // predictor = 0 (Zero)
-            tokens.push((3, 0)); // offset = 0
-            tokens.push((4, 0)); // mul_log = 0
-            tokens.push((5, 0)); // mul_bits = 0
-
-            // Right child is the next node (or leaf for last one)
-        } else {
-            // Last leaf (context 10)
-            tokens.push((1, 0)); // property = -1 (leaf marker)
-            tokens.push((2, 0)); // predictor = 0 (Zero)
-            tokens.push((3, 0)); // offset = 0
-            tokens.push((4, 0)); // mul_log = 0
-            tokens.push((5, 0)); // mul_bits = 0
+    // Nodes 2+: DC tree nodes with shifted child indices
+    for node in dc_tree {
+        let mut new_node = node.clone();
+        if new_node.property >= 0 {
+            // Internal node - adjust child indices by 2
+            new_node.lchild += 2;
+            new_node.rchild += 2;
         }
+        merged_tree.push(new_node);
     }
 
-    // Right subtree: learned DC tree
-    // These leaves get contexts 11+
-    tokens.extend_from_slice(learned_tree_tokens);
+    // Tokenize the merged tree in BFS order
+    let tokens = tree_to_tokens(&merged_tree);
+    let total_contexts = learned_num_contexts + 1; // DC contexts + 1 AC metadata context
 
-    let total_contexts = (NUM_AC_METADATA_CONTEXTS as u32) + learned_num_contexts;
     (tokens, total_contexts)
 }
 
@@ -845,8 +881,11 @@ pub fn collect_dc_tokens_with_tree(
                     prev_local_grad,
                 );
                 let tree_ctx = get_dc_context(tree, &props);
-                // Offset the context to not conflict with AC metadata contexts (0-10)
-                let ctx_id = tree_ctx + super::dc_coding::DC_CONTEXT_OFFSET as u32;
+                // With the new tree structure (MergeTrees approach):
+                // - DC leaves are in the LEFT subtree, getting contexts 0 to dc_num_contexts-1
+                // - AC metadata leaf is in the RIGHT subtree, getting context dc_num_contexts
+                // No offset needed - use tree context directly
+                let ctx_id = tree_ctx;
 
                 tokens.push(Token::new(ctx_id, pack_signed(residual)));
 
@@ -883,7 +922,7 @@ pub fn learn_and_collect_dc_tokens(
 ) -> (DcTree, Vec<super::token::Token>, DcTreeStats) {
     // First pass: gather samples
     let mut samples = DcTreeSamples::new();
-    
+
     if !quant_dc[0].is_empty() && !quant_dc[0][0].is_empty() {
         // Create a view of just this region for sample gathering
         let region_dc = extract_dc_region(quant_dc, start_bx, start_by, end_bx, end_by);
@@ -937,14 +976,14 @@ fn extract_dc_region(
 #[cfg(test)]
 mod debug_tests {
     use super::*;
-    use crate::tiny::context_tree::{write_learned_context_tree, write_context_tree};
     use crate::bit_writer::BitWriter;
+    use crate::tiny::context_tree::{write_context_tree, write_learned_context_tree};
 
     #[test]
     fn test_compare_static_vs_learned_tree_encoding() {
         // Test with single DC group
         let num_dc_groups = 1;
-        
+
         // Create a simple learned tree (single leaf)
         let tree = vec![DcTreeNode {
             property: -1,
@@ -956,15 +995,19 @@ mod debug_tests {
         for (i, (ctx, val)) in learned_tokens.iter().enumerate() {
             eprintln!("  token[{}]: ctx={}, val={}", i, ctx, val);
         }
-        
+
         // Write learned tree
         let mut learned_writer = BitWriter::new();
-        let learned_result = write_learned_context_tree(&learned_tokens, num_dc_groups, &mut learned_writer);
+        let learned_result =
+            write_learned_context_tree(&learned_tokens, num_dc_groups, &mut learned_writer);
         eprintln!("\nLearned tree encoding result: {:?}", learned_result);
         eprintln!("Learned bits written: {}", learned_writer.bits_written());
         learned_writer.zero_pad_to_byte();
         let learned_bytes = learned_writer.finish();
-        eprintln!("Learned bytes (first 30): {:02x?}", &learned_bytes[..learned_bytes.len().min(30)]);
+        eprintln!(
+            "Learned bytes (first 30): {:02x?}",
+            &learned_bytes[..learned_bytes.len().min(30)]
+        );
 
         // Write static tree for comparison
         let mut static_writer = BitWriter::new();
@@ -973,44 +1016,50 @@ mod debug_tests {
         eprintln!("Static bits written: {}", static_writer.bits_written());
         static_writer.zero_pad_to_byte();
         let static_bytes = static_writer.finish();
-        eprintln!("Static bytes (first 30): {:02x?}", &static_bytes[..static_bytes.len().min(30)]);
-        
+        eprintln!(
+            "Static bytes (first 30): {:02x?}",
+            &static_bytes[..static_bytes.len().min(30)]
+        );
+
         // The encoding itself should succeed
         assert!(learned_result.is_ok());
         assert!(static_result.is_ok());
     }
 }
 
-    #[test]
-    fn test_wrapped_tree_tokens() {
-        use super::*;
-        
-        // Single-leaf learned tree
-        let tree = vec![DcTreeNode {
-            property: -1,
-            context_id: 0,
-            ..Default::default()
-        }];
-        let learned_tokens = tree_to_tokens(&tree);
-        eprintln!("Unwrapped tokens ({}):", learned_tokens.len());
-        for (i, (ctx, val)) in learned_tokens.iter().enumerate() {
-            eprintln!("  [{}]: ctx={}, val={}", i, ctx, val);
-        }
-        
-        // Wrap with AC metadata prefix
-        let (wrapped_tokens, total_contexts) = tree_tokens_with_ac_metadata_prefix(&learned_tokens, 1);
-        eprintln!("\nWrapped tokens ({}, {} contexts):", wrapped_tokens.len(), total_contexts);
-        for (i, (ctx, val)) in wrapped_tokens.iter().enumerate() {
-            eprintln!("  [{}]: ctx={}, val={}", i, ctx, val);
-        }
-        
-        // Expected structure:
-        // - Root decision: 2 tokens
-        // - 10 decision+leaf pairs: 10 * 7 = 70 tokens
-        // - 1 final leaf: 5 tokens  
-        // - learned tree: 5 tokens
-        // Total: 2 + 70 + 5 + 5 = 82 tokens
-        eprintln!("\nExpected: 2 (root) + 70 (10 decision+leaf) + 5 (final leaf) + 5 (learned) = 82");
-        assert_eq!(wrapped_tokens.len(), 82);
-        assert_eq!(total_contexts, 12); // 11 AC metadata + 1 DC
+#[test]
+fn test_wrapped_tree_tokens() {
+    use super::*;
+
+    // Single-leaf learned tree (1 DC context)
+    let tree = vec![DcTreeNode {
+        property: -1,
+        context_id: 0,
+        ..Default::default()
+    }];
+    let dc_tokens = tree_to_tokens(&tree);
+    eprintln!("DC tree tokens ({}):", dc_tokens.len());
+    for (i, (ctx, val)) in dc_tokens.iter().enumerate() {
+        eprintln!("  [{}]: ctx={}, val={}", i, ctx, val);
     }
+
+    // Build merged tree with AC metadata routing (now takes tree, not tokens)
+    let (wrapped_tokens, total_contexts) = tree_tokens_with_ac_metadata_prefix(&tree, 1);
+    eprintln!(
+        "\nMerged tree tokens ({}, {} contexts):",
+        wrapped_tokens.len(),
+        total_contexts
+    );
+    for (i, (ctx, val)) in wrapped_tokens.iter().enumerate() {
+        eprintln!("  [{}]: ctx={}, val={}", i, ctx, val);
+    }
+
+    // Expected merged tree structure (BFS order):
+    // - Node 0: Root (internal, stream_id split) -> 2 tokens
+    // - Node 1: AC metadata leaf (right child of root) -> 5 tokens
+    // - Node 2: DC leaf (left child of root, from original tree) -> 5 tokens
+    // Total: 2 + 5 + 5 = 12 tokens
+    eprintln!("\nExpected: 2 (root) + 5 (AC metadata leaf) + 5 (DC leaf) = 12");
+    assert_eq!(wrapped_tokens.len(), 12);
+    assert_eq!(total_contexts, 2); // 1 DC + 1 AC metadata
+}
