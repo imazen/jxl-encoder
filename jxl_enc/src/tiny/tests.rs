@@ -955,6 +955,12 @@ fn test_lz77_backref_roundtrip() {
         bytes_no_lz77.len() as i64 - bytes_lz77.len() as i64,
     );
 
+    // Save files for debugging
+    std::fs::write("/tmp/lz77_backref.jxl", &bytes_lz77).unwrap();
+    std::fs::write("/tmp/no_lz77.jxl", &bytes_no_lz77).unwrap();
+    eprintln!("Saved {} bytes to /tmp/lz77_backref.jxl", bytes_lz77.len());
+    eprintln!("Saved {} bytes to /tmp/no_lz77.jxl", bytes_no_lz77.len());
+
     // Decode LZ77-encoded file with jxl-oxide
     let image = jxl_oxide::JxlImage::builder()
         .read(Cursor::new(&bytes_lz77))

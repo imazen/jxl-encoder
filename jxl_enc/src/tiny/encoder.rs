@@ -2359,7 +2359,16 @@ impl TinyEncoder {
         lz77: Option<&super::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        #[cfg(feature = "debug-tokens")]
+        let start_bits = writer.bits_written();
+
         if let Some(params) = lz77 {
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "[LZ77-header] Writing enabled=true, min_symbol={}, min_length={}, distance_context={}",
+                params.min_symbol, params.min_length, params.distance_context
+            );
+
             writer.write(1, 1)?; // lz77 enabled
 
             // min_symbol: U32(Val(224), Val(512), Val(4096), BitsOffset(15,8))
@@ -2391,13 +2400,21 @@ impl TinyEncoder {
             // EncodeUintConfig with log_alpha_size = 8:
             //   write(CeilLog2Nonzero(8 + 1), split_exponent=0) → write(4, 0)
             //   since split_exponent(0) != log_alpha_size(8):
-            //     write(CeilLog2Nonzero(0 + 1), msb_in_token=0) → write(1, 0)
-            //     write(CeilLog2Nonzero(0 - 0 + 1), lsb_in_token=0) → write(1, 0)
+            //     CeilLog2Nonzero(0 + 1) = CeilLog2Nonzero(1) = 0, so 0 bits for msb
+            //     CeilLog2Nonzero(0 - 0 + 1) = CeilLog2Nonzero(1) = 0, so 0 bits for lsb
+            //   Total: 4 bits (msb and lsb are implicit when split_exponent=0)
             writer.write(4, 0)?; // split_exponent = 0
-            writer.write(1, 0)?; // msb_in_token = 0
-            writer.write(1, 0)?; // lsb_in_token = 0
+            // msb_in_token and lsb_in_token need 0 bits each (CeilLog2Nonzero(1) = 0)
+
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "[LZ77-header] Total bits written: {} (1+2+2+4=9 expected)",
+                writer.bits_written() - start_bits
+            );
         } else {
             writer.write(1, 0)?; // no lz77
+            #[cfg(feature = "debug-tokens")]
+            eprintln!("[LZ77-header] Writing enabled=false");
         }
         Ok(())
     }
@@ -3213,11 +3230,14 @@ impl TinyEncoder {
         let mut ac_lz77_params: Option<super::lz77::Lz77Params> = None;
 
         // Distance multiplier for special distance codes.
-        // For VarDCT streams, libjxl uses 0 (no special 2D distance codes).
-        // Non-zero multiplier enables 120 special distance codes for 2D patterns
-        // (e.g., "previous row" = width), but requires proper signaling.
-        // TODO: Enable non-zero multiplier once we verify decoder compatibility.
-        let dc_distance_multiplier = 0i32;
+        // The decoder derives dist_multiplier = max(channel_widths) for each
+        // modular subimage. The encoder must use the same multiplier so that
+        // LZ77 distance symbols are interpreted correctly.
+        //
+        // DC subimage channels: 3 DC planes, each width = xsize_blocks
+        // AC metadata subimage channels: EPF (w/64), CfL (w/64), BlockInfo (nb_blocks), QF (w/8)
+        // AC VarDCT coefficients: not modular, decoder passes dist_multiplier=0
+        let dc_distance_multiplier = xsize_blocks as i32;
         let ac_distance_multiplier = 0i32;
 
         if use_lz77 {
@@ -3267,23 +3287,50 @@ impl TinyEncoder {
                 let mut new_dc_per_group = Vec::with_capacity(num_dc_groups);
                 let mut new_md_per_group = Vec::with_capacity(num_dc_groups);
                 for i in 0..num_dc_groups {
+                    // Compute per-group DC channel width for distance multiplier.
+                    // DC subimage channels have width = group's block width.
+                    let dc_gx = i % xsize_dc_groups;
+                    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+                    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                    let group_dc_width = (end_bx - start_bx) as i32;
+
                     if let Some((lz77_dc, _)) = super::lz77::apply_lz77(
                         &dc_tokens_per_group[i],
                         dc_num_ctx,
                         false,
                         self.lz77_method,
-                        dc_distance_multiplier,
+                        group_dc_width,
                     ) {
                         new_dc_per_group.push(lz77_dc);
                     } else {
                         new_dc_per_group.push(dc_tokens_per_group[i].clone());
                     }
+
+                    // AC metadata subimage has channels with different widths.
+                    // Compute max(channel_widths) to match decoder's dist_multiplier.
+                    let dc_gy = i / xsize_dc_groups;
+                    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+                    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                    let region_xblocks = end_bx - start_bx;
+                    let mut num_ac_blocks = 0u32;
+                    for ry in start_by..end_by {
+                        for rx in start_bx..end_bx {
+                            if ac_strategy.is_first(rx, ry) {
+                                num_ac_blocks += 1;
+                            }
+                        }
+                    }
+                    // Metadata channels: EPF (w/8), CfL (w/8), BlockInfo (nb_blocks x 2), QF (bw x bh)
+                    let epf_w = (region_xblocks * BLOCK_DIM).div_ceil(64) as u32;
+                    let qf_w = region_xblocks as u32;
+                    let md_dist_mult = epf_w.max(num_ac_blocks).max(qf_w) as i32;
+
                     if let Some((lz77_md, _)) = super::lz77::apply_lz77(
                         &ac_metadata_tokens_per_group[i],
                         dc_num_ctx,
                         false,
                         self.lz77_method,
-                        dc_distance_multiplier,
+                        md_dist_mult,
                     ) {
                         new_md_per_group.push(lz77_md);
                     } else {
@@ -3862,9 +3909,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: full libjxl thresholds, enhanced clustering
-        // (kFavor2X2 at -0.15 doesn't affect this image at d=1.0)
-        const EXPECTED_HASH: u64 = 0xeb59aa6dda4a7f48;
+        // Hash updated: iterative rate control changes output
+        const EXPECTED_HASH: u64 = 0x2ae0add828138409;
         assert_eq!(
             hash,
             EXPECTED_HASH,
