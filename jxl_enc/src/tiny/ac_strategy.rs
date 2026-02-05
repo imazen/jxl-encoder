@@ -58,10 +58,12 @@ pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] =
 /// IDENTITY, DCT2X2, DCT4X8, DCT8X4, DCT4X4, and AFV0-3 cover 1×1 blocks.
 /// DCT32X16 (32 rows × 16 cols): 2 cols × 4 rows of 8×8 blocks
 /// DCT16X32 (16 rows × 32 cols): 4 cols × 2 rows of 8×8 blocks
-pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] = [1, 1, 2, 2, 4, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1];
+pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] =
+    [1, 1, 2, 2, 4, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1];
 
 /// Covered blocks in Y direction for each raw strategy.
-pub(crate) const COVERED_Y: [usize; NUM_RAW_STRATEGIES] = [1, 2, 1, 2, 4, 1, 1, 1, 1, 1, 4, 2, 1, 1, 1, 1];
+pub(crate) const COVERED_Y: [usize; NUM_RAW_STRATEGIES] =
+    [1, 2, 1, 2, 4, 1, 1, 1, 1, 1, 4, 2, 1, 1, 1, 1];
 
 /// Per-block AC strategy map.
 ///
