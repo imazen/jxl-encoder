@@ -91,20 +91,35 @@ const AFV4X4_BASIS_TRANSPOSE: [[f32; 16]; 16] = [
     [0.2500000000000000, -0.1014005039375374, 0.0000000000000000, 0.4251149611657548,
      0.0000000000000000, -0.0643507165794626, -0.4517556589999480, 0.0000000000000000,
      -0.6035859033230976, 0.0000000000000000, 0.0000000000000000, 0.0000000000000000,
-     -0.0857401903551898, 0.0875511500058587, -0.1743760259965092, -0.5765224391635052],
+     -0.1426608480880724, -0.1381354035075845, 0.3487520519930227, 0.1135498731499429],
 ];
 
 /// Forward AFV 4x4 DCT using the custom basis matrix.
 /// Input: 16 pixels, Output: 16 coefficients
+///
+/// Let B be the basis matrix. AFV4X4_BASIS_TRANSPOSE = B^T.
+/// Forward: coeffs = B * pixels = sum_i(B[j][i] * pixels[i]) = sum_i(B^T[i][j] * pixels[i])
 fn afv_dct_4x4(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
-    // The forward DCT is pixels * basis^T
-    // Since AFV4X4_BASIS_TRANSPOSE is already transposed, we do pixels * basis
     for j in 0..16 {
         let mut sum = 0.0f32;
         for i in 0..16 {
             sum += pixels[i] * AFV4X4_BASIS_TRANSPOSE[i][j];
         }
         coeffs[j] = sum;
+    }
+}
+
+/// Inverse AFV 4x4 DCT using the custom basis matrix.
+/// Input: 16 coefficients, Output: 16 pixels
+///
+/// Inverse: pixels = B^T * coeffs = sum_j(B^T[i][j] * coeffs[j])
+fn afv_idct_4x4(coeffs: &[f32], pixels: &mut [f32]) {
+    for i in 0..16 {
+        let mut sum = 0.0f32;
+        for j in 0..16 {
+            sum += coeffs[j] * AFV4X4_BASIS_TRANSPOSE[i][j];
+        }
+        pixels[i] = sum;
     }
 }
 
@@ -244,6 +259,97 @@ pub fn dc_from_afv(coefficients: &[f32; 64]) -> f32 {
     coefficients[0]
 }
 
+/// Perform inverse AFV transform: coefficients to pixels.
+/// This is used for pixel-domain loss computation in strategy selection.
+///
+/// # Arguments
+/// * `coefficients` - 64-element coefficient array
+/// * `afv_kind` - 0-3 for AFV0-AFV3 (corner location)
+/// * `pixels` - 8x8 output pixels (row-major, stride 8)
+///
+/// Reference: jxl-rs jxl_transforms/src/transform.rs afv_transform_to_pixels
+pub fn inverse_afv_transform(coefficients: &[f32; 64], afv_kind: usize, pixels: &mut [f32; 64]) {
+    let afv_x = afv_kind & 1;
+    let afv_y = afv_kind / 2;
+
+    // Extract DC values from packed format
+    let block00 = coefficients[0];
+    let block01 = coefficients[1];
+    let block10 = coefficients[8];
+
+    // Compute DCs for each sub-transform
+    let dcs: [f32; 3] = [
+        (block00 + block10 + block01) * 4.0, // AFV4x4 DC
+        block00 + block10 - block01,         // DCT4x4 DC
+        block00 - block10,                   // DCT4x8 DC
+    ];
+
+    // Inverse AFV 4x4: (even, even) positions
+    let mut afv_coeff = [0.0f32; 16];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            afv_coeff[iy * 4 + ix] = if ix == 0 && iy == 0 {
+                dcs[0]
+            } else {
+                coefficients[iy * 2 * 8 + ix * 2]
+            };
+        }
+    }
+    let mut afv_pixels = [0.0f32; 16];
+    afv_idct_4x4(&afv_coeff, &mut afv_pixels);
+
+    // Write AFV pixels with mirroring based on corner
+    for iy in 0..4 {
+        let block_y = if afv_y == 1 { 3 - iy } else { iy };
+        for ix in 0..4 {
+            let block_x = if afv_x == 1 { 3 - ix } else { ix };
+            pixels[(iy + afv_y * 4) * 8 + afv_x * 4 + ix] = afv_pixels[block_y * 4 + block_x];
+        }
+    }
+
+    // Inverse DCT 4x4: (odd, even) positions
+    let mut dct4_coeff = [0.0f32; 16];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            dct4_coeff[iy * 4 + ix] = if ix == 0 && iy == 0 {
+                dcs[1]
+            } else {
+                coefficients[iy * 2 * 8 + ix * 2 + 1]
+            };
+        }
+    }
+    let mut dct4_pixels = [0.0f32; 16];
+    super::dct::idct_4x4(&dct4_coeff, &mut dct4_pixels);
+
+    // Write DCT4x4 pixels to the adjacent corner
+    for iy in 0..4 {
+        for ix in 0..4 {
+            pixels[(iy + afv_y * 4) * 8 + (1 - afv_x) * 4 + ix] = dct4_pixels[iy * 4 + ix];
+        }
+    }
+
+    // Inverse DCT 4x8: (any, odd) positions
+    let mut dct4x8_coeff = [0.0f32; 32];
+    for iy in 0..4 {
+        for ix in 0..8 {
+            dct4x8_coeff[iy * 8 + ix] = if ix == 0 && iy == 0 {
+                dcs[2]
+            } else {
+                coefficients[(1 + iy * 2) * 8 + ix]
+            };
+        }
+    }
+    let mut dct4x8_pixels = [0.0f32; 32];
+    super::dct::idct_4x8(&dct4x8_coeff, &mut dct4x8_pixels);
+
+    // Write DCT4x8 pixels to the other half
+    for iy in 0..4 {
+        for ix in 0..8 {
+            pixels[(iy + (1 - afv_y) * 4) * 8 + ix] = dct4x8_pixels[iy * 8 + ix];
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +400,132 @@ mod tests {
         assert_eq!(afv_kind_from_strategy(RAW_STRATEGY_AFV2), Some(2));
         assert_eq!(afv_kind_from_strategy(RAW_STRATEGY_AFV3), Some(3));
         assert_eq!(afv_kind_from_strategy(0), None);
+    }
+
+    #[test]
+    fn test_afv_4x4_roundtrip() {
+        // Test that AFV 4x4 forward/inverse are properly paired
+        let pixels = [
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ];
+
+        let mut coeffs = [0.0f32; 16];
+        afv_dct_4x4(&pixels, &mut coeffs);
+
+        let mut recovered = [0.0f32; 16];
+        afv_idct_4x4(&coeffs, &mut recovered);
+
+        // Check roundtrip error
+        let max_error: f32 = pixels
+            .iter()
+            .zip(recovered.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, |a, b| a.max(b));
+
+        assert!(
+            max_error < 1e-4,
+            "AFV 4x4 roundtrip error {} should be < 1e-4",
+            max_error
+        );
+    }
+
+    #[test]
+    fn test_afv_full_roundtrip() {
+        // Test that full AFV transform forward/inverse roundtrips correctly
+        let mut pixels = [0.0f32; 64];
+        for i in 0..64 {
+            pixels[i] = (i as f32) + 1.0;
+        }
+
+        // Test all 4 AFV variants
+        for afv_kind in 0..4 {
+            let mut coeffs = [0.0f32; 64];
+            afv_transform_from_pixels(&pixels, afv_kind, &mut coeffs);
+
+            let mut recovered = [0.0f32; 64];
+            inverse_afv_transform(&coeffs, afv_kind, &mut recovered);
+
+            // Check roundtrip error (allow larger error due to DC packing/unpacking)
+            let max_error: f32 = pixels
+                .iter()
+                .zip(recovered.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, |a, b| a.max(b));
+
+            assert!(
+                max_error < 1.0,
+                "AFV{} full roundtrip error {} should be < 1.0",
+                afv_kind,
+                max_error
+            );
+        }
+    }
+
+    #[test]
+    fn test_afv_regions_isolated() {
+        // Test each region independently to isolate the issue
+        let afv_kind = 0; // AFV0: afv_x=0, afv_y=0
+
+        // Test 1: Only AFV corner (top-left 4x4)
+        let mut pixels1 = [0.0f32; 64];
+        for i in 0..4 {
+            for j in 0..4 {
+                pixels1[i * 8 + j] = (i * 4 + j + 1) as f32;
+            }
+        }
+        let mut coeffs1 = [0.0f32; 64];
+        afv_transform_from_pixels(&pixels1, afv_kind, &mut coeffs1);
+        let mut recov1 = [0.0f32; 64];
+        inverse_afv_transform(&coeffs1, afv_kind, &mut recov1);
+        let err1: f32 = pixels1
+            .iter()
+            .zip(recov1.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        eprintln!("AFV corner only - max error: {}", err1);
+
+        // Test 2: Only DCT4 corner (top-right 4x4)
+        let mut pixels2 = [0.0f32; 64];
+        for i in 0..4 {
+            for j in 4..8 {
+                pixels2[i * 8 + j] = (i * 4 + (j - 4) + 1) as f32;
+            }
+        }
+        let mut coeffs2 = [0.0f32; 64];
+        afv_transform_from_pixels(&pixels2, afv_kind, &mut coeffs2);
+        let mut recov2 = [0.0f32; 64];
+        inverse_afv_transform(&coeffs2, afv_kind, &mut recov2);
+        let err2: f32 = pixels2
+            .iter()
+            .zip(recov2.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        eprintln!("DCT4 corner only - max error: {}", err2);
+
+        // Test 3: Only DCT4x8 region (bottom half)
+        let mut pixels3 = [0.0f32; 64];
+        for i in 4..8 {
+            for j in 0..8 {
+                pixels3[i * 8 + j] = ((i - 4) * 8 + j + 1) as f32;
+            }
+        }
+        let mut coeffs3 = [0.0f32; 64];
+        afv_transform_from_pixels(&pixels3, afv_kind, &mut coeffs3);
+        let mut recov3 = [0.0f32; 64];
+        inverse_afv_transform(&coeffs3, afv_kind, &mut recov3);
+        let err3: f32 = pixels3
+            .iter()
+            .zip(recov3.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
+        eprintln!("DCT4x8 only - max error: {}", err3);
+
+        assert!(err1 < 1e-4, "AFV corner roundtrip error {} too large", err1);
+        assert!(
+            err2 < 1e-4,
+            "DCT4 corner roundtrip error {} too large",
+            err2
+        );
+        assert!(err3 < 1e-4, "DCT4x8 roundtrip error {} too large", err3);
     }
 }
