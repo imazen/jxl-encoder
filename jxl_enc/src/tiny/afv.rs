@@ -433,8 +433,8 @@ mod tests {
     fn test_afv_full_roundtrip() {
         // Test that full AFV transform forward/inverse roundtrips correctly
         let mut pixels = [0.0f32; 64];
-        for i in 0..64 {
-            pixels[i] = (i as f32) + 1.0;
+        for (i, px) in pixels.iter_mut().enumerate() {
+            *px = (i as f32) + 1.0;
         }
 
         // Test all 4 AFV variants
