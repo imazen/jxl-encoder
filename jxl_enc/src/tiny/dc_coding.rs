@@ -111,10 +111,14 @@ pub const NUM_DC_CONTEXTS: usize = 45;
 
 /// Number of AC metadata contexts (contexts 0-10).
 /// These are used for: EPF (0), YtoB (1), YtoX (2), quant field (3-6), AC strategy (7-10).
+/// Used by dc_tree_learn.rs for tree structure.
+#[allow(dead_code)]
 pub const NUM_AC_METADATA_CONTEXTS: usize = 11;
 
 /// First context ID for DC values (after AC metadata contexts).
 /// When using the default GRADIENT_CONTEXT_LUT, DC values use contexts 11-44.
+/// Used by dc_tree_learn.rs for context offset calculation.
+#[allow(dead_code)]
 pub const DC_CONTEXT_OFFSET: usize = NUM_AC_METADATA_CONTEXTS;
 
 /// Encode DC coefficients using gradient predictor and entropy coding.
