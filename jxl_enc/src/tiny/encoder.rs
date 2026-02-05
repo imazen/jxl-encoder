@@ -203,7 +203,8 @@ pub struct TinyEncoder {
     /// Enable LZ77 backward references in entropy coding.
     /// When true, compresses token streams using LZ77 length+distance tokens.
     /// Only effective with two-pass mode (optimize_codes=true) and ANS (use_ans=true).
-    /// Off by default until verified.
+    /// Off by default — works for most cases but has known interactions with certain
+    /// forced strategy combinations (DCT2x2, IDENTITY) that cause InvalidAnsStream.
     pub enable_lz77: bool,
     /// LZ77 method to use when enable_lz77 is true.
     ///
@@ -238,7 +239,7 @@ impl Default for TinyEncoder {
             enable_gaborish: true,
             error_diffusion: false,
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
-            enable_lz77: false,
+            enable_lz77: false,    // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false,                      // DC tree learning (experimental)
         }
@@ -262,7 +263,7 @@ impl TinyEncoder {
             enable_gaborish: true,
             error_diffusion: false,
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
-            enable_lz77: false,
+            enable_lz77: false,     // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false,                      // DC tree learning (experimental)
         }

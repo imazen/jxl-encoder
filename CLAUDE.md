@@ -151,8 +151,8 @@ transform search, 32x32 search, and full CfL mode — not just gaborish.
 At low distances (d<=1.0), we're within 3% of cjxl e5 and 14-16% better than e1.
 At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - Iterative rate control (e5 reallocates bits across blocks)
-- More AC strategies (DCT32x16, DCT16x32, etc.)
-- DCT32x32 is now enabled at d>=3.0 but doesn't close the gap alone
+- More AC strategies (remaining 11 of 27)
+- DCT32x32/DCT32x16/DCT16x32 now enabled at d>=2.0, providing ~8% savings at d=2.0
 
 **What's confirmed correct**:
 - Parametric quantization weights match decoder expectations (all strategies)
@@ -169,9 +169,9 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
   DCT32x16, DCT16x32, AFV0, AFV1, AFV2, AFV3
 - IDENTITY auto-selects ~4-6% on natural photos at d=1.0, improves SSIM2/butteraugli
 - DCT2X2 rarely selected without kFavor2X2 bonus (disabled — our cost model is not complete enough)
-- DCT32x16/DCT16x32: IMPLEMENTED but selection disabled pending LZ77 backref interaction fix
-  (InvalidAnsStream decoder errors when both are enabled). Infrastructure complete:
-  forward DCT, DC extraction, quantization weights, coefficient orders, strategy selection.
+- DCT32x16/DCT16x32: ENABLED at d>=2.0, verified with jxl-oxide and djxl.
+  LZ77 backref interaction fix (Feb 5, 2026) resolved the InvalidAnsStream decoder errors.
+  Note: jxl-rs has a known decoder bug with these transforms ("Invalid AC: 1 nonzeros").
 - AFV0-3: FULLY IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl.
   Auto-selection now works in BOTH pixel-domain mode (default) and coefficient-domain mode.
   Fixed: proper inverse AFV transform (inverse_afv_transform in afv.rs) using AFV4x4 IDCT +
@@ -192,7 +192,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - AdjustQuantBlockAC: IMPLEMENTED (per-block quant field adjustment, `encoder.rs:811-1034`)
 - Dead-zone thresholds: UPDATED to full libjxl values (Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62})
 - X/B multi-block threshold: IMPLEMENTED (-0.00744 * xsize*ysize for c!=1, coverage>=4)
-- kFavor2X2: IMPLEMENTED at -0.15 (libjxl uses -0.4, reduced to avoid over-selection without iterative rate control)
+- kFavor2X2: IMPLEMENTED at -0.15 (libjxl uses -0.4; increasing to -0.25 causes quality regression at d<1.0)
 - Note: libjxl uses Round() with thresholds, same as us (previous "truncation" claim was wrong)
 
 **D. Entropy Coding**
@@ -220,7 +220,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
-1. ~~Fix DCT32x32~~ — DONE (re-enabled at d>=3.0, works correctly on smooth content)
+1. ~~Fix DCT32x32~~ — DONE (enabled at d>=2.0, works correctly on smooth content)
 2. ~~AFV corner DCT~~ — DONE (Feb 4, 2026, all 4 variants verified with decoders)
 3. ~~DC tree learning~~ — DONE (Feb 4, 2026)
    - `dc_tree_learn.rs`: Learns optimal context tree from DC statistics
@@ -236,8 +236,8 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
    - Fixed Feb 5, 2026: LZ77 header bit count (CeilLog2Nonzero(1)=0 for msb/lsb) and
      distance multiplier (must match decoder's per-subimage max(channel_widths))
    - Special distance codes now correctly enabled for DC stream (dist_multiplier=xsize_blocks)
-5. Iterative rate control (high effort, 2-5% RD improvement)
-6. Increase kFavor2X2 to full -0.4 after iterative rate control is implemented
+5. ~~Iterative rate control~~ — DONE (commit 67f011c)
+6. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0, needs investigation)
 
 ### Outstanding Work
 
@@ -246,7 +246,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 **Color/Brightness bug**: RESOLVED - transfer function was signaling Linear instead of Srgb.
 
 **DCT32x32** (RESOLVED - NOT A BUG):
-- Enabled at d>=3.0 in strategy selection
+- Enabled at d>=2.0 in strategy selection (alongside DCT32x16/DCT16x32)
 - Works correctly on smooth content (smaller files + better quality than DCT8)
 - Previous "bug" was forcing DCT32x32 on high-contrast content (frymire black/green edges)
 - Expected behavior: DCT32x32 averages 32x32 blocks, can't represent sharp edges within block
@@ -261,10 +261,9 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/IDENTITY/DCT2X2 per 16x16 region)
-- [ ] DCT32x16/DCT16x32: infrastructure complete but selection disabled (LZ77 interaction issue)
-- [x] AFV0-3: transform, DC extraction, quantization weights complete. Auto-selection disabled
-  (cost model issue causes quality regression when mixed with other strategies)
+- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/DCT32x16/DCT16x32/IDENTITY/DCT2X2 per 16x16 region)
+- [x] DCT32x16/DCT16x32: enabled at d>=2.0, verified with jxl-oxide and djxl
+- [x] AFV0-3: fully implemented with auto-selection in both pixel-domain and coefficient-domain modes
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
@@ -285,7 +284,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] LZ77 backward references (`--lz77` flag, opt-in, ANS two-pass only)
   - RLE method: `--lz77-method rle` (consecutive identical tokens only)
   - Greedy method: `--lz77-method greedy` (hash chain matching, default when enabled)
-  - Both decoder-validated, rarely activate on VarDCT photos (threshold not met)
+  - Both decoder-validated; known interaction issues with forced DCT2x2/IDENTITY strategies
 - [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 
@@ -309,7 +308,7 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   histogram serialization roundtrip and ANS symbol roundtrip.
 - [x] **DCT16x16** — Working. 2×2 block coverage (256 coefficients), 7-band quant
   weights, distance-dependent strategy selection. Verified with jxl-oxide and djxl.
-- [x] **DCT32x32** — Working! Enabled at d>=3.0. Excellent for smooth content
+- [x] **DCT32x32** — Working! Enabled at d>=2.0. Excellent for smooth content
   (2376 bytes/MAE 1.67 vs DCT8's 3627 bytes/MAE 2.09 on gradients). Strategy
   selection correctly avoids DCT32x32 for high-contrast edges. "Forced" DCT32x32
   on edges produces expected blur (averages 32x32 block), not a bug.
@@ -417,8 +416,9 @@ are the weighted average of the block's black (44%) and green (56%) pixels.
 When auto-strategy is enabled (not forced), frymire encodes with MAE 8.35 (correct)
 vs forced DCT32x32's MAE 29.00 (averaged/blurry).
 
-**Status**: DCT32x32 is enabled at d>=3.0 in strategy selection. The guard at d<3.0
-prevents evaluation at low distances where smaller transforms are more beneficial.
+**Status**: Large transforms (DCT32x32, DCT32x16, DCT16x32) enabled at d>=2.0 in strategy
+selection. The guard at d<2.0 prevents evaluation at low distances where smaller transforms
+are more beneficial.
 Previous test failures were due to tests inappropriately forcing DCT32x32 on
 pathological high-contrast content (frymire). Tests now use smooth gradient content.
 

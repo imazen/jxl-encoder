@@ -987,7 +987,7 @@ fn find_best_16x16_transform(
     } else {
         0.0
     };
-    let favor_2x2_adjust = -0.15 * favor_weight; // Reduced from libjxl's -0.4 (needs iterative rate control for full value)
+    let favor_2x2_adjust = -0.15 * favor_weight; // libjxl uses -0.4, kept at -0.15 (causes quality regression at d<1.0 when increased)
 
     // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0
     let avoid_transforms_adjust = if distance > 4.0 {
@@ -1321,11 +1321,11 @@ fn find_best_32x32_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
 ) -> bool {
-    // DCT32x32 averages 32x32 pixel blocks, which works well for smooth content
-    // but produces blur on high-contrast edges. The cost model correctly avoids
-    // DCT32x32 for high-contrast blocks. Enable at d >= 3.0 where compression
-    // benefit outweighs the risk of edge blur in mis-selected blocks.
-    if distance < 3.0 {
+    // Large transforms (32x32, 32x16, 16x32) average large pixel blocks, which
+    // works well for smooth content but produces blur on high-contrast edges.
+    // The cost model correctly avoids them for high-contrast blocks.
+    // Enable at d >= 2.0 where compression benefit outweighs edge blur risk.
+    if distance < 2.0 {
         // At low distances, evaluate 16x16 and smaller transforms only
         for qy in (0..4).step_by(2) {
             for qx in (0..4).step_by(2) {
@@ -1351,7 +1351,7 @@ fn find_best_32x32_transform(
         return false;
     }
 
-    // At high distances (d >= 3.0), evaluate DCT32x32, DCT32x16, DCT16x32 as options
+    // At higher distances (d >= 2.0), evaluate DCT32x32, DCT32x16, DCT16x32 as options
     let k32x32mul1: f32 = -0.75;
     let k32x32mul2: f32 = 1.2; // Very conservative
     let k32x32base: f32 = 2.0;
