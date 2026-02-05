@@ -18,8 +18,8 @@ use std::sync::LazyLock;
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
 /// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4, 8 = IDENTITY, 9 = DCT2X2,
-/// 10 = DCT32X16, 11 = DCT16X32
-pub const NUM_VALID_STRATEGIES: usize = 12;
+/// 10 = DCT32X16, 11 = DCT16X32, 12 = AFV0, 13 = AFV1, 14 = AFV2, 15 = AFV3
+pub const NUM_VALID_STRATEGIES: usize = 16;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -279,6 +279,41 @@ const DCT4_LLF_PARAMS: [[f64; 2]; 3] = [
     [1.0, 1.0],
     // B channel
     [1.0, 1.0],
+];
+
+/// AFV weight parameters from jxl-rs quant_weights.rs and libjxl quant_weights.cc.
+/// Per-channel: [dc_tend0, dc_tend1, corner0, corner1, corner2, band0, band1, band2, band3]
+/// - dc_tend0, dc_tend1: weights for positions (0,1) and (1,0)
+/// - corner0, corner1, corner2: weights for positions (0,2), (2,0), (2,2)
+/// - band0-3: distance bands for interpolating other AFV positions
+const AFV_WEIGHTS: [[f64; 9]; 3] = [
+    // X channel
+    [3072.0, 3072.0, 256.0, 256.0, 256.0, 414.0, 0.0, 0.0, 0.0],
+    // Y channel
+    [1024.0, 1024.0, 50.0, 50.0, 50.0, 58.0, 0.0, 0.0, 0.0],
+    // B channel
+    [384.0, 384.0, 12.0, 12.0, 12.0, 22.0, -0.25, -0.25, -0.25],
+];
+
+/// Frequency lookup table for AFV interpolation.
+/// From libjxl quant_weights.cc kFreqs array.
+const AFV_FREQS: [f64; 16] = [
+    0.0,                // (0,0) - not used
+    0.0,                // (1,0) - not used
+    0.8517778890324296, // (2,0)
+    5.37778436506804,   // (3,0)
+    0.0,                // (0,1) - not used
+    0.0,                // (1,1) - not used
+    4.734747904497923,  // (2,1)
+    5.449245381693219,  // (3,1)
+    1.6598270267479331, // (0,2)
+    4.0,                // (1,2)
+    7.275749096817861,  // (2,2)
+    10.423227632456525, // (3,2)
+    2.662932286148962,  // (0,3)
+    7.630657783650829,  // (1,3)
+    8.962388608184032,  // (2,3)
+    12.97166202570235,  // (3,3)
 ];
 
 // =============================================================================
@@ -588,6 +623,92 @@ fn generate_dct2x2_weights() -> Vec<f32> {
 
 static QUANT_WEIGHTS_DCT2X2: LazyLock<Vec<f32>> = LazyLock::new(generate_dct2x2_weights);
 
+// =============================================================================
+// AFV weights
+// =============================================================================
+
+/// Generate AFV quantization weights.
+/// AFV (Adaptive Frequency Variable) is a hybrid transform combining:
+/// - AFV-specific 4x4 weights in even rows/even columns
+/// - DCT 4x4 weights in even rows/odd columns
+/// - DCT 4x8 weights in odd rows
+///
+/// Matches jxl-rs quant_weights.rs and libjxl quant_weights.cc.
+fn generate_afv_weights() -> Vec<f32> {
+    let mut weights = vec![0.0f32; 192]; // 64 per channel
+
+    // First generate the DCT4x8 and DCT4x4 weights we'll need
+    let weights4x8 = generate_dct4x8_weights();
+    let weights4x4 = generate_dct4x4_weights();
+
+    const LO: f64 = 0.8517778890324296;
+    const HI: f64 = 12.97166202570235 - LO + 1e-6;
+
+    for (c, afv) in AFV_WEIGHTS.iter().enumerate() {
+        let start = c * 64;
+
+        // Build AFV distance bands
+        let mut bands = [0.0f64; 4];
+        bands[0] = afv[5]; // band0
+        for i in 1..4 {
+            bands[i] = bands[i - 1] * band_mult(afv[5 + i]);
+        }
+
+        // Position (0,0) is DC - use band interpolation at distance 0
+        // DC weight = 1.0 / bands[0] (similar to other DCT strategies)
+        weights[start] = (1.0 / bands[0]) as f32;
+
+        // Positions (0,1) and (1,0): DC tendency weights
+        weights[start + 1] = (1.0 / afv[0]) as f32; // position (0,1)
+        weights[start + 8] = (1.0 / afv[1]) as f32; // position (1,0)
+
+        // AFV corner positions
+        weights[start + 2] = (1.0 / afv[2]) as f32; // position (0,2)
+        weights[start + 16] = (1.0 / afv[3]) as f32; // position (2,0)
+        weights[start + 18] = (1.0 / afv[4]) as f32; // position (2,2)
+
+        // Other AFV positions (even rows, even columns, x>=2 or y>=2)
+        for y in 0..4usize {
+            for x in 0..4usize {
+                if x < 2 && y < 2 {
+                    continue; // Already handled above
+                }
+                let freq = AFV_FREQS[y * 4 + x];
+                let val = interpolate_band((freq - LO) / HI * 3.0, &bands);
+                weights[start + (2 * y) * 8 + (2 * x)] = (1.0 / val) as f32;
+            }
+        }
+
+        // DCT 4x8 weights in odd rows (except position 8 which is DC tendency)
+        for y in 0..4usize {
+            for x in 0..8usize {
+                if x == 0 && y == 0 {
+                    continue; // Position (0,1) is DC tendency, already set
+                }
+                let idx4x8 = c * 64 + y * 8 + x; // DCT4x8 weights are in 8x8 interleaved format
+                weights[start + (2 * y + 1) * 8 + x] = weights4x8[idx4x8];
+            }
+        }
+
+        // DCT 4x4 weights in even rows, odd columns (except position 1 which is DC tendency)
+        for y in 0..4usize {
+            for x in 0..4usize {
+                if x == 0 && y == 0 {
+                    continue; // Position (1,0) would be at odd col, but (0,1) is already handled
+                }
+                let idx4x4 = c * 64 + y * 16 + x * 2; // DCT4x4 weights are in replicated format
+                weights[start + (2 * y) * 8 + (2 * x + 1)] = weights4x4[idx4x4];
+            }
+        }
+    }
+
+    weights
+}
+
+/// AFV quantization weights (192 floats: 64 per channel).
+/// All AFV variants (AFV0-AFV3) share the same weights.
+static QUANT_WEIGHTS_AFV: LazyLock<Vec<f32>> = LazyLock::new(generate_afv_weights);
+
 /// Get the quantization weight table for a given strategy and channel.
 ///
 /// # Arguments
@@ -652,6 +773,11 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
             // DCT32X16 / DCT16X32: 512 coefficients per channel (share same weights)
             let offset = channel * 512;
             &QUANT_WEIGHTS_DCT16X32[offset..offset + 512]
+        }
+        12..=15 => {
+            // AFV0-AFV3: 64 coefficients per channel (all share same weights)
+            let offset = channel * 64;
+            &QUANT_WEIGHTS_AFV[offset..offset + 64]
         }
         _ => unreachable!("Invalid strategy: {}", strategy),
     }

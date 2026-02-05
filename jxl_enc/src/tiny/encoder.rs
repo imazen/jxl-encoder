@@ -11,11 +11,13 @@ use super::ac_group::{
     predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::ac_strategy::{
-    AcStrategyMap, RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8,
-    RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16,
-    RAW_STRATEGY_DCT16X32, RAW_STRATEGY_DCT32X16, RAW_STRATEGY_DCT32X32, RAW_STRATEGY_IDENTITY,
+    AcStrategyMap, RAW_STRATEGY_AFV0, RAW_STRATEGY_AFV1, RAW_STRATEGY_AFV2, RAW_STRATEGY_AFV3,
+    RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4,
+    RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT16X32,
+    RAW_STRATEGY_DCT32X16, RAW_STRATEGY_DCT32X32, RAW_STRATEGY_IDENTITY,
     adjust_quant_field_with_distance, compute_ac_strategy,
 };
+use super::afv::{afv_transform_from_pixels, dc_from_afv};
 
 /// Create an AC strategy map forcing a specific strategy.
 fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> AcStrategyMap {
@@ -1247,6 +1249,21 @@ impl TinyEncoder {
                 dct_16x32(&block, &mut dct_out);
                 output[..512].copy_from_slice(&dct_out);
             }
+            RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+                // AFV: Adaptive Frequency Variable (hybrid transform for corners)
+                // Extract 8x8 pixels and compute AFV transform
+                let mut pixels = [0.0f32; 64];
+                for dy in 0..8 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..8 {
+                        pixels[dy * 8 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
+                let mut dct_out = [0.0f32; 64];
+                afv_transform_from_pixels(&pixels, afv_kind, &mut dct_out);
+                output[..64].copy_from_slice(&dct_out);
+            }
             _ => unreachable!(),
         }
     }
@@ -1717,6 +1734,15 @@ impl TinyEncoder {
                             let dc = dc_from_dct_4x4_full(&coeffs_arr);
                             quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
                         }
+                        RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
+                        | RAW_STRATEGY_AFV3 => {
+                            // AFV covers 1×1 blocks, returns single DC
+                            let coeffs_arr: [f32; 64] = dct_coeffs[1][..64]
+                                .try_into()
+                                .expect("64 coefficients for AFV");
+                            let dc = dc_from_afv(&coeffs_arr);
+                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                        }
                         RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
                             // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
                             quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
@@ -1991,6 +2017,17 @@ impl TinyEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT4X4");
                             let dc = dc_from_dct_4x4_full(&coeffs_arr);
+                            let y_dc = quant_dc[1][by][bx] as f32;
+                            quant_dc[c][by][bx] =
+                                (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
+                        }
+                        RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
+                        | RAW_STRATEGY_AFV3 => {
+                            // AFV covers 1×1 blocks, returns single DC
+                            let coeffs_arr: [f32; 64] = dct_coeffs[c][..64]
+                                .try_into()
+                                .expect("64 coefficients for AFV");
+                            let dc = dc_from_afv(&coeffs_arr);
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;

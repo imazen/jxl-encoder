@@ -1040,3 +1040,72 @@ fn test_dct32x16_16x32_roundtrip() {
     let _render = image.render_frame(0).expect("render frame");
     eprintln!("Rendered frame successfully!");
 }
+
+#[test]
+#[ignore] // Decoder integration test
+fn test_afv_strategy_roundtrip() {
+    use super::ac_strategy::RAW_STRATEGY_AFV0;
+    use std::io::Cursor;
+
+    // Create 32x32 mixed content image - AFV is designed for corner blocks with mixed frequencies
+    let width = 32;
+    let height = 32;
+    let mut linear_rgb = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            // Create mixed content: smooth gradient in one quadrant, checkerboard in another
+            let (r, g, b) = if x < width / 2 && y < height / 2 {
+                // Top-left: smooth gradient
+                (x as f32 / width as f32, y as f32 / height as f32, 0.3)
+            } else if x >= width / 2 && y >= height / 2 {
+                // Bottom-right: checkerboard (high frequency)
+                let check = ((x + y) % 2) as f32;
+                (check * 0.8, check * 0.8, check * 0.8)
+            } else {
+                // Other quadrants: mid-gray
+                (0.5, 0.5, 0.5)
+            };
+            linear_rgb.extend_from_slice(&[r, g, b]);
+        }
+    }
+
+    // Test all 4 AFV variants
+    for afv_kind in 0..4 {
+        let raw_strategy = RAW_STRATEGY_AFV0 + afv_kind;
+        eprintln!(
+            "\n=== Testing AFV{} (raw_strategy={}) ===",
+            afv_kind, raw_strategy
+        );
+
+        let mut encoder = TinyEncoder::new(1.0);
+        encoder.use_ans = true;
+        encoder.enable_gaborish = false;
+        encoder.force_strategy = Some(raw_strategy);
+
+        let encoded = encoder
+            .encode(width, height, &linear_rgb)
+            .expect("encode should succeed");
+        eprintln!("AFV{}: encoded {} bytes at d=1.0", afv_kind, encoded.len());
+
+        // Save for inspection
+        let output_path = format!(
+            "/mnt/v/output/jxl-encoder-rs/tiny/test_afv{}_32x32.jxl",
+            afv_kind
+        );
+        let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/tiny");
+        let _ = std::fs::write(&output_path, &encoded);
+
+        // Verify decode with jxl-oxide
+        let cursor = Cursor::new(&encoded);
+        let image = jxl_oxide::JxlImage::builder()
+            .read(cursor)
+            .expect("jxl-oxide parse");
+        eprintln!("jxl-oxide: parsed {}x{}", image.width(), image.height());
+        assert_eq!(image.width(), width as u32);
+        assert_eq!(image.height(), height as u32);
+
+        // Render to get actual pixels - if this succeeds, the bitstream is valid
+        let _render = image.render_frame(0).expect("render frame");
+        eprintln!("AFV{}: Rendered frame successfully!", afv_kind);
+    }
+}

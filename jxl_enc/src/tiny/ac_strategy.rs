@@ -14,6 +14,7 @@
 //! Selection is based on entropy estimation: the strategy that yields the
 //! lowest estimated coded size (including information-loss penalty) wins.
 
+use super::afv::afv_transform_from_pixels;
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use super::dct::{
@@ -240,6 +241,7 @@ const RAW_ENTROPY_MUL_DCT4X4: f32 = 1.08;
 const RAW_ENTROPY_MUL_DCT4X8: f32 = 0.859_316_37;
 const RAW_ENTROPY_MUL_IDENTITY: f32 = 1.0428;
 const RAW_ENTROPY_MUL_DCT2X2: f32 = 0.95;
+const RAW_ENTROPY_MUL_AFV: f32 = 0.817_794_9;
 const RAW_ENTROPY_MUL_DCT16X8: f32 = 1.21;
 const RAW_ENTROPY_MUL_DCT16X16: f32 = 1.34;
 const RAW_ENTROPY_MUL_DCT16X32: f32 = 1.49;
@@ -267,6 +269,9 @@ fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
         RAW_STRATEGY_DCT4X4 => RAW_ENTROPY_MUL_DCT4X4 / RAW_ENTROPY_MUL_DCT8,
         RAW_STRATEGY_IDENTITY => RAW_ENTROPY_MUL_IDENTITY / RAW_ENTROPY_MUL_DCT8,
         RAW_STRATEGY_DCT2X2 => RAW_ENTROPY_MUL_DCT2X2 / RAW_ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+            RAW_ENTROPY_MUL_AFV / RAW_ENTROPY_MUL_DCT8
+        }
         // Larger transforms: use RAW values (libjxl TryMergeAcs uses raw entropy_mul)
         RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => RAW_ENTROPY_MUL_DCT16X8,
         RAW_STRATEGY_DCT16X16 => RAW_ENTROPY_MUL_DCT16X16,
@@ -503,6 +508,14 @@ fn estimate_entropy_full(
                 dct2x2_transform(&xyb_c[pixel_offset..], stride, &mut output);
                 block[offset..offset + 64].copy_from_slice(&output);
             }
+            RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
+                let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
+                let mut output = [0.0f32; 64];
+                afv_transform_from_pixels(&input, afv_kind, &mut output);
+                block[offset..offset + 64].copy_from_slice(&output);
+            }
             _ => unreachable!(),
         }
     }
@@ -720,8 +733,9 @@ fn estimate_entropy_full(
 /// Returns pixel-domain error in row-major layout.
 fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
     match raw_strategy {
-        RAW_STRATEGY_DCT8 | RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4 => {
-            // All these use 8x8 pixel output
+        RAW_STRATEGY_DCT8 | RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
+        | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+            // All these use 8x8 pixel output (AFV uses 8x8 IDCT as approximation)
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&error_coeffs[..64]);
             let mut output = [0.0f32; 64];
