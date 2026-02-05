@@ -112,6 +112,17 @@ struct Args {
     #[arg(long)]
     tree_learning: bool,
 
+    /// Enable iterative rate control for improved distance targeting.
+    /// Encodes multiple times, adjusting quantization to match target distance.
+    /// Requires the rate-control feature. Off by default.
+    #[arg(short = 'r', long)]
+    rate_control: bool,
+
+    /// Maximum iterations for rate control (default: 3).
+    /// Only used when --rate-control is enabled.
+    #[arg(long, value_name = "N", default_value = "3")]
+    rc_iterations: usize,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -221,7 +232,37 @@ fn main() {
                     })
                     .collect();
 
-                tiny.encode(width as usize, height as usize, &linear_rgb)
+                // Use rate control if enabled and feature is available
+                #[cfg(feature = "rate-control")]
+                if args.rate_control {
+                    let config = jxl_enc::tiny::RateControlConfig {
+                        max_iterations: args.rc_iterations,
+                        ..Default::default()
+                    };
+                    let result = tiny.encode_with_rate_control_config(
+                        width as usize,
+                        height as usize,
+                        &linear_rgb,
+                        &config,
+                    );
+                    if !args.quiet
+                        && let Ok((_, iters)) = &result
+                    {
+                        println!("Rate control converged in {} iterations", iters);
+                    }
+                    result.map(|(data, _)| data)
+                } else {
+                    tiny.encode(width as usize, height as usize, &linear_rgb)
+                }
+
+                #[cfg(not(feature = "rate-control"))]
+                {
+                    if args.rate_control {
+                        eprintln!("Warning: --rate-control requires the rate-control feature");
+                        eprintln!("Rebuild with: cargo build --features rate-control");
+                    }
+                    tiny.encode(width as usize, height as usize, &linear_rgb)
+                }
             } else {
                 // Use modular for lossless
                 let options = EncoderOptions {

@@ -14,6 +14,11 @@ thiserror = "2.0"
 byteorder = "1.4"
 num-derive = "0.4"
 num-traits = "0.2"
+# Optional dependencies for rate control feature
+jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide", optional = true }
+butteraugli = { path = "../../butteraugli/butteraugli", optional = true }
+imgref = { version = "1.10", optional = true }
+rgb = { version = "0.8", optional = true }
 
 [features]
 trace-bitstream = []
@@ -27,6 +32,9 @@ debug-ac-strategy = []
 # Enabled by default to prevent garbage output. Disable with --no-default-features
 # to allow multi-group encoding for debugging/development.
 safe-mode = []
+# Iterative rate control for improved distance targeting.
+# Requires jxl-oxide for decoding and butteraugli for quality measurement.
+rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 default = ["safe-mode"]
 
 [dev-dependencies]
