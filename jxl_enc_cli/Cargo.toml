@@ -11,7 +11,7 @@ name = "cjxl-rs"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["butteraugli-loop"]
 debug-tokens = ["jxl_enc/debug-tokens"]
 debug-ac-strategy = ["jxl_enc/debug-ac-strategy"]
 # Enable iterative rate control for improved distance targeting
