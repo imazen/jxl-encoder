@@ -20,9 +20,9 @@ use super::common::*;
 use super::dct::{
     dc_from_dct_4x4_full, dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16,
     dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_16x32, dc_from_dct_32x16, dc_from_dct_32x32,
-    dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64,
-    dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
-    dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, identity_transform,
+    dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64, dct_4x4_full, dct_4x8_full,
+    dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32, dct_32x16, dct_32x32,
+    dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, identity_transform,
 };
 use super::encoder::TinyEncoder;
 use super::frame::DistanceParams;

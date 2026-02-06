@@ -2839,7 +2839,9 @@ mod tests {
             assert!(
                 (dc - val).abs() < 0.5,
                 "DC32x32[{}] = {}, expected ~{}",
-                i, dc, val
+                i,
+                dc,
+                val
             );
         }
     }
@@ -2886,7 +2888,9 @@ mod tests {
             assert!(
                 (dc - val).abs() < 0.5,
                 "DC[{}] = {}, expected ~{}",
-                i, dc, val
+                i,
+                dc,
+                val
             );
         }
     }
@@ -2903,7 +2907,9 @@ mod tests {
             assert!(
                 (dc - val).abs() < 0.5,
                 "DC64x32[{}] = {}, expected ~{}",
-                i, dc, val
+                i,
+                dc,
+                val
             );
         }
     }
@@ -2920,7 +2926,9 @@ mod tests {
             assert!(
                 (dc - val).abs() < 0.5,
                 "DC32x64[{}] = {}, expected ~{}",
-                i, dc, val
+                i,
+                dc,
+                val
             );
         }
     }

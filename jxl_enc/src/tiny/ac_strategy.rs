@@ -19,9 +19,9 @@ use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
-    dct_32x16, dct_32x32, dct_64x32, dct_32x64, dct_64x64,
-    dct2x2_transform, idct_8x8, idct_8x16, idct_16x8, idct_16x16,
-    identity_transform, inverse_dct2x2_transform, inverse_identity_transform,
+    dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, idct_8x8, idct_8x16,
+    idct_16x8, idct_16x16, identity_transform, inverse_dct2x2_transform,
+    inverse_identity_transform,
 };
 use super::quant::quant_weights;
 
@@ -56,8 +56,9 @@ pub const NUM_RAW_STRATEGIES: usize = 19;
 /// From libjxl ac_strategy.h: DCT=0, IDENTITY=1, DCT2X2=2, DCT4X4=3, DCT16X16=4,
 /// DCT32X32=5, DCT16X8=6, DCT8X16=7, DCT32X16=10, DCT16X32=11, DCT4X8=12, DCT8X4=13,
 /// AFV0=14, AFV1=15, AFV2=16, AFV3=17, DCT64X64=18, DCT64X32=19, DCT32X64=20.
-pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] =
-    [0, 6, 7, 4, 5, 12, 13, 3, 1, 2, 10, 11, 14, 15, 16, 17, 18, 19, 20];
+pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] = [
+    0, 6, 7, 4, 5, 12, 13, 3, 1, 2, 10, 11, 14, 15, 16, 17, 18, 19, 20,
+];
 
 /// Covered blocks in X direction for each raw strategy.
 /// IDENTITY, DCT2X2, DCT4X8, DCT8X4, DCT4X4, and AFV0-3 cover 1×1 blocks.
