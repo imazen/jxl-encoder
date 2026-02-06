@@ -1757,6 +1757,371 @@ pub fn inverse_dct2x2_transform(coefficients: &[f32], pixels: &mut [f32]) {
     pixels[..64].copy_from_slice(&coeffs);
 }
 
+// =============================================================================
+// DCT64x64, DCT64x32, DCT32x64 support
+// =============================================================================
+
+/// WcMultipliers<64> from libjxl dct_scales.h:280-291.
+/// 32 constants for the 64-point DCT butterfly.
+pub const WC_MULTIPLIERS_64: [f32; 32] = [
+    0.500150636020651,
+    0.5013584524464084,
+    0.5037887256810443,
+    0.5074711720725553,
+    0.5124514794082247,
+    0.5187927131053328,
+    0.52657731515427,
+    0.535909816907992,
+    0.5469204379855088,
+    0.5597698129470802,
+    0.57465518403266,
+    0.5918185358574165,
+    0.6115573478825099,
+    0.6342389366884031,
+    0.6603198078137061,
+    0.6903721282002123,
+    0.7251205223771985,
+    0.7654941649730891,
+    0.8127020908144905,
+    0.8683447152233481,
+    0.9345835970364075,
+    1.0144082649970547,
+    1.1120716205797176,
+    1.233832737976571,
+    1.3892939586328277,
+    1.5939722833856311,
+    1.8746759800084078,
+    2.282050068005162,
+    2.924628428158216,
+    4.084611078129248,
+    6.796750711673633,
+    20.373878167231453,
+];
+
+/// Resample scales for DC extraction from 64-point DCT to 8-point domain.
+/// DCTResampleScales<64, 8> from libjxl dct_scales.h:72-79.
+pub const DCT_RESAMPLE_SCALE_64_TO_8: [f32; 8] = [
+    1.0000000000000000,
+    0.9936866130906366,
+    0.9748868211368796,
+    0.9440180941651672,
+    0.9017641950288744,
+    0.8490574973847023,
+    0.7870549181591013,
+    0.7171081282466044,
+];
+
+/// In-place 1D DCT for N=64.
+/// Same recursive pattern as dct1d_32: AddReverse/SubReverse, DCT on halves,
+/// multiply by WC_MULTIPLIERS_64, B transform, InverseEvenOdd.
+fn dct1d_64(mem: &mut [f32]) {
+    let mut tmp = [0.0f32; 64];
+
+    // AddReverse for first half
+    for i in 0..32 {
+        tmp[i] = mem[i] + mem[63 - i];
+    }
+    // SubReverse for second half
+    for i in 0..32 {
+        tmp[32 + i] = mem[i] - mem[63 - i];
+    }
+
+    // DCT on first half
+    dct1d_32(&mut tmp[0..32]);
+
+    // Multiply second half by WcMultipliers
+    for i in 0..32 {
+        tmp[32 + i] *= WC_MULTIPLIERS_64[i];
+    }
+
+    // DCT on second half
+    dct1d_32(&mut tmp[32..64]);
+
+    // B transform on second half
+    tmp[32] = SQRT2 * tmp[32] + tmp[33];
+    for i in 1..31 {
+        tmp[32 + i] += tmp[32 + i + 1];
+    }
+
+    // InverseEvenOdd: interleave
+    for i in 0..32 {
+        mem[2 * i] = tmp[i];
+        mem[2 * i + 1] = tmp[32 + i];
+    }
+}
+
+/// Compute scaled 64x64 DCT (64 rows, 64 columns).
+///
+/// Input: 64x64 block in row-major order (4096 floats)
+/// Output: 64x64 DCT coefficients
+///
+/// NO final transpose for square blocks (ROWS >= COLS branch).
+pub fn dct_64x64(input: &[f32], output: &mut [f32]) {
+    debug_assert!(input.len() >= 4096);
+    debug_assert!(output.len() >= 4096);
+
+    let mut tmp = [0.0f32; 4096];
+
+    // Transform rows (64 columns each)
+    for row in 0..64 {
+        let row_start = row * 64;
+        tmp[row_start..row_start + 64].copy_from_slice(&input[row_start..row_start + 64]);
+        dct1d_64(&mut tmp[row_start..row_start + 64]);
+        // Scale by 1/N
+        for i in 0..64 {
+            tmp[row_start + i] *= 1.0 / 64.0;
+        }
+    }
+
+    // Transpose 64x64
+    let mut transposed = [0.0f32; 4096];
+    transpose::<64, 64>(&tmp, &mut transposed);
+
+    // Transform columns (now rows after transpose)
+    for row in 0..64 {
+        let row_start = row * 64;
+        dct1d_64(&mut transposed[row_start..row_start + 64]);
+        // Scale by 1/N
+        for i in 0..64 {
+            transposed[row_start + i] *= 1.0 / 64.0;
+        }
+    }
+
+    // DO NOT transpose back — square blocks stay transposed.
+    output[..4096].copy_from_slice(&transposed);
+}
+
+/// Compute scaled 64x32 DCT (64 rows, 32 columns).
+///
+/// Input: 64x32 block in row-major order (2048 floats)
+/// Output: DCT coefficients in 32x64 layout (stride 64)
+///
+/// C++ `ComputeScaledDCT<64,32>` takes the ROWS >= COLS branch (no final transpose).
+pub fn dct_64x32(input: &[f32], output: &mut [f32]) {
+    debug_assert!(input.len() >= 2048);
+    debug_assert!(output.len() >= 2048);
+
+    let mut tmp = [0.0f32; 2048];
+
+    // Transform rows (32 columns each)
+    for row in 0..64 {
+        let row_start = row * 32;
+        tmp[row_start..row_start + 32].copy_from_slice(&input[row_start..row_start + 32]);
+        dct1d_32(&mut tmp[row_start..row_start + 32]);
+        for i in 0..32 {
+            tmp[row_start + i] *= 1.0 / 32.0;
+        }
+    }
+
+    // Transpose 64x32 -> 32x64
+    let mut transposed = [0.0f32; 2048];
+    for row in 0..64 {
+        for col in 0..32 {
+            transposed[col * 64 + row] = tmp[row * 32 + col];
+        }
+    }
+
+    // Transform columns (now 64 elements each in rows after transpose)
+    for row in 0..32 {
+        let row_start = row * 64;
+        dct1d_64(&mut transposed[row_start..row_start + 64]);
+        for i in 0..64 {
+            transposed[row_start + i] *= 1.0 / 64.0;
+        }
+    }
+
+    // No final transpose — ROWS >= COLS branch
+    output[..2048].copy_from_slice(&transposed);
+}
+
+/// Compute scaled 32x64 DCT (32 rows, 64 columns).
+///
+/// Input: 32x64 block in row-major order (2048 floats)
+/// Output: DCT coefficients
+///
+/// C++ `ComputeScaledDCT<32,64>` takes the ROWS < COLS branch (WITH final transpose).
+pub fn dct_32x64(input: &[f32], output: &mut [f32]) {
+    debug_assert!(input.len() >= 2048);
+    debug_assert!(output.len() >= 2048);
+
+    let mut tmp = [0.0f32; 2048];
+
+    // Transform rows (64 columns each)
+    for row in 0..32 {
+        let row_start = row * 64;
+        tmp[row_start..row_start + 64].copy_from_slice(&input[row_start..row_start + 64]);
+        dct1d_64(&mut tmp[row_start..row_start + 64]);
+        for i in 0..64 {
+            tmp[row_start + i] *= 1.0 / 64.0;
+        }
+    }
+
+    // Transpose 32x64 -> 64x32
+    let mut transposed = [0.0f32; 2048];
+    for row in 0..32 {
+        for col in 0..64 {
+            transposed[col * 32 + row] = tmp[row * 64 + col];
+        }
+    }
+
+    // Transform columns (now 32 elements each)
+    for row in 0..64 {
+        let row_start = row * 32;
+        dct1d_32(&mut transposed[row_start..row_start + 32]);
+        for i in 0..32 {
+            transposed[row_start + i] *= 1.0 / 32.0;
+        }
+    }
+
+    // Transpose back 64x32 -> 32x64 (ROWS < COLS branch includes final transpose)
+    for row in 0..64 {
+        for col in 0..32 {
+            output[col * 64 + row] = transposed[row * 32 + col];
+        }
+    }
+}
+
+/// Extract DC values from 64x64 DCT coefficients.
+/// Returns 64 DC values (for the 64 covered 8x8 blocks) in row-major 8x8 order.
+///
+/// The LLF region is 8x8 coefficients at positions `[r*64+c]` for r,c in 0..8
+/// in the 64x64 layout (stride 64). We apply `DCTResampleScale<64, 8>` to
+/// each dimension, then an 8x8 IDCT.
+pub fn dc_from_dct_64x64(coeffs: &[f32]) -> [f32; 64] {
+    debug_assert!(coeffs.len() >= 4096);
+
+    // Step 1: Extract 8x8 LLF and apply resample scales.
+    // Forward DCT64x64 scaled by 1/4096. The 8x8 IDCT will apply 8*8=64 scaling,
+    // so we need 4096/64 = 64 factor.
+    let mut block = [0.0f32; 64];
+    for iy in 0..8 {
+        for ix in 0..8 {
+            block[iy * 8 + ix] = coeffs[iy * 64 + ix]
+                * DCT_RESAMPLE_SCALE_64_TO_8[iy]
+                * DCT_RESAMPLE_SCALE_64_TO_8[ix];
+        }
+    }
+
+    // Step 2: 8x8 IDCT matching ComputeScaledIDCT<8,8> (ROWS >= COLS):
+    //   IDCT rows → transpose → IDCT rows.
+
+    // IDCT rows
+    for iy in 0..8 {
+        idct1d_8(&mut block[iy * 8..(iy + 1) * 8]);
+    }
+
+    // Transpose 8x8
+    let mut transposed = [0.0f32; 64];
+    for iy in 0..8 {
+        for ix in 0..8 {
+            transposed[ix * 8 + iy] = block[iy * 8 + ix];
+        }
+    }
+
+    // IDCT rows
+    for iy in 0..8 {
+        idct1d_8(&mut transposed[iy * 8..(iy + 1) * 8]);
+    }
+
+    transposed
+}
+
+/// Extract DC values from 64x32 DCT coefficients.
+/// Returns 32 DC values (for the 32 covered 8x8 blocks) in row-major 4x8 order.
+///
+/// The LLF region is 8x4 in the 32x64 layout (stride 64).
+/// Apply scale_64→8 for rows and scale_32→4 for cols, then 8x4 IDCT.
+///
+/// Coverage: 4 cols × 8 rows of 8x8 blocks. DC output is 8 rows × 4 cols.
+pub fn dc_from_dct_64x32(coeffs: &[f32]) -> [f32; 32] {
+    debug_assert!(coeffs.len() >= 2048);
+
+    // Extract 8x4 LLF from the 32x64 layout (stride 64)
+    let mut block = [0.0f32; 32];
+    for iy in 0..8 {
+        for ix in 0..4 {
+            block[iy * 4 + ix] = coeffs[iy * 64 + ix]
+                * DCT_RESAMPLE_SCALE_64_TO_8[iy]
+                * DCT_RESAMPLE_SCALE_32_TO_4[ix]
+                * 4.0;
+        }
+    }
+
+    // 8x4 IDCT: ROWS=8 >= COLS=4, so IDCT rows -> transpose -> IDCT rows
+
+    // IDCT on 4-element rows (8 rows)
+    for iy in 0..8 {
+        idct1d_4(&mut block[iy * 4..(iy + 1) * 4]);
+    }
+
+    // Transpose 8x4 -> 4x8
+    let mut transposed = [0.0f32; 32];
+    for iy in 0..8 {
+        for ix in 0..4 {
+            transposed[ix * 8 + iy] = block[iy * 4 + ix];
+        }
+    }
+
+    // IDCT on 8-element rows (4 rows)
+    for iy in 0..4 {
+        idct1d_8(&mut transposed[iy * 8..(iy + 1) * 8]);
+    }
+
+    transposed
+}
+
+/// Extract DC values from 32x64 DCT coefficients.
+/// Returns 32 DC values (for the 32 covered 8x8 blocks) in row-major 8x4 order.
+///
+/// Coverage: 8 cols × 4 rows of 8x8 blocks. DC output is 4 rows × 8 cols.
+/// After dct_32x64's final transpose, coefficients are in stride-64 layout.
+/// CoefficientLayout: cx=8 >= cy=4, so stride = cx*8 = 64.
+pub fn dc_from_dct_32x64(coeffs: &[f32]) -> [f32; 32] {
+    debug_assert!(coeffs.len() >= 2048);
+
+    // Extract 4x8 LLF from stride-64 layout
+    let mut block = [0.0f32; 32];
+    for iy in 0..4 {
+        for ix in 0..8 {
+            block[iy * 8 + ix] = coeffs[iy * 64 + ix]
+                * DCT_RESAMPLE_SCALE_32_TO_4[iy]
+                * DCT_RESAMPLE_SCALE_64_TO_8[ix]
+                * 4.0;
+        }
+    }
+
+    // 4x8 IDCT: ROWS=4 < COLS=8, so ROWS < COLS branch:
+    // IDCT rows -> transpose -> IDCT rows -> transpose back
+
+    // IDCT on 8-element rows (4 rows)
+    for iy in 0..4 {
+        idct1d_8(&mut block[iy * 8..(iy + 1) * 8]);
+    }
+
+    // Transpose 4x8 -> 8x4
+    let mut transposed = [0.0f32; 32];
+    for iy in 0..4 {
+        for ix in 0..8 {
+            transposed[ix * 4 + iy] = block[iy * 8 + ix];
+        }
+    }
+
+    // IDCT on 4-element rows (8 rows)
+    for iy in 0..8 {
+        idct1d_4(&mut transposed[iy * 4..(iy + 1) * 4]);
+    }
+
+    // Transpose back 8x4 -> 4x8
+    let mut result = [0.0f32; 32];
+    for iy in 0..8 {
+        for ix in 0..4 {
+            result[ix * 8 + iy] = transposed[iy * 4 + ix];
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2459,5 +2824,104 @@ mod tests {
             "dct2x2 roundtrip (constant) max error {} too large",
             max_err
         );
+    }
+
+    #[test]
+    fn test_dct_32x32_dc_extraction_constant() {
+        let val = 42.0f32;
+        let input = [val; 1024];
+        let mut output = [0.0f32; 1024];
+        dct_32x32(&input, &mut output);
+
+        let dcs = dc_from_dct_32x32(&output);
+        eprintln!("DCT32x32 DC[0] = {}, expected {}", dcs[0], val);
+        for (i, &dc) in dcs.iter().enumerate() {
+            assert!(
+                (dc - val).abs() < 0.5,
+                "DC32x32[{}] = {}, expected ~{}",
+                i, dc, val
+            );
+        }
+    }
+
+    #[test]
+    fn test_dct_64x64_dc_constant() {
+        // A constant 64x64 block should have all energy in DC
+        let val = 42.0f32;
+        let input = [val; 4096];
+        let mut output = [0.0f32; 4096];
+        dct_64x64(&input, &mut output);
+
+        // DC should be val (after double 1/64 scaling: val * 64 * (1/64) * 64 * (1/64) = val)
+        let dc = output[0];
+        assert!(
+            (dc - val).abs() < 0.01,
+            "DCT64x64 constant DC = {}, expected {}",
+            dc,
+            val
+        );
+
+        // All other coefficients should be ~0
+        let mut max_ac = 0.0f32;
+        for &coeff in &output[1..] {
+            max_ac = max_ac.max(coeff.abs());
+        }
+        assert!(
+            max_ac < 1e-3,
+            "DCT64x64 constant max AC = {}, expected ~0",
+            max_ac
+        );
+    }
+
+    #[test]
+    fn test_dct_64x64_dc_extraction_constant() {
+        // Constant 64x64 block: all 64 DCs should equal the constant value
+        let val = 42.0f32;
+        let input = [val; 4096];
+        let mut output = [0.0f32; 4096];
+        dct_64x64(&input, &mut output);
+
+        let dcs = dc_from_dct_64x64(&output);
+        for (i, &dc) in dcs.iter().enumerate() {
+            assert!(
+                (dc - val).abs() < 0.5,
+                "DC[{}] = {}, expected ~{}",
+                i, dc, val
+            );
+        }
+    }
+
+    #[test]
+    fn test_dct_64x32_dc_extraction_constant() {
+        let val = 42.0f32;
+        let input = [val; 2048];
+        let mut output = [0.0f32; 2048];
+        dct_64x32(&input, &mut output);
+
+        let dcs = dc_from_dct_64x32(&output);
+        for (i, &dc) in dcs.iter().enumerate() {
+            assert!(
+                (dc - val).abs() < 0.5,
+                "DC64x32[{}] = {}, expected ~{}",
+                i, dc, val
+            );
+        }
+    }
+
+    #[test]
+    fn test_dct_32x64_dc_extraction_constant() {
+        let val = 42.0f32;
+        let input = [val; 2048];
+        let mut output = [0.0f32; 2048];
+        dct_32x64(&input, &mut output);
+
+        let dcs = dc_from_dct_32x64(&output);
+        for (i, &dc) in dcs.iter().enumerate() {
+            assert!(
+                (dc - val).abs() < 0.5,
+                "DC32x64[{}] = {}, expected ~{}",
+                i, dc, val
+            );
+        }
     }
 }

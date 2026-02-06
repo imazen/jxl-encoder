@@ -206,6 +206,18 @@ pub fn count_zero_coefficients(
     for ch in &mut counts[4] {
         *ch = vec![0i64; 128];
     }
+    // Bucket 5: DCT32x16/DCT16x32, size 512
+    for ch in &mut counts[5] {
+        *ch = vec![0i64; 512];
+    }
+    // Bucket 7: DCT64x64, size 4096
+    for ch in &mut counts[7] {
+        *ch = vec![0i64; 4096];
+    }
+    // Bucket 8: DCT64x32/DCT32x64, size 2048
+    for ch in &mut counts[8] {
+        *ch = vec![0i64; 2048];
+    }
 
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
@@ -341,11 +353,14 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
 /// Convert order bucket index to (cx, cy) for natural order generation.
 fn bucket_to_cx_cy(bucket: usize) -> (usize, usize) {
     match bucket {
-        0 => (1, 1), // DCT8: 1x1 blocks
-        2 => (2, 2), // DCT16x16: 2x2 blocks
-        3 => (4, 4), // DCT32x32: 4x4 blocks
-        4 => (2, 1), // DCT8x16/DCT16x8: 2x1 blocks (after CoefficientLayout)
-        _ => (0, 0), // Not supported by our encoder
+        0 => (1, 1),   // DCT8: 1x1 blocks
+        2 => (2, 2),   // DCT16x16: 2x2 blocks
+        3 => (4, 4),   // DCT32x32: 4x4 blocks
+        4 => (2, 1),   // DCT8x16/DCT16x8: 2x1 blocks (after CoefficientLayout)
+        5 => (4, 2),   // DCT32x16/DCT16x32: 4x2 blocks (after CoefficientLayout)
+        7 => (8, 8),   // DCT64x64: 8x8 blocks
+        8 => (8, 4),   // DCT64x32/DCT32x64: 8x4 blocks (after CoefficientLayout)
+        _ => (0, 0),   // Not supported by our encoder
     }
 }
 
