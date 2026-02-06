@@ -96,12 +96,23 @@ pub(crate) fn reconstruct_xyb(
             }
 
             let raw_strategy = ac_strategy.raw_strategy(bx, by);
-            let cx = ac_strategy.covered_blocks_x(bx, by);
-            let cy = ac_strategy.covered_blocks_y(bx, by);
+            let covered_x = ac_strategy.covered_blocks_x(bx, by);
+            let covered_y = ac_strategy.covered_blocks_y(bx, by);
+            // Use PHYSICAL coverage for coefficient iteration and pixel output.
+            // The IDCT expects coefficients in natural (pre-swap) layout.
+            // Match the encoder's coefficient layout: swap cx/cy so cx >= cy.
+            // This gives the same stride and block mapping as the encoder's
+            // quantize_ac_block. After dequantizing, we transpose back to the
+            // IDCT's expected (natural) layout.
+            let transpose_slots = covered_y > covered_x;
+            let (cx, cy) = if transpose_slots {
+                (covered_y, covered_x)
+            } else {
+                (covered_x, covered_y)
+            };
             let block_width = cx * BLOCK_DIM;
             let block_height = cy * BLOCK_DIM;
             let size = block_width * block_height;
-            let transpose_slots = cy > cx;
 
             // CfL factors for this tile
             let tx = bx / TILE_DIM_IN_BLOCKS;
@@ -138,7 +149,6 @@ pub(crate) fn reconstruct_xyb(
                     } else {
                         (coef_slot_y, coef_slot_x)
                     };
-
                     let q_int = quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
 
                     // Check if this is an LLF position
@@ -209,15 +219,32 @@ pub(crate) fn reconstruct_xyb(
                 }
             }
 
-            // Step 3: IDCT to pixel domain
+            // Step 3: Transpose coefficients for rectangular transforms, then IDCT.
+            // The encoder stores coefficients in post-swap layout (cx >= cy, stride = cx*8).
+            // The IDCT functions expect the natural (physical) layout.
+            // For transpose_slots transforms, transpose from (cy_post × cx_post) to
+            // (cx_post × cy_post) = (covered_y × covered_x) layout.
             for c in 0..3usize {
-                let pixels = idct_for_strategy(raw_strategy, &dequant_coeffs[c]);
+                let idct_input = if transpose_slots {
+                    // Transpose from post-swap to natural layout
+                    let mut transposed = vec![0.0f32; size];
+                    for y in 0..block_height {
+                        for x in 0..block_width {
+                            transposed[x * block_height + y] =
+                                dequant_coeffs[c][y * block_width + x];
+                        }
+                    }
+                    transposed
+                } else {
+                    dequant_coeffs[c].clone()
+                };
+                let pixels = idct_for_strategy(raw_strategy, &idct_input);
 
-                // Write pixels to output plane
+                // Write pixels to output plane using physical coverage dimensions
                 let pixel_x = bx * BLOCK_DIM;
                 let pixel_y = by * BLOCK_DIM;
-                let pix_w = cx * BLOCK_DIM;
-                let pix_h = cy * BLOCK_DIM;
+                let pix_w = covered_x * BLOCK_DIM;
+                let pix_h = covered_y * BLOCK_DIM;
 
                 for py in 0..pix_h {
                     for px in 0..pix_w {

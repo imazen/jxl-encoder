@@ -312,6 +312,7 @@ impl TinyEncoder {
     /// For single-group images (≤256x256), dc_group_idx is 0 and covers the whole image.
     /// For multi-group images, each DC group covers a 256x256 block region (2048x2048 pixels).
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_dc_group(
         &self,
         dc_group_idx: usize,
@@ -322,6 +323,7 @@ impl TinyEncoder {
         quant_field: &[u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
+        sharpness_map: Option<&[u8]>,
         dc_code: &super::entropy_code::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
@@ -394,6 +396,7 @@ impl TinyEncoder {
             start_by,
             cfl_map,
             ac_strategy,
+            sharpness_map,
             dc_code,
             writer,
         )?;
@@ -700,6 +703,7 @@ impl TinyEncoder {
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
         noise_params: &Option<NoiseParams>,
+        sharpness_map: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
@@ -776,6 +780,7 @@ impl TinyEncoder {
                 start_by,
                 cfl_map,
                 ac_strategy,
+                sharpness_map,
             );
             // When using learned tree, remap ALL token contexts to match BFS ordering.
             // The merged tree's BFS interleaves dummy padding leaves with AC metadata,
