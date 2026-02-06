@@ -816,6 +816,77 @@ pub(crate) fn gab_smooth(planes: &mut [Vec<f32>; 3], width: usize, height: usize
     }
 }
 
+/// Convert XYB pixel planes to interleaved linear RGB.
+///
+/// Implements the inverse of the XYB color transform:
+/// 1. Unmix: L = Y + X, M = Y - X, S = B
+/// 2. Undo gamma: add cbrt(bias), then cube, then subtract bias
+/// 3. Apply inverse opsin matrix to get linear RGB
+///
+/// Output: interleaved [R, G, B, R, G, B, ...] in linear light (0.0-1.0 range).
+/// Values are NOT clamped — caller should clamp if needed.
+#[cfg(feature = "butteraugli-loop")]
+pub(crate) fn xyb_to_linear_rgb(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    width: usize,
+    height: usize,
+) -> Vec<f32> {
+    use crate::color::xyb::{NEG_OPSIN_ABSORBANCE_BIAS_CBRT, OPSIN_ABSORBANCE_BIAS};
+
+    // Inverse opsin absorbance matrix (from libjxl cms/opsin_params.h)
+    #[allow(clippy::excessive_precision)]
+    const INV_OPSIN: [[f32; 3]; 3] = [
+        [11.031566901960783, -9.866943921568629, -0.16462299647058826],
+        [-3.254147380392157, 4.418770392156863, -0.16462299647058826],
+        [-3.6588512862745097, 2.7129230470588235, 1.9459282392156863],
+    ];
+
+    let cbrt_bias_0 = -NEG_OPSIN_ABSORBANCE_BIAS_CBRT[0]; // cbrt(bias) ≈ 0.15595
+    let cbrt_bias_1 = -NEG_OPSIN_ABSORBANCE_BIAS_CBRT[1];
+    let cbrt_bias_2 = -NEG_OPSIN_ABSORBANCE_BIAS_CBRT[2];
+    let neg_bias_0 = -OPSIN_ABSORBANCE_BIAS[0];
+    let neg_bias_1 = -OPSIN_ABSORBANCE_BIAS[1];
+    let neg_bias_2 = -OPSIN_ABSORBANCE_BIAS[2];
+
+    let num_pixels = width * height;
+    let mut linear_rgb = vec![0.0f32; num_pixels * 3];
+
+    for i in 0..num_pixels {
+        let x = xyb_x[i];
+        let y = xyb_y[i];
+        let b = xyb_b[i];
+
+        // Step 1: Unmix XYB to LMS gamma domain
+        let mut gamma_r = y + x; // L
+        let mut gamma_g = y - x; // M
+        let mut gamma_b = b; // S
+
+        // Step 2: Add cbrt(bias) back (undo the encoder's subtraction)
+        gamma_r += cbrt_bias_0;
+        gamma_g += cbrt_bias_1;
+        gamma_b += cbrt_bias_2;
+
+        // Step 3: Cube and subtract bias to get mixed (opsin LMS) values
+        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias_0;
+        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias_1;
+        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias_2;
+
+        // Step 4: Apply inverse opsin matrix to get linear RGB
+        let r = INV_OPSIN[0][0] * mixed_r + INV_OPSIN[0][1] * mixed_g + INV_OPSIN[0][2] * mixed_b;
+        let g = INV_OPSIN[1][0] * mixed_r + INV_OPSIN[1][1] * mixed_g + INV_OPSIN[1][2] * mixed_b;
+        let b_lin =
+            INV_OPSIN[2][0] * mixed_r + INV_OPSIN[2][1] * mixed_g + INV_OPSIN[2][2] * mixed_b;
+
+        linear_rgb[i * 3] = r;
+        linear_rgb[i * 3 + 1] = g;
+        linear_rgb[i * 3 + 2] = b_lin;
+    }
+
+    linear_rgb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -944,6 +1015,56 @@ mod tests {
                     val
                 );
             }
+        }
+    }
+
+    /// Test that XYB → linear RGB inverse is the inverse of linear RGB → XYB forward.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_xyb_to_linear_rgb_roundtrip() {
+        use crate::color::xyb::linear_rgb_to_xyb;
+
+        // Test several colors
+        let test_colors: &[(f32, f32, f32)] = &[
+            (1.0, 0.0, 0.0),    // red
+            (0.0, 1.0, 0.0),    // green
+            (0.0, 0.0, 1.0),    // blue
+            (1.0, 1.0, 1.0),    // white
+            (0.0, 0.0, 0.0),    // black
+            (0.5, 0.3, 0.7),    // arbitrary
+            (0.18, 0.18, 0.18), // mid-gray
+        ];
+
+        for &(r, g, b) in test_colors {
+            let (x, y, b_xyb) = linear_rgb_to_xyb(r, g, b);
+
+            // Inverse via xyb_to_linear_rgb
+            let xyb_x = [x];
+            let xyb_y = [y];
+            let xyb_b = [b_xyb];
+            let linear = xyb_to_linear_rgb(&xyb_x, &xyb_y, &xyb_b, 1, 1);
+
+            let r2 = linear[0];
+            let g2 = linear[1];
+            let b2 = linear[2];
+
+            let err_r = (r - r2).abs();
+            let err_g = (g - g2).abs();
+            let err_b = (b - b2).abs();
+
+            assert!(
+                err_r < 1e-5 && err_g < 1e-5 && err_b < 1e-5,
+                "XYB roundtrip failed for ({}, {}, {}): got ({}, {}, {}), err=({}, {}, {})",
+                r,
+                g,
+                b,
+                r2,
+                g2,
+                b2,
+                err_r,
+                err_g,
+                err_b
+            );
         }
     }
 }

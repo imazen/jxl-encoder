@@ -16,6 +16,8 @@ debug-tokens = ["jxl_enc/debug-tokens"]
 debug-ac-strategy = ["jxl_enc/debug-ac-strategy"]
 # Enable iterative rate control for improved distance targeting
 rate-control = ["jxl_enc/rate-control"]
+# Enable butteraugli quantization loop for per-block quality refinement
+butteraugli-loop = ["jxl_enc/butteraugli-loop"]
 
 [dependencies]
 jxl_enc = { path = "../jxl_enc", version = "0.1.0" }
