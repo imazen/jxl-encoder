@@ -146,9 +146,10 @@ impl PixelStatsForChromacityAdjustment {
 
 /// Compute DC quantization scale from distance.
 fn quant_dc(distance: f32) -> f32 {
-    const DC_QUANT_POW: f32 = 0.57;
-    const DC_QUANT: f32 = 1.12;
-    const DC_MUL: f32 = 2.9;
+    // Full libjxl constants (from enc_adaptive_quantization.cc)
+    const DC_QUANT_POW: f32 = 0.83;
+    const DC_QUANT: f32 = 1.095924047623553;
+    const DC_MUL: f32 = 0.3;
 
     let effective_dist = DC_MUL * (distance / DC_MUL).powf(DC_QUANT_POW);
     let effective_dist = clamp(effective_dist, 0.5 * distance, distance);
@@ -201,7 +202,7 @@ impl DistanceParams {
     fn compute_internal(distance: f32, quant_stats: Option<(f32, f32)>) -> Self {
         const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
         const GLOBAL_SCALE_NUMERATOR: i32 = 4096;
-        const AC_QUANT: f32 = 0.8;
+        const AC_QUANT: f32 = 0.765;
         const QUANT_FIELD_TARGET: f32 = 5.0;
 
         let qdc = quant_dc(distance);

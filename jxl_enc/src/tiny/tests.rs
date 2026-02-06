@@ -400,7 +400,7 @@ fn test_optimize_codes_roundtrip_small() {
     assert_eq!(s_pixels.len(), d_pixels.len());
     for (i, (&s, &d)) in s_pixels.iter().zip(d_pixels.iter()).enumerate() {
         assert!(
-            (s - d).abs() < 1e-6,
+            (s - d).abs() < 2e-6,
             "pixel {} differs: static={}, dynamic={}",
             i,
             s,

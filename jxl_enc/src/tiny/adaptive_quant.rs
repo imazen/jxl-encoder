@@ -5,17 +5,17 @@
 
 //! Adaptive quantization field computation.
 //!
-//! Ported from libjxl-tiny `enc_adaptive_quantization.cc`.
+//! Ported from full libjxl `enc_adaptive_quantization.cc`.
 
 // Ported float constants from C++ - exact values are intentional for parity.
 #![allow(clippy::excessive_precision)]
 #![allow(clippy::approx_constant)]
 //! Computes per-block quantization values based on perceptual masking.
 //!
-//! Pipeline:
-//! 1. `compute_pre_erosion()` — Y + kXMul×X channel diffs, gamma ratio, masking sqrt, 4x downsample
-//! 2. `fuzzy_erosion()` — 3×3 min-4 weighted sum, 2x downsample
-//! 3. `per_block_modulations()` — ComputeMask + HfModulation + ColorModulation + GammaModulation + exp2
+//! Pipeline (matches full libjxl):
+//! 1. `compute_pre_erosion()` — Y channel diffs, gamma ratio, limit clamp, masking sqrt, 4x downsample
+//! 2. `fuzzy_erosion()` — 3×3 min-4 distance-weighted sum, 2x downsample
+//! 3. `per_block_modulations()` — ComputeMask → GammaModulation → HfModulation → Min(Hf,Blue) → exp2
 //! 4. Convert: `raw_quant = clamp(round(quant_field * inv_scale + 0.5), 1, 255)`
 
 use super::common::clamp;
@@ -67,13 +67,13 @@ fn fast_pow2f(x: f32) -> f32 {
     num / den
 }
 
-// --- SimpleGamma constants ---
+// --- SimpleGamma constants (full libjxl) ---
 
-const SG_MUL: f32 = 226.048_045_f32;
-const SG_MUL2: f32 = 1.0 / 73.377_13_f32;
-const K_LOG2: f32 = 0.693_147_2_f32;
-const SG_RET_MUL: f32 = SG_MUL2 * 18.658_093_f32 * K_LOG2;
-const SG_V_OFFSET: f32 = 7.146_724_7_f32;
+const SG_MUL: f32 = 226.77216153508914_f32;
+const SG_MUL2: f32 = 1.0 / 73.377132366608819_f32;
+const K_INV_LOG2E: f32 = 0.693147180559945_f32; // ln(2) = 1/log2(e)
+const SG_RET_MUL: f32 = SG_MUL2 * 18.6580932135_f32 * K_INV_LOG2E;
+const SG_V_OFFSET: f32 = 7.7825991679894591_f32;
 
 /// Ratio of derivatives of cubic root to simple gamma.
 ///
@@ -87,8 +87,8 @@ fn ratio_of_derivatives(v: f32, invert: bool) -> f32 {
     let v = v.max(0.0);
 
     let k_num_mul = SG_RET_MUL * 3.0 * SG_MUL;
-    let k_v_offset = SG_V_OFFSET * K_LOG2 + epsilon;
-    let k_den_mul = K_LOG2 * SG_MUL;
+    let k_v_offset = SG_V_OFFSET * K_INV_LOG2E + epsilon;
+    let k_den_mul = K_INV_LOG2E * SG_MUL;
 
     let v2 = v * v;
 
@@ -101,9 +101,10 @@ fn ratio_of_derivatives(v: f32, invert: bool) -> f32 {
 // --- Masking ---
 
 /// MaskingSqrt: converts accumulated diff values through masking function.
+/// Full libjxl constants.
 fn masking_sqrt(v: f32) -> f32 {
-    const K_LOG_OFFSET: f32 = 26.481_47_f32;
-    const K_MUL: f32 = 211.507_6_f32;
+    const K_LOG_OFFSET: f32 = 27.505837037000106_f32;
+    const K_MUL: f32 = 211.66567973503678_f32;
     let mul_v = K_MUL * 1e8;
     0.25 * (v * mul_v.sqrt() + K_LOG_OFFSET).sqrt()
 }
@@ -131,15 +132,16 @@ fn store_min4(v: f32, min0: &mut f32, min1: &mut f32, min2: &mut f32, min3: &mut
 }
 
 /// ComputeMask: modulates exponent based on out_val.
+/// Full libjxl constants.
 fn compute_mask(out_val: f32) -> f32 {
-    const K_BASE: f32 = -0.741_749_93_f32;
-    const K_MUL4: f32 = 3.235_325_7_f32;
-    const K_MUL2: f32 = 12.906_028_f32;
-    const K_OFFSET2: f32 = 305.040_36_f32;
-    const K_MUL3: f32 = 5.022_031_3_f32;
-    const K_OFFSET3: f32 = 2.192_574_f32;
+    const K_BASE: f32 = -0.7647_f32;
+    const K_MUL4: f32 = 9.4708735624378946_f32;
+    const K_MUL2: f32 = 17.35036561631863_f32;
+    const K_OFFSET2: f32 = 302.59587815579727_f32;
+    const K_MUL3: f32 = 6.7943250517376494_f32;
+    const K_OFFSET3: f32 = 3.7179635626140772_f32;
     const K_OFFSET4: f32 = 0.25 * K_OFFSET3;
-    const K_MUL0: f32 = 0.747_604_22_f32;
+    const K_MUL0: f32 = 0.80061762862741759_f32;
 
     // Avoid division by zero
     let v1 = (out_val * K_MUL0).max(1e-3);
@@ -151,101 +153,99 @@ fn compute_mask(out_val: f32) -> f32 {
 }
 
 /// HfModulation: adjust quantization based on high-frequency content.
-///
-/// Computes sum of absolute pixel differences (right neighbor + below neighbor)
-/// in the Y channel over an 8×8 block.
+/// Full libjxl version: uses valmin_y clamp, kMul_y=-0.38, kOffset=0.42.
 ///
 /// The buffer must be padded to at least (y+8) rows and (x+8) columns with
 /// edge-replicated values, so no bounds checking is needed.
 fn hf_modulation(x: usize, y: usize, xyb_y: &[f32], stride: usize, out_val: f32) -> f32 {
-    let mut sum = 0.0_f32;
+    let mut sum_y = 0.0_f32;
+    const VALMIN_Y: f32 = 0.0206;
 
     for dy in 0..8 {
         let py = y + dy;
-        // For dy < 7, the below-neighbor is py+1 which is within the 8-row block.
-        // For dy == 7, we use py itself (no below-neighbor at block edge).
         let py_next = if dy == 7 { py } else { py + 1 };
 
         for dx in 0..8 {
             let px = x + dx;
-            let p = xyb_y[py * stride + px];
+            let p_y = xyb_y[py * stride + px];
 
-            // Right neighbor difference (skip last column)
+            // Right neighbor difference (skip last column), clamped to valmin_y
             if dx < 7 {
-                sum += (p - xyb_y[py * stride + px + 1]).abs();
+                let pr_y = xyb_y[py * stride + px + 1];
+                sum_y += (p_y - pr_y).abs().min(VALMIN_Y);
             }
 
-            // Below neighbor difference
-            let pd = xyb_y[py_next * stride + px];
-            sum += (p - pd).abs();
+            // Below neighbor difference, clamped to valmin_y
+            let pd_y = xyb_y[py_next * stride + px];
+            sum_y += (p_y - pd_y).abs().min(VALMIN_Y);
         }
     }
 
-    // -2.0052193233688884 / 112 ≈ -0.017903
-    out_val + sum * (-2.005_219_3_f32 / 112.0)
+    const K_MUL_Y: f32 = -0.38;
+    const K_OFFSET: f32 = 0.42;
+
+    let scalar_sum_y = sum_y * K_MUL_Y + K_OFFSET;
+
+    out_val + scalar_sum_y
 }
 
-/// ColorModulation: adjust quantization based on color content (red/blue coverage).
+/// BlueModulation: adjust quantization based on blue content.
+/// Replaces libjxl-tiny's ColorModulation.
+///
+/// Based on the idea that M and L cone activations saturate S (blue) receptors,
+/// and S reception becomes more important when both M and L levels are low.
 ///
 /// The buffer must be padded to at least (y+8) rows and (x+8) columns with
 /// edge-replicated values, so no bounds checking is needed.
 #[allow(clippy::too_many_arguments)]
-fn color_modulation(
+fn blue_modulation(
     x: usize,
     y: usize,
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
     stride: usize,
-    butteraugli_target: f32,
     out_val: f32,
 ) -> f32 {
-    const K_STRENGTH_MUL: f32 = 2.177_823_4_f32;
-    const K_RED_RAMP_START: f32 = 0.007_320_014_f32;
-    const K_RED_RAMP_LENGTH: f32 = 0.019_421_556_f32;
-    const K_BLUE_RAMP_LENGTH: f32 = 0.086_890_61_f32;
-    const K_BLUE_RAMP_START: f32 = 0.269_734_2_f32;
+    const K_LIMIT: f32 = 0.010474084867598155;
+    const K_OFFSET: f32 = 0.0031994768654636393;
 
-    let strength = K_STRENGTH_MUL * (1.0 - 0.25 * butteraugli_target);
-    if strength < 0.0 {
-        return out_val;
-    }
-
-    let red_strength = strength * 5.992_297_8_f32;
-    let blue_strength = strength;
-
-    // Offset: reduce bits from areas not blue or red
-    let offset = strength * -0.009_174_542_f32;
-    let result = out_val + offset;
-
-    let mut blue_coverage = 0.0_f32;
-    let mut red_coverage = 0.0_f32;
+    let mut sum = 0.0_f32;
 
     for dy in 0..8 {
         let py = y + dy;
         for dx in 0..8 {
             let px = x + dx;
             let idx = py * stride + px;
-            let pixel_x = (xyb_x[idx] - K_RED_RAMP_START).max(0.0);
-            let pixel_y = xyb_y[idx];
-            let pixel_b = (xyb_b[idx] - pixel_y - K_BLUE_RAMP_START).max(0.0);
+            let p_x = xyb_x[idx];
+            let p_b = xyb_b[idx];
+            let p_y_raw = xyb_y[idx] + K_OFFSET;
+            let p_y_effective = p_y_raw + p_x.abs();
 
-            let blue_slope = pixel_b.min(K_BLUE_RAMP_LENGTH);
-            let red_slope = pixel_x.min(K_RED_RAMP_LENGTH);
-            red_coverage += red_slope;
-            blue_coverage += blue_slope;
+            if p_b > p_y_effective {
+                sum += (p_b - p_y_effective).min(K_LIMIT);
+            }
         }
     }
 
-    const RATIO: f32 = 30.610_615_f32; // out of 64 pixels
+    // If it is all blue, don't boost — all blue likely means low frequency blue.
+    if sum >= 32.0 * K_LIMIT {
+        sum = 64.0 * K_LIMIT - sum;
+    }
 
-    let overall_red = red_coverage.min(RATIO * K_RED_RAMP_LENGTH) * (red_strength / RATIO);
-    let overall_blue = blue_coverage.min(RATIO * K_BLUE_RAMP_LENGTH) * (blue_strength / RATIO);
+    const K_MAX_LIMIT: f32 = 15.463398341612438;
+    if sum >= K_MAX_LIMIT * K_LIMIT {
+        sum = K_MAX_LIMIT * K_LIMIT;
+    }
 
-    result + overall_red + overall_blue
+    const K_MUL: f32 = 0.90590804735610064;
+    sum *= K_MUL;
+
+    out_val + sum
 }
 
 /// GammaModulation: adjust quantization based on gamma approximation.
+/// Full libjxl version: positive kGamma = 0.1006.
 ///
 /// The buffer must be padded to at least (y+8) rows and (x+8) columns with
 /// edge-replicated values, so no bounds checking is needed.
@@ -271,27 +271,25 @@ fn gamma_modulation(
             let g = iny + inx;
             let ratio_r = ratio_of_derivatives(r, true);
             let ratio_g = ratio_of_derivatives(g, true);
-            overall_ratio += 0.5 * (ratio_r + ratio_g);
+            overall_ratio += ratio_r + ratio_g;
         }
     }
 
-    overall_ratio /= 64.0;
+    overall_ratio *= 0.5 / 64.0;
 
-    // ln(2) constant folded in because we want std::log but have fast_log2f
-    const K_GAM: f32 = -0.155_268_78_f32 * 0.693_147_2_f32;
-    out_val + K_GAM * fast_log2f(overall_ratio)
+    // Full libjxl: positive kGamma (libjxl-tiny was negative)
+    const K_GAMMA: f32 = 0.1005613337192697_f32;
+    out_val + K_GAMMA * fast_log2f(overall_ratio)
 }
 
 /// Compute pre-erosion map from XYB planes.
 ///
-/// For each pixel, computes local differences in Y (with kXMul×X contribution),
-/// applies gamma ratio and masking sqrt, then downsamples 4× in each direction.
+/// Full libjxl version: Y channel only (no X channel), with limit=0.2 clamp
+/// before MaskingSqrt.
 ///
-/// The tile may be padded by 4 pixels on each side for border handling.
 /// Output dimensions: ceil(tile_pixel_w / 4) × ceil(tile_pixel_h / 4).
 #[allow(clippy::too_many_arguments)]
 fn compute_pre_erosion(
-    xyb_x: &[f32],
     xyb_y: &[f32],
     width: usize,
     height: usize,
@@ -301,11 +299,9 @@ fn compute_pre_erosion(
     tile_y1: usize,
 ) -> (Vec<f32>, usize, usize) {
     const MATCH_GAMMA_OFFSET: f32 = 0.019;
-    const K_X_MUL: f32 = 23.426_803_f32;
+    const LIMIT: f32 = 0.2;
 
     // Extend tile region by 4 pixels for border handling.
-    // tile_x1/tile_y1 may exceed image dimensions (padded to block boundary);
-    // pixel accesses below are clamped to simulate edge replication.
     let x0 = if tile_x0 > 0 { tile_x0 - 4 } else { 0 };
     let x1 = if tile_x1 < width {
         tile_x1 + 4
@@ -340,7 +336,7 @@ fn compute_pre_erosion(
             let x2 = (x + 1).min(max_x);
             let x1_local = if x > 0 { (x - 1).min(max_x) } else { 0 };
 
-            // Y channel base (average of 4 neighbors)
+            // Y channel base (average of 4 neighbors) — Y only, no X channel
             let base = 0.25
                 * (xyb_y[y2 * width + xc]
                     + xyb_y[y1 * width + xc]
@@ -352,16 +348,11 @@ fn compute_pre_erosion(
             let mut diff = gammac * (xyb_y[yc * width + xc] - base);
             diff *= diff;
 
-            // X channel base
-            let base_x = 0.25
-                * (xyb_x[y2 * width + xc]
-                    + xyb_x[y1 * width + xc]
-                    + xyb_x[yc * width + x1_local]
-                    + xyb_x[yc * width + x2]);
+            // Full libjxl: clamp to limit before MaskingSqrt
+            if diff >= LIMIT {
+                diff = LIMIT;
+            }
 
-            let mut diff_x = gammac * (xyb_x[yc * width + xc] - base_x);
-            diff_x *= diff_x;
-            diff += K_X_MUL * diff_x;
             diff = masking_sqrt(diff);
 
             let local_x = x - x0;
@@ -389,9 +380,7 @@ fn compute_pre_erosion(
 }
 
 /// FuzzyErosion: 3×3 min-4 weighted sum, then 2x downsample.
-///
-/// For each pixel, finds the 4 smallest values in its 3×3 neighborhood,
-/// then computes a weighted sum. Downsamples by 2 in both dimensions.
+/// Full libjxl version: distance-dependent weights.
 fn fuzzy_erosion(
     from: &[f32],
     from_w: usize,
@@ -400,10 +389,32 @@ fn fuzzy_erosion(
     from_y0: usize,
     region_w: usize,
     region_h: usize,
+    butteraugli_target: f32,
 ) -> (Vec<f32>, usize, usize) {
     let out_w = region_w / 2;
     let out_h = region_h / 2;
     let mut out = vec![0.0_f32; out_w * out_h];
+
+    // Distance-dependent weights (full libjxl)
+    const K_MUL_BASE: [f32; 4] = [0.125, 0.1, 0.09, 0.06];
+    const K_MUL_ADD: [f32; 4] = [0.0, -0.1, -0.09, -0.06];
+
+    let mul = if butteraugli_target < 2.0 {
+        (2.0 - butteraugli_target) * 0.5
+    } else {
+        0.0
+    };
+
+    let mut k_mul = [0.0_f32; 4];
+    let mut norm_sum = 0.0_f32;
+    for ii in 0..4 {
+        k_mul[ii] = K_MUL_BASE[ii] + mul * K_MUL_ADD[ii];
+        norm_sum += k_mul[ii];
+    }
+    const K_TOTAL: f32 = 0.29959705784054957;
+    for ii in 0..4 {
+        k_mul[ii] *= K_TOTAL / norm_sum;
+    }
 
     for fy in 0..region_h {
         let y = fy + from_y0;
@@ -427,7 +438,6 @@ fn fuzzy_erosion(
             let bot_right = from[yp1 * from_w + xp1];
 
             // Find smallest 4 from 9 values
-            // Start with first 4, sort them
             let mut min0 = center;
             let mut min1 = left;
             let mut min2 = right;
@@ -460,14 +470,7 @@ fn fuzzy_erosion(
             store_min4(bot, &mut min0, &mut min1, &mut min2, &mut min3);
             store_min4(bot_right, &mut min0, &mut min1, &mut min2, &mut min3);
 
-            // Uniform weights (libjxl-tiny uses all 0.05)
-            const K_MUL_C: f32 = 0.05;
-            const K_MUL0: f32 = 0.05;
-            const K_MUL1: f32 = 0.05;
-            const K_MUL2: f32 = 0.05;
-            const K_MUL3: f32 = 0.05;
-            let v =
-                K_MUL_C * center + K_MUL0 * min0 + K_MUL1 * min1 + K_MUL2 * min2 + K_MUL3 * min3;
+            let v = k_mul[0] * min0 + k_mul[1] * min1 + k_mul[2] * min2 + k_mul[3] * min3;
 
             let ox = fx / 2;
             let oy = fy / 2;
@@ -491,15 +494,8 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 
 /// Compute per-pixel (1x1) masking field for pixel-domain loss calculation.
 ///
-/// This implements libjxl's 1x1 Laplacian masking from `enc_adaptive_quantization.cc:500-521`.
+/// This implements libjxl's 1x1 Laplacian masking from `enc_adaptive_quantization.cc`.
 /// The mask is used in `EstimateEntropy` to weight pixel-domain quantization error.
-///
-/// Algorithm for each pixel (x, y):
-/// 1. Compute base = 0.25 * (Y[y-1,x] + Y[y+1,x] + Y[y,x-1] + Y[y,x+1])
-/// 2. Compute gammac = RatioOfDerivatives(Y[x,y] + 0.019, invert=false)
-/// 3. diff = abs(gammac * (Y[x,y] - base))
-/// 4. diff = log1p(diff)
-/// 5. mask1x1[y,x] = 1.0 / (diff + 0.01)
 ///
 /// # Returns
 /// Per-pixel mask field of size `width * height`, row-major layout.
@@ -512,7 +508,6 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
     let mut mask1x1 = vec![0.0_f32; width * height];
 
     for y in 0..height {
-        // Clamped neighbor indices for edge handling
         let y1 = if y > 0 { y - 1 } else { 0 };
         let y2 = if y + 1 < height { y + 1 } else { y };
 
@@ -520,7 +515,6 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
             let x1 = if x > 0 { x - 1 } else { 0 };
             let x2 = if x + 1 < width { x + 1 } else { x };
 
-            // Average of 4 neighbors (cross pattern)
             let base = 0.25
                 * (xyb_y[y1 * width + x]
                     + xyb_y[y2 * width + x]
@@ -537,30 +531,13 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
         }
     }
 
-    // Apply Symmetric5 blur (matches libjxl's BlurMasking in enc_adaptive_quantization.cc)
+    // Apply Symmetric5 blur (matches libjxl's BlurMasking)
     symmetric5_blur_mask1x1(&mut mask1x1, width, height);
 
     mask1x1
 }
 
 /// Apply Symmetric5 blur to mask1x1, matching libjxl's BlurMasking function.
-///
-/// The 5x5 kernel uses 6 unique weights with 8-fold symmetry:
-/// - c (center): 1.0
-/// - r (4 adjacent, distance 1 h/v): 0.364911248
-/// - d (4 diagonal, distance 1): 0.05
-/// - R (4 far h/v, distance 2): 0.1688888021
-/// - L (8 knight-move): 0.221069183
-/// - D (4 far diagonal, distance 2): 0.306563504
-///
-/// Kernel layout (lower-right quadrant indices):
-/// ```text
-/// D L R L D
-/// L d r d L
-/// R r c r R
-/// L d r d L
-/// D L R L D
-/// ```
 fn symmetric5_blur_mask1x1(mask: &mut [f32], width: usize, height: usize) {
     // libjxl weights from enc_adaptive_quantization.cc
     const W_R: f32 = 0.364911248; // kFilterMask1x1[0]
@@ -581,12 +558,10 @@ fn symmetric5_blur_mask1x1(mask: &mut [f32], width: usize, height: usize) {
     let l = inv_sum * W_L;
     let d2 = inv_sum * W_D2;
 
-    // Create output buffer
     let mut output = vec![0.0_f32; width * height];
 
     for y in 0..height {
         for x in 0..width {
-            // Compute clamped indices for 5x5 neighborhood
             let ym2 = y.saturating_sub(2);
             let ym1 = y.saturating_sub(1);
             let yp1 = (y + 1).min(height - 1);
@@ -597,25 +572,13 @@ fn symmetric5_blur_mask1x1(mask: &mut [f32], width: usize, height: usize) {
             let xp1 = (x + 1).min(width - 1);
             let xp2 = (x + 2).min(width - 1);
 
-            // Helper to fetch pixel
             let get = |py: usize, px: usize| mask[py * width + px];
 
-            // Apply symmetric 5x5 kernel
-            let mut val = c * get(y, x); // center
-
-            // 4 adjacent (r)
+            let mut val = c * get(y, x);
             val += r * (get(ym1, x) + get(yp1, x) + get(y, xm1) + get(y, xp1));
-
-            // 4 diagonal (d)
             val += d * (get(ym1, xm1) + get(ym1, xp1) + get(yp1, xm1) + get(yp1, xp1));
-
-            // 4 far h/v (R/r2)
             val += r2 * (get(ym2, x) + get(yp2, x) + get(y, xm2) + get(y, xp2));
-
-            // 4 far diagonal (D/d2)
             val += d2 * (get(ym2, xm2) + get(ym2, xp2) + get(yp2, xm2) + get(yp2, xp2));
-
-            // 8 knight-move (L)
             val += l
                 * (get(ym2, xm1)
                     + get(ym2, xp1)
@@ -630,15 +593,12 @@ fn symmetric5_blur_mask1x1(mask: &mut [f32], width: usize, height: usize) {
         }
     }
 
-    // Copy result back
     mask.copy_from_slice(&output);
 }
 
 /// PerBlockModulations: apply all modulations and convert exponent to multiplier.
 ///
-/// For each block, applies ComputeMask, HfModulation, ColorModulation,
-/// GammaModulation, then converts from exponent space to multiplicative
-/// quant field via exp2.
+/// Full libjxl order: ComputeMask → GammaModulation → HfModulation → Min(Hf, BlueModulation) → exp2
 ///
 /// `stride` is the row stride (padded width) of the XYB buffers.
 #[allow(clippy::too_many_arguments)]
@@ -656,8 +616,8 @@ fn per_block_modulations(
     aq_map: &mut [f32],
     aq_map_w: usize,
 ) {
-    let base_level = 0.5 * scale;
-    let k_dampen_ramp_start = 7.0_f32;
+    let base_level = 0.48 * scale;
+    let k_dampen_ramp_start = 2.0_f32;
     let k_dampen_ramp_end = 14.0_f32;
     let mut dampen = 1.0_f32;
     if butteraugli_target >= k_dampen_ramp_start {
@@ -679,22 +639,19 @@ fn per_block_modulations(
             let px = block_ix * 8;
 
             let mut out_val = aq_map[iy * aq_map_w + ix];
-            out_val = compute_mask(out_val);
-            out_val = hf_modulation(px, py, xyb_y, stride, out_val);
-            out_val = color_modulation(
-                px,
-                py,
-                xyb_x,
-                xyb_y,
-                xyb_b,
-                stride,
-                butteraugli_target,
-                out_val,
-            );
-            out_val = gamma_modulation(px, py, xyb_x, xyb_y, stride, out_val);
 
-            // Convert from exponent to multiplicative field: exp2(out_val * log2(e)) * mul + add
-            // C++ uses: FastPow2f(out_val * 1.442695041f) * mul + add
+            // Full libjxl order: Mask → Gamma → then both Hf and Blue from mask_val → Min
+            out_val = compute_mask(out_val);
+            out_val = gamma_modulation(px, py, xyb_x, xyb_y, stride, out_val);
+            let mask_val = out_val; // after Mask+Gamma, input to both Hf and Blue
+            let after_hf = hf_modulation(px, py, xyb_y, stride, mask_val);
+            let after_blue = blue_modulation(
+                px, py, xyb_x, xyb_y, xyb_b, stride,
+                mask_val,
+            );
+            out_val = after_hf.min(after_blue);
+
+            // Convert from exponent to multiplicative field
             aq_map[iy * aq_map_w + ix] = fast_pow2f(out_val * 1.442_695_f32) * mul + add;
         }
     }
@@ -702,20 +659,7 @@ fn per_block_modulations(
 
 /// Compute the adaptive quantization field for the entire image.
 ///
-/// Compute the float quant field and masking without converting to u8.
-///
-/// Returns `(quant_field_float, masking)`:
-/// - `quant_field_float`: Per-block float quant values for content-adaptive global_scale
-/// - `masking`: Per-block masking values for AC strategy selection
-///
-/// Use `quantize_quant_field()` to convert float field to u8 raw_quant after
-/// computing global_scale from the float field statistics.
-///
-/// # Arguments
-/// * `xyb_x`, `xyb_y`, `xyb_b` - XYB color planes, flat row-major `[y * width + x]`
-/// * `width`, `height` - image dimensions in pixels
-/// * `xsize_blocks`, `ysize_blocks` - image dimensions in 8×8 blocks
-/// * `distance` - butteraugli target distance
+/// Returns `(quant_field_float, masking)`.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_quant_field_float(
     xyb_x: &[f32],
@@ -727,23 +671,15 @@ pub fn compute_quant_field_float(
     ysize_blocks: usize,
     distance: f32,
 ) -> (Vec<f32>, Vec<f32>) {
-    // libjxl-tiny uses kAcQuant = 0.8294, full libjxl uses 0.765.
-    // K_AC_QUANT is a pure scaling factor: it changes distance-to-size mapping
-    // but NOT RD efficiency. At equal file sizes, different K_AC_QUANT values
-    // give the same SSIM2 (tested: 0.700 at d=0.85 ≈ 0.8294 at d=1.0 ≈ 75.3 SSIM2
-    // at ~470KB). The 26-29% file size gap vs cjxl comes from pipeline differences
-    // (AdjustQuantBlockAC, iterative rate control, more AC strategies), not from
-    // this constant.
-    const K_AC_QUANT: f32 = 0.8294;
+    // Full libjxl K_AC_QUANT
+    const K_AC_QUANT: f32 = 0.765;
     let scale = K_AC_QUANT / distance;
 
-    // Process the entire image as one tile.
     let tile_x0_pixels = 0;
     let tile_y0_pixels = 0;
 
-    // Step 1: Compute pre-erosion (4x downsample of local differences)
+    // Step 1: Compute pre-erosion (Y only, limit clamp, 4x downsample)
     let (pre_erosion, pre_erosion_w, pre_erosion_h) = compute_pre_erosion(
-        xyb_x,
         xyb_y,
         width,
         height,
@@ -753,7 +689,7 @@ pub fn compute_quant_field_float(
         height,
     );
 
-    // Step 2: Fuzzy erosion (3×3 min-4 weighted sum, 2x downsample)
+    // Step 2: Fuzzy erosion (distance-dependent weights, 2x downsample)
     let from_x0 = if tile_x0_pixels > 0 { 1 } else { 0 };
     let from_y0 = if tile_y0_pixels > 0 { 1 } else { 0 };
     let erosion_region_w = (xsize_blocks * 2).min(pre_erosion_w.saturating_sub(from_x0));
@@ -767,9 +703,10 @@ pub fn compute_quant_field_float(
         from_y0,
         erosion_region_w,
         erosion_region_h,
+        distance,
     );
 
-    // Step 2.5: Compute masking field for AC strategy use (snapshot before modulations)
+    // Step 2.5: Compute masking field for AC strategy use
     let mut masking = vec![0.0f32; xsize_blocks * ysize_blocks];
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
@@ -778,7 +715,7 @@ pub fn compute_quant_field_float(
         }
     }
 
-    // Step 3: Per-block modulations
+    // Step 3: Per-block modulations (full libjxl order)
     per_block_modulations(
         xyb_x,
         xyb_y,
@@ -818,19 +755,8 @@ pub fn quantize_quant_field(quant_field_float: &[f32], inv_scale: f32) -> Vec<u8
         .collect()
 }
 
-/// Returns a flat buffer of `u8` values, indexed as `[by * xsize_blocks + bx]`.
-/// Each value is the per-block raw_quant in range [1, 255].
-///
-/// This is a convenience wrapper that calls `compute_quant_field_float()` then
-/// `quantize_quant_field()`. For content-adaptive global_scale, use those two
-/// functions separately.
-///
-/// # Arguments
-/// * `xyb_x`, `xyb_y`, `xyb_b` - XYB color planes, flat row-major `[y * width + x]`
-/// * `width`, `height` - image dimensions in pixels
-/// * `xsize_blocks`, `ysize_blocks` - image dimensions in 8×8 blocks
-/// * `distance` - butteraugli target distance
-/// * `inv_scale` - 1.0 / (global_scale / 65536)
+/// Convenience wrapper that calls `compute_quant_field_float()` then
+/// `quantize_quant_field()`.
 #[allow(clippy::too_many_arguments, dead_code)]
 pub fn compute_adaptive_quant_field(
     xyb_x: &[f32],
@@ -863,49 +789,39 @@ mod tests {
 
     #[test]
     fn test_fast_log2f() {
-        // log2(1.0) = 0.0
         let v = fast_log2f(1.0);
         assert!((v - 0.0).abs() < 0.001, "fast_log2f(1.0) = {}", v);
 
-        // log2(2.0) = 1.0
         let v = fast_log2f(2.0);
         assert!((v - 1.0).abs() < 0.001, "fast_log2f(2.0) = {}", v);
 
-        // log2(4.0) = 2.0
         let v = fast_log2f(4.0);
         assert!((v - 2.0).abs() < 0.001, "fast_log2f(4.0) = {}", v);
 
-        // log2(0.5) = -1.0
         let v = fast_log2f(0.5);
         assert!((v - (-1.0)).abs() < 0.001, "fast_log2f(0.5) = {}", v);
     }
 
     #[test]
     fn test_fast_pow2f() {
-        // 2^0 = 1.0
         let v = fast_pow2f(0.0);
         assert!((v - 1.0).abs() < 0.001, "fast_pow2f(0.0) = {}", v);
 
-        // 2^1 = 2.0
         let v = fast_pow2f(1.0);
         assert!((v - 2.0).abs() < 0.01, "fast_pow2f(1.0) = {}", v);
 
-        // 2^(-1) = 0.5
         let v = fast_pow2f(-1.0);
         assert!((v - 0.5).abs() < 0.001, "fast_pow2f(-1.0) = {}", v);
 
-        // 2^10 = 1024
         let v = fast_pow2f(10.0);
         assert!((v - 1024.0).abs() < 1.0, "fast_pow2f(10.0) = {}", v);
     }
 
     #[test]
     fn test_masking_sqrt() {
-        // Should produce reasonable positive values
         let v = masking_sqrt(0.0);
         assert!(v > 0.0, "masking_sqrt(0.0) = {}", v);
 
-        // Monotonically increasing
         let v1 = masking_sqrt(1.0);
         let v2 = masking_sqrt(10.0);
         assert!(v2 > v1, "masking_sqrt should be monotonically increasing");
@@ -925,13 +841,11 @@ mod tests {
         assert_eq!(min3, 7.0);
 
         store_min4(100.0, &mut min0, &mut min1, &mut min2, &mut min3);
-        // 100 > min3, so nothing changes
         assert_eq!(min3, 7.0);
     }
 
     #[test]
     fn test_compute_mask() {
-        // Should produce finite values for reasonable inputs
         let v = compute_mask(1.0);
         assert!(v.is_finite(), "compute_mask(1.0) = {}", v);
 
@@ -941,21 +855,18 @@ mod tests {
 
     #[test]
     fn test_ratio_of_derivatives() {
-        // Should produce finite positive values for positive inputs
         let v = ratio_of_derivatives(1.0, false);
         assert!(v > 0.0 && v.is_finite(), "ratio(1.0, false) = {}", v);
 
         let v = ratio_of_derivatives(1.0, true);
         assert!(v > 0.0 && v.is_finite(), "ratio(1.0, true) = {}", v);
 
-        // Zero input should not crash (clamped internally)
         let v = ratio_of_derivatives(0.0, false);
         assert!(v.is_finite(), "ratio(0.0, false) = {}", v);
     }
 
     #[test]
     fn test_adaptive_quant_field_uniform() {
-        // A uniform gray image should produce roughly uniform quant field
         let w = 16;
         let h = 16;
         let n = w * h;
@@ -971,11 +882,9 @@ mod tests {
 
         assert_eq!(result.len(), xb * yb);
         assert_eq!(masking.len(), xb * yb);
-        // All values should be in valid range
         for &v in &result {
             assert!(v >= 1, "quant value {} out of range", v);
         }
-        // For uniform image, all blocks should have the same value
         let first = result[0];
         for &v in &result {
             assert_eq!(v, first, "uniform image should produce uniform quant field");
@@ -984,7 +893,6 @@ mod tests {
 
     #[test]
     fn test_adaptive_quant_field_varying() {
-        // An image with varying content should produce varying quant values
         let w = 32;
         let h = 32;
         let n = w * h;
@@ -992,8 +900,6 @@ mod tests {
         let mut xyb_y = vec![0.0_f32; n];
         let mut xyb_b = vec![0.0_f32; n];
 
-        // Left half: smooth (low values)
-        // Right half: high-frequency pattern
         for y in 0..h {
             for x in 0..w {
                 let idx = y * w + x;
@@ -1001,7 +907,6 @@ mod tests {
                     xyb_y[idx] = 0.5;
                     xyb_b[idx] = 0.5;
                 } else {
-                    // Checkerboard pattern
                     xyb_y[idx] = if (x + y) % 2 == 0 { 0.8 } else { 0.2 };
                     xyb_b[idx] = xyb_y[idx];
                     xyb_x[idx] = if x % 2 == 0 { 0.1 } else { -0.1 };
@@ -1016,18 +921,14 @@ mod tests {
             compute_adaptive_quant_field(&xyb_x, &xyb_y, &xyb_b, w, h, xb, yb, 1.0, 8.93);
 
         assert_eq!(result.len(), xb * yb);
-        // All values should be in valid range
         for &v in &result {
             assert!(v >= 1, "quant value {} out of range", v);
         }
-        // Smooth and textured regions should differ
-        // (left column blocks vs right column blocks)
         let left_avg: f32 = (0..yb).map(|by| result[by * xb] as f32).sum::<f32>() / yb as f32;
         let right_avg: f32 = (0..yb)
             .map(|by| result[by * xb + xb - 1] as f32)
             .sum::<f32>()
             / yb as f32;
-        // They should be different (adaptive quant is doing something)
         assert!(
             (left_avg - right_avg).abs() > 0.01,
             "smooth vs textured should differ: left={}, right={}",
@@ -1038,11 +939,6 @@ mod tests {
 
     #[test]
     fn test_adaptive_quant_field_non_multiple_of_8() {
-        // Regression test: dimensions not multiples of 8 caused OOB panic
-        // because pre-erosion dimensions were too small for the block count.
-        //
-        // The caller (encoder.rs) pads XYB buffers to block boundaries with
-        // edge replication. This test simulates that by allocating padded buffers.
         for &(w, h) in &[
             (300usize, 300usize),
             (301, 301),
@@ -1054,8 +950,8 @@ mod tests {
         ] {
             let xb = w.div_ceil(8);
             let yb = h.div_ceil(8);
-            let pw = xb * 8; // padded width
-            let ph = yb * 8; // padded height
+            let pw = xb * 8;
+            let ph = yb * 8;
             let n = pw * ph;
             let xyb_x = vec![0.0_f32; n];
             let xyb_y = vec![0.5_f32; n];
@@ -1081,7 +977,6 @@ mod tests {
 
     #[test]
     fn test_compute_mask1x1_uniform() {
-        // A uniform image should produce uniform mask (high values since no edges)
         let w = 16;
         let h = 16;
         let xyb_y = vec![0.5_f32; w * h];
@@ -1089,24 +984,19 @@ mod tests {
         let mask = compute_mask1x1(&xyb_y, w, h);
 
         assert_eq!(mask.len(), w * h);
-        // All values should be positive and finite
         for &v in &mask {
             assert!(v > 0.0 && v.is_finite(), "mask value {} invalid", v);
         }
-        // For uniform image, mask should be high (1.0 / 0.01 = 100 when diff=0)
-        // due to log1p(0) = 0
-        let first = mask[w + 1]; // skip edge pixels
+        let first = mask[w + 1];
         assert!(first > 50.0, "uniform mask should be high, got {}", first);
     }
 
     #[test]
     fn test_compute_mask1x1_edges() {
-        // Image with edges should have lower mask values at edge locations
         let w = 16;
         let h = 16;
         let mut xyb_y = vec![0.2_f32; w * h];
 
-        // Create a vertical edge at x=8
         for y in 0..h {
             for x in 8..w {
                 xyb_y[y * w + x] = 0.8;
@@ -1115,13 +1005,9 @@ mod tests {
 
         let mask = compute_mask1x1(&xyb_y, w, h);
 
-        // Interior of uniform regions (left side)
         let interior_left = mask[4 * w + 4];
-        // At the edge (x=8)
         let at_edge = mask[8 * w + 8];
 
-        // Edge location should have LOWER mask value (more masking needed)
-        // because diff is larger, log1p(diff) is larger, so 1/(diff+offset) is smaller
         assert!(
             at_edge < interior_left,
             "edge mask {} should be < interior mask {}",
