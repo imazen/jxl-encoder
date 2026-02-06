@@ -164,9 +164,9 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 16 of 27 implemented**
+**A. AC Strategies — 19 of 27 implemented**
 - Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32, IDENTITY, DCT2X2,
-  DCT32x16, DCT16x32, AFV0, AFV1, AFV2, AFV3
+  DCT32x16, DCT16x32, AFV0, AFV1, AFV2, AFV3, DCT64x64, DCT64x32, DCT32x64
 - IDENTITY auto-selects ~4-6% on natural photos at d=1.0, improves SSIM2/butteraugli
 - DCT2X2 rarely selected without kFavor2X2 bonus (disabled — our cost model is not complete enough)
 - DCT32x16/DCT16x32: ENABLED at d>=2.0, verified with jxl-oxide and djxl.
@@ -174,11 +174,13 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
   Note: jxl-rs has a known decoder bug with these transforms ("Invalid AC: 1 nonzeros").
 - AFV0-3: FULLY IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl.
   Auto-selection now works in BOTH pixel-domain mode (default) and coefficient-domain mode.
-  Fixed: proper inverse AFV transform (inverse_afv_transform in afv.rs) using AFV4x4 IDCT +
-  DCT4x4 IDCT + DCT4x8 IDCT. Also fixed AFV4X4_BASIS_TRANSPOSE row 15 values, and idct_4x4/idct_4x8
-  scaling (was missing *= 4 to compensate for forward's *= 1/4).
-- Missing (large transforms): DCT64x32, DCT32x64, DCT64x64, etc.
-- Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this
+- DCT64x64/DCT64x32/DCT32x64: IMPLEMENTED (Feb 5, 2026), verified with jxl-oxide and djxl.
+  Auto-selection guarded at d>=3.0. Uses hierarchical 64x64→32x32→16x16 evaluation.
+  nzeros widened from u8 to u16 (DCT64x64 has up to 4032 AC coefficients).
+  Pixel-domain loss uses coefficient-domain fallback (no IDCT64 yet).
+- Missing: DCT32x8, DCT8x32 (libjxl has these commented out), DCT128+ (experimental/unused)
+- Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this.
+  All strategies that libjxl uses at effort 5 are now implemented.
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
 - Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
@@ -237,7 +239,11 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
      distance multiplier (must match decoder's per-subimage max(channel_widths))
    - Special distance codes now correctly enabled for DC stream (dist_multiplier=xsize_blocks)
 5. ~~Iterative rate control~~ — DONE (commit 67f011c)
-6. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0, needs investigation)
+6. ~~DCT64x64/DCT64x32/DCT32x64~~ — DONE (Feb 5, 2026, all verified with jxl-oxide and djxl)
+   - Brings total to 19/27 strategies — all that libjxl uses at effort 5
+   - Auto-selection guarded at d>=3.0, hierarchical 64→32→16 evaluation
+   - nzeros widened from u8 to u16 for DCT64x64's 4032 AC coefficients
+7. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0, needs investigation)
 
 ### Outstanding Work
 
@@ -261,8 +267,9 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
-- [x] AC strategy selection (DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/DCT32x16/DCT16x32/IDENTITY/DCT2X2 per 16x16 region)
+- [x] AC strategy selection (19 of 27: DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/DCT32x16/DCT16x32/DCT64x64/DCT64x32/DCT32x64/IDENTITY/DCT2X2/AFV0-3)
 - [x] DCT32x16/DCT16x32: enabled at d>=2.0, verified with jxl-oxide and djxl
+- [x] DCT64x64/DCT64x32/DCT32x64: enabled at d>=3.0, verified with jxl-oxide and djxl
 - [x] AFV0-3: fully implemented with auto-selection in both pixel-domain and coefficient-domain modes
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
