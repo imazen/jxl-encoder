@@ -871,9 +871,9 @@ impl TinyEncoder {
                 for x in 0..width {
                     let pi = y * padded_width + x;
                     recon_rgb.push(RGB {
-                        r: recon_linear[pi * 3].max(0.0),
-                        g: recon_linear[pi * 3 + 1].max(0.0),
-                        b: recon_linear[pi * 3 + 2].max(0.0),
+                        r: recon_linear[pi * 3].clamp(0.0, 1.0),
+                        g: recon_linear[pi * 3 + 1].clamp(0.0, 1.0),
+                        b: recon_linear[pi * 3 + 2].clamp(0.0, 1.0),
                     });
                 }
             }
@@ -892,100 +892,124 @@ impl TinyEncoder {
                 None => return,
             };
 
-            // Step 5: Adjust quant_field per block based on distmap
-            // For each block, compute average butteraugli distance
+            // Step 5: Compute per-block tile distance (16th-power norm, matching libjxl)
+            // libjxl uses TileDistMap with 16th-norm and kTileNorm=1.2 scaling
+            const K_TILE_NORM: f32 = 1.2;
+            let diffmap_buf = diffmap.buf();
+            let mut tile_dist = vec![0.0f32; num_blocks];
             for by in 0..ysize_blocks {
                 for bx in 0..xsize_blocks {
                     if !ac_strategy.is_first(bx, by) {
                         continue;
                     }
-
                     let covered_x = ac_strategy.covered_blocks_x(bx, by);
                     let covered_y = ac_strategy.covered_blocks_y(bx, by);
-
-                    // Average butteraugli distance over the block's pixel region
                     let px_start_x = bx * BLOCK_DIM;
                     let px_start_y = by * BLOCK_DIM;
                     let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
                     let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
-
                     if px_start_x >= width || px_start_y >= height {
                         continue;
                     }
-
-                    let mut sum_dist = 0.0f64;
-                    let mut count = 0u32;
+                    let mut dist_norm = 0.0f64;
+                    let mut pixels = 0.0f64;
                     for py in px_start_y..px_end_y {
                         for px in px_start_x..px_end_x {
-                            sum_dist += diffmap.buf()[py * width + px] as f64;
-                            count += 1;
+                            let v = diffmap_buf[py * width + px] as f64;
+                            // v^16 (16th-power norm)
+                            let v2 = v * v;
+                            let v4 = v2 * v2;
+                            let v8 = v4 * v4;
+                            let v16 = v8 * v8;
+                            dist_norm += v16;
+                            pixels += 1.0;
                         }
                     }
-
-                    if count == 0 {
-                        continue;
+                    if pixels == 0.0 {
+                        pixels = 1.0;
                     }
-
-                    let avg_dist = (sum_dist / count as f64) as f32;
-
-                    // Compute adjustment ratio: if avg_dist > target, increase quant
-                    // (lower quality to save bits); if < target, decrease quant.
-                    // But actually, in libjxl, higher quant_field = MORE quantization
-                    // = LOWER quality. So to improve quality (lower distance),
-                    // we need to DECREASE quant_field.
-                    //
-                    // Ratio = avg_dist / target_distance
-                    //   > 1: quality too low, decrease qf to improve
-                    //   < 1: quality too high, increase qf to save bits
-                    //
-                    // Wait — quant_field is an inverse-scale (higher = coarser quantization).
-                    // To reduce distance: need finer quantization = lower qf.
-                    // So: new_qf = old_qf * (target / avg_dist)
-                    // When avg_dist > target: target/avg_dist < 1, qf decreases = finer quant
-                    // When avg_dist < target: target/avg_dist > 1, qf increases = coarser quant
-                    //
-                    // Actually no — in our encoder, quant_field[block] is used as:
-                    //   qac = params.scale * quant_field[block]
-                    // Higher qac = more aggressive quantization = worse quality
-                    // So if distance is too high, we want to DECREASE qf.
-                    // new_qf = old_qf * (target / avg_dist) makes qf smaller when avg_dist > target.
-                    // Hmm but that's wrong — we want qf smaller → better quality → lower distance.
-                    // target/avg_dist < 1 when avg_dist > target, so qf gets smaller. Correct!
-
-                    let ratio = if avg_dist > 0.001 {
-                        target_distance / avg_dist
-                    } else {
-                        2.0 // Quality much better than needed, double coarseness
-                    };
-
-                    // Dampen the adjustment to avoid oscillation
-                    let damped_ratio = 1.0 + 0.5 * (ratio - 1.0);
-
-                    // Apply to all sub-blocks of this transform
+                    let td = K_TILE_NORM * (dist_norm / pixels).powf(1.0 / 16.0) as f32;
+                    // Fill all sub-blocks of this transform
                     for sy in 0..covered_y {
                         for sx in 0..covered_x {
-                            let bi = (by + sy) * xsize_blocks + (bx + sx);
-                            let old_qf = quant_field[bi] as f32;
-                            let new_qf = (old_qf * damped_ratio).round();
-
-                            // Clamp to valid range [1, 255]
-                            let new_qf = new_qf.clamp(1.0, 255.0) as u8;
-
-                            // Constrain: don't diverge too far from initial
-                            // After iteration 1, blend toward initial to prevent runaway
-                            let constrained = if iter >= 1 {
-                                let init_qf = initial_quant_field[bi] as f32;
-                                let blended = 0.6 * init_qf + 0.4 * new_qf as f32;
-                                (blended.round() as u8).max(1)
-                            } else {
-                                new_qf
-                            };
-
-                            quant_field[bi] = constrained;
+                            tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
                         }
                     }
                 }
             }
+
+            // Step 6: Adjust quant_field based on tile distances (matching libjxl)
+            //
+            // libjxl convention: higher qf = finer quantization = better quality
+            // Our convention: higher qf = coarser quantization = WORSE quality
+            //
+            // libjxl's adjustment when diff > 1 (quality too bad): qf *= diff (increase)
+            // For our inverted convention: when diff > 1, we DECREASE qf (= better quality)
+            //
+            // libjxl is ASYMMETRIC: aggressively fix bad blocks, barely touch good blocks.
+            // kPow = [0.2, 0.2, 0, 0, ...] — only iters 0-1 touch good blocks, gently.
+            let cur_pow: f64 = if iter < 2 {
+                0.2 + (target_distance as f64 - 1.0) * 0.0 // kPowMod[0..1] = 0
+            } else {
+                0.0
+            };
+
+            for bi in 0..num_blocks {
+                let diff = tile_dist[bi] / target_distance;
+                let old_qf = quant_field[bi] as f32;
+
+                let new_qf = if diff <= 1.0 {
+                    // Quality is good enough — barely adjust (or don't)
+                    if cur_pow == 0.0 {
+                        old_qf // Don't touch good blocks on later iterations
+                    } else {
+                        // Our convention inverted: good quality = decrease qf slightly
+                        // libjxl: qf *= pow(diff, cur_pow) — slight decrease
+                        // Ours: qf *= 1/pow(diff, cur_pow) — slight increase (coarser)
+                        // Wait: diff < 1, pow(diff, 0.2) < 1, so libjxl decreases qf
+                        // In our convention, to save bits on over-quality blocks,
+                        // we INCREASE qf (coarser). So: qf / pow(diff, cur_pow)
+                        old_qf / (diff as f64).powf(cur_pow) as f32
+                    }
+                } else {
+                    // Quality too bad — aggressively improve
+                    // libjxl: qf *= diff (increase qf = better quality)
+                    // Ours: qf /= diff (decrease qf = better quality, inverted convention)
+                    let candidate = old_qf / diff;
+                    // Ensure at least 1 step change (matching libjxl's rounding check)
+                    if candidate.round() as u8 == old_qf as u8 && old_qf > 1.0 {
+                        old_qf - 1.0
+                    } else {
+                        candidate
+                    }
+                };
+
+                quant_field[bi] = (new_qf.round() as u8).clamp(1, 255);
+            }
+
+            // kOriginalComparisonRound = 1: after iter 1, constrain toward initial
+            // to prevent oscillation. libjxl uses kInitMul=0.6 blend toward initial,
+            // but only clamps from BELOW (prevents qf from going too low = too coarse).
+            // In our inverted convention: prevent qf from going too HIGH = too coarse.
+            if iter == 1 {
+                const K_INIT_MUL: f32 = 0.6;
+                for bi in 0..num_blocks {
+                    let init_qf = initial_quant_field[bi] as f32;
+                    let cur_qf = quant_field[bi] as f32;
+                    // libjxl: clamp = (1-kInitMul)*cur + kInitMul*init
+                    // libjxl: if cur < clamp: cur = clamp (prevents going too low)
+                    // Our inverted: if cur > clamp: cur = clamp (prevents going too high/coarse)
+                    let clamp_val = (1.0 - K_INIT_MUL) * cur_qf + K_INIT_MUL * init_qf;
+                    if cur_qf > clamp_val {
+                        quant_field[bi] = (clamp_val.round() as u8).clamp(1, 255);
+                    }
+                }
+            }
+
+            eprintln!(
+                "  Butteraugli iter {}: score={:.3} (target={:.3})",
+                iter, result.score, target_distance,
+            );
 
             // Re-adjust quant field for multi-block consistency
             adjust_quant_field_with_distance(ac_strategy, quant_field, self.distance);
@@ -1271,7 +1295,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0x39bc54bdb21979dc;
+        const EXPECTED_HASH: u64 = 0x3b98124b0c19cb9c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1295,7 +1319,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0xeab625d7e3d04972;
+        const EXPECTED_HASH: u64 = 0x9c88473e426175b8;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1331,7 +1355,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0xcc959418ad9fc765;
+        const EXPECTED_HASH: u64 = 0xa7b89bca8f36d054;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1362,7 +1386,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0x481d92fc0b065c37;
+        const EXPECTED_HASH: u64 = 0x5324c4f675e42ff7;
         assert_eq!(
             hash,
             EXPECTED_HASH,

@@ -138,6 +138,15 @@ pub(crate) fn reconstruct_xyb(
                     let y = idx / block_width;
                     let x = idx % block_width;
 
+                    // LLF positions match the encoder's definition:
+                    // top-left cy×cx region of the coefficient grid
+                    let is_llf_pos = y < cy && x < cx;
+
+                    if is_llf_pos {
+                        // LLF positions are restored from DC, skip AC dequant
+                        continue;
+                    }
+
                     let coef_slot_y = y / BLOCK_DIM;
                     let coef_slot_x = x / BLOCK_DIM;
                     let pos_y = y % BLOCK_DIM;
@@ -151,23 +160,12 @@ pub(crate) fn reconstruct_xyb(
                     };
                     let q_int = quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
 
-                    // Check if this is an LLF position
-                    let is_llf_pos =
-                        coef_slot_y < cy && coef_slot_x < cx && pos_y == 0 && pos_x == 0;
-
-                    if is_llf_pos {
-                        // LLF positions are restored from DC, skip AC dequant
-                        continue;
-                    }
-
                     if q_int != 0 {
                         let weight = weights[idx];
-                        // Dequant formula: coeff = adjust_quant_bias(q) / (inv_weight * qac * qm_mul)
-                        // where inv_weight = 1/weight, so coeff = adjust_quant_bias(q) * weight / (qac * qm_mul)
-                        // Wait - the encoder uses: val = coef * inv_weight * qac * qm_mul
-                        // So: coef = val / (inv_weight * qac * qm_mul) = val * weight / (qac * qm_mul)
-                        // But actually the weights array from quant_weights() returns the
-                        // dequantization weights (i.e., the values the decoder multiplies by).
+                        // quant_weights() returns 1/dequant_weight (the quantization weight).
+                        // Encoder: val = coef * (1/weight) * qac * qm_mul
+                        //   where (1/weight) = dequant_weight
+                        // Dequant: coef = val * weight / (qac * qm_mul)
                         // Let me check: in quantize_coeff_ac, inv_weight = 1/weight.
                         // The quantization: val = coef * (1/weight) * qac * qm_mul
                         // The dequantization: coef = val * weight / (qac * qm_mul)
@@ -181,7 +179,7 @@ pub(crate) fn reconstruct_xyb(
                         // So quant_weights returns 1/dequant_weight = inv_weight.
                         // Dequant: coef = adjust_quant_bias(q) / (inv_weight * qac * qm_mul)
                         let biased = adjust_quant_bias(q_int, c);
-                        dequant_coeffs[c][idx] = biased / (weight * qac * qm_mul);
+                        dequant_coeffs[c][idx] = biased * weight / (qac * qm_mul);
                     }
                 }
 
@@ -189,6 +187,7 @@ pub(crate) fn reconstruct_xyb(
                 restore_llf_from_dc(
                     &mut dequant_coeffs[c],
                     &quant_dc[c],
+                    &quant_dc[1], // Y channel DC for CfL
                     c,
                     params,
                     raw_strategy,
@@ -206,12 +205,9 @@ pub(crate) fn reconstruct_xyb(
             for idx in 0..size {
                 let y = idx / block_width;
                 let x = idx % block_width;
-                let coef_slot_y = y / BLOCK_DIM;
-                let coef_slot_x = x / BLOCK_DIM;
-                let pos_y = y % BLOCK_DIM;
-                let pos_x = x % BLOCK_DIM;
 
-                let is_llf_pos = coef_slot_y < cy && coef_slot_x < cx && pos_y == 0 && pos_x == 0;
+                // LLF positions match the encoder's definition
+                let is_llf_pos = y < cy && x < cx;
 
                 if !is_llf_pos {
                     dequant_coeffs[0][idx] += x_factor * dequant_coeffs[1][idx];
@@ -271,6 +267,7 @@ pub(crate) fn reconstruct_xyb(
 fn restore_llf_from_dc(
     coeffs: &mut [f32],
     quant_dc_ch: &[Vec<i16>],
+    quant_dc_y: &[Vec<i16>], // Y channel DC for CfL on B channel
     channel: usize,
     params: &DistanceParams,
     raw_strategy: u8,
@@ -280,8 +277,15 @@ fn restore_llf_from_dc(
     _cy: usize,
     _block_width: usize,
 ) {
-    let _dc_cfl_factor = if channel == 2 { 0.5f32 } else { 0.0f32 };
+    let dc_cfl_factor: f32 = if channel == 2 { 0.5 } else { 0.0 };
     let inv_factor = INV_DC_QUANT[channel] * params.scale_dc;
+
+    // Helper: dequantize a DC value with CfL correction
+    let dequant_dc = |iy: usize, ix: usize| -> f32 {
+        let stored = quant_dc_ch[by + iy][bx + ix] as f32;
+        let y_stored = quant_dc_y[by + iy][bx + ix] as f32;
+        (stored + y_stored * dc_cfl_factor) / inv_factor
+    };
 
     // Collect DC values and dequantize them
     // DC was stored as: quant_dc[c][by+iy][bx+ix] = (dc * inv_factor - y_dc * dc_cfl_factor).round()
@@ -320,55 +324,33 @@ fn restore_llf_from_dc(
         | RAW_STRATEGY_AFV2
         | RAW_STRATEGY_AFV3 => {
             // Single-block: LLF is just DC at position [0]
-            let dc_stored = quant_dc_ch[by][bx] as f32;
-            let dc_float = dc_stored / inv_factor;
-            // CfL on DC is handled by the caller's CfL restore step
-            // (which adds y_dc * dc_cfl_factor back)
-            // Actually no - for DC, the encoder subtracted y_dc * dc_cfl_factor during
-            // quantization. The decoder adds it back. We need to replicate the decoder.
-            // But since we do CfL restore separately for AC, we need to handle DC CfL here.
-            // Actually, the decoder's LowestFrequenciesFromDC just sets the LLF from the
-            // already-dequantized DC. The CfL on DC happens through the DC prediction path.
-            // Let me just dequantize DC correctly and let the CfL step handle AC.
-            coeffs[0] = dc_float;
+            coeffs[0] = dequant_dc(0, 0);
         }
 
         RAW_STRATEGY_DCT16X8 => {
-            // 2 DC values in column (by, by+1 if not transposed)
-            let dc0 = quant_dc_ch[by][bx] as f32 / inv_factor;
-            let dc1 = quant_dc_ch[by + 1][bx] as f32 / inv_factor;
+            // 2 DC values in column (by, by+1)
+            let dc0 = dequant_dc(0, 0);
+            let dc1 = dequant_dc(1, 0);
 
-            // Forward 2-point DCT + scale
-            let llf0 = (dc0 + dc1) * DCT_RESAMPLE_SCALE_2_TO_16[0];
-            let llf1 = (dc0 - dc1) * DCT_RESAMPLE_SCALE_2_TO_16[1];
-
-            // Write to LLF positions (stride = block_width = 8 for 16x8)
-            // DCT16x8: coefficient layout is 8 cols x 16 rows, stride 8
-            // LLF positions: (0,0) and (1,0) in slot grid = positions [0] and [8]
-            // Wait - for DCT16x8 (no final transpose, ROWS >= COLS), the coefficient
-            // layout is such that the LLF region is the top-left cx × cy = 1 × 2 positions.
-            // In the stride=8 layout: position [0*8+0] and [1*8+0] = [0] and [8].
-            // But actually: dc_from_dct_16x8 reads coeffs[0] and coeffs[1] (both at row 0).
-            // Because after the forward DCT (no final transpose), the LLF coefficients
-            // are at the first row: coeffs[0] = LLF(0,0), coeffs[1] = LLF(0,1).
-            // The stride is 8 (short dimension) but LLF is 2 consecutive values.
-            // Let me check dc_from_dct_16x8 more carefully.
-            coeffs[0] = llf0;
-            coeffs[1] = llf1;
+            // Inverse of dc_from_dct_16x8:
+            // Forward: dc[0] = llf0*s0 + llf1*s1, dc[1] = llf0*s0 - llf1*s1
+            // Inverse: llf0 = (dc0+dc1) / (2*s0), llf1 = (dc0-dc1) / (2*s1)
+            // Note: 2-point Hadamard H*H = 2*I, so inverse = H/2
+            let s0 = DCT_RESAMPLE_SCALE_16_TO_2[0];
+            let s1 = DCT_RESAMPLE_SCALE_16_TO_2[1];
+            coeffs[0] = (dc0 + dc1) / (2.0 * s0);
+            coeffs[1] = (dc0 - dc1) / (2.0 * s1);
         }
 
         RAW_STRATEGY_DCT8X16 => {
             // 2 DC values in row (bx, bx+1)
-            let dc0 = quant_dc_ch[by][bx] as f32 / inv_factor;
-            let dc1 = quant_dc_ch[by][bx + 1] as f32 / inv_factor;
+            let dc0 = dequant_dc(0, 0);
+            let dc1 = dequant_dc(0, 1);
 
-            let llf0 = (dc0 + dc1) * DCT_RESAMPLE_SCALE_2_TO_16[0];
-            let llf1 = (dc0 - dc1) * DCT_RESAMPLE_SCALE_2_TO_16[1];
-
-            // DCT8x16 has final transpose. LLF positions in stride-16 layout:
-            // dc_from_dct_8x16 reads coeffs[0] and coeffs[1]
-            coeffs[0] = llf0;
-            coeffs[1] = llf1;
+            let s0 = DCT_RESAMPLE_SCALE_16_TO_2[0];
+            let s1 = DCT_RESAMPLE_SCALE_16_TO_2[1];
+            coeffs[0] = (dc0 + dc1) / (2.0 * s0);
+            coeffs[1] = (dc0 - dc1) / (2.0 * s1);
         }
 
         RAW_STRATEGY_DCT16X16 => {
@@ -376,7 +358,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 4];
             for iy in 0..2 {
                 for ix in 0..2 {
-                    dc_grid[iy * 2 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 2 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -404,7 +386,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 16];
             for iy in 0..4 {
                 for ix in 0..4 {
-                    dc_grid[iy * 4 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 4 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -447,7 +429,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 8];
             for iy in 0..4 {
                 for ix in 0..2 {
-                    dc_grid[iy * 2 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 2 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -487,7 +469,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 8];
             for iy in 0..2 {
                 for ix in 0..4 {
-                    dc_grid[iy * 4 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 4 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -533,7 +515,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 64];
             for iy in 0..8 {
                 for ix in 0..8 {
-                    dc_grid[iy * 8 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 8 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -558,7 +540,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 32];
             for iy in 0..8 {
                 for ix in 0..4 {
-                    dc_grid[iy * 4 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 4 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -601,7 +583,7 @@ fn restore_llf_from_dc(
             let mut dc_grid = [0.0f32; 32];
             for iy in 0..4 {
                 for ix in 0..8 {
-                    dc_grid[iy * 8 + ix] = quant_dc_ch[by + iy][bx + ix] as f32 / inv_factor;
+                    dc_grid[iy * 8 + ix] = dequant_dc(iy, ix);
                 }
             }
 
@@ -662,20 +644,105 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
             output.to_vec()
         }
         RAW_STRATEGY_DCT4X4 => {
-            // DCT4x4 uses 4 sub-blocks in interleaved layout.
-            // The inverse needs to undo the interleaving.
-            // For now, use idct_8x8 as an approximation (matches existing behavior).
+            // Inverse of dct_4x4_full: undo DC combining, de-interleave, apply idct_4x4
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&coeffs[..64]);
+
+            // Undo 2x2 DC combining (inverse of 2x2 Hadamard * 0.25)
+            let dc00 = input[0];
+            let dc01 = input[1];
+            let dc10 = input[8];
+            let dc11 = input[9];
+            input[0] = dc00 + dc01 + dc10 + dc11;
+            input[1] = dc00 + dc01 - dc10 - dc11;
+            input[8] = dc00 - dc01 + dc10 + dc11;
+            input[9] = dc00 - dc01 - dc10 + dc11;
+
             let mut output = [0.0f32; 64];
-            idct_8x8(&input, &mut output);
+            for y in 0..2 {
+                for x in 0..2 {
+                    // De-interleave sub-block coefficients
+                    let mut sub = [0.0f32; 16];
+                    for iy in 0..4 {
+                        for ix in 0..4 {
+                            sub[iy * 4 + ix] = input[(y + iy * 2) * 8 + x + ix * 2];
+                        }
+                    }
+                    // Apply base 4x4 IDCT
+                    let mut pixels = [0.0f32; 16];
+                    idct_4x4(&sub, &mut pixels);
+                    // Place into output
+                    for iy in 0..4 {
+                        for ix in 0..4 {
+                            output[(y * 4 + iy) * 8 + (x * 4 + ix)] = pixels[iy * 4 + ix];
+                        }
+                    }
+                }
+            }
             output.to_vec()
         }
-        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => {
+        RAW_STRATEGY_DCT4X8 => {
+            // Inverse of dct_4x8_full: undo DC combining, de-interleave, apply idct_4x8
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&coeffs[..64]);
+
+            // Undo 2-point DC combining (inverse of Hadamard * 0.5)
+            let dc0 = input[0];
+            let dc1 = input[8];
+            input[0] = dc0 + dc1;
+            input[8] = dc0 - dc1;
+
             let mut output = [0.0f32; 64];
-            idct_8x8(&input, &mut output);
+            for y in 0..2 {
+                // De-interleave sub-block coefficients
+                let mut sub = [0.0f32; 32];
+                for iy in 0..4 {
+                    for ix in 0..8 {
+                        sub[iy * 8 + ix] = input[(y + iy * 2) * 8 + ix];
+                    }
+                }
+                // Apply base 4x8 IDCT
+                let mut pixels = [0.0f32; 32];
+                idct_4x8(&sub, &mut pixels);
+                // Place into output (4 rows, 8 cols)
+                for iy in 0..4 {
+                    for ix in 0..8 {
+                        output[(y * 4 + iy) * 8 + ix] = pixels[iy * 8 + ix];
+                    }
+                }
+            }
+            output.to_vec()
+        }
+        RAW_STRATEGY_DCT8X4 => {
+            // Inverse of dct_8x4_full: undo DC combining, de-interleave, apply idct_8x4
+            let mut input = [0.0f32; 64];
+            input.copy_from_slice(&coeffs[..64]);
+
+            // Undo 2-point DC combining (inverse of Hadamard * 0.5)
+            let dc0 = input[0];
+            let dc1 = input[8];
+            input[0] = dc0 + dc1;
+            input[8] = dc0 - dc1;
+
+            let mut output = [0.0f32; 64];
+            for x in 0..2 {
+                // De-interleave sub-block coefficients
+                let mut sub = [0.0f32; 32];
+                for iy in 0..4 {
+                    for ix in 0..8 {
+                        sub[iy * 8 + ix] = input[(x + iy * 2) * 8 + ix];
+                    }
+                }
+                // Apply base 8x4 IDCT
+                let mut pixels = [0.0f32; 32];
+                idct_8x4(&sub, &mut pixels);
+                // Place into output (8 rows, 4 cols)
+                for iy in 0..8 {
+                    for ix in 0..4 {
+                        output[iy * 8 + (x * 4 + ix)] = pixels[iy * 4 + ix];
+                    }
+                }
+            }
             output.to_vec()
         }
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
@@ -1066,5 +1133,129 @@ mod tests {
                 err_b
             );
         }
+    }
+
+    /// Test that full quantize→dequant→IDCT roundtrip works for DCT16x16.
+    /// This isolates whether the reconstruction formula matches the encoder formula.
+    #[test]
+    fn test_full_roundtrip_dct16x16() {
+        use super::super::dct::{dc_from_dct_16x16, dct_16x16};
+        use super::super::frame::DistanceParams;
+        use super::super::quant::quant_weights;
+
+        // Create a 16x16 pixel block with varied content
+        let pixels: [f32; 256] = core::array::from_fn(|i| {
+            let x = (i % 16) as f32;
+            let y = (i / 16) as f32;
+            // A mix of low and high frequency content
+            0.5 + 0.2 * (x * 0.5).sin() + 0.1 * (y * 0.3).cos() + 0.05 * ((x + y) * 0.7).sin()
+        });
+
+        // Forward DCT
+        let mut coeffs = [0.0f32; 256];
+        dct_16x16(&pixels, &mut coeffs);
+
+        // Quantize: val = coeff * inv_w * qac * qm_mul, quantized = round(val)
+        let strategy = 3; // DCT16x16
+        let channel = 1; // Y channel (qm_mul = 1.0)
+        let qf = 6u8;
+        let params = DistanceParams::compute(1.0);
+        let qac = params.scale * qf as f32;
+        let weights = quant_weights(strategy, channel);
+        let qm_mul = 1.0f32; // Y channel
+
+        let mut quantized = [0i32; 256];
+        // Skip LLF positions
+        let cx = 2usize;
+        let cy = 2usize;
+        for idx in 0..256 {
+            let y = idx / 16;
+            let x = idx % 16;
+            let slot_y = y / 8;
+            let slot_x = x / 8;
+            let is_llf = slot_y < cy && slot_x < cx && (y % 8) == 0 && (x % 8) == 0;
+            if is_llf {
+                continue;
+            }
+            let inv_w = 1.0 / weights[idx];
+            let val = coeffs[idx] * inv_w * qac * qm_mul;
+            quantized[idx] = val.round() as i32;
+        }
+
+        // Extract DC values (forward path)
+        let dcs = dc_from_dct_16x16(&coeffs);
+        let inv_factor = super::super::quant::INV_DC_QUANT[channel] * params.scale_dc;
+        let quant_dc: Vec<i16> = dcs
+            .iter()
+            .map(|&dc| (dc * inv_factor).round() as i16)
+            .collect();
+
+        // Now reconstruct: dequant AC + restore LLF from DC + IDCT
+        let mut dequant = [0.0f32; 256];
+
+        // Dequant AC
+        for idx in 0..256 {
+            let y = idx / 16;
+            let x = idx % 16;
+            let slot_y = y / 8;
+            let slot_x = x / 8;
+            let is_llf = slot_y < cy && slot_x < cx && (y % 8) == 0 && (x % 8) == 0;
+            if is_llf {
+                continue;
+            }
+            if quantized[idx] != 0 {
+                let biased = adjust_quant_bias(quantized[idx], channel);
+                let weight = weights[idx];
+                dequant[idx] = biased * weight / (qac * qm_mul);
+            }
+        }
+
+        // Restore LLF from DC (same as in restore_llf_from_dc for DCT16x16)
+        let dc_grid: Vec<f32> = quant_dc.iter().map(|&v| v as f32 / inv_factor).collect();
+
+        let s0 = super::super::dct::DCT_RESAMPLE_SCALE_16_TO_2[0];
+        let s1 = super::super::dct::DCT_RESAMPLE_SCALE_16_TO_2[1];
+
+        let h00 = dc_grid[0] + dc_grid[1] + dc_grid[2] + dc_grid[3];
+        let h01 = dc_grid[0] + dc_grid[1] - dc_grid[2] - dc_grid[3];
+        let h10 = dc_grid[0] - dc_grid[1] + dc_grid[2] - dc_grid[3];
+        let h11 = dc_grid[0] - dc_grid[1] - dc_grid[2] + dc_grid[3];
+
+        dequant[0] = h00 / (4.0 * s0 * s0);
+        dequant[1] = h01 / (4.0 * s0 * s1);
+        dequant[16] = h10 / (4.0 * s1 * s0);
+        dequant[17] = h11 / (4.0 * s1 * s1);
+
+        // IDCT
+        let mut recon_pixels = [0.0f32; 256];
+        super::super::dct::idct_16x16(&dequant, &mut recon_pixels);
+
+        // Compare
+        let mut max_err = 0.0f32;
+        let mut sum_err = 0.0f32;
+        for i in 0..256 {
+            let err = (pixels[i] - recon_pixels[i]).abs();
+            if err > max_err {
+                max_err = err;
+            }
+            sum_err += err;
+        }
+        let mean_err = sum_err / 256.0;
+
+        println!(
+            "DCT16x16 roundtrip: mean_err={:.6}, max_err={:.6}, pixel range=[{:.3}, {:.3}]",
+            mean_err,
+            max_err,
+            pixels.iter().cloned().fold(f32::INFINITY, f32::min),
+            pixels.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+        );
+
+        // For lossy quantization at d=1.0, expect reasonable error
+        assert!(
+            max_err < 0.5,
+            "DCT16x16 roundtrip max error too large: {} (mean: {})",
+            max_err,
+            mean_err
+        );
     }
 }
