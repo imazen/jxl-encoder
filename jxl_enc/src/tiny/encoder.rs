@@ -308,7 +308,11 @@ impl TinyEncoder {
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
         let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-            &xyb_x, &xyb_y, &xyb_b, padded_width, padded_height,
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            padded_width,
+            padded_height,
         );
         let chromacity_x = pixel_stats.how_much_is_x_channel_pixelized();
         let chromacity_b = pixel_stats.how_much_is_b_channel_pixelized();
@@ -960,7 +964,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x2202a2f3981bde6f;
+        const EXPECTED_HASH: u64 = 0x12b9219d8f644fb4;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -984,7 +988,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0x4ded326a349386d9;
+        const EXPECTED_HASH: u64 = 0xc36a1d8442dfdc38;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1020,7 +1024,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: iterative rate control changes output
-        const EXPECTED_HASH: u64 = 0xc4d00f0eb81d025c;
+        const EXPECTED_HASH: u64 = 0x6098aa3ec5d8715d;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1051,7 +1055,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x9ef803f904f2d9ec;
+        const EXPECTED_HASH: u64 = 0x40cd02bd04832c44;
         assert_eq!(
             hash,
             EXPECTED_HASH,

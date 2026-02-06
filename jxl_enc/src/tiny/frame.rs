@@ -98,7 +98,13 @@ impl PixelStatsForChromacityAdjustment {
     }
 
     /// Compute all pixel stats from XYB image.
-    pub(crate) fn calc(xyb_x: &[f32], xyb_y: &[f32], xyb_b: &[f32], width: usize, height: usize) -> Self {
+    pub(crate) fn calc(
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        width: usize,
+        height: usize,
+    ) -> Self {
         let dx = Self::calc_plane(xyb_x, width, height);
         let (db, exposed_blue) = Self::calc_exposed_blue(xyb_y, xyb_b, width, height);
         Self {
@@ -315,11 +321,7 @@ impl DistanceParams {
     /// IMPORTANT: The pixel stats must be computed from the XYB image BEFORE
     /// gaborish inverse, matching libjxl's pipeline order. Gaborish sharpening
     /// inflates gradients and would produce overly aggressive chromacity adjustment.
-    pub fn apply_chromacity_adjustment(
-        &mut self,
-        x_pixelized: u32,
-        b_pixelized: u32,
-    ) {
+    pub fn apply_chromacity_adjustment(&mut self, x_pixelized: u32, b_pixelized: u32) {
         // For X, take the most severe adjustment (max of distance-based and pixel-based)
         self.x_qm_scale = self.x_qm_scale.max(2 + x_pixelized);
 
@@ -329,10 +331,7 @@ impl DistanceParams {
         #[cfg(feature = "debug-tokens")]
         eprintln!(
             "[chromacity] x_pixelized={} b_pixelized={} -> x_qm_scale={} b_qm_scale={}",
-            x_pixelized,
-            b_pixelized,
-            self.x_qm_scale,
-            self.b_qm_scale,
+            x_pixelized, b_pixelized, self.x_qm_scale, self.b_qm_scale,
         );
     }
 }

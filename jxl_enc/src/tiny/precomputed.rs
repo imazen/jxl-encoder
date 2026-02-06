@@ -148,7 +148,11 @@ impl EncoderPrecomputed {
 
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl's pipeline order)
         let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-            &xyb_x, &xyb_y, &xyb_b, padded_width, padded_height,
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            padded_width,
+            padded_height,
         );
         let chromacity_x_pixelized = pixel_stats.how_much_is_x_channel_pixelized();
         let chromacity_b_pixelized = pixel_stats.how_much_is_b_channel_pixelized();
