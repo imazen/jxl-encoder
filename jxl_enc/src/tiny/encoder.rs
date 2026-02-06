@@ -193,6 +193,17 @@ pub struct TinyEncoder {
     /// and splicing in the learned DC subtree while preserving AC metadata routing.
     /// Expected gain (~1.2% overall) doesn't justify the complexity. See CLAUDE.md.
     pub dc_tree_learning: bool,
+    /// Number of butteraugli quantization loop iterations.
+    /// When > 0, iteratively refines the per-block quant field using butteraugli
+    /// perceptual distance feedback. Each iteration: encode → reconstruct → measure
+    /// → adjust quant_field. AC strategy is kept fixed; only quant_field changes.
+    ///
+    /// libjxl uses 2 iterations at effort 8, 4 at effort 9.
+    /// Requires the `butteraugli-loop` feature.
+    ///
+    /// Default: 0 (disabled)
+    #[cfg(feature = "butteraugli-loop")]
+    pub butteraugli_iters: u32,
 }
 
 impl Default for TinyEncoder {
@@ -214,6 +225,8 @@ impl Default for TinyEncoder {
             enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
+            #[cfg(feature = "butteraugli-loop")]
+            butteraugli_iters: 0,
         }
     }
 }
@@ -238,6 +251,8 @@ impl TinyEncoder {
             enable_lz77: false,    // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
+            #[cfg(feature = "butteraugli-loop")]
+            butteraugli_iters: 0,
         }
     }
 
@@ -431,6 +446,30 @@ impl TinyEncoder {
         // Adjust quant field for multi-block transforms.
         // At low distances uses max, at high distances blends toward mean for better quality.
         adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
+
+        // Butteraugli quantization loop: iteratively refine quant_field using
+        // perceptual distance feedback. AC strategy is fixed; only quant_field changes.
+        #[cfg(feature = "butteraugli-loop")]
+        if self.butteraugli_iters > 0 {
+            let initial_quant_field = quant_field.clone();
+            self.butteraugli_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &initial_quant_field,
+                &cfl_map,
+                &ac_strategy,
+            );
+        }
 
         // Perform DCT and quantization (XYB data is padded to block boundaries)
         let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
@@ -709,6 +748,248 @@ impl TinyEncoder {
         }
 
         Ok(writer.finish_with_padding())
+    }
+
+    /// Butteraugli quantization loop: iteratively refines per-block quant_field
+    /// by measuring perceptual distance (butteraugli) between the original image
+    /// and the reconstruction from quantized coefficients.
+    ///
+    /// Algorithm (libjxl FindBestQuantization):
+    /// For each iteration:
+    ///   1. transform_and_quantize with current quant_field
+    ///   2. reconstruct XYB → apply gab → EPF → XYB-to-linear
+    ///   3. butteraugli(original_linear, reconstructed_linear) → per-block distmap
+    ///   4. For blocks where distmap > target: increase quant (qf *= distmap/target)
+    ///      For blocks where distmap < target: decrease quant (qf *= distmap/target)
+    ///   5. Clamp and constrain (don't diverge too far from initial)
+    ///
+    /// AC strategy is FIXED throughout — only quant_field changes.
+    #[cfg(feature = "butteraugli-loop")]
+    #[allow(clippy::too_many_arguments)]
+    fn butteraugli_refine_quant_field(
+        &self,
+        linear_rgb: &[f32],
+        width: usize,
+        height: usize,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        padded_width: usize,
+        padded_height: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        params: &DistanceParams,
+        quant_field: &mut [u8],
+        initial_quant_field: &[u8],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+    ) {
+        use super::epf;
+        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb};
+        use imgref::ImgRef;
+        use rgb::RGB;
+
+        let target_distance = self.distance;
+        let num_blocks = xsize_blocks * ysize_blocks;
+
+        // Build original linear RGB image as ImgRef<RGB<f32>> for butteraugli
+        let original_rgb: Vec<RGB<f32>> = (0..width * height)
+            .map(|i| RGB {
+                r: linear_rgb[i * 3],
+                g: linear_rgb[i * 3 + 1],
+                b: linear_rgb[i * 3 + 2],
+            })
+            .collect();
+        let original_img = ImgRef::new(&original_rgb, width, height);
+
+        let butteraugli_params = butteraugli::ButteraugliParams::new()
+            .with_intensity_target(80.0)
+            .with_compute_diffmap(true);
+
+        for iter in 0..self.butteraugli_iters {
+            // Step 1: Quantize with current quant_field
+            let mut qf_copy = quant_field.to_vec();
+            let (quant_dc, quant_ac, _nzeros, _raw_nzeros) = self.transform_and_quantize(
+                xyb_x,
+                xyb_y,
+                xyb_b,
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+                params,
+                &mut qf_copy,
+                cfl_map,
+                ac_strategy,
+            );
+
+            // Step 2: Reconstruct XYB from quantized coefficients
+            let mut planes = reconstruct_xyb(
+                &quant_dc,
+                &quant_ac,
+                params,
+                &qf_copy,
+                cfl_map,
+                ac_strategy,
+                xsize_blocks,
+                ysize_blocks,
+            );
+
+            // Apply gaborish smooth if enabled
+            if self.enable_gaborish {
+                gab_smooth(&mut planes, padded_width, padded_height);
+            }
+
+            // Apply EPF if active
+            if params.epf_iters > 0 {
+                // Use default sharpness (4) for butteraugli loop iterations
+                let sharpness = vec![4u8; num_blocks];
+                epf::apply_epf(
+                    &mut planes,
+                    &qf_copy,
+                    &sharpness,
+                    params.scale,
+                    params.epf_iters,
+                    xsize_blocks,
+                    ysize_blocks,
+                    padded_width,
+                    padded_height,
+                );
+            }
+
+            // Step 3: Convert reconstructed XYB to linear RGB
+            let recon_linear = xyb_to_linear_rgb(
+                &planes[0],
+                &planes[1],
+                &planes[2],
+                padded_width,
+                padded_height,
+            );
+
+            // Build reconstructed ImgRef<RGB<f32>> (crop to original dimensions)
+            let mut recon_rgb = Vec::with_capacity(width * height);
+            for y in 0..height {
+                for x in 0..width {
+                    let pi = y * padded_width + x;
+                    recon_rgb.push(RGB {
+                        r: recon_linear[pi * 3].max(0.0),
+                        g: recon_linear[pi * 3 + 1].max(0.0),
+                        b: recon_linear[pi * 3 + 2].max(0.0),
+                    });
+                }
+            }
+            let recon_img = ImgRef::new(&recon_rgb, width, height);
+
+            // Step 4: Compute butteraugli distance with diffmap
+            let result =
+                match butteraugli::butteraugli_linear(original_img, recon_img, &butteraugli_params)
+                {
+                    Ok(r) => r,
+                    Err(_) => return, // Bail on error (e.g., image too small)
+                };
+
+            let diffmap = match result.diffmap {
+                Some(dm) => dm,
+                None => return,
+            };
+
+            // Step 5: Adjust quant_field per block based on distmap
+            // For each block, compute average butteraugli distance
+            for by in 0..ysize_blocks {
+                for bx in 0..xsize_blocks {
+                    if !ac_strategy.is_first(bx, by) {
+                        continue;
+                    }
+
+                    let covered_x = ac_strategy.covered_blocks_x(bx, by);
+                    let covered_y = ac_strategy.covered_blocks_y(bx, by);
+
+                    // Average butteraugli distance over the block's pixel region
+                    let px_start_x = bx * BLOCK_DIM;
+                    let px_start_y = by * BLOCK_DIM;
+                    let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
+                    let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
+
+                    if px_start_x >= width || px_start_y >= height {
+                        continue;
+                    }
+
+                    let mut sum_dist = 0.0f64;
+                    let mut count = 0u32;
+                    for py in px_start_y..px_end_y {
+                        for px in px_start_x..px_end_x {
+                            sum_dist += diffmap.buf()[py * width + px] as f64;
+                            count += 1;
+                        }
+                    }
+
+                    if count == 0 {
+                        continue;
+                    }
+
+                    let avg_dist = (sum_dist / count as f64) as f32;
+
+                    // Compute adjustment ratio: if avg_dist > target, increase quant
+                    // (lower quality to save bits); if < target, decrease quant.
+                    // But actually, in libjxl, higher quant_field = MORE quantization
+                    // = LOWER quality. So to improve quality (lower distance),
+                    // we need to DECREASE quant_field.
+                    //
+                    // Ratio = avg_dist / target_distance
+                    //   > 1: quality too low, decrease qf to improve
+                    //   < 1: quality too high, increase qf to save bits
+                    //
+                    // Wait — quant_field is an inverse-scale (higher = coarser quantization).
+                    // To reduce distance: need finer quantization = lower qf.
+                    // So: new_qf = old_qf * (target / avg_dist)
+                    // When avg_dist > target: target/avg_dist < 1, qf decreases = finer quant
+                    // When avg_dist < target: target/avg_dist > 1, qf increases = coarser quant
+                    //
+                    // Actually no — in our encoder, quant_field[block] is used as:
+                    //   qac = params.scale * quant_field[block]
+                    // Higher qac = more aggressive quantization = worse quality
+                    // So if distance is too high, we want to DECREASE qf.
+                    // new_qf = old_qf * (target / avg_dist) makes qf smaller when avg_dist > target.
+                    // Hmm but that's wrong — we want qf smaller → better quality → lower distance.
+                    // target/avg_dist < 1 when avg_dist > target, so qf gets smaller. Correct!
+
+                    let ratio = if avg_dist > 0.001 {
+                        target_distance / avg_dist
+                    } else {
+                        2.0 // Quality much better than needed, double coarseness
+                    };
+
+                    // Dampen the adjustment to avoid oscillation
+                    let damped_ratio = 1.0 + 0.5 * (ratio - 1.0);
+
+                    // Apply to all sub-blocks of this transform
+                    for sy in 0..covered_y {
+                        for sx in 0..covered_x {
+                            let bi = (by + sy) * xsize_blocks + (bx + sx);
+                            let old_qf = quant_field[bi] as f32;
+                            let new_qf = (old_qf * damped_ratio).round();
+
+                            // Clamp to valid range [1, 255]
+                            let new_qf = new_qf.clamp(1.0, 255.0) as u8;
+
+                            // Constrain: don't diverge too far from initial
+                            // After iteration 1, blend toward initial to prevent runaway
+                            let constrained = if iter >= 1 {
+                                let init_qf = initial_quant_field[bi] as f32;
+                                let blended = 0.6 * init_qf + 0.4 * new_qf as f32;
+                                (blended.round() as u8).max(1)
+                            } else {
+                                new_qf
+                            };
+
+                            quant_field[bi] = constrained;
+                        }
+                    }
+                }
+            }
+
+            // Re-adjust quant field for multi-block consistency
+            adjust_quant_field_with_distance(ac_strategy, quant_field, self.distance);
+        }
     }
 
     /// Encode with iterative rate control for improved distance targeting.
@@ -1226,5 +1507,65 @@ mod tests {
 
         // Also verify with djxl
         std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
+    }
+
+    /// Test that the butteraugli quantization loop produces valid output.
+    #[cfg(feature = "butteraugli-loop")]
+    #[test]
+    fn test_butteraugli_loop_basic() {
+        // Create a 64x64 test image with some variation
+        let width = 64;
+        let height = 64;
+        let mut linear_rgb = vec![0.0f32; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 3;
+                let fx = x as f32 / width as f32;
+                let fy = y as f32 / height as f32;
+                linear_rgb[idx] = fx * 0.8; // R
+                linear_rgb[idx + 1] = fy * 0.6; // G
+                linear_rgb[idx + 2] = (1.0 - fx) * 0.4; // B
+            }
+        }
+
+        // Encode without butteraugli loop
+        let mut encoder_baseline = TinyEncoder::new(2.0);
+        encoder_baseline.butteraugli_iters = 0;
+        let bytes_baseline = encoder_baseline
+            .encode(width, height, &linear_rgb)
+            .expect("baseline encode failed");
+
+        // Encode with 2 butteraugli loop iterations
+        let mut encoder_loop = TinyEncoder::new(2.0);
+        encoder_loop.butteraugli_iters = 2;
+        let bytes_loop = encoder_loop
+            .encode(width, height, &linear_rgb)
+            .expect("butteraugli loop encode failed");
+
+        // Both should produce valid JXL
+        assert_eq!(bytes_baseline[0], 0xFF);
+        assert_eq!(bytes_baseline[1], 0x0A);
+        assert_eq!(bytes_loop[0], 0xFF);
+        assert_eq!(bytes_loop[1], 0x0A);
+
+        // File sizes should differ (butteraugli loop changes quant field)
+        eprintln!(
+            "Baseline: {} bytes, Butteraugli loop (2 iters): {} bytes",
+            bytes_baseline.len(),
+            bytes_loop.len()
+        );
+
+        // Verify the butteraugli-loop output decodes correctly
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes_loop))
+            .expect("jxl-oxide decode of butteraugli loop output failed");
+        assert_eq!(image.width(), width as u32);
+        assert_eq!(image.height(), height as u32);
+
+        let render = image
+            .render_frame(0)
+            .expect("jxl-oxide render of butteraugli loop output failed");
+        let _pixels = render.image_all_channels();
+        eprintln!("Butteraugli loop output decodes OK");
     }
 }

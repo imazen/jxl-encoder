@@ -124,6 +124,13 @@ struct Args {
     #[arg(long, value_name = "N", default_value = "3")]
     rc_iterations: usize,
 
+    /// Number of butteraugli quantization loop iterations (0 = disabled).
+    /// Iteratively refines per-block quantization using butteraugli perceptual
+    /// distance feedback. 2 iterations ≈ libjxl effort 8.
+    /// Requires the butteraugli-loop feature.
+    #[arg(long, value_name = "N", default_value = "0")]
+    butteraugli_iters: u32,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -219,6 +226,19 @@ fn main() {
                             jxl_enc::tiny::Lz77Method::Greedy
                         }
                     };
+                }
+
+                #[cfg(feature = "butteraugli-loop")]
+                if args.butteraugli_iters > 0 {
+                    tiny.butteraugli_iters = args.butteraugli_iters;
+                    if !args.quiet {
+                        println!("Butteraugli loop: {} iterations", args.butteraugli_iters);
+                    }
+                }
+                #[cfg(not(feature = "butteraugli-loop"))]
+                if args.butteraugli_iters > 0 {
+                    eprintln!("Warning: --butteraugli-iters requires the butteraugli-loop feature");
+                    eprintln!("Rebuild with: cargo build --features butteraugli-loop");
                 }
 
                 // Convert sRGB u8 to linear f32 for the tiny encoder

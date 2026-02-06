@@ -35,6 +35,8 @@ safe-mode = []
 # Iterative rate control for improved distance targeting.
 # Requires jxl-oxide for decoding and butteraugli for quality measurement.
 rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
+# Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
+butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 default = ["safe-mode"]
 
 [dev-dependencies]
