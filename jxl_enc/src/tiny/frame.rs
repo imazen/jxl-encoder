@@ -29,8 +29,113 @@ pub struct DistanceParams {
     pub scale_dc: f32,
     /// X channel quant matrix scale (2-5).
     pub x_qm_scale: u32,
+    /// B channel quant matrix scale (2-5).
+    pub b_qm_scale: u32,
     /// Number of EPF iterations (0-3).
     pub epf_iters: u32,
+}
+
+/// Pixel-level statistics for chroma quantization adjustment.
+///
+/// Ported from libjxl enc_frame.cc:572-645.
+/// Computes max horizontal/vertical gradients of X and B-Y channels
+/// to determine how much chroma quantization can be coarsened.
+struct PixelStatsForChromacityAdjustment {
+    /// Max gradient of X (opsin) channel.
+    dx: f32,
+    /// Max gradient of B-Y channel.
+    db: f32,
+    /// Exposed blue metric (B pixels much brighter than Y).
+    exposed_blue: f32,
+}
+
+impl PixelStatsForChromacityAdjustment {
+    /// Compute max horizontal/vertical gradient of a single plane.
+    fn calc_plane(plane: &[f32], width: usize, height: usize) -> f32 {
+        let mut xmax: f32 = 0.0;
+        let mut ymax: f32 = 0.0;
+        for ty in 1..height {
+            for tx in 1..width {
+                let cur = plane[ty * width + tx];
+                let prev_row = plane[(ty - 1) * width + tx];
+                let prev = plane[ty * width + (tx - 1)];
+                xmax = xmax.max((cur - prev).abs());
+                ymax = ymax.max((cur - prev_row).abs());
+            }
+        }
+        xmax.max(ymax)
+    }
+
+    /// Compute B-Y gradient and exposed blue metric.
+    fn calc_exposed_blue(
+        plane_y: &[f32],
+        plane_b: &[f32],
+        width: usize,
+        height: usize,
+    ) -> (f32, f32) {
+        let mut eb: f32 = 0.0;
+        let mut xmax: f32 = 0.0;
+        let mut ymax: f32 = 0.0;
+        for ty in 1..height {
+            for tx in 1..width {
+                let cur_y = plane_y[ty * width + tx];
+                let cur_b = plane_b[ty * width + tx];
+                let exposed_b = cur_b - cur_y * 1.2;
+                let diff_b = cur_b - cur_y;
+                let prev_row_b = plane_b[(ty - 1) * width + tx];
+                let prev_b = plane_b[ty * width + (tx - 1)];
+                let diff_prev_row = prev_row_b - plane_y[(ty - 1) * width + tx];
+                let diff_prev = prev_b - plane_y[ty * width + (tx - 1)];
+                xmax = xmax.max((diff_b - diff_prev).abs());
+                ymax = ymax.max((diff_b - diff_prev_row).abs());
+                if exposed_b >= 0.0 {
+                    let eb_val = exposed_b * ((cur_b - prev_b).abs() + (cur_b - prev_row_b).abs());
+                    eb = eb.max(eb_val);
+                }
+            }
+        }
+        (xmax.max(ymax), eb)
+    }
+
+    /// Compute all pixel stats from XYB image.
+    fn calc(xyb_x: &[f32], xyb_y: &[f32], xyb_b: &[f32], width: usize, height: usize) -> Self {
+        let dx = Self::calc_plane(xyb_x, width, height);
+        let (db, exposed_blue) = Self::calc_exposed_blue(xyb_y, xyb_b, width, height);
+        Self {
+            dx,
+            db,
+            exposed_blue,
+        }
+    }
+
+    /// How much X channel quantization can be coarsened (0-3).
+    fn how_much_is_x_channel_pixelized(&self) -> u32 {
+        if self.dx >= 0.026 {
+            return 3;
+        }
+        if self.dx >= 0.022 {
+            return 2;
+        }
+        if self.dx >= 0.015 {
+            return 1;
+        }
+        0
+    }
+
+    /// How much B channel quantization can be coarsened (0-3).
+    fn how_much_is_b_channel_pixelized(&self) -> u32 {
+        let add = if self.exposed_blue >= 0.13 { 1 } else { 0 };
+        if self.db > 0.38 {
+            return 2 + add;
+        }
+        if self.db > 0.33 {
+            return 1 + add;
+        }
+        if self.db > 0.28 {
+            return add;
+        }
+        0
+    }
 }
 
 /// Compute DC quantization scale from distance.
@@ -139,17 +244,18 @@ impl DistanceParams {
         let quant_dc = clamp((qdc / scale + 0.5) as i32, 1, 1 << 16);
         let scale_dc = (quant_dc as f32) * scale;
 
-        // X quant matrix scale
-        let mut x_qm_scale = 2u32;
-        let x_qm_scale_steps = [1.25f32, 9.0f32];
+        // X quant matrix scale - full libjxl formula (enc_frame.cc:655-661)
+        // Starts at 3, steps at [2.5, 5.5, 9.5] (vs libjxl-tiny: starts at 2, steps [1.25, 9.0])
+        let mut x_qm_scale = 3u32;
+        let x_qm_scale_steps = [2.5f32, 5.5f32, 9.5f32];
         for step in &x_qm_scale_steps {
             if distance > *step {
                 x_qm_scale += 1;
             }
         }
-        if distance < 0.299 {
-            x_qm_scale += 1;
-        }
+
+        // B quant matrix scale defaults to 2 (will be adjusted by pixel stats if available)
+        let b_qm_scale = 2u32;
 
         // EPF iterations
         const EPF_THRESHOLDS: [f32; 3] = [0.7, 1.5, 4.0];
@@ -168,6 +274,7 @@ impl DistanceParams {
             inv_scale,
             scale_dc,
             x_qm_scale,
+            b_qm_scale,
             epf_iters,
         }
     }
@@ -198,6 +305,43 @@ impl DistanceParams {
             255,
         ) as u8
     }
+
+    /// Apply pixel-level chromacity adjustments from XYB image data.
+    ///
+    /// Matches libjxl's `ComputeChromacityAdjustments` (enc_frame.cc:647-674):
+    /// - x_qm_scale = max(distance_based, 2 + HowMuchIsXChannelPixelized())
+    /// - b_qm_scale = 2 + HowMuchIsBChannelPixelized()
+    pub fn apply_chromacity_adjustment(
+        &mut self,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        width: usize,
+        height: usize,
+    ) {
+        let pixel_stats =
+            PixelStatsForChromacityAdjustment::calc(xyb_x, xyb_y, xyb_b, width, height);
+
+        // For X, take the most severe adjustment (max of distance-based and pixel-based)
+        self.x_qm_scale = self
+            .x_qm_scale
+            .max(2 + pixel_stats.how_much_is_x_channel_pixelized());
+
+        // B only adjusted by pixel-based approach
+        self.b_qm_scale = 2 + pixel_stats.how_much_is_b_channel_pixelized();
+
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "[chromacity] dx={:.4} db={:.4} eb={:.4} x_pixelized={} b_pixelized={} -> x_qm_scale={} b_qm_scale={}",
+            pixel_stats.dx,
+            pixel_stats.db,
+            pixel_stats.exposed_blue,
+            pixel_stats.how_much_is_x_channel_pixelized(),
+            pixel_stats.how_much_is_b_channel_pixelized(),
+            self.x_qm_scale,
+            self.b_qm_scale,
+        );
+    }
 }
 
 /// Write the frame header.
@@ -210,6 +354,7 @@ impl DistanceParams {
 /// the inverse sharpening pre-filter to compensate.
 pub fn write_frame_header(
     x_qm_scale: u32,
+    b_qm_scale: u32,
     epf_iters: u32,
     enable_noise: bool,
     enable_gaborish: bool,
@@ -227,7 +372,7 @@ pub fn write_frame_header(
     writer.write(8, flags_data)?; // flags value
     writer.write(2, 0)?; // no upsampling
     writer.write(3, x_qm_scale as u64)?;
-    writer.write(3, 2)?; // b_qm_scale
+    writer.write(3, b_qm_scale as u64)?;
     writer.write(2, 0)?; // one pass
     writer.write(1, 0)?; // no custom frame size or origin
     writer.write(2, 0)?; // replace blend mode
@@ -331,8 +476,10 @@ mod tests {
         assert!(params.global_scale > 0);
         assert!(params.quant_dc > 0);
         assert!(params.scale > 0.0);
-        // x_qm_scale: starts at 2, distance 1.0 < 1.25 so no increment
-        assert_eq!(params.x_qm_scale, 2);
+        // x_qm_scale: starts at 3 (full libjxl), distance 1.0 < 2.5 so no increment
+        assert_eq!(params.x_qm_scale, 3);
+        // b_qm_scale defaults to 2 (adjusted by pixel stats when available)
+        assert_eq!(params.b_qm_scale, 2);
         // EPF iterations for distance 1.0: >= 0.7 (1 iter), but < 1.5 (not 2 iters)
         assert_eq!(params.epf_iters, 1);
 
@@ -342,11 +489,16 @@ mod tests {
         assert_eq!(params_low.epf_iters, 0);
 
         // Higher distance increases x_qm_scale
-        let params_high = DistanceParams::compute(2.0);
-        // 2.0 > 1.25 -> x_qm_scale = 3, 2.0 < 9.0 -> still 3
-        assert_eq!(params_high.x_qm_scale, 3);
+        let params_high = DistanceParams::compute(3.0);
+        // 3.0 > 2.5 -> x_qm_scale = 4, 3.0 < 5.5 -> still 4
+        assert_eq!(params_high.x_qm_scale, 4);
         // 2.0 >= 0.7 and >= 1.5 -> epf_iters = 2
         assert_eq!(params_high.epf_iters, 2);
+
+        // Very high distance
+        let params_vhigh = DistanceParams::compute(10.0);
+        // 10.0 > 2.5 > 5.5 > 9.5 -> x_qm_scale = 6
+        assert_eq!(params_vhigh.x_qm_scale, 6);
     }
 
     #[test]

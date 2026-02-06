@@ -66,7 +66,7 @@ fn test_distance_params_reasonable() {
             dist
         );
         assert!(
-            params.x_qm_scale >= 2 && params.x_qm_scale <= 5,
+            params.x_qm_scale >= 2 && params.x_qm_scale <= 6,
             "x_qm_scale out of range for distance {}",
             dist
         );

@@ -209,7 +209,7 @@ impl Default for TinyEncoder {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
-            error_diffusion: false,
+            error_diffusion: true, // libjxl enables at speed_tier <= kSquirrel (effort 7)
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
@@ -233,9 +233,9 @@ impl TinyEncoder {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
-            error_diffusion: false,
+            error_diffusion: true, // libjxl enables at speed_tier <= kSquirrel (effort 7)
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
-            enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
+            enable_lz77: false,    // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
         }
@@ -343,7 +343,11 @@ impl TinyEncoder {
         // Step 2: Compute distance params with content-adaptive global_scale.
         // Uses median and MAD of the quant field to adapt quantization precision
         // to image content (matches libjxl ComputeGlobalScaleAndQuant).
-        let params = DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
+        let mut params =
+            DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
+
+        // Apply pixel-level chromacity adjustments (x_qm_scale, b_qm_scale)
+        params.apply_chromacity_adjustment(&xyb_x, &xyb_y, &xyb_b, padded_width, padded_height);
 
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
@@ -481,6 +485,7 @@ impl TinyEncoder {
         // Write frame header
         write_frame_header(
             params.x_qm_scale,
+            params.b_qm_scale,
             params.epf_iters,
             noise_params.is_some(),
             self.enable_gaborish,
@@ -761,8 +766,17 @@ impl TinyEncoder {
         adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
 
         // Compute distance params from precomputed quant field
-        let params =
+        let mut params =
             DistanceParams::compute_from_quant_field(self.distance, &precomputed.quant_field_float);
+
+        // Apply pixel-level chromacity adjustments (x_qm_scale, b_qm_scale)
+        params.apply_chromacity_adjustment(
+            &precomputed.xyb_x,
+            &precomputed.xyb_y,
+            &precomputed.xyb_b,
+            precomputed.padded_width,
+            precomputed.padded_height,
+        );
 
         // Perform DCT and quantization using precomputed XYB data
         let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
@@ -941,7 +955,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x64cf72edb237d564;
+        const EXPECTED_HASH: u64 = 0x2202a2f3981bde6f;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -965,7 +979,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0x5b873cf5cbba1fb7;
+        const EXPECTED_HASH: u64 = 0x4ded326a349386d9;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1001,7 +1015,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: iterative rate control changes output
-        const EXPECTED_HASH: u64 = 0x2ae0add828138409;
+        const EXPECTED_HASH: u64 = 0xc4d00f0eb81d025c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1032,7 +1046,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x1e9fdc465d6304f2;
+        const EXPECTED_HASH: u64 = 0x7fd7dccfc6f3020b;
         assert_eq!(
             hash,
             EXPECTED_HASH,

@@ -26,10 +26,9 @@ use crate::error::Result;
 impl TinyEncoder {
     /// Write the file header (SizeHeader + ImageMetadata).
     ///
-    /// Follows libjxl-tiny's enc_file.cc exactly:
     /// 1. SizeHeader with small=0 (U32 encoding)
-    /// 2. ImageMetadata with float samples (32-bit, 8 exp bits)
-    /// 3. ColorEncoding with sRGB primaries, Linear transfer
+    /// 2. ImageMetadata with 8-bit integer samples
+    /// 3. ColorEncoding with sRGB primaries, sRGB transfer
     /// 4. all_default_transform_data = 1
     /// 5. Zero padding to byte
     pub(crate) fn write_file_header(
@@ -45,12 +44,12 @@ impl TinyEncoder {
         writer.write(1, 0)?; // not all default
         writer.write(1, 0)?; // no extra fields
 
-        // Bit depth - 32-bit float with 8 exponent bits (libjxl-tiny format)
-        writer.write(1, 1)?; // float = 1
-        writer.write(2, 0)?; // bits_per_sample selector 0 = 32 bits
-        writer.write(4, 7)?; // exp_bits = 8 (encoded as 7+1)
+        // Bit depth - 8-bit integer (matching our u8 input)
+        writer.write(1, 0)?; // float = 0 (integer)
+        writer.write(2, 0)?; // bits_per_sample selector 0 = 8 bits
+        // exp_bits not written when float=0
 
-        writer.write(1, 0)?; // modular 16 bit buffer NOT sufficient (for float)
+        writer.write(1, 1)?; // modular 16 bit buffer sufficient (for 8-bit)
 
         // Extra channels - none
         writer.write(2, 0)?; // selector 0 = 0 extra channels
@@ -1290,6 +1289,7 @@ impl TinyEncoder {
         // Write frame header
         write_frame_header(
             params.x_qm_scale,
+            params.b_qm_scale,
             params.epf_iters,
             noise_params.is_some(),
             self.enable_gaborish,
