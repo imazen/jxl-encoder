@@ -6572,87 +6572,87 @@ fn test_rd_regression() {
         d050: Baseline,
     }
 
-    // Baselines updated for: full libjxl dead-zone thresholds, X/B multi-block threshold,
-    // enhanced histogram clustering (ANS), kFavor2X2 at -0.15.
+    // Baselines updated for: error diffusion default-on, full libjxl x_qm_scale formula,
+    // b_qm_mul for B channel, pixel chromacity adjustment, AFV disabled in pixel-domain mode.
     // SSIM2: in-process fast-ssim2 on sRGB u8 (gamma 2.2 roundtrip from jxl-oxide linear output).
     // Butteraugli: in-process butteraugli crate on linear RGB (srgb_to_linear for original).
     let baselines = [
         // frymire
         ImageBaselines {
             d025: Baseline {
-                size: 896361,
-                butteraugli: 1.497,
-                ssim2: 86.03,
+                size: 1007989,
+                butteraugli: 1.495,
+                ssim2: 86.95,
             },
             d050: Baseline {
-                size: 656600,
-                butteraugli: 1.550,
-                ssim2: 81.74,
+                size: 752638,
+                butteraugli: 1.473,
+                ssim2: 84.32,
             },
         },
         // img10
         ImageBaselines {
             d025: Baseline {
-                size: 195591,
-                butteraugli: 0.569,
+                size: 196487,
+                butteraugli: 0.638,
                 ssim2: 88.53,
             },
             d050: Baseline {
-                size: 125468,
-                butteraugli: 0.869,
-                ssim2: 86.59,
+                size: 127343,
+                butteraugli: 0.870,
+                ssim2: 86.64,
             },
         },
         // img11
         ImageBaselines {
             d025: Baseline {
-                size: 210957,
-                butteraugli: 0.486,
-                ssim2: 83.82,
+                size: 211643,
+                butteraugli: 0.510,
+                ssim2: 83.77,
             },
             d050: Baseline {
-                size: 143218,
+                size: 146042,
                 butteraugli: 0.832,
-                ssim2: 82.07,
+                ssim2: 82.08,
             },
         },
         // img12
         ImageBaselines {
             d025: Baseline {
-                size: 178624,
-                butteraugli: 0.553,
-                ssim2: 89.22,
+                size: 179636,
+                butteraugli: 0.612,
+                ssim2: 89.25,
             },
             d050: Baseline {
-                size: 113747,
-                butteraugli: 0.892,
-                ssim2: 87.27,
+                size: 115441,
+                butteraugli: 0.959,
+                ssim2: 87.26,
             },
         },
         // img13
         ImageBaselines {
             d025: Baseline {
-                size: 279753,
-                butteraugli: 0.451,
-                ssim2: 85.30,
+                size: 280294,
+                butteraugli: 0.483,
+                ssim2: 85.28,
             },
             d050: Baseline {
-                size: 207673,
-                butteraugli: 0.899,
-                ssim2: 83.24,
+                size: 209890,
+                butteraugli: 0.936,
+                ssim2: 83.25,
             },
         },
         // img14
         ImageBaselines {
             d025: Baseline {
-                size: 238986,
-                butteraugli: 0.485,
-                ssim2: 81.63,
+                size: 239323,
+                butteraugli: 0.539,
+                ssim2: 81.61,
             },
             d050: Baseline {
-                size: 168530,
-                butteraugli: 0.815,
-                ssim2: 80.06,
+                size: 170786,
+                butteraugli: 0.864,
+                ssim2: 80.08,
             },
         },
     ];

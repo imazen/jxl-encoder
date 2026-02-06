@@ -942,6 +942,7 @@ impl TinyEncoder {
                 let block_height = cy * BLOCK_DIM;
 
                 let x_qm_mul = 1.25f32.powf(params.x_qm_scale as f32 - 2.0);
+                let b_qm_mul = 1.25f32.powf(params.b_qm_scale as f32 - 2.0);
 
                 let mut dct_coeffs: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; size]);
 
@@ -1195,7 +1196,13 @@ impl TinyEncoder {
                     for &c in &[1usize, 0, 2] {
                         let mut thres = [0.58f32, 0.64, 0.64, 0.64];
                         let mut quant_c = quant_int;
-                        let qm_mul = if c == 0 { x_qm_mul } else { 1.0 };
+                        let qm_mul = if c == 0 {
+                            x_qm_mul
+                        } else if c == 2 {
+                            b_qm_mul
+                        } else {
+                            1.0
+                        };
                         let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
                         Self::adjust_quant_block_ac(
                             &dct_coeffs[c],
@@ -1317,7 +1324,13 @@ impl TinyEncoder {
                 for &c in &[0usize, 2] {
                     let dc_cfl_factor = if c == 2 { 0.5f32 } else { 0.0f32 };
                     let inv_factor = INV_DC_QUANT[c] * params.scale_dc;
-                    let qm_multiplier = if c == 0 { x_qm_mul } else { 1.0 };
+                    let qm_multiplier = if c == 0 {
+                        x_qm_mul
+                    } else if c == 2 {
+                        b_qm_mul
+                    } else {
+                        1.0
+                    };
 
                     // Extract DC from CfL-adjusted coefficients.
                     // Read Y DC into temporaries to avoid borrow conflict
