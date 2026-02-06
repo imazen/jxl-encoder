@@ -66,6 +66,10 @@ pub struct EncoderPrecomputed {
     pub gaborish_enabled: bool,
     /// Distance used for initial quant field computation.
     pub base_distance: f32,
+    /// X channel pixel chromacity (max gradient of pre-gaborish XYB X).
+    pub chromacity_x_pixelized: u32,
+    /// B channel pixel chromacity (from pre-gaborish XYB Y/B).
+    pub chromacity_b_pixelized: u32,
 }
 
 impl EncoderPrecomputed {
@@ -141,6 +145,13 @@ impl EncoderPrecomputed {
         } else {
             None
         };
+
+        // Compute pixel chromacity stats BEFORE gaborish (matching libjxl's pipeline order)
+        let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+            &xyb_x, &xyb_y, &xyb_b, padded_width, padded_height,
+        );
+        let chromacity_x_pixelized = pixel_stats.how_much_is_x_channel_pixelized();
+        let chromacity_b_pixelized = pixel_stats.how_much_is_b_channel_pixelized();
 
         // Apply gaborish inverse (5x5 sharpening) before adaptive quant
         if enable_gaborish {
@@ -239,6 +250,8 @@ impl EncoderPrecomputed {
             ac_strategy,
             gaborish_enabled: enable_gaborish,
             base_distance: distance,
+            chromacity_x_pixelized,
+            chromacity_b_pixelized,
         }
     }
 }
