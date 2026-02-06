@@ -34,6 +34,8 @@ pub mod dct;
 pub mod debug_log;
 mod encoder;
 pub(crate) mod entropy_code;
+#[allow(dead_code)] // Used in upcoming EPF sharpness selection
+pub(crate) mod epf;
 mod frame;
 mod gaborish;
 mod lz77;
