@@ -20,8 +20,8 @@ use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_non
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
     dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, idct_8x8, idct_8x16,
-    idct_16x8, idct_16x16, identity_transform, inverse_dct2x2_transform,
-    inverse_identity_transform,
+    idct_16x8, idct_16x16, idct_16x32, idct_32x16, idct_32x32, idct_32x64, idct_64x32, idct_64x64,
+    identity_transform, inverse_dct2x2_transform, inverse_identity_transform,
 };
 use super::quant::quant_weights;
 
@@ -807,29 +807,46 @@ fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
             output.to_vec()
         }
         RAW_STRATEGY_DCT32X32 => {
-            // 32 wide × 32 tall - no IDCT implemented, use coefficients directly
-            // Simple fallback: just use the coefficients directly scaled
-            error_coeffs[..1024].to_vec()
+            let mut input = [0.0f32; 1024];
+            input.copy_from_slice(&error_coeffs[..1024]);
+            let mut output = [0.0f32; 1024];
+            idct_32x32(&input, &mut output);
+            output.to_vec()
         }
         RAW_STRATEGY_DCT32X16 => {
-            // 16 wide × 32 tall - no IDCT implemented, use coefficients directly
-            error_coeffs[..512].to_vec()
+            let mut input = [0.0f32; 512];
+            input.copy_from_slice(&error_coeffs[..512]);
+            let mut output = [0.0f32; 512];
+            idct_32x16(&input, &mut output);
+            output.to_vec()
         }
         RAW_STRATEGY_DCT16X32 => {
-            // 32 wide × 16 tall - no IDCT implemented, use coefficients directly
-            error_coeffs[..512].to_vec()
+            let mut input = [0.0f32; 512];
+            input.copy_from_slice(&error_coeffs[..512]);
+            let mut output = [0.0f32; 512];
+            idct_16x32(&input, &mut output);
+            output.to_vec()
         }
         RAW_STRATEGY_DCT64X64 => {
-            // 64 wide × 64 tall - no IDCT implemented, use coefficients directly
-            error_coeffs[..4096].to_vec()
+            let mut input = vec![0.0f32; 4096];
+            input.copy_from_slice(&error_coeffs[..4096]);
+            let mut output = vec![0.0f32; 4096];
+            idct_64x64(&input, &mut output);
+            output
         }
         RAW_STRATEGY_DCT64X32 => {
-            // 32 wide × 64 tall - no IDCT implemented, use coefficients directly
-            error_coeffs[..2048].to_vec()
+            let mut input = vec![0.0f32; 2048];
+            input.copy_from_slice(&error_coeffs[..2048]);
+            let mut output = vec![0.0f32; 2048];
+            idct_64x32(&input, &mut output);
+            output
         }
         RAW_STRATEGY_DCT32X64 => {
-            // 64 wide × 32 tall - no IDCT implemented, use coefficients directly
-            error_coeffs[..2048].to_vec()
+            let mut input = vec![0.0f32; 2048];
+            input.copy_from_slice(&error_coeffs[..2048]);
+            let mut output = vec![0.0f32; 2048];
+            idct_32x64(&input, &mut output);
+            output
         }
         RAW_STRATEGY_IDENTITY => {
             let mut output = [0.0f32; 64];
