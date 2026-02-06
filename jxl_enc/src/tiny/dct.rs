@@ -61,7 +61,7 @@ pub const DCT_RESAMPLE_SCALE_2_TO_16: [f32; 2] = [1.000000000000000000, 1.108937
 
 /// In-place 1D DCT for N=2
 #[inline]
-fn dct1d_2(mem: &mut [f32]) {
+pub(crate) fn dct1d_2(mem: &mut [f32]) {
     let in1 = mem[0];
     let in2 = mem[1];
     mem[0] = in1 + in2;
@@ -69,7 +69,7 @@ fn dct1d_2(mem: &mut [f32]) {
 }
 
 /// In-place 1D DCT for N=4
-fn dct1d_4(mem: &mut [f32]) {
+pub(crate) fn dct1d_4(mem: &mut [f32]) {
     // AddReverse: tmp[i] = mem[i] + mem[N-1-i] for first half
     // SubReverse: tmp[N/2+i] = mem[i] - mem[N-1-i] for second half
     let mut tmp = [0.0f32; 4];
@@ -101,7 +101,7 @@ fn dct1d_4(mem: &mut [f32]) {
 }
 
 /// In-place 1D DCT for N=8
-fn dct1d_8(mem: &mut [f32]) {
+pub(crate) fn dct1d_8(mem: &mut [f32]) {
     let mut tmp = [0.0f32; 8];
 
     // AddReverse for first half

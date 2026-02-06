@@ -47,6 +47,8 @@ mod tile_distmap;
 
 pub use lz77::Lz77Method;
 mod quant;
+#[allow(dead_code)] // Functions used in upcoming phases (EPF, butteraugli)
+pub(crate) mod reconstruct;
 mod static_codes;
 pub(crate) mod token;
 mod transform;
