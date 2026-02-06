@@ -264,18 +264,30 @@ File: `tiny/adaptive_quant.rs`
 
 | | Rust | libjxl |
 |---|------|--------|
-| Default iters | opt-in (`--butteraugli-iters N`) | 2 (effort 8+) |
+| Default iters | 2 (default-on) | 2 (effort 8+) |
 | Max iters | user-specified | 4 (kTortoise) |
+| Disable | `--no-butteraugli` | effort < 8 |
 
-**DIFFERS** — libjxl enables butteraugli loop automatically at effort 8+. Ours is
-opt-in via CLI flag. The algorithm is the same: reconstruct → butteraugli → adjust
-quant field per block.
+**MATCH** (as of Feb 6, 2026) — Both default to 2 iterations. The algorithm is the
+same: reconstruct → butteraugli → adjust quant field per block.
+
+## Bit Depth Header
+
+| | Rust | libjxl |
+|---|------|--------|
+| float | 0 | 0 |
+| bits_per_sample | 8 | 8 |
+| modular_16bit | 1 | 1 |
+
+**MATCH** (as of Feb 6, 2026) — Previously signaled float32 (float=1, bps=32, exp=8),
+which prevented djxl from exporting to PNG. Now matches libjxl's default for u8 input.
 
 ## Algorithmic Differences (Not Just Constants)
 
 ### Iterative Rate Control
 - **Rust**: Implemented (commit 67f011c). Single-pass quant field adjustment.
 - **libjxl**: Multi-iteration with butteraugli feedback at effort 8+.
+- Both: Butteraugli quantization loop (2 iterations default) on top of initial quant field.
 
 ### Histogram Clustering
 - **Rust**: Enhanced pair-merge refinement (default-on).
@@ -308,5 +320,5 @@ quant field per block.
 | DC_QUANT/DC_QUANT_POW | Minor | Different DC quality curve |
 | kFavor2X2 (-0.15 vs -0.4) | Small at d<1.0 | Blocked by regression |
 | Coeff-domain mul8x8 | None (not default path) | Pixel-domain is default |
-| Butteraugli loop (opt-in vs auto) | +0.3 SSIM2 when enabled | User must opt in |
+| Butteraugli loop | None (both default 2 iters) | Default-on since Feb 6 |
 | AC strategy step=2 vs step=1 | Small | Only affects 32x32+ blocks |
