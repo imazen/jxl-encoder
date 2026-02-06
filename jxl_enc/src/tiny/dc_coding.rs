@@ -340,6 +340,7 @@ pub fn collect_ac_metadata_tokens_region(
     start_by: usize,
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
+    sharpness_map: Option<&[u8]>,
 ) -> Vec<Token> {
     let xsize_pixels = region_xsize_blocks * BLOCK_DIM;
     let ysize_pixels = region_ysize_blocks * BLOCK_DIM;
@@ -459,9 +460,18 @@ pub fn collect_ac_metadata_tokens_region(
         }
     }
 
-    // EPF tokens
-    for _ in 0..nblocks {
-        tokens.push(Token::new(0, pack_signed(4)));
+    // EPF tokens - per-block sharpness values
+    for by_local in 0..region_ysize_blocks {
+        for bx_local in 0..region_xsize_blocks {
+            let abs_by = start_by + by_local;
+            let abs_bx = start_bx + bx_local;
+            let sharpness = if let Some(sm) = sharpness_map {
+                sm[abs_by * full_xsize_blocks + abs_bx] as i32
+            } else {
+                4 // default EPF sharpness
+            };
+            tokens.push(Token::new(0, pack_signed(sharpness)));
+        }
     }
 
     tokens
@@ -503,6 +513,7 @@ pub fn write_ac_metadata_tokens(
     full_xsize_blocks: usize,
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
+    sharpness_map: Option<&[u8]>,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -516,6 +527,7 @@ pub fn write_ac_metadata_tokens(
         0,
         cfl_map,
         ac_strategy,
+        sharpness_map,
         dc_code,
         writer,
     )
@@ -545,6 +557,7 @@ pub fn write_ac_metadata_tokens_region(
     start_by: usize,
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
+    sharpness_map: Option<&[u8]>,
     dc_code: &EntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
@@ -682,13 +695,19 @@ pub fn write_ac_metadata_tokens_region(
     #[cfg(feature = "debug-tokens")]
     let after_qf = writer.bits_written();
 
-    // EPF (Edge-Preserving Filter) tokens
-    // Write one EPF token per block with value PackSigned(4) = 8
-    // Context 0 is used for EPF tokens
-    let nblocks = region_xsize_blocks * region_ysize_blocks;
-    for _ in 0..nblocks {
-        let token = Token::new(0, pack_signed(4)); // EPF default value 4
-        write_token(&token, dc_code, None, writer)?;
+    // EPF (Edge-Preserving Filter) tokens - per-block sharpness values
+    for by_local in 0..region_ysize_blocks {
+        for bx_local in 0..region_xsize_blocks {
+            let abs_by = start_by + by_local;
+            let abs_bx = start_bx + bx_local;
+            let sharpness = if let Some(sm) = sharpness_map {
+                sm[abs_by * full_xsize_blocks + abs_bx] as i32
+            } else {
+                4 // default EPF sharpness
+            };
+            let token = Token::new(0, pack_signed(sharpness));
+            write_token(&token, dc_code, None, writer)?;
+        }
     }
 
     #[cfg(feature = "debug-tokens")]
@@ -713,7 +732,7 @@ pub fn write_ac_metadata_tokens_region(
         debug_log!(
             "    epf: {} bits ({} tokens)",
             after_epf - after_qf,
-            nblocks
+            region_xsize_blocks * region_ysize_blocks
         );
         debug_log!("    total: {} bits", after_epf - start_bits);
     }

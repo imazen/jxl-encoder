@@ -446,6 +446,28 @@ impl TinyEncoder {
             &ac_strategy,
         );
 
+        // Compute per-block EPF sharpness map when EPF is active
+        let sharpness_map = if params.epf_iters > 0 && self.distance >= 0.5 {
+            let mask = mask1x1.unwrap_or_else(|| {
+                super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
+            });
+            Some(super::epf::compute_epf_sharpness(
+                [&xyb_x, &xyb_y, &xyb_b],
+                &quant_dc,
+                &quant_ac,
+                &quant_field,
+                &mask,
+                &params,
+                &cfl_map,
+                &ac_strategy,
+                self.enable_gaborish,
+                xsize_blocks,
+                ysize_blocks,
+            ))
+        } else {
+            None
+        };
+
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
         if self.optimize_codes {
             return self.encode_two_pass(
@@ -469,6 +491,7 @@ impl TinyEncoder {
                 &cfl_map,
                 &ac_strategy,
                 &noise_params,
+                sharpness_map.as_deref(),
             );
         }
 
@@ -541,6 +564,7 @@ impl TinyEncoder {
                 &quant_field,
                 &cfl_map,
                 &ac_strategy,
+                None, // no sharpness map in single-pass mode
                 &dc_huffman,
                 &mut dc_group,
             )?;
@@ -642,6 +666,7 @@ impl TinyEncoder {
                     &quant_field,
                     &cfl_map,
                     &ac_strategy,
+                    None, // no sharpness map in single-pass mode
                     &dc_huffman,
                     &mut dc_group,
                 )?;
@@ -823,6 +848,7 @@ impl TinyEncoder {
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
             &precomputed.noise_params,
+            None, // TODO: compute sharpness_map for rate control path
         )
     }
 }
@@ -964,7 +990,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x12b9219d8f644fb4;
+        const EXPECTED_HASH: u64 = 0xfbcf8d8ba10f5f8;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -988,7 +1014,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0xc36a1d8442dfdc38;
+        const EXPECTED_HASH: u64 = 0x310cb05d2ba544b7;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1024,7 +1050,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: iterative rate control changes output
-        const EXPECTED_HASH: u64 = 0x6098aa3ec5d8715d;
+        const EXPECTED_HASH: u64 = 0xa2084905cd53c244;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1055,7 +1081,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x40cd02bd04832c44;
+        const EXPECTED_HASH: u64 = 0x7171c66ec1420073;
         assert_eq!(
             hash,
             EXPECTED_HASH,
