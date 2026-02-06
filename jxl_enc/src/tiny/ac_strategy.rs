@@ -1084,7 +1084,7 @@ fn find_best_16x16_transform(
     } else {
         0.0
     };
-    let favor_2x2_adjust = -0.15 * favor_weight; // libjxl uses -0.4, kept at -0.15 (causes quality regression at d<1.0 when increased)
+    let favor_2x2_adjust = -0.4 * favor_weight; // matches libjxl
 
     // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0
     let avoid_transforms_adjust = if distance > 4.0 {
