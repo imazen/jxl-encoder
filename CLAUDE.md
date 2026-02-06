@@ -215,11 +215,12 @@ Strategy status:
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
-**E. Effort 8+ Features (Not Yet Implemented)**
-- **Butteraugli quantization loop** (effort 8+): Iteratively refines per-block quant field via
-  encode→decode→measure→adjust cycles. 2 iterations at e8, 4 at e9. This is the single biggest
-  remaining quality lever — fundamentally different from our iterative rate control (which only
-  adjusts global scale to hit a file size target).
+**E. Effort 8+ Features**
+- **Butteraugli quantization loop** (effort 8+): IMPLEMENTED (`--butteraugli-iters N`, feature `butteraugli-loop`).
+  Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles.
+  AC strategy is fixed; only quant_field changes. 2 iterations converges for most images.
+  At d=1.0 on CLIC 1024x1024: -15% file size at -1.7 SSIM2; at equal file size +0.3 SSIM2.
+  RD improvement comes from redistributing bits from over-quality to under-quality blocks.
 - **Fine-grained AC strategy search** (effort 9): step=1 instead of step=2 for 32x32+ blocks
 - **Optimal LZ77** (effort 9): exhaustive search vs our greedy hash chain
 - **Full histogram clustering** (effort 8+): kDefault vs our kFast-equivalent pair-merge
@@ -227,7 +228,7 @@ Strategy status:
 
 **F. Other**
 - No splines, patches/dictionary, dots detection (effort 7 features we skip)
-- EPF iterations correct but missing per-block epf_sharpness map
+- EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
 
 **Priority path:**
@@ -252,7 +253,9 @@ Strategy status:
    - Brings total to 19/27 strategies — all that libjxl evaluates through effort 9
    - Auto-selection guarded at d>=3.0, hierarchical 64→32→16 evaluation
    - nzeros widened from u8 to u16 for DCT64x64's 4032 AC coefficients
-7. Butteraugli quantization loop (effort 8 feature, biggest remaining quality lever)
+7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, `--butteraugli-iters N`, feature `butteraugli-loop`)
+   - Reconstruct→butteraugli→adjust cycles. 2 iterations converges. +0.3 SSIM2 at equal file size.
+   - Per-block EPF sharpness also done (Phase 4, same date)
 8. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0)
 
 ### Outstanding Work
@@ -304,6 +307,11 @@ Strategy status:
   - Both decoder-validated; known interaction issues with forced DCT2x2/IDENTITY strategies
 - [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
+- [x] Per-block EPF sharpness selection (auto, Phase 4 of reconstruction plan)
+- [x] Encoder-side reconstruction pipeline (dequant → CfL → LLF → IDCT → gab → EPF)
+- [x] Butteraugli quantization loop (`--butteraugli-iters N`, feature `butteraugli-loop`, opt-in)
+  - Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles
+  - 2 iterations converges for most images; +0.3 SSIM2 at equal file size vs baseline
 
 ### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
 
