@@ -645,10 +645,7 @@ fn per_block_modulations(
             out_val = gamma_modulation(px, py, xyb_x, xyb_y, stride, out_val);
             let mask_val = out_val; // after Mask+Gamma, input to both Hf and Blue
             let after_hf = hf_modulation(px, py, xyb_y, stride, mask_val);
-            let after_blue = blue_modulation(
-                px, py, xyb_x, xyb_y, xyb_b, stride,
-                mask_val,
-            );
+            let after_blue = blue_modulation(px, py, xyb_x, xyb_y, xyb_b, stride, mask_val);
             out_val = after_hf.min(after_blue);
 
             // Convert from exponent to multiplicative field
