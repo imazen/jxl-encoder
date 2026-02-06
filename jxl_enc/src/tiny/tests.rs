@@ -1121,8 +1121,8 @@ fn test_afv_strategy_roundtrip() {
 /// to exercise multi-block handling.
 #[test]
 fn test_dct64x64_forced_decode() {
-    use std::io::Cursor;
     use super::ac_strategy::RAW_STRATEGY_DCT64X64;
+    use std::io::Cursor;
 
     let w = 128;
     let h = 128;
@@ -1166,11 +1166,10 @@ fn test_dct64x64_forced_decode() {
     let tmp = "/tmp/test_dct64x64.jxl";
     let tmp_ppm = "/tmp/test_dct64x64.png";
     std::fs::write(tmp, &encoded).unwrap();
-    let djxl_status = std::process::Command::new(
-        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
-    )
-    .args([tmp, tmp_ppm])
-    .output();
+    let djxl_status =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args([tmp, tmp_ppm])
+            .output();
     match djxl_status {
         Ok(output) => {
             assert!(
@@ -1187,8 +1186,8 @@ fn test_dct64x64_forced_decode() {
 /// Test DCT64x32 forced strategy.
 #[test]
 fn test_dct64x32_forced_decode() {
-    use std::io::Cursor;
     use super::ac_strategy::RAW_STRATEGY_DCT64X32;
+    use std::io::Cursor;
 
     let w = 128;
     let h = 128;
@@ -1225,11 +1224,10 @@ fn test_dct64x32_forced_decode() {
 
     // Decode with djxl
     let tmp_ppm = "/tmp/test_dct64x32.png";
-    let djxl_status = std::process::Command::new(
-        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
-    )
-    .args(["/tmp/test_dct64x32.jxl", tmp_ppm])
-    .output();
+    let djxl_status =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args(["/tmp/test_dct64x32.jxl", tmp_ppm])
+            .output();
     match djxl_status {
         Ok(output) => {
             assert!(
@@ -1246,8 +1244,8 @@ fn test_dct64x32_forced_decode() {
 /// Test DCT32x64 forced strategy.
 #[test]
 fn test_dct32x64_forced_decode() {
-    use std::io::Cursor;
     use super::ac_strategy::RAW_STRATEGY_DCT32X64;
+    use std::io::Cursor;
 
     let w = 128;
     let h = 128;
@@ -1284,11 +1282,10 @@ fn test_dct32x64_forced_decode() {
 
     // Decode with djxl
     let tmp_ppm = "/tmp/test_dct32x64.png";
-    let djxl_status = std::process::Command::new(
-        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
-    )
-    .args(["/tmp/test_dct32x64.jxl", tmp_ppm])
-    .output();
+    let djxl_status =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args(["/tmp/test_dct32x64.jxl", tmp_ppm])
+            .output();
     match djxl_status {
         Ok(output) => {
             assert!(
@@ -1305,8 +1302,8 @@ fn test_dct32x64_forced_decode() {
 /// Test DCT64x64 forced on 256x256 (4 tiles of DCT64).
 #[test]
 fn test_dct64x64_forced_256x256() {
-    use std::io::Cursor;
     use super::ac_strategy::RAW_STRATEGY_DCT64X64;
+    use std::io::Cursor;
 
     let w = 256;
     let h = 256;
@@ -1325,25 +1322,28 @@ fn test_dct64x64_forced_256x256() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
 
-    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT64x64 256x256");
+    let encoded = encoder
+        .encode(w, h, &linear_rgb)
+        .expect("encode DCT64x64 256x256");
     eprintln!("DCT64x64 256x256: {} bytes", encoded.len());
 
     // Decode with jxl-oxide
     let image = jxl_oxide::JxlImage::builder()
         .read(Cursor::new(&encoded))
         .expect("jxl-oxide parse DCT64x64 256x256");
-    let render = image.render_frame(0).expect("jxl-oxide render DCT64x64 256x256");
+    let render = image
+        .render_frame(0)
+        .expect("jxl-oxide render DCT64x64 256x256");
     assert_eq!(render.image_all_channels().width(), w);
     assert_eq!(render.image_all_channels().height(), h);
     eprintln!("DCT64x64 256x256: jxl-oxide decode OK");
 
     // Decode with djxl
     std::fs::write("/tmp/test_dct64x64_256.jxl", &encoded).unwrap();
-    let djxl_status = std::process::Command::new(
-        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
-    )
-    .args(["/tmp/test_dct64x64_256.jxl", "/tmp/test_dct64x64_256.png"])
-    .output();
+    let djxl_status =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args(["/tmp/test_dct64x64_256.jxl", "/tmp/test_dct64x64_256.png"])
+            .output();
     match djxl_status {
         Ok(output) => {
             assert!(
