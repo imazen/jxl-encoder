@@ -22,6 +22,7 @@ mod ac_group;
 mod ac_strategy;
 mod adaptive_quant;
 mod afv;
+mod bitstream;
 mod chroma_from_luma;
 mod cluster;
 mod coeff_order;
@@ -48,6 +49,7 @@ pub use lz77::Lz77Method;
 mod quant;
 mod static_codes;
 pub(crate) mod token;
+mod transform;
 
 pub use encoder::TinyEncoder;
 #[cfg(feature = "rate-control")]
