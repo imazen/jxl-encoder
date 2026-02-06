@@ -1013,6 +1013,352 @@ pub fn idct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
     }
 }
 
+/// Compute 8x4 inverse DCT (exactly reverses dct_8x4).
+/// Input layout: 4 rows x 8 cols, stride 8 (output of dct_8x4 which has no final transpose).
+///
+/// dct_8x4 (ROWS=8 >= COLS=4, no final transpose):
+///
+///   1. 4pt DCT on rows (8 rows of 4), *= 1/4
+///   2. Transpose 8x4 -> 4x8
+///   3. 8pt DCT on rows (4 rows of 8), *= 1/8
+///
+/// No final transpose. Output is 4x8 (stride 8).
+pub fn idct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
+    let mut tmp = [0.0f32; 32];
+
+    // Step 1: 8pt IDCT on each of 4 rows (stride 8)
+    for row in 0..4 {
+        let s = row * 8;
+        tmp[s..s + 8].copy_from_slice(&input[s..s + 8]);
+        idct1d_8(&mut tmp[s..s + 8]);
+    }
+
+    // Step 2: Transpose 4x8 -> 8x4
+    let mut transposed = [0.0f32; 32];
+    for row in 0..4 {
+        for col in 0..8 {
+            transposed[col * 4 + row] = tmp[row * 8 + col];
+        }
+    }
+
+    // Step 3: *= 4, then 4pt IDCT on each of 8 rows (stride 4)
+    for row in 0..8 {
+        let s = row * 4;
+        for i in 0..4 {
+            transposed[s + i] *= 4.0;
+        }
+        idct1d_4(&mut transposed[s..s + 4]);
+    }
+
+    output.copy_from_slice(&transposed);
+}
+
+/// Core 1D IDCT for N=16 without the N scaling factor.
+/// Used internally by idct1d_32 which applies its own scaling.
+fn idct1d_16_core(mem: &mut [f32]) {
+    // Reverse step 7 (interleave): deinterleave
+    let mut tmp = [0.0f32; 16];
+    for i in 0..8 {
+        tmp[i] = mem[2 * i];
+        tmp[8 + i] = mem[2 * i + 1];
+    }
+
+    // Reverse step 6 (B transform)
+    for i in (1..7).rev() {
+        tmp[8 + i] -= tmp[8 + i + 1];
+    }
+    tmp[8] = (tmp[8] - tmp[9]) / SQRT2;
+
+    // Reverse step 5: idct on second half
+    idct1d_8_core(&mut tmp[8..16]);
+
+    // Reverse step 4: divide by WcMultipliers
+    for i in 0..8 {
+        tmp[8 + i] /= WC_MULTIPLIERS_16[i];
+    }
+
+    // Reverse step 3: idct on first half
+    idct1d_8_core(&mut tmp[0..8]);
+
+    // Reverse steps 1-2: combine
+    for i in 0..8 {
+        mem[i] = (tmp[i] + tmp[8 + i]) * 0.5;
+        mem[15 - i] = (tmp[i] - tmp[8 + i]) * 0.5;
+    }
+}
+
+/// Fast 1D IDCT for N=32 (exactly reverses dct1d_32).
+///
+/// Includes *= 32 scaling to compensate for the 1/32 applied by dct_32x32.
+fn idct1d_32(mem: &mut [f32]) {
+    for x in mem.iter_mut().take(32) {
+        *x *= 32.0;
+    }
+    idct1d_32_core(mem);
+}
+
+/// Core 1D IDCT for N=32 without the N scaling factor.
+fn idct1d_32_core(mem: &mut [f32]) {
+    let mut tmp = [0.0f32; 32];
+    for i in 0..16 {
+        tmp[i] = mem[2 * i];
+        tmp[16 + i] = mem[2 * i + 1];
+    }
+
+    // Reverse B transform
+    for i in (1..15).rev() {
+        tmp[16 + i] -= tmp[16 + i + 1];
+    }
+    tmp[16] = (tmp[16] - tmp[17]) / SQRT2;
+
+    // IDCT on second half
+    idct1d_16_core(&mut tmp[16..32]);
+
+    // Divide by WcMultipliers
+    for i in 0..16 {
+        tmp[16 + i] /= WC_MULTIPLIERS_32[i];
+    }
+
+    // IDCT on first half
+    idct1d_16_core(&mut tmp[0..16]);
+
+    // Combine
+    for i in 0..16 {
+        mem[i] = (tmp[i] + tmp[16 + i]) * 0.5;
+        mem[31 - i] = (tmp[i] - tmp[16 + i]) * 0.5;
+    }
+}
+
+/// Compute 32x32 inverse DCT (exactly reverses dct_32x32).
+pub fn idct_32x32(input: &[f32; 1024], output: &mut [f32; 1024]) {
+    let mut tmp = [0.0f32; 1024];
+
+    for row in 0..32 {
+        let s = row * 32;
+        tmp[s..s + 32].copy_from_slice(&input[s..s + 32]);
+        idct1d_32(&mut tmp[s..s + 32]);
+    }
+
+    let mut transposed = [0.0f32; 1024];
+    transpose::<32, 32>(&tmp, &mut transposed);
+
+    for row in 0..32 {
+        let s = row * 32;
+        output[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
+        idct1d_32(&mut output[s..s + 32]);
+    }
+}
+
+/// Compute 32x16 inverse DCT (exactly reverses dct_32x16).
+///
+/// dct_32x16 (ROWS=32 >= COLS=16, no final transpose):
+///
+///   1. 16pt DCT on rows (32 rows of 16), *= 1/16
+///   2. Transpose 32x16 -> 16x32
+///   3. 32pt DCT on rows (16 rows of 32), *= 1/32
+///
+/// Output: 16x32 (stride 32).
+pub fn idct_32x16(input: &[f32; 512], output: &mut [f32; 512]) {
+    let mut tmp = [0.0f32; 512];
+
+    // 32pt IDCT on each of 16 rows (stride 32)
+    for row in 0..16 {
+        let s = row * 32;
+        tmp[s..s + 32].copy_from_slice(&input[s..s + 32]);
+        idct1d_32(&mut tmp[s..s + 32]);
+    }
+
+    // Transpose 16x32 -> 32x16
+    let mut transposed = [0.0f32; 512];
+    for row in 0..16 {
+        for col in 0..32 {
+            transposed[col * 16 + row] = tmp[row * 32 + col];
+        }
+    }
+
+    // 16pt IDCT on each of 32 rows (stride 16)
+    for row in 0..32 {
+        let s = row * 16;
+        output[s..s + 16].copy_from_slice(&transposed[s..s + 16]);
+        idct1d_16(&mut output[s..s + 16]);
+    }
+}
+
+/// Compute 16x32 inverse DCT (exactly reverses dct_16x32).
+///
+/// dct_16x32 (ROWS=16 < COLS=32, WITH final transpose):
+///   1. 32pt DCT on rows, *= 1/32
+///   2. Transpose 16x32 -> 32x16
+///   3. 16pt DCT on rows, *= 1/16
+///   4. Transpose 32x16 -> 16x32
+pub fn idct_16x32(input: &[f32; 512], output: &mut [f32; 512]) {
+    // Undo final transpose: 16x32 -> 32x16
+    let mut transposed = [0.0f32; 512];
+    for row in 0..16 {
+        for col in 0..32 {
+            transposed[col * 16 + row] = input[row * 32 + col];
+        }
+    }
+
+    // 16pt IDCT on each of 32 rows (stride 16)
+    let mut tmp = [0.0f32; 512];
+    for row in 0..32 {
+        let s = row * 16;
+        tmp[s..s + 16].copy_from_slice(&transposed[s..s + 16]);
+        idct1d_16(&mut tmp[s..s + 16]);
+    }
+
+    // Transpose 32x16 -> 16x32
+    let mut transposed2 = [0.0f32; 512];
+    for row in 0..32 {
+        for col in 0..16 {
+            transposed2[col * 32 + row] = tmp[row * 16 + col];
+        }
+    }
+
+    // 32pt IDCT on each of 16 rows (stride 32)
+    for row in 0..16 {
+        let s = row * 32;
+        output[s..s + 32].copy_from_slice(&transposed2[s..s + 32]);
+        idct1d_32(&mut output[s..s + 32]);
+    }
+}
+
+/// Fast 1D IDCT for N=64 (exactly reverses dct1d_64).
+fn idct1d_64(mem: &mut [f32]) {
+    for x in mem.iter_mut().take(64) {
+        *x *= 64.0;
+    }
+    idct1d_64_core(mem);
+}
+
+/// Core 1D IDCT for N=64 without the N scaling factor.
+fn idct1d_64_core(mem: &mut [f32]) {
+    let mut tmp = [0.0f32; 64];
+    for i in 0..32 {
+        tmp[i] = mem[2 * i];
+        tmp[32 + i] = mem[2 * i + 1];
+    }
+
+    // Reverse B transform
+    for i in (1..31).rev() {
+        tmp[32 + i] -= tmp[32 + i + 1];
+    }
+    tmp[32] = (tmp[32] - tmp[33]) / SQRT2;
+
+    // IDCT on second half
+    idct1d_32_core(&mut tmp[32..64]);
+
+    // Divide by WcMultipliers
+    for i in 0..32 {
+        tmp[32 + i] /= WC_MULTIPLIERS_64[i];
+    }
+
+    // IDCT on first half
+    idct1d_32_core(&mut tmp[0..32]);
+
+    // Combine
+    for i in 0..32 {
+        mem[i] = (tmp[i] + tmp[32 + i]) * 0.5;
+        mem[63 - i] = (tmp[i] - tmp[32 + i]) * 0.5;
+    }
+}
+
+/// Compute 64x64 inverse DCT (exactly reverses dct_64x64).
+pub fn idct_64x64(input: &[f32], output: &mut [f32]) {
+    debug_assert!(input.len() >= 4096);
+    debug_assert!(output.len() >= 4096);
+
+    let mut tmp = [0.0f32; 4096];
+
+    for row in 0..64 {
+        let s = row * 64;
+        tmp[s..s + 64].copy_from_slice(&input[s..s + 64]);
+        idct1d_64(&mut tmp[s..s + 64]);
+    }
+
+    let mut transposed = [0.0f32; 4096];
+    transpose::<64, 64>(&tmp, &mut transposed);
+
+    for row in 0..64 {
+        let s = row * 64;
+        output[s..s + 64].copy_from_slice(&transposed[s..s + 64]);
+        idct1d_64(&mut output[s..s + 64]);
+    }
+}
+
+/// Compute 64x32 inverse DCT (exactly reverses dct_64x32).
+///
+/// dct_64x32 (ROWS=64 >= COLS=32, no final transpose):
+///   Output: 32x64 (stride 64).
+pub fn idct_64x32(input: &[f32], output: &mut [f32]) {
+    debug_assert!(input.len() >= 2048);
+    debug_assert!(output.len() >= 2048);
+
+    let mut tmp = [0.0f32; 2048];
+
+    // 64pt IDCT on each of 32 rows (stride 64)
+    for row in 0..32 {
+        let s = row * 64;
+        tmp[s..s + 64].copy_from_slice(&input[s..s + 64]);
+        idct1d_64(&mut tmp[s..s + 64]);
+    }
+
+    // Transpose 32x64 -> 64x32
+    let mut transposed = [0.0f32; 2048];
+    for row in 0..32 {
+        for col in 0..64 {
+            transposed[col * 32 + row] = tmp[row * 64 + col];
+        }
+    }
+
+    // 32pt IDCT on each of 64 rows (stride 32)
+    for row in 0..64 {
+        let s = row * 32;
+        output[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
+        idct1d_32(&mut output[s..s + 32]);
+    }
+}
+
+/// Compute 32x64 inverse DCT (exactly reverses dct_32x64).
+///
+/// dct_32x64 (ROWS=32 < COLS=64, WITH final transpose).
+pub fn idct_32x64(input: &[f32], output: &mut [f32]) {
+    debug_assert!(input.len() >= 2048);
+    debug_assert!(output.len() >= 2048);
+
+    // Undo final transpose: 32x64 -> 64x32
+    let mut transposed = [0.0f32; 2048];
+    for row in 0..32 {
+        for col in 0..64 {
+            transposed[col * 32 + row] = input[row * 64 + col];
+        }
+    }
+
+    // 32pt IDCT on each of 64 rows (stride 32)
+    let mut tmp = [0.0f32; 2048];
+    for row in 0..64 {
+        let s = row * 32;
+        tmp[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
+        idct1d_32(&mut tmp[s..s + 32]);
+    }
+
+    // Transpose 64x32 -> 32x64
+    let mut transposed2 = [0.0f32; 2048];
+    for row in 0..64 {
+        for col in 0..32 {
+            transposed2[col * 64 + row] = tmp[row * 32 + col];
+        }
+    }
+
+    // 64pt IDCT on each of 32 rows (stride 64)
+    for row in 0..32 {
+        let s = row * 64;
+        output[s..s + 64].copy_from_slice(&transposed2[s..s + 64]);
+        idct1d_64(&mut output[s..s + 64]);
+    }
+}
+
 /// Generic N-point 1D IDCT reference implementation.
 #[allow(clippy::needless_range_loop)]
 fn idct1d_n_ref(input: &[f32], output: &mut [f32], n: usize) {
@@ -2931,5 +3277,145 @@ mod tests {
                 val
             );
         }
+    }
+
+    #[test]
+    fn test_idct_8x4_roundtrip() {
+        let input: [f32; 32] = core::array::from_fn(|i| ((i as f32 * 1.7).sin()) * 100.0);
+        let mut coeffs = [0.0f32; 32];
+        dct_8x4(&input, &mut coeffs);
+        let mut output = [0.0f32; 32];
+        idct_8x4(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..32 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-4,
+            "idct_8x4 roundtrip max error {} too large",
+            max_err
+        );
+    }
+
+    #[test]
+    fn test_idct_32x32_roundtrip() {
+        let input: [f32; 1024] = core::array::from_fn(|i| ((i as f32 * 0.7).sin()) * 100.0);
+        let mut coeffs = [0.0f32; 1024];
+        dct_32x32(&input, &mut coeffs);
+        let mut output = [0.0f32; 1024];
+        idct_32x32(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..1024 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-3,
+            "idct_32x32 roundtrip max error {} too large",
+            max_err
+        );
+    }
+
+    #[test]
+    fn test_idct_32x16_roundtrip() {
+        let input: [f32; 512] = core::array::from_fn(|i| ((i as f32 * 0.3).cos()) * 50.0);
+        let mut coeffs = [0.0f32; 512];
+        dct_32x16(&input, &mut coeffs);
+        let mut output = [0.0f32; 512];
+        idct_32x16(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..512 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-3,
+            "idct_32x16 roundtrip max error {} too large",
+            max_err
+        );
+    }
+
+    #[test]
+    fn test_idct_16x32_roundtrip() {
+        let input: [f32; 512] = core::array::from_fn(|i| ((i as f32 * 0.5).sin()) * 75.0);
+        let mut coeffs = [0.0f32; 512];
+        dct_16x32(&input, &mut coeffs);
+        let mut output = [0.0f32; 512];
+        idct_16x32(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..512 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-3,
+            "idct_16x32 roundtrip max error {} too large",
+            max_err
+        );
+    }
+
+    #[test]
+    fn test_idct_64x64_roundtrip() {
+        let input: Vec<f32> = (0..4096).map(|i| ((i as f32 * 0.4).sin()) * 80.0).collect();
+        let mut coeffs = vec![0.0f32; 4096];
+        dct_64x64(&input, &mut coeffs);
+        let mut output = vec![0.0f32; 4096];
+        idct_64x64(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..4096 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-2,
+            "idct_64x64 roundtrip max error {} too large",
+            max_err
+        );
+    }
+
+    #[test]
+    fn test_idct_64x32_roundtrip() {
+        let input: Vec<f32> = (0..2048).map(|i| ((i as f32 * 0.6).cos()) * 60.0).collect();
+        let mut coeffs = vec![0.0f32; 2048];
+        dct_64x32(&input, &mut coeffs);
+        let mut output = vec![0.0f32; 2048];
+        idct_64x32(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..2048 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-2,
+            "idct_64x32 roundtrip max error {} too large",
+            max_err
+        );
+    }
+
+    #[test]
+    fn test_idct_32x64_roundtrip() {
+        let input: Vec<f32> = (0..2048).map(|i| ((i as f32 * 0.8).sin()) * 90.0).collect();
+        let mut coeffs = vec![0.0f32; 2048];
+        dct_32x64(&input, &mut coeffs);
+        let mut output = vec![0.0f32; 2048];
+        idct_32x64(&coeffs, &mut output);
+
+        let mut max_err = 0.0f32;
+        for i in 0..2048 {
+            let err = (input[i] - output[i]).abs();
+            max_err = max_err.max(err);
+        }
+        assert!(
+            max_err < 1e-2,
+            "idct_32x64 roundtrip max error {} too large",
+            max_err
+        );
     }
 }
