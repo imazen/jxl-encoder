@@ -226,7 +226,7 @@ impl Default for TinyEncoder {
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: 0,
+            butteraugli_iters: 2,
         }
     }
 }
@@ -252,7 +252,7 @@ impl TinyEncoder {
             lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: 0,
+            butteraugli_iters: 2,
         }
     }
 
@@ -1271,7 +1271,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0xfbcf8d8ba10f5f8;
+        const EXPECTED_HASH: u64 = 0x2314eb4e22237067;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1295,7 +1295,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0x310cb05d2ba544b7;
+        const EXPECTED_HASH: u64 = 0xa9bad33feede7a97;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1331,7 +1331,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: iterative rate control changes output
-        const EXPECTED_HASH: u64 = 0xa2084905cd53c244;
+        const EXPECTED_HASH: u64 = 0x81127ea607106bbe;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1362,7 +1362,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x7171c66ec1420073;
+        const EXPECTED_HASH: u64 = 0x8274be99fd9f2e9f;
         assert_eq!(
             hash,
             EXPECTED_HASH,

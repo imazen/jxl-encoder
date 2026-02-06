@@ -44,16 +44,12 @@ impl TinyEncoder {
         writer.write(1, 0)?; // not all default
         writer.write(1, 0)?; // no extra fields
 
-        // Bit depth - 32-bit float with 8 exponent bits
-        // NOTE: We keep the float header even though our input is u8, because
-        // jxl-oxide uses the bit depth to determine output precision. With 8-bit
-        // header, jxl-oxide quantizes decoded values to 8-bit even for VarDCT,
-        // losing precision that affects butteraugli/SSIM2 metrics.
-        writer.write(1, 1)?; // float = 1
-        writer.write(2, 0)?; // bits_per_sample selector 0 = 32 bits
-        writer.write(4, 7)?; // exp_bits = 8 (encoded as 7+1)
+        // Bit depth - 8-bit integer (matches libjxl default for u8 input)
+        // U32(8,10,12,1+Read(6)): selector 0 = 8 bits
+        writer.write(1, 0)?; // float = 0
+        writer.write(2, 0)?; // bits_per_sample selector 0 = 8 bits
 
-        writer.write(1, 0)?; // modular 16 bit buffer NOT sufficient (for float)
+        writer.write(1, 1)?; // modular 16 bit buffer sufficient (for 8-bit)
 
         // Extra channels - none
         writer.write(2, 0)?; // selector 0 = 0 extra channels

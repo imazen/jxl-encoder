@@ -37,7 +37,7 @@ safe-mode = []
 rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
-default = ["safe-mode"]
+default = ["safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
 rand = "0.9"
