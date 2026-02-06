@@ -108,6 +108,21 @@ static COEFF_ORDER_32X16: LazyLock<Vec<u32>> =
 static COEFF_ORDER_16X32: LazyLock<Vec<u32>> =
     LazyLock::new(|| coefficient_layout_order(16, 32, 2, 4));
 
+/// Default zig-zag coefficient order for DCT64x64 (4096 coefficients).
+/// DCT64x64: 64 rows × 64 cols, LLF region is 8×8.
+static COEFF_ORDER_64X64: LazyLock<Vec<u32>> =
+    LazyLock::new(|| coefficient_layout_order(64, 64, 8, 8));
+
+/// Default zig-zag coefficient order for DCT64x32 (2048 coefficients).
+/// DCT64x32: 64 rows × 32 cols, LLF region is 8×4.
+static COEFF_ORDER_64X32: LazyLock<Vec<u32>> =
+    LazyLock::new(|| coefficient_layout_order(64, 32, 8, 4));
+
+/// Default zig-zag coefficient order for DCT32x64 (2048 coefficients).
+/// DCT32x64: 32 rows × 64 cols, LLF region is 4×8.
+static COEFF_ORDER_32X64: LazyLock<Vec<u32>> =
+    LazyLock::new(|| coefficient_layout_order(32, 64, 4, 8));
+
 /// Generate a coefficient order with LLF positions first, then AC in zig-zag.
 ///
 /// For transforms larger than 8x8, the first `llf_x * llf_y` positions must be
@@ -197,6 +212,9 @@ pub fn get_coeff_order(strategy_code: u8) -> &'static [u32] {
         6 | 7 => &COEFF_ORDER_8X16,      // DCT8X16, DCT16X8
         10 => &COEFF_ORDER_32X16,        // DCT32X16
         11 => &COEFF_ORDER_16X32,        // DCT16X32
+        18 => &COEFF_ORDER_64X64,        // DCT64X64
+        19 => &COEFF_ORDER_64X32,        // DCT64X32
+        20 => &COEFF_ORDER_32X64,        // DCT32X64
         _ => &COEFF_ORDER_8X8,           // Default to 8x8 for unknown strategies
     }
 }
@@ -231,7 +249,7 @@ pub fn num_nonzero_except_llf(
     nzeros_pos: &mut [u8],
     covered_blocks_x: usize,
     covered_blocks_y: usize,
-) -> u8 {
+) -> u16 {
     let block_dim = 8;
     let covered_blocks = cx * cy;
     let log2_covered_blocks = covered_blocks.trailing_zeros() as usize;
@@ -259,10 +277,10 @@ pub fn num_nonzero_except_llf(
         }
     }
 
-    // Clamp to valid range
-    let nzeros = nzeros.max(0) as u8;
+    // Clamp to valid range (u16 supports up to 65535, max AC for DCT64x64 = 4032)
+    let nzeros = nzeros.max(0) as u16;
 
-    // Compute shifted nzeros for per-8x8-block storage
+    // Compute shifted nzeros for per-8x8-block storage (always fits in u8, max 63)
     let shifted_nzeros = ((nzeros as usize + covered_blocks - 1) >> log2_covered_blocks) as u8;
 
     // Fill in all covered 8x8 block positions
@@ -274,7 +292,7 @@ pub fn num_nonzero_except_llf(
 
     // Return actual nzeros (not the total_coeffs, but only AC)
     // For consistency, clamp to the number of AC coefficients
-    let max_ac = (total_coeffs - covered_blocks) as u8;
+    let max_ac = (total_coeffs - covered_blocks) as u16;
     nzeros.min(max_ac)
 }
 
@@ -339,7 +357,7 @@ pub fn ac_strategy_info(raw_strategy: u8) -> (usize, usize, usize, usize, u8) {
 pub fn tokenize_ac_coefficients(
     quantized: &[i32],
     raw_strategy: u8,
-    nzeros: u8,
+    nzeros: u16,
     predicted_nzeros: i32,
     block_ctx: usize,
     num_ctxs: usize,
@@ -420,7 +438,7 @@ pub fn tokenize_ac_coefficients(
 pub fn collect_ac_coefficients(
     quantized: &[i32],
     raw_strategy: u8,
-    nzeros: u8,
+    nzeros: u16,
     predicted_nzeros: i32,
     block_ctx: usize,
     num_ctxs: usize,

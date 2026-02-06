@@ -18,8 +18,9 @@ use std::sync::LazyLock;
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
 /// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4, 8 = IDENTITY, 9 = DCT2X2,
-/// 10 = DCT32X16, 11 = DCT16X32, 12 = AFV0, 13 = AFV1, 14 = AFV2, 15 = AFV3
-pub const NUM_VALID_STRATEGIES: usize = 16;
+/// 10 = DCT32X16, 11 = DCT16X32, 12 = AFV0, 13 = AFV1, 14 = AFV2, 15 = AFV3,
+/// 16 = DCT64X64, 17 = DCT64X32, 18 = DCT32X64
+pub const NUM_VALID_STRATEGIES: usize = 19;
 
 /// Inverse DC quantization constants per channel (X, Y, B).
 /// These are the denominators for DC quantization.
@@ -247,6 +248,82 @@ const DCT16X32_BAND_PARAMS: [[f64; 8]; 3] = [
     ],
 ];
 
+/// DCT64X64 band parameters from libjxl quant_weights.cc:899-931.
+/// 8 distance bands per channel.
+const DCT64X64_BAND_PARAMS: [[f64; 8]; 3] = [
+    // X channel (0.9 * 26629.073922049845 = 23966.16653...)
+    [
+        23966.16652984486,
+        -1.025,
+        -0.78,
+        -0.65012,
+        -0.19041574084286472,
+        -0.20819395464,
+        -0.421064,
+        -0.32733845535848671,
+    ],
+    // Y channel (0.9 * 9311.3238710010046 = 8380.19148...)
+    [
+        8380.191483900904,
+        -0.3041958212306401,
+        -0.3633036457487539,
+        -0.35660379990111464,
+        -0.3443074455424403,
+        -0.33699592683512467,
+        -0.30180866526242109,
+        -0.27321683125358037,
+    ],
+    // B channel (0.9 * 4992.2486445538634 = 4493.02378...)
+    [
+        4493.02378009847706,
+        -1.2,
+        -1.2,
+        -0.8,
+        -0.7,
+        -0.7,
+        -0.4,
+        -0.5,
+    ],
+];
+
+/// DCT32X64/DCT64X32 band parameters from libjxl quant_weights.cc:935-968.
+/// 8 distance bands per channel. Used for both DCT64X32 and DCT32X64.
+const DCT32X64_BAND_PARAMS: [[f64; 8]; 3] = [
+    // X channel (0.65 * 23629.073922049845 = 15358.898...)
+    [
+        15358.898049332399,
+        -1.025,
+        -0.78,
+        -0.65012,
+        -0.19041574084286472,
+        -0.20819395464,
+        -0.421064,
+        -0.32733845535848671,
+    ],
+    // Y channel (0.65 * 8611.3238710010046 = 5597.360...)
+    [
+        5597.36051615065299,
+        -0.3041958212306401,
+        -0.3633036457487539,
+        -0.35660379990111464,
+        -0.3443074455424403,
+        -0.33699592683512467,
+        -0.30180866526242109,
+        -0.27321683125358037,
+    ],
+    // B channel (0.65 * 4492.2486445538634 = 2919.961...)
+    [
+        2919.961618960011,
+        -1.2,
+        -1.2,
+        -0.8,
+        -0.7,
+        -0.7,
+        -0.4,
+        -0.5,
+    ],
+];
+
 /// DCT4X8 band parameters from jxl-oxide dequant.rs:44-48.
 /// 4 distance bands per channel.
 const DCT4X8_BAND_PARAMS: [[f64; 4]; 3] = [
@@ -382,6 +459,35 @@ static QUANT_WEIGHTS_DCT16X32: LazyLock<Vec<f32>> = LazyLock::new(|| {
             &DCT16X32_BAND_PARAMS[0],
             &DCT16X32_BAND_PARAMS[1],
             &DCT16X32_BAND_PARAMS[2],
+        ],
+        8,
+    )
+});
+
+/// DCT64x64 quantization weights (12288 floats: 4096 per channel).
+static QUANT_WEIGHTS_DCT64X64: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        64,
+        64,
+        &[
+            &DCT64X64_BAND_PARAMS[0],
+            &DCT64X64_BAND_PARAMS[1],
+            &DCT64X64_BAND_PARAMS[2],
+        ],
+        8,
+    )
+});
+
+/// DCT32x64/DCT64x32 quantization weights (6144 floats: 2048 per channel).
+/// Used for both DCT64X32 (raw strategy 17) and DCT32X64 (raw strategy 18).
+static QUANT_WEIGHTS_DCT32X64: LazyLock<Vec<f32>> = LazyLock::new(|| {
+    generate_dct_quant_weights_rect(
+        32,
+        64,
+        &[
+            &DCT32X64_BAND_PARAMS[0],
+            &DCT32X64_BAND_PARAMS[1],
+            &DCT32X64_BAND_PARAMS[2],
         ],
         8,
     )
@@ -778,6 +884,16 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
             // AFV0-AFV3: 64 coefficients per channel (all share same weights)
             let offset = channel * 64;
             &QUANT_WEIGHTS_AFV[offset..offset + 64]
+        }
+        16 => {
+            // DCT64X64: 4096 coefficients per channel
+            let offset = channel * 4096;
+            &QUANT_WEIGHTS_DCT64X64[offset..offset + 4096]
+        }
+        17 | 18 => {
+            // DCT64X32 / DCT32X64: 2048 coefficients per channel (share same weights)
+            let offset = channel * 2048;
+            &QUANT_WEIGHTS_DCT32X64[offset..offset + 2048]
         }
         _ => unreachable!("Invalid strategy: {}", strategy),
     }

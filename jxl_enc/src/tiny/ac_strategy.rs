@@ -19,7 +19,8 @@ use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
-    dct_32x16, dct_32x32, dct2x2_transform, idct_8x8, idct_8x16, idct_16x8, idct_16x16,
+    dct_32x16, dct_32x32, dct_64x32, dct_32x64, dct_64x64,
+    dct2x2_transform, idct_8x8, idct_8x16, idct_16x8, idct_16x16,
     identity_transform, inverse_dct2x2_transform, inverse_identity_transform,
 };
 use super::quant::quant_weights;
@@ -43,28 +44,33 @@ pub const RAW_STRATEGY_AFV0: u8 = 12;
 pub const RAW_STRATEGY_AFV1: u8 = 13;
 pub const RAW_STRATEGY_AFV2: u8 = 14;
 pub const RAW_STRATEGY_AFV3: u8 = 15;
+pub const RAW_STRATEGY_DCT64X64: u8 = 16;
+pub const RAW_STRATEGY_DCT64X32: u8 = 17;
+pub const RAW_STRATEGY_DCT32X64: u8 = 18;
 
 /// Number of supported raw strategies.
-pub const NUM_RAW_STRATEGIES: usize = 16;
+pub const NUM_RAW_STRATEGIES: usize = 19;
 
 /// Strategy code as written to the bitstream (via `StrategyCode()`).
 /// These differ from raw strategy codes.
 /// From libjxl ac_strategy.h: DCT=0, IDENTITY=1, DCT2X2=2, DCT4X4=3, DCT16X16=4,
 /// DCT32X32=5, DCT16X8=6, DCT8X16=7, DCT32X16=10, DCT16X32=11, DCT4X8=12, DCT8X4=13,
-/// AFV0=14, AFV1=15, AFV2=16, AFV3=17.
+/// AFV0=14, AFV1=15, AFV2=16, AFV3=17, DCT64X64=18, DCT64X32=19, DCT32X64=20.
 pub(crate) const STRATEGY_CODE_LUT: [u8; NUM_RAW_STRATEGIES] =
-    [0, 6, 7, 4, 5, 12, 13, 3, 1, 2, 10, 11, 14, 15, 16, 17];
+    [0, 6, 7, 4, 5, 12, 13, 3, 1, 2, 10, 11, 14, 15, 16, 17, 18, 19, 20];
 
 /// Covered blocks in X direction for each raw strategy.
 /// IDENTITY, DCT2X2, DCT4X8, DCT8X4, DCT4X4, and AFV0-3 cover 1×1 blocks.
 /// DCT32X16 (32 rows × 16 cols): 2 cols × 4 rows of 8×8 blocks
 /// DCT16X32 (16 rows × 32 cols): 4 cols × 2 rows of 8×8 blocks
+/// DCT64X64: 8 cols × 8 rows. DCT64X32 (64r × 32c): 4 cols × 8 rows.
+/// DCT32X64 (32r × 64c): 8 cols × 4 rows.
 pub(crate) const COVERED_X: [usize; NUM_RAW_STRATEGIES] =
-    [1, 1, 2, 2, 4, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1];
+    [1, 1, 2, 2, 4, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 8, 4, 8];
 
 /// Covered blocks in Y direction for each raw strategy.
 pub(crate) const COVERED_Y: [usize; NUM_RAW_STRATEGIES] =
-    [1, 2, 1, 2, 4, 1, 1, 1, 1, 1, 4, 2, 1, 1, 1, 1];
+    [1, 2, 1, 2, 4, 1, 1, 1, 1, 1, 4, 2, 1, 1, 1, 1, 8, 8, 4];
 
 /// Per-block AC strategy map.
 ///
@@ -246,6 +252,8 @@ const RAW_ENTROPY_MUL_DCT16X8: f32 = 1.21;
 const RAW_ENTROPY_MUL_DCT16X16: f32 = 1.34;
 const RAW_ENTROPY_MUL_DCT16X32: f32 = 1.49;
 const RAW_ENTROPY_MUL_DCT32X32: f32 = 1.48;
+const RAW_ENTROPY_MUL_DCT64X32: f32 = 2.25;
+const RAW_ENTROPY_MUL_DCT64X64: f32 = 2.25;
 
 /// Get the entropy multiplier for a raw strategy (full libjxl mode).
 ///
@@ -277,6 +285,8 @@ fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
         RAW_STRATEGY_DCT16X16 => RAW_ENTROPY_MUL_DCT16X16,
         RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => RAW_ENTROPY_MUL_DCT16X32,
         RAW_STRATEGY_DCT32X32 => RAW_ENTROPY_MUL_DCT32X32,
+        RAW_STRATEGY_DCT64X32 | RAW_STRATEGY_DCT32X64 => RAW_ENTROPY_MUL_DCT64X32,
+        RAW_STRATEGY_DCT64X64 => RAW_ENTROPY_MUL_DCT64X64,
         _ => 1.0,
     }
 }
@@ -474,6 +484,27 @@ fn estimate_entropy_full(
                 let mut output = [0.0f32; 512];
                 dct_16x32(&input, &mut output);
                 block[offset..offset + 512].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT64X64 => {
+                let mut input = [0.0f32; 4096];
+                extract_block_64x64(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 4096];
+                dct_64x64(&input, &mut output);
+                block[offset..offset + 4096].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT64X32 => {
+                let mut input = [0.0f32; 2048];
+                extract_block_64x32(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 2048];
+                dct_64x32(&input, &mut output);
+                block[offset..offset + 2048].copy_from_slice(&output);
+            }
+            RAW_STRATEGY_DCT32X64 => {
+                let mut input = [0.0f32; 2048];
+                extract_block_32x64(xyb_c, stride, bx, by, &mut input);
+                let mut output = [0.0f32; 2048];
+                dct_32x64(&input, &mut output);
+                block[offset..offset + 2048].copy_from_slice(&output);
             }
             RAW_STRATEGY_DCT4X8 => {
                 let mut input = [0.0f32; 64];
@@ -787,6 +818,18 @@ fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
             // 32 wide × 16 tall - no IDCT implemented, use coefficients directly
             error_coeffs[..512].to_vec()
         }
+        RAW_STRATEGY_DCT64X64 => {
+            // 64 wide × 64 tall - no IDCT implemented, use coefficients directly
+            error_coeffs[..4096].to_vec()
+        }
+        RAW_STRATEGY_DCT64X32 => {
+            // 32 wide × 64 tall - no IDCT implemented, use coefficients directly
+            error_coeffs[..2048].to_vec()
+        }
+        RAW_STRATEGY_DCT32X64 => {
+            // 64 wide × 32 tall - no IDCT implemented, use coefficients directly
+            error_coeffs[..2048].to_vec()
+        }
         RAW_STRATEGY_IDENTITY => {
             let mut output = [0.0f32; 64];
             inverse_identity_transform(&error_coeffs[..64], &mut output);
@@ -900,6 +943,42 @@ fn extract_block_16x32(plane: &[f32], stride: usize, bx: usize, by: usize, out: 
         for dx in 0..32 {
             let px = bx * BLOCK_DIM + dx;
             out[dy * 32 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 64×64 pixel block (8 wide × 8 tall) for DCT64x64.
+/// Layout: 64 rows × 64 cols, row-major.
+fn extract_block_64x64(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 4096]) {
+    for dy in 0..64 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..64 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 64 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 64×32 pixel block (4 wide × 8 tall) for DCT64x32.
+/// Layout: 64 rows × 32 cols, row-major.
+fn extract_block_64x32(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 2048]) {
+    for dy in 0..64 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..32 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 32 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 32×64 pixel block (8 wide × 4 tall) for DCT32x64.
+/// Layout: 32 rows × 64 cols, row-major.
+fn extract_block_32x64(plane: &[f32], stride: usize, bx: usize, by: usize, out: &mut [f32; 2048]) {
+    for dy in 0..32 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..64 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 64 + dx] = plane[py * stride + px];
         }
     }
 }
@@ -1582,6 +1661,293 @@ fn find_best_32x32_transform(
     }
 }
 
+// ─── 64×64 transform selection ──────────────────────────────────────────────
+
+/// Find the best transform for a 64×64 pixel region (8×8 group of 8×8 blocks).
+///
+/// Evaluates DCT64x64, two DCT64x32, two DCT32x64, and four find_best_32x32_transform.
+/// Only evaluated at d >= 3.0 (conservative — DCT64 averages 64x64 blocks).
+#[allow(clippy::too_many_arguments)]
+fn find_best_64x64_transform(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+) {
+    // DCT64 transforms only at d >= 3.0
+    if distance < 3.0 {
+        // At lower distances, fall through to 32x32 evaluation
+        for qy in (0..8).step_by(4) {
+            for qx in (0..8).step_by(4) {
+                find_best_32x32_transform(
+                    xyb,
+                    stride,
+                    bx0,
+                    by0,
+                    cx + qx,
+                    cy + qy,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    ac_strategy,
+                );
+            }
+        }
+        return;
+    }
+
+    // Conservative multipliers for DCT64 transforms
+    let k64x64mul1: f32 = -0.80;
+    let k64x64mul2: f32 = 1.3;
+    let k64x64base: f32 = 2.5;
+    let mul64x64 = k64x64mul2 + k64x64mul1 / (distance + k64x64base);
+
+    let k64x32mul1: f32 = -0.75;
+    let k64x32mul2: f32 = 1.2;
+    let k64x32base: f32 = 2.5;
+    let mul64x32 = k64x32mul2 + k64x32mul1 / (distance + k64x32base);
+
+    let abs_bx = bx0 + cx;
+    let abs_by = by0 + cy;
+
+    // Evaluate DCT64x64 cost
+    let entropy_64x64 = mul64x64
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT64X64,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+        );
+
+    // Evaluate DCT64x32 costs (two transforms stacked vertically)
+    // DCT64x32 covers 8 rows × 4 cols of 8×8 blocks
+    // Split: left half (bx, by) and right half (bx+4, by)
+    let entropy_64x32_0 = mul64x32
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT64X32,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+        );
+    let entropy_64x32_1 = mul64x32
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT64X32,
+            xyb,
+            stride,
+            abs_bx + 4,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+        );
+    let entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
+
+    // Evaluate DCT32x64 costs (two transforms side by side)
+    // DCT32x64 covers 4 rows × 8 cols of 8×8 blocks
+    // Split: top half (bx, by) and bottom half (bx, by+4)
+    let entropy_32x64_0 = mul64x32
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT32X64,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+        );
+    let entropy_32x64_1 = mul64x32
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT32X64,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by + 4,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+        );
+    let entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
+
+    // Run four 32x32 evaluations (each covers 4×4 blocks)
+    for qy in (0..8).step_by(4) {
+        for qx in (0..8).step_by(4) {
+            find_best_32x32_transform(
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx + qx,
+                cy + qy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+            );
+        }
+    }
+
+    // Compute the combined cost of the four 32x32 sub-evaluations
+    let mut cost_sub = 0.0f32;
+    for iy in 0..8 {
+        for ix in 0..8 {
+            if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
+                continue;
+            }
+            let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
+            // Distance-dependent multipliers (must match find_best_32x32/16x16_transform)
+            let k8x8mul1: f32 = -0.55 * 0.75;
+            let k8x8mul2: f32 = 1.073_575_8 * 0.75;
+            let k8x8base: f32 = 1.4;
+            let mul8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
+            let k8x16mul1: f32 = -0.55;
+            let k8x16mul2: f32 = 0.901_958_8;
+            let k8x16base: f32 = 1.6;
+            let mul16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
+            let k16x16mul1: f32 = -0.65;
+            let k16x16mul2: f32 = 0.88;
+            let k16x16base: f32 = 1.8;
+            let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
+            let k32x32mul1: f32 = -0.75;
+            let k32x32mul2: f32 = 1.2;
+            let k32x32base: f32 = 2.0;
+            let mul32x32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
+            let k32x16mul1: f32 = -0.70;
+            let k32x16mul2: f32 = 1.1;
+            let k32x16base: f32 = 2.0;
+            let mul32x16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
+
+            let mul = match sub_raw {
+                RAW_STRATEGY_DCT8 => mul8x8,
+                RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => mul16x8,
+                RAW_STRATEGY_DCT16X16 => mul16x16,
+                RAW_STRATEGY_DCT32X32 => mul32x32,
+                RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => mul32x16,
+                _ => mul8x8,
+            };
+            let base = if sub_raw == RAW_STRATEGY_DCT8 {
+                3.0 * mul8x8
+            } else {
+                0.0
+            };
+
+            let e = estimate_entropy_with_mask(
+                sub_raw,
+                xyb,
+                stride,
+                abs_bx + ix,
+                abs_by + iy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                0.0,
+            );
+            cost_sub += base + mul * e;
+        }
+    }
+
+    // Find the best option
+    let mut best_cost = cost_sub;
+    let mut best_choice = 0u8; // 0=keep sub, 1=DCT64x64, 2=DCT64x32, 3=DCT32x64
+
+    if entropy_64x64 < best_cost {
+        best_cost = entropy_64x64;
+        best_choice = 1;
+    }
+    if entropy_64x32_total < best_cost {
+        best_cost = entropy_64x32_total;
+        best_choice = 2;
+    }
+    if entropy_32x64_total < best_cost {
+        let _ = best_cost;
+        best_choice = 3;
+    }
+
+    match best_choice {
+        1 => {
+            // DCT64x64 wins
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X64);
+        }
+        2 => {
+            // Two DCT64x32 transforms win
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
+            ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
+        }
+        3 => {
+            // Two DCT32x64 transforms win
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
+            ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
+        }
+        _ => {
+            // Keep the 32x32 sub-evaluation results (already in ac_strategy)
+        }
+    }
+}
+
 // ─── Quant field adjustment ─────────────────────────────────────────────────
 
 /// Adjust the quant field for non-8×8 transforms.
@@ -1717,13 +2083,33 @@ pub fn compute_ac_strategy(
             let ytox = cfl_map.ytox_at(tx, ty);
             let ytob = cfl_map.ytob_at(tx, ty);
 
-            // Process 4×4 block groups first (32×32), then 2×2 (16×16) for remainder
+            // Process 8×8 block groups first (64×64), then 4×4 (32×32), then 2×2 (16×16)
             let mut cy = 0;
-            while cy + 3 < tile_h {
+            // Process 8-row bands: try DCT64x64/DCT64x32/DCT32x64
+            while cy + 7 < tile_h {
                 let mut cx = 0;
+                while cx + 7 < tile_w {
+                    find_best_64x64_transform(
+                        xyb,
+                        stride,
+                        tile_bx,
+                        tile_by,
+                        cx,
+                        cy,
+                        distance,
+                        quant_field_float,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        &mut ac_strategy,
+                    );
+                    cx += 8;
+                }
+                // Remaining cols in this 8-row band: 4-block groups, then 2-block groups
                 while cx + 3 < tile_w {
-                    // Try DCT32x32 first. If it loses, the four 16×16 sub-evaluations
-                    // have already been applied to ac_strategy inside find_best_32x32_transform.
                     find_best_32x32_transform(
                         xyb,
                         stride,
@@ -1743,7 +2129,6 @@ pub fn compute_ac_strategy(
                     );
                     cx += 4;
                 }
-                // Handle remaining columns that don't fit a 32×32 block
                 while cx + 1 < tile_w {
                     find_best_16x16_transform(
                         xyb,
@@ -1764,9 +2149,51 @@ pub fn compute_ac_strategy(
                     );
                     cx += 2;
                 }
-                // Also handle remaining rows in the 32×32 band (rows cy+0..cy+3)
-                // but only for columns already handled (cy+2..cy+3 rows, cx from 0)
-                // No: the 4-row band was fully handled above. Move to next 4-row band.
+                cy += 8;
+            }
+            // Remaining rows: 4-row bands for 32×32, then 2-row bands for 16×16
+            while cy + 3 < tile_h {
+                let mut cx = 0;
+                while cx + 3 < tile_w {
+                    find_best_32x32_transform(
+                        xyb,
+                        stride,
+                        tile_bx,
+                        tile_by,
+                        cx,
+                        cy,
+                        distance,
+                        quant_field_float,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        &mut ac_strategy,
+                    );
+                    cx += 4;
+                }
+                while cx + 1 < tile_w {
+                    find_best_16x16_transform(
+                        xyb,
+                        stride,
+                        tile_bx,
+                        tile_by,
+                        cx,
+                        cy,
+                        distance,
+                        quant_field_float,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        &mut ac_strategy,
+                    );
+                    cx += 2;
+                }
                 cy += 4;
             }
             // Handle remaining rows that don't fit a 32×32 block

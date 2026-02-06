@@ -297,18 +297,24 @@ pub fn compute_block_ctx_map(
 /// a LUT (e.g., code 0→order 0, code 4→order 2, code 5→order 3, code 6,7→order 4).
 static BLOCK_CONTEXT_MAP: [u8; 81] = [
     // X (c=0): decoder reads with ch_idx=1 (compact group 1)
-    //  code: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 ...
+    //  code: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 ...
     //  IDENTITY=1, DCT2X2=2, DCT4X4=3 all have order_id=1 → compact[14]=2
     //  DCT32X16=10, DCT16X32=11 have order_id=6 → compact[19]=3
-    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 3, 3, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  DCT64X64=18 has order_id=7 → compact[20]=3
+    //  DCT64X32=19, DCT32X64=20 have order_id=8 → compact[21]=3
+    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 3, 3, 2, 2, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 0,
     // Y (c=1): decoder reads with ch_idx=0 (compact group 0)
     //  IDENTITY=1, DCT2X2=2, DCT4X8=12, DCT8X4=13, DCT4X4=3 all have order_id=1 → compact[1]=0
     //  DCT32X16=10, DCT16X32=11 have order_id=6 → compact[6]=1
-    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  DCT64X64=18 has order_id=7 → compact[7]=1
+    //  DCT64X32=19, DCT32X64=20 have order_id=8 → compact[8]=1
+    0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0,
     // B (c=2): decoder reads with ch_idx=2 (compact group 2)
     //  IDENTITY=1, DCT2X2=2, DCT4X4=3 all have order_id=1 → compact[27]=2
     //  DCT32X16=10, DCT16X32=11 have order_id=6 → compact[32]=3
-    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 3, 3, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    //  DCT64X64=18 has order_id=7 → compact[33]=3
+    //  DCT64X32=19, DCT32X64=20 have order_id=8 → compact[34]=3
+    2, 2, 2, 2, 2, 2, 3, 3, 0, 0, 3, 3, 2, 2, 0, 0, 0, 0, 3, 3, 3, 0, 0, 0, 0, 0, 0,
 ];
 
 /// Get block context from channel and AC strategy code.

@@ -10,7 +10,8 @@ use super::ac_strategy::{
     AcStrategyMap, RAW_STRATEGY_AFV0, RAW_STRATEGY_AFV1, RAW_STRATEGY_AFV2, RAW_STRATEGY_AFV3,
     RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4,
     RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT16X32,
-    RAW_STRATEGY_DCT32X16, RAW_STRATEGY_DCT32X32, RAW_STRATEGY_IDENTITY,
+    RAW_STRATEGY_DCT32X16, RAW_STRATEGY_DCT32X32, RAW_STRATEGY_DCT32X64, RAW_STRATEGY_DCT64X32,
+    RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
 };
 use super::afv::{afv_transform_from_pixels, dc_from_afv};
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
@@ -19,8 +20,9 @@ use super::common::*;
 use super::dct::{
     dc_from_dct_4x4_full, dc_from_dct_4x8_full, dc_from_dct_8x4_full, dc_from_dct_8x16,
     dc_from_dct_16x8, dc_from_dct_16x16, dc_from_dct_16x32, dc_from_dct_32x16, dc_from_dct_32x32,
+    dc_from_dct_32x64, dc_from_dct_64x32, dc_from_dct_64x64,
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
-    dct_32x16, dct_32x32, dct2x2_transform, identity_transform,
+    dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, identity_transform,
 };
 use super::encoder::TinyEncoder;
 use super::frame::DistanceParams;
@@ -349,6 +351,9 @@ impl TinyEncoder {
                     | RAW_STRATEGY_DCT32X32
                     | RAW_STRATEGY_DCT16X8
                     | RAW_STRATEGY_DCT8X16
+                    | RAW_STRATEGY_DCT64X64
+                    | RAW_STRATEGY_DCT64X32
+                    | RAW_STRATEGY_DCT32X64
             );
             if is_large {
                 // Map strategy to table index
@@ -580,6 +585,45 @@ impl TinyEncoder {
                 let mut dct_out = [0.0f32; 512];
                 dct_16x32(&block, &mut dct_out);
                 output[..512].copy_from_slice(&dct_out);
+            }
+            RAW_STRATEGY_DCT64X64 => {
+                // DCT64X64: 64x64 transform (8 rows × 8 cols of 8x8 blocks)
+                let mut block = [0.0f32; 4096];
+                for dy in 0..64 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..64 {
+                        block[dy * 64 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 4096];
+                dct_64x64(&block, &mut dct_out);
+                output[..4096].copy_from_slice(&dct_out);
+            }
+            RAW_STRATEGY_DCT64X32 => {
+                // DCT64X32: 64x32 transform (8 rows × 4 cols of 8x8 blocks = 64 rows × 32 cols)
+                let mut block = [0.0f32; 2048];
+                for dy in 0..64 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..32 {
+                        block[dy * 32 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 2048];
+                dct_64x32(&block, &mut dct_out);
+                output[..2048].copy_from_slice(&dct_out);
+            }
+            RAW_STRATEGY_DCT32X64 => {
+                // DCT32X64: 32x64 transform (4 rows × 8 cols of 8x8 blocks = 32 rows × 64 cols)
+                let mut block = [0.0f32; 2048];
+                for dy in 0..32 {
+                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
+                    for dx in 0..64 {
+                        block[dy * 64 + dx] = channel_data[row_offset + dx];
+                    }
+                }
+                let mut dct_out = [0.0f32; 2048];
+                dct_32x64(&block, &mut dct_out);
+                output[..2048].copy_from_slice(&dct_out);
             }
             RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
                 // AFV: Adaptive Frequency Variable (hybrid transform for corners)
@@ -833,7 +877,7 @@ impl TinyEncoder {
         [Vec<Vec<i16>>; 3],                   // quant_dc
         [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3], // quant_ac
         [Vec<Vec<u8>>; 3],                    // nzeros (shifted, for prediction)
-        [Vec<Vec<u8>>; 3],                    // raw_nzeros (unshifted, for bitstream)
+        [Vec<Vec<u16>>; 3],                   // raw_nzeros (unshifted, for bitstream)
     ) {
         // Initialize output arrays
         let mut quant_dc: [Vec<Vec<i16>>; 3] = [
@@ -855,10 +899,10 @@ impl TinyEncoder {
             vec![vec![0u8; xsize_blocks]; ysize_blocks],
         ];
         // Raw (unshifted) nzeros for bitstream writing — stored at first-block positions
-        let mut raw_nzeros: [Vec<Vec<u8>>; 3] = [
-            vec![vec![0u8; xsize_blocks]; ysize_blocks],
-            vec![vec![0u8; xsize_blocks]; ysize_blocks],
-            vec![vec![0u8; xsize_blocks]; ysize_blocks],
+        let mut raw_nzeros: [Vec<Vec<u16>>; 3] = [
+            vec![vec![0u16; xsize_blocks]; ysize_blocks],
+            vec![vec![0u16; xsize_blocks]; ysize_blocks],
+            vec![vec![0u16; xsize_blocks]; ysize_blocks],
         ];
 
         let channels = [xyb_x, xyb_y, xyb_b];
@@ -1038,6 +1082,45 @@ impl TinyEncoder {
                             for iy in 0..2 {
                                 for ix in 0..4 {
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
+                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                }
+                            }
+                        }
+                        RAW_STRATEGY_DCT64X64 => {
+                            // DCT64X64: 8×8 blocks, returns 64 DC values in row-major 8x8
+                            let coeffs_arr: [f32; 4096] = dct_coeffs[1][..4096]
+                                .try_into()
+                                .expect("4096 coefficients for DCT64x64");
+                            let dcs = dc_from_dct_64x64(&coeffs_arr);
+                            for iy in 0..8 {
+                                for ix in 0..8 {
+                                    let qdc = (dcs[iy * 8 + ix] * inv_factor).round() as i16;
+                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                }
+                            }
+                        }
+                        RAW_STRATEGY_DCT64X32 => {
+                            // DCT64X32: 8×4 blocks, returns 32 DC values in row-major 8x4
+                            let coeffs_arr: [f32; 2048] = dct_coeffs[1][..2048]
+                                .try_into()
+                                .expect("2048 coefficients for DCT64x32");
+                            let dcs = dc_from_dct_64x32(&coeffs_arr);
+                            for iy in 0..8 {
+                                for ix in 0..4 {
+                                    let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
+                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                }
+                            }
+                        }
+                        RAW_STRATEGY_DCT32X64 => {
+                            // DCT32X64: 4×8 blocks, returns 32 DC values in row-major 4x8
+                            let coeffs_arr: [f32; 2048] = dct_coeffs[1][..2048]
+                                .try_into()
+                                .expect("2048 coefficients for DCT32x64");
+                            let dcs = dc_from_dct_32x64(&coeffs_arr);
+                            for iy in 0..4 {
+                                for ix in 0..8 {
+                                    let qdc = (dcs[iy * 8 + ix] * inv_factor).round() as i16;
                                     quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
                             }
@@ -1326,6 +1409,48 @@ impl TinyEncoder {
                                 }
                             }
                         }
+                        RAW_STRATEGY_DCT64X64 => {
+                            let coeffs_arr: [f32; 4096] = dct_coeffs[c][..4096]
+                                .try_into()
+                                .expect("4096 coefficients for DCT64x64");
+                            let dcs = dc_from_dct_64x64(&coeffs_arr);
+                            for iy in 0..8 {
+                                for ix in 0..8 {
+                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
+                                    quant_dc[c][by + iy][bx + ix] =
+                                        (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
+                                            .round() as i16;
+                                }
+                            }
+                        }
+                        RAW_STRATEGY_DCT64X32 => {
+                            let coeffs_arr: [f32; 2048] = dct_coeffs[c][..2048]
+                                .try_into()
+                                .expect("2048 coefficients for DCT64x32");
+                            let dcs = dc_from_dct_64x32(&coeffs_arr);
+                            for iy in 0..8 {
+                                for ix in 0..4 {
+                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
+                                    quant_dc[c][by + iy][bx + ix] =
+                                        (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
+                                            .round() as i16;
+                                }
+                            }
+                        }
+                        RAW_STRATEGY_DCT32X64 => {
+                            let coeffs_arr: [f32; 2048] = dct_coeffs[c][..2048]
+                                .try_into()
+                                .expect("2048 coefficients for DCT32x64");
+                            let dcs = dc_from_dct_32x64(&coeffs_arr);
+                            for iy in 0..4 {
+                                for ix in 0..8 {
+                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
+                                    quant_dc[c][by + iy][bx + ix] =
+                                        (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
+                                            .round() as i16;
+                                }
+                            }
+                        }
                         RAW_STRATEGY_DCT4X8 => {
                             let coeffs_arr: [f32; 64] = dct_coeffs[c][..64]
                                 .try_into()
@@ -1404,7 +1529,7 @@ impl TinyEncoder {
                 for c in 0..3 {
                     if covered_blocks == 1 {
                         num_nonzero_8x8_except_dc(&quant_ac[c][by][bx], &mut nzeros[c][by][bx]);
-                        raw_nzeros[c][by][bx] = nzeros[c][by][bx];
+                        raw_nzeros[c][by][bx] = nzeros[c][by][bx] as u16;
                     } else {
                         // Build flat block in cx*8 × cy*8 layout (stride = cx*8).
                         // num_nonzero_except_llf expects block[y * stride + x] for y,x in 0..cy*8, 0..cx*8.
