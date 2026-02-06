@@ -40,7 +40,7 @@ pub struct DistanceParams {
 /// Ported from libjxl enc_frame.cc:572-645.
 /// Computes max horizontal/vertical gradients of X and B-Y channels
 /// to determine how much chroma quantization can be coarsened.
-struct PixelStatsForChromacityAdjustment {
+pub(crate) struct PixelStatsForChromacityAdjustment {
     /// Max gradient of X (opsin) channel.
     dx: f32,
     /// Max gradient of B-Y channel.
@@ -51,7 +51,7 @@ struct PixelStatsForChromacityAdjustment {
 
 impl PixelStatsForChromacityAdjustment {
     /// Compute max horizontal/vertical gradient of a single plane.
-    fn calc_plane(plane: &[f32], width: usize, height: usize) -> f32 {
+    pub(crate) fn calc_plane(plane: &[f32], width: usize, height: usize) -> f32 {
         let mut xmax: f32 = 0.0;
         let mut ymax: f32 = 0.0;
         for ty in 1..height {
@@ -67,7 +67,7 @@ impl PixelStatsForChromacityAdjustment {
     }
 
     /// Compute B-Y gradient and exposed blue metric.
-    fn calc_exposed_blue(
+    pub(crate) fn calc_exposed_blue(
         plane_y: &[f32],
         plane_b: &[f32],
         width: usize,
@@ -98,7 +98,7 @@ impl PixelStatsForChromacityAdjustment {
     }
 
     /// Compute all pixel stats from XYB image.
-    fn calc(xyb_x: &[f32], xyb_y: &[f32], xyb_b: &[f32], width: usize, height: usize) -> Self {
+    pub(crate) fn calc(xyb_x: &[f32], xyb_y: &[f32], xyb_b: &[f32], width: usize, height: usize) -> Self {
         let dx = Self::calc_plane(xyb_x, width, height);
         let (db, exposed_blue) = Self::calc_exposed_blue(xyb_y, xyb_b, width, height);
         Self {
@@ -109,7 +109,7 @@ impl PixelStatsForChromacityAdjustment {
     }
 
     /// How much X channel quantization can be coarsened (0-3).
-    fn how_much_is_x_channel_pixelized(&self) -> u32 {
+    pub(crate) fn how_much_is_x_channel_pixelized(&self) -> u32 {
         if self.dx >= 0.026 {
             return 3;
         }
@@ -123,7 +123,7 @@ impl PixelStatsForChromacityAdjustment {
     }
 
     /// How much B channel quantization can be coarsened (0-3).
-    fn how_much_is_b_channel_pixelized(&self) -> u32 {
+    pub(crate) fn how_much_is_b_channel_pixelized(&self) -> u32 {
         let add = if self.exposed_blue >= 0.13 { 1 } else { 0 };
         if self.db > 0.38 {
             return 2 + add;
@@ -306,38 +306,31 @@ impl DistanceParams {
         ) as u8
     }
 
-    /// Apply pixel-level chromacity adjustments from XYB image data.
+    /// Apply pixel-level chromacity adjustments from pre-computed pixel stats.
     ///
     /// Matches libjxl's `ComputeChromacityAdjustments` (enc_frame.cc:647-674):
     /// - x_qm_scale = max(distance_based, 2 + HowMuchIsXChannelPixelized())
     /// - b_qm_scale = 2 + HowMuchIsBChannelPixelized()
+    ///
+    /// IMPORTANT: The pixel stats must be computed from the XYB image BEFORE
+    /// gaborish inverse, matching libjxl's pipeline order. Gaborish sharpening
+    /// inflates gradients and would produce overly aggressive chromacity adjustment.
     pub fn apply_chromacity_adjustment(
         &mut self,
-        xyb_x: &[f32],
-        xyb_y: &[f32],
-        xyb_b: &[f32],
-        width: usize,
-        height: usize,
+        x_pixelized: u32,
+        b_pixelized: u32,
     ) {
-        let pixel_stats =
-            PixelStatsForChromacityAdjustment::calc(xyb_x, xyb_y, xyb_b, width, height);
-
         // For X, take the most severe adjustment (max of distance-based and pixel-based)
-        self.x_qm_scale = self
-            .x_qm_scale
-            .max(2 + pixel_stats.how_much_is_x_channel_pixelized());
+        self.x_qm_scale = self.x_qm_scale.max(2 + x_pixelized);
 
         // B only adjusted by pixel-based approach
-        self.b_qm_scale = 2 + pixel_stats.how_much_is_b_channel_pixelized();
+        self.b_qm_scale = 2 + b_pixelized;
 
         #[cfg(feature = "debug-tokens")]
         eprintln!(
-            "[chromacity] dx={:.4} db={:.4} eb={:.4} x_pixelized={} b_pixelized={} -> x_qm_scale={} b_qm_scale={}",
-            pixel_stats.dx,
-            pixel_stats.db,
-            pixel_stats.exposed_blue,
-            pixel_stats.how_much_is_x_channel_pixelized(),
-            pixel_stats.how_much_is_b_channel_pixelized(),
+            "[chromacity] x_pixelized={} b_pixelized={} -> x_qm_scale={} b_qm_scale={}",
+            x_pixelized,
+            b_pixelized,
             self.x_qm_scale,
             self.b_qm_scale,
         );

@@ -305,6 +305,14 @@ impl TinyEncoder {
             None
         };
 
+        // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
+        // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
+        let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+            &xyb_x, &xyb_y, &xyb_b, padded_width, padded_height,
+        );
+        let chromacity_x = pixel_stats.how_much_is_x_channel_pixelized();
+        let chromacity_b = pixel_stats.how_much_is_b_channel_pixelized();
+
         // Apply gaborish inverse (5x5 sharpening) before adaptive quant.
         // The decoder will apply a 3x3 blur to compensate.
         if self.enable_gaborish {
@@ -346,8 +354,8 @@ impl TinyEncoder {
         let mut params =
             DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
 
-        // Apply pixel-level chromacity adjustments (x_qm_scale, b_qm_scale)
-        params.apply_chromacity_adjustment(&xyb_x, &xyb_y, &xyb_b, padded_width, padded_height);
+        // Apply pixel-level chromacity adjustments using pre-gaborish stats
+        params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
 
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
@@ -769,13 +777,10 @@ impl TinyEncoder {
         let mut params =
             DistanceParams::compute_from_quant_field(self.distance, &precomputed.quant_field_float);
 
-        // Apply pixel-level chromacity adjustments (x_qm_scale, b_qm_scale)
+        // Apply pixel-level chromacity adjustments using pre-gaborish stats
         params.apply_chromacity_adjustment(
-            &precomputed.xyb_x,
-            &precomputed.xyb_y,
-            &precomputed.xyb_b,
-            precomputed.padded_width,
-            precomputed.padded_height,
+            precomputed.chromacity_x_pixelized,
+            precomputed.chromacity_b_pixelized,
         );
 
         // Perform DCT and quantization using precomputed XYB data
@@ -1046,7 +1051,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x7fd7dccfc6f3020b;
+        const EXPECTED_HASH: u64 = 0x9ef803f904f2d9ec;
         assert_eq!(
             hash,
             EXPECTED_HASH,
