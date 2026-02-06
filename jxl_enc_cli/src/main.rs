@@ -86,9 +86,10 @@ struct Args {
     #[arg(long)]
     force_strategy: Option<u8>,
 
-    /// Enable error diffusion in AC quantization
+    /// Disable error diffusion in AC quantization.
+    /// Error diffusion is on by default (matching libjxl effort 7).
     #[arg(long)]
-    error_diffusion: bool,
+    no_error_diffusion: bool,
 
     /// Disable pixel-domain loss in AC strategy selection.
     /// Pixel-domain loss (full libjxl cost model) is on by default.
@@ -202,8 +203,8 @@ fn main() {
                 if let Some(s) = args.force_strategy {
                     tiny.force_strategy = Some(s);
                 }
-                if args.error_diffusion {
-                    tiny.error_diffusion = true;
+                if args.no_error_diffusion {
+                    tiny.error_diffusion = false;
                 }
                 if args.no_pixel_domain_loss {
                     tiny.pixel_domain_loss = false;
