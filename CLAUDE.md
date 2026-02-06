@@ -179,7 +179,7 @@ Strategy status:
 - DCT32x16/DCT16x32: enabled at d>=2.0 (jxl-rs has a decoder bug, use jxl-oxide/djxl)
 - AFV0-3: auto-selection in both pixel-domain and coefficient-domain modes
 - DCT64x64/DCT64x32/DCT32x64: enabled at d>=3.0, hierarchical evaluation
-- DCT2x2/IDENTITY: auto-select but conservative (kFavor2X2 at -0.15 vs libjxl's -0.4)
+- DCT2x2/IDENTITY: auto-select (kFavor2X2 = -0.4, matches libjxl)
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
 - Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
@@ -193,7 +193,7 @@ Strategy status:
 - AdjustQuantBlockAC: IMPLEMENTED (per-block quant field adjustment, `encoder.rs:811-1034`)
 - Dead-zone thresholds: UPDATED to full libjxl values (Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62})
 - X/B multi-block threshold: IMPLEMENTED (-0.00744 * xsize*ysize for c!=1, coverage>=4)
-- kFavor2X2: IMPLEMENTED at -0.15 (libjxl uses -0.4; increasing to -0.25 causes quality regression at d<1.0)
+- kFavor2X2: IMPLEMENTED at -0.4 (matches libjxl)
 - Note: libjxl uses Round() with thresholds, same as us (previous "truncation" claim was wrong)
 
 **D. Entropy Coding**
@@ -256,7 +256,7 @@ Strategy status:
 7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, default-on with 2 iters)
    - Reconstruct→butteraugli→adjust cycles. 2 iterations converges. +0.3 SSIM2 at equal file size.
    - Per-block EPF sharpness also done (Phase 4, same date)
-8. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0)
+8. ~~Increase kFavor2X2~~ — DONE (matches libjxl at -0.4)
 
 ### Outstanding Work
 

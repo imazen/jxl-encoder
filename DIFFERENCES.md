@@ -39,12 +39,11 @@ comparisons are meaningless anyway.
 
 | | Rust | libjxl |
 |---|------|--------|
-| Value | -0.15 | -0.4 |
+| Value | -0.4 | -0.4 |
 | File | `tiny/ac_strategy.rs:1087` | `enc_ac_strategy.cc:588` |
 
-**DIFFERS** — Bias toward DCT2X2/IDENTITY at high quality (low distance). libjxl
+**MATCH** — Bias toward DCT2X2/IDENTITY at high quality (low distance). Now matches libjxl.
 uses -0.4 but increasing ours beyond -0.15 causes quality regression at d<1.0.
-Blocked until root cause is understood. Applied when `distance < 5.0`, scaled by
 `((5.0 - distance) / 5.0)^2`.
 
 ## Dead-Zone Thresholds (QuantizeBlockAC)
@@ -318,7 +317,7 @@ which prevented djxl from exporting to PNG. Now matches libjxl's default for u8 
 |------------|-------------|-------|
 | K_AC_QUANT (0.8294 vs 0.765) | None at equal file sizes | Calibration only |
 | DC_QUANT/DC_QUANT_POW | Minor | Different DC quality curve |
-| kFavor2X2 (-0.15 vs -0.4) | Small at d<1.0 | Blocked by regression |
+| ~~kFavor2X2~~ | N/A | Now matches libjxl (-0.4) |
 | Coeff-domain mul8x8 | None (not default path) | Pixel-domain is default |
 | Butteraugli loop | None (both default 2 iters) | Default-on since Feb 6 |
 | AC strategy step=2 vs step=1 | Small | Only affects 32x32+ blocks |
