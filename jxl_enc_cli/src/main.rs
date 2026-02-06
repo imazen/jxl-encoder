@@ -124,12 +124,16 @@ struct Args {
     #[arg(long, value_name = "N", default_value = "3")]
     rc_iterations: usize,
 
-    /// Number of butteraugli quantization loop iterations (0 = disabled).
+    /// Number of butteraugli quantization loop iterations (default: 2).
     /// Iteratively refines per-block quantization using butteraugli perceptual
     /// distance feedback. 2 iterations ≈ libjxl effort 8.
-    /// Requires the butteraugli-loop feature.
-    #[arg(long, value_name = "N", default_value = "0")]
+    /// Requires the butteraugli-loop feature. Use --no-butteraugli to disable.
+    #[arg(long, value_name = "N", default_value = "2")]
     butteraugli_iters: u32,
+
+    /// Disable butteraugli quantization loop (equivalent to --butteraugli-iters 0).
+    #[arg(long)]
+    no_butteraugli: bool,
 
     /// Be quiet (minimal output)
     #[arg(long)]
@@ -229,14 +233,19 @@ fn main() {
                 }
 
                 #[cfg(feature = "butteraugli-loop")]
-                if args.butteraugli_iters > 0 {
-                    tiny.butteraugli_iters = args.butteraugli_iters;
-                    if !args.quiet {
-                        println!("Butteraugli loop: {} iterations", args.butteraugli_iters);
+                {
+                    let iters = if args.no_butteraugli {
+                        0
+                    } else {
+                        args.butteraugli_iters
+                    };
+                    tiny.butteraugli_iters = iters;
+                    if !args.quiet && iters > 0 {
+                        println!("Butteraugli loop: {} iterations", iters);
                     }
                 }
                 #[cfg(not(feature = "butteraugli-loop"))]
-                if args.butteraugli_iters > 0 {
+                if args.butteraugli_iters > 0 && !args.no_butteraugli {
                     eprintln!("Warning: --butteraugli-iters requires the butteraugli-loop feature");
                     eprintln!("Rebuild with: cargo build --features butteraugli-loop");
                 }

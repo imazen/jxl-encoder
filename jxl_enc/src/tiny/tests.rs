@@ -342,6 +342,10 @@ fn test_optimize_codes_roundtrip_small() {
     // Static codes (default)
     let mut enc_static = TinyEncoder::new(1.0);
     enc_static.optimize_codes = false;
+    #[cfg(feature = "butteraugli-loop")]
+    {
+        enc_static.butteraugli_iters = 0; // Disable to compare entropy coding only
+    }
     let static_bytes = enc_static
         .encode(width, height, &linear_rgb)
         .expect("static encode failed");
@@ -349,6 +353,10 @@ fn test_optimize_codes_roundtrip_small() {
     // Dynamic codes (two-pass)
     let mut enc_dynamic = TinyEncoder::new(1.0);
     enc_dynamic.optimize_codes = true;
+    #[cfg(feature = "butteraugli-loop")]
+    {
+        enc_dynamic.butteraugli_iters = 0; // Disable to compare entropy coding only
+    }
     let dynamic_bytes = enc_dynamic
         .encode(width, height, &linear_rgb)
         .expect("dynamic encode failed");
@@ -934,6 +942,10 @@ fn test_lz77_backref_roundtrip() {
     enc_no_lz77.use_ans = true;
     enc_no_lz77.optimize_codes = true;
     enc_no_lz77.enable_lz77 = false;
+    #[cfg(feature = "butteraugli-loop")]
+    {
+        enc_no_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing
+    }
     let bytes_no_lz77 = enc_no_lz77
         .encode(w, h, &linear_rgb)
         .expect("encode without LZ77 failed");
@@ -944,6 +956,10 @@ fn test_lz77_backref_roundtrip() {
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
     enc_lz77.lz77_method = super::lz77::Lz77Method::Greedy;
+    #[cfg(feature = "butteraugli-loop")]
+    {
+        enc_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing
+    }
     let bytes_lz77 = enc_lz77
         .encode(w, h, &linear_rgb)
         .expect("encode with LZ77 backref failed");
