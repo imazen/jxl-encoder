@@ -1115,3 +1115,244 @@ fn test_afv_strategy_roundtrip() {
         eprintln!("AFV{}: Rendered frame successfully!", afv_kind);
     }
 }
+
+/// Test DCT64x64 forced strategy on a smooth gradient.
+/// DCT64x64 covers 8×8 blocks (64×64 pixels). Use a 128×128 image
+/// to exercise multi-block handling.
+#[test]
+fn test_dct64x64_forced_decode() {
+    use std::io::Cursor;
+    use super::ac_strategy::RAW_STRATEGY_DCT64X64;
+
+    let w = 128;
+    let h = 128;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let gx = x as f32 / w as f32;
+            let gy = y as f32 / h as f32;
+            linear_rgb[idx] = gx * 0.8;
+            linear_rgb[idx + 1] = gy * 0.7;
+            linear_rgb[idx + 2] = (gx + gy) * 0.3;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.use_ans = true;
+    encoder.enable_gaborish = false;
+    encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
+
+    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT64x64");
+    eprintln!("DCT64x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
+
+    // Save for external inspection
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/tiny");
+    let _ = std::fs::write(
+        "/mnt/v/output/jxl-encoder-rs/tiny/test_dct64x64_128x128.jxl",
+        &encoded,
+    );
+
+    // Decode with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&encoded))
+        .expect("jxl-oxide parse DCT64x64");
+    let render = image.render_frame(0).expect("jxl-oxide render DCT64x64");
+    assert_eq!(render.image_all_channels().width(), w);
+    assert_eq!(render.image_all_channels().height(), h);
+    eprintln!("DCT64x64: jxl-oxide decode OK");
+
+    // Decode with djxl
+    let tmp = "/tmp/test_dct64x64.jxl";
+    let tmp_ppm = "/tmp/test_dct64x64.png";
+    std::fs::write(tmp, &encoded).unwrap();
+    let djxl_status = std::process::Command::new(
+        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
+    )
+    .args([tmp, tmp_ppm])
+    .output();
+    match djxl_status {
+        Ok(output) => {
+            assert!(
+                output.status.success(),
+                "djxl failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            eprintln!("DCT64x64: djxl decode OK");
+        }
+        Err(e) => eprintln!("djxl not available: {} (skipping)", e),
+    }
+}
+
+/// Test DCT64x32 forced strategy.
+#[test]
+fn test_dct64x32_forced_decode() {
+    use std::io::Cursor;
+    use super::ac_strategy::RAW_STRATEGY_DCT64X32;
+
+    let w = 128;
+    let h = 128;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let gx = x as f32 / w as f32;
+            let gy = y as f32 / h as f32;
+            linear_rgb[idx] = gx * 0.6;
+            linear_rgb[idx + 1] = gy * 0.8;
+            linear_rgb[idx + 2] = 0.3;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.use_ans = true;
+    encoder.enable_gaborish = false;
+    encoder.force_strategy = Some(RAW_STRATEGY_DCT64X32);
+
+    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT64x32");
+    eprintln!("DCT64x32 forced: {} bytes ({}x{})", encoded.len(), w, h);
+
+    let _ = std::fs::write("/tmp/test_dct64x32.jxl", &encoded);
+
+    // Decode with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&encoded))
+        .expect("jxl-oxide parse DCT64x32");
+    let render = image.render_frame(0).expect("jxl-oxide render DCT64x32");
+    assert_eq!(render.image_all_channels().width(), w);
+    assert_eq!(render.image_all_channels().height(), h);
+    eprintln!("DCT64x32: jxl-oxide decode OK");
+
+    // Decode with djxl
+    let tmp_ppm = "/tmp/test_dct64x32.png";
+    let djxl_status = std::process::Command::new(
+        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
+    )
+    .args(["/tmp/test_dct64x32.jxl", tmp_ppm])
+    .output();
+    match djxl_status {
+        Ok(output) => {
+            assert!(
+                output.status.success(),
+                "djxl failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            eprintln!("DCT64x32: djxl decode OK");
+        }
+        Err(e) => eprintln!("djxl not available: {} (skipping)", e),
+    }
+}
+
+/// Test DCT32x64 forced strategy.
+#[test]
+fn test_dct32x64_forced_decode() {
+    use std::io::Cursor;
+    use super::ac_strategy::RAW_STRATEGY_DCT32X64;
+
+    let w = 128;
+    let h = 128;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let gx = x as f32 / w as f32;
+            let gy = y as f32 / h as f32;
+            linear_rgb[idx] = 0.4;
+            linear_rgb[idx + 1] = gx * 0.5 + gy * 0.3;
+            linear_rgb[idx + 2] = gy * 0.7;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.use_ans = true;
+    encoder.enable_gaborish = false;
+    encoder.force_strategy = Some(RAW_STRATEGY_DCT32X64);
+
+    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT32x64");
+    eprintln!("DCT32x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
+
+    let _ = std::fs::write("/tmp/test_dct32x64.jxl", &encoded);
+
+    // Decode with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&encoded))
+        .expect("jxl-oxide parse DCT32x64");
+    let render = image.render_frame(0).expect("jxl-oxide render DCT32x64");
+    assert_eq!(render.image_all_channels().width(), w);
+    assert_eq!(render.image_all_channels().height(), h);
+    eprintln!("DCT32x64: jxl-oxide decode OK");
+
+    // Decode with djxl
+    let tmp_ppm = "/tmp/test_dct32x64.png";
+    let djxl_status = std::process::Command::new(
+        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
+    )
+    .args(["/tmp/test_dct32x64.jxl", tmp_ppm])
+    .output();
+    match djxl_status {
+        Ok(output) => {
+            assert!(
+                output.status.success(),
+                "djxl failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            eprintln!("DCT32x64: djxl decode OK");
+        }
+        Err(e) => eprintln!("djxl not available: {} (skipping)", e),
+    }
+}
+
+/// Test DCT64x64 forced on 256x256 (4 tiles of DCT64).
+#[test]
+fn test_dct64x64_forced_256x256() {
+    use std::io::Cursor;
+    use super::ac_strategy::RAW_STRATEGY_DCT64X64;
+
+    let w = 256;
+    let h = 256;
+    let mut linear_rgb = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            linear_rgb[idx] = x as f32 / w as f32 * 0.7;
+            linear_rgb[idx + 1] = y as f32 / h as f32 * 0.6;
+            linear_rgb[idx + 2] = 0.3;
+        }
+    }
+
+    let mut encoder = TinyEncoder::new(3.0);
+    encoder.use_ans = true;
+    encoder.enable_gaborish = false;
+    encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
+
+    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT64x64 256x256");
+    eprintln!("DCT64x64 256x256: {} bytes", encoded.len());
+
+    // Decode with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&encoded))
+        .expect("jxl-oxide parse DCT64x64 256x256");
+    let render = image.render_frame(0).expect("jxl-oxide render DCT64x64 256x256");
+    assert_eq!(render.image_all_channels().width(), w);
+    assert_eq!(render.image_all_channels().height(), h);
+    eprintln!("DCT64x64 256x256: jxl-oxide decode OK");
+
+    // Decode with djxl
+    std::fs::write("/tmp/test_dct64x64_256.jxl", &encoded).unwrap();
+    let djxl_status = std::process::Command::new(
+        "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
+    )
+    .args(["/tmp/test_dct64x64_256.jxl", "/tmp/test_dct64x64_256.png"])
+    .output();
+    match djxl_status {
+        Ok(output) => {
+            assert!(
+                output.status.success(),
+                "djxl failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            eprintln!("DCT64x64 256x256: djxl decode OK");
+        }
+        Err(e) => eprintln!("djxl not available: {} (skipping)", e),
+    }
+}
