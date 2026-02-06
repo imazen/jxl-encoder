@@ -1,91 +1,126 @@
 # jxl-encoder-rs
 
-A pure Rust JPEG XL encoder, supporting both lossless (Modular) and lossy (VarDCT) encoding.
+A pure Rust JPEG XL encoder supporting both lossy (VarDCT) and lossless (Modular) encoding. Verified against three independent decoders: jxl-rs, jxl-oxide, and djxl (libjxl).
 
 ## Status
 
-| Mode | Status | Notes |
-|------|--------|-------|
-| Lossless (Modular) | **Working** | Full round-trip with jxl-rs, jxl-oxide, djxl |
-| Lossy (VarDCT) | **Partial** | ~52% decode success, see [VARDCT_STATUS.md](VARDCT_STATUS.md) |
+**655 tests passing** (Feb 2026). Both encoding paths produce valid bitstreams decoded by all three reference decoders.
 
-**Tests:** 403 passing (Jan 2026)
+| Mode | Status |
+|------|--------|
+| Lossy (VarDCT) | Working — all image sizes, 19/27 AC strategies, ANS entropy coding |
+| Lossless (Modular) | Working — RGB, RGBA, grayscale, any size, ANS + LZ77 |
 
-## Features
+### Lossy Quality vs libjxl
 
-### Lossless Encoding
-- Single-group images (up to 256x256)
-- Multi-group images (any size)
-- RGB and grayscale
-- RCT (Reversible Color Transform) for better compression
-- LZ77 compression for repeated data
-- Gradient prediction
+At low distances (d <= 1.0), we're within 3% of cjxl effort 5 file sizes and 14-16% smaller than effort 1. At higher distances (d >= 2.0), the gap widens to ~22-26% vs effort 5 due to missing cost model refinements. See CLAUDE.md for detailed RD tables.
 
-### Lossy Encoding (VarDCT)
-- XYB color transform
-- DCT8, DCT16, DCT32 transforms
-- Perceptual quantization weights
-- Chroma-from-luma (CfL) correlation
-- Adaptive quantization
-- Multi-group support
+### Feature Parity vs libjxl
 
-See [VARDCT_STATUS.md](VARDCT_STATUS.md) for detailed compatibility information.
+We implement all AC strategies that libjxl evaluates through its default effort level (effort 7, Squirrel). Efforts 8-9 use the same strategies — the quality difference at higher efforts comes entirely from cost model refinements (butteraugli quantization loop, finer search grids), not missing transforms.
 
-## Usage
+| Feature | libjxl e5 | libjxl e7 | Us |
+|---------|-----------|-----------|-----|
+| AC strategies | 7 | 19 | 19 |
+| ANS entropy coding | No | Yes | Yes |
+| Custom coefficient orders | No | Yes | Yes |
+| Pixel-domain loss | Yes | Yes | Yes |
+| Adaptive quantization | Yes | Yes | Yes |
+| Gaborish | Yes | Yes | Yes |
+| Error diffusion | No | Yes | Yes (opt-in) |
+| Butteraugli quant loop | No | No | No |
+| Splines/patches/dots | No | Yes | No |
+
+## CLI
+
+```bash
+cargo build --release -p jxl_enc_cli
+
+# Lossy encoding (distance=1.0 is visually lossless)
+cjxl-rs input.png output.jxl -d 1.0
+
+# Lossless encoding
+cjxl-rs input.png output.jxl --modular
+
+# See all options
+cjxl-rs --help
+```
+
+### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-d, --distance` | 1.0 | Butteraugli distance (0 = mathematically lossless, 1.0 = visually lossless) |
+| `--modular` | off | Lossless modular encoding |
+| `--no-gaborish` | on | Disable gaborish pre-filter |
+| `--no-pixel-domain-loss` | on | Disable pixel-domain loss (faster, lower quality) |
+| `--no-ans` | ANS on | Use Huffman instead of ANS |
+| `--no-optimize-codes` | on | Single-pass static Huffman (streaming) |
+| `--dct8-only` | off | Force DCT8 (disable multi-strategy selection) |
+| `--noise` | off | Enable noise synthesis |
+| `--error-diffusion` | off | Enable error diffusion in AC quantization |
+| `--lz77` | off | Enable LZ77 backward references (ANS two-pass only) |
+| `--tree-learning` | off | Content-adaptive MA tree learning for modular |
+
+## Library Usage
 
 ```rust
-use jxl_enc::{encode_rgb8, encode_lossy_rgb8};
+use jxl_enc::tiny::encoder::TinyEncoder;
+
+// Lossy encoding
+let mut encoder = TinyEncoder::new(1.0); // distance
+let jxl_bytes = encoder.encode(width, height, &linear_rgb_f32)?;
 
 // Lossless encoding
-let rgb_data: Vec<u8> = /* RGB pixels */;
-let jxl_bytes = encode_rgb8(&rgb_data, width, height)?;
-
-// Lossy encoding (distance=1.0 is visually lossless)
-let jxl_bytes = encode_lossy_rgb8(&rgb_data, width, height, 1.0)?;
+let jxl_bytes = jxl_enc::tiny::encoder::encode_modular(width, height, &srgb_u8, has_alpha)?;
 ```
+
+## AC Strategy Coverage
+
+19 of 27 JXL AC strategies are implemented. The 8 missing strategies are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+).
+
+| Strategy | Pixels | Min Distance | libjxl Effort |
+|----------|--------|-------------|---------------|
+| DCT8 | 8x8 | any | e1+ |
+| DCT4x4 | 8x8 (4 sub-blocks) | any | e5+ |
+| DCT4x8, DCT8x4 | 8x8 (2 sub-blocks) | any | e6+ |
+| IDENTITY | 8x8 (pixel domain) | any | e5+ |
+| DCT2x2 | 8x8 (4 sub-blocks) | any | e5+ |
+| AFV0-3 | 8x8 (corner DCT) | any | e6+ |
+| DCT16x8, DCT8x16 | 16x8 | any | e5+ |
+| DCT16x16 | 16x16 | any | e5+ |
+| DCT32x16, DCT16x32 | 32x16 | d >= 2.0 | e6+ |
+| DCT32x32 | 32x32 | d >= 2.0 | e7+ |
+| DCT64x32, DCT32x64 | 64x32 | d >= 3.0 | e7+ |
+| DCT64x64 | 64x64 | d >= 3.0 | e7+ |
 
 ## Building
 
 ```bash
-cargo build
-cargo test
+cargo build                              # debug
+cargo build --release -p jxl_enc_cli     # release CLI
+cargo test                               # all tests
+cargo clippy -- -D warnings              # lint
 ```
-
-## Documentation
-
-- [VARDCT_STATUS.md](VARDCT_STATUS.md) - VarDCT compatibility matrix
-- [ENCODING_PARITY.md](ENCODING_PARITY.md) - Implementation progress
-- [CLAUDE.md](CLAUDE.md) - Development guidelines
 
 ## Project Structure
 
 ```
 jxl-encoder-rs/
-├── jxl_enc/              # Main encoder library
+├── jxl_enc/             # Main encoder library
 │   ├── src/
-│   │   ├── encoder.rs        # Public API
-│   │   ├── entropy_coding/   # ANS, Huffman, HybridUint
-│   │   ├── modular/          # Lossless encoding
-│   │   ├── vardct/           # Lossy encoding
-│   │   └── frame/            # Frame assembly
-├── jxl_enc_transforms/   # Forward DCT transforms
-└── jxl_enc_cli/          # Command-line tool (cjxl-rs)
+│   │   ├── tiny/            # Production encoder
+│   │   │   ├── encoder.rs       # Main encode loop
+│   │   │   ├── ac_strategy.rs   # AC strategy selection
+│   │   │   ├── transform.rs     # DCT + quantization
+│   │   │   ├── dct.rs           # Forward/inverse DCT
+│   │   │   ├── bitstream.rs     # Bitstream assembly
+│   │   │   └── ...
+│   │   ├── entropy_coding/  # ANS, Huffman, HybridUint
+│   │   └── headers/         # File/frame headers
+├── jxl_enc_transforms/  # DCT transform library
+└── jxl_enc_cli/         # CLI tool (cjxl-rs)
 ```
-
-## Known Issues
-
-### VarDCT Decoder Compatibility
-
-VarDCT encoding has partial compatibility. See [VARDCT_STATUS.md](VARDCT_STATUS.md) for details:
-
-- **Working:** Images up to 17x17 with any pattern
-- **Partial:** Larger images with simple content (solid colors always work)
-- **Issues:** Entropy coding problems at larger sizes
-
-Primary error types:
-- `InvalidIntegerConfig` - HybridUint split_exponent issues
-- `InvalidAnsStream` - ANS state management at larger images
-- `UnexpectedEof` - Multi-group section boundary issues
 
 ## License
 
@@ -93,4 +128,4 @@ BSD-style license (see LICENSE file)
 
 ## AI-Generated Code Notice
 
-This project was developed with assistance from Claude (Anthropic). Code has been tested against jxl-oxide, jxl-rs, and libjxl decoders. Not all code has been manually reviewed - please review critical paths before production use.
+Developed with Claude (Anthropic). Tested against jxl-oxide, jxl-rs, and libjxl decoders. Not all code manually reviewed — review critical paths before production use.

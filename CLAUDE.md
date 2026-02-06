@@ -164,23 +164,22 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 19 of 27 implemented**
-- Implemented: DCT8, DCT4x4, DCT4x8, DCT8x4, DCT16x8, DCT8x16, DCT16x16, DCT32x32, IDENTITY, DCT2X2,
-  DCT32x16, DCT16x32, AFV0, AFV1, AFV2, AFV3, DCT64x64, DCT64x32, DCT32x64
-- IDENTITY auto-selects ~4-6% on natural photos at d=1.0, improves SSIM2/butteraugli
-- DCT2X2 rarely selected without kFavor2X2 bonus (disabled — our cost model is not complete enough)
-- DCT32x16/DCT16x32: ENABLED at d>=2.0, verified with jxl-oxide and djxl.
-  LZ77 backref interaction fix (Feb 5, 2026) resolved the InvalidAnsStream decoder errors.
-  Note: jxl-rs has a known decoder bug with these transforms ("Invalid AC: 1 nonzeros").
-- AFV0-3: FULLY IMPLEMENTED (Feb 4, 2026), verified with jxl-oxide and djxl.
-  Auto-selection now works in BOTH pixel-domain mode (default) and coefficient-domain mode.
-- DCT64x64/DCT64x32/DCT32x64: IMPLEMENTED (Feb 5, 2026), verified with jxl-oxide and djxl.
-  Auto-selection guarded at d>=3.0. Uses hierarchical 64x64→32x32→16x16 evaluation.
-  nzeros widened from u8 to u16 (DCT64x64 has up to 4032 AC coefficients).
-  Pixel-domain loss uses coefficient-domain fallback (no IDCT64 yet).
-- Missing: DCT32x8, DCT8x32 (libjxl has these commented out), DCT128+ (experimental/unused)
-- Impact: The e1→e7 quality jump (77.49→84.09 SSIM2 at d=1.0) is mostly from this.
-  All strategies that libjxl uses at effort 5 are now implemented.
+**A. AC Strategies — 19/27 implemented (complete for libjxl effort 7)**
+
+All AC strategies that libjxl evaluates through effort 9 are implemented. The remaining
+8 (DCT32x8, DCT8x32, DCT128+) are commented out or experimental in libjxl — never selected.
+
+libjxl effort level strategy gating:
+- e5 (Hare): DCT8, DCT16x8, DCT8x16, DCT16x16, DCT4x4, DCT2x2, IDENTITY
+- e6 (Wombat): + DCT4x8, DCT8x4, AFV0-3, DCT32x16, DCT16x32
+- e7 (Squirrel): + DCT32x32, DCT64x32, DCT32x64, DCT64x64
+- e8-9: Same strategies, quality gains come from cost model refinements
+
+Strategy status:
+- DCT32x16/DCT16x32: enabled at d>=2.0 (jxl-rs has a decoder bug, use jxl-oxide/djxl)
+- AFV0-3: auto-selection in both pixel-domain and coefficient-domain modes
+- DCT64x64/DCT64x32/DCT32x64: enabled at d>=3.0, hierarchical evaluation
+- DCT2x2/IDENTITY: auto-select but conservative (kFavor2X2 at -0.15 vs libjxl's -0.4)
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
 - Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
@@ -216,8 +215,18 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
-**E. Other**
-- No splines, patches/dictionary, dots detection
+**E. Effort 8+ Features (Not Yet Implemented)**
+- **Butteraugli quantization loop** (effort 8+): Iteratively refines per-block quant field via
+  encode→decode→measure→adjust cycles. 2 iterations at e8, 4 at e9. This is the single biggest
+  remaining quality lever — fundamentally different from our iterative rate control (which only
+  adjusts global scale to hit a file size target).
+- **Fine-grained AC strategy search** (effort 9): step=1 instead of step=2 for 32x32+ blocks
+- **Optimal LZ77** (effort 9): exhaustive search vs our greedy hash chain
+- **Full histogram clustering** (effort 8+): kDefault vs our kFast-equivalent pair-merge
+- **Predictor::Variable** for modular (effort 8+): adapts per-channel vs fixed predictor
+
+**F. Other**
+- No splines, patches/dictionary, dots detection (effort 7 features we skip)
 - EPF iterations correct but missing per-block epf_sharpness map
 - DC coding: fixed context tree, no modular optimization
 
@@ -240,10 +249,11 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
    - Special distance codes now correctly enabled for DC stream (dist_multiplier=xsize_blocks)
 5. ~~Iterative rate control~~ — DONE (commit 67f011c)
 6. ~~DCT64x64/DCT64x32/DCT32x64~~ — DONE (Feb 5, 2026, all verified with jxl-oxide and djxl)
-   - Brings total to 19/27 strategies — all that libjxl uses at effort 5
+   - Brings total to 19/27 strategies — all that libjxl evaluates through effort 9
    - Auto-selection guarded at d>=3.0, hierarchical 64→32→16 evaluation
    - nzeros widened from u8 to u16 for DCT64x64's 4032 AC coefficients
-7. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0, needs investigation)
+7. Butteraugli quantization loop (effort 8 feature, biggest remaining quality lever)
+8. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0)
 
 ### Outstanding Work
 
