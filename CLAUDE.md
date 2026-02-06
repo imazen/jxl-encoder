@@ -216,7 +216,7 @@ Strategy status:
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
 **E. Effort 8+ Features**
-- **Butteraugli quantization loop** (effort 8+): IMPLEMENTED (`--butteraugli-iters N`, feature `butteraugli-loop`).
+- **Butteraugli quantization loop** (effort 8+): IMPLEMENTED, DEFAULT-ON (2 iterations, `--no-butteraugli` to disable).
   Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles.
   AC strategy is fixed; only quant_field changes. 2 iterations converges for most images.
   At d=1.0 on CLIC 1024x1024: -15% file size at -1.7 SSIM2; at equal file size +0.3 SSIM2.
@@ -253,7 +253,7 @@ Strategy status:
    - Brings total to 19/27 strategies — all that libjxl evaluates through effort 9
    - Auto-selection guarded at d>=3.0, hierarchical 64→32→16 evaluation
    - nzeros widened from u8 to u16 for DCT64x64's 4032 AC coefficients
-7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, `--butteraugli-iters N`, feature `butteraugli-loop`)
+7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, default-on with 2 iters)
    - Reconstruct→butteraugli→adjust cycles. 2 iterations converges. +0.3 SSIM2 at equal file size.
    - Per-block EPF sharpness also done (Phase 4, same date)
 8. Increase kFavor2X2 toward libjxl's -0.4 (blocked: -0.25 causes quality regression at d<1.0)
@@ -309,7 +309,7 @@ Strategy status:
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 - [x] Per-block EPF sharpness selection (auto, Phase 4 of reconstruction plan)
 - [x] Encoder-side reconstruction pipeline (dequant → CfL → LLF → IDCT → gab → EPF)
-- [x] Butteraugli quantization loop (`--butteraugli-iters N`, feature `butteraugli-loop`, opt-in)
+- [x] Butteraugli quantization loop (default-on, 2 iterations, `--no-butteraugli` to disable)
   - Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles
   - 2 iterations converges for most images; +0.3 SSIM2 at equal file size vs baseline
 
@@ -446,6 +446,15 @@ selection. The guard at d<2.0 prevents evaluation at low distances where smaller
 are more beneficial.
 Previous test failures were due to tests inappropriately forcing DCT32x32 on
 pathological high-contrast content (frymire). Tests now use smooth gradient content.
+
+### Bit Depth Header - Float Instead of Integer (FIXED Feb 6, 2026)
+
+**Issue**: File header signaled 32-bit float (float=1, bps=32, exp_bits=8) instead
+of 8-bit integer. This prevented djxl from exporting to PNG and caused jxl-oxide
+to return float32 decoded values instead of u8-precision.
+
+**Fix**: Changed to 8-bit integer (float=0, bps=8, modular_16bit=1), matching libjxl
+default for u8 input. djxl now successfully decodes to PNG.
 
 ### Color/Brightness Bug - Transfer Function Mismatch (FIXED Feb 3, 2026)
 
