@@ -1270,8 +1270,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x2314eb4e22237067;
+        // Updated: full libjxl adaptive quantization pipeline
+        const EXPECTED_HASH: u64 = 0x39bc54bdb21979dc;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1294,8 +1294,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: fixed transfer function from Linear to Srgb
-        const EXPECTED_HASH: u64 = 0xa9bad33feede7a97;
+        // Updated: full libjxl adaptive quantization pipeline
+        const EXPECTED_HASH: u64 = 0xeab625d7e3d04972;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1330,8 +1330,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: iterative rate control changes output
-        const EXPECTED_HASH: u64 = 0x81127ea607106bbe;
+        // Updated: full libjxl adaptive quantization pipeline
+        const EXPECTED_HASH: u64 = 0xcc959418ad9fc765;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1361,8 +1361,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Hash updated: full libjxl thresholds, enhanced clustering, kFavor2X2
-        const EXPECTED_HASH: u64 = 0x8274be99fd9f2e9f;
+        // Updated: full libjxl adaptive quantization pipeline
+        const EXPECTED_HASH: u64 = 0x481d92fc0b065c37;
         assert_eq!(
             hash,
             EXPECTED_HASH,
