@@ -908,8 +908,9 @@ impl<'a> EncodeRequest<'a> {
                 srgb_u8_to_linear_f32_drop_alpha(&bgr_to_rgb(pixels, 4), 4)
             }
             PixelLayout::RgbLinearF32 => {
-                // Already linear — convert bytes to f32
-                bytes_to_f32_vec(pixels)
+                // Already linear — zero-copy reinterpret via bytemuck
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                floats.to_vec()
             }
             PixelLayout::Gray8 | PixelLayout::GrayAlpha8 => {
                 return Err(EncodeError::UnsupportedPixelLayout(self.layout));
@@ -983,13 +984,6 @@ fn bgr_to_rgb(data: &[u8], stride: usize) -> Vec<u8> {
     out
 }
 
-/// Safe conversion from &[u8] to Vec<f32>.
-fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
 
 
 // ── Tests ───────────────────────────────────────────────────────────────────
