@@ -669,7 +669,6 @@ pub fn write_improved_modular_stream(
     write_improved_modular_stream_inner(image, writer, false, use_ans)
 }
 
-
 fn write_improved_modular_stream_inner(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -853,6 +852,7 @@ pub(crate) fn write_tree_histogram_for_gradient(
     // Tree tokens are raw symbols (0-5), not hybrid uints.
     // Use split_exponent = log_alphabet_size for raw symbol encoding.
     write_tree_histogram_for_gradient_impl(writer, true)
+}
 
 /// Write tree histogram and return (depths, codes) for encoding tree tokens.
 fn write_tree_histogram_for_gradient_impl(

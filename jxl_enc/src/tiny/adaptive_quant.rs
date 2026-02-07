@@ -381,6 +381,7 @@ fn compute_pre_erosion(
 
 /// FuzzyErosion: 3×3 min-4 weighted sum, then 2x downsample.
 /// Full libjxl version: distance-dependent weights.
+#[allow(clippy::too_many_arguments)]
 fn fuzzy_erosion(
     from: &[f32],
     from_w: usize,
@@ -407,13 +408,13 @@ fn fuzzy_erosion(
 
     let mut k_mul = [0.0_f32; 4];
     let mut norm_sum = 0.0_f32;
-    for ii in 0..4 {
-        k_mul[ii] = K_MUL_BASE[ii] + mul * K_MUL_ADD[ii];
-        norm_sum += k_mul[ii];
+    for (ii, k) in k_mul.iter_mut().enumerate() {
+        *k = K_MUL_BASE[ii] + mul * K_MUL_ADD[ii];
+        norm_sum += *k;
     }
     const K_TOTAL: f32 = 0.29959705784054957;
-    for ii in 0..4 {
-        k_mul[ii] *= K_TOTAL / norm_sum;
+    for k in &mut k_mul {
+        *k *= K_TOTAL / norm_sum;
     }
 
     for fy in 0..region_h {

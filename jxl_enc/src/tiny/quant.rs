@@ -1292,22 +1292,13 @@ mod weight_debug_tests {
     fn test_print_dct8_weights() {
         let w = quant_weights(0, 0); // DCT8, X channel
         println!("DCT8 X channel quant_weights()[0..8]:");
-        for i in 0..8 {
-            println!(
-                "  [{}] = {:.6e}  (reciprocal = {:.6e})",
-                i,
-                w[i],
-                1.0 / w[i]
-            );
+        for (i, &wi) in w.iter().enumerate().take(8) {
+            println!("  [{}] = {:.6e}  (reciprocal = {:.6e})", i, wi, 1.0 / wi);
         }
         let w_y = quant_weights(0, 1); // DCT8, Y channel
         println!("DCT8 Y channel quant_weights()[0..8]:");
-        for i in 0..8 {
-            println!(
-                "  [{}] = {:.6e}  (reciprocal = {:.6e})",
-                i,
-                w_y[i],
-                1.0 / w_y[i]
+        for (i, &wi) in w_y.iter().enumerate().take(8) {
+            println!("  [{}] = {:.6e}  (reciprocal = {:.6e})", i, wi, 1.0 / wi
             );
         }
     }

@@ -148,7 +148,7 @@ impl PixelStatsForChromacityAdjustment {
 fn quant_dc(distance: f32) -> f32 {
     // Full libjxl constants (from enc_adaptive_quantization.cc)
     const DC_QUANT_POW: f32 = 0.83;
-    const DC_QUANT: f32 = 1.095924047623553;
+    const DC_QUANT: f32 = 1.095_924;
     const DC_MUL: f32 = 0.3;
 
     let effective_dist = DC_MUL * (distance / DC_MUL).powf(DC_QUANT_POW);
