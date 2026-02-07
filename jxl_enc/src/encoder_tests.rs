@@ -3882,7 +3882,7 @@ fn test_squeeze_roundtrip_rgb_32x32() {
         .collect();
     let mut diff_count = 0;
     let mut max_diff = 0u8;
-    for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+    for (&orig, &dec) in data.iter().zip(decoded.iter()) {
         let diff = (orig as i16 - dec as i16).unsigned_abs() as u8;
         if diff > max_diff {
             max_diff = diff;

@@ -277,7 +277,7 @@ fn main() {
             }
             result
                 .map(|(data, _)| data)
-                .map_err(jxl_enc::EncodeError::from)
+                .map_err(|e| jxl_enc::at(jxl_enc::EncodeError::from(e)))
         } else {
             cfg.encode_request(width, height, layout).encode(&data)
         }
