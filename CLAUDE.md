@@ -1660,6 +1660,10 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 
 **Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
 
+**No backwards compatibility required** — we have no external users. Just bump the 0.x major version for breaking changes.
+
+**Builder convention**: `with_` prefix for consuming builder setters, bare-name for getters.
+
 - [ ] Rename `EncoderOptions` → `EncoderConfig`
 - [ ] Add `EncodeRequest<'a>` intermediate layer
 - [ ] One-shot via `request.encode()`/`encode_into()`/`encode_to()`
@@ -1672,5 +1676,10 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Change dimensions from `usize` to `u32`
 - [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
 - [ ] Add `EncodeStats` for encode metrics
-- [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on config
+- [ ] Split `EncoderOptions` into `LossyConfig` / `LosslessConfig` (compile-time invalid state prevention)
+- [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
 - [ ] Add `ImageMetadata` struct for ICC/EXIF/XMP on request
+- [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
+- [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
+- [ ] Adopt `with_` prefix convention for all builder setters on Config/Request
+- [ ] Support `Rgba8` and `Bgra8` for both encode and decode (A=255 on decode, ignore A on encode)

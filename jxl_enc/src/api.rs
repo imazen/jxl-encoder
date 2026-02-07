@@ -1,0 +1,826 @@
+// Copyright (c) the JPEG XL Project Authors. All rights reserved.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+//! Three-layer public API: Config → Request → Encoder.
+//!
+//! ```rust,no_run
+//! use jxl_enc::api::{LosslessConfig, LossyConfig, PixelLayout};
+//!
+//! // Lossless (modular)
+//! let jxl = LosslessConfig::new()
+//!     .encode_request(800, 600, PixelLayout::Rgb8)
+//!     .encode(&pixels)?;
+//!
+//! // Lossy (VarDCT)
+//! let jxl = LossyConfig::new(1.0)
+//!     .encode_request(800, 600, PixelLayout::Rgb8)
+//!     .encode(&pixels)?;
+//! # Ok::<_, jxl_enc::api::EncodeError>(())
+//! ```
+
+use crate::tiny::Lz77Method;
+
+// ── Error type ──────────────────────────────────────────────────────────────
+
+/// Encode error type.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum EncodeError {
+    /// Input validation failed (wrong buffer size, zero dimensions, etc.).
+    InvalidInput { message: String },
+    /// Config validation failed (contradictory options, out-of-range values).
+    InvalidConfig { message: String },
+    /// Pixel layout not supported for this config/mode.
+    UnsupportedPixelLayout(PixelLayout),
+    /// A configured limit was exceeded.
+    LimitExceeded { message: String },
+    /// Encoding was cancelled via the `Stop` trait.
+    Cancelled,
+    /// Allocation failure.
+    Oom(std::collections::TryReserveError),
+    /// I/O error (only with `std` feature / `encode_to`).
+    Io(std::io::Error),
+    /// Internal encoder error (should not happen — file a bug).
+    Internal { message: String },
+}
+
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidInput { message } => write!(f, "invalid input: {message}"),
+            Self::InvalidConfig { message } => write!(f, "invalid config: {message}"),
+            Self::UnsupportedPixelLayout(layout) => {
+                write!(f, "unsupported pixel layout: {layout:?}")
+            }
+            Self::LimitExceeded { message } => write!(f, "limit exceeded: {message}"),
+            Self::Cancelled => write!(f, "encoding cancelled"),
+            Self::Oom(e) => write!(f, "out of memory: {e}"),
+            Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::Internal { message } => write!(f, "internal error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for EncodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Oom(e) => Some(e),
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+impl From<crate::error::Error> for EncodeError {
+    fn from(e: crate::error::Error) -> Self {
+        match e {
+            crate::error::Error::InvalidImageDimensions(w, h) => Self::InvalidInput {
+                message: format!("invalid dimensions: {w}x{h}"),
+            },
+            crate::error::Error::ImageTooLarge(w, h, mw, mh) => Self::LimitExceeded {
+                message: format!("image {w}x{h} exceeds max {mw}x{mh}"),
+            },
+            crate::error::Error::InvalidInput(msg) => Self::InvalidInput { message: msg },
+            crate::error::Error::OutOfMemory(e) => Self::Oom(e),
+            crate::error::Error::IoError(e) => Self::Io(e),
+            crate::error::Error::Cancelled => Self::Cancelled,
+            other => Self::Internal {
+                message: format!("{other}"),
+            },
+        }
+    }
+}
+
+impl From<std::io::Error> for EncodeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+/// Result type for encoding operations.
+pub type Result<T> = core::result::Result<T, EncodeError>;
+
+// ── PixelLayout ─────────────────────────────────────────────────────────────
+
+/// Describes the pixel format of input data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PixelLayout {
+    /// 8-bit sRGB, 3 bytes per pixel (R, G, B).
+    Rgb8,
+    /// 8-bit sRGB + alpha, 4 bytes per pixel (R, G, B, A).
+    Rgba8,
+    /// 8-bit grayscale, 1 byte per pixel.
+    Gray8,
+    /// 8-bit grayscale + alpha, 2 bytes per pixel.
+    GrayAlpha8,
+    /// Linear f32 RGB, 12 bytes per pixel. Skips sRGB→linear conversion.
+    RgbLinearF32,
+}
+
+impl PixelLayout {
+    /// Bytes per pixel for this layout.
+    fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgb8 => 3,
+            Self::Rgba8 => 4,
+            Self::Gray8 => 1,
+            Self::GrayAlpha8 => 2,
+            Self::RgbLinearF32 => 12,
+        }
+    }
+}
+
+// ── Quality ─────────────────────────────────────────────────────────────────
+
+/// Quality specification for lossy encoding.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum Quality {
+    /// Butteraugli distance (1.0 = high quality, lower = better).
+    Distance(f32),
+    /// Percentage scale (0–100, 100 = mathematically lossless, invalid for lossy).
+    Percent(u32),
+}
+
+impl Quality {
+    /// Convert to butteraugli distance.
+    fn to_distance(self) -> core::result::Result<f32, EncodeError> {
+        match self {
+            Self::Distance(d) => {
+                if d <= 0.0 {
+                    return Err(EncodeError::InvalidConfig {
+                        message: format!("lossy distance must be > 0.0, got {d}"),
+                    });
+                }
+                Ok(d)
+            }
+            Self::Percent(q) => {
+                if q >= 100 {
+                    return Err(EncodeError::InvalidConfig {
+                        message: "quality 100 is lossless; use LosslessConfig instead".into(),
+                    });
+                }
+                Ok(percent_to_distance(q))
+            }
+        }
+    }
+}
+
+fn percent_to_distance(quality: u32) -> f32 {
+    if quality >= 100 {
+        0.0
+    } else if quality >= 90 {
+        (100 - quality) as f32 / 10.0
+    } else if quality >= 70 {
+        1.0 + (90 - quality) as f32 / 20.0
+    } else {
+        2.0 + (70 - quality) as f32 / 10.0
+    }
+}
+
+// ── Supporting types ────────────────────────────────────────────────────────
+
+/// Image metadata (ICC, EXIF, XMP) to embed in the JXL file.
+#[derive(Clone, Debug, Default)]
+pub struct ImageMetadata<'a> {
+    /// ICC color profile.
+    pub icc_profile: Option<&'a [u8]>,
+    /// EXIF data.
+    pub exif: Option<&'a [u8]>,
+    /// XMP data.
+    pub xmp: Option<&'a [u8]>,
+}
+
+/// Resource limits for encoding.
+#[derive(Clone, Debug, Default)]
+pub struct Limits {
+    /// Maximum image width.
+    pub max_width: Option<u64>,
+    /// Maximum image height.
+    pub max_height: Option<u64>,
+    /// Maximum total pixels (width × height).
+    pub max_pixels: Option<u64>,
+    /// Maximum memory bytes the encoder may allocate.
+    pub max_memory_bytes: Option<u64>,
+}
+
+// ── LosslessConfig ──────────────────────────────────────────────────────────
+
+/// Lossless (modular) encoding configuration.
+///
+/// Has a sensible `Default` — lossless has no quality ambiguity.
+#[derive(Clone, Debug)]
+pub struct LosslessConfig {
+    effort: u8,
+    use_ans: bool,
+    squeeze: bool,
+    tree_learning: bool,
+    lz77: bool,
+    lz77_method: Lz77Method,
+}
+
+impl Default for LosslessConfig {
+    fn default() -> Self {
+        Self {
+            effort: 7,
+            use_ans: true,
+            squeeze: false,
+            tree_learning: false,
+            lz77: false,
+            lz77_method: Lz77Method::Greedy,
+        }
+    }
+}
+
+impl LosslessConfig {
+    /// Create a new lossless config with defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set effort level (1–10). Higher = slower, better compression.
+    pub fn effort(mut self, effort: u8) -> Self {
+        self.effort = effort;
+        self
+    }
+
+    /// Enable/disable ANS entropy coding (default: true).
+    pub fn use_ans(mut self, enable: bool) -> Self {
+        self.use_ans = enable;
+        self
+    }
+
+    /// Enable/disable squeeze (Haar wavelet) transform (default: false).
+    pub fn squeeze(mut self, enable: bool) -> Self {
+        self.squeeze = enable;
+        self
+    }
+
+    /// Enable/disable content-adaptive tree learning (default: false).
+    pub fn tree_learning(mut self, enable: bool) -> Self {
+        self.tree_learning = enable;
+        self
+    }
+
+    /// Enable/disable LZ77 backward references (default: false).
+    pub fn lz77(mut self, enable: bool) -> Self {
+        self.lz77 = enable;
+        self
+    }
+
+    /// Set LZ77 method (default: Greedy). Only effective when LZ77 is enabled.
+    pub fn lz77_method(mut self, method: Lz77Method) -> Self {
+        self.lz77_method = method;
+        self
+    }
+
+    /// Create an encode request for an image with this config.
+    pub fn encode_request(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> EncodeRequest<'_> {
+        EncodeRequest {
+            config: ConfigRef::Lossless(self),
+            width,
+            height,
+            layout,
+            metadata: None,
+            limits: None,
+        }
+    }
+}
+
+// ── LossyConfig ─────────────────────────────────────────────────────────────
+
+/// Lossy (VarDCT) encoding configuration.
+///
+/// No `Default` — distance/quality is a required choice.
+#[derive(Clone, Debug)]
+pub struct LossyConfig {
+    distance: f32,
+    effort: u8,
+    use_ans: bool,
+    gaborish: bool,
+    noise: bool,
+    denoise: bool,
+    error_diffusion: bool,
+    pixel_domain_loss: bool,
+    lz77: bool,
+    lz77_method: Lz77Method,
+    force_strategy: Option<u8>,
+    #[cfg(feature = "butteraugli-loop")]
+    butteraugli_iters: u32,
+}
+
+impl LossyConfig {
+    /// Create with butteraugli distance (1.0 = high quality).
+    pub fn new(distance: f32) -> Self {
+        Self {
+            distance,
+            effort: 7,
+            use_ans: true,
+            gaborish: true,
+            noise: false,
+            denoise: false,
+            error_diffusion: true,
+            pixel_domain_loss: true,
+            lz77: false,
+            lz77_method: Lz77Method::Greedy,
+            force_strategy: None,
+            #[cfg(feature = "butteraugli-loop")]
+            butteraugli_iters: 2,
+        }
+    }
+
+    /// Create from a [`Quality`] specification.
+    pub fn from_quality(quality: Quality) -> core::result::Result<Self, EncodeError> {
+        let distance = quality.to_distance()?;
+        Ok(Self::new(distance))
+    }
+
+    /// Set effort level (1–10).
+    pub fn effort(mut self, effort: u8) -> Self {
+        self.effort = effort;
+        self
+    }
+
+    /// Enable/disable ANS entropy coding (default: true).
+    pub fn use_ans(mut self, enable: bool) -> Self {
+        self.use_ans = enable;
+        self
+    }
+
+    /// Enable/disable gaborish inverse pre-filter (default: true).
+    pub fn gaborish(mut self, enable: bool) -> Self {
+        self.gaborish = enable;
+        self
+    }
+
+    /// Enable/disable noise synthesis (default: false).
+    pub fn noise(mut self, enable: bool) -> Self {
+        self.noise = enable;
+        self
+    }
+
+    /// Enable/disable Wiener denoising pre-filter (default: false). Implies noise.
+    pub fn denoise(mut self, enable: bool) -> Self {
+        self.denoise = enable;
+        if enable {
+            self.noise = true;
+        }
+        self
+    }
+
+    /// Enable/disable error diffusion in AC quantization (default: true).
+    pub fn error_diffusion(mut self, enable: bool) -> Self {
+        self.error_diffusion = enable;
+        self
+    }
+
+    /// Enable/disable pixel-domain loss in strategy selection (default: true).
+    pub fn pixel_domain_loss(mut self, enable: bool) -> Self {
+        self.pixel_domain_loss = enable;
+        self
+    }
+
+    /// Enable/disable LZ77 backward references (default: false).
+    pub fn lz77(mut self, enable: bool) -> Self {
+        self.lz77 = enable;
+        self
+    }
+
+    /// Set LZ77 method (default: Greedy).
+    pub fn lz77_method(mut self, method: Lz77Method) -> Self {
+        self.lz77_method = method;
+        self
+    }
+
+    /// Force a specific AC strategy for all blocks. `None` for auto-selection.
+    pub fn force_strategy(mut self, strategy: Option<u8>) -> Self {
+        self.force_strategy = strategy;
+        self
+    }
+
+    /// Set butteraugli quantization loop iterations (default: 2).
+    /// Requires the `butteraugli-loop` feature.
+    #[cfg(feature = "butteraugli-loop")]
+    pub fn butteraugli_iters(mut self, n: u32) -> Self {
+        self.butteraugli_iters = n;
+        self
+    }
+
+    /// Create an encode request for an image with this config.
+    pub fn encode_request(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> EncodeRequest<'_> {
+        EncodeRequest {
+            config: ConfigRef::Lossy(self),
+            width,
+            height,
+            layout,
+            metadata: None,
+            limits: None,
+        }
+    }
+}
+
+// ── EncodeRequest ───────────────────────────────────────────────────────────
+
+/// Internal config reference (lossy or lossless).
+#[derive(Clone, Copy, Debug)]
+enum ConfigRef<'a> {
+    Lossless(&'a LosslessConfig),
+    Lossy(&'a LossyConfig),
+}
+
+/// An encoding request — binds config + image dimensions + pixel layout.
+///
+/// Created via [`LosslessConfig::encode_request`] or [`LossyConfig::encode_request`].
+pub struct EncodeRequest<'a> {
+    config: ConfigRef<'a>,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    metadata: Option<&'a ImageMetadata<'a>>,
+    limits: Option<&'a Limits>,
+}
+
+impl<'a> EncodeRequest<'a> {
+    /// Attach image metadata (ICC, EXIF, XMP).
+    pub fn metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
+        self.metadata = Some(meta);
+        self
+    }
+
+    /// Attach resource limits.
+    pub fn limits(mut self, limits: &'a Limits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
+
+    /// Encode pixels and return the JXL bitstream.
+    pub fn encode(self, pixels: &[u8]) -> Result<Vec<u8>> {
+        self.validate_pixels(pixels)?;
+        self.check_limits()?;
+
+        match self.config {
+            ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels),
+            ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels),
+        }
+    }
+
+    /// Encode pixels, appending to an existing buffer.
+    pub fn encode_into(self, pixels: &[u8], out: &mut Vec<u8>) -> Result<()> {
+        let data = self.encode(pixels)?;
+        out.extend_from_slice(&data);
+        Ok(())
+    }
+
+    /// Encode pixels, writing to a `std::io::Write` destination.
+    pub fn encode_to(self, pixels: &[u8], mut dest: impl std::io::Write) -> Result<()> {
+        let data = self.encode(pixels)?;
+        dest.write_all(&data)?;
+        Ok(())
+    }
+
+    fn validate_pixels(&self, pixels: &[u8]) -> Result<()> {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        if w == 0 || h == 0 {
+            return Err(EncodeError::InvalidInput {
+                message: format!("zero dimensions: {w}x{h}"),
+            });
+        }
+        let expected = w
+            .checked_mul(h)
+            .and_then(|n| n.checked_mul(self.layout.bytes_per_pixel()));
+        match expected {
+            Some(expected) if pixels.len() == expected => Ok(()),
+            Some(expected) => Err(EncodeError::InvalidInput {
+                message: format!(
+                    "pixel buffer size mismatch: expected {expected} bytes for {w}x{h} {:?}, got {}",
+                    self.layout,
+                    pixels.len()
+                ),
+            }),
+            None => Err(EncodeError::InvalidInput {
+                message: "image dimensions overflow".into(),
+            }),
+        }
+    }
+
+    fn check_limits(&self) -> Result<()> {
+        let Some(limits) = self.limits else {
+            return Ok(());
+        };
+        let w = self.width as u64;
+        let h = self.height as u64;
+        if let Some(max_w) = limits.max_width
+            && w > max_w
+        {
+            return Err(EncodeError::LimitExceeded {
+                message: format!("width {w} > max {max_w}"),
+            });
+        }
+        if let Some(max_h) = limits.max_height
+            && h > max_h
+        {
+            return Err(EncodeError::LimitExceeded {
+                message: format!("height {h} > max {max_h}"),
+            });
+        }
+        if let Some(max_px) = limits.max_pixels
+            && w * h > max_px
+        {
+            return Err(EncodeError::LimitExceeded {
+                message: format!("pixels {}x{} = {} > max {max_px}", w, h, w * h),
+            });
+        }
+        Ok(())
+    }
+
+    // ── Lossless path ───────────────────────────────────────────────────
+
+    fn encode_lossless(&self, cfg: &LosslessConfig, pixels: &[u8]) -> Result<Vec<u8>> {
+        match self.layout {
+            PixelLayout::Rgb8
+            | PixelLayout::Rgba8
+            | PixelLayout::Gray8
+            | PixelLayout::GrayAlpha8 => {}
+            other => return Err(EncodeError::UnsupportedPixelLayout(other)),
+        }
+
+        let options = crate::encoder::EncoderOptions {
+            distance: 0.0,
+            effort: cfg.effort,
+            force_modular: true,
+            use_ans: cfg.use_ans,
+            optimize_codes: true,
+            custom_orders: true,
+            enable_noise: false,
+            enable_denoise: false,
+            enable_gaborish: false,
+            use_tree_learning: cfg.tree_learning,
+            use_squeeze: cfg.squeeze,
+        };
+        let encoder = crate::encoder::Encoder::with_options(options);
+        let w = self.width as usize;
+        let h = self.height as usize;
+
+        let result = match self.layout {
+            PixelLayout::Rgb8 => encoder.encode_rgb8(pixels, w, h),
+            PixelLayout::Rgba8 => encoder.encode_rgba8(pixels, w, h),
+            PixelLayout::Gray8 => encoder.encode_gray8(pixels, w, h),
+            PixelLayout::GrayAlpha8 => {
+                return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::GrayAlpha8));
+            }
+            _ => unreachable!(),
+        };
+        result.map_err(EncodeError::from)
+    }
+
+    // ── Lossy path ──────────────────────────────────────────────────────
+
+    fn encode_lossy(&self, cfg: &LossyConfig, pixels: &[u8]) -> Result<Vec<u8>> {
+        let w = self.width as usize;
+        let h = self.height as usize;
+
+        // Build linear f32 RGB from input layout
+        let linear_rgb = match self.layout {
+            PixelLayout::Rgb8 => srgb_u8_to_linear_f32(pixels, 3),
+            PixelLayout::Rgba8 => {
+                // Drop alpha, VarDCT only encodes RGB
+                srgb_u8_to_linear_f32_drop_alpha(pixels)
+            }
+            PixelLayout::RgbLinearF32 => {
+                // Already linear — reinterpret bytes as f32
+                if !pixels.len().is_multiple_of(4) {
+                    return Err(EncodeError::InvalidInput {
+                        message: "RgbLinearF32 buffer not aligned to 4 bytes".into(),
+                    });
+                }
+                let floats: &[f32] = bytemuck_cast_f32(pixels);
+                floats.to_vec()
+            }
+            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 => {
+                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
+            }
+        };
+
+        let mut tiny = crate::tiny::TinyEncoder::new(cfg.distance);
+        tiny.use_ans = cfg.use_ans;
+        tiny.optimize_codes = true;
+        tiny.custom_orders = true;
+        tiny.enable_noise = cfg.noise;
+        tiny.enable_denoise = cfg.denoise;
+        tiny.enable_gaborish = cfg.gaborish;
+        tiny.error_diffusion = cfg.error_diffusion;
+        tiny.pixel_domain_loss = cfg.pixel_domain_loss;
+        tiny.enable_lz77 = cfg.lz77;
+        tiny.lz77_method = cfg.lz77_method;
+        tiny.force_strategy = cfg.force_strategy;
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            tiny.butteraugli_iters = cfg.butteraugli_iters;
+        }
+
+        tiny.encode(w, h, &linear_rgb).map_err(EncodeError::from)
+    }
+}
+
+// ── Pixel conversion helpers ────────────────────────────────────────────────
+
+/// sRGB u8 → linear f32 (IEC 61966-2-1).
+#[inline]
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = c as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+    data.chunks(channels)
+        .flat_map(|px| {
+            [
+                srgb_to_linear(px[0]),
+                srgb_to_linear(px[1]),
+                srgb_to_linear(px[2]),
+            ]
+        })
+        .collect()
+}
+
+fn srgb_u8_to_linear_f32_drop_alpha(data: &[u8]) -> Vec<f32> {
+    data.chunks(4)
+        .flat_map(|px| {
+            [
+                srgb_to_linear(px[0]),
+                srgb_to_linear(px[1]),
+                srgb_to_linear(px[2]),
+            ]
+        })
+        .collect()
+}
+
+/// Safe cast from &[u8] to &[f32] without bytemuck dependency.
+fn bytemuck_cast_f32(bytes: &[u8]) -> &[f32] {
+    assert!(bytes.len().is_multiple_of(4));
+    assert!(
+        (bytes.as_ptr() as usize).is_multiple_of(core::mem::align_of::<f32>()) || bytes.is_empty()
+    );
+    // SAFETY: we verified alignment and length
+    // Note: this is the ONE place we need unsafe for reinterpret cast.
+    // We don't add bytemuck as a dep for this single use.
+    #[allow(unsafe_code)]
+    unsafe {
+        core::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
+    }
+}
+
+// ── Convenience functions ───────────────────────────────────────────────────
+
+/// Encode RGB8 data to lossless JXL with default settings.
+pub fn encode_lossless_rgb8(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    LosslessConfig::new()
+        .encode_request(width, height, PixelLayout::Rgb8)
+        .encode(data)
+}
+
+/// Encode RGBA8 data to lossless JXL with default settings.
+pub fn encode_lossless_rgba8(data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    LosslessConfig::new()
+        .encode_request(width, height, PixelLayout::Rgba8)
+        .encode(data)
+}
+
+/// Encode RGB8 data to lossy JXL at the given butteraugli distance.
+pub fn encode_lossy_rgb8(data: &[u8], width: u32, height: u32, distance: f32) -> Result<Vec<u8>> {
+    LossyConfig::new(distance)
+        .encode_request(width, height, PixelLayout::Rgb8)
+        .encode(data)
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lossless_config_builder() {
+        let cfg = LosslessConfig::new()
+            .effort(5)
+            .use_ans(false)
+            .squeeze(true)
+            .tree_learning(true);
+        assert_eq!(cfg.effort, 5);
+        assert!(!cfg.use_ans);
+        assert!(cfg.squeeze);
+        assert!(cfg.tree_learning);
+    }
+
+    #[test]
+    fn test_lossy_config_builder() {
+        let cfg = LossyConfig::new(2.0).effort(3).gaborish(false).noise(true);
+        assert_eq!(cfg.distance, 2.0);
+        assert_eq!(cfg.effort, 3);
+        assert!(!cfg.gaborish);
+        assert!(cfg.noise);
+    }
+
+    #[test]
+    fn test_quality_to_distance() {
+        assert!(Quality::Distance(1.0).to_distance().unwrap() == 1.0);
+        assert!(Quality::Distance(-1.0).to_distance().is_err());
+        assert!(Quality::Percent(100).to_distance().is_err()); // lossless invalid for lossy
+        assert!(Quality::Percent(90).to_distance().unwrap() == 1.0);
+    }
+
+    #[test]
+    fn test_pixel_validation() {
+        let cfg = LosslessConfig::new();
+        let req = cfg.encode_request(2, 2, PixelLayout::Rgb8);
+        assert!(req.validate_pixels(&[0u8; 12]).is_ok());
+    }
+
+    #[test]
+    fn test_pixel_validation_wrong_size() {
+        let cfg = LosslessConfig::new();
+        let req = cfg.encode_request(2, 2, PixelLayout::Rgb8);
+        assert!(req.validate_pixels(&[0u8; 11]).is_err());
+    }
+
+    #[test]
+    fn test_limits_check() {
+        let limits = Limits {
+            max_width: Some(100),
+            ..Default::default()
+        };
+        let cfg = LosslessConfig::new();
+        let req = cfg
+            .encode_request(200, 100, PixelLayout::Rgb8)
+            .limits(&limits);
+        assert!(req.check_limits().is_err());
+    }
+
+    #[test]
+    fn test_lossless_encode_rgb8_small() {
+        // 4x4 red image
+        let pixels = vec![255u8, 0, 0].repeat(16);
+        let result = LosslessConfig::new()
+            .encode_request(4, 4, PixelLayout::Rgb8)
+            .encode(&pixels);
+        assert!(result.is_ok());
+        let jxl = result.unwrap();
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A]); // JXL signature
+    }
+
+    #[test]
+    fn test_lossy_encode_rgb8_small() {
+        // 8x8 gradient
+        let mut pixels = Vec::with_capacity(8 * 8 * 3);
+        for y in 0..8u8 {
+            for x in 0..8u8 {
+                pixels.push(x * 32);
+                pixels.push(y * 32);
+                pixels.push(128);
+            }
+        }
+        let result = LossyConfig::new(2.0)
+            .gaborish(false)
+            .encode_request(8, 8, PixelLayout::Rgb8)
+            .encode(&pixels);
+        assert!(result.is_ok());
+        let jxl = result.unwrap();
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
+    }
+
+    #[test]
+    fn test_convenience_lossless() {
+        let pixels = vec![128u8; 4 * 4 * 3];
+        let result = encode_lossless_rgb8(&pixels, 4, 4);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lossy_unsupported_gray() {
+        let pixels = vec![128u8; 8 * 8];
+        let result = LossyConfig::new(1.0)
+            .encode_request(8, 8, PixelLayout::Gray8)
+            .encode(&pixels);
+        assert!(matches!(
+            result,
+            Err(EncodeError::UnsupportedPixelLayout(_))
+        ));
+    }
+}
