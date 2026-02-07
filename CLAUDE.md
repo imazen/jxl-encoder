@@ -1683,7 +1683,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Deprecate/remove old `EncoderOptions` + `Encoder` + `TinyEncoder` pub API
 - [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
 - [ ] `encode_to()`/`finish_to()` std-only (currently always available)
-- [ ] Add `At<>` error location tracking (from `whereat` crate)
+- [x] Add `At<>` error location tracking (from `whereat` crate)
 - [ ] Add `EncodeStats` for encode metrics
 - [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
 - [ ] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output

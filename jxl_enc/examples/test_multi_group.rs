@@ -17,7 +17,10 @@ fn main() {
     }
 
     // Encode with VarDCT
-    let encoded = jxl_enc::encoder::encode_lossy_rgb8(&data, w, h, 1.0).expect("encode failed");
+    let encoded = jxl_enc::LossyConfig::new(1.0)
+        .encode_request(w as u32, h as u32, jxl_enc::PixelLayout::Rgb8)
+        .encode(&data)
+        .expect("encode failed");
     eprintln!("Encoded 257x257: {} bytes", encoded.len());
 
     // Save to file for inspection

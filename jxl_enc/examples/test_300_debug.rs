@@ -1,5 +1,5 @@
 fn main() {
-    use jxl_enc::encoder::encode_lossy_rgb8;
+    use jxl_enc::{LossyConfig, PixelLayout};
 
     // Generate horizontal gradient exactly like the test
     let width = 300usize;
@@ -18,7 +18,10 @@ fn main() {
     println!("Original first row (u8): {:?}", &data[0..15]);
 
     // Encode
-    let encoded = match encode_lossy_rgb8(&data, width, height, 1.0) {
+    let encoded = match LossyConfig::new(1.0)
+        .encode_request(width as u32, height as u32, PixelLayout::Rgb8)
+        .encode(&data)
+    {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Encode failed: {:?}", e);
