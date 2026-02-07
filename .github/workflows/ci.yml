@@ -56,6 +56,7 @@ jobs:
         include:
           - { os: ubuntu-24.04-arm, name: Linux }
           - { os: macos-latest, name: macOS }
+          - { os: windows-11-arm, name: "Windows ARM" }
 
     steps:
       - uses: actions/checkout@v6
