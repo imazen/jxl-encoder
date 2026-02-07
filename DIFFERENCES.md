@@ -11,29 +11,21 @@ known divergences.
 
 | | Rust | libjxl |
 |---|------|--------|
-| Value | 0.8294 | 0.765 |
-| File | `tiny/adaptive_quant.rs:737` | `enc_adaptive_quantization.cc:837` |
+| Value | 0.765 | 0.765 |
+| File | `tiny/adaptive_quant.rs:672` | `enc_adaptive_quantization.cc:837` |
 
-**DIFFERS** — Pure scaling factor. Changes distance-to-file-size mapping but NOT
-rate-distortion efficiency. At equal file sizes, both produce identical SSIM2.
-Our files are ~26-29% smaller at the same distance parameter. This is not a quality
-difference; it's a calibration difference.
-
-The vardct encoder (dead code) uses 0.765 matching libjxl (`vardct/quantizer.rs:30`).
+**MATCH**
 
 ## DC Quantization
 
 | | Rust | libjxl |
 |---|------|--------|
-| DC_QUANT | 1.12 | 1.095924 |
-| DC_QUANT_POW | 0.57 | 0.83 |
+| DC_QUANT | 1.095924 | 1.095924 |
+| DC_QUANT_POW | 0.83 | 0.83 |
 | DC_MUL | 0.3 | 0.3 |
 | File | `tiny/frame.rs:149-151` | `enc_adaptive_quantization.cc:835-836` |
 
-**DIFFERS** — Both DC_QUANT and DC_QUANT_POW differ. These control the nonlinear
-mapping from butteraugli target to DC quantization strength. The combined effect is
-a different DC quality curve, but since our K_AC_QUANT also differs, direct distance
-comparisons are meaningless anyway.
+**MATCH**
 
 ## kFavor2X2AtHighQuality
 
@@ -42,9 +34,8 @@ comparisons are meaningless anyway.
 | Value | -0.4 | -0.4 |
 | File | `tiny/ac_strategy.rs:1087` | `enc_ac_strategy.cc:588` |
 
-**MATCH** — Bias toward DCT2X2/IDENTITY at high quality (low distance). Now matches libjxl.
-uses -0.4 but increasing ours beyond -0.15 causes quality regression at d<1.0.
-`((5.0 - distance) / 5.0)^2`.
+**MATCH** — Bias toward DCT2X2/IDENTITY at high quality (low distance).
+Applied when `distance < 5.0`, scaled by `((5.0 - distance) / 5.0)^2`.
 
 ## Dead-Zone Thresholds (QuantizeBlockAC)
 
@@ -215,8 +206,8 @@ libjxl file: `quantizer.cc`
 
 Both use content-adaptive global_scale from quant field median and MAD.
 
-**Note**: The fixed-formula path (`tiny/frame.rs:204`) uses `AC_QUANT = 0.8` (not
-0.8294), matching the non-adaptive fallback for small images.
+**Note**: The fixed-formula path (`tiny/frame.rs:205`) uses `AC_QUANT = 0.765`,
+matching libjxl.
 
 ## Noise Synthesis
 
@@ -315,9 +306,8 @@ which prevented djxl from exporting to PNG. Now matches libjxl's default for u8 
 
 | Difference | Impact on RD | Notes |
 |------------|-------------|-------|
-| K_AC_QUANT (0.8294 vs 0.765) | None at equal file sizes | Calibration only |
-| DC_QUANT/DC_QUANT_POW | Minor | Different DC quality curve |
-| ~~kFavor2X2~~ | N/A | Now matches libjxl (-0.4) |
 | Coeff-domain mul8x8 | None (not default path) | Pixel-domain is default |
-| Butteraugli loop | None (both default 2 iters) | Default-on since Feb 6 |
 | AC strategy step=2 vs step=1 | Small | Only affects 32x32+ blocks |
+
+All quantization constants (K_AC_QUANT, DC_QUANT, DC_QUANT_POW, kFavor2X2,
+dead-zone thresholds, quant bias, entropy multipliers) now match libjxl.

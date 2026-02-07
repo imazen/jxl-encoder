@@ -117,9 +117,7 @@ Improvements made Feb 3, 2026:
 | 2.0 | 331KB | 64.35 | 433KB | 66.79 | 440KB | 78.23 |
 | 3.0 | 257KB | 53.96 | 362KB | 59.94 | 356KB | 72.61 |
 
-Our files are 26-29% smaller at the same distance parameter (different K_AC_QUANT:
-0.8294 vs libjxl's 0.765). Fair comparison should be at equal file sizes, not equal
-distance values.
+K_AC_QUANT now matches libjxl (0.765). Distance parameters are directly comparable.
 
 **Pixel-domain loss improvement** (SSIM2 delta over coefficient-domain, frymire.png):
 - d=0.5: +1.93, d=1.0: +1.13, d=2.0: +0.55, d=3.0: +0.21, d=4.0: +0.40, d=5.0: +0.66
@@ -183,9 +181,7 @@ Strategy status:
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
 - Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
-- `K_AC_QUANT` (0.8294 vs libjxl's 0.765) is a pure scaling factor — changes distance-to-size
-  mapping but NOT RD efficiency. Tested: at equal file sizes (~470KB), 0.700/d=0.85 and
-  0.8294/d=1.0 give identical SSIM2 (75.28 vs 75.34). The file size gap comes from
+- `K_AC_QUANT` matches libjxl (0.765)
   AdjustQuantBlockAC, iterative rate control, and more AC strategies, not K_AC_QUANT.
 - Content-adaptive global_scale is implemented (median-MAD of quant field)
 
