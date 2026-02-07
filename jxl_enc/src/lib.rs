@@ -10,6 +10,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod api;
 pub mod bit_writer;
 pub mod color;
 pub mod encoder;
@@ -22,7 +23,13 @@ pub mod modular;
 pub mod tiny;
 pub mod trace;
 
-// Re-export main API
+// Re-export new API as primary
+pub use api::{
+    EncodeError, EncodeRequest, ImageMetadata, Limits, LosslessConfig, LossyConfig, PixelLayout,
+    Quality, encode_lossless_rgb8, encode_lossless_rgba8, encode_lossy_rgb8,
+};
+
+// Re-export old API (will be deprecated in Phase 3)
 pub use encoder::{Encoder, EncoderOptions, encode_rgb8, encode_rgba8};
 
 #[cfg(test)]
