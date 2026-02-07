@@ -1637,22 +1637,22 @@ palette transform (lossless), squeeze transform (Haar wavelet).
    but property 15 causes encoder/decoder tree traversal mismatch on 128x128+ images.
    WP core is bit-exact. Impact: minor (WP still selectable, just can't split on its error).
 
-3. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
+2. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
 
-4. **Optimal LZ77 (effort 9)** — NOT IMPLEMENTED. Exhaustive vs greedy matching. ~1-2%.
+3. **Optimal LZ77 (effort 9)** — NOT IMPLEMENTED. Exhaustive vs greedy matching. ~1-2%.
 
-5. **Effort-level tuning** — No effort-dependent property count, clustering mode, tree mode,
+4. **Effort-level tuning** — No effort-dependent property count, clustering mode, tree mode,
    or LZ77 mode selection. Everything manual via CLI flags.
 
-6. **Lossy palette / delta palette** — Only lossless palette implemented. Lossy needs
+5. **Lossy palette / delta palette** — Only lossless palette implemented. Lossy needs
    nb_deltas>0, predictor selection, and delta row encoding.
 
-7. **Palette + tree learning integration** — Palette auto-detect works in gradient/WP paths
-   but not in tree learning path (needs channel-aware tree for palette+index structure).
+6. **16-bit/float input, animation, streaming ANS** — NOT IMPLEMENTED. Format/UX gaps.
 
-8. **16-bit/float input, animation, streaming ANS** — NOT IMPLEMENTED. Format/UX gaps.
+7. **Squeeze in multi-group** — Squeeze transform only works for single-group (<= 256x256).
+   Multi-group path uses pre-squeeze channel data.
 
-**Quickest win**: Debug WP property 15 mismatch to enable Weighted in tree learning.
+~~**Palette + tree learning integration**~~ — DONE (Feb 6, 2026). Auto-detect for RGB in tree learning path.
 
 ## API Convergence TODOs
 
