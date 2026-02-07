@@ -16,6 +16,7 @@ pub mod palette;
 pub mod predictor;
 pub mod rct;
 pub mod section;
+pub mod squeeze;
 pub mod token;
 pub mod tree;
 pub mod tree_learn;

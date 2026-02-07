@@ -27,6 +27,8 @@ pub struct FrameEncoderOptions {
     pub use_ans: bool,
     /// Use content-adaptive MA tree learning for modular encoding.
     pub use_tree_learning: bool,
+    /// Use squeeze (Haar wavelet) transform for modular encoding.
+    pub use_squeeze: bool,
 }
 
 impl Default for FrameEncoderOptions {
@@ -36,6 +38,7 @@ impl Default for FrameEncoderOptions {
             effort: 7,
             use_ans: false,
             use_tree_learning: false,
+            use_squeeze: false,
         }
     }
 }
@@ -99,7 +102,13 @@ impl FrameEncoder {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
 
-            if self.options.use_tree_learning && self.options.use_ans {
+            if self.options.use_squeeze {
+                crate::modular::improved::write_modular_stream_with_squeeze(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                )?;
+            } else if self.options.use_tree_learning && self.options.use_ans {
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
