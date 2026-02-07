@@ -1534,10 +1534,7 @@ mod decoder_validation {
         let encoded = encode_lossy_rgb8(&data, 16, 16, 1.0).unwrap();
         // Save for debugging
         std::fs::write("/tmp/test_16x16_lossy.jxl", &encoded).unwrap();
-        eprintln!(
-            "Saved {} bytes to /tmp/test_16x16_lossy.jxl",
-            encoded.len()
-        );
+        eprintln!("Saved {} bytes to /tmp/test_16x16_lossy.jxl", encoded.len());
         // VarDCT is validated against jxl-oxide only until encoder is complete
         let oxide_result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
         assert!(
