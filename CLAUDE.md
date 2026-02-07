@@ -1651,3 +1651,17 @@ predictors, multi-group encoding, RGBA/grayscale, context map compression.
 8. **16-bit/float input, animation, streaming ANS** — NOT IMPLEMENTED. Format/UX gaps.
 
 **Quickest wins**: Wire existing WP into main path + add all 14 predictors to tree learning.
+
+## API Convergence TODOs
+
+See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
+
+- [ ] Rename `EncoderOptions` → `EncoderConfig` (match all other codecs)
+- [ ] Add builder pattern to `EncoderConfig` (method chaining like zenwebp/zenjpeg)
+- [ ] Add streaming encoder pattern: `push()`/`finish()`/`finish_into()`/`finish_to()`
+- [ ] Add cancellation support via `S: Stop` generic (from `enough` crate)
+- [ ] Add `At<>` error location tracking (from `whereat` crate)
+- [ ] Change dimension types from `usize` to `u32`
+- [ ] Add `Limits` struct for resource management
+- [ ] Add `EncodeStats` for encode metrics
+- [ ] Standardize error type name to `EncodeError`
