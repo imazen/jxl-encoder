@@ -1680,7 +1680,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Add `&dyn Stop` cancellation (from `enough` crate)
 - [x] Adopt `with_` prefix convention for all builder setters on Config/Request
 - [x] CLI updated to use new API (LosslessConfig/LossyConfig/PixelLayout)
-- [ ] Deprecate/remove old `EncoderOptions` + `Encoder` + `TinyEncoder` pub API
+- [x] Hide old `EncoderOptions` + `Encoder` API (#[doc(hidden)], no root re-exports)
 - [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
 - [ ] `encode_to()`/`finish_to()` std-only (currently always available)
 - [x] Add `At<>` error location tracking (from `whereat` crate)
