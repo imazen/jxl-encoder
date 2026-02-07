@@ -25,7 +25,10 @@ fn srgb_to_linear(c: u8) -> f32 {
 }
 
 /// JPEG XL encoder options.
+///
+/// Prefer [`LosslessConfig`](crate::LosslessConfig) or [`LossyConfig`](crate::LossyConfig).
 #[derive(Debug, Clone)]
+#[doc(hidden)]
 pub struct EncoderOptions {
     /// Distance parameter (0.0 = lossless, higher = more lossy).
     pub distance: f32,
@@ -92,6 +95,9 @@ impl EncoderOptions {
 }
 
 /// JPEG XL encoder.
+///
+/// Prefer [`LosslessConfig`](crate::LosslessConfig) or [`LossyConfig`](crate::LossyConfig).
+#[doc(hidden)]
 pub struct Encoder {
     options: EncoderOptions,
 }
@@ -126,10 +132,7 @@ impl Encoder {
     }
 
     /// Encodes an RGB8 image to JXL format with lossy compression.
-    ///
-    /// Uses the TinyEncoder (VarDCT) for lossy encoding. This encoder supports
-    /// images of any size and produces high-quality output matching libjxl at
-    /// low distances (d≤1.0).
+    #[doc(hidden)]
     ///
     /// # Arguments
     /// * `data` - RGB8 pixel data in row-major order (R,G,B,R,G,B,...)
@@ -216,22 +219,19 @@ impl Default for Encoder {
 ///
 /// This is a convenience function for the common case of encoding
 /// an 8-bit RGB image to lossless JXL.
+#[doc(hidden)]
 pub fn encode_rgb8(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     Encoder::new().encode_rgb8(data, width, height)
 }
 
 /// Encodes RGBA8 data to JXL with default options.
+#[doc(hidden)]
 pub fn encode_rgba8(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     Encoder::new().encode_rgba8(data, width, height)
 }
 
 /// Encodes RGB8 data to JXL with lossy compression.
-///
-/// # Arguments
-/// * `data` - RGB8 pixel data in row-major order
-/// * `width` - Image width in pixels
-/// * `height` - Image height in pixels
-/// * `distance` - Butteraugli distance (1.0 = high quality, higher = smaller files)
+#[doc(hidden)]
 pub fn encode_lossy_rgb8(
     data: &[u8],
     width: usize,

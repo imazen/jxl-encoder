@@ -30,8 +30,7 @@ pub use api::{
     encode_lossless_rgba8, encode_lossy_rgb8,
 };
 
-// Re-export old API (will be deprecated in Phase 3)
-pub use encoder::{Encoder, EncoderOptions, encode_rgb8, encode_rgba8};
+// Old API is pub(crate) — use LosslessConfig/LossyConfig instead.
 
 #[cfg(test)]
 mod tests;

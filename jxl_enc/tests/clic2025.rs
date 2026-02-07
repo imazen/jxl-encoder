@@ -5731,8 +5731,10 @@ fn test_rgba_simple() {
             rgba_data[i * 4 + 3] = 255; // A - opaque
         }
 
-        let jxl_bytes =
-            jxl_enc::encode_rgba8(&rgba_data, width, height).expect("Failed to encode RGBA");
+        let jxl_bytes = jxl_enc::LosslessConfig::new()
+            .encode_request(width as u32, height as u32, jxl_enc::PixelLayout::Rgba8)
+            .encode(&rgba_data)
+            .expect("Failed to encode RGBA");
 
         eprintln!("RGBA Encoded {} bytes", jxl_bytes.len());
 
