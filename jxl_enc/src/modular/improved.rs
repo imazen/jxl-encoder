@@ -1223,6 +1223,75 @@ fn write_palette_transform(
     Ok(())
 }
 
+/// Write the Squeeze transform descriptor to the bitstream.
+///
+/// Format:
+/// - TransformId: 2 bits (selector 2 = Squeeze)
+/// - num_squeezes: U32(Val(0), BitsOffset(4,1), BitsOffset(6,9), BitsOffset(8,41))
+///   Val(0) = default squeeze (decoder computes parameters)
+/// - For each squeeze: horizontal(1 bit), in_place(1 bit),
+///   begin_c(U32), num_c(U32(Val(1),Val(2),Val(3),BitsOffset(4,4)))
+fn write_squeeze_transform(
+    writer: &mut BitWriter,
+    params: &[super::squeeze::SqueezeParams],
+) -> Result<()> {
+    // TransformId: Val(2) = Squeeze = selector 2 = "10"
+    writer.write(2, 2)?;
+
+    if params.is_empty() {
+        // num_squeezes = 0: use default squeeze
+        writer.write(2, 0)?; // selector 0 = Val(0)
+    } else {
+        // Encode num_squeezes
+        let n = params.len();
+        if (1..=16).contains(&n) {
+            writer.write(2, 1)?; // selector 1 = BitsOffset(4, 1)
+            writer.write(4, (n - 1) as u64)?;
+        } else if (9..=72).contains(&n) {
+            writer.write(2, 2)?; // selector 2 = BitsOffset(6, 9)
+            writer.write(6, (n - 9) as u64)?;
+        } else {
+            writer.write(2, 3)?; // selector 3 = BitsOffset(8, 41)
+            writer.write(8, (n - 41) as u64)?;
+        }
+
+        // Write each squeeze parameter
+        for sp in params {
+            writer.write(1, sp.horizontal as u64)?;
+            writer.write(1, sp.in_place as u64)?;
+
+            // begin_c: U32(Bits(3), BitsOffset(6,8), BitsOffset(10,72), BitsOffset(13,1096))
+            let bc = sp.begin_c as usize;
+            if bc < 8 {
+                writer.write(2, 0)?;
+                writer.write(3, bc as u64)?;
+            } else if bc < 72 {
+                writer.write(2, 1)?;
+                writer.write(6, (bc - 8) as u64)?;
+            } else if bc < 1096 {
+                writer.write(2, 2)?;
+                writer.write(10, (bc - 72) as u64)?;
+            } else {
+                writer.write(2, 3)?;
+                writer.write(13, (bc - 1096) as u64)?;
+            }
+
+            // num_c: U32(Val(1), Val(2), Val(3), BitsOffset(4, 4))
+            match sp.num_c {
+                1 => writer.write(2, 0)?,
+                2 => writer.write(2, 1)?,
+                3 => writer.write(2, 2)?,
+                _ => {
+                    writer.write(2, 3)?;
+                    writer.write(4, (sp.num_c - 4) as u64)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Write modular stream with palette transform for few-color images.
 ///
 /// When an image has few unique colors (≤256 for 8-bit), palette encoding
@@ -1318,6 +1387,105 @@ pub fn write_modular_stream_with_palette(
         writer.write(1, 1)?; // wp_header.all_default = true
         writer.write(2, 1)?; // num_transforms = 1
         write_palette_transform(writer, begin_c, num_c, nb_colors)?;
+
+        write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+    }
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
+/// Write modular stream with Squeeze (Haar wavelet) transform.
+///
+/// Decomposes channels into low-frequency (average) + high-frequency (residual)
+/// pairs by halving resolution. Enables progressive decoding and improves
+/// compression on smooth content.
+pub fn write_modular_stream_with_squeeze(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+) -> Result<()> {
+    use super::squeeze::{apply_squeeze, default_squeeze_params};
+
+    let params = default_squeeze_params(image);
+    if params.is_empty() {
+        // Image too small for squeeze, fall back
+        if image.channels.len() >= 3 {
+            return write_modular_stream_with_rct(image, writer, use_ans);
+        } else {
+            return write_simple_modular_stream(image, writer, use_ans);
+        }
+    }
+
+    // Apply forward squeeze
+    let mut transformed = image.clone();
+    apply_squeeze(&mut transformed, &params)?;
+
+    crate::trace::debug_eprintln!(
+        "SQUEEZE: {} steps, {} → {} channels",
+        params.len(),
+        image.channels.len(),
+        transformed.channels.len()
+    );
+
+    // Collect residuals with gradient prediction on all transformed channels
+    let mut residuals = Vec::new();
+    let mut max_residual: u32 = 0;
+
+    for channel in &transformed.channels {
+        let width = channel.width();
+        let height = channel.height();
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+
+                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
+                let top = if y > 0 { channel.get(x, y - 1) } else { left };
+                let topleft = if x > 0 && y > 0 {
+                    channel.get(x - 1, y - 1)
+                } else {
+                    left
+                };
+                let prediction = predict_gradient(left, top, topleft);
+
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+
+                residuals.push(packed);
+                max_residual = max_residual.max(packed);
+            }
+        }
+    }
+
+    // === Global section ===
+    writer.write(1, 1)?; // dc_quant.all_default = true
+    writer.write(1, 1)?; // has_tree = true
+
+    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
+    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+
+    if use_ans {
+        let (tokens, code) = build_ans_modular_code(&residuals);
+        write_ans_modular_header(writer, &code)?;
+
+        // GroupHeader with 1 transform (Squeeze)
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 1)?; // num_transforms = 1
+        write_squeeze_transform(writer, &params)?;
+
+        write_ans_modular_tokens(writer, &tokens, &code)?;
+    } else {
+        let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+        let histogram = build_token_histogram(&encoded, max_token);
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        // GroupHeader with 1 transform (Squeeze)
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 1)?; // num_transforms = 1
+        write_squeeze_transform(writer, &params)?;
 
         write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
     }
@@ -2042,6 +2210,7 @@ mod tests {
             effort: 7,
             use_ans: true,
             use_tree_learning: false,
+            use_squeeze: false,
         };
         let frame_encoder = FrameEncoder::new(4, 4, frame_options);
         let color_encoding = ColorEncoding::srgb();
@@ -2108,6 +2277,7 @@ mod tests {
                 effort: 7,
                 use_ans: false,
                 use_tree_learning: false,
+                use_squeeze: false,
             };
             let frame_encoder = FrameEncoder::new(4, 2, frame_options);
             let color_encoding = ColorEncoding::srgb();
@@ -2130,6 +2300,7 @@ mod tests {
             effort: 7,
             use_ans: true,
             use_tree_learning: false,
+            use_squeeze: false,
         };
         let frame_encoder = FrameEncoder::new(4, 2, frame_options);
         let color_encoding = ColorEncoding::srgb();
@@ -2194,6 +2365,7 @@ mod tests {
             effort: 7,
             use_ans: true,
             use_tree_learning: false,
+            use_squeeze: false,
         };
         let frame_encoder = FrameEncoder::new(8, 8, frame_options);
         let color_encoding = ColorEncoding::srgb();

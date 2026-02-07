@@ -3763,3 +3763,165 @@ fn test_palette_roundtrip_64x64() {
     }
     validate_palette_roundtrip_rgb(&data, 64, 64, "palette_4colors_64x64");
 }
+
+// ===== Squeeze transform roundtrip tests =====
+
+/// Uses Encoder pipeline with use_squeeze=true, jxl-rs to decode.
+#[test]
+fn test_squeeze_roundtrip_gray_16x16() {
+    use crate::encoder::{Encoder, EncoderOptions};
+
+    let mut data = vec![0u8; 16 * 16];
+    for y in 0..16 {
+        for x in 0..16 {
+            data[y * 16 + x] = (x * 16 + y * 8) as u8;
+        }
+    }
+
+    let opts = EncoderOptions {
+        use_squeeze: true,
+        ..EncoderOptions::lossless()
+    };
+    let encoder = Encoder::with_options(opts);
+    let bytes = encoder.encode_gray8(&data, 16, 16).unwrap();
+
+    let path = "/mnt/v/output/jxl-encoder-rs/squeeze/squeeze_gray_16x16.jxl";
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/squeeze/");
+    std::fs::write(path, &bytes).unwrap();
+    eprintln!(
+        "Squeeze gray 16x16: {} bytes, saved to {}",
+        bytes.len(),
+        path
+    );
+
+    // Decode with jxl-rs
+    let decoded_img =
+        crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
+    assert_eq!(decoded_img.width, 16);
+    assert_eq!(decoded_img.height, 16);
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+    let mut diff_count = 0;
+    let mut max_diff = 0u8;
+    for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+        let diff = (orig as i16 - dec as i16).unsigned_abs() as u8;
+        if diff > max_diff {
+            max_diff = diff;
+            eprintln!("  pixel {}: orig={} dec={} diff={}", i, orig, dec, diff);
+        }
+        if diff > 0 {
+            diff_count += 1;
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "Squeeze gray 16x16: {} pixels differ, max_diff={}",
+        diff_count, max_diff
+    );
+    eprintln!("Squeeze gray 16x16: PASS (pixel-exact)");
+}
+
+/// Squeeze roundtrip for RGB 32x32 image.
+#[test]
+fn test_squeeze_roundtrip_rgb_32x32() {
+    use crate::encoder::{Encoder, EncoderOptions};
+
+    let mut data = vec![0u8; 32 * 32 * 3];
+    for y in 0..32 {
+        for x in 0..32 {
+            let i = (y * 32 + x) * 3;
+            data[i] = (x * 8) as u8;
+            data[i + 1] = (y * 8) as u8;
+            data[i + 2] = ((x + y) * 4) as u8;
+        }
+    }
+
+    let opts = EncoderOptions {
+        use_squeeze: true,
+        ..EncoderOptions::lossless()
+    };
+    let bytes = Encoder::with_options(opts)
+        .encode_rgb8(&data, 32, 32)
+        .unwrap();
+
+    let path = "/mnt/v/output/jxl-encoder-rs/squeeze/squeeze_rgb_32x32.jxl";
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/squeeze/");
+    std::fs::write(path, &bytes).unwrap();
+    eprintln!("Squeeze RGB 32x32: {} bytes", bytes.len());
+
+    let decoded_img =
+        crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
+    assert_eq!(decoded_img.width, 32);
+    assert_eq!(decoded_img.height, 32);
+
+    // RGB: 3 channels
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+    let mut diff_count = 0;
+    let mut max_diff = 0u8;
+    for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+        let diff = (orig as i16 - dec as i16).unsigned_abs() as u8;
+        if diff > max_diff {
+            max_diff = diff;
+        }
+        if diff > 0 {
+            diff_count += 1;
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "Squeeze RGB 32x32: {} pixels differ, max_diff={}",
+        diff_count, max_diff
+    );
+    eprintln!("Squeeze RGB 32x32: PASS (pixel-exact)");
+}
+
+/// Squeeze roundtrip for larger 128x128 gray image.
+#[test]
+fn test_squeeze_roundtrip_gray_128x128() {
+    use crate::encoder::{Encoder, EncoderOptions};
+
+    let mut data = vec![0u8; 128 * 128];
+    for y in 0..128 {
+        for x in 0..128 {
+            data[y * 128 + x] = ((x * 2 + y) % 256) as u8;
+        }
+    }
+
+    let opts = EncoderOptions {
+        use_squeeze: true,
+        ..EncoderOptions::lossless()
+    };
+    let bytes = Encoder::with_options(opts)
+        .encode_gray8(&data, 128, 128)
+        .unwrap();
+    eprintln!("Squeeze gray 128x128: {} bytes", bytes.len());
+
+    let decoded_img =
+        crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
+    assert_eq!(decoded_img.width, 128);
+    assert_eq!(decoded_img.height, 128);
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+    let mut diff_count = 0;
+    for (&orig, &dec) in data.iter().zip(decoded.iter()) {
+        if orig != dec {
+            diff_count += 1;
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "Squeeze gray 128x128: {} pixels differ",
+        diff_count
+    );
+    eprintln!("Squeeze gray 128x128: PASS (pixel-exact)");
+}

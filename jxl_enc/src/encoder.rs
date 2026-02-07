@@ -48,6 +48,9 @@ pub struct EncoderOptions {
     /// Enable content-adaptive MA tree learning for modular encoding.
     /// Off by default (uses fixed gradient tree).
     pub use_tree_learning: bool,
+    /// Enable squeeze (Haar wavelet) transform for modular encoding.
+    /// Off by default. Enables progressive decoding.
+    pub(crate) use_squeeze: bool,
 }
 
 impl Default for EncoderOptions {
@@ -63,6 +66,7 @@ impl Default for EncoderOptions {
             enable_denoise: false,
             enable_gaborish: true,
             use_tree_learning: false,
+            use_squeeze: false,
         }
     }
 }
@@ -186,6 +190,7 @@ impl Encoder {
             effort: self.options.effort,
             use_ans: self.options.use_ans,
             use_tree_learning: self.options.use_tree_learning,
+            use_squeeze: self.options.use_squeeze,
         };
 
         let frame_encoder = FrameEncoder::new(image.width(), image.height(), frame_options);
