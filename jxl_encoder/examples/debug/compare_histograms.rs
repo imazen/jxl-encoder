@@ -3,7 +3,7 @@ fn main() {
 
     // Working: uniform 40x40
     let data_uniform = vec![128u8; 40 * 40 * 3];
-    let result1 = jxl_enc::encoder::encode_lossy_rgb8(&data_uniform, 40, 40, 1.0);
+    let result1 = jxl_encoder::encoder::encode_lossy_rgb8(&data_uniform, 40, 40, 1.0);
     match &result1 {
         Ok(enc) => {
             eprintln!("UNIFORM 40x40: {} bytes", enc.len());
@@ -23,7 +23,7 @@ fn main() {
             data_gradient[idx + 2] = val;
         }
     }
-    let result2 = jxl_enc::encoder::encode_lossy_rgb8(&data_gradient, 40, 40, 1.0);
+    let result2 = jxl_encoder::encoder::encode_lossy_rgb8(&data_gradient, 40, 40, 1.0);
     match &result2 {
         Ok(enc) => {
             eprintln!("GRADIENT 40x40: {} bytes", enc.len());

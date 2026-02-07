@@ -1,5 +1,5 @@
 fn main() {
-    use jxl_enc::{LossyConfig, PixelLayout};
+    use jxl_encoder::{LossyConfig, PixelLayout};
 
     // Generate horizontal gradient exactly like the test
     let width = 300usize;

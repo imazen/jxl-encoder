@@ -11,7 +11,7 @@ fn main() {
         // Uniform gray
         let data = vec![128u8; width * height * 3];
 
-        let result = jxl_enc::encoder::encode_lossy_rgb8(&data, width, height, 1.0);
+        let result = jxl_encoder::encoder::encode_lossy_rgb8(&data, width, height, 1.0);
         match result {
             Ok(encoded) => {
                 let decode_result = jxl_oxide::JxlImage::builder()

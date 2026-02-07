@@ -14,7 +14,7 @@ fn main() {
         }
     }
 
-    let h_encoded = jxl_enc::encoder::encode_lossy_rgb8(&h_data, w, h, 1.0).unwrap();
+    let h_encoded = jxl_encoder::encoder::encode_lossy_rgb8(&h_data, w, h, 1.0).unwrap();
     eprintln!("  Encoded: {} bytes", h_encoded.len());
 
     let h_result = jxl_oxide::JxlImage::builder()
@@ -38,7 +38,7 @@ fn main() {
         }
     }
 
-    let v_encoded = jxl_enc::encoder::encode_lossy_rgb8(&v_data, w, h, 1.0).unwrap();
+    let v_encoded = jxl_encoder::encoder::encode_lossy_rgb8(&v_data, w, h, 1.0).unwrap();
     eprintln!("  Encoded: {} bytes", v_encoded.len());
 
     let v_result = jxl_oxide::JxlImage::builder()

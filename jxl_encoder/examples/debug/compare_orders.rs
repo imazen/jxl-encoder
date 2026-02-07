@@ -1,5 +1,5 @@
 #![allow(unused)]
-use jxl_enc::vardct::tokenize::ZIGZAG_ORDER_8X8;
+use jxl_encoder::vardct::tokenize::ZIGZAG_ORDER_8X8;
 
 fn jxl_natural_order_8x8() -> Vec<usize> {
     // Computed from jxl-oxide const_compute_natural_order algorithm

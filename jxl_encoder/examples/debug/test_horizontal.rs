@@ -1,5 +1,5 @@
 #![allow(unused)]
-use jxl_enc::encoder::Encoder;
+use jxl_encoder::encoder::Encoder;
 use std::io::Cursor;
 
 fn main() {

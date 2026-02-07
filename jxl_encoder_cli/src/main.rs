@@ -6,7 +6,7 @@
 //! Command-line JPEG XL encoder.
 
 use clap::Parser;
-use jxl_enc::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
+use jxl_encoder::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -242,7 +242,7 @@ fn main() {
         #[cfg(feature = "rate-control")]
         if args.rate_control {
             // Rate control needs the internal TinyEncoder for multi-pass
-            use jxl_enc::tiny::TinyEncoder;
+            use jxl_encoder::tiny::TinyEncoder;
             let mut tiny = TinyEncoder::new(distance);
             tiny.use_ans = !args.no_ans;
             tiny.enable_noise = args.noise || args.denoise;
@@ -260,7 +260,7 @@ fn main() {
             }
 
             let linear_rgb = srgb_u8_to_linear_f32(&data);
-            let rc_config = jxl_enc::tiny::RateControlConfig {
+            let rc_config = jxl_encoder::tiny::RateControlConfig {
                 max_iterations: args.rc_iterations,
                 ..Default::default()
             };
@@ -277,7 +277,7 @@ fn main() {
             }
             result
                 .map(|(data, _)| data)
-                .map_err(|e| jxl_enc::at(jxl_enc::EncodeError::from(e)))
+                .map_err(|e| jxl_encoder::at(jxl_encoder::EncodeError::from(e)))
         } else {
             cfg.encode_request(width, height, layout).encode(&data)
         }

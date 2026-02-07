@@ -2,7 +2,7 @@
 //!
 //! Generates both files and shows byte-by-byte comparison.
 
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 use std::fs;
 
 fn create_gradient_image(width: usize, height: usize) -> Vec<u8> {

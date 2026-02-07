@@ -1,5 +1,5 @@
 //! Test solid gray encoding at multiple gray levels
-use jxl_enc::encoder::Encoder;
+use jxl_encoder::encoder::Encoder;
 use jxl_oxide::JxlImage;
 use std::io::Cursor;
 

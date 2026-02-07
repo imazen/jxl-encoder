@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("cjxl: {} bytes", cjxl_bytes.len());
 
     // Encode with our encoder
-    let our_bytes = jxl_enc::encoder::encode_lossy_rgb8(&data, w, h, 1.0)?;
+    let our_bytes = jxl_encoder::encoder::encode_lossy_rgb8(&data, w, h, 1.0)?;
     let our_out = "/tmp/our_output.jxl";
     std::fs::write(our_out, &our_bytes)?;
     eprintln!("ours: {} bytes", our_bytes.len());

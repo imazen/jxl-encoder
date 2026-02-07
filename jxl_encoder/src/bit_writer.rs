@@ -24,7 +24,7 @@ pub const MAX_BITS_PER_CALL: usize = 56;
 /// # Example
 ///
 /// ```
-/// use jxl_enc::bit_writer::BitWriter;
+/// use jxl_encoder::bit_writer::BitWriter;
 ///
 /// let mut writer = BitWriter::new();
 /// writer.write(8, 0x12).unwrap();

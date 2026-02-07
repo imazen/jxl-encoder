@@ -34,13 +34,13 @@ We implement all AC strategies that libjxl evaluates through its default effort 
 ## CLI
 
 ```bash
-cargo build --release -p jxl_enc_cli
+cargo build --release -p jxl_encoder_cli
 
 # Lossy encoding (distance=1.0 is visually lossless)
 cjxl-rs input.png output.jxl -d 1.0
 
 # Lossless encoding
-cjxl-rs input.png output.jxl --modular
+cjxl-rs input.png output.jxl --lossless
 
 # See all options
 cjxl-rs --help
@@ -51,28 +51,31 @@ cjxl-rs --help
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-d, --distance` | 1.0 | Butteraugli distance (0 = mathematically lossless, 1.0 = visually lossless) |
-| `--modular` | off | Lossless modular encoding |
+| `--lossless` | off | Lossless modular encoding |
 | `--no-gaborish` | on | Disable gaborish pre-filter |
 | `--no-pixel-domain-loss` | on | Disable pixel-domain loss (faster, lower quality) |
 | `--no-ans` | ANS on | Use Huffman instead of ANS |
 | `--no-optimize-codes` | on | Single-pass static Huffman (streaming) |
 | `--dct8-only` | off | Force DCT8 (disable multi-strategy selection) |
 | `--noise` | off | Enable noise synthesis |
-| `--error-diffusion` | off | Enable error diffusion in AC quantization |
+| `--no-error-diffusion` | on | Disable error diffusion in AC quantization |
 | `--lz77` | off | Enable LZ77 backward references (ANS two-pass only) |
 | `--tree-learning` | off | Content-adaptive MA tree learning for modular |
 
 ## Library Usage
 
 ```rust
-use jxl_enc::tiny::encoder::TinyEncoder;
+use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
 
-// Lossy encoding
-let mut encoder = TinyEncoder::new(1.0); // distance
-let jxl_bytes = encoder.encode(width, height, &linear_rgb_f32)?;
+// Lossy encoding (distance 1.0 = visually lossless)
+let jxl = LossyConfig::new(1.0)
+    .encode_request(width, height, PixelLayout::Rgb8)
+    .encode(&srgb_u8_pixels)?;
 
 // Lossless encoding
-let jxl_bytes = jxl_enc::tiny::encoder::encode_modular(width, height, &srgb_u8, has_alpha)?;
+let jxl = LosslessConfig::new()
+    .encode_request(width, height, PixelLayout::Rgb8)
+    .encode(&srgb_u8_pixels)?;
 ```
 
 ## AC Strategy Coverage
@@ -97,17 +100,17 @@ let jxl_bytes = jxl_enc::tiny::encoder::encode_modular(width, height, &srgb_u8, 
 ## Building
 
 ```bash
-cargo build                              # debug
-cargo build --release -p jxl_enc_cli     # release CLI
-cargo test                               # all tests
-cargo clippy -- -D warnings              # lint
+cargo build                                # debug
+cargo build --release -p jxl_encoder_cli   # release CLI
+cargo test                                 # all tests
+cargo clippy -- -D warnings                # lint
 ```
 
 ## Project Structure
 
 ```
 jxl-encoder-rs/
-├── jxl_enc/             # Main encoder library
+├── jxl_encoder/             # Main encoder library
 │   ├── src/
 │   │   ├── tiny/            # Production encoder
 │   │   │   ├── encoder.rs       # Main encode loop
@@ -118,8 +121,7 @@ jxl-encoder-rs/
 │   │   │   └── ...
 │   │   ├── entropy_coding/  # ANS, Huffman, HybridUint
 │   │   └── headers/         # File/frame headers
-├── jxl_enc_transforms/  # DCT transform library
-└── jxl_enc_cli/         # CLI tool (cjxl-rs)
+└── jxl_encoder_cli/         # CLI tool (cjxl-rs)
 ```
 
 ## License

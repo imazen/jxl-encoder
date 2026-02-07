@@ -4,7 +4,7 @@ fn main() {
 
     // Uniform gray
     let data_uniform: Vec<u8> = vec![128; w * h * 3];
-    let result = jxl_enc::encoder::encode_lossy_rgb8(&data_uniform, w, h, 1.0);
+    let result = jxl_encoder::encoder::encode_lossy_rgb8(&data_uniform, w, h, 1.0);
     match result {
         Ok(encoded) => {
             let decode = jxl_oxide::JxlImage::builder()
@@ -29,7 +29,7 @@ fn main() {
             data_grad[idx + 2] = val;
         }
     }
-    let result = jxl_enc::encoder::encode_lossy_rgb8(&data_grad, w, h, 1.0);
+    let result = jxl_encoder::encoder::encode_lossy_rgb8(&data_grad, w, h, 1.0);
     match result {
         Ok(encoded) => {
             let decode = jxl_oxide::JxlImage::builder()

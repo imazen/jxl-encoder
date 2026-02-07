@@ -4,7 +4,7 @@
 
 #![cfg(feature = "rate-control")]
 
-use jxl_enc::tiny::{RateControlConfig, TinyEncoder};
+use jxl_encoder::tiny::{RateControlConfig, TinyEncoder};
 
 /// sRGB to linear conversion.
 fn srgb_to_linear(c: u8) -> f32 {
@@ -159,7 +159,7 @@ fn test_rate_control_converges_quickly() {
 
 #[test]
 fn test_encode_from_precomputed() {
-    use jxl_enc::tiny::EncoderPrecomputed;
+    use jxl_encoder::tiny::EncoderPrecomputed;
 
     let width = 64;
     let height = 64;

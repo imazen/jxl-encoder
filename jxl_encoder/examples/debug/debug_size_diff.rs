@@ -39,7 +39,7 @@ fn main() {
             }
         }
 
-        let encoded = match jxl_enc::encoder::encode_lossy_rgb8(&data, w, h, 1.0) {
+        let encoded = match jxl_encoder::encoder::encode_lossy_rgb8(&data, w, h, 1.0) {
             Ok(e) => e,
             Err(_) => {
                 eprintln!(

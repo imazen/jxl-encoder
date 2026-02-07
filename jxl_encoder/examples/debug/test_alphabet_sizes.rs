@@ -1,4 +1,4 @@
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 /// Test specific alphabet sizes with single-cluster encoding
 ///
 /// Since vertical 33x33 (alphabet_size=54) fails but similar sizes work,

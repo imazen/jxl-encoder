@@ -1,6 +1,6 @@
 //! Debug gradient encoding to see AC coefficient handling
 
-use jxl_enc::encoder::Encoder;
+use jxl_encoder::encoder::Encoder;
 use std::io::Cursor;
 
 fn main() {

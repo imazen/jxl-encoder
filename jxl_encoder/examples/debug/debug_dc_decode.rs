@@ -1,6 +1,6 @@
 //! Debug what DC value the decoder is receiving.
 
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 
 fn main() {
     let width = 8;

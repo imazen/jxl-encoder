@@ -1,5 +1,5 @@
 /// Trace bit positions during 8x8 vs 33x33 encoding to find misalignment
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 use std::io::Cursor;
 
 fn generate_vertical(size: usize) -> Vec<u8> {

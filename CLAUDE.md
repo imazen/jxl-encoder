@@ -50,7 +50,7 @@ Never omit jxl-rs from decoder validation.
 
 ## Current Status: Full libjxl Parametric Quantization Weights
 
-The tiny encoder (`jxl_enc/src/tiny/`) now uses full libjxl's default parametric
+The tiny encoder (`jxl_encoder/src/tiny/`) now uses full libjxl's default parametric
 quantization weights for all strategies (DCT8, DCT16X8/DCT8X16, DCT16X16,
 DCT32X32, DCT4X8, DCT8X4, DCT4X4). This matches what the decoder expects when
 `all_default=true` is signaled in the frame header.
@@ -785,7 +785,7 @@ dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder
 We match libjxl-tiny's algorithm exactly and produce equivalent output.
 Note: libjxl-tiny (cjxl_tiny) crashes on multi-group images (>256x256).
 
-Test: `cargo test -p jxl_enc --test clic2025 test_cpp_vs_rust_quality -- --ignored --nocapture`
+Test: `cargo test -p jxl_encoder --test clic2025 test_cpp_vs_rust_quality -- --ignored --nocapture`
 
 ### AC Strategy Cost Model Investigation (Feb 2, 2026)
 
@@ -903,7 +903,7 @@ for all blocks. At low distances, this uniform value saturated and couldn't prov
 finer quantization where the image needed it.
 
 **Fix**: Ported libjxl-tiny's adaptive quantization pipeline (`enc_adaptive_quantization.cc`)
-to `jxl_enc/src/tiny/adaptive_quant.rs`. The pipeline computes per-block raw_quant values
+to `jxl_encoder/src/tiny/adaptive_quant.rs`. The pipeline computes per-block raw_quant values
 based on perceptual masking:
 1. Pre-erosion: Y + kXMul×X local differences, gamma ratio, masking sqrt, 4x downsample
 2. Fuzzy erosion: 3×3 min-4 weighted sum, 2x downsample
@@ -1006,15 +1006,14 @@ to verify no quality/size regressions.
 
 ```
 jxl-encoder-rs/
-├── jxl_enc/             # Main encoder library
+├── jxl_encoder/             # Main encoder library
 │   ├── src/
 │   │   ├── bit_writer.rs      # Bitstream writing
 │   │   ├── entropy_coding/    # ANS, Huffman, HybridUint
 │   │   ├── headers/           # File and frame headers
 │   │   ├── image/             # Image buffer types
 │   │   └── error.rs           # Error types
-├── jxl_enc_transforms/  # Forward DCT transforms
-└── jxl_enc_cli/         # Command-line tool (cjxl-rs)
+└── jxl_encoder_cli/         # Command-line tool (cjxl-rs)
 ```
 
 ## Porting Guidelines
@@ -1552,7 +1551,7 @@ When ANS is implemented, enhanced clustering SHOULD help because:
 - Merging clusters saves more header bits with ANS
 - The pair merge refinement cost model (`EntropyType::Ans`) is designed for this
 
-**Test:** `cargo test -p jxl_enc --test clic2025 test_enhanced_clustering_compression -- --ignored`
+**Test:** `cargo test -p jxl_encoder --test clic2025 test_enhanced_clustering_compression -- --ignored`
 
 ### Pixel-Domain Loss Partial Fix (Feb 2, 2026)
 

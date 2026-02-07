@@ -1,4 +1,4 @@
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 /// Test with jxl-rs decoder
 use std::io::Cursor;
 

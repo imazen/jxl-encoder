@@ -45,7 +45,7 @@ fn main() {
 
     for &dist in &distances {
         // --- Our tiny encoder ---
-        let encoder = jxl_enc::tiny::TinyEncoder::new(dist);
+        let encoder = jxl_encoder::tiny::TinyEncoder::new(dist);
         let bytes = encoder
             .encode(width, height, &linear_rgb)
             .expect("Encoding failed");

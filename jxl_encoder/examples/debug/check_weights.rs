@@ -1,4 +1,4 @@
-use jxl_enc::vardct::quant_weights::generate_dct8_weights;
+use jxl_encoder::vardct::quant_weights::generate_dct8_weights;
 
 fn main() {
     let weights = generate_dct8_weights();

@@ -1,6 +1,6 @@
 //! Compute JXL natural order and compare with our ZIGZAG_ORDER_8X8
 
-use jxl_enc::vardct::tokenize::ZIGZAG_ORDER_8X8;
+use jxl_encoder::vardct::tokenize::ZIGZAG_ORDER_8X8;
 
 fn main() {
     // Compute JXL natural order for 8x8 using the jxl-oxide algorithm

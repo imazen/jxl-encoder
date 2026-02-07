@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let encoded = jxl_enc::encoder::encode_lossy_rgb8(&data, w, h, 1.0)?;
+        let encoded = jxl_encoder::encoder::encode_lossy_rgb8(&data, w, h, 1.0)?;
         let out_path = format!("/tmp/test_32x{}.jxl", h);
         std::fs::write(&out_path, &encoded)?;
 

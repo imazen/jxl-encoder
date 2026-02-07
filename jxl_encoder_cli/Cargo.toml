@@ -1,5 +1,5 @@
 [package]
-name = "jxl_enc_cli"
+name = "jxl_encoder_cli"
 description = "Command-line JPEG XL encoder"
 version.workspace = true
 edition.workspace = true
@@ -12,15 +12,15 @@ path = "src/main.rs"
 
 [features]
 default = ["butteraugli-loop"]
-debug-tokens = ["jxl_enc/debug-tokens"]
-debug-ac-strategy = ["jxl_enc/debug-ac-strategy"]
+debug-tokens = ["jxl_encoder/debug-tokens"]
+debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
 # Enable iterative rate control for improved distance targeting
-rate-control = ["jxl_enc/rate-control"]
+rate-control = ["jxl_encoder/rate-control"]
 # Enable butteraugli quantization loop for per-block quality refinement
-butteraugli-loop = ["jxl_enc/butteraugli-loop"]
+butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
 
 [dependencies]
-jxl_enc = { path = "../jxl_enc", version = "0.1.0" }
+jxl_encoder = { path = "../jxl_encoder", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
 png = "0.17"
 

@@ -1,5 +1,5 @@
 #![allow(unused)]
-use jxl_enc::entropy_coding::hybrid_uint::HybridUintConfig;
+use jxl_encoder::entropy_coding::hybrid_uint::HybridUintConfig;
 
 fn main() {
     // The config used in write_pass_group_clustered

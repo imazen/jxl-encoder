@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 
 fn generate_vertical_gray(width: usize, height: usize) -> Vec<u8> {
     let mut data = vec![0u8; width * height * 3];

@@ -1,8 +1,8 @@
 #![allow(unused)]
-use jxl_enc::encoder::Encoder;
-use jxl_enc::color::xyb::srgb_to_xyb;
-use jxl_enc::vardct::quantizer::QuantizerParams;
-use jxl_enc::vardct::transform::transform_xyb_image;
+use jxl_encoder::encoder::Encoder;
+use jxl_encoder::color::xyb::srgb_to_xyb;
+use jxl_encoder::vardct::quantizer::QuantizerParams;
+use jxl_encoder::vardct::transform::transform_xyb_image;
 use std::io::Cursor;
 
 fn main() {

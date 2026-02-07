@@ -3,8 +3,8 @@
 //! Tests the ANS encoding with a single distribution and verifies
 //! the bitstream is correct.
 
-use jxl_enc::bit_writer::BitWriter;
-use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder};
+use jxl_encoder::bit_writer::BitWriter;
+use jxl_encoder::entropy_coding::ans::{AnsDistribution, AnsEncoder};
 
 /// Test encoding and decoding a single symbol with a flat distribution.
 #[test]
@@ -63,7 +63,7 @@ fn test_single_symbol_roundtrip() {
 /// Test encoding and decoding multiple symbols using the jxl-rs compatible decoder.
 #[test]
 fn test_multiple_symbols_roundtrip() {
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
 
     // Create a flat distribution with 4 symbols
     let counts = [1024i32, 1024, 1024, 1024]; // Each symbol gets 1024/4096 probability
@@ -92,8 +92,8 @@ fn test_multiple_symbols_roundtrip() {
 
     // Build decoder histogram by writing and reading back
     // (In practice, the histogram is serialized separately)
-    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
     let histo = Histogram::from_counts(&[1024, 1024, 1024, 1024]);
     let ans_histo =
         ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
@@ -137,10 +137,10 @@ fn test_multiple_symbols_roundtrip() {
 /// Test encoding and decoding with a non-flat distribution using jxl-rs compatible decoder.
 #[test]
 fn test_nonflat_distribution_roundtrip() {
-    use jxl_enc::entropy_coding::ans::AnsDistribution;
-    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans::AnsDistribution;
+    use jxl_encoder::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     // Create a skewed distribution
     let histo = Histogram::from_counts(&[100, 50, 25, 10]);
@@ -228,8 +228,8 @@ fn test_nonflat_distribution_roundtrip() {
 /// Test that the histogram we write can be decoded correctly.
 #[test]
 fn test_histogram_serialization() {
-    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     // Create and normalize a histogram
     let histo = Histogram::from_counts(&[100, 50, 25, 10]);
@@ -279,9 +279,9 @@ fn test_histogram_serialization() {
 /// The actual roundtrip verification is done by test_decode_general_histogram in ans_decode.rs
 #[test]
 fn test_histogram_byte_decode() {
-    use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, BitReader};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy};
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, BitReader};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     // Create a simple 4-symbol histogram
     let histo = Histogram::from_counts(&[100, 50, 25, 10]);
@@ -362,12 +362,12 @@ fn hybrid_uint_decode(token: u32, extra_bits: u32) -> u32 {
 /// This tests the combination that full image encoding uses.
 #[test]
 fn test_ans_with_hybrid_uint() {
-    use jxl_enc::bit_writer::BitWriter;
-    use jxl_enc::entropy_coding::ans::{
+    use jxl_encoder::bit_writer::BitWriter;
+    use jxl_encoder::entropy_coding::ans::{
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     // Test values that will produce varying HybridUint tokens
     let values: Vec<u32> = vec![0, 1, 2, 5, 10, 20, 50, 100, 200];
@@ -461,12 +461,12 @@ fn test_ans_with_hybrid_uint() {
 /// This mimics the DC token stream with multiple contexts.
 #[test]
 fn test_ans_multi_context() {
-    use jxl_enc::bit_writer::BitWriter;
-    use jxl_enc::entropy_coding::ans::{
+    use jxl_encoder::bit_writer::BitWriter;
+    use jxl_encoder::entropy_coding::ans::{
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     // Simulate tokens from different contexts (like DC encoding)
     // Context 0: DC values
@@ -576,12 +576,12 @@ fn test_ans_multi_context() {
 /// This mimics exactly what write_entropy_code_ans + write_tokens_ans produce.
 #[test]
 fn test_ans_full_entropy_code_format() {
-    use jxl_enc::bit_writer::BitWriter;
-    use jxl_enc::entropy_coding::ans::{
+    use jxl_encoder::bit_writer::BitWriter;
+    use jxl_encoder::entropy_coding::ans::{
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     // Create tokens like the encoder does
     let tokens: Vec<(u8, u32)> = vec![
@@ -760,12 +760,12 @@ fn test_ans_full_entropy_code_format() {
 /// Test with LZ77 flag included (matching real encoder format).
 #[test]
 fn test_ans_with_lz77_flag() {
-    use jxl_enc::bit_writer::BitWriter;
-    use jxl_enc::entropy_coding::ans::{
+    use jxl_encoder::bit_writer::BitWriter;
+    use jxl_encoder::entropy_coding::ans::{
         ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution, AnsEncoder,
     };
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
-    use jxl_enc::entropy_coding::histogram::Histogram;
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::histogram::Histogram;
 
     let tokens: Vec<u32> = vec![5, 10, 3, 20, 8];
 
