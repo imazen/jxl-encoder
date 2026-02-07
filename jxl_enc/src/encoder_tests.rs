@@ -3646,3 +3646,120 @@ mod tree_learning_tests {
         validate_tree_learning_roundtrip_rgb(&data, 300, 300, "tree_rgb_multi_300x300");
     }
 }
+
+// ===== Palette transform roundtrip tests =====
+
+/// Validate palette encoding roundtrip: encode → decode with jxl-rs → pixel-exact match.
+fn validate_palette_roundtrip_rgb(data: &[u8], width: usize, height: usize, test_name: &str) {
+    let encoded = Encoder::new()
+        .encode_rgb8(data, width, height)
+        .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
+
+    let path = format!("/mnt/v/output/jxl-encoder-rs/palette/{}.jxl", test_name);
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/palette/");
+    std::fs::write(&path, &encoded).unwrap();
+    eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
+
+    // Decode with jxl-rs
+    let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
+        .unwrap_or_else(|e| panic!("{}: jxl-rs decode failed: {}", test_name, e));
+
+    assert_eq!(decoded_img.width, width, "{}: width mismatch", test_name);
+    assert_eq!(decoded_img.height, height, "{}: height mismatch", test_name);
+
+    // Convert f32 to u8
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+
+    // Pixel-exact match for lossless
+    let mut max_diff = 0u8;
+    let mut diff_count = 0;
+    for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+        let diff = (orig as i16 - dec as i16).unsigned_abs() as u8;
+        if diff > 0 {
+            diff_count += 1;
+            if diff > max_diff {
+                max_diff = diff;
+                let px = i / 3;
+                let ch = i % 3;
+                eprintln!(
+                    "{}: first diff at pixel {} ch {}: orig={} dec={}",
+                    test_name, px, ch, orig, dec
+                );
+            }
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "{}: {} pixels differ, max_diff={}",
+        test_name, diff_count, max_diff
+    );
+    eprintln!("{}: PASS (pixel-exact)", test_name);
+}
+
+#[test]
+fn test_palette_roundtrip_2_colors_4x4() {
+    // 4x4 image with only 2 colors: red and blue
+    let mut data = vec![0u8; 4 * 4 * 3];
+    for y in 0..4 {
+        for x in 0..4 {
+            let idx = (y * 4 + x) * 3;
+            if (x + y) % 2 == 0 {
+                data[idx] = 255;
+                data[idx + 1] = 0;
+                data[idx + 2] = 0;
+            } else {
+                data[idx] = 0;
+                data[idx + 1] = 0;
+                data[idx + 2] = 255;
+            }
+        }
+    }
+    validate_palette_roundtrip_rgb(&data, 4, 4, "palette_2colors_4x4");
+}
+
+#[test]
+fn test_palette_roundtrip_8_colors_16x16() {
+    // 16x16 image with 8 colors
+    let colors: [[u8; 3]; 8] = [
+        [255, 0, 0],
+        [0, 255, 0],
+        [0, 0, 255],
+        [255, 255, 0],
+        [255, 0, 255],
+        [0, 255, 255],
+        [0, 0, 0],
+        [255, 255, 255],
+    ];
+    let mut data = vec![0u8; 16 * 16 * 3];
+    for y in 0..16 {
+        for x in 0..16 {
+            let idx = (y * 16 + x) * 3;
+            let c = &colors[(x + y * 3) % 8];
+            data[idx] = c[0];
+            data[idx + 1] = c[1];
+            data[idx + 2] = c[2];
+        }
+    }
+    validate_palette_roundtrip_rgb(&data, 16, 16, "palette_8colors_16x16");
+}
+
+#[test]
+fn test_palette_roundtrip_64x64() {
+    // 64x64 image with 4 colors — larger test
+    let colors: [[u8; 3]; 4] = [[10, 20, 30], [100, 150, 200], [200, 50, 75], [30, 180, 90]];
+    let mut data = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = (y * 64 + x) * 3;
+            let c = &colors[(x / 16 + y / 16 * 2) % 4];
+            data[idx] = c[0];
+            data[idx + 1] = c[1];
+            data[idx + 2] = c[2];
+        }
+    }
+    validate_palette_roundtrip_rgb(&data, 64, 64, "palette_4colors_64x64");
+}
