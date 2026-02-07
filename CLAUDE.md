@@ -1660,25 +1660,29 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 
 **Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
 
-**No backwards compatibility required** — we have no external users. Just bump the 0.x major version for breaking changes.
+**No backwards compatibility required** — we have no external users. Just bump the 0.x major version for breaking changes. No deprecation shims or legacy aliases — delete old APIs.
 
 **Builder convention**: `with_` prefix for consuming builder setters, bare-name for getters.
 
-- [ ] Rename `EncoderOptions` → `EncoderConfig`
-- [ ] Add `EncodeRequest<'a>` intermediate layer
-- [ ] One-shot via `request.encode()`/`encode_into()`/`encode_to()`
-- [ ] Add streaming `Encoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
-- [ ] `encode_to()`/`finish_to()` std-only
-- [ ] Add `PixelLayout` enum (replace method-name-based dispatch)
+**Project standards**: `#![forbid(unsafe_code)]` with default features. no_std+alloc (minimum: wasm32). CI with codecov. README with badges and usage examples. As of Rust 1.92, almost everything is in `core::` (including `Error`) — don't assume `std` is needed. Use `wasmtimer` crate for timing on wasm.
+
+- [x] Split `EncoderOptions` into `LossyConfig` / `LosslessConfig` (compile-time invalid state prevention)
+- [x] Add `EncodeRequest<'a>` intermediate layer
+- [x] One-shot via `request.encode()`/`encode_into()`/`encode_to()`
+- [x] Add `PixelLayout` enum (replace method-name-based dispatch)
+- [x] Rename `Error` → `EncodeError` (new `api::EncodeError`)
+- [x] Change dimensions from `usize` to `u32` (in new API)
+- [x] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
+- [x] Add `ImageMetadata` struct for ICC/EXIF/XMP on request (type exists, not wired yet)
+- [x] Add `Quality` enum with `Distance(f32)` and `Percent(u32)`
+- [ ] Deprecate/remove old `EncoderOptions` + `Encoder` + `TinyEncoder` pub API
+- [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
+- [ ] `encode_to()`/`finish_to()` std-only (currently always available)
 - [ ] Add `&dyn Stop` cancellation (from `enough` crate)
 - [ ] Add `At<>` error location tracking (from `whereat` crate)
-- [ ] Rename `Error` → `EncodeError`
-- [ ] Change dimensions from `usize` to `u32`
-- [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
 - [ ] Add `EncodeStats` for encode metrics
-- [ ] Split `EncoderOptions` into `LossyConfig` / `LosslessConfig` (compile-time invalid state prevention)
 - [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
-- [ ] Add `ImageMetadata` struct for ICC/EXIF/XMP on request
+- [ ] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
 - [ ] Adopt `with_` prefix convention for all builder setters on Config/Request
