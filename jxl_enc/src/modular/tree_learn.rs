@@ -27,8 +27,8 @@ const GATHER_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
 const NUM_PROPERTIES: usize = 16;
 
 /// Candidate predictors for tree learning.
-/// All spatial predictors except Weighted (WP has a known bit-exactness issue
-/// vs decoders that needs debugging before it can be used in tree learning).
+/// All 14 predictors (0-13). Weighted (6) uses WP state which is bit-exact with jxl-rs.
+/// Property 15 (wp_max_error) is disabled in SPLIT_PROPERTIES pending debugging.
 const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Zero,
     Predictor::Left,
@@ -36,6 +36,7 @@ const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Average0,
     Predictor::Select,
     Predictor::Gradient,
+    Predictor::Weighted,
     Predictor::TopRight,
     Predictor::TopLeft,
     Predictor::LeftLeft,
