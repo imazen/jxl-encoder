@@ -1678,6 +1678,10 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Add `Quality` enum with `Distance(f32)` and `Percent(u32)`
 - [x] Add `&dyn Stop` cancellation (from `enough` crate)
 - [x] Adopt `with_` prefix convention for all builder setters on Config/Request
+- [x] Bare-name getters on both Config types (distance(), effort(), ans(), etc.)
+- [x] Fluent encode shortcuts on Config types (encode(), encode_into())
+- [x] Remove free functions (encode_lossless_rgb8 etc.) per "avoid free functions"
+- [x] `PixelLayout::bytes_per_pixel()` public + const, `is_linear()`, `has_alpha()`
 - [x] CLI updated to use new API (LosslessConfig/LossyConfig/PixelLayout)
 - [x] Hide old `EncoderOptions` + `Encoder` API (#[doc(hidden)], no root re-exports)
 - [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
