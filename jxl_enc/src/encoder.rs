@@ -50,7 +50,9 @@ pub struct EncoderOptions {
     pub use_tree_learning: bool,
     /// Enable squeeze (Haar wavelet) transform for modular encoding.
     /// Off by default. Enables progressive decoding.
-    pub(crate) use_squeeze: bool,
+    /// Enable squeeze (Haar wavelet) transform for modular encoding.
+    /// Off by default. Enables progressive decoding.
+    pub use_squeeze: bool,
 }
 
 impl Default for EncoderOptions {
