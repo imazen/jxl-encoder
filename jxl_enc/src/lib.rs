@@ -25,9 +25,9 @@ pub mod trace;
 
 // Re-export new API as primary
 pub use api::{
-    EncodeError, EncodeRequest, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method,
-    PixelLayout, Quality, Stop, Unstoppable, encode_lossless_rgb8, encode_lossless_rgba8,
-    encode_lossy_rgb8,
+    At, EncodeError, EncodeRequest, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method,
+    PixelLayout, Quality, ResultAtExt, Stop, Unstoppable, encode_lossless_rgb8,
+    encode_lossless_rgba8, encode_lossy_rgb8,
 };
 
 // Re-export old API (will be deprecated in Phase 3)

@@ -18,11 +18,12 @@
 //! let jxl = LossyConfig::new(1.0)
 //!     .encode_request(800, 600, PixelLayout::Rgb8)
 //!     .encode(&pixels)?;
-//! # Ok::<_, jxl_enc::api::EncodeError>(())
+//! # Ok::<_, jxl_enc::api::At<jxl_enc::api::EncodeError>>(())
 //! ```
 
 pub use crate::tiny::Lz77Method;
 pub use enough::{Stop, Unstoppable};
+pub use whereat::{At, ResultAtExt, at};
 
 // ── Error type ──────────────────────────────────────────────────────────────
 
@@ -108,7 +109,10 @@ impl From<enough::StopReason> for EncodeError {
 }
 
 /// Result type for encoding operations.
-pub type Result<T> = core::result::Result<T, EncodeError>;
+///
+/// Errors carry location traces via [`whereat::At`] for lightweight
+/// production-safe error tracking without debuginfo or backtraces.
+pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 
 // ── PixelLayout ─────────────────────────────────────────────────────────────
 
@@ -487,7 +491,29 @@ impl<'a> EncodeRequest<'a> {
     }
 
     /// Encode pixels and return the JXL bitstream.
+    #[track_caller]
     pub fn encode(self, pixels: &[u8]) -> Result<Vec<u8>> {
+        self.encode_inner(pixels).map_err(at)
+    }
+
+    /// Encode pixels, appending to an existing buffer.
+    #[track_caller]
+    pub fn encode_into(self, pixels: &[u8], out: &mut Vec<u8>) -> Result<()> {
+        let data = self.encode_inner(pixels).map_err(at)?;
+        out.extend_from_slice(&data);
+        Ok(())
+    }
+
+    /// Encode pixels, writing to a `std::io::Write` destination.
+    #[track_caller]
+    pub fn encode_to(self, pixels: &[u8], mut dest: impl std::io::Write) -> Result<()> {
+        let data = self.encode_inner(pixels).map_err(at)?;
+        dest.write_all(&data)
+            .map_err(|e| at(EncodeError::from(e)))?;
+        Ok(())
+    }
+
+    fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<Vec<u8>, EncodeError> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
 
@@ -497,21 +523,7 @@ impl<'a> EncodeRequest<'a> {
         }
     }
 
-    /// Encode pixels, appending to an existing buffer.
-    pub fn encode_into(self, pixels: &[u8], out: &mut Vec<u8>) -> Result<()> {
-        let data = self.encode(pixels)?;
-        out.extend_from_slice(&data);
-        Ok(())
-    }
-
-    /// Encode pixels, writing to a `std::io::Write` destination.
-    pub fn encode_to(self, pixels: &[u8], mut dest: impl std::io::Write) -> Result<()> {
-        let data = self.encode(pixels)?;
-        dest.write_all(&data)?;
-        Ok(())
-    }
-
-    fn validate_pixels(&self, pixels: &[u8]) -> Result<()> {
+    fn validate_pixels(&self, pixels: &[u8]) -> core::result::Result<(), EncodeError> {
         let w = self.width as usize;
         let h = self.height as usize;
         if w == 0 || h == 0 {
@@ -537,7 +549,7 @@ impl<'a> EncodeRequest<'a> {
         }
     }
 
-    fn check_limits(&self) -> Result<()> {
+    fn check_limits(&self) -> core::result::Result<(), EncodeError> {
         let Some(limits) = self.limits else {
             return Ok(());
         };
@@ -569,7 +581,11 @@ impl<'a> EncodeRequest<'a> {
 
     // ── Lossless path ───────────────────────────────────────────────────
 
-    fn encode_lossless(&self, cfg: &LosslessConfig, pixels: &[u8]) -> Result<Vec<u8>> {
+    fn encode_lossless(
+        &self,
+        cfg: &LosslessConfig,
+        pixels: &[u8],
+    ) -> core::result::Result<Vec<u8>, EncodeError> {
         match self.layout {
             PixelLayout::Rgb8
             | PixelLayout::Rgba8
@@ -609,7 +625,11 @@ impl<'a> EncodeRequest<'a> {
 
     // ── Lossy path ──────────────────────────────────────────────────────
 
-    fn encode_lossy(&self, cfg: &LossyConfig, pixels: &[u8]) -> Result<Vec<u8>> {
+    fn encode_lossy(
+        &self,
+        cfg: &LossyConfig,
+        pixels: &[u8],
+    ) -> core::result::Result<Vec<u8>, EncodeError> {
         let w = self.width as usize;
         let h = self.height as usize;
 
@@ -800,7 +820,7 @@ mod tests {
     #[test]
     fn test_lossless_encode_rgb8_small() {
         // 4x4 red image
-        let pixels = vec![255u8, 0, 0].repeat(16);
+        let pixels = [255u8, 0, 0].repeat(16);
         let result = LosslessConfig::new()
             .encode_request(4, 4, PixelLayout::Rgb8)
             .encode(&pixels);
@@ -843,7 +863,7 @@ mod tests {
             .encode_request(8, 8, PixelLayout::Gray8)
             .encode(&pixels);
         assert!(matches!(
-            result,
+            result.as_ref().map_err(|e| e.error()),
             Err(EncodeError::UnsupportedPixelLayout(_))
         ));
     }
