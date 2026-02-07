@@ -269,6 +269,9 @@ Strategy status:
 
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
+- **Lossy+alpha**: VarDCT encodes RGB only. Alpha must be encoded as a modular extra channel
+  in the same frame. Currently lossy+RGBA/BGRA returns `UnsupportedPixelLayout`. libjxl
+  encodes alpha via `EncExtraChannel` using modular sub-bitstream within the VarDCT frame.
 
 **Unpushed**: 51 commits ahead of origin/main
 
@@ -1692,5 +1695,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
-- [x] Support `Rgba8` and `Bgra8` for encode (ignore A for lossy, pass through for lossless)
+- [x] Support `Rgba8` and `Bgra8` for lossless encode (alpha preserved)
+- [x] Support `Bgr8` and `Bgra8` pixel layouts (R↔B swap)
+- [ ] Lossy+alpha: encode alpha as modular extra channel alongside VarDCT RGB
 - [ ] Support `Bgra8` for decode (future — no decoder yet)
