@@ -211,25 +211,109 @@ fn percent_to_distance(quality: u32) -> f32 {
 /// Image metadata (ICC, EXIF, XMP) to embed in the JXL file.
 #[derive(Clone, Debug, Default)]
 pub struct ImageMetadata<'a> {
-    /// ICC color profile.
-    pub icc_profile: Option<&'a [u8]>,
-    /// EXIF data.
-    pub exif: Option<&'a [u8]>,
-    /// XMP data.
-    pub xmp: Option<&'a [u8]>,
+    icc_profile: Option<&'a [u8]>,
+    exif: Option<&'a [u8]>,
+    xmp: Option<&'a [u8]>,
+}
+
+impl<'a> ImageMetadata<'a> {
+    /// Create empty metadata.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Attach an ICC color profile.
+    pub fn with_icc_profile(mut self, data: &'a [u8]) -> Self {
+        self.icc_profile = Some(data);
+        self
+    }
+
+    /// Attach EXIF data.
+    pub fn with_exif(mut self, data: &'a [u8]) -> Self {
+        self.exif = Some(data);
+        self
+    }
+
+    /// Attach XMP data.
+    pub fn with_xmp(mut self, data: &'a [u8]) -> Self {
+        self.xmp = Some(data);
+        self
+    }
+
+    /// Get the ICC color profile, if set.
+    pub fn icc_profile(&self) -> Option<&[u8]> {
+        self.icc_profile
+    }
+
+    /// Get the EXIF data, if set.
+    pub fn exif(&self) -> Option<&[u8]> {
+        self.exif
+    }
+
+    /// Get the XMP data, if set.
+    pub fn xmp(&self) -> Option<&[u8]> {
+        self.xmp
+    }
 }
 
 /// Resource limits for encoding.
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
-    /// Maximum image width.
-    pub max_width: Option<u64>,
-    /// Maximum image height.
-    pub max_height: Option<u64>,
-    /// Maximum total pixels (width × height).
-    pub max_pixels: Option<u64>,
-    /// Maximum memory bytes the encoder may allocate.
-    pub max_memory_bytes: Option<u64>,
+    max_width: Option<u64>,
+    max_height: Option<u64>,
+    max_pixels: Option<u64>,
+    max_memory_bytes: Option<u64>,
+}
+
+impl Limits {
+    /// Create limits with no restrictions (all `None`).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set maximum image width.
+    pub fn with_max_width(mut self, w: u64) -> Self {
+        self.max_width = Some(w);
+        self
+    }
+
+    /// Set maximum image height.
+    pub fn with_max_height(mut self, h: u64) -> Self {
+        self.max_height = Some(h);
+        self
+    }
+
+    /// Set maximum total pixels (width × height).
+    pub fn with_max_pixels(mut self, p: u64) -> Self {
+        self.max_pixels = Some(p);
+        self
+    }
+
+    /// Set maximum memory bytes the encoder may allocate.
+    pub fn with_max_memory_bytes(mut self, bytes: u64) -> Self {
+        self.max_memory_bytes = Some(bytes);
+        self
+    }
+
+    /// Get maximum width, if set.
+    pub fn max_width(&self) -> Option<u64> {
+        self.max_width
+    }
+
+    /// Get maximum height, if set.
+    pub fn max_height(&self) -> Option<u64> {
+        self.max_height
+    }
+
+    /// Get maximum pixels, if set.
+    pub fn max_pixels(&self) -> Option<u64> {
+        self.max_pixels
+    }
+
+    /// Get maximum memory bytes, if set.
+    pub fn max_memory_bytes(&self) -> Option<u64> {
+        self.max_memory_bytes
+    }
 }
 
 // ── LosslessConfig ──────────────────────────────────────────────────────────
@@ -991,10 +1075,7 @@ mod tests {
 
     #[test]
     fn test_limits_check() {
-        let limits = Limits {
-            max_width: Some(100),
-            ..Default::default()
-        };
+        let limits = Limits::new().with_max_width(100);
         let cfg = LosslessConfig::new();
         let req = cfg
             .encode_request(200, 100, PixelLayout::Rgb8)
