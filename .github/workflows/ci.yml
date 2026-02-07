@@ -107,6 +107,80 @@ jobs:
         run: cross test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --target ${{ matrix.target }}
 
   # ==========================================================================
+  # WASM Build Check (wasm32 + simd128)
+  # ==========================================================================
+  test-wasm:
+    name: WASM Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build for WASM
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+        run: cargo build -p jxl_encoder --no-default-features --features "${{ env.CI_FEATURES }}" --target wasm32-wasip1
+
+  # ==========================================================================
+  # Code Coverage
+  # ==========================================================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ==========================================================================
+  # RD Regression (main branch only)
+  # ==========================================================================
+  rd-regression:
+    name: RD Regression
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run RD regression
+        run: cargo test -p jxl_encoder --release --no-default-features --features "${{ env.CI_FEATURES }}" --test clic2025 test_rd_regression -- --ignored --nocapture
+
+  # ==========================================================================
   # Clippy
   # ==========================================================================
   clippy:
