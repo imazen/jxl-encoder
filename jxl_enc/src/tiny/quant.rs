@@ -1298,8 +1298,7 @@ mod weight_debug_tests {
         let w_y = quant_weights(0, 1); // DCT8, Y channel
         println!("DCT8 Y channel quant_weights()[0..8]:");
         for (i, &wi) in w_y.iter().enumerate().take(8) {
-            println!("  [{}] = {:.6e}  (reciprocal = {:.6e})", i, wi, 1.0 / wi
-            );
+            println!("  [{}] = {:.6e}  (reciprocal = {:.6e})", i, wi, 1.0 / wi);
         }
     }
 }

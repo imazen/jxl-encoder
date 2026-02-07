@@ -10,7 +10,7 @@
 //! Port of libjxl's `FindBestSplit` algorithm from `enc_ma.cc`.
 
 use super::channel::{Channel, ModularImage};
-use super::predictor::{Neighbors, Predictor, pack_signed};
+use super::predictor::{Neighbors, Predictor, WeightedPredictorState, pack_signed};
 use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts};
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
@@ -27,7 +27,8 @@ const GATHER_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
 const NUM_PROPERTIES: usize = 16;
 
 /// Candidate predictors for tree learning.
-/// Weighted is skipped for now (requires WP state tracking per candidate).
+/// All spatial predictors except Weighted (WP has a known bit-exactness issue
+/// vs decoders that needs debugging before it can be used in tree learning).
 const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Zero,
     Predictor::Left,
@@ -35,10 +36,18 @@ const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Average0,
     Predictor::Select,
     Predictor::Gradient,
+    Predictor::TopRight,
+    Predictor::TopLeft,
+    Predictor::LeftLeft,
+    Predictor::Average1,
+    Predictor::Average2,
+    Predictor::Average3,
+    Predictor::Average4,
 ];
 
 /// Properties to consider for splits. Indices into the spec property array.
-/// Skip GroupId (1), FloorLog2 variants (not in spec), and WpMaxError (15).
+/// Skip GroupId (1) which is redundant for single-group images.
+/// Skip WpMaxError (15) until WP bit-exactness issue is resolved.
 const SPLIT_PROPERTIES: &[usize] = &[
     0,  // Channel
     2,  // Y
@@ -152,6 +161,9 @@ fn gather_channel_samples(
         return;
     }
 
+    // WP state for computing weighted predictions and property 15
+    let mut wp_state = WeightedPredictorState::with_defaults(width);
+
     // prev_gradient tracks the gradient from the previous pixel in scan order.
     // Property 8 = W - prev_gradient. At the start of each row, prev_gradient = 0.
     let mut prev_gradient: i32;
@@ -162,6 +174,10 @@ fn gather_channel_samples(
             let pixel = channel.get(x, y);
 
             let n = Neighbors::gather(channel, x, y);
+
+            // Compute WP prediction and max_error property
+            let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
+
             let props = compute_spec_properties(
                 channel_idx,
                 group_id,
@@ -169,7 +185,7 @@ fn gather_channel_samples(
                 y,
                 &n,
                 prev_gradient,
-                0, // No WP for now
+                wp_max_error,
             );
 
             // Update prev_gradient for next pixel
@@ -177,12 +193,19 @@ fn gather_channel_samples(
 
             // Compute residual for each candidate predictor
             for (pred_idx, &predictor) in CANDIDATE_PREDICTORS.iter().enumerate() {
-                let prediction = predictor.predict_from_neighbors(&n);
+                let prediction = if predictor == Predictor::Weighted {
+                    wp_pred as i32
+                } else {
+                    predictor.predict_from_neighbors(&n)
+                };
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
                 let (token, _extra_bits, _num_extra) = GATHER_HYBRID_UINT.encode(packed);
                 samples.residual_tokens[pred_idx].push(token);
             }
+
+            // Update WP error tracking with actual pixel value
+            wp_state.update_errors(pixel, x, y, width);
 
             // Store property values
             for (prop_list, &val) in samples
@@ -637,6 +660,7 @@ pub fn collect_residuals_with_tree(
             continue;
         }
 
+        let mut wp_state = WeightedPredictorState::with_defaults(width);
         let mut prev_gradient: i32;
 
         for y in 0..height {
@@ -644,6 +668,10 @@ pub fn collect_residuals_with_tree(
             for x in 0..width {
                 let pixel = channel.get(x, y);
                 let n = Neighbors::gather(channel, x, y);
+
+                // Compute WP prediction and property
+                let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
+
                 let props = compute_spec_properties(
                     ch_idx as u32,
                     group_id,
@@ -651,7 +679,7 @@ pub fn collect_residuals_with_tree(
                     y,
                     &n,
                     prev_gradient,
-                    0, // No WP
+                    wp_max_error,
                 );
                 prev_gradient = props[9];
 
@@ -659,9 +687,16 @@ pub fn collect_residuals_with_tree(
                 let leaf = traverse_with_spec_props(tree, &props);
 
                 // Predict using leaf's predictor
-                let prediction = leaf.predictor.predict_from_neighbors(&n);
+                let prediction = if leaf.predictor == Predictor::Weighted {
+                    wp_pred as i32
+                } else {
+                    leaf.predictor.predict_from_neighbors(&n)
+                };
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
+
+                // Update WP error tracking
+                wp_state.update_errors(pixel, x, y, width);
 
                 // Store raw packed residual — UintCoder (HybridUint {4,2,0}) encoding
                 // is applied by build_entropy_code_ans and write_tokens_ans
