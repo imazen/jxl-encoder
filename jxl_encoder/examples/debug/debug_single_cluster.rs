@@ -1,4 +1,4 @@
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 /// Debug single-cluster vs multi-cluster encoding
 ///
 /// This test compares the bitstream structure between images that result in

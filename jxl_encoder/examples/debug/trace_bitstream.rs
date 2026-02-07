@@ -1,4 +1,4 @@
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 /// Trace bitstream encoding bit-by-bit for debugging
 ///
 /// Compares vertical (failing) vs horizontal (working) at 33x33

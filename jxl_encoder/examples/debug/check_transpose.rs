@@ -1,5 +1,5 @@
 #![allow(unused)]
-use jxl_enc::vardct::tokenize::ZIGZAG_ORDER_8X8;
+use jxl_encoder::vardct::tokenize::ZIGZAG_ORDER_8X8;
 
 fn main() {
     println!("ZIGZAG_ORDER_8X8 interpretation:");

@@ -1,4 +1,4 @@
-use jxl_enc::encoder::Encoder;
+use jxl_encoder::encoder::Encoder;
 
 fn main() {
     let mut pixels = vec![0u8; 8 * 8 * 3];

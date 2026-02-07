@@ -1,4 +1,4 @@
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 /// Compare vertical (failing) vs horizontal (working) encoding in detail
 ///
 /// Focus on finding the difference that causes vertical to fail

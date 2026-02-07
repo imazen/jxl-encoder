@@ -32,7 +32,7 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
         .collect();
 
     // Encode
-    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
     let bytes = encoder
         .encode(width, height, &linear_rgb)
         .expect("Encoding failed");

@@ -1123,7 +1123,7 @@ mod tests {
     }
 
     /// Print weight statistics per strategy/channel for diagnostics.
-    /// Use `cargo test -p jxl_enc --lib test_dct4x8_position8_weight -- --nocapture` to see output.
+    /// Use `cargo test -p jxl_encoder --lib test_dct4x8_position8_weight -- --nocapture` to see output.
     #[test]
     fn test_dct4x8_position8_weight() {
         // Check DCT4X8 weights, especially position 8 (DC difference)

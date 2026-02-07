@@ -1,4 +1,4 @@
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 /// Trace hskip encoding bit-by-bit to find the mismatch
 ///
 /// For 33x33 vertical gradient:

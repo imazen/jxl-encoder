@@ -6,7 +6,7 @@
 //! Three-layer public API: Config → Request → Encoder.
 //!
 //! ```rust,no_run
-//! use jxl_enc::api::{LosslessConfig, LossyConfig, PixelLayout};
+//! use jxl_encoder::api::{LosslessConfig, LossyConfig, PixelLayout};
 //!
 //! # let pixels = vec![0u8; 800 * 600 * 3];
 //! // Lossless (modular)
@@ -18,7 +18,7 @@
 //! let jxl = LossyConfig::new(1.0)
 //!     .encode_request(800, 600, PixelLayout::Rgb8)
 //!     .encode(&pixels)?;
-//! # Ok::<_, jxl_enc::api::At<jxl_enc::api::EncodeError>>(())
+//! # Ok::<_, jxl_encoder::api::At<jxl_encoder::api::EncodeError>>(())
 //! ```
 
 pub use crate::tiny::Lz77Method;

@@ -38,7 +38,7 @@ fn main() {
 
     // Encode
     eprintln!("Encoding {}x{}...", width, height);
-    let encoder = jxl_enc::tiny::TinyEncoder::new(1.0);
+    let encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
     let bytes = encoder
         .encode(width as usize, height as usize, &linear_rgb)
         .expect("Encoding failed");

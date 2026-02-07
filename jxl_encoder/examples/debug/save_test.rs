@@ -12,7 +12,7 @@ fn main() {
         }
     }
 
-    let encoded = jxl_enc::encoder::encode_lossy_rgb8(&data, w, h, 1.0).unwrap();
+    let encoded = jxl_encoder::encoder::encode_lossy_rgb8(&data, w, h, 1.0).unwrap();
     std::fs::write("/tmp/test_32x40.jxl", &encoded).unwrap();
     eprintln!("Wrote {} bytes to /tmp/test_32x40.jxl", encoded.len());
 
@@ -46,7 +46,7 @@ fn main() {
         }
     }
 
-    let encoded2 = jxl_enc::encoder::encode_lossy_rgb8(&data2, w2, h2, 1.0).unwrap();
+    let encoded2 = jxl_encoder::encoder::encode_lossy_rgb8(&data2, w2, h2, 1.0).unwrap();
     std::fs::write("/tmp/test_40x32.jxl", &encoded2).unwrap();
     eprintln!("Wrote {} bytes to /tmp/test_40x32.jxl", encoded2.len());
 

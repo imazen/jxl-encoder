@@ -1,5 +1,5 @@
 /// Test alphabet size 54 specifically
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 use std::io::Cursor;
 
 fn generate_pattern(size: usize, scale: u8) -> Vec<u8> {

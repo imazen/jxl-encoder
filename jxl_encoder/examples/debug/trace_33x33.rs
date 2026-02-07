@@ -1,5 +1,5 @@
 /// Trace 33x33 encoding in detail to find the bug
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 use std::io::Cursor;
 
 fn generate_vertical(size: usize) -> Vec<u8> {

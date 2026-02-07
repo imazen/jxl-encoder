@@ -5,7 +5,7 @@
 //! - DCT will have large coefficients in the first column (DC and vertical frequencies)
 //! - AC coefficients in other columns will be ~0
 
-use jxl_enc::encoder::encode_lossy_rgb8;
+use jxl_encoder::encoder::encode_lossy_rgb8;
 use std::io::Cursor;
 
 fn generate_vertical_gray(width: usize, height: usize) -> Vec<u8> {

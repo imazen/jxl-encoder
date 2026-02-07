@@ -24,7 +24,7 @@ fn main() {
             }
         }
 
-        let v_encoded = jxl_enc::encoder::encode_lossy_rgb8(&v_data, w, h, 1.0).unwrap();
+        let v_encoded = jxl_encoder::encoder::encode_lossy_rgb8(&v_data, w, h, 1.0).unwrap();
         let v_result = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&v_encoded))
             .and_then(|img| img.render_frame(0));

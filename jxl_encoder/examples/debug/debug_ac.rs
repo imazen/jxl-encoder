@@ -1,7 +1,7 @@
 //! Debug AC coefficient values
 
-use jxl_enc::color::xyb::srgb_to_xyb;
-use jxl_enc::vardct::quant_weights::get_dct8_inv_dequant_per_channel;
+use jxl_encoder::color::xyb::srgb_to_xyb;
+use jxl_encoder::vardct::quant_weights::get_dct8_inv_dequant_per_channel;
 use std::f32::consts::PI;
 
 fn dct8x8(input: &[[f32; 8]; 8]) -> [[f32; 8]; 8] {

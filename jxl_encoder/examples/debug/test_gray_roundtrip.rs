@@ -1,6 +1,6 @@
-use jxl_enc::color::xyb::srgb_to_xyb;
-use jxl_enc::encoder::encode_lossy_rgb8;
-use jxl_enc::vardct::quantizer::QuantizerParams;
+use jxl_encoder::color::xyb::srgb_to_xyb;
+use jxl_encoder::encoder::encode_lossy_rgb8;
+use jxl_encoder::vardct::quantizer::QuantizerParams;
 
 fn main() {
     // Test uniform gray 128

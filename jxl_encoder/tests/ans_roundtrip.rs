@@ -1,8 +1,10 @@
 //! Test ANS histogram serialization roundtrip.
 
-use jxl_enc::bit_writer::BitWriter;
-use jxl_enc::entropy_coding::ans::{ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution};
-use jxl_enc::entropy_coding::histogram::Histogram;
+use jxl_encoder::bit_writer::BitWriter;
+use jxl_encoder::entropy_coding::ans::{
+    ANSEncodingHistogram, ANSHistogramStrategy, AnsDistribution,
+};
+use jxl_encoder::entropy_coding::histogram::Histogram;
 
 #[test]
 fn test_single_symbol_histogram() {
@@ -147,8 +149,8 @@ fn test_distribution_from_histogram() {
 /// (Uses raw symbols 0-3, not HybridUint encoded values)
 #[test]
 fn test_full_ans_token_roundtrip() {
-    use jxl_enc::entropy_coding::ans::{AnsDistribution, AnsEncoder};
-    use jxl_enc::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+    use jxl_encoder::entropy_coding::ans::{AnsDistribution, AnsEncoder};
+    use jxl_encoder::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
 
     // Create a simple histogram
     let histo = Histogram::from_counts(&[100, 50, 25, 10]);

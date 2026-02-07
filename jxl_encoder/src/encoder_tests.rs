@@ -3248,7 +3248,7 @@ mod dual_decoder_butteraugli_tests {
     #[test]
     #[ignore = "Real photo quality test - run with: cargo test test_frymire_quality -- --ignored --nocapture"]
     fn test_frymire_quality() {
-        // frymire.png is stored in jxl_enc/tests/images/
+        // frymire.png is stored in jxl_encoder/tests/images/
         let frymire_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/images/frymire.png");
 
         let Some((original, width, height)) = load_png(frymire_path) else {
