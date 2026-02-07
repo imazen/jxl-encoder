@@ -26,8 +26,7 @@ pub mod trace;
 // Re-export new API as primary
 pub use api::{
     At, EncodeError, EncodeRequest, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method,
-    PixelLayout, Quality, ResultAtExt, Stop, Unstoppable, at, encode_lossless_rgb8,
-    encode_lossless_rgba8, encode_lossy_rgb8,
+    PixelLayout, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
 
 // Old API is pub(crate) — use LosslessConfig/LossyConfig instead.
