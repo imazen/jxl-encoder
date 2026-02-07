@@ -113,6 +113,12 @@ struct Args {
     #[arg(long)]
     tree_learning: bool,
 
+    /// Enable squeeze (Haar wavelet) transform for lossless encoding.
+    /// Decomposes channels into multi-resolution average+residual pairs.
+    /// Enables progressive decoding. Off by default.
+    #[arg(long)]
+    squeeze: bool,
+
     /// Enable iterative rate control for improved distance targeting.
     /// Encodes multiple times, adjusting quantization to match target distance.
     /// Requires the rate-control feature. Off by default.
@@ -301,6 +307,7 @@ fn main() {
                     force_modular: true,
                     use_ans: !args.no_ans || args.tree_learning,
                     use_tree_learning: args.tree_learning,
+                    use_squeeze: args.squeeze,
                     ..Default::default()
                 };
                 let encoder = Encoder::with_options(options);
