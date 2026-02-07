@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+  # Default features include butteraugli-loop which requires path deps to sibling repos.
+  # CI uses --no-default-features with only safe-mode enabled.
+  CI_FEATURES: "safe-mode"
+
+jobs:
+  # ==========================================================================
+  # Native x64 testing
+  # ==========================================================================
+  build-x64:
+    name: Build x64 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}"
+
+      # Note: cargo test requires dev-dependencies (jxl-rs, jxl-oxide, etc.)
+      # which use path deps to sibling repos not available in CI.
+      # Only lib unit tests (no integration tests) could potentially work.
+      - name: Run lib unit tests
+        run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
+
+  # ==========================================================================
+  # Native ARM64 testing
+  # ==========================================================================
+  build-aarch64:
+    name: Build aarch64 (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04-arm, name: Linux }
+          - { os: macos-latest, name: macOS }
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace
+        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}"
+
+      - name: Run lib unit tests
+        run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
+
+  # ==========================================================================
+  # Cross-compiled testing with QEMU emulation (32-bit targets)
+  # ==========================================================================
+  build-cross:
+    name: Cross (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (cross)
+        run: cross build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --target ${{ matrix.target }}
+
+      - name: Test lib (cross/QEMU)
+        run: cross test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --target ${{ matrix.target }}
+
+  # ==========================================================================
+  # Clippy
+  # ==========================================================================
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --no-default-features --features "${{ env.CI_FEATURES }}" -- -D warnings
+
+  # ==========================================================================
+  # Format check
+  # ==========================================================================
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt --all -- --check
