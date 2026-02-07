@@ -47,7 +47,10 @@ const CANDIDATE_PREDICTORS: &[Predictor] = &[
 
 /// Properties to consider for splits. Indices into the spec property array.
 /// Skip GroupId (1) which is redundant for single-group images.
-/// Skip WpMaxError (15) until WP bit-exactness issue is resolved.
+/// WpMaxError (15) requires bit-exact WP state matching between encoder and decoder.
+/// Our WP golden-number test passes (bit-exact with jxl-rs), so property 15 should be safe.
+/// However, 128x128 gray gradient roundtrip failed with property 15 enabled.
+/// Root cause TBD. Disabled until debugged.
 const SPLIT_PROPERTIES: &[usize] = &[
     0,  // Channel
     2,  // Y
