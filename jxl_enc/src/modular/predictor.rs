@@ -705,4 +705,62 @@ mod tests {
         }
         // Just verify it doesn't panic
     }
+
+    /// Reproduce jxl-rs golden-number test to verify bit-exactness.
+    #[test]
+    fn test_wp_matches_jxl_rs_golden() {
+        struct SimpleRandom {
+            out: i64,
+        }
+        impl SimpleRandom {
+            fn new() -> Self {
+                Self { out: 1 }
+            }
+            fn next(&mut self) -> i64 {
+                self.out = self.out * 48271 % 0x7fffffff;
+                self.out
+            }
+        }
+
+        let mut rng = SimpleRandom::new();
+        let params = WeightedPredictorParams {
+            p1c: rng.next() as u32 % 32,
+            p2c: rng.next() as u32 % 32,
+            p3ca: rng.next() as u32 % 32,
+            p3cb: rng.next() as u32 % 32,
+            p3cc: rng.next() as u32 % 32,
+            p3cd: rng.next() as u32 % 32,
+            p3ce: rng.next() as u32 % 32,
+            w0: rng.next() as u32 % 16,
+            w1: rng.next() as u32 % 16,
+            w2: rng.next() as u32 % 16,
+            w3: rng.next() as u32 % 16,
+        };
+        let xsize = 8;
+        let ysize = 8;
+        let mut state = WeightedPredictorState::new(&params, xsize);
+
+        // Helper: one step of predict + update
+        let step = |rng: &mut SimpleRandom, state: &mut WeightedPredictorState| -> (i64, i32) {
+            let x = rng.next() as usize % xsize;
+            let y = rng.next() as usize % ysize;
+            let neighbors = Neighbors {
+                n: rng.next() as i32 % 256,  // top
+                w: rng.next() as i32 % 256,  // left
+                ne: rng.next() as i32 % 256, // topright
+                nw: rng.next() as i32 % 256, // topleft
+                nn: rng.next() as i32 % 256, // toptop
+                ww: 0,
+            };
+            let res = state.predict_and_property(x, y, xsize, &neighbors);
+            state.update_errors((rng.next() % 256) as i32, x, y, xsize);
+            res
+        };
+
+        // Golden numbers from libjxl (verified in jxl-rs test)
+        assert_eq!(step(&mut rng, &mut state), (135, 0), "step 1");
+        assert_eq!(step(&mut rng, &mut state), (110, -60), "step 2");
+        assert_eq!(step(&mut rng, &mut state), (165, 0), "step 3");
+        assert_eq!(step(&mut rng, &mut state), (153, -60), "step 4");
+    }
 }

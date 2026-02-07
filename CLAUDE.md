@@ -1658,7 +1658,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 
 - [ ] Rename `EncoderOptions` → `EncoderConfig` (match all other codecs)
 - [ ] Add builder pattern to `EncoderConfig` (method chaining like zenwebp/zenjpeg)
-- [ ] Add streaming encoder pattern: `push()`/`finish()`/`finish_into()`/`finish_to()`
+- [ ] Add streaming encoder pattern: `push()`/`finish()` → Vec, `finish_into()` → caller buf, `finish_to(impl Write)` → std-only
 - [ ] Add cancellation support via `S: Stop` generic (from `enough` crate)
 - [ ] Add `At<>` error location tracking (from `whereat` crate)
 - [ ] Change dimension types from `usize` to `u32`
