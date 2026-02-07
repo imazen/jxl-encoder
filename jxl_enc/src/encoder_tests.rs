@@ -3645,6 +3645,23 @@ mod tree_learning_tests {
         }
         validate_tree_learning_roundtrip_rgb(&data, 300, 300, "tree_rgb_multi_300x300");
     }
+
+    /// Tree learning + palette auto-detect for few-color RGB image.
+    #[test]
+    fn test_tree_learning_palette_rgb_4_colors_32x32() {
+        let colors: [[u8; 3]; 4] = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
+        let mut data = vec![0u8; 32 * 32 * 3];
+        for y in 0..32 {
+            for x in 0..32 {
+                let c = &colors[(y / 16 * 2 + x / 16) % 4];
+                let i = (y * 32 + x) * 3;
+                data[i] = c[0];
+                data[i + 1] = c[1];
+                data[i + 2] = c[2];
+            }
+        }
+        validate_tree_learning_roundtrip_rgb(&data, 32, 32, "tree_palette_4colors_32x32");
+    }
 }
 
 // ===== Palette transform roundtrip tests =====
