@@ -123,6 +123,10 @@ pub enum PixelLayout {
     Rgb8,
     /// 8-bit sRGB + alpha, 4 bytes per pixel (R, G, B, A).
     Rgba8,
+    /// 8-bit sRGB in BGR order, 3 bytes per pixel (B, G, R).
+    Bgr8,
+    /// 8-bit sRGB in BGRA order, 4 bytes per pixel (B, G, R, A).
+    Bgra8,
     /// 8-bit grayscale, 1 byte per pixel.
     Gray8,
     /// 8-bit grayscale + alpha, 2 bytes per pixel.
@@ -135,8 +139,8 @@ impl PixelLayout {
     /// Bytes per pixel for this layout.
     pub const fn bytes_per_pixel(self) -> usize {
         match self {
-            Self::Rgb8 => 3,
-            Self::Rgba8 => 4,
+            Self::Rgb8 | Self::Bgr8 => 3,
+            Self::Rgba8 | Self::Bgra8 => 4,
             Self::Gray8 => 1,
             Self::GrayAlpha8 => 2,
             Self::RgbLinearF32 => 12,
@@ -150,7 +154,7 @@ impl PixelLayout {
 
     /// Whether this layout includes an alpha channel.
     pub const fn has_alpha(self) -> bool {
-        matches!(self, Self::Rgba8 | Self::GrayAlpha8)
+        matches!(self, Self::Rgba8 | Self::Bgra8 | Self::GrayAlpha8)
     }
 }
 
@@ -764,14 +768,6 @@ impl<'a> EncodeRequest<'a> {
         cfg: &LosslessConfig,
         pixels: &[u8],
     ) -> core::result::Result<Vec<u8>, EncodeError> {
-        match self.layout {
-            PixelLayout::Rgb8
-            | PixelLayout::Rgba8
-            | PixelLayout::Gray8
-            | PixelLayout::GrayAlpha8 => {}
-            other => return Err(EncodeError::UnsupportedPixelLayout(other)),
-        }
-
         let options = crate::encoder::EncoderOptions {
             distance: 0.0,
             effort: cfg.effort,
@@ -792,11 +788,15 @@ impl<'a> EncodeRequest<'a> {
         let result = match self.layout {
             PixelLayout::Rgb8 => encoder.encode_rgb8(pixels, w, h),
             PixelLayout::Rgba8 => encoder.encode_rgba8(pixels, w, h),
+            PixelLayout::Bgr8 => encoder.encode_rgb8(&bgr_to_rgb(pixels, 3), w, h),
+            PixelLayout::Bgra8 => encoder.encode_rgba8(&bgr_to_rgb(pixels, 4), w, h),
             PixelLayout::Gray8 => encoder.encode_gray8(pixels, w, h),
             PixelLayout::GrayAlpha8 => {
                 return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::GrayAlpha8));
             }
-            _ => unreachable!(),
+            PixelLayout::RgbLinearF32 => {
+                return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::RgbLinearF32));
+            }
         };
         result.map_err(EncodeError::from)
     }
@@ -814,9 +814,14 @@ impl<'a> EncodeRequest<'a> {
         // Build linear f32 RGB from input layout
         let linear_rgb = match self.layout {
             PixelLayout::Rgb8 => srgb_u8_to_linear_f32(pixels, 3),
+            PixelLayout::Bgr8 => srgb_u8_to_linear_f32(&bgr_to_rgb(pixels, 3), 3),
             PixelLayout::Rgba8 => {
                 // Drop alpha, VarDCT only encodes RGB
-                srgb_u8_to_linear_f32_drop_alpha(pixels)
+                srgb_u8_to_linear_f32_drop_alpha(pixels, 4)
+            }
+            PixelLayout::Bgra8 => {
+                // Reorder B,G,R,A → R,G,B,A then drop alpha
+                srgb_u8_to_linear_f32_drop_alpha(&bgr_to_rgb(pixels, 4), 4)
             }
             PixelLayout::RgbLinearF32 => {
                 // Already linear — reinterpret bytes as f32
@@ -879,8 +884,8 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
         .collect()
 }
 
-fn srgb_u8_to_linear_f32_drop_alpha(data: &[u8]) -> Vec<f32> {
-    data.chunks(4)
+fn srgb_u8_to_linear_f32_drop_alpha(data: &[u8], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
         .flat_map(|px| {
             [
                 srgb_to_linear(px[0]),
@@ -889,6 +894,15 @@ fn srgb_u8_to_linear_f32_drop_alpha(data: &[u8]) -> Vec<f32> {
             ]
         })
         .collect()
+}
+
+/// Swap B and R channels in-place equivalent: BGR(A) → RGB(A).
+fn bgr_to_rgb(data: &[u8], stride: usize) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for chunk in out.chunks_mut(stride) {
+        chunk.swap(0, 2);
+    }
+    out
 }
 
 /// Safe cast from &[u8] to &[f32] without bytemuck dependency.
@@ -942,11 +956,14 @@ mod tests {
     fn test_pixel_layout_helpers() {
         assert_eq!(PixelLayout::Rgb8.bytes_per_pixel(), 3);
         assert_eq!(PixelLayout::Rgba8.bytes_per_pixel(), 4);
+        assert_eq!(PixelLayout::Bgr8.bytes_per_pixel(), 3);
+        assert_eq!(PixelLayout::Bgra8.bytes_per_pixel(), 4);
         assert_eq!(PixelLayout::Gray8.bytes_per_pixel(), 1);
         assert!(!PixelLayout::Rgb8.is_linear());
         assert!(PixelLayout::RgbLinearF32.is_linear());
         assert!(!PixelLayout::Rgb8.has_alpha());
         assert!(PixelLayout::Rgba8.has_alpha());
+        assert!(PixelLayout::Bgra8.has_alpha());
         assert!(PixelLayout::GrayAlpha8.has_alpha());
     }
 
@@ -1034,6 +1051,28 @@ mod tests {
             result.as_ref().map_err(|e| e.error()),
             Err(EncodeError::UnsupportedPixelLayout(_))
         ));
+    }
+
+    #[test]
+    fn test_bgra_lossless() {
+        // 4x4 red image in BGRA (B=0, G=0, R=255, A=255)
+        let pixels = [0u8, 0, 255, 255].repeat(16);
+        let result = LosslessConfig::new().encode(&pixels, 4, 4, PixelLayout::Bgra8);
+        assert!(result.is_ok());
+        let jxl = result.unwrap();
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
+    }
+
+    #[test]
+    fn test_bgra_lossy() {
+        // 8x8 blue image in BGRA (B=255, G=0, R=0, A=255)
+        let pixels = [255u8, 0, 0, 255].repeat(64);
+        let result = LossyConfig::new(2.0)
+            .with_gaborish(false)
+            .encode(&pixels, 8, 8, PixelLayout::Bgra8);
+        assert!(result.is_ok());
+        let jxl = result.unwrap();
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
     }
 
     #[test]
