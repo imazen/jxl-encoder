@@ -908,14 +908,8 @@ impl<'a> EncodeRequest<'a> {
                 srgb_u8_to_linear_f32_drop_alpha(&bgr_to_rgb(pixels, 4), 4)
             }
             PixelLayout::RgbLinearF32 => {
-                // Already linear — reinterpret bytes as f32
-                if !pixels.len().is_multiple_of(4) {
-                    return Err(EncodeError::InvalidInput {
-                        message: "RgbLinearF32 buffer not aligned to 4 bytes".into(),
-                    });
-                }
-                let floats: &[f32] = bytemuck_cast_f32(pixels);
-                floats.to_vec()
+                // Already linear — convert bytes to f32
+                bytes_to_f32_vec(pixels)
             }
             PixelLayout::Gray8 | PixelLayout::GrayAlpha8 => {
                 return Err(EncodeError::UnsupportedPixelLayout(self.layout));
@@ -989,19 +983,12 @@ fn bgr_to_rgb(data: &[u8], stride: usize) -> Vec<u8> {
     out
 }
 
-/// Safe cast from &[u8] to &[f32] without bytemuck dependency.
-fn bytemuck_cast_f32(bytes: &[u8]) -> &[f32] {
-    assert!(bytes.len().is_multiple_of(4));
-    assert!(
-        (bytes.as_ptr() as usize).is_multiple_of(core::mem::align_of::<f32>()) || bytes.is_empty()
-    );
-    // SAFETY: we verified alignment and length
-    // Note: this is the ONE place we need unsafe for reinterpret cast.
-    // We don't add bytemuck as a dep for this single use.
-    #[allow(unsafe_code)]
-    unsafe {
-        core::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4)
-    }
+/// Safe conversion from &[u8] to Vec<f32>.
+fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 

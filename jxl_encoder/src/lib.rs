@@ -8,7 +8,7 @@
 //! This crate provides a complete JPEG XL encoder implementation, supporting
 //! both lossless (modular) and lossy (VarDCT) encoding modes.
 
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 pub mod api;
 pub mod bit_writer;
