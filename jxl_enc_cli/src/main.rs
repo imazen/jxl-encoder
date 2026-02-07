@@ -6,21 +6,11 @@
 //! Command-line JPEG XL encoder.
 
 use clap::Parser;
-use jxl_enc::{Encoder, EncoderOptions};
+use jxl_enc::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
-
-/// sRGB to linear conversion (exact IEC 61966-2-1 transfer function).
-fn srgb_to_linear(c: u8) -> f32 {
-    let c = c as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
 
 #[derive(Parser, Debug)]
 #[command(name = "cjxl-rs")]
@@ -160,7 +150,6 @@ fn main() {
     } else if let Some(d) = args.distance {
         d
     } else {
-        // Convert quality to distance (approximate mapping)
         quality_to_distance(args.quality)
     };
 
@@ -190,158 +179,126 @@ fn main() {
         println!("Image:    {}x{} {:?}", width, height, color_type);
     }
 
-    // Encode
-    let encoded = match color_type {
-        png::ColorType::Rgb => {
-            if distance > 0.0 {
-                // Use TinyEncoder (VarDCT) for lossy RGB
-                let mut tiny = jxl_enc::tiny::TinyEncoder::new(distance);
-                if args.no_optimize_codes {
-                    tiny.optimize_codes = false;
-                }
-                if args.no_ans {
-                    tiny.use_ans = false;
-                }
-                if args.no_custom_orders {
-                    tiny.custom_orders = false;
-                }
-                if args.noise || args.denoise {
-                    tiny.enable_noise = true;
-                }
-                if args.denoise {
-                    tiny.enable_denoise = true;
-                }
-                if args.no_gaborish {
-                    tiny.enable_gaborish = false;
-                }
-                if args.dct8_only {
-                    tiny.force_strategy = Some(0); // RAW_STRATEGY_DCT8 = 0
-                }
-                if let Some(s) = args.force_strategy {
-                    tiny.force_strategy = Some(s);
-                }
-                if args.no_error_diffusion {
-                    tiny.error_diffusion = false;
-                }
-                if args.no_pixel_domain_loss {
-                    tiny.pixel_domain_loss = false;
-                }
-                if args.lz77 {
-                    tiny.enable_lz77 = true;
-                    tiny.lz77_method = match args.lz77_method.to_lowercase().as_str() {
-                        "rle" => jxl_enc::tiny::Lz77Method::Rle,
-                        "greedy" => jxl_enc::tiny::Lz77Method::Greedy,
-                        other => {
-                            eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
-                            jxl_enc::tiny::Lz77Method::Greedy
-                        }
-                    };
-                }
-
-                #[cfg(feature = "butteraugli-loop")]
-                {
-                    let iters = if args.no_butteraugli {
-                        0
-                    } else {
-                        args.butteraugli_iters
-                    };
-                    tiny.butteraugli_iters = iters;
-                    if !args.quiet && iters > 0 {
-                        println!("Butteraugli loop: {} iterations", iters);
-                    }
-                }
-                #[cfg(not(feature = "butteraugli-loop"))]
-                if args.butteraugli_iters > 0 && !args.no_butteraugli {
-                    eprintln!("Warning: --butteraugli-iters requires the butteraugli-loop feature");
-                    eprintln!("Rebuild with: cargo build --features butteraugli-loop");
-                }
-
-                // Convert sRGB u8 to linear f32 for the tiny encoder
-                let linear_rgb: Vec<f32> = data
-                    .chunks(3)
-                    .flat_map(|px| {
-                        [
-                            srgb_to_linear(px[0]),
-                            srgb_to_linear(px[1]),
-                            srgb_to_linear(px[2]),
-                        ]
-                    })
-                    .collect();
-
-                // Use rate control if enabled and feature is available
-                #[cfg(feature = "rate-control")]
-                if args.rate_control {
-                    let config = jxl_enc::tiny::RateControlConfig {
-                        max_iterations: args.rc_iterations,
-                        ..Default::default()
-                    };
-                    let result = tiny.encode_with_rate_control_config(
-                        width as usize,
-                        height as usize,
-                        &linear_rgb,
-                        &config,
-                    );
-                    if !args.quiet
-                        && let Ok((_, iters)) = &result
-                    {
-                        println!("Rate control converged in {} iterations", iters);
-                    }
-                    result.map(|(data, _)| data)
-                } else {
-                    tiny.encode(width as usize, height as usize, &linear_rgb)
-                }
-
-                #[cfg(not(feature = "rate-control"))]
-                {
-                    if args.rate_control {
-                        eprintln!("Warning: --rate-control requires the rate-control feature");
-                        eprintln!("Rebuild with: cargo build --features rate-control");
-                    }
-                    tiny.encode(width as usize, height as usize, &linear_rgb)
-                }
-            } else {
-                // Use modular for lossless
-                let options = EncoderOptions {
-                    distance,
-                    effort: args.effort,
-                    force_modular: true,
-                    use_ans: !args.no_ans || args.tree_learning,
-                    use_tree_learning: args.tree_learning,
-                    use_squeeze: args.squeeze,
-                    ..Default::default()
-                };
-                let encoder = Encoder::with_options(options);
-                encoder.encode_rgb8(&data, width as usize, height as usize)
-            }
+    let lz77_method = match args.lz77_method.to_lowercase().as_str() {
+        "rle" => Lz77Method::Rle,
+        "greedy" => Lz77Method::Greedy,
+        other => {
+            eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
+            Lz77Method::Greedy
         }
-        png::ColorType::Rgba => {
-            let options = EncoderOptions {
-                distance,
-                effort: args.effort,
-                force_modular: distance == 0.0,
-                use_ans: !args.no_ans || args.tree_learning,
-                use_tree_learning: args.tree_learning,
-                ..Default::default()
-            };
-            let encoder = Encoder::with_options(options);
-            encoder.encode_rgba8(&data, width as usize, height as usize)
-        }
-        png::ColorType::Grayscale => {
-            let options = EncoderOptions {
-                distance,
-                effort: args.effort,
-                force_modular: distance == 0.0,
-                use_ans: !args.no_ans || args.tree_learning,
-                use_tree_learning: args.tree_learning,
-                ..Default::default()
-            };
-            let encoder = Encoder::with_options(options);
-            encoder.encode_gray8(&data, width as usize, height as usize)
-        }
+    };
+
+    // Determine pixel layout
+    let layout = match color_type {
+        png::ColorType::Rgb => PixelLayout::Rgb8,
+        png::ColorType::Rgba => PixelLayout::Rgba8,
+        png::ColorType::Grayscale => PixelLayout::Gray8,
         _ => {
             eprintln!("Error: Unsupported color type: {:?}", color_type);
             std::process::exit(1);
         }
+    };
+
+    // Encode using new API
+    let encoded = if distance > 0.0 && matches!(color_type, png::ColorType::Rgb) {
+        // Lossy VarDCT path
+        let mut cfg = LossyConfig::new(distance)
+            .with_effort(args.effort)
+            .with_ans(!args.no_ans)
+            .with_gaborish(!args.no_gaborish)
+            .with_noise(args.noise || args.denoise)
+            .with_denoise(args.denoise)
+            .with_error_diffusion(!args.no_error_diffusion)
+            .with_pixel_domain_loss(!args.no_pixel_domain_loss)
+            .with_lz77(args.lz77)
+            .with_lz77_method(lz77_method);
+
+        if args.dct8_only {
+            cfg = cfg.with_force_strategy(Some(0));
+        }
+        if let Some(s) = args.force_strategy {
+            cfg = cfg.with_force_strategy(Some(s));
+        }
+
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            let iters = if args.no_butteraugli {
+                0
+            } else {
+                args.butteraugli_iters
+            };
+            cfg = cfg.with_butteraugli_iters(iters);
+            if !args.quiet && iters > 0 {
+                println!("Butteraugli loop: {} iterations", iters);
+            }
+        }
+        #[cfg(not(feature = "butteraugli-loop"))]
+        if args.butteraugli_iters > 0 && !args.no_butteraugli {
+            eprintln!("Warning: --butteraugli-iters requires the butteraugli-loop feature");
+            eprintln!("Rebuild with: cargo build --features butteraugli-loop");
+        }
+
+        // Rate control path (uses internal TinyEncoder directly)
+        #[cfg(feature = "rate-control")]
+        if args.rate_control {
+            // Rate control needs the internal TinyEncoder for multi-pass
+            use jxl_enc::tiny::TinyEncoder;
+            let mut tiny = TinyEncoder::new(distance);
+            tiny.use_ans = !args.no_ans;
+            tiny.enable_noise = args.noise || args.denoise;
+            tiny.enable_denoise = args.denoise;
+            tiny.enable_gaborish = !args.no_gaborish;
+            tiny.error_diffusion = !args.no_error_diffusion;
+            tiny.pixel_domain_loss = !args.no_pixel_domain_loss;
+            tiny.enable_lz77 = args.lz77;
+            tiny.lz77_method = lz77_method;
+            if args.dct8_only {
+                tiny.force_strategy = Some(0);
+            }
+            if let Some(s) = args.force_strategy {
+                tiny.force_strategy = Some(s);
+            }
+
+            let linear_rgb = srgb_u8_to_linear_f32(&data);
+            let rc_config = jxl_enc::tiny::RateControlConfig {
+                max_iterations: args.rc_iterations,
+                ..Default::default()
+            };
+            let result = tiny.encode_with_rate_control_config(
+                width as usize,
+                height as usize,
+                &linear_rgb,
+                &rc_config,
+            );
+            if !args.quiet
+                && let Ok((_, iters)) = &result
+            {
+                println!("Rate control converged in {} iterations", iters);
+            }
+            result
+                .map(|(data, _)| data)
+                .map_err(jxl_enc::EncodeError::from)
+        } else {
+            cfg.encode_request(width, height, layout).encode(&data)
+        }
+
+        #[cfg(not(feature = "rate-control"))]
+        {
+            if args.rate_control {
+                eprintln!("Warning: --rate-control requires the rate-control feature");
+                eprintln!("Rebuild with: cargo build --features rate-control");
+            }
+            cfg.encode_request(width, height, layout).encode(&data)
+        }
+    } else {
+        // Lossless modular path (or lossy RGBA/gray which falls through to modular)
+        let cfg = LosslessConfig::new()
+            .with_effort(args.effort)
+            .with_ans(!args.no_ans || args.tree_learning)
+            .with_tree_learning(args.tree_learning)
+            .with_squeeze(args.squeeze);
+
+        cfg.encode_request(width, height, layout).encode(&data)
     };
 
     let encoded = match encoded {
@@ -383,7 +340,6 @@ fn main() {
 }
 
 fn quality_to_distance(quality: u32) -> f32 {
-    // Approximate conversion: quality 100 = distance 0, quality 90 = distance 1
     if quality >= 100 {
         0.0
     } else if quality >= 90 {
@@ -393,6 +349,30 @@ fn quality_to_distance(quality: u32) -> f32 {
     } else {
         2.0 + (70 - quality) as f32 / 10.0
     }
+}
+
+/// sRGB to linear conversion (exact IEC 61966-2-1 transfer function).
+#[cfg(feature = "rate-control")]
+fn srgb_to_linear(c: u8) -> f32 {
+    let c = c as f32 / 255.0;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[cfg(feature = "rate-control")]
+fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
+    data.chunks(3)
+        .flat_map(|px| {
+            [
+                srgb_to_linear(px[0]),
+                srgb_to_linear(px[1]),
+                srgb_to_linear(px[2]),
+            ]
+        })
+        .collect()
 }
 
 #[allow(clippy::type_complexity)]

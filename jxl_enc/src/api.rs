@@ -8,6 +8,7 @@
 //! ```rust,no_run
 //! use jxl_enc::api::{LosslessConfig, LossyConfig, PixelLayout};
 //!
+//! # let pixels = vec![0u8; 800 * 600 * 3];
 //! // Lossless (modular)
 //! let jxl = LosslessConfig::new()
 //!     .encode_request(800, 600, PixelLayout::Rgb8)
@@ -20,7 +21,8 @@
 //! # Ok::<_, jxl_enc::api::EncodeError>(())
 //! ```
 
-use crate::tiny::Lz77Method;
+pub use crate::tiny::Lz77Method;
+pub use enough::{Stop, Unstoppable};
 
 // ── Error type ──────────────────────────────────────────────────────────────
 
@@ -36,11 +38,11 @@ pub enum EncodeError {
     UnsupportedPixelLayout(PixelLayout),
     /// A configured limit was exceeded.
     LimitExceeded { message: String },
-    /// Encoding was cancelled via the `Stop` trait.
+    /// Encoding was cancelled via [`Stop`].
     Cancelled,
     /// Allocation failure.
     Oom(std::collections::TryReserveError),
-    /// I/O error (only with `std` feature / `encode_to`).
+    /// I/O error.
     Io(std::io::Error),
     /// Internal encoder error (should not happen — file a bug).
     Internal { message: String },
@@ -72,6 +74,7 @@ impl std::error::Error for EncodeError {
         }
     }
 }
+
 impl From<crate::error::Error> for EncodeError {
     fn from(e: crate::error::Error) -> Self {
         match e {
@@ -95,6 +98,12 @@ impl From<crate::error::Error> for EncodeError {
 impl From<std::io::Error> for EncodeError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<enough::StopReason> for EncodeError {
+    fn from(_: enough::StopReason) -> Self {
+        Self::Cancelled
     }
 }
 
@@ -241,37 +250,37 @@ impl LosslessConfig {
     }
 
     /// Set effort level (1–10). Higher = slower, better compression.
-    pub fn effort(mut self, effort: u8) -> Self {
+    pub fn with_effort(mut self, effort: u8) -> Self {
         self.effort = effort;
         self
     }
 
     /// Enable/disable ANS entropy coding (default: true).
-    pub fn use_ans(mut self, enable: bool) -> Self {
+    pub fn with_ans(mut self, enable: bool) -> Self {
         self.use_ans = enable;
         self
     }
 
     /// Enable/disable squeeze (Haar wavelet) transform (default: false).
-    pub fn squeeze(mut self, enable: bool) -> Self {
+    pub fn with_squeeze(mut self, enable: bool) -> Self {
         self.squeeze = enable;
         self
     }
 
     /// Enable/disable content-adaptive tree learning (default: false).
-    pub fn tree_learning(mut self, enable: bool) -> Self {
+    pub fn with_tree_learning(mut self, enable: bool) -> Self {
         self.tree_learning = enable;
         self
     }
 
     /// Enable/disable LZ77 backward references (default: false).
-    pub fn lz77(mut self, enable: bool) -> Self {
+    pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = enable;
         self
     }
 
     /// Set LZ77 method (default: Greedy). Only effective when LZ77 is enabled.
-    pub fn lz77_method(mut self, method: Lz77Method) -> Self {
+    pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = method;
         self
     }
@@ -290,6 +299,7 @@ impl LosslessConfig {
             layout,
             metadata: None,
             limits: None,
+            stop: None,
         }
     }
 }
@@ -343,31 +353,31 @@ impl LossyConfig {
     }
 
     /// Set effort level (1–10).
-    pub fn effort(mut self, effort: u8) -> Self {
+    pub fn with_effort(mut self, effort: u8) -> Self {
         self.effort = effort;
         self
     }
 
     /// Enable/disable ANS entropy coding (default: true).
-    pub fn use_ans(mut self, enable: bool) -> Self {
+    pub fn with_ans(mut self, enable: bool) -> Self {
         self.use_ans = enable;
         self
     }
 
     /// Enable/disable gaborish inverse pre-filter (default: true).
-    pub fn gaborish(mut self, enable: bool) -> Self {
+    pub fn with_gaborish(mut self, enable: bool) -> Self {
         self.gaborish = enable;
         self
     }
 
     /// Enable/disable noise synthesis (default: false).
-    pub fn noise(mut self, enable: bool) -> Self {
+    pub fn with_noise(mut self, enable: bool) -> Self {
         self.noise = enable;
         self
     }
 
     /// Enable/disable Wiener denoising pre-filter (default: false). Implies noise.
-    pub fn denoise(mut self, enable: bool) -> Self {
+    pub fn with_denoise(mut self, enable: bool) -> Self {
         self.denoise = enable;
         if enable {
             self.noise = true;
@@ -376,31 +386,31 @@ impl LossyConfig {
     }
 
     /// Enable/disable error diffusion in AC quantization (default: true).
-    pub fn error_diffusion(mut self, enable: bool) -> Self {
+    pub fn with_error_diffusion(mut self, enable: bool) -> Self {
         self.error_diffusion = enable;
         self
     }
 
     /// Enable/disable pixel-domain loss in strategy selection (default: true).
-    pub fn pixel_domain_loss(mut self, enable: bool) -> Self {
+    pub fn with_pixel_domain_loss(mut self, enable: bool) -> Self {
         self.pixel_domain_loss = enable;
         self
     }
 
     /// Enable/disable LZ77 backward references (default: false).
-    pub fn lz77(mut self, enable: bool) -> Self {
+    pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = enable;
         self
     }
 
     /// Set LZ77 method (default: Greedy).
-    pub fn lz77_method(mut self, method: Lz77Method) -> Self {
+    pub fn with_lz77_method(mut self, method: Lz77Method) -> Self {
         self.lz77_method = method;
         self
     }
 
     /// Force a specific AC strategy for all blocks. `None` for auto-selection.
-    pub fn force_strategy(mut self, strategy: Option<u8>) -> Self {
+    pub fn with_force_strategy(mut self, strategy: Option<u8>) -> Self {
         self.force_strategy = strategy;
         self
     }
@@ -408,7 +418,7 @@ impl LossyConfig {
     /// Set butteraugli quantization loop iterations (default: 2).
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
-    pub fn butteraugli_iters(mut self, n: u32) -> Self {
+    pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
         self.butteraugli_iters = n;
         self
     }
@@ -427,6 +437,7 @@ impl LossyConfig {
             layout,
             metadata: None,
             limits: None,
+            stop: None,
         }
     }
 }
@@ -450,18 +461,28 @@ pub struct EncodeRequest<'a> {
     layout: PixelLayout,
     metadata: Option<&'a ImageMetadata<'a>>,
     limits: Option<&'a Limits>,
+    stop: Option<&'a dyn Stop>,
 }
 
 impl<'a> EncodeRequest<'a> {
     /// Attach image metadata (ICC, EXIF, XMP).
-    pub fn metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
+    pub fn with_metadata(mut self, meta: &'a ImageMetadata<'a>) -> Self {
         self.metadata = Some(meta);
         self
     }
 
     /// Attach resource limits.
-    pub fn limits(mut self, limits: &'a Limits) -> Self {
+    pub fn with_limits(mut self, limits: &'a Limits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    /// Attach a cooperative cancellation token.
+    ///
+    /// The encoder will check this periodically and return
+    /// [`EncodeError::Cancelled`] if stopped.
+    pub fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
+        self.stop = Some(stop);
         self
     }
 
@@ -719,10 +740,10 @@ mod tests {
     #[test]
     fn test_lossless_config_builder() {
         let cfg = LosslessConfig::new()
-            .effort(5)
-            .use_ans(false)
-            .squeeze(true)
-            .tree_learning(true);
+            .with_effort(5)
+            .with_ans(false)
+            .with_squeeze(true)
+            .with_tree_learning(true);
         assert_eq!(cfg.effort, 5);
         assert!(!cfg.use_ans);
         assert!(cfg.squeeze);
@@ -731,7 +752,10 @@ mod tests {
 
     #[test]
     fn test_lossy_config_builder() {
-        let cfg = LossyConfig::new(2.0).effort(3).gaborish(false).noise(true);
+        let cfg = LossyConfig::new(2.0)
+            .with_effort(3)
+            .with_gaborish(false)
+            .with_noise(true);
         assert_eq!(cfg.distance, 2.0);
         assert_eq!(cfg.effort, 3);
         assert!(!cfg.gaborish);
@@ -769,7 +793,7 @@ mod tests {
         let cfg = LosslessConfig::new();
         let req = cfg
             .encode_request(200, 100, PixelLayout::Rgb8)
-            .limits(&limits);
+            .with_limits(&limits);
         assert!(req.check_limits().is_err());
     }
 
@@ -797,7 +821,7 @@ mod tests {
             }
         }
         let result = LossyConfig::new(2.0)
-            .gaborish(false)
+            .with_gaborish(false)
             .encode_request(8, 8, PixelLayout::Rgb8)
             .encode(&pixels);
         assert!(result.is_ok());
@@ -822,5 +846,18 @@ mod tests {
             result,
             Err(EncodeError::UnsupportedPixelLayout(_))
         ));
+    }
+
+    #[test]
+    fn test_stop_cancellation() {
+        use enough::Unstoppable;
+        // Unstoppable should not cancel
+        let pixels = vec![128u8; 4 * 4 * 3];
+        let cfg = LosslessConfig::new();
+        let result = cfg
+            .encode_request(4, 4, PixelLayout::Rgb8)
+            .with_stop(&Unstoppable)
+            .encode(&pixels);
+        assert!(result.is_ok());
     }
 }
