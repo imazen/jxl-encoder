@@ -1672,3 +1672,5 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Change dimensions from `usize` to `u32`
 - [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
 - [ ] Add `EncodeStats` for encode metrics
+- [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on config
+- [ ] Add `ImageMetadata` struct for ICC/EXIF/XMP on request
