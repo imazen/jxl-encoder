@@ -17,12 +17,10 @@ pub mod entropy_coding;
 pub mod error;
 pub mod frame;
 pub mod headers;
-pub mod heuristics;
 pub mod image;
 pub mod modular;
 pub mod tiny;
 pub mod trace;
-pub mod vardct;
 
 // Re-export main API
 pub use encoder::{Encoder, EncoderOptions, encode_rgb8, encode_rgba8};
@@ -33,8 +31,6 @@ mod tests;
 #[cfg(test)]
 pub mod test_helpers;
 
-#[cfg(test)]
-mod vardct_quality_tests;
 
 /// Group dimension in pixels (256x256 groups).
 pub const GROUP_DIM: usize = 256;

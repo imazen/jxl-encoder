@@ -669,68 +669,6 @@ pub fn write_improved_modular_stream(
     write_improved_modular_stream_inner(image, writer, false, use_ans)
 }
 
-/// Writes a modular substream for VarDCT (GroupHeader already written by caller).
-///
-/// This writes just: Tree + Histogram + Data
-/// Unlike standalone modular frames, this does NOT write dc_quant or has_tree.
-pub fn write_vardct_modular_substream(image: &ModularImage, writer: &mut BitWriter) -> Result<()> {
-    // Collect residuals with gradient prediction
-    let mut residuals = Vec::new();
-    let mut max_residual: u32 = 0;
-
-    for channel in &image.channels {
-        let width = channel.width();
-        let height = channel.height();
-
-        for y in 0..height {
-            for x in 0..width {
-                let pixel = channel.get(x, y);
-
-                // Get neighbors (matching JXL decoder)
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-
-                // Predict using ClampedGradient (predictor 5)
-                let prediction = predict_gradient(left, top, topleft);
-                let residual = pixel - prediction;
-                let packed = pack_signed(residual);
-
-                residuals.push(packed);
-                max_residual = max_residual.max(packed);
-            }
-        }
-    }
-
-    // Encode residuals through HybridUint {4,2,0}
-    let (encoded, max_token) = encode_residuals_hybrid(&residuals);
-    let histogram = build_token_histogram(&encoded, max_token);
-
-    crate::trace::debug_eprintln!(
-        "VARDCT_MODULAR: {} residuals, max_raw={}, max_token={}",
-        residuals.len(),
-        max_residual,
-        max_token
-    );
-
-    // === Write Tree (local tree since GroupHeader has use_global_tree=false) ===
-    let (tree_depths, tree_codes) = write_tree_histogram_no_lz77(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
-
-    // === Write Data Histogram with HybridUint {4,2,0} ===
-    let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
-
-    // === Write Data (residuals with HybridUint tokens + extra bits) ===
-    write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
-
-    // Note: NO byte padding here - VarDCT modular substreams are continuous
-    crate::trace::debug_eprintln!("VARDCT_MODULAR [bit {}]: Done", writer.bits_written());
-    Ok(())
-}
 
 fn write_improved_modular_stream_inner(
     image: &ModularImage,
@@ -915,20 +853,6 @@ pub(crate) fn write_tree_histogram_for_gradient(
     // Tree tokens are raw symbols (0-5), not hybrid uints.
     // Use split_exponent = log_alphabet_size for raw symbol encoding.
     write_tree_histogram_for_gradient_impl(writer, true)
-}
-
-/// Write tree histogram for VarDCT modular substreams.
-/// Returns (depths, codes) for use in encoding tree tokens.
-///
-/// Note: The decoder ALWAYS reads lz77.enabled even when allow_lz77=false.
-/// If lz77.enabled=1 and allow_lz77=false, the decoder errors.
-/// So we must write lz77.enabled=0 to indicate no LZ77.
-fn write_tree_histogram_no_lz77(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {
-    // Tree tokens are raw symbols (0-5), not hybrid uints.
-    // Use split_exponent = log_alphabet_size for raw symbol encoding.
-    // Write lz77.enabled = 0 (the decoder always reads this bit).
-    write_tree_histogram_for_gradient_impl(writer, true)
-}
 
 /// Write tree histogram and return (depths, codes) for encoding tree tokens.
 fn write_tree_histogram_for_gradient_impl(

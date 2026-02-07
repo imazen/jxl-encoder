@@ -1521,7 +1521,7 @@ mod decoder_validation {
     /// Dual-decoder validation for lossy VarDCT encoding
     /// Note: VarDCT encoding is WIP and may not pass djxl yet
     #[test]
-    fn test_dual_decode_lossy_vardct() {
+    fn test_dual_decode_lossy() {
         let mut data = vec![0u8; 16 * 16 * 3];
         for y in 0..16 {
             for x in 0..16 {
@@ -1533,9 +1533,9 @@ mod decoder_validation {
         }
         let encoded = encode_lossy_rgb8(&data, 16, 16, 1.0).unwrap();
         // Save for debugging
-        std::fs::write("/tmp/test_16x16_vardct.jxl", &encoded).unwrap();
+        std::fs::write("/tmp/test_16x16_lossy.jxl", &encoded).unwrap();
         eprintln!(
-            "Saved {} bytes to /tmp/test_16x16_vardct.jxl",
+            "Saved {} bytes to /tmp/test_16x16_lossy.jxl",
             encoded.len()
         );
         // VarDCT is validated against jxl-oxide only until encoder is complete
@@ -1552,9 +1552,9 @@ mod decoder_validation {
         // Try to actually render the frame (not just parse headers)
         let _render = image
             .render_frame(0)
-            .expect("test_dual_decode_lossy_vardct: render failed");
+            .expect("test_dual_decode_lossy: render failed");
 
-        eprintln!("lossy_vardct_16x16: PASSED jxl-oxide (rendered successfully)");
+        eprintln!("lossy_16x16: PASSED jxl-oxide (rendered successfully)");
     }
 
     /// Dual-decoder validation for solid color image
@@ -2009,11 +2009,11 @@ mod decoder_validation {
         validate_lossless_roundtrip_gray(gray.as_raw(), w, h, "corpus_basn0g08");
     }
     #[cfg(test)]
-    mod vardct_tests {
+    mod lossy_tests {
         use crate::test_helpers::*;
 
         #[test]
-        fn test_vardct_8x8_checkerboard() {
+        fn test_lossy_8x8_checkerboard() {
             // 8x8 checkerboard - simplest VarDCT test
             let mut data = vec![0u8; 8 * 8 * 3];
             for y in 0..8 {
@@ -2027,7 +2027,7 @@ mod decoder_validation {
             }
 
             // This will verify encoding mode and fail with clear error if wrong
-            test_lossy_roundtrip(&data, 8, 8, 1.0, "vardct_8x8_checkerboard")
+            test_lossy_roundtrip(&data, 8, 8, 1.0, "lossy_8x8_checkerboard")
                 .expect("VarDCT 8x8 should work");
         }
     }
@@ -2397,7 +2397,7 @@ mod quality_comparison_tests {
 
     /// Test that horizontal gradient is properly preserved (not transposed to vertical)
     #[test]
-    fn test_vardct_horizontal_gradient_orientation() {
+    fn test_lossy_horizontal_gradient_orientation() {
         // Create 8x8 horizontal gradient (varies by column, constant by row)
         let mut data = vec![0u8; 8 * 8 * 3];
         for y in 0..8 {
