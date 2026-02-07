@@ -1692,4 +1692,5 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
-- [ ] Support `Rgba8` and `Bgra8` for both encode and decode (A=255 on decode, ignore A on encode)
+- [x] Support `Rgba8` and `Bgra8` for encode (ignore A for lossy, pass through for lossless)
+- [ ] Support `Bgra8` for decode (future — no decoder yet)
