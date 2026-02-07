@@ -1657,11 +1657,13 @@ predictors, multi-group encoding, RGBA/grayscale, context map compression.
 See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
 
 - [ ] Rename `EncoderOptions` → `EncoderConfig` (match all other codecs)
-- [ ] Add builder pattern to `EncoderConfig` (method chaining like zenwebp/zenjpeg)
-- [ ] Add streaming encoder pattern: `push()`/`finish()` → Vec, `finish_into()` → caller buf, `finish_to(impl Write)` → std-only
-- [ ] Add cancellation support via `S: Stop` generic (from `enough` crate)
+- [ ] Add builder pattern to `EncoderConfig` (when >5 options; plain struct + Default fine for now)
+- [ ] One-shot: `encode()`/`encode_into()`/`encode_to()` — rename from `encode_rgb8()` etc.
+- [ ] Add streaming encoder: `push()`/`finish()`/`finish_into()`/`finish_to()`
+- [ ] `encode_to()`/`finish_to()` std-only (IO abstraction, not file IO)
+- [ ] Add cancellation via `&dyn Stop` (from `enough` crate — no type param pollution)
 - [ ] Add `At<>` error location tracking (from `whereat` crate)
 - [ ] Change dimension types from `usize` to `u32`
-- [ ] Add `Limits` struct for resource management
+- [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit): `max_width`, `max_height`, `max_pixels`, `max_memory_bytes`
 - [ ] Add `EncodeStats` for encode metrics
 - [ ] Standardize error type name to `EncodeError`
