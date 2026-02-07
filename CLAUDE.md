@@ -1615,3 +1615,39 @@ size than DCT8-only), but produces slightly larger files than coefficient-domain
 
 **Impact**: -18.9% file size on 64x64 gradient (482 → 391 bytes). Real-world impact varies
 by image content — gradient images with regular DC patterns benefit most.
+
+
+### Modular Encoder Parity vs libjxl (Feb 6, 2026)
+
+**AT PARITY**: RCT (all 42 variants), ANS + Huffman, HybridUint {4,2,0}, LZ77 (RLE + hash chain),
+histogram clustering, tree learning (ID3, 16 properties, 256 quantization buckets), 13/14 spatial
+predictors, multi-group encoding, RGBA/grayscale, context map compression.
+
+**GAPS (ranked by compression impact)**:
+
+1. **Palette transform** — NOT IMPLEMENTED. 19-57% savings on graphics/screenshots/UI.
+   libjxl: auto-detect unique colors, lossy palette, delta palette. We have nothing.
+
+2. **Weighted predictor not integrated** — `WeightedPredictorState` exists in `predictor.rs`
+   with full predict/update_errors/4 sub-predictors/9 params, but `Predictor::Weighted`
+   `predict_from_neighbors()` is a STUB (clamped gradient fallback). Only used in standalone
+   test functions (`write_modular_stream_with_weighted`), not the main encoding path or tree
+   learning. Impact: 2-5% on photos.
+
+3. **Tree learning only 6 of 14 candidate predictors** — CANDIDATE_PREDICTORS in `tree_learn.rs`
+   is [Zero, Left, Top, Avg0, Select, Gradient]. Missing: Weighted, TopRight, TopLeft, LeftLeft,
+   Average1-4. This means tree can't select optimal predictors per region.
+
+4. **Squeeze transform** — NOT IMPLEMENTED. Haar wavelet for progressive decoding. Some
+   compression benefit on certain content.
+
+5. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
+
+6. **Optimal LZ77 (effort 9)** — NOT IMPLEMENTED. Exhaustive vs greedy matching. ~1-2%.
+
+7. **Effort-level tuning** — No effort-dependent property count, clustering mode, tree mode,
+   or LZ77 mode selection. Everything manual via CLI flags.
+
+8. **16-bit/float input, animation, streaming ANS** — NOT IMPLEMENTED. Format/UX gaps.
+
+**Quickest wins**: Wire existing WP into main path + add all 14 predictors to tree learning.
