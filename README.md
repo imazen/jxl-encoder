@@ -67,15 +67,16 @@ cjxl-rs --help
 ```rust
 use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
 
-// Lossy encoding (distance 1.0 = visually lossless)
+// Simple — one line, no request visible
 let jxl = LossyConfig::new(1.0)
-    .encode_request(width, height, PixelLayout::Rgb8)
-    .encode(&srgb_u8_pixels)?;
+    .encode(&pixels, width, height, PixelLayout::Rgb8)?;
 
-// Lossless encoding
+// Full control — request layer for metadata, limits, cancellation
 let jxl = LosslessConfig::new()
+    .with_tree_learning(true)
     .encode_request(width, height, PixelLayout::Rgb8)
-    .encode(&srgb_u8_pixels)?;
+    .with_limits(&limits)
+    .encode(&pixels)?;
 ```
 
 ## AC Strategy Coverage
