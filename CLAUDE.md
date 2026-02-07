@@ -309,13 +309,6 @@ Strategy status:
   - Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles
   - 2 iterations converges for most images; +0.3 SSIM2 at equal file size vs baseline
 
-### DANGER: Avoid `jxl_enc/src/vardct/encoder.rs`
-
-**DO NOT use or extend `vardct/encoder.rs`.** We spent weeks debugging this older
-VarDCT encoder and it produces tricky, hard-to-diagnose errors. It is experimental
-dead code from before the tiny port. The production encoder is `tiny/encoder.rs`.
-Any new VarDCT features (ANS, more AC strategies, etc.) should be added to the tiny
-encoder, not the vardct encoder.
 
 ### Roadmap: Upgrading Beyond libjxl-tiny
 
@@ -979,8 +972,6 @@ quality (SSIM2 60-95). Multi-group DC region bug was fixed Jan 27, 2026.
 
 - `test_write_hf_metadata_dct8/16/32` - Verify metadata encoding
 - `test_write_hf_metadata_mixed_strategies` - Mixed DCT8/16 encoding
-- `test_vardct_with_variance_based_strategy` - Full roundtrip
-- `test_vardct_quality_enforcement` - Quality verification (SSIM2 > 50)
 
 ## Build Commands
 
