@@ -66,6 +66,8 @@ const SPLIT_PROPERTIES: &[usize] = &[
     12, // N - NE
     13, // N - NN
     14, // W - WW
+    // 15 (WpMaxError) disabled: 128x128+ images produce off-by-1 errors due to
+    // subtle WP error buffer divergence between encoder and decoder.
 ];
 
 /// Maximum number of quantized threshold buckets per property.
