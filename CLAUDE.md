@@ -1677,15 +1677,16 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
 - [x] Add `ImageMetadata` struct for ICC/EXIF/XMP on request (type exists, not wired yet)
 - [x] Add `Quality` enum with `Distance(f32)` and `Percent(u32)`
+- [x] Add `&dyn Stop` cancellation (from `enough` crate)
+- [x] Adopt `with_` prefix convention for all builder setters on Config/Request
+- [x] CLI updated to use new API (LosslessConfig/LossyConfig/PixelLayout)
 - [ ] Deprecate/remove old `EncoderOptions` + `Encoder` + `TinyEncoder` pub API
 - [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
 - [ ] `encode_to()`/`finish_to()` std-only (currently always available)
-- [ ] Add `&dyn Stop` cancellation (from `enough` crate)
 - [ ] Add `At<>` error location tracking (from `whereat` crate)
 - [ ] Add `EncodeStats` for encode metrics
 - [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
 - [ ] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
-- [ ] Adopt `with_` prefix convention for all builder setters on Config/Request
 - [ ] Support `Rgba8` and `Bgra8` for both encode and decode (A=255 on decode, ignore A on encode)
