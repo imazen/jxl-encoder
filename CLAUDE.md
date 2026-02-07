@@ -1620,23 +1620,22 @@ by image content — gradient images with regular DC patterns benefit most.
 ### Modular Encoder Parity vs libjxl (Feb 6, 2026)
 
 **AT PARITY**: RCT (all 42 variants), ANS + Huffman, HybridUint {4,2,0}, LZ77 (RLE + hash chain),
-histogram clustering, tree learning (ID3, 16 properties, 256 quantization buckets), 13/14 spatial
-predictors, multi-group encoding, RGBA/grayscale, context map compression, palette transform (lossless).
+histogram clustering, tree learning (ID3, 16 properties, 256 quantization buckets), 14/14
+predictors (including Weighted), multi-group encoding, RGBA/grayscale, context map compression,
+palette transform (lossless), squeeze transform (Haar wavelet).
 
 **COMPLETED** (Feb 6, 2026):
 - Palette transform (TransformId=1): auto-detect, lossless, 19-57% on graphics. Verified jxl-rs + djxl.
-- Tree learning expanded to 13 candidate predictors (all spatial except Weighted)
+- Squeeze transform (TransformId=2): Haar wavelet decomposition, progressive decoding support.
+  3 roundtrip tests (gray 16/128, RGB 32) pixel-exact. Verified jxl-rs + djxl.
+- Tree learning expanded to 14 candidate predictors (all spatial + Weighted)
 - WP golden-number test confirms bit-exact match with jxl-rs/libjxl
 
 **GAPS (ranked by compression impact)**:
 
-1. **Weighted predictor not in tree learning** — WP state runs during tree learning for
-   property computation, but WP is excluded from CANDIDATE_PREDICTORS because property 15
-   (wp_max_error) causes encoder/decoder tree traversal mismatch. WP core is bit-exact.
-   Impact: 2-5% on photos.
-
-2. **Squeeze transform** — NOT IMPLEMENTED. Haar wavelet for progressive decoding. Some
-   compression benefit on certain content.
+1. **Property 15 (wp_max_error) disabled in tree learning** — WP predictor is a candidate,
+   but property 15 causes encoder/decoder tree traversal mismatch on 128x128+ images.
+   WP core is bit-exact. Impact: minor (WP still selectable, just can't split on its error).
 
 3. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
 
@@ -1659,14 +1658,17 @@ predictors, multi-group encoding, RGBA/grayscale, context map compression, palet
 
 See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
 
-- [ ] Rename `EncoderOptions` → `EncoderConfig` (match all other codecs)
-- [ ] Add builder pattern to `EncoderConfig` (when >5 options; plain struct + Default fine for now)
-- [ ] One-shot: `encode()`/`encode_into()`/`encode_to()` — rename from `encode_rgb8()` etc.
-- [ ] Add streaming encoder: `push()`/`finish()`/`finish_into()`/`finish_to()`
-- [ ] `encode_to()`/`finish_to()` std-only (IO abstraction, not file IO)
-- [ ] Add cancellation via `&dyn Stop` (from `enough` crate — no type param pollution)
+**Three-layer pattern: EncoderConfig → EncodeRequest<'a> → Encoder (streaming only)**
+
+- [ ] Rename `EncoderOptions` → `EncoderConfig`
+- [ ] Add `EncodeRequest<'a>` intermediate layer
+- [ ] One-shot via `request.encode()`/`encode_into()`/`encode_to()`
+- [ ] Add streaming `Encoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
+- [ ] `encode_to()`/`finish_to()` std-only
+- [ ] Add `PixelLayout` enum (replace method-name-based dispatch)
+- [ ] Add `&dyn Stop` cancellation (from `enough` crate)
 - [ ] Add `At<>` error location tracking (from `whereat` crate)
-- [ ] Change dimension types from `usize` to `u32`
-- [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit): `max_width`, `max_height`, `max_pixels`, `max_memory_bytes`
+- [ ] Rename `Error` → `EncodeError`
+- [ ] Change dimensions from `usize` to `u32`
+- [ ] Add `Limits` struct (all fields `Option<u64>`, default None = no limit)
 - [ ] Add `EncodeStats` for encode metrics
-- [ ] Standardize error type name to `EncodeError`
