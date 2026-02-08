@@ -88,7 +88,7 @@ impl TinyEncoder {
 
         // Write ICC profile data if present (after header, before zero pad)
         if let Some(ref icc) = self.icc_profile {
-            super::icc_codec::write_icc(icc, writer)?;
+            crate::icc::write_icc(icc, writer)?;
         }
 
         // Zero pad to byte before frame

@@ -37,7 +37,6 @@ mod encoder;
 pub(crate) mod epf;
 mod frame;
 mod gaborish;
-pub(crate) mod icc_codec;
 pub(crate) mod noise;
 #[cfg(feature = "rate-control")]
 mod precomputed;
