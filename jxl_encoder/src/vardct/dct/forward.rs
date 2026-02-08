@@ -507,35 +507,7 @@ pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 /// Like `dct_8x8()`, there is NO final transpose for square blocks.
 /// C++ `ComputeScaledDCT<16,16>` takes the ROWS >= COLS branch (no final transpose).
 pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
-    let mut tmp = [0.0f32; 256];
-
-    // Transform rows (16 columns each)
-    for row in 0..16 {
-        let row_start = row * 16;
-        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
-        dct1d_16(&mut tmp[row_start..row_start + 16]);
-        // Scale by 1/N
-        for i in 0..16 {
-            tmp[row_start + i] *= 1.0 / 16.0;
-        }
-    }
-
-    // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
-    transpose::<16, 16>(&tmp, &mut transposed);
-
-    // Transform columns (now rows after transpose)
-    for row in 0..16 {
-        let row_start = row * 16;
-        dct1d_16(&mut transposed[row_start..row_start + 16]);
-        // Scale by 1/N
-        for i in 0..16 {
-            transposed[row_start + i] *= 1.0 / 16.0;
-        }
-    }
-
-    // DO NOT transpose back! Same as DCT8x8 - square blocks stay transposed.
-    output.copy_from_slice(&transposed);
+    jxl_simd::dct_16x16(input, output);
 }
 
 /// Extract DC values from 16x16 DCT coefficients.

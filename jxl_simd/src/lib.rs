@@ -16,6 +16,7 @@
 extern crate alloc;
 
 mod dct8;
+mod dct16;
 mod dequant;
 mod entropy;
 mod epf;
@@ -28,6 +29,7 @@ mod xyb;
 
 pub use dct8::dct_8x8;
 pub use dct8::idct_8x8;
+pub use dct16::dct_16x16;
 pub use dequant::dequant_block_dct8;
 pub use entropy::{EntropyCoeffResult, entropy_estimate_coeffs};
 pub use epf::{epf_step1, epf_step2};
