@@ -9,6 +9,7 @@
 //! without DCT transforms. This is the primary mode for lossless encoding.
 
 pub mod channel;
+pub mod frame;
 pub mod improved;
 pub mod palette;
 pub mod predictor;
@@ -19,6 +20,7 @@ pub mod tree;
 pub mod tree_learn;
 
 pub use channel::{Channel, ModularImage};
+pub use frame::{FrameEncoder, FrameEncoderOptions};
 pub use improved::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
     write_group_modular_section, write_modular_stream_with_rct,

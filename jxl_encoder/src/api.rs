@@ -888,9 +888,9 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
     ) -> core::result::Result<Vec<u8>, EncodeError> {
         use crate::bit_writer::BitWriter;
-        use crate::frame::{FrameEncoder, FrameEncoderOptions};
         use crate::headers::{ColorEncoding, FileHeader};
         use crate::modular::channel::ModularImage;
+        use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
 
         let w = self.width as usize;
         let h = self.height as usize;
