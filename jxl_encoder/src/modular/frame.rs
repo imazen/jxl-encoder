@@ -5,17 +5,17 @@
 
 //! Frame encoder - assembles complete JXL frames.
 
+use super::channel::ModularImage;
+use super::improved::{
+    build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
+    write_group_modular_section, write_improved_modular_stream, write_modular_stream_with_tree,
+};
+use super::section::write_global_modular_section_with_tree;
 use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::headers::frame_header::{BlendMode, FrameHeader};
-use crate::modular::channel::ModularImage;
-use crate::modular::improved::{
-    build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section, write_improved_modular_stream, write_modular_stream_with_tree,
-};
-use crate::modular::section::write_global_modular_section_with_tree;
 
 /// Options for frame encoding.
 #[derive(Debug, Clone)]

@@ -2212,7 +2212,7 @@ mod tests {
 
     #[test]
     fn test_ans_roundtrip_gray() {
-        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use super::frame::{FrameEncoder, FrameEncoderOptions};
         use crate::headers::{ColorEncoding, FileHeader};
 
         let data: Vec<u8> = vec![
@@ -2280,7 +2280,7 @@ mod tests {
 
     #[test]
     fn test_ans_roundtrip_gray_varied() {
-        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use super::frame::{FrameEncoder, FrameEncoderOptions};
         use crate::headers::{ColorEncoding, FileHeader};
 
         let data = vec![0u8, 64, 128, 192, 255, 100, 50, 200];
@@ -2362,7 +2362,7 @@ mod tests {
 
     #[test]
     fn test_ans_roundtrip_rgb_gradient() {
-        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use super::frame::{FrameEncoder, FrameEncoderOptions};
         use crate::headers::{ColorEncoding, FileHeader};
 
         let mut data = vec![0u8; 8 * 8 * 3];
