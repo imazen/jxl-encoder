@@ -5,7 +5,6 @@
 
 //! IDENTITY and DCT2X2 special transforms from full libjxl (enc_transforms-inl.h).
 
-
 // =============================================================================
 // IDENTITY transform (libjxl enc_transforms-inl.h:464-494)
 // =============================================================================

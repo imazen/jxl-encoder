@@ -129,6 +129,7 @@ impl HybridUintConfig {
     }
 
     /// Writes a HybridUint value, given an entropy coder for the token.
+    #[allow(dead_code)]
     pub fn write<F>(&self, value: u32, writer: &mut BitWriter, mut write_token: F) -> Result<()>
     where
         F: FnMut(&mut BitWriter, u32) -> Result<()>,

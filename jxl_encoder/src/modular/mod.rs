@@ -8,16 +8,16 @@
 //! The modular mode encodes images using prediction and entropy coding,
 //! without DCT transforms. This is the primary mode for lossless encoding.
 
-pub mod channel;
-pub mod encode;
-pub mod frame;
-pub mod palette;
-pub mod predictor;
-pub mod rct;
-pub mod section;
-pub mod squeeze;
-pub mod tree;
-pub mod tree_learn;
+pub(crate) mod channel;
+pub(crate) mod encode;
+pub(crate) mod frame;
+pub(crate) mod palette;
+pub(crate) mod predictor;
+pub(crate) mod rct;
+pub(crate) mod section;
+pub(crate) mod squeeze;
+pub(crate) mod tree;
+pub(crate) mod tree_learn;
 
 pub use channel::{Channel, ModularImage};
 pub use encode::{

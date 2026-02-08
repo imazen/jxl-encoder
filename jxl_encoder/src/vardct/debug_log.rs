@@ -78,5 +78,3 @@ macro_rules! debug_log_flush {
     };
 }
 
-pub use debug_log;
-pub use debug_log_flush;
