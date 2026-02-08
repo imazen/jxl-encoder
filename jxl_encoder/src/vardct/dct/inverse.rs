@@ -184,9 +184,9 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
         idct1d_8(&mut tmp[row_start..row_start + 8]);
     }
 
-    // Transpose
+    // Transpose (SIMD-accelerated for 8x8)
     let mut transposed = [0.0f32; 64];
-    transpose::<8, 8>(&tmp, &mut transposed);
+    jxl_simd::transpose_8x8(&tmp, &mut transposed);
 
     // Apply IDCT to each row of transposed
     for row in 0..8 {

@@ -16,5 +16,7 @@
 extern crate alloc;
 
 mod gab;
+mod transpose;
 
 pub use gab::gab_smooth_channel;
+pub use transpose::transpose_8x8;
