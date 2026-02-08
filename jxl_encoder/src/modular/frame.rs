@@ -6,7 +6,7 @@
 //! Frame encoder - assembles complete JXL frames.
 
 use super::channel::ModularImage;
-use super::improved::{
+use super::encode::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
     write_group_modular_section, write_improved_modular_stream, write_modular_stream_with_tree,
 };
@@ -109,7 +109,7 @@ impl FrameEncoder {
             let mut section_writer = BitWriter::new();
 
             if self.options.use_squeeze {
-                crate::modular::improved::write_modular_stream_with_squeeze(
+                super::encode::write_modular_stream_with_squeeze(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
