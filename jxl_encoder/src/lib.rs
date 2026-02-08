@@ -33,8 +33,8 @@ pub use api::{
 mod tests;
 
 #[cfg(test)]
-#[path = "encoder_tests.rs"]
-mod encoder_tests;
+#[path = "api_tests.rs"]
+mod api_tests;
 
 #[cfg(test)]
 pub mod test_helpers;
