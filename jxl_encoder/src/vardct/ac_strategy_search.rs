@@ -27,6 +27,7 @@ pub(super) fn find_best_16x16_transform(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
 ) {
     // In pixel-domain mode (mask1x1.is_some()), entropy_mul is applied internally
     // by estimate_entropy_full using fixed values per transform. External multipliers
@@ -114,51 +115,54 @@ pub(super) fn find_best_16x16_transform(
             let block_x = abs_bx + dx;
             let block_y = abs_by + dy;
 
-            // Helper: evaluate a single-block strategy with entropy_mul adjustment
-            let eval = |strategy: u8, adjust: f32| -> f32 {
-                estimate_entropy_with_mask(
-                    strategy,
-                    xyb,
-                    stride,
-                    block_x,
-                    block_y,
-                    distance,
-                    quant_field,
-                    xsize_blocks,
-                    masking,
-                    ytox,
-                    ytob,
-                    mask1x1,
-                    mask1x1_stride,
-                    adjust,
-                )
-            };
+            // Helper macro: evaluate a single-block strategy with entropy_mul adjustment
+            macro_rules! eval {
+                ($strategy:expr, $adjust:expr) => {
+                    estimate_entropy_with_mask(
+                        $strategy,
+                        xyb,
+                        stride,
+                        block_x,
+                        block_y,
+                        distance,
+                        quant_field,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        $adjust,
+                        scratch,
+                    )
+                };
+            }
 
             // DCT8 (no adjustment)
-            let e8 = eval(RAW_STRATEGY_DCT8, 0.0);
+            let e8 = eval!(RAW_STRATEGY_DCT8, 0.0);
             let cost8 = base_cost_8x8 + mul8x8 * e8;
 
             // DCT4X8 (kAvoidEntropy penalty at high distance)
-            let e4x8 = eval(RAW_STRATEGY_DCT4X8, avoid_transforms_adjust);
+            let e4x8 = eval!(RAW_STRATEGY_DCT4X8, avoid_transforms_adjust);
             let base_cost_4x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x8 };
             let cost4x8 = base_cost_4x8 + mul4x8 * e4x8;
 
             // DCT8X4
-            let e8x4 = eval(RAW_STRATEGY_DCT8X4, avoid_transforms_adjust);
+            let e8x4 = eval!(RAW_STRATEGY_DCT8X4, avoid_transforms_adjust);
             let cost8x4 = base_cost_4x8 + mul4x8 * e8x4;
 
             // DCT4X4
-            let e4x4 = eval(RAW_STRATEGY_DCT4X4, avoid_transforms_adjust);
+            let e4x4 = eval!(RAW_STRATEGY_DCT4X4, avoid_transforms_adjust);
             let base_cost_4x4 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x4 };
             let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
 
             // IDENTITY (kFavor2X2 bonus at low distance)
-            let e_identity = eval(RAW_STRATEGY_IDENTITY, favor_2x2_adjust);
+            let e_identity = eval!(RAW_STRATEGY_IDENTITY, favor_2x2_adjust);
             let base_cost_identity = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
             let cost_identity = base_cost_identity + mul8x8 * e_identity;
 
             // DCT2X2 (kFavor2X2 bonus at low distance)
-            let e_dct2 = eval(RAW_STRATEGY_DCT2X2, favor_2x2_adjust);
+            let e_dct2 = eval!(RAW_STRATEGY_DCT2X2, favor_2x2_adjust);
             let base_cost_dct2 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
             let cost_dct2 = base_cost_dct2 + mul8x8 * e_dct2;
 
@@ -195,10 +199,10 @@ pub(super) fn find_best_16x16_transform(
             // Re-enable once the AFV pixel-domain cost model is calibrated.
             if !use_pixel_domain {
                 let base_cost_afv = 3.0 * mul8x8;
-                let e_afv0 = eval(RAW_STRATEGY_AFV0, avoid_transforms_adjust);
-                let e_afv1 = eval(RAW_STRATEGY_AFV1, avoid_transforms_adjust);
-                let e_afv2 = eval(RAW_STRATEGY_AFV2, avoid_transforms_adjust);
-                let e_afv3 = eval(RAW_STRATEGY_AFV3, avoid_transforms_adjust);
+                let e_afv0 = eval!(RAW_STRATEGY_AFV0, avoid_transforms_adjust);
+                let e_afv1 = eval!(RAW_STRATEGY_AFV1, avoid_transforms_adjust);
+                let e_afv2 = eval!(RAW_STRATEGY_AFV2, avoid_transforms_adjust);
+                let e_afv3 = eval!(RAW_STRATEGY_AFV3, avoid_transforms_adjust);
                 let cost_afv0 = base_cost_afv + mul8x8 * e_afv0;
                 let cost_afv1 = base_cost_afv + mul8x8 * e_afv1;
                 let cost_afv2 = base_cost_afv + mul8x8 * e_afv2;
@@ -241,6 +245,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_16x8_right = mul16x8
         * estimate_entropy_with_mask(
@@ -258,6 +263,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
 
     // Evaluate two DCT8X16 options (top row, bottom row)
@@ -277,6 +283,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_8x16_bottom = mul16x8
         * estimate_entropy_with_mask(
@@ -294,6 +301,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
 
     // Evaluate DCT16x16 (one transform covering the entire 2x2 region)
@@ -313,6 +321,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
 
     // Compare all options: four single-block, 16x8 split, 8x16 split, or one 16x16
@@ -424,6 +433,7 @@ pub(super) fn find_best_32x32_transform(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
 ) -> bool {
     // Large transforms (32x32, 32x16, 16x32) average large pixel blocks, which
     // works well for smooth content but produces blur on high-contrast edges.
@@ -449,6 +459,7 @@ pub(super) fn find_best_32x32_transform(
                     mask1x1,
                     mask1x1_stride,
                     ac_strategy,
+                    scratch,
                 );
             }
         }
@@ -487,6 +498,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
 
     // Evaluate DCT32x16 costs (two transforms: at (0,0) and (0,2))
@@ -507,6 +519,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_32x16_1 = mul32x16
         * estimate_entropy_with_mask(
@@ -524,6 +537,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
 
@@ -545,6 +559,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_16x32_1 = mul32x16
         * estimate_entropy_with_mask(
@@ -562,6 +577,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
 
@@ -584,6 +600,7 @@ pub(super) fn find_best_32x32_transform(
                 mask1x1,
                 mask1x1_stride,
                 ac_strategy,
+                scratch,
             );
         }
     }
@@ -638,6 +655,7 @@ pub(super) fn find_best_32x32_transform(
                 mask1x1,
                 mask1x1_stride,
                 0.0,
+                scratch,
             );
             cost_sub += base + mul * e;
         }
@@ -709,6 +727,7 @@ pub(super) fn find_best_64x64_transform(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
 ) {
     // DCT64 transforms only at d >= 3.0
     if distance < 3.0 {
@@ -731,6 +750,7 @@ pub(super) fn find_best_64x64_transform(
                     mask1x1,
                     mask1x1_stride,
                     ac_strategy,
+                    scratch,
                 );
             }
         }
@@ -768,6 +788,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
 
     // Evaluate DCT64x32 costs (two transforms stacked vertically)
@@ -789,6 +810,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_64x32_1 = mul64x32
         * estimate_entropy_with_mask(
@@ -806,6 +828,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
 
@@ -828,6 +851,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_32x64_1 = mul64x32
         * estimate_entropy_with_mask(
@@ -845,6 +869,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            scratch,
         );
     let entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
 
@@ -867,6 +892,7 @@ pub(super) fn find_best_64x64_transform(
                 mask1x1,
                 mask1x1_stride,
                 ac_strategy,
+                scratch,
             );
         }
     }
@@ -930,6 +956,7 @@ pub(super) fn find_best_64x64_transform(
                 mask1x1,
                 mask1x1_stride,
                 0.0,
+                scratch,
             );
             cost_sub += base + mul * e;
         }
