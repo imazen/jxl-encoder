@@ -185,50 +185,12 @@ pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 
 /// Compute 16x8 inverse DCT (16 rows x 8 cols, exactly reverses dct_16x8).
 pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
-
-    // Apply 8-point IDCT to each row
-    for row in 0..16 {
-        let row_start = row * 8;
-        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
-        idct1d_8(&mut tmp[row_start..row_start + 8]);
-    }
-
-    // Apply 16-point IDCT to each column (in-place via temporary column buffer)
-    for col in 0..8 {
-        let mut col_buf = [0.0f32; 16];
-        for row in 0..16 {
-            col_buf[row] = tmp[row * 8 + col];
-        }
-        idct1d_16(&mut col_buf);
-        for row in 0..16 {
-            output[row * 8 + col] = col_buf[row];
-        }
-    }
+    jxl_simd::idct_16x8(input, output);
 }
 
 /// Compute 8x16 inverse DCT (8 rows x 16 cols, exactly reverses dct_8x16).
 pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
-
-    // Apply 16-point IDCT to each row
-    for row in 0..8 {
-        let row_start = row * 16;
-        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
-        idct1d_16(&mut tmp[row_start..row_start + 16]);
-    }
-
-    // Apply 8-point IDCT to each column (in-place via temporary column buffer)
-    for col in 0..16 {
-        let mut col_buf = [0.0f32; 8];
-        for row in 0..8 {
-            col_buf[row] = tmp[row * 16 + col];
-        }
-        idct1d_8(&mut col_buf);
-        for row in 0..8 {
-            output[row * 16 + col] = col_buf[row];
-        }
-    }
+    jxl_simd::idct_8x16(input, output);
 }
 
 /// Compute 4x4 inverse DCT (exactly reverses dct_4x4).
