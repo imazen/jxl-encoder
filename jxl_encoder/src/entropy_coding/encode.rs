@@ -1104,13 +1104,7 @@ pub fn build_entropy_code_ans_with_options(
 
     let mut histograms: Vec<EnhancedHistogram> = max_sym_per_ctx
         .iter()
-        .map(|&max_sym| {
-            let mut h = EnhancedHistogram::new();
-            if max_sym > 0 {
-                h.ensure_capacity(max_sym);
-            }
-            h
-        })
+        .map(|&max_sym| EnhancedHistogram::with_capacity(max_sym))
         .collect();
 
     for token in tokens {
