@@ -12,7 +12,7 @@ use super::common::*;
 use super::entropy_code::{
     OwnedAnsEntropyCode, OwnedEntropyCode, write_entropy_code_ans, write_tokens, write_tokens_ans,
 };
-use super::frame::{DistanceParams, write_frame_header, write_toc};
+use super::frame::{DistanceParams, write_toc};
 use super::gaborish::gaborish_inverse;
 use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
@@ -21,6 +21,7 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::error::Result;
+use crate::headers::frame_header::FrameHeader;
 
 /// Create an AC strategy map forcing a specific strategy.
 fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> AcStrategyMap {
@@ -577,15 +578,18 @@ impl TinyEncoder {
         );
 
         // Write frame header
-        write_frame_header(
-            params.x_qm_scale,
-            params.b_qm_scale,
-            params.epf_iters,
-            noise_params.is_some(),
-            self.enable_gaborish,
-            0, // streaming path: no extra channels
-            &mut writer,
-        )?;
+        {
+            let mut fh = FrameHeader::lossy();
+            fh.x_qm_scale = params.x_qm_scale;
+            fh.b_qm_scale = params.b_qm_scale;
+            fh.epf_iters = params.epf_iters;
+            fh.gaborish = self.enable_gaborish;
+            if noise_params.is_some() {
+                fh.flags |= 0x01; // ENABLE_NOISE
+            }
+            // streaming path: no extra channels
+            fh.write(&mut writer)?;
+        }
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "After frame header: bit {} (byte {})",

@@ -9,6 +9,7 @@ use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
+use crate::headers::frame_header::{BlendMode, FrameHeader};
 use crate::modular::channel::ModularImage;
 use crate::modular::improved::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
@@ -93,8 +94,13 @@ impl FrameEncoder {
         // Compute num_extra_channels from image
         let num_extra_channels = if image.has_alpha { 1 } else { 0 };
 
-        // Write frame header with extra channel info
-        self.write_frame_header_with_extra_channels(writer, num_extra_channels)?;
+        // Write frame header using unified FrameHeader
+        {
+            let mut fh = FrameHeader::lossless();
+            fh.ec_upsampling = vec![1; num_extra_channels];
+            fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
+            fh.write(writer)?;
+        }
 
         let num_groups = self.num_groups();
 
@@ -298,145 +304,6 @@ impl FrameEncoder {
                 writer.write_u8(byte)?;
             }
         }
-
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    /// Writes the frame header for a simple lossless modular frame (no extra channels).
-    fn write_frame_header(&self, writer: &mut BitWriter) -> Result<()> {
-        self.write_frame_header_with_extra_channels(writer, 0)
-    }
-
-    /// Writes the frame header for a lossless modular frame with extra channels.
-    fn write_frame_header_with_extra_channels(
-        &self,
-        writer: &mut BitWriter,
-        num_extra_channels: usize,
-    ) -> Result<()> {
-        crate::trace::debug_eprintln!(
-            "FRMH [bit {}]: Starting frame header (num_extra_channels={})",
-            writer.bits_written(),
-            num_extra_channels
-        );
-
-        // all_default = false (because we use Modular encoding, not VarDCT default)
-        writer.write(1, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: all_default = 0", writer.bits_written());
-
-        // frame_type = RegularFrame (0)
-        writer.write(2, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: frame_type = 0", writer.bits_written());
-
-        // encoding = Modular (1)
-        writer.write(1, 1)?;
-        crate::trace::debug_eprintln!(
-            "FRMH [bit {}]: encoding = 1 (Modular)",
-            writer.bits_written()
-        );
-
-        // flags = 0 (U64 encoding: selector 0 with 2 bits means value is 0)
-        writer.write(2, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: flags = 0", writer.bits_written());
-
-        // do_ycbcr = false (only for non-xyb_encoded, which is our case for lossless)
-        // For lossless modular, xyb_encoded should be false in the image metadata
-        writer.write(1, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: do_ycbcr = 0", writer.bits_written());
-
-        // upsampling = 1 (selector 0 in u2S(1,2,4,8))
-        writer.write(2, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: upsampling = 0", writer.bits_written());
-
-        // ec_upsampling - for each extra channel
-        // Each extra channel uses u2S(1, 2, 4, 8) encoding.
-        // We want upsampling = 1, which is selector 0.
-        for _ec_idx in 0..num_extra_channels {
-            writer.write(2, 0)?; // selector 0 = value 1 (no upsampling)
-            crate::trace::debug_eprintln!(
-                "FRMH [bit {}]: ec_upsampling[{}] = 1",
-                writer.bits_written(),
-                _ec_idx
-            );
-        }
-
-        // group_size_shift: 0 = 128, 1 = 256, 2 = 512, 3 = 1024
-        // We use GROUP_DIM = 256, so shift must be 1
-        writer.write(2, 1)?; // selector 1 = 256 pixels
-        crate::trace::debug_eprintln!(
-            "FRMH [bit {}]: group_size_shift = 1 (256)",
-            writer.bits_written()
-        );
-
-        // passes (only if frame_type != ReferenceOnly)
-        // num_passes = 1 (selector 0 in u2S(1,2,3,Bits(3)+4))
-        writer.write(2, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: passes = 0", writer.bits_written());
-
-        // lf_level - not written (only for LFFrame)
-
-        // have_crop = false (only if frame_type != LFFrame)
-        writer.write(1, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: have_crop = 0", writer.bits_written());
-
-        // blending_info (only for RegularFrame or SkipProgressive)
-        // mode = Replace (selector 0 in u2S(0,1,2,Bits(2)+3))
-        writer.write(2, 0)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: blending = 0", writer.bits_written());
-
-        // ec_blending_info - for each extra channel
-        // Each uses BlendingInfo which starts with mode.
-        // For full_frame && mode == Replace, source is NOT written (condition fails).
-        // mode = Replace (selector 0), no alpha_channel or clamp (num_extra > 0 but mode != Blend/AlphaWeightedAdd)
-        for _ec_idx in 0..num_extra_channels {
-            writer.write(2, 0)?; // mode = Replace (selector 0)
-            crate::trace::debug_eprintln!(
-                "FRMH [bit {}]: ec_blending_info[{}].mode = Replace",
-                writer.bits_written(),
-                _ec_idx
-            );
-            // alpha_channel, clamp, source NOT written for Replace mode with full_frame
-        }
-
-        // duration - not written (no animation)
-        // timecode - not written (no timecode)
-
-        // is_last = true (only for RegularFrame or SkipProgressive)
-        writer.write(1, 1)?;
-        crate::trace::debug_eprintln!("FRMH [bit {}]: is_last = 1", writer.bits_written());
-
-        // save_as_reference - not written (is_last = true)
-
-        // save_before_ct - not written (conditions not met)
-
-        // name = empty string
-        // name_length = 0 using u2S(0, Bits(4), Bits(5)+16, Bits(10)+48)
-        writer.write(2, 0)?; // selector 0 = value 0
-        crate::trace::debug_eprintln!("FRMH [bit {}]: name = 0", writer.bits_written());
-
-        // restoration_filter - MUST disable filters for lossless modular encoding!
-        // Default has gab=true (Gaborish) and epf_iters=2 (Edge-Preserving Filter)
-        // which would blur the image. For lossless, we disable both.
-        writer.write(1, 0)?; // all_default = false
-        writer.write(1, 0)?; // gab = false (disable Gaborish)
-        writer.write(2, 0)?; // epf_iters = 0 (disable EPF)
-        crate::trace::debug_eprintln!(
-            "FRMH [bit {}]: restoration = disabled (gab=false, epf=0)",
-            writer.bits_written()
-        );
-
-        // extensions = 0 (no extensions)
-        // u64 encoding: selector 0 (2 bits) means value 0
-        writer.write(2, 0)?;
-        crate::trace::debug_eprintln!(
-            "FRMH [bit {}]: extensions = 0, frame header done",
-            writer.bits_written()
-        );
-
-        // NOTE: #[aligned] in jxl-rs means byte alignment at START of reading,
-        // not at the end. The caller (encoder.rs) handles the alignment before
-        // calling encode_modular. We do NOT byte-align here - the TOC follows
-        // immediately and handles its own alignment after the permuted bit.
 
         Ok(())
     }

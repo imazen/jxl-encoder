@@ -15,7 +15,7 @@ use super::common::*;
 use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_region};
 use super::encoder::{BuiltEntropyCode, TinyEncoder};
 use super::entropy_code::{build_entropy_code_ans_with_options, build_entropy_code_with_options};
-use super::frame::{DistanceParams, write_frame_header, write_quant_scales, write_toc};
+use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
 use super::token::Token;
 use crate::bit_writer::BitWriter;
@@ -25,6 +25,7 @@ use crate::error::Result;
 use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use crate::headers::extra_channels::ExtraChannelInfo;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
+use crate::headers::frame_header::{BlendMode, FrameHeader};
 
 impl TinyEncoder {
     /// Build a `FileHeader` for VarDCT encoding from current encoder settings.
@@ -1266,15 +1267,19 @@ impl TinyEncoder {
         self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
 
         // Write frame header
-        write_frame_header(
-            params.x_qm_scale,
-            params.b_qm_scale,
-            params.epf_iters,
-            noise_params.is_some(),
-            self.enable_gaborish,
-            num_extra_channels,
-            &mut writer,
-        )?;
+        {
+            let mut fh = FrameHeader::lossy();
+            fh.x_qm_scale = params.x_qm_scale;
+            fh.b_qm_scale = params.b_qm_scale;
+            fh.epf_iters = params.epf_iters;
+            fh.gaborish = self.enable_gaborish;
+            if noise_params.is_some() {
+                fh.flags |= 0x01; // ENABLE_NOISE
+            }
+            fh.ec_upsampling = vec![1; num_extra_channels];
+            fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
+            fh.write(&mut writer)?;
+        }
 
         if num_sections == 4 {
             // Single-group: combine sections at the bit level
