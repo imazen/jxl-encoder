@@ -9,3 +9,4 @@ Cargo.lock
 comparison_outputs/
 test_baselines/decoded/
 test_baselines/jxl/
+*.zst
