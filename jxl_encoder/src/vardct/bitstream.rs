@@ -1487,7 +1487,7 @@ impl VarDctEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         use crate::entropy_coding::hybrid_uint::HybridUintConfig;
-        use crate::modular::improved::{
+        use crate::modular::encode::{
             write_gradient_tree_tokens, write_tree_histogram_for_gradient,
         };
         use crate::modular::predictor::pack_signed;
@@ -1559,7 +1559,7 @@ impl VarDctEncoder {
             histogram[token as usize] += 1;
         }
 
-        use crate::modular::improved::write_hybrid_data_histogram;
+        use crate::modular::encode::write_hybrid_data_histogram;
         let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
         // Write tokens

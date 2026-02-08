@@ -9,7 +9,7 @@
 //! are split into multiple groups.
 
 use super::channel::ModularImage;
-use super::improved::{
+use super::encode::{
     write_gradient_tree_tokens, write_hybrid_data_histogram, write_tree_histogram_for_gradient,
 };
 use super::predictor::pack_signed;
@@ -261,7 +261,7 @@ pub fn write_global_modular_section_with_tree(
     max_nodes: usize,
     split_threshold: f64,
 ) -> Result<GlobalModularState> {
-    use super::improved::write_tree;
+    use super::encode::write_tree;
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
