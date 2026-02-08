@@ -131,6 +131,14 @@ struct Args {
     #[arg(long)]
     no_butteraugli: bool,
 
+    /// EXIF metadata file to embed in the output JXL container
+    #[arg(long, value_name = "FILE")]
+    exif: Option<PathBuf>,
+
+    /// XMP metadata file to embed in the output JXL container
+    #[arg(long, value_name = "FILE")]
+    xmp: Option<PathBuf>,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -167,7 +175,7 @@ fn main() {
 
     // Read PNG
     let start = Instant::now();
-    let (width, height, color_type, data) = match read_png(&args.input) {
+    let (width, height, color_type, bit_depth, data) = match read_png(&args.input) {
         Ok(result) => result,
         Err(e) => {
             eprintln!("Error reading input: {}", e);
@@ -175,8 +183,16 @@ fn main() {
         }
     };
 
+    let is_16bit = bit_depth == png::BitDepth::Sixteen;
+
     if !args.quiet {
-        println!("Image:    {}x{} {:?}", width, height, color_type);
+        println!(
+            "Image:    {}x{} {:?} {}bpc",
+            width,
+            height,
+            color_type,
+            if is_16bit { 16 } else { 8 }
+        );
     }
 
     let lz77_method = match args.lz77_method.to_lowercase().as_str() {
@@ -189,18 +205,63 @@ fn main() {
     };
 
     // Determine pixel layout
-    let layout = match color_type {
-        png::ColorType::Rgb => PixelLayout::Rgb8,
-        png::ColorType::Rgba => PixelLayout::Rgba8,
-        png::ColorType::Grayscale => PixelLayout::Gray8,
+    let layout = match (color_type, is_16bit) {
+        (png::ColorType::Rgb, false) => PixelLayout::Rgb8,
+        (png::ColorType::Rgba, false) => PixelLayout::Rgba8,
+        (png::ColorType::Grayscale, false) => PixelLayout::Gray8,
+        (png::ColorType::Rgb, true) => PixelLayout::Rgb16,
+        (png::ColorType::Rgba, true) => PixelLayout::Rgba16,
+        (png::ColorType::Grayscale, true) => PixelLayout::Gray16,
         _ => {
-            eprintln!("Error: Unsupported color type: {:?}", color_type);
+            eprintln!(
+                "Error: Unsupported color type: {:?} {:?}",
+                color_type, bit_depth
+            );
             std::process::exit(1);
         }
     };
 
+    // Read optional EXIF/XMP metadata files
+    let exif_data = args.exif.as_ref().map(|p| {
+        std::fs::read(p).unwrap_or_else(|e| {
+            eprintln!("Error reading EXIF file {}: {}", p.display(), e);
+            std::process::exit(1);
+        })
+    });
+    let xmp_data = args.xmp.as_ref().map(|p| {
+        std::fs::read(p).unwrap_or_else(|e| {
+            eprintln!("Error reading XMP file {}: {}", p.display(), e);
+            std::process::exit(1);
+        })
+    });
+
+    let metadata = if exif_data.is_some() || xmp_data.is_some() {
+        let mut meta = jxl_encoder::ImageMetadata::new();
+        if let Some(ref exif) = exif_data {
+            meta = meta.with_exif(exif);
+        }
+        if let Some(ref xmp) = xmp_data {
+            meta = meta.with_xmp(xmp);
+        }
+        Some(meta)
+    } else {
+        None
+    };
+
+    // Lossy VarDCT supported for RGB/RGBA layouts (8-bit and 16-bit)
+    let lossy_supported = matches!(
+        layout,
+        PixelLayout::Rgb8
+            | PixelLayout::Rgba8
+            | PixelLayout::Bgr8
+            | PixelLayout::Bgra8
+            | PixelLayout::Rgb16
+            | PixelLayout::Rgba16
+            | PixelLayout::RgbLinearF32
+    );
+
     // Encode using new API
-    let encoded = if distance > 0.0 && matches!(color_type, png::ColorType::Rgb) {
+    let encoded = if distance > 0.0 && lossy_supported {
         // Lossy VarDCT path
         let mut cfg = LossyConfig::new(distance)
             .with_effort(args.effort)
@@ -279,7 +340,11 @@ fn main() {
                 .map(|(data, _)| data)
                 .map_err(|e| jxl_encoder::at(jxl_encoder::EncodeError::from(e)))
         } else {
-            cfg.encode_request(width, height, layout).encode(&data)
+            let mut req = cfg.encode_request(width, height, layout);
+            if let Some(ref meta) = metadata {
+                req = req.with_metadata(meta);
+            }
+            req.encode(&data)
         }
 
         #[cfg(not(feature = "rate-control"))]
@@ -288,7 +353,11 @@ fn main() {
                 eprintln!("Warning: --rate-control requires the rate-control feature");
                 eprintln!("Rebuild with: cargo build --features rate-control");
             }
-            cfg.encode_request(width, height, layout).encode(&data)
+            let mut req = cfg.encode_request(width, height, layout);
+            if let Some(ref meta) = metadata {
+                req = req.with_metadata(meta);
+            }
+            req.encode(&data)
         }
     } else {
         // Lossless modular path (or lossy RGBA/gray which falls through to modular)
@@ -298,7 +367,11 @@ fn main() {
             .with_tree_learning(args.tree_learning)
             .with_squeeze(args.squeeze);
 
-        cfg.encode_request(width, height, layout).encode(&data)
+        let mut req = cfg.encode_request(width, height, layout);
+        if let Some(ref meta) = metadata {
+            req = req.with_metadata(meta);
+        }
+        req.encode(&data)
     };
 
     let encoded = match encoded {
@@ -378,7 +451,7 @@ fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
 #[allow(clippy::type_complexity)]
 fn read_png(
     path: &PathBuf,
-) -> Result<(u32, u32, png::ColorType, Vec<u8>), Box<dyn std::error::Error>> {
+) -> Result<(u32, u32, png::ColorType, png::BitDepth, Vec<u8>), Box<dyn std::error::Error>> {
     let file = File::open(path)?;
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info()?;
@@ -387,7 +460,13 @@ fn read_png(
     let info = reader.next_frame(&mut buf)?;
     buf.truncate(info.buffer_size());
 
-    Ok((info.width, info.height, info.color_type, buf))
+    Ok((
+        info.width,
+        info.height,
+        info.color_type,
+        info.bit_depth,
+        buf,
+    ))
 }
 
 fn write_output(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
