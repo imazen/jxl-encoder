@@ -2051,8 +2051,8 @@ pub fn write_modular_stream_with_tree(
 // These functions are now in the section module for better organization
 
 pub use super::section::{
-    GlobalModularState, build_histogram_from_residuals, collect_all_residuals,
-    write_global_modular_section, write_group_modular_section,
+    build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
+    write_group_modular_section,
 };
 
 #[cfg(test)]

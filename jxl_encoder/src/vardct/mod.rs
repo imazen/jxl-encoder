@@ -29,7 +29,7 @@ mod context_tree;
 mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
-pub mod debug_log;
+pub(crate) mod debug_log;
 mod encoder;
 #[allow(dead_code)] // Used in upcoming EPF sharpness selection
 pub(crate) mod epf;

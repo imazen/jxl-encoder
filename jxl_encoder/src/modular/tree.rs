@@ -177,6 +177,7 @@ pub fn gradient_tree() -> Tree {
 }
 
 /// Creates a tree that selects predictor based on channel.
+#[allow(dead_code)]
 pub fn per_channel_tree(num_channels: usize) -> Tree {
     let mut tree = Vec::with_capacity(num_channels * 2);
 

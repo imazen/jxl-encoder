@@ -10,14 +10,14 @@
 
 pub mod ans;
 pub mod ans_decode;
-pub mod cluster;
-pub mod context_map;
-pub mod encode;
+pub(crate) mod cluster;
+pub(crate) mod context_map;
+pub(crate) mod encode;
 pub mod histogram;
-pub mod huffman_tree;
-pub mod hybrid_uint;
-pub mod lz77;
-pub mod token;
+pub(crate) mod huffman_tree;
+pub(crate) mod hybrid_uint;
+pub(crate) mod lz77;
+pub(crate) mod token;
 
 pub use ans::{
     ANS_LOG_TAB_SIZE, ANS_MAX_ALPHABET_SIZE, ANS_SIGNATURE, ANS_TAB_MASK, ANS_TAB_SIZE,
