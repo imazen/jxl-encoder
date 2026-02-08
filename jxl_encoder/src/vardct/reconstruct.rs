@@ -23,29 +23,7 @@ use super::common::*;
 use super::dct::*;
 use super::frame::DistanceParams;
 use super::quant::{INV_DC_QUANT, quant_weights};
-
-/// Adjust quantized value with bias for dequantization.
-/// Exact copy of VarDctEncoder::adjust_quant_bias (transform.rs).
-fn adjust_quant_bias(quantized: i32, channel: usize) -> f32 {
-    #[allow(clippy::excessive_precision)]
-    const BIAS: [f32; 4] = [
-        1.0 - 0.05465007330715401,
-        1.0 - 0.07005449891748593,
-        1.0 - 0.049935103337343655,
-        0.145,
-    ];
-
-    if quantized == 0 {
-        return 0.0;
-    }
-
-    let q = quantized as f32;
-    if q.abs() < 1.125 {
-        q.signum() * BIAS[channel]
-    } else {
-        q - BIAS[3] / q
-    }
-}
+use super::quantize::adjust_quant_bias;
 
 /// Reconstruct XYB pixel planes from quantized coefficients.
 ///

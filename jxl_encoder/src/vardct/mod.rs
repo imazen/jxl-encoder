@@ -44,10 +44,12 @@ pub mod rate_control;
 mod tile_distmap;
 
 mod quant;
+mod quantize;
 #[allow(dead_code)] // Functions used in upcoming phases (EPF, butteraugli)
 pub(crate) mod reconstruct;
 mod static_codes;
 mod transform;
+mod xyb;
 
 pub use encoder::VarDctEncoder;
 #[cfg(feature = "rate-control")]
