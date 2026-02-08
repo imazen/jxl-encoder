@@ -18,6 +18,7 @@ pub mod entropy_coding;
 pub mod error;
 pub mod frame;
 pub mod headers;
+pub(crate) mod icc;
 pub mod image;
 pub mod modular;
 pub mod tiny;

@@ -935,7 +935,7 @@ impl<'a> EncodeRequest<'a> {
         if let Some(meta) = self.metadata
             && let Some(icc) = meta.icc_profile
         {
-            crate::tiny::icc_codec::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
+            crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
         }
         writer.zero_pad_to_byte();
 
