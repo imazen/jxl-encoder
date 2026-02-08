@@ -664,47 +664,26 @@ pub(super) fn estimate_entropy_full(
         let offset_c = c * size;
         let offset_y = size; // Y channel always at offset 1*size
 
-        let mut entropy_sum = 0.0f32;
-        let mut nzeros_sum = 0.0f32;
-
-        // Process all coefficients (including LLF for pixel-domain loss storage)
-        for i in 0..size {
-            let val_in = block[offset_c + i];
-            let val_y = block[offset_y + i] * cmap_factor;
-            // weights stores dequant matrix; inv_matrix = 1/weight
-            let inv_matrix_val = 1.0 / weights[i];
-            let val = (val_in - val_y) * inv_matrix_val * quant;
-            let rval = val.round();
-            let diff = val - rval;
-
-            // Store error coefficient for IDCT (matrix * diff)
-            if use_pixel_domain {
-                error_coeffs[i] = weights[i] * diff;
-            }
-
-            // NOTE: We do NOT skip LLF coefficients here.
-            // Both libjxl and libjxl-tiny process ALL coefficients (including LLF)
-            // in entropy estimation. The LLF coefficients contribute to entropy_v
-            // and nzeros_v in the reference implementations.
-
-            let diff_abs = diff.abs();
-            if !use_pixel_domain {
-                // Coefficient-domain loss (libjxl-tiny style)
-                info_loss_sum += diff_abs;
-                info_loss2_sum += diff_abs * diff_abs;
-            }
-
-            let q = rval.abs();
-            // K_COST2 threshold only in coefficient-domain mode (libjxl-tiny style)
-            // Full libjxl pixel-domain mode doesn't have this threshold
-            if !use_pixel_domain && q >= 1.5 {
-                entropy_sum += K_COST2;
-            }
-            // Full libjxl uses sqrt(q) * cost_delta, libjxl-tiny similar
-            entropy_sum += q.sqrt() * k_cost_delta;
-            if q != 0.0 {
-                nzeros_sum += 1.0;
-            }
+        // SIMD-accelerated coefficient processing (biggest encoder hotspot).
+        // Processes all coefficients including LLF — both libjxl and libjxl-tiny
+        // include LLF in entropy/nzeros estimation.
+        let coeff_result = jxl_simd::entropy_estimate_coeffs(
+            &block[offset_c..offset_c + size],
+            &block[offset_y..offset_y + size],
+            weights,
+            size,
+            cmap_factor,
+            quant,
+            k_cost_delta,
+            K_COST2,
+            use_pixel_domain,
+            error_coeffs,
+        );
+        let mut entropy_sum = coeff_result.entropy_sum;
+        let nzeros_sum = coeff_result.nzeros_sum;
+        if !use_pixel_domain {
+            info_loss_sum += coeff_result.info_loss_sum;
+            info_loss2_sum += coeff_result.info_loss2_sum;
         }
         // cost_of_1 term only in coefficient-domain mode (libjxl-tiny style)
         // Full libjxl pixel-domain mode doesn't have this per-nzero term
