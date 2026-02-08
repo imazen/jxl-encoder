@@ -879,7 +879,9 @@ impl<'a> EncodeRequest<'a> {
                 return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::GrayAlpha8));
             }
             PixelLayout::RgbLinearF32 => {
-                return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::RgbLinearF32));
+                return Err(EncodeError::UnsupportedPixelLayout(
+                    PixelLayout::RgbLinearF32,
+                ));
             }
         };
         result.map_err(EncodeError::from)
@@ -909,7 +911,9 @@ impl<'a> EncodeRequest<'a> {
                 let floats: &[f32] = bytemuck::cast_slice(pixels);
                 floats.to_vec()
             }
-            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 | PixelLayout::Rgba8
+            PixelLayout::Gray8
+            | PixelLayout::GrayAlpha8
+            | PixelLayout::Rgba8
             | PixelLayout::Bgra8 => {
                 return Err(EncodeError::UnsupportedPixelLayout(self.layout));
             }
@@ -969,8 +973,6 @@ fn bgr_to_rgb(data: &[u8], stride: usize) -> Vec<u8> {
     }
     out
 }
-
-
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -1115,16 +1117,16 @@ mod tests {
     fn test_lossy_alpha_unsupported() {
         // Lossy+alpha not yet implemented (needs modular extra channel)
         let pixels = [255u8, 0, 0, 255].repeat(64);
-        let result = LossyConfig::new(2.0)
-            .with_gaborish(false)
-            .encode(&pixels, 8, 8, PixelLayout::Bgra8);
+        let result =
+            LossyConfig::new(2.0)
+                .with_gaborish(false)
+                .encode(&pixels, 8, 8, PixelLayout::Bgra8);
         assert!(matches!(
             result.as_ref().map_err(|e| e.error()),
             Err(EncodeError::UnsupportedPixelLayout(PixelLayout::Bgra8))
         ));
 
-        let result2 = LossyConfig::new(2.0)
-            .encode(&pixels, 8, 8, PixelLayout::Rgba8);
+        let result2 = LossyConfig::new(2.0).encode(&pixels, 8, 8, PixelLayout::Rgba8);
         assert!(matches!(
             result2.as_ref().map_err(|e| e.error()),
             Err(EncodeError::UnsupportedPixelLayout(PixelLayout::Rgba8))
