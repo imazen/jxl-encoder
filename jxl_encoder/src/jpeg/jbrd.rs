@@ -34,9 +34,7 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     }
     // marker_order should end with 0xD9 (EOI)
 
-    // Count marker types (for verification — already counted during parsing)
     let num_app_markers = jpeg.app_data.len();
-    let _num_com_markers = jpeg.com_data.len();
 
     // APP marker types and lengths
     for i in 0..num_app_markers {
@@ -58,12 +56,10 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     let num_quant = jpeg.quant.len() as u32;
     // U32(Val(1), Val(2), Val(3), Val(4)) — stored as num_quant, default 2
     write_u32_jbrd(&mut writer, num_quant, &[1, 2, 3, 4], &[])?;
-    for (i, qt) in jpeg.quant.iter().enumerate() {
+    for qt in &jpeg.quant {
         writer.write(1, qt.precision as u64)?;
         writer.write(2, qt.index as u64)?;
-        // is_last: default true
         writer.write(1, qt.is_last as u64)?;
-        let _ = i; // index used as default in libjxl but we write explicit value
     }
 
     // Component type
@@ -121,7 +117,7 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
                 256 // kJpegHuffmanAlphabetSize sentinel
             };
             // U32(Bits(2), BitsOffset(2, 4), BitsOffset(4, 8), BitsOffset(8, 1))
-            write_u32_jbrd_custom(&mut writer, val, &[(2, 0), (2, 4), (4, 8), (8, 1)])?;
+            write_u32_jbrd(&mut writer, val, &[], &[(2, 0), (2, 4), (4, 8), (8, 1)])?;
         }
     }
 
@@ -158,7 +154,12 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
         // Reset points
         let num_reset_points = scan.reset_points.len() as u32;
         // U32(Val(0), BitsOffset(2, 1), BitsOffset(4, 4), BitsOffset(16, 20))
-        write_u32_jbrd(&mut writer, num_reset_points, &[0], &[(2, 1), (4, 4), (16, 20)])?;
+        write_u32_jbrd(
+            &mut writer,
+            num_reset_points,
+            &[0],
+            &[(2, 1), (4, 4), (16, 20)],
+        )?;
 
         let mut last_block_idx: i64 = -1;
         for &block_idx in &scan.reset_points {
@@ -184,11 +185,7 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     }
 
     // Inter-marker data lengths
-    let num_intermarkers = jpeg
-        .marker_order
-        .iter()
-        .filter(|&&m| m == 0xFF)
-        .count();
+    let num_intermarkers = jpeg.marker_order.iter().filter(|&&m| m == 0xFF).count();
     for i in 0..num_intermarkers {
         let len = jpeg.inter_marker_data[i].len() as u32;
         writer.write(16, len as u64)?;
@@ -197,7 +194,12 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     // Tail data length
     let tail_len = jpeg.tail_data.len() as u32;
     // U32(Val(0), BitsOffset(8, 1), BitsOffset(16, 257), BitsOffset(22, 65793))
-    write_u32_jbrd(&mut writer, tail_len, &[0], &[(8, 1), (16, 257), (22, 65793)])?;
+    write_u32_jbrd(
+        &mut writer,
+        tail_len,
+        &[0],
+        &[(8, 1), (16, 257), (22, 65793)],
+    )?;
 
     // Padding bits
     writer.write(1, jpeg.has_zero_padding_bit as u64)?;
@@ -244,11 +246,11 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
     Ok(result)
 }
 
-/// Write a U32 value using the JXL U32 encoding format.
+/// Write a JXL U32 value.
 ///
-/// `direct_values` are the first N selector values (selectors 0..N-1) that encode
-/// exact values with no extra bits. `bits_offset` are (num_bits, offset) pairs for
-/// the remaining selectors. Total selectors must be exactly 4.
+/// `direct_values` are selectors that encode exact values with no extra bits.
+/// `bits_offset` are `(num_bits, offset)` pairs for the remaining selectors.
+/// The total number of selectors (direct + bits_offset) must be exactly 4.
 fn write_u32_jbrd(
     writer: &mut BitWriter,
     value: u32,
@@ -267,24 +269,8 @@ fn write_u32_jbrd(
     let base_selector = direct_values.len();
     for (i, &(bits, offset)) in bits_offset.iter().enumerate() {
         let selector = base_selector + i;
-        if selector >= 3 {
-            // Last selector — must use it
-            debug_assert!(
-                value >= offset,
-                "value {value} < offset {offset} for selector {selector}"
-            );
-            debug_assert!(
-                bits == 0 || (value - offset) < (1 << bits),
-                "value {value} - offset {offset} doesn't fit in {bits} bits"
-            );
-            writer.write(2, selector as u64)?;
-            if bits > 0 {
-                writer.write(bits, (value - offset) as u64)?;
-            }
-            return Ok(());
-        }
-        // Check if value fits in this selector
-        if value >= offset && (bits == 0 || (value - offset) < (1 << bits)) {
+        let is_last = selector >= 3;
+        if is_last || (value >= offset && (bits == 0 || (value - offset) < (1 << bits))) {
             writer.write(2, selector as u64)?;
             if bits > 0 {
                 writer.write(bits, (value - offset) as u64)?;
@@ -293,34 +279,6 @@ fn write_u32_jbrd(
         }
     }
 
-    unreachable!("No selector matched for value {value}");
-}
-
-/// Write a U32 value where ALL selectors use bits+offset (no direct values).
-/// This handles cases like U32(Bits(2), BitsOffset(2, 4), BitsOffset(4, 8), BitsOffset(8, 1))
-fn write_u32_jbrd_custom(
-    writer: &mut BitWriter,
-    value: u32,
-    selectors: &[(usize, u32)], // (bits, offset) for each selector
-) -> Result<()> {
-    for (selector, &(bits, offset)) in selectors.iter().enumerate() {
-        if selector == 3 {
-            // Last selector — must use it
-            writer.write(2, selector as u64)?;
-            if bits > 0 {
-                writer.write(bits, (value - offset) as u64)?;
-            }
-            return Ok(());
-        }
-        // Check if value fits
-        if value >= offset && (bits == 0 || (value - offset) < (1 << bits)) {
-            writer.write(2, selector as u64)?;
-            if bits > 0 {
-                writer.write(bits, (value - offset) as u64)?;
-            }
-            return Ok(());
-        }
-    }
     unreachable!("No selector matched for value {value}");
 }
 
@@ -330,8 +288,7 @@ fn brotli_compress(data: &[u8]) -> Result<Vec<u8>> {
 
     let mut compressed = Vec::new();
     {
-        let mut encoder =
-            brotli::CompressorWriter::new(&mut compressed, 4096, 11, 22);
+        let mut encoder = brotli::CompressorWriter::new(&mut compressed, 4096, 11, 22);
         encoder.write_all(data)?;
         encoder.flush()?;
     }
@@ -341,7 +298,7 @@ fn brotli_compress(data: &[u8]) -> Result<Vec<u8>> {
 /// Extract EXIF data from JPEG APP markers for the container Exif box.
 ///
 /// Returns the raw EXIF data (after the "Exif\0\0" header), or None.
-pub fn extract_exif(jpeg: &JpegData) -> Option<Vec<u8>> {
+pub(crate) fn extract_exif(jpeg: &JpegData) -> Option<Vec<u8>> {
     // APP data format: [marker_byte, len_hi, len_lo, payload...]
     // EXIF payload starts with "Exif\0\0" (6 bytes)
     const EXIF_HEADER: &[u8] = b"Exif\0\0";
@@ -363,7 +320,7 @@ pub fn extract_exif(jpeg: &JpegData) -> Option<Vec<u8>> {
 /// Extract XMP data from JPEG APP markers for the container xml box.
 ///
 /// Returns the raw XMP string, or None.
-pub fn extract_xmp(jpeg: &JpegData) -> Option<Vec<u8>> {
+pub(crate) fn extract_xmp(jpeg: &JpegData) -> Option<Vec<u8>> {
     // APP data format: [marker_byte, len_hi, len_lo, payload...]
     // XMP payload starts with "http://ns.adobe.com/xap/1.0/\0"
     const XMP_HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -372,9 +329,7 @@ pub fn extract_xmp(jpeg: &JpegData) -> Option<Vec<u8>> {
             let data = &jpeg.app_data[i];
             let header_start = 3; // Skip marker byte + length
             let skip = header_start + XMP_HEADER.len();
-            if data.len() > skip
-                && &data[header_start..skip] == XMP_HEADER
-            {
+            if data.len() > skip && &data[header_start..skip] == XMP_HEADER {
                 return Some(data[skip..].to_vec());
             }
         }
