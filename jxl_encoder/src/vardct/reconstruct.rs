@@ -109,6 +109,89 @@ pub(crate) fn reconstruct_xyb(
             let x_factor = ytox_ratio(cfl_map.ytox_at(tx, ty));
             let b_factor = ytob_ratio(cfl_map.ytob_at(tx, ty));
 
+            // DCT8 fast path: SIMD dequant + CfL + IDCT in one optimized pass
+            if raw_strategy == RAW_STRATEGY_DCT8 {
+                let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
+                let qac_qm = [qac * x_qm_mul, qac, qac * b_qm_mul];
+                let weights_x: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, 0)[..64]
+                    .try_into()
+                    .unwrap();
+                let weights_y: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, 1)[..64]
+                    .try_into()
+                    .unwrap();
+                let weights_b: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, 2)[..64]
+                    .try_into()
+                    .unwrap();
+
+                let mut dq_x = [0.0f32; 64];
+                let mut dq_y = [0.0f32; 64];
+                let mut dq_b = [0.0f32; 64];
+
+                jxl_simd::dequant_block_dct8(
+                    &quant_ac[0][by][bx],
+                    &quant_ac[1][by][bx],
+                    &quant_ac[2][by][bx],
+                    weights_x,
+                    weights_y,
+                    weights_b,
+                    qac_qm,
+                    x_factor,
+                    b_factor,
+                    &mut dq_x,
+                    &mut dq_y,
+                    &mut dq_b,
+                );
+
+                // Restore LLF (DC) for each channel
+                // DC CfL uses dc_cfl_factor (0.5 for B channel, 0 for X/Y) —
+                // this is separate from the AC-level CfL (x_factor, b_factor)
+                // which is already applied by the SIMD kernel for AC positions.
+                // DC is NOT subject to tile-level CfL (the generic path skips LLF
+                // positions in the CfL loop).
+                let dc_cfl_factor_b: f32 = 0.5;
+                let inv_factor = [
+                    INV_DC_QUANT[0] * params.scale_dc,
+                    INV_DC_QUANT[1] * params.scale_dc,
+                    INV_DC_QUANT[2] * params.scale_dc,
+                ];
+                let dc_stored = [
+                    quant_dc[0][by][bx] as f32,
+                    quant_dc[1][by][bx] as f32,
+                    quant_dc[2][by][bx] as f32,
+                ];
+
+                dq_y[0] = dc_stored[1] / inv_factor[1];
+                dq_x[0] = dc_stored[0] / inv_factor[0];
+                dq_b[0] = (dc_stored[2] + dc_stored[1] * dc_cfl_factor_b) / inv_factor[2];
+
+                // IDCT + write to output planes
+                let pixel_x = bx * BLOCK_DIM;
+                let pixel_y = by * BLOCK_DIM;
+                let out_base = pixel_y * padded_width + pixel_x;
+
+                let mut px = [0.0f32; 64];
+                idct_8x8(&dq_x, &mut px);
+                for row in 0..BLOCK_DIM {
+                    let src = row * BLOCK_DIM;
+                    let dst = out_base + row * padded_width;
+                    planes[0][dst..dst + BLOCK_DIM].copy_from_slice(&px[src..src + BLOCK_DIM]);
+                }
+                idct_8x8(&dq_y, &mut px);
+                for row in 0..BLOCK_DIM {
+                    let src = row * BLOCK_DIM;
+                    let dst = out_base + row * padded_width;
+                    planes[1][dst..dst + BLOCK_DIM].copy_from_slice(&px[src..src + BLOCK_DIM]);
+                }
+                idct_8x8(&dq_b, &mut px);
+                for row in 0..BLOCK_DIM {
+                    let src = row * BLOCK_DIM;
+                    let dst = out_base + row * padded_width;
+                    planes[2][dst..dst + BLOCK_DIM].copy_from_slice(&px[src..src + BLOCK_DIM]);
+                }
+                continue;
+            }
+
+            // Generic path for non-DCT8 strategies
             // Zero the scratch regions we'll use
             for ch in &mut dequant_scratch {
                 ch[..size].fill(0.0);
