@@ -321,6 +321,11 @@ impl VarDctEncoder {
             Vec::new()
         };
 
+        // Scratch buffers for multi-block nzeros counting (reused per block)
+        let mut nz_full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
+        // Max flat_nz size: for DCT64x64, covered = 8×8, flat_len = 7*xsize_blocks+8
+        let mut nz_flat_scratch = vec![0u8; 7 * xsize_blocks + 8];
+
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
                 // Skip non-first blocks of multi-block transforms
@@ -992,35 +997,33 @@ impl VarDctEncoder {
                         // num_nonzero_except_llf expects block[y * stride + x] for y,x in 0..cy*8, 0..cx*8.
                         // The 8x8 block storage uses quant_ac[slot_by][slot_bx][pos_in_8x8].
                         let stride = cx * BLOCK_DIM;
-                        let full_block: Vec<i32> = (0..size)
-                            .map(|idx| {
-                                // idx = y * stride + x in the flat layout
-                                let y = idx / stride;
-                                let x = idx % stride;
-                                // Which 8x8 block slot in coefficient space
-                                let coef_slot_y = y / BLOCK_DIM;
-                                let coef_slot_x = x / BLOCK_DIM;
-                                // Position within the 8x8 block
-                                let pos_y = y % BLOCK_DIM;
-                                let pos_x = x % BLOCK_DIM;
-                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                                // Map to physical block offset
-                                let (phys_row_off, phys_col_off) = if transpose_slots {
-                                    (coef_slot_x, coef_slot_y)
-                                } else {
-                                    (coef_slot_y, coef_slot_x)
-                                };
-                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
-                            })
-                            .collect();
+                        let full_block = &mut nz_full_block_scratch[..size];
+                        #[allow(clippy::needless_range_loop)]
+                        for idx in 0..size {
+                            let y = idx / stride;
+                            let x = idx % stride;
+                            let coef_slot_y = y / BLOCK_DIM;
+                            let coef_slot_x = x / BLOCK_DIM;
+                            let pos_y = y % BLOCK_DIM;
+                            let pos_x = x % BLOCK_DIM;
+                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                            let (phys_row_off, phys_col_off) = if transpose_slots {
+                                (coef_slot_x, coef_slot_y)
+                            } else {
+                                (coef_slot_y, coef_slot_x)
+                            };
+                            full_block[idx] =
+                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                        }
                         let flat_len = (covered_y - 1) * xsize_blocks + covered_x;
-                        let mut flat_nz = vec![0u8; flat_len];
+                        let flat_nz = &mut nz_flat_scratch[..flat_len];
+                        flat_nz.fill(0);
                         let raw_nz = num_nonzero_except_llf(
                             cx,
                             cy,
-                            &full_block,
+                            full_block,
                             xsize_blocks,
-                            &mut flat_nz,
+                            flat_nz,
                             covered_x,
                             covered_y,
                         );
