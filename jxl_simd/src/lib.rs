@@ -16,6 +16,7 @@
 extern crate alloc;
 
 mod dct8;
+mod dequant;
 mod entropy;
 mod gab;
 mod gaborish5x5;
@@ -25,6 +26,7 @@ mod xyb;
 
 pub use dct8::dct_8x8;
 pub use dct8::idct_8x8;
+pub use dequant::dequant_block_dct8;
 pub use entropy::{EntropyCoeffResult, entropy_estimate_coeffs};
 pub use gab::gab_smooth_channel;
 pub use gaborish5x5::gaborish_5x5_channel;
