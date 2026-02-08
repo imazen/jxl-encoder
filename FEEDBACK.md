@@ -46,3 +46,9 @@ Two critical bugs fixed via bit-level comparison with libjxl:
 2. Huffman tables needed sentinel symbol (value=256) at max depth
 Byte-exact reconstruction verified on 64x64 and 600x450 JPEGs via djxl.
 800x600 JBRD proven correct via hybrid testing (VarDCT codestream has separate issue).
+
+## 2026-02-08: SIMD IDCT16x16
+User requested SIMD-accelerated idct_16x16 in jxl_simd crate. Batched 16-point IDCT
+processes 8 rows at a time via f32x8. Gather/scatter for column-to-lane mapping.
+Pre-computed reciprocals for WC_MULTIPLIERS (mul instead of div). Max error vs scalar:
+0.003 absolute on ~192 magnitude values (relative ~1.5e-5, well within f32 precision).
