@@ -422,39 +422,7 @@ pub fn dc_from_dct_4x4_full(coeffs: &[f32; 64]) -> f32 {
 /// Input: 16x8 block in row-major order (128 floats)
 /// Output: 16x8 DCT coefficients
 pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
-
-    // Transform rows (8 columns each)
-    for row in 0..16 {
-        let row_start = row * 8;
-        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
-        dct1d_8(&mut tmp[row_start..row_start + 8]);
-        for i in 0..8 {
-            tmp[row_start + i] *= 1.0 / 8.0;
-        }
-    }
-
-    // Transpose 16x8 -> 8x16
-    let mut transposed = [0.0f32; 128];
-    for row in 0..16 {
-        for col in 0..8 {
-            transposed[col * 16 + row] = tmp[row * 8 + col];
-        }
-    }
-
-    // Transform columns (now 16 elements each)
-    for row in 0..8 {
-        let row_start = row * 16;
-        dct1d_16(&mut transposed[row_start..row_start + 16]);
-        for i in 0..16 {
-            transposed[row_start + i] *= 1.0 / 16.0;
-        }
-    }
-
-    // No final transpose — C++ ComputeScaledDCT<16,8> (ROWS >= COLS branch)
-    // does not include a final transpose, matching DCT8x8 behavior.
-    // Output is in 8x16 layout: output[fx * 16 + fy] for frequency (fy, fx).
-    output.copy_from_slice(&transposed);
+    jxl_simd::dct_16x8(input, output);
 }
 
 /// Compute scaled 8x16 DCT (8 rows, 16 columns).
@@ -462,41 +430,7 @@ pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
 /// Input: 8x16 block in row-major order (128 floats)
 /// Output: 8x16 DCT coefficients
 pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
-
-    // Transform rows (16 columns each)
-    for row in 0..8 {
-        let row_start = row * 16;
-        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
-        dct1d_16(&mut tmp[row_start..row_start + 16]);
-        for i in 0..16 {
-            tmp[row_start + i] *= 1.0 / 16.0;
-        }
-    }
-
-    // Transpose 8x16 -> 16x8
-    let mut transposed = [0.0f32; 128];
-    for row in 0..8 {
-        for col in 0..16 {
-            transposed[col * 8 + row] = tmp[row * 16 + col];
-        }
-    }
-
-    // Transform columns (now 8 elements each)
-    for row in 0..16 {
-        let row_start = row * 8;
-        dct1d_8(&mut transposed[row_start..row_start + 8]);
-        for i in 0..8 {
-            transposed[row_start + i] *= 1.0 / 8.0;
-        }
-    }
-
-    // Transpose 16x8 -> 8x16
-    for row in 0..16 {
-        for col in 0..8 {
-            output[col * 16 + row] = transposed[row * 8 + col];
-        }
-    }
+    jxl_simd::dct_8x16(input, output);
 }
 
 /// Compute scaled 16x16 DCT (16 rows, 16 columns).
