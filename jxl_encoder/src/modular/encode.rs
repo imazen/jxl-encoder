@@ -169,7 +169,7 @@ fn build_ans_tokens(residuals: &[u32]) -> Vec<AnsToken> {
 
 /// Build the ANS entropy code for modular residuals.
 /// Returns (tokens, code) for separate header/token writing.
-fn build_ans_modular_code(residuals: &[u32]) -> (Vec<AnsToken>, OwnedAnsEntropyCode) {
+pub(crate) fn build_ans_modular_code(residuals: &[u32]) -> (Vec<AnsToken>, OwnedAnsEntropyCode) {
     let tokens = build_ans_tokens(residuals);
     let code = build_entropy_code_ans(&tokens, 1); // 1 context for single-leaf tree
     (tokens, code)
@@ -182,7 +182,10 @@ fn build_ans_modular_code(residuals: &[u32]) -> (Vec<AnsToken>, OwnedAnsEntropyC
 /// and always writes a context map via write_entropy_code_ans.
 ///
 /// Layout: lz77.enabled=0 + use_prefix_code=0 + log_alpha_size + HybridUint config + ANS distribution
-fn write_ans_modular_header(writer: &mut BitWriter, code: &OwnedAnsEntropyCode) -> Result<()> {
+pub(crate) fn write_ans_modular_header(
+    writer: &mut BitWriter,
+    code: &OwnedAnsEntropyCode,
+) -> Result<()> {
     assert_eq!(
         code.histograms.len(),
         1,
@@ -230,7 +233,7 @@ fn ceil_log2_nonzero(x: u32) -> u32 {
 }
 
 /// Write ANS-encoded tokens.
-fn write_ans_modular_tokens(
+pub(crate) fn write_ans_modular_tokens(
     writer: &mut BitWriter,
     tokens: &[AnsToken],
     code: &OwnedAnsEntropyCode,

@@ -10,27 +10,27 @@
 //! decodes to pixel-identical output as the original JPEG.
 
 use super::data::*;
+use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
-    build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans, OwnedAnsEntropyCode,
+    OwnedAnsEntropyCode, build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans,
 };
-use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
-use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
+use crate::headers::color_encoding::ColorEncoding;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use crate::headers::frame_header::{Encoding, FrameHeader};
-use crate::modular::predictor::pack_signed;
 use crate::vardct::ac_context;
-use crate::vardct::ac_group::{collect_ac_coefficients, predict_from_top_and_left};
+use crate::vardct::ac_group::{collect_ac_coefficients_into, predict_from_top_and_left};
 use crate::vardct::ac_strategy::AcStrategyMap;
 use crate::vardct::chroma_from_luma::CflMap;
 use crate::vardct::common::*;
 use crate::vardct::dc_coding::{
-    collect_ac_metadata_tokens_region, collect_dc_tokens_region, NUM_DC_CONTEXTS,
+    NUM_DC_CONTEXTS, collect_ac_metadata_tokens_region, collect_dc_tokens_region,
 };
-use crate::vardct::frame::{write_quant_scales, write_toc};
-use crate::BLOCK_SIZE;
+use crate::vardct::frame::{
+    assemble_frame_sections, write_dc_group_from_tokens, write_quant_scales,
+};
 
 /// Number of JXL quant tables (from libjxl quant_weights.h).
 const NUM_QUANT_TABLES: usize = 17;
@@ -89,13 +89,11 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
     let ysize_dc_groups = div_ceil(height, DC_GROUP_DIM);
     let num_groups = xsize_groups * ysize_groups;
     let num_dc_groups = xsize_dc_groups * ysize_dc_groups;
-    let num_sections = 2 + num_dc_groups + num_groups;
-
     // Build transposed quant tables for RAW encoding
     let raw_qtables = build_raw_qtables(jpeg, &jpeg_c_map)?;
 
-    // DC quantization values: dcquant[c] = 2040.0 / Q_dc[c]
-    let dc_quant = build_dc_quant(jpeg, &jpeg_c_map)?;
+    // DC dequantization values: dc_dequant[c] = Q_dc[c] / 2040.0
+    let dc_dequant = build_dc_dequant(jpeg, &jpeg_c_map)?;
 
     // ── Pass 1: Collect all tokens ──
 
@@ -129,14 +127,11 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
     }
 
     // AC tokens per group — iterate blocks, call collect_ac_coefficients per block
-    // Default block context map for all-DCT8, all-QF=1
-    let block_ctx_map = ac_context::compute_block_ctx_map(
-        &quant_field,
-        &ac_strategy,
-        1.0, // distance doesn't matter for all-QF=1
-        xsize_blocks,
-        ysize_blocks,
-    );
+    // Use the default 4-cluster block context map matching what we write in DC global.
+    // JPEG reencoding has uniform QF=1 and all-DCT8, so adaptive context modeling
+    // provides no benefit and compute_block_ctx_map would produce a different cluster
+    // count than the hardcoded COMPACT_BLOCK_CONTEXT_MAP, causing decoder mismatch.
+    let block_ctx_map = ac_context::BlockCtxMap::default();
 
     let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
     for group_idx in 0..num_groups {
@@ -172,9 +167,9 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
                         predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
                     };
                     let qf_val = quant_field[by * xsize_blocks + bx] as u32;
-                    let block_ctx =
-                        block_ctx_map.block_context(c, strategy_code, qf_val);
-                    let block_tokens = collect_ac_coefficients(
+                    let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
+                    collect_ac_coefficients_into(
+                        &mut tokens,
                         &quant_ac[c][by][bx],
                         raw_strategy,
                         nz,
@@ -183,7 +178,6 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
                         block_ctx_map.num_ctxs,
                         None, // no custom coefficient order
                     );
-                    tokens.extend_from_slice(&block_tokens);
                 }
             }
         }
@@ -219,9 +213,8 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
 
     let mut writer = BitWriter::with_capacity(width * height * 4);
 
-    // File header
+    // File header (write() includes the signature)
     let file_header = build_jpeg_file_header(width, height);
-    FileHeader::write_signature(&mut writer)?;
     file_header.write(&mut writer)?;
     writer.zero_pad_to_byte();
 
@@ -229,92 +222,47 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
     let frame_header = build_jpeg_frame_header(jpeg);
     frame_header.write(&mut writer)?;
 
-    // Build sections
-    if num_sections == 4 {
-        // Single-group: combine all sections at bit level (no byte-alignment between sections)
-        let mut dc_global = BitWriter::new();
-        write_dc_global_jpeg(&dc_quant, &dc_code, num_dc_groups, &mut dc_global)?;
-        // Empty modular global (no alpha, no extra channels)
-        write_modular_empty_global(&mut dc_global)?;
+    // Build section content using shared infrastructure
+    let write_tok = |tokens: &[Token], w: &mut BitWriter| -> Result<()> {
+        write_tokens_ans(tokens, &dc_code, None, w)
+    };
 
+    // DC Global
+    let mut dc_global = BitWriter::new();
+    write_dc_global_jpeg(&dc_dequant, &dc_code, num_dc_groups, &mut dc_global)?;
+
+    // DC Groups (using shared function from frame.rs)
+    let mut dc_groups = Vec::with_capacity(num_dc_groups);
+    for dc_group_idx in 0..num_dc_groups {
         let mut dc_group = BitWriter::new();
-        write_dc_group_jpeg(
-            0,
+        write_dc_group_from_tokens(
+            dc_group_idx,
             xsize_blocks,
             ysize_blocks,
             xsize_dc_groups,
-            &dc_tokens_per_group[0],
-            &ac_metadata_tokens_per_group[0],
+            &dc_tokens_per_group[dc_group_idx],
+            &ac_metadata_tokens_per_group[dc_group_idx],
             &ac_strategy,
-            &dc_code,
+            &write_tok,
             &mut dc_group,
         )?;
-
-        let mut ac_global = BitWriter::new();
-        write_ac_global_jpeg(&raw_qtables, num_groups, &ac_code, &mut ac_global)?;
-
-        let mut ac_group_writer = BitWriter::new();
-        write_tokens_ans(&ac_section_tokens[0], &ac_code, None, &mut ac_group_writer)?;
-
-        // Combine sections
-        let mut combined = dc_global;
-        combined.append_unaligned(&dc_group)?;
-        combined.append_unaligned(&ac_global)?;
-        combined.append_unaligned(&ac_group_writer)?;
-        combined.zero_pad_to_byte();
-        let combined_bytes = combined.finish();
-
-        write_toc(&[combined_bytes.len()], &mut writer)?;
-        writer.append_bytes(&combined_bytes)?;
-    } else {
-        // Multi-group: byte-aligned sections
-        let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
-
-        // DC Global
-        let mut dc_global = BitWriter::new();
-        write_dc_global_jpeg(&dc_quant, &dc_code, num_dc_groups, &mut dc_global)?;
-        write_modular_empty_global(&mut dc_global)?;
-        dc_global.zero_pad_to_byte();
-        sections.push(dc_global.finish());
-
-        // DC groups
-        for dc_group_idx in 0..num_dc_groups {
-            let mut dc_group = BitWriter::new();
-            write_dc_group_jpeg(
-                dc_group_idx,
-                xsize_blocks,
-                ysize_blocks,
-                xsize_dc_groups,
-                &dc_tokens_per_group[dc_group_idx],
-                &ac_metadata_tokens_per_group[dc_group_idx],
-                &ac_strategy,
-                &dc_code,
-                &mut dc_group,
-            )?;
-            dc_group.zero_pad_to_byte();
-            sections.push(dc_group.finish());
-        }
-
-        // AC Global
-        let mut ac_global = BitWriter::new();
-        write_ac_global_jpeg(&raw_qtables, num_groups, &ac_code, &mut ac_global)?;
-        ac_global.zero_pad_to_byte();
-        sections.push(ac_global.finish());
-
-        // AC groups
-        for ac_tokens in &ac_section_tokens {
-            let mut ac_group_writer = BitWriter::new();
-            write_tokens_ans(ac_tokens, &ac_code, None, &mut ac_group_writer)?;
-            ac_group_writer.zero_pad_to_byte();
-            sections.push(ac_group_writer.finish());
-        }
-
-        let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
-        write_toc(&section_sizes, &mut writer)?;
-        for section in sections {
-            writer.append_bytes(&section)?;
-        }
+        dc_groups.push(dc_group);
     }
+
+    // AC Global
+    let mut ac_global = BitWriter::new();
+    write_ac_global_jpeg(&raw_qtables, num_groups, &ac_code, &mut ac_global)?;
+
+    // AC Groups
+    let mut ac_groups = Vec::with_capacity(num_groups);
+    for ac_tokens in &ac_section_tokens {
+        let mut ac_group_writer = BitWriter::new();
+        write_tokens_ans(ac_tokens, &ac_code, None, &mut ac_group_writer)?;
+        ac_groups.push(ac_group_writer);
+    }
+
+    // Assemble frame (shared single-group/multi-group assembly logic)
+    assemble_frame_sections(dc_global, dc_groups, ac_global, ac_groups, &mut writer)?;
 
     Ok(writer.finish_with_padding())
 }
@@ -425,22 +373,28 @@ fn build_raw_qtables(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<Vec<i32
     Ok(qtables)
 }
 
-/// Build DC quantization values: dcquant[c] = 2040.0 / Q_dc[c]
-fn build_dc_quant(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<[f32; 3]> {
-    let mut dc_quant = [0.0f32; 3];
+/// Build DC dequantization values for the DequantDC header section.
+///
+/// Returns the inverse DC quantization factors: `dc_dequant[c] = Q_dc[c] / 2040.0`
+///
+/// In libjxl, `SetDCQuant(dcquantization)` stores `dc_quant_[c] = 1/dcquantization[c]`
+/// where `dcquantization[c] = 2040/Q_dc[c]`. The stored value `dc_quant_[c] = Q_dc[c]/2040`
+/// is then written as `dc_quant_[c] * 128` in F16 format. The decoder reads this F16
+/// and uses it directly in: `scale = m_lf * 512 / (global_scale * quant_lf)`.
+fn build_dc_dequant(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<[f32; 3]> {
+    let mut dc_dequant = [0.0f32; 3];
     for jxl_c in 0..3 {
         let jpeg_c = jpeg_c_map[jxl_c];
         let quant_idx = jpeg.components[jpeg_c].quant_idx as usize;
         let q_dc = jpeg.quant[quant_idx].values[0] as f32;
-        dc_quant[jxl_c] = 255.0 * 8.0 / q_dc;
+        dc_dequant[jxl_c] = q_dc / (255.0 * 8.0);
     }
-    Ok(dc_quant)
+    Ok(dc_dequant)
 }
 
 /// Build the JXL file header for JPEG reencoding.
 fn build_jpeg_file_header(width: usize, height: usize) -> FileHeader {
-    let mut color_encoding = ColorEncoding::srgb();
-    color_encoding.rendering_intent = RenderingIntent::Relative;
+    let color_encoding = ColorEncoding::srgb(); // Perceptual rendering intent → all_default
 
     FileHeader {
         width: width as u32,
@@ -475,26 +429,22 @@ fn build_jpeg_frame_header(jpeg: &JpegData) -> FrameHeader {
 /// Write DC global section for JPEG reencoding.
 ///
 /// Unlike the normal VarDCT path, JPEG reencoding uses:
-/// - Custom DC quantization values (not default)
+/// - Custom DC dequantization values (not default)
 /// - global_scale=65536, quant_dc=1
 fn write_dc_global_jpeg(
-    dc_quant: &[f32; 3],
+    dc_dequant: &[f32; 3],
     dc_code: &OwnedAnsEntropyCode,
     num_dc_groups: usize,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // No noise params for JPEG reencoding
 
-    // Custom DC quantization: default_dequant_dc = false
-    writer.write(1, 0)?; // NOT default dequant dc
-    // Write 3 DC quant values as F16
-    // The decoder reads: dcquantization[c] = F16_value * 128.0
-    // So we write: F16_value = (1.0 / dcquantization[c]) * 128.0
-    // where dcquantization[c] = dc_quant[c] = 2040.0 / Q_dc[c]
-    for &dq in &dc_quant[..3] {
-        let dc_quant_internal = 1.0 / dq; // 1/dcquantization
-        let f16_value = dc_quant_internal * 128.0;
-        write_f16(f16_value, writer)?;
+    // DequantDC: custom values (not default)
+    // The F16 value stored is dc_dequant[c] * 128.0
+    // Decoder reads this and uses it directly in: scale = m_lf * 512 / (global_scale * quant_lf)
+    writer.write(1, 0)?; // not all_default
+    for &dcq in dc_dequant.iter() {
+        write_f16(dcq * 128.0, writer)?;
     }
 
     // Quantizer params: global_scale=65536, quant_dc=1
@@ -505,8 +455,16 @@ fn write_dc_global_jpeg(
     writer.write(16, 0)?; // no dc ctx, no qft
     crate::vardct::context_tree::write_block_context_map(writer)?;
 
-    // Default DC cmap
-    writer.write(1, 1)?; // default DC cmap
+    // LfChannelCorrelation (CfL DC params)
+    // For YCbCr mode, base_correlation_b must be 0.0 (not the XYB default of 1.0).
+    // The default (all_default=1) uses base_correlation_b=1.0 which adds Y into the
+    // Cr channel, corrupting chroma. We must write all_default=0 explicitly.
+    writer.write(1, 0)?; // not all_default
+    writer.write(2, 0)?; // colour_factor = 84 (U32 selector 0)
+    write_f16(0.0, writer)?; // base_correlation_x = 0.0
+    write_f16(0.0, writer)?; // base_correlation_b = 0.0 (NOT the XYB default 1.0)
+    writer.write(8, 128)?; // x_factor_lf = 128 (signed 0)
+    writer.write(8, 128)?; // b_factor_lf = 128 (signed 0)
 
     // Context tree for modular DC header
     crate::vardct::context_tree::write_context_tree(num_dc_groups, writer)?;
@@ -520,59 +478,6 @@ fn write_dc_global_jpeg(
     Ok(())
 }
 
-/// Write a DC group section for JPEG reencoding.
-///
-/// Same format as normal VarDCT DC groups: DC tokens + AC metadata tokens.
-#[allow(clippy::too_many_arguments)]
-fn write_dc_group_jpeg(
-    dc_group_idx: usize,
-    xsize_blocks: usize,
-    ysize_blocks: usize,
-    xsize_dc_groups: usize,
-    dc_tokens: &[Token],
-    ac_metadata_tokens: &[Token],
-    ac_strategy: &AcStrategyMap,
-    dc_code: &OwnedAnsEntropyCode,
-    writer: &mut BitWriter,
-) -> Result<()> {
-    let dc_gx = dc_group_idx % xsize_dc_groups;
-    let dc_gy = dc_group_idx / xsize_dc_groups;
-    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
-    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
-    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-    let region_xsize = end_bx - start_bx;
-    let region_ysize = end_by - start_by;
-
-    // DC group header
-    writer.write(2, 0)?; // extra_dc_precision = 0
-    writer.write(4, 3)?; // use global tree, default wp, no transforms
-
-    // Write DC tokens
-    write_tokens_ans(dc_tokens, dc_code, None, writer)?;
-
-    // AC metadata sub-header — count first blocks (distinct transforms)
-    let num_blocks = region_xsize * region_ysize;
-    let mut num_ac_blocks = 0;
-    for ry in start_by..end_by {
-        for rx in start_bx..end_bx {
-            if ac_strategy.is_first(rx, ry) {
-                num_ac_blocks += 1;
-            }
-        }
-    }
-    let nb_bits = ceil_log2_nonzero(num_blocks);
-    if nb_bits != 0 {
-        writer.write(nb_bits as usize, (num_ac_blocks - 1) as u64)?;
-    }
-    writer.write(4, 3)?; // use global tree, default wp, no transforms
-
-    // Write AC metadata tokens
-    write_tokens_ans(ac_metadata_tokens, dc_code, None, writer)?;
-
-    Ok(())
-}
-
 /// Write AC global section for JPEG reencoding.
 ///
 /// Unlike normal VarDCT, this writes RAW quant matrices (not all_default).
@@ -582,8 +487,8 @@ fn write_ac_global_jpeg(
     ac_code: &OwnedAnsEntropyCode,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    // Quant matrices: NOT all_default
-    writer.write(1, 0)?;
+    // RAW quant matrices with JPEG quant tables
+    writer.write(1, 0)?; // not all_default
     write_quant_matrices_jpeg(raw_qtables, writer)?;
 
     // num_histograms
@@ -622,129 +527,65 @@ fn write_quant_matrices_jpeg(raw_qtables: &[i32], writer: &mut BitWriter) -> Res
             write_raw_quant_table_modular(raw_qtables, writer)?;
         } else {
             // Library mode (predefined table 0) for all other strategies
+            // kCeilLog2NumPredefinedTables = 0, so no additional bits needed
             writer.write(3, 0)?; // mode = kQuantModeLibrary (0)
-            writer.write(1, 0)?; // predefined index 0
         }
     }
     Ok(())
 }
 
 /// Write a raw quant table as a modular-encoded 8x8 image with 3 channels.
+///
+/// This is a standalone modular sub-bitstream within the AC global section.
+/// Structure: GroupHeader → MA tree (Decoder::parse with 6 ctx) → tree tokens
+///          → Data entropy (Decoder::parse with 1 ctx) → data tokens
+///
+/// CRITICAL: When num_dist=1 (single leaf tree → 1 context for data), the decoder's
+/// read_clusters() returns immediately without reading any context map bits.
+/// We must NOT write a context map for the data entropy code.
 fn write_raw_quant_table_modular(qtables: &[i32], writer: &mut BitWriter) -> Result<()> {
-    let width = 8;
-    let height = 8;
-    let num_channels = 3;
+    use crate::modular::channel::{Channel, ModularImage};
+    use crate::modular::section::collect_all_residuals;
 
-    let hybrid_config = HybridUintConfig::new(4, 2, 0);
+    // Create a 3-channel 8x8 ModularImage from the quant table data
+    let mut channels = Vec::with_capacity(3);
+    for c in 0..3 {
+        let data: Vec<i32> = (0..64).map(|i| qtables[c * 64 + i]).collect();
+        channels.push(Channel::from_vec(data, 8, 8)?);
+    }
+    let image = ModularImage {
+        channels,
+        bit_depth: 8,
+        is_grayscale: false,
+        has_alpha: false,
+    };
+
+    // Collect gradient residuals using existing infrastructure
+    let (residuals, _max_residual) = collect_all_residuals(&image);
 
     // GroupHeader: use_global_tree=false, wp_params default, no transforms
     writer.write(1, 0)?; // use_global_tree = false
     writer.write(1, 1)?; // wp_params all_default = true
     writer.write(2, 0)?; // nb_transforms = 0
 
-    // Write a simple context tree: single leaf with gradient predictor
+    // Write tree entropy code (Decoder::parse with 6 contexts → writes context map)
     let (tree_depths, tree_codes) =
         crate::modular::encode::write_tree_histogram_for_gradient(writer)?;
+    // Write tree tokens (single leaf: property=0, predictor=Gradient, offset=0, mul=1)
     crate::modular::encode::write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-    // Collect residuals using gradient prediction for all 3 channels
-    let mut tokens = Vec::with_capacity(num_channels * width * height);
+    // Build ANS code and write data entropy header.
+    // Uses write_ans_modular_header which correctly skips context map when num_dist=1.
+    let (tokens, code) = crate::modular::encode::build_ans_modular_code(&residuals);
+    crate::modular::encode::write_ans_modular_header(writer, &code)?;
 
-    for c in 0..num_channels {
-        for y in 0..height {
-            for x in 0..width {
-                let value = qtables[c * 64 + y * width + x];
-
-                // Gradient prediction: clamp(left + top - topleft)
-                let left = if x > 0 {
-                    qtables[c * 64 + y * width + (x - 1)]
-                } else if y > 0 {
-                    qtables[c * 64 + (y - 1) * width + x]
-                } else {
-                    0
-                };
-                let top = if y > 0 {
-                    qtables[c * 64 + (y - 1) * width + x]
-                } else {
-                    left
-                };
-                let topleft = if x > 0 && y > 0 {
-                    qtables[c * 64 + (y - 1) * width + (x - 1)]
-                } else {
-                    left
-                };
-
-                let pred = crate::vardct::dc_coding::clamped_gradient(top, left, topleft);
-                let residual = value - pred;
-                let packed = pack_signed(residual);
-                let (token, nbits, bits) = hybrid_config.encode(packed);
-                tokens.push(Token::new(0, token));
-                // Store extra bits info — we'll write them manually after the token
-                // Actually, Token only has context+value. The entropy coder handles
-                // the HybridUint encoding internally.
-                // But wait — the modular sub-bitstream tokens need to use the same
-                // HybridUint config as the entropy coder expects.
-                // For modular, the Token value IS the packed residual (pre-hybrid encoding
-                // is handled by the Token/entropy system).
-                let _ = (nbits, bits); // Not needed — Token stores the raw value
-            }
-        }
-    }
-
-    // Actually, Token.value should be the raw packed residual, not the hybrid-encoded token.
-    // The entropy coder applies HybridUint encoding internally.
-    // Let me fix this:
-    tokens.clear();
-    for c in 0..num_channels {
-        for y in 0..height {
-            for x in 0..width {
-                let value = qtables[c * 64 + y * width + x];
-                let left = if x > 0 {
-                    qtables[c * 64 + y * width + (x - 1)]
-                } else if y > 0 {
-                    qtables[c * 64 + (y - 1) * width + x]
-                } else {
-                    0
-                };
-                let top = if y > 0 {
-                    qtables[c * 64 + (y - 1) * width + x]
-                } else {
-                    left
-                };
-                let topleft = if x > 0 && y > 0 {
-                    qtables[c * 64 + (y - 1) * width + (x - 1)]
-                } else {
-                    left
-                };
-                let pred = crate::vardct::dc_coding::clamped_gradient(top, left, topleft);
-                let residual = value - pred;
-                let packed = pack_signed(residual);
-                tokens.push(Token::new(0, packed));
-            }
-        }
-    }
-
-    // Build entropy code for the quant table tokens
-    let qt_code = build_entropy_code_ans(&tokens, 1);
-
-    // LZ77: disabled
-    writer.write(1, 0)?;
-
-    // Write entropy code and tokens
-    write_entropy_code_ans(&qt_code, writer)?;
-    write_tokens_ans(&tokens, &qt_code, None, writer)?;
+    // Write data tokens
+    crate::modular::encode::write_ans_modular_tokens(writer, &tokens, &code)?;
 
     Ok(())
 }
 
 /// Write an empty modular global sub-bitstream (no alpha, no extra channels).
-fn write_modular_empty_global(writer: &mut BitWriter) -> Result<()> {
-    writer.write(1, 0)?; // use_global_tree = false
-    writer.write(1, 1)?; // wp_params all_default = true
-    writer.write(2, 0)?; // nb_transforms = 0
-    Ok(())
-}
-
 /// Encode an f32 value as IEEE 754 half-precision (16 bits).
 fn write_f16(value: f32, writer: &mut BitWriter) -> Result<()> {
     let bits = f32_to_f16_bits(value);
@@ -812,7 +653,10 @@ mod tests {
         let qtable_den = 1.0f32 / 2040.0;
         let bits = f32_to_f16_bits(qtable_den);
         // Should be a small positive denormalized or small normal value
-        assert!(bits > 0 && bits < 0x4000, "qtable_den f16 bits = 0x{bits:04X}");
+        assert!(
+            bits > 0 && bits < 0x4000,
+            "qtable_den f16 bits = 0x{bits:04X}"
+        );
     }
 
     #[test]
@@ -828,7 +672,14 @@ mod tests {
         assert_eq!(jxl[1], 0x0A);
         eprintln!(
             "Encoded {}x{} JPEG to {} bytes JXL",
-            jpeg.width, jpeg.height, jxl.len()
+            jpeg.width,
+            jpeg.height,
+            jxl.len()
         );
+
+        // Save for manual inspection
+        let out_path = "/mnt/v/output/jpeg-reencoding/landscape1.jxl";
+        std::fs::write(out_path, &jxl).expect("failed to write JXL");
+        eprintln!("Saved to {out_path}");
     }
 }

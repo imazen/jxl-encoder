@@ -229,8 +229,8 @@ impl FrameHeader {
             writer.write(2, self.group_size_shift as u64)?;
         }
 
-        // x_qm_scale, b_qm_scale: VarDCT only
-        if self.encoding == Encoding::VarDct {
+        // x_qm_scale, b_qm_scale: VarDCT + xyb_encoded only
+        if self.encoding == Encoding::VarDct && self.xyb_encoded {
             writer.write(3, self.x_qm_scale as u64)?;
             writer.write(3, self.b_qm_scale as u64)?;
         }
