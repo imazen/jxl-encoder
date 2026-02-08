@@ -847,57 +847,9 @@ pub(crate) fn xyb_to_linear_rgb(
     width: usize,
     height: usize,
 ) -> Vec<f32> {
-    use crate::color::xyb::{NEG_OPSIN_ABSORBANCE_BIAS_CBRT, OPSIN_ABSORBANCE_BIAS};
-
-    // Inverse opsin absorbance matrix (from libjxl cms/opsin_params.h)
-    #[allow(clippy::excessive_precision)]
-    const INV_OPSIN: [[f32; 3]; 3] = [
-        [11.031566901960783, -9.866943921568629, -0.16462299647058826],
-        [-3.254147380392157, 4.418770392156863, -0.16462299647058826],
-        [-3.6588512862745097, 2.7129230470588235, 1.9459282392156863],
-    ];
-
-    let cbrt_bias_0 = -NEG_OPSIN_ABSORBANCE_BIAS_CBRT[0]; // cbrt(bias) ≈ 0.15595
-    let cbrt_bias_1 = -NEG_OPSIN_ABSORBANCE_BIAS_CBRT[1];
-    let cbrt_bias_2 = -NEG_OPSIN_ABSORBANCE_BIAS_CBRT[2];
-    let neg_bias_0 = -OPSIN_ABSORBANCE_BIAS[0];
-    let neg_bias_1 = -OPSIN_ABSORBANCE_BIAS[1];
-    let neg_bias_2 = -OPSIN_ABSORBANCE_BIAS[2];
-
     let num_pixels = width * height;
     let mut linear_rgb = vec![0.0f32; num_pixels * 3];
-
-    for i in 0..num_pixels {
-        let x = xyb_x[i];
-        let y = xyb_y[i];
-        let b = xyb_b[i];
-
-        // Step 1: Unmix XYB to LMS gamma domain
-        let mut gamma_r = y + x; // L
-        let mut gamma_g = y - x; // M
-        let mut gamma_b = b; // S
-
-        // Step 2: Add cbrt(bias) back (undo the encoder's subtraction)
-        gamma_r += cbrt_bias_0;
-        gamma_g += cbrt_bias_1;
-        gamma_b += cbrt_bias_2;
-
-        // Step 3: Cube and subtract bias to get mixed (opsin LMS) values
-        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias_0;
-        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias_1;
-        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias_2;
-
-        // Step 4: Apply inverse opsin matrix to get linear RGB
-        let r = INV_OPSIN[0][0] * mixed_r + INV_OPSIN[0][1] * mixed_g + INV_OPSIN[0][2] * mixed_b;
-        let g = INV_OPSIN[1][0] * mixed_r + INV_OPSIN[1][1] * mixed_g + INV_OPSIN[1][2] * mixed_b;
-        let b_lin =
-            INV_OPSIN[2][0] * mixed_r + INV_OPSIN[2][1] * mixed_g + INV_OPSIN[2][2] * mixed_b;
-
-        linear_rgb[i * 3] = r;
-        linear_rgb[i * 3 + 1] = g;
-        linear_rgb[i * 3 + 2] = b_lin;
-    }
-
+    jxl_simd::xyb_to_linear_rgb_batch(xyb_x, xyb_y, xyb_b, &mut linear_rgb, num_pixels);
     linear_rgb
 }
 
