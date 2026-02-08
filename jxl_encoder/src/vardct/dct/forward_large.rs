@@ -9,7 +9,7 @@ use super::constants::*;
 use super::forward::dct1d_16;
 use super::inverse::{idct1d_4, idct1d_8};
 
-fn dct1d_32(mem: &mut [f32]) {
+pub fn dct1d_32(mem: &mut [f32]) {
     let mut tmp = [0.0f32; 32];
 
     // AddReverse for first half
@@ -319,7 +319,7 @@ pub fn dc_from_dct_16x32(coeffs: &[f32; 512]) -> [f32; 8] {
     result
 }
 
-fn dct1d_64(mem: &mut [f32]) {
+pub fn dct1d_64(mem: &mut [f32]) {
     let mut tmp = [0.0f32; 64];
 
     // AddReverse for first half
