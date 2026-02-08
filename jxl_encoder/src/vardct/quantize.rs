@@ -394,6 +394,15 @@ impl VarDctEncoder {
         let transpose_slots = covered_y > covered_x;
 
         if !error_diffusion {
+            // DCT8 fast path: use SIMD-accelerated kernel for single-block transforms
+            if covered_x == 1 && covered_y == 1 && size == DCT_BLOCK_SIZE {
+                let coeffs: &[f32; 64] = dct_coeffs[..64].try_into().unwrap();
+                let w: &[f32; 64] = weights[..64].try_into().unwrap();
+                let qac_qm = qac * qm_multiplier;
+                jxl_simd::quantize_block_dct8(coeffs, w, qac_qm, thresholds, &mut quant_ac[by][bx]);
+                return;
+            }
+
             // Standard quantization without error diffusion
             #[cfg(feature = "debug-tokens")]
             let mut debug_nonzero_count = 0usize;
