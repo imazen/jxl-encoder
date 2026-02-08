@@ -10,7 +10,9 @@
 //! bit-exact JPEG reconstruction from a JPEG XL container.
 
 mod data;
+mod encode;
 mod parse;
 
 pub use data::*;
+pub use encode::encode_jpeg_to_jxl;
 pub use parse::read_jpeg;
