@@ -1032,7 +1032,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
-                    &mut scratch,
+                        &mut scratch,
                     );
                     cx += 8;
                 }
@@ -1054,7 +1054,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
-                    &mut scratch,
+                        &mut scratch,
                     );
                     cx += 4;
                 }
@@ -1075,7 +1075,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
-                    &mut scratch,
+                        &mut scratch,
                     );
                     cx += 2;
                 }
@@ -1101,7 +1101,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
-                    &mut scratch,
+                        &mut scratch,
                     );
                     cx += 4;
                 }
@@ -1122,7 +1122,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
-                    &mut scratch,
+                        &mut scratch,
                     );
                     cx += 2;
                 }
@@ -1148,7 +1148,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
-                    &mut scratch,
+                        &mut scratch,
                     );
                     cx += 2;
                 }
