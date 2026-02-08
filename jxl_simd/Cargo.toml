@@ -1,0 +1,14 @@
+[package]
+name = "jxl_simd"
+description = "SIMD-accelerated primitives for jxl_encoder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+archmage = "0.5"
+magetypes = "0.5"
+
+[lints]
+workspace = true

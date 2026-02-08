@@ -14,6 +14,7 @@ whereat = "0.1.3"
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = "2.0"
 byteorder = "1.4"
+jxl_simd = { path = "../jxl_simd" }
 num-derive = "0.4"
 num-traits = "0.2"
 # Optional dependencies for rate control feature

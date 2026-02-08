@@ -826,48 +826,7 @@ pub(crate) fn gab_smooth(planes: &mut [Vec<f32>; 3], width: usize, height: usize
     let mut scratch = vec![0.0f32; num_pixels];
 
     for plane in planes.iter_mut() {
-        // Copy plane into scratch (input), then write filtered result back to plane
-        scratch[..num_pixels].copy_from_slice(&plane[..num_pixels]);
-
-        apply_channel_gab(plane, &scratch, width, height, w_center, w1, w2);
-    }
-}
-
-#[inline(never)]
-fn apply_channel_gab(
-    output: &mut [f32],
-    input: &[f32],
-    width: usize,
-    height: usize,
-    w_center: f32,
-    w1: f32,
-    w2: f32,
-) {
-    for y in 0..height {
-        let ym = if y > 0 { y - 1 } else { 0 };
-        let yp = if y + 1 < height { y + 1 } else { height - 1 };
-        let row_center = y * width;
-        let row_top = ym * width;
-        let row_bottom = yp * width;
-
-        for x in 0..width {
-            let xm = if x > 0 { x - 1 } else { 0 };
-            let xp = if x + 1 < width { x + 1 } else { width - 1 };
-
-            let center = input[row_center + x];
-            let top = input[row_top + x];
-            let bottom = input[row_bottom + x];
-            let left = input[row_center + xm];
-            let right = input[row_center + xp];
-            let tl = input[row_top + xm];
-            let tr = input[row_top + xp];
-            let bl = input[row_bottom + xm];
-            let br = input[row_bottom + xp];
-
-            output[row_center + x] = w_center * center
-                + w1 * (top + bottom + left + right)
-                + w2 * (tl + tr + bl + br);
-        }
+        jxl_simd::gab_smooth_channel(plane, &mut scratch, width, height, w_center, w1, w2);
     }
 }
 
