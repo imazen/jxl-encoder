@@ -831,9 +831,15 @@ impl VarDctEncoder {
             .with_intensity_target(80.0)
             .with_compute_diffmap(true);
 
+        // Pre-allocate buffers reused across butteraugli iterations
+        let mut qf_copy = vec![0u8; quant_field.len()];
+        let sharpness = vec![4u8; num_blocks];
+        let mut tile_dist = vec![0.0f32; num_blocks];
+        let mut recon_rgb = Vec::with_capacity(width * height);
+
         for iter in 0..self.butteraugli_iters {
             // Step 1: Quantize with current quant_field
-            let mut qf_copy = quant_field.to_vec();
+            qf_copy.copy_from_slice(quant_field);
             let (quant_dc, quant_ac, _nzeros, _raw_nzeros) = self.transform_and_quantize(
                 xyb_x,
                 xyb_y,
@@ -866,8 +872,6 @@ impl VarDctEncoder {
 
             // Apply EPF if active
             if params.epf_iters > 0 {
-                // Use default sharpness (4) for butteraugli loop iterations
-                let sharpness = vec![4u8; num_blocks];
                 epf::apply_epf(
                     &mut planes,
                     &qf_copy,
@@ -891,7 +895,7 @@ impl VarDctEncoder {
             );
 
             // Build reconstructed ImgRef<RGB<f32>> (crop to original dimensions)
-            let mut recon_rgb = Vec::with_capacity(width * height);
+            recon_rgb.clear();
             for y in 0..height {
                 for x in 0..width {
                     let pi = y * padded_width + x;
@@ -921,7 +925,7 @@ impl VarDctEncoder {
             // libjxl uses TileDistMap with 16th-norm and kTileNorm=1.2 scaling
             const K_TILE_NORM: f32 = 1.2;
             let diffmap_buf = diffmap.buf();
-            let mut tile_dist = vec![0.0f32; num_blocks];
+            tile_dist.fill(0.0);
             for by in 0..ysize_blocks {
                 for bx in 0..xsize_blocks {
                     if !ac_strategy.is_first(bx, by) {

@@ -7,7 +7,7 @@
 
 use super::ac_context::BlockCtxMap;
 use super::ac_group::{
-    collect_ac_coefficients, predict_from_top_and_left, tokenize_ac_coefficients,
+    collect_ac_coefficients_into, predict_from_top_and_left, tokenize_ac_coefficients,
 };
 use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
@@ -500,6 +500,10 @@ impl VarDctEncoder {
             end_by
         );
 
+        // Pre-allocate scratch buffer for multi-block coefficient assembly (max DCT64x64 = 4096)
+        const MAX_BLOCK_SIZE: usize = 4096;
+        let mut full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
+
         // Process blocks in row-major order, with channels interleaved per block
         // CRITICAL: libjxl-tiny loops: for block { for channel {Y,X,B} { tokenize } }
         // We must match this exact order!
@@ -570,27 +574,24 @@ impl VarDctEncoder {
                         };
                         let transpose_slots = covered_y > covered_x;
                         let stride = cx * BLOCK_DIM;
-                        let full_block: Vec<i32> = (0..size)
-                            .map(|idx| {
-                                // idx = y * stride + x in the flat layout
-                                let y = idx / stride;
-                                let x = idx % stride;
-                                // Which 8x8 block slot in coefficient space
-                                let coef_slot_y = y / BLOCK_DIM;
-                                let coef_slot_x = x / BLOCK_DIM;
-                                // Position within the 8x8 block
-                                let pos_y = y % BLOCK_DIM;
-                                let pos_x = x % BLOCK_DIM;
-                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                                // Map to physical block offset
-                                let (phys_row_off, phys_col_off) = if transpose_slots {
-                                    (coef_slot_x, coef_slot_y)
-                                } else {
-                                    (coef_slot_y, coef_slot_x)
-                                };
-                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
-                            })
-                            .collect();
+                        let full_block = &mut full_block_scratch[..size];
+                        #[allow(clippy::needless_range_loop)]
+                        for idx in 0..size {
+                            let y = idx / stride;
+                            let x = idx % stride;
+                            let coef_slot_y = y / BLOCK_DIM;
+                            let coef_slot_x = x / BLOCK_DIM;
+                            let pos_y = y % BLOCK_DIM;
+                            let pos_x = x % BLOCK_DIM;
+                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                            let (phys_row_off, phys_col_off) = if transpose_slots {
+                                (coef_slot_x, coef_slot_y)
+                            } else {
+                                (coef_slot_y, coef_slot_x)
+                            };
+                            full_block[idx] =
+                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                        }
 
                         #[cfg(feature = "debug-tokens")]
                         if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
@@ -614,7 +615,7 @@ impl VarDctEncoder {
                         let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                         let block_ctx = block_ctx_map.block_context(c, strategy_code_2, qf_val);
                         tokenize_ac_coefficients(
-                            &full_block,
+                            full_block,
                             raw_strategy,
                             nz,
                             predicted_nz,
@@ -843,6 +844,10 @@ impl VarDctEncoder {
         );
 
         // AC section tokens: one Vec<Token> per ac_group
+        // Pre-allocate scratch buffer for multi-block coefficient assembly
+        const MAX_BLOCK_SIZE: usize = 4096;
+        let mut full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
+
         let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
         for group_idx in 0..num_groups {
             let group_x = group_idx % xsize_groups;
@@ -899,7 +904,8 @@ impl VarDctEncoder {
                             // collect_ac_coefficients expects raw_strategy, not bitstream code
                             let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                             let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
-                            let block_tokens = collect_ac_coefficients(
+                            collect_ac_coefficients_into(
+                                &mut tokens,
                                 &quant_ac[c][by][bx],
                                 raw_strategy,
                                 nz,
@@ -908,7 +914,6 @@ impl VarDctEncoder {
                                 block_ctx_map.num_ctxs,
                                 custom_ord,
                             );
-                            tokens.extend_from_slice(&block_tokens);
                         } else {
                             // Assemble contiguous buffer in flat layout.
                             // collect_ac_coefficients uses COEFF_ORDER which indexes into a flat
@@ -923,27 +928,24 @@ impl VarDctEncoder {
                             };
                             let transpose_slots = covered_y > covered_x;
                             let stride = cx * BLOCK_DIM;
-                            let full_block: Vec<i32> = (0..size)
-                                .map(|idx| {
-                                    // idx = y * stride + x in the flat layout
-                                    let y = idx / stride;
-                                    let x = idx % stride;
-                                    // Which 8x8 block slot in coefficient space
-                                    let coef_slot_y = y / BLOCK_DIM;
-                                    let coef_slot_x = x / BLOCK_DIM;
-                                    // Position within the 8x8 block
-                                    let pos_y = y % BLOCK_DIM;
-                                    let pos_x = x % BLOCK_DIM;
-                                    let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                                    // Map to physical block offset
-                                    let (phys_row_off, phys_col_off) = if transpose_slots {
-                                        (coef_slot_x, coef_slot_y)
-                                    } else {
-                                        (coef_slot_y, coef_slot_x)
-                                    };
-                                    quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
-                                })
-                                .collect();
+                            let full_block = &mut full_block_scratch[..size];
+                            #[allow(clippy::needless_range_loop)]
+                            for idx in 0..size {
+                                let y = idx / stride;
+                                let x = idx % stride;
+                                let coef_slot_y = y / BLOCK_DIM;
+                                let coef_slot_x = x / BLOCK_DIM;
+                                let pos_y = y % BLOCK_DIM;
+                                let pos_x = x % BLOCK_DIM;
+                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                                let (phys_row_off, phys_col_off) = if transpose_slots {
+                                    (coef_slot_x, coef_slot_y)
+                                } else {
+                                    (coef_slot_y, coef_slot_x)
+                                };
+                                full_block[idx] =
+                                    quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                            }
 
                             #[cfg(feature = "debug-tokens")]
                             if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
@@ -966,8 +968,9 @@ impl VarDctEncoder {
                             let qf_val = quant_field[by * xsize_blocks + bx] as u32;
                             let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
 
-                            let block_tokens = collect_ac_coefficients(
-                                &full_block,
+                            collect_ac_coefficients_into(
+                                &mut tokens,
+                                full_block,
                                 raw_strategy,
                                 nz,
                                 predicted_nz,
@@ -975,7 +978,6 @@ impl VarDctEncoder {
                                 block_ctx_map.num_ctxs,
                                 custom_ord,
                             );
-                            tokens.extend_from_slice(&block_tokens);
                         }
                     }
                 }
