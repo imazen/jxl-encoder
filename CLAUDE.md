@@ -269,11 +269,9 @@ Strategy status:
 
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
-- **Lossy+alpha**: VarDCT encodes RGB only. Alpha must be encoded as a modular extra channel
-  in the same frame. Currently lossy+RGBA/BGRA returns `UnsupportedPixelLayout`. libjxl
-  encodes alpha via `EncExtraChannel` using modular sub-bitstream within the VarDCT frame.
+- ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
 
-**Unpushed**: 51 commits ahead of origin/main
+**Unpushed**: 55 commits ahead of origin/main
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
@@ -292,6 +290,7 @@ Strategy status:
 - [x] Static Huffman fallback (streaming single-pass, `--no-optimize-codes`)
 - [x] Modular encoder (lossless path, RCT, decision tree contexts, HybridUint {4,2,0})
 - [x] RGBA lossless encoding (extra channel support in frame header)
+- [x] RGBA/BGRA lossy+alpha encoding (VarDCT RGB + modular alpha extra channel)
 - [x] Frame assembly, TOC, multi-group section layout
 - [x] CLI tool (`cjxl-rs`) with distance and code optimization flags
 - [x] ANS entropy coding (default-on, `--no-ans` for Huffman) — VarDCT and modular paths
@@ -1697,5 +1696,5 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
 - [x] Support `Rgba8` and `Bgra8` for lossless encode (alpha preserved)
 - [x] Support `Bgr8` and `Bgra8` pixel layouts (R↔B swap)
-- [ ] Lossy+alpha: encode alpha as modular extra channel alongside VarDCT RGB
+- [x] Lossy+alpha: encode alpha as modular extra channel alongside VarDCT RGB
 - [ ] Support `Bgra8` for decode (future — no decoder yet)
