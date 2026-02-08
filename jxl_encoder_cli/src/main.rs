@@ -120,12 +120,11 @@ struct Args {
     #[arg(long, value_name = "N", default_value = "3")]
     rc_iterations: usize,
 
-    /// Number of butteraugli quantization loop iterations (default: 2).
-    /// Iteratively refines per-block quantization using butteraugli perceptual
-    /// distance feedback. 2 iterations ≈ libjxl effort 8.
+    /// Number of butteraugli quantization loop iterations.
+    /// Default depends on effort: e7=0, e8=2, e9+=4 (matching libjxl).
     /// Requires the butteraugli-loop feature. Use --no-butteraugli to disable.
-    #[arg(long, value_name = "N", default_value = "2")]
-    butteraugli_iters: u32,
+    #[arg(long, value_name = "N")]
+    butteraugli_iters: Option<u32>,
 
     /// Disable butteraugli quantization loop (equivalent to --butteraugli-iters 0).
     #[arg(long)]
@@ -296,18 +295,18 @@ fn main() {
 
         #[cfg(feature = "butteraugli-loop")]
         {
-            let iters = if args.no_butteraugli {
-                0
-            } else {
-                args.butteraugli_iters
-            };
-            cfg = cfg.with_butteraugli_iters(iters);
-            if !args.quiet && iters > 0 {
-                println!("Butteraugli loop: {} iterations", iters);
+            if args.no_butteraugli {
+                cfg = cfg.with_butteraugli_iters(0);
+            } else if let Some(n) = args.butteraugli_iters {
+                cfg = cfg.with_butteraugli_iters(n);
+            }
+            // else: use effort-derived default from with_effort()
+            if !args.quiet && cfg.butteraugli_iters() > 0 {
+                println!("Butteraugli loop: {} iterations", cfg.butteraugli_iters());
             }
         }
         #[cfg(not(feature = "butteraugli-loop"))]
-        if args.butteraugli_iters > 0 && !args.no_butteraugli {
+        if args.butteraugli_iters.is_some() && !args.no_butteraugli {
             eprintln!("Warning: --butteraugli-iters requires the butteraugli-loop feature");
             eprintln!("Rebuild with: cargo build --features butteraugli-loop");
         }

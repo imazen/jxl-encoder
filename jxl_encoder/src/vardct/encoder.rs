@@ -235,7 +235,7 @@ impl Default for VarDctEncoder {
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: 2,
+            butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
         }
@@ -263,7 +263,7 @@ impl VarDctEncoder {
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: 2,
+            butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
         }
@@ -1361,8 +1361,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: unified file header (Phase 1 — shared FileHeader::write())
-        const EXPECTED_HASH: u64 = 0x105bf5bae74e9b97;
+        // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
+        const EXPECTED_HASH: u64 = 0x2cf2e7aae4f14de7;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1397,8 +1397,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: unified file header (Phase 1 — shared FileHeader::write())
-        const EXPECTED_HASH: u64 = 0xc5ffd51e05f589cb;
+        // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
+        const EXPECTED_HASH: u64 = 0xcb394243355216ae;
         assert_eq!(
             hash,
             EXPECTED_HASH,
