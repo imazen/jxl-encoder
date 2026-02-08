@@ -514,7 +514,11 @@ fn test_lossless_with_icc_decodes() {
     let image = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(&jxl))
         .expect("jxl-oxide parse lossless+ICC failed");
-    eprintln!("jxl-oxide parsed lossless+ICC: {}x{}", image.width(), image.height());
+    eprintln!(
+        "jxl-oxide parsed lossless+ICC: {}x{}",
+        image.width(),
+        image.height()
+    );
     image
         .render_frame(0)
         .expect("jxl-oxide render lossless+ICC failed");
@@ -524,4 +528,36 @@ fn test_lossless_with_icc_decodes() {
         jxl.len(),
         icc.len()
     );
+}
+
+#[test]
+fn test_icc_profile_roundtrip_bytes() {
+    // Read a real ICC profile
+    let icc =
+        std::fs::read("/usr/share/nip2/data/AdobeRGB1998.icc").expect("AdobeRGB1998.icc not found");
+
+    let meta = ImageMetadata::default().with_icc_profile(&icc);
+    let jxl = LossyConfig::new(2.0)
+        .with_gaborish(false)
+        .encode_request(64, 64, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&[128u8; 64 * 64 * 3])
+        .unwrap();
+
+    // Decode with jxl-oxide and extract the original ICC profile
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&jxl))
+        .expect("jxl-oxide parse failed");
+    let recovered_icc = image
+        .original_icc()
+        .expect("No ICC profile in decoded image");
+    assert_eq!(
+        recovered_icc.len(),
+        icc.len(),
+        "ICC profile size mismatch: got {} expected {}",
+        recovered_icc.len(),
+        icc.len()
+    );
+    assert_eq!(recovered_icc, &icc[..], "ICC profile bytes don't match");
+    eprintln!("ICC roundtrip OK: {} bytes match exactly", icc.len());
 }
