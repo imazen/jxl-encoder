@@ -4,7 +4,7 @@
 
 #![cfg(feature = "rate-control")]
 
-use jxl_encoder::tiny::{RateControlConfig, TinyEncoder};
+use jxl_encoder::vardct::{RateControlConfig, VarDctEncoder};
 
 /// sRGB to linear conversion.
 fn srgb_to_linear(c: u8) -> f32 {
@@ -80,7 +80,7 @@ fn test_rate_control_basic() {
     let height = 64;
     let linear_rgb = generate_gradient_image(width, height);
 
-    let encoder = TinyEncoder::new(1.5);
+    let encoder = VarDctEncoder::new(1.5);
 
     // Encode without rate control
     let without_rc = encoder.encode(width, height, &linear_rgb, None).unwrap();
@@ -114,7 +114,7 @@ fn test_rate_control_improves_targeting() {
     let (width, height, linear_rgb) = load_test_image();
     let target = 1.5;
 
-    let encoder = TinyEncoder::new(target);
+    let encoder = VarDctEncoder::new(target);
 
     // Encode with rate control
     let config = RateControlConfig::default();
@@ -141,7 +141,7 @@ fn test_rate_control_converges_quickly() {
     let height = 64;
     let linear_rgb = generate_gradient_image(width, height);
 
-    let encoder = TinyEncoder::new(2.0);
+    let encoder = VarDctEncoder::new(2.0);
     let config = RateControlConfig {
         max_iterations: 4,
         tolerance: 0.10, // 10% tolerance for faster convergence
@@ -159,13 +159,13 @@ fn test_rate_control_converges_quickly() {
 
 #[test]
 fn test_encode_from_precomputed() {
-    use jxl_encoder::tiny::EncoderPrecomputed;
+    use jxl_encoder::vardct::EncoderPrecomputed;
 
     let width = 64;
     let height = 64;
     let linear_rgb = generate_gradient_image(width, height);
 
-    let encoder = TinyEncoder::new(1.5);
+    let encoder = VarDctEncoder::new(1.5);
 
     // Compute precomputed state
     let precomputed = EncoderPrecomputed::compute(

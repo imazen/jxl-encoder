@@ -13,7 +13,7 @@ use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::*;
 use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_region};
-use super::encoder::{BuiltEntropyCode, TinyEncoder};
+use super::encoder::{BuiltEntropyCode, VarDctEncoder};
 use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
 use crate::bit_writer::BitWriter;
@@ -29,7 +29,7 @@ use crate::headers::extra_channels::ExtraChannelInfo;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use crate::headers::frame_header::{BlendMode, FrameHeader};
 
-impl TinyEncoder {
+impl VarDctEncoder {
     /// Build a `FileHeader` for VarDCT encoding from current encoder settings.
     ///
     /// This produces the same bitstream as the old hand-rolled `write_file_header()`,

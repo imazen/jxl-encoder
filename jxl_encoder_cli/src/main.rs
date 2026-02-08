@@ -312,12 +312,12 @@ fn main() {
             eprintln!("Rebuild with: cargo build --features butteraugli-loop");
         }
 
-        // Rate control path (uses internal TinyEncoder directly)
+        // Rate control path (uses internal VarDctEncoder directly)
         #[cfg(feature = "rate-control")]
         if args.rate_control {
-            // Rate control needs the internal TinyEncoder for multi-pass
-            use jxl_encoder::tiny::TinyEncoder;
-            let mut tiny = TinyEncoder::new(distance);
+            // Rate control needs the internal VarDctEncoder for multi-pass
+            use jxl_encoder::vardct::VarDctEncoder;
+            let mut tiny = VarDctEncoder::new(distance);
             tiny.use_ans = !args.no_ans;
             tiny.enable_noise = args.noise || args.denoise;
             tiny.enable_denoise = args.denoise;
@@ -334,7 +334,7 @@ fn main() {
             }
 
             let linear_rgb = srgb_u8_to_linear_f32(&data);
-            let rc_config = jxl_encoder::tiny::RateControlConfig {
+            let rc_config = jxl_encoder::vardct::RateControlConfig {
                 max_iterations: args.rc_iterations,
                 ..Default::default()
             };

@@ -1003,7 +1003,7 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
-        let mut tiny = crate::tiny::TinyEncoder::new(cfg.distance);
+        let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
         tiny.use_ans = cfg.use_ans;
         tiny.optimize_codes = true;
         tiny.custom_orders = true;

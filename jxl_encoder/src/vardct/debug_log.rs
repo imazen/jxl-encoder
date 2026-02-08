@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Debug logging to file for the tiny encoder.
+//! Debug logging to file for the VarDCT encoder.
 //!
 //! When the `debug-tokens` feature is enabled, debug output goes to a file
 //! instead of stderr, making it easy to grep without clobbering context.
@@ -61,7 +61,7 @@ macro_rules! debug_log {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-tokens")]
         {
-            $crate::tiny::debug_log::write_debug_log(&format!($($arg)*));
+            $crate::vardct::debug_log::write_debug_log(&format!($($arg)*));
         }
     };
 }
@@ -72,8 +72,8 @@ macro_rules! debug_log_flush {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-tokens")]
         {
-            $crate::tiny::debug_log::write_debug_log(&format!($($arg)*));
-            $crate::tiny::debug_log::flush_debug_log();
+            $crate::vardct::debug_log::write_debug_log(&format!($($arg)*));
+            $crate::vardct::debug_log::flush_debug_log();
         }
     };
 }

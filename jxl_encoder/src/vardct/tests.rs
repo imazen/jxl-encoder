@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Tests for the tiny encoder module.
+//! Tests for the VarDCT encoder module.
 
 use super::*;
 
@@ -136,15 +136,15 @@ fn test_static_codes_exist() {
 
 #[test]
 fn test_encoder_default() {
-    let enc = TinyEncoder::default();
+    let enc = VarDctEncoder::default();
     assert_eq!(enc.distance, 1.0);
 }
 
-/// Test that the tiny encoder produces a valid JXL signature.
+/// Test that the VarDCT encoder produces a valid JXL signature.
 /// Note: Full encoding is not yet implemented - this verifies the skeleton.
 #[test]
 fn test_tiny_encoder_produces_jxl_signature() {
-    let encoder = TinyEncoder::new(1.0);
+    let encoder = VarDctEncoder::new(1.0);
 
     // Create a simple 8x8 gray image (linear RGB)
     let width = 8;
@@ -172,7 +172,7 @@ fn test_tiny_encoder_produces_jxl_signature() {
 /// Test various image sizes with the tiny encoder skeleton.
 #[test]
 fn test_tiny_encoder_various_sizes() {
-    let encoder = TinyEncoder::new(1.0);
+    let encoder = VarDctEncoder::new(1.0);
 
     for (width, height) in &[(8, 8), (16, 16), (64, 64), (256, 256), (300, 300)] {
         let linear_rgb = vec![0.5f32; width * height * 3];
@@ -231,14 +231,14 @@ fn test_decode_libjxl_tiny_reference() {
     }
 }
 
-/// Test that the tiny encoder output can be at least parsed (header read) by a decoder.
+/// Test that the VarDCT encoder output can be at least parsed (header read) by a decoder.
 /// This verifies the entropy code header writing is valid.
 #[test]
 #[ignore = "Decoder integration test - run with --ignored"]
 fn test_tiny_encoder_decode() {
     use std::io::Cursor;
 
-    let encoder = TinyEncoder::new(1.0);
+    let encoder = VarDctEncoder::new(1.0);
 
     // Create a simple 16x16 red image (linear RGB) - same as libjxl-tiny reference
     let width = 16;
@@ -340,7 +340,7 @@ fn test_optimize_codes_roundtrip_small() {
     }
 
     // Static codes (default)
-    let mut enc_static = TinyEncoder::new(1.0);
+    let mut enc_static = VarDctEncoder::new(1.0);
     enc_static.optimize_codes = false;
     #[cfg(feature = "butteraugli-loop")]
     {
@@ -351,7 +351,7 @@ fn test_optimize_codes_roundtrip_small() {
         .expect("static encode failed");
 
     // Dynamic codes (two-pass)
-    let mut enc_dynamic = TinyEncoder::new(1.0);
+    let mut enc_dynamic = VarDctEncoder::new(1.0);
     enc_dynamic.optimize_codes = true;
     #[cfg(feature = "butteraugli-loop")]
     {
@@ -421,7 +421,7 @@ fn test_static_codes_8x8_roundtrip() {
         linear_rgb[i * 3] = 1.0; // R
     }
 
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.optimize_codes = false;
     let bytes = enc
         .encode(width, height, &linear_rgb, None)
@@ -452,7 +452,7 @@ fn test_optimize_codes_various_sizes() {
             }
         }
 
-        let mut enc = TinyEncoder::new(2.0);
+        let mut enc = VarDctEncoder::new(2.0);
         enc.optimize_codes = true;
         let bytes = enc
             .encode(w, h, &linear_rgb, None)
@@ -470,7 +470,7 @@ fn test_optimize_codes_various_sizes() {
         assert_eq!(fb.height(), h);
 
         // Compare with static
-        let mut enc_static = TinyEncoder::new(2.0);
+        let mut enc_static = VarDctEncoder::new(2.0);
         enc_static.optimize_codes = false;
         let static_bytes = enc_static.encode(w, h, &linear_rgb, None).unwrap();
 
@@ -502,7 +502,7 @@ fn test_optimize_codes_boundary_256() {
         }
     }
 
-    let mut enc = TinyEncoder::new(2.0);
+    let mut enc = VarDctEncoder::new(2.0);
     enc.optimize_codes = true;
     let bytes = enc.encode(w, h, &linear_rgb, None).expect("encode failed");
 
@@ -515,7 +515,7 @@ fn test_optimize_codes_boundary_256() {
     assert_eq!(frame.image_all_channels().height(), h);
 
     // Compare with static
-    let mut enc_static = TinyEncoder::new(2.0);
+    let mut enc_static = VarDctEncoder::new(2.0);
     enc_static.optimize_codes = false;
     let static_bytes = enc_static.encode(w, h, &linear_rgb, None).unwrap();
 
@@ -555,7 +555,7 @@ fn test_noise_synthesis_roundtrip_oxide() {
     }
 
     // Encode with noise enabled
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
     let bytes = encoder
         .encode(w, h, &linear_rgb, None)
@@ -601,7 +601,7 @@ fn test_noise_synthesis_ans_roundtrip() {
         linear_rgb.push(val);
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
     encoder.use_ans = true;
     let bytes = encoder
@@ -645,7 +645,7 @@ fn test_noise_synthesis_static_huffman_roundtrip() {
         linear_rgb.push(val);
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
     encoder.optimize_codes = false; // Static Huffman (single-pass)
     let bytes = encoder
@@ -677,7 +677,7 @@ fn test_noise_synthesis_clean_image_no_noise_detected() {
     let (w, h) = (64, 64);
     let linear_rgb: Vec<f32> = vec![0.5; w * h * 3];
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true; // Enabled, but estimation should return None
     let bytes = encoder
         .encode(w, h, &linear_rgb, None)
@@ -720,7 +720,7 @@ fn test_noise_synthesis_multigroup() {
         linear_rgb.push(val);
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
     let bytes = encoder
         .encode(w, h, &linear_rgb, None)
@@ -748,7 +748,7 @@ fn test_identity_strategy_roundtrip() {
     use super::ac_strategy::RAW_STRATEGY_IDENTITY;
     use std::io::Cursor;
 
-    let mut encoder = TinyEncoder::new(1.0);
+    let mut encoder = VarDctEncoder::new(1.0);
     encoder.force_strategy = Some(RAW_STRATEGY_IDENTITY);
 
     let w = 64;
@@ -787,7 +787,7 @@ fn test_dct2x2_strategy_roundtrip() {
     use super::ac_strategy::RAW_STRATEGY_DCT2X2;
     use std::io::Cursor;
 
-    let mut encoder = TinyEncoder::new(1.0);
+    let mut encoder = VarDctEncoder::new(1.0);
     encoder.force_strategy = Some(RAW_STRATEGY_DCT2X2);
 
     let w = 64;
@@ -846,7 +846,7 @@ fn test_lz77_rle_roundtrip() {
     }
 
     // Encode WITHOUT LZ77 at high distance (more zero AC coefficients = more runs)
-    let mut enc_no_lz77 = TinyEncoder::new(4.0);
+    let mut enc_no_lz77 = VarDctEncoder::new(4.0);
     enc_no_lz77.use_ans = true;
     enc_no_lz77.optimize_codes = true;
     enc_no_lz77.enable_lz77 = false;
@@ -855,7 +855,7 @@ fn test_lz77_rle_roundtrip() {
         .expect("encode without LZ77 failed");
 
     // Encode WITH LZ77 (RLE mode for this test)
-    let mut enc_lz77 = TinyEncoder::new(4.0);
+    let mut enc_lz77 = VarDctEncoder::new(4.0);
     enc_lz77.use_ans = true;
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
@@ -950,7 +950,7 @@ fn test_lz77_backref_roundtrip() {
     }
 
     // Encode WITHOUT LZ77
-    let mut enc_no_lz77 = TinyEncoder::new(3.0);
+    let mut enc_no_lz77 = VarDctEncoder::new(3.0);
     enc_no_lz77.use_ans = true;
     enc_no_lz77.optimize_codes = true;
     enc_no_lz77.enable_lz77 = false;
@@ -963,7 +963,7 @@ fn test_lz77_backref_roundtrip() {
         .expect("encode without LZ77 failed");
 
     // Encode WITH LZ77 greedy backref
-    let mut enc_lz77 = TinyEncoder::new(3.0);
+    let mut enc_lz77 = VarDctEncoder::new(3.0);
     enc_lz77.use_ans = true;
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
@@ -1044,7 +1044,7 @@ fn test_dct32x16_16x32_roundtrip() {
     }
 
     // Test at d=3.0 where 32x16/16x32 would be considered
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.use_ans = true;
     encoder.enable_gaborish = false; // Disable gab for simpler testing
 
@@ -1111,7 +1111,7 @@ fn test_afv_strategy_roundtrip() {
             afv_kind, raw_strategy
         );
 
-        let mut encoder = TinyEncoder::new(1.0);
+        let mut encoder = VarDctEncoder::new(1.0);
         encoder.use_ans = true;
         encoder.enable_gaborish = false;
         encoder.force_strategy = Some(raw_strategy);
@@ -1166,7 +1166,7 @@ fn test_dct64x64_forced_decode() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.use_ans = true;
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
@@ -1233,7 +1233,7 @@ fn test_dct64x32_forced_decode() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.use_ans = true;
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X32);
@@ -1293,7 +1293,7 @@ fn test_dct32x64_forced_decode() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.use_ans = true;
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT32X64);
@@ -1351,7 +1351,7 @@ fn test_dct64x64_forced_256x256() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.use_ans = true;
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
@@ -1412,7 +1412,7 @@ fn test_lossy_alpha_single_group_roundtrip() {
         }
     }
 
-    let mut enc = super::encoder::TinyEncoder::new(2.0);
+    let mut enc = super::encoder::VarDctEncoder::new(2.0);
     enc.enable_gaborish = false;
     let bytes = enc
         .encode(width, height, &linear_rgb, Some(&alpha))

@@ -287,7 +287,7 @@ pub fn parse_encoding_mode(data: &[u8]) -> Option<EncodingMode> {
     // Look for all_default=0 followed by frame_type (2 bits) and encoding (1 bit)
     // Start at 38 to skip file header metadata (which can have spurious zeros)
     // The frame header position varies by file header size and the bit parsing
-    // is fragile. Since TinyEncoder always produces VarDCT (verified in source)
+    // is fragile. Since VarDctEncoder always produces VarDCT (verified in source)
     // and the real test is that decoders work, we use a simpler heuristic:
     // Just check if the file decodes and trust the encoding type based on API used.
     //

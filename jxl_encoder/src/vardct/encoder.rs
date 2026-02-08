@@ -109,7 +109,7 @@ impl<'a> BuiltEntropyCode<'a> {
 /// - Huffman or ANS entropy coding
 /// - Default zig-zag coefficient order
 /// - Fixed context tree for DC
-pub struct TinyEncoder {
+pub struct VarDctEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
     /// Use dynamic Huffman codes built from actual token frequencies.
@@ -215,7 +215,7 @@ pub struct TinyEncoder {
     pub icc_profile: Option<Vec<u8>>,
 }
 
-impl Default for TinyEncoder {
+impl Default for VarDctEncoder {
     fn default() -> Self {
         Self {
             distance: 1.0,
@@ -242,7 +242,7 @@ impl Default for TinyEncoder {
     }
 }
 
-impl TinyEncoder {
+impl VarDctEncoder {
     /// Create a new tiny encoder with the given distance.
     pub fn new(distance: f32) -> Self {
         Self {
@@ -1190,16 +1190,16 @@ mod tests {
 
     #[test]
     fn test_encoder_creation() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
         assert_eq!(encoder.distance, 1.0);
 
-        let encoder_default = TinyEncoder::default();
+        let encoder_default = VarDctEncoder::default();
         assert_eq!(encoder_default.distance, 1.0);
     }
 
     #[test]
     fn test_encode_small_image() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
 
         // Create a simple 8x8 red image
         let width = 8;
@@ -1226,7 +1226,7 @@ mod tests {
 
     #[test]
     fn test_convert_to_xyb_padded() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
 
         // Gray pixel (1x1 image -> padded to 8x8)
         let linear_rgb = vec![0.5, 0.5, 0.5];
@@ -1253,7 +1253,7 @@ mod tests {
     #[test]
     fn test_encode_16x16_red_image() {
         // Test a 16x16 pixel image (2x2 blocks) to compare with libjxl-tiny
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
 
         let width = 16;
         let height = 16;
@@ -1301,7 +1301,7 @@ mod tests {
     /// This test ensures the encoder output doesn't change unexpectedly.
     #[test]
     fn test_hash_lock_8x8_gradient() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
         let width = 8;
         let height = 8;
         let mut linear_rgb = vec![0.0f32; width * height * 3];
@@ -1336,7 +1336,7 @@ mod tests {
     /// Hash-locked test for 16x16 solid color image.
     #[test]
     fn test_hash_lock_16x16_solid() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
         let width = 16;
         let height = 16;
         let linear_rgb = vec![0.3f32; width * height * 3]; // gray
@@ -1360,7 +1360,7 @@ mod tests {
     /// Hash-locked test for 64x64 checkerboard pattern.
     #[test]
     fn test_hash_lock_64x64_checkerboard() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
         let width = 64;
         let height = 64;
         let mut linear_rgb = vec![0.0f32; width * height * 3];
@@ -1396,7 +1396,7 @@ mod tests {
     /// Hash-locked test for non-power-of-two size (tests padding).
     #[test]
     fn test_hash_lock_13x17_noise() {
-        let encoder = TinyEncoder::new(1.0);
+        let encoder = VarDctEncoder::new(1.0);
         let width = 13;
         let height = 17;
         let mut linear_rgb = vec![0.0f32; width * height * 3];
@@ -1447,7 +1447,7 @@ mod tests {
                 }
             }
 
-            let encoder = TinyEncoder::new(1.0);
+            let encoder = VarDctEncoder::new(1.0);
             let bytes = encoder
                 .encode(w, h, &linear_rgb, None)
                 .unwrap_or_else(|e| panic!("encode {}x{} failed: {}", w, h, e));
@@ -1501,14 +1501,14 @@ mod tests {
         }
 
         // Encode WITHOUT DC tree learning (baseline) — use ANS
-        let mut encoder_baseline = TinyEncoder::new(1.0);
+        let mut encoder_baseline = VarDctEncoder::new(1.0);
         encoder_baseline.dc_tree_learning = false;
         let bytes_baseline = encoder_baseline
             .encode(width, height, &linear_rgb, None)
             .expect("baseline encode failed");
 
         // Encode WITH DC tree learning — also use ANS
-        let mut encoder_learned = TinyEncoder::new(1.0);
+        let mut encoder_learned = VarDctEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
         std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
         let bytes_learned = encoder_learned
@@ -1579,14 +1579,14 @@ mod tests {
         }
 
         // Encode without butteraugli loop
-        let mut encoder_baseline = TinyEncoder::new(2.0);
+        let mut encoder_baseline = VarDctEncoder::new(2.0);
         encoder_baseline.butteraugli_iters = 0;
         let bytes_baseline = encoder_baseline
             .encode(width, height, &linear_rgb, None)
             .expect("baseline encode failed");
 
         // Encode with 2 butteraugli loop iterations
-        let mut encoder_loop = TinyEncoder::new(2.0);
+        let mut encoder_loop = VarDctEncoder::new(2.0);
         encoder_loop.butteraugli_iters = 2;
         let bytes_loop = encoder_loop
             .encode(width, height, &linear_rgb, None)

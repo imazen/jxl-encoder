@@ -1126,12 +1126,12 @@ fn extract_dc_region(
 mod debug_tests {
     use super::*;
     use crate::bit_writer::BitWriter;
-    use crate::tiny::context_tree::{write_context_tree, write_learned_context_tree};
+    use crate::vardct::context_tree::{write_context_tree, write_learned_context_tree};
 
     #[test]
     fn test_static_tokens_through_learned_path() {
-        use crate::tiny::common::pack_signed;
-        use crate::tiny::context_tree::CONTEXT_TREE_TOKENS;
+        use crate::vardct::common::pack_signed;
+        use crate::vardct::context_tree::CONTEXT_TREE_TOKENS;
         let num_dc_groups = 1;
 
         // Get the static tokens with num_dc_groups adjustment

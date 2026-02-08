@@ -25,7 +25,7 @@ use super::frame::DistanceParams;
 use super::quant::{INV_DC_QUANT, quant_weights};
 
 /// Adjust quantized value with bias for dequantization.
-/// Exact copy of TinyEncoder::adjust_quant_bias (transform.rs).
+/// Exact copy of VarDctEncoder::adjust_quant_bias (transform.rs).
 fn adjust_quant_bias(quantized: i32, channel: usize) -> f32 {
     #[allow(clippy::excessive_precision)]
     const BIAS: [f32; 4] = [

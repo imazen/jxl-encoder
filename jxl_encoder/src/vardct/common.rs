@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Common constants and helper functions for the tiny encoder.
+//! Common constants and helper functions for the VarDCT encoder.
 //!
 //! These are ported from libjxl-tiny and will be used as encoding is implemented.
 
