@@ -16,9 +16,11 @@
 mod ac_context;
 mod ac_group;
 mod ac_strategy;
+mod ac_strategy_search;
 mod adaptive_quant;
 mod afv;
 mod bitstream;
+mod block_extract;
 mod chroma_from_luma;
 pub(crate) mod cluster;
 mod coeff_order;

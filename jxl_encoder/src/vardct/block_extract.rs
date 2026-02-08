@@ -1,0 +1,205 @@
+// Copyright (c) the JPEG XL Project Authors. All rights reserved.
+//
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+//! Block pixel extraction from image planes.
+//!
+//! Extracts rectangular pixel blocks from padded image buffers.
+//! These functions are natural SIMD optimization targets (gather operations).
+
+use super::common::BLOCK_DIM;
+
+/// Extract an 8×8 pixel block from a plane.
+///
+/// The buffer must be padded to at least (by*8+8) rows and (bx*8+8) columns
+/// with edge-replicated values, so no bounds checking is needed.
+pub(super) fn extract_block_8x8(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 64],
+) {
+    for dy in 0..8 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..8 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 8 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract an 8×16 pixel block (1 wide × 2 tall) for DCT16x8.
+/// Layout: 16 rows × 8 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+16) rows and (bx*8+8) columns.
+pub(super) fn extract_block_8x16(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 128],
+) {
+    for dy in 0..16 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..8 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 8 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 16×8 pixel block (2 wide × 1 tall) for DCT8x16.
+/// Layout: 8 rows × 16 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+8) rows and (bx*8+16) columns.
+pub(super) fn extract_block_16x8(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 128],
+) {
+    for dy in 0..8 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..16 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 16 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 16×16 pixel block (2 wide × 2 tall) for DCT16x16.
+/// Layout: 16 rows × 16 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+16) rows and (bx*8+16) columns.
+pub(super) fn extract_block_16x16(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 256],
+) {
+    for dy in 0..16 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..16 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 16 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 32×32 pixel block (4 wide × 4 tall) for DCT32x32.
+/// Layout: 32 rows × 32 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+32) rows and (bx*8+32) columns.
+pub(super) fn extract_block_32x32(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 1024],
+) {
+    for dy in 0..32 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..32 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 32 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 32×16 pixel block (2 wide × 4 tall) for DCT32x16.
+/// Layout: 32 rows × 16 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+32) rows and (bx*8+16) columns.
+pub(super) fn extract_block_32x16(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 512],
+) {
+    for dy in 0..32 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..16 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 16 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 16×32 pixel block (4 wide × 2 tall) for DCT16x32.
+/// Layout: 16 rows × 32 cols, row-major.
+///
+/// The buffer must be padded to at least (by*8+16) rows and (bx*8+32) columns.
+pub(super) fn extract_block_16x32(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 512],
+) {
+    for dy in 0..16 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..32 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 32 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 64×64 pixel block (8 wide × 8 tall) for DCT64x64.
+/// Layout: 64 rows × 64 cols, row-major.
+pub(super) fn extract_block_64x64(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 4096],
+) {
+    for dy in 0..64 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..64 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 64 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 64×32 pixel block (4 wide × 8 tall) for DCT64x32.
+/// Layout: 64 rows × 32 cols, row-major.
+pub(super) fn extract_block_64x32(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 2048],
+) {
+    for dy in 0..64 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..32 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 32 + dx] = plane[py * stride + px];
+        }
+    }
+}
+
+/// Extract a 32×64 pixel block (8 wide × 4 tall) for DCT32x64.
+/// Layout: 32 rows × 64 cols, row-major.
+pub(super) fn extract_block_32x64(
+    plane: &[f32],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    out: &mut [f32; 2048],
+) {
+    for dy in 0..32 {
+        let py = by * BLOCK_DIM + dy;
+        for dx in 0..64 {
+            let px = bx * BLOCK_DIM + dx;
+            out[dy * 64 + dx] = plane[py * stride + px];
+        }
+    }
+}
