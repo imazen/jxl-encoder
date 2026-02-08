@@ -6,6 +6,7 @@
 //! Tests for the VarDCT encoder module.
 
 use super::*;
+use crate::entropy_coding::token;
 
 #[test]
 fn test_common_pack_signed() {
