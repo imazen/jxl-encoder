@@ -15,8 +15,13 @@
 #![no_std]
 extern crate alloc;
 
+mod dct8;
 mod gab;
+mod gaborish5x5;
 mod transpose;
 
+pub use dct8::dct_8x8;
+pub use dct8::idct_8x8;
 pub use gab::gab_smooth_channel;
+pub use gaborish5x5::gaborish_5x5_channel;
 pub use transpose::transpose_8x8;
