@@ -457,6 +457,250 @@ fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut
     }
 }
 
+// ============================================================================
+// 16x8 inverse DCT (16 rows, 8 cols)
+// ============================================================================
+
+/// Compute 16x8 inverse DCT with SIMD acceleration.
+///
+/// Input: 128 f32 in 8x16 layout (stride 16, coefficient domain — output of dct_16x8).
+/// Output: 128 f32 in 16x8 row-major order (stride 8, spatial domain).
+/// Dispatches to AVX2 when available; falls back to scalar otherwise.
+pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            idct_16x8_avx2(token, input, output);
+            return;
+        }
+    }
+
+    idct_16x8_scalar(input, output);
+}
+
+fn idct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
+    let mut tmp = [0.0f32; 128];
+
+    // Apply 8-point IDCT (with x8 scaling) to each of 16 rows (stride 8)
+    for row in 0..16 {
+        let s = row * 8;
+        tmp[s..s + 8].copy_from_slice(&input[s..s + 8]);
+        idct1d_8_scalar(&mut tmp[s..s + 8]);
+    }
+
+    // Apply 16-point IDCT (with x16 scaling) to each of 8 columns
+    for col in 0..8 {
+        let mut col_buf = [0.0f32; 16];
+        for row in 0..16 {
+            col_buf[row] = tmp[row * 8 + col];
+        }
+        idct1d_16_scalar(&mut col_buf);
+        for row in 0..16 {
+            output[row * 8 + col] = col_buf[row];
+        }
+    }
+}
+
+/// 8-point IDCT with *= 8 scaling (scalar).
+fn idct1d_8_scalar(mem: &mut [f32]) {
+    for x in mem.iter_mut().take(8) {
+        *x *= 8.0;
+    }
+    idct1d_8_core_scalar(mem);
+}
+
+/// Load column `j` from 8 consecutive rows starting at `base_row` in `data` (stride 8).
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[inline(always)]
+fn gather_col_s8(
+    token: archmage::X64V3Token,
+    data: &[f32],
+    base_row: usize,
+    j: usize,
+) -> magetypes::simd::f32x8 {
+    magetypes::simd::f32x8::from_array(
+        token,
+        [
+            data[base_row * 8 + j],
+            data[(base_row + 1) * 8 + j],
+            data[(base_row + 2) * 8 + j],
+            data[(base_row + 3) * 8 + j],
+            data[(base_row + 4) * 8 + j],
+            data[(base_row + 5) * 8 + j],
+            data[(base_row + 6) * 8 + j],
+            data[(base_row + 7) * 8 + j],
+        ],
+    )
+}
+
+/// Store f32x8 lanes back to column `j` of 8 consecutive rows starting at `base_row` (stride 8).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn scatter_col_s8(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, j: usize) {
+    let mut lane = [0.0f32; 8];
+    v.store(&mut lane);
+    for r in 0..8 {
+        data[(base_row + r) * 8 + j] = lane[r];
+    }
+}
+
+/// AVX2 batched 8-point IDCT with *= 8 scaling.
+///
+/// `v` holds [v0..v7] representing positions 0-7 across 8 lanes.
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[inline(always)]
+fn idct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
+    use magetypes::simd::f32x8;
+
+    let scale8 = f32x8::splat(token, 8.0);
+    for vi in v.iter_mut() {
+        *vi *= scale8;
+    }
+    idct1d_8_core_batch(token, v);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
+    use magetypes::simd::f32x8;
+
+    let mut tmp = [0.0f32; 128];
+
+    // --- Pass 1: 8-point IDCT (with x8 scaling) on each of 16 rows (stride 8) ---
+    // Process 8 rows at a time. Gather column j from 8 rows -> f32x8.
+    // Batch 1: rows 0-7
+    {
+        let mut v = [f32x8::zero(token); 8];
+        for j in 0..8 {
+            v[j] = gather_col_s8(token, input, 0, j);
+        }
+        idct1d_8_batch(token, &mut v);
+        for j in 0..8 {
+            scatter_col_s8(v[j], &mut tmp, 0, j);
+        }
+    }
+    // Batch 2: rows 8-15
+    {
+        let mut v = [f32x8::zero(token); 8];
+        for j in 0..8 {
+            v[j] = gather_col_s8(token, input, 8, j);
+        }
+        idct1d_8_batch(token, &mut v);
+        for j in 0..8 {
+            scatter_col_s8(v[j], &mut tmp, 8, j);
+        }
+    }
+
+    // --- Pass 2: 16-point IDCT (with x16 scaling) on each of 8 columns ---
+    // Load row i as contiguous f32x8 from tmp[i*8..i*8+8]. Each lane k = column k's i-th element.
+    {
+        let mut v = [f32x8::zero(token); 16];
+        for i in 0..16 {
+            v[i] = f32x8::from_slice(token, &tmp[i * 8..i * 8 + 8]);
+        }
+        idct1d_16_batch(token, &mut v);
+        for i in 0..16 {
+            v[i].store((&mut output[i * 8..i * 8 + 8]).try_into().unwrap());
+        }
+    }
+}
+
+// ============================================================================
+// 8x16 inverse DCT (8 rows, 16 cols)
+// ============================================================================
+
+/// Compute 8x16 inverse DCT with SIMD acceleration.
+///
+/// Input: 128 f32 in 8x16 layout (stride 16, coefficient domain — output of dct_8x16).
+/// Output: 128 f32 in 8x16 row-major order (stride 16, spatial domain).
+/// Dispatches to AVX2 when available; falls back to scalar otherwise.
+pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            idct_8x16_avx2(token, input, output);
+            return;
+        }
+    }
+
+    idct_8x16_scalar(input, output);
+}
+
+fn idct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
+    let mut tmp = [0.0f32; 128];
+
+    // Apply 16-point IDCT (with x16 scaling) to each of 8 rows (stride 16)
+    for row in 0..8 {
+        let s = row * 16;
+        tmp[s..s + 16].copy_from_slice(&input[s..s + 16]);
+        idct1d_16_scalar(&mut tmp[s..s + 16]);
+    }
+
+    // Apply 8-point IDCT (with x8 scaling) to each of 16 columns
+    for col in 0..16 {
+        let mut col_buf = [0.0f32; 8];
+        for row in 0..8 {
+            col_buf[row] = tmp[row * 16 + col];
+        }
+        idct1d_8_scalar(&mut col_buf);
+        for row in 0..8 {
+            output[row * 16 + col] = col_buf[row];
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
+    use magetypes::simd::f32x8;
+
+    let mut tmp = [0.0f32; 128];
+
+    // --- Pass 1: 16-point IDCT (with x16 scaling) on each of 8 rows (stride 16) ---
+    // All 8 rows fit in one batch. Gather column j from 8 rows at stride 16.
+    {
+        let mut v = [f32x8::zero(token); 16];
+        for j in 0..16 {
+            v[j] = gather_col(token, input, 0, j);
+        }
+        idct1d_16_batch(token, &mut v);
+        for j in 0..16 {
+            scatter_col(v[j], &mut tmp, 0, j);
+        }
+    }
+
+    // --- Pass 2: 8-point IDCT (with x8 scaling) on each of 16 columns ---
+    // Process 8 columns at a time via contiguous loads (2 batches for 16 columns).
+    // Batch 1: columns 0-7
+    {
+        let mut v = [f32x8::zero(token); 8];
+        for i in 0..8 {
+            v[i] = f32x8::from_slice(token, &tmp[i * 16..i * 16 + 8]);
+        }
+        idct1d_8_batch(token, &mut v);
+        for i in 0..8 {
+            v[i].store((&mut output[i * 16..i * 16 + 8]).try_into().unwrap());
+        }
+    }
+    // Batch 2: columns 8-15
+    {
+        let mut v = [f32x8::zero(token); 8];
+        for i in 0..8 {
+            v[i] = f32x8::from_slice(token, &tmp[i * 16 + 8..i * 16 + 16]);
+        }
+        idct1d_8_batch(token, &mut v);
+        for i in 0..8 {
+            v[i].store((&mut output[i * 16 + 8..i * 16 + 16]).try_into().unwrap());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,6 +834,72 @@ mod tests {
             max_diff < 1e-3,
             "IDCT16x16 single AC max diff = {}",
             max_diff,
+        );
+    }
+
+    #[test]
+    fn test_idct_16x8_simd_matches_scalar() {
+        let mut input = [0.0f32; 128];
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = ((i as f32) * 0.43 + 2.1).cos() * 80.0;
+        }
+
+        let mut scalar_out = [0.0f32; 128];
+        let mut simd_out = [0.0f32; 128];
+
+        idct_16x8_scalar(&input, &mut scalar_out);
+        idct_16x8(&input, &mut simd_out);
+
+        let mut max_diff = 0.0f32;
+        let mut max_idx = 0;
+        for i in 0..128 {
+            let diff = (scalar_out[i] - simd_out[i]).abs();
+            if diff > max_diff {
+                max_diff = diff;
+                max_idx = i;
+            }
+        }
+
+        assert!(
+            max_diff < 1e-2,
+            "IDCT16x8 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
+            max_diff,
+            max_idx,
+            scalar_out[max_idx],
+            simd_out[max_idx],
+        );
+    }
+
+    #[test]
+    fn test_idct_8x16_simd_matches_scalar() {
+        let mut input = [0.0f32; 128];
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = ((i as f32) * 0.29 + 0.7).sin() * 120.0;
+        }
+
+        let mut scalar_out = [0.0f32; 128];
+        let mut simd_out = [0.0f32; 128];
+
+        idct_8x16_scalar(&input, &mut scalar_out);
+        idct_8x16(&input, &mut simd_out);
+
+        let mut max_diff = 0.0f32;
+        let mut max_idx = 0;
+        for i in 0..128 {
+            let diff = (scalar_out[i] - simd_out[i]).abs();
+            if diff > max_diff {
+                max_diff = diff;
+                max_idx = i;
+            }
+        }
+
+        assert!(
+            max_diff < 1e-2,
+            "IDCT8x16 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
+            max_diff,
+            max_idx,
+            scalar_out[max_idx],
+            simd_out[max_idx],
         );
     }
 }
