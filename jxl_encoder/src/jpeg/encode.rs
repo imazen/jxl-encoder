@@ -10,8 +10,10 @@
 //! decodes to pixel-identical output as the original JPEG.
 
 use super::data::*;
+use super::jbrd::{encode_jbrd, extract_exif, extract_xmp};
 use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
+use crate::container::wrap_in_container_jxlp;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans,
 };
@@ -41,6 +43,13 @@ const NUM_QUANT_TABLES: usize = 17;
 /// This does NOT include the jbrd box — it produces a bare JXL codestream.
 /// For byte-exact JPEG reconstruction, wrap in a container with a jbrd box.
 pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
+    let (codestream, _split) = encode_jpeg_to_jxl_inner(jpeg)?;
+    Ok(codestream)
+}
+
+/// Inner function that returns both codestream bytes and the file header size
+/// (split point for jxlp box splitting when JBRD is needed).
+fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
 
@@ -217,6 +226,7 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
     let file_header = build_jpeg_file_header(width, height);
     file_header.write(&mut writer)?;
     writer.zero_pad_to_byte();
+    let file_header_bytes = writer.bytes_written();
 
     // Frame header
     let frame_header = build_jpeg_frame_header(jpeg);
@@ -264,7 +274,38 @@ pub fn encode_jpeg_to_jxl(jpeg: &JpegData) -> Result<Vec<u8>> {
     // Assemble frame (shared single-group/multi-group assembly logic)
     assemble_frame_sections(dc_global, dc_groups, ac_global, ac_groups, &mut writer)?;
 
-    Ok(writer.finish_with_padding())
+    Ok((writer.finish_with_padding(), file_header_bytes))
+}
+
+/// Encode a JPEG as a JXL container with JBRD for byte-exact reconstruction.
+///
+/// Returns a complete JXL container file with:
+/// - `jxlp` boxes: VarDCT codestream split around the jbrd box
+/// - `jbrd` box: JPEG Bitstream Reconstruction Data
+/// - `Exif` box: EXIF metadata (if present in JPEG)
+/// - `xml ` box: XMP metadata (if present in JPEG)
+///
+/// A decoder with JPEG reconstruction support (e.g., djxl --reconstruct_jpeg)
+/// can produce a byte-exact copy of the original JPEG from this container.
+pub fn encode_jpeg_to_jxl_container(jpeg: &JpegData) -> Result<Vec<u8>> {
+    let (codestream, file_header_size) = encode_jpeg_to_jxl_inner(jpeg)?;
+    let jbrd = encode_jbrd(jpeg)?;
+    let exif = extract_exif(jpeg);
+    let xmp = extract_xmp(jpeg);
+
+    // Split codestream at file header boundary for jxlp box format.
+    // libjxl requires the jbrd box to appear between the file header
+    // and frame data, using jxlp (partial codestream) boxes.
+    let cs_part1 = &codestream[..file_header_size];
+    let cs_part2 = &codestream[file_header_size..];
+
+    Ok(wrap_in_container_jxlp(
+        cs_part1,
+        cs_part2,
+        &jbrd,
+        exif.as_deref(),
+        xmp.as_deref(),
+    ))
 }
 
 /// Map JPEG coefficients into JXL quant_dc / quant_ac / nzeros arrays.

@@ -58,7 +58,7 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
         huffman_code: Vec::new(),
         components: Vec::new(),
         scan_info: Vec::new(),
-        marker_order: vec![0xD8], // SOI
+        marker_order: vec![],
         inter_marker_data: vec![Vec::new()],
         tail_data: Vec::new(),
         has_zero_padding_bit: false,
@@ -69,6 +69,8 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
     let mut pos = 2usize; // After SOI
     let mut seen_jfif = false;
     let mut adobe_transform: Option<u8> = None;
+    let mut have_exif = false;
+    let mut have_xmp = false;
 
     loop {
         // Skip to next marker (0xFF followed by non-zero byte)
@@ -148,7 +150,16 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
                 }
                 let payload = &data[pos + 2..pos + len];
 
-                let marker_type = classify_app_marker(marker, payload);
+                let mut marker_type = classify_app_marker(marker, payload);
+                // libjxl only marks the FIRST Exif and FIRST XMP marker;
+                // duplicates remain Unknown (go in JBRD data stream).
+                match marker_type {
+                    AppMarkerType::Exif if have_exif => marker_type = AppMarkerType::Unknown,
+                    AppMarkerType::Exif => have_exif = true,
+                    AppMarkerType::Xmp if have_xmp => marker_type = AppMarkerType::Unknown,
+                    AppMarkerType::Xmp => have_xmp = true,
+                    _ => {}
+                }
                 if marker == 0xE0 && payload.starts_with(b"JFIF\0") {
                     seen_jfif = true;
                 }
@@ -156,10 +167,12 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
                     adobe_transform = Some(payload[11]);
                 }
 
-                // Store raw APP data: marker type byte + payload
-                let mut raw = Vec::with_capacity(1 + payload.len());
+                // Store raw APP data: marker_type + length_field + payload
+                // Format: [marker_byte, len_hi, len_lo, payload...]
+                // This matches libjxl's JPEGData format (size = marker_len + 1)
+                let mut raw = Vec::with_capacity(1 + len);
                 raw.push(marker);
-                raw.extend_from_slice(payload);
+                raw.extend_from_slice(&data[pos..pos + len]);
                 jpeg.app_data.push(raw);
                 jpeg.app_marker_type.push(marker_type);
 
@@ -174,7 +187,13 @@ fn scan_markers(data: &[u8]) -> Result<JpegData> {
                 if pos + len > data.len() || len < 2 {
                     return Err(JpegError::Invalid("COM marker length invalid".into()));
                 }
-                jpeg.com_data.push(data[pos + 2..pos + len].to_vec());
+                // Store raw COM data: marker_type + length_field + payload
+                // Format: [0xFE, len_hi, len_lo, payload...]
+                // This matches libjxl's JPEGData format (size = marker_len + 1)
+                let mut raw = Vec::with_capacity(1 + len);
+                raw.push(0xFE);
+                raw.extend_from_slice(&data[pos..pos + len]);
+                jpeg.com_data.push(raw);
                 pos += len;
             }
             0xD0..=0xD7 => {
