@@ -16,11 +16,11 @@ use std::sync::LazyLock;
 
 use super::ac_context::{NON_ZERO_BUCKETS, ZERO_DENSITY_CONTEXT_COUNT, zero_density_context};
 use super::common::{DCT_BLOCK_SIZE, pack_signed};
-use super::entropy_code::{EntropyCode, write_token};
-use super::token::Token;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::entropy_coding::encode::{EntropyCode, write_token};
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
 /// Compute non-zero context from predicted non-zeros, block context, and num_ctxs.

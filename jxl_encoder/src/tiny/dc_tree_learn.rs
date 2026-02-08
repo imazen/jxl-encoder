@@ -948,8 +948,8 @@ pub fn collect_dc_tokens_with_tree(
     start_by: usize,
     end_bx: usize,
     end_by: usize,
-) -> Vec<super::token::Token> {
-    use super::token::Token;
+) -> Vec<crate::entropy_coding::token::Token> {
+    use crate::entropy_coding::token::Token;
 
     let region_width = end_bx - start_bx;
     let region_height = end_by - start_by;
@@ -1063,7 +1063,11 @@ pub fn learn_and_collect_dc_tokens(
     start_by: usize,
     end_bx: usize,
     end_by: usize,
-) -> (DcTree, Vec<super::token::Token>, DcTreeStats) {
+) -> (
+    DcTree,
+    Vec<crate::entropy_coding::token::Token>,
+    DcTreeStats,
+) {
     // First pass: gather samples
     let mut samples = DcTreeSamples::new();
 

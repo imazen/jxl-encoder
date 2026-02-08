@@ -12,9 +12,12 @@ pub mod ans;
 pub mod ans_decode;
 pub mod cluster;
 pub mod context_map;
+pub mod encode;
 pub mod histogram;
 pub mod huffman_tree;
 pub mod hybrid_uint;
+pub mod lz77;
+pub mod token;
 
 pub use ans::{
     ANS_LOG_TAB_SIZE, ANS_MAX_ALPHABET_SIZE, ANS_SIGNATURE, ANS_TAB_MASK, ANS_TAB_SIZE,
@@ -34,3 +37,4 @@ pub use huffman_tree::{
     HuffmanTable, build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
     store_huffman_tree, write_huffman_tree,
 };
+pub use lz77::Lz77Method;

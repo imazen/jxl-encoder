@@ -9,17 +9,17 @@ use super::ac_strategy::{AcStrategyMap, adjust_quant_field_with_distance, comput
 use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float, quantize_quant_field};
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
 use super::common::*;
-use super::entropy_code::{
-    OwnedAnsEntropyCode, OwnedEntropyCode, write_entropy_code_ans, write_tokens, write_tokens_ans,
-};
 use super::frame::{DistanceParams, write_toc};
 use super::gaborish::gaborish_inverse;
 use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
-use super::token::Token;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::entropy_coding::encode::{
+    OwnedAnsEntropyCode, OwnedEntropyCode, write_entropy_code_ans, write_tokens, write_tokens_ans,
+};
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 use crate::headers::frame_header::FrameHeader;
 
@@ -31,7 +31,7 @@ fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8
 /// Entropy code that holds either Huffman or ANS code.
 pub enum BuiltEntropyCode<'a> {
     /// Static Huffman prefix codes (borrowed).
-    StaticHuffman(super::entropy_code::EntropyCode<'a>),
+    StaticHuffman(crate::entropy_coding::encode::EntropyCode<'a>),
     /// Dynamic Huffman prefix codes (owned).
     Huffman(OwnedEntropyCode),
     /// ANS distributions with context map.
@@ -43,10 +43,10 @@ impl<'a> BuiltEntropyCode<'a> {
     pub fn write_header(&self, writer: &mut BitWriter) -> Result<()> {
         match self {
             BuiltEntropyCode::StaticHuffman(code) => {
-                super::entropy_code::write_entropy_code(code, writer)
+                crate::entropy_coding::encode::write_entropy_code(code, writer)
             }
             BuiltEntropyCode::Huffman(code) => {
-                super::entropy_code::write_entropy_code(&code.as_entropy_code(), writer)
+                crate::entropy_coding::encode::write_entropy_code(&code.as_entropy_code(), writer)
             }
             BuiltEntropyCode::Ans(code) => write_entropy_code_ans(code, writer),
         }
@@ -56,7 +56,7 @@ impl<'a> BuiltEntropyCode<'a> {
     pub fn write_tokens(
         &self,
         tokens: &[Token],
-        lz77: Option<&super::lz77::Lz77Params>,
+        lz77: Option<&crate::entropy_coding::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         match self {
@@ -71,7 +71,7 @@ impl<'a> BuiltEntropyCode<'a> {
     /// Get the underlying Huffman code for streaming token writing.
     ///
     /// Panics if this is an ANS code (streaming with ANS is not supported).
-    pub fn as_huffman(&self) -> super::entropy_code::EntropyCode<'_> {
+    pub fn as_huffman(&self) -> crate::entropy_coding::encode::EntropyCode<'_> {
         match self {
             BuiltEntropyCode::StaticHuffman(code) => *code,
             BuiltEntropyCode::Huffman(code) => code.as_entropy_code(),
@@ -185,7 +185,7 @@ pub struct TinyEncoder {
     /// - `Greedy`: Hash chain backward references (slower, 1-3% better on photos)
     ///
     /// Default: `Greedy` (best compression)
-    pub lz77_method: super::lz77::Lz77Method,
+    pub lz77_method: crate::entropy_coding::lz77::Lz77Method,
     /// Enable DC tree learning.
     /// When true, learns an optimal context tree for DC coding from image content
     /// instead of using the fixed GRADIENT_CONTEXT_LUT.
@@ -232,7 +232,7 @@ impl Default for TinyEncoder {
             error_diffusion: true, // libjxl enables at speed_tier <= kSquirrel (effort 7)
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
-            lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
+            lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 2,
@@ -260,7 +260,7 @@ impl TinyEncoder {
             error_diffusion: true, // libjxl enables at speed_tier <= kSquirrel (effort 7)
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,    // LZ77 has known interactions with DCT2x2/IDENTITY strategies
-            lz77_method: super::lz77::Lz77Method::Greedy, // Best compression
+            lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 2,

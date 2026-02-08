@@ -15,12 +15,12 @@
 use super::ac_group::ac_strategy_info;
 use super::ac_strategy::AcStrategyMap;
 use super::common::{DCT_BLOCK_SIZE, ceil_log2_nonzero, floor_log2_nonzero};
-use super::entropy_code::{
+use crate::bit_writer::BitWriter;
+use crate::entropy_coding::encode::{
     build_entropy_code_ans_with_options, build_entropy_code_with_options, write_entropy_code_ans,
     write_tokens, write_tokens_ans,
 };
-use super::token::Token;
-use crate::bit_writer::BitWriter;
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
 /// Number of order buckets used by our encoder.
@@ -454,7 +454,7 @@ pub fn build_and_write_coeff_orders(
     } else {
         let code = build_entropy_code_with_options(tokens, NUM_PERMUTATION_CONTEXTS, false, None);
         let ec = code.as_entropy_code();
-        super::entropy_code::write_entropy_code(&ec, writer)?;
+        crate::entropy_coding::encode::write_entropy_code(&ec, writer)?;
         write_tokens(tokens, &ec, None, writer)?;
     }
 

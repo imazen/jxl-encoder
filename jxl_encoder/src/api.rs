@@ -20,7 +20,7 @@
 //! # Ok::<_, jxl_encoder::At<jxl_encoder::EncodeError>>(())
 //! ```
 
-pub use crate::tiny::Lz77Method;
+pub use crate::entropy_coding::Lz77Method;
 pub use enough::{Stop, Unstoppable};
 pub use whereat::{At, ResultAtExt, at};
 

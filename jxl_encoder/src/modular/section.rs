@@ -14,10 +14,12 @@ use super::improved::{
 };
 use super::predictor::pack_signed;
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::encode::{
+    OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans,
+};
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+use crate::entropy_coding::token::Token as AnsToken;
 use crate::error::Result;
-use crate::tiny::entropy_code::{OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans};
-use crate::tiny::token::Token as AnsToken;
 
 /// Default HybridUint config for modular data: split_exponent=4, msb_in_token=2, lsb_in_token=0.
 const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
@@ -264,7 +266,7 @@ pub fn write_global_modular_section_with_tree(
     use super::tree_learn::{
         TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
     };
-    use crate::tiny::entropy_code::{build_entropy_code_ans, write_entropy_code_ans};
+    use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
     // Step 1: Gather samples from all groups
     let mut samples = TreeSamples::new();

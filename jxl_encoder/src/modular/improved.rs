@@ -12,15 +12,17 @@
 //! Based on techniques from zune-jpegxl.
 
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::encode::{
+    OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans,
+};
 use crate::entropy_coding::huffman_tree::{
     build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
 };
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+use crate::entropy_coding::token::Token as AnsToken;
 use crate::error::Result;
 use crate::modular::channel::ModularImage;
 use crate::modular::rct::{RctType, forward_rct};
-use crate::tiny::entropy_code::{OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans};
-use crate::tiny::token::Token as AnsToken;
 
 // LZ77 constants (from zune-jpegxl)
 const K_NUM_RAW_SYMBOLS: usize = 19;
@@ -1947,7 +1949,7 @@ pub fn write_modular_stream_with_tree(
     use super::tree_learn::{
         TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
     };
-    use crate::tiny::entropy_code::{build_entropy_code_ans, write_entropy_code_ans};
+    use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
     // Apply palette if beneficial (RGB+ only in tree learning path), otherwise RCT
     let palette_info: Option<(usize, usize, usize)>; // (begin_c, num_c, nb_colors)
@@ -2032,7 +2034,8 @@ pub fn write_modular_stream_with_tree(
 
     // Debug: verify ANS encoding correctness
     #[cfg(debug_assertions)]
-    if num_contexts > 1 && crate::tiny::entropy_code::verify_ans_roundtrip(&tokens, &code).is_err()
+    if num_contexts > 1
+        && crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code).is_err()
     {
         eprintln!("ANS ROUNDTRIP VERIFICATION FAILED for tree learning data");
     }

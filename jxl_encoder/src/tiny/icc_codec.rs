@@ -9,9 +9,11 @@
 //! The ICC profile is transformed via PredictICC (making it more compressible),
 //! then entropy-coded using Huffman with 41 contexts.
 
-use super::entropy_code::{build_entropy_code_with_options, write_entropy_code, write_tokens};
-use super::token::Token;
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::encode::{
+    build_entropy_code_with_options, write_entropy_code, write_tokens,
+};
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
 use std::collections::BTreeMap;

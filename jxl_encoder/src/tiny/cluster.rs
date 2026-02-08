@@ -7,7 +7,7 @@
 //!
 //! Ported from libjxl-tiny enc_cluster.cc
 
-use super::entropy_code::{ALPHABET_SIZE, create_huffman_tree};
+use crate::entropy_coding::encode::{ALPHABET_SIZE, create_huffman_tree};
 
 /// A histogram of symbol counts.
 #[derive(Clone)]

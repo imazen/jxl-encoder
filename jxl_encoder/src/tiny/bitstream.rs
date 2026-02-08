@@ -14,13 +14,15 @@ use super::chroma_from_luma::CflMap;
 use super::common::*;
 use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_region};
 use super::encoder::{BuiltEntropyCode, TinyEncoder};
-use super::entropy_code::{build_entropy_code_ans_with_options, build_entropy_code_with_options};
 use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
-use super::token::Token;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::entropy_coding::encode::{
+    build_entropy_code_ans_with_options, build_entropy_code_with_options,
+};
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use crate::headers::extra_channels::ExtraChannelInfo;
@@ -107,7 +109,7 @@ impl TinyEncoder {
     ///   EncodeUintConfig(length_uint_config, log_alpha_size=8)
     /// ```
     pub(crate) fn write_lz77_header(
-        lz77: Option<&super::lz77::Lz77Params>,
+        lz77: Option<&crate::entropy_coding::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -191,7 +193,7 @@ impl TinyEncoder {
         num_dc_groups: usize,
         dc_code: &BuiltEntropyCode,
         noise_params: &Option<NoiseParams>,
-        dc_lz77_params: Option<&super::lz77::Lz77Params>,
+        dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
         block_ctx_map: &BlockCtxMap,
         learned_tree_tokens: Option<&[(u32, u32)]>,
         writer: &mut BitWriter,
@@ -296,7 +298,7 @@ impl TinyEncoder {
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
         sharpness_map: Option<&[u8]>,
-        dc_code: &super::entropy_code::EntropyCode,
+        dc_code: &crate::entropy_coding::encode::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -405,7 +407,7 @@ impl TinyEncoder {
         ac_code: &BuiltEntropyCode,
         used_orders: u32,
         coeff_order_tokens: Option<&[Token]>,
-        ac_lz77_params: Option<&super::lz77::Lz77Params>,
+        ac_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -474,7 +476,7 @@ impl TinyEncoder {
         quant_field: &[u8],
         ac_strategy: &AcStrategyMap,
         block_ctx_map: &BlockCtxMap,
-        ac_code: &super::entropy_code::EntropyCode,
+        ac_code: &crate::entropy_coding::encode::EntropyCode,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -984,8 +986,8 @@ impl TinyEncoder {
         // ── Apply LZ77 if enabled (ANS only, before building codes) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
-        let mut dc_lz77_params: Option<super::lz77::Lz77Params> = None;
-        let mut ac_lz77_params: Option<super::lz77::Lz77Params> = None;
+        let mut dc_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
+        let mut ac_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
 
         // Distance multiplier for special distance codes.
         // The decoder derives dist_multiplier = max(channel_widths) for each
@@ -1024,7 +1026,7 @@ impl TinyEncoder {
                 dc_num_ctx
             );
 
-            if let Some((lz77_tokens, params)) = super::lz77::apply_lz77(
+            if let Some((lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
                 &merged_dc,
                 dc_num_ctx,
                 false,
@@ -1052,7 +1054,7 @@ impl TinyEncoder {
                     let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
                     let group_dc_width = (end_bx - start_bx) as i32;
 
-                    if let Some((lz77_dc, _)) = super::lz77::apply_lz77(
+                    if let Some((lz77_dc, _)) = crate::entropy_coding::lz77::apply_lz77(
                         &dc_tokens_per_group[i],
                         dc_num_ctx,
                         false,
@@ -1083,7 +1085,7 @@ impl TinyEncoder {
                     let qf_w = region_xblocks as u32;
                     let md_dist_mult = epf_w.max(num_ac_blocks).max(qf_w) as i32;
 
-                    if let Some((lz77_md, _)) = super::lz77::apply_lz77(
+                    if let Some((lz77_md, _)) = crate::entropy_coding::lz77::apply_lz77(
                         &ac_metadata_tokens_per_group[i],
                         dc_num_ctx,
                         false,
@@ -1119,7 +1121,7 @@ impl TinyEncoder {
                 ac_num_ctx
             );
 
-            if let Some((_lz77_tokens, params)) = super::lz77::apply_lz77(
+            if let Some((_lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
                 &merged_ac,
                 ac_num_ctx,
                 false,
@@ -1135,7 +1137,7 @@ impl TinyEncoder {
                 ac_lz77_params = Some(params);
                 let mut new_ac_sections = Vec::with_capacity(num_groups);
                 for tokens in &ac_section_tokens {
-                    if let Some((lz77_ac, _)) = super::lz77::apply_lz77(
+                    if let Some((lz77_ac, _)) = crate::entropy_coding::lz77::apply_lz77(
                         tokens,
                         ac_num_ctx,
                         false,
@@ -1613,7 +1615,7 @@ impl TinyEncoder {
         ac_metadata_tokens: &[Token],
         ac_strategy: &AcStrategyMap,
         dc_code: &BuiltEntropyCode,
-        dc_lz77_params: Option<&super::lz77::Lz77Params>,
+        dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         let dc_gx = dc_group_idx % xsize_dc_groups;

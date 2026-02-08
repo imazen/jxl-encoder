@@ -13,7 +13,7 @@
 //! avoids the complexity of dynamic Huffman code optimization while still
 //! producing valid bitstreams.
 
-use super::entropy_code::PrefixCode;
+use crate::entropy_coding::encode::PrefixCode;
 
 /// Number of DC prefix codes.
 pub const NUM_DC_PREFIX_CODES: usize = 8;
@@ -628,11 +628,11 @@ pub static AC_PREFIX_CODES: [PrefixCode; NUM_AC_PREFIX_CODES] = [
 ];
 
 /// Get a reference to DC entropy code.
-pub fn get_dc_entropy_code() -> super::entropy_code::EntropyCode<'static> {
-    super::entropy_code::EntropyCode::new(&DC_CONTEXT_MAP, &DC_PREFIX_CODES)
+pub fn get_dc_entropy_code() -> crate::entropy_coding::encode::EntropyCode<'static> {
+    crate::entropy_coding::encode::EntropyCode::new(&DC_CONTEXT_MAP, &DC_PREFIX_CODES)
 }
 
 /// Get a reference to AC entropy code.
-pub fn get_ac_entropy_code() -> super::entropy_code::EntropyCode<'static> {
-    super::entropy_code::EntropyCode::new(&AC_CONTEXT_MAP, &AC_PREFIX_CODES)
+pub fn get_ac_entropy_code() -> crate::entropy_coding::encode::EntropyCode<'static> {
+    crate::entropy_coding::encode::EntropyCode::new(&AC_CONTEXT_MAP, &AC_PREFIX_CODES)
 }

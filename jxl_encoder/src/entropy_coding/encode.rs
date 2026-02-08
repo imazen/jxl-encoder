@@ -933,7 +933,7 @@ pub fn build_entropy_code_with_options(
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {
-    use super::cluster::{Histogram as TinyHistogram, cluster_histograms};
+    use crate::tiny::cluster::{Histogram as TinyHistogram, cluster_histograms};
 
     // Build per-context histograms using tiny's histogram type
     let mut histograms: Vec<TinyHistogram> =
