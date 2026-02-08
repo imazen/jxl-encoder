@@ -209,9 +209,12 @@ fn inverse_xyb_planar_scalar(
         let mixed_g = gamma_g * gamma_g * gamma_g - OPSIN_BIAS[1];
         let mixed_b = gamma_b * gamma_b * gamma_b - OPSIN_BIAS[2];
 
-        out_r[i] = INV_OPSIN[0][0] * mixed_r + INV_OPSIN[0][1] * mixed_g + INV_OPSIN[0][2] * mixed_b;
-        out_g[i] = INV_OPSIN[1][0] * mixed_r + INV_OPSIN[1][1] * mixed_g + INV_OPSIN[1][2] * mixed_b;
-        out_b[i] = INV_OPSIN[2][0] * mixed_r + INV_OPSIN[2][1] * mixed_g + INV_OPSIN[2][2] * mixed_b;
+        out_r[i] =
+            INV_OPSIN[0][0] * mixed_r + INV_OPSIN[0][1] * mixed_g + INV_OPSIN[0][2] * mixed_b;
+        out_g[i] =
+            INV_OPSIN[1][0] * mixed_r + INV_OPSIN[1][1] * mixed_g + INV_OPSIN[1][2] * mixed_b;
+        out_b[i] =
+            INV_OPSIN[2][0] * mixed_r + INV_OPSIN[2][1] * mixed_g + INV_OPSIN[2][2] * mixed_b;
     }
 }
 
@@ -753,7 +756,9 @@ mod tests {
             assert!(
                 (pr[i] - ir).abs() < 1e-6 && (pg[i] - ig).abs() < 1e-6 && (pb[i] - ib).abs() < 1e-6,
                 "Planar/interleaved mismatch at {i}: planar=({},{},{}) interleaved=({ir},{ig},{ib})",
-                pr[i], pg[i], pb[i]
+                pr[i],
+                pg[i],
+                pb[i]
             );
         }
     }
