@@ -9,7 +9,6 @@
 //! Top SIMD optimization target — the inner loop is a pure per-pixel transform.
 
 use super::encoder::VarDctEncoder;
-use crate::color::xyb::linear_rgb_to_xyb;
 
 impl VarDctEncoder {
     /// Convert linear RGB to XYB color space with padding to block boundaries.
@@ -30,35 +29,50 @@ impl VarDctEncoder {
         let mut xyb_y = vec![0.0f32; padded_n];
         let mut xyb_b = vec![0.0f32; padded_n];
 
-        // Convert the actual image pixels
+        // Scratch buffers for deinterleaving one row of RGB input
+        let mut row_r = vec![0.0f32; width];
+        let mut row_g = vec![0.0f32; width];
+        let mut row_b = vec![0.0f32; width];
+
+        // Convert the actual image pixels row by row
         for y in 0..height {
+            let src_row = y * width;
+
+            // Deinterleave RGB row
             for x in 0..width {
-                let src_idx = y * width + x;
-                let dst_idx = y * padded_width + x;
-                let r = linear_rgb[src_idx * 3];
-                let g = linear_rgb[src_idx * 3 + 1];
-                let b = linear_rgb[src_idx * 3 + 2];
-                let (xv, yv, bv) = linear_rgb_to_xyb(r, g, b);
-                #[cfg(feature = "debug-dc")]
-                if x == 0 && y == 0 {
-                    eprintln!(
-                        "XYB[0,0]: linear_rgb=({:.6},{:.6},{:.6}) -> XYB=({:.6},{:.6},{:.6})",
-                        r, g, b, xv, yv, bv
-                    );
-                }
-                xyb_x[dst_idx] = xv;
-                xyb_y[dst_idx] = yv;
-                xyb_b[dst_idx] = bv;
+                let si = (src_row + x) * 3;
+                row_r[x] = linear_rgb[si];
+                row_g[x] = linear_rgb[si + 1];
+                row_b[x] = linear_rgb[si + 2];
+            }
+
+            // Convert row via SIMD (or scalar fallback)
+            let dst_row = y * padded_width;
+            jxl_simd::linear_rgb_to_xyb_batch(
+                &row_r,
+                &row_g,
+                &row_b,
+                &mut xyb_x[dst_row..dst_row + width],
+                &mut xyb_y[dst_row..dst_row + width],
+                &mut xyb_b[dst_row..dst_row + width],
+            );
+
+            #[cfg(feature = "debug-dc")]
+            if y == 0 {
+                eprintln!(
+                    "XYB[0,0]: linear_rgb=({:.6},{:.6},{:.6}) -> XYB=({:.6},{:.6},{:.6})",
+                    row_r[0], row_g[0], row_b[0], xyb_x[0], xyb_y[0], xyb_b[0]
+                );
             }
 
             // Pad right edge with last pixel value (edge replication)
             if padded_width > width {
-                let last_x_idx = y * padded_width + (width - 1);
+                let last_x_idx = dst_row + width - 1;
                 let last_x = xyb_x[last_x_idx];
                 let last_y = xyb_y[last_x_idx];
                 let last_b = xyb_b[last_x_idx];
                 for x in width..padded_width {
-                    let dst_idx = y * padded_width + x;
+                    let dst_idx = dst_row + x;
                     xyb_x[dst_idx] = last_x;
                     xyb_y[dst_idx] = last_y;
                     xyb_b[dst_idx] = last_b;
@@ -71,11 +85,9 @@ impl VarDctEncoder {
             let last_row_start = (height - 1) * padded_width;
             for y in height..padded_height {
                 let dst_row_start = y * padded_width;
-                for x in 0..padded_width {
-                    xyb_x[dst_row_start + x] = xyb_x[last_row_start + x];
-                    xyb_y[dst_row_start + x] = xyb_y[last_row_start + x];
-                    xyb_b[dst_row_start + x] = xyb_b[last_row_start + x];
-                }
+                xyb_x.copy_within(last_row_start..last_row_start + padded_width, dst_row_start);
+                xyb_y.copy_within(last_row_start..last_row_start + padded_width, dst_row_start);
+                xyb_b.copy_within(last_row_start..last_row_start + padded_width, dst_row_start);
             }
         }
 
