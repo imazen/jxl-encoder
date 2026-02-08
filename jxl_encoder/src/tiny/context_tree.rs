@@ -10,14 +10,14 @@
 use super::ac_context::BlockCtxMap;
 use super::cluster::{Histogram, cluster_histograms};
 use super::common::pack_signed;
-use super::entropy_code::{
-    ALPHABET_SIZE, EntropyCode, PrefixCode, convert_bit_depths_to_symbols, create_huffman_tree,
-    write_entropy_code, write_prefix_codes, write_token,
-};
-use super::token::{Token, UintCoder};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::entropy_coding::encode::{
+    ALPHABET_SIZE, EntropyCode, PrefixCode, convert_bit_depths_to_symbols, create_huffman_tree,
+    write_entropy_code, write_prefix_codes, write_token,
+};
+use crate::entropy_coding::token::{Token, UintCoder};
 use crate::error::Result;
 
 /// Number of contexts for the context tree.

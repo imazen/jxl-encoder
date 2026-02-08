@@ -654,8 +654,8 @@ pub fn collect_residuals_with_tree(
     image: &ModularImage,
     tree: &Tree,
     group_id: u32,
-) -> Vec<crate::tiny::token::Token> {
-    use crate::tiny::token::Token as AnsToken;
+) -> Vec<crate::entropy_coding::token::Token> {
+    use crate::entropy_coding::token::Token as AnsToken;
 
     let mut tokens = Vec::new();
 

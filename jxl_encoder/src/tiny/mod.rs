@@ -24,22 +24,20 @@ mod adaptive_quant;
 mod afv;
 mod bitstream;
 mod chroma_from_luma;
-mod cluster;
+pub(crate) mod cluster;
 mod coeff_order;
-mod common;
+pub(crate) mod common;
 mod context_tree;
 mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub mod debug_log;
 mod encoder;
-pub(crate) mod entropy_code;
 #[allow(dead_code)] // Used in upcoming EPF sharpness selection
 pub(crate) mod epf;
 mod frame;
 mod gaborish;
 pub(crate) mod icc_codec;
-mod lz77;
 pub(crate) mod noise;
 #[cfg(feature = "rate-control")]
 mod precomputed;
@@ -48,12 +46,10 @@ pub mod rate_control;
 #[cfg(feature = "rate-control")]
 mod tile_distmap;
 
-pub use lz77::Lz77Method;
 mod quant;
 #[allow(dead_code)] // Functions used in upcoming phases (EPF, butteraugli)
 pub(crate) mod reconstruct;
 mod static_codes;
-pub(crate) mod token;
 mod transform;
 
 pub use encoder::TinyEncoder;

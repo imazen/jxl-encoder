@@ -859,7 +859,7 @@ fn test_lz77_rle_roundtrip() {
     enc_lz77.use_ans = true;
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
-    enc_lz77.lz77_method = super::lz77::Lz77Method::Rle; // Explicit RLE for roundtrip test
+    enc_lz77.lz77_method = crate::entropy_coding::lz77::Lz77Method::Rle; // Explicit RLE for roundtrip test
     let bytes_lz77 = enc_lz77
         .encode(w, h, &linear_rgb, None)
         .expect("encode with LZ77 failed");
@@ -967,7 +967,7 @@ fn test_lz77_backref_roundtrip() {
     enc_lz77.use_ans = true;
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
-    enc_lz77.lz77_method = super::lz77::Lz77Method::Greedy;
+    enc_lz77.lz77_method = crate::entropy_coding::lz77::Lz77Method::Greedy;
     #[cfg(feature = "butteraugli-loop")]
     {
         enc_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing

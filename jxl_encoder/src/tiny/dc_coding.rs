@@ -13,11 +13,11 @@
 use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::pack_signed;
-use super::entropy_code::{EntropyCode, write_token};
-use super::token::Token;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::entropy_coding::encode::{EntropyCode, write_token};
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
 /// Compute the clamped gradient prediction from neighbors.

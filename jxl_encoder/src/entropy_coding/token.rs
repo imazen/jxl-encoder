@@ -9,7 +9,7 @@
 
 #![allow(dead_code)]
 
-use super::common::floor_log2_nonzero;
+use crate::tiny::common::floor_log2_nonzero;
 
 /// A token to be entropy coded.
 /// Consists of a context and a value.
