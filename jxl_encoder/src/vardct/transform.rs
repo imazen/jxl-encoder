@@ -295,6 +295,14 @@ impl VarDctEncoder {
 
         let channels = [xyb_x, xyb_y, xyb_b];
 
+        // Hoist constant computations out of the block loop
+        let x_qm_mul = 1.25f32.powf(params.x_qm_scale as f32 - 2.0);
+        let b_qm_mul = 1.25f32.powf(params.b_qm_scale as f32 - 2.0);
+
+        // Pre-allocate scratch buffers for DCT coefficients (max DCT64x64 = 4096)
+        const MAX_BLOCK_SIZE: usize = 4096;
+        let mut dct_scratch: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; MAX_BLOCK_SIZE]);
+
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
                 // Skip non-first blocks of multi-block transforms
@@ -329,10 +337,12 @@ impl VarDctEncoder {
                 let block_width = cx * BLOCK_DIM;
                 let block_height = cy * BLOCK_DIM;
 
-                let x_qm_mul = 1.25f32.powf(params.x_qm_scale as f32 - 2.0);
-                let b_qm_mul = 1.25f32.powf(params.b_qm_scale as f32 - 2.0);
-
-                let mut dct_coeffs: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; size]);
+                // Zero the scratch regions we'll use
+                for ch in &mut dct_scratch {
+                    ch[..size].fill(0.0);
+                }
+                // Alias for readability — dct_coeffs[c] is dct_scratch[c][..size]
+                let dct_coeffs = &mut dct_scratch;
 
                 // ── Step 1: DCT Y channel ──────────────────────────────────
                 Self::apply_dct(
