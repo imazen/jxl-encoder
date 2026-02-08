@@ -11,7 +11,7 @@
 // The bug: DCT4X8 produces catastrophic quality on real photos but works on synthetic images.
 // Evidence: decoded pixels range [-0.7625, 3.3630] with 33,527 negative pixels (vs normal DCT8 range).
 
-use jxl_encoder::tiny::TinyEncoder;
+use jxl_encoder::vardct::VarDctEncoder;
 
 fn load_png_crop(path: &str, crop_w: usize, crop_h: usize) -> (usize, usize, Vec<f32>, Vec<u8>) {
     let img = image::open(path).expect("Failed to open image").to_rgb8();
@@ -211,7 +211,7 @@ fn diagnose_dct4x8_real_photo() {
     analyze_pixels(&linear, "Input linear RGB");
 
     // Encode with DCT4X8
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
     let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
@@ -224,7 +224,7 @@ fn diagnose_dct4x8_real_photo() {
     analyze_pixels(&dec_pixels, "DCT4X8 decoded");
 
     // Compare with DCT8
-    let mut encoder2 = TinyEncoder::new(2.0);
+    let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
     let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
@@ -282,7 +282,7 @@ fn diagnose_dct4x8_synthetic() {
     analyze_pixels(&linear, "Synthetic input");
 
     // Encode with DCT4X8
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
     let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
@@ -293,7 +293,7 @@ fn diagnose_dct4x8_synthetic() {
     analyze_pixels(&dec_pixels, "DCT4X8 decoded");
 
     // Compare with DCT8
-    let mut encoder2 = TinyEncoder::new(2.0);
+    let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
     let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
@@ -329,7 +329,7 @@ fn diagnose_single_block_dct4x8() {
     println!("  Bottom (y=4..7): 0.2");
 
     // Encode with DCT4X8
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
     let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
@@ -371,7 +371,7 @@ fn find_extreme_pixels() {
     let (w, h, linear, _srgb) = load_png_crop(&path, 256, 256);
 
     // Encode with DCT4X8
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
     let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
@@ -379,7 +379,7 @@ fn find_extreme_pixels() {
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
 
     // Also encode with DCT8 for comparison
-    let mut encoder2 = TinyEncoder::new(2.0);
+    let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
     let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
@@ -481,7 +481,7 @@ fn verify_dct4x8_weights_applied() {
 
     // Encode at different distances to see quantization effect
     for distance in [0.5f32, 1.0, 2.0, 4.0] {
-        let mut encoder = TinyEncoder::new(distance);
+        let mut encoder = VarDctEncoder::new(distance);
         encoder.force_strategy = Some(5); // DCT4X8
         let bytes = encoder
             .encode(w, h, &contrast_block, None)
@@ -518,7 +518,7 @@ fn verify_dct4x8_weights_applied() {
 #[test]
 #[ignore]
 fn diagnose_coefficient_layout() {
-    use jxl_encoder::tiny::dct::{dct_4x8_full, dct_8x8};
+    use jxl_encoder::vardct::dct::{dct_4x8_full, dct_8x8};
 
     // Create a block with known pattern to check coefficient layout
     let mut block = [0.0f32; 64];
@@ -600,7 +600,7 @@ fn test_dct4x4_jxl_oxide_decode() {
     }
 
     // Encode with DCT4X4
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
     let bytes = encoder
         .encode(w, h, &linear, None)
@@ -638,7 +638,7 @@ fn test_dct4x4_jxl_rs_decode() {
     }
 
     // Encode with DCT4X4
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
     let bytes = encoder
         .encode(w, h, &linear, None)
@@ -682,7 +682,7 @@ fn test_dct4x4_multigroup() {
     }
 
     // Encode with DCT4X4
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
     let bytes = encoder
         .encode(w, h, &linear, None)
@@ -727,7 +727,7 @@ fn diagnose_dct4x4_real_photo() {
     analyze_pixels(&linear, "Input linear RGB");
 
     // Encode with DCT4X4
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
     let bytes_4x4 = encoder
         .encode(w, h, &linear, None)
@@ -740,7 +740,7 @@ fn diagnose_dct4x4_real_photo() {
     analyze_pixels(&dec_pixels, "DCT4X4 decoded");
 
     // Compare with DCT8
-    let mut encoder2 = TinyEncoder::new(2.0);
+    let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
     let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
@@ -774,7 +774,7 @@ fn test_error_diffusion_jxl_oxide_decode() {
     }
 
     // Encode with error diffusion enabled
-    let mut encoder = TinyEncoder::new(4.0); // High compression to stress error diffusion
+    let mut encoder = VarDctEncoder::new(4.0); // High compression to stress error diffusion
     encoder.error_diffusion = true;
     let bytes = encoder
         .encode(w, h, &linear, None)
@@ -812,7 +812,7 @@ fn test_error_diffusion_jxl_rs_decode() {
     }
 
     // Encode with error diffusion enabled
-    let mut encoder = TinyEncoder::new(4.0);
+    let mut encoder = VarDctEncoder::new(4.0);
     encoder.error_diffusion = true;
     let bytes = encoder
         .encode(w, h, &linear, None)
@@ -855,7 +855,7 @@ fn test_error_diffusion_multigroup() {
     }
 
     // Encode with error diffusion enabled
-    let mut encoder = TinyEncoder::new(4.0);
+    let mut encoder = VarDctEncoder::new(4.0);
     encoder.error_diffusion = true;
     let bytes = encoder
         .encode(w, h, &linear, None)
@@ -900,14 +900,14 @@ fn diagnose_error_diffusion_quality() {
         println!("\n=== Distance {} ===", distance);
 
         // Encode without error diffusion
-        let mut encoder_off = TinyEncoder::new(distance);
+        let mut encoder_off = VarDctEncoder::new(distance);
         encoder_off.error_diffusion = false;
         let bytes_off = encoder_off
             .encode(w, h, &linear, None)
             .expect("Encode failed (off)");
 
         // Encode with error diffusion
-        let mut encoder_on = TinyEncoder::new(distance);
+        let mut encoder_on = VarDctEncoder::new(distance);
         encoder_on.error_diffusion = true;
         let bytes_on = encoder_on
             .encode(w, h, &linear, None)

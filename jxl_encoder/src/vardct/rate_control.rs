@@ -9,7 +9,7 @@
 //! butteraugli → adjust quant field → repeat. Typically converges in 2-4
 //! iterations with 5% tolerance of target distance.
 
-use super::TinyEncoder;
+use super::VarDctEncoder;
 use super::adaptive_quant::quantize_quant_field;
 use super::frame::DistanceParams;
 use super::precomputed::EncoderPrecomputed;
@@ -65,7 +65,7 @@ pub struct IterationResult {
 ///
 /// Returns the final encoded bytes and iteration count.
 pub fn encode_with_rate_control(
-    encoder: &TinyEncoder,
+    encoder: &VarDctEncoder,
     precomputed: &EncoderPrecomputed,
     config: &RateControlConfig,
 ) -> Result<(Vec<u8>, usize)> {
@@ -171,7 +171,7 @@ pub fn encode_with_rate_control(
 
 /// Encode a single iteration with the given quant field.
 fn encode_iteration(
-    encoder: &TinyEncoder,
+    encoder: &VarDctEncoder,
     precomputed: &EncoderPrecomputed,
     quant_field: &[u8],
 ) -> Result<Vec<u8>> {

@@ -21,8 +21,8 @@ pub mod headers;
 pub(crate) mod icc;
 pub mod image;
 pub mod modular;
-pub mod tiny;
 pub mod trace;
+pub mod vardct;
 
 // Re-export new API as primary
 pub use api::{

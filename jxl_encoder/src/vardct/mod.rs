@@ -3,19 +3,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! "Tiny" JPEG XL encoder - a simplified VarDCT encoder.
+//! VarDCT (lossy) encoder for JPEG XL.
 //!
-//! This started as a port of [libjxl-tiny](https://github.com/libjxl/libjxl-tiny), a simplified
-//! JPEG XL encoder aimed at photographic images. It now includes additional features:
+//! Variable-DCT encoding transforms image blocks using DCT of various sizes,
+//! quantizes coefficients with perceptual weighting, and entropy codes the result.
 //!
-//! - DCT8, DCT4x4, DCT4x8, DCT8x4, DCT8x16, DCT16x8, DCT16x16, DCT32x32 transforms
-//! - Huffman or ANS entropy coding (`use_ans` flag)
-//! - Custom or default zig-zag coefficient order (`custom_orders` flag)
-//! - Fixed context tree for DC coding
-//! - LZ77 backward references with RLE or hash chain matching (`enable_lz77`, `lz77_method`)
-//!
-//! This provides a simpler encoding path that's easier to get correct while still
-//! producing valid JPEG XL bitstreams.
+//! Supports 19 of 27 DCT strategies (all that libjxl evaluates through effort 9),
+//! Huffman or ANS entropy coding, custom coefficient ordering, LZ77 backward
+//! references, adaptive quantization, chroma-from-luma, gaborish inverse,
+//! noise synthesis, and butteraugli-guided rate control.
 
 mod ac_context;
 mod ac_group;
@@ -51,7 +47,7 @@ pub(crate) mod reconstruct;
 mod static_codes;
 mod transform;
 
-pub use encoder::TinyEncoder;
+pub use encoder::VarDctEncoder;
 #[cfg(feature = "rate-control")]
 pub use precomputed::EncoderPrecomputed;
 #[cfg(feature = "rate-control")]

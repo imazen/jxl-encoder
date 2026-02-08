@@ -24,12 +24,12 @@ use super::dct::{
     dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32, dct_32x16, dct_32x32,
     dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, identity_transform,
 };
-use super::encoder::TinyEncoder;
+use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use super::quant::INV_DC_QUANT;
 use crate::color::xyb::linear_rgb_to_xyb;
 
-impl TinyEncoder {
+impl VarDctEncoder {
     /// Convert linear RGB to XYB color space with padding to block boundaries.
     ///
     /// Returns (xyb_x, xyb_y, xyb_b) arrays padded to `padded_width × padded_height`

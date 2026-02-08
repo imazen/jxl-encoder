@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_ac_strategy_info() {
-        use crate::tiny::ac_strategy::{
+        use crate::vardct::ac_strategy::{
             RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8, RAW_STRATEGY_DCT8X4, RAW_STRATEGY_DCT8X16,
             RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
         };

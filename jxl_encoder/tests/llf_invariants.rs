@@ -301,7 +301,7 @@ fn layer1_cfl_skip_consistency_dct16x16() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: load a PNG and convert to linear sRGB f32 for TinyEncoder
+// Helper: load a PNG and convert to linear sRGB f32 for VarDctEncoder
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Load a PNG, optionally crop to (crop_w, crop_h) from center, return (width, height, linear_rgb, srgb_u8).
@@ -596,7 +596,7 @@ fn layer2_single_group_dct16x16_decode_jxl_oxide() {
     assert_eq!(w, 256);
     assert_eq!(h, 256);
 
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true; // triggers forced DCT16x16
 
     let bytes = encoder
@@ -629,7 +629,7 @@ fn layer2_single_group_dct16x16_decode_jxl_oxide() {
 fn layer2_single_group_dct16x16_decode_djxl() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
 
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -666,7 +666,7 @@ fn layer3_multigroup_dct16x16_decode_djxl() {
     eprintln!("layer3: loaded frymire {}x{}", w, h);
     assert!(w > 256 || h > 256, "frymire should be multi-group");
 
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -698,7 +698,7 @@ fn layer3_multigroup_dct16x16_decode_djxl() {
 fn layer3_multigroup_dct16x16_decode_jxl_oxide() {
     let (w, h, linear, srgb) = load_png_full(&frymire_path());
 
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -739,14 +739,14 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_256() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 256, 256);
 
     // DCT8-only
-    let mut enc_dct8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT16x16-only (forced via hack)
-    let mut enc_dct16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
     let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
@@ -793,14 +793,14 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_full() {
     let (w, h, linear, srgb) = load_png_full(&frymire_path());
 
     // DCT8-only
-    let mut enc_dct8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT16x16-only
-    let mut enc_dct16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
     let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
@@ -851,13 +851,13 @@ fn layer4_quality_dct16x16_vs_dct8_kodak1() {
     }
     let (w, h, linear, srgb) = load_png_full(&kodak_path);
 
-    let mut enc_dct8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
-    let mut enc_dct16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
     let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
@@ -1047,7 +1047,7 @@ fn diag_dct16x16_solid_16x16() {
     let srgb_val = (val.powf(1.0 / 2.2) * 255.0).round() as u8;
 
     // Encode with DCT16x16 (ac_strategy_enabled = true forces it)
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -1094,7 +1094,7 @@ fn diag_dct16x16_solid_16x16() {
     }
 
     // Now encode the same thing with DCT8 for comparison
-    let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
     std::fs::write("/tmp/diag_solid16x16_dct8.jxl", &bytes8).unwrap();
@@ -1122,13 +1122,13 @@ fn diag_dct16x16_real_16x16() {
     assert_eq!(h, 16);
 
     // DCT16x16
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
     std::fs::write("/tmp/diag_real16x16_dct16.jxl", &bytes16).unwrap();
 
     // DCT8
-    let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
     std::fs::write("/tmp/diag_real16x16_dct8.jxl", &bytes8).unwrap();
@@ -1208,14 +1208,14 @@ fn diag_dct16x16_progressive_sizes() {
         }
 
         // DCT8 — encode and decode with jxl-oxide
-        let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+        let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc8.ac_strategy_enabled = false;
         let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
         let (_, _, d8_linear) = decode_jxl_oxide(&bytes8);
         let ssim8 = ssim2_u8_vs_linear_f32(&srgb, &d8_linear, w, h);
 
         // DCT16x16 — encode and decode with jxl-oxide
-        let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+        let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc16.ac_strategy_enabled = true;
         let bytes16 = match enc16.encode(w, h, &linear, None) {
             Ok(b) => b,
@@ -1507,7 +1507,7 @@ fn layer2_single_group_dct32x32_decode_jxl_oxide() {
     assert_eq!(h, 256);
 
     // Use d=3.0 because DCT32x32 is enabled at d>=3.0
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder
@@ -1544,7 +1544,7 @@ fn layer2_single_group_dct32x32_decode_djxl() {
     let (w, h, linear, srgb) = generate_smooth_gradient(256, 256);
 
     // Use d=3.0 because DCT32x32 is enabled at d>=3.0
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -1582,7 +1582,7 @@ fn layer3_multigroup_dct32x32_decode_djxl() {
     eprintln!("layer3 DCT32x32: generated {}x{} smooth gradient", w, h);
     assert!(w > 256 || h > 256, "should be multi-group");
 
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -1615,7 +1615,7 @@ fn layer3_multigroup_dct32x32_decode_jxl_oxide() {
     // Use smooth gradient content - appropriate for DCT32x32
     let (w, h, linear, srgb) = generate_smooth_gradient(512, 512);
 
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -1654,14 +1654,14 @@ fn layer4_quality_dct32x32_vs_dct8_smooth_256() {
     let (w, h, linear, srgb) = generate_smooth_gradient(256, 256);
 
     // DCT8-only
-    let mut enc_dct8 = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT32x32-only (forced)
-    let mut enc_dct32 = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut enc_dct32 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct32.force_strategy = Some(4);
     let bytes_dct32 = enc_dct32.encode(w, h, &linear, None).unwrap();
     let (_, _, dec32) = decode_djxl(&bytes_dct32);
@@ -1708,14 +1708,14 @@ fn layer4_quality_dct32x32_vs_dct8_smooth_512() {
     let (w, h, linear, srgb) = generate_smooth_gradient(512, 512);
 
     // DCT8-only
-    let mut enc_dct8 = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT32x32-only
-    let mut enc_dct32 = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut enc_dct32 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct32.force_strategy = Some(4);
     let bytes_dct32 = enc_dct32.encode(w, h, &linear, None).unwrap();
     let (_, _, dec32) = decode_djxl(&bytes_dct32);
@@ -1772,13 +1772,13 @@ fn layer4_quality_dct16x16_across_distances() {
     );
 
     for &distance in &[0.5, 1.0, 2.0, 4.0] {
-        let mut enc_dct8 = jxl_encoder::tiny::TinyEncoder::new(distance);
+        let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(distance);
         enc_dct8.ac_strategy_enabled = false;
         let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
         let (_, _, dec8) = decode_djxl(&bytes_dct8);
         let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
-        let mut enc_dct16 = jxl_encoder::tiny::TinyEncoder::new(distance);
+        let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(distance);
         enc_dct16.ac_strategy_enabled = true;
         let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
         let (_, _, dec16) = decode_djxl(&bytes_dct16);
@@ -1816,7 +1816,7 @@ fn layer4_quality_dct16x16_across_distances() {
 #[test]
 #[ignore]
 fn diag_dct32x32_constant_block() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Create a 32x32 block with all values = 0.5
     let constant_val = 0.5f32;
@@ -1886,7 +1886,7 @@ fn diag_dct32x32_constant_block() {
 #[test]
 #[ignore]
 fn diag_dct32x32_forward_idct_roundtrip() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Create a gradient pattern - values increase along x and y
     let mut input = [0.0f32; 1024];
@@ -1944,7 +1944,7 @@ fn diag_dct32x32_forward_idct_roundtrip() {
 #[test]
 #[ignore]
 fn diag_dct32x32_llf_detail() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Create a gradient pattern - values increase along x and y
     let mut input = [0.0f32; 1024];
@@ -2054,7 +2054,7 @@ fn diag_dct32x32_llf_detail() {
 #[test]
 #[ignore]
 fn diag_dct32x32_roundtrip_verification() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Resample scales for 32 -> 4 (from C++)
     const SCALE_32_TO_4: [f32; 4] = [
@@ -2223,7 +2223,7 @@ fn diag_dct32x32_roundtrip_verification() {
 #[test]
 #[ignore]
 fn diag_dct32x32_sqrt2_correction() {
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     const SCALE_32_TO_4: [f32; 4] = [
         1.0,
@@ -2380,7 +2380,7 @@ fn diag_dct32x32_sqrt2_correction() {
 #[test]
 #[ignore]
 fn diag_dct32x32_butterfly_idct() {
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     const SCALE_32_TO_4: [f32; 4] = [
         1.0,
@@ -2565,7 +2565,7 @@ fn diag_save_dct16x16_file() {
     }
 
     // Encode with forced DCT16x16
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.force_strategy = Some(3); // RAW_STRATEGY_DCT16X16
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -2599,12 +2599,12 @@ fn diag_dct16x16_decode_compare() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 16, 16);
 
     // DCT8 encoding
-    let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
 
     // DCT16x16 encoding
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
 
@@ -2687,12 +2687,12 @@ fn diag_dct16x16_32x32_compare() {
     let (w, h, linear, srgb) = load_png_crop(&frymire_path(), 32, 32);
 
     // DCT8 encoding
-    let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
 
     // DCT16x16 encoding
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
 
@@ -2780,12 +2780,12 @@ fn diag_dct16x16_nzeros() {
     }
 
     // First, try DCT8 to see expected nzeros
-    let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
 
     // Then DCT16x16
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
 
@@ -2837,7 +2837,7 @@ fn diag_dct16x16_gradient() {
         }
     }
 
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
 
@@ -2865,7 +2865,7 @@ fn diag_dct16x16_gradient() {
 #[test]
 #[ignore]
 fn diag_dct16x16_iteration() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Create a small test where each 8x8 block has a distinct DC value
     let w = 32usize;
@@ -2890,12 +2890,12 @@ fn diag_dct16x16_iteration() {
     }
 
     // DCT8
-    let mut enc8 = TinyEncoder::new(1.0);
+    let mut enc8 = VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
 
     // DCT16x16
-    let mut enc16 = TinyEncoder::new(1.0);
+    let mut enc16 = VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
 
@@ -2999,7 +2999,7 @@ fn diag_dct16x16_dc_trace() {
 
     // Do forward DCT
     let mut dct_coeffs = [0.0f32; 256];
-    jxl_encoder::tiny::dct::dct_16x16(&block16x16, &mut dct_coeffs);
+    jxl_encoder::vardct::dct::dct_16x16(&block16x16, &mut dct_coeffs);
 
     eprintln!("DCT coefficients (LLF 2x2 region):");
     eprintln!(
@@ -3012,7 +3012,7 @@ fn diag_dct16x16_dc_trace() {
     );
 
     // Extract DC values
-    let dcs = jxl_encoder::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
+    let dcs = jxl_encoder::vardct::dct::dc_from_dct_16x16(&dct_coeffs);
 
     eprintln!("Extracted DC values:");
     eprintln!("  dcs[0]={:.6} (top-left 8x8)", dcs[0]);
@@ -3046,8 +3046,8 @@ fn diag_dct16x16_dc_trace() {
         }
     }
 
-    jxl_encoder::tiny::dct::dct_16x16(&block16x16, &mut dct_coeffs);
-    let dcs3 = jxl_encoder::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
+    jxl_encoder::vardct::dct::dct_16x16(&block16x16, &mut dct_coeffs);
+    let dcs3 = jxl_encoder::vardct::dct::dc_from_dct_16x16(&dct_coeffs);
 
     eprintln!("Extracted DC values for third block:");
     eprintln!("  dcs[0]={:.6} (expected {:.6})", dcs3[0], 8.0 / 16.0);
@@ -3063,8 +3063,8 @@ fn diag_dct16x16_uniform() {
     for v in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
         let block = [v; 256];
         let mut dct_coeffs = [0.0f32; 256];
-        jxl_encoder::tiny::dct::dct_16x16(&block, &mut dct_coeffs);
-        let dcs = jxl_encoder::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
+        jxl_encoder::vardct::dct::dct_16x16(&block, &mut dct_coeffs);
+        let dcs = jxl_encoder::vardct::dct::dc_from_dct_16x16(&dct_coeffs);
 
         eprintln!(
             "Uniform v={:.2}: dcs=[{:.4}, {:.4}, {:.4}, {:.4}] (all should be {:.4})",
@@ -3091,8 +3091,8 @@ fn diag_dct16x16_uniform() {
     }
 
     let mut dct_coeffs = [0.0f32; 256];
-    jxl_encoder::tiny::dct::dct_16x16(&block, &mut dct_coeffs);
-    let dcs = jxl_encoder::tiny::dct::dc_from_dct_16x16(&dct_coeffs);
+    jxl_encoder::vardct::dct::dct_16x16(&block, &mut dct_coeffs);
+    let dcs = jxl_encoder::vardct::dct::dc_from_dct_16x16(&dct_coeffs);
 
     eprintln!("Quadrant pattern (TL=0, TR=1, BL=0, BR=1):");
     eprintln!("  Expected: 0.0, 1.0, 0.0, 1.0");
@@ -3116,7 +3116,7 @@ fn diag_dct16x16_layout() {
     }
 
     let mut dct_h = [0.0f32; 256];
-    jxl_encoder::tiny::dct::dct_16x16(&block_h, &mut dct_h);
+    jxl_encoder::vardct::dct::dct_16x16(&block_h, &mut dct_h);
 
     eprintln!("Horizontal gradient (x-variation only):");
     eprintln!("  coeff[0] (DC) = {:.6}", dct_h[0]);
@@ -3136,7 +3136,7 @@ fn diag_dct16x16_layout() {
     }
 
     let mut dct_v = [0.0f32; 256];
-    jxl_encoder::tiny::dct::dct_16x16(&block_v, &mut dct_v);
+    jxl_encoder::vardct::dct::dct_16x16(&block_v, &mut dct_v);
 
     eprintln!("\nVertical gradient (y-variation only):");
     eprintln!("  coeff[0] (DC) = {:.6}", dct_v[0]);
@@ -3147,8 +3147,8 @@ fn diag_dct16x16_layout() {
     );
 
     // Now test dc_from_dct_16x16 with these
-    let dcs_h = jxl_encoder::tiny::dct::dc_from_dct_16x16(&dct_h);
-    let dcs_v = jxl_encoder::tiny::dct::dc_from_dct_16x16(&dct_v);
+    let dcs_h = jxl_encoder::vardct::dct::dc_from_dct_16x16(&dct_h);
+    let dcs_v = jxl_encoder::vardct::dct::dc_from_dct_16x16(&dct_v);
 
     eprintln!("\nHorizontal gradient DC extraction:");
     eprintln!("  Should have horizontal variation (left vs right):");
@@ -3193,14 +3193,14 @@ fn diag_dct16x16_layout() {
 #[test]
 #[ignore]
 fn diag_dct16x16_transform_coverage() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
-    // Patch TinyEncoder to print transform positions - we'll do this by examining the strategy map
+    // Patch VarDctEncoder to print transform positions - we'll do this by examining the strategy map
     let w = 32usize;
     let h = 32usize;
     let linear = vec![0.5f32; w * h * 3];
 
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
 
     // Run encoding
@@ -3250,11 +3250,11 @@ fn diag_dct16x16_two_values() {
         }
     }
 
-    let mut enc8 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
 
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
 
@@ -3293,7 +3293,7 @@ fn diag_dct16x16_two_values() {
 #[test]
 #[ignore]
 fn trace_two_value_dc_extraction() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_8x8, dc_from_dct_16x16, dct_8x8, dct_16x16};
+    use jxl_encoder::vardct::dct::{dc_from_dct_8x8, dc_from_dct_16x16, dct_8x8, dct_16x16};
 
     let w = 32usize;
     let h = 32usize;
@@ -3395,7 +3395,7 @@ fn trace_two_value_dc_extraction() {
 
     eprintln!("\n=== Testing encoder with DC prediction ===");
 
-    let mut enc16 = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes = enc16.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
@@ -3420,7 +3420,7 @@ fn trace_two_value_dc_extraction() {
 #[test]
 #[ignore]
 fn trace_dct16x16_dc_detailed() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_16x16, dct_16x16};
+    use jxl_encoder::vardct::dct::{dc_from_dct_16x16, dct_16x16};
 
     // Create a simple 32x32 image with two values
     // Top half = 0.25 (in linear sRGB), bottom half = 0.75
@@ -3463,8 +3463,8 @@ fn trace_dct16x16_dc_detailed() {
     );
 
     // Now encode and see what DC tokens are generated
-    eprintln!("\n=== Encoding with TinyEncoder ===");
-    let mut enc = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    eprintln!("\n=== Encoding with VarDctEncoder ===");
+    let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
 
     // Enable debug output if available
@@ -3539,7 +3539,7 @@ fn trace_dct16x16_dc_detailed() {
 #[test]
 #[ignore]
 fn trace_quant_dc_values() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 32usize;
     let h = 32usize;
@@ -3557,7 +3557,7 @@ fn trace_quant_dc_values() {
     }
 
     eprintln!("=== Checking with DCT8 only (reference) ===");
-    let mut enc8 = TinyEncoder::new(1.0);
+    let mut enc8 = VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
@@ -3574,7 +3574,7 @@ fn trace_quant_dc_values() {
     }
 
     eprintln!("\n=== Checking with DCT16x16 ===");
-    let mut enc16 = TinyEncoder::new(1.0);
+    let mut enc16 = VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
@@ -3654,7 +3654,7 @@ fn compare_cpp_output() {
         }
     }
 
-    let mut enc = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
     let rust_bytes = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("\nRust file size: {} bytes", rust_bytes.len());
@@ -3677,7 +3677,7 @@ fn compare_cpp_output() {
 #[test]
 #[ignore]
 fn force_dct16x16_trace() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 32usize;
     let h = 32usize;
@@ -3694,7 +3694,7 @@ fn force_dct16x16_trace() {
 
     eprintln!("=== Forcing DCT16x16 for all blocks ===\n");
 
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.force_strategy = Some(3); // RAW_STRATEGY_DCT16X16
     let bytes = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
@@ -3717,7 +3717,7 @@ fn force_dct16x16_trace() {
 #[test]
 #[ignore]
 fn check_selected_strategies() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 32usize;
     let h = 32usize;
@@ -3733,7 +3733,7 @@ fn check_selected_strategies() {
     }
 
     eprintln!("=== With ac_strategy_enabled = true ===");
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
     let bytes = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
@@ -3750,7 +3750,7 @@ fn check_selected_strategies() {
     }
 
     eprintln!("\n=== With force_strategy = DCT16x16 ===");
-    let mut enc2 = TinyEncoder::new(1.0);
+    let mut enc2 = VarDctEncoder::new(1.0);
     enc2.force_strategy = Some(3);
     let bytes2 = enc2.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes2.len());
@@ -3767,7 +3767,7 @@ fn check_selected_strategies() {
     }
 
     eprintln!("\n=== With ac_strategy_enabled = false (DCT8 only) ===");
-    let mut enc3 = TinyEncoder::new(1.0);
+    let mut enc3 = VarDctEncoder::new(1.0);
     enc3.ac_strategy_enabled = false;
     let bytes3 = enc3.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes3.len());
@@ -3788,7 +3788,7 @@ fn check_selected_strategies() {
 #[test]
 #[ignore]
 fn test_dc_from_dct_32x32_uniform() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Create uniform 32x32 block
     let mut input = [0.5f32; 1024];
@@ -3851,7 +3851,7 @@ fn test_dc_from_dct_32x32_uniform() {
 #[test]
 #[ignore]
 fn test_dc_from_dct_16x16_step() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_16x16, dct_16x16};
+    use jxl_encoder::vardct::dct::{dc_from_dct_16x16, dct_16x16};
 
     // Step function: top half = 0.3, bottom half = 0.7
     let mut input = [0.0f32; 256];
@@ -3879,7 +3879,7 @@ fn test_dc_from_dct_16x16_step() {
 #[test]
 #[ignore]
 fn test_llf_dc_roundtrip_32x32() {
-    use jxl_encoder::tiny::dct::{DCT_RESAMPLE_SCALE_32_TO_4, dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{DCT_RESAMPLE_SCALE_32_TO_4, dc_from_dct_32x32, dct_32x32};
 
     // Create step function input
     let mut input = [0.0f32; 1024];
@@ -3996,7 +3996,7 @@ fn test_llf_dc_roundtrip_32x32() {
 #[test]
 #[ignore]
 fn test_4x4_dct_idct_roundtrip() {
-    use jxl_encoder::tiny::dct::DCT_RESAMPLE_SCALE_32_TO_4;
+    use jxl_encoder::vardct::dct::DCT_RESAMPLE_SCALE_32_TO_4;
 
     // Create asymmetric 4x4 input (not symmetric, so we can see transpose issues)
     let input = [
@@ -4212,7 +4212,7 @@ fn test_dct32x32_uniform_blocks() {
     eprintln!("=== 64x64 image with step at y=32 ===");
     eprintln!("Each DCT32x32 block is uniform (top: 0.25, bottom: 0.75)\n");
 
-    let mut enc = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc.force_strategy = Some(4); // DCT32x32
     enc.optimize_codes = false; // Use static Huffman for simpler debugging
     let bytes = enc.encode(w, h, &linear, None).unwrap();
@@ -4238,7 +4238,7 @@ fn test_dct32x32_uniform_blocks() {
 #[test]
 #[ignore]
 fn test_each_strategy_quality() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 32usize;
     let h = 32usize;
@@ -4262,7 +4262,7 @@ fn test_each_strategy_quality() {
     ];
 
     for (strat, name) in &strategies {
-        let mut enc = TinyEncoder::new(1.0);
+        let mut enc = VarDctEncoder::new(1.0);
         enc.force_strategy = Some(*strat);
         let bytes = enc.encode(w, h, &linear, None).unwrap();
         let (_, _, dec) = decode_jxl_oxide(&bytes);
@@ -4300,7 +4300,7 @@ fn test_each_strategy_quality() {
 #[test]
 #[ignore]
 fn test_uniform_image_with_strategy_selection() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 32usize;
     let h = 32usize;
@@ -4308,7 +4308,7 @@ fn test_uniform_image_with_strategy_selection() {
     let linear = vec![0.5f32; w * h * 3];
 
     eprintln!("=== Uniform image (0.5) with ac_strategy_enabled = true ===");
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
     let bytes = enc.encode(w, h, &linear, None).unwrap();
     let (_, _, dec) = decode_jxl_oxide(&bytes);
@@ -4329,7 +4329,7 @@ fn test_uniform_image_with_strategy_selection() {
     eprintln!("Max error: {:.4} (expected 0.5 everywhere)", max_err);
 
     eprintln!("\n=== Same with ac_strategy_enabled = false ===");
-    let mut enc2 = TinyEncoder::new(1.0);
+    let mut enc2 = VarDctEncoder::new(1.0);
     enc2.ac_strategy_enabled = false;
     let bytes2 = enc2.encode(w, h, &linear, None).unwrap();
     let (_, _, dec2) = decode_jxl_oxide(&bytes2);
@@ -4361,7 +4361,7 @@ fn test_uniform_image_with_strategy_selection() {
 #[test]
 #[ignore]
 fn test_dct32x32_two_value_image() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Need 64x64 to fit a DCT32x32
     let w = 64usize;
@@ -4378,7 +4378,7 @@ fn test_dct32x32_two_value_image() {
     }
 
     eprintln!("=== 64x64 two-value image with force_strategy = DCT32x32 ===");
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.force_strategy = Some(4); // DCT32x32
     let bytes = enc.encode(w, h, &linear, None).unwrap();
     let (_, _, dec) = decode_jxl_oxide(&bytes);
@@ -4408,7 +4408,7 @@ fn test_dct32x32_two_value_image() {
     eprintln!("Average bot: {:.4} (expected 0.75)", sum_bot / 32.0);
 
     eprintln!("\n=== Same with ac_strategy_enabled = true ===");
-    let mut enc2 = TinyEncoder::new(1.0);
+    let mut enc2 = VarDctEncoder::new(1.0);
     enc2.ac_strategy_enabled = true;
     let bytes2 = enc2.encode(w, h, &linear, None).unwrap();
     let (_, _, dec2) = decode_jxl_oxide(&bytes2);
@@ -4436,7 +4436,7 @@ fn test_dct32x32_two_value_image() {
     eprintln!("Average bot: {:.4} (expected 0.75)", sum_bot2 / 32.0);
 
     eprintln!("\n=== Same with DCT8 only ===");
-    let mut enc3 = TinyEncoder::new(1.0);
+    let mut enc3 = VarDctEncoder::new(1.0);
     enc3.ac_strategy_enabled = false;
     let bytes3 = enc3.encode(w, h, &linear, None).unwrap();
     let (_, _, dec3) = decode_jxl_oxide(&bytes3);
@@ -4464,7 +4464,7 @@ fn test_dct32x32_two_value_image() {
 #[test]
 #[ignore]
 fn test_dct32x32_on_32x32_two_value() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 32usize;
     let h = 32usize;
@@ -4480,7 +4480,7 @@ fn test_dct32x32_on_32x32_two_value() {
     }
 
     eprintln!("=== 32x32 two-value with force_strategy = DCT32x32 ===");
-    let mut enc = TinyEncoder::new(1.0);
+    let mut enc = VarDctEncoder::new(1.0);
     enc.force_strategy = Some(4); // DCT32x32
     let bytes = enc.encode(w, h, &linear, None).unwrap();
     let (_, _, dec) = decode_jxl_oxide(&bytes);
@@ -4506,7 +4506,7 @@ fn test_dct32x32_on_32x32_two_value() {
     ];
 
     for (force_strat, name) in configs.iter() {
-        let mut enc = TinyEncoder::new(1.0);
+        let mut enc = VarDctEncoder::new(1.0);
         if let Some(s) = force_strat {
             enc.force_strategy = Some(*s);
         } else {
@@ -4532,7 +4532,7 @@ fn test_dct32x32_on_32x32_two_value() {
 #[test]
 #[ignore]
 fn test_dct16x16_with_internal_edge() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // 16x16 image with edge at y=8 (inside single DCT16x16 block)
     let w = 16usize;
@@ -4551,7 +4551,7 @@ fn test_dct16x16_with_internal_edge() {
     let configs: [(u8, &str); 2] = [(0, "DCT8"), (3, "DCT16x16")];
 
     for (force_strat, name) in configs.iter() {
-        let mut enc = TinyEncoder::new(1.0);
+        let mut enc = VarDctEncoder::new(1.0);
         enc.force_strategy = Some(*force_strat);
         let bytes = enc.encode(w, h, &linear, None).unwrap();
         let (_, _, dec) = decode_jxl_oxide(&bytes);
@@ -4594,7 +4594,7 @@ fn test_layer2_strategies_comparison() {
     ];
 
     for (force_strat, name) in strategies.iter() {
-        let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+        let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         if let Some(s) = force_strat {
             encoder.force_strategy = Some(*s);
         }
@@ -4618,7 +4618,7 @@ fn test_layer2_strategies_comparison() {
 
     // Also test with ac_strategy_enabled
     eprintln!("\n--- With ac_strategy_enabled ---");
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
     let (_, _, dec_srgb) = decode_djxl(&bytes);
@@ -4638,7 +4638,7 @@ fn test_layer2_strategies_comparison() {
 #[test]
 #[ignore]
 fn layer3_single_group_dct4x8_decode_djxl() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
     use std::fs;
     use std::io::Write;
 
@@ -4656,7 +4656,7 @@ fn layer3_single_group_dct4x8_decode_djxl() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -4686,7 +4686,7 @@ fn layer3_single_group_dct4x8_decode_djxl() {
 #[test]
 #[ignore]
 fn layer3_single_group_dct8x4_decode_djxl() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
     use std::fs;
     use std::io::Write;
 
@@ -4704,7 +4704,7 @@ fn layer3_single_group_dct8x4_decode_djxl() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -4734,7 +4734,7 @@ fn layer3_single_group_dct8x4_decode_djxl() {
 #[test]
 #[ignore]
 fn layer3_single_group_dct4x8_decode_jxl_oxide() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // 64x64 gradient image
     let w = 64usize;
@@ -4750,7 +4750,7 @@ fn layer3_single_group_dct4x8_decode_jxl_oxide() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -4776,7 +4776,7 @@ fn layer3_single_group_dct4x8_decode_jxl_oxide() {
 #[test]
 #[ignore]
 fn layer3_single_group_dct8x4_decode_jxl_oxide() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // 64x64 gradient image
     let w = 64usize;
@@ -4792,7 +4792,7 @@ fn layer3_single_group_dct8x4_decode_jxl_oxide() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -4820,7 +4820,7 @@ fn layer3_single_group_dct8x4_decode_jxl_oxide() {
 #[test]
 #[ignore]
 fn layer3_single_group_dct4x8_decode_jxl_rs() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // 64x64 gradient image
     let w = 64usize;
@@ -4836,7 +4836,7 @@ fn layer3_single_group_dct4x8_decode_jxl_rs() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -4870,7 +4870,7 @@ fn layer3_single_group_dct4x8_decode_jxl_rs() {
 #[test]
 #[ignore]
 fn layer3_single_group_dct8x4_decode_jxl_rs() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // 64x64 gradient image
     let w = 64usize;
@@ -4886,7 +4886,7 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
         }
     }
 
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -4929,7 +4929,7 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
 #[test]
 #[ignore]
 fn test_dct4x8_decoder_colorspace_comparison() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Create 64x64 diagonal gradient: value = (x + y) / 126, range 0.0 to 1.0
     let w = 64usize;
@@ -4946,7 +4946,7 @@ fn test_dct4x8_decoder_colorspace_comparison() {
     }
 
     // Encode with forced DCT4x8
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
@@ -5008,7 +5008,7 @@ fn test_dct4x8_decoder_colorspace_comparison() {
 #[test]
 #[ignore]
 fn test_strategy_selection_picks_small_transforms() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Create an image with strong horizontal edges (should favor DCT8X4)
     // and strong vertical edges (should favor DCT4X8)
@@ -5036,7 +5036,7 @@ fn test_strategy_selection_picks_small_transforms() {
     }
 
     // Encode with strategy selection enabled
-    let mut encoder = TinyEncoder::new(2.0);
+    let mut encoder = VarDctEncoder::new(2.0);
     encoder.ac_strategy_enabled = true;
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -5072,19 +5072,19 @@ fn test_strategy_selection_picks_small_transforms() {
 #[test]
 #[ignore]
 fn test_dct4x8_vs_dct8_quality_real_photo() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Load frymire image
     let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
     let (w, h, linear, srgb) = load_png_crop(path, 256, 256);
 
     // Encode with forced DCT4X8
-    let mut encoder_4x8 = TinyEncoder::new(1.0);
+    let mut encoder_4x8 = VarDctEncoder::new(1.0);
     encoder_4x8.force_strategy = Some(5); // DCT4X8
     let bytes_4x8 = encoder_4x8.encode(w, h, &linear, None).unwrap();
 
     // Encode with DCT8 only
-    let mut encoder_dct8 = TinyEncoder::new(1.0);
+    let mut encoder_dct8 = VarDctEncoder::new(1.0);
     encoder_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = encoder_dct8.encode(w, h, &linear, None).unwrap();
 
@@ -5126,7 +5126,7 @@ fn test_dct4x8_vs_dct8_quality_real_photo() {
 #[test]
 #[ignore]
 fn test_dct4x8_content_complexity() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let w = 64usize;
     let h = 64usize;
@@ -5173,7 +5173,7 @@ fn test_dct4x8_content_complexity() {
         ("edge", &linear_edge),
         ("noise", &linear_noise),
     ] {
-        let mut encoder = TinyEncoder::new(1.0);
+        let mut encoder = VarDctEncoder::new(1.0);
         encoder.force_strategy = Some(5); // DCT4X8
         let bytes = encoder.encode(w, h, linear, None).unwrap();
 
@@ -5210,7 +5210,7 @@ fn test_dct4x8_content_complexity() {
 #[test]
 #[ignore]
 fn test_dct4x8_image_sizes() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     for size in [64, 128, 200, 256, 300] {
         let w = size;
@@ -5228,7 +5228,7 @@ fn test_dct4x8_image_sizes() {
             }
         }
 
-        let mut encoder = TinyEncoder::new(1.0);
+        let mut encoder = VarDctEncoder::new(1.0);
         encoder.force_strategy = Some(5); // DCT4X8
         let bytes = encoder.encode(w, h, &linear, None).unwrap();
 
@@ -5269,7 +5269,7 @@ fn test_dct4x8_image_sizes() {
 #[test]
 #[ignore]
 fn debug_dct4x8_real_photo_save() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
     use std::io::Write;
 
     // Load frymire image
@@ -5278,7 +5278,7 @@ fn debug_dct4x8_real_photo_save() {
     eprintln!("Loaded {}x{} image", w, h);
 
     // Encode with forced DCT4X8
-    let mut encoder_4x8 = TinyEncoder::new(1.0);
+    let mut encoder_4x8 = VarDctEncoder::new(1.0);
     encoder_4x8.force_strategy = Some(5); // DCT4X8
     let bytes_4x8 = encoder_4x8.encode(w, h, &linear, None).unwrap();
 
@@ -5313,7 +5313,7 @@ fn debug_dct4x8_real_photo_save() {
     }
 
     // Encode with DCT8 for comparison
-    let mut encoder_dct8 = TinyEncoder::new(1.0);
+    let mut encoder_dct8 = VarDctEncoder::new(1.0);
     encoder_dct8.ac_strategy_enabled = false;
     let bytes_dct8 = encoder_dct8.encode(w, h, &linear, None).unwrap();
 
@@ -5341,14 +5341,14 @@ fn debug_dct4x8_real_photo_save() {
 #[test]
 #[ignore]
 fn debug_dct4x8_check_values() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Load frymire image
     let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
     let (w, h, linear, _srgb) = load_png_crop(path, 256, 256);
 
     // Encode with forced DCT4X8
-    let mut encoder = TinyEncoder::new(1.0);
+    let mut encoder = VarDctEncoder::new(1.0);
     encoder.force_strategy = Some(5); // DCT4X8
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
 
@@ -5388,7 +5388,7 @@ fn debug_dct4x8_check_values() {
     eprintln!("  Range: [{:.4}, {:.4}]", min_val, max_val);
 
     // Also check DCT8 for comparison
-    let mut encoder2 = TinyEncoder::new(1.0);
+    let mut encoder2 = VarDctEncoder::new(1.0);
     encoder2.ac_strategy_enabled = false;
     let bytes2 = encoder2.encode(w, h, &linear, None).unwrap();
     let (_, _, pixels2) = decode_jxl_oxide(&bytes2);
@@ -5419,7 +5419,7 @@ fn debug_dct4x8_check_values() {
 /// results than the known-correct direct formula.
 #[test]
 fn test_dc_from_dct_32x32_production_vs_reference() {
-    use jxl_encoder::tiny::dct::{DCT_RESAMPLE_SCALE_32_TO_4, dc_from_dct_32x32};
+    use jxl_encoder::vardct::dct::{DCT_RESAMPLE_SCALE_32_TO_4, dc_from_dct_32x32};
 
     // Reference 4-point IDCT using direct DCT-III formula
     fn idct4_reference(input: &[f32; 4]) -> [f32; 4] {
@@ -5649,7 +5649,7 @@ fn test_dc_from_dct_32x32_production_vs_reference() {
 /// Verify dc_from_dct_32x32 with uniform input
 #[test]
 fn test_dc_from_dct_32x32_uniform_input() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Uniform 32x32 input with value 0.5
     let input = [0.5f32; 1024];
@@ -5693,7 +5693,7 @@ fn test_dc_from_dct_32x32_uniform_input() {
 /// Verify dc_from_dct_32x32 with step function input
 #[test]
 fn test_dc_from_dct_32x32_step_input() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Step function: top half = 0.25, bottom half = 0.75
     let mut input = [0.0f32; 1024];
@@ -5769,7 +5769,7 @@ fn test_dc_from_dct_32x32_step_input() {
 #[test]
 #[ignore]
 fn test_dct32x32_ac_coeff_debug() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Create simple 32x32 test pattern: left half black, right half white
     let w = 32usize;
@@ -5786,7 +5786,7 @@ fn test_dct32x32_ac_coeff_debug() {
     }
 
     // Encode with forced DCT32x32
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -5828,7 +5828,7 @@ fn test_dct32x32_ac_coeff_debug() {
 #[test]
 #[ignore]
 fn test_dct32x32_64x64_debug() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Create 64x64 test pattern: top-left=black, bottom-right=white
     let w = 64usize;
@@ -5845,7 +5845,7 @@ fn test_dct32x32_64x64_debug() {
     }
 
     // Encode with forced DCT32x32
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -5904,7 +5904,7 @@ fn test_dct32x32_64x64_debug() {
 #[test]
 #[ignore]
 fn test_dct32x32_256x256_debug() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Create 256x256 test pattern: top-left=black, bottom-right=white
     let w = 256usize;
@@ -5921,7 +5921,7 @@ fn test_dct32x32_256x256_debug() {
     }
 
     // Encode with forced DCT32x32
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -6004,7 +6004,7 @@ fn test_dct32x32_frymire_detailed_debug() {
     }
 
     // Encode with forced DCT32x32
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -6055,7 +6055,7 @@ fn test_dct32x32_frymire_detailed_debug() {
     );
 
     // Compare with DCT8-only encoding
-    let mut encoder8 = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder8 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder8.ac_strategy_enabled = false; // DCT8 only
     let bytes8 = encoder8.encode(w, h, &linear, None).unwrap();
     let (_, _, decoded8) = decode_jxl_oxide(&bytes8);
@@ -6098,7 +6098,7 @@ fn test_dct32x32_frymire_pattern_debug() {
     }
 
     // Encode with forced DCT32x32
-    let mut encoder = jxl_encoder::tiny::TinyEncoder::new(3.0);
+    let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4);
 
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
@@ -6143,8 +6143,8 @@ fn test_dct32x32_frymire_pattern_debug() {
 #[test]
 #[ignore]
 fn test_dct32x32_nzeros_debug() {
-    use jxl_encoder::tiny::TinyEncoder;
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::VarDctEncoder;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 256, 256);
 
@@ -6226,17 +6226,17 @@ fn test_dct32x32_nzeros_debug() {
 #[test]
 #[ignore]
 fn test_dct32x32_vs_dct8_filesize() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 256, 256);
 
     // Encode with DCT8 only
-    let mut encoder8 = TinyEncoder::new(3.0);
+    let mut encoder8 = VarDctEncoder::new(3.0);
     encoder8.ac_strategy_enabled = false;
     let bytes8 = encoder8.encode(w, h, &linear, None).unwrap();
 
     // Encode with DCT32x32 only
-    let mut encoder32 = TinyEncoder::new(3.0);
+    let mut encoder32 = VarDctEncoder::new(3.0);
     encoder32.force_strategy = Some(4);
     let bytes32 = encoder32.encode(w, h, &linear, None).unwrap();
 
@@ -6263,7 +6263,7 @@ fn test_dct32x32_vs_dct8_filesize() {
 #[test]
 #[ignore]
 fn test_dct32x32_ac_trace() {
-    use jxl_encoder::tiny::TinyEncoder;
+    use jxl_encoder::vardct::VarDctEncoder;
 
     // Just 64x64 = 8x8 blocks = 4 DCT32x32 transforms
     let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 64, 64);
@@ -6275,14 +6275,14 @@ fn test_dct32x32_ac_trace() {
         (w / 32) * (h / 32)
     );
 
-    let mut encoder = TinyEncoder::new(3.0);
+    let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
     let bytes = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!("Output size: {} bytes", bytes.len());
 
     // For comparison, encode with DCT8
-    let mut encoder8 = TinyEncoder::new(3.0);
+    let mut encoder8 = VarDctEncoder::new(3.0);
     encoder8.ac_strategy_enabled = false;
     let bytes8 = encoder8.encode(w, h, &linear, None).unwrap();
 
@@ -6300,7 +6300,7 @@ fn test_dct32x32_ac_trace() {
 #[test]
 #[ignore]
 fn test_dct32x32_coeff_storage_debug() {
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     // Create a simple 32x32 pattern
     let mut pixels = [0.0f32; 32 * 32];
@@ -6347,7 +6347,7 @@ fn test_dct32x32_coeff_storage_debug() {
 #[test]
 #[ignore]
 fn test_dct32x32_checkerboard_frequencies() {
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     // Checkerboard pattern
     let mut pixels = [0.0f32; 32 * 32];
@@ -6377,7 +6377,7 @@ fn test_dct32x32_checkerboard_frequencies() {
 #[test]
 #[ignore]
 fn test_dct32x32_manual_trace() {
-    use jxl_encoder::tiny::dct::{dc_from_dct_32x32, dct_32x32};
+    use jxl_encoder::vardct::dct::{dc_from_dct_32x32, dct_32x32};
 
     // Simple gradient pattern
     let mut pixels = [0.0f32; 1024];
@@ -6443,7 +6443,7 @@ fn test_dct32x32_manual_trace() {
 #[test]
 #[ignore]
 fn test_dct32x32_photo_trace() {
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     // Generate smooth content (DCT32x32 appropriate) instead of frymire
     let (w, h, linear, _srgb) = generate_smooth_gradient(32, 32);
@@ -6535,7 +6535,7 @@ fn test_dct32x32_photo_trace() {
 #[test]
 #[ignore]
 fn test_dct32x32_photo_correct_quant() {
-    use jxl_encoder::tiny::dct::dct_32x32;
+    use jxl_encoder::vardct::dct::dct_32x32;
 
     let (w, h, linear, _srgb) = load_png_crop(&frymire_path(), 32, 32);
     eprintln!("Loaded {}x{} crop", w, h);
