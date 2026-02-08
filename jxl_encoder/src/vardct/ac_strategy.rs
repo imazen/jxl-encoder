@@ -29,6 +29,28 @@ use super::dct::{
 };
 use super::quant::quant_weights;
 
+/// Pre-allocated scratch buffers for entropy estimation.
+/// Avoids per-call heap allocations in the hot `estimate_entropy_full` loop.
+pub(super) struct EntropyEstScratch {
+    /// DCT coefficients for 3 channels (max 3 × 4096 for DCT64x64).
+    pub block: Vec<f32>,
+    /// Error coefficients for pixel-domain IDCT (max 4096).
+    pub error_coeffs: Vec<f32>,
+    /// Pixel-domain error output from IDCT (max 4096).
+    pub pixel_error: Vec<f32>,
+}
+
+impl EntropyEstScratch {
+    pub fn new() -> Self {
+        const MAX: usize = 4096; // DCT64x64
+        Self {
+            block: vec![0.0f32; 3 * MAX],
+            error_coeffs: vec![0.0f32; MAX],
+            pixel_error: vec![0.0f32; MAX],
+        }
+    }
+}
+
 /// Raw strategy codes matching the C++ `AcStrategy::Type` enum.
 /// Note: These are internal codes, not bitstream codes. Use STRATEGY_CODE_LUT
 /// to convert to bitstream codes.
@@ -315,6 +337,7 @@ pub(super) fn estimate_entropy(
     ytox: i8,
     ytob: i8,
 ) -> f32 {
+    let mut scratch = EntropyEstScratch::new();
     estimate_entropy_with_mask(
         raw_strategy,
         xyb,
@@ -330,6 +353,7 @@ pub(super) fn estimate_entropy(
         None,
         0,
         0.0,
+        &mut scratch,
     )
 }
 
@@ -360,6 +384,7 @@ pub(super) fn estimate_entropy_with_mask(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul_adjust: f32,
+    scratch: &mut EntropyEstScratch,
 ) -> f32 {
     // In pixel-domain mode, use fixed entropy_mul values per transform
     // In coefficient-domain mode, entropy_mul is applied outside by the caller (mul8x8 etc.)
@@ -387,6 +412,7 @@ pub(super) fn estimate_entropy_with_mask(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
+        scratch,
     )
 }
 
@@ -415,6 +441,7 @@ pub(super) fn estimate_entropy_full(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
+    scratch: &mut EntropyEstScratch,
 ) -> f32 {
     let cx = COVERED_X[raw_strategy as usize];
     let cy = COVERED_Y[raw_strategy as usize];
@@ -436,8 +463,9 @@ pub(super) fn estimate_entropy_full(
     const K_INFO_LOSS_MULTIPLIER2: f32 = 50.468_4;
     const K_COST2: f32 = 4.462_815;
 
-    // Apply transform for each channel
-    let mut block = vec![0.0f32; 3 * size]; // 3 channels × size coeffs
+    // Use pre-allocated scratch buffers
+    let block = &mut scratch.block[..3 * size];
+    block.fill(0.0);
     for (c, xyb_c) in xyb.iter().enumerate() {
         let offset = c * size;
         match raw_strategy {
@@ -620,7 +648,8 @@ pub(super) fn estimate_entropy_full(
     let mut total_pixel_loss = 0.0f64;
 
     // Error coefficient buffer for pixel-domain IDCT (reused per channel)
-    let mut error_coeffs = vec![0.0f32; size];
+    let error_coeffs = &mut scratch.error_coeffs[..size];
+    error_coeffs.fill(0.0);
 
     let slope = (distance / 3.0).min(1.0);
     let cost_of_1 = 1.0 + slope * 8.870_325;
@@ -697,7 +726,9 @@ pub(super) fn estimate_entropy_full(
         // Pixel-domain loss calculation
         if let Some(mask) = mask1x1 {
             // Apply IDCT to error coefficients to get pixel-domain error
-            let pixel_error = apply_idct_for_strategy(raw_strategy, &error_coeffs);
+            let pixel_error_buf = &mut scratch.pixel_error[..size];
+            apply_idct_for_strategy(raw_strategy, error_coeffs, pixel_error_buf);
+            let pixel_error = &*pixel_error_buf;
 
             // Compute 8th power norm with per-pixel masking
             let mut channel_loss = 0.0f64;
@@ -766,101 +797,84 @@ pub(super) fn estimate_entropy_full(
 }
 
 /// Apply inverse DCT to error coefficients based on strategy.
-/// Returns pixel-domain error in row-major layout.
-pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32]) -> Vec<f32> {
+/// Writes pixel-domain error in row-major layout into `output`.
+pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], output: &mut [f32]) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 | RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4 => {
-            // All these use 8x8 pixel output with standard 8x8 IDCT
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&error_coeffs[..64]);
-            let mut output = [0.0f32; 64];
-            idct_8x8(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            idct_8x8(&input, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-            // AFV has a hybrid inverse transform (AFV4x4 + DCT4x4 + DCT4x8)
             let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&error_coeffs[..64]);
-            let mut output = [0.0f32; 64];
-            super::afv::inverse_afv_transform(&input, afv_kind, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            super::afv::inverse_afv_transform(&input, afv_kind, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X8 => {
-            // 8 wide × 16 tall (stored as 8x16 layout after IDCT)
             let mut input = [0.0f32; 128];
             input.copy_from_slice(&error_coeffs[..128]);
-            let mut output = [0.0f32; 128];
-            idct_16x8(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 128];
+            idct_16x8(&input, &mut tmp);
+            output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT8X16 => {
-            // 16 wide × 8 tall
             let mut input = [0.0f32; 128];
             input.copy_from_slice(&error_coeffs[..128]);
-            let mut output = [0.0f32; 128];
-            idct_8x16(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 128];
+            idct_8x16(&input, &mut tmp);
+            output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X16 => {
-            // 16 wide × 16 tall
             let mut input = [0.0f32; 256];
             input.copy_from_slice(&error_coeffs[..256]);
-            let mut output = [0.0f32; 256];
-            idct_16x16(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 256];
+            idct_16x16(&input, &mut tmp);
+            output[..256].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X32 => {
             let mut input = [0.0f32; 1024];
             input.copy_from_slice(&error_coeffs[..1024]);
-            let mut output = [0.0f32; 1024];
-            idct_32x32(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 1024];
+            idct_32x32(&input, &mut tmp);
+            output[..1024].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X16 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&error_coeffs[..512]);
-            let mut output = [0.0f32; 512];
-            idct_32x16(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 512];
+            idct_32x16(&input, &mut tmp);
+            output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X32 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&error_coeffs[..512]);
-            let mut output = [0.0f32; 512];
-            idct_16x32(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 512];
+            idct_16x32(&input, &mut tmp);
+            output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT64X64 => {
-            let mut input = vec![0.0f32; 4096];
-            input.copy_from_slice(&error_coeffs[..4096]);
-            let mut output = vec![0.0f32; 4096];
-            idct_64x64(&input, &mut output);
-            output
+            idct_64x64(&error_coeffs[..4096], &mut output[..4096]);
         }
         RAW_STRATEGY_DCT64X32 => {
-            let mut input = vec![0.0f32; 2048];
-            input.copy_from_slice(&error_coeffs[..2048]);
-            let mut output = vec![0.0f32; 2048];
-            idct_64x32(&input, &mut output);
-            output
+            idct_64x32(&error_coeffs[..2048], &mut output[..2048]);
         }
         RAW_STRATEGY_DCT32X64 => {
-            let mut input = vec![0.0f32; 2048];
-            input.copy_from_slice(&error_coeffs[..2048]);
-            let mut output = vec![0.0f32; 2048];
-            idct_32x64(&input, &mut output);
-            output
+            idct_32x64(&error_coeffs[..2048], &mut output[..2048]);
         }
         RAW_STRATEGY_IDENTITY => {
-            let mut output = [0.0f32; 64];
-            inverse_identity_transform(&error_coeffs[..64], &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            inverse_identity_transform(&error_coeffs[..64], &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT2X2 => {
-            let mut output = [0.0f32; 64];
-            inverse_dct2x2_transform(&error_coeffs[..64], &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            inverse_dct2x2_transform(&error_coeffs[..64], &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         _ => unreachable!(
             "unknown strategy {} in apply_idct_for_strategy",
@@ -982,6 +996,7 @@ pub fn compute_ac_strategy(
     // Using u8 cast to f32 would give ~6x larger values (raw_quant = aq_map * inv_scale).
 
     let xyb = [xyb_x, xyb_y, xyb_b];
+    let mut scratch = EntropyEstScratch::new();
 
     // Process each tile (8×8 blocks = 64×64 pixels)
     for tile_by in (0..ysize_blocks).step_by(TILE_DIM_IN_BLOCKS) {
@@ -1017,6 +1032,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
+                    &mut scratch,
                     );
                     cx += 8;
                 }
@@ -1038,6 +1054,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
+                    &mut scratch,
                     );
                     cx += 4;
                 }
@@ -1058,6 +1075,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
+                    &mut scratch,
                     );
                     cx += 2;
                 }
@@ -1083,6 +1101,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
+                    &mut scratch,
                     );
                     cx += 4;
                 }
@@ -1103,6 +1122,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
+                    &mut scratch,
                     );
                     cx += 2;
                 }
@@ -1128,6 +1148,7 @@ pub fn compute_ac_strategy(
                         mask1x1,
                         mask1x1_stride,
                         &mut ac_strategy,
+                    &mut scratch,
                     );
                     cx += 2;
                 }
@@ -1260,6 +1281,8 @@ mod tests {
         let mask1x1_stride = stride;
         let mask1x1 = vec![0.5f32; n];
 
+        let mut scratch = EntropyEstScratch::new();
+
         // Calculate coefficient-domain loss (without mask1x1)
         let ent_coeff = estimate_entropy_full(
             RAW_STRATEGY_DCT8,
@@ -1276,6 +1299,7 @@ mod tests {
             None,
             0,
             1.0, // entropy_mul = 1.0 for coefficient-domain (caller applies mul8x8)
+            &mut scratch,
         );
 
         // Calculate pixel-domain loss (with mask1x1)
@@ -1294,6 +1318,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8), // Normalized entropy_mul for DCT8 = 1.0
+            &mut scratch,
         );
 
         eprintln!("Coefficient-domain entropy: {}", ent_coeff);
@@ -1344,6 +1369,8 @@ mod tests {
         let mask1x1_stride = stride;
         let mask1x1: Vec<f32> = (0..n).map(|i| 0.3 + (i % 7) as f32 * 0.1).collect();
 
+        let mut scratch = EntropyEstScratch::new();
+
         // Test DCT8
         let ent_dct8 = estimate_entropy_full(
             RAW_STRATEGY_DCT8,
@@ -1360,6 +1387,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8),
+            &mut scratch,
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
         assert!(ent_dct8.is_finite() && ent_dct8 >= 0.0);
@@ -1380,6 +1408,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
+            &mut scratch,
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
         assert!(ent_dct16x8.is_finite() && ent_dct16x8 >= 0.0);
@@ -1400,6 +1429,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
+            &mut scratch,
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
         assert!(ent_dct8x16.is_finite() && ent_dct8x16 >= 0.0);
@@ -1420,6 +1450,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16),
+            &mut scratch,
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);
         assert!(ent_dct16x16.is_finite() && ent_dct16x16 >= 0.0);
