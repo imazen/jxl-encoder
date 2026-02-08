@@ -39,3 +39,10 @@ Also fixed a pre-existing bug in all jxl-oxide decode sites: after the transfer 
 User asked to load context handoff and create a detailed REORGANIZE.md plan.
 Created comprehensive plan with 7 incremental steps, ~80 import changes across ~20 files.
 
+## 2026-02-08: JBRD box serialization complete
+Implemented JPEG Bitstream Reconstruction Data (JBRD) box for byte-exact JPEG roundtrip.
+Two critical bugs fixed via bit-level comparison with libjxl:
+1. marker_order included SOI (0xD8) — libjxl doesn't
+2. Huffman tables needed sentinel symbol (value=256) at max depth
+Byte-exact reconstruction verified on 64x64 and 600x450 JPEGs via djxl.
+800x600 JBRD proven correct via hybrid testing (VarDCT codestream has separate issue).
