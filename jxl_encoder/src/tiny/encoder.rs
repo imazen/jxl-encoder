@@ -209,6 +209,9 @@ pub struct TinyEncoder {
     /// is always f32 internally), but the decoder uses this to reconstruct at
     /// the correct output bit depth.
     pub bit_depth_16: bool,
+    /// ICC profile to embed in the codestream.
+    /// When Some, writes has_icc=1 and encodes the profile after the file header.
+    pub icc_profile: Option<Vec<u8>>,
 }
 
 impl Default for TinyEncoder {
@@ -233,6 +236,7 @@ impl Default for TinyEncoder {
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 2,
             bit_depth_16: false,
+            icc_profile: None,
         }
     }
 }
@@ -260,6 +264,7 @@ impl TinyEncoder {
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 2,
             bit_depth_16: false,
+            icc_profile: None,
         }
     }
 

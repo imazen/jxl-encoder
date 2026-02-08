@@ -73,18 +73,24 @@ impl TinyEncoder {
         // xyb_encoded = 1 (required for VarDCT)
         writer.write(1, 1)?;
 
-        // Color encoding - sRGB primaries/white, sRGB transfer function
+        // Color encoding
+        let has_icc = self.icc_profile.is_some();
         writer.write(1, 0)?; // not all default
-        writer.write(1, 0)?; // no ICC profile
-        writer.write(2, 0)?; // color_space = RGB (0)
-        writer.write(2, 1)?; // white_point = D65 (1)
-        writer.write(2, 1)?; // primaries = sRGB (1)
-        writer.write(1, 0)?; // no gamma (use transfer function)
-        // TransferFunction: U32(0, 1, 2+Read(4), 18+Read(6))
-        // For Srgb (value 13): selector=2, extra=11 (13 = 2 + 11)
-        writer.write(2, 2)?; // selector 2
-        writer.write(4, 11)?; // value 11 -> transfer_function = 2+11 = 13 = Srgb
-        writer.write(2, 1)?; // rendering_intent = relative (1)
+        if has_icc {
+            writer.write(1, 1)?; // want_icc = true
+        // When want_icc=1, no parametric color fields follow
+        } else {
+            writer.write(1, 0)?; // want_icc = false
+            writer.write(2, 0)?; // color_space = RGB (0)
+            writer.write(2, 1)?; // white_point = D65 (1)
+            writer.write(2, 1)?; // primaries = sRGB (1)
+            writer.write(1, 0)?; // no gamma (use transfer function)
+            // TransferFunction: U32(0, 1, 2+Read(4), 18+Read(6))
+            // For Srgb (value 13): selector=2, extra=11 (13 = 2 + 11)
+            writer.write(2, 2)?; // selector 2
+            writer.write(4, 11)?; // value 11 -> transfer_function = 2+11 = 13 = Srgb
+            writer.write(2, 1)?; // rendering_intent = relative (1)
+        }
 
         // Extensions
         writer.write(2, 0)?; // no extensions
@@ -92,7 +98,12 @@ impl TinyEncoder {
         // 3. all_default_transform_data = 1 (required before frame)
         writer.write(1, 1)?;
 
-        // 4. Zero pad to byte before frame
+        // 4. Write ICC profile data if present (after header, before zero pad)
+        if let Some(ref icc) = self.icc_profile {
+            super::icc_codec::write_icc(icc, writer)?;
+        }
+
+        // 5. Zero pad to byte before frame
         writer.zero_pad_to_byte();
 
         Ok(())
