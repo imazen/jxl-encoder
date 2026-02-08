@@ -818,31 +818,31 @@ impl VarDctEncoder {
     ) {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb};
-        use imgref::ImgRef;
-        use rgb::RGB;
 
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
 
-        // Build original linear RGB image as ImgRef<RGB<f32>> for butteraugli
-        let original_rgb: Vec<RGB<f32>> = (0..width * height)
-            .map(|i| RGB {
-                r: linear_rgb[i * 3],
-                g: linear_rgb[i * 3 + 1],
-                b: linear_rgb[i * 3 + 2],
-            })
-            .collect();
-        let original_img = ImgRef::new(&original_rgb, width, height);
-
+        // Precompute butteraugli reference from original image ONCE.
+        // This saves ~40-50% of butteraugli time per iteration by caching
+        // the XYB conversion and frequency decomposition of the reference.
         let butteraugli_params = butteraugli::ButteraugliParams::new()
             .with_intensity_target(80.0)
             .with_compute_diffmap(true);
+        let reference = match butteraugli::ButteraugliReference::new_linear(
+            linear_rgb,
+            width,
+            height,
+            butteraugli_params,
+        ) {
+            Ok(r) => r,
+            Err(_) => return, // Bail on error (e.g., image too small)
+        };
 
         // Pre-allocate buffers reused across butteraugli iterations
         let mut qf_copy = vec![0u8; quant_field.len()];
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
-        let mut recon_rgb = Vec::with_capacity(width * height);
+        let mut recon_cropped = vec![0.0f32; width * height * 3];
         let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
         for iter in 0..self.butteraugli_iters {
@@ -903,27 +903,24 @@ impl VarDctEncoder {
                 padded_height,
             );
 
-            // Build reconstructed ImgRef<RGB<f32>> (crop to original dimensions)
-            recon_rgb.clear();
+            // Crop padded reconstruction to original dimensions (interleaved f32 RGB)
             for y in 0..height {
+                let src_row = y * padded_width;
+                let dst_row = y * width;
                 for x in 0..width {
-                    let pi = y * padded_width + x;
-                    recon_rgb.push(RGB {
-                        r: recon_linear[pi * 3].clamp(0.0, 1.0),
-                        g: recon_linear[pi * 3 + 1].clamp(0.0, 1.0),
-                        b: recon_linear[pi * 3 + 2].clamp(0.0, 1.0),
-                    });
+                    let si = (src_row + x) * 3;
+                    let di = (dst_row + x) * 3;
+                    recon_cropped[di] = recon_linear[si].clamp(0.0, 1.0);
+                    recon_cropped[di + 1] = recon_linear[si + 1].clamp(0.0, 1.0);
+                    recon_cropped[di + 2] = recon_linear[si + 2].clamp(0.0, 1.0);
                 }
             }
-            let recon_img = ImgRef::new(&recon_rgb, width, height);
 
-            // Step 4: Compute butteraugli distance with diffmap
-            let result =
-                match butteraugli::butteraugli_linear(original_img, recon_img, &butteraugli_params)
-                {
-                    Ok(r) => r,
-                    Err(_) => return, // Bail on error (e.g., image too small)
-                };
+            // Step 4: Compare against precomputed reference (saves ~40% vs fresh)
+            let result = match reference.compare_linear(&recon_cropped) {
+                Ok(r) => r,
+                Err(_) => return,
+            };
 
             let diffmap = match result.diffmap {
                 Some(dm) => dm,
