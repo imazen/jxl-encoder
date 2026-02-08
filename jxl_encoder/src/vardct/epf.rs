@@ -119,25 +119,6 @@ fn sad_3x3_plus(
     sad
 }
 
-/// Compute single-pixel SAD between two positions.
-fn sad_1x1(
-    planes: &[Vec<f32>; 3],
-    cx: isize,
-    cy: isize,
-    nx: isize,
-    ny: isize,
-    width: usize,
-    height: usize,
-) -> f32 {
-    let mut sad = 0.0f32;
-    for c in 0..3 {
-        let cv = get_pixel(&planes[c], cx, cy, width, height);
-        let nv = get_pixel(&planes[c], nx, ny, width, height);
-        sad += (cv - nv).abs() * EPF_CHANNEL_SCALE[c];
-    }
-    sad
-}
-
 /// Get the border SAD multiplier for a pixel position within a block.
 ///
 /// Pixels at block edges (first/last row or column of an 8x8 block) use a
@@ -237,140 +218,6 @@ fn epf_step0(
     output
 }
 
-/// Apply EPF Step 1: 3x3 cross kernel with 3x3-plus SAD.
-fn epf_step1(
-    planes: &[Vec<f32>; 3],
-    inv_sigma: &[f32],
-    xsize_blocks: usize,
-    width: usize,
-    height: usize,
-) -> [Vec<f32>; 3] {
-    let base_sm = 1.65;
-
-    // 4 cross neighbors
-    const NEIGHBORS: [(isize, isize); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-
-    let mut output = [
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-    ];
-
-    for py in 0..height {
-        let by = py / BLOCK_DIM;
-        for px in 0..width {
-            let bx = px / BLOCK_DIM;
-            let sigma_idx = by * xsize_blocks + bx;
-            let is = inv_sigma[sigma_idx];
-
-            if is == 0.0 {
-                for c in 0..3 {
-                    output[c][py * width + px] = planes[c][py * width + px];
-                }
-                continue;
-            }
-
-            let sm = base_sm * border_mul(px, py);
-            let eff_inv_sigma = is * sm;
-
-            let cx = px as isize;
-            let cy = py as isize;
-
-            let mut total_weight = 1.0f32;
-            let mut sums = [0.0f32; 3];
-            for c in 0..3 {
-                sums[c] = planes[c][py * width + px];
-            }
-
-            for &(dy, dx) in &NEIGHBORS {
-                let nx = cx + dx;
-                let ny = cy + dy;
-                let sad = sad_3x3_plus(planes, cx, cy, nx, ny, width, height);
-                let w = epf_weight(sad, eff_inv_sigma);
-                total_weight += w;
-                for c in 0..3 {
-                    sums[c] += w * get_pixel(&planes[c], nx, ny, width, height);
-                }
-            }
-
-            let inv_tw = 1.0 / total_weight;
-            for c in 0..3 {
-                output[c][py * width + px] = sums[c] * inv_tw;
-            }
-        }
-    }
-
-    output
-}
-
-/// Apply EPF Step 2: 3x3 cross kernel with 1x1 SAD.
-///
-/// This is the lightest filter step, using single-pixel difference for SAD.
-fn epf_step2(
-    planes: &[Vec<f32>; 3],
-    inv_sigma: &[f32],
-    xsize_blocks: usize,
-    width: usize,
-    height: usize,
-) -> [Vec<f32>; 3] {
-    let base_sm = EPF_PASS2_SIGMA_SCALE * 1.65;
-
-    // 4 cross neighbors
-    const NEIGHBORS: [(isize, isize); 4] = [(0, -1), (-1, 0), (1, 0), (0, 1)];
-
-    let mut output = [
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-    ];
-
-    for py in 0..height {
-        let by = py / BLOCK_DIM;
-        for px in 0..width {
-            let bx = px / BLOCK_DIM;
-            let sigma_idx = by * xsize_blocks + bx;
-            let is = inv_sigma[sigma_idx];
-
-            if is == 0.0 {
-                for c in 0..3 {
-                    output[c][py * width + px] = planes[c][py * width + px];
-                }
-                continue;
-            }
-
-            let sm = base_sm * border_mul(px, py);
-            let eff_inv_sigma = is * sm;
-
-            let cx = px as isize;
-            let cy = py as isize;
-
-            let mut total_weight = 1.0f32;
-            let mut sums = [0.0f32; 3];
-            for c in 0..3 {
-                sums[c] = planes[c][py * width + px];
-            }
-
-            for &(dy, dx) in &NEIGHBORS {
-                let nx = cx + dx;
-                let ny = cy + dy;
-                let sad = sad_1x1(planes, cx, cy, nx, ny, width, height);
-                let w = epf_weight(sad, eff_inv_sigma);
-                total_weight += w;
-                for c in 0..3 {
-                    sums[c] += w * get_pixel(&planes[c], nx, ny, width, height);
-                }
-            }
-
-            let inv_tw = 1.0 / total_weight;
-            for c in 0..3 {
-                output[c][py * width + px] = sums[c] * inv_tw;
-            }
-        }
-    }
-
-    output
-}
-
 /// Apply the full EPF pipeline to XYB pixel planes.
 ///
 /// `epf_iters` controls filter strength:
@@ -408,16 +255,56 @@ pub(crate) fn apply_epf(
         *planes = result;
     }
 
+    let n = width * height;
+
     // Step 1: medium 3x3 cross with multi-point SAD (only at epf_iters >= 2)
+    // Uses SIMD-accelerated kernel from jxl_simd.
     if epf_iters >= 2 {
-        let result = epf_step1(planes, &inv_sigma, xsize_blocks, width, height);
-        *planes = result;
+        let mut out_x = vec![0.0f32; n];
+        let mut out_y = vec![0.0f32; n];
+        let mut out_b = vec![0.0f32; n];
+        jxl_simd::epf_step1(
+            &planes[0],
+            &planes[1],
+            &planes[2],
+            &mut out_x,
+            &mut out_y,
+            &mut out_b,
+            &inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            1.65, // sigma_scale for step 1
+            EPF_BORDER_SAD_MUL,
+        );
+        planes[0] = out_x;
+        planes[1] = out_y;
+        planes[2] = out_b;
     }
 
     // Step 2: light 3x3 cross with single-pixel SAD (always runs when epf_iters >= 1)
+    // Uses SIMD-accelerated kernel from jxl_simd.
     {
-        let result = epf_step2(planes, &inv_sigma, xsize_blocks, width, height);
-        *planes = result;
+        let mut out_x = vec![0.0f32; n];
+        let mut out_y = vec![0.0f32; n];
+        let mut out_b = vec![0.0f32; n];
+        jxl_simd::epf_step2(
+            &planes[0],
+            &planes[1],
+            &planes[2],
+            &mut out_x,
+            &mut out_y,
+            &mut out_b,
+            &inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            EPF_PASS2_SIGMA_SCALE * 1.65, // sigma_scale for step 2
+            EPF_BORDER_SAD_MUL,
+        );
+        planes[0] = out_x;
+        planes[1] = out_y;
+        planes[2] = out_b;
     }
 }
 
