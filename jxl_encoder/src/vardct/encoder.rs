@@ -817,17 +817,19 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
     ) {
         use super::epf;
-        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb};
+        use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
 
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
+        let padded_pixels = padded_width * padded_height;
 
         // Precompute butteraugli reference from original image ONCE.
         // This saves ~40-50% of butteraugli time per iteration by caching
         // the XYB conversion and frequency decomposition of the reference.
         let butteraugli_params = butteraugli::ButteraugliParams::new()
             .with_intensity_target(80.0)
-            .with_compute_diffmap(true);
+            .with_compute_diffmap(true)
+            .with_single_resolution(true);
         let reference = match butteraugli::ButteraugliReference::new_linear(
             linear_rgb,
             width,
@@ -842,7 +844,10 @@ impl VarDctEncoder {
         let mut qf_copy = vec![0u8; quant_field.len()];
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
-        let mut recon_cropped = vec![0.0f32; width * height * 3];
+        // Planar reconstruction buffers (padded dimensions, reused across iterations)
+        let mut recon_r = vec![0.0f32; padded_pixels];
+        let mut recon_g = vec![0.0f32; padded_pixels];
+        let mut recon_b = vec![0.0f32; padded_pixels];
         let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
         for iter in 0..self.butteraugli_iters {
@@ -894,30 +899,26 @@ impl VarDctEncoder {
                 );
             }
 
-            // Step 3: Convert reconstructed XYB to linear RGB
-            let recon_linear = xyb_to_linear_rgb(
+            // Step 3: Convert reconstructed XYB to planar linear RGB (in-place, no interleave)
+            xyb_to_linear_rgb_planar(
                 &planes[0],
                 &planes[1],
                 &planes[2],
-                padded_width,
-                padded_height,
+                &mut recon_r,
+                &mut recon_g,
+                &mut recon_b,
+                padded_pixels,
             );
 
-            // Crop padded reconstruction to original dimensions (interleaved f32 RGB)
-            for y in 0..height {
-                let src_row = y * padded_width;
-                let dst_row = y * width;
-                for x in 0..width {
-                    let si = (src_row + x) * 3;
-                    let di = (dst_row + x) * 3;
-                    recon_cropped[di] = recon_linear[si].clamp(0.0, 1.0);
-                    recon_cropped[di + 1] = recon_linear[si + 1].clamp(0.0, 1.0);
-                    recon_cropped[di + 2] = recon_linear[si + 2].clamp(0.0, 1.0);
-                }
-            }
-
-            // Step 4: Compare against precomputed reference (saves ~40% vs fresh)
-            let result = match reference.compare_linear(&recon_cropped) {
+            // Step 4: Compare against precomputed reference using planar API.
+            // Pass padded buffers with stride=padded_width; butteraugli reads only
+            // width pixels per row, skipping the padding — no crop copy needed.
+            let result = match reference.compare_linear_planar(
+                &recon_r,
+                &recon_g,
+                &recon_b,
+                padded_width,
+            ) {
                 Ok(r) => r,
                 Err(_) => return,
             };
