@@ -14,7 +14,6 @@ pub mod api;
 pub mod bit_writer;
 pub mod color;
 pub mod container;
-pub mod encoder;
 pub mod entropy_coding;
 pub mod error;
 pub mod frame;
@@ -30,10 +29,12 @@ pub use api::{
     PixelLayout, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
 
-// Old API is pub(crate) — use LosslessConfig/LossyConfig instead.
-
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "encoder_tests.rs"]
+mod encoder_tests;
 
 #[cfg(test)]
 pub mod test_helpers;

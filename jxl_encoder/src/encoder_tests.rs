@@ -5,7 +5,7 @@
 
 //! Tests for the encoder — uses the public LosslessConfig/LossyConfig API.
 
-use crate::{LosslessConfig, LossyConfig, PixelLayout};
+use crate::{LosslessConfig, PixelLayout};
 
 mod tests {
     use crate::{LosslessConfig, LossyConfig, PixelLayout};
@@ -204,7 +204,7 @@ mod tests {
 }
 
 mod gray_tests {
-    use crate::{LosslessConfig, LossyConfig, PixelLayout};
+    use crate::{LosslessConfig, PixelLayout};
 
     #[test]
     fn test_encode_gray_2x2() {
@@ -406,7 +406,7 @@ fn test_encode_gray_8x8_pattern() {
 }
 
 mod corpus_tests {
-    use crate::{LosslessConfig, LossyConfig, PixelLayout};
+    use crate::{LosslessConfig, PixelLayout};
 
     const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
 
@@ -3482,7 +3482,7 @@ mod dual_decoder_butteraugli_tests {
 }
 
 mod tree_learning_tests {
-    use crate::{LosslessConfig, LossyConfig, PixelLayout};
+    use crate::{LosslessConfig, PixelLayout};
 
     /// Helper: encode RGB with tree learning enabled, decode with jxl-rs, verify lossless.
     fn validate_tree_learning_roundtrip_rgb(
@@ -3917,7 +3917,7 @@ fn test_palette_roundtrip_64x64() {
 /// Uses Encoder pipeline with use_squeeze=true, jxl-rs to decode.
 #[test]
 fn test_squeeze_roundtrip_gray_16x16() {
-    use crate::{LosslessConfig, LossyConfig, PixelLayout};
+    use crate::{LosslessConfig, PixelLayout};
 
     let mut data = vec![0u8; 16 * 16];
     for y in 0..16 {
@@ -3973,7 +3973,7 @@ fn test_squeeze_roundtrip_gray_16x16() {
 /// Squeeze roundtrip for RGB 32x32 image.
 #[test]
 fn test_squeeze_roundtrip_rgb_32x32() {
-    use crate::{LosslessConfig, LossyConfig, PixelLayout};
+    use crate::{LosslessConfig, PixelLayout};
 
     let mut data = vec![0u8; 32 * 32 * 3];
     for y in 0..32 {
@@ -4028,7 +4028,7 @@ fn test_squeeze_roundtrip_rgb_32x32() {
 /// Squeeze roundtrip for larger 128x128 gray image.
 #[test]
 fn test_squeeze_roundtrip_gray_128x128() {
-    use crate::{LosslessConfig, LossyConfig, PixelLayout};
+    use crate::{LosslessConfig, PixelLayout};
 
     let mut data = vec![0u8; 128 * 128];
     for y in 0..128 {
