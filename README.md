@@ -125,6 +125,18 @@ jxl-encoder-rs/
 └── jxl_encoder_cli/         # CLI tool (cjxl-rs)
 ```
 
+## Credits
+
+This project builds on excellent work by others:
+
+- **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — The reference JPEG XL implementation. Our encoder's algorithms, quantization weights, cost models, and bitstream format are derived from libjxl's encoder. The [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) subset was used as the initial porting target.
+
+- **[jxl-rs](https://github.com/nicoshev/jxl-rs)** (JPEG XL Project Authors, BSD-3-Clause) — Pure Rust JPEG XL decoder used as the primary roundtrip validation decoder.
+
+- **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Independent Rust JPEG XL decoder used for secondary validation.
+
+- **Claude** (Anthropic) — AI-assisted development. Not all code manually reviewed — review critical paths before production use.
+
 ## License
 
 Sustainable, large-scale open source work requires a funding model, and I have been
@@ -134,7 +146,3 @@ https://www.imazen.io/pricing
 
 Commercial licenses are similar to the Apache 2 license but company-specific, and on
 a sliding scale. You can also use this under the AGPL v3.
-
-## AI-Generated Code Notice
-
-Developed with Claude (Anthropic). Tested against jxl-oxide, jxl-rs, and libjxl decoders. Not all code manually reviewed — review critical paths before production use.
