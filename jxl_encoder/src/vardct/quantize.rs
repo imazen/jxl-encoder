@@ -14,7 +14,6 @@ use super::ac_strategy::{
     RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
     RAW_STRATEGY_DCT32X64, RAW_STRATEGY_DCT64X32, RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
 };
-use super::coeff_order::natural_coeff_order;
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE};
 use super::encoder::VarDctEncoder;
 
@@ -377,6 +376,8 @@ impl VarDctEncoder {
         by: usize,
         quant_ac: &mut [Vec<[i32; DCT_BLOCK_SIZE]>],
         error_diffusion: bool,
+        zigzag_order: Option<&[u32]>,
+        error_scratch: Option<&mut Vec<f32>>,
     ) {
         // C++ QuantizeBlockAC uses post-swap (cx, cy) for the coefficient grid:
         // stride = cx * 8 (block_width), height = cy * 8 (block_height).
@@ -474,15 +475,23 @@ impl VarDctEncoder {
             }
         } else {
             // Error diffusion: process in zigzag order, propagate error to next coefficient
-            let zigzag = natural_coeff_order(cx, cy);
+            let zigzag = zigzag_order.unwrap_or_else(|| {
+                panic!("zigzag_order must be provided when error_diffusion is true")
+            });
 
             // Accumulated error to add to next coefficient (in zigzag order)
             // Using separate accumulators for different frequency bands
             let mut accumulated_error: f32 = 0.0;
             const ERROR_DIFFUSION_FACTOR: f32 = 0.25; // Propagate 1/4 of error
 
-            // Create a mutable copy of coefficients to apply error correction
-            let mut corrected_coeffs = dct_coeffs.to_vec();
+            // Use pre-allocated scratch buffer or allocate if not provided
+            let scratch =
+                error_scratch.expect("error_scratch must be provided when error_diffusion is true");
+            if scratch.len() < size {
+                scratch.resize(size, 0.0);
+            }
+            scratch[..size].copy_from_slice(&dct_coeffs[..size]);
+            let corrected_coeffs = &mut scratch[..size];
 
             for (zigzag_pos, &flat_idx) in zigzag.iter().enumerate() {
                 let idx = flat_idx as usize;
