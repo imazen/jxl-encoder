@@ -1,6 +1,6 @@
 # Implementation Differences: jxl-encoder-rs vs libjxl
 
-Last updated: 2026-02-06
+Last updated: 2026-02-07
 
 This document tracks all known constant, algorithmic, and behavioral differences
 between our Rust encoder and the reference libjxl (C++) encoder. Values marked
@@ -301,6 +301,16 @@ which prevented djxl from exporting to PNG. Now matches libjxl's default for u8 
 - No patches (dictionary-based repeated patterns)
 - No dots detection
 - No progressive encoding
+- No 16-bit or float input (headers support it, API is u8-only)
+- No animation (multi-frame)
+- No ICC/EXIF/XMP metadata passthrough (types exist, not wired)
+
+### Lossy+Alpha
+- **Rust**: VarDCT RGB + modular alpha extra channel in same frame. Single-group
+  and multi-group. Huffman coding for alpha residuals.
+- **libjxl**: Same approach (EncExtraChannel via modular sub-bitstream). Uses ANS
+  for alpha residuals and more sophisticated tree learning.
+- **MATCH** in approach; our alpha sub-bitstream uses simpler entropy coding.
 
 ## Summary of Impactful Differences
 
