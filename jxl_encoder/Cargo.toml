@@ -17,6 +17,7 @@ byteorder = "1.4"
 jxl_simd = { path = "../jxl_simd" }
 num-derive = "0.4"
 num-traits = "0.2"
+zenjpeg = { path = "../../zenjpeg/zenjpeg", features = ["decoder"], optional = true }
 # Optional dependencies for rate control feature
 jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide", optional = true }
 butteraugli = { path = "../../butteraugli/butteraugli", optional = true }
@@ -40,6 +41,7 @@ safe-mode = []
 rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
+jpeg-reencoding = ["dep:zenjpeg"]
 default = ["safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
