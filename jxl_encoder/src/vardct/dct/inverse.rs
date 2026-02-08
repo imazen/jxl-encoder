@@ -180,25 +180,7 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 
 /// Compute 16x16 inverse DCT (exactly reverses dct_16x16).
 pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
-    let mut tmp = [0.0f32; 256];
-
-    // Copy input and apply IDCT to each row
-    for row in 0..16 {
-        let row_start = row * 16;
-        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
-        idct1d_16(&mut tmp[row_start..row_start + 16]);
-    }
-
-    // Transpose
-    let mut transposed = [0.0f32; 256];
-    transpose::<16, 16>(&tmp, &mut transposed);
-
-    // Apply IDCT to each row (now columns)
-    for row in 0..16 {
-        let row_start = row * 16;
-        output[row_start..row_start + 16].copy_from_slice(&transposed[row_start..row_start + 16]);
-        idct1d_16(&mut output[row_start..row_start + 16]);
-    }
+    jxl_simd::idct_16x16(input, output);
 }
 
 /// Compute 16x8 inverse DCT (16 rows x 8 cols, exactly reverses dct_16x8).
