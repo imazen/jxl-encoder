@@ -66,6 +66,17 @@ pub(crate) fn reconstruct_xyb(
         vec![0.0f32; num_pixels],
     ];
 
+    // Pre-allocate scratch buffers to avoid per-block heap allocations.
+    // Max block size is 4096 (DCT64x64 = 64x64 coefficients).
+    const MAX_BLOCK_SIZE: usize = 4096;
+    let mut dequant_scratch = [
+        vec![0.0f32; MAX_BLOCK_SIZE],
+        vec![0.0f32; MAX_BLOCK_SIZE],
+        vec![0.0f32; MAX_BLOCK_SIZE],
+    ];
+    let mut transpose_scratch = vec![0.0f32; MAX_BLOCK_SIZE];
+    let mut idct_scratch = vec![0.0f32; MAX_BLOCK_SIZE];
+
     // Process all first-blocks
     for by in 0..ysize_blocks {
         for bx in 0..xsize_blocks {
@@ -98,8 +109,10 @@ pub(crate) fn reconstruct_xyb(
             let x_factor = ytox_ratio(cfl_map.ytox_at(tx, ty));
             let b_factor = ytob_ratio(cfl_map.ytob_at(tx, ty));
 
-            // Dequantize all 3 channels
-            let mut dequant_coeffs = [vec![0.0f32; size], vec![0.0f32; size], vec![0.0f32; size]];
+            // Zero the scratch regions we'll use
+            for ch in &mut dequant_scratch {
+                ch[..size].fill(0.0);
+            }
 
             for c in 0..3usize {
                 let qm_mul = match c {
@@ -140,30 +153,15 @@ pub(crate) fn reconstruct_xyb(
 
                     if q_int != 0 {
                         let weight = weights[idx];
-                        // quant_weights() returns 1/dequant_weight (the quantization weight).
-                        // Encoder: val = coef * (1/weight) * qac * qm_mul
-                        //   where (1/weight) = dequant_weight
-                        // Dequant: coef = val * weight / (qac * qm_mul)
-                        // Let me check: in quantize_coeff_ac, inv_weight = 1/weight.
-                        // The quantization: val = coef * (1/weight) * qac * qm_mul
-                        // The dequantization: coef = val * weight / (qac * qm_mul)
-                        // But with bias: coef = adjust_quant_bias(q_int, c) * weight / (qac * qm_mul)
-                        // Hmm, actually the quant_weights() function returns different things
-                        // for encoding vs decoding. Let me check what the encoder stores.
-
-                        // In transform.rs, quantize_coeff_ac uses:
-                        //   inv_weight = weights[idx]  (where weights = quant_weights(strat, c))
-                        //   val = coef * inv_weight * qac * qm_mul
-                        // So quant_weights returns 1/dequant_weight = inv_weight.
                         // Dequant: coef = adjust_quant_bias(q) / (inv_weight * qac * qm_mul)
                         let biased = adjust_quant_bias(q_int, c);
-                        dequant_coeffs[c][idx] = biased * weight / (qac * qm_mul);
+                        dequant_scratch[c][idx] = biased * weight / (qac * qm_mul);
                     }
                 }
 
                 // Restore LLF from DC
                 restore_llf_from_dc(
-                    &mut dequant_coeffs[c],
+                    &mut dequant_scratch[c][..size],
                     &quant_dc[c],
                     &quant_dc[1], // Y channel DC for CfL
                     c,
@@ -188,8 +186,9 @@ pub(crate) fn reconstruct_xyb(
                 let is_llf_pos = y < cy && x < cx;
 
                 if !is_llf_pos {
-                    dequant_coeffs[0][idx] += x_factor * dequant_coeffs[1][idx];
-                    dequant_coeffs[2][idx] += b_factor * dequant_coeffs[1][idx];
+                    let y_val = dequant_scratch[1][idx];
+                    dequant_scratch[0][idx] += x_factor * y_val;
+                    dequant_scratch[2][idx] += b_factor * y_val;
                 }
             }
 
@@ -200,19 +199,18 @@ pub(crate) fn reconstruct_xyb(
             // (cx_post × cy_post) = (covered_y × covered_x) layout.
             for c in 0..3usize {
                 let idct_input = if transpose_slots {
-                    // Transpose from post-swap to natural layout
-                    let mut transposed = vec![0.0f32; size];
+                    // Transpose from post-swap to natural layout using scratch
                     for y in 0..block_height {
                         for x in 0..block_width {
-                            transposed[x * block_height + y] =
-                                dequant_coeffs[c][y * block_width + x];
+                            transpose_scratch[x * block_height + y] =
+                                dequant_scratch[c][y * block_width + x];
                         }
                     }
-                    transposed
+                    &transpose_scratch[..size]
                 } else {
-                    dequant_coeffs[c].clone()
+                    &dequant_scratch[c][..size]
                 };
-                let pixels = idct_for_strategy(raw_strategy, &idct_input);
+                idct_for_strategy(raw_strategy, idct_input, &mut idct_scratch[..size]);
 
                 // Write pixels to output plane using physical coverage dimensions
                 let pixel_x = bx * BLOCK_DIM;
@@ -221,11 +219,16 @@ pub(crate) fn reconstruct_xyb(
                 let pix_h = covered_y * BLOCK_DIM;
 
                 for py in 0..pix_h {
+                    let out_y = pixel_y + py;
+                    if out_y >= padded_height {
+                        break;
+                    }
+                    let out_row = out_y * padded_width;
+                    let in_row = py * pix_w;
                     for px in 0..pix_w {
-                        let out_y = pixel_y + py;
                         let out_x = pixel_x + px;
-                        if out_y < padded_height && out_x < padded_width {
-                            planes[c][out_y * padded_width + out_x] = pixels[py * pix_w + px];
+                        if out_x < padded_width {
+                            planes[c][out_row + out_x] = idct_scratch[in_row + px];
                         }
                     }
                 }
@@ -612,14 +615,14 @@ fn restore_llf_from_dc(
 }
 
 /// Apply IDCT for a given strategy, producing pixel-domain output.
-fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
+fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&coeffs[..64]);
-            let mut output = [0.0f32; 64];
-            idct_8x8(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            idct_8x8(&input, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT4X4 => {
             // Inverse of dct_4x4_full: undo DC combining, de-interleave, apply idct_4x4
@@ -636,7 +639,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
             input[8] = dc00 - dc01 + dc10 + dc11;
             input[9] = dc00 - dc01 - dc10 + dc11;
 
-            let mut output = [0.0f32; 64];
+            output[..64].fill(0.0);
             for y in 0..2 {
                 for x in 0..2 {
                     // De-interleave sub-block coefficients
@@ -657,7 +660,6 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
                     }
                 }
             }
-            output.to_vec()
         }
         RAW_STRATEGY_DCT4X8 => {
             // Inverse of dct_4x8_full: undo DC combining, de-interleave, apply idct_4x8
@@ -670,7 +672,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
             input[0] = dc0 + dc1;
             input[8] = dc0 - dc1;
 
-            let mut output = [0.0f32; 64];
+            output[..64].fill(0.0);
             for y in 0..2 {
                 // De-interleave sub-block coefficients
                 let mut sub = [0.0f32; 32];
@@ -689,7 +691,6 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
                     }
                 }
             }
-            output.to_vec()
         }
         RAW_STRATEGY_DCT8X4 => {
             // Inverse of dct_8x4_full: undo DC combining, de-interleave, apply idct_8x4
@@ -702,7 +703,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
             input[0] = dc0 + dc1;
             input[8] = dc0 - dc1;
 
-            let mut output = [0.0f32; 64];
+            output[..64].fill(0.0);
             for x in 0..2 {
                 // De-interleave sub-block coefficients
                 let mut sub = [0.0f32; 32];
@@ -721,92 +722,80 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32]) -> Vec<f32> {
                     }
                 }
             }
-            output.to_vec()
         }
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
             let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&coeffs[..64]);
-            let mut output = [0.0f32; 64];
-            super::afv::inverse_afv_transform(&input, afv_kind, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            super::afv::inverse_afv_transform(&input, afv_kind, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X8 => {
             let mut input = [0.0f32; 128];
             input.copy_from_slice(&coeffs[..128]);
-            let mut output = [0.0f32; 128];
-            idct_16x8(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 128];
+            idct_16x8(&input, &mut tmp);
+            output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT8X16 => {
             let mut input = [0.0f32; 128];
             input.copy_from_slice(&coeffs[..128]);
-            let mut output = [0.0f32; 128];
-            idct_8x16(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 128];
+            idct_8x16(&input, &mut tmp);
+            output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X16 => {
             let mut input = [0.0f32; 256];
             input.copy_from_slice(&coeffs[..256]);
-            let mut output = [0.0f32; 256];
-            idct_16x16(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 256];
+            idct_16x16(&input, &mut tmp);
+            output[..256].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X32 => {
             let mut input = [0.0f32; 1024];
             input.copy_from_slice(&coeffs[..1024]);
-            let mut output = [0.0f32; 1024];
-            idct_32x32(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 1024];
+            idct_32x32(&input, &mut tmp);
+            output[..1024].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X16 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&coeffs[..512]);
-            let mut output = [0.0f32; 512];
-            idct_32x16(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 512];
+            idct_32x16(&input, &mut tmp);
+            output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X32 => {
             let mut input = [0.0f32; 512];
             input.copy_from_slice(&coeffs[..512]);
-            let mut output = [0.0f32; 512];
-            idct_16x32(&input, &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 512];
+            idct_16x32(&input, &mut tmp);
+            output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT64X64 => {
-            let mut input = vec![0.0f32; 4096];
-            input.copy_from_slice(&coeffs[..4096]);
-            let mut output = vec![0.0f32; 4096];
-            idct_64x64(&input, &mut output);
-            output
+            // DCT64 uses stack arrays via the output parameter
+            idct_64x64(&coeffs[..4096], &mut output[..4096]);
         }
         RAW_STRATEGY_DCT64X32 => {
-            let mut input = vec![0.0f32; 2048];
-            input.copy_from_slice(&coeffs[..2048]);
-            let mut output = vec![0.0f32; 2048];
-            idct_64x32(&input, &mut output);
-            output
+            idct_64x32(&coeffs[..2048], &mut output[..2048]);
         }
         RAW_STRATEGY_DCT32X64 => {
-            let mut input = vec![0.0f32; 2048];
-            input.copy_from_slice(&coeffs[..2048]);
-            let mut output = vec![0.0f32; 2048];
-            idct_32x64(&input, &mut output);
-            output
+            idct_32x64(&coeffs[..2048], &mut output[..2048]);
         }
         RAW_STRATEGY_IDENTITY => {
-            let mut output = [0.0f32; 64];
-            inverse_identity_transform(&coeffs[..64], &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            inverse_identity_transform(&coeffs[..64], &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT2X2 => {
-            let mut output = [0.0f32; 64];
-            inverse_dct2x2_transform(&coeffs[..64], &mut output);
-            output.to_vec()
+            let mut tmp = [0.0f32; 64];
+            inverse_dct2x2_transform(&coeffs[..64], &mut tmp);
+            output[..64].copy_from_slice(&tmp);
         }
         _ => {
-            // Unknown strategy: return zeros
-            vec![0.0f32; 64]
+            // Unknown strategy: output zeros
+            output[..64].fill(0.0);
         }
     }
 }
@@ -832,31 +821,52 @@ pub(crate) fn gab_smooth(planes: &mut [Vec<f32>; 3], width: usize, height: usize
     let w1 = w1_base / div;
     let w2 = w2_base / div;
 
+    // Reuse a single scratch buffer across all 3 channels to avoid 3x cloning
+    let num_pixels = width * height;
+    let mut scratch = vec![0.0f32; num_pixels];
+
     for plane in planes.iter_mut() {
-        let input = plane.clone();
-        let output = plane;
+        // Copy plane into scratch (input), then write filtered result back to plane
+        scratch[..num_pixels].copy_from_slice(&plane[..num_pixels]);
 
-        for y in 0..height {
-            for x in 0..width {
-                let ym = if y > 0 { y - 1 } else { 0 };
-                let yp = if y + 1 < height { y + 1 } else { height - 1 };
-                let xm = if x > 0 { x - 1 } else { 0 };
-                let xp = if x + 1 < width { x + 1 } else { width - 1 };
+        apply_channel_gab(plane, &scratch, width, height, w_center, w1, w2);
+    }
+}
 
-                let center = input[y * width + x];
-                let top = input[ym * width + x];
-                let bottom = input[yp * width + x];
-                let left = input[y * width + xm];
-                let right = input[y * width + xp];
-                let tl = input[ym * width + xm];
-                let tr = input[ym * width + xp];
-                let bl = input[yp * width + xm];
-                let br = input[yp * width + xp];
+#[inline(never)]
+fn apply_channel_gab(
+    output: &mut [f32],
+    input: &[f32],
+    width: usize,
+    height: usize,
+    w_center: f32,
+    w1: f32,
+    w2: f32,
+) {
+    for y in 0..height {
+        let ym = if y > 0 { y - 1 } else { 0 };
+        let yp = if y + 1 < height { y + 1 } else { height - 1 };
+        let row_center = y * width;
+        let row_top = ym * width;
+        let row_bottom = yp * width;
 
-                output[y * width + x] = w_center * center
-                    + w1 * (top + bottom + left + right)
-                    + w2 * (tl + tr + bl + br);
-            }
+        for x in 0..width {
+            let xm = if x > 0 { x - 1 } else { 0 };
+            let xp = if x + 1 < width { x + 1 } else { width - 1 };
+
+            let center = input[row_center + x];
+            let top = input[row_top + x];
+            let bottom = input[row_bottom + x];
+            let left = input[row_center + xm];
+            let right = input[row_center + xp];
+            let tl = input[row_top + xm];
+            let tr = input[row_top + xp];
+            let bl = input[row_bottom + xm];
+            let br = input[row_bottom + xp];
+
+            output[row_center + x] = w_center * center
+                + w1 * (top + bottom + left + right)
+                + w2 * (tl + tr + bl + br);
         }
     }
 }
