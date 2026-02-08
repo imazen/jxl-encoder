@@ -1088,9 +1088,23 @@ pub fn build_entropy_code_ans_with_options(
     };
     use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
-    // Build per-context histograms
-    let mut histograms: Vec<EnhancedHistogram> = (0..num_contexts)
-        .map(|_| EnhancedHistogram::new())
+    // Build per-context histograms.
+    // First pass: find max symbol per context to pre-allocate (avoids Vec growth).
+    let mut max_sym_per_ctx = vec![0usize; num_contexts];
+    for token in tokens {
+        let ctx = token.context as usize;
+        if ctx < num_contexts {
+            let (_encoded, sym) = encode_token_value(token, lz77);
+            let sym = sym as usize;
+            if sym >= max_sym_per_ctx[ctx] {
+                max_sym_per_ctx[ctx] = sym + 1;
+            }
+        }
+    }
+
+    let mut histograms: Vec<EnhancedHistogram> = max_sym_per_ctx
+        .iter()
+        .map(|&max_sym| EnhancedHistogram::with_capacity(max_sym))
         .collect();
 
     for token in tokens {

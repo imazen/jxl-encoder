@@ -435,7 +435,9 @@ pub fn tokenize_ac_coefficients(
 /// Collect AC coefficient tokens for a single block/transform (without writing).
 ///
 /// Same logic as `tokenize_ac_coefficients()` but returns a `Vec<Token>`.
-pub fn collect_ac_coefficients(
+#[allow(clippy::too_many_arguments)]
+pub fn collect_ac_coefficients_into(
+    tokens: &mut Vec<Token>,
     quantized: &[i32],
     raw_strategy: u8,
     nzeros: u16,
@@ -443,7 +445,7 @@ pub fn collect_ac_coefficients(
     block_ctx: usize,
     num_ctxs: usize,
     custom_order: Option<&[u32]>,
-) -> Vec<Token> {
+) {
     let (cx, cy, covered_blocks, log2_covered_blocks, strategy_code) =
         ac_strategy_info(raw_strategy);
     let size = cx * cy * DCT_BLOCK_SIZE;
@@ -451,8 +453,8 @@ pub fn collect_ac_coefficients(
     let nzero_ctx = nz_context(predicted_nzeros as usize, block_ctx, num_ctxs);
     let histo_offset = zd_offset(block_ctx, num_ctxs);
 
-    // Capacity: 1 nzeros token + up to nzeros coefficient tokens
-    let mut tokens = Vec::with_capacity(1 + nzeros as usize);
+    // Reserve space: 1 nzeros token + up to nzeros coefficient tokens
+    tokens.reserve(1 + nzeros as usize);
 
     // Write number of non-zeros as first token
     tokens.push(Token::new(nzero_ctx as u32, nzeros as u32));
@@ -484,7 +486,6 @@ pub fn collect_ac_coefficients(
     }
 
     debug_assert_eq!(nzeros_left, 0, "Not all non-zeros were collected");
-    tokens
 }
 
 #[cfg(test)]

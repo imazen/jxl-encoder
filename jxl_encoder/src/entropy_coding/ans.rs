@@ -323,7 +323,11 @@ impl AnsDistribution {
                 sym.reverse_map.clear();
             }
             // Set identity mapping for the single symbol
-            symbols[single_sym_idx].reverse_map = (0..ANS_TAB_SIZE as u16).collect();
+            let map = &mut symbols[single_sym_idx].reverse_map;
+            map.resize(ANS_TAB_SIZE as usize, 0);
+            for (i, v) in map.iter_mut().enumerate() {
+                *v = i as u16;
+            }
             return Ok(());
         }
 
@@ -391,21 +395,14 @@ impl AnsDistribution {
             }
         }
 
-        // Clear existing reverse maps
+        // Pre-allocate reverse maps with exact sizes (offset is 0..freq-1)
         for sym in symbols.iter_mut() {
             sym.reverse_map.clear();
+            sym.reverse_map.resize(sym.freq as usize, 0);
         }
 
         // For each idx in [0, 4096), simulate the decoder to find which symbol it decodes to
-        // and what offset within that symbol's range.
-        // We need to track: for symbol s with freq[s], what idx values map to it?
-        // The decoder computes: next_state = (state >> 12) * freq + offset
-        // So for a given idx, the offset contributed to the next state depends on
-        // whether it's the primary or alias symbol.
-
-        // Build a table: for each idx, what (symbol, offset) does it decode to?
-        let mut idx_to_symbol_offset: Vec<(usize, u16)> = Vec::with_capacity(ANS_TAB_SIZE as usize);
-
+        // and what offset within that symbol's range. Write directly into reverse_map[offset].
         for idx in 0..ANS_TAB_SIZE {
             let bucket_idx = (idx >> log_bucket_size) as usize;
             let pos = (idx as u16) & (bucket_size - 1);
@@ -414,45 +411,15 @@ impl AnsDistribution {
             let alias_cutoff = bucket.alias_cutoff;
 
             let (symbol, offset) = if pos < alias_cutoff {
-                // Primary symbol (bucket index)
                 (bucket_idx, pos)
             } else {
-                // Alias symbol
-                // jxl-rs stores: bucket.alias_offset = working.alias_offset - working.alias_cutoff
-                // Then reads: offset = bucket.alias_offset + pos
-                // So total offset = (working.alias_offset - working.alias_cutoff) + pos
-                // We have working bucket, so: offset = alias_offset - alias_cutoff + pos
                 let alias_sym = bucket.alias_symbol as usize;
                 let offset = bucket.alias_offset - alias_cutoff + pos;
                 (alias_sym, offset)
             };
 
-            idx_to_symbol_offset.push((symbol, offset));
-        }
-
-        // Now invert: for each symbol, collect all (offset, idx) pairs and sort by offset
-        let mut symbol_positions: Vec<Vec<(u16, u32)>> = vec![Vec::new(); alphabet_size];
-        for (idx, &(symbol, offset)) in idx_to_symbol_offset.iter().enumerate() {
             if symbol < alphabet_size {
-                symbol_positions[symbol].push((offset, idx as u32));
-            }
-        }
-
-        // Sort each symbol's positions by offset and extract idx values
-        for (sym_idx, positions) in symbol_positions.iter_mut().enumerate() {
-            positions.sort_by_key(|(offset, _)| *offset);
-            symbols[sym_idx].reverse_map = positions.iter().map(|(_, idx)| *idx as u16).collect();
-        }
-
-        // Verify each symbol got the right number of positions
-        for (i, sym) in symbols.iter().enumerate() {
-            if sym.reverse_map.len() != sym.freq as usize {
-                return Err(Error::InvalidHistogram(format!(
-                    "symbol {} has freq {} but got {} positions",
-                    i,
-                    sym.freq,
-                    sym.reverse_map.len()
-                )));
+                symbols[symbol].reverse_map[offset as usize] = idx as u16;
             }
         }
 
