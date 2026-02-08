@@ -28,6 +28,49 @@ use super::frame::DistanceParams;
 use super::quant::INV_DC_QUANT;
 use super::quantize::adjust_quant_bias;
 
+/// Pre-allocated output buffers for `transform_and_quantize`.
+///
+/// Reuse across butteraugli iterations to avoid re-allocating Vec<Vec<>> arrays.
+pub(crate) struct TransformOutput {
+    pub quant_dc: [Vec<Vec<i16>>; 3],
+    pub quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    pub nzeros: [Vec<Vec<u8>>; 3],
+    pub raw_nzeros: [Vec<Vec<u16>>; 3],
+}
+
+impl TransformOutput {
+    pub fn new(xsize_blocks: usize, ysize_blocks: usize) -> Self {
+        Self {
+            quant_dc: core::array::from_fn(|_| vec![vec![0i16; xsize_blocks]; ysize_blocks]),
+            quant_ac: core::array::from_fn(|_| {
+                vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks]
+            }),
+            nzeros: core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]),
+            raw_nzeros: core::array::from_fn(|_| vec![vec![0u16; xsize_blocks]; ysize_blocks]),
+        }
+    }
+
+    /// Zero-fill all buffers for reuse without deallocating.
+    pub fn clear(&mut self) {
+        for c in 0..3 {
+            for row in &mut self.quant_dc[c] {
+                row.fill(0);
+            }
+            for row in &mut self.quant_ac[c] {
+                for block in row.iter_mut() {
+                    *block = [0i32; DCT_BLOCK_SIZE];
+                }
+            }
+            for row in &mut self.nzeros[c] {
+                row.fill(0);
+            }
+            for row in &mut self.raw_nzeros[c] {
+                row.fill(0);
+            }
+        }
+    }
+}
+
 impl VarDctEncoder {
     /// Apply DCT to a single channel at block position (bx, by).
     ///
@@ -247,9 +290,41 @@ impl VarDctEncoder {
     /// 3. DCT X, B → apply CfL using roundtripped Y → extract X/B DC
     /// 4. Quantize X/B AC (with thresholding + x_qm_mul for X)
     ///
-    /// Returns (quantized_dc, quantized_ac, nzeros)
+    /// Allocates output buffers and calls `transform_and_quantize_into`.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn transform_and_quantize(
+        &self,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        padded_width: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        params: &DistanceParams,
+        quant_field: &mut [u8],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+    ) -> TransformOutput {
+        let mut out = TransformOutput::new(xsize_blocks, ysize_blocks);
+        self.transform_and_quantize_into(
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            padded_width,
+            xsize_blocks,
+            ysize_blocks,
+            params,
+            quant_field,
+            cfl_map,
+            ac_strategy,
+            &mut out,
+        );
+        out
+    }
+
+    /// Fill pre-allocated `TransformOutput` buffers. Clears them first.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn transform_and_quantize_into(
         &self,
         xyb_x: &[f32],
         xyb_y: &[f32],
@@ -261,37 +336,13 @@ impl VarDctEncoder {
         quant_field: &mut [u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
-    ) -> (
-        [Vec<Vec<i16>>; 3],                   // quant_dc
-        [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3], // quant_ac
-        [Vec<Vec<u8>>; 3],                    // nzeros (shifted, for prediction)
-        [Vec<Vec<u16>>; 3],                   // raw_nzeros (unshifted, for bitstream)
+        out: &mut TransformOutput,
     ) {
-        // Initialize output arrays
-        let mut quant_dc: [Vec<Vec<i16>>; 3] = [
-            vec![vec![0i16; xsize_blocks]; ysize_blocks],
-            vec![vec![0i16; xsize_blocks]; ysize_blocks],
-            vec![vec![0i16; xsize_blocks]; ysize_blocks],
-        ];
-
-        let mut quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3] = [
-            vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
-            vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
-            vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks],
-        ];
-
-        // Shifted nzeros for neighbor prediction (nzeros / covered_blocks)
-        let mut nzeros: [Vec<Vec<u8>>; 3] = [
-            vec![vec![0u8; xsize_blocks]; ysize_blocks],
-            vec![vec![0u8; xsize_blocks]; ysize_blocks],
-            vec![vec![0u8; xsize_blocks]; ysize_blocks],
-        ];
-        // Raw (unshifted) nzeros for bitstream writing — stored at first-block positions
-        let mut raw_nzeros: [Vec<Vec<u16>>; 3] = [
-            vec![vec![0u16; xsize_blocks]; ysize_blocks],
-            vec![vec![0u16; xsize_blocks]; ysize_blocks],
-            vec![vec![0u16; xsize_blocks]; ysize_blocks],
-        ];
+        out.clear();
+        let quant_dc = &mut out.quant_dc;
+        let quant_ac = &mut out.quant_ac;
+        let nzeros = &mut out.nzeros;
+        let raw_nzeros = &mut out.raw_nzeros;
 
         let channels = [xyb_x, xyb_y, xyb_b];
 
@@ -320,6 +371,11 @@ impl VarDctEncoder {
         } else {
             Vec::new()
         };
+
+        // Scratch buffers for multi-block nzeros counting (reused per block)
+        let mut nz_full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
+        // Max flat_nz size: for DCT64x64, covered = 8×8, flat_len = 7*xsize_blocks+8
+        let mut nz_flat_scratch = vec![0u8; 7 * xsize_blocks + 8];
 
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
@@ -992,35 +1048,33 @@ impl VarDctEncoder {
                         // num_nonzero_except_llf expects block[y * stride + x] for y,x in 0..cy*8, 0..cx*8.
                         // The 8x8 block storage uses quant_ac[slot_by][slot_bx][pos_in_8x8].
                         let stride = cx * BLOCK_DIM;
-                        let full_block: Vec<i32> = (0..size)
-                            .map(|idx| {
-                                // idx = y * stride + x in the flat layout
-                                let y = idx / stride;
-                                let x = idx % stride;
-                                // Which 8x8 block slot in coefficient space
-                                let coef_slot_y = y / BLOCK_DIM;
-                                let coef_slot_x = x / BLOCK_DIM;
-                                // Position within the 8x8 block
-                                let pos_y = y % BLOCK_DIM;
-                                let pos_x = x % BLOCK_DIM;
-                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                                // Map to physical block offset
-                                let (phys_row_off, phys_col_off) = if transpose_slots {
-                                    (coef_slot_x, coef_slot_y)
-                                } else {
-                                    (coef_slot_y, coef_slot_x)
-                                };
-                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
-                            })
-                            .collect();
+                        let full_block = &mut nz_full_block_scratch[..size];
+                        #[allow(clippy::needless_range_loop)]
+                        for idx in 0..size {
+                            let y = idx / stride;
+                            let x = idx % stride;
+                            let coef_slot_y = y / BLOCK_DIM;
+                            let coef_slot_x = x / BLOCK_DIM;
+                            let pos_y = y % BLOCK_DIM;
+                            let pos_x = x % BLOCK_DIM;
+                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                            let (phys_row_off, phys_col_off) = if transpose_slots {
+                                (coef_slot_x, coef_slot_y)
+                            } else {
+                                (coef_slot_y, coef_slot_x)
+                            };
+                            full_block[idx] =
+                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                        }
                         let flat_len = (covered_y - 1) * xsize_blocks + covered_x;
-                        let mut flat_nz = vec![0u8; flat_len];
+                        let flat_nz = &mut nz_flat_scratch[..flat_len];
+                        flat_nz.fill(0);
                         let raw_nz = num_nonzero_except_llf(
                             cx,
                             cy,
-                            &full_block,
+                            full_block,
                             xsize_blocks,
-                            &mut flat_nz,
+                            flat_nz,
                             covered_x,
                             covered_y,
                         );
@@ -1034,7 +1088,5 @@ impl VarDctEncoder {
                 }
             }
         }
-
-        (quant_dc, quant_ac, nzeros, raw_nzeros)
     }
 }
