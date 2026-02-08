@@ -169,7 +169,7 @@ impl Encoder {
         encoder.enable_denoise = self.options.enable_denoise;
         encoder.enable_gaborish = self.options.enable_gaborish;
 
-        encoder.encode(width, height, &linear_rgb)
+        encoder.encode(width, height, &linear_rgb, None)
     }
 
     /// Encodes a ModularImage to JXL format.

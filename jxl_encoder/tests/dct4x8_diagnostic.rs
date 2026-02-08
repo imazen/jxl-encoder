@@ -213,7 +213,9 @@ fn diagnose_dct4x8_real_photo() {
     // Encode with DCT4X8
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let bytes_4x8 = encoder.encode(w, h, &linear).expect("DCT4X8 encode failed");
+    let bytes_4x8 = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X8 encode failed");
     println!("\nDCT4X8 encoded: {} bytes", bytes_4x8.len());
 
     // Decode
@@ -224,7 +226,9 @@ fn diagnose_dct4x8_real_photo() {
     // Compare with DCT8
     let mut encoder2 = TinyEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let bytes_dct8 = encoder2.encode(w, h, &linear).expect("DCT8 encode failed");
+    let bytes_dct8 = encoder2
+        .encode(w, h, &linear, None)
+        .expect("DCT8 encode failed");
     println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
 
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
@@ -280,7 +284,9 @@ fn diagnose_dct4x8_synthetic() {
     // Encode with DCT4X8
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let bytes_4x8 = encoder.encode(w, h, &linear).expect("DCT4X8 encode failed");
+    let bytes_4x8 = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X8 encode failed");
     println!("\nDCT4X8 encoded: {} bytes", bytes_4x8.len());
 
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
@@ -289,7 +295,9 @@ fn diagnose_dct4x8_synthetic() {
     // Compare with DCT8
     let mut encoder2 = TinyEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let bytes_dct8 = encoder2.encode(w, h, &linear).expect("DCT8 encode failed");
+    let bytes_dct8 = encoder2
+        .encode(w, h, &linear, None)
+        .expect("DCT8 encode failed");
     println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
 
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
@@ -323,7 +331,9 @@ fn diagnose_single_block_dct4x8() {
     // Encode with DCT4X8
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let bytes_4x8 = encoder.encode(w, h, &linear).expect("DCT4X8 encode failed");
+    let bytes_4x8 = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X8 encode failed");
     println!("\nDCT4X8 encoded: {} bytes", bytes_4x8.len());
 
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
@@ -363,13 +373,17 @@ fn find_extreme_pixels() {
     // Encode with DCT4X8
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let bytes_4x8 = encoder.encode(w, h, &linear).expect("DCT4X8 encode failed");
+    let bytes_4x8 = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X8 encode failed");
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
 
     // Also encode with DCT8 for comparison
     let mut encoder2 = TinyEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let bytes_dct8 = encoder2.encode(w, h, &linear).expect("DCT8 encode failed");
+    let bytes_dct8 = encoder2
+        .encode(w, h, &linear, None)
+        .expect("DCT8 encode failed");
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
 
     // Find the most extreme pixels
@@ -470,7 +484,7 @@ fn verify_dct4x8_weights_applied() {
         let mut encoder = TinyEncoder::new(distance);
         encoder.force_strategy = Some(5); // DCT4X8
         let bytes = encoder
-            .encode(w, h, &contrast_block)
+            .encode(w, h, &contrast_block, None)
             .expect("encode failed");
         let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes);
 
@@ -588,7 +602,9 @@ fn test_dct4x4_jxl_oxide_decode() {
     // Encode with DCT4X4
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let bytes = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X4 encode failed");
 
     // Decode with jxl-oxide
     let (dec_w, dec_h, _dec_pixels) = decode_with_jxl_oxide(&bytes);
@@ -624,7 +640,9 @@ fn test_dct4x4_jxl_rs_decode() {
     // Encode with DCT4X4
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let bytes = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X4 encode failed");
 
     // Decode with jxl-rs
     let result = decode_with_jxl_rs(&bytes);
@@ -666,7 +684,9 @@ fn test_dct4x4_multigroup() {
     // Encode with DCT4X4
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let bytes = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X4 encode failed");
 
     // Decode with both decoders
     let (dec_w, dec_h, _) = decode_with_jxl_oxide(&bytes);
@@ -709,7 +729,9 @@ fn diagnose_dct4x4_real_photo() {
     // Encode with DCT4X4
     let mut encoder = TinyEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let bytes_4x4 = encoder.encode(w, h, &linear).expect("DCT4X4 encode failed");
+    let bytes_4x4 = encoder
+        .encode(w, h, &linear, None)
+        .expect("DCT4X4 encode failed");
     println!("\nDCT4X4 encoded: {} bytes", bytes_4x4.len());
 
     // Decode
@@ -720,7 +742,9 @@ fn diagnose_dct4x4_real_photo() {
     // Compare with DCT8
     let mut encoder2 = TinyEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let bytes_dct8 = encoder2.encode(w, h, &linear).expect("DCT8 encode failed");
+    let bytes_dct8 = encoder2
+        .encode(w, h, &linear, None)
+        .expect("DCT8 encode failed");
     println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
 
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
@@ -753,7 +777,7 @@ fn test_error_diffusion_jxl_oxide_decode() {
     let mut encoder = TinyEncoder::new(4.0); // High compression to stress error diffusion
     encoder.error_diffusion = true;
     let bytes = encoder
-        .encode(w, h, &linear)
+        .encode(w, h, &linear, None)
         .expect("Encode with error diffusion failed");
 
     // Decode with jxl-oxide
@@ -791,7 +815,7 @@ fn test_error_diffusion_jxl_rs_decode() {
     let mut encoder = TinyEncoder::new(4.0);
     encoder.error_diffusion = true;
     let bytes = encoder
-        .encode(w, h, &linear)
+        .encode(w, h, &linear, None)
         .expect("Encode with error diffusion failed");
 
     // Decode with jxl-rs
@@ -834,7 +858,7 @@ fn test_error_diffusion_multigroup() {
     let mut encoder = TinyEncoder::new(4.0);
     encoder.error_diffusion = true;
     let bytes = encoder
-        .encode(w, h, &linear)
+        .encode(w, h, &linear, None)
         .expect("Encode with error diffusion failed");
 
     // Decode with both decoders
@@ -879,14 +903,14 @@ fn diagnose_error_diffusion_quality() {
         let mut encoder_off = TinyEncoder::new(distance);
         encoder_off.error_diffusion = false;
         let bytes_off = encoder_off
-            .encode(w, h, &linear)
+            .encode(w, h, &linear, None)
             .expect("Encode failed (off)");
 
         // Encode with error diffusion
         let mut encoder_on = TinyEncoder::new(distance);
         encoder_on.error_diffusion = true;
         let bytes_on = encoder_on
-            .encode(w, h, &linear)
+            .encode(w, h, &linear, None)
             .expect("Encode failed (on)");
 
         let (_, _, pixels_off) = decode_with_jxl_oxide(&bytes_off);

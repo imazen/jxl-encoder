@@ -47,7 +47,7 @@ fn main() {
         // --- Our tiny encoder ---
         let encoder = jxl_encoder::tiny::TinyEncoder::new(dist);
         let bytes = encoder
-            .encode(width, height, &linear_rgb)
+            .encode(width, height, &linear_rgb, None)
             .expect("Encoding failed");
         let tiny_bpp = bytes.len() as f64 * 8.0 / (width * height) as f64;
 

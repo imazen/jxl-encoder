@@ -34,7 +34,7 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
     // Encode
     let encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
     let bytes = encoder
-        .encode(width, height, &linear_rgb)
+        .encode(width, height, &linear_rgb, None)
         .expect("Encoding failed");
     let orig_bytes = width * height * 3;
     eprintln!(

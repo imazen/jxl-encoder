@@ -151,7 +151,7 @@ fn test_tiny_encoder_produces_jxl_signature() {
     let height = 8;
     let linear_rgb = vec![0.5f32; width * height * 3];
 
-    let result = encoder.encode(width, height, &linear_rgb);
+    let result = encoder.encode(width, height, &linear_rgb, None);
     assert!(
         result.is_ok(),
         "Encoding should not fail: {:?}",
@@ -176,7 +176,7 @@ fn test_tiny_encoder_various_sizes() {
 
     for (width, height) in &[(8, 8), (16, 16), (64, 64), (256, 256), (300, 300)] {
         let linear_rgb = vec![0.5f32; width * height * 3];
-        let result = encoder.encode(*width, *height, &linear_rgb);
+        let result = encoder.encode(*width, *height, &linear_rgb, None);
         assert!(
             result.is_ok(),
             "Encoding {}x{} failed: {:?}",
@@ -251,7 +251,7 @@ fn test_tiny_encoder_decode() {
     }
 
     let encoded = encoder
-        .encode(width, height, &linear_rgb)
+        .encode(width, height, &linear_rgb, None)
         .expect("encoding should succeed");
 
     // Save to file for manual inspection
@@ -347,7 +347,7 @@ fn test_optimize_codes_roundtrip_small() {
         enc_static.butteraugli_iters = 0; // Disable to compare entropy coding only
     }
     let static_bytes = enc_static
-        .encode(width, height, &linear_rgb)
+        .encode(width, height, &linear_rgb, None)
         .expect("static encode failed");
 
     // Dynamic codes (two-pass)
@@ -358,7 +358,7 @@ fn test_optimize_codes_roundtrip_small() {
         enc_dynamic.butteraugli_iters = 0; // Disable to compare entropy coding only
     }
     let dynamic_bytes = enc_dynamic
-        .encode(width, height, &linear_rgb)
+        .encode(width, height, &linear_rgb, None)
         .expect("dynamic encode failed");
 
     eprintln!(
@@ -424,7 +424,7 @@ fn test_static_codes_8x8_roundtrip() {
     let mut enc = TinyEncoder::new(1.0);
     enc.optimize_codes = false;
     let bytes = enc
-        .encode(width, height, &linear_rgb)
+        .encode(width, height, &linear_rgb, None)
         .expect("encode failed");
 
     let img = jxl_oxide::JxlImage::builder()
@@ -455,7 +455,7 @@ fn test_optimize_codes_various_sizes() {
         let mut enc = TinyEncoder::new(2.0);
         enc.optimize_codes = true;
         let bytes = enc
-            .encode(w, h, &linear_rgb)
+            .encode(w, h, &linear_rgb, None)
             .unwrap_or_else(|e| panic!("encode {}x{} failed: {:?}", w, h, e));
 
         // Must decode
@@ -472,7 +472,7 @@ fn test_optimize_codes_various_sizes() {
         // Compare with static
         let mut enc_static = TinyEncoder::new(2.0);
         enc_static.optimize_codes = false;
-        let static_bytes = enc_static.encode(w, h, &linear_rgb).unwrap();
+        let static_bytes = enc_static.encode(w, h, &linear_rgb, None).unwrap();
 
         eprintln!(
             "  {}x{}: static={} bytes, dynamic={} bytes (diff={:+})",
@@ -504,7 +504,7 @@ fn test_optimize_codes_boundary_256() {
 
     let mut enc = TinyEncoder::new(2.0);
     enc.optimize_codes = true;
-    let bytes = enc.encode(w, h, &linear_rgb).expect("encode failed");
+    let bytes = enc.encode(w, h, &linear_rgb, None).expect("encode failed");
 
     // Must decode
     let img = jxl_oxide::JxlImage::builder()
@@ -517,7 +517,7 @@ fn test_optimize_codes_boundary_256() {
     // Compare with static
     let mut enc_static = TinyEncoder::new(2.0);
     enc_static.optimize_codes = false;
-    let static_bytes = enc_static.encode(w, h, &linear_rgb).unwrap();
+    let static_bytes = enc_static.encode(w, h, &linear_rgb, None).unwrap();
 
     eprintln!(
         "  {}x{}: static={} bytes, dynamic={} bytes (diff={:+})",
@@ -557,7 +557,9 @@ fn test_noise_synthesis_roundtrip_oxide() {
     // Encode with noise enabled
     let mut encoder = TinyEncoder::new(2.0);
     encoder.enable_noise = true;
-    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode failed");
 
     // Decode with jxl-oxide (full render)
     let reader = Cursor::new(&bytes);
@@ -602,7 +604,9 @@ fn test_noise_synthesis_ans_roundtrip() {
     let mut encoder = TinyEncoder::new(2.0);
     encoder.enable_noise = true;
     encoder.use_ans = true;
-    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode failed");
 
     let reader = Cursor::new(&bytes);
     let image = jxl_oxide::JxlImage::builder()
@@ -644,7 +648,9 @@ fn test_noise_synthesis_static_huffman_roundtrip() {
     let mut encoder = TinyEncoder::new(2.0);
     encoder.enable_noise = true;
     encoder.optimize_codes = false; // Static Huffman (single-pass)
-    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode failed");
 
     let reader = Cursor::new(&bytes);
     let image = jxl_oxide::JxlImage::builder()
@@ -673,7 +679,9 @@ fn test_noise_synthesis_clean_image_no_noise_detected() {
 
     let mut encoder = TinyEncoder::new(2.0);
     encoder.enable_noise = true; // Enabled, but estimation should return None
-    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode failed");
 
     let reader = Cursor::new(&bytes);
     let image = jxl_oxide::JxlImage::builder()
@@ -714,7 +722,9 @@ fn test_noise_synthesis_multigroup() {
 
     let mut encoder = TinyEncoder::new(2.0);
     encoder.enable_noise = true;
-    let bytes = encoder.encode(w, h, &linear_rgb).expect("encode failed");
+    let bytes = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode failed");
 
     let reader = Cursor::new(&bytes);
     let image = jxl_oxide::JxlImage::builder()
@@ -756,7 +766,7 @@ fn test_identity_strategy_roundtrip() {
     }
 
     let bytes = encoder
-        .encode(w, h, &pixels)
+        .encode(w, h, &pixels, None)
         .expect("IDENTITY encode failed");
     eprintln!("IDENTITY 64x64: {} bytes", bytes.len());
 
@@ -793,7 +803,9 @@ fn test_dct2x2_strategy_roundtrip() {
         }
     }
 
-    let bytes = encoder.encode(w, h, &pixels).expect("DCT2X2 encode failed");
+    let bytes = encoder
+        .encode(w, h, &pixels, None)
+        .expect("DCT2X2 encode failed");
     eprintln!("DCT2X2 64x64: {} bytes", bytes.len());
 
     let image = jxl_oxide::JxlImage::builder()
@@ -839,7 +851,7 @@ fn test_lz77_rle_roundtrip() {
     enc_no_lz77.optimize_codes = true;
     enc_no_lz77.enable_lz77 = false;
     let bytes_no_lz77 = enc_no_lz77
-        .encode(w, h, &linear_rgb)
+        .encode(w, h, &linear_rgb, None)
         .expect("encode without LZ77 failed");
 
     // Encode WITH LZ77 (RLE mode for this test)
@@ -849,7 +861,7 @@ fn test_lz77_rle_roundtrip() {
     enc_lz77.enable_lz77 = true;
     enc_lz77.lz77_method = super::lz77::Lz77Method::Rle; // Explicit RLE for roundtrip test
     let bytes_lz77 = enc_lz77
-        .encode(w, h, &linear_rgb)
+        .encode(w, h, &linear_rgb, None)
         .expect("encode with LZ77 failed");
 
     eprintln!(
@@ -947,7 +959,7 @@ fn test_lz77_backref_roundtrip() {
         enc_no_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing
     }
     let bytes_no_lz77 = enc_no_lz77
-        .encode(w, h, &linear_rgb)
+        .encode(w, h, &linear_rgb, None)
         .expect("encode without LZ77 failed");
 
     // Encode WITH LZ77 greedy backref
@@ -961,7 +973,7 @@ fn test_lz77_backref_roundtrip() {
         enc_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing
     }
     let bytes_lz77 = enc_lz77
-        .encode(w, h, &linear_rgb)
+        .encode(w, h, &linear_rgb, None)
         .expect("encode with LZ77 backref failed");
 
     eprintln!(
@@ -1037,7 +1049,7 @@ fn test_dct32x16_16x32_roundtrip() {
     encoder.enable_gaborish = false; // Disable gab for simpler testing
 
     let encoded = encoder
-        .encode(width, height, &linear_rgb)
+        .encode(width, height, &linear_rgb, None)
         .expect("encode should succeed");
     eprintln!(
         "DCT32x16/DCT16x32 test: encoded {} bytes at d=3.0",
@@ -1105,7 +1117,7 @@ fn test_afv_strategy_roundtrip() {
         encoder.force_strategy = Some(raw_strategy);
 
         let encoded = encoder
-            .encode(width, height, &linear_rgb)
+            .encode(width, height, &linear_rgb, None)
             .expect("encode should succeed");
         eprintln!("AFV{}: encoded {} bytes at d=1.0", afv_kind, encoded.len());
 
@@ -1159,7 +1171,9 @@ fn test_dct64x64_forced_decode() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
 
-    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT64x64");
+    let encoded = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode DCT64x64");
     eprintln!("DCT64x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
 
     // Save for external inspection
@@ -1224,7 +1238,9 @@ fn test_dct64x32_forced_decode() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X32);
 
-    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT64x32");
+    let encoded = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode DCT64x32");
     eprintln!("DCT64x32 forced: {} bytes ({}x{})", encoded.len(), w, h);
 
     let _ = std::fs::write("/tmp/test_dct64x32.jxl", &encoded);
@@ -1282,7 +1298,9 @@ fn test_dct32x64_forced_decode() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT32X64);
 
-    let encoded = encoder.encode(w, h, &linear_rgb).expect("encode DCT32x64");
+    let encoded = encoder
+        .encode(w, h, &linear_rgb, None)
+        .expect("encode DCT32x64");
     eprintln!("DCT32x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
 
     let _ = std::fs::write("/tmp/test_dct32x64.jxl", &encoded);
@@ -1339,7 +1357,7 @@ fn test_dct64x64_forced_256x256() {
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
 
     let encoded = encoder
-        .encode(w, h, &linear_rgb)
+        .encode(w, h, &linear_rgb, None)
         .expect("encode DCT64x64 256x256");
     eprintln!("DCT64x64 256x256: {} bytes", encoded.len());
 
@@ -1371,4 +1389,90 @@ fn test_dct64x64_forced_256x256() {
         }
         Err(e) => eprintln!("djxl not available: {} (skipping)", e),
     }
+}
+
+#[test]
+fn test_lossy_alpha_single_group_roundtrip() {
+    use std::io::Cursor;
+
+    let width = 64;
+    let height = 64;
+    let mut linear_rgb = vec![0.0f32; width * height * 3];
+    let mut alpha = vec![0u8; width * height];
+
+    // Create a gradient image with varying alpha
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            linear_rgb[idx] = x as f32 / width as f32;
+            linear_rgb[idx + 1] = y as f32 / height as f32;
+            linear_rgb[idx + 2] = 0.3;
+            // Varying alpha: top row opaque, bottom row transparent
+            alpha[y * width + x] = (255.0 * (1.0 - y as f32 / height as f32)) as u8;
+        }
+    }
+
+    let mut enc = super::encoder::TinyEncoder::new(2.0);
+    enc.enable_gaborish = false;
+    let bytes = enc
+        .encode(width, height, &linear_rgb, Some(&alpha))
+        .expect("encode failed");
+
+    eprintln!("Lossy+alpha 64x64: {} bytes", bytes.len());
+
+    // Decode with jxl-oxide
+    let mut img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+
+    // Request linear output for correct color space
+    img.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+
+    let render = img.render_frame(0).expect("jxl-oxide render failed");
+
+    // Verify dimensions
+    assert_eq!(render.image_all_channels().width(), width);
+    assert_eq!(render.image_all_channels().height(), height);
+
+    // Verify extra channels exist
+    let (ec_info, _ec_buffers) = render.extra_channels();
+    assert!(
+        !ec_info.is_empty(),
+        "Expected extra channels (alpha) but found none"
+    );
+    assert!(ec_info[0].is_alpha(), "First extra channel should be alpha");
+
+    // Use image_planar to get per-channel data (channels 0-2 = RGB, channel 3 = alpha)
+    let planar = render.image_planar();
+    // RGB = 3 channels + alpha = 1 extra channel
+    assert!(
+        planar.len() >= 4,
+        "Expected at least 4 channels (RGB+A), got {}",
+        planar.len()
+    );
+    let alpha_fb = &planar[3];
+    let alpha_data_decoded: Vec<f32> = alpha_fb.buf().to_vec();
+    assert_eq!(alpha_data_decoded.len(), width * height);
+
+    // Top-left should be ~1.0 (opaque), bottom-left should be ~0.0 (transparent)
+    let top_left_alpha = alpha_data_decoded[0];
+    let bottom_left_alpha = alpha_data_decoded[(height - 1) * width];
+    eprintln!(
+        "Alpha check: top_left={:.3}, bottom_left={:.3}",
+        top_left_alpha, bottom_left_alpha
+    );
+    assert!(
+        top_left_alpha > 0.9,
+        "Top-left alpha should be ~1.0, got {}",
+        top_left_alpha
+    );
+    assert!(
+        bottom_left_alpha < 0.1,
+        "Bottom-left alpha should be ~0.0, got {}",
+        bottom_left_alpha
+    );
+
+    eprintln!("Lossy+alpha 64x64 roundtrip OK");
 }

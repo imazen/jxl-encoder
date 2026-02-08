@@ -35,6 +35,7 @@ impl TinyEncoder {
         &self,
         width: usize,
         height: usize,
+        has_alpha: bool,
         writer: &mut BitWriter,
     ) -> Result<()> {
         // 1. SizeHeader - use U32 format (small=0), same as libjxl-tiny
@@ -51,8 +52,15 @@ impl TinyEncoder {
 
         writer.write(1, 1)?; // modular 16 bit buffer sufficient (for 8-bit)
 
-        // Extra channels - none
-        writer.write(2, 0)?; // selector 0 = 0 extra channels
+        // Extra channels
+        if has_alpha {
+            // num_extra_channels = 1: U32(0,1,2+Read(4),12+Read(8)), selector 1 = 1
+            writer.write(2, 1)?;
+            // ExtraChannelInfo for default alpha (d_alpha=true = 1 bit)
+            crate::headers::extra_channels::ExtraChannelInfo::alpha().write(writer)?;
+        } else {
+            writer.write(2, 0)?; // selector 0 = 0 extra channels
+        }
 
         // xyb_encoded = 1 (required for VarDCT)
         writer.write(1, 1)?;
@@ -700,6 +708,7 @@ impl TinyEncoder {
         ac_strategy: &AcStrategyMap,
         noise_params: &Option<NoiseParams>,
         sharpness_map: Option<&[u8]>,
+        alpha: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         // ── Pass 1: Collect tokens per section ──
 
@@ -1289,7 +1298,9 @@ impl TinyEncoder {
         writer.write(8, 0x0A)?;
 
         // Write file header
-        self.write_file_header(width, height, &mut writer)?;
+        let has_alpha = alpha.is_some();
+        let num_extra_channels = if has_alpha { 1 } else { 0 };
+        self.write_file_header(width, height, has_alpha, &mut writer)?;
 
         // Write frame header
         write_frame_header(
@@ -1298,6 +1309,7 @@ impl TinyEncoder {
             params.epf_iters,
             noise_params.is_some(),
             self.enable_gaborish,
+            num_extra_channels,
             &mut writer,
         )?;
 
@@ -1314,6 +1326,12 @@ impl TinyEncoder {
                 learned_tree_tokens.as_deref(),
                 &mut dc_global,
             )?;
+
+            // Single-group alpha: all alpha data goes in the modular global sub-bitstream
+            // within the DC global section, after the VarDCT DC entropy code.
+            if let Some(alpha_data) = &alpha {
+                Self::write_modular_alpha_global(alpha_data, width, height, &mut dc_global)?;
+            }
 
             let mut dc_group = BitWriter::new();
             self.write_dc_group_from_tokens(
@@ -1371,6 +1389,12 @@ impl TinyEncoder {
                 learned_tree_tokens.as_deref(),
                 &mut dc_global,
             )?;
+            // Multi-group alpha: write empty modular global sub-bitstream.
+            // Alpha channels are NOT meta_or_small for >256px images, so no data here.
+            // The decoder still reads the GroupHeader + tree for the global section.
+            if alpha.is_some() {
+                Self::write_modular_empty_global(&mut dc_global)?;
+            }
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
@@ -1407,13 +1431,31 @@ impl TinyEncoder {
             sections.push(ac_global.finish());
 
             // AC groups
-            for ac_tokens in &ac_section_tokens {
+            for (group_idx, ac_tokens) in ac_section_tokens.iter().enumerate() {
                 let mut ac_group_writer = BitWriter::new();
                 ac_built_code.write_tokens(
                     ac_tokens,
                     ac_lz77_params.as_ref(),
                     &mut ac_group_writer,
                 )?;
+                // Multi-group alpha: write modular HF sub-bitstream for this group
+                if let Some(alpha_data) = &alpha {
+                    let group_x = group_idx % xsize_groups;
+                    let group_y = group_idx / xsize_groups;
+                    let x0 = group_x * GROUP_DIM;
+                    let y0 = group_y * GROUP_DIM;
+                    let gw = GROUP_DIM.min(width - x0);
+                    let gh = GROUP_DIM.min(height - y0);
+                    Self::write_modular_alpha_group(
+                        alpha_data,
+                        width,
+                        x0,
+                        y0,
+                        gw,
+                        gh,
+                        &mut ac_group_writer,
+                    )?;
+                }
                 ac_group_writer.zero_pad_to_byte();
                 sections.push(ac_group_writer.finish());
             }
@@ -1430,7 +1472,166 @@ impl TinyEncoder {
     }
 
     /// Write DC group section from pre-collected tokens (two-pass mode).
+    /// Write the modular global sub-bitstream for alpha in single-group VarDCT frames.
     ///
+    /// For single-group images (≤256×256), the alpha channel is "meta_or_small" and
+    /// goes entirely in the LfGlobal section. The decoder reads:
+    ///   GroupHeader → (use_global_tree=0 → local tree) → entropy code → alpha pixels
+    fn write_modular_alpha_global(
+        alpha: &[u8],
+        width: usize,
+        height: usize,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        Self::write_modular_alpha_subbitstream(alpha, width, 0, 0, width, height, writer)
+    }
+
+    /// Write an empty modular global sub-bitstream for multi-group VarDCT frames with alpha.
+    ///
+    /// For multi-group images (>256×256), the alpha channel is NOT meta_or_small,
+    /// so no alpha data belongs in the global section. The decoder reads the GroupHeader
+    /// during `FullModularImage::read()`, then calls `decode_modular_subbitstream` with
+    /// an empty buffer list (alpha assigned to HfGroups), which returns immediately.
+    /// Only the GroupHeader is needed.
+    fn write_modular_empty_global(writer: &mut BitWriter) -> Result<()> {
+        // GroupHeader: use_global_tree=0, wp_params default=1, nb_transforms=0
+        writer.write(1, 0)?; // use_global_tree = false
+        writer.write(1, 1)?; // wp_params all_default = true
+        writer.write(2, 0)?; // nb_transforms = 0
+        Ok(())
+    }
+
+    /// Write a modular sub-bitstream for alpha data in a region (used by both global and HF groups).
+    ///
+    /// Format: GroupHeader → local tree → LZ77(disabled) → entropy code → alpha residuals
+    ///
+    /// Uses gradient prediction (predictor 5) and HybridUint {4,2,0}, matching the
+    /// default modular encoding path. Each sub-bitstream is independent (fresh decoder state).
+    fn write_modular_alpha_subbitstream(
+        alpha: &[u8],
+        stride: usize,
+        x0: usize,
+        y0: usize,
+        region_width: usize,
+        region_height: usize,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+        use crate::modular::improved::{
+            write_gradient_tree_tokens, write_tree_histogram_for_gradient,
+        };
+        use crate::modular::predictor::pack_signed;
+
+        let hybrid_config = HybridUintConfig {
+            split_exponent: 4,
+            split: 16,
+            msb_in_token: 2,
+            lsb_in_token: 0,
+        };
+
+        // GroupHeader: use_global_tree=0, wp default, no transforms
+        writer.write(1, 0)?; // use_global_tree = false
+        writer.write(1, 1)?; // wp_params all_default = true
+        writer.write(2, 0)?; // nb_transforms = 0
+
+        // Local tree: gradient prediction, single context
+        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
+        write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+
+        // Collect residuals using gradient prediction
+        let num_pixels = region_width * region_height;
+        let mut tokens = Vec::with_capacity(num_pixels);
+        let mut max_token: u32 = 0;
+
+        for y in 0..region_height {
+            for x in 0..region_width {
+                let pixel = alpha[(y0 + y) * stride + (x0 + x)] as i32;
+
+                let left = if x > 0 {
+                    alpha[(y0 + y) * stride + (x0 + x - 1)] as i32
+                } else if y > 0 {
+                    alpha[(y0 + y - 1) * stride + x0] as i32
+                } else {
+                    0
+                };
+                let top = if y > 0 {
+                    alpha[(y0 + y - 1) * stride + (x0 + x)] as i32
+                } else {
+                    left
+                };
+                let topleft = if x > 0 && y > 0 {
+                    alpha[(y0 + y - 1) * stride + (x0 + x - 1)] as i32
+                } else {
+                    left
+                };
+
+                // ClampedGradient prediction
+                let grad = left + top - topleft;
+                let prediction = grad.clamp(left.min(top), left.max(top));
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+                let (token, _, _) = hybrid_config.encode(packed);
+                max_token = max_token.max(token);
+                tokens.push(Token {
+                    context: 0,
+                    value: packed,
+                    is_lz77_length: false,
+                });
+            }
+        }
+
+        // Build and write entropy code (single context, Huffman)
+        // Use the simple Huffman path to avoid ANS complexity in modular sub-bitstreams.
+        let histogram_size = (max_token + 1) as usize;
+        let mut histogram = vec![0u32; histogram_size];
+        for t in &tokens {
+            let (token, _, _) = hybrid_config.encode(t.value);
+            histogram[token as usize] += 1;
+        }
+
+        use crate::modular::improved::write_hybrid_data_histogram;
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        // Write tokens
+        for t in &tokens {
+            let (token, extra_bits, num_extra) = hybrid_config.encode(t.value);
+            // Write Huffman code for token
+            let depth = depths[token as usize];
+            let code = codes[token as usize];
+            writer.write(depth as usize, code as u64)?;
+            // Write extra bits
+            if num_extra > 0 {
+                writer.write(num_extra as usize, extra_bits as u64)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Write a modular HF group sub-bitstream for alpha in multi-group VarDCT frames.
+    ///
+    /// Each HF group gets its own independent modular sub-bitstream with a fresh
+    /// GroupHeader, local tree, and entropy code.
+    fn write_modular_alpha_group(
+        alpha: &[u8],
+        stride: usize,
+        x0: usize,
+        y0: usize,
+        region_width: usize,
+        region_height: usize,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        Self::write_modular_alpha_subbitstream(
+            alpha,
+            stride,
+            x0,
+            y0,
+            region_width,
+            region_height,
+            writer,
+        )
+    }
+
     /// Writes the DC group header, DC tokens, AC metadata sub-header, then AC
     /// metadata tokens — matching the exact bitstream layout of `write_dc_group`.
     #[allow(clippy::too_many_arguments)]
