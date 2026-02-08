@@ -1691,7 +1691,9 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] Add `At<>` error location tracking (from `whereat` crate)
 - [ ] Add `EncodeStats` for encode metrics
 - [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
-- [ ] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
+- [x] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
+  - ICC: embedded in codestream via PredictICC + Huffman entropy, lossy + lossless paths
+  - EXIF/XMP: container format boxes (already working)
 - [ ] Add probing: `ImageInfo::from_bytes(&[u8])` static probe with `PROBE_BYTES` constant
 - [ ] Two-phase decoder: `build()` parses header → `info()` inspects → `decode()` continues without re-parsing
 - [x] Support `Rgba8` and `Bgra8` for lossless encode (alpha preserved)
