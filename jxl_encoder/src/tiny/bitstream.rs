@@ -45,12 +45,20 @@ impl TinyEncoder {
         writer.write(1, 0)?; // not all default
         writer.write(1, 0)?; // no extra fields
 
-        // Bit depth - 8-bit integer (matches libjxl default for u8 input)
-        // U32(8,10,12,1+Read(6)): selector 0 = 8 bits
+        // Bit depth - integer, parameterized by self.bit_depth_16
+        // U32(8,10,12,1+Read(6))
         writer.write(1, 0)?; // float = 0
-        writer.write(2, 0)?; // bits_per_sample selector 0 = 8 bits
+        if self.bit_depth_16 {
+            // bits_per_sample = 16: selector 3, value = 16-1 = 15 (6 bits)
+            writer.write(2, 3)?;
+            writer.write(6, 15)?; // 1 + 15 = 16
+        } else {
+            // bits_per_sample = 8: selector 0
+            writer.write(2, 0)?;
+        }
 
-        writer.write(1, 1)?; // modular 16 bit buffer sufficient (for 8-bit)
+        // modular_16_bit_buffer_sufficient: true for bits_per_sample <= 12
+        writer.write(1, if self.bit_depth_16 { 0 } else { 1 })?;
 
         // Extra channels
         if has_alpha {
