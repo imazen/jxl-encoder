@@ -50,7 +50,7 @@ Never omit jxl-rs from decoder validation.
 
 ## Current Status: Full libjxl Parametric Quantization Weights
 
-The tiny encoder (`jxl_encoder/src/tiny/`) now uses full libjxl's default parametric
+The VarDCT encoder (`jxl_encoder/src/vardct/`) now uses full libjxl's default parametric
 quantization weights for all strategies (DCT8, DCT16X8/DCT8X16, DCT16X16,
 DCT32X32, DCT4X8, DCT8X4, DCT4X4). This matches what the decoder expects when
 `all_default=true` is signaled in the frame header.
@@ -1010,10 +1010,14 @@ to verify no quality/size regressions.
 jxl-encoder-rs/
 ├── jxl_encoder/             # Main encoder library
 │   ├── src/
+│   │   ├── api.rs             # Public API (LossyConfig, LosslessConfig, EncodeRequest)
 │   │   ├── bit_writer.rs      # Bitstream writing
-│   │   ├── entropy_coding/    # ANS, Huffman, HybridUint
+│   │   ├── entropy_coding/    # ANS, Huffman, HybridUint, LZ77, tokens
 │   │   ├── headers/           # File and frame headers
+│   │   ├── icc.rs             # ICC profile encoding
 │   │   ├── image/             # Image buffer types
+│   │   ├── modular/           # Modular (lossless) encoder + FrameEncoder
+│   │   ├── vardct/            # VarDCT (lossy) encoder (was tiny/)
 │   │   └── error.rs           # Error types
 └── jxl_encoder_cli/         # Command-line tool (cjxl-rs)
 ```
