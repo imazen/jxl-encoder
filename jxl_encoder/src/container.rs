@@ -5,15 +5,17 @@
 
 //! JXL container format (ISOBMFF boxes) for metadata embedding.
 //!
-//! When EXIF or XMP metadata is present, the codestream must be wrapped in a
-//! container format. The container uses ISOBMFF-style boxes:
+//! When EXIF/XMP metadata is present, the codestream must be wrapped in a
+//! container format. The container uses ISOBMFF-style boxes.
 //!
+//! Standard layout (single `jxlc` codestream box):
 //! ```text
-//! [JXL signature box - 12 bytes]
-//! [ftyp box - 20 bytes]
-//! [jxlc box - 8 + codestream_len bytes]
-//! [Exif box - 8 + 4 + exif_len bytes] (optional)
-//! [xml  box - 8 + xmp_len bytes] (optional)
+//! [JXL signature] [ftyp] [jxlc] [Exif?] [xml?]
+//! ```
+//!
+//! JPEG lossless reencoding layout (split `jxlp` boxes with `jbrd` between):
+//! ```text
+//! [JXL signature] [ftyp] [jxlp part 0] [jbrd] [jxlp part 1 (last)] [Exif?] [xml?]
 //! ```
 
 /// JXL container signature box (12 bytes).

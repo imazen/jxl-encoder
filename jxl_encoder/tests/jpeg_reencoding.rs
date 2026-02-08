@@ -1,8 +1,8 @@
 // Tests for JPEG lossless reencoding into JXL
 #![cfg(feature = "jpeg-reencoding")]
 
-use jxl_encoder::jpeg::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, read_jpeg};
 use jxl_encoder::jpeg::encode_jbrd;
+use jxl_encoder::jpeg::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, read_jpeg};
 
 #[test]
 fn test_encode_small_jpeg() {
@@ -285,9 +285,13 @@ fn test_jbrd_roundtrip_small() {
 
     if djxl.status.success() {
         // Compare original and reconstructed JPEG byte-for-byte
-        let reconstructed = std::fs::read(&reconstructed_path).expect("failed to read reconstructed");
+        let reconstructed =
+            std::fs::read(&reconstructed_path).expect("failed to read reconstructed");
         if jpeg_data == reconstructed {
-            eprintln!("BYTE-EXACT JPEG RECONSTRUCTION: PASS ({} bytes)", jpeg_data.len());
+            eprintln!(
+                "BYTE-EXACT JPEG RECONSTRUCTION: PASS ({} bytes)",
+                jpeg_data.len()
+            );
         } else {
             eprintln!(
                 "Reconstructed JPEG differs: original {} bytes, reconstructed {} bytes",
@@ -347,7 +351,8 @@ fn test_jbrd_roundtrip_landscape() {
     eprintln!("djxl stderr: {stderr}");
 
     if djxl.status.success() {
-        let reconstructed = std::fs::read(&reconstructed_path).expect("failed to read reconstructed");
+        let reconstructed =
+            std::fs::read(&reconstructed_path).expect("failed to read reconstructed");
         if jpeg_data == reconstructed {
             eprintln!(
                 "BYTE-EXACT JPEG RECONSTRUCTION: PASS ({} bytes)",
@@ -394,8 +399,10 @@ fn test_jbrd_roundtrip_large_photos() {
             .file_name()
             .unwrap()
             .to_string_lossy();
-        let jpeg_data = std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-        let jpeg = read_jpeg(&jpeg_data).unwrap_or_else(|e| panic!("failed to parse {basename}: {e}"));
+        let jpeg_data =
+            std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+        let jpeg =
+            read_jpeg(&jpeg_data).unwrap_or_else(|e| panic!("failed to parse {basename}: {e}"));
         let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
             .unwrap_or_else(|e| panic!("failed to encode {basename}: {e}"));
 
@@ -414,10 +421,11 @@ fn test_jbrd_roundtrip_large_photos() {
         std::fs::write(&jxl_path, &jxl_bytes).unwrap();
 
         let reconstructed_path = format!("{out_dir}/{stem}_reconstructed.jpg");
-        let djxl = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
-            .output()
-            .expect("failed to run djxl");
+        let djxl =
+            std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+                .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
+                .output()
+                .expect("failed to run djxl");
 
         let stderr = String::from_utf8_lossy(&djxl.stderr);
         assert!(
@@ -427,7 +435,8 @@ fn test_jbrd_roundtrip_large_photos() {
 
         let reconstructed = std::fs::read(&reconstructed_path).unwrap();
         assert_eq!(
-            jpeg_data, reconstructed,
+            jpeg_data,
+            reconstructed,
             "{basename}: JPEG reconstruction not byte-exact (orig={}, recon={})",
             jpeg_data.len(),
             reconstructed.len()
