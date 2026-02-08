@@ -11,8 +11,10 @@
 
 mod data;
 mod encode;
+mod jbrd;
 mod parse;
 
 pub use data::*;
-pub use encode::encode_jpeg_to_jxl;
+pub use encode::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container};
+pub use jbrd::{encode_jbrd, extract_exif, extract_xmp};
 pub use parse::read_jpeg;

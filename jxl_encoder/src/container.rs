@@ -38,12 +38,27 @@ const FTYP_BOX: [u8; 20] = [
 /// goes into a `jxlc` box, EXIF into an `Exif` box (with 4-byte Tiff offset
 /// prefix), and XMP into an `xml ` box.
 pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u8]>) -> Vec<u8> {
+    wrap_in_container_with_jbrd(codestream, None, exif, xmp)
+}
+
+/// Wraps a JXL codestream in a container with optional JBRD, EXIF, and XMP.
+///
+/// The `jbrd` box contains JPEG Bitstream Reconstruction Data needed for
+/// byte-exact JPEG reconstruction from the JXL file. When present, the box
+/// order is: signature, ftyp, jxlc, jbrd, Exif (optional), xml (optional).
+pub fn wrap_in_container_with_jbrd(
+    codestream: &[u8],
+    jbrd: Option<&[u8]>,
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+) -> Vec<u8> {
     // Calculate total size for pre-allocation
     let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len(); // 32
     let jxlc_size = 8 + codestream.len();
+    let jbrd_size = jbrd.map_or(0, |j| 8 + j.len());
     let exif_size = exif.map_or(0, |e| 8 + 4 + e.len()); // 4-byte Tiff header offset prefix
     let xmp_size = xmp.map_or(0, |x| 8 + x.len());
-    let total = header_size + jxlc_size + exif_size + xmp_size;
+    let total = header_size + jxlc_size + jbrd_size + exif_size + xmp_size;
 
     let mut out = Vec::with_capacity(total);
 
@@ -53,6 +68,11 @@ pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u
 
     // jxlc box (codestream)
     write_box(&mut out, b"jxlc", codestream);
+
+    // jbrd box (JPEG Bitstream Reconstruction Data)
+    if let Some(jbrd_data) = jbrd {
+        write_box(&mut out, b"jbrd", jbrd_data);
+    }
 
     // Exif box (with 4-byte Tiff header offset prefix, always 0)
     if let Some(exif_data) = exif {
@@ -69,6 +89,78 @@ pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u
     }
 
     out
+}
+
+/// Wraps a split codestream in a container with jxlp boxes, jbrd, and metadata.
+///
+/// The codestream is split into two `jxlp` boxes with the `jbrd` box between
+/// them. This matches libjxl's JPEG lossless transcoding container format:
+/// ```text
+/// [JXL signature] [ftyp] [jxlp part 0] [jbrd] [jxlp part 1 (last)] [Exif?] [xml?]
+/// ```
+/// Each `jxlp` box has a 4-byte LE counter where bit 31 marks the last part.
+#[cfg(feature = "jpeg-reencoding")]
+pub fn wrap_in_container_jxlp(
+    cs_part1: &[u8],
+    cs_part2: &[u8],
+    jbrd: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+) -> Vec<u8> {
+    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len(); // 32
+    // jxlp box: 8-byte box header + 4-byte counter + payload
+    let jxlp1_size = 8 + 4 + cs_part1.len();
+    let jxlp2_size = 8 + 4 + cs_part2.len();
+    let jbrd_size = 8 + jbrd.len();
+    let exif_size = exif.map_or(0, |e| 8 + 4 + e.len());
+    let xmp_size = xmp.map_or(0, |x| 8 + x.len());
+    let total = header_size + jxlp1_size + jbrd_size + jxlp2_size + exif_size + xmp_size;
+
+    let mut out = Vec::with_capacity(total);
+
+    // Container header
+    out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+    out.extend_from_slice(&FTYP_BOX);
+
+    // First jxlp box: file header (counter = 0, not last)
+    write_jxlp_box(&mut out, 0, false, cs_part1);
+
+    // jbrd box
+    write_box(&mut out, b"jbrd", jbrd);
+
+    // Second jxlp box: frame data (counter = 1, last)
+    write_jxlp_box(&mut out, 1, true, cs_part2);
+
+    // Exif box
+    if let Some(exif_data) = exif {
+        let box_size = (8 + 4 + exif_data.len()) as u32;
+        out.extend_from_slice(&box_size.to_be_bytes());
+        out.extend_from_slice(b"Exif");
+        out.extend_from_slice(&[0u8; 4]);
+        out.extend_from_slice(exif_data);
+    }
+
+    // xml box
+    if let Some(xmp_data) = xmp {
+        write_box(&mut out, b"xml ", xmp_data);
+    }
+
+    out
+}
+
+/// Write a jxlp (partial codestream) box.
+/// Counter format: bits 0-30 = sequence number, bit 31 = last part flag.
+fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) {
+    let box_size = (8 + 4 + data.len()) as u32;
+    out.extend_from_slice(&box_size.to_be_bytes());
+    out.extend_from_slice(b"jxlp");
+    let counter = if is_last {
+        sequence | 0x8000_0000
+    } else {
+        sequence
+    };
+    out.extend_from_slice(&counter.to_le_bytes());
+    out.extend_from_slice(data);
 }
 
 /// Write an ISOBMFF box: 4-byte big-endian size + 4-byte type + payload.
