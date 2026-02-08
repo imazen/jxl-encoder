@@ -5,10 +5,16 @@
 
 //! Frame header writing for the tiny encoder.
 
+#[cfg(feature = "jpeg-reencoding")]
+use super::ac_strategy::AcStrategyMap;
 use super::common::clamp;
+#[cfg(feature = "jpeg-reencoding")]
+use super::common::{DC_GROUP_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+#[cfg(feature = "jpeg-reencoding")]
+use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
 /// Distance-dependent encoding parameters.
@@ -365,6 +371,130 @@ pub fn write_quant_scales(global_scale: i32, quant_dc: i32, writer: &mut BitWrit
         writer.write(2, 3)?;
         writer.write(16, (quant_dc - 1) as u64)?;
     }
+    Ok(())
+}
+
+/// Write a DC group section from pre-collected tokens.
+///
+/// Writes the DC group header, DC tokens, AC metadata sub-header, then AC
+/// metadata tokens. Used by both normal VarDCT and JPEG reencoding paths.
+///
+/// The `write_tokens` closure handles the actual entropy-coded token writing,
+/// allowing callers to use either `BuiltEntropyCode` or `OwnedAnsEntropyCode`.
+#[cfg(feature = "jpeg-reencoding")]
+#[allow(clippy::too_many_arguments)]
+pub fn write_dc_group_from_tokens(
+    dc_group_idx: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    xsize_dc_groups: usize,
+    dc_tokens: &[Token],
+    ac_metadata_tokens: &[Token],
+    ac_strategy: &AcStrategyMap,
+    write_tokens: &dyn Fn(&[Token], &mut BitWriter) -> Result<()>,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let dc_gx = dc_group_idx % xsize_dc_groups;
+    let dc_gy = dc_group_idx / xsize_dc_groups;
+    let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+    let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+    let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+    let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+    let region_xsize = end_bx - start_bx;
+    let region_ysize = end_by - start_by;
+
+    // DC group header
+    writer.write(2, 0)?; // extra_dc_precision = 0
+    writer.write(4, 3)?; // use global tree, default wp, no transforms
+
+    // Write DC tokens
+    write_tokens(dc_tokens, writer)?;
+
+    // AC metadata sub-header — count first blocks (distinct transforms)
+    let num_blocks = region_xsize * region_ysize;
+    let mut num_ac_blocks = 0;
+    for ry in start_by..end_by {
+        for rx in start_bx..end_bx {
+            if ac_strategy.is_first(rx, ry) {
+                num_ac_blocks += 1;
+            }
+        }
+    }
+    let nb_bits = ceil_log2_nonzero(num_blocks);
+    if nb_bits != 0 {
+        writer.write(nb_bits as usize, (num_ac_blocks - 1) as u64)?;
+    }
+    writer.write(4, 3)?; // use global tree, default wp, no transforms
+
+    // Write AC metadata tokens
+    write_tokens(ac_metadata_tokens, writer)?;
+
+    Ok(())
+}
+
+/// Assemble VarDCT frame sections into the output bitstream.
+///
+/// Handles both single-group (bit-level combination) and multi-group (byte-aligned
+/// sections with TOC) assembly. This is shared by both the normal VarDCT encoder
+/// and the JPEG reencoding path.
+///
+/// Section order: DC global, DC groups, AC global, AC groups (per JXL spec).
+#[cfg(feature = "jpeg-reencoding")]
+pub fn assemble_frame_sections(
+    dc_global: BitWriter,
+    dc_groups: Vec<BitWriter>,
+    ac_global: BitWriter,
+    ac_groups: Vec<BitWriter>,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let num_dc_groups = dc_groups.len();
+    let num_ac_groups = ac_groups.len();
+    let num_sections = 2 + num_dc_groups + num_ac_groups;
+
+    if num_sections == 4 {
+        // Single-group: combine all sections at the bit level (no byte alignment between them)
+        let mut combined = dc_global;
+        combined.append_unaligned(&dc_groups[0])?;
+        combined.append_unaligned(&ac_global)?;
+        combined.append_unaligned(&ac_groups[0])?;
+        combined.zero_pad_to_byte();
+        let combined_bytes = combined.finish();
+
+        write_toc(&[combined_bytes.len()], writer)?;
+        writer.append_bytes(&combined_bytes)?;
+    } else {
+        // Multi-group: each section is independently byte-aligned
+        let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
+
+        // DC Global
+        let mut dc_global = dc_global;
+        dc_global.zero_pad_to_byte();
+        sections.push(dc_global.finish());
+
+        // DC Groups
+        for mut dc_group in dc_groups {
+            dc_group.zero_pad_to_byte();
+            sections.push(dc_group.finish());
+        }
+
+        // AC Global
+        let mut ac_global = ac_global;
+        ac_global.zero_pad_to_byte();
+        sections.push(ac_global.finish());
+
+        // AC Groups
+        for mut ac_group in ac_groups {
+            ac_group.zero_pad_to_byte();
+            sections.push(ac_group.finish());
+        }
+
+        let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
+        write_toc(&section_sizes, writer)?;
+        for section in sections {
+            writer.append_bytes(&section)?;
+        }
+    }
+
     Ok(())
 }
 

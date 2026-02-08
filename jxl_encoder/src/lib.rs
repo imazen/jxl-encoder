@@ -19,6 +19,8 @@ pub mod error;
 pub mod headers;
 pub(crate) mod icc;
 pub mod image;
+#[cfg(feature = "jpeg-reencoding")]
+pub mod jpeg;
 pub mod modular;
 pub mod trace;
 pub mod vardct;
