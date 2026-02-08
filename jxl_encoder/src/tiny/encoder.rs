@@ -256,12 +256,24 @@ impl TinyEncoder {
         }
     }
 
-    /// Encode an image in linear sRGB format.
+    /// Encode an image in linear sRGB format, optionally with an alpha channel.
     ///
     /// Input should be 3 channels (RGB) of f32 values in [0, 1] range.
     /// Values outside [0, 1] are allowed for out-of-gamut colors.
-    pub fn encode(&self, width: usize, height: usize, linear_rgb: &[f32]) -> Result<Vec<u8>> {
+    ///
+    /// If `alpha` is provided, it must be `width * height` bytes of u8 alpha values.
+    /// Alpha is encoded as a modular extra channel alongside the VarDCT RGB data.
+    pub fn encode(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        alpha: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
         assert_eq!(linear_rgb.len(), width * height * 3);
+        if let Some(a) = alpha {
+            assert_eq!(a.len(), width * height);
+        }
 
         // Calculate dimensions
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
@@ -531,6 +543,7 @@ impl TinyEncoder {
                 &ac_strategy,
                 &noise_params,
                 sharpness_map.as_deref(),
+                alpha,
             );
         }
 
@@ -548,7 +561,8 @@ impl TinyEncoder {
         debug_log!("After signature: bit {}", writer.bits_written());
 
         // Write size header (simple format for small images)
-        self.write_file_header(width, height, &mut writer)?;
+        // Streaming path does not support alpha
+        self.write_file_header(width, height, false, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "After file header: bit {} (byte {})",
@@ -563,6 +577,7 @@ impl TinyEncoder {
             params.epf_iters,
             noise_params.is_some(),
             self.enable_gaborish,
+            0, // streaming path: no extra channels
             &mut writer,
         )?;
         #[cfg(feature = "debug-tokens")]
@@ -1154,6 +1169,7 @@ impl TinyEncoder {
             &precomputed.ac_strategy,
             &precomputed.noise_params,
             None, // TODO: compute sharpness_map for rate control path
+            None, // TODO: thread alpha through butteraugli path
         )
     }
 }
@@ -1189,7 +1205,7 @@ mod tests {
         }
 
         // This should at least not panic - full encoding not yet implemented
-        let result = encoder.encode(width, height, &linear_rgb);
+        let result = encoder.encode(width, height, &linear_rgb, None);
         // For now, just check it produces some output
         assert!(result.is_ok());
         let bytes = result.unwrap();
@@ -1241,7 +1257,7 @@ mod tests {
             }
         }
 
-        let result = encoder.encode(width, height, &linear_rgb);
+        let result = encoder.encode(width, height, &linear_rgb, None);
         assert!(result.is_ok());
         let bytes = result.unwrap();
 
@@ -1290,7 +1306,7 @@ mod tests {
             }
         }
 
-        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
@@ -1315,7 +1331,7 @@ mod tests {
         let height = 16;
         let linear_rgb = vec![0.3f32; width * height * 3]; // gray
 
-        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
@@ -1351,7 +1367,7 @@ mod tests {
             }
         }
 
-        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
@@ -1382,7 +1398,7 @@ mod tests {
             *val = ((seed >> 32) as f32) / (u32::MAX as f32);
         }
 
-        let bytes = encoder.encode(width, height, &linear_rgb).unwrap();
+        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
@@ -1423,7 +1439,7 @@ mod tests {
 
             let encoder = TinyEncoder::new(1.0);
             let bytes = encoder
-                .encode(w, h, &linear_rgb)
+                .encode(w, h, &linear_rgb, None)
                 .unwrap_or_else(|e| panic!("encode {}x{} failed: {}", w, h, e));
 
             // Verify JXL signature
@@ -1478,7 +1494,7 @@ mod tests {
         let mut encoder_baseline = TinyEncoder::new(1.0);
         encoder_baseline.dc_tree_learning = false;
         let bytes_baseline = encoder_baseline
-            .encode(width, height, &linear_rgb)
+            .encode(width, height, &linear_rgb, None)
             .expect("baseline encode failed");
 
         // Encode WITH DC tree learning — also use ANS
@@ -1486,7 +1502,7 @@ mod tests {
         encoder_learned.dc_tree_learning = true;
         std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
         let bytes_learned = encoder_learned
-            .encode(width, height, &linear_rgb)
+            .encode(width, height, &linear_rgb, None)
             .expect("learned encode failed");
         std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
 
@@ -1556,14 +1572,14 @@ mod tests {
         let mut encoder_baseline = TinyEncoder::new(2.0);
         encoder_baseline.butteraugli_iters = 0;
         let bytes_baseline = encoder_baseline
-            .encode(width, height, &linear_rgb)
+            .encode(width, height, &linear_rgb, None)
             .expect("baseline encode failed");
 
         // Encode with 2 butteraugli loop iterations
         let mut encoder_loop = TinyEncoder::new(2.0);
         encoder_loop.butteraugli_iters = 2;
         let bytes_loop = encoder_loop
-            .encode(width, height, &linear_rgb)
+            .encode(width, height, &linear_rgb, None)
             .expect("butteraugli loop encode failed");
 
         // Both should produce valid JXL

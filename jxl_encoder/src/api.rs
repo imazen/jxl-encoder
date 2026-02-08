@@ -897,24 +897,26 @@ impl<'a> EncodeRequest<'a> {
         let w = self.width as usize;
         let h = self.height as usize;
 
-        // Lossy+alpha not yet implemented (needs modular extra channel alongside VarDCT)
-        if self.layout.has_alpha() {
-            return Err(EncodeError::UnsupportedPixelLayout(self.layout));
-        }
-
-        // Build linear f32 RGB from input layout
-        let linear_rgb = match self.layout {
-            PixelLayout::Rgb8 => srgb_u8_to_linear_f32(pixels, 3),
-            PixelLayout::Bgr8 => srgb_u8_to_linear_f32(&bgr_to_rgb(pixels, 3), 3),
-            PixelLayout::RgbLinearF32 => {
-                // Already linear — zero-copy reinterpret via bytemuck
-                let floats: &[f32] = bytemuck::cast_slice(pixels);
-                floats.to_vec()
+        // Build linear f32 RGB and extract alpha from input layout
+        let (linear_rgb, alpha) = match self.layout {
+            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(pixels, 3), None),
+            PixelLayout::Bgr8 => (srgb_u8_to_linear_f32(&bgr_to_rgb(pixels, 3), 3), None),
+            PixelLayout::Rgba8 => {
+                let rgb = srgb_u8_to_linear_f32(pixels, 4);
+                let alpha = extract_alpha(pixels, 4, 3);
+                (rgb, Some(alpha))
             }
-            PixelLayout::Gray8
-            | PixelLayout::GrayAlpha8
-            | PixelLayout::Rgba8
-            | PixelLayout::Bgra8 => {
+            PixelLayout::Bgra8 => {
+                let swapped = bgr_to_rgb(pixels, 4);
+                let rgb = srgb_u8_to_linear_f32(&swapped, 4);
+                let alpha = extract_alpha(pixels, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::RgbLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                (floats.to_vec(), None)
+            }
+            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 => {
                 return Err(EncodeError::UnsupportedPixelLayout(self.layout));
             }
         };
@@ -936,7 +938,8 @@ impl<'a> EncodeRequest<'a> {
             tiny.butteraugli_iters = cfg.butteraugli_iters;
         }
 
-        tiny.encode(w, h, &linear_rgb).map_err(EncodeError::from)
+        tiny.encode(w, h, &linear_rgb, alpha.as_deref())
+            .map_err(EncodeError::from)
     }
 }
 
@@ -972,6 +975,11 @@ fn bgr_to_rgb(data: &[u8], stride: usize) -> Vec<u8> {
         chunk.swap(0, 2);
     }
     out
+}
+
+/// Extract a single channel from interleaved pixel data.
+fn extract_alpha(data: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
+    data.chunks(stride).map(|px| px[alpha_offset]).collect()
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1114,23 +1122,25 @@ mod tests {
     }
 
     #[test]
-    fn test_lossy_alpha_unsupported() {
-        // Lossy+alpha not yet implemented (needs modular extra channel)
+    fn test_lossy_alpha_encodes() {
+        // Lossy+alpha: VarDCT RGB + modular alpha extra channel
         let pixels = [255u8, 0, 0, 255].repeat(64);
         let result =
             LossyConfig::new(2.0)
                 .with_gaborish(false)
                 .encode(&pixels, 8, 8, PixelLayout::Bgra8);
-        assert!(matches!(
-            result.as_ref().map_err(|e| e.error()),
-            Err(EncodeError::UnsupportedPixelLayout(PixelLayout::Bgra8))
-        ));
+        assert!(
+            result.is_ok(),
+            "BGRA lossy encode failed: {:?}",
+            result.err()
+        );
 
         let result2 = LossyConfig::new(2.0).encode(&pixels, 8, 8, PixelLayout::Rgba8);
-        assert!(matches!(
-            result2.as_ref().map_err(|e| e.error()),
-            Err(EncodeError::UnsupportedPixelLayout(PixelLayout::Rgba8))
-        ));
+        assert!(
+            result2.is_ok(),
+            "RGBA lossy encode failed: {:?}",
+            result2.err()
+        );
     }
 
     #[test]

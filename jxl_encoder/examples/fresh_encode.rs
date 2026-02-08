@@ -40,7 +40,7 @@ fn main() {
     eprintln!("Encoding {}x{}...", width, height);
     let encoder = jxl_encoder::tiny::TinyEncoder::new(1.0);
     let bytes = encoder
-        .encode(width as usize, height as usize, &linear_rgb)
+        .encode(width as usize, height as usize, &linear_rgb, None)
         .expect("Encoding failed");
     eprintln!(
         "Encoded to {} bytes ({:.1}x compression)",

@@ -83,7 +83,7 @@ fn test_rate_control_basic() {
     let encoder = TinyEncoder::new(1.5);
 
     // Encode without rate control
-    let without_rc = encoder.encode(width, height, &linear_rgb).unwrap();
+    let without_rc = encoder.encode(width, height, &linear_rgb, None).unwrap();
 
     // Encode with rate control
     let config = RateControlConfig {

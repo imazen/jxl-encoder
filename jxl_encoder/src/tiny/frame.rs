@@ -351,6 +351,7 @@ pub fn write_frame_header(
     epf_iters: u32,
     enable_noise: bool,
     enable_gaborish: bool,
+    num_extra_channels: usize,
     writer: &mut BitWriter,
 ) -> Result<()> {
     // Flags: SKIP_ADAPTIVE_LF_SMOOTHING (0x80) | optional ENABLE_NOISE (0x01)
@@ -364,11 +365,23 @@ pub fn write_frame_header(
     writer.write(2, 2)?; // flags U64 selector (17 .. 272)
     writer.write(8, flags_data)?; // flags value
     writer.write(2, 0)?; // no upsampling
+
+    // ec_upsampling: one U2S(1,2,4,8) per extra channel
+    for _ in 0..num_extra_channels {
+        writer.write(2, 0)?; // selector 0 = no upsampling (1)
+    }
+
     writer.write(3, x_qm_scale as u64)?;
     writer.write(3, b_qm_scale as u64)?;
     writer.write(2, 0)?; // one pass
     writer.write(1, 0)?; // no custom frame size or origin
     writer.write(2, 0)?; // replace blend mode
+
+    // ec_blending_info: one BlendingInfo per extra channel
+    for _ in 0..num_extra_channels {
+        writer.write(2, 0)?; // mode = Replace (selector 0)
+    }
+
     writer.write(1, 1)?; // last frame
     writer.write(2, 0)?; // no name
 
