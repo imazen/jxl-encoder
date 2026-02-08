@@ -100,6 +100,8 @@ impl EncoderOptions {
 #[doc(hidden)]
 pub struct Encoder {
     options: EncoderOptions,
+    /// ICC profile to embed in the codestream (lossless path).
+    pub(crate) icc_profile: Option<Vec<u8>>,
 }
 
 impl Encoder {
@@ -110,7 +112,10 @@ impl Encoder {
 
     /// Creates a new encoder with custom options.
     pub fn with_options(options: EncoderOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            icc_profile: None,
+        }
     }
 
     /// Encodes an RGB8 image to JXL format.
@@ -222,7 +227,17 @@ impl Encoder {
             }
         }
 
+        // Set want_icc if ICC profile is provided
+        if self.icc_profile.is_some() {
+            file_header.metadata.color_encoding.want_icc = true;
+        }
+
         file_header.write(&mut writer)?;
+
+        // Write ICC profile data after header, before zero pad
+        if let Some(ref icc) = self.icc_profile {
+            crate::tiny::icc_codec::write_icc(icc, &mut writer)?;
+        }
 
         // JXL frame header has #[aligned] attribute, meaning it starts byte-aligned
         writer.zero_pad_to_byte();

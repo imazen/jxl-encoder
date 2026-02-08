@@ -78,10 +78,14 @@ impl TinyEncoder {
         writer.write(1, 0)?; // not all default
         if has_icc {
             writer.write(1, 1)?; // want_icc = true
-        // When want_icc=1, no parametric color fields follow
         } else {
             writer.write(1, 0)?; // want_icc = false
-            writer.write(2, 0)?; // color_space = RGB (0)
+        }
+        // color_space is ALWAYS sent (even when want_icc=1, it affects decoding)
+        writer.write(2, 0)?; // color_space = RGB (0)
+        if !has_icc {
+            // White point, primaries, transfer function, rendering intent
+            // only sent when want_icc=false
             writer.write(2, 1)?; // white_point = D65 (1)
             writer.write(2, 1)?; // primaries = sRGB (1)
             writer.write(1, 0)?; // no gamma (use transfer function)

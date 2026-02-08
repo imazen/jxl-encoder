@@ -900,7 +900,12 @@ impl<'a> EncodeRequest<'a> {
             use_tree_learning: cfg.tree_learning,
             use_squeeze: cfg.squeeze,
         };
-        let encoder = crate::encoder::Encoder::with_options(options);
+        let mut encoder = crate::encoder::Encoder::with_options(options);
+        if let Some(meta) = self.metadata
+            && let Some(icc) = meta.icc_profile
+        {
+            encoder.icc_profile = Some(icc.to_vec());
+        }
         let w = self.width as usize;
         let h = self.height as usize;
 

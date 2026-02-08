@@ -758,7 +758,11 @@ pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
     let code = build_entropy_code_with_options(&tokens, NUM_ICC_CONTEXTS, false, None);
     let code_ref = code.as_entropy_code();
 
-    // Write entropy code header
+    // Write LZ77 header: disabled (1 bit = 0)
+    // The decoder reads LZ77 header before the entropy code, so this must come first.
+    writer.write(1, 0)?;
+
+    // Write entropy code header (context map + prefix codes)
     write_entropy_code(&code_ref, writer)?;
 
     // Write tokens (no LZ77)

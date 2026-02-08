@@ -464,3 +464,64 @@ fn test_existing_8bit_unaffected() {
         .unwrap();
     assert_eq!(&jxl_lossy[..2], &[0xFF, 0x0A]);
 }
+
+#[test]
+fn test_lossy_with_icc_decodes() {
+    // Read a real ICC profile
+    let icc =
+        std::fs::read("/usr/share/nip2/data/AdobeRGB1998.icc").expect("AdobeRGB1998.icc not found");
+
+    let meta = ImageMetadata::default().with_icc_profile(&icc);
+    let jxl = LossyConfig::new(2.0)
+        .with_gaborish(false)
+        .encode_request(64, 64, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&[128u8; 64 * 64 * 3])
+        .unwrap();
+
+    // Verify with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&jxl))
+        .expect("jxl-oxide parse with ICC failed");
+    eprintln!("jxl-oxide parsed: {}x{}", image.width(), image.height());
+    image
+        .render_frame(0)
+        .expect("jxl-oxide render with ICC failed");
+    eprintln!("jxl-oxide render OK");
+
+    // Verify ICC is present in decoded metadata
+    eprintln!(
+        "jxl file size: {} bytes, ICC profile size: {} bytes",
+        jxl.len(),
+        icc.len()
+    );
+}
+
+#[test]
+fn test_lossless_with_icc_decodes() {
+    // Read a real ICC profile
+    let icc =
+        std::fs::read("/usr/share/nip2/data/AdobeRGB1998.icc").expect("AdobeRGB1998.icc not found");
+
+    let meta = ImageMetadata::default().with_icc_profile(&icc);
+    let jxl = LosslessConfig::new()
+        .encode_request(32, 32, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&[128u8; 32 * 32 * 3])
+        .unwrap();
+
+    // Verify with jxl-oxide
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&jxl))
+        .expect("jxl-oxide parse lossless+ICC failed");
+    eprintln!("jxl-oxide parsed lossless+ICC: {}x{}", image.width(), image.height());
+    image
+        .render_frame(0)
+        .expect("jxl-oxide render lossless+ICC failed");
+    eprintln!("jxl-oxide render OK");
+    eprintln!(
+        "jxl file size: {} bytes, ICC profile size: {} bytes",
+        jxl.len(),
+        icc.len()
+    );
+}

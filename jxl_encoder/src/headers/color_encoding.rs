@@ -221,12 +221,7 @@ impl ColorEncoding {
         );
         writer.write_bit(self.want_icc)?;
 
-        if self.want_icc {
-            // ICC profile data would follow (not implemented)
-            return Ok(());
-        }
-
-        // color_space
+        // color_space is ALWAYS written (even when want_icc=true, it affects decoding)
         crate::trace::debug_eprintln!(
             "CENC [bit {}]: color_space = {:?} ({})",
             writer.bits_written(),
@@ -234,6 +229,11 @@ impl ColorEncoding {
             self.color_space as u8
         );
         writer.write(2, self.color_space as u64)?;
+
+        if self.want_icc {
+            // When want_icc=true, white point/primaries/transfer/rendering intent are not written
+            return Ok(());
+        }
 
         // white_point - uses jxl-rs default u2S(0, 1, Bits(4)+2, Bits(6)+18)
         let wp = match self.white_point {
@@ -477,8 +477,8 @@ mod tests {
 
         let mut writer = BitWriter::new();
         enc.write(&mut writer).unwrap();
-        // With want_icc=true, only all_default=0 and want_icc=1 are written
-        assert_eq!(writer.bits_written(), 2);
+        // With want_icc=true: all_default=0 (1), want_icc=1 (1), color_space (2) = 4 bits
+        assert_eq!(writer.bits_written(), 4);
     }
 
     #[test]
