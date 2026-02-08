@@ -13,27 +13,27 @@
 //! references, adaptive quantization, chroma-from-luma, gaborish inverse,
 //! noise synthesis, and butteraugli-guided rate control.
 
-mod ac_context;
-mod ac_group;
-mod ac_strategy;
+pub(crate) mod ac_context;
+pub(crate) mod ac_group;
+pub(crate) mod ac_strategy;
 mod ac_strategy_search;
 mod adaptive_quant;
 mod afv;
 mod bitstream;
 mod block_extract;
-mod chroma_from_luma;
+pub(crate) mod chroma_from_luma;
 pub(crate) mod cluster;
 mod coeff_order;
 pub(crate) mod common;
-mod context_tree;
-mod dc_coding;
+pub(crate) mod context_tree;
+pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
-mod encoder;
+pub(crate) mod encoder;
 #[allow(dead_code)] // Used in upcoming EPF sharpness selection
 pub(crate) mod epf;
-mod frame;
+pub(crate) mod frame;
 mod gaborish;
 pub(crate) mod noise;
 #[cfg(feature = "rate-control")]
