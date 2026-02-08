@@ -339,7 +339,9 @@ pub fn test_lossless_roundtrip(
     height: usize,
     test_name: &str,
 ) -> Result<()> {
-    let encoded = crate::encoder::encode_rgb8(data, width, height)?;
+    let encoded = crate::LosslessConfig::new()
+        .encode(data, width as u32, height as u32, crate::PixelLayout::Rgb8)
+        .map_err(|e| crate::error::Error::InvalidInput(format!("{e}")))?;
 
     // VERIFY we actually used Modular encoding
     assert_encoding_mode(&encoded, EncodingMode::Modular, test_name);
@@ -361,7 +363,9 @@ pub fn test_lossy_roundtrip(
     distance: f32,
     test_name: &str,
 ) -> Result<()> {
-    let encoded = crate::encoder::encode_lossy_rgb8(data, width, height, distance)?;
+    let encoded = crate::LossyConfig::new(distance)
+        .encode(data, width as u32, height as u32, crate::PixelLayout::Rgb8)
+        .map_err(|e| crate::error::Error::InvalidInput(format!("{e}")))?;
 
     // Save for debugging
     let debug_path = format!("/tmp/{}.jxl", test_name);
@@ -389,7 +393,9 @@ pub fn test_lossy_roundtrip_with_quality(
     distance: f32,
     test_name: &str,
 ) -> Result<f64> {
-    let encoded = crate::encoder::encode_lossy_rgb8(data, width, height, distance)?;
+    let encoded = crate::LossyConfig::new(distance)
+        .encode(data, width as u32, height as u32, crate::PixelLayout::Rgb8)
+        .map_err(|e| crate::error::Error::InvalidInput(format!("{e}")))?;
 
     // Save for debugging
     let debug_path = format!("/tmp/{}.jxl", test_name);

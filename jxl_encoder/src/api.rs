@@ -887,47 +887,76 @@ impl<'a> EncodeRequest<'a> {
         cfg: &LosslessConfig,
         pixels: &[u8],
     ) -> core::result::Result<Vec<u8>, EncodeError> {
-        let options = crate::encoder::EncoderOptions {
-            distance: 0.0,
-            effort: cfg.effort,
-            force_modular: true,
-            use_ans: cfg.use_ans,
-            optimize_codes: true,
-            custom_orders: true,
-            enable_noise: false,
-            enable_denoise: false,
-            enable_gaborish: false,
-            use_tree_learning: cfg.tree_learning,
-            use_squeeze: cfg.squeeze,
-        };
-        let mut encoder = crate::encoder::Encoder::with_options(options);
-        if let Some(meta) = self.metadata
-            && let Some(icc) = meta.icc_profile
-        {
-            encoder.icc_profile = Some(icc.to_vec());
-        }
+        use crate::bit_writer::BitWriter;
+        use crate::frame::{FrameEncoder, FrameEncoderOptions};
+        use crate::headers::{ColorEncoding, FileHeader};
+        use crate::modular::channel::ModularImage;
+
         let w = self.width as usize;
         let h = self.height as usize;
 
-        let result = match self.layout {
-            PixelLayout::Rgb8 => encoder.encode_rgb8(pixels, w, h),
-            PixelLayout::Rgba8 => encoder.encode_rgba8(pixels, w, h),
-            PixelLayout::Bgr8 => encoder.encode_rgb8(&bgr_to_rgb(pixels, 3), w, h),
-            PixelLayout::Bgra8 => encoder.encode_rgba8(&bgr_to_rgb(pixels, 4), w, h),
-            PixelLayout::Gray8 => encoder.encode_gray8(pixels, w, h),
-            PixelLayout::Rgb16 => encoder.encode_rgb16_native(pixels, w, h),
-            PixelLayout::Rgba16 => encoder.encode_rgba16_native(pixels, w, h),
-            PixelLayout::Gray16 => encoder.encode_gray16_native(pixels, w, h),
-            PixelLayout::GrayAlpha8 => {
-                return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::GrayAlpha8));
-            }
-            PixelLayout::RgbLinearF32 => {
-                return Err(EncodeError::UnsupportedPixelLayout(
-                    PixelLayout::RgbLinearF32,
-                ));
-            }
+        // Build ModularImage from pixel layout
+        let image = match self.layout {
+            PixelLayout::Rgb8 => ModularImage::from_rgb8(pixels, w, h),
+            PixelLayout::Rgba8 => ModularImage::from_rgba8(pixels, w, h),
+            PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(pixels, 3), w, h),
+            PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(pixels, 4), w, h),
+            PixelLayout::Gray8 => ModularImage::from_gray8(pixels, w, h),
+            PixelLayout::Rgb16 => ModularImage::from_rgb16_native(pixels, w, h),
+            PixelLayout::Rgba16 => ModularImage::from_rgba16_native(pixels, w, h),
+            PixelLayout::Gray16 => ModularImage::from_gray16_native(pixels, w, h),
+            other => return Err(EncodeError::UnsupportedPixelLayout(other)),
+        }
+        .map_err(EncodeError::from)?;
+
+        // Build file header
+        let mut file_header = if image.is_grayscale {
+            FileHeader::new_gray(self.width, self.height)
+        } else if image.has_alpha {
+            FileHeader::new_rgba(self.width, self.height)
+        } else {
+            FileHeader::new_rgb(self.width, self.height)
         };
-        result.map_err(EncodeError::from)
+        if image.bit_depth == 16 {
+            file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
+            for ec in &mut file_header.metadata.extra_channels {
+                ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
+            }
+        }
+        if let Some(meta) = self.metadata
+            && meta.icc_profile.is_some()
+        {
+            file_header.metadata.color_encoding.want_icc = true;
+        }
+
+        // Write codestream
+        let mut writer = BitWriter::new();
+        file_header.write(&mut writer).map_err(EncodeError::from)?;
+        if let Some(meta) = self.metadata
+            && let Some(icc) = meta.icc_profile
+        {
+            crate::tiny::icc_codec::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
+        }
+        writer.zero_pad_to_byte();
+
+        // Encode frame
+        let frame_encoder = FrameEncoder::new(
+            w,
+            h,
+            FrameEncoderOptions {
+                use_modular: true,
+                effort: cfg.effort,
+                use_ans: cfg.use_ans,
+                use_tree_learning: cfg.tree_learning,
+                use_squeeze: cfg.squeeze,
+            },
+        );
+        let color_encoding = ColorEncoding::srgb();
+        frame_encoder
+            .encode_modular(&image, &color_encoding, &mut writer)
+            .map_err(EncodeError::from)?;
+
+        Ok(writer.finish_with_padding())
     }
 
     // ── Lossy path ──────────────────────────────────────────────────────
