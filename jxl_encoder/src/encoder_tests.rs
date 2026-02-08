@@ -3,14 +3,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//! Tests for the encoder module.
-//!
-//! This file is included as a submodule of encoder.rs when running tests.
+//! Tests for the encoder — uses the public LosslessConfig/LossyConfig API.
 
-use super::*;
+use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
 mod tests {
-    use super::*;
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     #[test]
     fn test_encode_small_rgb() {
@@ -22,7 +20,9 @@ mod tests {
             255, 255, 0, // Yellow
         ];
 
-        let encoded = encode_rgb8(&data, 2, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 2, 2, PixelLayout::Rgb8)
+            .unwrap();
 
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -58,7 +58,9 @@ mod tests {
             }
         }
 
-        let encoded = encode_rgb8(&data, 4, 4).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 4, 4, PixelLayout::Rgb8)
+            .unwrap();
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
     }
@@ -68,7 +70,9 @@ mod tests {
         // 4x4 flat gray image
         let data = vec![128u8; 4 * 4 * 3];
 
-        let encoded = encode_rgb8(&data, 4, 4).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 4, 4, PixelLayout::Rgb8)
+            .unwrap();
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 
@@ -81,7 +85,9 @@ mod tests {
         // 2x2 all-black image - should work with minimal zero-everywhere encoding
         let data = vec![0u8; 2 * 2 * 3]; // All zeros
 
-        let encoded = encode_rgb8(&data, 2, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 2, 2, PixelLayout::Rgb8)
+            .unwrap();
 
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -105,7 +111,9 @@ mod tests {
         // 2x2 all-white image - tests single non-zero symbol encoding
         let data = vec![255u8; 2 * 2 * 3]; // All 255
 
-        let encoded = encode_rgb8(&data, 2, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 2, 2, PixelLayout::Rgb8)
+            .unwrap();
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 
         eprintln!("Encoded white 2x2: {} bytes:", encoded.len());
@@ -121,12 +129,13 @@ mod tests {
     }
 
     #[test]
-    fn test_encoder_options() {
-        let options = EncoderOptions::lossless();
-        assert_eq!(options.distance, 0.0);
+    fn test_config_defaults() {
+        let cfg = LosslessConfig::new();
+        assert_eq!(cfg.effort(), 7);
+        assert!(cfg.ans());
 
-        let options = EncoderOptions::lossy(1.0);
-        assert_eq!(options.distance, 1.0);
+        let cfg = LossyConfig::new(1.0);
+        assert_eq!(cfg.distance(), 1.0);
     }
 
     #[test]
@@ -148,7 +157,9 @@ mod tests {
             }
         }
 
-        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        let encoded = LossyConfig::new(1.0)
+            .encode(&data, 8, 8, PixelLayout::Rgb8)
+            .unwrap();
 
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -193,14 +204,16 @@ mod tests {
 }
 
 mod gray_tests {
-    use super::*;
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     #[test]
     fn test_encode_gray_2x2() {
         // 2x2 grayscale with varied values
         let data = vec![0u8, 128, 64, 255];
 
-        let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 2, 2, PixelLayout::Gray8)
+            .unwrap();
 
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -224,7 +237,9 @@ fn test_encode_gray_binary() {
     // 2x2 grayscale with only 0 and 255
     let data = vec![0u8, 255, 0, 255];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_binary.jxl", &encoded).unwrap();
 
     eprintln!("Encoded gray binary 2x2: {} bytes", encoded.len());
@@ -235,7 +250,9 @@ fn test_encode_gray_uniform_128() {
     // 2x2 grayscale all 128
     let data = vec![128u8; 4];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_128.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 128 uniform: {} bytes", encoded.len());
 }
@@ -250,7 +267,9 @@ fn test_encode_rgb_simulated_gray() {
         255, 255, 255, // pixel (1,1) = white
     ];
 
-    let encoded = encode_rgb8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/test_rgb_gray.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB simulated gray: {} bytes", encoded.len());
 }
@@ -260,7 +279,9 @@ fn test_encode_gray_0_and_1() {
     // 2x2 grayscale with only 0 and 1
     let data = vec![0u8, 1, 0, 1];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_01.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 0/1 2x2: {} bytes", encoded.len());
 }
@@ -270,7 +291,9 @@ fn test_encode_gray_0_and_3() {
     // 2x2 grayscale with 0 and 3 (zigzag: 0, 6)
     let data = vec![0u8, 3, 0, 3];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_03.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 0/3 2x2: {} bytes", encoded.len());
 }
@@ -280,7 +303,9 @@ fn test_encode_gray_0_and_7() {
     // 2x2 grayscale with 0 and 7 (zigzag: 0, 14)
     let data = vec![0u8, 7, 0, 7];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_07.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 0/7 2x2: {} bytes", encoded.len());
 }
@@ -290,7 +315,9 @@ fn test_encode_gray_0_and_15() {
     // 2x2 grayscale with 0 and 15 (zigzag: 0, 30)
     let data = vec![0u8, 15, 0, 15];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_015.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 0/15 2x2: {} bytes", encoded.len());
 }
@@ -300,7 +327,9 @@ fn test_encode_gray_0_and_4() {
     // 2x2 grayscale with 0 and 4 (zigzag: 0, 8) - boundary: al_size=9, max_bits=4
     let data = vec![0u8, 4, 0, 4];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_04.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 0/4 2x2: {} bytes", encoded.len());
 }
@@ -310,7 +339,9 @@ fn test_encode_gray_1_and_2() {
     // 2x2 grayscale with 1 and 2 (zigzag: 2, 4) - al_size=5, max_bits=3
     let data = vec![1u8, 2, 1, 2];
 
-    let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 2, 2, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_12.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 1/2 2x2: {} bytes", encoded.len());
 }
@@ -320,7 +351,9 @@ fn test_encode_gray_4x4_pattern() {
     // 4x4 grayscale with 4 unique values (max for simple Huffman)
     let data: Vec<u8> = vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
 
-    let encoded = Encoder::new().encode_gray8(&data, 4, 4).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 4, 4, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_4x4.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 4x4 pattern: {} bytes", encoded.len());
 }
@@ -330,7 +363,9 @@ fn test_encode_gray_16_symbols() {
     // 4x4 gradient with 16 unique values - now works with full Huffman
     let data: Vec<u8> = (0u8..16).collect();
 
-    let encoded = Encoder::new().encode_gray8(&data, 4, 4).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 4, 4, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_16sym.jxl", &encoded).unwrap();
     eprintln!("Encoded 16-symbol gray 4x4: {} bytes", encoded.len());
 
@@ -343,7 +378,9 @@ fn test_encode_gray_256_symbols() {
     // 16x16 gradient with 256 unique values
     let data: Vec<u8> = (0u8..=255).collect();
 
-    let encoded = Encoder::new().encode_gray8(&data, 16, 16).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 16, 16, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_256sym.jxl", &encoded).unwrap();
     eprintln!("Encoded 256-symbol gray 16x16: {} bytes", encoded.len());
 
@@ -361,13 +398,15 @@ fn test_encode_gray_8x8_pattern() {
         }
     }
 
-    let encoded = Encoder::new().encode_gray8(&data, 8, 8).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 8, 8, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/test_gray_8x8.jxl", &encoded).unwrap();
     eprintln!("Encoded gray 8x8 checkerboard: {} bytes", encoded.len());
 }
 
 mod corpus_tests {
-    use super::*;
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
 
@@ -380,27 +419,37 @@ mod corpus_tests {
         let encoded = match img.color() {
             image::ColorType::L8 => {
                 let gray = img.to_luma8();
-                Encoder::new()
-                    .encode_gray8(gray.as_raw(), width, height)
+                LosslessConfig::new()
+                    .encode(
+                        gray.as_raw(),
+                        width as u32,
+                        height as u32,
+                        PixelLayout::Gray8,
+                    )
                     .map_err(|e| format!("Encode failed: {}", e))?
             }
             image::ColorType::Rgb8 => {
                 let rgb = img.to_rgb8();
-                Encoder::new()
-                    .encode_rgb8(rgb.as_raw(), width, height)
+                LosslessConfig::new()
+                    .encode(rgb.as_raw(), width as u32, height as u32, PixelLayout::Rgb8)
                     .map_err(|e| format!("Encode failed: {}", e))?
             }
             image::ColorType::Rgba8 => {
                 let rgba = img.to_rgba8();
-                Encoder::new()
-                    .encode_rgba8(rgba.as_raw(), width, height)
+                LosslessConfig::new()
+                    .encode(
+                        rgba.as_raw(),
+                        width as u32,
+                        height as u32,
+                        PixelLayout::Rgba8,
+                    )
                     .map_err(|e| format!("Encode failed: {}", e))?
             }
             other => {
                 // Convert to RGB8 for other formats
                 let rgb = img.to_rgb8();
-                Encoder::new()
-                    .encode_rgb8(rgb.as_raw(), width, height)
+                LosslessConfig::new()
+                    .encode(rgb.as_raw(), width as u32, height as u32, PixelLayout::Rgb8)
                     .map_err(|e| format!("Encode failed for {:?}: {}", other, e))?
             }
         };
@@ -421,7 +470,9 @@ mod corpus_tests {
             let img = image::open(&path).unwrap();
             let gray = img.to_luma8();
             let (w, h) = (img.width() as usize, img.height() as usize);
-            let encoded = Encoder::new().encode_gray8(gray.as_raw(), w, h).unwrap();
+            let encoded = LosslessConfig::new()
+                .encode(gray.as_raw(), w as u32, h as u32, PixelLayout::Gray8)
+                .unwrap();
             std::fs::write("/tmp/pngsuite_gray.jxl", &encoded).unwrap();
             eprintln!("basi0g08.png: {}x{} -> {} bytes", w, h, encoded.len());
         } else {
@@ -437,7 +488,9 @@ mod corpus_tests {
             let img = image::open(&path).unwrap();
             let rgb = img.to_rgb8();
             let (w, h) = (img.width() as usize, img.height() as usize);
-            let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
+            let encoded = LosslessConfig::new()
+                .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
+                .unwrap();
             std::fs::write("/tmp/pngsuite_rgb.jxl", &encoded).unwrap();
             eprintln!("basi2c08.png: {}x{} -> {} bytes", w, h, encoded.len());
         } else {
@@ -455,7 +508,9 @@ mod corpus_tests {
                     // Save for manual verification
                     let img = image::open(&path).unwrap();
                     let rgb = img.to_rgb8();
-                    let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
+                    let encoded = LosslessConfig::new()
+                        .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
+                        .unwrap();
                     std::fs::write("/tmp/kodak1.jxl", &encoded).unwrap();
                 }
                 Err(e) => panic!("{}", e),
@@ -524,7 +579,9 @@ fn test_encode_rgb_8x8() {
         }
     }
 
-    let encoded = Encoder::new().encode_rgb8(&data, 8, 8).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 8, 8, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_8x8.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 8x8: {} bytes", encoded.len());
     assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -541,7 +598,9 @@ fn test_encode_gray_8x8() {
         }
     }
 
-    let encoded = Encoder::new().encode_gray8(&data, 8, 8).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 8, 8, PixelLayout::Gray8)
+        .unwrap();
     std::fs::write("/tmp/gray_8x8.jxl", &encoded).unwrap();
     eprintln!("Encoded Gray 8x8: {} bytes", encoded.len());
 }
@@ -565,7 +624,9 @@ fn test_encode_rgb_4x4() {
         }
     }
 
-    let encoded = Encoder::new().encode_rgb8(&data, 4, 4).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 4, 4, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_4x4.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 4x4: {} bytes", encoded.len());
 }
@@ -588,7 +649,9 @@ fn test_encode_rgb_6x6() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 6, 6).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 6, 6, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_6x6.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 6x6: {} bytes", encoded.len());
 }
@@ -610,7 +673,9 @@ fn test_encode_rgb_7x7() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 7, 7).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 7, 7, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_7x7.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 7x7: {} bytes", encoded.len());
 }
@@ -632,7 +697,9 @@ fn test_encode_rgb_9x9() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 9, 9).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 9, 9, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_9x9.jxl", &encoded).unwrap();
 }
 
@@ -653,7 +720,9 @@ fn test_encode_rgb_16x16() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 16, 16).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 16, 16, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_16x16.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 16x16: {} bytes", encoded.len());
 }
@@ -675,7 +744,9 @@ fn test_encode_rgb_24x24() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 24, 24).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 24, 24, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_24x24.jxl", &encoded).unwrap();
 }
 
@@ -696,7 +767,9 @@ fn test_encode_rgb_10x10() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 10, 10).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 10, 10, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_10x10.jxl", &encoded).unwrap();
 }
 
@@ -717,7 +790,9 @@ fn test_encode_rgb_32x32() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 32, 32).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 32, 32, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_32x32.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 32x32: {} bytes", encoded.len());
 }
@@ -739,7 +814,9 @@ fn test_encode_rgb_64x64() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 64, 64).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 64, 64, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_64x64.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 64x64: {} bytes", encoded.len());
 }
@@ -762,7 +839,9 @@ fn test_encode_rgb_256x256() {
             }
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 256, 256).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 256, 256, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_256x256.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB 256x256: {} bytes", encoded.len());
 }
@@ -798,8 +877,8 @@ fn test_encode_rgb_irregular_dimensions() {
                 }
             }
         }
-        let encoded = Encoder::new()
-            .encode_rgb8(&data, w, h)
+        let encoded = LosslessConfig::new()
+            .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{}x{} failed to encode: {}", w, h, e));
 
         let path = format!("/tmp/rgb_{}x{}.jxl", w, h);
@@ -832,13 +911,15 @@ fn test_encode_rgb_gradient() {
             data[idx + 2] = ((x + y) * 4) as u8; // B varies with x+y
         }
     }
-    let encoded = Encoder::new().encode_rgb8(&data, 32, 32).unwrap();
+    let encoded = LosslessConfig::new()
+        .encode(&data, 32, 32, PixelLayout::Rgb8)
+        .unwrap();
     std::fs::write("/tmp/rgb_gradient_32x32.jxl", &encoded).unwrap();
     eprintln!("Encoded RGB gradient 32x32: {} bytes", encoded.len());
 }
 
 mod decoder_validation {
-    use super::*;
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
     use std::process::Command;
 
     /// Path to djxl from libjxl for dual-decoder validation
@@ -860,8 +941,8 @@ mod decoder_validation {
         assert_eq!(original.len(), width * height * 3);
 
         // Encode
-        let encoded = Encoder::new()
-            .encode_rgb8(original, width, height)
+        let encoded = LosslessConfig::new()
+            .encode(original, width as u32, height as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Save to file for debugging
@@ -965,8 +1046,8 @@ mod decoder_validation {
         assert_eq!(original.len(), width * height);
 
         // Encode
-        let encoded = Encoder::new()
-            .encode_gray8(original, width, height)
+        let encoded = LosslessConfig::new()
+            .encode(original, width as u32, height as u32, PixelLayout::Gray8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Decode with jxl-oxide
@@ -1039,7 +1120,8 @@ mod decoder_validation {
         assert_eq!(original.len(), width * height * 3);
 
         // Encode lossy
-        let encoded = encode_lossy_rgb8(original, width, height, distance)
+        let encoded = LossyConfig::new(distance)
+            .encode(original, width as u32, height as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Decode with jxl-oxide
@@ -1184,7 +1266,9 @@ mod decoder_validation {
     fn test_decode_simple_gray() {
         // 2x2 grayscale with values [0, 1, 0, 1]
         let data = vec![0u8, 1, 0, 1];
-        let encoded = Encoder::new().encode_gray8(&data, 2, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 2, 2, PixelLayout::Gray8)
+            .unwrap();
 
         // Try to decode with jxl-oxide
         let decoder = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
@@ -1234,7 +1318,9 @@ mod decoder_validation {
             }
         }
 
-        let encoded = Encoder::new().encode_rgb8(&data, 8, 8).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 8, 8, PixelLayout::Rgb8)
+            .unwrap();
         eprintln!("Lossless RGB 8x8 encoded to {} bytes", encoded.len());
 
         // Try to decode with jxl-oxide
@@ -1285,7 +1371,9 @@ mod decoder_validation {
             }
         }
 
-        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        let encoded = LossyConfig::new(1.0)
+            .encode(&data, 8, 8, PixelLayout::Rgb8)
+            .unwrap();
         eprintln!("Lossy 8x8 encoded to {} bytes", encoded.len());
 
         // Try to decode with jxl-oxide
@@ -1333,7 +1421,9 @@ mod decoder_validation {
             data[i * 3 + 2] = 100; // B
         }
 
-        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        let encoded = LossyConfig::new(1.0)
+            .encode(&data, 8, 8, PixelLayout::Rgb8)
+            .unwrap();
         eprintln!("Solid color 8x8 encoded to {} bytes", encoded.len());
 
         // Decode with jxl-oxide
@@ -1371,7 +1461,9 @@ mod decoder_validation {
         }
 
         for distance in [0.5, 1.0, 2.0, 4.0] {
-            let encoded = encode_lossy_rgb8(&data, 8, 8, distance).unwrap();
+            let encoded = LossyConfig::new(distance)
+                .encode(&data, 8, 8, PixelLayout::Rgb8)
+                .unwrap();
             eprintln!("Distance {}: {} bytes", distance, encoded.len());
 
             // Verify decodes correctly
@@ -1406,7 +1498,9 @@ mod decoder_validation {
         let rgb = img.to_rgb8();
         let (w, h) = (img.width() as usize, img.height() as usize);
 
-        let encoded = Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
+            .unwrap();
         eprintln!(
             "basn2c08.png {}x{} encoded to {} bytes",
             w,
@@ -1457,7 +1551,9 @@ mod decoder_validation {
             }
         }
 
-        let encoded = encode_lossy_rgb8(&data, 512, 512, 2.0).unwrap();
+        let encoded = LossyConfig::new(2.0)
+            .encode(&data, 512, 512, PixelLayout::Rgb8)
+            .unwrap();
         eprintln!("Multi-group 512x512 encoded to {} bytes", encoded.len());
 
         // Verify decodes correctly with jxl-oxide
@@ -1498,7 +1594,9 @@ mod decoder_validation {
     #[test]
     fn test_dual_decode_lossless_gray() {
         let data = vec![0u8, 64, 128, 192, 255, 100, 50, 200];
-        let encoded = Encoder::new().encode_gray8(&data, 4, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 4, 2, PixelLayout::Gray8)
+            .unwrap();
         validate_dual_decoder(&encoded, 4, 2, "lossless_gray_4x2");
     }
 
@@ -1514,7 +1612,9 @@ mod decoder_validation {
                 data[idx + 2] = 128; // B constant
             }
         }
-        let encoded = Encoder::new().encode_rgb8(&data, 8, 8).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 8, 8, PixelLayout::Rgb8)
+            .unwrap();
         validate_dual_decoder(&encoded, 8, 8, "lossless_rgb_8x8");
     }
 
@@ -1531,7 +1631,9 @@ mod decoder_validation {
                 data[idx + 2] = ((y * 2) % 256) as u8;
             }
         }
-        let encoded = encode_lossy_rgb8(&data, 16, 16, 1.0).unwrap();
+        let encoded = LossyConfig::new(1.0)
+            .encode(&data, 16, 16, PixelLayout::Rgb8)
+            .unwrap();
         // Save for debugging
         std::fs::write("/tmp/test_16x16_lossy.jxl", &encoded).unwrap();
         eprintln!("Saved {} bytes to /tmp/test_16x16_lossy.jxl", encoded.len());
@@ -1563,7 +1665,9 @@ mod decoder_validation {
             data[i * 3 + 1] = 100;
             data[i * 3 + 2] = 50;
         }
-        let encoded = Encoder::new().encode_rgb8(&data, 32, 32).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 32, 32, PixelLayout::Rgb8)
+            .unwrap();
         validate_dual_decoder(&encoded, 32, 32, "solid_color_32x32");
     }
 
@@ -1585,7 +1689,9 @@ mod decoder_validation {
                 }
             }
         }
-        let encoded = Encoder::new().encode_rgb8(&data, 16, 16).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 16, 16, PixelLayout::Rgb8)
+            .unwrap();
         validate_dual_decoder(&encoded, 16, 16, "checkerboard_16x16");
     }
 
@@ -1604,7 +1710,9 @@ mod decoder_validation {
         }
 
         for distance in [0.5, 1.0, 2.0, 4.0] {
-            let encoded = encode_lossy_rgb8(&data, 8, 8, distance).unwrap();
+            let encoded = LossyConfig::new(distance)
+                .encode(&data, 8, 8, PixelLayout::Rgb8)
+                .unwrap();
             // VarDCT validated against jxl-oxide only
             let oxide_result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
             assert!(
@@ -1641,7 +1749,9 @@ mod decoder_validation {
                     data[idx + 2] = 128;
                 }
             }
-            let encoded = Encoder::new().encode_rgb8(&data, w, h).unwrap();
+            let encoded = LosslessConfig::new()
+                .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+                .unwrap();
             validate_dual_decoder(
                 &encoded,
                 w as u32,
@@ -1666,11 +1776,15 @@ mod decoder_validation {
             }
         }
         // Test lossless (modular) with dual-decoder
-        let encoded = Encoder::new().encode_rgb8(&data, 256, 256).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 256, 256, PixelLayout::Rgb8)
+            .unwrap();
         validate_dual_decoder(&encoded, 256, 256, "multi_group_256x256_lossless");
 
         // Also test lossy with jxl-oxide only
-        let lossy_encoded = encode_lossy_rgb8(&data, 256, 256, 2.0).unwrap();
+        let lossy_encoded = LossyConfig::new(2.0)
+            .encode(&data, 256, 256, PixelLayout::Rgb8)
+            .unwrap();
         let oxide_result =
             jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&lossy_encoded));
         assert!(
@@ -1697,7 +1811,9 @@ mod decoder_validation {
             }
         }
 
-        let encoded = Encoder::new().encode_rgb8(&data, 300, 300).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 300, 300, PixelLayout::Rgb8)
+            .unwrap();
 
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -1732,7 +1848,9 @@ mod decoder_validation {
             }
         }
 
-        let encoded = Encoder::new().encode_rgb8(&data, 512, 512).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 512, 512, PixelLayout::Rgb8)
+            .unwrap();
 
         // Check JXL signature
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
@@ -1776,10 +1894,14 @@ mod decoder_validation {
 
             let encoded = if is_gray {
                 let gray = img.to_luma8();
-                Encoder::new().encode_gray8(gray.as_raw(), w, h).unwrap()
+                LosslessConfig::new()
+                    .encode(gray.as_raw(), w as u32, h as u32, PixelLayout::Gray8)
+                    .unwrap()
             } else {
                 let rgb = img.to_rgb8();
-                Encoder::new().encode_rgb8(rgb.as_raw(), w, h).unwrap()
+                LosslessConfig::new()
+                    .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
+                    .unwrap()
             };
 
             validate_dual_decoder(
@@ -1805,7 +1927,9 @@ mod decoder_validation {
             255, 255, 255, // W
         ];
 
-        let encoded = Encoder::new().encode_rgb8(&data, 2, 2).unwrap();
+        let encoded = LosslessConfig::new()
+            .encode(&data, 2, 2, PixelLayout::Rgb8)
+            .unwrap();
         eprintln!("Encoded {} bytes", encoded.len());
 
         let image = jxl_oxide::JxlImage::builder()
@@ -2034,7 +2158,7 @@ mod decoder_validation {
 /// These tests compare SSIMULACRA2 scores at the same distance values.
 #[cfg(test)]
 mod quality_comparison_tests {
-    use crate::encoder::encode_lossy_rgb8;
+    use crate::{LossyConfig, PixelLayout};
     use fast_ssim2::{Rgb, compute_frame_ssimulacra2};
     use std::process::Command;
     use yuvxyb::{ColorPrimaries, TransferCharacteristic};
@@ -2140,9 +2264,11 @@ mod quality_comparison_tests {
         height: usize,
         distance: f32,
     ) -> Option<Vec<u8>> {
-        use crate::encoder::encode_lossy_rgb8;
+        use crate::{LossyConfig, PixelLayout};
 
-        let encoded = encode_lossy_rgb8(data, width, height, distance).ok()?;
+        let encoded = LossyConfig::new(distance)
+            .encode(data, width as u32, height as u32, PixelLayout::Rgb8)
+            .ok()?;
 
         // Decode with jxl-oxide
         let img = jxl_oxide::JxlImage::builder()
@@ -2174,10 +2300,11 @@ mod quality_comparison_tests {
         height: usize,
         distance: f32,
     ) -> (Option<usize>, Option<usize>) {
-        use crate::encoder::encode_lossy_rgb8;
+        use crate::{LossyConfig, PixelLayout};
 
         // Our encoder size
-        let our_size = encode_lossy_rgb8(data, width, height, distance)
+        let our_size = LossyConfig::new(distance)
+            .encode(data, width as u32, height as u32, PixelLayout::Rgb8)
             .ok()
             .map(|e| e.len());
 
@@ -2408,7 +2535,9 @@ mod quality_comparison_tests {
         }
 
         // Encode with lossy VarDCT
-        let encoded = encode_lossy_rgb8(&data, 8, 8, 1.0).unwrap();
+        let encoded = LossyConfig::new(1.0)
+            .encode(&data, 8, 8, PixelLayout::Rgb8)
+            .unwrap();
         std::fs::write("/tmp/test_hgrad_orientation.jxl", &encoded).unwrap();
 
         // Decode with jxl-oxide
@@ -2472,7 +2601,7 @@ mod quality_comparison_tests {
 /// and that butteraugli scores are reasonable for the encoder distance.
 #[cfg(test)]
 mod dual_decoder_butteraugli_tests {
-    use crate::encoder::encode_lossy_rgb8;
+    use crate::{LossyConfig, PixelLayout};
     use butteraugli::{ButteraugliParams, butteraugli};
     use imgref::Img;
     use rgb::RGB8;
@@ -2626,7 +2755,8 @@ mod dual_decoder_butteraugli_tests {
             .iter()
             .map(|&distance| {
                 // Encode
-                let encoded = encode_lossy_rgb8(&original, width, height, distance)
+                let encoded = LossyConfig::new(distance)
+                    .encode(&original, width as u32, height as u32, PixelLayout::Rgb8)
                     .map_err(|e| format!("{} d={}: encode error: {:?}", image_name, distance, e))?;
 
                 // Decode with both decoders
@@ -2830,8 +2960,9 @@ mod dual_decoder_butteraugli_tests {
         let distances = [1.0f32, 2.0];
 
         for distance in distances {
-            let encoded =
-                encode_lossy_rgb8(&original, width, height, distance).expect("Encode failed");
+            let encoded = LossyConfig::new(distance)
+                .encode(&original, width as u32, height as u32, PixelLayout::Rgb8)
+                .expect("Encode failed");
 
             let (oxide_decoded, _, _) =
                 decode_with_oxide(&encoded).expect("jxl-oxide decode failed");
@@ -3000,7 +3131,12 @@ mod dual_decoder_butteraugli_tests {
             new_tests += 1;
 
             // Encode
-            let encoded = match encode_lossy_rgb8(&original, width, height, 1.0) {
+            let encoded = match LossyConfig::new(1.0).encode(
+                &original,
+                width as u32,
+                height as u32,
+                PixelLayout::Rgb8,
+            ) {
                 Ok(data) => {
                     encode_ok += 1;
                     data
@@ -3152,7 +3288,12 @@ mod dual_decoder_butteraugli_tests {
             };
 
             // Encode at distance 1.0
-            let Ok(encoded) = encode_lossy_rgb8(&original, width, height, 1.0) else {
+            let Ok(encoded) = LossyConfig::new(1.0).encode(
+                &original,
+                width as u32,
+                height as u32,
+                PixelLayout::Rgb8,
+            ) else {
                 println!("{:<50} Encode error", sample);
                 continue;
             };
@@ -3200,7 +3341,9 @@ mod dual_decoder_butteraugli_tests {
         println!("Loaded {}x{} image", width, height);
 
         // Encode
-        let encoded = encode_lossy_rgb8(&original, width, height, 1.0).expect("Encode failed");
+        let encoded = LossyConfig::new(1.0)
+            .encode(&original, width as u32, height as u32, PixelLayout::Rgb8)
+            .expect("Encode failed");
 
         // Save JXL
         std::fs::write("/tmp/broken.jxl", &encoded).unwrap();
@@ -3258,7 +3401,9 @@ mod dual_decoder_butteraugli_tests {
         println!("Loaded frymire.png: {}x{}", width, height);
 
         // Encode at distance 1.0
-        let encoded = encode_lossy_rgb8(&original, width, height, 1.0).expect("Encode failed");
+        let encoded = LossyConfig::new(1.0)
+            .encode(&original, width as u32, height as u32, PixelLayout::Rgb8)
+            .expect("Encode failed");
         println!(
             "Encoded: {} bytes ({:.2} bpp)",
             encoded.len(),
@@ -3337,7 +3482,7 @@ mod dual_decoder_butteraugli_tests {
 }
 
 mod tree_learning_tests {
-    use crate::encoder::{Encoder, EncoderOptions};
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     /// Helper: encode RGB with tree learning enabled, decode with jxl-rs, verify lossless.
     fn validate_tree_learning_roundtrip_rgb(
@@ -3348,16 +3493,9 @@ mod tree_learning_tests {
     ) {
         assert_eq!(original.len(), width * height * 3);
 
-        let options = EncoderOptions {
-            distance: 0.0,
-            force_modular: true,
-            use_ans: true,
-            use_tree_learning: true,
-            ..Default::default()
-        };
-        let encoder = Encoder::with_options(options);
-        let encoded = encoder
-            .encode_rgb8(original, width, height)
+        let encoded = LosslessConfig::new()
+            .with_tree_learning(true)
+            .encode(original, width as u32, height as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         let path = format!("/tmp/{}.jxl", test_name);
@@ -3426,16 +3564,9 @@ mod tree_learning_tests {
     ) {
         assert_eq!(original.len(), width * height);
 
-        let options = EncoderOptions {
-            distance: 0.0,
-            force_modular: true,
-            use_ans: true,
-            use_tree_learning: true,
-            ..Default::default()
-        };
-        let encoder = Encoder::with_options(options);
-        let encoded = encoder
-            .encode_gray8(original, width, height)
+        let encoded = LosslessConfig::new()
+            .with_tree_learning(true)
+            .encode(original, width as u32, height as u32, PixelLayout::Gray8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         let path = format!("/tmp/{}.jxl", test_name);
@@ -3668,8 +3799,8 @@ mod tree_learning_tests {
 
 /// Validate palette encoding roundtrip: encode → decode with jxl-rs → pixel-exact match.
 fn validate_palette_roundtrip_rgb(data: &[u8], width: usize, height: usize, test_name: &str) {
-    let encoded = Encoder::new()
-        .encode_rgb8(data, width, height)
+    let encoded = LosslessConfig::new()
+        .encode(data, width as u32, height as u32, PixelLayout::Rgb8)
         .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
     let path = format!("/mnt/v/output/jxl-encoder-rs/palette/{}.jxl", test_name);
@@ -3786,7 +3917,7 @@ fn test_palette_roundtrip_64x64() {
 /// Uses Encoder pipeline with use_squeeze=true, jxl-rs to decode.
 #[test]
 fn test_squeeze_roundtrip_gray_16x16() {
-    use crate::encoder::{Encoder, EncoderOptions};
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     let mut data = vec![0u8; 16 * 16];
     for y in 0..16 {
@@ -3795,12 +3926,10 @@ fn test_squeeze_roundtrip_gray_16x16() {
         }
     }
 
-    let opts = EncoderOptions {
-        use_squeeze: true,
-        ..EncoderOptions::lossless()
-    };
-    let encoder = Encoder::with_options(opts);
-    let bytes = encoder.encode_gray8(&data, 16, 16).unwrap();
+    let bytes = LosslessConfig::new()
+        .with_squeeze(true)
+        .encode(&data, 16, 16, PixelLayout::Gray8)
+        .unwrap();
 
     let path = "/mnt/v/output/jxl-encoder-rs/squeeze/squeeze_gray_16x16.jxl";
     let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/squeeze/");
@@ -3844,7 +3973,7 @@ fn test_squeeze_roundtrip_gray_16x16() {
 /// Squeeze roundtrip for RGB 32x32 image.
 #[test]
 fn test_squeeze_roundtrip_rgb_32x32() {
-    use crate::encoder::{Encoder, EncoderOptions};
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     let mut data = vec![0u8; 32 * 32 * 3];
     for y in 0..32 {
@@ -3856,12 +3985,9 @@ fn test_squeeze_roundtrip_rgb_32x32() {
         }
     }
 
-    let opts = EncoderOptions {
-        use_squeeze: true,
-        ..EncoderOptions::lossless()
-    };
-    let bytes = Encoder::with_options(opts)
-        .encode_rgb8(&data, 32, 32)
+    let bytes = LosslessConfig::new()
+        .with_squeeze(true)
+        .encode(&data, 32, 32, PixelLayout::Rgb8)
         .unwrap();
 
     let path = "/mnt/v/output/jxl-encoder-rs/squeeze/squeeze_rgb_32x32.jxl";
@@ -3902,7 +4028,7 @@ fn test_squeeze_roundtrip_rgb_32x32() {
 /// Squeeze roundtrip for larger 128x128 gray image.
 #[test]
 fn test_squeeze_roundtrip_gray_128x128() {
-    use crate::encoder::{Encoder, EncoderOptions};
+    use crate::{LosslessConfig, LossyConfig, PixelLayout};
 
     let mut data = vec![0u8; 128 * 128];
     for y in 0..128 {
@@ -3911,12 +4037,9 @@ fn test_squeeze_roundtrip_gray_128x128() {
         }
     }
 
-    let opts = EncoderOptions {
-        use_squeeze: true,
-        ..EncoderOptions::lossless()
-    };
-    let bytes = Encoder::with_options(opts)
-        .encode_gray8(&data, 128, 128)
+    let bytes = LosslessConfig::new()
+        .with_squeeze(true)
+        .encode(&data, 128, 128, PixelLayout::Gray8)
         .unwrap();
     eprintln!("Squeeze gray 128x128: {} bytes", bytes.len());
 
