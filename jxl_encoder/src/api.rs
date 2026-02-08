@@ -498,6 +498,20 @@ impl LosslessConfig {
 
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
+/// Return the default butteraugli iteration count for a given effort level.
+///
+/// Matches libjxl's effort gating:
+/// - effort 7 (Squirrel) and below: 0 (no butteraugli loop)
+/// - effort 8 (Kitten): 2 iterations
+/// - effort 9+ (Tortoise): 4 iterations
+fn butteraugli_iters_for_effort(effort: u8) -> u32 {
+    match effort {
+        0..=7 => 0,
+        8 => 2,
+        _ => 4,
+    }
+}
+
 /// Lossy (VarDCT) encoding configuration.
 ///
 /// No `Default` — distance/quality is a required choice.
@@ -516,14 +530,17 @@ pub struct LossyConfig {
     force_strategy: Option<u8>,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters: u32,
+    #[cfg(feature = "butteraugli-loop")]
+    butteraugli_iters_explicit: bool,
 }
 
 impl LossyConfig {
     /// Create with butteraugli distance (1.0 = high quality).
     pub fn new(distance: f32) -> Self {
+        let effort = 7;
         Self {
             distance,
-            effort: 7,
+            effort,
             use_ans: true,
             gaborish: true,
             noise: false,
@@ -534,7 +551,9 @@ impl LossyConfig {
             lz77_method: Lz77Method::Greedy,
             force_strategy: None,
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: 2,
+            butteraugli_iters: butteraugli_iters_for_effort(effort),
+            #[cfg(feature = "butteraugli-loop")]
+            butteraugli_iters_explicit: false,
         }
     }
 
@@ -545,8 +564,15 @@ impl LossyConfig {
     }
 
     /// Set effort level (1–10).
+    ///
+    /// Also adjusts butteraugli iterations to match libjxl's effort gating,
+    /// unless [`with_butteraugli_iters`](Self::with_butteraugli_iters) was called explicitly.
     pub fn with_effort(mut self, effort: u8) -> Self {
         self.effort = effort;
+        #[cfg(feature = "butteraugli-loop")]
+        if !self.butteraugli_iters_explicit {
+            self.butteraugli_iters = butteraugli_iters_for_effort(effort);
+        }
         self
     }
 
@@ -607,11 +633,14 @@ impl LossyConfig {
         self
     }
 
-    /// Set butteraugli quantization loop iterations (default: 2).
+    /// Set butteraugli quantization loop iterations explicitly.
+    ///
+    /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
         self.butteraugli_iters = n;
+        self.butteraugli_iters_explicit = true;
         self
     }
 

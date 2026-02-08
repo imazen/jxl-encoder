@@ -288,7 +288,7 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0xc0cebf489b3c2530,
+        0xfd9fa46d8584f85a, // Updated: butteraugli default off (effort 7 → 0 iters)
     );
 }
 
@@ -307,7 +307,7 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0x0c59aee426b21bff,
-        0x90e446d7cff75bda,
+        0xad077b38356254f1, // Updated: butteraugli default off
     );
 }
 
@@ -326,7 +326,7 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0xc5c1d402949b996b,
-        0xcb8e997fe3c1912b,
+        0x7cd8e8c92b41990a, // Updated: butteraugli default off
     );
 }
 
@@ -345,7 +345,7 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0x5b0d878403288983,
-        0x9b0ad1ebd2f34406,
+        0x9d48df98b1a5e106, // Updated: butteraugli default off
     );
 }
 
@@ -364,7 +364,7 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xc289a2241b87a923,
-        0x897e155e2c8b8567,
+        0x51de050955f10d01, // Updated: butteraugli default off
     );
 }
 
@@ -384,7 +384,7 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0x12119347a6f78de5,
+        0xaeab6f98590e9d79, // Updated: butteraugli default off
     );
 }
 
@@ -404,7 +404,7 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0x214681bfb19d71ad,
+        0xdd19a7aba6cce46a, // Updated: butteraugli default off
     );
 }
 
@@ -424,7 +424,7 @@ fn lossy_with_noise() {
         false,
         false,
         0x0c59aee426b21bff,
-        0x90e446d7cff75bda,
+        0xad077b38356254f1, // Updated: butteraugli default off
     );
 }
 
@@ -444,7 +444,7 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0xbf2fe6c2ace9fd7f,
+        0xa5e392b5ab87c192, // Updated: butteraugli default off
     );
 }
 
@@ -464,7 +464,7 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0xc0cebf489b3c2530,
+        0xfd9fa46d8584f85a, // Updated: butteraugli default off
     );
 }
 
@@ -504,7 +504,7 @@ fn lossy_force_dct8() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0xa626ba5dee783fa3,
+        0x3412848bb6745bee, // Updated: butteraugli default off
     );
 }
 
@@ -524,7 +524,7 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0x42628d75a26df619,
+        0xc7897f503dd423ca, // Updated: butteraugli default off
     );
 }
 
@@ -629,7 +629,7 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0x0c59aee426b21bff,
-        0x90e446d7cff75bda,
+        0xad077b38356254f1, // Updated: butteraugli default off
     );
 }
 
@@ -650,7 +650,7 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0x0c59aee426b21bff,
-        0x90e446d7cff75bda,
+        0xad077b38356254f1, // Updated: butteraugli default off
     );
 }
 
@@ -669,7 +669,7 @@ fn lossy_distance_05() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0x2bca92a431e8aecc,
+        0xc0af91b28caa0f4a, // Updated: butteraugli default off
     );
 }
 
@@ -688,7 +688,7 @@ fn lossy_distance_3() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0x93ba66fe3a02e672,
+        0xa5bb7ab1f9800074, // Updated: butteraugli default off
     );
 }
 
@@ -736,7 +736,7 @@ fn lossy_bgr8() {
         false,
         false,
         0x67432d0a6b4c4707,
-        0x37f83dd36b04918f,
+        0x4a2f12344dc27ddd, // Updated: butteraugli default off
     );
 }
 
