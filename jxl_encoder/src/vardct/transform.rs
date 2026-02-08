@@ -303,6 +303,24 @@ impl VarDctEncoder {
         const MAX_BLOCK_SIZE: usize = 4096;
         let mut dct_scratch: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; MAX_BLOCK_SIZE]);
 
+        // Pre-compute zigzag orders for error diffusion (avoids per-block Vec allocation).
+        // Index by (cx, cy) pair. Only 7 distinct pairs across all strategies.
+        use super::coeff_order::natural_coeff_order;
+        let zigzag_cache: Vec<(usize, usize, Vec<u32>)> = if self.error_diffusion {
+            [(1, 1), (2, 1), (2, 2), (4, 2), (4, 4), (8, 4), (8, 8)]
+                .iter()
+                .map(|&(cx, cy)| (cx, cy, natural_coeff_order(cx, cy)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Scratch buffer for error diffusion corrected coefficients (reused per block)
+        let mut error_scratch = if self.error_diffusion {
+            vec![0.0f32; MAX_BLOCK_SIZE]
+        } else {
+            Vec::new()
+        };
+
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
                 // Skip non-first blocks of multi-block transforms
@@ -631,6 +649,14 @@ impl VarDctEncoder {
                 {
                     let c = 1;
                     let weights = super::quant::quant_weights(raw_strategy as usize, c);
+                    let zigzag = if self.error_diffusion {
+                        zigzag_cache
+                            .iter()
+                            .find(|(cx2, cy2, _)| *cx2 == cx && *cy2 == cy)
+                            .map(|(_, _, v)| v.as_slice())
+                    } else {
+                        None
+                    };
                     Self::quantize_ac_block(
                         &dct_coeffs[c],
                         weights,
@@ -648,6 +674,12 @@ impl VarDctEncoder {
                         by,
                         &mut quant_ac[c],
                         self.error_diffusion,
+                        zigzag,
+                        if self.error_diffusion {
+                            Some(&mut error_scratch)
+                        } else {
+                            None
+                        },
                     );
                 }
 
@@ -915,6 +947,14 @@ impl VarDctEncoder {
                     // (different from libjxl-tiny's per-channel adjustments)
                     let thresholds_xb = Self::default_thresholds(c, covered_x, covered_y);
                     let weights = super::quant::quant_weights(raw_strategy as usize, c);
+                    let zigzag = if self.error_diffusion {
+                        zigzag_cache
+                            .iter()
+                            .find(|(cx2, cy2, _)| *cx2 == cx && *cy2 == cy)
+                            .map(|(_, _, v)| v.as_slice())
+                    } else {
+                        None
+                    };
                     Self::quantize_ac_block(
                         &dct_coeffs[c],
                         weights,
@@ -932,6 +972,12 @@ impl VarDctEncoder {
                         by,
                         &mut quant_ac[c],
                         self.error_diffusion,
+                        zigzag,
+                        if self.error_diffusion {
+                            Some(&mut error_scratch)
+                        } else {
+                            None
+                        },
                     );
                 }
 
