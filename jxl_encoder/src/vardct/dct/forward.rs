@@ -131,36 +131,7 @@ pub fn dct1d_16(mem: &mut [f32]) {
 /// output[cx * 8 + cy] contains the coefficient for frequency (cy, cx) where
 /// cy is the vertical frequency and cx is the horizontal frequency.
 pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut tmp = [0.0f32; 64];
-
-    // Transform rows
-    for row in 0..8 {
-        let row_start = row * 8;
-        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
-        dct1d_8(&mut tmp[row_start..row_start + 8]);
-        // Scale by 1/N
-        for i in 0..8 {
-            tmp[row_start + i] *= 1.0 / 8.0;
-        }
-    }
-
-    // Transpose (SIMD-accelerated for 8x8)
-    let mut transposed = [0.0f32; 64];
-    jxl_simd::transpose_8x8(&tmp, &mut transposed);
-
-    // Transform columns (now rows after transpose)
-    for row in 0..8 {
-        let row_start = row * 8;
-        dct1d_8(&mut transposed[row_start..row_start + 8]);
-        // Scale by 1/N
-        for i in 0..8 {
-            transposed[row_start + i] *= 1.0 / 8.0;
-        }
-    }
-
-    // DO NOT transpose back! libjxl-tiny expects transposed output for square blocks.
-    // This matches ComputeScaledDCT in libjxl-tiny/encoder/enc_transforms-inl.h
-    output.copy_from_slice(&transposed);
+    jxl_simd::dct_8x8(input, output);
 }
 
 /// Compute base 4x8 DCT (4 rows, 8 columns).

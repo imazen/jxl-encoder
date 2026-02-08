@@ -175,25 +175,7 @@ fn idct1d_8_ref(input: &[f32], output: &mut [f32]) {
 /// This uses the fast matched IDCT that exactly reverses our forward DCT algorithm.
 /// Roundtrip error is essentially zero (floating point precision only).
 pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut tmp = [0.0f32; 64];
-
-    // Copy input to tmp and apply IDCT to each row
-    for row in 0..8 {
-        let row_start = row * 8;
-        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
-        idct1d_8(&mut tmp[row_start..row_start + 8]);
-    }
-
-    // Transpose (SIMD-accelerated for 8x8)
-    let mut transposed = [0.0f32; 64];
-    jxl_simd::transpose_8x8(&tmp, &mut transposed);
-
-    // Apply IDCT to each row of transposed
-    for row in 0..8 {
-        let row_start = row * 8;
-        output[row_start..row_start + 8].copy_from_slice(&transposed[row_start..row_start + 8]);
-        idct1d_8(&mut output[row_start..row_start + 8]);
-    }
+    jxl_simd::idct_8x8(input, output);
 }
 
 /// Compute 16x16 inverse DCT (exactly reverses dct_16x16).

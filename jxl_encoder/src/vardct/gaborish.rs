@@ -62,64 +62,12 @@ fn compute_weights(mul: f64) -> (f32, f32, f32, f32, f32, f32) {
 ///
 /// Uses a scratch buffer to avoid reading already-modified values.
 /// Boundary handling: clamp coordinates to [0, dim-1] (edge replication).
+/// Dispatches to SIMD-accelerated implementation via jxl_simd.
 fn apply_channel(data: &mut [f32], scratch: &mut [f32], width: usize, height: usize, mul: f64) {
     let (wc, wr, wd, w_big_r, wl, w_big_d) = compute_weights(mul);
-
-    // Copy input to scratch so we read unmodified values
-    let n = width * height;
-    scratch[..n].copy_from_slice(&data[..n]);
-    let src = &scratch[..n];
-
-    // Helper: clamp-index into src
-    let px = |x: isize, y: isize| -> f32 {
-        let cx = x.clamp(0, (width - 1) as isize) as usize;
-        let cy = y.clamp(0, (height - 1) as isize) as usize;
-        src[cy * width + cx]
-    };
-
-    for y in 0..height {
-        let iy = y as isize;
-        for x in 0..width {
-            let ix = x as isize;
-
-            // Full 5x5 symmetric kernel application
-            // Center
-            let mut val = wc * px(ix, iy);
-
-            // r: 4 orthogonal neighbors at distance 1
-            val += wr * (px(ix - 1, iy) + px(ix + 1, iy) + px(ix, iy - 1) + px(ix, iy + 1));
-
-            // d: 4 diagonal neighbors at distance sqrt(2)
-            val += wd
-                * (px(ix - 1, iy - 1)
-                    + px(ix + 1, iy - 1)
-                    + px(ix - 1, iy + 1)
-                    + px(ix + 1, iy + 1));
-
-            // R: 4 orthogonal neighbors at distance 2
-            val += w_big_r * (px(ix - 2, iy) + px(ix + 2, iy) + px(ix, iy - 2) + px(ix, iy + 2));
-
-            // L: 8 knight's move neighbors
-            val += wl
-                * (px(ix - 2, iy - 1)
-                    + px(ix - 2, iy + 1)
-                    + px(ix + 2, iy - 1)
-                    + px(ix + 2, iy + 1)
-                    + px(ix - 1, iy - 2)
-                    + px(ix + 1, iy - 2)
-                    + px(ix - 1, iy + 2)
-                    + px(ix + 1, iy + 2));
-
-            // D: 4 corner neighbors at distance 2*sqrt(2)
-            val += w_big_d
-                * (px(ix - 2, iy - 2)
-                    + px(ix + 2, iy - 2)
-                    + px(ix - 2, iy + 2)
-                    + px(ix + 2, iy + 2));
-
-            data[y * width + x] = val;
-        }
-    }
+    jxl_simd::gaborish_5x5_channel(
+        data, scratch, width, height, wc, wr, wd, w_big_r, wl, w_big_d,
+    );
 }
 
 /// Apply gaborish inverse sharpening to all three XYB channels.
@@ -173,7 +121,8 @@ mod tests {
         let height = 16;
         let value = 0.5f32;
         let mut data = vec![value; width * height];
-        apply_channel(&mut data, width, height, 1.0);
+        let mut scratch = vec![0.0f32; width * height];
+        apply_channel(&mut data, &mut scratch, width, height, 1.0);
 
         for (i, &v) in data.iter().enumerate() {
             assert!(
@@ -197,7 +146,8 @@ mod tests {
         data[4 * width + 4] = 1.0;
         let original_center = data[4 * width + 4];
 
-        apply_channel(&mut data, width, height, 1.0);
+        let mut scratch = vec![0.0f32; width * height];
+        apply_channel(&mut data, &mut scratch, width, height, 1.0);
 
         // Center should still be the brightest (sharpening increases it relative to neighbors)
         let new_center = data[4 * width + 4];
