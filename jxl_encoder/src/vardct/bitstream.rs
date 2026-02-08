@@ -857,7 +857,8 @@ impl VarDctEncoder {
             let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
             let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
 
-            let mut tokens = Vec::new();
+            let region_blocks = (end_bx - start_bx) * (end_by - start_by);
+            let mut tokens = Vec::with_capacity(region_blocks * 64 * 3); // ~64 coeffs * 3 channels per block
             for by in start_by..end_by {
                 for bx in start_bx..end_bx {
                     if !ac_strategy.is_first(bx, by) {
@@ -1285,9 +1286,10 @@ impl VarDctEncoder {
             fh.write(&mut writer)?;
         }
 
+        let num_blocks = xsize_blocks * ysize_blocks;
         if num_sections == 4 {
             // Single-group: combine sections at the bit level
-            let mut dc_global = BitWriter::new();
+            let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
                 params,
                 num_dc_groups,
@@ -1305,7 +1307,7 @@ impl VarDctEncoder {
                 Self::write_modular_alpha_global(alpha_data, width, height, &mut dc_global)?;
             }
 
-            let mut dc_group = BitWriter::new();
+            let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
             self.write_dc_group_from_tokens(
                 0,
                 xsize_blocks,
@@ -1319,7 +1321,7 @@ impl VarDctEncoder {
                 &mut dc_group,
             )?;
 
-            let mut ac_global = BitWriter::new();
+            let mut ac_global = BitWriter::with_capacity(4096);
             self.write_ac_global(
                 num_groups,
                 &ac_built_code,
@@ -1329,7 +1331,7 @@ impl VarDctEncoder {
                 &mut ac_global,
             )?;
 
-            let mut ac_group_writer = BitWriter::new();
+            let mut ac_group_writer = BitWriter::with_capacity(num_blocks * 100);
             ac_built_code.write_tokens(
                 &ac_section_tokens[0],
                 ac_lz77_params.as_ref(),
@@ -1350,7 +1352,7 @@ impl VarDctEncoder {
             let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
 
             // DC Global
-            let mut dc_global = BitWriter::new();
+            let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
                 params,
                 num_dc_groups,
@@ -1371,8 +1373,9 @@ impl VarDctEncoder {
             sections.push(dc_global.finish());
 
             // DC groups
+            let blocks_per_dc_group = (256 / 8) * (256 / 8);
             for dc_group_idx in 0..num_dc_groups {
-                let mut dc_group = BitWriter::new();
+                let mut dc_group = BitWriter::with_capacity(blocks_per_dc_group * 10);
                 self.write_dc_group_from_tokens(
                     dc_group_idx,
                     xsize_blocks,
@@ -1390,7 +1393,7 @@ impl VarDctEncoder {
             }
 
             // AC Global
-            let mut ac_global = BitWriter::new();
+            let mut ac_global = BitWriter::with_capacity(4096);
             self.write_ac_global(
                 num_groups,
                 &ac_built_code,
@@ -1403,8 +1406,9 @@ impl VarDctEncoder {
             sections.push(ac_global.finish());
 
             // AC groups
+            let blocks_per_ac_group = (256 / 8) * (256 / 8);
             for (group_idx, ac_tokens) in ac_section_tokens.iter().enumerate() {
-                let mut ac_group_writer = BitWriter::new();
+                let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
                 ac_built_code.write_tokens(
                     ac_tokens,
                     ac_lz77_params.as_ref(),

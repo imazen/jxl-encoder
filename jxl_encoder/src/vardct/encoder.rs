@@ -606,7 +606,8 @@ impl VarDctEncoder {
         if num_sections == 4 {
             // Write sections to individual BitWriters (no padding)
             let block_ctx_map = super::ac_context::BlockCtxMap::default();
-            let mut dc_global = BitWriter::new();
+            let num_blocks = xsize_blocks * ysize_blocks;
+            let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
                 &params,
                 num_dc_groups,
@@ -622,7 +623,7 @@ impl VarDctEncoder {
             let dc_huffman = dc_code.as_huffman();
             let ac_huffman = ac_code.as_huffman();
 
-            let mut dc_group = BitWriter::new();
+            let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
             self.write_dc_group(
                 0,
                 quant_dc,
@@ -637,10 +638,10 @@ impl VarDctEncoder {
                 &mut dc_group,
             )?;
 
-            let mut ac_global = BitWriter::new();
+            let mut ac_global = BitWriter::with_capacity(4096);
             self.write_ac_global(num_groups, &ac_code, 0, None, None, &mut ac_global)?;
 
-            let mut ac_group_writer = BitWriter::new();
+            let mut ac_group_writer = BitWriter::with_capacity(num_blocks * 100);
             self.write_ac_group(
                 0,
                 quant_ac,
@@ -708,7 +709,7 @@ impl VarDctEncoder {
 
             // DC Global section
             let block_ctx_map = super::ac_context::BlockCtxMap::default();
-            let mut dc_global = BitWriter::new();
+            let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
                 &params,
                 num_dc_groups,
@@ -723,8 +724,9 @@ impl VarDctEncoder {
             sections.push(dc_global.finish());
 
             // DC group sections
+            let blocks_per_dc_group = (256 / 8) * (256 / 8); // 1024 blocks per DC group
             for dc_group_idx in 0..num_dc_groups {
-                let mut dc_group = BitWriter::new();
+                let mut dc_group = BitWriter::with_capacity(blocks_per_dc_group * 10);
                 self.write_dc_group(
                     dc_group_idx,
                     quant_dc,
@@ -743,14 +745,15 @@ impl VarDctEncoder {
             }
 
             // AC Global section
-            let mut ac_global = BitWriter::new();
+            let mut ac_global = BitWriter::with_capacity(4096);
             self.write_ac_global(num_groups, &ac_code, 0, None, None, &mut ac_global)?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
             // AC group sections
+            let blocks_per_ac_group = (256 / 8) * (256 / 8); // 1024 blocks per AC group
             for group_idx in 0..num_groups {
-                let mut ac_group_writer = BitWriter::new();
+                let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
                 self.write_ac_group(
                     group_idx,
                     quant_ac,

@@ -1366,7 +1366,7 @@ pub fn write_tokens_ans(
     lz77: Option<&Lz77Params>,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    let mut encoder = AnsEncoder::new();
+    let mut encoder = AnsEncoder::with_capacity(tokens.len());
 
     #[cfg(feature = "debug-tokens")]
     {

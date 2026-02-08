@@ -69,7 +69,15 @@ pub fn entropy_estimate_coeffs(
     }
 
     entropy_coeffs_scalar(
-        block_c, block_y, weights, n, cmap_factor, quant, k_cost_delta, k_cost2, pixel_domain,
+        block_c,
+        block_y,
+        weights,
+        n,
+        cmap_factor,
+        quant,
+        k_cost_delta,
+        k_cost2,
+        pixel_domain,
         error_coeffs,
     )
 }
@@ -177,11 +185,7 @@ fn entropy_coeffs_avx2(
         // Write error coefficients for pixel-domain loss
         if pixel_domain {
             let err = w * diff;
-            err.store(
-                (&mut error_coeffs[base..base + 8])
-                    .try_into()
-                    .unwrap(),
-            );
+            err.store((&mut error_coeffs[base..base + 8]).try_into().unwrap());
         }
 
         // Entropy accumulation: entropy += sqrt(|rval|) * cost_delta
@@ -404,12 +408,30 @@ mod tests {
 
         let mut error_ref = vec![0.0f32; n];
         let ref_result = entropy_coeffs_scalar(
-            &block_c, &block_y, &weights, n, 0.2, 4.0, 5.335, 4.463, true, &mut error_ref,
+            &block_c,
+            &block_y,
+            &weights,
+            n,
+            0.2,
+            4.0,
+            5.335,
+            4.463,
+            true,
+            &mut error_ref,
         );
 
         let mut error_simd = vec![0.0f32; n];
         let simd_result = entropy_estimate_coeffs(
-            &block_c, &block_y, &weights, n, 0.2, 4.0, 5.335, 4.463, true, &mut error_simd,
+            &block_c,
+            &block_y,
+            &weights,
+            n,
+            0.2,
+            4.0,
+            5.335,
+            4.463,
+            true,
+            &mut error_simd,
         );
 
         let rel_eps = 0.005;
@@ -450,12 +472,30 @@ mod tests {
 
         let mut error_ref = vec![0.0f32; n];
         let ref_result = entropy_coeffs_scalar(
-            &block_c, &block_y, &weights, n, 0.1, 2.0, 5.335, 4.463, true, &mut error_ref,
+            &block_c,
+            &block_y,
+            &weights,
+            n,
+            0.1,
+            2.0,
+            5.335,
+            4.463,
+            true,
+            &mut error_ref,
         );
 
         let mut error_simd = vec![0.0f32; n];
         let simd_result = entropy_estimate_coeffs(
-            &block_c, &block_y, &weights, n, 0.1, 2.0, 5.335, 4.463, true, &mut error_simd,
+            &block_c,
+            &block_y,
+            &weights,
+            n,
+            0.1,
+            2.0,
+            5.335,
+            4.463,
+            true,
+            &mut error_simd,
         );
 
         // Large block: use relative tolerance

@@ -72,7 +72,7 @@ impl AnsEncSymbolInfo {
         Self {
             freq,
             ifreq,
-            reverse_map: vec![0; freq as usize],
+            reverse_map: Vec::new(), // Allocated later in build_reverse_maps
         }
     }
 }
@@ -91,6 +91,14 @@ impl AnsEncoder {
         Self {
             state: ANS_SIGNATURE << 16,
             bits: Vec::new(),
+        }
+    }
+
+    /// Creates a new ANS encoder with pre-allocated capacity for `num_tokens` tokens.
+    pub fn with_capacity(num_tokens: usize) -> Self {
+        Self {
+            state: ANS_SIGNATURE << 16,
+            bits: Vec::with_capacity(num_tokens * 2), // ~2 entries per token (symbol + extra bits)
         }
     }
 
@@ -371,8 +379,8 @@ impl AnsDistribution {
             .collect();
 
         // Separate into underfull and overfull
-        let mut underfull: Vec<usize> = Vec::new();
-        let mut overfull: Vec<usize> = Vec::new();
+        let mut underfull: Vec<usize> = Vec::with_capacity(table_size);
+        let mut overfull: Vec<usize> = Vec::with_capacity(table_size);
         for (i, bucket) in buckets.iter().enumerate() {
             if bucket.alias_cutoff < bucket_size {
                 underfull.push(i);
