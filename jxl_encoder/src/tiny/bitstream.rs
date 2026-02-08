@@ -22,130 +22,74 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::error::Result;
+use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
+use crate::headers::extra_channels::ExtraChannelInfo;
+use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 
 impl TinyEncoder {
-    /// Write the file header (SizeHeader + ImageMetadata).
+    /// Build a `FileHeader` for VarDCT encoding from current encoder settings.
     ///
-    /// 1. SizeHeader with small=0 (U32 encoding)
-    /// 2. ImageMetadata with 8-bit integer samples
-    /// 3. ColorEncoding with sRGB primaries, sRGB transfer
-    /// 4. all_default_transform_data = 1
-    /// 5. Zero padding to byte
-    pub(crate) fn write_file_header(
+    /// This produces the same bitstream as the old hand-rolled `write_file_header()`,
+    /// but uses the shared `FileHeader` struct used by both lossy and lossless paths.
+    pub(crate) fn build_file_header(
+        &self,
+        width: usize,
+        height: usize,
+        has_alpha: bool,
+    ) -> FileHeader {
+        let bit_depth = if self.bit_depth_16 {
+            BitDepth::uint16()
+        } else {
+            BitDepth::uint8()
+        };
+
+        let mut color_encoding = ColorEncoding::srgb();
+        // VarDCT uses Relative rendering intent (matches libjxl-tiny)
+        color_encoding.rendering_intent = RenderingIntent::Relative;
+        if self.icc_profile.is_some() {
+            color_encoding.want_icc = true;
+        }
+
+        let extra_channels = if has_alpha {
+            vec![ExtraChannelInfo::alpha()]
+        } else {
+            Vec::new()
+        };
+
+        FileHeader {
+            width: width as u32,
+            height: height as u32,
+            metadata: ImageMetadata {
+                bit_depth,
+                color_encoding,
+                extra_channels,
+                xyb_encoded: true, // Required for VarDCT
+                ..ImageMetadata::default()
+            },
+        }
+    }
+
+    /// Write the file header, ICC profile, and zero-pad to byte boundary.
+    ///
+    /// This replaces the old hand-rolled file header writer with the shared
+    /// `FileHeader::write()` path, then appends ICC data and byte-aligns.
+    pub(crate) fn write_file_header_and_pad(
         &self,
         width: usize,
         height: usize,
         has_alpha: bool,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // 1. SizeHeader - use U32 format (small=0), same as libjxl-tiny
-        self.write_size(width, height, writer)?;
+        let file_header = self.build_file_header(width, height, has_alpha);
+        file_header.write(writer)?;
 
-        // 2. ImageMetadata
-        writer.write(1, 0)?; // not all default
-        writer.write(1, 0)?; // no extra fields
-
-        // Bit depth - integer, parameterized by self.bit_depth_16
-        // U32(8,10,12,1+Read(6))
-        writer.write(1, 0)?; // float = 0
-        if self.bit_depth_16 {
-            // bits_per_sample = 16: selector 3, value = 16-1 = 15 (6 bits)
-            writer.write(2, 3)?;
-            writer.write(6, 15)?; // 1 + 15 = 16
-        } else {
-            // bits_per_sample = 8: selector 0
-            writer.write(2, 0)?;
-        }
-
-        // modular_16_bit_buffer_sufficient: true for bits_per_sample <= 12
-        writer.write(1, if self.bit_depth_16 { 0 } else { 1 })?;
-
-        // Extra channels
-        if has_alpha {
-            // num_extra_channels = 1: U32(0,1,2+Read(4),12+Read(8)), selector 1 = 1
-            writer.write(2, 1)?;
-            // ExtraChannelInfo for default alpha (d_alpha=true = 1 bit)
-            crate::headers::extra_channels::ExtraChannelInfo::alpha().write(writer)?;
-        } else {
-            writer.write(2, 0)?; // selector 0 = 0 extra channels
-        }
-
-        // xyb_encoded = 1 (required for VarDCT)
-        writer.write(1, 1)?;
-
-        // Color encoding
-        let has_icc = self.icc_profile.is_some();
-        writer.write(1, 0)?; // not all default
-        if has_icc {
-            writer.write(1, 1)?; // want_icc = true
-        } else {
-            writer.write(1, 0)?; // want_icc = false
-        }
-        // color_space is ALWAYS sent (even when want_icc=1, it affects decoding)
-        writer.write(2, 0)?; // color_space = RGB (0)
-        if !has_icc {
-            // White point, primaries, transfer function, rendering intent
-            // only sent when want_icc=false
-            writer.write(2, 1)?; // white_point = D65 (1)
-            writer.write(2, 1)?; // primaries = sRGB (1)
-            writer.write(1, 0)?; // no gamma (use transfer function)
-            // TransferFunction: U32(0, 1, 2+Read(4), 18+Read(6))
-            // For Srgb (value 13): selector=2, extra=11 (13 = 2 + 11)
-            writer.write(2, 2)?; // selector 2
-            writer.write(4, 11)?; // value 11 -> transfer_function = 2+11 = 13 = Srgb
-            writer.write(2, 1)?; // rendering_intent = relative (1)
-        }
-
-        // Extensions
-        writer.write(2, 0)?; // no extensions
-
-        // 3. all_default_transform_data = 1 (required before frame)
-        writer.write(1, 1)?;
-
-        // 4. Write ICC profile data if present (after header, before zero pad)
+        // Write ICC profile data if present (after header, before zero pad)
         if let Some(ref icc) = self.icc_profile {
             super::icc_codec::write_icc(icc, writer)?;
         }
 
-        // 5. Zero pad to byte before frame
+        // Zero pad to byte before frame
         writer.zero_pad_to_byte();
-
-        Ok(())
-    }
-
-    /// Write image size header.
-    ///
-    /// Uses U32 format (small=0) to match libjxl-tiny exactly.
-    /// Format: small=0, height U32, ratio=0, width U32
-    pub(crate) fn write_size(
-        &self,
-        width: usize,
-        height: usize,
-        writer: &mut BitWriter,
-    ) -> Result<()> {
-        // Helper to write a dimension using U32 encoding
-        // Matches libjxl-tiny's WriteSize() exactly
-        fn write_dim(size: usize, writer: &mut BitWriter) -> Result<()> {
-            let size_m1 = (size.saturating_sub(1)) as u32;
-            // U32 selectors: 9 bits, 13 bits, 18 bits, 30 bits
-            // Select first one where value fits
-            let k_bits: [u32; 4] = [9, 13, 18, 30];
-            for (i, &bits) in k_bits.iter().enumerate() {
-                if size_m1 < (1u32 << bits) {
-                    writer.write(2, i as u64)?;
-                    writer.write(bits as usize, size_m1 as u64)?;
-                    return Ok(());
-                }
-            }
-            // Shouldn't reach here for valid sizes
-            Ok(())
-        }
-
-        // small = 0 (use U32 encoding)
-        writer.write(1, 0)?;
-        write_dim(height, writer)?;
-        writer.write(3, 0)?; // ratio = 0 (explicit width)
-        write_dim(width, writer)?;
 
         Ok(())
     }
@@ -1316,14 +1260,10 @@ impl TinyEncoder {
 
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
-        // Write JXL signature
-        writer.write(8, 0xFF)?;
-        writer.write(8, 0x0A)?;
-
-        // Write file header
+        // Write file header (includes JXL signature, ICC, and byte padding)
         let has_alpha = alpha.is_some();
         let num_extra_channels = if has_alpha { 1 } else { 0 };
-        self.write_file_header(width, height, has_alpha, &mut writer)?;
+        self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
 
         // Write frame header
         write_frame_header(

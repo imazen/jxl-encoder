@@ -566,15 +566,9 @@ impl TinyEncoder {
         // Create main writer
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
-        // Write JXL signature
-        writer.write(8, 0xFF)?;
-        writer.write(8, 0x0A)?;
-        #[cfg(feature = "debug-tokens")]
-        debug_log!("After signature: bit {}", writer.bits_written());
-
-        // Write size header (simple format for small images)
+        // Write file header (includes JXL signature, ICC, and byte padding)
         // Streaming path does not support alpha
-        self.write_file_header(width, height, false, &mut writer)?;
+        self.write_file_header_and_pad(width, height, false, &mut writer)?;
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "After file header: bit {} (byte {})",
@@ -1322,8 +1316,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0x3b98124b0c19cb9c;
+        // Updated: unified file header (Phase 1 — shared FileHeader::write())
+        const EXPECTED_HASH: u64 = 0x1578d7de62b7489d;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1346,8 +1340,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0x9c88473e426175b8;
+        // Updated: unified file header (Phase 1 — shared FileHeader::write())
+        const EXPECTED_HASH: u64 = 0x105bf5bae74e9b97;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1382,8 +1376,8 @@ mod tests {
         let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
-        // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0xa7b89bca8f36d054;
+        // Updated: unified file header (Phase 1 — shared FileHeader::write())
+        const EXPECTED_HASH: u64 = 0xc5ffd51e05f589cb;
         assert_eq!(
             hash,
             EXPECTED_HASH,
