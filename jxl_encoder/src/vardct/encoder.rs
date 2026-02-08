@@ -913,15 +913,11 @@ impl VarDctEncoder {
             // Step 4: Compare against precomputed reference using planar API.
             // Pass padded buffers with stride=padded_width; butteraugli reads only
             // width pixels per row, skipping the padding — no crop copy needed.
-            let result = match reference.compare_linear_planar(
-                &recon_r,
-                &recon_g,
-                &recon_b,
-                padded_width,
-            ) {
-                Ok(r) => r,
-                Err(_) => return,
-            };
+            let result =
+                match reference.compare_linear_planar(&recon_r, &recon_g, &recon_b, padded_width) {
+                    Ok(r) => r,
+                    Err(_) => return,
+                };
 
             let diffmap = match result.diffmap {
                 Some(dm) => dm,

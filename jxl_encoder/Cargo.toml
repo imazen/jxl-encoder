@@ -19,7 +19,7 @@ num-derive = "0.4"
 num-traits = "0.2"
 # Optional dependencies for rate control feature
 jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide", optional = true }
-butteraugli = { path = "../../butteraugli/butteraugli", optional = true }
+butteraugli = { path = "../../butteraugli-opt/butteraugli", optional = true }
 imgref = { version = "1.10", optional = true }
 rgb = { version = "0.8", optional = true }
 
@@ -55,7 +55,7 @@ jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
 fast-ssim2 = { path = "../../fast-ssim2/ssimulacra2", features = ["imgref"] }
 yuvxyb = "0.4.1"
 # Butteraugli perceptual quality metric
-butteraugli = { path = "../../butteraugli/butteraugli" }
+butteraugli = { path = "../../butteraugli-opt/butteraugli" }
 imgref = "1.10"
 rgb = "0.8"
 walkdir = "2.5"
