@@ -19,6 +19,7 @@ mod dct8;
 mod entropy;
 mod gab;
 mod gaborish5x5;
+mod quantize;
 mod transpose;
 mod xyb;
 
@@ -27,6 +28,7 @@ pub use dct8::idct_8x8;
 pub use entropy::{EntropyCoeffResult, entropy_estimate_coeffs};
 pub use gab::gab_smooth_channel;
 pub use gaborish5x5::gaborish_5x5_channel;
+pub use quantize::quantize_block_dct8;
 pub use transpose::transpose_8x8;
 pub use xyb::linear_rgb_to_xyb_batch;
 pub use xyb::xyb_to_linear_rgb_batch;
