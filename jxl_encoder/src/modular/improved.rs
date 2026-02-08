@@ -2511,7 +2511,7 @@ mod tests {
     /// Compare ANS vs Huffman file sizes for a lossless encode.
     #[test]
     fn test_ans_vs_huffman_size() {
-        use crate::encoder::{Encoder, EncoderOptions};
+        use crate::{LosslessConfig, PixelLayout};
 
         // Create a non-trivial 32x32 RGB image
         let mut data = vec![0u8; 32 * 32 * 3];
@@ -2525,21 +2525,15 @@ mod tests {
         }
 
         // Encode with Huffman
-        let huf_opts = EncoderOptions {
-            use_ans: false,
-            ..EncoderOptions::default()
-        };
-        let huf_encoded = Encoder::with_options(huf_opts)
-            .encode_rgb8(&data, 32, 32)
+        let huf_encoded = LosslessConfig::new()
+            .with_ans(false)
+            .encode(&data, 32, 32, PixelLayout::Rgb8)
             .unwrap();
 
         // Encode with ANS
-        let ans_opts = EncoderOptions {
-            use_ans: true,
-            ..EncoderOptions::default()
-        };
-        let ans_encoded = Encoder::with_options(ans_opts)
-            .encode_rgb8(&data, 32, 32)
+        let ans_encoded = LosslessConfig::new()
+            .with_ans(true)
+            .encode(&data, 32, 32, PixelLayout::Rgb8)
             .unwrap();
 
         eprintln!(
