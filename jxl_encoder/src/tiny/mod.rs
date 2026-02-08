@@ -38,6 +38,7 @@ pub(crate) mod entropy_code;
 pub(crate) mod epf;
 mod frame;
 mod gaborish;
+pub(crate) mod icc_codec;
 mod lz77;
 pub(crate) mod noise;
 #[cfg(feature = "rate-control")]

@@ -988,6 +988,13 @@ impl<'a> EncodeRequest<'a> {
 
         tiny.bit_depth_16 = bit_depth_16;
 
+        // ICC profile from metadata
+        if let Some(meta) = self.metadata
+            && let Some(icc) = meta.icc_profile
+        {
+            tiny.icc_profile = Some(icc.to_vec());
+        }
+
         tiny.encode(w, h, &linear_rgb, alpha.as_deref())
             .map_err(EncodeError::from)
     }
