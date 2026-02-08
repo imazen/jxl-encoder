@@ -62,11 +62,13 @@ fn compute_weights(mul: f64) -> (f32, f32, f32, f32, f32, f32) {
 ///
 /// Uses a scratch buffer to avoid reading already-modified values.
 /// Boundary handling: clamp coordinates to [0, dim-1] (edge replication).
-fn apply_channel(data: &mut [f32], width: usize, height: usize, mul: f64) {
+fn apply_channel(data: &mut [f32], scratch: &mut [f32], width: usize, height: usize, mul: f64) {
     let (wc, wr, wd, w_big_r, wl, w_big_d) = compute_weights(mul);
 
-    // Clone input so we read unmodified values
-    let src = data.to_vec();
+    // Copy input to scratch so we read unmodified values
+    let n = width * height;
+    scratch[..n].copy_from_slice(&data[..n]);
+    let src = &scratch[..n];
 
     // Helper: clamp-index into src
     let px = |x: isize, y: isize| -> f32 {
@@ -133,10 +135,13 @@ pub fn gaborish_inverse(
     width: usize,
     height: usize,
 ) {
+    // Reuse one scratch buffer across all 3 channels to avoid 3 allocations
+    let mut scratch = vec![0.0f32; width * height];
+
     // mul=1.0 for all channels, matching libjxl enc_heuristics.cc line 1137-1140
-    apply_channel(xyb_x, width, height, 1.0);
-    apply_channel(xyb_y, width, height, 1.0);
-    apply_channel(xyb_b, width, height, 1.0);
+    apply_channel(xyb_x, &mut scratch, width, height, 1.0);
+    apply_channel(xyb_y, &mut scratch, width, height, 1.0);
+    apply_channel(xyb_b, &mut scratch, width, height, 1.0);
 }
 
 #[cfg(test)]
