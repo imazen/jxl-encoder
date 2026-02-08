@@ -936,6 +936,21 @@ pub(crate) fn xyb_to_linear_rgb(
     linear_rgb
 }
 
+/// Converts XYB planes to planar linear RGB (3 separate channel buffers).
+///
+/// Avoids the interleave step when the consumer needs planar data (e.g., butteraugli).
+pub(crate) fn xyb_to_linear_rgb_planar(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    out_r: &mut [f32],
+    out_g: &mut [f32],
+    out_b: &mut [f32],
+    num_pixels: usize,
+) {
+    jxl_simd::xyb_to_linear_rgb_planar(xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, num_pixels);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -73,6 +73,34 @@ pub fn linear_rgb_to_xyb_batch(
     forward_xyb_scalar(r, g, b, x_out, y_out, b_out, n);
 }
 
+/// Convert separate X, Y, B channel buffers to planar linear RGB.
+///
+/// Output is three separate channel slices, each of length `n`.
+/// This avoids the interleave overhead when the consumer needs planar data.
+pub fn xyb_to_linear_rgb_planar(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    out_r: &mut [f32],
+    out_g: &mut [f32],
+    out_b: &mut [f32],
+    n: usize,
+) {
+    debug_assert!(xyb_x.len() >= n && xyb_y.len() >= n && xyb_b.len() >= n);
+    debug_assert!(out_r.len() >= n && out_g.len() >= n && out_b.len() >= n);
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            inverse_xyb_planar_avx2(token, xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
+            return;
+        }
+    }
+
+    inverse_xyb_planar_scalar(xyb_x, xyb_y, xyb_b, out_r, out_g, out_b, n);
+}
+
 /// Convert separate X, Y, B channel buffers to interleaved linear RGB.
 ///
 /// Output is `[R0, G0, B0, R1, G1, B1, ...]` with length `3 * n`.
@@ -156,6 +184,34 @@ fn forward_xyb_scalar(
         x_out[i] = 0.5 * (l - m);
         y_out[i] = 0.5 * (l + m);
         b_out[i] = s;
+    }
+}
+
+fn inverse_xyb_planar_scalar(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    out_r: &mut [f32],
+    out_g: &mut [f32],
+    out_b: &mut [f32],
+    n: usize,
+) {
+    for i in 0..n {
+        let x = xyb_x[i];
+        let y = xyb_y[i];
+        let b = xyb_b[i];
+
+        let gamma_r = y + x - NEG_CBRT_BIAS[0];
+        let gamma_g = y - x - NEG_CBRT_BIAS[1];
+        let gamma_b = b - NEG_CBRT_BIAS[2];
+
+        let mixed_r = gamma_r * gamma_r * gamma_r - OPSIN_BIAS[0];
+        let mixed_g = gamma_g * gamma_g * gamma_g - OPSIN_BIAS[1];
+        let mixed_b = gamma_b * gamma_b * gamma_b - OPSIN_BIAS[2];
+
+        out_r[i] = INV_OPSIN[0][0] * mixed_r + INV_OPSIN[0][1] * mixed_g + INV_OPSIN[0][2] * mixed_b;
+        out_g[i] = INV_OPSIN[1][0] * mixed_r + INV_OPSIN[1][1] * mixed_g + INV_OPSIN[1][2] * mixed_b;
+        out_b[i] = INV_OPSIN[2][0] * mixed_r + INV_OPSIN[2][1] * mixed_g + INV_OPSIN[2][2] * mixed_b;
     }
 }
 
@@ -357,6 +413,78 @@ fn inverse_xyb_avx2(
         &xyb_y[start..],
         &xyb_b[start..],
         &mut linear_rgb[start * 3..],
+        n - start,
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn inverse_xyb_planar_avx2(
+    token: archmage::X64V3Token,
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    out_r: &mut [f32],
+    out_g: &mut [f32],
+    out_b: &mut [f32],
+    n: usize,
+) {
+    use magetypes::simd::f32x8;
+
+    let neg_cbrt0 = f32x8::splat(token, -NEG_CBRT_BIAS[0]);
+    let neg_cbrt1 = f32x8::splat(token, -NEG_CBRT_BIAS[1]);
+    let neg_cbrt2 = f32x8::splat(token, -NEG_CBRT_BIAS[2]);
+    let neg_bias0 = f32x8::splat(token, -OPSIN_BIAS[0]);
+    let neg_bias1 = f32x8::splat(token, -OPSIN_BIAS[1]);
+    let neg_bias2 = f32x8::splat(token, -OPSIN_BIAS[2]);
+    let inv00 = f32x8::splat(token, INV_OPSIN[0][0]);
+    let inv01 = f32x8::splat(token, INV_OPSIN[0][1]);
+    let inv02 = f32x8::splat(token, INV_OPSIN[0][2]);
+    let inv10 = f32x8::splat(token, INV_OPSIN[1][0]);
+    let inv11 = f32x8::splat(token, INV_OPSIN[1][1]);
+    let inv12 = f32x8::splat(token, INV_OPSIN[1][2]);
+    let inv20 = f32x8::splat(token, INV_OPSIN[2][0]);
+    let inv21 = f32x8::splat(token, INV_OPSIN[2][1]);
+    let inv22 = f32x8::splat(token, INV_OPSIN[2][2]);
+
+    let chunks = n / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let x = f32x8::from_slice(token, &xyb_x[base..]);
+        let y = f32x8::from_slice(token, &xyb_y[base..]);
+        let b = f32x8::from_slice(token, &xyb_b[base..]);
+
+        // Unmix to gamma-domain LMS + add cbrt(bias)
+        let gamma_r = y + x + neg_cbrt0;
+        let gamma_g = y - x + neg_cbrt1;
+        let gamma_b = b + neg_cbrt2;
+
+        // Cube and subtract bias
+        let mixed_r = gamma_r * gamma_r * gamma_r + neg_bias0;
+        let mixed_g = gamma_g * gamma_g * gamma_g + neg_bias1;
+        let mixed_b = gamma_b * gamma_b * gamma_b + neg_bias2;
+
+        // Inverse opsin matrix (FMA chains)
+        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
+        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
+        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
+
+        // Store planar — direct SIMD store, no scalar interleave needed
+        rv.store((&mut out_r[base..base + 8]).try_into().unwrap());
+        gv.store((&mut out_g[base..base + 8]).try_into().unwrap());
+        bv.store((&mut out_b[base..base + 8]).try_into().unwrap());
+    }
+
+    // Scalar remainder
+    let start = chunks * 8;
+    inverse_xyb_planar_scalar(
+        &xyb_x[start..],
+        &xyb_y[start..],
+        &xyb_b[start..],
+        &mut out_r[start..],
+        &mut out_g[start..],
+        &mut out_b[start..],
         n - start,
     );
 }
@@ -583,6 +711,49 @@ mod tests {
                 ex,
                 ey,
                 eb
+            );
+        }
+    }
+
+    /// Test that planar inverse matches interleaved inverse.
+    #[test]
+    fn test_inverse_xyb_planar_matches_interleaved() {
+        let n = 256;
+        let mut r = vec![0.0f32; n];
+        let mut g = vec![0.0f32; n];
+        let mut b = vec![0.0f32; n];
+
+        for i in 0..n {
+            let t = i as f32 / (n - 1) as f32;
+            r[i] = t;
+            g[i] = 1.0 - t;
+            b[i] = (t * 2.0).min(1.0);
+        }
+
+        // Forward XYB
+        let mut x = vec![0.0f32; n];
+        let mut y = vec![0.0f32; n];
+        let mut bv = vec![0.0f32; n];
+        linear_rgb_to_xyb_batch(&r, &g, &b, &mut x, &mut y, &mut bv);
+
+        // Interleaved inverse
+        let mut interleaved = vec![0.0f32; n * 3];
+        xyb_to_linear_rgb_batch(&x, &y, &bv, &mut interleaved, n);
+
+        // Planar inverse
+        let mut pr = vec![0.0f32; n];
+        let mut pg = vec![0.0f32; n];
+        let mut pb = vec![0.0f32; n];
+        xyb_to_linear_rgb_planar(&x, &y, &bv, &mut pr, &mut pg, &mut pb, n);
+
+        for i in 0..n {
+            let ir = interleaved[i * 3];
+            let ig = interleaved[i * 3 + 1];
+            let ib = interleaved[i * 3 + 2];
+            assert!(
+                (pr[i] - ir).abs() < 1e-6 && (pg[i] - ig).abs() < 1e-6 && (pb[i] - ib).abs() < 1e-6,
+                "Planar/interleaved mismatch at {i}: planar=({},{},{}) interleaved=({ir},{ig},{ib})",
+                pr[i], pg[i], pb[i]
             );
         }
     }

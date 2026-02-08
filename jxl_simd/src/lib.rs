@@ -34,3 +34,4 @@ pub use quantize::quantize_block_dct8;
 pub use transpose::transpose_8x8;
 pub use xyb::linear_rgb_to_xyb_batch;
 pub use xyb::xyb_to_linear_rgb_batch;
+pub use xyb::xyb_to_linear_rgb_planar;
