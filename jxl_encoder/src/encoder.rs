@@ -216,6 +216,10 @@ impl Encoder {
         // Set bit depth from image
         if image.bit_depth == 16 {
             file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
+            // Also update extra channel bit depths (e.g., alpha)
+            for ec in &mut file_header.metadata.extra_channels {
+                ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
+            }
         }
 
         file_header.write(&mut writer)?;
