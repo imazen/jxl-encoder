@@ -497,7 +497,7 @@ impl VarDctEncoder {
         }
 
         // Perform DCT and quantization (XYB data is padded to block boundaries)
-        let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
+        let transform_out = self.transform_and_quantize(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -509,6 +509,10 @@ impl VarDctEncoder {
             &cfl_map,
             &ac_strategy,
         );
+        let quant_dc = &transform_out.quant_dc;
+        let quant_ac = &transform_out.quant_ac;
+        let nzeros = &transform_out.nzeros;
+        let raw_nzeros = &transform_out.raw_nzeros;
 
         // Compute per-block EPF sharpness map when EPF is active
         let sharpness_map = if params.epf_iters > 0 && self.distance >= 0.5 {
@@ -517,8 +521,8 @@ impl VarDctEncoder {
             });
             Some(super::epf::compute_epf_sharpness(
                 [&xyb_x, &xyb_y, &xyb_b],
-                &quant_dc,
-                &quant_ac,
+                quant_dc,
+                quant_ac,
                 &quant_field,
                 &mask,
                 &params,
@@ -547,10 +551,10 @@ impl VarDctEncoder {
                 num_groups,
                 num_dc_groups,
                 num_sections,
-                &quant_dc,
-                &quant_ac,
-                &nzeros,
-                &raw_nzeros,
+                quant_dc,
+                quant_ac,
+                nzeros,
+                raw_nzeros,
                 &quant_field,
                 &cfl_map,
                 &ac_strategy,
@@ -621,7 +625,7 @@ impl VarDctEncoder {
             let mut dc_group = BitWriter::new();
             self.write_dc_group(
                 0,
-                &quant_dc,
+                quant_dc,
                 xsize_blocks,
                 ysize_blocks,
                 xsize_dc_groups,
@@ -639,9 +643,9 @@ impl VarDctEncoder {
             let mut ac_group_writer = BitWriter::new();
             self.write_ac_group(
                 0,
-                &quant_ac,
-                &nzeros,
-                &raw_nzeros,
+                quant_ac,
+                nzeros,
+                raw_nzeros,
                 xsize_blocks,
                 ysize_blocks,
                 xsize_groups,
@@ -723,7 +727,7 @@ impl VarDctEncoder {
                 let mut dc_group = BitWriter::new();
                 self.write_dc_group(
                     dc_group_idx,
-                    &quant_dc,
+                    quant_dc,
                     xsize_blocks,
                     ysize_blocks,
                     xsize_dc_groups,
@@ -749,9 +753,9 @@ impl VarDctEncoder {
                 let mut ac_group_writer = BitWriter::new();
                 self.write_ac_group(
                     group_idx,
-                    &quant_ac,
-                    &nzeros,
-                    &raw_nzeros,
+                    quant_ac,
+                    nzeros,
+                    raw_nzeros,
                     xsize_blocks,
                     ysize_blocks,
                     xsize_groups,
@@ -836,11 +840,12 @@ impl VarDctEncoder {
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
         let mut recon_rgb = Vec::with_capacity(width * height);
+        let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
         for iter in 0..self.butteraugli_iters {
-            // Step 1: Quantize with current quant_field
+            // Step 1: Quantize with current quant_field (reuses pre-allocated buffers)
             qf_copy.copy_from_slice(quant_field);
-            let (quant_dc, quant_ac, _nzeros, _raw_nzeros) = self.transform_and_quantize(
+            self.transform_and_quantize_into(
                 xyb_x,
                 xyb_y,
                 xyb_b,
@@ -851,12 +856,13 @@ impl VarDctEncoder {
                 &mut qf_copy,
                 cfl_map,
                 ac_strategy,
+                &mut transform_out,
             );
 
             // Step 2: Reconstruct XYB from quantized coefficients
             let mut planes = reconstruct_xyb(
-                &quant_dc,
-                &quant_ac,
+                &transform_out.quant_dc,
+                &transform_out.quant_ac,
                 params,
                 &qf_copy,
                 cfl_map,
@@ -1147,7 +1153,7 @@ impl VarDctEncoder {
         );
 
         // Perform DCT and quantization using precomputed XYB data
-        let (quant_dc, quant_ac, nzeros, raw_nzeros) = self.transform_and_quantize(
+        let transform_out = self.transform_and_quantize(
             &precomputed.xyb_x,
             &precomputed.xyb_y,
             &precomputed.xyb_b,
@@ -1159,6 +1165,10 @@ impl VarDctEncoder {
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
         );
+        let quant_dc = &transform_out.quant_dc;
+        let quant_ac = &transform_out.quant_ac;
+        let nzeros = &transform_out.nzeros;
+        let raw_nzeros = &transform_out.raw_nzeros;
 
         // Use two-pass mode for rate control (required for ANS)
         self.encode_two_pass(
@@ -1174,10 +1184,10 @@ impl VarDctEncoder {
             num_groups,
             num_dc_groups,
             num_sections,
-            &quant_dc,
-            &quant_ac,
-            &nzeros,
-            &raw_nzeros,
+            quant_dc,
+            quant_ac,
+            nzeros,
+            raw_nzeros,
             &quant_field,
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
