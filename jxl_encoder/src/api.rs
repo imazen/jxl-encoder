@@ -131,6 +131,12 @@ pub enum PixelLayout {
     Gray8,
     /// 8-bit grayscale + alpha, 2 bytes per pixel.
     GrayAlpha8,
+    /// 16-bit sRGB, 6 bytes per pixel (R, G, B) — native-endian u16.
+    Rgb16,
+    /// 16-bit sRGB + alpha, 8 bytes per pixel (R, G, B, A) — native-endian u16.
+    Rgba16,
+    /// 16-bit grayscale, 2 bytes per pixel — native-endian u16.
+    Gray16,
     /// Linear f32 RGB, 12 bytes per pixel. Skips sRGB→linear conversion.
     RgbLinearF32,
 }
@@ -143,6 +149,9 @@ impl PixelLayout {
             Self::Rgba8 | Self::Bgra8 => 4,
             Self::Gray8 => 1,
             Self::GrayAlpha8 => 2,
+            Self::Rgb16 => 6,
+            Self::Rgba16 => 8,
+            Self::Gray16 => 2,
             Self::RgbLinearF32 => 12,
         }
     }
@@ -152,9 +161,22 @@ impl PixelLayout {
         matches!(self, Self::RgbLinearF32)
     }
 
+    /// Whether this layout uses 16-bit samples.
+    pub const fn is_16bit(self) -> bool {
+        matches!(self, Self::Rgb16 | Self::Rgba16 | Self::Gray16)
+    }
+
     /// Whether this layout includes an alpha channel.
     pub const fn has_alpha(self) -> bool {
-        matches!(self, Self::Rgba8 | Self::Bgra8 | Self::GrayAlpha8)
+        matches!(
+            self,
+            Self::Rgba8 | Self::Bgra8 | Self::GrayAlpha8 | Self::Rgba16
+        )
+    }
+
+    /// Whether this layout is grayscale.
+    pub const fn is_grayscale(self) -> bool {
+        matches!(self, Self::Gray8 | Self::GrayAlpha8 | Self::Gray16)
     }
 }
 
@@ -783,9 +805,22 @@ impl<'a> EncodeRequest<'a> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
 
-        match self.config {
+        let codestream = match self.config {
             ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels),
             ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels),
+        }?;
+
+        // Wrap in container if metadata (EXIF/XMP) is present
+        if let Some(meta) = self.metadata
+            && (meta.exif.is_some() || meta.xmp.is_some())
+        {
+            Ok(crate::container::wrap_in_container(
+                &codestream,
+                meta.exif,
+                meta.xmp,
+            ))
+        } else {
+            Ok(codestream)
         }
     }
 
@@ -875,6 +910,9 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Bgr8 => encoder.encode_rgb8(&bgr_to_rgb(pixels, 3), w, h),
             PixelLayout::Bgra8 => encoder.encode_rgba8(&bgr_to_rgb(pixels, 4), w, h),
             PixelLayout::Gray8 => encoder.encode_gray8(pixels, w, h),
+            PixelLayout::Rgb16 => encoder.encode_rgb16_native(pixels, w, h),
+            PixelLayout::Rgba16 => encoder.encode_rgba16_native(pixels, w, h),
+            PixelLayout::Gray16 => encoder.encode_gray16_native(pixels, w, h),
             PixelLayout::GrayAlpha8 => {
                 return Err(EncodeError::UnsupportedPixelLayout(PixelLayout::GrayAlpha8));
             }
@@ -898,25 +936,35 @@ impl<'a> EncodeRequest<'a> {
         let h = self.height as usize;
 
         // Build linear f32 RGB and extract alpha from input layout
-        let (linear_rgb, alpha) = match self.layout {
-            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(pixels, 3), None),
-            PixelLayout::Bgr8 => (srgb_u8_to_linear_f32(&bgr_to_rgb(pixels, 3), 3), None),
+        let (linear_rgb, alpha, bit_depth_16) = match self.layout {
+            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(pixels, 3), None, false),
+            PixelLayout::Bgr8 => (
+                srgb_u8_to_linear_f32(&bgr_to_rgb(pixels, 3), 3),
+                None,
+                false,
+            ),
             PixelLayout::Rgba8 => {
                 let rgb = srgb_u8_to_linear_f32(pixels, 4);
                 let alpha = extract_alpha(pixels, 4, 3);
-                (rgb, Some(alpha))
+                (rgb, Some(alpha), false)
             }
             PixelLayout::Bgra8 => {
                 let swapped = bgr_to_rgb(pixels, 4);
                 let rgb = srgb_u8_to_linear_f32(&swapped, 4);
                 let alpha = extract_alpha(pixels, 4, 3);
-                (rgb, Some(alpha))
+                (rgb, Some(alpha), false)
+            }
+            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(pixels, 3), None, true),
+            PixelLayout::Rgba16 => {
+                let rgb = srgb_u16_to_linear_f32(pixels, 4);
+                let alpha = extract_alpha_u16(pixels, 4, 3);
+                (rgb, Some(alpha), true)
             }
             PixelLayout::RgbLinearF32 => {
                 let floats: &[f32] = bytemuck::cast_slice(pixels);
-                (floats.to_vec(), None)
+                (floats.to_vec(), None, false)
             }
-            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 => {
+            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 | PixelLayout::Gray16 => {
                 return Err(EncodeError::UnsupportedPixelLayout(self.layout));
             }
         };
@@ -938,6 +986,8 @@ impl<'a> EncodeRequest<'a> {
             tiny.butteraugli_iters = cfg.butteraugli_iters;
         }
 
+        tiny.bit_depth_16 = bit_depth_16;
+
         tiny.encode(w, h, &linear_rgb, alpha.as_deref())
             .map_err(EncodeError::from)
     }
@@ -948,12 +998,7 @@ impl<'a> EncodeRequest<'a> {
 /// sRGB u8 → linear f32 (IEC 61966-2-1).
 #[inline]
 fn srgb_to_linear(c: u8) -> f32 {
-    let c = c as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+    srgb_to_linear_f(c as f32 / 255.0)
 }
 
 fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
@@ -965,6 +1010,40 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
                 srgb_to_linear(px[2]),
             ]
         })
+        .collect()
+}
+
+/// sRGB u16 → linear f32 (IEC 61966-2-1).
+fn srgb_u16_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(channels)
+        .flat_map(|px| {
+            [
+                srgb_to_linear_f(px[0] as f32 / 65535.0),
+                srgb_to_linear_f(px[1] as f32 / 65535.0),
+                srgb_to_linear_f(px[2] as f32 / 65535.0),
+            ]
+        })
+        .collect()
+}
+
+/// sRGB transfer function: normalized float [0,1] → linear float.
+#[inline]
+fn srgb_to_linear_f(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Extract alpha channel from interleaved 16-bit pixel data as u8 (quantized).
+fn extract_alpha_u16(data: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(stride)
+        .map(|px| (px[alpha_offset] >> 8) as u8)
         .collect()
 }
 
@@ -1020,12 +1099,25 @@ mod tests {
         assert_eq!(PixelLayout::Bgr8.bytes_per_pixel(), 3);
         assert_eq!(PixelLayout::Bgra8.bytes_per_pixel(), 4);
         assert_eq!(PixelLayout::Gray8.bytes_per_pixel(), 1);
+        assert_eq!(PixelLayout::Rgb16.bytes_per_pixel(), 6);
+        assert_eq!(PixelLayout::Rgba16.bytes_per_pixel(), 8);
+        assert_eq!(PixelLayout::Gray16.bytes_per_pixel(), 2);
         assert!(!PixelLayout::Rgb8.is_linear());
         assert!(PixelLayout::RgbLinearF32.is_linear());
+        assert!(!PixelLayout::Rgb16.is_linear());
         assert!(!PixelLayout::Rgb8.has_alpha());
         assert!(PixelLayout::Rgba8.has_alpha());
         assert!(PixelLayout::Bgra8.has_alpha());
         assert!(PixelLayout::GrayAlpha8.has_alpha());
+        assert!(PixelLayout::Rgba16.has_alpha());
+        assert!(!PixelLayout::Rgb16.has_alpha());
+        assert!(PixelLayout::Rgb16.is_16bit());
+        assert!(PixelLayout::Rgba16.is_16bit());
+        assert!(PixelLayout::Gray16.is_16bit());
+        assert!(!PixelLayout::Rgb8.is_16bit());
+        assert!(PixelLayout::Gray8.is_grayscale());
+        assert!(PixelLayout::Gray16.is_grayscale());
+        assert!(!PixelLayout::Rgb16.is_grayscale());
     }
 
     #[test]

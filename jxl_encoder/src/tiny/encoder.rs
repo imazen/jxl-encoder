@@ -204,6 +204,11 @@ pub struct TinyEncoder {
     /// Default: 0 (disabled)
     #[cfg(feature = "butteraugli-loop")]
     pub butteraugli_iters: u32,
+    /// Whether the input has 16-bit samples. When true, the file header signals
+    /// bit_depth=16 instead of 8. The actual VarDCT encoding is the same (XYB
+    /// is always f32 internally), but the decoder uses this to reconstruct at
+    /// the correct output bit depth.
+    pub bit_depth_16: bool,
 }
 
 impl Default for TinyEncoder {
@@ -227,6 +232,7 @@ impl Default for TinyEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 2,
+            bit_depth_16: false,
         }
     }
 }
@@ -253,6 +259,7 @@ impl TinyEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 2,
+            bit_depth_16: false,
         }
     }
 

@@ -131,6 +131,34 @@ impl Encoder {
         self.encode_modular_image(&image)
     }
 
+    /// Encodes a 16-bit RGB image to JXL format (lossless).
+    pub fn encode_rgb16_native(&self, data: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+        let image = ModularImage::from_rgb16_native(data, width, height)?;
+        self.encode_modular_image(&image)
+    }
+
+    /// Encodes a 16-bit RGBA image to JXL format (lossless).
+    pub fn encode_rgba16_native(
+        &self,
+        data: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let image = ModularImage::from_rgba16_native(data, width, height)?;
+        self.encode_modular_image(&image)
+    }
+
+    /// Encodes a 16-bit grayscale image to JXL format (lossless).
+    pub fn encode_gray16_native(
+        &self,
+        data: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<Vec<u8>> {
+        let image = ModularImage::from_gray16_native(data, width, height)?;
+        self.encode_modular_image(&image)
+    }
+
     /// Encodes an RGB8 image to JXL format with lossy compression.
     #[doc(hidden)]
     ///
@@ -177,13 +205,19 @@ impl Encoder {
         let mut writer = BitWriter::new();
 
         // Write file header (includes JXL signature)
-        let file_header = if image.is_grayscale {
+        let mut file_header = if image.is_grayscale {
             FileHeader::new_gray(image.width() as u32, image.height() as u32)
         } else if image.has_alpha {
             FileHeader::new_rgba(image.width() as u32, image.height() as u32)
         } else {
             FileHeader::new_rgb(image.width() as u32, image.height() as u32)
         };
+
+        // Set bit depth from image
+        if image.bit_depth == 16 {
+            file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
+        }
+
         file_header.write(&mut writer)?;
 
         // JXL frame header has #[aligned] attribute, meaning it starts byte-aligned

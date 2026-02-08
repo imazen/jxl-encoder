@@ -273,6 +273,83 @@ impl ModularImage {
         })
     }
 
+    /// Creates a new modular image from native-endian 16-bit RGB data.
+    ///
+    /// Input is a byte slice interpreted as `&[u16]` in native endian order
+    /// (6 bytes per pixel: R_lo, R_hi, G_lo, G_hi, B_lo, B_hi on little-endian).
+    pub fn from_rgb16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        if data.len() != width * height * 6 {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let mut channels = Vec::with_capacity(3);
+        for c in 0..3 {
+            let mut channel = Channel::new(width, height)?;
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = (y * width + x) * 3 + c;
+                    channel.set(x, y, pixels[idx] as i32);
+                }
+            }
+            channels.push(channel);
+        }
+        Ok(Self {
+            channels,
+            bit_depth: 16,
+            is_grayscale: false,
+            has_alpha: false,
+        })
+    }
+
+    /// Creates a new modular image from native-endian 16-bit RGBA data.
+    ///
+    /// Input is 8 bytes per pixel (R, G, B, A as native-endian u16).
+    pub fn from_rgba16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        if data.len() != width * height * 8 {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let mut channels = Vec::with_capacity(4);
+        for c in 0..4 {
+            let mut channel = Channel::new(width, height)?;
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = (y * width + x) * 4 + c;
+                    channel.set(x, y, pixels[idx] as i32);
+                }
+            }
+            channels.push(channel);
+        }
+        Ok(Self {
+            channels,
+            bit_depth: 16,
+            is_grayscale: false,
+            has_alpha: true,
+        })
+    }
+
+    /// Creates a new modular image from native-endian 16-bit grayscale data.
+    ///
+    /// Input is 2 bytes per pixel (native-endian u16).
+    pub fn from_gray16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        if data.len() != width * height * 2 {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let mut channel = Channel::new(width, height)?;
+        for (i, &val) in pixels.iter().enumerate() {
+            let x = i % width;
+            let y = i / width;
+            channel.set(x, y, val as i32);
+        }
+        Ok(Self {
+            channels: vec![channel],
+            bit_depth: 16,
+            is_grayscale: true,
+            has_alpha: false,
+        })
+    }
+
     /// Returns the width of the image.
     pub fn width(&self) -> usize {
         self.channels.first().map_or(0, |c| c.width())
