@@ -126,10 +126,15 @@ pub fn compute_cfl_map(
     let mut ytox = vec![0i8; num_tiles];
     let mut ytob = vec![0i8; num_tiles];
 
-    // Pre-fetch inverse quant weights for X and B channels (DCT8 strategy).
-    // C++ uses dequant.InvMatrix(strategy, channel) which is 1/kQuantWeights.
-    let qw_x = quant::quant_weights(0, 0); // DCT8, X channel — small values
-    let qw_b = quant::quant_weights(0, 2); // DCT8, B channel — small values
+    // Pre-compute inverse quant weights once (avoid per-block division).
+    let qw_x = quant::quant_weights(0, 0); // DCT8, X channel
+    let qw_b = quant::quant_weights(0, 2); // DCT8, B channel
+    let mut inv_qm_x = [0.0f32; DCT_BLOCK_SIZE];
+    let mut inv_qm_b = [0.0f32; DCT_BLOCK_SIZE];
+    for i in 0..DCT_BLOCK_SIZE {
+        inv_qm_x[i] = 1.0 / qw_x[i];
+        inv_qm_b[i] = 1.0 / qw_b[i];
+    }
 
     // Max coefficients per tile: 8*8 blocks * 64 coefficients = 4096
     let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
@@ -154,15 +159,13 @@ pub fn compute_cfl_map(
                     let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
                     let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
 
+                    let x0 = bx * BLOCK_DIM;
                     for dy in 0..BLOCK_DIM {
-                        let py = by * BLOCK_DIM + dy;
-                        for dx in 0..BLOCK_DIM {
-                            let px = bx * BLOCK_DIM + dx;
-                            let idx = py * stride + px;
-                            block_y[dy * BLOCK_DIM + dx] = xyb_y[idx];
-                            block_x[dy * BLOCK_DIM + dx] = xyb_x[idx];
-                            block_b[dy * BLOCK_DIM + dx] = xyb_b[idx];
-                        }
+                        let src = (by * BLOCK_DIM + dy) * stride + x0;
+                        let dst = dy * BLOCK_DIM;
+                        block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
+                        block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
+                        block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
                     }
 
                     let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
@@ -173,20 +176,16 @@ pub fn compute_cfl_map(
                     dct_8x8(&block_b, &mut dct_b);
 
                     // Zero out DC so it doesn't affect the AC-only fitting.
-                    // C++ does this explicitly: block_y[0] = block_x[0] = block_b[0] = 0
                     dct_y[0] = 0.0;
                     dct_x[0] = 0.0;
                     dct_b[0] = 0.0;
 
-                    // Multiply by inverse quant weights (1/kQuantWeights = InvMatrix)
-                    // and accumulate into coefficient arrays.
+                    // Multiply by precomputed inverse quant weights and accumulate.
                     for i in 0..DCT_BLOCK_SIZE {
-                        let inv_qm_x = 1.0 / qw_x[i]; // InvMatrix for X channel
-                        let inv_qm_b = 1.0 / qw_b[i]; // InvMatrix for B channel
-                        coeffs_yx[num_ac + i] = dct_y[i] * inv_qm_x;
-                        coeffs_x[num_ac + i] = dct_x[i] * inv_qm_x;
-                        coeffs_yb[num_ac + i] = dct_y[i] * inv_qm_b;
-                        coeffs_b[num_ac + i] = dct_b[i] * inv_qm_b;
+                        coeffs_yx[num_ac + i] = dct_y[i] * inv_qm_x[i];
+                        coeffs_x[num_ac + i] = dct_x[i] * inv_qm_x[i];
+                        coeffs_yb[num_ac + i] = dct_y[i] * inv_qm_b[i];
+                        coeffs_b[num_ac + i] = dct_b[i] * inv_qm_b[i];
                     }
                     num_ac += DCT_BLOCK_SIZE;
                 }

@@ -245,6 +245,19 @@ fn epf_step2_avx2(
             (height - 1) * width
         };
 
+        // Pre-slice input rows so compiler can prove SIMD loads in-bounds.
+        // Interior SIMD blocks access x-1..x+8 (left neighbor) through x+1..x+9 (right neighbor),
+        // all within [0..width). Pre-slicing to width tells the compiler the range.
+        let row0_x = &in_x[r0..r0 + width];
+        let row0_y = &in_y[r0..r0 + width];
+        let row0_b = &in_b[r0..r0 + width];
+        let rowt_x = &in_x[rt..rt + width];
+        let rowt_y = &in_y[rt..rt + width];
+        let rowt_b = &in_b[rt..rt + width];
+        let rowb_x = &in_x[rb..rb + width];
+        let rowb_y = &in_y[rb..rb + width];
+        let rowb_b = &in_b[rb..rb + width];
+
         // Scalar: first block (bx=0) — left neighbor clamping needed
         {
             let bx = 0;
@@ -293,19 +306,22 @@ fn epf_step2_avx2(
             }
         }
 
+        // Pre-slice output row for SIMD stores
+        let orow_x = &mut out_x[r0..r0 + width];
+        let orow_y = &mut out_y[r0..r0 + width];
+        let orow_b = &mut out_b[r0..r0 + width];
+
         // SIMD: interior blocks (bx=1..xsize_blocks-1)
         for bx in 1..xsize_blocks - 1 {
             let x = bx * block_dim;
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            let base = r0 + x;
-
             if is == 0.0 {
                 // Copy 8 pixels per channel
-                out_x[base..base + 8].copy_from_slice(&in_x[base..base + 8]);
-                out_y[base..base + 8].copy_from_slice(&in_y[base..base + 8]);
-                out_b[base..base + 8].copy_from_slice(&in_b[base..base + 8]);
+                orow_x[x..x + 8].copy_from_slice(&row0_x[x..x + 8]);
+                orow_y[x..x + 8].copy_from_slice(&row0_y[x..x + 8]);
+                orow_b[x..x + 8].copy_from_slice(&row0_b[x..x + 8]);
                 continue;
             }
 
@@ -313,9 +329,9 @@ fn epf_step2_avx2(
             let eff_is = is_v * sm_vec;
 
             // Load center pixels
-            let cx = f32x8::from_slice(token, &in_x[base..]);
-            let cy = f32x8::from_slice(token, &in_y[base..]);
-            let cb = f32x8::from_slice(token, &in_b[base..]);
+            let cx = f32x8::from_slice(token, &row0_x[x..]);
+            let cy = f32x8::from_slice(token, &row0_y[x..]);
+            let cb = f32x8::from_slice(token, &row0_b[x..]);
 
             let mut sum_x = cx;
             let mut sum_y = cy;
@@ -323,10 +339,9 @@ fn epf_step2_avx2(
             let mut total_w = one;
 
             // Top neighbor (dy=-1, dx=0)
-            let top = rt + x;
-            let nx = f32x8::from_slice(token, &in_x[top..]);
-            let ny = f32x8::from_slice(token, &in_y[top..]);
-            let nb = f32x8::from_slice(token, &in_b[top..]);
+            let nx = f32x8::from_slice(token, &rowt_x[x..]);
+            let ny = f32x8::from_slice(token, &rowt_y[x..]);
+            let nb = f32x8::from_slice(token, &rowt_b[x..]);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -336,10 +351,9 @@ fn epf_step2_avx2(
             sum_b = w.mul_add(nb, sum_b);
 
             // Bottom neighbor (dy=+1, dx=0)
-            let bot = rb + x;
-            let nx = f32x8::from_slice(token, &in_x[bot..]);
-            let ny = f32x8::from_slice(token, &in_y[bot..]);
-            let nb = f32x8::from_slice(token, &in_b[bot..]);
+            let nx = f32x8::from_slice(token, &rowb_x[x..]);
+            let ny = f32x8::from_slice(token, &rowb_y[x..]);
+            let nb = f32x8::from_slice(token, &rowb_b[x..]);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -348,11 +362,10 @@ fn epf_step2_avx2(
             sum_y = w.mul_add(ny, sum_y);
             sum_b = w.mul_add(nb, sum_b);
 
-            // Left neighbor (dy=0, dx=-1)
-            let left = r0 + x - 1; // safe: bx >= 1, so x >= 8
-            let nx = f32x8::from_slice(token, &in_x[left..]);
-            let ny = f32x8::from_slice(token, &in_y[left..]);
-            let nb = f32x8::from_slice(token, &in_b[left..]);
+            // Left neighbor (dy=0, dx=-1) — safe: bx >= 1, so x >= 8
+            let nx = f32x8::from_slice(token, &row0_x[x - 1..]);
+            let ny = f32x8::from_slice(token, &row0_y[x - 1..]);
+            let nb = f32x8::from_slice(token, &row0_b[x - 1..]);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -361,11 +374,10 @@ fn epf_step2_avx2(
             sum_y = w.mul_add(ny, sum_y);
             sum_b = w.mul_add(nb, sum_b);
 
-            // Right neighbor (dy=0, dx=+1)
-            let right = r0 + x + 1; // safe: bx < xsize_blocks-1, so x+8 < width
-            let nx = f32x8::from_slice(token, &in_x[right..]);
-            let ny = f32x8::from_slice(token, &in_y[right..]);
-            let nb = f32x8::from_slice(token, &in_b[right..]);
+            // Right neighbor (dy=0, dx=+1) — safe: bx < xsize_blocks-1, so x+8 < width
+            let nx = f32x8::from_slice(token, &row0_x[x + 1..]);
+            let ny = f32x8::from_slice(token, &row0_y[x + 1..]);
+            let nb = f32x8::from_slice(token, &row0_b[x + 1..]);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -376,9 +388,9 @@ fn epf_step2_avx2(
 
             // Normalize and store
             let inv_tw = total_w.recip();
-            let out_arr_x: &mut [f32; 8] = (&mut out_x[base..base + 8]).try_into().unwrap();
-            let out_arr_y: &mut [f32; 8] = (&mut out_y[base..base + 8]).try_into().unwrap();
-            let out_arr_b: &mut [f32; 8] = (&mut out_b[base..base + 8]).try_into().unwrap();
+            let out_arr_x: &mut [f32; 8] = (&mut orow_x[x..x + 8]).try_into().unwrap();
+            let out_arr_y: &mut [f32; 8] = (&mut orow_y[x..x + 8]).try_into().unwrap();
+            let out_arr_b: &mut [f32; 8] = (&mut orow_b[x..x + 8]).try_into().unwrap();
             (sum_x * inv_tw).store(out_arr_x);
             (sum_y * inv_tw).store(out_arr_y);
             (sum_b * inv_tw).store(out_arr_b);
@@ -783,6 +795,17 @@ fn epf_step1_avx2(
         let r_p1 = (py + 1).min(h_max) * width;
         let r_p2 = (py + 2).min(h_max) * width;
 
+        // Pre-slice rows for SIMD interior loop loads (neighbor pixel loads + stores)
+        let row0_x = &in_x[r_0..r_0 + width];
+        let row0_y = &in_y[r_0..r_0 + width];
+        let row0_b = &in_b[r_0..r_0 + width];
+        let rowm1_x = &in_x[r_m1..r_m1 + width];
+        let rowm1_y = &in_y[r_m1..r_m1 + width];
+        let rowm1_b = &in_b[r_m1..r_m1 + width];
+        let rowp1_x = &in_x[r_p1..r_p1 + width];
+        let rowp1_y = &in_y[r_p1..r_p1 + width];
+        let rowp1_b = &in_b[r_p1..r_p1 + width];
+
         // Scalar: first block (left edge)
         scalar_step1_block(
             in_x,
@@ -803,28 +826,31 @@ fn epf_step1_avx2(
             0,
         );
 
+        // Pre-slice output row for SIMD stores
+        let orow_x = &mut out_x[r_0..r_0 + width];
+        let orow_y = &mut out_y[r_0..r_0 + width];
+        let orow_b = &mut out_b[r_0..r_0 + width];
+
         // SIMD: interior blocks
         for bx in 1..xsize_blocks - 1 {
             let x = bx * block_dim;
             let sigma_idx = by * xsize_blocks + bx;
             let is = inv_sigma[sigma_idx];
 
-            let base = r_0 + x;
-
             if is == 0.0 {
-                out_x[base..base + 8].copy_from_slice(&in_x[base..base + 8]);
-                out_y[base..base + 8].copy_from_slice(&in_y[base..base + 8]);
-                out_b[base..base + 8].copy_from_slice(&in_b[base..base + 8]);
+                orow_x[x..x + 8].copy_from_slice(&row0_x[x..x + 8]);
+                orow_y[x..x + 8].copy_from_slice(&row0_y[x..x + 8]);
+                orow_b[x..x + 8].copy_from_slice(&row0_b[x..x + 8]);
                 continue;
             }
 
             let is_v = f32x8::splat(token, is);
             let eff_is = is_v * sm_vec;
 
-            // Load center pixels (for weighted sum)
-            let cx = f32x8::from_slice(token, &in_x[base..]);
-            let cy = f32x8::from_slice(token, &in_y[base..]);
-            let cb = f32x8::from_slice(token, &in_b[base..]);
+            // Load center pixels using pre-sliced rows
+            let cx = f32x8::from_slice(token, &row0_x[x..]);
+            let cy = f32x8::from_slice(token, &row0_y[x..]);
+            let cb = f32x8::from_slice(token, &row0_b[x..]);
 
             let mut sum_x = cx;
             let mut sum_y = cy;
@@ -832,11 +858,6 @@ fn epf_step1_avx2(
             let mut total_w = one;
 
             // Neighbor: top (dx=0, dy=-1)
-            // Center plus rows: r_m1, r_m2(for center's y-1), r_0(for center's y+1)
-            //   Wait - center's plus: (y, x), (y, x-1), (y-1, x), (y, x+1), (y+1, x)
-            //   So center plus uses rows: r_m1, r_0, r_p1
-            // Neighbor at (x, y-1): plus uses (y-1, x), (y-1, x-1), (y-2, x), (y-1, x+1), (y, x)
-            //   So neighbor plus uses rows: r_m2, r_m1, r_0
             {
                 let sad = sad_3x3_plus_simd(
                     token, in_x, in_y, in_b, x, r_0, r_m1, r_p1, // center rows
@@ -846,17 +867,15 @@ fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_m1 + x..]);
-                let ny = f32x8::from_slice(token, &in_y[r_m1 + x..]);
-                let nb = f32x8::from_slice(token, &in_b[r_m1 + x..]);
+                let nx = f32x8::from_slice(token, &rowm1_x[x..]);
+                let ny = f32x8::from_slice(token, &rowm1_y[x..]);
+                let nb = f32x8::from_slice(token, &rowm1_b[x..]);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
             }
 
             // Neighbor: bottom (dx=0, dy=+1)
-            // Neighbor at (x, y+1): plus uses (y+1, x), (y+1, x-1), (y, x), (y+1, x+1), (y+2, x)
-            //   Neighbor plus rows: r_0, r_p1, r_p2
             {
                 let sad = sad_3x3_plus_simd(
                     token, in_x, in_y, in_b, x, r_0, r_m1, r_p1, // center rows
@@ -866,18 +885,15 @@ fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_p1 + x..]);
-                let ny = f32x8::from_slice(token, &in_y[r_p1 + x..]);
-                let nb = f32x8::from_slice(token, &in_b[r_p1 + x..]);
+                let nx = f32x8::from_slice(token, &rowp1_x[x..]);
+                let ny = f32x8::from_slice(token, &rowp1_y[x..]);
+                let nb = f32x8::from_slice(token, &rowp1_b[x..]);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
             }
 
             // Neighbor: left (dx=-1, dy=0)
-            // Neighbor at (x-1, y): plus uses (y, x-1), (y, x-2), (y-1, x-1), (y, x), (y+1, x-1)
-            //   Neighbor plus rows: r_m1, r_0, r_p1 (same as center!)
-            //   ndx = -1
             {
                 let sad = sad_3x3_plus_simd(
                     token, in_x, in_y, in_b, x, r_0, r_m1, r_p1, // center rows
@@ -887,9 +903,9 @@ fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_0 + x - 1..]);
-                let ny = f32x8::from_slice(token, &in_y[r_0 + x - 1..]);
-                let nb = f32x8::from_slice(token, &in_b[r_0 + x - 1..]);
+                let nx = f32x8::from_slice(token, &row0_x[x - 1..]);
+                let ny = f32x8::from_slice(token, &row0_y[x - 1..]);
+                let nb = f32x8::from_slice(token, &row0_b[x - 1..]);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
@@ -904,9 +920,9 @@ fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_0 + x + 1..]);
-                let ny = f32x8::from_slice(token, &in_y[r_0 + x + 1..]);
-                let nb = f32x8::from_slice(token, &in_b[r_0 + x + 1..]);
+                let nx = f32x8::from_slice(token, &row0_x[x + 1..]);
+                let ny = f32x8::from_slice(token, &row0_y[x + 1..]);
+                let nb = f32x8::from_slice(token, &row0_b[x + 1..]);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
@@ -914,9 +930,9 @@ fn epf_step1_avx2(
 
             // Normalize and store
             let inv_tw = total_w.recip();
-            let out_arr_x: &mut [f32; 8] = (&mut out_x[base..base + 8]).try_into().unwrap();
-            let out_arr_y: &mut [f32; 8] = (&mut out_y[base..base + 8]).try_into().unwrap();
-            let out_arr_b: &mut [f32; 8] = (&mut out_b[base..base + 8]).try_into().unwrap();
+            let out_arr_x: &mut [f32; 8] = (&mut orow_x[x..x + 8]).try_into().unwrap();
+            let out_arr_y: &mut [f32; 8] = (&mut orow_y[x..x + 8]).try_into().unwrap();
+            let out_arr_b: &mut [f32; 8] = (&mut orow_b[x..x + 8]).try_into().unwrap();
             (sum_x * inv_tw).store(out_arr_x);
             (sum_y * inv_tw).store(out_arr_y);
             (sum_b * inv_tw).store(out_arr_b);
