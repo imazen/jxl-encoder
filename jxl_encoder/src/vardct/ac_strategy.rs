@@ -710,35 +710,23 @@ pub(super) fn estimate_entropy_full(
             apply_idct_for_strategy(raw_strategy, error_coeffs, pixel_error_buf);
             let pixel_error = &*pixel_error_buf;
 
-            // Compute 8th power norm with per-pixel masking
-            let mut channel_loss = 0.0f64;
+            // Compute 8th power norm with per-pixel masking via SIMD kernel.
+            // mask1x1 is padded to block-aligned dimensions (xsize_blocks*8 × ysize_blocks*8),
+            // and mask1x1_stride = padded_width, so all block pixel accesses are in-bounds.
             let mask_offset = MASK_CHANNEL_OFFSET[c];
-
             let block_width = cx * BLOCK_DIM;
             let block_height = cy * BLOCK_DIM;
+            let mask_row_base = pixel_y * mask1x1_stride + pixel_x;
 
-            for py in 0..block_height {
-                for px in 0..block_width {
-                    let abs_x = pixel_x + px;
-                    let abs_y = pixel_y + py;
-
-                    // Bounds check for mask access
-                    if abs_x < mask1x1_stride && abs_y * mask1x1_stride + abs_x < mask.len() {
-                        let mask_val = mask[abs_y * mask1x1_stride + abs_x];
-                        let error_val = pixel_error[py * block_width + px];
-
-                        // masked = (mask + offset) * error
-                        let masked = (mask_val + mask_offset) * error_val;
-
-                        // 8th power: masked^8 = (masked^2)^4
-                        let m2 = (masked * masked) as f64;
-                        let m4 = m2 * m2;
-                        let m8 = m4 * m4;
-
-                        channel_loss += m8;
-                    }
-                }
-            }
+            let mut channel_loss = jxl_simd::pixel_domain_loss(
+                pixel_error,
+                mask,
+                mask_row_base,
+                mask1x1_stride,
+                mask_offset,
+                block_width,
+                block_height,
+            );
 
             // Apply channel multiplier
             channel_loss *= CHANNEL_MUL[c];
