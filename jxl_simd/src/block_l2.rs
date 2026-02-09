@@ -172,16 +172,8 @@ mod tests {
         let n = padded_width * ysize_blocks * 8;
 
         // Uniform original, zero reconstructed → diff = original
-        let original = [
-            vec![1.0f32; n],
-            vec![1.0f32; n],
-            vec![1.0f32; n],
-        ];
-        let reconstructed = [
-            vec![0.0f32; n],
-            vec![0.0f32; n],
-            vec![0.0f32; n],
-        ];
+        let original = [vec![1.0f32; n], vec![1.0f32; n], vec![1.0f32; n]];
+        let reconstructed = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
         let mask = vec![1.0f32; n];
 
         let errors = compute_block_l2_errors(
@@ -200,7 +192,9 @@ mod tests {
             assert!(
                 (err - expected).abs() < 0.1,
                 "Block {} error {} != expected {}",
-                i, err, expected
+                i,
+                err,
+                expected
             );
         }
     }
@@ -260,7 +254,10 @@ mod tests {
             assert!(
                 rel_err < 1e-5,
                 "Block {} SIMD {} vs scalar {} rel_err {}",
-                i, s, sc, rel_err
+                i,
+                s,
+                sc,
+                rel_err
             );
         }
     }
