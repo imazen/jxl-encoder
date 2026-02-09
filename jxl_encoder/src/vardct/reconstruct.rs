@@ -722,7 +722,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             input[8] = dc00 - dc01 + dc10 + dc11;
             input[9] = dc00 - dc01 - dc10 + dc11;
 
-            output[..64].fill(0.0);
+            // All 64 positions written: 4 sub-blocks × 4×4 = 64 pixels
             for y in 0..2 {
                 for x in 0..2 {
                     // De-interleave sub-block coefficients
@@ -755,7 +755,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             input[0] = dc0 + dc1;
             input[8] = dc0 - dc1;
 
-            output[..64].fill(0.0);
+            // All 64 positions written: 2 sub-blocks × 4×8 = 64 pixels
             for y in 0..2 {
                 // De-interleave sub-block coefficients
                 let mut sub = [0.0f32; 32];
@@ -786,7 +786,7 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
             input[0] = dc0 + dc1;
             input[8] = dc0 - dc1;
 
-            output[..64].fill(0.0);
+            // All 64 positions written: 2 sub-blocks × 8×4 = 64 pixels
             for x in 0..2 {
                 // De-interleave sub-block coefficients
                 let mut sub = [0.0f32; 32];

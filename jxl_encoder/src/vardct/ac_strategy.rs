@@ -463,9 +463,8 @@ pub(super) fn estimate_entropy_full(
     const K_INFO_LOSS_MULTIPLIER2: f32 = 50.468_4;
     const K_COST2: f32 = 4.462_815;
 
-    // Use pre-allocated scratch buffers
+    // Use pre-allocated scratch buffers (no fill needed — transforms overwrite all positions)
     let block = &mut scratch.block[..3 * size];
-    block.fill(0.0);
     for (c, xyb_c) in xyb.iter().enumerate() {
         let offset = c * size;
         match raw_strategy {
@@ -650,9 +649,9 @@ pub(super) fn estimate_entropy_full(
     // For pixel-domain loss: accumulate loss across all channels
     let mut total_pixel_loss = 0.0f64;
 
-    // Error coefficient buffer for pixel-domain IDCT (reused per channel)
+    // Error coefficient buffer for pixel-domain IDCT (reused per channel,
+    // no fill needed — entropy_estimate_coeffs writes all positions)
     let error_coeffs = &mut scratch.error_coeffs[..size];
-    error_coeffs.fill(0.0);
 
     let slope = (distance / 3.0).min(1.0);
     let cost_of_1 = 1.0 + slope * 8.870_325;

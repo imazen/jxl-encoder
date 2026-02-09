@@ -418,10 +418,7 @@ impl VarDctEncoder {
                 let block_width = cx * BLOCK_DIM;
                 let block_height = cy * BLOCK_DIM;
 
-                // Zero the scratch regions we'll use
-                for ch in &mut dct_scratch {
-                    ch[..size].fill(0.0);
-                }
+                // No fill needed — apply_dct writes all output positions
                 // Alias for readability — dct_coeffs[c] is dct_scratch[c][..size]
                 let dct_coeffs = &mut dct_scratch;
 
