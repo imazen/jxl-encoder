@@ -381,26 +381,28 @@ pub(crate) fn compute_epf_sharpness(
         &[0, 2, 7]
     };
 
-    // For each candidate, reconstruct + gab + EPF, compute per-block error
+    // Reconstruct once — the dequant→CfL→IDCT→gab result is identical for all
+    // sharpness candidates. Only the EPF pass differs.
+    let mut base_recon = reconstruct_xyb(
+        quant_dc,
+        quant_ac,
+        params,
+        quant_field,
+        cfl_map,
+        ac_strategy,
+        xsize_blocks,
+        ysize_blocks,
+    );
+
+    if enable_gaborish {
+        gab_smooth(&mut base_recon, padded_width, padded_height);
+    }
+
+    // For each candidate, clone the base reconstruction and apply EPF
     let mut error_maps: Vec<Vec<f32>> = Vec::with_capacity(candidates.len());
 
     for &sharpness_val in candidates {
-        // Reconstruct XYB from quantized coefficients
-        let mut recon = reconstruct_xyb(
-            quant_dc,
-            quant_ac,
-            params,
-            quant_field,
-            cfl_map,
-            ac_strategy,
-            xsize_blocks,
-            ysize_blocks,
-        );
-
-        // Apply decoder-side gaborish smooth
-        if enable_gaborish {
-            gab_smooth(&mut recon, padded_width, padded_height);
-        }
+        let mut recon = base_recon.clone();
 
         // Apply EPF with uniform sharpness
         let uniform_sharpness = vec![sharpness_val; nblocks];
