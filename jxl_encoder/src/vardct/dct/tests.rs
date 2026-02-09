@@ -616,7 +616,7 @@ fn test_identity_roundtrip() {
     let pixels: [f32; 64] = core::array::from_fn(|i| ((i as f32 * 1.3).sin() + 0.5) * 200.0);
 
     let mut coeffs = [0.0f32; 64];
-    identity_transform(&pixels, 8, &mut coeffs);
+    identity_transform(&pixels, &mut coeffs);
 
     let mut reconstructed = [0.0f32; 64];
     inverse_identity_transform(&coeffs, &mut reconstructed);
@@ -641,7 +641,7 @@ fn test_identity_roundtrip_constant() {
     let pixels = [42.0f32; 64];
 
     let mut coeffs = [0.0f32; 64];
-    identity_transform(&pixels, 8, &mut coeffs);
+    identity_transform(&pixels, &mut coeffs);
 
     let mut reconstructed = [0.0f32; 64];
     inverse_identity_transform(&coeffs, &mut reconstructed);
@@ -664,7 +664,7 @@ fn test_dct2x2_roundtrip() {
     let pixels: [f32; 64] = core::array::from_fn(|i| ((i as f32 * 0.9).cos() + 1.0) * 128.0);
 
     let mut coeffs = [0.0f32; 64];
-    dct2x2_transform(&pixels, 8, &mut coeffs);
+    dct2x2_transform(&pixels, &mut coeffs);
 
     let mut reconstructed = [0.0f32; 64];
     inverse_dct2x2_transform(&coeffs, &mut reconstructed);
@@ -688,7 +688,7 @@ fn test_dct2x2_roundtrip_constant() {
     let pixels = [99.0f32; 64];
 
     let mut coeffs = [0.0f32; 64];
-    dct2x2_transform(&pixels, 8, &mut coeffs);
+    dct2x2_transform(&pixels, &mut coeffs);
 
     let mut reconstructed = [0.0f32; 64];
     inverse_dct2x2_transform(&coeffs, &mut reconstructed);

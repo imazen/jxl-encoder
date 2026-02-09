@@ -868,12 +868,14 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
         }
         RAW_STRATEGY_IDENTITY => {
             let mut tmp = [0.0f32; 64];
-            inverse_identity_transform(&coeffs[..64], &mut tmp);
+            let c: &[f32; 64] = coeffs[..64].try_into().unwrap();
+            inverse_identity_transform(c, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT2X2 => {
             let mut tmp = [0.0f32; 64];
-            inverse_dct2x2_transform(&coeffs[..64], &mut tmp);
+            let c: &[f32; 64] = coeffs[..64].try_into().unwrap();
+            inverse_dct2x2_transform(c, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         _ => {
