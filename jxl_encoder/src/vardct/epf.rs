@@ -308,9 +308,83 @@ pub(crate) fn apply_epf(
     }
 }
 
+/// Apply EPF with pre-allocated scratch buffers and pre-computed inv_sigma.
+///
+/// This avoids repeated allocation when called multiple times with different
+/// sharpness maps (e.g., EPF sharpness search). The caller provides:
+/// - `scratch_x/y/b`: 3 pre-allocated output buffers (length >= width*height each)
+/// - `inv_sigma`: pre-computed from `compute_inv_sigma_map`
+#[allow(clippy::too_many_arguments)]
+fn apply_epf_with_scratch(
+    planes: &mut [Vec<f32>; 3],
+    inv_sigma: &[f32],
+    epf_iters: u32,
+    xsize_blocks: usize,
+    width: usize,
+    height: usize,
+    scratch_x: &mut Vec<f32>,
+    scratch_y: &mut Vec<f32>,
+    scratch_b: &mut Vec<f32>,
+) {
+    if epf_iters == 0 {
+        return;
+    }
+
+    // Step 0: heavy 5x5 plus (only at epf_iters >= 3)
+    if epf_iters >= 3 {
+        let result = epf_step0(planes, inv_sigma, xsize_blocks, width, height);
+        *planes = result;
+    }
+
+    // Step 1: medium 3x3 cross with multi-point SAD (only at epf_iters >= 2)
+    if epf_iters >= 2 {
+        // No zeroing needed — EPF kernels write every output pixel
+        jxl_simd::epf_step1(
+            &planes[0],
+            &planes[1],
+            &planes[2],
+            scratch_x,
+            scratch_y,
+            scratch_b,
+            inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            1.65,
+            EPF_BORDER_SAD_MUL,
+        );
+        core::mem::swap(&mut planes[0], scratch_x);
+        core::mem::swap(&mut planes[1], scratch_y);
+        core::mem::swap(&mut planes[2], scratch_b);
+    }
+
+    // Step 2: light 3x3 cross with single-pixel SAD (always runs when epf_iters >= 1)
+    {
+        // No zeroing needed — EPF kernels write every output pixel
+        jxl_simd::epf_step2(
+            &planes[0],
+            &planes[1],
+            &planes[2],
+            scratch_x,
+            scratch_y,
+            scratch_b,
+            inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            EPF_PASS2_SIGMA_SCALE * 1.65,
+            EPF_BORDER_SAD_MUL,
+        );
+        core::mem::swap(&mut planes[0], scratch_x);
+        core::mem::swap(&mut planes[1], scratch_y);
+        core::mem::swap(&mut planes[2], scratch_b);
+    }
+}
+
 /// Compute per-block masked L2 distance between original and reconstructed XYB.
 ///
 /// Channel weights: X=12.34, Y=1.0, B=0.2 (from libjxl ComputeBlockL2Distance).
+/// Uses SIMD-accelerated kernel (AVX2 on x86_64).
 fn compute_block_l2_errors(
     original: [&[f32]; 3],
     reconstructed: [&[f32]; 3],
@@ -318,36 +392,7 @@ fn compute_block_l2_errors(
     xsize_blocks: usize,
     ysize_blocks: usize,
 ) -> Vec<f32> {
-    const CHANNEL_WEIGHTS: [f32; 3] = [12.339_445, 1.0, 0.2];
-    let padded_width = xsize_blocks * BLOCK_DIM;
-    let nblocks = xsize_blocks * ysize_blocks;
-    let mut errors = vec![0.0f32; nblocks];
-
-    for by in 0..ysize_blocks {
-        for bx in 0..xsize_blocks {
-            let block_idx = by * xsize_blocks + bx;
-            let mut total_err = 0.0f32;
-
-            for py in 0..BLOCK_DIM {
-                for px in 0..BLOCK_DIM {
-                    let y = by * BLOCK_DIM + py;
-                    let x = bx * BLOCK_DIM + px;
-                    let pixel_idx = y * padded_width + x;
-                    let mask = mask1x1[pixel_idx];
-                    let mask_sq = mask * mask;
-
-                    for c in 0..3 {
-                        let diff = original[c][pixel_idx] - reconstructed[c][pixel_idx];
-                        total_err += CHANNEL_WEIGHTS[c] * mask_sq * diff * diff;
-                    }
-                }
-            }
-
-            errors[block_idx] = total_err;
-        }
-    }
-
-    errors
+    jxl_simd::compute_block_l2_errors(original, reconstructed, mask1x1, xsize_blocks, ysize_blocks)
 }
 
 /// Compute per-block EPF sharpness map using libjxl's two-pass algorithm.
@@ -398,24 +443,42 @@ pub(crate) fn compute_epf_sharpness(
         gab_smooth(&mut base_recon, padded_width, padded_height);
     }
 
+    // Pre-allocate scratch buffers for EPF output (reused across candidates)
+    let n = padded_width * padded_height;
+    let mut scratch_x = vec![0.0f32; n];
+    let mut scratch_y = vec![0.0f32; n];
+    let mut scratch_b = vec![0.0f32; n];
+
+    // Pre-allocate uniform sharpness map (reused across candidates)
+    let mut uniform_sharpness = vec![0u8; nblocks];
+
     // For each candidate, clone the base reconstruction and apply EPF
     let mut error_maps: Vec<Vec<f32>> = Vec::with_capacity(candidates.len());
 
     for &sharpness_val in candidates {
         let mut recon = base_recon.clone();
 
-        // Apply EPF with uniform sharpness
-        let uniform_sharpness = vec![sharpness_val; nblocks];
-        apply_epf(
-            &mut recon,
+        // Compute inv_sigma for this sharpness candidate
+        uniform_sharpness.fill(sharpness_val);
+        let inv_sigma = compute_inv_sigma_map(
             quant_field,
             &uniform_sharpness,
             params.scale,
-            params.epf_iters,
             xsize_blocks,
             ysize_blocks,
+        );
+
+        // Apply EPF with pre-allocated scratch (avoids repeated mmap/munmap)
+        apply_epf_with_scratch(
+            &mut recon,
+            &inv_sigma,
+            params.epf_iters,
+            xsize_blocks,
             padded_width,
             padded_height,
+            &mut scratch_x,
+            &mut scratch_y,
+            &mut scratch_b,
         );
 
         // Compute per-block masked L2 error vs original

@@ -15,6 +15,7 @@
 #![no_std]
 extern crate alloc;
 
+mod block_l2;
 mod dct16;
 mod dct8;
 mod dequant;
@@ -29,6 +30,7 @@ mod quantize;
 mod transpose;
 mod xyb;
 
+pub use block_l2::compute_block_l2_errors;
 pub use dct8::dct_8x8;
 pub use dct8::idct_8x8;
 pub use dct16::dct_8x16;
