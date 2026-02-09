@@ -250,15 +250,17 @@ pub fn count_zero_coefficients(
                         }
                     }
                 } else {
-                    // Multi-block: assemble from sub-blocks
+                    // Multi-block: iterate by sub-block to avoid per-coeff div/mod
                     let covered_x_local = super::ac_strategy::COVERED_X[raw_strategy as usize];
-                    for (idx, count) in counts[bucket][c][..size].iter_mut().enumerate() {
-                        let block_slot = idx / DCT_BLOCK_SIZE;
-                        let coeff_in_block = idx % DCT_BLOCK_SIZE;
+                    for block_slot in 0..covered_blocks {
                         let slot_by = by + block_slot / covered_x_local;
                         let slot_bx = bx + block_slot % covered_x_local;
-                        if quant_ac[c][slot_by][slot_bx][coeff_in_block] == 0 {
-                            *count += 1;
+                        let block = &quant_ac[c][slot_by][slot_bx];
+                        let base_idx = block_slot * DCT_BLOCK_SIZE;
+                        for k in 0..DCT_BLOCK_SIZE {
+                            if block[k] == 0 {
+                                counts[bucket][c][base_idx + k] += 1;
+                            }
                         }
                     }
                 }

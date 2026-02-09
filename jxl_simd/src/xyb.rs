@@ -288,11 +288,16 @@ fn forward_xyb_avx2(
     let zero = f32x8::splat(token, 0.0);
 
     let chunks = n / 8;
+    let simd_n = chunks * 8;
+    let r_s = &r[..simd_n];
+    let g_s = &g[..simd_n];
+    let b_s = &b[..simd_n];
+
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let rv = f32x8::from_slice(token, &r[base..]);
-        let gv = f32x8::from_slice(token, &g[base..]);
-        let bv = f32x8::from_slice(token, &b[base..]);
+        let rv = f32x8::from_slice(token, &r_s[base..]);
+        let gv = f32x8::from_slice(token, &g_s[base..]);
+        let bv = f32x8::from_slice(token, &b_s[base..]);
 
         // Matrix multiply + bias (FMA chains)
         let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
@@ -331,7 +336,7 @@ fn forward_xyb_avx2(
     }
 
     // Scalar remainder
-    let start = chunks * 8;
+    let start = simd_n;
     forward_xyb_scalar(
         &r[start..],
         &g[start..],

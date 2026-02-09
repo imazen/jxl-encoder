@@ -120,12 +120,15 @@ fn pixel_domain_loss_avx2(
     for py in 0..block_height {
         let mask_row_start = mask_row_base + py * mask_stride;
         let error_row_start = py * block_width;
+        // Pre-slice rows so compiler can prove SIMD loads are in-bounds
+        let mask_row = &mask[mask_row_start..mask_row_start + block_width];
+        let error_row = &pixel_error[error_row_start..error_row_start + block_width];
 
         let mut px = 0;
         while px < block_width {
             // Load 8 mask values and 8 error values
-            let mask_v = f32x8::from_slice(token, &mask[mask_row_start + px..]);
-            let error_v = f32x8::from_slice(token, &pixel_error[error_row_start + px..]);
+            let mask_v = f32x8::from_slice(token, &mask_row[px..]);
+            let error_v = f32x8::from_slice(token, &error_row[px..]);
 
             // masked = (mask + offset) * error (in f32)
             let masked_v = (mask_v + offset_v) * error_v;
