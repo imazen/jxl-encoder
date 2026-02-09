@@ -632,7 +632,8 @@ pub(super) fn estimate_entropy_full(
                 }
             }
             norm_sum /= num_blocks as f32;
-            norm_sum.powf(1.0 / 16.0)
+            // x^(1/16) = sqrt(sqrt(sqrt(sqrt(x))))
+            norm_sum.sqrt().sqrt().sqrt().sqrt()
         }
     } else {
         0.0 // Not used in coefficient-domain mode
@@ -760,7 +761,8 @@ pub(super) fn estimate_entropy_full(
     if use_pixel_domain {
         // Pixel-domain loss: (sum/n)^(1/8) * n / quant_norm16
         let n = (num_blocks * DCT_BLOCK_SIZE) as f64;
-        let loss_scalar = (total_pixel_loss / n).powf(1.0 / 8.0) * n / quant_norm16 as f64;
+        // x^(1/8) = sqrt(sqrt(sqrt(x)))
+        let loss_scalar = (total_pixel_loss / n).sqrt().sqrt().sqrt() * n / quant_norm16 as f64;
         // Apply entropy_mul to entropy, then add loss
         entropy *= entropy_mul;
         entropy += k_info_loss_mul * loss_scalar as f32;

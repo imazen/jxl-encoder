@@ -46,9 +46,6 @@ impl TileDistMap {
         let ysize_blocks = div_ceil(height, BLOCK_DIM);
         let mut distances = vec![0.0f32; xsize_blocks * ysize_blocks];
 
-        const NORM_POWER: f32 = 16.0;
-        const INV_NORM_POWER: f32 = 1.0 / 16.0;
-
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
                 let block_y_start = by * BLOCK_DIM;
@@ -70,15 +67,20 @@ impl TileDistMap {
                         }
 
                         let pixel_dist = diffmap[y * width + x];
-                        // Clamp to reasonable range to avoid overflow
                         let clamped = pixel_dist.clamp(0.0, 100.0);
-                        sum_pow += clamped.powf(NORM_POWER);
+                        // x^16 = ((x^2)^2)^2)^2 — avoids expensive powf
+                        let v2 = clamped * clamped;
+                        let v4 = v2 * v2;
+                        let v8 = v4 * v4;
+                        let v16 = v8 * v8;
+                        sum_pow += v16;
                         count += 1;
                     }
                 }
 
                 let block_dist = if count > 0 {
-                    (sum_pow / count as f32).powf(INV_NORM_POWER)
+                    // x^(1/16) = sqrt(sqrt(sqrt(sqrt(x))))
+                    (sum_pow / count as f32).sqrt().sqrt().sqrt().sqrt()
                 } else {
                     0.0
                 };
