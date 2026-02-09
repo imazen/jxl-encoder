@@ -12,6 +12,7 @@
 //! Uses [archmage](https://docs.rs/archmage) for token-based SIMD dispatch
 //! and [magetypes](https://docs.rs/magetypes) for cross-platform vector types.
 
+#![forbid(unsafe_code)]
 #![no_std]
 extern crate alloc;
 

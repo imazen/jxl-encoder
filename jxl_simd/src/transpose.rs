@@ -98,16 +98,13 @@ fn transpose_8x8_avx2(token: archmage::X64V3Token, input: &[f32], output: &mut [
     let c6 = _mm256_permute2f128_ps::<0x31>(s2, s6);
     let c7 = _mm256_permute2f128_ps::<0x31>(s3, s7);
 
-    // Store results
-    // SAFETY: from_raw is safe inside #[arcane] because token proves AVX2 support
-    unsafe {
-        f32x8::from_raw(c0).store((&mut output[0..8]).try_into().unwrap());
-        f32x8::from_raw(c1).store((&mut output[8..16]).try_into().unwrap());
-        f32x8::from_raw(c2).store((&mut output[16..24]).try_into().unwrap());
-        f32x8::from_raw(c3).store((&mut output[24..32]).try_into().unwrap());
-        f32x8::from_raw(c4).store((&mut output[32..40]).try_into().unwrap());
-        f32x8::from_raw(c5).store((&mut output[40..48]).try_into().unwrap());
-        f32x8::from_raw(c6).store((&mut output[48..56]).try_into().unwrap());
-        f32x8::from_raw(c7).store((&mut output[56..64]).try_into().unwrap());
-    }
+    // Store results — from_m256 is token-gated safe
+    f32x8::from_m256(token, c0).store((&mut output[0..8]).try_into().unwrap());
+    f32x8::from_m256(token, c1).store((&mut output[8..16]).try_into().unwrap());
+    f32x8::from_m256(token, c2).store((&mut output[16..24]).try_into().unwrap());
+    f32x8::from_m256(token, c3).store((&mut output[24..32]).try_into().unwrap());
+    f32x8::from_m256(token, c4).store((&mut output[32..40]).try_into().unwrap());
+    f32x8::from_m256(token, c5).store((&mut output[40..48]).try_into().unwrap());
+    f32x8::from_m256(token, c6).store((&mut output[48..56]).try_into().unwrap());
+    f32x8::from_m256(token, c7).store((&mut output[56..64]).try_into().unwrap());
 }

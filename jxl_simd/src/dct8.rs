@@ -267,9 +267,8 @@ fn dct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f3
     let r7 = r7 * scale;
 
     // Transpose
-    // SAFETY: we're inside an #[arcane] function — AVX2 is guaranteed available
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
-        unsafe { transpose_8x8_regs(r0, r1, r2, r3, r4, r5, r6, r7) };
+        transpose_8x8_regs(token, r0, r1, r2, r3, r4, r5, r6, r7);
 
     // Row-DCT: butterfly on transposed registers (processes all 8 rows simultaneously)
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
@@ -316,9 +315,8 @@ fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f
         vectorized_idct1d_8(token, r0, r1, r2, r3, r4, r5, r6, r7);
 
     // Transpose
-    // SAFETY: we're inside an #[arcane] function — AVX2 is guaranteed available
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
-        unsafe { transpose_8x8_regs(r0, r1, r2, r3, r4, r5, r6, r7) };
+        transpose_8x8_regs(token, r0, r1, r2, r3, r4, r5, r6, r7);
 
     // Inverse column-DCT
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
@@ -571,11 +569,12 @@ fn vectorized_idct1d_8(
 
 /// In-register 8x8 transpose using AVX2 instructions.
 ///
-/// SAFETY: caller must ensure AVX2 is available (called from #[arcane] functions).
+/// Safe: token proves AVX2 is available, `from_m256` is token-gated.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
+#[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-unsafe fn transpose_8x8_regs(
+fn transpose_8x8_regs(
+    token: archmage::X64V3Token,
     r0: magetypes::simd::f32x8,
     r1: magetypes::simd::f32x8,
     r2: magetypes::simd::f32x8,
@@ -636,19 +635,16 @@ unsafe fn transpose_8x8_regs(
     let c6 = _mm256_permute2f128_ps::<0x31>(s2, s6);
     let c7 = _mm256_permute2f128_ps::<0x31>(s3, s7);
 
-    // SAFETY: AVX2 is guaranteed by #[target_feature] and caller's token
-    unsafe {
-        (
-            f32x8::from_raw(c0),
-            f32x8::from_raw(c1),
-            f32x8::from_raw(c2),
-            f32x8::from_raw(c3),
-            f32x8::from_raw(c4),
-            f32x8::from_raw(c5),
-            f32x8::from_raw(c6),
-            f32x8::from_raw(c7),
-        )
-    }
+    (
+        f32x8::from_m256(token, c0),
+        f32x8::from_m256(token, c1),
+        f32x8::from_m256(token, c2),
+        f32x8::from_m256(token, c3),
+        f32x8::from_m256(token, c4),
+        f32x8::from_m256(token, c5),
+        f32x8::from_m256(token, c6),
+        f32x8::from_m256(token, c7),
+    )
 }
 
 #[cfg(test)]
