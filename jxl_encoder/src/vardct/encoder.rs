@@ -282,7 +282,7 @@ impl VarDctEncoder {
         height: usize,
         linear_rgb: &[f32],
         alpha: Option<&[u8]>,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<(Vec<u8>, [u32; 19])> {
         assert_eq!(linear_rgb.len(), width * height * 3);
         if let Some(a) = alpha {
             assert_eq!(a.len(), width * height);
@@ -538,7 +538,8 @@ impl VarDctEncoder {
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
         if self.optimize_codes {
-            return self.encode_two_pass(
+            let strategy_counts = ac_strategy.strategy_histogram();
+            let data = self.encode_two_pass(
                 width,
                 height,
                 &params,
@@ -561,7 +562,8 @@ impl VarDctEncoder {
                 &noise_params,
                 sharpness_map.as_deref(),
                 alpha,
-            );
+            )?;
+            return Ok((data, strategy_counts));
         }
 
         // Get static entropy codes (wrapped in BuiltEntropyCode for uniform handling)
@@ -779,7 +781,8 @@ impl VarDctEncoder {
             }
         }
 
-        Ok(writer.finish_with_padding())
+        let strategy_counts = ac_strategy.strategy_histogram();
+        Ok((writer.finish_with_padding(), strategy_counts))
     }
 
     /// Butteraugli quantization loop: iteratively refines per-block quant_field
@@ -1230,7 +1233,7 @@ mod tests {
         let result = encoder.encode(width, height, &linear_rgb, None);
         // For now, just check it produces some output
         assert!(result.is_ok());
-        let bytes = result.unwrap();
+        let (bytes, _) = result.unwrap();
         assert!(bytes.len() > 2);
         assert_eq!(bytes[0], 0xFF);
         assert_eq!(bytes[1], 0x0A);
@@ -1281,7 +1284,7 @@ mod tests {
 
         let result = encoder.encode(width, height, &linear_rgb, None);
         assert!(result.is_ok());
-        let bytes = result.unwrap();
+        let (bytes, _) = result.unwrap();
 
         eprintln!("Output file size: {} bytes", bytes.len());
         eprintln!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
@@ -1328,7 +1331,7 @@ mod tests {
             }
         }
 
-        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
@@ -1353,7 +1356,7 @@ mod tests {
         let height = 16;
         let linear_rgb = vec![0.3f32; width * height * 3]; // gray
 
-        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
@@ -1389,7 +1392,7 @@ mod tests {
             }
         }
 
-        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
@@ -1420,7 +1423,7 @@ mod tests {
             *val = ((seed >> 32) as f32) / (u32::MAX as f32);
         }
 
-        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
@@ -1460,7 +1463,7 @@ mod tests {
             }
 
             let encoder = VarDctEncoder::new(1.0);
-            let bytes = encoder
+            let (bytes, _) = encoder
                 .encode(w, h, &linear_rgb, None)
                 .unwrap_or_else(|e| panic!("encode {}x{} failed: {}", w, h, e));
 
@@ -1515,7 +1518,7 @@ mod tests {
         // Encode WITHOUT DC tree learning (baseline) — use ANS
         let mut encoder_baseline = VarDctEncoder::new(1.0);
         encoder_baseline.dc_tree_learning = false;
-        let bytes_baseline = encoder_baseline
+        let (bytes_baseline, _) = encoder_baseline
             .encode(width, height, &linear_rgb, None)
             .expect("baseline encode failed");
 
@@ -1523,7 +1526,7 @@ mod tests {
         let mut encoder_learned = VarDctEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
         std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
-        let bytes_learned = encoder_learned
+        let (bytes_learned, _) = encoder_learned
             .encode(width, height, &linear_rgb, None)
             .expect("learned encode failed");
         std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
@@ -1593,14 +1596,14 @@ mod tests {
         // Encode without butteraugli loop
         let mut encoder_baseline = VarDctEncoder::new(2.0);
         encoder_baseline.butteraugli_iters = 0;
-        let bytes_baseline = encoder_baseline
+        let (bytes_baseline, _) = encoder_baseline
             .encode(width, height, &linear_rgb, None)
             .expect("baseline encode failed");
 
         // Encode with 2 butteraugli loop iterations
         let mut encoder_loop = VarDctEncoder::new(2.0);
         encoder_loop.butteraugli_iters = 2;
-        let bytes_loop = encoder_loop
+        let (bytes_loop, _) = encoder_loop
             .encode(width, height, &linear_rgb, None)
             .expect("butteraugli loop encode failed");
 

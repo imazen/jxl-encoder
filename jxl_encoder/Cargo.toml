@@ -26,6 +26,7 @@ imgref = { version = "1.10", optional = true }
 rgb = { version = "0.8", optional = true }
 
 [features]
+std = []
 trace-bitstream = []
 # Verbose debug output for token encoding (DC, AC, entropy codes)
 debug-tokens = []
@@ -43,7 +44,7 @@ rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
-default = ["safe-mode", "butteraugli-loop"]
+default = ["std", "safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
 rand = "0.9"

@@ -43,6 +43,7 @@ pub enum EncodeError {
     /// Allocation failure.
     Oom(std::collections::TryReserveError),
     /// I/O error.
+    #[cfg(feature = "std")]
     Io(std::io::Error),
     /// Internal encoder error (should not happen — file a bug).
     Internal { message: String },
@@ -59,16 +60,18 @@ impl core::fmt::Display for EncodeError {
             Self::LimitExceeded { message } => write!(f, "limit exceeded: {message}"),
             Self::Cancelled => write!(f, "encoding cancelled"),
             Self::Oom(e) => write!(f, "out of memory: {e}"),
+            #[cfg(feature = "std")]
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Internal { message } => write!(f, "internal error: {message}"),
         }
     }
 }
 
-impl std::error::Error for EncodeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for EncodeError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Oom(e) => Some(e),
+            #[cfg(feature = "std")]
             Self::Io(e) => Some(e),
             _ => None,
         }
@@ -86,6 +89,7 @@ impl From<crate::error::Error> for EncodeError {
             },
             crate::error::Error::InvalidInput(msg) => Self::InvalidInput { message: msg },
             crate::error::Error::OutOfMemory(e) => Self::Oom(e),
+            #[cfg(feature = "std")]
             crate::error::Error::IoError(e) => Self::Io(e),
             crate::error::Error::Cancelled => Self::Cancelled,
             other => Self::Internal {
@@ -95,6 +99,7 @@ impl From<crate::error::Error> for EncodeError {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<std::io::Error> for EncodeError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
@@ -112,6 +117,103 @@ impl From<enough::StopReason> for EncodeError {
 /// Errors carry location traces via [`whereat::At`] for lightweight
 /// production-safe error tracking without debuginfo or backtraces.
 pub type Result<T> = core::result::Result<T, At<EncodeError>>;
+
+// ── EncodeResult / EncodeStats ──────────────────────────────────────────────
+
+/// Result of an encode operation. Holds encoded data and metrics.
+///
+/// After `encode()`, `data()` returns the JXL bytes. After `encode_into()`
+/// or `encode_to()`, `data()` returns `None` (data already delivered).
+/// Use `take_data()` to move the vec out without cloning.
+#[derive(Clone, Debug)]
+pub struct EncodeResult {
+    data: Option<Vec<u8>>,
+    stats: EncodeStats,
+}
+
+impl EncodeResult {
+    /// Encoded JXL bytes (borrowing). None if data was written elsewhere.
+    pub fn data(&self) -> Option<&[u8]> {
+        self.data.as_deref()
+    }
+
+    /// Take the owned data vec, leaving None in its place.
+    pub fn take_data(&mut self) -> Option<Vec<u8>> {
+        self.data.take()
+    }
+
+    /// Encode metrics.
+    pub fn stats(&self) -> &EncodeStats {
+        &self.stats
+    }
+}
+
+/// Encode metrics collected during encoding.
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct EncodeStats {
+    codestream_size: usize,
+    output_size: usize,
+    mode: EncodeMode,
+    /// Index = raw strategy code (0..19), value = first-block count.
+    strategy_counts: [u32; 19],
+    gaborish: bool,
+    ans: bool,
+    butteraugli_iters: u32,
+    pixel_domain_loss: bool,
+}
+
+impl EncodeStats {
+    /// Size of the JXL codestream in bytes (before container wrapping).
+    pub fn codestream_size(&self) -> usize {
+        self.codestream_size
+    }
+
+    /// Size of the final output in bytes (after container wrapping, if any).
+    pub fn output_size(&self) -> usize {
+        self.output_size
+    }
+
+    /// Whether the encode was lossy or lossless.
+    pub fn mode(&self) -> EncodeMode {
+        self.mode
+    }
+
+    /// Per-strategy first-block counts, indexed by raw strategy code (0..19).
+    pub fn strategy_counts(&self) -> &[u32; 19] {
+        &self.strategy_counts
+    }
+
+    /// Whether gaborish pre-filtering was enabled.
+    pub fn gaborish(&self) -> bool {
+        self.gaborish
+    }
+
+    /// Whether ANS entropy coding was used.
+    pub fn ans(&self) -> bool {
+        self.ans
+    }
+
+    /// Number of butteraugli quantization loop iterations performed.
+    pub fn butteraugli_iters(&self) -> u32 {
+        self.butteraugli_iters
+    }
+
+    /// Whether pixel-domain loss was enabled.
+    pub fn pixel_domain_loss(&self) -> bool {
+        self.pixel_domain_loss
+    }
+}
+
+/// Encoding mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EncodeMode {
+    /// Lossy (VarDCT) encoding.
+    #[default]
+    Lossy,
+    /// Lossless (modular) encoding.
+    Lossless,
+}
 
 // ── PixelLayout ─────────────────────────────────────────────────────────────
 
@@ -478,7 +580,9 @@ impl LosslessConfig {
         height: u32,
         layout: PixelLayout,
     ) -> Result<Vec<u8>> {
-        self.encode_request(width, height, layout).encode(pixels)
+        self.encode_request(width, height, layout)
+            .encode(pixels)
+            .map(|mut r| r.take_data().unwrap())
     }
 
     /// Encode pixels, appending to an existing buffer.
@@ -493,6 +597,7 @@ impl LosslessConfig {
     ) -> Result<()> {
         self.encode_request(width, height, layout)
             .encode_into(pixels, out)
+            .map(|_| ())
     }
 }
 
@@ -745,7 +850,9 @@ impl LossyConfig {
         height: u32,
         layout: PixelLayout,
     ) -> Result<Vec<u8>> {
-        self.encode_request(width, height, layout).encode(pixels)
+        self.encode_request(width, height, layout)
+            .encode(pixels)
+            .map(|mut r| r.take_data().unwrap())
     }
 
     /// Encode pixels, appending to an existing buffer.
@@ -760,6 +867,7 @@ impl LossyConfig {
     ) -> Result<()> {
         self.encode_request(width, height, layout)
             .encode_into(pixels, out)
+            .map(|_| ())
     }
 }
 
@@ -807,50 +915,60 @@ impl<'a> EncodeRequest<'a> {
         self
     }
 
-    /// Encode pixels and return the JXL bitstream.
+    /// Encode pixels and return the JXL bitstream with metrics.
     #[track_caller]
-    pub fn encode(self, pixels: &[u8]) -> Result<Vec<u8>> {
+    pub fn encode(self, pixels: &[u8]) -> Result<EncodeResult> {
         self.encode_inner(pixels).map_err(at)
     }
 
-    /// Encode pixels, appending to an existing buffer.
+    /// Encode pixels, appending to an existing buffer. Returns metrics.
     #[track_caller]
-    pub fn encode_into(self, pixels: &[u8], out: &mut Vec<u8>) -> Result<()> {
-        let data = self.encode_inner(pixels).map_err(at)?;
-        out.extend_from_slice(&data);
-        Ok(())
+    pub fn encode_into(self, pixels: &[u8], out: &mut Vec<u8>) -> Result<EncodeResult> {
+        let mut result = self.encode_inner(pixels).map_err(at)?;
+        if let Some(data) = result.data.take() {
+            out.extend_from_slice(&data);
+        }
+        Ok(result)
     }
 
-    /// Encode pixels, writing to a `std::io::Write` destination.
+    /// Encode pixels, writing to a `std::io::Write` destination. Returns metrics.
+    #[cfg(feature = "std")]
     #[track_caller]
-    pub fn encode_to(self, pixels: &[u8], mut dest: impl std::io::Write) -> Result<()> {
-        let data = self.encode_inner(pixels).map_err(at)?;
-        dest.write_all(&data)
-            .map_err(|e| at(EncodeError::from(e)))?;
-        Ok(())
+    pub fn encode_to(self, pixels: &[u8], mut dest: impl std::io::Write) -> Result<EncodeResult> {
+        let mut result = self.encode_inner(pixels).map_err(at)?;
+        if let Some(data) = result.data.take() {
+            dest.write_all(&data)
+                .map_err(|e| at(EncodeError::from(e)))?;
+        }
+        Ok(result)
     }
 
-    fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<Vec<u8>, EncodeError> {
+    fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<EncodeResult, EncodeError> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
 
-        let codestream = match self.config {
+        let (codestream, mut stats) = match self.config {
             ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels),
             ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels),
         }?;
 
+        stats.codestream_size = codestream.len();
+
         // Wrap in container if metadata (EXIF/XMP) is present
-        if let Some(meta) = self.metadata
+        let output = if let Some(meta) = self.metadata
             && (meta.exif.is_some() || meta.xmp.is_some())
         {
-            Ok(crate::container::wrap_in_container(
-                &codestream,
-                meta.exif,
-                meta.xmp,
-            ))
+            crate::container::wrap_in_container(&codestream, meta.exif, meta.xmp)
         } else {
-            Ok(codestream)
-        }
+            codestream
+        };
+
+        stats.output_size = output.len();
+
+        Ok(EncodeResult {
+            data: Some(output),
+            stats,
+        })
     }
 
     fn validate_pixels(&self, pixels: &[u8]) -> core::result::Result<(), EncodeError> {
@@ -915,7 +1033,7 @@ impl<'a> EncodeRequest<'a> {
         &self,
         cfg: &LosslessConfig,
         pixels: &[u8],
-    ) -> core::result::Result<Vec<u8>, EncodeError> {
+    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
         use crate::bit_writer::BitWriter;
         use crate::headers::{ColorEncoding, FileHeader};
         use crate::modular::channel::ModularImage;
@@ -985,7 +1103,12 @@ impl<'a> EncodeRequest<'a> {
             .encode_modular(&image, &color_encoding, &mut writer)
             .map_err(EncodeError::from)?;
 
-        Ok(writer.finish_with_padding())
+        let stats = EncodeStats {
+            mode: EncodeMode::Lossless,
+            ans: cfg.use_ans,
+            ..Default::default()
+        };
+        Ok((writer.finish_with_padding(), stats))
     }
 
     // ── Lossy path ──────────────────────────────────────────────────────
@@ -994,7 +1117,7 @@ impl<'a> EncodeRequest<'a> {
         &self,
         cfg: &LossyConfig,
         pixels: &[u8],
-    ) -> core::result::Result<Vec<u8>, EncodeError> {
+    ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
         let w = self.width as usize;
         let h = self.height as usize;
 
@@ -1058,8 +1181,25 @@ impl<'a> EncodeRequest<'a> {
             tiny.icc_profile = Some(icc.to_vec());
         }
 
-        tiny.encode(w, h, &linear_rgb, alpha.as_deref())
-            .map_err(EncodeError::from)
+        let (data, strategy_counts) = tiny
+            .encode(w, h, &linear_rgb, alpha.as_deref())
+            .map_err(EncodeError::from)?;
+
+        #[cfg(feature = "butteraugli-loop")]
+        let butteraugli_iters_actual = cfg.butteraugli_iters;
+        #[cfg(not(feature = "butteraugli-loop"))]
+        let butteraugli_iters_actual = 0u32;
+
+        let stats = EncodeStats {
+            mode: EncodeMode::Lossy,
+            strategy_counts,
+            gaborish: cfg.gaborish,
+            ans: cfg.use_ans,
+            butteraugli_iters: butteraugli_iters_actual,
+            pixel_domain_loss: cfg.pixel_domain_loss,
+            ..Default::default()
+        };
+        Ok((data, stats))
     }
 }
 
@@ -1231,7 +1371,7 @@ mod tests {
             .encode(&pixels);
         assert!(result.is_ok());
         let jxl = result.unwrap();
-        assert_eq!(&jxl[..2], &[0xFF, 0x0A]); // JXL signature
+        assert_eq!(&jxl.data().unwrap()[..2], &[0xFF, 0x0A]); // JXL signature
     }
 
     #[test]
@@ -1251,7 +1391,7 @@ mod tests {
             .encode(&pixels);
         assert!(result.is_ok());
         let jxl = result.unwrap();
-        assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
+        assert_eq!(&jxl.data().unwrap()[..2], &[0xFF, 0x0A]);
     }
 
     #[test]

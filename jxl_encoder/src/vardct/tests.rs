@@ -159,7 +159,7 @@ fn test_tiny_encoder_produces_jxl_signature() {
         result.err()
     );
 
-    let bytes = result.unwrap();
+    let (bytes, _) = result.unwrap();
 
     // Must have JXL signature
     assert!(bytes.len() >= 2, "Output too short");
@@ -185,7 +185,7 @@ fn test_tiny_encoder_various_sizes() {
             height,
             result.err()
         );
-        let bytes = result.unwrap();
+        let (bytes, _) = result.unwrap();
         assert_eq!(
             bytes[0..2],
             [0xFF, 0x0A],
@@ -251,7 +251,7 @@ fn test_tiny_encoder_decode() {
         linear_rgb[i * 3 + 2] = 0.0; // B
     }
 
-    let encoded = encoder
+    let (encoded, _) = encoder
         .encode(width, height, &linear_rgb, None)
         .expect("encoding should succeed");
 
@@ -347,7 +347,7 @@ fn test_optimize_codes_roundtrip_small() {
     {
         enc_static.butteraugli_iters = 0; // Disable to compare entropy coding only
     }
-    let static_bytes = enc_static
+    let (static_bytes, _) = enc_static
         .encode(width, height, &linear_rgb, None)
         .expect("static encode failed");
 
@@ -358,7 +358,7 @@ fn test_optimize_codes_roundtrip_small() {
     {
         enc_dynamic.butteraugli_iters = 0; // Disable to compare entropy coding only
     }
-    let dynamic_bytes = enc_dynamic
+    let (dynamic_bytes, _) = enc_dynamic
         .encode(width, height, &linear_rgb, None)
         .expect("dynamic encode failed");
 
@@ -424,7 +424,7 @@ fn test_static_codes_8x8_roundtrip() {
 
     let mut enc = VarDctEncoder::new(1.0);
     enc.optimize_codes = false;
-    let bytes = enc
+    let (bytes, _) = enc
         .encode(width, height, &linear_rgb, None)
         .expect("encode failed");
 
@@ -455,7 +455,7 @@ fn test_optimize_codes_various_sizes() {
 
         let mut enc = VarDctEncoder::new(2.0);
         enc.optimize_codes = true;
-        let bytes = enc
+        let (bytes, _) = enc
             .encode(w, h, &linear_rgb, None)
             .unwrap_or_else(|e| panic!("encode {}x{} failed: {:?}", w, h, e));
 
@@ -473,7 +473,7 @@ fn test_optimize_codes_various_sizes() {
         // Compare with static
         let mut enc_static = VarDctEncoder::new(2.0);
         enc_static.optimize_codes = false;
-        let static_bytes = enc_static.encode(w, h, &linear_rgb, None).unwrap();
+        let (static_bytes, _) = enc_static.encode(w, h, &linear_rgb, None).unwrap();
 
         eprintln!(
             "  {}x{}: static={} bytes, dynamic={} bytes (diff={:+})",
@@ -505,7 +505,7 @@ fn test_optimize_codes_boundary_256() {
 
     let mut enc = VarDctEncoder::new(2.0);
     enc.optimize_codes = true;
-    let bytes = enc.encode(w, h, &linear_rgb, None).expect("encode failed");
+    let (bytes, _) = enc.encode(w, h, &linear_rgb, None).expect("encode failed");
 
     // Must decode
     let img = jxl_oxide::JxlImage::builder()
@@ -518,7 +518,7 @@ fn test_optimize_codes_boundary_256() {
     // Compare with static
     let mut enc_static = VarDctEncoder::new(2.0);
     enc_static.optimize_codes = false;
-    let static_bytes = enc_static.encode(w, h, &linear_rgb, None).unwrap();
+    let (static_bytes, _) = enc_static.encode(w, h, &linear_rgb, None).unwrap();
 
     eprintln!(
         "  {}x{}: static={} bytes, dynamic={} bytes (diff={:+})",
@@ -558,7 +558,7 @@ fn test_noise_synthesis_roundtrip_oxide() {
     // Encode with noise enabled
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode failed");
 
@@ -605,7 +605,7 @@ fn test_noise_synthesis_ans_roundtrip() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
     encoder.use_ans = true;
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode failed");
 
@@ -649,7 +649,7 @@ fn test_noise_synthesis_static_huffman_roundtrip() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
     encoder.optimize_codes = false; // Static Huffman (single-pass)
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode failed");
 
@@ -680,7 +680,7 @@ fn test_noise_synthesis_clean_image_no_noise_detected() {
 
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true; // Enabled, but estimation should return None
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode failed");
 
@@ -723,7 +723,7 @@ fn test_noise_synthesis_multigroup() {
 
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.enable_noise = true;
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode failed");
 
@@ -766,7 +766,7 @@ fn test_identity_strategy_roundtrip() {
         }
     }
 
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &pixels, None)
         .expect("IDENTITY encode failed");
     eprintln!("IDENTITY 64x64: {} bytes", bytes.len());
@@ -804,7 +804,7 @@ fn test_dct2x2_strategy_roundtrip() {
         }
     }
 
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &pixels, None)
         .expect("DCT2X2 encode failed");
     eprintln!("DCT2X2 64x64: {} bytes", bytes.len());
@@ -851,7 +851,7 @@ fn test_lz77_rle_roundtrip() {
     enc_no_lz77.use_ans = true;
     enc_no_lz77.optimize_codes = true;
     enc_no_lz77.enable_lz77 = false;
-    let bytes_no_lz77 = enc_no_lz77
+    let (bytes_no_lz77, _) = enc_no_lz77
         .encode(w, h, &linear_rgb, None)
         .expect("encode without LZ77 failed");
 
@@ -861,7 +861,7 @@ fn test_lz77_rle_roundtrip() {
     enc_lz77.optimize_codes = true;
     enc_lz77.enable_lz77 = true;
     enc_lz77.lz77_method = crate::entropy_coding::lz77::Lz77Method::Rle; // Explicit RLE for roundtrip test
-    let bytes_lz77 = enc_lz77
+    let (bytes_lz77, _) = enc_lz77
         .encode(w, h, &linear_rgb, None)
         .expect("encode with LZ77 failed");
 
@@ -959,7 +959,7 @@ fn test_lz77_backref_roundtrip() {
     {
         enc_no_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing
     }
-    let bytes_no_lz77 = enc_no_lz77
+    let (bytes_no_lz77, _) = enc_no_lz77
         .encode(w, h, &linear_rgb, None)
         .expect("encode without LZ77 failed");
 
@@ -973,7 +973,7 @@ fn test_lz77_backref_roundtrip() {
     {
         enc_lz77.butteraugli_iters = 0; // Disable to isolate LZ77 testing
     }
-    let bytes_lz77 = enc_lz77
+    let (bytes_lz77, _) = enc_lz77
         .encode(w, h, &linear_rgb, None)
         .expect("encode with LZ77 backref failed");
 
@@ -1049,7 +1049,7 @@ fn test_dct32x16_16x32_roundtrip() {
     encoder.use_ans = true;
     encoder.enable_gaborish = false; // Disable gab for simpler testing
 
-    let encoded = encoder
+    let (encoded, _) = encoder
         .encode(width, height, &linear_rgb, None)
         .expect("encode should succeed");
     eprintln!(
@@ -1117,7 +1117,7 @@ fn test_afv_strategy_roundtrip() {
         encoder.enable_gaborish = false;
         encoder.force_strategy = Some(raw_strategy);
 
-        let encoded = encoder
+        let (encoded, _) = encoder
             .encode(width, height, &linear_rgb, None)
             .expect("encode should succeed");
         eprintln!("AFV{}: encoded {} bytes at d=1.0", afv_kind, encoded.len());
@@ -1172,7 +1172,7 @@ fn test_dct64x64_forced_decode() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
 
-    let encoded = encoder
+    let (encoded, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode DCT64x64");
     eprintln!("DCT64x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
@@ -1239,7 +1239,7 @@ fn test_dct64x32_forced_decode() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X32);
 
-    let encoded = encoder
+    let (encoded, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode DCT64x32");
     eprintln!("DCT64x32 forced: {} bytes ({}x{})", encoded.len(), w, h);
@@ -1299,7 +1299,7 @@ fn test_dct32x64_forced_decode() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT32X64);
 
-    let encoded = encoder
+    let (encoded, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode DCT32x64");
     eprintln!("DCT32x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
@@ -1357,7 +1357,7 @@ fn test_dct64x64_forced_256x256() {
     encoder.enable_gaborish = false;
     encoder.force_strategy = Some(RAW_STRATEGY_DCT64X64);
 
-    let encoded = encoder
+    let (encoded, _) = encoder
         .encode(w, h, &linear_rgb, None)
         .expect("encode DCT64x64 256x256");
     eprintln!("DCT64x64 256x256: {} bytes", encoded.len());
@@ -1415,7 +1415,7 @@ fn test_lossy_alpha_single_group_roundtrip() {
 
     let mut enc = super::encoder::VarDctEncoder::new(2.0);
     enc.enable_gaborish = false;
-    let bytes = enc
+    let (bytes, _) = enc
         .encode(width, height, &linear_rgb, Some(&alpha))
         .expect("encode failed");
 

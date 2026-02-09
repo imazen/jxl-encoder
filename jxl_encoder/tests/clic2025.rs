@@ -35,7 +35,7 @@ fn test_clic_image_with_ssim2(path: &str) -> Option<f64> {
     // Encode
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     let bytes = match encoder.encode(width as usize, height as usize, &linear_rgb, None) {
-        Ok(b) => b,
+        Ok((b, _)) => b,
         Err(e) => {
             eprintln!("{}: ENCODE ERROR: {:?}", filename, e);
             return None;
@@ -248,7 +248,7 @@ fn test_clic2025_small_crop() {
 
     // Encode
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(cw as usize, ch as usize, &linear_rgb, None)
         .expect("Encoding failed");
     eprintln!(
@@ -352,7 +352,7 @@ fn test_save_multigroup_comparison() {
 
     // Encode
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(cw as usize, ch as usize, &linear_rgb, None)
         .expect("Encoding failed");
     eprintln!(
@@ -510,7 +510,7 @@ fn test_exact_multiples() {
             .collect();
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -598,7 +598,7 @@ fn test_multigroup_sizes() {
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         let bytes = match encoder.encode(cw as usize, ch as usize, &linear_rgb, None) {
-            Ok(b) => b,
+            Ok((b, _)) => b,
             Err(e) => {
                 eprintln!("{}x{}: ENCODE ERROR: {:?}", cw, ch, e);
                 continue;
@@ -697,7 +697,7 @@ fn test_djxl_vs_jxl_oxide() {
         .collect();
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -853,7 +853,7 @@ fn test_section_sizes() {
         .collect();
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -910,7 +910,7 @@ fn test_compare_working_vs_broken() {
             .collect();
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -995,7 +995,7 @@ fn test_nzeros_by_group() {
     // the encoded file structure)
 
     let encoder = VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -1076,7 +1076,7 @@ fn test_per_group_corruption() {
         .collect();
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -1181,7 +1181,7 @@ fn test_real_photo_value_stats() {
             .collect();
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -1248,7 +1248,7 @@ fn test_noise_multigroup() {
         }
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -1317,7 +1317,7 @@ fn test_gradient_multigroup() {
         }
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -1393,7 +1393,7 @@ fn test_solid_color_multigroup() {
         let linear_rgb: Vec<f32> = vec![0.5; n * 3]; // Solid mid-gray
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -1470,7 +1470,7 @@ fn test_compare_with_libjxl_tiny() {
     // Encode with our encoder (static codes for byte-exact parity with C++)
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.optimize_codes = false;
-    let bytes = encoder.encode(64, 64, &linear_rgb, None).unwrap();
+    let (bytes, _) = encoder.encode(64, 64, &linear_rgb, None).unwrap();
     eprintln!("Our encoder: {} bytes", bytes.len());
 
     // Read libjxl-tiny reference
@@ -1616,7 +1616,7 @@ fn test_save_comparison_files() {
     }
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder.encode(64, 64, &linear_rgb, None).unwrap();
+    let (bytes, _) = encoder.encode(64, 64, &linear_rgb, None).unwrap();
 
     std::fs::create_dir_all("/tmp/jxl_compare").ok();
     std::fs::write("/tmp/jxl_compare/rust.jxl", &bytes).unwrap();
@@ -1664,7 +1664,7 @@ fn test_single_block_noise() {
     // Encode
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     let bytes = match encoder.encode(8, 8, &linear_rgb, None) {
-        Ok(b) => b,
+        Ok((b, _)) => b,
         Err(e) => {
             eprintln!("ENCODE ERROR: {:?}", e);
             return;
@@ -1764,7 +1764,7 @@ fn test_compare_checkerboard() {
 
     // Encode with our encoder
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(8, 8, &linear_rgb, None)
         .expect("encode failed");
     eprintln!("Our encoder: {} bytes", bytes.len());
@@ -1849,7 +1849,7 @@ fn test_dark_values_multigroup() {
         }
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -1914,7 +1914,7 @@ fn test_color_multigroup() {
         }
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -2125,7 +2125,7 @@ fn test_high_contrast_multigroup() {
         }
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(size as usize, size as usize, &linear_rgb, None)
             .expect("Encode failed");
 
@@ -2180,7 +2180,7 @@ fn test_bright_block_trace() {
     );
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -2208,7 +2208,7 @@ fn test_bright_block_trace() {
     let dark_val = 0.2f32;
     let dark_rgb: Vec<f32> = vec![dark_val; (size * size * 3) as usize];
 
-    let bytes2 = encoder
+    let (bytes2, _) = encoder
         .encode(size as usize, size as usize, &dark_rgb, None)
         .expect("Encode");
     let reader2 = Cursor::new(&bytes2);
@@ -2262,7 +2262,7 @@ fn test_high_contrast_checkerboard() {
     );
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -2339,7 +2339,7 @@ fn test_full_range_random_8x8() {
     );
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &linear_rgb, None)
         .expect("Encode failed");
 
@@ -2410,7 +2410,7 @@ fn test_grayscale_vs_color_random() {
     }
 
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &gray_rgb, None)
         .unwrap();
 
@@ -2451,7 +2451,7 @@ fn test_grayscale_vs_color_random() {
         color_rgb.push(lcg(&mut seed));
     }
 
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(size as usize, size as usize, &color_rgb, None)
         .unwrap();
 
@@ -2510,7 +2510,7 @@ fn test_gradient_16x16_debug() {
 
     // Encode with our encoder
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder.encode(size, size, &linear_rgb, None).unwrap();
+    let (bytes, _) = encoder.encode(size, size, &linear_rgb, None).unwrap();
 
     // Save
     std::fs::write("/tmp/jxl_debug/rust_16.jxl", &bytes).unwrap();
@@ -2568,7 +2568,7 @@ fn test_random_16x16_debug() {
 
     // Encode with our encoder
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder.encode(size, size, &linear_rgb, None).unwrap();
+    let (bytes, _) = encoder.encode(size, size, &linear_rgb, None).unwrap();
 
     println!("Our encoder: {} bytes", bytes.len());
 
@@ -2622,7 +2622,7 @@ fn test_random_ac_coeffs() {
 
     // Encode
     let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder.encode(size, size, &linear_rgb, None).unwrap();
+    let (bytes, _) = encoder.encode(size, size, &linear_rgb, None).unwrap();
     println!("Encoded {} bytes", bytes.len());
 
     // Decode and check
@@ -2730,7 +2730,7 @@ fn test_compare_libjxl_tiny() {
     // Encode with our encoder (static codes for byte-exact parity with C++)
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.optimize_codes = false;
-    let our_bytes = encoder
+    let (our_bytes, _) = encoder
         .encode(size, size, &linear_rgb, None)
         .expect("encode");
     println!("\nOur encoder: {} bytes", our_bytes.len());
@@ -2804,7 +2804,7 @@ fn test_cfl_quality_1024() {
                 })
                 .collect();
             let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-            let bytes = encoder
+            let (bytes, _) = encoder
                 .encode(w as usize, h as usize, &linear_rgb, None)
                 .unwrap();
             sizes.push(bytes.len());
@@ -2845,7 +2845,7 @@ fn encode_and_measure_ssim2_cfl(
 ) -> Option<(f64, usize)> {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(distance);
     encoder.cfl_enabled = cfl_enabled;
-    let bytes = encoder.encode(width, height, linear_rgb, None).ok()?;
+    let (bytes, _) = encoder.encode(width, height, linear_rgb, None).ok()?;
     let file_size = bytes.len();
 
     let reader = std::io::Cursor::new(&bytes);
@@ -3019,7 +3019,7 @@ fn encode_and_measure_ssim2_strategy(
 ) -> Option<(f64, usize)> {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(distance);
     encoder.ac_strategy_enabled = ac_strategy_enabled;
-    let bytes = encoder.encode(width, height, linear_rgb, None).ok()?;
+    let (bytes, _) = encoder.encode(width, height, linear_rgb, None).ok()?;
     let file_size = bytes.len();
 
     let reader = std::io::Cursor::new(&bytes);
@@ -3297,7 +3297,7 @@ fn test_cpp_vs_rust_quality() {
             let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
             let mut enc = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc.ac_strategy_enabled = true;
-            let ron_bytes = enc.encode(w, h, &crop.linear_rgb, None).unwrap();
+            let (ron_bytes, _) = enc.encode(w, h, &crop.linear_rgb, None).unwrap();
             let ron_size = ron_bytes.len();
             std::fs::write(&ron_jxl, &ron_bytes).unwrap();
             run(&djxl, &[&ron_jxl, &ron_dec]);
@@ -3307,7 +3307,7 @@ fn test_cpp_vs_rust_quality() {
             let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
             let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
             enc.ac_strategy_enabled = false;
-            let roff_bytes = enc.encode(w, h, &crop.linear_rgb, None).unwrap();
+            let (roff_bytes, _) = enc.encode(w, h, &crop.linear_rgb, None).unwrap();
             let roff_size = roff_bytes.len();
             std::fs::write(&roff_jxl, &roff_bytes).unwrap();
             run(&djxl, &[&roff_jxl, &roff_dec]);
@@ -3564,7 +3564,7 @@ fn test_multigroup_quality() {
             let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
             let mut enc = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc.ac_strategy_enabled = true;
-            let ron_bytes = enc.encode(w, h, &img.linear_rgb, None).unwrap();
+            let (ron_bytes, _) = enc.encode(w, h, &img.linear_rgb, None).unwrap();
             let ron_size = ron_bytes.len();
             std::fs::write(&ron_jxl, &ron_bytes).unwrap();
             run(&djxl, &[&ron_jxl, &ron_dec]);
@@ -3574,7 +3574,7 @@ fn test_multigroup_quality() {
             let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
             let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
             enc.ac_strategy_enabled = false;
-            let roff_bytes = enc.encode(w, h, &img.linear_rgb, None).unwrap();
+            let (roff_bytes, _) = enc.encode(w, h, &img.linear_rgb, None).unwrap();
             let roff_size = roff_bytes.len();
             std::fs::write(&roff_jxl, &roff_bytes).unwrap();
             run(&djxl, &[&roff_jxl, &roff_dec]);
@@ -3761,13 +3761,13 @@ fn test_enhanced_clustering_compression() {
             let mut enc_simple = jxl_encoder::vardct::VarDctEncoder::new(distance);
             enc_simple.optimize_codes = true;
             enc_simple.enhanced_clustering = false;
-            let bytes_simple = enc_simple.encode(w, h, &linear_rgb, None).unwrap();
+            let (bytes_simple, _) = enc_simple.encode(w, h, &linear_rgb, None).unwrap();
 
             // Encode with enhanced clustering
             let mut enc_enhanced = jxl_encoder::vardct::VarDctEncoder::new(distance);
             enc_enhanced.optimize_codes = true;
             enc_enhanced.enhanced_clustering = true;
-            let bytes_enhanced = enc_enhanced.encode(w, h, &linear_rgb, None).unwrap();
+            let (bytes_enhanced, _) = enc_enhanced.encode(w, h, &linear_rgb, None).unwrap();
 
             let simple_size = bytes_simple.len();
             let enhanced_size = bytes_enhanced.len();
@@ -3938,7 +3938,7 @@ fn test_comprehensive_rd_sweep() {
         for (di, &distance) in distances.iter().enumerate() {
             // Encode
             let encoder = jxl_encoder::vardct::VarDctEncoder::new(distance);
-            let bytes = encoder
+            let (bytes, _) = encoder
                 .encode(w as usize, h as usize, &linear_rgb, None)
                 .unwrap();
             let size_kb = bytes.len() as f64 / 1024.0;
@@ -4121,7 +4121,7 @@ fn test_distance_vs_butteraugli() {
         for &distance in &distances {
             // Encode
             let encoder = jxl_encoder::vardct::VarDctEncoder::new(distance);
-            let bytes = encoder
+            let (bytes, _) = encoder
                 .encode(w as usize, h as usize, &linear_rgb, None)
                 .unwrap();
 
@@ -4253,7 +4253,7 @@ fn test_butteraugli_quality_gate() {
         let orig_img = Img::new(orig_pixels, w, h);
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder.encode(w, h, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(w, h, &linear_rgb, None).unwrap();
 
         // Decode with jxl-oxide
         let reader = Cursor::new(&bytes);
@@ -4293,7 +4293,7 @@ fn test_butteraugli_quality_gate() {
         let orig_img = Img::new(orig_pixels, w, h);
 
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-        let bytes = encoder.encode(w, h, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(w, h, &linear_rgb, None).unwrap();
 
         let reader = Cursor::new(&bytes);
         let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
@@ -4355,7 +4355,7 @@ fn test_encode_256_crop_for_comparison() {
     for dist_str in &["0.5", "1.0", "2.0", "3.0"] {
         let dist: f32 = dist_str.parse().unwrap();
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(dist);
-        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
 
         let out_path = format!(
             "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl",
@@ -4535,7 +4535,7 @@ fn test_encode_extra_distances() {
 
     for dist in [0.9f32, 1.1] {
         let encoder = jxl_encoder::vardct::VarDctEncoder::new(dist);
-        let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
         let out_path = format!(
             "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl",
             dist
@@ -4702,7 +4702,7 @@ fn test_section_sizes_d1() {
     encoder.ac_strategy_enabled = true;
     encoder.cfl_enabled = true;
 
-    let bytes = encoder.encode(width, height, &linear_rgb, None).unwrap();
+    let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
     eprintln!("Rust d=1.0: {} bytes total", bytes.len());
 
     // Parse the JXL to get section info
@@ -4767,7 +4767,7 @@ fn test_isolate_d1_butteraugli_gap() {
         encoder.cfl_enabled = *cfl;
         encoder.ac_strategy_enabled = *strat;
 
-        let bytes = encoder.encode(w, h, &linear_rgb, None).unwrap();
+        let (bytes, _) = encoder.encode(w, h, &linear_rgb, None).unwrap();
         let size = bytes.len();
 
         let reader = Cursor::new(&bytes);
@@ -4814,7 +4814,7 @@ fn test_isolate_d1_butteraugli_gap() {
             let mut enc = jxl_encoder::vardct::VarDctEncoder::new(dist);
             enc.cfl_enabled = true;
             enc.ac_strategy_enabled = *strat;
-            let bytes = enc.encode(w, h, &linear_rgb, None).unwrap();
+            let (bytes, _) = enc.encode(w, h, &linear_rgb, None).unwrap();
             let sz = bytes.len();
             let reader = Cursor::new(&bytes);
             let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
@@ -4849,7 +4849,7 @@ fn test_isolate_d1_butteraugli_gap() {
         let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc.cfl_enabled = true;
         enc.ac_strategy_enabled = strat;
-        let bytes = enc.encode(w, h, &linear_rgb, None).unwrap();
+        let (bytes, _) = enc.encode(w, h, &linear_rgb, None).unwrap();
         let reader = Cursor::new(&bytes);
         let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
         image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
@@ -4898,7 +4898,7 @@ fn test_isolate_d1_butteraugli_gap() {
         let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc.cfl_enabled = true;
         enc.ac_strategy_enabled = true;
-        let bytes = enc.encode(w, h, &linear_rgb, None).unwrap();
+        let (bytes, _) = enc.encode(w, h, &linear_rgb, None).unwrap();
         let jxl_path = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_on.jxl";
         std::fs::write(jxl_path, &bytes).unwrap();
 
@@ -4966,7 +4966,7 @@ fn test_isolate_d1_butteraugli_gap() {
         let mut enc2 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc2.cfl_enabled = true;
         enc2.ac_strategy_enabled = false;
-        let bytes2 = enc2.encode(w, h, &linear_rgb, None).unwrap();
+        let (bytes2, _) = enc2.encode(w, h, &linear_rgb, None).unwrap();
         let jxl_path2 = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_off.jxl";
         std::fs::write(jxl_path2, &bytes2).unwrap();
         let djxl_png2 = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_off_djxl.png";
@@ -5105,14 +5105,14 @@ fn test_static_vs_dynamic_sweep() {
             // Encode with static codes
             let mut enc_static = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc_static.optimize_codes = false;
-            let bytes_static = enc_static
+            let (bytes_static, _) = enc_static
                 .encode(cw as usize, ch as usize, &linear_rgb, None)
                 .unwrap();
 
             // Encode with dynamic codes
             let mut enc_dynamic = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc_dynamic.optimize_codes = true;
-            let bytes_dynamic = enc_dynamic
+            let (bytes_dynamic, _) = enc_dynamic
                 .encode(cw as usize, ch as usize, &linear_rgb, None)
                 .unwrap();
 
@@ -5306,13 +5306,13 @@ fn test_static_vs_optimize_codes() {
         for &d in &distances {
             let mut enc_static = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc_static.optimize_codes = false;
-            let static_bytes = enc_static
+            let (static_bytes, _) = enc_static
                 .encode(cw as usize, ch as usize, &linear_rgb, None)
                 .unwrap();
 
             let mut enc_opt = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc_opt.optimize_codes = true;
-            let opt_bytes = enc_opt
+            let (opt_bytes, _) = enc_opt
                 .encode(cw as usize, ch as usize, &linear_rgb, None)
                 .unwrap();
 
@@ -5744,7 +5744,9 @@ fn test_rgba_simple() {
         let jxl_bytes = jxl_encoder::LosslessConfig::new()
             .encode_request(width as u32, height as u32, jxl_encoder::PixelLayout::Rgba8)
             .encode(&rgba_data)
-            .expect("Failed to encode RGBA");
+            .expect("Failed to encode RGBA")
+            .take_data()
+            .unwrap();
 
         eprintln!("RGBA Encoded {} bytes", jxl_bytes.len());
 
@@ -5893,7 +5895,7 @@ fn test_ans_clic2025() {
         encoder_huff.use_ans = false;
         let bytes_huff =
             match encoder_huff.encode(width as usize, height as usize, &linear_rgb, None) {
-                Ok(b) => b,
+                Ok((b, _)) => b,
                 Err(e) => {
                     eprintln!("{}: Huffman encode failed: {:?}", short_name, e);
                     continue;
@@ -5905,7 +5907,7 @@ fn test_ans_clic2025() {
         encoder_ans.use_ans = true;
         let bytes_ans = match encoder_ans.encode(width as usize, height as usize, &linear_rgb, None)
         {
-            Ok(b) => b,
+            Ok((b, _)) => b,
             Err(e) => {
                 eprintln!("{}: ANS encode failed: {:?}", short_name, e);
                 continue;
@@ -6031,7 +6033,7 @@ fn test_ans_multigroup_gradient() {
         encoder.use_ans = true;
 
         let bytes = match encoder.encode(width, height, &linear_rgb, None) {
-            Ok(b) => b,
+            Ok((b, _)) => b,
             Err(e) => {
                 panic!("ANS encode failed for {}x{}: {:?}", width, height, e);
             }
@@ -6101,7 +6103,7 @@ fn test_ans_failing_image() {
     encoder.use_ans = true;
 
     eprintln!("Starting ANS encode...");
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(width as usize, height as usize, &linear_rgb, None)
         .expect("ANS encode failed");
 
@@ -6168,7 +6170,7 @@ fn test_ans_vs_huffman_debug() {
     // Encode with Huffman first
     let mut encoder_huff = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder_huff.use_ans = false;
-    let bytes_huff = encoder_huff
+    let (bytes_huff, _) = encoder_huff
         .encode(width as usize, height as usize, &linear_rgb, None)
         .expect("Huffman encode failed");
     eprintln!("Huffman: {} bytes", bytes_huff.len());
@@ -6188,7 +6190,7 @@ fn test_ans_vs_huffman_debug() {
     // Now encode with ANS
     let mut encoder_ans = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder_ans.use_ans = true;
-    let bytes_ans = encoder_ans
+    let (bytes_ans, _) = encoder_ans
         .encode(width as usize, height as usize, &linear_rgb, None)
         .expect("ANS encode failed");
     eprintln!("ANS: {} bytes", bytes_ans.len());
@@ -6256,7 +6258,7 @@ fn test_ans_crop_binary_search() {
         let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         encoder.use_ans = true;
 
-        let bytes = encoder
+        let (bytes, _) = encoder
             .encode(w, h, &linear_rgb, None)
             .expect("ANS encode failed");
 
@@ -6346,7 +6348,7 @@ fn test_custom_orders() {
         enc_default.custom_orders = false;
         let bytes_default =
             match enc_default.encode(width as usize, height as usize, &linear_rgb, None) {
-                Ok(b) => b,
+                Ok((b, _)) => b,
                 Err(e) => {
                     eprintln!("{}: Default encode failed: {:?}", short_name, e);
                     continue;
@@ -6358,7 +6360,7 @@ fn test_custom_orders() {
         enc_custom.custom_orders = true;
         let bytes_custom =
             match enc_custom.encode(width as usize, height as usize, &linear_rgb, None) {
-                Ok(b) => b,
+                Ok((b, _)) => b,
                 Err(e) => {
                     eprintln!("{}: Custom encode failed: {:?}", short_name, e);
                     continue;
@@ -6473,7 +6475,7 @@ fn test_custom_orders_compression() {
         enc_default.custom_orders = false;
         let bytes_default =
             match enc_default.encode(width as usize, height as usize, &linear_rgb, None) {
-                Ok(b) => b,
+                Ok((b, _)) => b,
                 Err(e) => {
                     eprintln!("{}: Default encode failed: {:?}", short_name, e);
                     continue;
@@ -6485,7 +6487,7 @@ fn test_custom_orders_compression() {
         enc_custom.custom_orders = true;
         let bytes_custom =
             match enc_custom.encode(width as usize, height as usize, &linear_rgb, None) {
-                Ok(b) => b,
+                Ok((b, _)) => b,
                 Err(e) => {
                     eprintln!("{}: Custom encode failed: {:?}", short_name, e);
                     continue;
@@ -6819,7 +6821,7 @@ fn test_rd_regression() {
             // Encode
             let encoder = jxl_encoder::vardct::VarDctEncoder::new(*dist);
             let bytes = match encoder.encode(w as usize, h as usize, &linear_rgb, None) {
-                Ok(b) => b,
+                Ok((b, _)) => b,
                 Err(e) => {
                     let msg = format!("{} d={}: encode failed: {:?}", image.name, dist, e);
                     eprintln!("{}", msg);

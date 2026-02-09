@@ -1691,9 +1691,9 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] CLI updated to use new API (LosslessConfig/LossyConfig/PixelLayout)
 - [x] Hide old `EncoderOptions` + `Encoder` API (#[doc(hidden)], no root re-exports)
 - [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
-- [ ] `encode_to()`/`finish_to()` std-only (currently always available)
+- [x] `encode_to()`/`finish_to()` std-only (gated behind `feature = "std"`)
 - [x] Add `At<>` error location tracking (from `whereat` crate)
-- [ ] Add `EncodeStats` for encode metrics
+- [x] Add `EncodeStats` for encode metrics
 - [ ] Add `estimate_memory()` / `estimate_memory_ceiling()` on both config types
 - [x] Wire `ImageMetadata` (ICC/EXIF/XMP) through to actual encoder output
   - ICC: embedded in codestream via PredictICC + Huffman entropy, lossy + lossless paths
