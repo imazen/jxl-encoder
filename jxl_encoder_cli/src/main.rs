@@ -356,7 +356,7 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            req.encode(&data).map(|mut r| r.take_data().unwrap())
+            req.encode(&data)
         }
 
         #[cfg(not(feature = "rate-control"))]
@@ -369,7 +369,7 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
-            req.encode(&data).map(|mut r| r.take_data().unwrap())
+            req.encode(&data)
         }
     } else {
         // Lossless modular path (or lossy RGBA/gray which falls through to modular)
@@ -383,7 +383,7 @@ fn main() {
         if let Some(ref meta) = metadata {
             req = req.with_metadata(meta);
         }
-        req.encode(&data).map(|mut r| r.take_data().unwrap())
+        req.encode(&data)
     };
 
     let encoded = match encoded {

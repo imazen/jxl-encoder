@@ -580,9 +580,7 @@ impl LosslessConfig {
         height: u32,
         layout: PixelLayout,
     ) -> Result<Vec<u8>> {
-        self.encode_request(width, height, layout)
-            .encode(pixels)
-            .map(|mut r| r.take_data().unwrap())
+        self.encode_request(width, height, layout).encode(pixels)
     }
 
     /// Encode pixels, appending to an existing buffer.
@@ -850,9 +848,7 @@ impl LossyConfig {
         height: u32,
         layout: PixelLayout,
     ) -> Result<Vec<u8>> {
-        self.encode_request(width, height, layout)
-            .encode(pixels)
-            .map(|mut r| r.take_data().unwrap())
+        self.encode_request(width, height, layout).encode(pixels)
     }
 
     /// Encode pixels, appending to an existing buffer.
@@ -915,9 +911,17 @@ impl<'a> EncodeRequest<'a> {
         self
     }
 
-    /// Encode pixels and return the JXL bitstream with metrics.
+    /// Encode pixels and return the JXL bytes.
     #[track_caller]
-    pub fn encode(self, pixels: &[u8]) -> Result<EncodeResult> {
+    pub fn encode(self, pixels: &[u8]) -> Result<Vec<u8>> {
+        self.encode_inner(pixels)
+            .map(|mut r| r.take_data().unwrap())
+            .map_err(at)
+    }
+
+    /// Encode pixels and return the JXL bytes together with [`EncodeStats`].
+    #[track_caller]
+    pub fn encode_with_stats(self, pixels: &[u8]) -> Result<EncodeResult> {
         self.encode_inner(pixels).map_err(at)
     }
 
@@ -1371,7 +1375,7 @@ mod tests {
             .encode(&pixels);
         assert!(result.is_ok());
         let jxl = result.unwrap();
-        assert_eq!(&jxl.data().unwrap()[..2], &[0xFF, 0x0A]); // JXL signature
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A]); // JXL signature
     }
 
     #[test]
@@ -1391,7 +1395,7 @@ mod tests {
             .encode(&pixels);
         assert!(result.is_ok());
         let jxl = result.unwrap();
-        assert_eq!(&jxl.data().unwrap()[..2], &[0xFF, 0x0A]);
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
     }
 
     #[test]

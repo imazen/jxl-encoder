@@ -260,8 +260,6 @@ fn test_exif_container_wrapping() {
         .encode_request(8, 8, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&pixels)
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Container starts with JXL container signature, not bare codestream
@@ -301,8 +299,6 @@ fn test_xmp_container_wrapping() {
         .encode_request(8, 8, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&pixels)
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Container format
@@ -331,8 +327,6 @@ fn test_exif_and_xmp_container() {
         .encode_request(8, 8, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&pixels)
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Both boxes present
@@ -365,8 +359,6 @@ fn test_lossy_with_exif_decodes() {
         .encode_request(16, 16, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&pixels)
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Container format with Exif box
@@ -433,8 +425,6 @@ fn test_container_exif_djxl_decode() {
         .encode_request(16, 16, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&pixels)
-        .unwrap()
-        .take_data()
         .unwrap();
 
     let temp_jxl = "/tmp/test_container_exif.jxl";
@@ -487,8 +477,6 @@ fn test_lossy_with_icc_decodes() {
         .encode_request(64, 64, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&[128u8; 64 * 64 * 3])
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Verify with jxl-oxide
@@ -520,8 +508,6 @@ fn test_lossless_with_icc_decodes() {
         .encode_request(32, 32, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&[128u8; 32 * 32 * 3])
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Verify with jxl-oxide
@@ -556,8 +542,6 @@ fn test_icc_profile_roundtrip_bytes() {
         .encode_request(64, 64, PixelLayout::Rgb8)
         .with_metadata(&meta)
         .encode(&[128u8; 64 * 64 * 3])
-        .unwrap()
-        .take_data()
         .unwrap();
 
     // Decode with jxl-oxide and extract the original ICC profile
