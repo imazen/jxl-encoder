@@ -88,23 +88,17 @@ impl VarDctEncoder {
         match raw_strategy {
             0 => {
                 let mut block = [0.0f32; 64];
-                for dy in 0..8 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..8 {
-                        block[dy * 8 + dx] = channel_data[row_offset + dx];
-                    }
-                }
+                extract_block_8x8(channel_data, stride, bx, by, &mut block);
                 let mut dct_out = [0.0f32; 64];
                 dct_8x8(&block, &mut dct_out);
                 output[..64].copy_from_slice(&dct_out);
             }
             RAW_STRATEGY_DCT16X8 => {
                 let mut block = [0.0f32; 128];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..16 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..8 {
-                        block[dy * 8 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 8..dy * 8 + 8].copy_from_slice(&channel_data[src..src + 8]);
                 }
                 let mut dct_out = [0.0f32; 128];
                 dct_16x8(&block, &mut dct_out);
@@ -112,11 +106,10 @@ impl VarDctEncoder {
             }
             RAW_STRATEGY_DCT8X16 => {
                 let mut block = [0.0f32; 128];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..8 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..16 {
-                        block[dy * 16 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
                 let mut dct_out = [0.0f32; 128];
                 dct_8x16(&block, &mut dct_out);
@@ -124,11 +117,10 @@ impl VarDctEncoder {
             }
             RAW_STRATEGY_DCT16X16 => {
                 let mut block = [0.0f32; 256];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..16 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..16 {
-                        block[dy * 16 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
                 let mut dct_out = [0.0f32; 256];
                 dct_16x16(&block, &mut dct_out);
@@ -136,11 +128,10 @@ impl VarDctEncoder {
             }
             RAW_STRATEGY_DCT32X32 => {
                 let mut block = [0.0f32; 1024];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..32 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..32 {
-                        block[dy * 32 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
                 let mut dct_out = [0.0f32; 1024];
                 dct_32x32(&block, &mut dct_out);
@@ -149,12 +140,7 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT4X8 => {
                 // DCT4X8 full: two 4x8 transforms covering 8x8 pixels
                 let mut block = [0.0f32; 64];
-                for dy in 0..8 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..8 {
-                        block[dy * 8 + dx] = channel_data[row_offset + dx];
-                    }
-                }
+                extract_block_8x8(channel_data, stride, bx, by, &mut block);
                 let mut dct_out = [0.0f32; 64];
                 dct_4x8_full(&block, &mut dct_out);
                 output[..64].copy_from_slice(&dct_out);
@@ -162,12 +148,7 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT8X4 => {
                 // DCT8X4 full: two 8x4 transforms covering 8x8 pixels
                 let mut block = [0.0f32; 64];
-                for dy in 0..8 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..8 {
-                        block[dy * 8 + dx] = channel_data[row_offset + dx];
-                    }
-                }
+                extract_block_8x8(channel_data, stride, bx, by, &mut block);
                 let mut dct_out = [0.0f32; 64];
                 dct_8x4_full(&block, &mut dct_out);
                 output[..64].copy_from_slice(&dct_out);
@@ -175,12 +156,7 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT4X4 => {
                 // DCT4X4 full: four 4x4 transforms covering 8x8 pixels
                 let mut block = [0.0f32; 64];
-                for dy in 0..8 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..8 {
-                        block[dy * 8 + dx] = channel_data[row_offset + dx];
-                    }
-                }
+                extract_block_8x8(channel_data, stride, bx, by, &mut block);
                 let mut dct_out = [0.0f32; 64];
                 dct_4x4_full(&block, &mut dct_out);
                 output[..64].copy_from_slice(&dct_out);
@@ -204,11 +180,10 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT32X16 => {
                 // DCT32X16: 32x16 transform (4 rows × 2 cols of 8x8 blocks = 32 rows × 16 cols)
                 let mut block = [0.0f32; 512];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..32 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..16 {
-                        block[dy * 16 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
                 let mut dct_out = [0.0f32; 512];
                 dct_32x16(&block, &mut dct_out);
@@ -217,11 +192,10 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT16X32 => {
                 // DCT16X32: 16x32 transform (2 rows × 4 cols of 8x8 blocks = 16 rows × 32 cols)
                 let mut block = [0.0f32; 512];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..16 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..32 {
-                        block[dy * 32 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
                 let mut dct_out = [0.0f32; 512];
                 dct_16x32(&block, &mut dct_out);
@@ -230,11 +204,10 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT64X64 => {
                 // DCT64X64: 64x64 transform (8 rows × 8 cols of 8x8 blocks)
                 let mut block = [0.0f32; 4096];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..64 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..64 {
-                        block[dy * 64 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 64..dy * 64 + 64].copy_from_slice(&channel_data[src..src + 64]);
                 }
                 let mut dct_out = [0.0f32; 4096];
                 dct_64x64(&block, &mut dct_out);
@@ -243,11 +216,10 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT64X32 => {
                 // DCT64X32: 64x32 transform (8 rows × 4 cols of 8x8 blocks = 64 rows × 32 cols)
                 let mut block = [0.0f32; 2048];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..64 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..32 {
-                        block[dy * 32 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
                 let mut dct_out = [0.0f32; 2048];
                 dct_64x32(&block, &mut dct_out);
@@ -256,11 +228,10 @@ impl VarDctEncoder {
             RAW_STRATEGY_DCT32X64 => {
                 // DCT32X64: 32x64 transform (4 rows × 8 cols of 8x8 blocks = 32 rows × 64 cols)
                 let mut block = [0.0f32; 2048];
+                let x0 = bx * BLOCK_DIM;
                 for dy in 0..32 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..64 {
-                        block[dy * 64 + dx] = channel_data[row_offset + dx];
-                    }
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    block[dy * 64..dy * 64 + 64].copy_from_slice(&channel_data[src..src + 64]);
                 }
                 let mut dct_out = [0.0f32; 2048];
                 dct_32x64(&block, &mut dct_out);
@@ -270,12 +241,7 @@ impl VarDctEncoder {
                 // AFV: Adaptive Frequency Variable (hybrid transform for corners)
                 // Extract 8x8 pixels and compute AFV transform
                 let mut pixels = [0.0f32; 64];
-                for dy in 0..8 {
-                    let row_offset = (by * BLOCK_DIM + dy) * stride + bx * BLOCK_DIM;
-                    for dx in 0..8 {
-                        pixels[dy * 8 + dx] = channel_data[row_offset + dx];
-                    }
-                }
+                extract_block_8x8(channel_data, stride, bx, by, &mut pixels);
                 let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
                 let mut dct_out = [0.0f32; 64];
                 afv_transform_from_pixels(&pixels, afv_kind, &mut dct_out);

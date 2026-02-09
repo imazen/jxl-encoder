@@ -411,12 +411,11 @@ impl VarDctEncoder {
                 // For DCT8 this is just index 0.
                 // For DCT16x16 (cx=cy=2, stride=16) this is {0, 1, 16, 17}.
                 // For DCT16x8 (cx=2, cy=1, stride=16) this is {0, 1}.
-                let is_llf = (idx / grid_width) < cy && (idx % grid_width) < cx;
-                let qval = if is_llf {
+                let y = idx / grid_width;
+                let x = idx % grid_width;
+                let qval = if y < cy && x < cx {
                     0 // LLF handled separately
                 } else {
-                    let y = idx / grid_width;
-                    let x = idx % grid_width;
                     Self::quantize_coeff_ac(
                         dct_coeffs[idx],
                         1.0 / weights[idx],
@@ -435,10 +434,7 @@ impl VarDctEncoder {
                     debug_nonzero_count += 1;
                 }
 
-                // Store in flat layout: idx = y * grid_width + x in the transform grid.
-                // Map to 8x8 block slots for storage.
-                let y = idx / grid_width;
-                let x = idx % grid_width;
+                // Store in flat layout: map to 8x8 block slots for storage.
                 let coef_slot_y = y / BLOCK_DIM;
                 let coef_slot_x = x / BLOCK_DIM;
                 let pos_y = y % BLOCK_DIM;

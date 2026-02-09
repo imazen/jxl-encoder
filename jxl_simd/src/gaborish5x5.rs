@@ -218,59 +218,67 @@ fn gaborish_5x5_avx2(
             output[y * width + x] = scalar_pixel(x as isize, iy);
         }
 
-        // Row offsets for 5 rows
-        let r_m2 = (y - 2) * width; // y - 2
-        let r_m1 = (y - 1) * width; // y - 1
-        let r_0 = y * width; // y
-        let r_p1 = (y + 1) * width; // y + 1
-        let r_p2 = (y + 2) * width; // y + 2
+        // Pre-slice rows to help compiler eliminate bounds checks.
+        // Each row has exactly `width` elements; the loop bound guarantees
+        // all f32x8 loads (offset range -2..+9) stay within the row.
+        let r_m2 = (y - 2) * width;
+        let r_m1 = (y - 1) * width;
+        let r_0 = y * width;
+        let r_p1 = (y + 1) * width;
+        let r_p2 = (y + 2) * width;
+        let row_m2 = &input[r_m2..r_m2 + width];
+        let row_m1 = &input[r_m1..r_m1 + width];
+        let row_0 = &input[r_0..r_0 + width];
+        let row_p1 = &input[r_p1..r_p1 + width];
+        let row_p2 = &input[r_p2..r_p2 + width];
 
-        // SIMD interior: x in 2..width-2, processed in chunks of 8
-        // Need to load x-2..x+8+2 = x-2..x+10, so x+10 <= width means x <= width-10
-        let simd_end = if width >= 10 { width - 8 } else { 2 };
+        // SIMD interior: loads access x-2..x+10, so need x + 10 <= width.
+        // For widths that are multiples of 8, width-10 and width-8 produce
+        // identical iteration counts (x starts at 2, steps by 8).
+        let simd_end = if width >= 12 { width - 10 } else { 2 };
         let mut x = 2;
 
         while x < simd_end {
             // Center
-            let center = f32x8::from_slice(token, &input[r_0 + x..]);
+            let center = f32x8::from_slice(token, &row_0[x..]);
 
             // r: 4 orthogonal at distance 1
-            let left1 = f32x8::from_slice(token, &input[r_0 + x - 1..]);
-            let right1 = f32x8::from_slice(token, &input[r_0 + x + 1..]);
-            let top1 = f32x8::from_slice(token, &input[r_m1 + x..]);
-            let bot1 = f32x8::from_slice(token, &input[r_p1 + x..]);
+            let left1 = f32x8::from_slice(token, &row_0[x - 1..]);
+            let right1 = f32x8::from_slice(token, &row_0[x + 1..]);
+            let top1 = f32x8::from_slice(token, &row_m1[x..]);
+            let bot1 = f32x8::from_slice(token, &row_p1[x..]);
             let r_sum = left1 + right1 + top1 + bot1;
 
             // d: 4 diagonal at distance sqrt(2)
-            let tl1 = f32x8::from_slice(token, &input[r_m1 + x - 1..]);
-            let tr1 = f32x8::from_slice(token, &input[r_m1 + x + 1..]);
-            let bl1 = f32x8::from_slice(token, &input[r_p1 + x - 1..]);
-            let br1 = f32x8::from_slice(token, &input[r_p1 + x + 1..]);
+            let tl1 = f32x8::from_slice(token, &row_m1[x - 1..]);
+            let tr1 = f32x8::from_slice(token, &row_m1[x + 1..]);
+            let bl1 = f32x8::from_slice(token, &row_p1[x - 1..]);
+            let br1 = f32x8::from_slice(token, &row_p1[x + 1..]);
             let d_sum = tl1 + tr1 + bl1 + br1;
 
             // R: 4 orthogonal at distance 2
-            let left2 = f32x8::from_slice(token, &input[r_0 + x - 2..]);
-            let right2 = f32x8::from_slice(token, &input[r_0 + x + 2..]);
-            let top2 = f32x8::from_slice(token, &input[r_m2 + x..]);
-            let bot2 = f32x8::from_slice(token, &input[r_p2 + x..]);
+            let left2 = f32x8::from_slice(token, &row_0[x - 2..]);
+            let right2 = f32x8::from_slice(token, &row_0[x + 2..]);
+            let top2 = f32x8::from_slice(token, &row_m2[x..]);
+            let bot2 = f32x8::from_slice(token, &row_p2[x..]);
             let big_r_sum = left2 + right2 + top2 + bot2;
 
             // L: 8 knight's move neighbors
-            let l_a = f32x8::from_slice(token, &input[r_m1 + x - 2..]);
-            let l_b = f32x8::from_slice(token, &input[r_p1 + x - 2..]);
-            let l_c = f32x8::from_slice(token, &input[r_m1 + x + 2..]);
-            let l_d = f32x8::from_slice(token, &input[r_p1 + x + 2..]);
-            let l_e = f32x8::from_slice(token, &input[r_m2 + x - 1..]);
-            let l_f = f32x8::from_slice(token, &input[r_m2 + x + 1..]);
-            let l_g = f32x8::from_slice(token, &input[r_p2 + x - 1..]);
-            let l_h = f32x8::from_slice(token, &input[r_p2 + x + 1..]);
+            let l_a = f32x8::from_slice(token, &row_m1[x - 2..]);
+            let l_b = f32x8::from_slice(token, &row_p1[x - 2..]);
+            let l_c = f32x8::from_slice(token, &row_m1[x + 2..]);
+            let l_d = f32x8::from_slice(token, &row_p1[x + 2..]);
+            let l_e = f32x8::from_slice(token, &row_m2[x - 1..]);
+            let l_f = f32x8::from_slice(token, &row_m2[x + 1..]);
+            let l_g = f32x8::from_slice(token, &row_p2[x - 1..]);
+            let l_h = f32x8::from_slice(token, &row_p2[x + 1..]);
             let l_sum = l_a + l_b + l_c + l_d + l_e + l_f + l_g + l_h;
 
             // D: 4 corner at distance 2*sqrt(2)
-            let tl2 = f32x8::from_slice(token, &input[r_m2 + x - 2..]);
-            let tr2 = f32x8::from_slice(token, &input[r_m2 + x + 2..]);
-            let bl2 = f32x8::from_slice(token, &input[r_p2 + x - 2..]);
-            let br2 = f32x8::from_slice(token, &input[r_p2 + x + 2..]);
+            let tl2 = f32x8::from_slice(token, &row_m2[x - 2..]);
+            let tr2 = f32x8::from_slice(token, &row_m2[x + 2..]);
+            let bl2 = f32x8::from_slice(token, &row_p2[x - 2..]);
+            let br2 = f32x8::from_slice(token, &row_p2[x + 2..]);
             let big_d_sum = tl2 + tr2 + bl2 + br2;
 
             // Combine with FMA chains:
