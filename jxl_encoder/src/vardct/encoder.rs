@@ -960,7 +960,8 @@ impl VarDctEncoder {
                     if pixels == 0.0 {
                         pixels = 1.0;
                     }
-                    let td = K_TILE_NORM * (dist_norm / pixels).powf(1.0 / 16.0) as f32;
+                    // x^(1/16) = sqrt(sqrt(sqrt(sqrt(x))))
+                    let td = K_TILE_NORM * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
                     // Fill all sub-blocks of this transform
                     for sy in 0..covered_y {
                         for sx in 0..covered_x {
