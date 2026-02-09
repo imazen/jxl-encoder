@@ -507,70 +507,41 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
     // SIMD-accelerated per-pixel masking (neighbor avg → gamma ratio → log1p → reciprocal)
     jxl_simd::compute_mask1x1(xyb_y, width, height, &mut mask1x1);
 
-    // Apply Symmetric5 blur (matches libjxl's BlurMasking)
-    symmetric5_blur_mask1x1(&mut mask1x1, width, height);
+    // Apply Symmetric5 blur using SIMD gaborish kernel with mask1x1 weights.
+    // The gaborish_5x5_channel kernel has the same 5x5 weight pattern:
+    //   D  L  R  L  D
+    //   L  d  r  d  L
+    //   R  r  c  r  R
+    //   L  d  r  d  L
+    //   D  L  R  L  D
+    // libjxl mask1x1 weights from enc_adaptive_quantization.cc:
+    const W_R: f32 = 0.364_911_248; // kFilterMask1x1[0] = r (orthogonal dist 1)
+    const W_D: f32 = 0.05; // kFilterMask1x1[1] = d (diagonal dist 1)
+    const W_R2: f32 = 0.168_888_802_1; // kFilterMask1x1[2] = R (orthogonal dist 2)
+    const W_L: f32 = 0.221_069_183; // kFilterMask1x1[3] = L (knight's move)
+    const W_D2: f32 = 0.306_563_504; // kFilterMask1x1[4] = D (diagonal dist 2)
+    let sum = 1.0 + 4.0 * (W_R + W_D + W_R2 + W_D2 + 2.0 * W_L);
+    let inv_sum = 1.0 / sum;
+
+    let mut scratch = vec![0.0_f32; width * height];
+    jxl_simd::gaborish_5x5_channel(
+        &mut mask1x1,
+        &mut scratch,
+        width,
+        height,
+        inv_sum,        // wc (center)
+        inv_sum * W_R,  // wr (orthogonal dist 1)
+        inv_sum * W_D,  // wd (diagonal dist 1)
+        inv_sum * W_R2, // w_big_r (orthogonal dist 2)
+        inv_sum * W_L,  // wl (knight's move)
+        inv_sum * W_D2, // w_big_d (diagonal dist 2)
+    );
 
     mask1x1
 }
 
-/// Apply Symmetric5 blur to mask1x1, matching libjxl's BlurMasking function.
-fn symmetric5_blur_mask1x1(mask: &mut [f32], width: usize, height: usize) {
-    // libjxl weights from enc_adaptive_quantization.cc
-    const W_R: f32 = 0.364911248; // kFilterMask1x1[0]
-    const W_D: f32 = 0.05; // kFilterMask1x1[1]
-    const W_R2: f32 = 0.1688888021; // kFilterMask1x1[2] (far h/v)
-    const W_L: f32 = 0.221069183; // kFilterMask1x1[3] (knight-move)
-    const W_D2: f32 = 0.306563504; // kFilterMask1x1[4] (far diagonal)
-
-    // Normalization sum: center (1.0) + 4*r + 4*d + 4*R + 4*D + 8*L
-    let sum = 1.0 + 4.0 * (W_R + W_D + W_R2 + W_D2 + 2.0 * W_L);
-    let inv_sum = 1.0 / sum;
-
-    // Normalized weights
-    let c = inv_sum;
-    let r = inv_sum * W_R;
-    let d = inv_sum * W_D;
-    let r2 = inv_sum * W_R2;
-    let l = inv_sum * W_L;
-    let d2 = inv_sum * W_D2;
-
-    let mut output = vec![0.0_f32; width * height];
-
-    for y in 0..height {
-        for x in 0..width {
-            let ym2 = y.saturating_sub(2);
-            let ym1 = y.saturating_sub(1);
-            let yp1 = (y + 1).min(height - 1);
-            let yp2 = (y + 2).min(height - 1);
-
-            let xm2 = x.saturating_sub(2);
-            let xm1 = x.saturating_sub(1);
-            let xp1 = (x + 1).min(width - 1);
-            let xp2 = (x + 2).min(width - 1);
-
-            let get = |py: usize, px: usize| mask[py * width + px];
-
-            let mut val = c * get(y, x);
-            val += r * (get(ym1, x) + get(yp1, x) + get(y, xm1) + get(y, xp1));
-            val += d * (get(ym1, xm1) + get(ym1, xp1) + get(yp1, xm1) + get(yp1, xp1));
-            val += r2 * (get(ym2, x) + get(yp2, x) + get(y, xm2) + get(y, xp2));
-            val += d2 * (get(ym2, xm2) + get(ym2, xp2) + get(yp2, xm2) + get(yp2, xp2));
-            val += l
-                * (get(ym2, xm1)
-                    + get(ym2, xp1)
-                    + get(ym1, xm2)
-                    + get(ym1, xp2)
-                    + get(yp1, xm2)
-                    + get(yp1, xp2)
-                    + get(yp2, xm1)
-                    + get(yp2, xp1));
-
-            output[y * width + x] = val;
-        }
-    }
-
-    mask.copy_from_slice(&output);
-}
+// symmetric5_blur_mask1x1 replaced by jxl_simd::gaborish_5x5_channel with
+// mask1x1-specific weights (same 5x5 kernel structure, ~10x faster via AVX2).
 
 /// PerBlockModulations: apply all modulations and convert exponent to multiplier.
 ///
