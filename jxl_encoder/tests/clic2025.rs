@@ -5744,9 +5744,7 @@ fn test_rgba_simple() {
         let jxl_bytes = jxl_encoder::LosslessConfig::new()
             .encode_request(width as u32, height as u32, jxl_encoder::PixelLayout::Rgba8)
             .encode(&rgba_data)
-            .expect("Failed to encode RGBA")
-            .take_data()
-            .unwrap();
+            .expect("Failed to encode RGBA");
 
         eprintln!("RGBA Encoded {} bytes", jxl_bytes.len());
 
