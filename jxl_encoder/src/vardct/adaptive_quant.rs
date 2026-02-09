@@ -502,35 +502,10 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 /// Per-pixel mask field of size `width * height`, row-major layout.
 /// After computing the raw mask, applies libjxl's Symmetric5 blur.
 pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
-    const MATCH_GAMMA_OFFSET: f32 = 0.019;
-    const K_MUL: f32 = 1.0;
-    const K_OFFSET: f32 = 0.01;
-
     let mut mask1x1 = vec![0.0_f32; width * height];
 
-    for y in 0..height {
-        let y1 = if y > 0 { y - 1 } else { 0 };
-        let y2 = if y + 1 < height { y + 1 } else { y };
-
-        for x in 0..width {
-            let x1 = if x > 0 { x - 1 } else { 0 };
-            let x2 = if x + 1 < width { x + 1 } else { x };
-
-            let base = 0.25
-                * (xyb_y[y1 * width + x]
-                    + xyb_y[y2 * width + x]
-                    + xyb_y[y * width + x1]
-                    + xyb_y[y * width + x2]);
-
-            let pixel_val = xyb_y[y * width + x];
-            let gammac = ratio_of_derivatives(pixel_val + MATCH_GAMMA_OFFSET, false);
-
-            let diff = (gammac * (pixel_val - base)).abs();
-            let diff = (1.0 + diff).ln(); // log1p(diff)
-
-            mask1x1[y * width + x] = K_MUL / (diff + K_OFFSET);
-        }
-    }
+    // SIMD-accelerated per-pixel masking (neighbor avg → gamma ratio → log1p → reciprocal)
+    jxl_simd::compute_mask1x1(xyb_y, width, height, &mut mask1x1);
 
     // Apply Symmetric5 blur (matches libjxl's BlurMasking)
     symmetric5_blur_mask1x1(&mut mask1x1, width, height);
