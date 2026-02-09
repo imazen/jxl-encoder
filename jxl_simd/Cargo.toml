@@ -1,6 +1,6 @@
 [package]
-name = "jxl_simd"
-description = "SIMD-accelerated primitives for jxl_encoder"
+name = "jxl-encoder-simd"
+description = "SIMD-accelerated primitives for jxl-encoder"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

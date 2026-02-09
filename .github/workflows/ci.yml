@@ -126,7 +126,7 @@ jobs:
       - name: Build for WASM
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build -p jxl_encoder --no-default-features --features "${{ env.CI_FEATURES }}" --target wasm32-wasip1
+        run: cargo build -p jxl-encoder --no-default-features --features "${{ env.CI_FEATURES }}" --target wasm32-wasip1
 
   # ==========================================================================
   # Code Coverage
@@ -178,7 +178,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run RD regression
-        run: cargo test -p jxl_encoder --release --no-default-features --features "${{ env.CI_FEATURES }}" --test clic2025 test_rd_regression -- --ignored --nocapture
+        run: cargo test -p jxl-encoder --release --no-default-features --features "${{ env.CI_FEATURES }}" --test clic2025 test_rd_regression -- --ignored --nocapture
 
   # ==========================================================================
   # Clippy
