@@ -14,6 +14,7 @@ use super::ac_strategy::{
     RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
 };
 use super::afv::{afv_transform_from_pixels, dc_from_afv};
+use super::block_extract::extract_block_8x8;
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::*;
 use super::dct::{
@@ -186,13 +187,19 @@ impl VarDctEncoder {
             }
             RAW_STRATEGY_IDENTITY => {
                 // IDENTITY: pixel differences from reference pixel per 4x4 sub-block
-                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
-                identity_transform(&channel_data[pixel_offset..], stride, &mut output[..64]);
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(channel_data, stride, bx, by, &mut input);
+                let mut out64 = [0.0f32; 64];
+                identity_transform(&input, &mut out64);
+                output[..64].copy_from_slice(&out64);
             }
             RAW_STRATEGY_DCT2X2 => {
                 // DCT2X2: hierarchical 2x2 DCT
-                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
-                dct2x2_transform(&channel_data[pixel_offset..], stride, &mut output[..64]);
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(channel_data, stride, bx, by, &mut input);
+                let mut out64 = [0.0f32; 64];
+                dct2x2_transform(&input, &mut out64);
+                output[..64].copy_from_slice(&out64);
             }
             RAW_STRATEGY_DCT32X16 => {
                 // DCT32X16: 32x16 transform (4 rows × 2 cols of 8x8 blocks = 32 rows × 16 cols)

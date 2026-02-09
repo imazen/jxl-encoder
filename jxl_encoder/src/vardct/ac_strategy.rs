@@ -561,15 +561,17 @@ pub(super) fn estimate_entropy_full(
                 block[offset..offset + 64].copy_from_slice(&output);
             }
             RAW_STRATEGY_IDENTITY => {
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 64];
-                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
-                identity_transform(&xyb_c[pixel_offset..], stride, &mut output);
+                identity_transform(&input, &mut output);
                 block[offset..offset + 64].copy_from_slice(&output);
             }
             RAW_STRATEGY_DCT2X2 => {
+                let mut input = [0.0f32; 64];
+                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let mut output = [0.0f32; 64];
-                let pixel_offset = by * BLOCK_DIM * stride + bx * BLOCK_DIM;
-                dct2x2_transform(&xyb_c[pixel_offset..], stride, &mut output);
+                dct2x2_transform(&input, &mut output);
                 block[offset..offset + 64].copy_from_slice(&output);
             }
             RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
@@ -837,12 +839,14 @@ pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], ou
         }
         RAW_STRATEGY_IDENTITY => {
             let mut tmp = [0.0f32; 64];
-            inverse_identity_transform(&error_coeffs[..64], &mut tmp);
+            let coeffs: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
+            inverse_identity_transform(coeffs, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT2X2 => {
             let mut tmp = [0.0f32; 64];
-            inverse_dct2x2_transform(&error_coeffs[..64], &mut tmp);
+            let coeffs: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
+            inverse_dct2x2_transform(coeffs, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         _ => unreachable!(
