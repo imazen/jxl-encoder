@@ -136,18 +136,14 @@ fn pixel_domain_loss_avx2(
             // m2 = masked * masked (in f32)
             let m2_v = masked_v * masked_v;
 
-            // Convert f32x8 m2 to two f64x4 vectors via raw intrinsics
-            // SAFETY: from_raw is safe inside #[arcane] because token proves AVX2 support
-            let (m2_lo, m2_hi) = unsafe {
-                // Lower 4 floats → f64x4
-                let m2_lo_128 = _mm256_castps256_ps128(m2_v.raw());
-                let m2_lo = f64x4::from_raw(_mm256_cvtps_pd(m2_lo_128));
+            // Convert f32x8 m2 to two f64x4 vectors via intrinsics
+            // Lower 4 floats → f64x4
+            let m2_lo_128 = _mm256_castps256_ps128(m2_v.raw());
+            let m2_lo = f64x4::from_m256d(token, _mm256_cvtps_pd(m2_lo_128));
 
-                // Upper 4 floats → f64x4
-                let m2_hi_128 = _mm256_extractf128_ps::<1>(m2_v.raw());
-                let m2_hi = f64x4::from_raw(_mm256_cvtps_pd(m2_hi_128));
-                (m2_lo, m2_hi)
-            };
+            // Upper 4 floats → f64x4
+            let m2_hi_128 = _mm256_extractf128_ps::<1>(m2_v.raw());
+            let m2_hi = f64x4::from_m256d(token, _mm256_cvtps_pd(m2_hi_128));
 
             // m4 = m2 * m2 (in f64)
             let m4_lo = m2_lo * m2_lo;
