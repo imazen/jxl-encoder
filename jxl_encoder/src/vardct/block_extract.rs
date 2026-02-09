@@ -6,7 +6,7 @@
 //! Block pixel extraction from image planes.
 //!
 //! Extracts rectangular pixel blocks from padded image buffers.
-//! These functions are natural SIMD optimization targets (gather operations).
+//! Uses `copy_from_slice` for row-wide copies (single bounds check per row).
 
 use super::common::BLOCK_DIM;
 
@@ -21,12 +21,10 @@ pub(super) fn extract_block_8x8(
     by: usize,
     out: &mut [f32; 64],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..8 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..8 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 8 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 8..dy * 8 + 8].copy_from_slice(&plane[src..src + 8]);
     }
 }
 
@@ -41,12 +39,10 @@ pub(super) fn extract_block_8x16(
     by: usize,
     out: &mut [f32; 128],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..16 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..8 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 8 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 8..dy * 8 + 8].copy_from_slice(&plane[src..src + 8]);
     }
 }
 
@@ -61,12 +57,10 @@ pub(super) fn extract_block_16x8(
     by: usize,
     out: &mut [f32; 128],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..8 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..16 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 16 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 16..dy * 16 + 16].copy_from_slice(&plane[src..src + 16]);
     }
 }
 
@@ -81,12 +75,10 @@ pub(super) fn extract_block_16x16(
     by: usize,
     out: &mut [f32; 256],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..16 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..16 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 16 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 16..dy * 16 + 16].copy_from_slice(&plane[src..src + 16]);
     }
 }
 
@@ -101,12 +93,10 @@ pub(super) fn extract_block_32x32(
     by: usize,
     out: &mut [f32; 1024],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..32 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..32 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 32 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 32..dy * 32 + 32].copy_from_slice(&plane[src..src + 32]);
     }
 }
 
@@ -121,12 +111,10 @@ pub(super) fn extract_block_32x16(
     by: usize,
     out: &mut [f32; 512],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..32 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..16 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 16 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 16..dy * 16 + 16].copy_from_slice(&plane[src..src + 16]);
     }
 }
 
@@ -141,12 +129,10 @@ pub(super) fn extract_block_16x32(
     by: usize,
     out: &mut [f32; 512],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..16 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..32 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 32 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 32..dy * 32 + 32].copy_from_slice(&plane[src..src + 32]);
     }
 }
 
@@ -159,12 +145,10 @@ pub(super) fn extract_block_64x64(
     by: usize,
     out: &mut [f32; 4096],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..64 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..64 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 64 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 64..dy * 64 + 64].copy_from_slice(&plane[src..src + 64]);
     }
 }
 
@@ -177,12 +161,10 @@ pub(super) fn extract_block_64x32(
     by: usize,
     out: &mut [f32; 2048],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..64 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..32 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 32 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 32..dy * 32 + 32].copy_from_slice(&plane[src..src + 32]);
     }
 }
 
@@ -195,11 +177,9 @@ pub(super) fn extract_block_32x64(
     by: usize,
     out: &mut [f32; 2048],
 ) {
+    let x0 = bx * BLOCK_DIM;
     for dy in 0..32 {
-        let py = by * BLOCK_DIM + dy;
-        for dx in 0..64 {
-            let px = bx * BLOCK_DIM + dx;
-            out[dy * 64 + dx] = plane[py * stride + px];
-        }
+        let src = (by * BLOCK_DIM + dy) * stride + x0;
+        out[dy * 64..dy * 64 + 64].copy_from_slice(&plane[src..src + 64]);
     }
 }
