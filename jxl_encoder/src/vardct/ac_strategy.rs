@@ -192,17 +192,16 @@ impl AcStrategyMap {
         self.data.iter().filter(|&&v| (v & 1) != 0).count()
     }
 
-    /// Return strategy histogram indexed by raw strategy code.
+    /// Return strategy histogram indexed by raw strategy code (0..19).
     /// Counts first blocks only (number of times each transform was selected).
-    #[cfg(feature = "debug-ac-strategy")]
-    pub fn strategy_histogram(&self) -> [usize; 10] {
-        let mut counts = [0usize; 10];
+    pub fn strategy_histogram(&self) -> [u32; 19] {
+        let mut counts = [0u32; 19];
         for &v in &self.data {
             if (v & 1) != 0 {
                 // is_first block
-                let raw = v >> 1;
-                if (raw as usize) < 10 {
-                    counts[raw as usize] += 1;
+                let raw = (v >> 1) as usize;
+                if raw < 19 {
+                    counts[raw] += 1;
                 }
             }
         }
@@ -212,12 +211,13 @@ impl AcStrategyMap {
     /// Print strategy histogram with names.
     #[cfg(feature = "debug-ac-strategy")]
     pub fn print_histogram(&self) {
-        const NAMES: [&str; 10] = [
+        const NAMES: [&str; 19] = [
             "DCT8", "DCT16x8", "DCT8x16", "DCT16x16", "DCT32x32", "DCT4x8", "DCT8x4", "DCT4x4",
-            "IDENTITY", "DCT2X2",
+            "IDENTITY", "DCT2X2", "DCT32x16", "DCT16x32", "AFV0", "AFV1", "AFV2", "AFV3",
+            "DCT64x64", "DCT64x32", "DCT32x64",
         ];
         let hist = self.strategy_histogram();
-        let total: usize = hist.iter().sum();
+        let total: u32 = hist.iter().sum();
         eprintln!("Strategy histogram (total {} transforms):", total);
         for (i, &count) in hist.iter().enumerate() {
             if count > 0 {

@@ -599,7 +599,7 @@ fn layer2_single_group_dct16x16_decode_jxl_oxide() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true; // triggers forced DCT16x16
 
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear, None)
         .unwrap_or_else(|e| panic!("encode failed: {:?}", e));
 
@@ -632,7 +632,7 @@ fn layer2_single_group_dct16x16_decode_djxl() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!(
         "layer2 djxl: encoded 256x256 frymire crop, {} bytes",
@@ -669,7 +669,7 @@ fn layer3_multigroup_dct16x16_decode_djxl() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!(
         "layer3 djxl: encoded {}x{} frymire, {} bytes",
@@ -701,7 +701,7 @@ fn layer3_multigroup_dct16x16_decode_jxl_oxide() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!(
         "layer3 jxl-oxide: encoded {}x{} frymire, {} bytes",
@@ -741,14 +741,14 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_256() {
     // DCT8-only
     let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT16x16-only (forced via hack)
     let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
-    let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct16, _) = enc_dct16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
     let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
@@ -795,14 +795,14 @@ fn layer4_quality_dct16x16_vs_dct8_frymire_full() {
     // DCT8-only
     let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT16x16-only
     let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
-    let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct16, _) = enc_dct16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
     let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
@@ -853,13 +853,13 @@ fn layer4_quality_dct16x16_vs_dct8_kodak1() {
 
     let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc_dct16.ac_strategy_enabled = true;
-    let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct16, _) = enc_dct16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_djxl(&bytes_dct16);
     let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
@@ -1050,7 +1050,7 @@ fn diag_dct16x16_solid_16x16() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("solid 16x16: encoded {} bytes", bytes.len());
 
     // Save for external inspection
@@ -1096,7 +1096,7 @@ fn diag_dct16x16_solid_16x16() {
     // Now encode the same thing with DCT8 for comparison
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
     std::fs::write("/tmp/diag_solid16x16_dct8.jxl", &bytes8).unwrap();
 
     let (_, _, djxl8) = decode_djxl(&bytes8);
@@ -1124,13 +1124,13 @@ fn diag_dct16x16_real_16x16() {
     // DCT16x16
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
     std::fs::write("/tmp/diag_real16x16_dct16.jxl", &bytes16).unwrap();
 
     // DCT8
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
     std::fs::write("/tmp/diag_real16x16_dct8.jxl", &bytes8).unwrap();
 
     // Decode both with djxl
@@ -1210,7 +1210,7 @@ fn diag_dct16x16_progressive_sizes() {
         // DCT8 — encode and decode with jxl-oxide
         let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc8.ac_strategy_enabled = false;
-        let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+        let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
         let (_, _, d8_linear) = decode_jxl_oxide(&bytes8);
         let ssim8 = ssim2_u8_vs_linear_f32(&srgb, &d8_linear, w, h);
 
@@ -1218,7 +1218,7 @@ fn diag_dct16x16_progressive_sizes() {
         let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
         enc16.ac_strategy_enabled = true;
         let bytes16 = match enc16.encode(w, h, &linear, None) {
-            Ok(b) => b,
+            Ok((b, _)) => b,
             Err(e) => {
                 eprintln!("{:>8}: DCT16x16 ENCODE ERROR: {:?}", size, e);
                 continue;
@@ -1510,7 +1510,7 @@ fn layer2_single_group_dct32x32_decode_jxl_oxide() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
-    let bytes = encoder
+    let (bytes, _) = encoder
         .encode(w, h, &linear, None)
         .unwrap_or_else(|e| panic!("encode failed: {:?}", e));
 
@@ -1547,7 +1547,7 @@ fn layer2_single_group_dct32x32_decode_djxl() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!(
         "layer2 DCT32x32 djxl: encoded 256x256 smooth gradient at d=3.0, {} bytes",
@@ -1585,7 +1585,7 @@ fn layer3_multigroup_dct32x32_decode_djxl() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!(
         "layer3 DCT32x32 djxl: encoded {}x{} smooth gradient, {} bytes",
@@ -1618,7 +1618,7 @@ fn layer3_multigroup_dct32x32_decode_jxl_oxide() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!(
         "layer3 DCT32x32 jxl-oxide: encoded {}x{} smooth gradient, {} bytes",
@@ -1656,14 +1656,14 @@ fn layer4_quality_dct32x32_vs_dct8_smooth_256() {
     // DCT8-only
     let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT32x32-only (forced)
     let mut enc_dct32 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct32.force_strategy = Some(4);
-    let bytes_dct32 = enc_dct32.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct32, _) = enc_dct32.encode(w, h, &linear, None).unwrap();
     let (_, _, dec32) = decode_djxl(&bytes_dct32);
     let ssim2_dct32 = ssim2_u8_vs_linear_u8(&srgb, &dec32, w, h);
 
@@ -1710,14 +1710,14 @@ fn layer4_quality_dct32x32_vs_dct8_smooth_512() {
     // DCT8-only
     let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = enc_dct8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_djxl(&bytes_dct8);
     let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
     // DCT32x32-only
     let mut enc_dct32 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     enc_dct32.force_strategy = Some(4);
-    let bytes_dct32 = enc_dct32.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct32, _) = enc_dct32.encode(w, h, &linear, None).unwrap();
     let (_, _, dec32) = decode_djxl(&bytes_dct32);
     let ssim2_dct32 = ssim2_u8_vs_linear_u8(&srgb, &dec32, w, h);
 
@@ -1774,13 +1774,13 @@ fn layer4_quality_dct16x16_across_distances() {
     for &distance in &[0.5, 1.0, 2.0, 4.0] {
         let mut enc_dct8 = jxl_encoder::vardct::VarDctEncoder::new(distance);
         enc_dct8.ac_strategy_enabled = false;
-        let bytes_dct8 = enc_dct8.encode(w, h, &linear, None).unwrap();
+        let (bytes_dct8, _) = enc_dct8.encode(w, h, &linear, None).unwrap();
         let (_, _, dec8) = decode_djxl(&bytes_dct8);
         let ssim2_dct8 = ssim2_u8_vs_linear_u8(&srgb, &dec8, w, h);
 
         let mut enc_dct16 = jxl_encoder::vardct::VarDctEncoder::new(distance);
         enc_dct16.ac_strategy_enabled = true;
-        let bytes_dct16 = enc_dct16.encode(w, h, &linear, None).unwrap();
+        let (bytes_dct16, _) = enc_dct16.encode(w, h, &linear, None).unwrap();
         let (_, _, dec16) = decode_djxl(&bytes_dct16);
         let ssim2_dct16 = ssim2_u8_vs_linear_u8(&srgb, &dec16, w, h);
 
@@ -2568,7 +2568,7 @@ fn diag_save_dct16x16_file() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.force_strategy = Some(3); // RAW_STRATEGY_DCT16X16
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     // Save to file
     let path = "/tmp/test_dct16x16.jxl";
@@ -2601,12 +2601,12 @@ fn diag_dct16x16_decode_compare() {
     // DCT8 encoding
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
 
     // DCT16x16 encoding
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
 
     // Decode with jxl-oxide
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
@@ -2689,12 +2689,12 @@ fn diag_dct16x16_32x32_compare() {
     // DCT8 encoding
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
 
     // DCT16x16 encoding
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
 
     // Save for inspection
     std::fs::write("/tmp/frymire_32x32_dct8.jxl", &bytes8).unwrap();
@@ -2782,12 +2782,12 @@ fn diag_dct16x16_nzeros() {
     // First, try DCT8 to see expected nzeros
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
 
     // Then DCT16x16
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
 
     eprintln!("Checkerboard 32x32:");
     eprintln!("  DCT8 file:   {} bytes", bytes8.len());
@@ -2839,7 +2839,7 @@ fn diag_dct16x16_gradient() {
 
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
 
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
 
@@ -2892,12 +2892,12 @@ fn diag_dct16x16_iteration() {
     // DCT8
     let mut enc8 = VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
 
     // DCT16x16
     let mut enc16 = VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
 
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
@@ -3204,7 +3204,7 @@ fn diag_dct16x16_transform_coverage() {
     enc.ac_strategy_enabled = true;
 
     // Run encoding
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded 32x32 with DCT16x16: {} bytes", bytes.len());
 
     // We can't easily inspect internal state, but we can check if the file decodes correctly
@@ -3252,11 +3252,11 @@ fn diag_dct16x16_two_values() {
 
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
 
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
 
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
@@ -3397,7 +3397,7 @@ fn trace_two_value_dc_extraction() {
 
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc16.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
 
     // Decode with jxl-oxide
@@ -3468,7 +3468,7 @@ fn trace_dct16x16_dc_detailed() {
     enc.ac_strategy_enabled = true;
 
     // Enable debug output if available
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
 
     // Decode
@@ -3559,7 +3559,7 @@ fn trace_quant_dc_values() {
     eprintln!("=== Checking with DCT8 only (reference) ===");
     let mut enc8 = VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
-    let bytes8 = enc8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = enc8.encode(w, h, &linear, None).unwrap();
     let (_, _, dec8) = decode_jxl_oxide(&bytes8);
 
     eprintln!("DCT8 decoded block centers:");
@@ -3576,7 +3576,7 @@ fn trace_quant_dc_values() {
     eprintln!("\n=== Checking with DCT16x16 ===");
     let mut enc16 = VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
-    let bytes16 = enc16.encode(w, h, &linear, None).unwrap();
+    let (bytes16, _) = enc16.encode(w, h, &linear, None).unwrap();
     let (_, _, dec16) = decode_jxl_oxide(&bytes16);
 
     eprintln!("DCT16 decoded block centers:");
@@ -3656,7 +3656,7 @@ fn compare_cpp_output() {
 
     let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
-    let rust_bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (rust_bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("\nRust file size: {} bytes", rust_bytes.len());
 
     let (_, _, rust_dec) = decode_jxl_oxide(&rust_bytes);
@@ -3696,7 +3696,7 @@ fn force_dct16x16_trace() {
 
     let mut enc = VarDctEncoder::new(1.0);
     enc.force_strategy = Some(3); // RAW_STRATEGY_DCT16X16
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
 
     let (dw, _, dec) = decode_jxl_oxide(&bytes);
@@ -3735,7 +3735,7 @@ fn check_selected_strategies() {
     eprintln!("=== With ac_strategy_enabled = true ===");
     let mut enc = VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
     let (_, _, dec) = decode_jxl_oxide(&bytes);
     eprintln!("Decoded block centers (ac_strategy_enabled):");
@@ -3752,7 +3752,7 @@ fn check_selected_strategies() {
     eprintln!("\n=== With force_strategy = DCT16x16 ===");
     let mut enc2 = VarDctEncoder::new(1.0);
     enc2.force_strategy = Some(3);
-    let bytes2 = enc2.encode(w, h, &linear, None).unwrap();
+    let (bytes2, _) = enc2.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes2.len());
     let (_, _, dec2) = decode_jxl_oxide(&bytes2);
     eprintln!("Decoded block centers (force DCT16x16):");
@@ -3769,7 +3769,7 @@ fn check_selected_strategies() {
     eprintln!("\n=== With ac_strategy_enabled = false (DCT8 only) ===");
     let mut enc3 = VarDctEncoder::new(1.0);
     enc3.ac_strategy_enabled = false;
-    let bytes3 = enc3.encode(w, h, &linear, None).unwrap();
+    let (bytes3, _) = enc3.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes3.len());
     let (_, _, dec3) = decode_jxl_oxide(&bytes3);
     eprintln!("Decoded block centers (DCT8 only):");
@@ -4215,7 +4215,7 @@ fn test_dct32x32_uniform_blocks() {
     let mut enc = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc.force_strategy = Some(4); // DCT32x32
     enc.optimize_codes = false; // Use static Huffman for simpler debugging
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
 
     let (dw, dh, dec) = decode_jxl_oxide(&bytes);
@@ -4264,7 +4264,7 @@ fn test_each_strategy_quality() {
     for (strat, name) in &strategies {
         let mut enc = VarDctEncoder::new(1.0);
         enc.force_strategy = Some(*strat);
-        let bytes = enc.encode(w, h, &linear, None).unwrap();
+        let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
         let (_, _, dec) = decode_jxl_oxide(&bytes);
 
         eprintln!("\n=== {} (strategy {}) ===", name, strat);
@@ -4310,7 +4310,7 @@ fn test_uniform_image_with_strategy_selection() {
     eprintln!("=== Uniform image (0.5) with ac_strategy_enabled = true ===");
     let mut enc = VarDctEncoder::new(1.0);
     enc.ac_strategy_enabled = true;
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     let (_, _, dec) = decode_jxl_oxide(&bytes);
     eprintln!("Encoded {} bytes", bytes.len());
 
@@ -4331,7 +4331,7 @@ fn test_uniform_image_with_strategy_selection() {
     eprintln!("\n=== Same with ac_strategy_enabled = false ===");
     let mut enc2 = VarDctEncoder::new(1.0);
     enc2.ac_strategy_enabled = false;
-    let bytes2 = enc2.encode(w, h, &linear, None).unwrap();
+    let (bytes2, _) = enc2.encode(w, h, &linear, None).unwrap();
     let (_, _, dec2) = decode_jxl_oxide(&bytes2);
     eprintln!("Encoded {} bytes", bytes2.len());
 
@@ -4380,7 +4380,7 @@ fn test_dct32x32_two_value_image() {
     eprintln!("=== 64x64 two-value image with force_strategy = DCT32x32 ===");
     let mut enc = VarDctEncoder::new(1.0);
     enc.force_strategy = Some(4); // DCT32x32
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     let (_, _, dec) = decode_jxl_oxide(&bytes);
     eprintln!("Encoded {} bytes", bytes.len());
 
@@ -4410,7 +4410,7 @@ fn test_dct32x32_two_value_image() {
     eprintln!("\n=== Same with ac_strategy_enabled = true ===");
     let mut enc2 = VarDctEncoder::new(1.0);
     enc2.ac_strategy_enabled = true;
-    let bytes2 = enc2.encode(w, h, &linear, None).unwrap();
+    let (bytes2, _) = enc2.encode(w, h, &linear, None).unwrap();
     let (_, _, dec2) = decode_jxl_oxide(&bytes2);
     eprintln!("Encoded {} bytes", bytes2.len());
 
@@ -4438,7 +4438,7 @@ fn test_dct32x32_two_value_image() {
     eprintln!("\n=== Same with DCT8 only ===");
     let mut enc3 = VarDctEncoder::new(1.0);
     enc3.ac_strategy_enabled = false;
-    let bytes3 = enc3.encode(w, h, &linear, None).unwrap();
+    let (bytes3, _) = enc3.encode(w, h, &linear, None).unwrap();
     let (_, _, dec3) = decode_jxl_oxide(&bytes3);
     eprintln!("Encoded {} bytes", bytes3.len());
 
@@ -4482,7 +4482,7 @@ fn test_dct32x32_on_32x32_two_value() {
     eprintln!("=== 32x32 two-value with force_strategy = DCT32x32 ===");
     let mut enc = VarDctEncoder::new(1.0);
     enc.force_strategy = Some(4); // DCT32x32
-    let bytes = enc.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
     let (_, _, dec) = decode_jxl_oxide(&bytes);
     eprintln!("Encoded {} bytes", bytes.len());
 
@@ -4512,7 +4512,7 @@ fn test_dct32x32_on_32x32_two_value() {
         } else {
             enc.ac_strategy_enabled = true;
         }
-        let bytes = enc.encode(w, h, &linear, None).unwrap();
+        let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
         let (_, _, dec) = decode_jxl_oxide(&bytes);
 
         let mut max_err = 0.0f32;
@@ -4553,7 +4553,7 @@ fn test_dct16x16_with_internal_edge() {
     for (force_strat, name) in configs.iter() {
         let mut enc = VarDctEncoder::new(1.0);
         enc.force_strategy = Some(*force_strat);
-        let bytes = enc.encode(w, h, &linear, None).unwrap();
+        let (bytes, _) = enc.encode(w, h, &linear, None).unwrap();
         let (_, _, dec) = decode_jxl_oxide(&bytes);
 
         eprintln!("=== {} on 16x16 with edge at y=8 ===", name);
@@ -4600,7 +4600,7 @@ fn test_layer2_strategies_comparison() {
         }
 
         let bytes = match encoder.encode(w, h, &linear, None) {
-            Ok(b) => b,
+            Ok((b, _)) => b,
             Err(e) => {
                 eprintln!("{}: encode failed: {:?}", name, e);
                 continue;
@@ -4620,7 +4620,7 @@ fn test_layer2_strategies_comparison() {
     eprintln!("\n--- With ac_strategy_enabled ---");
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     encoder.ac_strategy_enabled = true;
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     let (_, _, dec_srgb) = decode_djxl(&bytes);
     let ssim2 = ssim2_u8_vs_linear_u8(&srgb, &dec_srgb, w, h);
     eprintln!(
@@ -4659,7 +4659,7 @@ fn layer3_single_group_dct4x8_decode_djxl() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     // Save to file
     let path = "/tmp/test_dct4x8_layer3.jxl";
@@ -4707,7 +4707,7 @@ fn layer3_single_group_dct8x4_decode_djxl() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     // Save to file
     let path = "/tmp/test_dct8x4_layer3.jxl";
@@ -4753,7 +4753,7 @@ fn layer3_single_group_dct4x8_decode_jxl_oxide() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("DCT4X8: {} bytes encoded", bytes.len());
 
     // Decode with jxl-oxide
@@ -4795,7 +4795,7 @@ fn layer3_single_group_dct8x4_decode_jxl_oxide() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("DCT8X4: {} bytes encoded", bytes.len());
 
     // Decode with jxl-oxide
@@ -4839,7 +4839,7 @@ fn layer3_single_group_dct4x8_decode_jxl_rs() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("DCT4X8: {} bytes encoded", bytes.len());
 
     // Decode with jxl-rs
@@ -4889,7 +4889,7 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(6); // RAW_STRATEGY_DCT8X4
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("DCT8X4: {} bytes encoded", bytes.len());
 
     // Decode with jxl-rs
@@ -4948,7 +4948,7 @@ fn test_dct4x8_decoder_colorspace_comparison() {
     // Encode with forced DCT4x8
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // RAW_STRATEGY_DCT4X8
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
 
     // Decode with jxl-oxide (requests linear)
@@ -5039,7 +5039,7 @@ fn test_strategy_selection_picks_small_transforms() {
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.ac_strategy_enabled = true;
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes with ac_strategy_enabled", bytes.len());
 
     // Decode with jxl-oxide
@@ -5081,12 +5081,12 @@ fn test_dct4x8_vs_dct8_quality_real_photo() {
     // Encode with forced DCT4X8
     let mut encoder_4x8 = VarDctEncoder::new(1.0);
     encoder_4x8.force_strategy = Some(5); // DCT4X8
-    let bytes_4x8 = encoder_4x8.encode(w, h, &linear, None).unwrap();
+    let (bytes_4x8, _) = encoder_4x8.encode(w, h, &linear, None).unwrap();
 
     // Encode with DCT8 only
     let mut encoder_dct8 = VarDctEncoder::new(1.0);
     encoder_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = encoder_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = encoder_dct8.encode(w, h, &linear, None).unwrap();
 
     // Decode both
     let (_, _, pixels_4x8) = decode_jxl_oxide(&bytes_4x8);
@@ -5175,7 +5175,7 @@ fn test_dct4x8_content_complexity() {
     ] {
         let mut encoder = VarDctEncoder::new(1.0);
         encoder.force_strategy = Some(5); // DCT4X8
-        let bytes = encoder.encode(w, h, linear, None).unwrap();
+        let (bytes, _) = encoder.encode(w, h, linear, None).unwrap();
 
         let (_, _, pixels) = decode_jxl_oxide(&bytes);
 
@@ -5230,7 +5230,7 @@ fn test_dct4x8_image_sizes() {
 
         let mut encoder = VarDctEncoder::new(1.0);
         encoder.force_strategy = Some(5); // DCT4X8
-        let bytes = encoder.encode(w, h, &linear, None).unwrap();
+        let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
         let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
         assert_eq!(dw, w);
@@ -5280,7 +5280,7 @@ fn debug_dct4x8_real_photo_save() {
     // Encode with forced DCT4X8
     let mut encoder_4x8 = VarDctEncoder::new(1.0);
     encoder_4x8.force_strategy = Some(5); // DCT4X8
-    let bytes_4x8 = encoder_4x8.encode(w, h, &linear, None).unwrap();
+    let (bytes_4x8, _) = encoder_4x8.encode(w, h, &linear, None).unwrap();
 
     // Save for djxl inspection
     let mut file = std::fs::File::create("/tmp/debug_dct4x8.jxl").unwrap();
@@ -5315,7 +5315,7 @@ fn debug_dct4x8_real_photo_save() {
     // Encode with DCT8 for comparison
     let mut encoder_dct8 = VarDctEncoder::new(1.0);
     encoder_dct8.ac_strategy_enabled = false;
-    let bytes_dct8 = encoder_dct8.encode(w, h, &linear, None).unwrap();
+    let (bytes_dct8, _) = encoder_dct8.encode(w, h, &linear, None).unwrap();
 
     let mut file = std::fs::File::create("/tmp/debug_dct8.jxl").unwrap();
     file.write_all(&bytes_dct8).unwrap();
@@ -5350,7 +5350,7 @@ fn debug_dct4x8_check_values() {
     // Encode with forced DCT4X8
     let mut encoder = VarDctEncoder::new(1.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     // Decode
     let (_, _, pixels) = decode_jxl_oxide(&bytes);
@@ -5390,7 +5390,7 @@ fn debug_dct4x8_check_values() {
     // Also check DCT8 for comparison
     let mut encoder2 = VarDctEncoder::new(1.0);
     encoder2.ac_strategy_enabled = false;
-    let bytes2 = encoder2.encode(w, h, &linear, None).unwrap();
+    let (bytes2, _) = encoder2.encode(w, h, &linear, None).unwrap();
     let (_, _, pixels2) = decode_jxl_oxide(&bytes2);
 
     let mut min_val2 = f32::MAX;
@@ -5789,7 +5789,7 @@ fn test_dct32x32_ac_coeff_debug() {
     let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("Encoded {} bytes", bytes.len());
 
     // Decode with jxl-oxide
@@ -5848,7 +5848,7 @@ fn test_dct32x32_64x64_debug() {
     let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("64x64 encoded {} bytes", bytes.len());
 
     // Decode with jxl-oxide
@@ -5924,7 +5924,7 @@ fn test_dct32x32_256x256_debug() {
     let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("256x256 encoded {} bytes", bytes.len());
 
     // Decode with jxl-oxide
@@ -6007,7 +6007,7 @@ fn test_dct32x32_frymire_detailed_debug() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // RAW_STRATEGY_DCT32X32
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     eprintln!("\nEncoded {} bytes", bytes.len());
 
     // Decode with jxl-oxide
@@ -6057,7 +6057,7 @@ fn test_dct32x32_frymire_detailed_debug() {
     // Compare with DCT8-only encoding
     let mut encoder8 = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder8.ac_strategy_enabled = false; // DCT8 only
-    let bytes8 = encoder8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = encoder8.encode(w, h, &linear, None).unwrap();
     let (_, _, decoded8) = decode_jxl_oxide(&bytes8);
 
     let dec8_min = decoded8.iter().cloned().fold(f32::MAX, f32::min);
@@ -6101,7 +6101,7 @@ fn test_dct32x32_frymire_pattern_debug() {
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4);
 
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
     let (_, _, decoded) = decode_jxl_oxide(&bytes);
 
     eprintln!("\nDecoded linear Y values (8x8 block at top-left):");
@@ -6233,12 +6233,12 @@ fn test_dct32x32_vs_dct8_filesize() {
     // Encode with DCT8 only
     let mut encoder8 = VarDctEncoder::new(3.0);
     encoder8.ac_strategy_enabled = false;
-    let bytes8 = encoder8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = encoder8.encode(w, h, &linear, None).unwrap();
 
     // Encode with DCT32x32 only
     let mut encoder32 = VarDctEncoder::new(3.0);
     encoder32.force_strategy = Some(4);
-    let bytes32 = encoder32.encode(w, h, &linear, None).unwrap();
+    let (bytes32, _) = encoder32.encode(w, h, &linear, None).unwrap();
 
     eprintln!("File sizes for 256x256 frymire at d=3.0:");
     eprintln!("  DCT8:    {} bytes", bytes8.len());
@@ -6277,14 +6277,14 @@ fn test_dct32x32_ac_trace() {
 
     let mut encoder = VarDctEncoder::new(3.0);
     encoder.force_strategy = Some(4); // DCT32x32
-    let bytes = encoder.encode(w, h, &linear, None).unwrap();
+    let (bytes, _) = encoder.encode(w, h, &linear, None).unwrap();
 
     eprintln!("Output size: {} bytes", bytes.len());
 
     // For comparison, encode with DCT8
     let mut encoder8 = VarDctEncoder::new(3.0);
     encoder8.ac_strategy_enabled = false;
-    let bytes8 = encoder8.encode(w, h, &linear, None).unwrap();
+    let (bytes8, _) = encoder8.encode(w, h, &linear, None).unwrap();
 
     eprintln!("DCT8 size: {} bytes", bytes8.len());
     eprintln!("Ratio: {:.2}x", bytes.len() as f64 / bytes8.len() as f64);

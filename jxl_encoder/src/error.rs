@@ -6,6 +6,8 @@
 //! Error types for the JPEG XL encoder.
 
 use std::collections::TryReserveError;
+#[cfg(feature = "std")]
+use std::io;
 use thiserror::Error;
 
 /// Result type alias using the encoder's Error type.
@@ -75,8 +77,9 @@ pub enum Error {
     #[error("Out of memory")]
     OutOfMemory(#[from] TryReserveError),
 
+    #[cfg(feature = "std")]
     #[error("I/O error: {0}")]
-    IoError(#[from] std::io::Error),
+    IoError(#[from] io::Error),
 
     #[error("Encoding cancelled")]
     Cancelled,
