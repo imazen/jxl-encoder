@@ -32,6 +32,12 @@ pub use api::{
     at,
 };
 
+// zencodec-types trait implementations
+#[cfg(feature = "zencodec")]
+mod zencodec;
+#[cfg(feature = "zencodec")]
+pub use zencodec::{JxlEncodeJob, JxlEncoding};
+
 #[cfg(test)]
 mod tests;
 
