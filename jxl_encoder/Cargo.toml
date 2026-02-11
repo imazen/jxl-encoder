@@ -24,7 +24,6 @@ jxl-oxide = { path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide", optional = 
 butteraugli = { path = "../../butteraugli-opt/butteraugli", optional = true }
 imgref = { version = "1.10", optional = true }
 rgb = { version = "0.8", optional = true }
-zencodec-types = { path = "../../zencodec-types", optional = true }
 
 [features]
 std = []
@@ -45,8 +44,6 @@ rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
-# zencodec-types trait integration (Encoding/EncodingJob)
-zencodec = ["dep:zencodec-types", "dep:imgref", "dep:rgb"]
 default = ["std", "safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
