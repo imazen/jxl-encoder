@@ -1377,9 +1377,7 @@ fn encode_animation_lossless(
             PixelLayout::Rgb8 => ModularImage::from_rgb8(frame.pixels, w, h),
             PixelLayout::Rgba8 => ModularImage::from_rgba8(frame.pixels, w, h),
             PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frame.pixels, 3), w, h),
-            PixelLayout::Bgra8 => {
-                ModularImage::from_rgba8(&bgr_to_rgb(frame.pixels, 4), w, h)
-            }
+            PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(frame.pixels, 4), w, h),
             PixelLayout::Gray8 => ModularImage::from_gray8(frame.pixels, w, h),
             PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frame.pixels, w, h),
             PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frame.pixels, w, h),
@@ -1451,54 +1449,28 @@ fn encode_animation_lossy(
     let bit_depth_16 = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
     tiny.bit_depth_16 = bit_depth_16;
 
-    // Build file header with animation
-    let mut writer = BitWriter::with_capacity(w * h * 4);
-    tiny.write_file_header_and_pad(w, h, has_alpha, &mut writer)
-        .map_err(EncodeError::from)?;
+    // Build file header from VarDCT encoder (sets xyb_encoded, rendering_intent, etc.)
+    // then add animation metadata
+    let mut file_header = tiny.build_file_header(w, h, has_alpha);
+    file_header.metadata.animation = Some(AnimationHeader {
+        tps_numerator: animation.tps_numerator,
+        tps_denominator: animation.tps_denominator,
+        num_loops: animation.num_loops,
+        have_timecodes: false,
+    });
 
-    // Patch the file header to include animation data.
-    // The file header was already written without animation. We need to rebuild.
-    // Instead, build the header with animation from scratch.
-    drop(writer);
-
     let mut writer = BitWriter::with_capacity(w * h * 4);
-    {
-        use crate::headers::file_header::{BitDepth, FileHeader};
-        let mut file_header = if has_alpha {
-            FileHeader::new_rgba(width, height)
-        } else {
-            FileHeader::new_rgb(width, height)
-        };
-        if bit_depth_16 {
-            file_header.metadata.bit_depth = BitDepth::uint16();
-            for ec in &mut file_header.metadata.extra_channels {
-                ec.bit_depth = BitDepth::uint16();
-            }
-        }
-        file_header.metadata.animation = Some(AnimationHeader {
-            tps_numerator: animation.tps_numerator,
-            tps_denominator: animation.tps_denominator,
-            num_loops: animation.num_loops,
-            have_timecodes: false,
-        });
-        if let Some(ref icc) = tiny.icc_profile {
-            file_header.metadata.color_encoding.want_icc = true;
-            file_header.write(&mut writer).map_err(EncodeError::from)?;
-            crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
-        } else {
-            file_header.write(&mut writer).map_err(EncodeError::from)?;
-        }
-        writer.zero_pad_to_byte();
+    file_header.write(&mut writer).map_err(EncodeError::from)?;
+    if let Some(ref icc) = tiny.icc_profile {
+        crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
     }
+    writer.zero_pad_to_byte();
 
     // Encode each frame
     for (i, frame) in frames.iter().enumerate() {
         let (linear_rgb, alpha) = match layout {
             PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(frame.pixels, 3), None),
-            PixelLayout::Bgr8 => (
-                srgb_u8_to_linear_f32(&bgr_to_rgb(frame.pixels, 3), 3),
-                None,
-            ),
+            PixelLayout::Bgr8 => (srgb_u8_to_linear_f32(&bgr_to_rgb(frame.pixels, 3), 3), None),
             PixelLayout::Rgba8 => {
                 let rgb = srgb_u8_to_linear_f32(frame.pixels, 4);
                 let alpha = extract_alpha(frame.pixels, 4, 3);
