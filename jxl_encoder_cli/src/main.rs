@@ -6,7 +6,9 @@
 //! Command-line JPEG XL encoder.
 
 use clap::Parser;
-use jxl_encoder::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
+use jxl_encoder::{
+    AnimationFrame, AnimationParams, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
+};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -142,6 +144,16 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     icc: Option<PathBuf>,
 
+    /// Override frame rate for APNG animation (frames per second).
+    /// Default: derive from APNG per-frame delays.
+    #[arg(long, value_name = "FPS")]
+    fps: Option<u32>,
+
+    /// Number of animation loops (0 = infinite).
+    /// Default: use APNG loop count.
+    #[arg(long, value_name = "N")]
+    loops: Option<u32>,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -176,8 +188,126 @@ fn main() {
         println!();
     }
 
-    // Read PNG
+    // Check for APNG (animated PNG) — handle before single-frame path
     let start = Instant::now();
+    match read_apng(&args.input) {
+        Ok(Some(apng)) => {
+            if !args.quiet {
+                println!(
+                    "APNG:     {}x{} {:?}, {} frames, {} loops",
+                    apng.width,
+                    apng.height,
+                    apng.color_type,
+                    apng.frames.len(),
+                    apng.num_loops
+                );
+            }
+
+            let layout = if apng.has_alpha {
+                PixelLayout::Rgba8
+            } else {
+                PixelLayout::Rgb8
+            };
+
+            // Build animation params
+            let (tps_numerator, tps_denominator) = if let Some(fps) = args.fps {
+                (fps, 1)
+            } else {
+                (1000, 1) // millisecond precision
+            };
+
+            let num_loops = args.loops.unwrap_or(apng.num_loops);
+
+            let animation = AnimationParams {
+                tps_numerator,
+                tps_denominator,
+                num_loops,
+            };
+
+            // Build frames with durations
+            let anim_frames: Vec<AnimationFrame<'_>> = apng
+                .frames
+                .iter()
+                .map(|f| AnimationFrame {
+                    pixels: &f.pixels,
+                    duration: if args.fps.is_some() {
+                        1 // 1 tick per frame when fps is explicit
+                    } else {
+                        f.delay_ms // millisecond ticks
+                    },
+                })
+                .collect();
+
+            let lossy_supported = matches!(layout, PixelLayout::Rgb8 | PixelLayout::Rgba8);
+
+            let encoded = if distance > 0.0 && lossy_supported {
+                LossyConfig::new(distance)
+                    .with_effort(args.effort)
+                    .with_ans(!args.no_ans)
+                    .with_gaborish(!args.no_gaborish)
+                    .with_noise(args.noise || args.denoise)
+                    .with_denoise(args.denoise)
+                    .with_error_diffusion(!args.no_error_diffusion)
+                    .with_pixel_domain_loss(!args.no_pixel_domain_loss)
+                    .with_lz77(args.lz77)
+                    .encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
+            } else {
+                LosslessConfig::new()
+                    .with_effort(args.effort)
+                    .with_ans(!args.no_ans || args.tree_learning)
+                    .with_tree_learning(args.tree_learning)
+                    .with_squeeze(args.squeeze)
+                    .encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
+            };
+
+            let encoded = match encoded {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!("Error encoding animation: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let encode_time = start.elapsed();
+
+            match write_output(&args.output, &encoded) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("Error writing output: {}", e);
+                    std::process::exit(1);
+                }
+            }
+
+            let input_size = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
+            let output_size = encoded.len() as u64;
+
+            if !args.quiet {
+                println!();
+                println!("Input size:  {} bytes", input_size);
+                println!("Output size: {} bytes", output_size);
+                println!(
+                    "Ratio:       {:.2}x",
+                    if input_size > 0 {
+                        output_size as f64 / input_size as f64
+                    } else {
+                        0.0
+                    }
+                );
+                println!("Time:        {:.2?}", encode_time);
+            } else {
+                println!("{}", args.output.display());
+            }
+
+            return;
+        }
+        Ok(None) => {} // Not animated, fall through to single-frame path
+        Err(e) => {
+            eprintln!("Error reading input: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    // Read PNG (single frame)
     let (width, height, color_type, bit_depth, data) = match read_png(&args.input) {
         Ok(result) => result,
         Err(e) => {
@@ -487,4 +617,209 @@ fn write_output(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
     writer.write_all(data)?;
     writer.flush()?;
     Ok(())
+}
+
+struct ApngFrameData {
+    pixels: Vec<u8>,
+    delay_ms: u32,
+}
+
+struct ApngResult {
+    width: u32,
+    height: u32,
+    color_type: png::ColorType,
+    has_alpha: bool,
+    num_loops: u32,
+    frames: Vec<ApngFrameData>,
+}
+
+/// Read an APNG file, compositing frames according to dispose/blend ops.
+/// Returns None if the PNG is not animated.
+fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::Error>> {
+    let file = File::open(path)?;
+    let decoder = png::Decoder::new(file);
+    let mut reader = decoder.read_info()?;
+
+    let actl = match reader.info().animation_control {
+        Some(actl) => actl,
+        None => return Ok(None),
+    };
+
+    let num_frames = actl.num_frames;
+    let num_loops = actl.num_plays;
+    let canvas_width = reader.info().width;
+    let canvas_height = reader.info().height;
+    let color_type = reader.info().color_type;
+    let bit_depth = reader.info().bit_depth;
+
+    if bit_depth != png::BitDepth::Eight {
+        return Err(format!("APNG: only 8-bit supported, got {:?}", bit_depth).into());
+    }
+
+    let src_channels: usize = match color_type {
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        _ => return Err(format!("APNG: only RGB/RGBA supported, got {:?}", color_type).into()),
+    };
+    let has_alpha = color_type == png::ColorType::Rgba;
+
+    // Work in RGBA8 for composition
+    let canvas_pixels = (canvas_width * canvas_height) as usize;
+    let mut canvas = vec![0u8; canvas_pixels * 4];
+    let mut prev_canvas = Vec::new(); // saved for DisposeOp::Previous
+
+    let mut frames = Vec::with_capacity(num_frames as usize);
+    let mut frame_buf = vec![0u8; reader.output_buffer_size()];
+
+    let mut prev_dispose_op = png::DisposeOp::None;
+    let mut prev_region: (u32, u32, u32, u32) = (0, 0, canvas_width, canvas_height);
+
+    for _frame_idx in 0..num_frames {
+        let info = reader.next_frame(&mut frame_buf)?;
+        let frame_data = &frame_buf[..info.buffer_size()];
+
+        let fc = reader.info().frame_control;
+
+        let (fw, fh, fx, fy, delay_num, delay_den, dispose_op, blend_op) = if let Some(fc) = fc {
+            (
+                fc.width,
+                fc.height,
+                fc.x_offset,
+                fc.y_offset,
+                fc.delay_num,
+                fc.delay_den,
+                fc.dispose_op,
+                fc.blend_op,
+            )
+        } else {
+            // First frame without FrameControl — use full canvas, 100ms default
+            (
+                canvas_width,
+                canvas_height,
+                0,
+                0,
+                100,
+                1000,
+                png::DisposeOp::None,
+                png::BlendOp::Source,
+            )
+        };
+
+        // Apply previous frame's dispose_op
+        if !frames.is_empty() {
+            let (px, py, pw, ph) = prev_region;
+            match prev_dispose_op {
+                png::DisposeOp::None => {}
+                png::DisposeOp::Background => {
+                    for y in py..(py + ph) {
+                        for x in px..(px + pw) {
+                            let idx = ((y * canvas_width + x) * 4) as usize;
+                            canvas[idx..idx + 4].fill(0);
+                        }
+                    }
+                }
+                png::DisposeOp::Previous => {
+                    canvas.copy_from_slice(&prev_canvas);
+                }
+            }
+        }
+
+        // Save canvas for potential DisposeOp::Previous
+        if dispose_op == png::DisposeOp::Previous {
+            prev_canvas = canvas.clone();
+        }
+
+        // Composite frame onto canvas
+        for y in 0..fh {
+            for x in 0..fw {
+                let src_idx = ((y * fw + x) * src_channels as u32) as usize;
+                let dst_idx = (((fy + y) * canvas_width + (fx + x)) * 4) as usize;
+
+                let (sr, sg, sb, sa) = if has_alpha {
+                    (
+                        frame_data[src_idx],
+                        frame_data[src_idx + 1],
+                        frame_data[src_idx + 2],
+                        frame_data[src_idx + 3],
+                    )
+                } else {
+                    (
+                        frame_data[src_idx],
+                        frame_data[src_idx + 1],
+                        frame_data[src_idx + 2],
+                        255,
+                    )
+                };
+
+                match blend_op {
+                    png::BlendOp::Source => {
+                        canvas[dst_idx] = sr;
+                        canvas[dst_idx + 1] = sg;
+                        canvas[dst_idx + 2] = sb;
+                        canvas[dst_idx + 3] = sa;
+                    }
+                    png::BlendOp::Over => {
+                        if sa == 255 {
+                            canvas[dst_idx] = sr;
+                            canvas[dst_idx + 1] = sg;
+                            canvas[dst_idx + 2] = sb;
+                            canvas[dst_idx + 3] = 255;
+                        } else if sa > 0 {
+                            let sa_f = sa as f32 / 255.0;
+                            let da_f = canvas[dst_idx + 3] as f32 / 255.0;
+                            let out_a = sa_f + da_f * (1.0 - sa_f);
+                            if out_a > 0.0 {
+                                let inv = 1.0 / out_a;
+                                let blend = |s: u8, d: u8| -> u8 {
+                                    ((s as f32 * sa_f + d as f32 * da_f * (1.0 - sa_f)) * inv) as u8
+                                };
+                                canvas[dst_idx] = blend(sr, canvas[dst_idx]);
+                                canvas[dst_idx + 1] = blend(sg, canvas[dst_idx + 1]);
+                                canvas[dst_idx + 2] = blend(sb, canvas[dst_idx + 2]);
+                                canvas[dst_idx + 3] = (out_a * 255.0) as u8;
+                            }
+                        }
+                        // sa == 0: fully transparent source, no change
+                    }
+                }
+            }
+        }
+
+        // Compute delay in milliseconds
+        let den = if delay_den == 0 {
+            100
+        } else {
+            delay_den as u32
+        };
+        let delay_ms = (delay_num as u32 * 1000 + den / 2) / den;
+
+        // Extract full canvas as frame pixels
+        let frame_pixels = if has_alpha {
+            canvas.clone()
+        } else {
+            // Strip alpha → RGB8
+            let mut rgb = Vec::with_capacity(canvas_pixels * 3);
+            for px in canvas.chunks_exact(4) {
+                rgb.extend_from_slice(&px[..3]);
+            }
+            rgb
+        };
+
+        frames.push(ApngFrameData {
+            pixels: frame_pixels,
+            delay_ms,
+        });
+
+        prev_dispose_op = dispose_op;
+        prev_region = (fx, fy, fw, fh);
+    }
+
+    Ok(Some(ApngResult {
+        width: canvas_width,
+        height: canvas_height,
+        color_type,
+        has_alpha,
+        num_loops,
+        frames,
+    }))
 }
