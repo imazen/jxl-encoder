@@ -8,6 +8,24 @@
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 
+/// Crop rectangle for a frame within the canvas.
+///
+/// When set on a frame, the frame contains only the specified rectangular region.
+/// The decoder composites this region onto the persistent canvas using the frame's
+/// blend mode. For `Replace` blending, only the crop rectangle is replaced; the
+/// rest of the canvas is unchanged.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameCrop {
+    /// X offset of the crop region within the canvas.
+    pub x0: i32,
+    /// Y offset of the crop region within the canvas.
+    pub y0: i32,
+    /// Width of the crop region.
+    pub width: u32,
+    /// Height of the crop region.
+    pub height: u32,
+}
+
 /// Overrides for frame header fields in animation encoding.
 ///
 /// Used by `encode_animation()` to set per-frame duration, is_last, and animation flags
@@ -22,6 +40,8 @@ pub struct FrameOptions {
     pub duration: u32,
     /// Whether this is the last frame in the file.
     pub is_last: bool,
+    /// Optional crop rectangle for this frame (None = full frame).
+    pub crop: Option<FrameCrop>,
 }
 
 /// Frame type.
@@ -314,6 +334,13 @@ impl FrameHeader {
         // save_as_reference (only when !is_last and not LfFrame)
         if !self.is_last && self.frame_type != FrameType::LfFrame {
             writer.write(2, self.save_as_reference as u64)?;
+            // save_before_ct: written when frame resets canvas and can be referenced.
+            // Condition matches decoder: resets_canvas && (duration==0 || save_as_reference!=0)
+            let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
+            let resets_canvas = self.blend_mode == BlendMode::Replace && full_frame;
+            if resets_canvas && (self.duration == 0 || self.save_as_reference != 0) {
+                writer.write_bit(self.save_before_ct)?;
+            }
         }
 
         // name
@@ -329,6 +356,9 @@ impl FrameHeader {
     }
 
     /// Writes crop information.
+    ///
+    /// Crop dimensions use U32(Bits(8), Bits(11)+256, Bits(14)+2048, Bits(30)+18432).
+    /// x0/y0 are packed-signed first, then encoded with the same distribution.
     fn write_crop(&self, writer: &mut BitWriter) -> Result<()> {
         // x0, y0 as UnpackSigned
         let x0u = if self.x0 >= 0 {
@@ -342,11 +372,29 @@ impl FrameHeader {
             (((-self.y0 - 1) as u32) << 1) | 1
         };
 
-        writer.write_u32_coder(x0u, 0, 256, 2304, 18688, 14)?;
-        writer.write_u32_coder(y0u, 0, 256, 2304, 18688, 14)?;
-        writer.write_u32_coder(self.width, 0, 256, 2304, 18688, 14)?;
-        writer.write_u32_coder(self.height, 0, 256, 2304, 18688, 14)?;
+        Self::write_crop_u32(writer, x0u)?;
+        Self::write_crop_u32(writer, y0u)?;
+        Self::write_crop_u32(writer, self.width)?;
+        Self::write_crop_u32(writer, self.height)?;
 
+        Ok(())
+    }
+
+    /// Encodes a single crop dimension value using U32(Bits(8), Bits(11)+256, Bits(14)+2304, Bits(30)+18688).
+    fn write_crop_u32(writer: &mut BitWriter, value: u32) -> Result<()> {
+        if value < 256 {
+            writer.write(2, 0)?; // selector 0: Bits(8)
+            writer.write(8, value as u64)?;
+        } else if value < 2304 {
+            writer.write(2, 1)?; // selector 1: Bits(11)+256
+            writer.write(11, (value - 256) as u64)?;
+        } else if value < 18688 {
+            writer.write(2, 2)?; // selector 2: Bits(14)+2304
+            writer.write(14, (value - 2304) as u64)?;
+        } else {
+            writer.write(2, 3)?; // selector 3: Bits(30)+18688
+            writer.write(30, (value - 18688) as u64)?;
+        }
         Ok(())
     }
 

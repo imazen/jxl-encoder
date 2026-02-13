@@ -15,7 +15,7 @@ use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
-use crate::headers::frame_header::{BlendMode, FrameHeader};
+use crate::headers::frame_header::{BlendMode, FrameCrop, FrameHeader};
 
 /// Options for frame encoding.
 #[derive(Debug, Clone)]
@@ -36,6 +36,8 @@ pub struct FrameEncoderOptions {
     pub duration: u32,
     /// Whether this is the last frame in the image/animation.
     pub is_last: bool,
+    /// Optional crop rectangle for this frame (None = full frame).
+    pub crop: Option<FrameCrop>,
 }
 
 impl Default for FrameEncoderOptions {
@@ -49,6 +51,7 @@ impl Default for FrameEncoderOptions {
             have_animation: false,
             duration: 0,
             is_last: true,
+            crop: None,
         }
     }
 }
@@ -111,6 +114,19 @@ impl FrameEncoder {
             fh.have_animation = self.options.have_animation;
             fh.duration = self.options.duration;
             fh.is_last = self.options.is_last;
+            if let Some(ref crop) = self.options.crop {
+                fh.x0 = crop.x0;
+                fh.y0 = crop.y0;
+                fh.width = crop.width;
+                fh.height = crop.height;
+                fh.blend_mode = BlendMode::Replace;
+                fh.blend_source = 1;
+            }
+            // For animation, save non-last frames to reference slot 1
+            // so crop frames can composite onto the previous canvas.
+            if self.options.have_animation && !self.options.is_last {
+                fh.save_as_reference = 1;
+            }
             fh.write(writer)?;
         }
 

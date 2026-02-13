@@ -1166,6 +1166,7 @@ impl<'a> EncodeRequest<'a> {
                 have_animation: false,
                 duration: 0,
                 is_last: true,
+                crop: None,
             },
         );
         let color_encoding = ColorEncoding::srgb();
@@ -1370,25 +1371,67 @@ fn encode_animation_lossless(
     file_header.write(&mut writer).map_err(EncodeError::from)?;
     writer.zero_pad_to_byte();
 
-    // Encode each frame
+    // Encode each frame with crop detection
     let color_encoding = ColorEncoding::srgb();
+    let bpp = layout.bytes_per_pixel();
+    let mut prev_pixels: Option<&[u8]> = None;
+
     for (i, frame) in frames.iter().enumerate() {
+        // Detect crop: compare current frame against previous.
+        // Only use crop when it's smaller than the full frame.
+        let crop = if let Some(prev) = prev_pixels {
+            match detect_frame_crop(prev, frame.pixels, w, h, bpp, false) {
+                Some(crop) if (crop.width as usize) < w || (crop.height as usize) < h => Some(crop),
+                Some(_) => None, // Crop covers full frame — no benefit
+                None => {
+                    // Frames are identical — emit a minimal 1x1 crop to preserve canvas
+                    Some(FrameCrop {
+                        x0: 0,
+                        y0: 0,
+                        width: 1,
+                        height: 1,
+                    })
+                }
+            }
+        } else {
+            None // Frame 0: always full frame
+        };
+
+        // Build ModularImage from the appropriate pixel region
+        let (frame_w, frame_h, frame_pixels_owned);
+        let frame_pixels: &[u8] = if let Some(ref crop) = crop {
+            frame_w = crop.width as usize;
+            frame_h = crop.height as usize;
+            frame_pixels_owned = extract_pixel_crop(frame.pixels, w, crop, bpp);
+            &frame_pixels_owned
+        } else {
+            frame_w = w;
+            frame_h = h;
+            frame_pixels_owned = Vec::new();
+            let _ = &frame_pixels_owned; // suppress unused warning
+            frame.pixels
+        };
+
         let image = match layout {
-            PixelLayout::Rgb8 => ModularImage::from_rgb8(frame.pixels, w, h),
-            PixelLayout::Rgba8 => ModularImage::from_rgba8(frame.pixels, w, h),
-            PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frame.pixels, 3), w, h),
-            PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(frame.pixels, 4), w, h),
-            PixelLayout::Gray8 => ModularImage::from_gray8(frame.pixels, w, h),
-            PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frame.pixels, w, h),
-            PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frame.pixels, w, h),
-            PixelLayout::Gray16 => ModularImage::from_gray16_native(frame.pixels, w, h),
+            PixelLayout::Rgb8 => ModularImage::from_rgb8(frame_pixels, frame_w, frame_h),
+            PixelLayout::Rgba8 => ModularImage::from_rgba8(frame_pixels, frame_w, frame_h),
+            PixelLayout::Bgr8 => {
+                ModularImage::from_rgb8(&bgr_to_rgb(frame_pixels, 3), frame_w, frame_h)
+            }
+            PixelLayout::Bgra8 => {
+                ModularImage::from_rgba8(&bgr_to_rgb(frame_pixels, 4), frame_w, frame_h)
+            }
+            PixelLayout::Gray8 => ModularImage::from_gray8(frame_pixels, frame_w, frame_h),
+            PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frame_pixels, frame_w, frame_h),
+            PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frame_pixels, frame_w, frame_h),
+            PixelLayout::Gray16 => ModularImage::from_gray16_native(frame_pixels, frame_w, frame_h),
             other => return Err(EncodeError::UnsupportedPixelLayout(other)),
         }
         .map_err(EncodeError::from)?;
 
         let frame_encoder = FrameEncoder::new(
-            w,
-            h,
+            frame_w,
+            frame_h,
             FrameEncoderOptions {
                 use_modular: true,
                 effort: cfg.effort,
@@ -1398,11 +1441,14 @@ fn encode_animation_lossless(
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
+                crop,
             },
         );
         frame_encoder
             .encode_modular(&image, &color_encoding, &mut writer)
             .map_err(EncodeError::from)?;
+
+        prev_pixels = Some(frame.pixels);
     }
 
     Ok(writer.finish_with_padding())
@@ -1466,30 +1512,70 @@ fn encode_animation_lossy(
     }
     writer.zero_pad_to_byte();
 
-    // Encode each frame
+    // Encode each frame with crop detection
+    let bpp = layout.bytes_per_pixel();
+    let mut prev_pixels: Option<&[u8]> = None;
+
     for (i, frame) in frames.iter().enumerate() {
+        // Detect crop on raw input pixels (before linear conversion).
+        // Only use crop when it's smaller than the full frame.
+        let crop = if let Some(prev) = prev_pixels {
+            match detect_frame_crop(prev, frame.pixels, w, h, bpp, true) {
+                Some(crop) if (crop.width as usize) < w || (crop.height as usize) < h => Some(crop),
+                Some(_) => None, // Crop covers full frame — no benefit
+                None => {
+                    // Frames identical — emit minimal 8x8 crop (VarDCT minimum)
+                    Some(FrameCrop {
+                        x0: 0,
+                        y0: 0,
+                        width: 8.min(width),
+                        height: 8.min(height),
+                    })
+                }
+            }
+        } else {
+            None // Frame 0: always full frame
+        };
+
+        // Extract crop region from raw pixels, then convert to linear
+        let (frame_w, frame_h) = if let Some(ref crop) = crop {
+            (crop.width as usize, crop.height as usize)
+        } else {
+            (w, h)
+        };
+
+        let crop_pixels_owned;
+        let src_pixels: &[u8] = if let Some(ref crop) = crop {
+            crop_pixels_owned = extract_pixel_crop(frame.pixels, w, crop, bpp);
+            &crop_pixels_owned
+        } else {
+            crop_pixels_owned = Vec::new();
+            let _ = &crop_pixels_owned;
+            frame.pixels
+        };
+
         let (linear_rgb, alpha) = match layout {
-            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(frame.pixels, 3), None),
-            PixelLayout::Bgr8 => (srgb_u8_to_linear_f32(&bgr_to_rgb(frame.pixels, 3), 3), None),
+            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(src_pixels, 3), None),
+            PixelLayout::Bgr8 => (srgb_u8_to_linear_f32(&bgr_to_rgb(src_pixels, 3), 3), None),
             PixelLayout::Rgba8 => {
-                let rgb = srgb_u8_to_linear_f32(frame.pixels, 4);
-                let alpha = extract_alpha(frame.pixels, 4, 3);
+                let rgb = srgb_u8_to_linear_f32(src_pixels, 4);
+                let alpha = extract_alpha(src_pixels, 4, 3);
                 (rgb, Some(alpha))
             }
             PixelLayout::Bgra8 => {
-                let swapped = bgr_to_rgb(frame.pixels, 4);
+                let swapped = bgr_to_rgb(src_pixels, 4);
                 let rgb = srgb_u8_to_linear_f32(&swapped, 4);
-                let alpha = extract_alpha(frame.pixels, 4, 3);
+                let alpha = extract_alpha(src_pixels, 4, 3);
                 (rgb, Some(alpha))
             }
-            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(frame.pixels, 3), None),
+            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3), None),
             PixelLayout::Rgba16 => {
-                let rgb = srgb_u16_to_linear_f32(frame.pixels, 4);
-                let alpha = extract_alpha_u16(frame.pixels, 4, 3);
+                let rgb = srgb_u16_to_linear_f32(src_pixels, 4);
+                let alpha = extract_alpha_u16(src_pixels, 4, 3);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbLinearF32 => {
-                let floats: &[f32] = bytemuck::cast_slice(frame.pixels);
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
                 (floats.to_vec(), None)
             }
             PixelLayout::Gray8 | PixelLayout::GrayAlpha8 | PixelLayout::Gray16 => {
@@ -1502,20 +1588,132 @@ fn encode_animation_lossy(
             have_timecodes: false,
             duration: frame.duration,
             is_last: i == num_frames - 1,
+            crop,
         };
 
         tiny.encode_frame_to_writer(
-            w,
-            h,
+            frame_w,
+            frame_h,
             &linear_rgb,
             alpha.as_deref(),
             &frame_options,
             &mut writer,
         )
         .map_err(EncodeError::from)?;
+
+        prev_pixels = Some(frame.pixels);
     }
 
     Ok(writer.finish_with_padding())
+}
+
+// ── Animation frame crop detection ──────────────────────────────────────────
+
+use crate::headers::frame_header::FrameCrop;
+
+/// Detects the minimal bounding rectangle that differs between two frames.
+///
+/// Compares `prev` and `curr` byte-by-byte. Returns `Some(FrameCrop)` with the
+/// tight bounding box of changed pixels, or `None` if the frames are identical.
+///
+/// When `align_to_8x8` is true (for VarDCT), the crop is expanded outward to
+/// 8x8 block boundaries for better compression.
+fn detect_frame_crop(
+    prev: &[u8],
+    curr: &[u8],
+    width: usize,
+    height: usize,
+    bytes_per_pixel: usize,
+    align_to_8x8: bool,
+) -> Option<FrameCrop> {
+    let stride = width * bytes_per_pixel;
+    debug_assert_eq!(prev.len(), height * stride);
+    debug_assert_eq!(curr.len(), height * stride);
+
+    // Find top (first row with a difference)
+    let mut top = height;
+    let mut bottom = 0;
+    let mut left = width;
+    let mut right = 0;
+
+    for y in 0..height {
+        let row_start = y * stride;
+        let row_end = row_start + stride;
+        let prev_row = &prev[row_start..row_end];
+        let curr_row = &curr[row_start..row_end];
+
+        if prev_row == curr_row {
+            continue;
+        }
+
+        // This row has differences — find leftmost and rightmost changed pixel
+        if top == height {
+            top = y;
+        }
+        bottom = y;
+
+        for x in 0..width {
+            let px_start = x * bytes_per_pixel;
+            let px_end = px_start + bytes_per_pixel;
+            if prev_row[px_start..px_end] != curr_row[px_start..px_end] {
+                left = left.min(x);
+                right = right.max(x);
+            }
+        }
+    }
+
+    if top == height {
+        // Frames are identical
+        return None;
+    }
+
+    // Convert to crop rectangle (inclusive → exclusive for width/height)
+    let mut crop_x = left as i32;
+    let mut crop_y = top as i32;
+    let mut crop_w = (right - left + 1) as u32;
+    let mut crop_h = (bottom - top + 1) as u32;
+
+    if align_to_8x8 {
+        // Expand to 8x8 block boundaries
+        let aligned_x = (crop_x / 8) * 8;
+        let aligned_y = (crop_y / 8) * 8;
+        let end_x = (crop_x as u32 + crop_w).div_ceil(8) * 8;
+        let end_y = (crop_y as u32 + crop_h).div_ceil(8) * 8;
+        crop_x = aligned_x;
+        crop_y = aligned_y;
+        crop_w = end_x.min(width as u32) - aligned_x as u32;
+        crop_h = end_y.min(height as u32) - aligned_y as u32;
+    }
+
+    Some(FrameCrop {
+        x0: crop_x,
+        y0: crop_y,
+        width: crop_w,
+        height: crop_h,
+    })
+}
+
+/// Extracts a rectangular crop region from a pixel buffer.
+///
+/// `bytes_per_pixel` is the number of bytes per pixel (e.g., 3 for RGB, 4 for RGBA).
+fn extract_pixel_crop(
+    pixels: &[u8],
+    full_width: usize,
+    crop: &FrameCrop,
+    bytes_per_pixel: usize,
+) -> Vec<u8> {
+    let cx = crop.x0 as usize;
+    let cy = crop.y0 as usize;
+    let cw = crop.width as usize;
+    let ch = crop.height as usize;
+    let stride = full_width * bytes_per_pixel;
+
+    let mut out = Vec::with_capacity(cw * ch * bytes_per_pixel);
+    for y in cy..cy + ch {
+        let row_start = y * stride + cx * bytes_per_pixel;
+        out.extend_from_slice(&pixels[row_start..row_start + cw * bytes_per_pixel]);
+    }
+    out
 }
 
 // ── Pixel conversion helpers ────────────────────────────────────────────────

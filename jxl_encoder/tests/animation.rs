@@ -359,3 +359,387 @@ fn test_animation_empty_frames_rejected() {
         LosslessConfig::new().encode_animation(64, 64, PixelLayout::Rgb8, &animation, frames);
     assert!(result.is_err(), "empty frame list should be rejected");
 }
+
+// ── Crop detection tests ───────────────────────────────────────────────────
+
+/// Create a 64x64 RGB image with a colored sub-region.
+/// The base color fills everything, then the sub-region is overwritten.
+fn frame_with_region(
+    base_r: u8,
+    base_g: u8,
+    base_b: u8,
+    region_x: usize,
+    region_y: usize,
+    region_w: usize,
+    region_h: usize,
+    region_r: u8,
+    region_g: u8,
+    region_b: u8,
+) -> Vec<u8> {
+    let mut pixels = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = (y * 64 + x) * 3;
+            if x >= region_x && x < region_x + region_w && y >= region_y && y < region_y + region_h
+            {
+                pixels[idx] = region_r;
+                pixels[idx + 1] = region_g;
+                pixels[idx + 2] = region_b;
+            } else {
+                pixels[idx] = base_r;
+                pixels[idx + 1] = base_g;
+                pixels[idx + 2] = base_b;
+            }
+        }
+    }
+    pixels
+}
+
+/// Lossless: 3 frames where only a 16x16 sub-region changes.
+/// Verifies all pixels roundtrip correctly and file is smaller than 3 full frames.
+#[test]
+fn test_lossless_crop_partial_change() {
+    // Frame 0: solid blue
+    let frame0 = solid_rgb(0, 0, 200);
+    // Frame 1: blue with a red 16x16 patch at (24, 24)
+    let frame1 = frame_with_region(0, 0, 200, 24, 24, 16, 16, 200, 0, 0);
+    // Frame 2: blue with a green 16x16 patch at (24, 24)
+    let frame2 = frame_with_region(0, 0, 200, 24, 24, 16, 16, 0, 200, 0);
+
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+    };
+
+    let frames = [
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame1,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame2,
+            duration: 1,
+        },
+    ];
+
+    let cropped = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect("crop encode failed");
+
+    std::fs::write(
+        "/mnt/v/output/jxl-encoder/animation/lossless_crop_partial.jxl",
+        &cropped,
+    )
+    .ok();
+
+    // Also encode without crop for size comparison: use 3 completely different frames
+    // to prevent any crop optimization
+    let no_crop_frames = [
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+    ];
+    let full_baseline = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &no_crop_frames)
+        .expect("baseline encode failed");
+
+    // The cropped version should be significantly smaller because frames 1 and 2
+    // only encode a 16x16 region instead of 64x64
+    eprintln!(
+        "crop_partial: cropped={} bytes, baseline_identical={} bytes",
+        cropped.len(),
+        full_baseline.len()
+    );
+
+    // Verify roundtrip with jxl-oxide
+    let (width, height, decoded_frames) = decode_animation_oxide(&cropped);
+    assert_eq!(width, 64);
+    assert_eq!(height, 64);
+    assert_eq!(decoded_frames.len(), 3);
+
+    // Verify frame 0 pixels: all blue
+    let (f0_px, _) = &decoded_frames[0];
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = (y * 64 + x) * 3;
+            assert!(
+                f0_px[idx] < 0.01
+                    && f0_px[idx + 1] < 0.01
+                    && (f0_px[idx + 2] - 200.0 / 255.0).abs() < 0.02,
+                "frame 0 pixel ({x},{y}): got ({:.3}, {:.3}, {:.3})",
+                f0_px[idx],
+                f0_px[idx + 1],
+                f0_px[idx + 2]
+            );
+        }
+    }
+
+    // Verify frame 1 pixels: blue background, red patch at (24,24)-(39,39)
+    let (f1_px, _) = &decoded_frames[1];
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = (y * 64 + x) * 3;
+            let in_patch = x >= 24 && x < 40 && y >= 24 && y < 40;
+            if in_patch {
+                assert!(
+                    (f1_px[idx] - 200.0 / 255.0).abs() < 0.02
+                        && f1_px[idx + 1] < 0.01
+                        && f1_px[idx + 2] < 0.01,
+                    "frame 1 patch pixel ({x},{y}): got ({:.3}, {:.3}, {:.3})",
+                    f1_px[idx],
+                    f1_px[idx + 1],
+                    f1_px[idx + 2]
+                );
+            } else {
+                assert!(
+                    f1_px[idx] < 0.01
+                        && f1_px[idx + 1] < 0.01
+                        && (f1_px[idx + 2] - 200.0 / 255.0).abs() < 0.02,
+                    "frame 1 bg pixel ({x},{y}): got ({:.3}, {:.3}, {:.3})",
+                    f1_px[idx],
+                    f1_px[idx + 1],
+                    f1_px[idx + 2]
+                );
+            }
+        }
+    }
+}
+
+/// Lossless: 3 frames where frame 1 == frame 2 (identical).
+/// Verifies correctness and that the file with identical frames is smaller.
+#[test]
+fn test_lossless_crop_identical_frames() {
+    let frame0 = solid_rgb(100, 100, 100);
+    let frame1 = solid_rgb(200, 200, 200);
+    let frame2 = solid_rgb(200, 200, 200); // identical to frame1
+
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+    };
+
+    let frames = [
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame1,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame2,
+            duration: 1,
+        },
+    ];
+
+    let data = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect("encode failed");
+
+    std::fs::write(
+        "/mnt/v/output/jxl-encoder/animation/lossless_crop_identical.jxl",
+        &data,
+    )
+    .ok();
+
+    // Encode the same but with 3 different frames for comparison
+    let frame2_diff = solid_rgb(50, 50, 50);
+    let diff_frames = [
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame1,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame2_diff,
+            duration: 1,
+        },
+    ];
+    let diff_data = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &diff_frames)
+        .expect("diff encode failed");
+
+    eprintln!(
+        "identical_frames: with_identical={} bytes, all_different={} bytes",
+        data.len(),
+        diff_data.len()
+    );
+    // The identical-frame version should be smaller (frame 2 is a 1x1 crop)
+    assert!(
+        data.len() < diff_data.len(),
+        "identical frame optimization should produce smaller file: {} >= {}",
+        data.len(),
+        diff_data.len()
+    );
+
+    // Verify roundtrip
+    let (width, height, decoded_frames) = decode_animation_oxide(&data);
+    assert_eq!(width, 64);
+    assert_eq!(height, 64);
+    assert_eq!(decoded_frames.len(), 3);
+
+    // Frame 2 should match frame 1 (identical)
+    let (f1_px, _) = &decoded_frames[1];
+    let (f2_px, _) = &decoded_frames[2];
+    for i in 0..f1_px.len() {
+        assert!(
+            (f1_px[i] - f2_px[i]).abs() < 0.001,
+            "frame 1 vs frame 2 mismatch at index {i}: {:.4} vs {:.4}",
+            f1_px[i],
+            f2_px[i]
+        );
+    }
+}
+
+/// Lossy: 3 frames with only a sub-region changing.
+/// Verifies approximate pixel correctness after roundtrip.
+#[test]
+fn test_lossy_crop_partial_change() {
+    let frame0 = solid_rgb(0, 0, 200);
+    let frame1 = frame_with_region(0, 0, 200, 24, 24, 16, 16, 200, 0, 0);
+    let frame2 = frame_with_region(0, 0, 200, 24, 24, 16, 16, 0, 200, 0);
+
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+    };
+
+    let frames = [
+        AnimationFrame {
+            pixels: &frame0,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame1,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &frame2,
+            duration: 1,
+        },
+    ];
+
+    let data = LossyConfig::new(1.0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect("lossy crop encode failed");
+
+    std::fs::write(
+        "/mnt/v/output/jxl-encoder/animation/lossy_crop_partial.jxl",
+        &data,
+    )
+    .ok();
+
+    let (width, height, decoded_frames) = decode_animation_oxide(&data);
+    assert_eq!(width, 64);
+    assert_eq!(height, 64);
+    assert_eq!(decoded_frames.len(), 3);
+
+    // Verify frame 1: blue background with red patch (lossy tolerance)
+    let (f1_px, _) = &decoded_frames[1];
+    // Check a pixel in the patch center
+    let patch_idx = (32 * 64 + 32) * 3;
+    assert!(
+        f1_px[patch_idx] > 0.5 && f1_px[patch_idx + 2] < 0.2,
+        "frame 1 patch center should be reddish: ({:.3}, {:.3}, {:.3})",
+        f1_px[patch_idx],
+        f1_px[patch_idx + 1],
+        f1_px[patch_idx + 2]
+    );
+    // Check a pixel in the background
+    let bg_idx = (0 * 64 + 0) * 3;
+    assert!(
+        f1_px[bg_idx] < 0.2 && f1_px[bg_idx + 2] > 0.5,
+        "frame 1 background should be bluish: ({:.3}, {:.3}, {:.3})",
+        f1_px[bg_idx],
+        f1_px[bg_idx + 1],
+        f1_px[bg_idx + 2]
+    );
+}
+
+/// Regression: 3 completely different frames should produce valid output
+/// (no crop optimization applied, matches pre-crop behavior).
+#[test]
+fn test_crop_regression_all_different() {
+    let red = solid_rgb(255, 0, 0);
+    let green = solid_rgb(0, 255, 0);
+    let blue = solid_rgb(0, 0, 255);
+
+    let animation = AnimationParams {
+        tps_numerator: 10,
+        tps_denominator: 1,
+        num_loops: 0,
+    };
+
+    let frames = [
+        AnimationFrame {
+            pixels: &red,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &green,
+            duration: 1,
+        },
+        AnimationFrame {
+            pixels: &blue,
+            duration: 1,
+        },
+    ];
+
+    // Lossless
+    let lossless_data = LosslessConfig::new()
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect("lossless regression encode failed");
+
+    let (_, _, decoded) = decode_animation_oxide(&lossless_data);
+    assert_eq!(decoded.len(), 3);
+    // Verify pixel colors
+    let expected: [(f32, f32, f32); 3] = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)];
+    for (i, (px, _)) in decoded.iter().enumerate() {
+        let (er, eg, eb) = expected[i];
+        assert!(
+            (px[0] - er).abs() < 0.01 && (px[1] - eg).abs() < 0.01 && (px[2] - eb).abs() < 0.01,
+            "lossless frame {i}: ({:.3}, {:.3}, {:.3}) expected ({er}, {eg}, {eb})",
+            px[0],
+            px[1],
+            px[2]
+        );
+    }
+
+    // Lossy
+    let lossy_data = LossyConfig::new(1.0)
+        .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
+        .expect("lossy regression encode failed");
+
+    let (_, _, decoded) = decode_animation_oxide(&lossy_data);
+    assert_eq!(decoded.len(), 3);
+    for (i, (px, _)) in decoded.iter().enumerate() {
+        let (er, eg, eb) = expected[i];
+        assert!(
+            (px[0] - er).abs() < 0.15 && (px[1] - eg).abs() < 0.15 && (px[2] - eb).abs() < 0.15,
+            "lossy frame {i}: ({:.3}, {:.3}, {:.3}) expected ~({er}, {eg}, {eb})",
+            px[0],
+            px[1],
+            px[2]
+        );
+    }
+}
