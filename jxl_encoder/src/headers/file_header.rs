@@ -95,6 +95,69 @@ pub struct AnimationHeader {
     pub have_timecodes: bool,
 }
 
+impl AnimationHeader {
+    /// Writes the AnimationHeader to the bitstream.
+    ///
+    /// Matches libjxl's `AnimationHeader::VisitFields`:
+    /// - tps_numerator: u2S(100, 1000, Bits(10)+1, Bits(30)+1)
+    /// - tps_denominator: u2S(1, 1001, Bits(8)+1, Bits(10)+1)
+    /// - num_loops: u2S(0, Bits(3), Bits(16), Bits(32))
+    /// - have_timecodes: Bool(false)
+    pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        // tps_numerator: u2S(100, 1000, BitsOffset(10,1), BitsOffset(30,1))
+        match self.tps_numerator {
+            100 => writer.write(2, 0)?,
+            1000 => writer.write(2, 1)?,
+            v if (1..=1024).contains(&v) => {
+                writer.write(2, 2)?;
+                writer.write(10, (v - 1) as u64)?;
+            }
+            v => {
+                debug_assert!(v >= 1, "tps_numerator must be >= 1");
+                writer.write(2, 3)?;
+                writer.write(30, (v - 1) as u64)?;
+            }
+        }
+
+        // tps_denominator: u2S(1, 1001, BitsOffset(8,1), BitsOffset(10,1))
+        match self.tps_denominator {
+            1 => writer.write(2, 0)?,
+            1001 => writer.write(2, 1)?,
+            v @ 2..=256 => {
+                writer.write(2, 2)?;
+                writer.write(8, (v - 1) as u64)?;
+            }
+            v => {
+                debug_assert!((1..=1025).contains(&v), "tps_denominator {v} out of range");
+                writer.write(2, 3)?;
+                writer.write(10, (v - 1) as u64)?;
+            }
+        }
+
+        // num_loops: u2S(0, Bits(3), Bits(16), Bits(32))
+        match self.num_loops {
+            0 => writer.write(2, 0)?,
+            v @ 1..=7 => {
+                writer.write(2, 1)?;
+                writer.write(3, v as u64)?;
+            }
+            v @ 8..=65535 => {
+                writer.write(2, 2)?;
+                writer.write(16, v as u64)?;
+            }
+            v => {
+                writer.write(2, 3)?;
+                writer.write(32, v as u64)?;
+            }
+        }
+
+        // have_timecodes: Bool(default=false)
+        writer.write_bit(self.have_timecodes)?;
+
+        Ok(())
+    }
+}
+
 /// Image metadata that appears once per file.
 #[derive(Debug, Clone)]
 pub struct ImageMetadata {
@@ -370,8 +433,8 @@ impl FileHeader {
 
             // have_animation
             writer.write_bit(meta.animation.is_some())?;
-            if let Some(ref _anim) = meta.animation {
-                // TODO: Write animation header
+            if let Some(ref anim) = meta.animation {
+                anim.write(writer)?;
             }
         }
 
