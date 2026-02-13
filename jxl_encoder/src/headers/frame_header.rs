@@ -94,6 +94,8 @@ pub struct FrameHeader {
     pub blend_mode: BlendMode,
     /// Per-extra-channel blending modes.
     pub ec_blend_modes: Vec<BlendMode>,
+    /// Source reference frame for blending (0-3).
+    pub blend_source: u32,
     /// Alpha channel to use for blending.
     pub alpha_blend_channel: u32,
     /// Whether frame is saved for reference.
@@ -102,6 +104,11 @@ pub struct FrameHeader {
     pub save_before_ct: bool,
     /// Frame name.
     pub name: String,
+    /// Whether the file header signals animation (have_animation=true).
+    /// When true, duration/timecode fields are written for normal frames.
+    pub have_animation: bool,
+    /// Whether the file header signals have_timecodes.
+    pub have_timecodes: bool,
     /// Duration in ticks (for animation).
     pub duration: u32,
     /// Timecode (if have_timecodes).
@@ -134,11 +141,14 @@ impl Default for FrameHeader {
             width: 0,
             height: 0,
             blend_mode: BlendMode::Replace,
+            blend_source: 0,
             ec_blend_modes: Vec::new(),
             alpha_blend_channel: 0,
             save_as_reference: 0,
             save_before_ct: false,
             name: String::new(),
+            have_animation: false,
+            have_timecodes: false,
             duration: 0,
             timecode: 0,
             is_last: true,
@@ -257,9 +267,27 @@ impl FrameHeader {
 
         // ec_blending_info per extra channel
         for &mode in &self.ec_blend_modes {
-            // mode: U32(0, 1, 2, 3+u(2))
-            writer.write_u32_coder(mode as u32, 0, 1, 2, 3, 2)?;
-            // For full-frame Replace, no additional fields
+            self.write_ec_blending_info(mode, writer)?;
+        }
+
+        // duration and timecode (for animated normal frames)
+        if normal_frame && self.have_animation {
+            // duration: U32(Val(0), Val(1), Bits(8), Bits(32))
+            match self.duration {
+                0 => writer.write(2, 0)?,
+                1 => writer.write(2, 1)?,
+                d if d <= 255 => {
+                    writer.write(2, 2)?;
+                    writer.write(8, d as u64)?;
+                }
+                d => {
+                    writer.write(2, 3)?;
+                    writer.write(32, d as u64)?;
+                }
+            }
+            if self.have_timecodes {
+                writer.write(32, self.timecode as u64)?;
+            }
         }
 
         // is_last (for Regular or SkipProgressive)
@@ -310,12 +338,32 @@ impl FrameHeader {
     fn write_blending_info(&self, writer: &mut BitWriter) -> Result<()> {
         writer.write_u32_coder(self.blend_mode as u32, 0, 1, 2, 3, 2)?;
 
-        if self.blend_mode != BlendMode::Replace {
-            writer.write(2, 0)?; // source = 0
+        // source: only when not (full_frame && Replace)
+        // Full frame is the default (no crop), so source is written for non-Replace modes.
+        let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
+        if !(full_frame && self.blend_mode == BlendMode::Replace) {
+            writer.write(2, self.blend_source as u64)?;
         }
 
         if self.blend_mode == BlendMode::Blend || self.blend_mode == BlendMode::AlphaWeightedAdd {
             writer.write_u32_coder(self.alpha_blend_channel, 0, 1, 2, 3, 3)?;
+            writer.write_bit(false)?; // clamp = false
+        }
+
+        Ok(())
+    }
+
+    /// Writes blending information for an extra channel.
+    fn write_ec_blending_info(&self, mode: BlendMode, writer: &mut BitWriter) -> Result<()> {
+        writer.write_u32_coder(mode as u32, 0, 1, 2, 3, 2)?;
+
+        let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
+        if !(full_frame && mode == BlendMode::Replace) {
+            writer.write(2, 0)?; // source = 0
+        }
+
+        if mode == BlendMode::Blend || mode == BlendMode::AlphaWeightedAdd {
+            writer.write_u32_coder(0, 0, 1, 2, 3, 3)?; // alpha channel = 0
             writer.write_bit(false)?; // clamp = false
         }
 
@@ -397,9 +445,11 @@ impl FrameHeader {
             && self.width == 0
             && self.height == 0
             && self.blend_mode == BlendMode::Replace
+            && self.blend_source == 0
             && self.save_as_reference == 0
             && !self.save_before_ct
             && self.name.is_empty()
+            && !self.have_animation
             && self.is_last
             && self.gaborish
             && self.epf_iters == 2
