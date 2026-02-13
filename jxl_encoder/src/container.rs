@@ -152,6 +152,7 @@ pub fn wrap_in_container_jxlp(
 
 /// Write a jxlp (partial codestream) box.
 /// Counter format: bits 0-30 = sequence number, bit 31 = last part flag.
+#[allow(dead_code)]
 fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) {
     let box_size = (8 + 4 + data.len()) as u32;
     out.extend_from_slice(&box_size.to_be_bytes());
