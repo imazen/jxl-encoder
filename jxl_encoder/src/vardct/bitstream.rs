@@ -27,7 +27,7 @@ use crate::error::Result;
 use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use crate::headers::extra_channels::ExtraChannelInfo;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
-use crate::headers::frame_header::{BlendMode, FrameHeader};
+use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
 
 impl VarDctEncoder {
     /// Build a `FileHeader` for VarDCT encoding from current encoder settings.
@@ -656,6 +656,254 @@ impl VarDctEncoder {
 
     /// Two-pass encoding: collect all tokens, build optimal codes, write bitstream.
     #[allow(clippy::too_many_arguments)]
+    /// Encode a single frame to an existing BitWriter (no file header).
+    ///
+    /// Used by `encode_animation()` to write individual frames after the file header
+    /// has already been written. The `frame_options` control animation-specific fields
+    /// (duration, is_last, have_animation).
+    #[allow(dead_code)]
+    pub(crate) fn encode_frame_to_writer(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        alpha: Option<&[u8]>,
+        frame_options: &FrameOptions,
+        writer: &mut BitWriter,
+    ) -> Result<[u32; 19]> {
+        // Reuse the full encode pipeline from encode() but write to an existing writer.
+        // This duplicates some setup from encode(), but keeps the code paths separate.
+        let xsize_blocks = div_ceil(width, BLOCK_DIM);
+        let ysize_blocks = div_ceil(height, BLOCK_DIM);
+        let xsize_groups = div_ceil(width, GROUP_DIM);
+        let ysize_groups = div_ceil(height, GROUP_DIM);
+        let xsize_dc_groups = div_ceil(width, DC_GROUP_DIM);
+        let ysize_dc_groups = div_ceil(height, DC_GROUP_DIM);
+        let num_groups = xsize_groups * ysize_groups;
+        let num_dc_groups = xsize_dc_groups * ysize_dc_groups;
+        let num_sections = 2 + num_dc_groups + num_groups;
+        let padded_width = xsize_blocks * BLOCK_DIM;
+        let padded_height = ysize_blocks * BLOCK_DIM;
+
+        let (mut xyb_x, mut xyb_y, mut xyb_b) =
+            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
+
+        let noise_params = if self.enable_noise {
+            let quality_coef = super::noise::noise_quality_coef(self.distance);
+            let params = super::noise::estimate_noise_params(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                quality_coef,
+            );
+            if self.enable_denoise
+                && let Some(ref p) = params
+            {
+                super::noise::denoise_xyb(
+                    &mut xyb_x,
+                    &mut xyb_y,
+                    &mut xyb_b,
+                    padded_width,
+                    padded_height,
+                    p,
+                    quality_coef,
+                );
+            }
+            params
+        } else {
+            None
+        };
+
+        let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            padded_width,
+            padded_height,
+        );
+        let chromacity_x = pixel_stats.how_much_is_x_channel_pixelized();
+        let chromacity_b = pixel_stats.how_much_is_b_channel_pixelized();
+
+        if self.enable_gaborish {
+            super::gaborish::gaborish_inverse(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                padded_width,
+                padded_height,
+            );
+        }
+
+        let distance_for_iqf = if self.enable_gaborish {
+            self.distance
+        } else {
+            self.distance * 0.62
+        };
+
+        let (quant_field_float, masking) = super::adaptive_quant::compute_quant_field_float(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            padded_width,
+            padded_height,
+            xsize_blocks,
+            ysize_blocks,
+            distance_for_iqf,
+        );
+
+        let mut params =
+            DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
+        params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
+
+        let mut quant_field =
+            super::adaptive_quant::quantize_quant_field(&quant_field_float, params.inv_scale);
+
+        let cfl_map = if self.cfl_enabled {
+            super::chroma_from_luma::compute_cfl_map(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+            )
+        } else {
+            CflMap::zeros(
+                div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
+                div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
+            )
+        };
+
+        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
+            Some(super::adaptive_quant::compute_mask1x1(
+                &xyb_y,
+                padded_width,
+                padded_height,
+            ))
+        } else {
+            None
+        };
+
+        let ac_strategy = if let Some(forced) = self.force_strategy {
+            super::encoder::force_strategy_map(xsize_blocks, ysize_blocks, forced)
+        } else if !self.ac_strategy_enabled {
+            AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks)
+        } else {
+            super::ac_strategy::compute_ac_strategy(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                self.distance,
+                &quant_field_float,
+                &masking,
+                &cfl_map,
+                mask1x1.as_deref(),
+                padded_width,
+            )
+        };
+
+        super::ac_strategy::adjust_quant_field_with_distance(
+            &ac_strategy,
+            &mut quant_field,
+            self.distance,
+        );
+
+        #[cfg(feature = "butteraugli-loop")]
+        if self.butteraugli_iters > 0 {
+            let initial_quant_field = quant_field.clone();
+            self.butteraugli_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &initial_quant_field,
+                &cfl_map,
+                &ac_strategy,
+            );
+        }
+
+        let transform_out = self.transform_and_quantize(
+            &xyb_x,
+            &xyb_y,
+            &xyb_b,
+            padded_width,
+            xsize_blocks,
+            ysize_blocks,
+            &params,
+            &mut quant_field,
+            &cfl_map,
+            &ac_strategy,
+        );
+
+        let sharpness_map = if params.epf_iters > 0 && self.distance >= 0.5 {
+            let mask = mask1x1.unwrap_or_else(|| {
+                super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
+            });
+            Some(super::epf::compute_epf_sharpness(
+                [&xyb_x, &xyb_y, &xyb_b],
+                &transform_out.quant_dc,
+                &transform_out.quant_ac,
+                &quant_field,
+                &mask,
+                &params,
+                &cfl_map,
+                &ac_strategy,
+                self.enable_gaborish,
+                xsize_blocks,
+                ysize_blocks,
+            ))
+        } else {
+            None
+        };
+
+        let strategy_counts = ac_strategy.strategy_histogram();
+
+        self.encode_two_pass_to_writer(
+            width,
+            height,
+            &params,
+            xsize_blocks,
+            ysize_blocks,
+            xsize_groups,
+            ysize_groups,
+            xsize_dc_groups,
+            ysize_dc_groups,
+            num_groups,
+            num_dc_groups,
+            num_sections,
+            &transform_out.quant_dc,
+            &transform_out.quant_ac,
+            &transform_out.nzeros,
+            &transform_out.raw_nzeros,
+            &quant_field,
+            &cfl_map,
+            &ac_strategy,
+            &noise_params,
+            sharpness_map.as_deref(),
+            alpha,
+            Some(frame_options),
+            writer,
+        )?;
+
+        Ok(strategy_counts)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_two_pass(
         &self,
         width: usize,
@@ -681,6 +929,75 @@ impl VarDctEncoder {
         sharpness_map: Option<&[u8]>,
         alpha: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
+        let mut writer = BitWriter::with_capacity(width * height * 4);
+
+        // Write file header
+        let has_alpha = alpha.is_some();
+        self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
+
+        // Write frame (header + TOC + sections)
+        self.encode_two_pass_to_writer(
+            width,
+            height,
+            params,
+            xsize_blocks,
+            ysize_blocks,
+            xsize_groups,
+            _ysize_groups,
+            xsize_dc_groups,
+            _ysize_dc_groups,
+            num_groups,
+            num_dc_groups,
+            num_sections,
+            quant_dc,
+            quant_ac,
+            nzeros,
+            raw_nzeros,
+            quant_field,
+            cfl_map,
+            ac_strategy,
+            noise_params,
+            sharpness_map,
+            alpha,
+            None,
+            &mut writer,
+        )?;
+
+        Ok(writer.finish_with_padding())
+    }
+
+    /// Write a VarDCT frame to a BitWriter (two-pass mode).
+    ///
+    /// If `frame_options` is Some, overrides frame header fields (for animation).
+    /// If None, uses default lossy frame header settings.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_two_pass_to_writer(
+        &self,
+        width: usize,
+        height: usize,
+        params: &DistanceParams,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        xsize_groups: usize,
+        _ysize_groups: usize,
+        xsize_dc_groups: usize,
+        _ysize_dc_groups: usize,
+        num_groups: usize,
+        num_dc_groups: usize,
+        num_sections: usize,
+        quant_dc: &[Vec<Vec<i16>>; 3],
+        quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+        nzeros: &[Vec<Vec<u8>>; 3],
+        raw_nzeros: &[Vec<Vec<u16>>; 3],
+        quant_field: &[u8],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+        noise_params: &Option<NoiseParams>,
+        sharpness_map: Option<&[u8]>,
+        alpha: Option<&[u8]>,
+        frame_options: Option<&FrameOptions>,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
         // ── Pass 1: Collect tokens per section ──
 
         // DC tree learning: learn optimal context tree from image content.
@@ -1264,12 +1581,8 @@ impl VarDctEncoder {
 
         // ── Pass 2: Write bitstream ──
 
-        let mut writer = BitWriter::with_capacity(width * height * 4);
-
-        // Write file header (includes JXL signature, ICC, and byte padding)
         let has_alpha = alpha.is_some();
         let num_extra_channels = if has_alpha { 1 } else { 0 };
-        self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
 
         // Write frame header
         {
@@ -1283,7 +1596,16 @@ impl VarDctEncoder {
             }
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
-            fh.write(&mut writer)?;
+
+            // Apply animation frame options if provided
+            if let Some(opts) = frame_options {
+                fh.have_animation = opts.have_animation;
+                fh.have_timecodes = opts.have_timecodes;
+                fh.duration = opts.duration;
+                fh.is_last = opts.is_last;
+            }
+
+            fh.write(writer)?;
         }
 
         let num_blocks = xsize_blocks * ysize_blocks;
@@ -1345,7 +1667,7 @@ impl VarDctEncoder {
             combined.zero_pad_to_byte();
             let combined_bytes = combined.finish();
 
-            write_toc(&[combined_bytes.len()], &mut writer)?;
+            write_toc(&[combined_bytes.len()], writer)?;
             writer.append_bytes(&combined_bytes)?;
         } else {
             // Multi-group: byte-aligned sections
@@ -1438,13 +1760,13 @@ impl VarDctEncoder {
 
             let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
 
-            write_toc(&section_sizes, &mut writer)?;
+            write_toc(&section_sizes, writer)?;
             for section in sections {
                 writer.append_bytes(&section)?;
             }
         }
 
-        Ok(writer.finish_with_padding())
+        Ok(())
     }
 
     /// Write DC group section from pre-collected tokens (two-pass mode).

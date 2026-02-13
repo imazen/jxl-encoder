@@ -8,6 +8,22 @@
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 
+/// Overrides for frame header fields in animation encoding.
+///
+/// Used by `encode_animation()` to set per-frame duration, is_last, and animation flags
+/// without exposing the full FrameHeader construction to callers.
+#[derive(Debug, Clone, Default)]
+pub struct FrameOptions {
+    /// Whether the file header has animation enabled.
+    pub have_animation: bool,
+    /// Whether the file header has have_timecodes enabled.
+    pub have_timecodes: bool,
+    /// Duration in ticks for this frame (only used if have_animation=true).
+    pub duration: u32,
+    /// Whether this is the last frame in the file.
+    pub is_last: bool,
+}
+
 /// Frame type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]

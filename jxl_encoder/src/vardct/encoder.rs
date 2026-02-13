@@ -24,7 +24,11 @@ use crate::error::Result;
 use crate::headers::frame_header::FrameHeader;
 
 /// Create an AC strategy map forcing a specific strategy.
-fn force_strategy_map(xsize_blocks: usize, ysize_blocks: usize, raw_strategy: u8) -> AcStrategyMap {
+pub(crate) fn force_strategy_map(
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    raw_strategy: u8,
+) -> AcStrategyMap {
     AcStrategyMap::force_strategy(xsize_blocks, ysize_blocks, raw_strategy)
 }
 
@@ -801,7 +805,7 @@ impl VarDctEncoder {
     /// AC strategy is FIXED throughout — only quant_field changes.
     #[cfg(feature = "butteraugli-loop")]
     #[allow(clippy::too_many_arguments)]
-    fn butteraugli_refine_quant_field(
+    pub(crate) fn butteraugli_refine_quant_field(
         &self,
         linear_rgb: &[f32],
         width: usize,
