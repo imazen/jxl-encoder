@@ -1603,6 +1603,19 @@ impl VarDctEncoder {
                 fh.have_timecodes = opts.have_timecodes;
                 fh.duration = opts.duration;
                 fh.is_last = opts.is_last;
+                if let Some(ref crop) = opts.crop {
+                    fh.x0 = crop.x0;
+                    fh.y0 = crop.y0;
+                    fh.width = crop.width;
+                    fh.height = crop.height;
+                    fh.blend_mode = BlendMode::Replace;
+                    fh.blend_source = 1;
+                }
+                // For animation, save non-last frames to reference slot 1
+                // so crop frames can composite onto the previous canvas.
+                if opts.have_animation && !opts.is_last {
+                    fh.save_as_reference = 1;
+                }
             }
 
             fh.write(writer)?;
