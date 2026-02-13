@@ -30,6 +30,12 @@ pub struct FrameEncoderOptions {
     pub use_tree_learning: bool,
     /// Use squeeze (Haar wavelet) transform for modular encoding.
     pub use_squeeze: bool,
+    /// Whether this frame is part of an animation (enables duration field in header).
+    pub have_animation: bool,
+    /// Duration of this frame in ticks (only used when have_animation is true).
+    pub duration: u32,
+    /// Whether this is the last frame in the image/animation.
+    pub is_last: bool,
 }
 
 impl Default for FrameEncoderOptions {
@@ -40,6 +46,9 @@ impl Default for FrameEncoderOptions {
             use_ans: false,
             use_tree_learning: false,
             use_squeeze: false,
+            have_animation: false,
+            duration: 0,
+            is_last: true,
         }
     }
 }
@@ -99,6 +108,9 @@ impl FrameEncoder {
             let mut fh = FrameHeader::lossless();
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
+            fh.have_animation = self.options.have_animation;
+            fh.duration = self.options.duration;
+            fh.is_last = self.options.is_last;
             fh.write(writer)?;
         }
 

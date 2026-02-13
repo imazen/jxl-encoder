@@ -1100,6 +1100,9 @@ impl<'a> EncodeRequest<'a> {
                 use_ans: cfg.use_ans,
                 use_tree_learning: cfg.tree_learning,
                 use_squeeze: cfg.squeeze,
+                have_animation: false,
+                duration: 0,
+                is_last: true,
             },
         );
         let color_encoding = ColorEncoding::srgb();
