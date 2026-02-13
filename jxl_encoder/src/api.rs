@@ -440,6 +440,37 @@ impl Limits {
     }
 }
 
+// ── Animation ──────────────────────────────────────────────────────────────
+
+/// Animation timing parameters.
+#[derive(Clone, Debug)]
+pub struct AnimationParams {
+    /// Ticks per second numerator (default 100 = 10ms precision).
+    pub tps_numerator: u32,
+    /// Ticks per second denominator (default 1).
+    pub tps_denominator: u32,
+    /// Number of loops: 0 = infinite (default), >0 = play N times.
+    pub num_loops: u32,
+}
+
+impl Default for AnimationParams {
+    fn default() -> Self {
+        Self {
+            tps_numerator: 100,
+            tps_denominator: 1,
+            num_loops: 0,
+        }
+    }
+}
+
+/// A single frame in an animation sequence.
+pub struct AnimationFrame<'a> {
+    /// Raw pixel data (must match width/height/layout from the encode call).
+    pub pixels: &'a [u8],
+    /// Duration of this frame in ticks (tps_numerator/tps_denominator seconds per tick).
+    pub duration: u32,
+}
+
 // ── LosslessConfig ──────────────────────────────────────────────────────────
 
 /// Lossless (modular) encoding configuration.
@@ -596,6 +627,22 @@ impl LosslessConfig {
         self.encode_request(width, height, layout)
             .encode_into(pixels, out)
             .map(|_| ())
+    }
+
+    /// Encode a multi-frame animation as a lossless JXL.
+    ///
+    /// Each frame must have the same dimensions and pixel layout.
+    /// Returns the complete JXL codestream bytes.
+    #[track_caller]
+    pub fn encode_animation(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+    ) -> Result<Vec<u8>> {
+        encode_animation_lossless(self, width, height, layout, animation, frames).map_err(at)
     }
 }
 
@@ -864,6 +911,22 @@ impl LossyConfig {
         self.encode_request(width, height, layout)
             .encode_into(pixels, out)
             .map(|_| ())
+    }
+
+    /// Encode a multi-frame animation as a lossy JXL.
+    ///
+    /// Each frame must have the same dimensions and pixel layout.
+    /// Returns the complete JXL codestream bytes.
+    #[track_caller]
+    pub fn encode_animation(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+    ) -> Result<Vec<u8>> {
+        encode_animation_lossy(self, width, height, layout, animation, frames).map_err(at)
     }
 }
 
@@ -1208,6 +1271,279 @@ impl<'a> EncodeRequest<'a> {
         };
         Ok((data, stats))
     }
+}
+
+// ── Animation encode implementations ────────────────────────────────────────
+
+fn validate_animation_input(
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    frames: &[AnimationFrame<'_>],
+) -> core::result::Result<(), EncodeError> {
+    if width == 0 || height == 0 {
+        return Err(EncodeError::InvalidInput {
+            message: format!("zero dimensions: {width}x{height}"),
+        });
+    }
+    if frames.is_empty() {
+        return Err(EncodeError::InvalidInput {
+            message: "animation requires at least one frame".into(),
+        });
+    }
+    let expected_size = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(layout.bytes_per_pixel()))
+        .ok_or_else(|| EncodeError::InvalidInput {
+            message: "image dimensions overflow".into(),
+        })?;
+    for (i, frame) in frames.iter().enumerate() {
+        if frame.pixels.len() != expected_size {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "frame {} pixel buffer size mismatch: expected {expected_size}, got {}",
+                    i,
+                    frame.pixels.len()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn encode_animation_lossless(
+    cfg: &LosslessConfig,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    animation: &AnimationParams,
+    frames: &[AnimationFrame<'_>],
+) -> core::result::Result<Vec<u8>, EncodeError> {
+    use crate::bit_writer::BitWriter;
+    use crate::headers::file_header::AnimationHeader;
+    use crate::headers::{ColorEncoding, FileHeader};
+    use crate::modular::channel::ModularImage;
+    use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
+
+    validate_animation_input(width, height, layout, frames)?;
+
+    let w = width as usize;
+    let h = height as usize;
+    let num_frames = frames.len();
+
+    // Build file header with animation
+    let sample_image = match layout {
+        PixelLayout::Rgb8 => ModularImage::from_rgb8(frames[0].pixels, w, h),
+        PixelLayout::Rgba8 => ModularImage::from_rgba8(frames[0].pixels, w, h),
+        PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frames[0].pixels, 3), w, h),
+        PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(frames[0].pixels, 4), w, h),
+        PixelLayout::Gray8 => ModularImage::from_gray8(frames[0].pixels, w, h),
+        PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frames[0].pixels, w, h),
+        PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frames[0].pixels, w, h),
+        PixelLayout::Gray16 => ModularImage::from_gray16_native(frames[0].pixels, w, h),
+        other => return Err(EncodeError::UnsupportedPixelLayout(other)),
+    }
+    .map_err(EncodeError::from)?;
+
+    let mut file_header = if sample_image.is_grayscale {
+        FileHeader::new_gray(width, height)
+    } else if sample_image.has_alpha {
+        FileHeader::new_rgba(width, height)
+    } else {
+        FileHeader::new_rgb(width, height)
+    };
+    if sample_image.bit_depth == 16 {
+        file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
+        for ec in &mut file_header.metadata.extra_channels {
+            ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
+        }
+    }
+    file_header.metadata.animation = Some(AnimationHeader {
+        tps_numerator: animation.tps_numerator,
+        tps_denominator: animation.tps_denominator,
+        num_loops: animation.num_loops,
+        have_timecodes: false,
+    });
+
+    // Write file header
+    let mut writer = BitWriter::new();
+    file_header.write(&mut writer).map_err(EncodeError::from)?;
+    writer.zero_pad_to_byte();
+
+    // Encode each frame
+    let color_encoding = ColorEncoding::srgb();
+    for (i, frame) in frames.iter().enumerate() {
+        let image = match layout {
+            PixelLayout::Rgb8 => ModularImage::from_rgb8(frame.pixels, w, h),
+            PixelLayout::Rgba8 => ModularImage::from_rgba8(frame.pixels, w, h),
+            PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frame.pixels, 3), w, h),
+            PixelLayout::Bgra8 => {
+                ModularImage::from_rgba8(&bgr_to_rgb(frame.pixels, 4), w, h)
+            }
+            PixelLayout::Gray8 => ModularImage::from_gray8(frame.pixels, w, h),
+            PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frame.pixels, w, h),
+            PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frame.pixels, w, h),
+            PixelLayout::Gray16 => ModularImage::from_gray16_native(frame.pixels, w, h),
+            other => return Err(EncodeError::UnsupportedPixelLayout(other)),
+        }
+        .map_err(EncodeError::from)?;
+
+        let frame_encoder = FrameEncoder::new(
+            w,
+            h,
+            FrameEncoderOptions {
+                use_modular: true,
+                effort: cfg.effort,
+                use_ans: cfg.use_ans,
+                use_tree_learning: cfg.tree_learning,
+                use_squeeze: cfg.squeeze,
+                have_animation: true,
+                duration: frame.duration,
+                is_last: i == num_frames - 1,
+            },
+        );
+        frame_encoder
+            .encode_modular(&image, &color_encoding, &mut writer)
+            .map_err(EncodeError::from)?;
+    }
+
+    Ok(writer.finish_with_padding())
+}
+
+fn encode_animation_lossy(
+    cfg: &LossyConfig,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    animation: &AnimationParams,
+    frames: &[AnimationFrame<'_>],
+) -> core::result::Result<Vec<u8>, EncodeError> {
+    use crate::bit_writer::BitWriter;
+    use crate::headers::file_header::AnimationHeader;
+    use crate::headers::frame_header::FrameOptions;
+
+    validate_animation_input(width, height, layout, frames)?;
+
+    let w = width as usize;
+    let h = height as usize;
+    let num_frames = frames.len();
+
+    // Set up VarDCT encoder
+    let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
+    tiny.use_ans = cfg.use_ans;
+    tiny.optimize_codes = true;
+    tiny.custom_orders = true;
+    tiny.enable_noise = cfg.noise;
+    tiny.enable_denoise = cfg.denoise;
+    tiny.enable_gaborish = cfg.gaborish;
+    tiny.error_diffusion = cfg.error_diffusion;
+    tiny.pixel_domain_loss = cfg.pixel_domain_loss;
+    tiny.enable_lz77 = cfg.lz77;
+    tiny.lz77_method = cfg.lz77_method;
+    tiny.force_strategy = cfg.force_strategy;
+    #[cfg(feature = "butteraugli-loop")]
+    {
+        tiny.butteraugli_iters = cfg.butteraugli_iters;
+    }
+
+    // Detect alpha and 16-bit from layout
+    let has_alpha = layout.has_alpha();
+    let bit_depth_16 = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
+    tiny.bit_depth_16 = bit_depth_16;
+
+    // Build file header with animation
+    let mut writer = BitWriter::with_capacity(w * h * 4);
+    tiny.write_file_header_and_pad(w, h, has_alpha, &mut writer)
+        .map_err(EncodeError::from)?;
+
+    // Patch the file header to include animation data.
+    // The file header was already written without animation. We need to rebuild.
+    // Instead, build the header with animation from scratch.
+    drop(writer);
+
+    let mut writer = BitWriter::with_capacity(w * h * 4);
+    {
+        use crate::headers::file_header::{BitDepth, FileHeader};
+        let mut file_header = if has_alpha {
+            FileHeader::new_rgba(width, height)
+        } else {
+            FileHeader::new_rgb(width, height)
+        };
+        if bit_depth_16 {
+            file_header.metadata.bit_depth = BitDepth::uint16();
+            for ec in &mut file_header.metadata.extra_channels {
+                ec.bit_depth = BitDepth::uint16();
+            }
+        }
+        file_header.metadata.animation = Some(AnimationHeader {
+            tps_numerator: animation.tps_numerator,
+            tps_denominator: animation.tps_denominator,
+            num_loops: animation.num_loops,
+            have_timecodes: false,
+        });
+        if let Some(ref icc) = tiny.icc_profile {
+            file_header.metadata.color_encoding.want_icc = true;
+            file_header.write(&mut writer).map_err(EncodeError::from)?;
+            crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
+        } else {
+            file_header.write(&mut writer).map_err(EncodeError::from)?;
+        }
+        writer.zero_pad_to_byte();
+    }
+
+    // Encode each frame
+    for (i, frame) in frames.iter().enumerate() {
+        let (linear_rgb, alpha) = match layout {
+            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(frame.pixels, 3), None),
+            PixelLayout::Bgr8 => (
+                srgb_u8_to_linear_f32(&bgr_to_rgb(frame.pixels, 3), 3),
+                None,
+            ),
+            PixelLayout::Rgba8 => {
+                let rgb = srgb_u8_to_linear_f32(frame.pixels, 4);
+                let alpha = extract_alpha(frame.pixels, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::Bgra8 => {
+                let swapped = bgr_to_rgb(frame.pixels, 4);
+                let rgb = srgb_u8_to_linear_f32(&swapped, 4);
+                let alpha = extract_alpha(frame.pixels, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(frame.pixels, 3), None),
+            PixelLayout::Rgba16 => {
+                let rgb = srgb_u16_to_linear_f32(frame.pixels, 4);
+                let alpha = extract_alpha_u16(frame.pixels, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::RgbLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(frame.pixels);
+                (floats.to_vec(), None)
+            }
+            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 | PixelLayout::Gray16 => {
+                return Err(EncodeError::UnsupportedPixelLayout(layout));
+            }
+        };
+
+        let frame_options = FrameOptions {
+            have_animation: true,
+            have_timecodes: false,
+            duration: frame.duration,
+            is_last: i == num_frames - 1,
+        };
+
+        tiny.encode_frame_to_writer(
+            w,
+            h,
+            &linear_rgb,
+            alpha.as_deref(),
+            &frame_options,
+            &mut writer,
+        )
+        .map_err(EncodeError::from)?;
+    }
+
+    Ok(writer.finish_with_padding())
 }
 
 // ── Pixel conversion helpers ────────────────────────────────────────────────
