@@ -1638,11 +1638,13 @@ fn detect_frame_crop(
 
     for y in 0..height {
         let row_start = y * stride;
-        let row_end = row_start + stride;
-        let prev_row = &prev[row_start..row_end];
-        let curr_row = &curr[row_start..row_end];
+        let prev_row = &prev[row_start..row_start + stride];
+        let curr_row = &curr[row_start..row_start + stride];
 
-        if prev_row == curr_row {
+        // Fast row comparison via u64 chunks — lets the compiler auto-vectorize
+        let (prev_prefix, prev_u64, prev_suffix) = bytemuck::pod_align_to::<u8, u64>(prev_row);
+        let (curr_prefix, curr_u64, curr_suffix) = bytemuck::pod_align_to::<u8, u64>(curr_row);
+        if prev_prefix == curr_prefix && prev_u64 == curr_u64 && prev_suffix == curr_suffix {
             continue;
         }
 
@@ -1652,12 +1654,24 @@ fn detect_frame_crop(
         }
         bottom = y;
 
+        // Scan from left to find first differing pixel
         for x in 0..width {
             let px_start = x * bytes_per_pixel;
-            let px_end = px_start + bytes_per_pixel;
-            if prev_row[px_start..px_end] != curr_row[px_start..px_end] {
+            if prev_row[px_start..px_start + bytes_per_pixel]
+                != curr_row[px_start..px_start + bytes_per_pixel]
+            {
                 left = left.min(x);
+                break;
+            }
+        }
+        // Scan from right to find last differing pixel
+        for x in (0..width).rev() {
+            let px_start = x * bytes_per_pixel;
+            if prev_row[px_start..px_start + bytes_per_pixel]
+                != curr_row[px_start..px_start + bytes_per_pixel]
+            {
                 right = right.max(x);
+                break;
             }
         }
     }
