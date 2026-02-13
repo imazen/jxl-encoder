@@ -188,6 +188,15 @@ fn main() {
         println!();
     }
 
+    let lz77_method = match args.lz77_method.to_lowercase().as_str() {
+        "rle" => Lz77Method::Rle,
+        "greedy" => Lz77Method::Greedy,
+        other => {
+            eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
+            Lz77Method::Greedy
+        }
+    };
+
     // Check for APNG (animated PNG) — handle before single-frame path
     let start = Instant::now();
     match read_apng(&args.input) {
@@ -241,7 +250,7 @@ fn main() {
             let lossy_supported = matches!(layout, PixelLayout::Rgb8 | PixelLayout::Rgba8);
 
             let encoded = if distance > 0.0 && lossy_supported {
-                LossyConfig::new(distance)
+                let mut cfg = LossyConfig::new(distance)
                     .with_effort(args.effort)
                     .with_ans(!args.no_ans)
                     .with_gaborish(!args.no_gaborish)
@@ -250,7 +259,28 @@ fn main() {
                     .with_error_diffusion(!args.no_error_diffusion)
                     .with_pixel_domain_loss(!args.no_pixel_domain_loss)
                     .with_lz77(args.lz77)
-                    .encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
+                    .with_lz77_method(lz77_method);
+
+                if args.dct8_only {
+                    cfg = cfg.with_force_strategy(Some(0));
+                }
+                if let Some(s) = args.force_strategy {
+                    cfg = cfg.with_force_strategy(Some(s));
+                }
+
+                #[cfg(feature = "butteraugli-loop")]
+                {
+                    if args.no_butteraugli {
+                        cfg = cfg.with_butteraugli_iters(0);
+                    } else if let Some(n) = args.butteraugli_iters {
+                        cfg = cfg.with_butteraugli_iters(n);
+                    }
+                    if !args.quiet && cfg.butteraugli_iters() > 0 {
+                        println!("Butteraugli loop: {} iterations", cfg.butteraugli_iters());
+                    }
+                }
+
+                cfg.encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
             } else {
                 LosslessConfig::new()
                     .with_effort(args.effort)
@@ -327,15 +357,6 @@ fn main() {
             if is_16bit { 16 } else { 8 }
         );
     }
-
-    let lz77_method = match args.lz77_method.to_lowercase().as_str() {
-        "rle" => Lz77Method::Rle,
-        "greedy" => Lz77Method::Greedy,
-        other => {
-            eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
-            Lz77Method::Greedy
-        }
-    };
 
     // Determine pixel layout
     let layout = match (color_type, is_16bit) {
