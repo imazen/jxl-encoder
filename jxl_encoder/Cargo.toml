@@ -61,7 +61,7 @@ jxl_transforms = { version = "0.3.0", path = "../../jxl-rs/jxl_transforms" }
 jxl-oxide = { version = "0.12.5", path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
 jxl-jbr = { version = "0.2.1", path = "../../jxl-efforts/jxl-oxide/crates/jxl-jbr" }
 # SSIMULACRA2 for perceptual quality metrics
-fast-ssim2 = { version = "0.6.5", path = "../../fast-ssim2/ssimulacra2", features = ["imgref"] }
+fast-ssim2 = { version = "0.7.0", path = "../../fast-ssim2/ssimulacra2", features = ["imgref"] }
 yuvxyb = "0.4.1"
 # Butteraugli perceptual quality metric
 butteraugli = { version = "0.4.0", path = "../../butteraugli-opt/butteraugli" }
