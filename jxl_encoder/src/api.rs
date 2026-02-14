@@ -647,12 +647,7 @@ impl LosslessConfig {
 
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
-/// Return the default butteraugli iteration count for a given effort level.
-///
-/// Matches libjxl's effort gating:
-/// - effort 7 (Squirrel) and below: 0 (no butteraugli loop)
-/// - effort 8 (Kitten): 2 iterations
-/// - effort 9+ (Tortoise): 4 iterations
+#[cfg(feature = "butteraugli-loop")]
 fn butteraugli_iters_for_effort(effort: u8) -> u32 {
     match effort {
         0..=7 => 0,
