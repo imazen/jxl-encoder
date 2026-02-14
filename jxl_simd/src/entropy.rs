@@ -68,6 +68,26 @@ pub fn entropy_estimate_coeffs(
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return entropy_coeffs_neon(
+                token,
+                block_c,
+                block_y,
+                weights,
+                n,
+                cmap_factor,
+                quant,
+                k_cost_delta,
+                k_cost2,
+                pixel_domain,
+                error_coeffs,
+            );
+        }
+    }
+
     entropy_coeffs_scalar(
         block_c,
         block_y,
@@ -217,6 +237,111 @@ fn entropy_coeffs_avx2(
 
     // Handle remainder with scalar fallback
     let start = chunks * 8;
+    let remainder = entropy_coeffs_scalar(
+        &block_c[start..n],
+        &block_y[start..n],
+        &weights[start..n],
+        n - start,
+        cmap_factor,
+        quant,
+        k_cost_delta,
+        k_cost2,
+        pixel_domain,
+        &mut error_coeffs[start..n],
+    );
+
+    let mut entropy_sum = entropy_acc.reduce_add() + remainder.entropy_sum;
+    if !pixel_domain {
+        entropy_sum += cost2_acc.reduce_add();
+    }
+
+    EntropyCoeffResult {
+        entropy_sum,
+        nzeros_sum: nzeros_acc.reduce_add() + remainder.nzeros_sum,
+        info_loss_sum: info_loss_acc.reduce_add() + remainder.info_loss_sum,
+        info_loss2_sum: info_loss2_acc.reduce_add() + remainder.info_loss2_sum,
+    }
+}
+
+// ============================================================================
+// aarch64 NEON implementation
+// ============================================================================
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn entropy_coeffs_neon(
+    token: archmage::NeonToken,
+    block_c: &[f32],
+    block_y: &[f32],
+    weights: &[f32],
+    n: usize,
+    cmap_factor: f32,
+    quant: f32,
+    k_cost_delta: f32,
+    k_cost2: f32,
+    pixel_domain: bool,
+    error_coeffs: &mut [f32],
+) -> EntropyCoeffResult {
+    use magetypes::simd::f32x4;
+
+    let cmap_v = f32x4::splat(token, cmap_factor);
+    let quant_v = f32x4::splat(token, quant);
+    let cost_delta_v = f32x4::splat(token, k_cost_delta);
+    let cost2_v = f32x4::splat(token, k_cost2);
+    let zero = f32x4::zero(token);
+    let one = f32x4::splat(token, 1.0);
+    let thr_1_5 = f32x4::splat(token, 1.5);
+
+    let mut entropy_acc = f32x4::zero(token);
+    let mut nzeros_acc = f32x4::zero(token);
+    let mut info_loss_acc = f32x4::zero(token);
+    let mut info_loss2_acc = f32x4::zero(token);
+    let mut cost2_acc = f32x4::zero(token);
+
+    let chunks = n / 4;
+    let simd_n = chunks * 4;
+    let block_c_s = &block_c[..simd_n];
+    let block_y_s = &block_y[..simd_n];
+    let weights_s = &weights[..simd_n];
+    for chunk in 0..chunks {
+        let base = chunk * 4;
+
+        let bc = f32x4::from_slice(token, &block_c_s[base..]);
+        let by_v = f32x4::from_slice(token, &block_y_s[base..]);
+        let w = f32x4::from_slice(token, &weights_s[base..]);
+
+        // val = (block_c - block_y * cmap_factor) / weights * quant
+        let adjusted = bc - by_v * cmap_v;
+        let val = adjusted / w * quant_v;
+
+        let rval = val.round();
+        let diff = val - rval;
+
+        if pixel_domain {
+            let err = w * diff;
+            let out: &mut [f32; 4] = (&mut error_coeffs[base..base + 4]).try_into().unwrap();
+            err.store(out);
+        }
+
+        let q = rval.abs();
+        entropy_acc = q.sqrt().mul_add(cost_delta_v, entropy_acc);
+
+        let nz_mask = q.simd_ne(zero);
+        nzeros_acc += f32x4::blend(nz_mask, one, zero);
+
+        if !pixel_domain {
+            let diff_abs = diff.abs();
+            info_loss_acc += diff_abs;
+            info_loss2_acc = diff_abs.mul_add(diff_abs, info_loss2_acc);
+
+            let ge_mask = q.simd_ge(thr_1_5);
+            cost2_acc += f32x4::blend(ge_mask, cost2_v, zero);
+        }
+    }
+
+    // Scalar remainder
+    let start = chunks * 4;
     let remainder = entropy_coeffs_scalar(
         &block_c[start..n],
         &block_y[start..n],
