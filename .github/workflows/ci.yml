@@ -54,9 +54,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-24.04-arm, name: Linux }
-          - { os: macos-latest, name: macOS }
-          - { os: windows-11-arm, name: "Windows ARM" }
+          - { os: ubuntu-24.04-arm, name: Linux, run_tests: true }
+          - { os: macos-latest, name: macOS, run_tests: true }
+          # Windows ARM: build-only (fd-lock dev-dep doesn't compile on aarch64-windows)
+          - { os: windows-11-arm, name: "Windows ARM", run_tests: false }
 
     steps:
       - uses: actions/checkout@v6
@@ -74,9 +75,11 @@ jobs:
         run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --release
 
       - name: Run lib unit tests (debug)
+        if: matrix.run_tests
         run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
 
       - name: Run lib unit tests (release)
+        if: matrix.run_tests
         run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --release
 
   # ==========================================================================
@@ -150,11 +153,11 @@ jobs:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=."
         run: cargo test -p jxl-encoder-simd --target wasm32-wasip1 --lib
 
-      - name: Test jxl-encoder (skip hash-exact tests — FP rounding differs on WASM)
+      - name: Test jxl-encoder (skip decoder tests and hash locks — decoders + FP differ on WASM)
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=. --dir=/tmp"
-        run: cargo test -p jxl-encoder --target wasm32-wasip1 --no-default-features --features "${{ env.CI_FEATURES }}" --lib -- --skip test_hash_lock
+        run: cargo test -p jxl-encoder --target wasm32-wasip1 --no-default-features --features "${{ env.CI_FEATURES }}" --lib -- --skip test_hash_lock --skip decoder_validation --skip dual_decoder_butteraugli
 
       - name: Bench — encode 256x256 RGB lossy (release)
         env:

@@ -66,6 +66,8 @@ imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 
+# codec-corpus uses fd-lock which doesn't compile on WASM
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 codec-corpus = "1.0.1"
 
 [lints]

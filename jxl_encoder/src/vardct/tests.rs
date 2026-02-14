@@ -203,14 +203,22 @@ fn test_decode_libjxl_tiny_reference() {
     use std::io::Cursor;
 
     // Try both OPTIMIZE_CODE=1 (175 bytes) and OPTIMIZE_CODE=0 (1101 bytes) references
-    for path in &["/tmp/tiny_ref_16x16.jxl", "/tmp/tiny_ref_static_16x16.jxl"] {
-        if !std::path::Path::new(path).exists() {
-            eprintln!("Reference file not found at {}", path);
+    let ref_paths = [
+        std::env::temp_dir().join("tiny_ref_16x16.jxl"),
+        std::env::temp_dir().join("tiny_ref_static_16x16.jxl"),
+    ];
+    for path in &ref_paths {
+        if !path.exists() {
+            eprintln!("Reference file not found at {}", path.display());
             continue;
         }
 
         let data = std::fs::read(path).expect("read reference file");
-        eprintln!("\n=== Testing {} ({} bytes) ===", path, data.len());
+        eprintln!(
+            "\n=== Testing {} ({} bytes) ===",
+            path.display(),
+            data.len()
+        );
         eprintln!("First 20 bytes: {:02x?}", &data[..20.min(data.len())]);
 
         let result = jxl_oxide::JxlImage::builder().read(Cursor::new(&data));
@@ -260,9 +268,9 @@ fn test_tiny_encoder_decode() {
 
     // Compare with libjxl-tiny OPTIMIZE_CODE=0 (static) reference if available
     // The static reference uses the same code path as our encoder
-    let ref_path = "/tmp/tiny_ref_static_16x16.jxl";
-    if std::path::Path::new(ref_path).exists() {
-        let ref_data = std::fs::read(ref_path).expect("read reference");
+    let ref_path = std::env::temp_dir().join("tiny_ref_static_16x16.jxl");
+    if ref_path.exists() {
+        let ref_data = std::fs::read(&ref_path).expect("read reference");
         eprintln!("\n=== Comparison with libjxl-tiny static reference (OPTIMIZE_CODE=0) ===");
         eprintln!(
             "Our size: {} bytes, Reference: {} bytes",
@@ -1001,10 +1009,16 @@ fn test_lz77_backref_roundtrip() {
     );
 
     // Save files for debugging
-    std::fs::write("/tmp/lz77_backref.jxl", &bytes_lz77).unwrap();
-    std::fs::write("/tmp/no_lz77.jxl", &bytes_no_lz77).unwrap();
-    eprintln!("Saved {} bytes to /tmp/lz77_backref.jxl", bytes_lz77.len());
-    eprintln!("Saved {} bytes to /tmp/no_lz77.jxl", bytes_no_lz77.len());
+    let tmp_lz77 = std::env::temp_dir().join("lz77_backref.jxl");
+    let tmp_no_lz77 = std::env::temp_dir().join("no_lz77.jxl");
+    std::fs::write(&tmp_lz77, &bytes_lz77).unwrap();
+    std::fs::write(&tmp_no_lz77, &bytes_no_lz77).unwrap();
+    eprintln!("Saved {} bytes to {}", bytes_lz77.len(), tmp_lz77.display());
+    eprintln!(
+        "Saved {} bytes to {}",
+        bytes_no_lz77.len(),
+        tmp_no_lz77.display()
+    );
 
     // Decode LZ77-encoded file with jxl-oxide
     let image = jxl_oxide::JxlImage::builder()
@@ -1206,12 +1220,13 @@ fn test_dct64x64_forced_decode() {
     eprintln!("DCT64x64: jxl-oxide decode OK");
 
     // Decode with djxl
-    let tmp = "/tmp/test_dct64x64.jxl";
-    let tmp_ppm = "/tmp/test_dct64x64.png";
-    std::fs::write(tmp, &encoded).unwrap();
+    let tmp = std::env::temp_dir().join("test_dct64x64.jxl");
+    let tmp_ppm = std::env::temp_dir().join("test_dct64x64.png");
+    std::fs::write(&tmp, &encoded).unwrap();
     let djxl_status =
         std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args([tmp, tmp_ppm])
+            .arg(&tmp)
+            .arg(&tmp_ppm)
             .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
@@ -1262,7 +1277,8 @@ fn test_dct64x32_forced_decode() {
         .data;
     eprintln!("DCT64x32 forced: {} bytes ({}x{})", encoded.len(), w, h);
 
-    let _ = std::fs::write("/tmp/test_dct64x32.jxl", &encoded);
+    let tmp_jxl = std::env::temp_dir().join("test_dct64x32.jxl");
+    let _ = std::fs::write(&tmp_jxl, &encoded);
 
     // Decode with jxl-oxide
     let image = jxl_oxide::JxlImage::builder()
@@ -1274,10 +1290,11 @@ fn test_dct64x32_forced_decode() {
     eprintln!("DCT64x32: jxl-oxide decode OK");
 
     // Decode with djxl
-    let tmp_ppm = "/tmp/test_dct64x32.png";
+    let tmp_ppm = std::env::temp_dir().join("test_dct64x32.png");
     let djxl_status =
         std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args(["/tmp/test_dct64x32.jxl", tmp_ppm])
+            .arg(&tmp_jxl)
+            .arg(&tmp_ppm)
             .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
@@ -1328,7 +1345,8 @@ fn test_dct32x64_forced_decode() {
         .data;
     eprintln!("DCT32x64 forced: {} bytes ({}x{})", encoded.len(), w, h);
 
-    let _ = std::fs::write("/tmp/test_dct32x64.jxl", &encoded);
+    let tmp_jxl = std::env::temp_dir().join("test_dct32x64.jxl");
+    let _ = std::fs::write(&tmp_jxl, &encoded);
 
     // Decode with jxl-oxide
     let image = jxl_oxide::JxlImage::builder()
@@ -1340,10 +1358,11 @@ fn test_dct32x64_forced_decode() {
     eprintln!("DCT32x64: jxl-oxide decode OK");
 
     // Decode with djxl
-    let tmp_ppm = "/tmp/test_dct32x64.png";
+    let tmp_ppm = std::env::temp_dir().join("test_dct32x64.png");
     let djxl_status =
         std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args(["/tmp/test_dct32x64.jxl", tmp_ppm])
+            .arg(&tmp_jxl)
+            .arg(&tmp_ppm)
             .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
@@ -1404,10 +1423,13 @@ fn test_dct64x64_forced_256x256() {
     eprintln!("DCT64x64 256x256: jxl-oxide decode OK");
 
     // Decode with djxl
-    std::fs::write("/tmp/test_dct64x64_256.jxl", &encoded).unwrap();
+    let tmp_jxl = std::env::temp_dir().join("test_dct64x64_256.jxl");
+    let tmp_png = std::env::temp_dir().join("test_dct64x64_256.png");
+    std::fs::write(&tmp_jxl, &encoded).unwrap();
     let djxl_status =
         std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args(["/tmp/test_dct64x64_256.jxl", "/tmp/test_dct64x64_256.png"])
+            .arg(&tmp_jxl)
+            .arg(&tmp_png)
             .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
