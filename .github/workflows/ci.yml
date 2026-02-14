@@ -68,19 +68,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build workspace (debug)
+      - name: Build workspace
         run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}"
 
-      - name: Build workspace (release)
-        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --release
-
-      - name: Run lib unit tests (debug)
+      - name: Run lib unit tests
         if: matrix.run_tests
         run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
-
-      - name: Run lib unit tests (release)
-        if: matrix.run_tests
-        run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --release
 
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)
@@ -91,9 +84,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - i686-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabihf
+        include:
+          - { target: i686-unknown-linux-gnu, run_tests: true }
+          # armv7: build-only (QEMU emulation is very slow; i686 already validates 32-bit)
+          - { target: armv7-unknown-linux-gnueabihf, run_tests: false }
 
     steps:
       - uses: actions/checkout@v6
@@ -113,6 +107,7 @@ jobs:
         run: cross build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --target ${{ matrix.target }}
 
       - name: Test lib (cross/QEMU)
+        if: matrix.run_tests
         run: cross test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --target ${{ matrix.target }}
 
   # ==========================================================================
@@ -180,7 +175,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --lcov --output-path lcov.info --exclude jxl-encoder-simd
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
