@@ -10,7 +10,7 @@ use jxl_encoder::{
     AnimationFrame, AnimationParams, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
 };
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -615,11 +615,16 @@ fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
 fn read_png(
     path: &PathBuf,
 ) -> Result<(u32, u32, png::ColorType, png::BitDepth, Vec<u8>), Box<dyn std::error::Error>> {
-    let file = File::open(path)?;
+    let file = BufReader::new(File::open(path)?);
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info()?;
 
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .expect("no frame info available")
+    ];
     let info = reader.next_frame(&mut buf)?;
     buf.truncate(info.buffer_size());
 
@@ -657,7 +662,7 @@ struct ApngResult {
 /// Read an APNG file, compositing frames according to dispose/blend ops.
 /// Returns None if the PNG is not animated.
 fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::Error>> {
-    let file = File::open(path)?;
+    let file = BufReader::new(File::open(path)?);
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info()?;
 
@@ -690,7 +695,12 @@ fn read_apng(path: &PathBuf) -> Result<Option<ApngResult>, Box<dyn std::error::E
     let mut prev_canvas = Vec::new(); // saved for DisposeOp::Previous
 
     let mut frames = Vec::with_capacity(num_frames as usize);
-    let mut frame_buf = vec![0u8; reader.output_buffer_size()];
+    let mut frame_buf = vec![
+        0u8;
+        reader
+            .output_buffer_size()
+            .expect("no frame info available")
+    ];
 
     let mut prev_dispose_op = png::DisposeOp::None;
     let mut prev_region: (u32, u32, u32, u32) = (0, 0, canvas_width, canvas_height);

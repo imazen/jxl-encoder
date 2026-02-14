@@ -4067,3 +4067,41 @@ fn test_squeeze_roundtrip_gray_128x128() {
     );
     eprintln!("Squeeze gray 128x128: PASS (pixel-exact)");
 }
+
+/// Simple encode benchmark for CI — exercises the full lossy pipeline on WASM.
+/// Run with: cargo test --release --lib -- bench_encode_256x256 --ignored --nocapture
+#[test]
+#[ignore]
+fn bench_encode_256x256() {
+    use crate::{LossyConfig, PixelLayout};
+
+    let (width, height) = (256u32, 256u32);
+    let mut data = vec![0u8; (width * height * 3) as usize];
+    // Deterministic pseudo-random content via LCG
+    let mut seed: u64 = 0xDEAD_BEEF;
+    for val in data.iter_mut() {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        *val = (seed >> 56) as u8;
+    }
+
+    // Warmup
+    let _ = LossyConfig::new(2.0).encode(&data, width, height, PixelLayout::Rgb8);
+
+    let iters = 3;
+    let start = std::time::Instant::now();
+    let mut size = 0;
+    for _ in 0..iters {
+        let encoded = LossyConfig::new(2.0)
+            .encode(&data, width, height, PixelLayout::Rgb8)
+            .unwrap();
+        size = encoded.len();
+    }
+    let elapsed = start.elapsed();
+    let per_iter = elapsed / iters;
+    let mpixels_per_sec =
+        (width as f64 * height as f64 * iters as f64) / elapsed.as_secs_f64() / 1_000_000.0;
+
+    eprintln!(
+        "bench_encode_256x256: {per_iter:?}/iter, {mpixels_per_sec:.2} MP/s, {size} bytes output"
+    );
+}

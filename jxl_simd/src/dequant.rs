@@ -112,7 +112,11 @@ pub fn dequant_dct8_scalar(
     let inv_qac_y = 1.0 / qac_qm[1];
     let inv_qac_b = 1.0 / qac_qm[2];
 
-    // Index 0 is DC/LLF — skip (leave as-is)
+    // DC (index 0) must be zeroed — it's restored from DC separately
+    output_x[0] = 0.0;
+    output_y[0] = 0.0;
+    output_b[0] = 0.0;
+
     for i in 1..64 {
         // Dequantize each channel
         let biased_x = adjust_quant_bias_scalar(quant_ac_x[i], BIAS_X);
