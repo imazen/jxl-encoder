@@ -6535,6 +6535,7 @@ fn test_custom_orders_compression() {
 /// CID22-512 images are auto-downloaded via the `codec-corpus` crate on first run.
 ///
 /// Run with: cargo test -p jxl-encoder --test clic2025 test_rd_regression -- --ignored --nocapture
+#[cfg(unix)]
 #[test]
 #[ignore]
 fn test_rd_regression() {

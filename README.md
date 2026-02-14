@@ -6,7 +6,7 @@
 [![codecov](https://codecov.io/gh/imazen/jxl-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder)
 [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
-A comprehensive, pure Rust JPEG XL encoder. 67k lines of library code, 19k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/lilith/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
+A comprehensive, pure Rust JPEG XL encoder. 67k lines of library code, 19k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
 `#![forbid(unsafe_code)]`. 740+ tests passing.
 
@@ -185,7 +185,7 @@ jxl-encoder/                             ~113k lines of Rust
 
 - **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — Reference encoder. Our algorithms, quantization weights, cost models, and bitstream format are derived from libjxl. [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) was the initial porting target.
 - **[zune-jpegxl](https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl)** (Caleb Etemesi, MIT/Apache-2.0/Zlib) — Seeing a working pure-Rust JXL encoder (lossless, ~2.5k lines) was the inspiration to build a comprehensive one covering lossy, lossless, and the 30+ features listed above.
-- **[jxl-rs](https://github.com/lilith/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
+- **[jxl-rs](https://github.com/libjxl/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
 - **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Secondary validation decoder.
 - **Claude** (Anthropic) — AI-assisted development. Not all code has been manually reviewed; review critical paths before production use.
 
