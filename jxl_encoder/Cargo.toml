@@ -16,6 +16,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 [dependencies]
 enough = "0.3.1"
 once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
+hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
 whereat = "0.1.3"
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }

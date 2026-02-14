@@ -9,7 +9,7 @@
 
 use super::channel::{Channel, ModularImage};
 use crate::error::Result;
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 /// Result of palette analysis.
 pub struct PaletteAnalysis {

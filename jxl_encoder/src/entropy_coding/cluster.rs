@@ -6,8 +6,8 @@
 //!
 //! Ported from libjxl `lib/jxl/enc_cluster.cc`.
 
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use alloc::collections::BinaryHeap;
+use core::cmp::Ordering;
 
 use super::histogram::{Histogram, histogram_distance, histogram_kl_divergence};
 use crate::error::{Error, Result};
@@ -257,7 +257,7 @@ impl Ord for HistogramPair {
 
 /// Wrapper for f32 that implements Ord for use in priority queues.
 mod ordered_float {
-    use std::cmp::Ordering;
+    use core::cmp::Ordering;
 
     #[derive(Clone, Copy, Debug)]
     pub struct OrderedFloat(pub f32);

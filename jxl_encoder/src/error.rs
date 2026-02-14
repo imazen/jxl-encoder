@@ -4,13 +4,13 @@
 
 //! Error types for the JPEG XL encoder.
 
-use std::collections::TryReserveError;
+use alloc::collections::TryReserveError;
 #[cfg(feature = "std")]
 use std::io;
 use thiserror::Error;
 
 /// Result type alias using the encoder's Error type.
-pub type Result<T, E = Error> = std::result::Result<T, E>;
+pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 /// Encoder error types.
 #[derive(Error, Debug)]
