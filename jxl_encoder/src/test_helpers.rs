@@ -474,3 +474,28 @@ mod tests {
         let _ = parse_encoding_mode(&[0; 100]);
     }
 }
+
+/// Return a test output directory, creating it if possible.
+///
+/// Prefers `/mnt/v/output/jxl-encoder-rs/{subdir}` (persistent, visible from Windows).
+/// Falls back to `$TMPDIR/jxl-encoder-rs/{subdir}` when that path is unavailable
+/// (CI, Docker, other machines).
+pub fn test_output_dir(subdir: &str) -> std::path::PathBuf {
+    let preferred = std::path::PathBuf::from(format!("/mnt/v/output/jxl-encoder-rs/{subdir}"));
+    if std::fs::create_dir_all(&preferred).is_ok() {
+        return preferred;
+    }
+    let fallback = std::env::temp_dir().join(format!("jxl-encoder-rs/{subdir}"));
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+/// Write test output to the best available directory. Never panics.
+pub fn save_test_output(subdir: &str, filename: &str, data: &[u8]) {
+    let dir = test_output_dir(subdir);
+    let path = dir.join(filename);
+    match std::fs::write(&path, data) {
+        Ok(()) => eprintln!("Saved {} bytes to {}", data.len(), path.display()),
+        Err(e) => eprintln!("Could not save to {} ({})", path.display(), e),
+    }
+}

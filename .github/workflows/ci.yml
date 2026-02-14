@@ -45,7 +45,7 @@ jobs:
         run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
 
   # ==========================================================================
-  # Native ARM64 testing
+  # Native ARM64 testing (NEON SIMD validation)
   # ==========================================================================
   build-aarch64:
     name: Build aarch64 (${{ matrix.name }})
@@ -67,11 +67,17 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build workspace
+      - name: Build workspace (debug)
         run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}"
 
-      - name: Run lib unit tests
+      - name: Build workspace (release)
+        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --release
+
+      - name: Run lib unit tests (debug)
         run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
+
+      - name: Run lib unit tests (release)
+        run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --release
 
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)
@@ -181,11 +187,17 @@ jobs:
         run: cargo test -p jxl-encoder --release --no-default-features --features "${{ env.CI_FEATURES }}" --test clic2025 test_rd_regression -- --ignored --nocapture
 
   # ==========================================================================
-  # Clippy
+  # Clippy (x64 + aarch64)
   # ==========================================================================
   clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
+    name: Clippy (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: x64 }
+          - { os: ubuntu-24.04-arm, name: aarch64 }
 
     steps:
       - uses: actions/checkout@v6

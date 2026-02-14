@@ -882,7 +882,7 @@ fn test_encode_rgb_irregular_dimensions() {
             .unwrap_or_else(|e| panic!("{}x{} failed to encode: {}", w, h, e));
 
         let path = format!("/tmp/rgb_{}x{}.jxl", w, h);
-        std::fs::write(&path, &encoded).unwrap();
+        let _ = std::fs::write(&path, &encoded);
         eprintln!("{}x{}: {} bytes", w, h, encoded.len());
 
         // Verify JXL signature
@@ -947,7 +947,7 @@ mod decoder_validation {
 
         // Save to file for debugging
         let path = format!("/tmp/{}.jxl", test_name);
-        std::fs::write(&path, &encoded).unwrap();
+        let _ = std::fs::write(&path, &encoded);
         eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
 
         // Decode with jxl-rs (PRIMARY decoder)
@@ -1216,41 +1216,57 @@ mod decoder_validation {
             let temp_png = format!("/tmp/dual_decode_test_{}.png", test_name.replace(" ", "_"));
             std::fs::write(&temp_jxl, encoded).expect("Failed to write temp JXL");
 
-            // Run djxl
-            let output = Command::new(DJXL_PATH)
+            // Run djxl — may fail if binary exists but shared libs are missing
+            // (e.g. cross-compilation container with host volume mount)
+            match Command::new(DJXL_PATH)
                 .args([&temp_jxl, &temp_png])
                 .output()
-                .expect("Failed to run djxl");
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                panic!("{}: djxl decode failed: {}", test_name, stderr);
-            }
-
-            // Verify the PNG was created and has correct dimensions
-            if let Ok(img) = image::open(&temp_png) {
-                assert_eq!(
-                    img.width(),
-                    expected_width,
-                    "{}: djxl output width mismatch",
-                    test_name
-                );
-                assert_eq!(
-                    img.height(),
-                    expected_height,
-                    "{}: djxl output height mismatch",
-                    test_name
-                );
+            {
+                Ok(output) if output.status.success() => {
+                    // Verify the PNG was created and has correct dimensions
+                    if let Ok(img) = image::open(&temp_png) {
+                        assert_eq!(
+                            img.width(),
+                            expected_width,
+                            "{}: djxl output width mismatch",
+                            test_name
+                        );
+                        assert_eq!(
+                            img.height(),
+                            expected_height,
+                            "{}: djxl output height mismatch",
+                            test_name
+                        );
+                    }
+                    eprintln!(
+                        "{}: PASSED dual-decoder validation (jxl-oxide + djxl)",
+                        test_name
+                    );
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if stderr.contains("cannot open shared object")
+                        || stderr.contains("No such file or directory")
+                    {
+                        eprintln!(
+                            "{}: PASSED jxl-oxide only (djxl missing shared libs)",
+                            test_name
+                        );
+                    } else {
+                        panic!("{}: djxl decode failed: {}", test_name, stderr);
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}: PASSED jxl-oxide only (djxl not runnable: {})",
+                        test_name, e
+                    );
+                }
             }
 
             // Cleanup
             let _ = std::fs::remove_file(&temp_jxl);
             let _ = std::fs::remove_file(&temp_png);
-
-            eprintln!(
-                "{}: PASSED dual-decoder validation (jxl-oxide + djxl)",
-                test_name
-            );
         } else {
             eprintln!(
                 "{}: PASSED jxl-oxide only (djxl not available at {})",
@@ -3499,7 +3515,7 @@ mod tree_learning_tests {
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         let path = format!("/tmp/{}.jxl", test_name);
-        std::fs::write(&path, &encoded).unwrap();
+        let _ = std::fs::write(&path, &encoded);
         eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
 
         // Decode with jxl-rs (PRIMARY decoder)
@@ -3570,7 +3586,7 @@ mod tree_learning_tests {
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         let path = format!("/tmp/{}.jxl", test_name);
-        std::fs::write(&path, &encoded).unwrap();
+        let _ = std::fs::write(&path, &encoded);
         eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
 
         // Decode with jxl-rs (PRIMARY decoder)
@@ -3803,10 +3819,7 @@ fn validate_palette_roundtrip_rgb(data: &[u8], width: usize, height: usize, test
         .encode(data, width as u32, height as u32, PixelLayout::Rgb8)
         .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
-    let path = format!("/mnt/v/output/jxl-encoder-rs/palette/{}.jxl", test_name);
-    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/palette/");
-    std::fs::write(&path, &encoded).unwrap();
-    eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
+    crate::test_helpers::save_test_output("palette", &format!("{test_name}.jxl"), &encoded);
 
     // Decode with jxl-rs
     let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
@@ -3931,14 +3944,7 @@ fn test_squeeze_roundtrip_gray_16x16() {
         .encode(&data, 16, 16, PixelLayout::Gray8)
         .unwrap();
 
-    let path = "/mnt/v/output/jxl-encoder-rs/squeeze/squeeze_gray_16x16.jxl";
-    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/squeeze/");
-    std::fs::write(path, &bytes).unwrap();
-    eprintln!(
-        "Squeeze gray 16x16: {} bytes, saved to {}",
-        bytes.len(),
-        path
-    );
+    crate::test_helpers::save_test_output("squeeze", "squeeze_gray_16x16.jxl", &bytes);
 
     // Decode with jxl-rs
     let decoded_img =
@@ -3990,10 +3996,7 @@ fn test_squeeze_roundtrip_rgb_32x32() {
         .encode(&data, 32, 32, PixelLayout::Rgb8)
         .unwrap();
 
-    let path = "/mnt/v/output/jxl-encoder-rs/squeeze/squeeze_rgb_32x32.jxl";
-    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder-rs/squeeze/");
-    std::fs::write(path, &bytes).unwrap();
-    eprintln!("Squeeze RGB 32x32: {} bytes", bytes.len());
+    crate::test_helpers::save_test_output("squeeze", "squeeze_rgb_32x32.jxl", &bytes);
 
     let decoded_img =
         crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
