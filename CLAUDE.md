@@ -1381,21 +1381,101 @@ Guessing would have taken days longer.
    - Synthetic data hides bugs (see: ANS omit_pos, raw_quant=1).
    - Use CLIC 2025 photos or `~/work/codec-corpus/` for any test above Layer 2.
 
-## Investigation State Management
+## Invariant Preservation Across Sessions (MANDATORY)
 
-**CLAUDE.md is the single source of truth for active bugs and investigation state.**
+**Every finding and proof-narrowing of invariants MUST be recorded in CLAUDE.md.**
 
-Do NOT create separate INVESTIGATION.md, STATUS.md, PROVEN_INVARIANTS.md, or similar files.
-All active bug state belongs in "Known Bugs (ACTIVE)" above. Resolved bugs go in "Resolved Bugs".
+Context compaction loses knowledge. The only way to preserve it is to write it down and commit it.
+
+### Rules
+
+1. **Commit findings immediately:**
+   - When a layer passes, record it in CLAUDE.md "Investigation Notes" with the test name
+   - When a layer fails, record what was ruled out
+   - Include the commit hash where the test was added
+
+2. **Format for tracking features under development:**
+   ```markdown
+   ### Feature: <name> (IN PROGRESS)
+
+   #### Proven Layers
+   - [x] Layer 1: Transform roundtrip (`test_dct_4x8_roundtrip`, commit abc123)
+   - [x] Layer 1: Quant weights match libjxl (`test_dct4x8_quant_weights`, commit def456)
+   - [ ] Layer 2: Tokenization roundtrip (IN PROGRESS)
+   - [ ] Layer 3: External decoders
+   - [ ] Layer 4: Quality on real photos
+
+   #### Ruled Out
+   - Transpose bug: verified output layout matches C++ (see test_dct4x8_layout)
+   - DC extraction: spatial ordering confirmed correct (see test_dc_from_dct_4x8)
+
+   #### Open Questions
+   - Strategy selection threshold needs tuning after Layer 4
+   ```
+
+3. **After context compaction:**
+   - FIRST action: read CLAUDE.md
+   - Resume from the first unchecked layer
+   - Do NOT re-investigate proven layers
+
+4. **Commit atomically:**
+   - Each layer proven = one commit with test + CLAUDE.md update
+   - Message format: `test: prove Layer N for <feature> - <what was proven>`
+
+5. **Clean up completed features:**
+   - Move completed feature tracking from "Investigation Notes" to appropriate sections
+   - Keep the record of what was proven (tests are the permanent proof)
+
+## Investigation Documentation (MANDATORY)
+
+**CLAUDE.md is the single source of truth for all debugging investigations.**
+
+Do NOT create separate INVESTIGATION.md, STATUS.md, or similar files.
+Active bugs go in "Known Bugs (ACTIVE)". Resolved bugs go in "Resolved Bugs".
 Historical context lives in `docs/CODE-HISTORY.md`.
 
 ### Rules
 
-1. **Record findings in CLAUDE.md immediately** — active bugs in "Known Bugs", fixes in "Resolved Bugs"
-2. **Commit incrementally** — each proven layer or ruled-out hypothesis gets its own commit
-3. **Read before investigating** — check CLAUDE.md, `docs/CODE-HISTORY.md`, and recent git log first
-4. **Tests ARE the invariant record** — a passing `#[test]` proves more than any markdown checklist
-5. **Move resolved items promptly** — keep "Known Bugs" lean, move fixes to "Resolved Bugs"
+1. **Keep CLAUDE.md up to date at ALL times** - Update immediately when you discover something
+2. **Move resolved items promptly** - Keep "Known Bugs" lean, move fixes to "Resolved Bugs"
+3. **Label findings by confidence level:**
+   - `[PROVEN]` - Verified with evidence (include proof: test output, hex dump, etc.)
+   - `[LIKELY]` - Strong evidence but not conclusive
+   - `[SUSPICION]` - Educated guess, needs investigation
+   - `[THREAD]` - Investigation path to explore
+   - `[RULED OUT]` - Investigated and disproven (explain why)
+   - `[RESOLVED]` - Issue was fixed (link to commit)
+
+### Format
+
+```markdown
+### YYYY-MM-DD: Issue Title
+
+**Status**: [ACTIVE|RESOLVED|BLOCKED]
+
+**Summary**: Brief description of the problem.
+
+**Findings**:
+- [PROVEN] X causes Y (proof: `cargo test foo` output shows...)
+- [SUSPICION] Could be related to Z
+- [THREAD] Need to check if W affects this
+
+**What's Been Tried**:
+- Tried A - didn't work because...
+- Tried B - partial success, revealed...
+
+**Next Steps**:
+1. Investigate X
+2. Test Y with Z
+```
+
+### Why This Exists
+
+Investigation loops have wasted weeks of effort. Proper documentation prevents:
+- Re-discovering the same bug
+- Re-trying failed approaches
+- Losing context between sessions
+- Multiple people investigating the same issue
 
 ## Bitstream Tracing (NEVER REMOVE)
 
