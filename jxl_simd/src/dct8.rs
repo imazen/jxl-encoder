@@ -732,46 +732,46 @@ pub fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut 
     let (c0, c1, c2, c3) = neon_transpose_4x4(token, l4, l5, l6, l7);
     let (d0, d1, d2, d3) = neon_transpose_4x4(token, h4, h5, h6, h7);
 
-    // After transpose: row i lo = A^T[i], row i hi = C^T[i] for i=0..3
-    //                  row i lo = B^T[i-4], row i hi = D^T[i-4] for i=4..7
-    // Pass 3: Row-DCT on left 4 columns of transposed data
-    let (a0, a1, a2, a3, c0, c1, c2, c3) = neon_dct1d_8(token, a0, a1, a2, a3, c0, c1, c2, c3);
+    // After transpose: row i = [A^T[i] | C^T[i]] for i=0..3
+    //                  row i = [B^T[i-4] | D^T[i-4]] for i=4..7
+    // Pass 3: Row-DCT on left 4 columns (cols 0-3 across all 8 rows)
+    let (a0, a1, a2, a3, b0, b1, b2, b3) = neon_dct1d_8(token, a0, a1, a2, a3, b0, b1, b2, b3);
     let a0 = a0 * scale;
     let a1 = a1 * scale;
     let a2 = a2 * scale;
     let a3 = a3 * scale;
-    let c0 = c0 * scale;
-    let c1 = c1 * scale;
-    let c2 = c2 * scale;
-    let c3 = c3 * scale;
-
-    // Pass 4: Row-DCT on right 4 columns of transposed data
-    let (b0, b1, b2, b3, d0, d1, d2, d3) = neon_dct1d_8(token, b0, b1, b2, b3, d0, d1, d2, d3);
     let b0 = b0 * scale;
     let b1 = b1 * scale;
     let b2 = b2 * scale;
     let b3 = b3 * scale;
+
+    // Pass 4: Row-DCT on right 4 columns (cols 4-7 across all 8 rows)
+    let (c0, c1, c2, c3, d0, d1, d2, d3) = neon_dct1d_8(token, c0, c1, c2, c3, d0, d1, d2, d3);
+    let c0 = c0 * scale;
+    let c1 = c1 * scale;
+    let c2 = c2 * scale;
+    let c3 = c3 * scale;
     let d0 = d0 * scale;
     let d1 = d1 * scale;
     let d2 = d2 * scale;
     let d3 = d3 * scale;
 
-    // Store — interleave lo/hi halves back into rows
+    // Store — interleave left (a/b) and right (c/d) halves for each row
     a0.store((&mut output[0..4]).try_into().unwrap());
-    b0.store((&mut output[4..8]).try_into().unwrap());
+    c0.store((&mut output[4..8]).try_into().unwrap());
     a1.store((&mut output[8..12]).try_into().unwrap());
-    b1.store((&mut output[12..16]).try_into().unwrap());
+    c1.store((&mut output[12..16]).try_into().unwrap());
     a2.store((&mut output[16..20]).try_into().unwrap());
-    b2.store((&mut output[20..24]).try_into().unwrap());
+    c2.store((&mut output[20..24]).try_into().unwrap());
     a3.store((&mut output[24..28]).try_into().unwrap());
-    b3.store((&mut output[28..32]).try_into().unwrap());
-    c0.store((&mut output[32..36]).try_into().unwrap());
+    c3.store((&mut output[28..32]).try_into().unwrap());
+    b0.store((&mut output[32..36]).try_into().unwrap());
     d0.store((&mut output[36..40]).try_into().unwrap());
-    c1.store((&mut output[40..44]).try_into().unwrap());
+    b1.store((&mut output[40..44]).try_into().unwrap());
     d1.store((&mut output[44..48]).try_into().unwrap());
-    c2.store((&mut output[48..52]).try_into().unwrap());
+    b2.store((&mut output[48..52]).try_into().unwrap());
     d2.store((&mut output[52..56]).try_into().unwrap());
-    c3.store((&mut output[56..60]).try_into().unwrap());
+    b3.store((&mut output[56..60]).try_into().unwrap());
     d3.store((&mut output[60..64]).try_into().unwrap());
 }
 

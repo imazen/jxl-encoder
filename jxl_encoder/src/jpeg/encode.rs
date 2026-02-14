@@ -719,8 +719,6 @@ mod tests {
         );
 
         // Save for manual inspection
-        let out_path = "/mnt/v/output/jpeg-reencoding/landscape1.jxl";
-        std::fs::write(out_path, &jxl).expect("failed to write JXL");
-        eprintln!("Saved to {out_path}");
+        crate::test_helpers::save_test_output("jpeg-reencoding", "landscape1.jxl", &jxl);
     }
 }
