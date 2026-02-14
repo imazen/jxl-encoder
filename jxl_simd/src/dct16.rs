@@ -1000,6 +1000,7 @@ fn dct1d_16_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32
 /// Process a batch of 4 rows through gather → 8-point DCT → scale → scatter.
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
+#[allow(clippy::needless_range_loop)]
 fn neon_dct8_batch(
     token: archmage::NeonToken,
     data_in: &[f32],
@@ -1024,6 +1025,7 @@ fn neon_dct8_batch(
 /// Process a batch of 4 rows through gather → 16-point DCT → scale → scatter.
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
+#[allow(clippy::needless_range_loop)]
 fn neon_dct16_batch(
     token: archmage::NeonToken,
     data_in: &[f32],

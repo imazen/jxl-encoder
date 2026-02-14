@@ -63,6 +63,9 @@ butteraugli = "0.5.1"
 imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
+
+# codec-corpus uses tar_light which depends on libc (Unix-only)
+[target.'cfg(unix)'.dev-dependencies]
 codec-corpus = "1"
 
 [lints]
