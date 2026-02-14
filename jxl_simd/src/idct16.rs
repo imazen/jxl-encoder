@@ -734,7 +734,7 @@ fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut 
 
 /// Gather column `j` from 4 consecutive rows starting at `base_row` (stride `s`).
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn gather_col_neon(
     token: archmage::NeonToken,
     data: &[f32],
@@ -755,7 +755,7 @@ fn gather_col_neon(
 
 /// Scatter f32x4 lanes back to column `j` of 4 consecutive rows (stride `s`).
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn scatter_col_neon(
     v: magetypes::simd::f32x4,
     data: &mut [f32],
@@ -772,7 +772,7 @@ fn scatter_col_neon(
 
 /// NEON batched 4-point inverse DCT on f32x4 arrays.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn idct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
@@ -811,7 +811,7 @@ fn idct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32
 
 /// NEON batched 8-point IDCT core (no N scaling) on f32x4 arrays.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn idct1d_8_core_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
@@ -852,7 +852,7 @@ fn idct1d_8_core_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd
 
 /// NEON batched 8-point IDCT with *= 8 scaling.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn idct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
@@ -865,7 +865,7 @@ fn idct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32
 
 /// NEON batched 16-point IDCT with *= 16 scaling.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn idct1d_16_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 16]) {
     use magetypes::simd::f32x4;
 
@@ -928,7 +928,7 @@ fn idct1d_16_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f3
 
 /// Process a batch of 4 rows through gather → 8-point IDCT → scatter.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn neon_idct8_batch(
     token: archmage::NeonToken,
     data_in: &[f32],
@@ -948,7 +948,7 @@ fn neon_idct8_batch(
 
 /// Process a batch of 4 rows through gather → 16-point IDCT → scatter.
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 fn neon_idct16_batch(
     token: archmage::NeonToken,
     data_in: &[f32],
@@ -968,6 +968,7 @@ fn neon_idct16_batch(
 
 /// NEON 16x16 inverse DCT: process 4 rows at a time.
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
 fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
     let mut tmp = [0.0f32; 256];
@@ -993,6 +994,7 @@ fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut 
 
 /// NEON 16x8 inverse DCT.
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
 fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
@@ -1034,6 +1036,7 @@ fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [
 
 /// NEON 8x16 inverse DCT.
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
 fn idct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];

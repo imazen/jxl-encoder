@@ -1530,6 +1530,31 @@ on unpadded dimensions — the C++ reference pads first and never worries about 
 - Group size is 256x256 pixels
 - Block size is 8x8 for DCT
 
+### SIMD Target Feature Boundaries (Feb 13, 2026)
+
+The performance bottleneck with SIMD dispatch is NOT `summon()` (it's a cached atomic load, ~1.3ns).
+The bottleneck is the **target feature mismatch at call boundaries**. When a function without
+`#[target_feature]` calls a function with `#[target_feature]`, LLVM cannot inline across that
+boundary — costing up to 4-6x on hot loops (measured in archmage benchmarks).
+
+**Fix**: Expose concrete `_avx2(token, ...)` / `_neon(token, ...)` / `_scalar(...)` variants
+from jxl_simd. Have jxl_encoder callers be `#[arcane]` functions that accept a concrete token
+type, then call the matching variant directly. The token type IS the performance benefit —
+it carries `#[target_feature]` through the call chain.
+
+**Do NOT** create a `SimdDispatch` struct that wraps `Option<Token>`. That just moves the
+dispatch inside the function and doesn't solve the boundary problem.
+
+**Archmage annotation rules**:
+- `#[arcane]`: Top-level SIMD entry points. Adds `#[target_feature]`.
+- `#[rite]`: Inner helpers called from `#[arcane]`. Adds `#[target_feature]` + `#[inline]`.
+  Requires a token parameter (macro derives features from token type).
+- `#[inline(always)]`: Only for helpers WITHOUT a token parameter (pure scalar code that
+  gets inlined into the `#[arcane]` caller). Works because inlining plain code INTO a
+  `#[target_feature]` context is fine; the reverse is not.
+- **Never call `#[arcane]` from `#[arcane]`** — use `#[rite]` for function-to-function calls
+  within SIMD code.
+
 ### Enhanced Clustering Cost Model Discovery (Jan 31, 2026)
 
 **Finding:** Enhanced clustering with pair merge refinement produces ~0.5% LARGER
