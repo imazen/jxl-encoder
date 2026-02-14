@@ -33,16 +33,6 @@ pub use api::{
     Quality, ResultAtExt, Stop, Unstoppable, at,
 };
 
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-#[path = "api_tests.rs"]
-mod api_tests;
-
-#[cfg(test)]
-pub mod test_helpers;
-
 /// Group dimension in pixels (256x256 groups).
 pub const GROUP_DIM: usize = 256;
 
@@ -54,3 +44,13 @@ pub const BLOCK_SIZE: usize = BLOCK_DIM * BLOCK_DIM;
 
 /// JXL signature bytes.
 pub const JXL_SIGNATURE: [u8; 2] = [0xFF, 0x0A];
+
+#[cfg(test)]
+pub mod test_helpers;
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+#[path = "api_tests.rs"]
+mod api_tests;

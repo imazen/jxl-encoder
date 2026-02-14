@@ -50,7 +50,7 @@ mod static_codes;
 mod transform;
 mod xyb;
 
-pub use encoder::VarDctEncoder;
+pub use encoder::{VarDctEncoder, VarDctOutput};
 #[cfg(feature = "rate-control")]
 pub use precomputed::EncoderPrecomputed;
 #[cfg(feature = "rate-control")]

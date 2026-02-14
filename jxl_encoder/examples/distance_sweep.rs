@@ -2,6 +2,8 @@
 //! Also compares with cjxl at each distance level.
 use std::io::Cursor;
 
+use jxl_encoder::{LossyConfig, PixelLayout};
+
 fn main() {
     let base = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
     let ssim2_bin = format!("{}/work/fast-ssim2/target/release/fast-ssim2-cli", base);
@@ -14,24 +16,13 @@ fn main() {
     eprintln!("Loading: {}", img_path);
     let img = image::open(&img_path).expect("Could not open image");
     let rgb = img.to_rgb8();
-    let (width, height) = (rgb.width() as usize, rgb.height() as usize);
+    let (width, height) = (rgb.width(), rgb.height());
     eprintln!("Size: {}x{}", width, height);
 
     let out_dir = "/mnt/v/output/jxl-encoder-rs/distance_sweep";
     std::fs::create_dir_all(out_dir).ok();
     let orig_path = format!("{}/original.png", out_dir);
     img.save(&orig_path).expect("Failed to save original");
-
-    // Convert to linear RGB for our encoder
-    let linear_rgb: Vec<f32> = rgb
-        .pixels()
-        .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
-            [r, g, b]
-        })
-        .collect();
 
     let distances = [2.0f32, 1.0, 0.5, 0.25, 0.1, 0.05, 0.01];
 
@@ -44,12 +35,11 @@ fn main() {
     eprintln!("{}", "-".repeat(78));
 
     for &dist in &distances {
-        // --- Our tiny encoder ---
-        let encoder = jxl_encoder::vardct::VarDctEncoder::new(dist);
-        let bytes = encoder
-            .encode(width, height, &linear_rgb, None)
+        // --- Our encoder ---
+        let bytes = LossyConfig::new(dist)
+            .encode(rgb.as_raw(), width, height, PixelLayout::Rgb8)
             .expect("Encoding failed");
-        let tiny_bpp = bytes.len() as f64 * 8.0 / (width * height) as f64;
+        let tiny_bpp = bytes.len() as f64 * 8.0 / (width as usize * height as usize) as f64;
 
         // Decode with jxl-oxide
         let reader = Cursor::new(&bytes);
@@ -60,7 +50,7 @@ fn main() {
         let fb = render.image_all_channels();
         let decoded = fb.buf();
 
-        let mut output_img = image::RgbImage::new(width as u32, height as u32);
+        let mut output_img = image::RgbImage::new(width, height);
         for (i, pixel) in output_img.pixels_mut().enumerate() {
             let r = (decoded[i * 3].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
             let g = (decoded[i * 3 + 1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
@@ -88,7 +78,7 @@ fn main() {
 
         let (cjxl_bytes, cjxl_bpp, cjxl_ssim) = if cjxl_ok {
             let cjxl_size = std::fs::metadata(&cjxl_path).map(|m| m.len()).unwrap_or(0);
-            let cjxl_bpp_val = cjxl_size as f64 * 8.0 / (width * height) as f64;
+            let cjxl_bpp_val = cjxl_size as f64 * 8.0 / (width as usize * height as usize) as f64;
 
             // Decode with djxl
             let djxl_ok = std::process::Command::new(format!(

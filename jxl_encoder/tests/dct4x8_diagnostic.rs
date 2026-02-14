@@ -213,9 +213,10 @@ fn diagnose_dct4x8_real_photo() {
     // Encode with DCT4X8
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let (bytes_4x8, _) = encoder
+    let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X8 encode failed");
+        .expect("DCT4X8 encode failed")
+        .data;
     println!("\nDCT4X8 encoded: {} bytes", bytes_4x8.len());
 
     // Decode
@@ -226,9 +227,10 @@ fn diagnose_dct4x8_real_photo() {
     // Compare with DCT8
     let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let (bytes_dct8, _) = encoder2
+    let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
-        .expect("DCT8 encode failed");
+        .expect("DCT8 encode failed")
+        .data;
     println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
 
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
@@ -284,9 +286,10 @@ fn diagnose_dct4x8_synthetic() {
     // Encode with DCT4X8
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let (bytes_4x8, _) = encoder
+    let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X8 encode failed");
+        .expect("DCT4X8 encode failed")
+        .data;
     println!("\nDCT4X8 encoded: {} bytes", bytes_4x8.len());
 
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
@@ -295,9 +298,10 @@ fn diagnose_dct4x8_synthetic() {
     // Compare with DCT8
     let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let (bytes_dct8, _) = encoder2
+    let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
-        .expect("DCT8 encode failed");
+        .expect("DCT8 encode failed")
+        .data;
     println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
 
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
@@ -331,9 +335,10 @@ fn diagnose_single_block_dct4x8() {
     // Encode with DCT4X8
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let (bytes_4x8, _) = encoder
+    let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X8 encode failed");
+        .expect("DCT4X8 encode failed")
+        .data;
     println!("\nDCT4X8 encoded: {} bytes", bytes_4x8.len());
 
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
@@ -373,17 +378,19 @@ fn find_extreme_pixels() {
     // Encode with DCT4X8
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(5); // DCT4X8
-    let (bytes_4x8, _) = encoder
+    let bytes_4x8 = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X8 encode failed");
+        .expect("DCT4X8 encode failed")
+        .data;
     let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes_4x8);
 
     // Also encode with DCT8 for comparison
     let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let (bytes_dct8, _) = encoder2
+    let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
-        .expect("DCT8 encode failed");
+        .expect("DCT8 encode failed")
+        .data;
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
 
     // Find the most extreme pixels
@@ -483,9 +490,10 @@ fn verify_dct4x8_weights_applied() {
     for distance in [0.5f32, 1.0, 2.0, 4.0] {
         let mut encoder = VarDctEncoder::new(distance);
         encoder.force_strategy = Some(5); // DCT4X8
-        let (bytes, _) = encoder
+        let bytes = encoder
             .encode(w, h, &contrast_block, None)
-            .expect("encode failed");
+            .expect("encode failed")
+            .data;
         let (_, _, dec_pixels) = decode_with_jxl_oxide(&bytes);
 
         // Check if top-bottom contrast is preserved
@@ -602,9 +610,10 @@ fn test_dct4x4_jxl_oxide_decode() {
     // Encode with DCT4X4
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let (bytes, _) = encoder
+    let bytes = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X4 encode failed");
+        .expect("DCT4X4 encode failed")
+        .data;
 
     // Decode with jxl-oxide
     let (dec_w, dec_h, _dec_pixels) = decode_with_jxl_oxide(&bytes);
@@ -640,9 +649,10 @@ fn test_dct4x4_jxl_rs_decode() {
     // Encode with DCT4X4
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let (bytes, _) = encoder
+    let bytes = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X4 encode failed");
+        .expect("DCT4X4 encode failed")
+        .data;
 
     // Decode with jxl-rs
     let result = decode_with_jxl_rs(&bytes);
@@ -684,9 +694,10 @@ fn test_dct4x4_multigroup() {
     // Encode with DCT4X4
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let (bytes, _) = encoder
+    let bytes = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X4 encode failed");
+        .expect("DCT4X4 encode failed")
+        .data;
 
     // Decode with both decoders
     let (dec_w, dec_h, _) = decode_with_jxl_oxide(&bytes);
@@ -729,9 +740,10 @@ fn diagnose_dct4x4_real_photo() {
     // Encode with DCT4X4
     let mut encoder = VarDctEncoder::new(2.0);
     encoder.force_strategy = Some(7); // DCT4X4
-    let (bytes_4x4, _) = encoder
+    let bytes_4x4 = encoder
         .encode(w, h, &linear, None)
-        .expect("DCT4X4 encode failed");
+        .expect("DCT4X4 encode failed")
+        .data;
     println!("\nDCT4X4 encoded: {} bytes", bytes_4x4.len());
 
     // Decode
@@ -742,9 +754,10 @@ fn diagnose_dct4x4_real_photo() {
     // Compare with DCT8
     let mut encoder2 = VarDctEncoder::new(2.0);
     encoder2.ac_strategy_enabled = false;
-    let (bytes_dct8, _) = encoder2
+    let bytes_dct8 = encoder2
         .encode(w, h, &linear, None)
-        .expect("DCT8 encode failed");
+        .expect("DCT8 encode failed")
+        .data;
     println!("\nDCT8 encoded: {} bytes", bytes_dct8.len());
 
     let (_, _, dec8_pixels) = decode_with_jxl_oxide(&bytes_dct8);
@@ -776,9 +789,10 @@ fn test_error_diffusion_jxl_oxide_decode() {
     // Encode with error diffusion enabled
     let mut encoder = VarDctEncoder::new(4.0); // High compression to stress error diffusion
     encoder.error_diffusion = true;
-    let (bytes, _) = encoder
+    let bytes = encoder
         .encode(w, h, &linear, None)
-        .expect("Encode with error diffusion failed");
+        .expect("Encode with error diffusion failed")
+        .data;
 
     // Decode with jxl-oxide
     let (dec_w, dec_h, _dec_pixels) = decode_with_jxl_oxide(&bytes);
@@ -814,9 +828,10 @@ fn test_error_diffusion_jxl_rs_decode() {
     // Encode with error diffusion enabled
     let mut encoder = VarDctEncoder::new(4.0);
     encoder.error_diffusion = true;
-    let (bytes, _) = encoder
+    let bytes = encoder
         .encode(w, h, &linear, None)
-        .expect("Encode with error diffusion failed");
+        .expect("Encode with error diffusion failed")
+        .data;
 
     // Decode with jxl-rs
     let result = decode_with_jxl_rs(&bytes);
@@ -857,9 +872,10 @@ fn test_error_diffusion_multigroup() {
     // Encode with error diffusion enabled
     let mut encoder = VarDctEncoder::new(4.0);
     encoder.error_diffusion = true;
-    let (bytes, _) = encoder
+    let bytes = encoder
         .encode(w, h, &linear, None)
-        .expect("Encode with error diffusion failed");
+        .expect("Encode with error diffusion failed")
+        .data;
 
     // Decode with both decoders
     let (dec_w, dec_h, _) = decode_with_jxl_oxide(&bytes);
@@ -902,16 +918,18 @@ fn diagnose_error_diffusion_quality() {
         // Encode without error diffusion
         let mut encoder_off = VarDctEncoder::new(distance);
         encoder_off.error_diffusion = false;
-        let (bytes_off, _) = encoder_off
+        let bytes_off = encoder_off
             .encode(w, h, &linear, None)
-            .expect("Encode failed (off)");
+            .expect("Encode failed (off)")
+            .data;
 
         // Encode with error diffusion
         let mut encoder_on = VarDctEncoder::new(distance);
         encoder_on.error_diffusion = true;
-        let (bytes_on, _) = encoder_on
+        let bytes_on = encoder_on
             .encode(w, h, &linear, None)
-            .expect("Encode failed (on)");
+            .expect("Encode failed (on)")
+            .data;
 
         let (_, _, pixels_off) = decode_with_jxl_oxide(&bytes_off);
         let (_, _, pixels_on) = decode_with_jxl_oxide(&bytes_on);

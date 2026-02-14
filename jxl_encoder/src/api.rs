@@ -1246,7 +1246,7 @@ impl<'a> EncodeRequest<'a> {
             tiny.icc_profile = Some(icc.to_vec());
         }
 
-        let (data, strategy_counts) = tiny
+        let output = tiny
             .encode(w, h, &linear_rgb, alpha.as_deref())
             .map_err(EncodeError::from)?;
 
@@ -1257,14 +1257,14 @@ impl<'a> EncodeRequest<'a> {
 
         let stats = EncodeStats {
             mode: EncodeMode::Lossy,
-            strategy_counts,
+            strategy_counts: output.strategy_counts,
             gaborish: cfg.gaborish,
             ans: cfg.use_ans,
             butteraugli_iters: butteraugli_iters_actual,
             pixel_domain_loss: cfg.pixel_domain_loss,
             ..Default::default()
         };
-        Ok((data, stats))
+        Ok((output.data, stats))
     }
 }
 

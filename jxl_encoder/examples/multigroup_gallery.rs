@@ -1,6 +1,8 @@
-//! Encode several multi-group CLIC images and create visual comparisons
+//! Encode several multi-group CLIC images and create visual comparisons.
 use std::io::Cursor;
 use std::path::Path;
+
+use jxl_encoder::{LossyConfig, PixelLayout};
 
 fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
     let path = Path::new(img_path);
@@ -12,36 +14,24 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
     eprintln!("=== {} ===", label);
     let img = image::open(img_path).expect("Could not open image");
     let rgb = img.to_rgb8();
-    let (width, height) = (rgb.width() as usize, rgb.height() as usize);
+    let (width, height) = (rgb.width(), rgb.height());
     eprintln!(
         "  Size: {}x{} ({} groups)",
         width,
         height,
-        width.div_ceil(256) * height.div_ceil(256)
+        (width as usize).div_ceil(256) * (height as usize).div_ceil(256)
     );
 
-    // Convert to linear RGB
-    let linear_rgb: Vec<f32> = rgb
-        .pixels()
-        .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
-            [r, g, b]
-        })
-        .collect();
-
-    // Encode
-    let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
-        .encode(width, height, &linear_rgb, None)
+    // Encode using public API
+    let bytes = LossyConfig::new(1.0)
+        .encode(rgb.as_raw(), width, height, PixelLayout::Rgb8)
         .expect("Encoding failed");
-    let orig_bytes = width * height * 3;
+    let orig_bytes = width as usize * height as usize * 3;
     eprintln!(
         "  Encoded: {} bytes ({:.1}:1 ratio, {:.2} bpp)",
         bytes.len(),
         orig_bytes as f64 / bytes.len() as f64,
-        bytes.len() as f64 * 8.0 / (width * height) as f64
+        bytes.len() as f64 * 8.0 / (width as usize * height as usize) as f64
     );
 
     // Save JXL
@@ -58,7 +48,7 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
     let decoded = fb.buf();
 
     // Convert to sRGB u8
-    let mut output_img = image::RgbImage::new(width as u32, height as u32);
+    let mut output_img = image::RgbImage::new(width, height);
     for (i, pixel) in output_img.pixels_mut().enumerate() {
         let r = (decoded[i * 3].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
         let g = (decoded[i * 3 + 1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
@@ -119,7 +109,7 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
                 width,
                 height,
                 bytes.len(),
-                bytes.len() as f64 * 8.0 / (width * height) as f64
+                bytes.len() as f64 * 8.0 / (width as usize * height as usize) as f64
             ),
             &annotated_path,
         ])
