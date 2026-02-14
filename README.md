@@ -1,87 +1,98 @@
 # jxl-encoder-rs
 
-A pure Rust JPEG XL encoder supporting both lossy (VarDCT) and lossless (Modular) encoding. Verified against three independent decoders: jxl-rs, jxl-oxide, and djxl (libjxl).
+Pure Rust JPEG XL encoder. Lossy (VarDCT) and lossless (Modular) paths, both producing valid bitstreams verified against three independent decoders: [jxl-rs](https://github.com/nicoshev/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
-## Status
+`#![forbid(unsafe_code)]` with default features. `no_std + alloc` compatible.
 
-**655 tests passing** (Feb 2026). Both encoding paths produce valid bitstreams decoded by all three reference decoders.
+742 tests passing (Feb 2026).
 
-| Mode | Status |
-|------|--------|
-| Lossy (VarDCT) | Working — all image sizes, 19/27 AC strategies, ANS entropy coding |
-| Lossless (Modular) | Working — RGB, RGBA, grayscale, any size, ANS + LZ77 |
+## Library usage
 
-### Lossy Quality vs libjxl
+```rust
+use jxl_encoder::{LossyConfig, LosslessConfig, PixelLayout};
 
-At low distances (d <= 1.0), we're within 3% of cjxl effort 5 file sizes and 14-16% smaller than effort 1. At higher distances (d >= 2.0), the gap widens to ~22-26% vs effort 5 due to missing cost model refinements. See CLAUDE.md for detailed RD tables.
+// Lossy — distance 1.0 is visually lossless
+let jxl = LossyConfig::new(1.0)
+    .encode(&pixels, width, height, PixelLayout::Rgb8)?;
 
-### Feature Parity vs libjxl
+// Lossless
+let jxl = LosslessConfig::new()
+    .encode(&pixels, width, height, PixelLayout::Rgb8)?;
 
-We implement all AC strategies that libjxl evaluates through its default effort level (effort 7, Squirrel). Efforts 8-9 use the same strategies — the quality difference at higher efforts comes entirely from cost model refinements (butteraugli quantization loop, finer search grids), not missing transforms.
+// Full control — limits, metadata, cancellation
+let jxl = LossyConfig::new(1.0)
+    .with_ans(true)
+    .with_gaborish(true)
+    .encode_request(width, height, PixelLayout::Rgba8)
+    .with_limits(&jxl_encoder::Limits::default())
+    .encode(&pixels)?;
+```
 
-| Feature | libjxl e5 | libjxl e7 | Us |
-|---------|-----------|-----------|-----|
-| AC strategies | 7 | 19 | 19 |
-| ANS entropy coding | No | Yes | Yes |
-| Custom coefficient orders | No | Yes | Yes |
-| Pixel-domain loss | Yes | Yes | Yes |
-| Adaptive quantization | Yes | Yes | Yes |
-| Gaborish | Yes | Yes | Yes |
-| Error diffusion | No | Yes | Yes (opt-in) |
-| Butteraugli quant loop | No | No | No |
-| Splines/patches/dots | No | Yes | No |
+Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `LinearRgb32F`.
 
 ## CLI
 
 ```bash
-cargo build --release -p jxl_encoder_cli
+cargo install jxl-encoder-cli
 
-# Lossy encoding (distance=1.0 is visually lossless)
+# Lossy (distance 1.0 = visually lossless)
 cjxl-rs input.png output.jxl -d 1.0
 
-# Lossless encoding
+# Lossless
 cjxl-rs input.png output.jxl --lossless
 
 # See all options
 cjxl-rs --help
 ```
 
-### CLI Flags
+## Lossy quality vs libjxl
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-d, --distance` | 1.0 | Butteraugli distance (0 = mathematically lossless, 1.0 = visually lossless) |
-| `--lossless` | off | Lossless modular encoding |
-| `--no-gaborish` | on | Disable gaborish pre-filter |
-| `--no-pixel-domain-loss` | on | Disable pixel-domain loss (faster, lower quality) |
-| `--no-ans` | ANS on | Use Huffman instead of ANS |
-| `--no-optimize-codes` | on | Single-pass static Huffman (streaming) |
-| `--dct8-only` | off | Force DCT8 (disable multi-strategy selection) |
-| `--noise` | off | Enable noise synthesis |
-| `--no-error-diffusion` | on | Disable error diffusion in AC quantization |
-| `--lz77` | off | Enable LZ77 backward references (ANS two-pass only) |
-| `--tree-learning` | off | Content-adaptive MA tree learning for modular |
+At low distances (d <= 1.0), we're within 3% of cjxl effort 5 file sizes and 14-16% smaller than effort 1. At higher distances (d >= 2.0), the gap widens to ~22-26% vs effort 5 — mostly due to missing iterative rate control and full histogram clustering.
 
-## Library Usage
+## Feature parity
 
-```rust
-use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
+We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirrel). The remaining 8 are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+).
 
-// Simple — one line, no request visible
-let jxl = LossyConfig::new(1.0)
-    .encode(&pixels, width, height, PixelLayout::Rgb8)?;
+| Feature | libjxl e5 | libjxl e7 | Us |
+|---------|-----------|-----------|-----|
+| AC strategies | 7 | 19 | 19 |
+| ANS entropy coding | Yes | Yes | Yes |
+| Custom coefficient orders | Yes | Yes | Yes |
+| Pixel-domain loss | Yes | Yes | Yes |
+| Adaptive quantization | Yes | Yes | Yes |
+| Gaborish | Yes | Yes | Yes |
+| Butteraugli quant loop | Yes | Yes | Yes (default-on, 2 iterations) |
+| Error diffusion | No | Yes | Yes (default-on) |
+| Splines/patches/dots | No | Yes | No |
 
-// Full control — request layer for metadata, limits, cancellation
-let jxl = LosslessConfig::new()
-    .with_tree_learning(true)
-    .encode_request(width, height, PixelLayout::Rgb8)
-    .with_limits(&limits)
-    .encode(&pixels)?;
-```
+### Lossy features
 
-## AC Strategy Coverage
+- 19/27 AC strategies: DCT8, DCT4x4, DCT4x8/8x4, DCT16x8/8x16, DCT16x16, DCT32x16/16x32, DCT32x32, DCT64x32/32x64, DCT64x64, IDENTITY, DCT2x2, AFV0-3
+- ANS entropy coding (default-on, 4-10% smaller than Huffman)
+- Butteraugli quantization loop (default-on, iteratively refines per-block quality)
+- Pixel-domain loss in cost model (IDCT of quantization error, perceptual masking)
+- Adaptive quantization with perceptual masking
+- Chroma-from-luma (per-tile least-squares)
+- Gaborish inverse pre-filter
+- Custom coefficient ordering
+- Noise synthesis (opt-in)
+- Error diffusion in AC quantization
+- EPF per-block sharpness
+- Content-adaptive block context map
+- JPEG re-encoding (opt-in feature)
 
-19 of 27 JXL AC strategies are implemented. The 8 missing strategies are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+).
+### Lossless features
+
+- RCT (all 42 variants)
+- ANS + Huffman entropy coding
+- LZ77 (RLE + hash chain backward references)
+- Content-adaptive MA tree learning (14 predictors, 16 properties)
+- Palette transform (auto-detect for graphics)
+- Squeeze transform (Haar wavelet)
+- Histogram clustering
+- Multi-group encoding (any image size)
+
+## AC strategy coverage
 
 | Strategy | Pixels | Min Distance | libjxl Effort |
 |----------|--------|-------------|---------------|
@@ -102,47 +113,40 @@ let jxl = LosslessConfig::new()
 
 ```bash
 cargo build                                # debug
-cargo build --release -p jxl_encoder_cli   # release CLI
-cargo test                                 # all tests
-cargo clippy -- -D warnings                # lint
+cargo build --release -p jxl-encoder-cli   # release CLI
+cargo test --workspace --lib --tests       # all tests
+cargo clippy --workspace -- -D warnings    # lint
 ```
 
-## Project Structure
+## Project structure
 
 ```
 jxl-encoder-rs/
-├── jxl_encoder/             # Main encoder library
-│   ├── src/
-│   │   ├── tiny/            # Production encoder
-│   │   │   ├── encoder.rs       # Main encode loop
-│   │   │   ├── ac_strategy.rs   # AC strategy selection
-│   │   │   ├── transform.rs     # DCT + quantization
-│   │   │   ├── dct.rs           # Forward/inverse DCT
-│   │   │   ├── bitstream.rs     # Bitstream assembly
-│   │   │   └── ...
-│   │   ├── entropy_coding/  # ANS, Huffman, HybridUint
-│   │   └── headers/         # File/frame headers
-└── jxl_encoder_cli/         # CLI tool (cjxl-rs)
+├── jxl_encoder/             # Main encoder library (jxl-encoder on crates.io)
+│   └── src/
+│       ├── api.rs               # Public API (LossyConfig, LosslessConfig, EncodeRequest)
+│       ├── vardct/              # VarDCT (lossy) encoder
+│       │   ├── encoder.rs           # Main encode loop
+│       │   ├── ac_strategy.rs       # AC strategy types and selection
+│       │   ├── transform.rs         # DCT + quantization
+│       │   ├── dct/                 # Forward/inverse DCT (8-64)
+│       │   └── ...
+│       ├── modular/             # Modular (lossless) encoder
+│       ├── entropy_coding/      # ANS, Huffman, HybridUint, LZ77
+│       └── headers/             # File/frame headers
+├── jxl_simd/                # SIMD primitives (jxl-encoder-simd on crates.io)
+└── jxl_encoder_cli/         # CLI tool: cjxl-rs (jxl-encoder-cli on crates.io)
 ```
 
 ## Credits
 
-This project builds on excellent work by others:
-
-- **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — The reference JPEG XL implementation. Our encoder's algorithms, quantization weights, cost models, and bitstream format are derived from libjxl's encoder. The [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) subset was used as the initial porting target.
-
-- **[jxl-rs](https://github.com/nicoshev/jxl-rs)** (JPEG XL Project Authors, BSD-3-Clause) — Pure Rust JPEG XL decoder used as the primary roundtrip validation decoder.
-
-- **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Independent Rust JPEG XL decoder used for secondary validation.
-
-- **Claude** (Anthropic) — AI-assisted development. Not all code manually reviewed — review critical paths before production use.
+- **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — Reference encoder. Our algorithms, quantization weights, cost models, and bitstream format are derived from libjxl. [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) was the initial porting target.
+- **[jxl-rs](https://github.com/nicoshev/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
+- **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Secondary validation decoder.
+- **Claude** (Anthropic) — AI-assisted development. Not all code has been manually reviewed; review critical paths before production use.
 
 ## License
 
-Sustainable, large-scale open source work requires a funding model, and I have been
-doing this full-time for 15 years. If you are using this for closed-source development
-AND make over $1 million per year, you'll need to buy a commercial license at
-https://www.imazen.io/pricing
+AGPL-3.0-or-later. Commercial licenses at [imazen.io/pricing](https://www.imazen.io/pricing).
 
-Commercial licenses are similar to the Apache 2 license but company-specific, and on
-a sliding scale. You can also use this under the AGPL v3.
+Large-scale open source work requires a funding model; I've been doing this full-time for 15 years. If you're using this for closed-source development and make over $1M/year, you need a commercial license. Commercial licenses are similar to Apache 2 but company-specific, on a sliding scale. You can also use this under the AGPL v3.
