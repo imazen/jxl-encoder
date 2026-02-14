@@ -20,15 +20,37 @@ use jxl_encoder::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use jxl_encoder::headers::extra_channels::ExtraChannelInfo;
 use jxl_encoder::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use jxl_encoder::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+
+// ── Feature-gated helpers ────────────────────────────────────────────────────
+
+trait NoButterflyExt {
+    fn no_butteraugli(self) -> Self;
+}
+
+impl NoButterflyExt for LossyConfig {
+    fn no_butteraugli(self) -> Self {
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            self.with_butteraugli_iters(0)
+        }
+        #[cfg(not(feature = "butteraugli-loop"))]
+        {
+            self
+        }
+    }
+}
 
 // ── Hashing helpers ─────────────────────────────────────────────────────────
 
+/// FNV-1a 64-bit hash — deterministic across all platforms and Rust versions.
+/// (DefaultHasher uses SipHash with version-dependent seeding.)
 fn hash_bytes(data: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    data.hash(&mut hasher);
-    hasher.finish()
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
 }
 
 /// Measure the file header byte length by encoding the header alone.
@@ -287,8 +309,8 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xfd9fa46d8584f85a, // Updated: butteraugli default off (effort 7 → 0 iters)
+        0x3ba5403031c1499f,
+        0xbba7dbf4d847a448, // Updated: butteraugli default off (effort 7 → 0 iters)
     );
 }
 
@@ -306,8 +328,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         false,
-        0x0c59aee426b21bff,
-        0xad077b38356254f1, // Updated: butteraugli default off
+        0xb81c2f58aebac4b3,
+        0x116e7e141f9a1c1a, // Updated: butteraugli default off
     );
 }
 
@@ -325,8 +347,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         false,
-        0xc5c1d402949b996b,
-        0x7cd8e8c92b41990a, // Updated: butteraugli default off
+        0x3333c10727f60b90,
+        0x7243fb9c7661d4f5, // Updated: butteraugli default off
     );
 }
 
@@ -344,8 +366,8 @@ fn lossy_rgba_32x32() {
         true,
         false,
         false,
-        0x5b0d878403288983,
-        0x9d48df98b1a5e106, // Updated: butteraugli default off
+        0xe058fd017b3de453,
+        0xfa91ade07b8789a3, // Updated: butteraugli default off
     );
 }
 
@@ -363,8 +385,8 @@ fn lossy_rgb16_32x32() {
         false,
         false,
         true,
-        0xc289a2241b87a923,
-        0x51de050955f10d01, // Updated: butteraugli default off
+        0xe37a0d041fe39334,
+        0xecf75fc475fca593, // Updated: butteraugli default off
     );
 }
 
@@ -383,8 +405,8 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xaeab6f98590e9d79, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0x10d494f850db0fb5, // Updated: butteraugli default off
     );
 }
 
@@ -403,8 +425,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xdd19a7aba6cce46a, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0x88bd6e74af75e73a, // Updated: butteraugli default off
     );
 }
 
@@ -423,8 +445,8 @@ fn lossy_with_noise() {
         false,
         false,
         false,
-        0x0c59aee426b21bff,
-        0xad077b38356254f1, // Updated: butteraugli default off
+        0xb81c2f58aebac4b3,
+        0x116e7e141f9a1c1a, // Updated: butteraugli default off
     );
 }
 
@@ -443,8 +465,8 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xa5e392b5ab87c192, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0x9e770fa82eebd2c3, // Updated: butteraugli default off
     );
 }
 
@@ -463,15 +485,15 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xfd9fa46d8584f85a, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0xbba7dbf4d847a448, // Updated: butteraugli default off
     );
 }
 
 #[test]
 fn lossy_no_butteraugli() {
     let data = LossyConfig::new(1.0)
-        .with_butteraugli_iters(0)
+        .no_butteraugli()
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -483,8 +505,8 @@ fn lossy_no_butteraugli() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xfd9fa46d8584f85a,
+        0x3ba5403031c1499f,
+        0xbba7dbf4d847a448,
     );
 }
 
@@ -503,8 +525,8 @@ fn lossy_force_dct8() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0x3412848bb6745bee, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0x40958266a0cacd23, // Updated: butteraugli default off
     );
 }
 
@@ -523,8 +545,8 @@ fn lossy_force_dct16x16() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xc7897f503dd423ca, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0xe37e7bd6b33e9b01, // Updated: butteraugli default off
     );
 }
 
@@ -532,7 +554,7 @@ fn lossy_force_dct16x16() {
 fn lossy_force_identity() {
     let data = LossyConfig::new(1.0)
         .with_force_strategy(Some(8)) // IDENTITY (raw strategy code)
-        .with_butteraugli_iters(0)
+        .no_butteraugli()
         .encode(&checkerboard_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -544,8 +566,8 @@ fn lossy_force_identity() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0x8f21f24c0f554990,
+        0x3ba5403031c1499f,
+        0x1c6f3ab39b54e55b,
     );
 }
 
@@ -553,7 +575,7 @@ fn lossy_force_identity() {
 fn lossy_force_dct2x2() {
     let data = LossyConfig::new(1.0)
         .with_force_strategy(Some(9)) // DCT2x2 (raw strategy code)
-        .with_butteraugli_iters(0)
+        .no_butteraugli()
         .encode(&checkerboard_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -565,8 +587,8 @@ fn lossy_force_dct2x2() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0x56e03497c31ebc16,
+        0x3ba5403031c1499f,
+        0x2bb092a623b577dd,
     );
 }
 
@@ -574,7 +596,7 @@ fn lossy_force_dct2x2() {
 fn lossy_force_dct4x4() {
     let data = LossyConfig::new(1.0)
         .with_force_strategy(Some(7)) // DCT4x4 (raw strategy code)
-        .with_butteraugli_iters(0)
+        .no_butteraugli()
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -586,8 +608,8 @@ fn lossy_force_dct4x4() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0x9bec22fce839654b,
+        0x3ba5403031c1499f,
+        0xacb4374610639248,
     );
 }
 
@@ -595,7 +617,7 @@ fn lossy_force_dct4x4() {
 fn lossy_force_afv0() {
     let data = LossyConfig::new(1.0)
         .with_force_strategy(Some(12)) // AFV0 (raw strategy code)
-        .with_butteraugli_iters(0)
+        .no_butteraugli()
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -607,8 +629,8 @@ fn lossy_force_afv0() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xce3c3afb5c6d8ebd,
+        0x3ba5403031c1499f,
+        0x2ad3ed0ab76e20b9,
     );
 }
 
@@ -628,8 +650,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         false,
-        0x0c59aee426b21bff,
-        0xad077b38356254f1, // Updated: butteraugli default off
+        0xb81c2f58aebac4b3,
+        0x116e7e141f9a1c1a, // Updated: butteraugli default off
     );
 }
 
@@ -649,8 +671,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         false,
-        0x0c59aee426b21bff,
-        0xad077b38356254f1, // Updated: butteraugli default off
+        0xb81c2f58aebac4b3,
+        0x116e7e141f9a1c1a, // Updated: butteraugli default off
     );
 }
 
@@ -668,8 +690,8 @@ fn lossy_distance_05() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xc0af91b28caa0f4a, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0xe6f1c1e29ac9510a, // Updated: butteraugli default off
     );
 }
 
@@ -687,8 +709,8 @@ fn lossy_distance_3() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xa5bb7ab1f9800074, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0x7b3c34804f975a6e, // Updated: butteraugli default off
     );
 }
 
@@ -702,7 +724,7 @@ fn lossy_all_off() {
         .with_noise(false)
         .with_error_diffusion(false)
         .with_pixel_domain_loss(false)
-        .with_butteraugli_iters(0)
+        .no_butteraugli()
         .with_lz77(false)
         .with_force_strategy(Some(0))
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
@@ -716,8 +738,8 @@ fn lossy_all_off() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0xb430b9d399883073,
+        0x3ba5403031c1499f,
+        0x869dcd8cef21fd5a,
     );
 }
 
@@ -735,8 +757,8 @@ fn lossy_bgr8() {
         false,
         false,
         false,
-        0x67432d0a6b4c4707,
-        0x4a2f12344dc27ddd, // Updated: butteraugli default off
+        0x3ba5403031c1499f,
+        0xe83341cd1d9eefc7, // Updated: butteraugli default off
     );
 }
 
@@ -756,8 +778,8 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x146c2f990929bcec,
+        0x6a695d8f2209b4e5,
+        0x613d6f1ab42ace8d,
     );
 }
 
@@ -775,8 +797,8 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         false,
-        0x05b14955e4f6edf7,
-        0xf8cc983b59b7eb50,
+        0x4610698f0cf81821,
+        0x5217cd2d54af8dbf,
     );
 }
 
@@ -794,8 +816,8 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         false,
-        0x258e0e951b29e3f0,
-        0x94110fdd27da7d2a,
+        0x492393a4c3f29174,
+        0xf3e34b97bc235c6d,
     );
 }
 
@@ -813,8 +835,8 @@ fn lossless_rgba_32x32() {
         true,
         false,
         false,
-        0x25054f58c0e81bd7,
-        0xe724811059ae6a7d,
+        0x68b6bf8f2098c6eb,
+        0x352eda930e119163,
     );
 }
 
@@ -832,8 +854,8 @@ fn lossless_gray_32x32() {
         false,
         true,
         false,
-        0x1b01148ea2842662,
-        0x83d0398435f8871a,
+        0xd7858d308a0845e5,
+        0xb3eb8879c469235d,
     );
 }
 
@@ -852,8 +874,8 @@ fn lossless_no_ans_huffman() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x146c2f990929bcec,
+        0x6a695d8f2209b4e5,
+        0x613d6f1ab42ace8d,
     );
 }
 
@@ -872,8 +894,8 @@ fn lossless_with_tree_learning() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x169c8e213c25ff69,
+        0x6a695d8f2209b4e5,
+        0xdcb0543fbf062bd8,
     );
 }
 
@@ -892,8 +914,8 @@ fn lossless_with_squeeze() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0xd3fe9c24629ac50a,
+        0x6a695d8f2209b4e5,
+        0x84b3b2f884be6872,
     );
 }
 
@@ -913,8 +935,8 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x146c2f990929bcec,
+        0x6a695d8f2209b4e5,
+        0x613d6f1ab42ace8d,
     );
 }
 
@@ -934,8 +956,8 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x146c2f990929bcec,
+        0x6a695d8f2209b4e5,
+        0x613d6f1ab42ace8d,
     );
 }
 
@@ -955,8 +977,8 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0xd3fe9c24629ac50a,
+        0x6a695d8f2209b4e5,
+        0x84b3b2f884be6872,
     );
 }
 
@@ -979,8 +1001,8 @@ fn lossless_all_off() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x146c2f990929bcec,
+        0x6a695d8f2209b4e5,
+        0x613d6f1ab42ace8d,
     );
 }
 
@@ -998,7 +1020,7 @@ fn lossless_bgr8() {
         false,
         false,
         false,
-        0x2f03d1fa6f96e57e,
-        0x49f8fe3c4a3d23c6,
+        0x6a695d8f2209b4e5,
+        0x1852b8db8adf5444,
     );
 }
