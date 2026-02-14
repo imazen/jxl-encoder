@@ -11,8 +11,12 @@
 // Ported float constants from C++ - exact values are intentional for parity.
 #![allow(clippy::excessive_precision)]
 
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+use once_cell::race::OnceBox;
+
 use super::common::DCT_BLOCK_SIZE;
-use std::sync::LazyLock;
 
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
@@ -389,99 +393,120 @@ const AFV_FREQS: [f64; 16] = [
 
 /// DCT8 quantization weights (192 floats: 64 per channel).
 /// Generated from libjxl's default DCT8 band parameters.
-static QUANT_WEIGHTS_DCT8: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        8,
-        8,
-        &[&DCT8_PARAMS[0], &DCT8_PARAMS[1], &DCT8_PARAMS[2]],
-        6,
-    )
-});
+static QUANT_WEIGHTS_DCT8: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct8() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT8.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            8,
+            8,
+            &[&DCT8_PARAMS[0], &DCT8_PARAMS[1], &DCT8_PARAMS[2]],
+            6,
+        ))
+    })
+}
 
 /// DCT16x16 quantization weights (768 floats: 256 per channel).
 /// Generated from libjxl's default DCT16x16 band parameters.
-static QUANT_WEIGHTS_DCT16X16: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        16,
-        16,
-        &[
-            &DCT16X16_PARAMS[0],
-            &DCT16X16_PARAMS[1],
-            &DCT16X16_PARAMS[2],
-        ],
-        7,
-    )
-});
+static QUANT_WEIGHTS_DCT16X16: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct16x16() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT16X16.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            16,
+            16,
+            &[
+                &DCT16X16_PARAMS[0],
+                &DCT16X16_PARAMS[1],
+                &DCT16X16_PARAMS[2],
+            ],
+            7,
+        ))
+    })
+}
 
 /// DCT16x8 quantization weights (384 floats: 128 per channel).
 /// Generated from libjxl's default DCT8X16 band parameters.
 /// GetQuantWeights(ROWS=8, COLS=16, ...) produces 8x16 = 128 values per channel.
-static QUANT_WEIGHTS_DCT16X8: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        8,
-        16,
-        &[&DCT16X8_PARAMS[0], &DCT16X8_PARAMS[1], &DCT16X8_PARAMS[2]],
-        7,
-    )
-});
+static QUANT_WEIGHTS_DCT16X8: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct16x8() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT16X8.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            8,
+            16,
+            &[&DCT16X8_PARAMS[0], &DCT16X8_PARAMS[1], &DCT16X8_PARAMS[2]],
+            7,
+        ))
+    })
+}
 
 /// DCT32x32 quantization weights (3072 floats: 1024 per channel).
-static QUANT_WEIGHTS_DCT32X32: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        32,
-        32,
-        &[
-            &DCT32X32_BAND_PARAMS[0],
-            &DCT32X32_BAND_PARAMS[1],
-            &DCT32X32_BAND_PARAMS[2],
-        ],
-        8,
-    )
-});
+static QUANT_WEIGHTS_DCT32X32: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct32x32() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT32X32.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            32,
+            32,
+            &[
+                &DCT32X32_BAND_PARAMS[0],
+                &DCT32X32_BAND_PARAMS[1],
+                &DCT32X32_BAND_PARAMS[2],
+            ],
+            8,
+        ))
+    })
+}
 
 /// DCT16x32/DCT32x16 quantization weights (1536 floats: 512 per channel).
 /// Used for both DCT32X16 (raw strategy 10) and DCT16X32 (raw strategy 11).
-static QUANT_WEIGHTS_DCT16X32: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        16,
-        32,
-        &[
-            &DCT16X32_BAND_PARAMS[0],
-            &DCT16X32_BAND_PARAMS[1],
-            &DCT16X32_BAND_PARAMS[2],
-        ],
-        8,
-    )
-});
+static QUANT_WEIGHTS_DCT16X32: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct16x32() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT16X32.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            16,
+            32,
+            &[
+                &DCT16X32_BAND_PARAMS[0],
+                &DCT16X32_BAND_PARAMS[1],
+                &DCT16X32_BAND_PARAMS[2],
+            ],
+            8,
+        ))
+    })
+}
 
 /// DCT64x64 quantization weights (12288 floats: 4096 per channel).
-static QUANT_WEIGHTS_DCT64X64: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        64,
-        64,
-        &[
-            &DCT64X64_BAND_PARAMS[0],
-            &DCT64X64_BAND_PARAMS[1],
-            &DCT64X64_BAND_PARAMS[2],
-        ],
-        8,
-    )
-});
+static QUANT_WEIGHTS_DCT64X64: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct64x64() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT64X64.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            64,
+            64,
+            &[
+                &DCT64X64_BAND_PARAMS[0],
+                &DCT64X64_BAND_PARAMS[1],
+                &DCT64X64_BAND_PARAMS[2],
+            ],
+            8,
+        ))
+    })
+}
 
 /// DCT32x64/DCT64x32 quantization weights (6144 floats: 2048 per channel).
 /// Used for both DCT64X32 (raw strategy 17) and DCT32X64 (raw strategy 18).
-static QUANT_WEIGHTS_DCT32X64: LazyLock<Vec<f32>> = LazyLock::new(|| {
-    generate_dct_quant_weights_rect(
-        32,
-        64,
-        &[
-            &DCT32X64_BAND_PARAMS[0],
-            &DCT32X64_BAND_PARAMS[1],
-            &DCT32X64_BAND_PARAMS[2],
-        ],
-        8,
-    )
-});
+static QUANT_WEIGHTS_DCT32X64: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct32x64() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT32X64.get_or_init(|| {
+        Box::new(generate_dct_quant_weights_rect(
+            32,
+            64,
+            &[
+                &DCT32X64_BAND_PARAMS[0],
+                &DCT32X64_BAND_PARAMS[1],
+                &DCT32X64_BAND_PARAMS[2],
+            ],
+            8,
+        ))
+    })
+}
 
 /// Generate DCT4X8 quantization weights using parametric formula.
 /// Matches jxl-oxide's dequant.rs:279-294.
@@ -539,16 +564,19 @@ fn generate_dct4x8_weights() -> Vec<f32> {
     weights
 }
 
-/// Lazily-generated DCT4X8 quantization weights (192 floats: 64 per channel).
-///
-/// Uses parametric formula matching jxl-oxide decoder. The decoder expects
-/// row-interleaved coefficients, so weights are row-duplicated from an 8x4 base.
-static QUANT_WEIGHTS_DCT4X8: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_weights);
+/// DCT4X8 quantization weights (192 floats: 64 per channel).
+/// Parametric formula matching jxl-oxide decoder, row-duplicated from 8x4 base.
+static QUANT_WEIGHTS_DCT4X8: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct4x8() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT4X8.get_or_init(|| Box::new(generate_dct4x8_weights()))
+}
 
-/// Lazily-generated DCT8X4 quantization weights (192 floats: 64 per channel).
-///
+/// DCT8X4 quantization weights (192 floats: 64 per channel).
 /// Same parametric formula as DCT4X8.
-static QUANT_WEIGHTS_DCT8X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x8_weights);
+static QUANT_WEIGHTS_DCT8X4: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct8x4() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT8X4.get_or_init(|| Box::new(generate_dct4x8_weights()))
+}
 
 /// Generate DCT4X4 quantization weights using parametric formula.
 /// Matches jxl-oxide's dequant.rs:257-277 (Dct4 case).
@@ -618,11 +646,12 @@ fn generate_dct4x4_weights() -> Vec<f32> {
     weights
 }
 
-/// Lazily-generated DCT4X4 quantization weights (192 floats: 64 per channel).
-///
-/// Uses parametric formula matching jxl-oxide decoder. The decoder expects
-/// 2x2-replicated coefficients, so weights are replicated from a 4x4 base.
-static QUANT_WEIGHTS_DCT4X4: LazyLock<Vec<f32>> = LazyLock::new(generate_dct4x4_weights);
+/// DCT4X4 quantization weights (192 floats: 64 per channel).
+/// Parametric formula matching jxl-oxide decoder, 2x2-replicated from 4x4 base.
+static QUANT_WEIGHTS_DCT4X4: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct4x4() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT4X4.get_or_init(|| Box::new(generate_dct4x4_weights()))
+}
 
 // =============================================================================
 // IDENTITY weights (quant_weights.cc:80-90, 564-579)
@@ -658,7 +687,10 @@ fn generate_identity_weights() -> Vec<f32> {
     weights
 }
 
-static QUANT_WEIGHTS_IDENTITY: LazyLock<Vec<f32>> = LazyLock::new(generate_identity_weights);
+static QUANT_WEIGHTS_IDENTITY: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_identity() -> &'static [f32] {
+    QUANT_WEIGHTS_IDENTITY.get_or_init(|| Box::new(generate_identity_weights()))
+}
 
 // =============================================================================
 // DCT2X2 weights (quant_weights.cc:48-77, 583-607)
@@ -717,7 +749,10 @@ fn generate_dct2x2_weights() -> Vec<f32> {
     weights
 }
 
-static QUANT_WEIGHTS_DCT2X2: LazyLock<Vec<f32>> = LazyLock::new(generate_dct2x2_weights);
+static QUANT_WEIGHTS_DCT2X2: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_dct2x2() -> &'static [f32] {
+    QUANT_WEIGHTS_DCT2X2.get_or_init(|| Box::new(generate_dct2x2_weights()))
+}
 
 // =============================================================================
 // AFV weights
@@ -803,7 +838,10 @@ fn generate_afv_weights() -> Vec<f32> {
 
 /// AFV quantization weights (192 floats: 64 per channel).
 /// All AFV variants (AFV0-AFV3) share the same weights.
-static QUANT_WEIGHTS_AFV: LazyLock<Vec<f32>> = LazyLock::new(generate_afv_weights);
+static QUANT_WEIGHTS_AFV: OnceBox<Vec<f32>> = OnceBox::new();
+fn quant_weights_afv() -> &'static [f32] {
+    QUANT_WEIGHTS_AFV.get_or_init(|| Box::new(generate_afv_weights()))
+}
 
 /// Get the quantization weight table for a given strategy and channel.
 ///
@@ -823,67 +861,67 @@ pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
         0 => {
             // DCT8: 64 coefficients per channel
             let offset = channel * 64;
-            &QUANT_WEIGHTS_DCT8[offset..offset + 64]
+            &quant_weights_dct8()[offset..offset + 64]
         }
         1 | 2 => {
             // DCT16X8 / DCT8X16: 128 coefficients per channel (share same weights)
             let offset = channel * 128;
-            &QUANT_WEIGHTS_DCT16X8[offset..offset + 128]
+            &quant_weights_dct16x8()[offset..offset + 128]
         }
         3 => {
             // DCT16X16: 256 coefficients per channel
             let offset = channel * 256;
-            &QUANT_WEIGHTS_DCT16X16[offset..offset + 256]
+            &quant_weights_dct16x16()[offset..offset + 256]
         }
         4 => {
             // DCT32X32: 1024 coefficients per channel
             let offset = channel * 1024;
-            &QUANT_WEIGHTS_DCT32X32[offset..offset + 1024]
+            &quant_weights_dct32x32()[offset..offset + 1024]
         }
         5 => {
             // DCT4X8: 64 coefficients per channel
             let offset = channel * DCT_BLOCK_SIZE;
-            &QUANT_WEIGHTS_DCT4X8[offset..offset + DCT_BLOCK_SIZE]
+            &quant_weights_dct4x8()[offset..offset + DCT_BLOCK_SIZE]
         }
         6 => {
             // DCT8X4: 64 coefficients per channel
             let offset = channel * DCT_BLOCK_SIZE;
-            &QUANT_WEIGHTS_DCT8X4[offset..offset + DCT_BLOCK_SIZE]
+            &quant_weights_dct8x4()[offset..offset + DCT_BLOCK_SIZE]
         }
         7 => {
             // DCT4X4: 64 coefficients per channel
             let offset = channel * DCT_BLOCK_SIZE;
-            &QUANT_WEIGHTS_DCT4X4[offset..offset + DCT_BLOCK_SIZE]
+            &quant_weights_dct4x4()[offset..offset + DCT_BLOCK_SIZE]
         }
         8 => {
             // IDENTITY: 64 coefficients per channel
             let offset = channel * 64;
-            &QUANT_WEIGHTS_IDENTITY[offset..offset + 64]
+            &quant_weights_identity()[offset..offset + 64]
         }
         9 => {
             // DCT2X2: 64 coefficients per channel
             let offset = channel * 64;
-            &QUANT_WEIGHTS_DCT2X2[offset..offset + 64]
+            &quant_weights_dct2x2()[offset..offset + 64]
         }
         10 | 11 => {
             // DCT32X16 / DCT16X32: 512 coefficients per channel (share same weights)
             let offset = channel * 512;
-            &QUANT_WEIGHTS_DCT16X32[offset..offset + 512]
+            &quant_weights_dct16x32()[offset..offset + 512]
         }
         12..=15 => {
             // AFV0-AFV3: 64 coefficients per channel (all share same weights)
             let offset = channel * 64;
-            &QUANT_WEIGHTS_AFV[offset..offset + 64]
+            &quant_weights_afv()[offset..offset + 64]
         }
         16 => {
             // DCT64X64: 4096 coefficients per channel
             let offset = channel * 4096;
-            &QUANT_WEIGHTS_DCT64X64[offset..offset + 4096]
+            &quant_weights_dct64x64()[offset..offset + 4096]
         }
         17 | 18 => {
             // DCT64X32 / DCT32X64: 2048 coefficients per channel (share same weights)
             let offset = channel * 2048;
-            &QUANT_WEIGHTS_DCT32X64[offset..offset + 2048]
+            &quant_weights_dct32x64()[offset..offset + 2048]
         }
         _ => unreachable!("Invalid strategy: {}", strategy),
     }
@@ -956,13 +994,13 @@ mod tests {
     #[test]
     fn test_table_sizes() {
         // DCT8: 64 per channel, 192 total
-        assert_eq!(QUANT_WEIGHTS_DCT8.len(), 192);
+        assert_eq!(quant_weights_dct8().len(), 192);
         // DCT16X8: 128 per channel, 384 total
-        assert_eq!(QUANT_WEIGHTS_DCT16X8.len(), 384);
+        assert_eq!(quant_weights_dct16x8().len(), 384);
         // DCT16X16: 256 per channel, 768 total
-        assert_eq!(QUANT_WEIGHTS_DCT16X16.len(), 768);
+        assert_eq!(quant_weights_dct16x16().len(), 768);
         // DCT32X32: 1024 per channel, 3072 total
-        assert_eq!(QUANT_WEIGHTS_DCT32X32.len(), 3072);
+        assert_eq!(quant_weights_dct32x32().len(), 3072);
     }
 
     #[test]

@@ -9,6 +9,8 @@
 
 #![forbid(unsafe_code)]
 
+extern crate alloc;
+
 pub mod api;
 pub mod bit_writer;
 pub mod color;

@@ -11,7 +11,10 @@
 //!
 //! Ported from libjxl-tiny enc_group.cc.
 
-use std::sync::LazyLock;
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+use once_cell::race::OnceBox;
 
 use super::ac_context::{NON_ZERO_BUCKETS, ZERO_DENSITY_CONTEXT_COUNT, zero_density_context};
 use super::common::{DCT_BLOCK_SIZE, pack_signed};
@@ -94,33 +97,45 @@ pub static COEFF_ORDER_16X16: [u32; 256] = [
 /// Default zig-zag coefficient order for DCT32x32 (1024 coefficients).
 /// Generated at runtime via CoefficientLayout scan: LLF positions first,
 /// then remaining AC positions in zig-zag order.
-static COEFF_ORDER_32X32: LazyLock<Vec<u32>> =
-    LazyLock::new(|| coefficient_layout_order(32, 32, 4, 4));
+static COEFF_ORDER_32X32: OnceBox<Vec<u32>> = OnceBox::new();
+fn coeff_order_32x32() -> &'static [u32] {
+    COEFF_ORDER_32X32.get_or_init(|| Box::new(coefficient_layout_order(32, 32, 4, 4)))
+}
 
 /// Default zig-zag coefficient order for DCT32x16 (512 coefficients).
 /// DCT32x16: 32 rows × 16 cols, LLF region is 4×2 (4 rows × 2 cols).
-static COEFF_ORDER_32X16: LazyLock<Vec<u32>> =
-    LazyLock::new(|| coefficient_layout_order(32, 16, 4, 2));
+static COEFF_ORDER_32X16: OnceBox<Vec<u32>> = OnceBox::new();
+fn coeff_order_32x16() -> &'static [u32] {
+    COEFF_ORDER_32X16.get_or_init(|| Box::new(coefficient_layout_order(32, 16, 4, 2)))
+}
 
 /// Default zig-zag coefficient order for DCT16x32 (512 coefficients).
 /// DCT16x32: 16 rows × 32 cols, LLF region is 2×4 (2 rows × 4 cols).
-static COEFF_ORDER_16X32: LazyLock<Vec<u32>> =
-    LazyLock::new(|| coefficient_layout_order(16, 32, 2, 4));
+static COEFF_ORDER_16X32: OnceBox<Vec<u32>> = OnceBox::new();
+fn coeff_order_16x32() -> &'static [u32] {
+    COEFF_ORDER_16X32.get_or_init(|| Box::new(coefficient_layout_order(16, 32, 2, 4)))
+}
 
 /// Default zig-zag coefficient order for DCT64x64 (4096 coefficients).
 /// DCT64x64: 64 rows × 64 cols, LLF region is 8×8.
-static COEFF_ORDER_64X64: LazyLock<Vec<u32>> =
-    LazyLock::new(|| coefficient_layout_order(64, 64, 8, 8));
+static COEFF_ORDER_64X64: OnceBox<Vec<u32>> = OnceBox::new();
+fn coeff_order_64x64() -> &'static [u32] {
+    COEFF_ORDER_64X64.get_or_init(|| Box::new(coefficient_layout_order(64, 64, 8, 8)))
+}
 
 /// Default zig-zag coefficient order for DCT64x32 (2048 coefficients).
 /// DCT64x32: 64 rows × 32 cols, LLF region is 8×4.
-static COEFF_ORDER_64X32: LazyLock<Vec<u32>> =
-    LazyLock::new(|| coefficient_layout_order(64, 32, 8, 4));
+static COEFF_ORDER_64X32: OnceBox<Vec<u32>> = OnceBox::new();
+fn coeff_order_64x32() -> &'static [u32] {
+    COEFF_ORDER_64X32.get_or_init(|| Box::new(coefficient_layout_order(64, 32, 8, 4)))
+}
 
 /// Default zig-zag coefficient order for DCT32x64 (2048 coefficients).
 /// DCT32x64: 32 rows × 64 cols, LLF region is 4×8.
-static COEFF_ORDER_32X64: LazyLock<Vec<u32>> =
-    LazyLock::new(|| coefficient_layout_order(32, 64, 4, 8));
+static COEFF_ORDER_32X64: OnceBox<Vec<u32>> = OnceBox::new();
+fn coeff_order_32x64() -> &'static [u32] {
+    COEFF_ORDER_32X64.get_or_init(|| Box::new(coefficient_layout_order(32, 64, 4, 8)))
+}
 
 /// Generate a coefficient order with LLF positions first, then AC in zig-zag.
 ///
@@ -207,13 +222,13 @@ pub fn get_coeff_order(strategy_code: u8) -> &'static [u32] {
         3 | 12 | 13 => &COEFF_ORDER_8X8, // DCT4X4, DCT4X8, DCT8X4 (64 coeffs like DCT8)
         14..=17 => &COEFF_ORDER_8X8,     // AFV0-AFV3 (64 coeffs like DCT8)
         4 => &COEFF_ORDER_16X16,         // DCT16X16
-        5 => &COEFF_ORDER_32X32,         // DCT32X32
+        5 => coeff_order_32x32(),        // DCT32X32
         6 | 7 => &COEFF_ORDER_8X16,      // DCT8X16, DCT16X8
-        10 => &COEFF_ORDER_32X16,        // DCT32X16
-        11 => &COEFF_ORDER_16X32,        // DCT16X32
-        18 => &COEFF_ORDER_64X64,        // DCT64X64
-        19 => &COEFF_ORDER_64X32,        // DCT64X32
-        20 => &COEFF_ORDER_32X64,        // DCT32X64
+        10 => coeff_order_32x16(),       // DCT32X16
+        11 => coeff_order_16x32(),       // DCT16X32
+        18 => coeff_order_64x64(),       // DCT64X64
+        19 => coeff_order_64x32(),       // DCT64X32
+        20 => coeff_order_32x64(),       // DCT32X64
         _ => &COEFF_ORDER_8X8,           // Default to 8x8 for unknown strategies
     }
 }
@@ -610,7 +625,7 @@ mod tests {
 
     #[test]
     fn test_coeff_order_32x32_llf_first() {
-        let order = &*COEFF_ORDER_32X32;
+        let order = coeff_order_32x32();
         assert_eq!(order.len(), 1024);
 
         // Build set of LLF positions (4x4 in 32x32 grid, stride 32)
