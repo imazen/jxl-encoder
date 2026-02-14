@@ -29,7 +29,7 @@ butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
 [dependencies]
 jxl_encoder = { package = "jxl-encoder", path = "../jxl_encoder", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
-png = "0.17"
+png = "0.18"
 
 [lints]
 workspace = true

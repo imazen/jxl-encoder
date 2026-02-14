@@ -20,7 +20,7 @@ bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = "2.0"
 byteorder = "1.4"
 jxl_simd = { package = "jxl-encoder-simd", version = "0.1.0", path = "../jxl_simd" }
-archmage = "0.5"
+archmage = "0.7"
 num-derive = "0.4"
 num-traits = "0.2"
 zenjpeg = { version = "0.6.1", path = "../../zenjpeg/zenjpeg", features = ["decoder"], optional = true }
@@ -28,7 +28,7 @@ brotli = { version = "8.0", optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features
 jxl-oxide = { version = "0.12.5", path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide", optional = true }
 butteraugli = { version = "0.4.0", path = "../../butteraugli-opt/butteraugli", optional = true }
-imgref = { version = "1.10", optional = true }
+imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 
 [features]
@@ -51,8 +51,6 @@ jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 default = ["std", "safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
-rand = "0.9"
-rand_xorshift = "0.4"
 image = "0.25"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = { version = "0.3.0", path = "../../jxl-rs/jxl" }
@@ -65,7 +63,7 @@ fast-ssim2 = { version = "0.7.0", path = "../../fast-ssim2/ssimulacra2", feature
 yuvxyb = "0.4.1"
 # Butteraugli perceptual quality metric
 butteraugli = { version = "0.4.0", path = "../../butteraugli-opt/butteraugli" }
-imgref = "1.10"
+imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 
