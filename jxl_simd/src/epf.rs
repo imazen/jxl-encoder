@@ -188,6 +188,7 @@ fn epf_step2_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
 fn epf_step2_avx2(
     token: archmage::X64V3Token,
@@ -662,7 +663,7 @@ fn epf_step1_scalar(
 /// - All row offsets + x ± 1 are within bounds of the input slices
 /// - All row offsets + x + 8 are within bounds (for SIMD loads)
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[archmage::rite]
 #[allow(clippy::too_many_arguments)]
 fn sad_3x3_plus_simd(
     token: archmage::X64V3Token,
@@ -760,6 +761,7 @@ fn sad_3x3_plus_simd(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
 fn epf_step1_avx2(
     token: archmage::X64V3Token,
@@ -1080,6 +1082,7 @@ fn scalar_step1_block(
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
 fn epf_step2_neon(
     token: archmage::NeonToken,
@@ -1368,7 +1371,7 @@ fn epf_step2_neon(
 
 /// NEON helper: compute 3x3-plus SAD between center at x and neighbor at (x+ndx, ndy rows).
 #[cfg(target_arch = "aarch64")]
-#[inline(always)]
+#[archmage::rite]
 #[allow(clippy::too_many_arguments)]
 fn sad_3x3_plus_neon(
     token: archmage::NeonToken,
@@ -1462,6 +1465,7 @@ fn sad_3x3_plus_neon(
 }
 
 #[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
 fn epf_step1_neon(
     token: archmage::NeonToken,
