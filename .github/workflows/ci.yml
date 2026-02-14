@@ -11,8 +11,8 @@ env:
   CARGO_TERM_COLOR: always
   CI: true
   # Default features include butteraugli-loop which requires path deps to sibling repos.
-  # CI uses --no-default-features with only safe-mode enabled.
-  CI_FEATURES: "safe-mode"
+  # CI uses --no-default-features with std and safe-mode enabled.
+  CI_FEATURES: "std,safe-mode"
 
 jobs:
   # ==========================================================================

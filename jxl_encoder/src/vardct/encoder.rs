@@ -1334,7 +1334,9 @@ mod tests {
 
     /// Hash-locked test for 8x8 gradient image.
     /// This test ensures the encoder output doesn't change unexpectedly.
+    /// x86_64 only: FP rounding differs on other architectures and 32-bit.
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_hash_lock_8x8_gradient() {
         let encoder = VarDctEncoder::new(1.0);
         let width = 8;
@@ -1372,7 +1374,9 @@ mod tests {
     }
 
     /// Hash-locked test for 16x16 solid color image.
+    /// x86_64 only: FP rounding differs on other architectures and 32-bit.
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_hash_lock_16x16_solid() {
         let encoder = VarDctEncoder::new(1.0);
         let width = 16;
@@ -1399,7 +1403,9 @@ mod tests {
     }
 
     /// Hash-locked test for 64x64 checkerboard pattern.
+    /// x86_64 only: FP rounding differs on other architectures and 32-bit.
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_hash_lock_64x64_checkerboard() {
         let encoder = VarDctEncoder::new(1.0);
         let width = 64;
@@ -1438,7 +1444,9 @@ mod tests {
     }
 
     /// Hash-locked test for non-power-of-two size (tests padding).
+    /// x86_64 only: FP rounding differs on other architectures and 32-bit.
     #[test]
+    #[cfg(target_arch = "x86_64")]
     fn test_hash_lock_13x17_noise() {
         let encoder = VarDctEncoder::new(1.0);
         let width = 13;
