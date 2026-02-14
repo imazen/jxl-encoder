@@ -16,5 +16,19 @@ test-i686:
 test-armv7:
     cross test --workspace --no-default-features --features safe-mode --lib --target armv7-unknown-linux-gnueabihf
 
+# Cross-compile and test for AArch64 (requires cross + Docker)
+test-aarch64:
+    CROSS_CONTAINER_OPTS="--volume /home/lilith/work:/home/lilith/work" cross test --workspace --no-default-features --features safe-mode --lib --target aarch64-unknown-linux-gnu
+
+# Build and test for WASM (requires wasmtime)
+test-wasm:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --" cargo test -p jxl-encoder --target wasm32-wasip1 --no-default-features --features safe-mode --lib -- api::tests
+
+# Run encode benchmark on all platforms
+bench-platforms:
+    @echo "=== x86_64 native ===" && cargo run --example wasm_bench -p jxl-encoder --release --no-default-features --features safe-mode
+    @echo "=== WASM (wasmtime) ===" && cargo build --example wasm_bench -p jxl-encoder --release --target wasm32-wasip1 --no-default-features --features safe-mode 2>/dev/null && wasmtime ./target/wasm32-wasip1/release/examples/wasm_bench.wasm
+    @echo "=== AArch64 (qemu) ===" && CROSS_CONTAINER_OPTS="--volume /home/lilith/work:/home/lilith/work" cross run --example wasm_bench -p jxl-encoder --release --target aarch64-unknown-linux-gnu --no-default-features --features safe-mode
+
 # Run all cross-compilation targets
 test-cross: test-i686 test-armv7
