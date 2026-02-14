@@ -105,6 +105,14 @@ impl<'a> BuiltEntropyCode<'a> {
     }
 }
 
+/// Output of a VarDCT encode operation.
+pub struct VarDctOutput {
+    /// Encoded JXL codestream bytes.
+    pub data: Vec<u8>,
+    /// Per-strategy first-block counts, indexed by raw strategy code (0..19).
+    pub strategy_counts: [u32; 19],
+}
+
 /// Tiny JPEG XL encoder.
 ///
 /// This is a simplified VarDCT encoder based on libjxl-tiny that uses:
@@ -285,7 +293,7 @@ impl VarDctEncoder {
         height: usize,
         linear_rgb: &[f32],
         alpha: Option<&[u8]>,
-    ) -> Result<(Vec<u8>, [u32; 19])> {
+    ) -> Result<VarDctOutput> {
         assert_eq!(linear_rgb.len(), width * height * 3);
         if let Some(a) = alpha {
             assert_eq!(a.len(), width * height);
@@ -566,7 +574,10 @@ impl VarDctEncoder {
                 sharpness_map.as_deref(),
                 alpha,
             )?;
-            return Ok((data, strategy_counts));
+            return Ok(VarDctOutput {
+                data,
+                strategy_counts,
+            });
         }
 
         // Get static entropy codes (wrapped in BuiltEntropyCode for uniform handling)
@@ -785,7 +796,10 @@ impl VarDctEncoder {
         }
 
         let strategy_counts = ac_strategy.strategy_histogram();
-        Ok((writer.finish_with_padding(), strategy_counts))
+        Ok(VarDctOutput {
+            data: writer.finish_with_padding(),
+            strategy_counts,
+        })
     }
 
     /// Butteraugli quantization loop: iteratively refines per-block quant_field
@@ -1236,10 +1250,10 @@ mod tests {
         let result = encoder.encode(width, height, &linear_rgb, None);
         // For now, just check it produces some output
         assert!(result.is_ok());
-        let (bytes, _) = result.unwrap();
-        assert!(bytes.len() > 2);
-        assert_eq!(bytes[0], 0xFF);
-        assert_eq!(bytes[1], 0x0A);
+        let output = result.unwrap();
+        assert!(output.data.len() > 2);
+        assert_eq!(output.data[0], 0xFF);
+        assert_eq!(output.data[1], 0x0A);
     }
 
     #[test]
@@ -1287,13 +1301,16 @@ mod tests {
 
         let result = encoder.encode(width, height, &linear_rgb, None);
         assert!(result.is_ok());
-        let (bytes, _) = result.unwrap();
+        let output = result.unwrap();
 
-        eprintln!("Output file size: {} bytes", bytes.len());
-        eprintln!("First 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
+        eprintln!("Output file size: {} bytes", output.data.len());
+        eprintln!(
+            "First 32 bytes: {:02x?}",
+            &output.data[..32.min(output.data.len())]
+        );
 
         // Write output to file for comparison
-        std::fs::write("/tmp/our_16x16.jxl", &bytes).unwrap();
+        std::fs::write("/tmp/our_16x16.jxl", &output.data).unwrap();
 
         // libjxl-tiny produces:
         // DC_group: 106 bits (14 bytes)
@@ -1303,8 +1320,8 @@ mod tests {
         // Our encoder should match these sizes
 
         // Check signature
-        assert_eq!(bytes[0], 0xFF);
-        assert_eq!(bytes[1], 0x0A);
+        assert_eq!(output.data[0], 0xFF);
+        assert_eq!(output.data[1], 0x0A);
     }
 
     /// Compute a simple hash of a byte slice for output locking.
@@ -1334,7 +1351,10 @@ mod tests {
             }
         }
 
-        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let bytes = encoder
+            .encode(width, height, &linear_rgb, None)
+            .unwrap()
+            .data;
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
@@ -1359,7 +1379,10 @@ mod tests {
         let height = 16;
         let linear_rgb = vec![0.3f32; width * height * 3]; // gray
 
-        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let bytes = encoder
+            .encode(width, height, &linear_rgb, None)
+            .unwrap()
+            .data;
         let hash = hash_bytes(&bytes);
 
         // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
@@ -1395,7 +1418,10 @@ mod tests {
             }
         }
 
-        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let bytes = encoder
+            .encode(width, height, &linear_rgb, None)
+            .unwrap()
+            .data;
         let hash = hash_bytes(&bytes);
 
         // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
@@ -1426,7 +1452,10 @@ mod tests {
             *val = ((seed >> 32) as f32) / (u32::MAX as f32);
         }
 
-        let (bytes, _) = encoder.encode(width, height, &linear_rgb, None).unwrap();
+        let bytes = encoder
+            .encode(width, height, &linear_rgb, None)
+            .unwrap()
+            .data;
         let hash = hash_bytes(&bytes);
 
         // Updated: full libjxl adaptive quantization pipeline
@@ -1466,9 +1495,10 @@ mod tests {
             }
 
             let encoder = VarDctEncoder::new(1.0);
-            let (bytes, _) = encoder
+            let bytes = encoder
                 .encode(w, h, &linear_rgb, None)
-                .unwrap_or_else(|e| panic!("encode {}x{} failed: {}", w, h, e));
+                .unwrap_or_else(|e| panic!("encode {}x{} failed: {}", w, h, e))
+                .data;
 
             // Verify JXL signature
             assert_eq!(bytes[0], 0xFF, "{}x{}: bad signature byte 0", w, h);
@@ -1521,17 +1551,19 @@ mod tests {
         // Encode WITHOUT DC tree learning (baseline) — use ANS
         let mut encoder_baseline = VarDctEncoder::new(1.0);
         encoder_baseline.dc_tree_learning = false;
-        let (bytes_baseline, _) = encoder_baseline
+        let bytes_baseline = encoder_baseline
             .encode(width, height, &linear_rgb, None)
-            .expect("baseline encode failed");
+            .expect("baseline encode failed")
+            .data;
 
         // Encode WITH DC tree learning — also use ANS
         let mut encoder_learned = VarDctEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
         std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
-        let (bytes_learned, _) = encoder_learned
+        let bytes_learned = encoder_learned
             .encode(width, height, &linear_rgb, None)
-            .expect("learned encode failed");
+            .expect("learned encode failed")
+            .data;
         std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
 
         eprintln!(
@@ -1599,16 +1631,18 @@ mod tests {
         // Encode without butteraugli loop
         let mut encoder_baseline = VarDctEncoder::new(2.0);
         encoder_baseline.butteraugli_iters = 0;
-        let (bytes_baseline, _) = encoder_baseline
+        let bytes_baseline = encoder_baseline
             .encode(width, height, &linear_rgb, None)
-            .expect("baseline encode failed");
+            .expect("baseline encode failed")
+            .data;
 
         // Encode with 2 butteraugli loop iterations
         let mut encoder_loop = VarDctEncoder::new(2.0);
         encoder_loop.butteraugli_iters = 2;
-        let (bytes_loop, _) = encoder_loop
+        let bytes_loop = encoder_loop
             .encode(width, height, &linear_rgb, None)
-            .expect("butteraugli loop encode failed");
+            .expect("butteraugli loop encode failed")
+            .data;
 
         // Both should produce valid JXL
         assert_eq!(bytes_baseline[0], 0xFF);

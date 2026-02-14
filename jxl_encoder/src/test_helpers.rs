@@ -463,22 +463,6 @@ pub fn calculate_ssim2(
     compute_ssimulacra2(src.as_ref(), dst.as_ref()).unwrap_or(0.0)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_encoding_mode() {
-        // This test verifies the parser itself works correctly
-        // We'll generate known bitstreams and verify parsing
-
-        // For now, just ensure it doesn't panic on various inputs
-        let _ = parse_encoding_mode(&[]);
-        let _ = parse_encoding_mode(&[0xFF, 0x0A]);
-        let _ = parse_encoding_mode(&[0; 100]);
-    }
-}
-
 /// Return a test output directory, creating it if possible.
 ///
 /// Prefers `/mnt/v/output/jxl-encoder-rs/{subdir}` (persistent, visible from Windows).
@@ -501,5 +485,21 @@ pub fn save_test_output(subdir: &str, filename: &str, data: &[u8]) {
     match std::fs::write(&path, data) {
         Ok(()) => eprintln!("Saved {} bytes to {}", data.len(), path.display()),
         Err(e) => eprintln!("Could not save to {} ({})", path.display(), e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_encoding_mode() {
+        // This test verifies the parser itself works correctly
+        // We'll generate known bitstreams and verify parsing
+
+        // For now, just ensure it doesn't panic on various inputs
+        let _ = parse_encoding_mode(&[]);
+        let _ = parse_encoding_mode(&[0xFF, 0x0A]);
+        let _ = parse_encoding_mode(&[0; 100]);
     }
 }

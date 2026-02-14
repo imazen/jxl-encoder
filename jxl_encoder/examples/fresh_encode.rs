@@ -1,5 +1,7 @@
-//! Encode a fresh image and save original + decoded for visual comparison
+//! Encode a fresh image and save original + decoded for visual comparison.
 use std::io::Cursor;
+
+use jxl_encoder::{LossyConfig, PixelLayout};
 
 fn main() {
     let out_dir = "/mnt/v/output/jxl-encoder-rs/clic2025";
@@ -25,22 +27,10 @@ fn main() {
     cropped.save(&orig_path).expect("Failed to save original");
     eprintln!("Saved original: {}", orig_path);
 
-    // Convert to linear RGB
-    let linear_rgb: Vec<f32> = rgb
-        .pixels()
-        .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
-            [r, g, b]
-        })
-        .collect();
-
-    // Encode
+    // Encode using public API (handles sRGB→linear internally)
     eprintln!("Encoding {}x{}...", width, height);
-    let encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
-    let bytes = encoder
-        .encode(width as usize, height as usize, &linear_rgb, None)
+    let bytes = LossyConfig::new(1.0)
+        .encode(rgb.as_raw(), width, height, PixelLayout::Rgb8)
         .expect("Encoding failed");
     eprintln!(
         "Encoded to {} bytes ({:.1}x compression)",
