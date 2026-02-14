@@ -36,13 +36,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build workspace
-        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}"
+        run: cargo build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}"
 
       # Note: cargo test requires dev-dependencies (jxl-rs, jxl-oxide, etc.)
       # which use path deps to sibling repos not available in CI.
       # Only lib unit tests (no integration tests) could potentially work.
       - name: Run lib unit tests
-        run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
+        run: cargo test --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --lib
 
   # ==========================================================================
   # Native ARM64 testing (NEON SIMD validation)
@@ -69,11 +69,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build workspace
-        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}"
+        run: cargo build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}"
 
       - name: Run lib unit tests
         if: matrix.run_tests
-        run: cargo test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib
+        run: cargo test --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --lib
 
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)
@@ -104,11 +104,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build (cross)
-        run: cross build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --target ${{ matrix.target }}
+        run: cross build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --target ${{ matrix.target }}
 
       - name: Test lib (cross/QEMU)
         if: matrix.run_tests
-        run: cross test --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --target ${{ matrix.target }}
+        run: cross test --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --lib --target ${{ matrix.target }}
 
   # ==========================================================================
   # WASM Runtime Tests (wasm32-wasip1 + simd128)
@@ -140,13 +140,13 @@ jobs:
       - name: Build for WASM
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --target wasm32-wasip1
+        run: cargo build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --target wasm32-wasip1
 
       - name: Test jxl-encoder-simd (all 44 SIMD-vs-scalar tests)
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=."
-        run: cargo test -p jxl-encoder-simd --target wasm32-wasip1 --lib
+        run: cargo test -p jxl-encoder-simd --release --target wasm32-wasip1 --lib
 
       # jxl-encoder lib tests are skipped on WASM: dev-dependencies (jxl-oxide,
       # butteraugli, etc.) cause the test binary to trap during initialization.
