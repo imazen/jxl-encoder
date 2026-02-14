@@ -55,6 +55,18 @@ pub fn dequant_block_dct8(
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            dequant_dct8_neon(
+                token, quant_ac_x, quant_ac_y, quant_ac_b, weights_x, weights_y, weights_b, qac_qm,
+                x_factor, b_factor, output_x, output_y, output_b,
+            );
+            return;
+        }
+    }
+
     dequant_dct8_scalar(
         quant_ac_x, quant_ac_y, quant_ac_b, weights_x, weights_y, weights_b, qac_qm, x_factor,
         b_factor, output_x, output_y, output_b,
@@ -265,6 +277,147 @@ fn dequant_8_avx2(
 
     // Multiply by dequant weight and inverse qac_qm
     let w = f32x8::from_slice(token, weights);
+    biased * w * inv_qac_qm
+}
+
+// --- aarch64 NEON implementation ---
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn dequant_dct8_neon(
+    token: archmage::NeonToken,
+    quant_ac_x: &[i32; 64],
+    quant_ac_y: &[i32; 64],
+    quant_ac_b: &[i32; 64],
+    weights_x: &[f32; 64],
+    weights_y: &[f32; 64],
+    weights_b: &[f32; 64],
+    qac_qm: [f32; 3],
+    x_factor: f32,
+    b_factor: f32,
+    output_x: &mut [f32; 64],
+    output_y: &mut [f32; 64],
+    output_b: &mut [f32; 64],
+) {
+    use magetypes::simd::{f32x4, i32x4};
+
+    let inv_qac_x_v = f32x4::splat(token, 1.0 / qac_qm[0]);
+    let inv_qac_y_v = f32x4::splat(token, 1.0 / qac_qm[1]);
+    let inv_qac_b_v = f32x4::splat(token, 1.0 / qac_qm[2]);
+    let x_factor_v = f32x4::splat(token, x_factor);
+    let b_factor_v = f32x4::splat(token, b_factor);
+    let zero_f = f32x4::zero(token);
+    let one_f = f32x4::splat(token, 1.0);
+    let neg_one_f = f32x4::splat(token, -1.0);
+    let threshold = f32x4::splat(token, 1.125);
+    let bias_recip_v = f32x4::splat(token, BIAS_RECIP);
+    let bias_x_v = f32x4::splat(token, BIAS_X);
+    let bias_y_v = f32x4::splat(token, BIAS_Y);
+    let bias_b_v = f32x4::splat(token, BIAS_B);
+    let half_v = f32x4::splat(token, 0.5);
+
+    // Process 16 chunks of 4 coefficients
+    for chunk in 0..16 {
+        let base = chunk * 4;
+
+        // Channel Y
+        let q_i_y = i32x4::from_slice(token, &quant_ac_y[base..]);
+        let dq_y = neon_dequant_4(
+            token,
+            q_i_y,
+            bias_y_v,
+            bias_recip_v,
+            threshold,
+            zero_f,
+            one_f,
+            neg_one_f,
+            half_v,
+            &weights_y[base..],
+            inv_qac_y_v,
+        );
+        dq_y.store((&mut output_y[base..base + 4]).try_into().unwrap());
+
+        // Channel X + CfL
+        let q_i_x = i32x4::from_slice(token, &quant_ac_x[base..]);
+        let dq_x_raw = neon_dequant_4(
+            token,
+            q_i_x,
+            bias_x_v,
+            bias_recip_v,
+            threshold,
+            zero_f,
+            one_f,
+            neg_one_f,
+            half_v,
+            &weights_x[base..],
+            inv_qac_x_v,
+        );
+        let dq_x = dq_x_raw + x_factor_v * dq_y;
+        dq_x.store((&mut output_x[base..base + 4]).try_into().unwrap());
+
+        // Channel B + CfL
+        let q_i_b = i32x4::from_slice(token, &quant_ac_b[base..]);
+        let dq_b_raw = neon_dequant_4(
+            token,
+            q_i_b,
+            bias_b_v,
+            bias_recip_v,
+            threshold,
+            zero_f,
+            one_f,
+            neg_one_f,
+            half_v,
+            &weights_b[base..],
+            inv_qac_b_v,
+        );
+        let dq_b = dq_b_raw + b_factor_v * dq_y;
+        dq_b.store((&mut output_b[base..base + 4]).try_into().unwrap());
+    }
+
+    output_x[0] = 0.0;
+    output_y[0] = 0.0;
+    output_b[0] = 0.0;
+}
+
+/// Dequantize 4 coefficients with adjust_quant_bias, branchless NEON.
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+#[allow(clippy::too_many_arguments)]
+fn neon_dequant_4(
+    token: archmage::NeonToken,
+    q_int: magetypes::simd::i32x4,
+    channel_bias: magetypes::simd::f32x4,
+    bias_recip: magetypes::simd::f32x4,
+    threshold: magetypes::simd::f32x4,
+    zero_f: magetypes::simd::f32x4,
+    one_f: magetypes::simd::f32x4,
+    neg_one_f: magetypes::simd::f32x4,
+    half_v: magetypes::simd::f32x4,
+    weights: &[f32],
+    inv_qac_qm: magetypes::simd::f32x4,
+) -> magetypes::simd::f32x4 {
+    use magetypes::simd::f32x4;
+
+    let q_f = f32x4::from_i32x4(q_int);
+    let abs_q = q_f.abs();
+
+    let sign = f32x4::blend(q_f.simd_ge(zero_f), one_f, neg_one_f);
+
+    // Case 1: |q| < 1.125 → sign * channel_bias
+    let case_one = sign * channel_bias;
+
+    // Case 2: |q| >= 1.125 → q - 0.145/q
+    let case_large = q_f - bias_recip / q_f;
+
+    let is_large = abs_q.simd_ge(threshold);
+    let biased = f32x4::blend(is_large, case_large, case_one);
+
+    // Zero out where q == 0
+    let is_nonzero = abs_q.simd_ge(half_v);
+    let biased = f32x4::blend(is_nonzero, biased, zero_f);
+
+    let w = f32x4::from_slice(token, weights);
     biased * w * inv_qac_qm
 }
 
