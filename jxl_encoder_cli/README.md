@@ -2,6 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/jxl-encoder-cli.svg)](https://crates.io/crates/jxl-encoder-cli)
 [![CI](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
 Command-line JPEG XL encoder. Pure Rust, `#![forbid(unsafe_code)]`.
 

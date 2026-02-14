@@ -1,7 +1,9 @@
 # jxl-encoder-simd
 
+[![CI](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/jxl-encoder-simd.svg)](https://crates.io/crates/jxl-encoder-simd)
 [![docs.rs](https://docs.rs/jxl-encoder-simd/badge.svg)](https://docs.rs/jxl-encoder-simd)
+[![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
 SIMD-accelerated primitives for [jxl-encoder](https://crates.io/crates/jxl-encoder). Internal crate — you probably want `jxl-encoder` instead.
 
