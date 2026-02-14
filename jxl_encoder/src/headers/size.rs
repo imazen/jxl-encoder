@@ -1,7 +1,6 @@
-// Copyright (c) the JPEG XL Project Authors. All rights reserved.
-//
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// Copyright (c) Imazen LLC and the JPEG XL Project Authors.
+// Algorithms and constants derived from libjxl (BSD-3-Clause).
+// Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
 //! Size encoding utilities for JPEG XL.
 

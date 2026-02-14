@@ -1,3 +1,7 @@
+// Copyright (c) Imazen LLC and the JPEG XL Project Authors.
+// Algorithms and constants derived from libjxl (BSD-3-Clause).
+// Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
+
 //! XYB color space transform for JPEG XL encoding.
 //!
 //! XYB is a perceptually-motivated color space used by JPEG XL for lossy encoding.
