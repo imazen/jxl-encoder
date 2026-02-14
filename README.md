@@ -6,9 +6,9 @@
 [![codecov](https://codecov.io/gh/imazen/jxl-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder)
 [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
-A comprehensive, pure Rust JPEG XL encoder. 40k lines of library code, 35k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
+A comprehensive, pure Rust JPEG XL encoder. 67k lines of library code, 19k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/lilith/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
-`#![forbid(unsafe_code)]`. ~700 tests passing.
+`#![forbid(unsafe_code)]`. 740+ tests passing.
 
 ## Library usage
 
@@ -32,7 +32,7 @@ let jxl = LossyConfig::new(1.0)
     .encode(&pixels)?;
 ```
 
-Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `LinearRgb32F`.
+Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `RgbLinearF32`.
 
 ## CLI
 
@@ -75,6 +75,8 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Noise synthesis | Yes | Yes | Yes (opt-in) |
 | Lossy + alpha (VarDCT RGB + modular alpha) | Yes | Yes | Yes |
 | JPEG re-encoding | Yes | Yes | Yes (opt-in feature) |
+| Animation | Yes | Yes | Yes (lossy + lossless) |
+| 16-bit / float input | Yes | Yes | Yes (Rgb16, Rgba16, Gray16, RgbLinearF32) |
 | Splines / patches / dots | No | Yes | No |
 
 ### Lossless (Modular) — comparison with libjxl
@@ -115,6 +117,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | ICC profile embedding | Yes | Yes (PredictICC + entropy coded) |
 | EXIF metadata | Yes | Yes (container box) |
 | XMP metadata | Yes | Yes (container box) |
+| Animation (lossy + lossless) | Yes | Yes (per-frame duration, loop count) |
 | Multi-group framing (>256x256) | Yes | Yes |
 | Cancellation / limits | No | Yes (`&dyn Stop`, `Limits` struct) |
 
@@ -131,9 +134,6 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Full histogram clustering | e8+ | ~1-2% | kDefault vs our pair-merge |
 | Optimal LZ77 | e9 | ~1-2% | Exhaustive vs greedy matching |
 | Fine-grained strategy search | e9 | Minor | step=1 vs step=2 for 32x32+ |
-| DC modular optimization | All | Minor | Fixed context tree currently |
-| 16-bit / float input | All | Format gap | 8-bit only currently |
-| Animation | All | Format gap | Single-frame only |
 
 ## AC strategy coverage
 
@@ -164,8 +164,8 @@ cargo clippy --workspace -- -D warnings    # lint
 ## Project structure
 
 ```
-jxl-encoder/                             ~81k lines of Rust
-├── jxl_encoder/             40k lib + 35k tests
+jxl-encoder/                             ~113k lines of Rust
+├── jxl_encoder/             56k lib + 19k tests
 │   └── src/
 │       ├── api.rs               # Public API (LossyConfig, LosslessConfig, EncodeRequest)
 │       ├── vardct/              # VarDCT (lossy) encoder
@@ -185,7 +185,7 @@ jxl-encoder/                             ~81k lines of Rust
 
 - **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — Reference encoder. Our algorithms, quantization weights, cost models, and bitstream format are derived from libjxl. [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) was the initial porting target.
 - **[zune-jpegxl](https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl)** (Caleb Etemesi, MIT/Apache-2.0/Zlib) — Seeing a working pure-Rust JXL encoder (lossless, ~2.5k lines) was the inspiration to build a comprehensive one covering lossy, lossless, and the 30+ features listed above.
-- **[jxl-rs](https://github.com/libjxl/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
+- **[jxl-rs](https://github.com/lilith/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
 - **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Secondary validation decoder.
 - **Claude** (Anthropic) — AI-assisted development. Not all code has been manually reviewed; review critical paths before production use.
 
