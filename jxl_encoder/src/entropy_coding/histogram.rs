@@ -6,7 +6,7 @@
 //!
 //! Ported from libjxl `lib/jxl/enc_ans_params.h` and `lib/jxl/enc_cluster.cc`.
 
-use std::cell::Cell;
+use core::cell::Cell;
 
 /// Alignment for SIMD-friendly histogram operations.
 /// Matches libjxl's `Histogram::kRounding`.

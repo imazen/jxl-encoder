@@ -520,7 +520,7 @@ pub fn get_dc_context(tree: &DcTree, props: &[i32; NUM_DC_PROPERTIES]) -> u32 {
 /// The decoder computes child indices assuming BFS order.
 pub fn tree_to_tokens(tree: &DcTree) -> Vec<(u32, u32)> {
     use super::common::pack_signed;
-    use std::collections::VecDeque;
+    use alloc::collections::VecDeque;
 
     let mut tokens = Vec::new();
     let mut queue = VecDeque::new();
@@ -751,7 +751,7 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     [u32; NUM_AC_META_CONTEXTS as usize],
 ) {
     use super::common::pack_signed;
-    use std::collections::VecDeque;
+    use alloc::collections::VecDeque;
 
     // ─── Node types for building the merged tree ───
 

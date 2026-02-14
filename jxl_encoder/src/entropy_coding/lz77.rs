@@ -12,7 +12,7 @@
 //! distances within a sliding window, providing 1-3% compression improvement on
 //! photographic content compared to RLE-only.
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use super::token::{Lz77UintCoder, Token, UintCoder};
 

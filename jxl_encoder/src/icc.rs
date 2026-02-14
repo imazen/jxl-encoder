@@ -15,7 +15,7 @@ use crate::entropy_coding::encode::{
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
