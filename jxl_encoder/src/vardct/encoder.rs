@@ -1053,7 +1053,6 @@ impl VarDctEncoder {
             // Re-adjust quant field for multi-block consistency
             adjust_quant_field_with_distance(ac_strategy, quant_field, self.distance);
         }
-
     }
 
     /// Encode with iterative rate control for improved distance targeting.
