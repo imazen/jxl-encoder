@@ -32,6 +32,15 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            dct_8x8_neon(token, input, output);
+            return;
+        }
+    }
+
     dct_8x8_scalar(input, output);
 }
 
@@ -44,6 +53,15 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
         use archmage::SimdToken;
         if let Some(token) = archmage::X64V3Token::summon() {
             idct_8x8_avx2(token, input, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            idct_8x8_neon(token, input, output);
             return;
         }
     }
@@ -644,6 +662,416 @@ fn transpose_8x8_regs(
         f32x8::from_m256(token, c5),
         f32x8::from_m256(token, c6),
         f32x8::from_m256(token, c7),
+    )
+}
+
+// ============================================================================
+// aarch64 NEON implementation
+// ============================================================================
+
+/// NEON 8x8 forward DCT: two-pass (4 columns at a time), in-register transpose.
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
+    use magetypes::simd::f32x4;
+
+    let scale = f32x4::splat(token, 0.125);
+
+    // Pass 1: Column-DCT on left 4 columns
+    let l0 = f32x4::from_slice(token, &input[0..]);
+    let l1 = f32x4::from_slice(token, &input[8..]);
+    let l2 = f32x4::from_slice(token, &input[16..]);
+    let l3 = f32x4::from_slice(token, &input[24..]);
+    let l4 = f32x4::from_slice(token, &input[32..]);
+    let l5 = f32x4::from_slice(token, &input[40..]);
+    let l6 = f32x4::from_slice(token, &input[48..]);
+    let l7 = f32x4::from_slice(token, &input[56..]);
+
+    let (l0, l1, l2, l3, l4, l5, l6, l7) = neon_dct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
+    let l0 = l0 * scale;
+    let l1 = l1 * scale;
+    let l2 = l2 * scale;
+    let l3 = l3 * scale;
+    let l4 = l4 * scale;
+    let l5 = l5 * scale;
+    let l6 = l6 * scale;
+    let l7 = l7 * scale;
+
+    // Pass 2: Column-DCT on right 4 columns
+    let h0 = f32x4::from_slice(token, &input[4..]);
+    let h1 = f32x4::from_slice(token, &input[12..]);
+    let h2 = f32x4::from_slice(token, &input[20..]);
+    let h3 = f32x4::from_slice(token, &input[28..]);
+    let h4 = f32x4::from_slice(token, &input[36..]);
+    let h5 = f32x4::from_slice(token, &input[44..]);
+    let h6 = f32x4::from_slice(token, &input[52..]);
+    let h7 = f32x4::from_slice(token, &input[60..]);
+
+    let (h0, h1, h2, h3, h4, h5, h6, h7) = neon_dct1d_8(token, h0, h1, h2, h3, h4, h5, h6, h7);
+    let h0 = h0 * scale;
+    let h1 = h1 * scale;
+    let h2 = h2 * scale;
+    let h3 = h3 * scale;
+    let h4 = h4 * scale;
+    let h5 = h5 * scale;
+    let h6 = h6 * scale;
+    let h7 = h7 * scale;
+
+    // In-register 8x8 transpose using four 4x4 sub-transposes
+    // Matrix is stored as 8 rows × (lo, hi) f32x4 pairs
+    // Quadrant A = rows 0-3 lo, B = rows 0-3 hi, C = rows 4-7 lo, D = rows 4-7 hi
+    let (a0, a1, a2, a3) = neon_transpose_4x4(token, l0, l1, l2, l3);
+    let (b0, b1, b2, b3) = neon_transpose_4x4(token, h0, h1, h2, h3);
+    let (c0, c1, c2, c3) = neon_transpose_4x4(token, l4, l5, l6, l7);
+    let (d0, d1, d2, d3) = neon_transpose_4x4(token, h4, h5, h6, h7);
+
+    // After transpose: row i lo = A^T[i], row i hi = C^T[i] for i=0..3
+    //                  row i lo = B^T[i-4], row i hi = D^T[i-4] for i=4..7
+    // Pass 3: Row-DCT on left 4 columns of transposed data
+    let (a0, a1, a2, a3, c0, c1, c2, c3) = neon_dct1d_8(token, a0, a1, a2, a3, c0, c1, c2, c3);
+    let a0 = a0 * scale;
+    let a1 = a1 * scale;
+    let a2 = a2 * scale;
+    let a3 = a3 * scale;
+    let c0 = c0 * scale;
+    let c1 = c1 * scale;
+    let c2 = c2 * scale;
+    let c3 = c3 * scale;
+
+    // Pass 4: Row-DCT on right 4 columns of transposed data
+    let (b0, b1, b2, b3, d0, d1, d2, d3) = neon_dct1d_8(token, b0, b1, b2, b3, d0, d1, d2, d3);
+    let b0 = b0 * scale;
+    let b1 = b1 * scale;
+    let b2 = b2 * scale;
+    let b3 = b3 * scale;
+    let d0 = d0 * scale;
+    let d1 = d1 * scale;
+    let d2 = d2 * scale;
+    let d3 = d3 * scale;
+
+    // Store — interleave lo/hi halves back into rows
+    a0.store((&mut output[0..4]).try_into().unwrap());
+    b0.store((&mut output[4..8]).try_into().unwrap());
+    a1.store((&mut output[8..12]).try_into().unwrap());
+    b1.store((&mut output[12..16]).try_into().unwrap());
+    a2.store((&mut output[16..20]).try_into().unwrap());
+    b2.store((&mut output[20..24]).try_into().unwrap());
+    a3.store((&mut output[24..28]).try_into().unwrap());
+    b3.store((&mut output[28..32]).try_into().unwrap());
+    c0.store((&mut output[32..36]).try_into().unwrap());
+    d0.store((&mut output[36..40]).try_into().unwrap());
+    c1.store((&mut output[40..44]).try_into().unwrap());
+    d1.store((&mut output[44..48]).try_into().unwrap());
+    c2.store((&mut output[48..52]).try_into().unwrap());
+    d2.store((&mut output[52..56]).try_into().unwrap());
+    c3.store((&mut output[56..60]).try_into().unwrap());
+    d3.store((&mut output[60..64]).try_into().unwrap());
+}
+
+/// NEON 8x8 inverse DCT.
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+fn idct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
+    use magetypes::simd::f32x4;
+
+    // Load as 8 rows × (lo, hi)
+    let l0 = f32x4::from_slice(token, &input[0..]);
+    let h0 = f32x4::from_slice(token, &input[4..]);
+    let l1 = f32x4::from_slice(token, &input[8..]);
+    let h1 = f32x4::from_slice(token, &input[12..]);
+    let l2 = f32x4::from_slice(token, &input[16..]);
+    let h2 = f32x4::from_slice(token, &input[20..]);
+    let l3 = f32x4::from_slice(token, &input[24..]);
+    let h3 = f32x4::from_slice(token, &input[28..]);
+    let l4 = f32x4::from_slice(token, &input[32..]);
+    let h4 = f32x4::from_slice(token, &input[36..]);
+    let l5 = f32x4::from_slice(token, &input[40..]);
+    let h5 = f32x4::from_slice(token, &input[44..]);
+    let l6 = f32x4::from_slice(token, &input[48..]);
+    let h6 = f32x4::from_slice(token, &input[52..]);
+    let l7 = f32x4::from_slice(token, &input[56..]);
+    let h7 = f32x4::from_slice(token, &input[60..]);
+
+    // Inverse row-DCT: left half
+    let (l0, l1, l2, l3, l4, l5, l6, l7) = neon_idct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
+    // Inverse row-DCT: right half
+    let (h0, h1, h2, h3, h4, h5, h6, h7) = neon_idct1d_8(token, h0, h1, h2, h3, h4, h5, h6, h7);
+
+    // Transpose 8x8 (four 4x4 sub-transposes)
+    let (a0, a1, a2, a3) = neon_transpose_4x4(token, l0, l1, l2, l3);
+    let (b0, b1, b2, b3) = neon_transpose_4x4(token, h0, h1, h2, h3);
+    let (c0, c1, c2, c3) = neon_transpose_4x4(token, l4, l5, l6, l7);
+    let (d0, d1, d2, d3) = neon_transpose_4x4(token, h4, h5, h6, h7);
+
+    // After transpose: reassemble rows
+    // Row 0 = [a0, c0], Row 1 = [a1, c1], ... Row 4 = [b0, d0], etc.
+    // Inverse column-DCT: left half (rows 0-7, cols 0-3)
+    let (a0, a1, a2, a3, b0, b1, b2, b3) = neon_idct1d_8(token, a0, a1, a2, a3, b0, b1, b2, b3);
+    // Inverse column-DCT: right half (rows 0-7, cols 4-7)
+    let (c0, c1, c2, c3, d0, d1, d2, d3) = neon_idct1d_8(token, c0, c1, c2, c3, d0, d1, d2, d3);
+
+    // Store row-major
+    a0.store((&mut output[0..4]).try_into().unwrap());
+    c0.store((&mut output[4..8]).try_into().unwrap());
+    a1.store((&mut output[8..12]).try_into().unwrap());
+    c1.store((&mut output[12..16]).try_into().unwrap());
+    a2.store((&mut output[16..20]).try_into().unwrap());
+    c2.store((&mut output[20..24]).try_into().unwrap());
+    a3.store((&mut output[24..28]).try_into().unwrap());
+    c3.store((&mut output[28..32]).try_into().unwrap());
+    b0.store((&mut output[32..36]).try_into().unwrap());
+    d0.store((&mut output[36..40]).try_into().unwrap());
+    b1.store((&mut output[40..44]).try_into().unwrap());
+    d1.store((&mut output[44..48]).try_into().unwrap());
+    b2.store((&mut output[48..52]).try_into().unwrap());
+    d2.store((&mut output[52..56]).try_into().unwrap());
+    b3.store((&mut output[56..60]).try_into().unwrap());
+    d3.store((&mut output[60..64]).try_into().unwrap());
+}
+
+/// NEON vectorized 8-point forward DCT butterfly (f32x4, 4 independent DCTs).
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn neon_dct1d_8(
+    token: archmage::NeonToken,
+    r0: magetypes::simd::f32x4,
+    r1: magetypes::simd::f32x4,
+    r2: magetypes::simd::f32x4,
+    r3: magetypes::simd::f32x4,
+    r4: magetypes::simd::f32x4,
+    r5: magetypes::simd::f32x4,
+    r6: magetypes::simd::f32x4,
+    r7: magetypes::simd::f32x4,
+) -> (
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+) {
+    use magetypes::simd::f32x4;
+
+    let sqrt2 = f32x4::splat(token, SQRT2);
+
+    // Level 0: AddReverse / SubReverse
+    let a0 = r0 + r7;
+    let a1 = r1 + r6;
+    let a2 = r2 + r5;
+    let a3 = r3 + r4;
+    let s0 = r0 - r7;
+    let s1 = r1 - r6;
+    let s2 = r2 - r5;
+    let s3 = r3 - r4;
+
+    // DCT-4 on first half
+    let b0 = a0 + a3;
+    let b1 = a1 + a2;
+    let b2 = a0 - a3;
+    let b3 = a1 - a2;
+
+    let c0 = b0 + b1;
+    let c1 = b0 - b1;
+
+    let b2 = b2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
+    let b3 = b3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+
+    let d0 = b2 + b3;
+    let d1 = b2 - b3;
+    let d0 = sqrt2.mul_add(d0, d1);
+
+    let fh0 = c0;
+    let fh1 = d0;
+    let fh2 = c1;
+    let fh3 = d1;
+
+    // WcMultipliers_8 on second half
+    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+
+    // DCT-4 on second half
+    let e0 = s0 + s3;
+    let e1 = s1 + s2;
+    let e2 = s0 - s3;
+    let e3 = s1 - s2;
+
+    let f0 = e0 + e1;
+    let f1 = e0 - e1;
+
+    let e2 = e2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
+    let e3 = e3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+
+    let g0 = e2 + e3;
+    let g1 = e2 - e3;
+    let g0 = sqrt2.mul_add(g0, g1);
+
+    let sh0 = f0;
+    let sh1 = g0;
+    let sh2 = f1;
+    let sh3 = g1;
+
+    // B transform on second half
+    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh1 = sh1 + sh2;
+    let sh2 = sh2 + sh3;
+
+    (fh0, sh0, fh1, sh1, fh2, sh2, fh3, sh3)
+}
+
+/// NEON vectorized 8-point inverse DCT butterfly (f32x4).
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn neon_idct1d_8(
+    token: archmage::NeonToken,
+    r0: magetypes::simd::f32x4,
+    r1: magetypes::simd::f32x4,
+    r2: magetypes::simd::f32x4,
+    r3: magetypes::simd::f32x4,
+    r4: magetypes::simd::f32x4,
+    r5: magetypes::simd::f32x4,
+    r6: magetypes::simd::f32x4,
+    r7: magetypes::simd::f32x4,
+) -> (
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+) {
+    use magetypes::simd::f32x4;
+
+    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+
+    // De-interleave
+    let fh0 = r0;
+    let sh0 = r1;
+    let fh1 = r2;
+    let sh1 = r3;
+    let fh2 = r4;
+    let sh2 = r5;
+    let fh3 = r6;
+    let sh3 = r7;
+
+    // Inverse B transform on second half
+    let sh2 = sh2 - sh3;
+    let sh1 = sh1 - sh2;
+    let sh0 = (sh0 - sh1) * inv_sqrt2;
+
+    let f0 = sh0;
+    let g0 = sh1;
+    let f1 = sh2;
+    let g1 = sh3;
+
+    let g0 = (g0 - g1) * inv_sqrt2;
+
+    let e2p = g0 + g1;
+    let e3p = g0 - g1;
+
+    let e2 = e2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let e3 = e3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+
+    let e0p = f0 + f1;
+    let e1p = f0 - f1;
+
+    let s0 = e0p + e2;
+    let s3 = e0p - e2;
+    let s1 = e1p + e3;
+    let s2 = e1p - e3;
+
+    let s0 = s0 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[3]);
+
+    // First half
+    let c0 = fh0;
+    let d0 = fh1;
+    let c1 = fh2;
+    let d1 = fh3;
+
+    let d0_in = (d0 - d1) * inv_sqrt2;
+
+    let b2p = d0_in + d1;
+    let b3p = d0_in - d1;
+
+    let b2 = b2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let b3 = b3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+
+    let b0p = c0 + c1;
+    let b1p = c0 - c1;
+
+    let a0 = b0p + b2;
+    let a3 = b0p - b2;
+    let a1 = b1p + b3;
+    let a2 = b1p - b3;
+
+    // Level 0: inverse add/sub reverse
+    let out0 = a0 + s0;
+    let out7 = a0 - s0;
+    let out1 = a1 + s1;
+    let out6 = a1 - s1;
+    let out2 = a2 + s2;
+    let out5 = a2 - s2;
+    let out3 = a3 + s3;
+    let out4 = a3 - s3;
+
+    (out0, out1, out2, out3, out4, out5, out6, out7)
+}
+
+/// NEON in-register 4x4 transpose using vtrn + 64-bit lane swap.
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+#[allow(clippy::type_complexity)]
+fn neon_transpose_4x4(
+    _token: archmage::NeonToken,
+    r0: magetypes::simd::f32x4,
+    r1: magetypes::simd::f32x4,
+    r2: magetypes::simd::f32x4,
+    r3: magetypes::simd::f32x4,
+) -> (
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+) {
+    use core::arch::aarch64::*;
+    use magetypes::simd::f32x4;
+
+    let r0 = r0.raw();
+    let r1 = r1.raw();
+    let r2 = r2.raw();
+    let r3 = r3.raw();
+
+    let t01_lo = vtrn1q_f32(r0, r1);
+    let t01_hi = vtrn2q_f32(r0, r1);
+    let t23_lo = vtrn1q_f32(r2, r3);
+    let t23_hi = vtrn2q_f32(r2, r3);
+
+    let lo0 = vreinterpretq_f64_f32(t01_lo);
+    let lo1 = vreinterpretq_f64_f32(t23_lo);
+    let hi0 = vreinterpretq_f64_f32(t01_hi);
+    let hi1 = vreinterpretq_f64_f32(t23_hi);
+
+    let out0 = vreinterpretq_f32_f64(vtrn1q_f64(lo0, lo1));
+    let out1 = vreinterpretq_f32_f64(vtrn1q_f64(hi0, hi1));
+    let out2 = vreinterpretq_f32_f64(vtrn2q_f64(lo0, lo1));
+    let out3 = vreinterpretq_f32_f64(vtrn2q_f64(hi0, hi1));
+
+    // Token needed for from_float32x4_t, get it back via _token
+    (
+        f32x4::from_float32x4_t(_token, out0),
+        f32x4::from_float32x4_t(_token, out1),
+        f32x4::from_float32x4_t(_token, out2),
+        f32x4::from_float32x4_t(_token, out3),
     )
 }
 
