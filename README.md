@@ -1,9 +1,9 @@
-# jxl-encoder-rs
+# jxl-encoder
 
-[![CI](https://github.com/imazen/jxl-encoder-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jxl-encoder-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jxl-encoder/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/jxl-encoder.svg)](https://crates.io/crates/jxl-encoder)
 [![docs.rs](https://docs.rs/jxl-encoder/badge.svg)](https://docs.rs/jxl-encoder)
-[![codecov](https://codecov.io/gh/imazen/jxl-encoder-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder-rs)
+[![codecov](https://codecov.io/gh/imazen/jxl-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder)
 [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
 Pure Rust JPEG XL encoder. Lossy (VarDCT) and lossless (Modular) paths, both producing valid bitstreams verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
@@ -127,7 +127,7 @@ cargo clippy --workspace -- -D warnings    # lint
 ## Project structure
 
 ```
-jxl-encoder-rs/
+jxl-encoder/
 ├── jxl_encoder/             # Main encoder library (jxl-encoder on crates.io)
 │   └── src/
 │       ├── api.rs               # Public API (LossyConfig, LosslessConfig, EncodeRequest)
