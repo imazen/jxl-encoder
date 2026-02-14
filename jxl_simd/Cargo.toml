@@ -13,9 +13,13 @@ rust-version.workspace = true
 keywords = ["jpeg-xl", "simd", "dct"]
 categories = ["multimedia::images", "algorithms"]
 
+[features]
+default = ["std"]
+std = ["archmage/std", "magetypes/std"]
+
 [dependencies]
-archmage = "0.7"
-magetypes = "0.7"
+archmage = { version = "0.7", default-features = false, features = ["std", "macros", "safe_unaligned_simd"] }
+magetypes = { version = "0.7", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

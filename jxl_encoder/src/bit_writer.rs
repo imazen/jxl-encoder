@@ -7,8 +7,6 @@
 //! Writes bits in little-endian order, least-significant-bit first within
 //! each byte. This is the inverse of the BitReader used in decoding.
 
-use byteorder::{ByteOrder, LittleEndian};
-
 use crate::error::{Error, Result};
 
 /// Maximum bits that can be written in a single call.
@@ -153,9 +151,9 @@ impl BitWriter {
         // Use little-endian 64-bit write for efficiency
         // This may write more bytes than strictly necessary, but the extra
         // bytes are already zero-initialized
-        let mut current = LittleEndian::read_u64(p);
+        let mut current = u64::from_le_bytes(p[..8].try_into().unwrap());
         current |= shifted_bits;
-        LittleEndian::write_u64(p, current);
+        p[..8].copy_from_slice(&current.to_le_bytes());
 
         self.bits_written += n_bits;
         Ok(())
