@@ -12,7 +12,7 @@
 //! debug_log!("DC token: ctx={}, value={}", ctx, value);
 //! ```
 //!
-//! Output goes to `/tmp/jxl_enc_debug.log` (overwritten each run).
+//! Output goes to `<temp_dir>/jxl_enc_debug.log` (overwritten each run).
 
 #[cfg(feature = "debug-tokens")]
 use std::io::Write;
@@ -27,7 +27,7 @@ static DEBUG_LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
 pub fn init_debug_log() {
     let mut guard = DEBUG_LOG.lock().unwrap();
     if guard.is_none() {
-        let file = std::fs::File::create("/tmp/jxl_enc_debug.log")
+        let file = std::fs::File::create(std::env::temp_dir().join("jxl_enc_debug.log"))
             .expect("Failed to create debug log file");
         *guard = Some(file);
     }
@@ -53,7 +53,7 @@ pub fn flush_debug_log() {
     }
 }
 
-/// Debug log macro - writes to /tmp/jxl_enc_debug.log when debug-tokens feature is enabled.
+/// Debug log macro - writes to `<temp_dir>/jxl_enc_debug.log` when debug-tokens feature is enabled.
 ///
 /// Usage: `debug_log!("message: {}", value);`
 #[macro_export]

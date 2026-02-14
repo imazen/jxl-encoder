@@ -2339,7 +2339,7 @@ mod tests {
         eprintln!("ANS bytes: {:02x?}", &bytes);
 
         // Save for external debugging
-        std::fs::write("/tmp/ans_modular_varied.jxl", &bytes).ok();
+        std::fs::write(std::env::temp_dir().join("ans_modular_varied.jxl"), &bytes).ok();
 
         let jxl_image = jxl_oxide::JxlImage::builder()
             .read(std::io::Cursor::new(&bytes))

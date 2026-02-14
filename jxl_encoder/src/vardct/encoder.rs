@@ -1310,7 +1310,7 @@ mod tests {
         );
 
         // Write output to file for comparison
-        std::fs::write("/tmp/our_16x16.jxl", &output.data).unwrap();
+        std::fs::write(std::env::temp_dir().join("our_16x16.jxl"), &output.data).unwrap();
 
         // libjxl-tiny produces:
         // DC_group: 106 bits (14 bytes)
@@ -1567,12 +1567,20 @@ mod tests {
         // Encode WITH DC tree learning — also use ANS
         let mut encoder_learned = VarDctEncoder::new(1.0);
         encoder_learned.dc_tree_learning = true;
-        std::fs::write("/tmp/dc_baseline_test.jxl", &bytes_baseline).unwrap();
+        std::fs::write(
+            std::env::temp_dir().join("dc_baseline_test.jxl"),
+            &bytes_baseline,
+        )
+        .unwrap();
         let bytes_learned = encoder_learned
             .encode(width, height, &linear_rgb, None)
             .expect("learned encode failed")
             .data;
-        std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
+        std::fs::write(
+            std::env::temp_dir().join("dc_learned_test.jxl"),
+            &bytes_learned,
+        )
+        .unwrap();
 
         eprintln!(
             "DC tree learning: baseline={} bytes, learned={} bytes (delta={:.2}%)",
@@ -1614,7 +1622,11 @@ mod tests {
         eprintln!("Learned ANS decodes OK ({} bytes)", bytes_learned.len());
 
         // Also verify with djxl
-        std::fs::write("/tmp/dc_learned_test.jxl", &bytes_learned).unwrap();
+        std::fs::write(
+            std::env::temp_dir().join("dc_learned_test.jxl"),
+            &bytes_learned,
+        )
+        .unwrap();
     }
 
     /// Test that the butteraugli quantization loop produces valid output.

@@ -39,8 +39,8 @@ mod tests {
         }
         eprintln!();
 
-        // Write to /tmp for debugging
-        std::fs::write("/tmp/test_out.jxl", &encoded).unwrap();
+        // Write to temp dir for debugging
+        std::fs::write(std::env::temp_dir().join("test_out.jxl"), &encoded).unwrap();
     }
 
     #[test]
@@ -101,8 +101,8 @@ mod tests {
         }
         eprintln!();
 
-        // Write to /tmp for testing with decoder
-        std::fs::write("/tmp/test_black.jxl", &encoded).unwrap();
+        // Write to temp dir for testing with decoder
+        std::fs::write(std::env::temp_dir().join("test_black.jxl"), &encoded).unwrap();
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod tests {
         }
         eprintln!();
 
-        std::fs::write("/tmp/test_white.jxl", &encoded).unwrap();
+        std::fs::write(std::env::temp_dir().join("test_white.jxl"), &encoded).unwrap();
     }
 
     #[test]
@@ -172,10 +172,11 @@ mod tests {
             }
         }
         eprintln!();
-        std::fs::write("/tmp/lossy_8x8.jxl", &encoded).unwrap();
+        let lossy_8x8_path = std::env::temp_dir().join("lossy_8x8.jxl");
+        std::fs::write(&lossy_8x8_path, &encoded).unwrap();
 
         // Verify roundtrip: file bytes == memory bytes
-        let read_back = std::fs::read("/tmp/lossy_8x8.jxl").unwrap();
+        let read_back = std::fs::read(&lossy_8x8_path).unwrap();
         assert_eq!(encoded, read_back, "File bytes don't match memory bytes!");
 
         // Try to decode the READ-BACK bytes (not original)
@@ -227,7 +228,7 @@ mod gray_tests {
         }
         eprintln!();
 
-        std::fs::write("/tmp/test_gray.jxl", &encoded).unwrap();
+        std::fs::write(std::env::temp_dir().join("test_gray.jxl"), &encoded).unwrap();
     }
 }
 
@@ -239,7 +240,7 @@ fn test_encode_gray_binary() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_binary.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_binary.jxl"), &encoded).unwrap();
 
     eprintln!("Encoded gray binary 2x2: {} bytes", encoded.len());
 }
@@ -252,7 +253,7 @@ fn test_encode_gray_uniform_128() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_128.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_128.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 128 uniform: {} bytes", encoded.len());
 }
 
@@ -269,7 +270,7 @@ fn test_encode_rgb_simulated_gray() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/test_rgb_gray.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_rgb_gray.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB simulated gray: {} bytes", encoded.len());
 }
 
@@ -281,7 +282,7 @@ fn test_encode_gray_0_and_1() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_01.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_01.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 0/1 2x2: {} bytes", encoded.len());
 }
 
@@ -293,7 +294,7 @@ fn test_encode_gray_0_and_3() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_03.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_03.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 0/3 2x2: {} bytes", encoded.len());
 }
 
@@ -305,7 +306,7 @@ fn test_encode_gray_0_and_7() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_07.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_07.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 0/7 2x2: {} bytes", encoded.len());
 }
 
@@ -317,7 +318,7 @@ fn test_encode_gray_0_and_15() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_015.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_015.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 0/15 2x2: {} bytes", encoded.len());
 }
 
@@ -329,7 +330,7 @@ fn test_encode_gray_0_and_4() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_04.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_04.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 0/4 2x2: {} bytes", encoded.len());
 }
 
@@ -341,7 +342,7 @@ fn test_encode_gray_1_and_2() {
     let encoded = LosslessConfig::new()
         .encode(&data, 2, 2, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_12.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_12.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 1/2 2x2: {} bytes", encoded.len());
 }
 
@@ -353,7 +354,7 @@ fn test_encode_gray_4x4_pattern() {
     let encoded = LosslessConfig::new()
         .encode(&data, 4, 4, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_4x4.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_4x4.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 4x4 pattern: {} bytes", encoded.len());
 }
 
@@ -365,7 +366,7 @@ fn test_encode_gray_16_symbols() {
     let encoded = LosslessConfig::new()
         .encode(&data, 4, 4, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_16sym.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_16sym.jxl"), &encoded).unwrap();
     eprintln!("Encoded 16-symbol gray 4x4: {} bytes", encoded.len());
 
     // Check JXL signature
@@ -380,7 +381,7 @@ fn test_encode_gray_256_symbols() {
     let encoded = LosslessConfig::new()
         .encode(&data, 16, 16, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_256sym.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_256sym.jxl"), &encoded).unwrap();
     eprintln!("Encoded 256-symbol gray 16x16: {} bytes", encoded.len());
 
     // Check JXL signature
@@ -400,7 +401,7 @@ fn test_encode_gray_8x8_pattern() {
     let encoded = LosslessConfig::new()
         .encode(&data, 8, 8, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/test_gray_8x8.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("test_gray_8x8.jxl"), &encoded).unwrap();
     eprintln!("Encoded gray 8x8 checkerboard: {} bytes", encoded.len());
 }
 
@@ -472,7 +473,7 @@ mod corpus_tests {
             let encoded = LosslessConfig::new()
                 .encode(gray.as_raw(), w as u32, h as u32, PixelLayout::Gray8)
                 .unwrap();
-            std::fs::write("/tmp/pngsuite_gray.jxl", &encoded).unwrap();
+            std::fs::write(std::env::temp_dir().join("pngsuite_gray.jxl"), &encoded).unwrap();
             eprintln!("basi0g08.png: {}x{} -> {} bytes", w, h, encoded.len());
         } else {
             eprintln!("Skipping: {} not found", path);
@@ -490,7 +491,7 @@ mod corpus_tests {
             let encoded = LosslessConfig::new()
                 .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
                 .unwrap();
-            std::fs::write("/tmp/pngsuite_rgb.jxl", &encoded).unwrap();
+            std::fs::write(std::env::temp_dir().join("pngsuite_rgb.jxl"), &encoded).unwrap();
             eprintln!("basi2c08.png: {}x{} -> {} bytes", w, h, encoded.len());
         } else {
             eprintln!("Skipping: {} not found", path);
@@ -510,7 +511,7 @@ mod corpus_tests {
                     let encoded = LosslessConfig::new()
                         .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
                         .unwrap();
-                    std::fs::write("/tmp/kodak1.jxl", &encoded).unwrap();
+                    std::fs::write(std::env::temp_dir().join("kodak1.jxl"), &encoded).unwrap();
                 }
                 Err(e) => panic!("{}", e),
             }
@@ -581,7 +582,7 @@ fn test_encode_rgb_8x8() {
     let encoded = LosslessConfig::new()
         .encode(&data, 8, 8, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_8x8.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_8x8.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 8x8: {} bytes", encoded.len());
     assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 }
@@ -600,7 +601,7 @@ fn test_encode_gray_8x8() {
     let encoded = LosslessConfig::new()
         .encode(&data, 8, 8, PixelLayout::Gray8)
         .unwrap();
-    std::fs::write("/tmp/gray_8x8.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("gray_8x8.jxl"), &encoded).unwrap();
     eprintln!("Encoded Gray 8x8: {} bytes", encoded.len());
 }
 
@@ -626,7 +627,7 @@ fn test_encode_rgb_4x4() {
     let encoded = LosslessConfig::new()
         .encode(&data, 4, 4, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_4x4.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_4x4.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 4x4: {} bytes", encoded.len());
 }
 
@@ -651,7 +652,7 @@ fn test_encode_rgb_6x6() {
     let encoded = LosslessConfig::new()
         .encode(&data, 6, 6, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_6x6.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_6x6.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 6x6: {} bytes", encoded.len());
 }
 
@@ -675,7 +676,7 @@ fn test_encode_rgb_7x7() {
     let encoded = LosslessConfig::new()
         .encode(&data, 7, 7, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_7x7.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_7x7.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 7x7: {} bytes", encoded.len());
 }
 
@@ -699,7 +700,7 @@ fn test_encode_rgb_9x9() {
     let encoded = LosslessConfig::new()
         .encode(&data, 9, 9, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_9x9.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_9x9.jxl"), &encoded).unwrap();
 }
 
 #[test]
@@ -722,7 +723,7 @@ fn test_encode_rgb_16x16() {
     let encoded = LosslessConfig::new()
         .encode(&data, 16, 16, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_16x16.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_16x16.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 16x16: {} bytes", encoded.len());
 }
 
@@ -746,7 +747,7 @@ fn test_encode_rgb_24x24() {
     let encoded = LosslessConfig::new()
         .encode(&data, 24, 24, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_24x24.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_24x24.jxl"), &encoded).unwrap();
 }
 
 #[test]
@@ -769,7 +770,7 @@ fn test_encode_rgb_10x10() {
     let encoded = LosslessConfig::new()
         .encode(&data, 10, 10, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_10x10.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_10x10.jxl"), &encoded).unwrap();
 }
 
 #[test]
@@ -792,7 +793,7 @@ fn test_encode_rgb_32x32() {
     let encoded = LosslessConfig::new()
         .encode(&data, 32, 32, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_32x32.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_32x32.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 32x32: {} bytes", encoded.len());
 }
 
@@ -816,7 +817,7 @@ fn test_encode_rgb_64x64() {
     let encoded = LosslessConfig::new()
         .encode(&data, 64, 64, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_64x64.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_64x64.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 64x64: {} bytes", encoded.len());
 }
 
@@ -841,7 +842,7 @@ fn test_encode_rgb_256x256() {
     let encoded = LosslessConfig::new()
         .encode(&data, 256, 256, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_256x256.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("rgb_256x256.jxl"), &encoded).unwrap();
     eprintln!("Encoded RGB 256x256: {} bytes", encoded.len());
 }
 
@@ -880,7 +881,7 @@ fn test_encode_rgb_irregular_dimensions() {
             .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{}x{} failed to encode: {}", w, h, e));
 
-        let path = format!("/tmp/rgb_{}x{}.jxl", w, h);
+        let path = std::env::temp_dir().join(format!("rgb_{}x{}.jxl", w, h));
         let _ = std::fs::write(&path, &encoded);
         eprintln!("{}x{}: {} bytes", w, h, encoded.len());
 
@@ -913,7 +914,11 @@ fn test_encode_rgb_gradient() {
     let encoded = LosslessConfig::new()
         .encode(&data, 32, 32, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/rgb_gradient_32x32.jxl", &encoded).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("rgb_gradient_32x32.jxl"),
+        &encoded,
+    )
+    .unwrap();
     eprintln!("Encoded RGB gradient 32x32: {} bytes", encoded.len());
 }
 
@@ -945,9 +950,14 @@ mod decoder_validation {
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
         // Save to file for debugging
-        let path = format!("/tmp/{}.jxl", test_name);
+        let path = std::env::temp_dir().join(format!("{}.jxl", test_name));
         let _ = std::fs::write(&path, &encoded);
-        eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
+        eprintln!(
+            "{}: Saved {} bytes to {}",
+            test_name,
+            encoded.len(),
+            path.display()
+        );
 
         // Decode with jxl-rs (PRIMARY decoder)
         let jxlrs_result = crate::test_helpers::decode_with_jxl_rs(&encoded);
@@ -1211,8 +1221,14 @@ mod decoder_validation {
         // 2. Validate with djxl (libjxl reference decoder)
         if std::path::Path::new(DJXL_PATH).exists() {
             // Write JXL to temp file
-            let temp_jxl = format!("/tmp/dual_decode_test_{}.jxl", test_name.replace(" ", "_"));
-            let temp_png = format!("/tmp/dual_decode_test_{}.png", test_name.replace(" ", "_"));
+            let temp_jxl = std::env::temp_dir().join(format!(
+                "dual_decode_test_{}.jxl",
+                test_name.replace(" ", "_")
+            ));
+            let temp_png = std::env::temp_dir().join(format!(
+                "dual_decode_test_{}.png",
+                test_name.replace(" ", "_")
+            ));
             std::fs::write(&temp_jxl, encoded).expect("Failed to write temp JXL");
 
             // Run djxl — may fail if binary exists but shared libs are missing
@@ -1650,8 +1666,13 @@ mod decoder_validation {
             .encode(&data, 16, 16, PixelLayout::Rgb8)
             .unwrap();
         // Save for debugging
-        std::fs::write("/tmp/test_16x16_lossy.jxl", &encoded).unwrap();
-        eprintln!("Saved {} bytes to /tmp/test_16x16_lossy.jxl", encoded.len());
+        let lossy_16x16_path = std::env::temp_dir().join("test_16x16_lossy.jxl");
+        std::fs::write(&lossy_16x16_path, &encoded).unwrap();
+        eprintln!(
+            "Saved {} bytes to {}",
+            encoded.len(),
+            lossy_16x16_path.display()
+        );
         // VarDCT is validated against jxl-oxide only until encoder is complete
         let oxide_result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
         assert!(
@@ -1834,7 +1855,11 @@ mod decoder_validation {
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 
         eprintln!("Multi-group 300x300: {} bytes", encoded.len());
-        std::fs::write("/tmp/test_multigroup_300.jxl", &encoded).unwrap();
+        std::fs::write(
+            std::env::temp_dir().join("test_multigroup_300.jxl"),
+            &encoded,
+        )
+        .unwrap();
 
         // Verify with jxl-oxide
         let result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
@@ -1871,7 +1896,11 @@ mod decoder_validation {
         assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
 
         eprintln!("Multi-group 512x512: {} bytes", encoded.len());
-        std::fs::write("/tmp/test_multigroup_512.jxl", &encoded).unwrap();
+        std::fs::write(
+            std::env::temp_dir().join("test_multigroup_512.jxl"),
+            &encoded,
+        )
+        .unwrap();
 
         // Verify with jxl-oxide
         let result = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(&encoded));
@@ -2236,12 +2265,15 @@ mod quality_comparison_tests {
 
     /// Encode with libjxl and decode back to PNG
     fn encode_decode_libjxl(input: &str, distance: f32) -> Option<Vec<u8>> {
-        let jxl_path = format!("/tmp/libjxl_test_{}.jxl", std::process::id());
-        let out_path = format!("/tmp/libjxl_test_{}.png", std::process::id());
+        let jxl_path = std::env::temp_dir().join(format!("libjxl_test_{}.jxl", std::process::id()));
+        let out_path = std::env::temp_dir().join(format!("libjxl_test_{}.png", std::process::id()));
 
         // Encode with cjxl
         let status = Command::new(LIBJXL_CJXL)
-            .args([input, &jxl_path, "-d", &format!("{}", distance)])
+            .arg(input)
+            .arg(&jxl_path)
+            .arg("-d")
+            .arg(format!("{}", distance))
             .output()
             .ok()?;
 
@@ -2252,7 +2284,8 @@ mod quality_comparison_tests {
 
         // Decode with djxl
         let status = Command::new(LIBJXL_DJXL)
-            .args([&jxl_path, &out_path])
+            .arg(&jxl_path)
+            .arg(&out_path)
             .output()
             .ok()?;
 
@@ -2324,9 +2357,12 @@ mod quality_comparison_tests {
             .map(|e| e.len());
 
         // libjxl size
-        let jxl_path = format!("/tmp/libjxl_size_{}.jxl", std::process::id());
+        let jxl_path = std::env::temp_dir().join(format!("libjxl_size_{}.jxl", std::process::id()));
         let libjxl_size = Command::new(LIBJXL_CJXL)
-            .args([input_path, &jxl_path, "-d", &format!("{}", distance)])
+            .arg(input_path)
+            .arg(&jxl_path)
+            .arg("-d")
+            .arg(format!("{}", distance))
             .output()
             .ok()
             .and_then(|status| {
@@ -2553,7 +2589,11 @@ mod quality_comparison_tests {
         let encoded = LossyConfig::new(1.0)
             .encode(&data, 8, 8, PixelLayout::Rgb8)
             .unwrap();
-        std::fs::write("/tmp/test_hgrad_orientation.jxl", &encoded).unwrap();
+        std::fs::write(
+            std::env::temp_dir().join("test_hgrad_orientation.jxl"),
+            &encoded,
+        )
+        .unwrap();
 
         // Decode with jxl-oxide
         let image = jxl_oxide::JxlImage::builder()
@@ -2666,8 +2706,8 @@ mod dual_decoder_butteraugli_tests {
     /// Decode JXL with jxl-rs CLI and return RGB8 pixels
     fn decode_with_jxlrs(jxl_data: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
         // Write JXL to temp file
-        let jxl_path = format!("/tmp/test_jxlrs_{}.jxl", std::process::id());
-        let png_path = format!("/tmp/test_jxlrs_{}.png", std::process::id());
+        let jxl_path = std::env::temp_dir().join(format!("test_jxlrs_{}.jxl", std::process::id()));
+        let png_path = std::env::temp_dir().join(format!("test_jxlrs_{}.png", std::process::id()));
 
         std::fs::write(&jxl_path, jxl_data)
             .map_err(|e| format!("Failed to write temp JXL: {}", e))?;
@@ -3024,8 +3064,8 @@ mod dual_decoder_butteraugli_tests {
         }
 
         // Results file for resume support
-        let results_path = "/tmp/jxl_corpus_results.csv";
-        let failures_path = "/tmp/jxl_corpus_failures.txt";
+        let results_path = std::env::temp_dir().join("jxl_corpus_results.csv");
+        let failures_path = std::env::temp_dir().join("jxl_corpus_failures.txt");
 
         // Load previously processed images
         let mut processed: HashSet<String> = HashSet::new();
@@ -3034,7 +3074,7 @@ mod dual_decoder_butteraugli_tests {
         let mut prev_total_size = 0usize;
         let mut prev_total_pixels = 0usize;
 
-        if let Ok(file) = File::open(results_path) {
+        if let Ok(file) = File::open(&results_path) {
             let reader = BufReader::new(file);
             for line in reader.lines().skip(1).flatten() {
                 let parts: Vec<&str> = line.split(',').collect();
@@ -3094,7 +3134,7 @@ mod dual_decoder_butteraugli_tests {
         let mut results_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(results_path)
+            .open(&results_path)
             .expect("Failed to open results file");
 
         // Write header if file is empty
@@ -3105,7 +3145,7 @@ mod dual_decoder_butteraugli_tests {
         let mut failures_file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(failures_path)
+            .open(&failures_path)
             .expect("Failed to open failures file");
 
         let mut encode_ok = prev_encode_ok;
@@ -3253,8 +3293,8 @@ mod dual_decoder_butteraugli_tests {
             println!("Avg bpp:         {:.3}", bpp);
         }
 
-        println!("\nResults: {}", results_path);
-        println!("Failures: {}", failures_path);
+        println!("\nResults: {}", results_path.display());
+        println!("Failures: {}", failures_path.display());
 
         // Assert high success rate
         let success_rate = decode_ok as f64 / total_tests as f64 * 100.0;
@@ -3361,8 +3401,13 @@ mod dual_decoder_butteraugli_tests {
             .expect("Encode failed");
 
         // Save JXL
-        std::fs::write("/tmp/broken.jxl", &encoded).unwrap();
-        println!("Saved /tmp/broken.jxl ({} bytes)", encoded.len());
+        let broken_jxl_path = std::env::temp_dir().join("broken.jxl");
+        std::fs::write(&broken_jxl_path, &encoded).unwrap();
+        println!(
+            "Saved {} ({} bytes)",
+            broken_jxl_path.display(),
+            encoded.len()
+        );
 
         // Decode with jxl-oxide
         let jxl_image = jxl_oxide::JxlImage::builder()
@@ -3384,8 +3429,9 @@ mod dual_decoder_butteraugli_tests {
         }
 
         // Save decoded PNG
+        let broken_decoded_path = std::env::temp_dir().join("broken_decoded.png");
         image::save_buffer(
-            "/tmp/broken_decoded.png",
+            &broken_decoded_path,
             &decoded,
             width as u32,
             height as u32,
@@ -3393,10 +3439,10 @@ mod dual_decoder_butteraugli_tests {
         )
         .expect("Failed to save decoded PNG");
 
-        println!("Saved /tmp/broken_decoded.png");
+        println!("Saved {}", broken_decoded_path.display());
         println!("\nRun:");
         println!("  display {} &", original_path);
-        println!("  display /tmp/broken_decoded.png &");
+        println!("  display {} &", broken_decoded_path.display());
     }
 
     /// Test quality on frymire.png - a real photo that catches bugs synthetic images miss.
@@ -3471,16 +3517,22 @@ mod dual_decoder_butteraugli_tests {
 
         if ssim2 < MIN_SSIM2 {
             // Save files for debugging
-            std::fs::write("/tmp/frymire.jxl", &encoded).ok();
+            let frymire_jxl = std::env::temp_dir().join("frymire.jxl");
+            let frymire_decoded = std::env::temp_dir().join("frymire_decoded.png");
+            std::fs::write(&frymire_jxl, &encoded).ok();
             image::save_buffer(
-                "/tmp/frymire_decoded.png",
+                &frymire_decoded,
                 &decoded,
                 width as u32,
                 height as u32,
                 image::ColorType::Rgb8,
             )
             .ok();
-            println!("\nSaved /tmp/frymire.jxl and /tmp/frymire_decoded.png for debugging");
+            println!(
+                "\nSaved {} and {} for debugging",
+                frymire_jxl.display(),
+                frymire_decoded.display()
+            );
         }
 
         assert!(
@@ -3513,9 +3565,14 @@ mod tree_learning_tests {
             .encode(original, width as u32, height as u32, PixelLayout::Rgb8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
-        let path = format!("/tmp/{}.jxl", test_name);
+        let path = std::env::temp_dir().join(format!("{}.jxl", test_name));
         let _ = std::fs::write(&path, &encoded);
-        eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
+        eprintln!(
+            "{}: Saved {} bytes to {}",
+            test_name,
+            encoded.len(),
+            path.display()
+        );
 
         // Decode with jxl-rs (PRIMARY decoder)
         let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)
@@ -3584,9 +3641,14 @@ mod tree_learning_tests {
             .encode(original, width as u32, height as u32, PixelLayout::Gray8)
             .unwrap_or_else(|e| panic!("{}: encoding failed: {}", test_name, e));
 
-        let path = format!("/tmp/{}.jxl", test_name);
+        let path = std::env::temp_dir().join(format!("{}.jxl", test_name));
         let _ = std::fs::write(&path, &encoded);
-        eprintln!("{}: Saved {} bytes to {}", test_name, encoded.len(), path);
+        eprintln!(
+            "{}: Saved {} bytes to {}",
+            test_name,
+            encoded.len(),
+            path.display()
+        );
 
         // Decode with jxl-rs (PRIMARY decoder)
         let decoded_img = crate::test_helpers::decode_with_jxl_rs(&encoded)

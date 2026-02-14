@@ -173,8 +173,15 @@ pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
 
     // Use unique temp file names to avoid race conditions
     let pid = std::process::id();
-    let temp_jxl = format!("/tmp/decode_test_djxl_{}.jxl", pid);
-    let temp_png = format!("/tmp/decode_test_djxl_{}.png", pid);
+    let temp_dir = std::env::temp_dir();
+    let temp_jxl = temp_dir
+        .join(format!("decode_test_djxl_{}.jxl", pid))
+        .to_string_lossy()
+        .into_owned();
+    let temp_png = temp_dir
+        .join(format!("decode_test_djxl_{}.png", pid))
+        .to_string_lossy()
+        .into_owned();
 
     std::fs::write(&temp_jxl, data).map_err(|e| {
         crate::error::Error::InvalidInput(format!("Failed to write temp file: {:?}", e))
@@ -372,9 +379,13 @@ pub fn test_lossy_roundtrip(
         .map_err(|e| crate::error::Error::InvalidInput(format!("{e}")))?;
 
     // Save for debugging
-    let debug_path = format!("/tmp/{}.jxl", test_name);
+    let debug_path = std::env::temp_dir().join(format!("{}.jxl", test_name));
     std::fs::write(&debug_path, &encoded).ok();
-    eprintln!("DEBUG: Saved {} bytes to {}", encoded.len(), debug_path);
+    eprintln!(
+        "DEBUG: Saved {} bytes to {}",
+        encoded.len(),
+        debug_path.display()
+    );
 
     // VERIFY we actually used VarDCT encoding
     assert_encoding_mode(&encoded, EncodingMode::VarDct, test_name);
@@ -402,7 +413,7 @@ pub fn test_lossy_roundtrip_with_quality(
         .map_err(|e| crate::error::Error::InvalidInput(format!("{e}")))?;
 
     // Save for debugging
-    let debug_path = format!("/tmp/{}.jxl", test_name);
+    let debug_path = std::env::temp_dir().join(format!("{}.jxl", test_name));
     std::fs::write(&debug_path, &encoded).ok();
 
     // VERIFY we actually used VarDCT encoding
