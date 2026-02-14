@@ -7,6 +7,7 @@ Cargo.lock
 .vscode/
 *.orig
 comparison_outputs/
-test_baselines/decoded/
-test_baselines/jxl/
+test_baselines/
+test_images/
 *.zst
+callgrind.out.*
