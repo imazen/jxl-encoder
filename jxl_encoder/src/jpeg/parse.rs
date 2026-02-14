@@ -556,8 +556,7 @@ mod tests {
 
     #[test]
     fn test_zigzag_roundtrip() {
-        for i in 0..64 {
-            let natural = JPEG_NATURAL_ORDER[i];
+        for (i, &natural) in JPEG_NATURAL_ORDER.iter().enumerate() {
             let back = JPEG_ZIGZAG_ORDER[natural];
             assert_eq!(i, back, "zigzag roundtrip failed at {i}");
         }

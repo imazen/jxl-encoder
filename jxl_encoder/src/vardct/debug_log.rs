@@ -45,6 +45,7 @@ pub fn write_debug_log(msg: &str) {
 
 /// Flush the debug log file.
 #[cfg(feature = "debug-tokens")]
+#[allow(dead_code)]
 pub fn flush_debug_log() {
     let mut guard = DEBUG_LOG.lock().unwrap();
     if let Some(ref mut file) = *guard {

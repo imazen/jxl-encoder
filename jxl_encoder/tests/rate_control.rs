@@ -83,7 +83,7 @@ fn test_rate_control_basic() {
     let encoder = VarDctEncoder::new(1.5);
 
     // Encode without rate control
-    let without_rc = encoder.encode(width, height, &linear_rgb, None).unwrap();
+    let without_rc = encoder.encode(width, height, &linear_rgb, None).unwrap().data;
 
     // Encode with rate control
     let config = RateControlConfig {

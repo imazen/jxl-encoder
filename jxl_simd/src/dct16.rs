@@ -1200,8 +1200,8 @@ mod tests {
         // All AC coefficients should be near zero
         let mut max_ac = 0.0f32;
         let mut max_ac_idx = 0;
-        for i in 1..256 {
-            let val = output[i].abs();
+        for (i, &coeff) in output.iter().enumerate().skip(1) {
+            let val = coeff.abs();
             if val > max_ac {
                 max_ac = val;
                 max_ac_idx = i;

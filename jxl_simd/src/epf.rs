@@ -1810,12 +1810,12 @@ mod tests {
             2.0 / 3.0,
         );
 
-        for i in 0..w * h {
+        for (i, &x) in out_x[..w * h].iter().enumerate() {
             assert!(
-                (out_x[i] - val).abs() < 1e-5,
+                (x - val).abs() < 1e-5,
                 "step1 X: i={} got {} expected {}",
                 i,
-                out_x[i],
+                x,
                 val,
             );
         }
@@ -1844,8 +1844,8 @@ mod tests {
         let ysb = h / 8;
         // Varied inv_sigma
         let mut inv_sigma = vec![0.0f32; xsb * ysb];
-        for i in 0..inv_sigma.len() {
-            inv_sigma[i] = if i % 3 == 0 {
+        for (i, s) in inv_sigma.iter_mut().enumerate() {
+            *s = if i % 3 == 0 {
                 0.0
             } else {
                 -0.5 - (i as f32) * 0.1
@@ -1938,8 +1938,8 @@ mod tests {
         let xsb = w / 8;
         let ysb = h / 8;
         let mut inv_sigma = vec![0.0f32; xsb * ysb];
-        for i in 0..inv_sigma.len() {
-            inv_sigma[i] = if i % 3 == 0 {
+        for (i, s) in inv_sigma.iter_mut().enumerate() {
+            *s = if i % 3 == 0 {
                 0.0
             } else {
                 -0.5 - (i as f32) * 0.1
