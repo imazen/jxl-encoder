@@ -34,6 +34,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Build workspace
         run: cargo build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}"
@@ -67,6 +69,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Build workspace
         run: cargo build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}"
@@ -102,6 +106,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Build (cross)
         run: cross build --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --target ${{ matrix.target }}
@@ -136,6 +142,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Build for WASM
         env:
@@ -173,6 +181,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Generate coverage
         run: cargo llvm-cov --workspace --no-default-features --features "${{ env.CI_FEATURES }}" --lib --lcov --output-path lcov.info --exclude jxl-encoder-simd
@@ -201,6 +211,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Cache codec-corpus
         uses: actions/cache@v4
@@ -234,6 +246,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
 
       - name: Clippy
         run: cargo clippy --workspace --no-default-features --features "${{ env.CI_FEATURES }}" -- -D warnings
