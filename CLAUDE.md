@@ -15,7 +15,7 @@ correctness verification, but is no longer the reference for quality comparisons
   - Use djxl for decode verification
 - **libjxl-tiny (C++)**: `~/work/libjxl-tiny` - Historical stepping stone (DO NOT USE FOR REFERENCE)
   - Was used for initial port verification, now superseded
-  - See [LIBJXL_TINY_PORT.md](LIBJXL_TINY_PORT.md) for historical port details
+  - See [docs/archive/LIBJXL_TINY_PORT.md](docs/archive/LIBJXL_TINY_PORT.md) for historical port details
 - **jxl-rs (Rust decoder)**: `~/work/jxl-rs` - **PRIMARY** Rust decoder for roundtrip tests
   - GitHub: https://github.com/lilith/jxl-rs (more conformant and complete)
 - **jxl-oxide (Rust decoder)**: `~/work/jxl-efforts/jxl-oxide` - Alternative Rust decoder
@@ -1133,14 +1133,14 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
 - Commit 9d4141d (Jan 3): INVESTIGATION.md documented `TransformId=3` error for VarDCT lossy: "8x8 lossy: FAILS (InvalidEnum TransformId=3)"
 - Commit 8874f01 (Jan 3, same day): "Found" TransformId=3 error "again", wrote "Investigation continues for the TransformId error" as if discovering it for the first time
 
-**The mistake:** Did not read INVESTIGATION.md or git history before "investigating." Re-discovered the exact same bug that was documented hours earlier.
+**The mistake:** Did not read existing docs or git history before "investigating." Re-discovered the exact same bug that was documented hours earlier.
 
 **Why this is severe:** Wasted time on duplicate investigation. No progress made despite spending time.
 
 **Rules to prevent:**
 1. **BEFORE investigating a bug, read:**
-   - `INVESTIGATION.md`
-   - `MISTAKES.md`
+   - `CLAUDE.md` (Known Bugs, Resolved Bugs sections)
+   - `docs/CODE-HISTORY.md` (chronological bug history)
    - Recent git log (`git log --oneline --since="3 days ago" -30`)
    - `git log --grep="<error message>" --all`
 2. **IF bug is already documented:**
@@ -1191,7 +1191,7 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
 - Multiple commits claimed VarDCT "works" or "is complete"
 - Commit 4e4f0ef explicitly titled: "docs: correct false claims about VarDCT working"
 - Claims appeared in:
-  - ENCODING_PARITY.md: "VarDCT: ✓ Complete"
+  - Status docs: "VarDCT: ✓ Complete"
   - Commit messages: "feat: complete VarDCT AC coefficient encoding pipeline"
   - Code comments
 
@@ -1214,12 +1214,12 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
 3. **When correcting false claims:**
    - Update ALL locations (docs, comments, commit messages can't be changed)
    - Document WHY the claim was false (what test was inadequate)
-   - Add this to MISTAKES.md so pattern is documented
+   - Document WHY the claim was false in CLAUDE.md
 
 **Detection:**
 - If commit says "correct false claims", previous documentation lied
 - If docs say "complete" but bugs exist, documentation is premature
-- If INVESTIGATION.md contradicts ENCODING_PARITY.md, one is wrong
+- If different docs contradict each other, at least one is wrong
 
 ### Mistake Pattern 5: Multiple Corrections of Same Issue
 
@@ -1268,10 +1268,10 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
 **Why this is severe:** Makes it impossible to track what's actually been tried. Investigation notes become noise instead of signal.
 
 **Rules to prevent:**
-1. **Use ONE investigation document:**
-   - INVESTIGATION.md is the single source of truth
-   - Update it, don't create STATUS.md, NOTES.md, etc.
-   - Use dated sections (## 2026-01-03: Issue Name)
+1. **Use ONE place for investigation state:**
+   - CLAUDE.md "Known Bugs" section is the single source of truth
+   - Don't create STATUS.md, NOTES.md, INVESTIGATION.md, etc.
+   - Use dated entries with clear status labels
 2. **Link related errors:**
    - If seeing multiple symptoms (UnexpectedEof, InvalidEnum, byte corruption), they may be the same root cause
    - Document the connection: "This may be related to issue from YYYY-MM-DD"
@@ -1280,7 +1280,7 @@ Analysis of 69 commits from Dec 28, 2025 - Jan 3, 2026 reveals systematic patter
    - Don't create "investigate: correct VarDCT bug analysis" - just update the analysis
 
 **Detection:**
-- Multiple files documenting same issue (INVESTIGATION.md, STATUS.md, NOTES.md all about VarDCT bugs)
+- Multiple files documenting same issue (scattered .md files all about the same bug)
 - Multiple commits with "investigate:" prefix in same day for same component
 - Commit message says "correct X analysis" meaning previous analysis was wrong
 
@@ -1381,98 +1381,21 @@ Guessing would have taken days longer.
    - Synthetic data hides bugs (see: ANS omit_pos, raw_quant=1).
    - Use CLIC 2025 photos or `~/work/codec-corpus/` for any test above Layer 2.
 
-## Invariant Preservation Across Sessions (MANDATORY)
+## Investigation State Management
 
-**Every finding and proof-narrowing of invariants MUST be committed to `PROVEN_INVARIANTS.md`.**
+**CLAUDE.md is the single source of truth for active bugs and investigation state.**
 
-Context compaction loses knowledge. The only way to preserve it is to write it down and commit it.
-
-### Rules
-
-1. **Commit findings immediately:**
-   - When a layer passes, record it in `PROVEN_INVARIANTS.md` with the test name
-   - When a layer fails, record what was ruled out
-   - Include the commit hash where the test was added
-
-2. **Format for PROVEN_INVARIANTS.md:**
-   ```markdown
-   ## Feature: DCT4x8/DCT8x4
-
-   ### Proven Layers
-   - [x] Layer 1: Transform roundtrip (`test_dct_4x8_roundtrip`, commit abc123)
-   - [x] Layer 1: Quant weights match libjxl (`test_dct4x8_quant_weights`, commit def456)
-   - [ ] Layer 2: Tokenization roundtrip (IN PROGRESS)
-   - [ ] Layer 3: External decoders
-   - [ ] Layer 4: Quality on real photos
-
-   ### Ruled Out
-   - Transpose bug: verified output layout matches C++ (see test_dct4x8_layout)
-   - DC extraction: spatial ordering confirmed correct (see test_dc_from_dct_4x8)
-
-   ### Open Questions
-   - Strategy selection threshold needs tuning after Layer 4
-   ```
-
-3. **After context compaction:**
-   - FIRST action: `cat PROVEN_INVARIANTS.md`
-   - Resume from the first unchecked layer
-   - Do NOT re-investigate proven layers
-
-4. **Commit atomically:**
-   - Each layer proven = one commit with test + PROVEN_INVARIANTS.md update
-   - Message format: `test: prove Layer N for <feature> - <what was proven>`
-
-5. **Never delete from PROVEN_INVARIANTS.md:**
-   - Mark completed features as `[COMPLETE]` but keep the record
-   - Failed approaches are valuable - they prevent re-investigation
-
-## INVESTIGATION.md Maintenance (MANDATORY)
-
-**INVESTIGATION.md is the single source of truth for all debugging investigations. NEVER delete from it.**
+Do NOT create separate INVESTIGATION.md, STATUS.md, PROVEN_INVARIANTS.md, or similar files.
+All active bug state belongs in "Known Bugs (ACTIVE)" above. Resolved bugs go in "Resolved Bugs".
+Historical context lives in `docs/CODE-HISTORY.md`.
 
 ### Rules
 
-1. **Keep INVESTIGATION.md up to date at ALL times** - Update immediately when you discover something
-2. **NEVER delete content** - Only add or mark sections as resolved
-3. **Label findings by confidence level:**
-   - `[PROVEN]` - Verified with evidence (include proof: test output, hex dump, etc.)
-   - `[LIKELY]` - Strong evidence but not conclusive
-   - `[SUSPICION]` - Educated guess, needs investigation
-   - `[THREAD]` - Investigation path to explore
-   - `[RULED OUT]` - Investigated and disproven (explain why)
-   - `[RESOLVED]` - Issue was fixed (link to commit)
-
-### Format
-
-```markdown
-## YYYY-MM-DD: Issue Title
-
-### Status: [ACTIVE|RESOLVED|BLOCKED]
-
-### Summary
-Brief description of the problem.
-
-### Findings
-- [PROVEN] X causes Y (proof: `cargo test foo` output shows...)
-- [SUSPICION] Could be related to Z
-- [THREAD] Need to check if W affects this
-
-### What's Been Tried
-- Tried A - didn't work because...
-- Tried B - partial success, revealed...
-
-### Next Steps
-1. Investigate X
-2. Test Y with Z
-```
-
-### Why This Exists
-
-Investigation loops have wasted weeks of effort. Proper documentation prevents:
-- Re-discovering the same bug
-- Re-trying failed approaches
-- Losing context between sessions
-- Multiple people investigating the same issue
+1. **Record findings in CLAUDE.md immediately** — active bugs in "Known Bugs", fixes in "Resolved Bugs"
+2. **Commit incrementally** — each proven layer or ruled-out hypothesis gets its own commit
+3. **Read before investigating** — check CLAUDE.md, `docs/CODE-HISTORY.md`, and recent git log first
+4. **Tests ARE the invariant record** — a passing `#[test]` proves more than any markdown checklist
+5. **Move resolved items promptly** — keep "Known Bugs" lean, move fixes to "Resolved Bugs"
 
 ## Bitstream Tracing (NEVER REMOVE)
 
