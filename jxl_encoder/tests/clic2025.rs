@@ -6529,10 +6529,12 @@ fn test_custom_orders_compression() {
 
 /// RD regression test: track encoder quality/size over time against committed baselines.
 ///
-/// Encodes 6 committed test images at d=0.25 and d=0.5, measures butteraugli + SSIM2,
-/// and asserts per-image thresholds. Also prints libjxl e7 baselines for context.
+/// Encodes 6 test images (frymire + 5 CID22-512) at d=0.25 and d=0.5, measures
+/// butteraugli + SSIM2, and asserts per-image thresholds.
 ///
-/// Run with: cargo test -p jxl_encoder --test clic2025 test_rd_regression -- --ignored --nocapture
+/// CID22-512 images are auto-downloaded via the `codec-corpus` crate on first run.
+///
+/// Run with: cargo test -p jxl-encoder --test clic2025 test_rd_regression -- --ignored --nocapture
 #[test]
 #[ignore]
 fn test_rd_regression() {
@@ -6541,44 +6543,38 @@ fn test_rd_regression() {
     use rgb::RGB;
     use std::io::Cursor;
 
-    // --- Image definitions ---
-    struct TestImage {
-        name: &'static str,
-        path: &'static str,
-    }
-
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let project_root = std::path::Path::new(manifest_dir).parent().unwrap();
 
-    let images = [
-        TestImage {
-            name: "frymire",
-            path: "jxl_encoder/tests/images/frymire.png",
-        },
-        TestImage {
-            name: "img10",
-            path: "test_baselines/decoded/10_d0.0_e7.png",
-        },
-        TestImage {
-            name: "img11",
-            path: "test_baselines/decoded/11_d0.0_e7.png",
-        },
-        TestImage {
-            name: "img12",
-            path: "test_baselines/decoded/12_d0.0_e7.png",
-        },
-        TestImage {
-            name: "img13",
-            path: "test_baselines/decoded/13_d0.0_e7.png",
-        },
-        TestImage {
-            name: "img14",
-            path: "test_baselines/decoded/14_d0.0_e7.png",
-        },
-    ];
+    // CID22-512 training images (512x512, CC BY-SA 4.0)
+    // Downloaded and cached automatically by codec-corpus crate.
+    let corpus = codec_corpus::Corpus::new().expect("Failed to init codec-corpus");
+    let cid22_dir = corpus
+        .get("CID22/CID22-512/training")
+        .expect("Failed to download CID22-512 training set");
 
-    // Our encoder baselines (full libjxl thresholds, enhanced clustering, kFavor2X2, 2026-02-03).
-    // Per-image: (size, butteraugli, ssim2)
+    // First 5 CID22-512 images by sorted filename
+    const CID22_NAMES: [&str; 5] = ["1001682", "1028637", "1029604", "106399", "1080721"];
+
+    struct TestImage {
+        name: String,
+        path: std::path::PathBuf,
+    }
+
+    let mut images = vec![TestImage {
+        name: "frymire".into(),
+        path: project_root.join("jxl_encoder/tests/images/frymire.png"),
+    }];
+    for name in &CID22_NAMES {
+        images.push(TestImage {
+            name: (*name).into(),
+            path: cid22_dir.join(format!("{name}.png")),
+        });
+    }
+
+    // Per-image baselines: (size, butteraugli, ssim2) at d=0.25 and d=0.5.
+    // SSIM2: in-process fast-ssim2 on sRGB u8 (gamma 2.2 roundtrip from jxl-oxide linear output).
+    // Butteraugli: in-process butteraugli crate on linear RGB (srgb_to_linear for original).
     struct Baseline {
         size: usize,
         butteraugli: f64,
@@ -6590,171 +6586,84 @@ fn test_rd_regression() {
         d050: Baseline,
     }
 
-    // Baselines updated for: error diffusion default-on, full libjxl x_qm_scale formula,
-    // b_qm_mul for B channel, pixel chromacity adjustment, AFV disabled in pixel-domain mode.
-    // SSIM2: in-process fast-ssim2 on sRGB u8 (gamma 2.2 roundtrip from jxl-oxide linear output).
-    // Butteraugli: in-process butteraugli crate on linear RGB (srgb_to_linear for original).
+    // To recalibrate: run `just rd-regression` and update from the output.
     let baselines = [
-        // frymire
+        // frymire (1118x1105)
         ImageBaselines {
             d025: Baseline {
-                size: 1007989,
-                butteraugli: 1.495,
-                ssim2: 86.95,
+                size: 1070416,
+                butteraugli: 1.420,
+                ssim2: 87.51,
             },
             d050: Baseline {
-                size: 752638,
-                butteraugli: 1.473,
-                ssim2: 84.32,
+                size: 798641,
+                butteraugli: 1.531,
+                ssim2: 85.27,
             },
         },
-        // img10
+        // 1001682 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 196487,
-                butteraugli: 0.638,
-                ssim2: 88.53,
+                size: 119618,
+                butteraugli: 0.511,
+                ssim2: 85.87,
             },
             d050: Baseline {
-                size: 127343,
-                butteraugli: 0.870,
-                ssim2: 86.64,
+                size: 79585,
+                butteraugli: 0.960,
+                ssim2: 85.66,
             },
         },
-        // img11
+        // 1028637 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 211643,
-                butteraugli: 0.510,
-                ssim2: 83.77,
+                size: 93617,
+                butteraugli: 0.479,
+                ssim2: 60.47,
             },
             d050: Baseline {
-                size: 146042,
-                butteraugli: 0.832,
-                ssim2: 82.08,
+                size: 63609,
+                butteraugli: 0.866,
+                ssim2: 58.64,
             },
         },
-        // img12
+        // 1029604 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 179636,
-                butteraugli: 0.612,
-                ssim2: 89.25,
+                size: 153464,
+                butteraugli: 0.497,
+                ssim2: 82.33,
             },
             d050: Baseline {
-                size: 115441,
-                butteraugli: 0.959,
-                ssim2: 87.26,
+                size: 103743,
+                butteraugli: 0.896,
+                ssim2: 80.97,
             },
         },
-        // img13
+        // 106399 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 280294,
-                butteraugli: 0.483,
-                ssim2: 85.28,
+                size: 123199,
+                butteraugli: 0.600,
+                ssim2: 85.37,
             },
             d050: Baseline {
-                size: 209890,
-                butteraugli: 0.936,
-                ssim2: 83.25,
+                size: 75418,
+                butteraugli: 0.961,
+                ssim2: 83.83,
             },
         },
-        // img14
+        // 1080721 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 239323,
-                butteraugli: 0.539,
-                ssim2: 81.61,
+                size: 110071,
+                butteraugli: 0.407,
+                ssim2: 87.71,
             },
             d050: Baseline {
-                size: 170786,
-                butteraugli: 0.864,
-                ssim2: 80.08,
-            },
-        },
-    ];
-
-    // libjxl e7 baselines (for context display, no assertions)
-    // libjxl e7 baselines (for context display only, no assertions).
-    // These were measured externally with ssimulacra2 CLI and butteraugli CLI,
-    // so they use different measurement methodology than our in-process metrics.
-    // Shown for directional comparison, not exact matching.
-    struct E7Baseline {
-        size: usize,
-        butteraugli: f64,
-    }
-
-    struct E7ImageBaselines {
-        d025: E7Baseline,
-        d050: E7Baseline,
-    }
-
-    let e7_baselines = [
-        // frymire
-        E7ImageBaselines {
-            d025: E7Baseline {
-                size: 987654,
-                butteraugli: 0.640,
-            },
-            d050: E7Baseline {
-                size: 690000,
-                butteraugli: 1.180,
-            },
-        },
-        // img10
-        E7ImageBaselines {
-            d025: E7Baseline {
-                size: 199000,
-                butteraugli: 0.480,
-            },
-            d050: E7Baseline {
-                size: 131000,
-                butteraugli: 0.850,
-            },
-        },
-        // img11
-        E7ImageBaselines {
-            d025: E7Baseline {
-                size: 214000,
-                butteraugli: 0.470,
-            },
-            d050: E7Baseline {
-                size: 148000,
-                butteraugli: 0.870,
-            },
-        },
-        // img12
-        E7ImageBaselines {
-            d025: E7Baseline {
-                size: 180000,
-                butteraugli: 0.540,
-            },
-            d050: E7Baseline {
-                size: 119000,
-                butteraugli: 0.840,
-            },
-        },
-        // img13
-        E7ImageBaselines {
-            d025: E7Baseline {
-                size: 283000,
-                butteraugli: 0.430,
-            },
-            d050: E7Baseline {
-                size: 213000,
-                butteraugli: 0.860,
-            },
-        },
-        // img14
-        E7ImageBaselines {
-            d025: E7Baseline {
-                size: 245000,
-                butteraugli: 0.640,
-            },
-            d050: E7Baseline {
-                size: 177000,
-                butteraugli: 1.030,
+                size: 70436,
+                butteraugli: 0.830,
+                ssim2: 86.31,
             },
         },
     ];
@@ -6769,19 +6678,18 @@ fn test_rd_regression() {
     let mut failures: Vec<String> = Vec::new();
     let mut improvements: Vec<String> = Vec::new();
 
-    eprintln!("\n=== RD Regression Test (baseline: commit b11fa1c) ===\n");
+    eprintln!("\n=== RD Regression Test ===\n");
 
     for dist in &distances {
         eprintln!("--- Distance {:.2} ---\n", dist);
         eprintln!(
-            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6}",
-            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base", "e7 Size", "e7 Bfly"
+            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6}",
+            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base"
         );
-        eprintln!("{}", "-".repeat(100));
+        eprintln!("{}", "-".repeat(75));
 
         for (i, image) in images.iter().enumerate() {
-            let full_path = project_root.join(image.path);
-            let img = match image::open(&full_path) {
+            let img = match image::open(&image.path) {
                 Ok(img) => img,
                 Err(e) => {
                     let msg = format!("{}: failed to open: {}", image.name, e);
@@ -6898,19 +6806,28 @@ fn test_rd_regression() {
                 }
             };
 
-            // Get baselines for this image/distance
-            let (base, e7) = if *dist == 0.25 {
-                (&baselines[i].d025, &e7_baselines[i].d025)
+            let base = if *dist == 0.25 {
+                &baselines[i].d025
             } else {
-                (&baselines[i].d050, &e7_baselines[i].d050)
+                &baselines[i].d050
             };
 
             let size = bytes.len();
+
+            // Skip assertions for uncalibrated baselines (size == 0)
+            if base.size == 0 {
+                eprintln!(
+                    "{:<10} {:>8} {:>8} {:>6} {:>7.3} {:>6} {:>7.2} {:>6}",
+                    image.name, size, "NEW", "", bfly, "", ssim2, ""
+                );
+                continue;
+            }
+
             let size_pct = (size as f64 / base.size as f64 - 1.0) * 100.0;
             let size_indicator = if size_pct <= 0.0 { "" } else { " !" };
 
             eprintln!(
-                "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>7.2} {:>6.2} {:>8} {:>6.3}",
+                "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>7.2} {:>6.2}",
                 image.name,
                 size,
                 base.size,
@@ -6920,8 +6837,6 @@ fn test_rd_regression() {
                 base.butteraugli,
                 ssim2,
                 base.ssim2,
-                e7.size,
-                e7.butteraugli,
             );
 
             // --- Assertions ---

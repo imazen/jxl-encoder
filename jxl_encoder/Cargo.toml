@@ -23,11 +23,11 @@ jxl_simd = { package = "jxl-encoder-simd", version = "0.1.0", path = "../jxl_sim
 archmage = "0.7"
 num-derive = "0.4"
 num-traits = "0.2"
-zenjpeg = { version = "0.6.1", path = "../../zenjpeg/zenjpeg", features = ["decoder"], optional = true }
+zenjpeg = { version = "0.6.1", features = ["decoder"], optional = true }
 brotli = { version = "8.0", optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features
-jxl-oxide = { version = "0.12.5", path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide", optional = true }
-butteraugli = { version = "0.4.0", path = "../../butteraugli-opt/butteraugli", optional = true }
+jxl-oxide = { version = "0.12.5", optional = true }
+butteraugli = { version = "0.4.0", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 
@@ -53,19 +53,20 @@ default = ["std", "safe-mode", "butteraugli-loop"]
 [dev-dependencies]
 image = "0.25"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
-jxl = { version = "0.3.0", path = "../../jxl-rs/jxl" }
-jxl_transforms = { version = "0.3.0", path = "../../jxl-rs/jxl_transforms" }
+jxl = "0.3.0"
+jxl_transforms = "0.3.0"
 # jxl-oxide is secondary — always test jxl-rs first
-jxl-oxide = { version = "0.12.5", path = "../../jxl-efforts/jxl-oxide/crates/jxl-oxide" }
-jxl-jbr = { version = "0.2.1", path = "../../jxl-efforts/jxl-oxide/crates/jxl-jbr" }
+jxl-oxide = "0.12.5"
+jxl-jbr = "0.2.1"
 # SSIMULACRA2 for perceptual quality metrics
-fast-ssim2 = { version = "0.7.0", path = "../../fast-ssim2/ssimulacra2", features = ["imgref"] }
+fast-ssim2 = { version = "0.6.5", features = ["imgref"] }
 yuvxyb = "0.4.1"
 # Butteraugli perceptual quality metric
-butteraugli = { version = "0.4.0", path = "../../butteraugli-opt/butteraugli" }
+butteraugli = "0.4.0"
 imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
+codec-corpus = "1"
 
 [lints]
 workspace = true

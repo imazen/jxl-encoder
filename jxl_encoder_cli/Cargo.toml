@@ -18,7 +18,7 @@ name = "cjxl-rs"
 path = "src/main.rs"
 
 [features]
-default = ["butteraugli-loop"]
+default = ["jxl_encoder/std", "jxl_encoder/safe-mode", "butteraugli-loop"]
 debug-tokens = ["jxl_encoder/debug-tokens"]
 debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
 # Enable iterative rate control for improved distance targeting
@@ -27,7 +27,7 @@ rate-control = ["jxl_encoder/rate-control"]
 butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
 
 [dependencies]
-jxl_encoder = { package = "jxl-encoder", path = "../jxl_encoder", version = "0.1.0" }
+jxl_encoder = { package = "jxl-encoder", path = "../jxl_encoder", version = "0.1.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 png = "0.18"
 
