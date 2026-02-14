@@ -1,5 +1,8 @@
 # cjxl-rs
 
+[![crates.io](https://img.shields.io/crates/v/jxl-encoder-cli.svg)](https://crates.io/crates/jxl-encoder-cli)
+[![CI](https://github.com/imazen/jxl-encoder-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/jxl-encoder-rs/actions/workflows/ci.yml)
+
 Command-line JPEG XL encoder. Pure Rust, `#![forbid(unsafe_code)]`.
 
 Wraps [jxl-encoder](https://crates.io/crates/jxl-encoder) — see that crate for library usage.

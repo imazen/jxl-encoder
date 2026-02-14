@@ -2,6 +2,7 @@
 name = "jxl-encoder-cli"
 description = "Command-line JPEG XL encoder"
 readme = "README.md"
+documentation = "https://docs.rs/jxl-encoder-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

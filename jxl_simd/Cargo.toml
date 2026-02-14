@@ -2,6 +2,7 @@
 name = "jxl-encoder-simd"
 description = "SIMD-accelerated primitives for jxl-encoder"
 readme = "README.md"
+documentation = "https://docs.rs/jxl-encoder-simd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
