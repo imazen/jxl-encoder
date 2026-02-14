@@ -28,4 +28,4 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/imazen/jxl-encoder-rs"
 homepage = "https://github.com/imazen/jxl-encoder-rs"
 authors = ["Lilith River"]
-rust-version = "1.85"
+rust-version = "1.89"
