@@ -64,9 +64,7 @@ imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 
-# codec-corpus uses tar_light which depends on libc (Unix-only)
-[target.'cfg(unix)'.dev-dependencies]
-codec-corpus = "1"
+codec-corpus = "1.0.1"
 
 [lints]
 workspace = true
