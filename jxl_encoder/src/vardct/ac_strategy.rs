@@ -425,8 +425,178 @@ pub(super) fn estimate_entropy_with_mask(
 /// `entropy_mul` multiplies ONLY the entropy part, not the loss. In full libjxl
 /// mode, this is a fixed value per transform type. In libjxl-tiny mode, this
 /// is 1.0 and the caller applies multipliers externally.
+///
+/// Dispatches to an `#[arcane]` variant on x86_64/aarch64 so the entire function
+/// body (including scalar arithmetic) runs under `#[target_feature]` and LLVM can
+/// inline the jxl_simd calls + auto-vectorize surrounding code.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn estimate_entropy_full(
+    raw_strategy: u8,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    entropy_mul: f32,
+    scratch: &mut EntropyEstScratch,
+) -> f32 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::X64V3Token::summon() {
+            return estimate_entropy_full_avx2(
+                token,
+                raw_strategy,
+                xyb,
+                stride,
+                bx,
+                by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                entropy_mul,
+                scratch,
+            );
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::NeonToken::summon() {
+            return estimate_entropy_full_neon(
+                token,
+                raw_strategy,
+                xyb,
+                stride,
+                bx,
+                by,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                entropy_mul,
+                scratch,
+            );
+        }
+    }
+    estimate_entropy_full_impl(
+        raw_strategy,
+        xyb,
+        stride,
+        bx,
+        by,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        entropy_mul,
+        scratch,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn estimate_entropy_full_avx2(
+    _token: jxl_simd::X64V3Token,
+    raw_strategy: u8,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    entropy_mul: f32,
+    scratch: &mut EntropyEstScratch,
+) -> f32 {
+    estimate_entropy_full_impl(
+        raw_strategy,
+        xyb,
+        stride,
+        bx,
+        by,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        entropy_mul,
+        scratch,
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn estimate_entropy_full_neon(
+    _token: jxl_simd::NeonToken,
+    raw_strategy: u8,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx: usize,
+    by: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    entropy_mul: f32,
+    scratch: &mut EntropyEstScratch,
+) -> f32 {
+    estimate_entropy_full_impl(
+        raw_strategy,
+        xyb,
+        stride,
+        bx,
+        by,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        entropy_mul,
+        scratch,
+    )
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn estimate_entropy_full_impl(
     raw_strategy: u8,
     xyb: [&[f32]; 3],
     stride: usize,

@@ -75,6 +75,7 @@ fn ratio_of_derivatives_scalar(v: f32) -> f32 {
 ///
 /// `xyb_y`: Y channel, row-major, `width * height` elements.
 /// `output`: output buffer, same size.
+#[inline]
 pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize, output: &mut [f32]) {
     debug_assert!(xyb_y.len() >= width * height);
     debug_assert!(output.len() >= width * height);
@@ -100,7 +101,8 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize, output: &mut 
     compute_mask1x1_scalar(xyb_y, width, height, output);
 }
 
-fn compute_mask1x1_scalar(xyb_y: &[f32], width: usize, height: usize, output: &mut [f32]) {
+#[inline]
+pub fn compute_mask1x1_scalar(xyb_y: &[f32], width: usize, height: usize, output: &mut [f32]) {
     for y in 0..height {
         let y1 = y.saturating_sub(1);
         let y2 = (y + 1).min(height - 1);
@@ -131,8 +133,9 @@ fn compute_mask1x1_scalar(xyb_y: &[f32], width: usize, height: usize, output: &m
 // ============================================================================
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
-fn compute_mask1x1_avx2(
+pub fn compute_mask1x1_avx2(
     token: archmage::X64V3Token,
     xyb_y: &[f32],
     width: usize,
@@ -288,8 +291,9 @@ fn compute_mask1x1_avx2(
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
-fn compute_mask1x1_neon(
+pub fn compute_mask1x1_neon(
     token: archmage::NeonToken,
     xyb_y: &[f32],
     width: usize,

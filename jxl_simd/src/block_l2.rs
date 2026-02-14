@@ -22,6 +22,7 @@ const CHANNEL_WEIGHTS: [f32; 3] = [12.339_445, 1.0, 0.2];
 ///   mask[px]^2 * (w_x * dx^2 + w_y * dy^2 + w_b * db^2)
 ///
 /// All planes and mask have stride = `xsize_blocks * 8`.
+#[inline]
 pub fn compute_block_l2_errors(
     original: [&[f32]; 3],
     reconstructed: [&[f32]; 3],
@@ -77,7 +78,8 @@ pub fn compute_block_l2_errors(
     )
 }
 
-fn compute_block_l2_errors_scalar(
+#[inline]
+pub fn compute_block_l2_errors_scalar(
     original: [&[f32]; 3],
     reconstructed: [&[f32]; 3],
     mask1x1: &[f32],
@@ -116,9 +118,10 @@ fn compute_block_l2_errors_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn compute_block_l2_errors_avx2(
+pub fn compute_block_l2_errors_avx2(
     token: archmage::X64V3Token,
     original: [&[f32]; 3],
     reconstructed: [&[f32]; 3],
@@ -181,9 +184,10 @@ fn compute_block_l2_errors_avx2(
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn compute_block_l2_errors_neon(
+pub fn compute_block_l2_errors_neon(
     token: archmage::NeonToken,
     original: [&[f32]; 3],
     reconstructed: [&[f32]; 3],

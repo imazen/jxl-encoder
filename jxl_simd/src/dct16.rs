@@ -37,6 +37,7 @@ const WC_MULTIPLIERS_16: [f32; 8] = [
 /// Output: 256 f32 in transposed layout (coefficient domain).
 /// No final transpose for square blocks, matching libjxl convention.
 /// Dispatches to AVX2 when available; falls back to scalar otherwise.
+#[inline]
 pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -63,7 +64,8 @@ pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 // Scalar fallback — matches jxl_encoder/src/vardct/dct/forward.rs exactly
 // ============================================================================
 
-fn dct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
+#[inline]
+pub fn dct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
     let mut tmp = [0.0f32; 256];
 
     // Forward DCT on each row
@@ -419,9 +421,10 @@ fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 
 
 /// AVX2 16x16 forward DCT: process 8 rows at a time via batched 16-point DCT.
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut [f32; 256]) {
+pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x8;
 
     let scale = f32x8::splat(token, 1.0 / 16.0);
@@ -507,6 +510,7 @@ fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut 
 /// Input: 128 f32 in row-major order (16 rows x 8 cols, stride 8).
 /// Output: 128 f32 in 8x16 layout (stride 16) — no final transpose (ROWS >= COLS).
 /// Dispatches to AVX2 when available; falls back to scalar otherwise.
+#[inline]
 pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -529,7 +533,8 @@ pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     dct_16x8_scalar(input, output);
 }
 
-fn dct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
+#[inline]
+pub fn dct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Transform rows (8 columns each) with 8-point DCT
@@ -600,9 +605,10 @@ fn scatter_col_s8(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, 
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
     let scale8 = f32x8::splat(token, 1.0 / 8.0);
@@ -677,6 +683,7 @@ fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [
 /// Input: 128 f32 in row-major order (8 rows x 16 cols, stride 16).
 /// Output: 128 f32 in 8x16 layout (stride 16) — includes final transpose (ROWS < COLS).
 /// Dispatches to AVX2 when available; falls back to scalar otherwise.
+#[inline]
 pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -699,7 +706,8 @@ pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     dct_8x16_scalar(input, output);
 }
 
-fn dct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
+#[inline]
+pub fn dct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Transform rows (16 columns each) with 16-point DCT
@@ -738,9 +746,10 @@ fn dct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
     let scale8 = f32x8::splat(token, 1.0 / 8.0);
@@ -839,6 +848,7 @@ fn gather_col_neon(
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
 fn scatter_col_neon(
+    _token: archmage::NeonToken,
     v: magetypes::simd::f32x4,
     data: &mut [f32],
     base_row: usize,
@@ -1008,7 +1018,7 @@ fn neon_dct8_batch(
         v[j] *= scale;
     }
     for j in 0..8 {
-        scatter_col_neon(v[j], data_out, base_row, j, stride);
+        scatter_col_neon(token, v[j], data_out, base_row, j, stride);
     }
 }
 
@@ -1032,15 +1042,16 @@ fn neon_dct16_batch(
         v[j] *= scale;
     }
     for j in 0..16 {
-        scatter_col_neon(v[j], data_out, base_row, j, stride);
+        scatter_col_neon(token, v[j], data_out, base_row, j, stride);
     }
 }
 
 /// NEON 16x16 forward DCT: process 4 rows at a time.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
+pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x4;
     let scale = f32x4::splat(token, 1.0 / 16.0);
     let mut tmp = [0.0f32; 256];
@@ -1066,9 +1077,10 @@ fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [
 
 /// NEON 16x8 forward DCT.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x4;
     let scale8 = f32x4::splat(token, 1.0 / 8.0);
     let scale16 = f32x4::splat(token, 1.0 / 16.0);
@@ -1095,9 +1107,10 @@ fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f
 
 /// NEON 8x16 forward DCT.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x4;
     let scale8 = f32x4::splat(token, 1.0 / 8.0);
     let scale16 = f32x4::splat(token, 1.0 / 16.0);

@@ -27,6 +27,7 @@
 /// `block_height`: number of rows
 ///
 /// Returns the channel loss as f64.
+#[inline]
 pub fn pixel_domain_loss(
     pixel_error: &[f32],
     mask: &[f32],
@@ -88,7 +89,8 @@ pub fn pixel_domain_loss(
     )
 }
 
-fn pixel_domain_loss_scalar(
+#[inline]
+pub fn pixel_domain_loss_scalar(
     pixel_error: &[f32],
     mask: &[f32],
     mask_row_base: usize,
@@ -115,9 +117,10 @@ fn pixel_domain_loss_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn pixel_domain_loss_avx2(
+pub fn pixel_domain_loss_avx2(
     token: archmage::X64V3Token,
     pixel_error: &[f32],
     mask: &[f32],
@@ -187,9 +190,10 @@ fn pixel_domain_loss_avx2(
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn pixel_domain_loss_neon(
+pub fn pixel_domain_loss_neon(
     token: archmage::NeonToken,
     pixel_error: &[f32],
     mask: &[f32],

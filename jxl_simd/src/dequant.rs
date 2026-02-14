@@ -28,6 +28,7 @@
 /// - `x_factor`: CfL ytox ratio for this tile
 /// - `b_factor`: CfL ytob ratio for this tile
 /// - `output_x/y/b`: Output dequantized coefficients per channel, [f32; 64]
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn dequant_block_dct8(
     quant_ac_x: &[i32; 64],
@@ -92,8 +93,9 @@ fn adjust_quant_bias_scalar(q_int: i32, channel_bias: f32) -> f32 {
     }
 }
 
+#[inline]
 #[allow(clippy::too_many_arguments)]
-fn dequant_dct8_scalar(
+pub fn dequant_dct8_scalar(
     quant_ac_x: &[i32; 64],
     quant_ac_y: &[i32; 64],
     quant_ac_b: &[i32; 64],
@@ -128,9 +130,10 @@ fn dequant_dct8_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn dequant_dct8_avx2(
+pub fn dequant_dct8_avx2(
     token: archmage::X64V3Token,
     quant_ac_x: &[i32; 64],
     quant_ac_y: &[i32; 64],
@@ -283,9 +286,10 @@ fn dequant_8_avx2(
 // --- aarch64 NEON implementation ---
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn dequant_dct8_neon(
+pub fn dequant_dct8_neon(
     token: archmage::NeonToken,
     quant_ac_x: &[i32; 64],
     quant_ac_y: &[i32; 64],

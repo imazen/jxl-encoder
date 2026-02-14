@@ -130,6 +130,7 @@ pub fn dct1d_16(mem: &mut [f32]) {
 /// The decoder expects coefficients in this transposed layout. For 8x8 blocks,
 /// output[cx * 8 + cy] contains the coefficient for frequency (cy, cx) where
 /// cy is the vertical frequency and cx is the horizontal frequency.
+#[inline]
 pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     jxl_simd::dct_8x8(input, output);
 }
@@ -421,6 +422,7 @@ pub fn dc_from_dct_4x4_full(coeffs: &[f32; 64]) -> f32 {
 ///
 /// Input: 16x8 block in row-major order (128 floats)
 /// Output: 16x8 DCT coefficients
+#[inline]
 pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     jxl_simd::dct_16x8(input, output);
 }
@@ -429,6 +431,7 @@ pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
 ///
 /// Input: 8x16 block in row-major order (128 floats)
 /// Output: 8x16 DCT coefficients
+#[inline]
 pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     jxl_simd::dct_8x16(input, output);
 }
@@ -440,6 +443,7 @@ pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 ///
 /// Like `dct_8x8()`, there is NO final transpose for square blocks.
 /// C++ `ComputeScaledDCT<16,16>` takes the ROWS >= COLS branch (no final transpose).
+#[inline]
 pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     jxl_simd::dct_16x16(input, output);
 }
