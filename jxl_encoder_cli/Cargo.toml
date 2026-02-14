@@ -1,10 +1,16 @@
 [package]
 name = "jxl-encoder-cli"
 description = "Command-line JPEG XL encoder"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+keywords = ["jpeg-xl", "encoder", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
 
 [[bin]]
 name = "cjxl-rs"
