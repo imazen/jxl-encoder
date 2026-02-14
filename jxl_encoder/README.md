@@ -8,7 +8,7 @@
 
 Pure Rust JPEG XL encoder. Lossy (VarDCT) and lossless (Modular) encoding, verified against three independent decoders (jxl-rs, jxl-oxide, djxl). `#![forbid(unsafe_code)]`.
 
-742 tests passing (Feb 2026).
+740+ tests passing.
 
 ## Quick start
 
@@ -35,7 +35,7 @@ let jxl = LossyConfig::new(1.0)
 
 ## Pixel layouts
 
-`Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `LinearRgb32F`.
+`Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `RgbLinearF32`.
 
 Lossy encoding supports all layouts including alpha (VarDCT for RGB + modular for the alpha channel). Lossless supports RGB, RGBA, grayscale, and gray+alpha.
 
@@ -44,6 +44,10 @@ Lossy encoding supports all layouts including alpha (VarDCT for RGB + modular fo
 **Lossy (VarDCT)**: 19/27 AC strategies (all that libjxl evaluates through effort 7), ANS entropy coding, adaptive quantization, chroma-from-luma, gaborish, pixel-domain loss, butteraugli quantization loop, custom coefficient ordering, noise synthesis, error diffusion, EPF sharpness, JPEG re-encoding.
 
 **Lossless (Modular)**: RCT (all 42 variants), ANS + Huffman, LZ77 (RLE + hash chain), histogram clustering, content-adaptive MA tree learning, palette transform, squeeze (Haar wavelet), 14/14 predictors including Weighted.
+
+**Animation**: Both lossy and lossless, per-frame duration, loop count, frame crop detection.
+
+**Input formats**: 8-bit sRGB, 16-bit sRGB, linear f32, grayscale, alpha. BGR/BGRA layouts.
 
 **Lossy quality vs libjxl**: Within 3% of cjxl effort 5 at low distances (d <= 1.0). The gap widens to ~22-26% at higher distances due to missing cost model refinements (iterative rate control, full histogram clustering).
 
