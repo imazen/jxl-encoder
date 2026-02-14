@@ -291,11 +291,11 @@ mod tests {
         // Use varied data
         let mut pixel_error = vec![0.0f32; block_width * block_height];
         let mut mask = vec![0.0f32; mask_stride * 16];
-        for i in 0..pixel_error.len() {
-            pixel_error[i] = (i as f32 * 0.1 + 0.5) * if i % 3 == 0 { -1.0 } else { 1.0 };
+        for (i, val) in pixel_error.iter_mut().enumerate() {
+            *val = (i as f32 * 0.1 + 0.5) * if i % 3 == 0 { -1.0 } else { 1.0 };
         }
-        for i in 0..mask.len() {
-            mask[i] = (i as f32 * 0.01 + 0.3).sin().abs();
+        for (i, val) in mask.iter_mut().enumerate() {
+            *val = (i as f32 * 0.01 + 0.3).sin().abs();
         }
         let mask_offset = 0.7f32;
 

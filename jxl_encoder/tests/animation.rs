@@ -364,6 +364,7 @@ fn test_animation_empty_frames_rejected() {
 
 /// Create a 64x64 RGB image with a colored sub-region.
 /// The base color fills everything, then the sub-region is overwritten.
+#[allow(clippy::too_many_arguments)]
 fn frame_with_region(
     base_r: u8,
     base_g: u8,
@@ -493,7 +494,7 @@ fn test_lossless_crop_partial_change() {
     for y in 0..64 {
         for x in 0..64 {
             let idx = (y * 64 + x) * 3;
-            let in_patch = x >= 24 && x < 40 && y >= 24 && y < 40;
+            let in_patch = (24..40).contains(&x) && (24..40).contains(&y);
             if in_patch {
                 assert!(
                     (f1_px[idx] - 200.0 / 255.0).abs() < 0.02
@@ -666,7 +667,7 @@ fn test_lossy_crop_partial_change() {
         f1_px[patch_idx + 2]
     );
     // Check a pixel in the background
-    let bg_idx = (0 * 64 + 0) * 3;
+    let bg_idx = 0; // pixel (0,0) channel 0
     assert!(
         f1_px[bg_idx] < 0.2 && f1_px[bg_idx + 2] > 0.5,
         "frame 1 background should be bluish: ({:.3}, {:.3}, {:.3})",

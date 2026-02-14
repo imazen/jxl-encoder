@@ -519,8 +519,8 @@ mod tests {
         let width = 37;
         let height = 19;
         let mut xyb_y = vec![0.0f32; width * height];
-        for i in 0..width * height {
-            xyb_y[i] = (i as f32 * 0.001).sin().abs() * 0.3;
+        for (i, val) in xyb_y.iter_mut().enumerate() {
+            *val = (i as f32 * 0.001).sin().abs() * 0.3;
         }
 
         let mut output = vec![0.0f32; width * height];

@@ -156,6 +156,7 @@ pub const JPEG_NATURAL_ORDER: [usize; 64] = [
 
 /// Natural order to zigzag order lookup table.
 /// `JPEG_ZIGZAG_ORDER[natural_index]` = zigzag index.
+#[cfg(test)]
 pub const JPEG_ZIGZAG_ORDER: [usize; 64] = {
     let mut table = [0usize; 64];
     let mut i = 0;

@@ -1089,8 +1089,8 @@ mod tests {
     #[test]
     fn test_dct_8x8_scalar_roundtrip() {
         let mut input = [0.0f32; 64];
-        for i in 0..64 {
-            input[i] = (i as f32 * 0.1).sin();
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = (i as f32 * 0.1).sin();
         }
         let mut dct_out = [0.0f32; 64];
         let mut idct_out = [0.0f32; 64];
@@ -1175,8 +1175,8 @@ mod tests {
     #[test]
     fn test_dct_8x8_simd_matches_scalar() {
         let mut input = [0.0f32; 64];
-        for i in 0..64 {
-            input[i] = ((i as f32) * 0.37 + 1.5).cos();
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = ((i as f32) * 0.37 + 1.5).cos();
         }
 
         let mut scalar_out = [0.0f32; 64];
@@ -1199,8 +1199,8 @@ mod tests {
     #[test]
     fn test_idct_8x8_simd_matches_scalar() {
         let mut input = [0.0f32; 64];
-        for i in 0..64 {
-            input[i] = ((i as f32) * 0.37 + 1.5).cos();
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = ((i as f32) * 0.37 + 1.5).cos();
         }
 
         let mut scalar_out = [0.0f32; 64];
@@ -1223,8 +1223,8 @@ mod tests {
     #[test]
     fn test_dct_idct_simd_roundtrip() {
         let mut input = [0.0f32; 64];
-        for i in 0..64 {
-            input[i] = (i as f32 * 0.1).sin();
+        for (i, val) in input.iter_mut().enumerate() {
+            *val = (i as f32 * 0.1).sin();
         }
         let mut dct_out = [0.0f32; 64];
         let mut idct_out = [0.0f32; 64];

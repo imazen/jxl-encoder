@@ -276,8 +276,8 @@ mod tests {
         quantize_block_dct8(&coeffs, &weights, 1.0, &thresholds, &mut output);
 
         assert_eq!(output[0], 0, "DC must be 0");
-        for i in 1..64 {
-            assert_eq!(output[i], 100, "Index {} should be 100", i);
+        for (i, &val) in output.iter().enumerate().skip(1) {
+            assert_eq!(val, 100, "Index {} should be 100", i);
         }
     }
 }

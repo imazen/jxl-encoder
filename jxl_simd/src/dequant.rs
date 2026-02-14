@@ -535,8 +535,8 @@ mod tests {
     fn test_dequant_dct8_unit_values() {
         // All ±1 values — tests the channel bias path
         let mut quant = [0i32; 64];
-        for i in 1..64 {
-            quant[i] = if i % 2 == 0 { 1 } else { -1 };
+        for (i, q) in quant.iter_mut().enumerate().skip(1) {
+            *q = if i % 2 == 0 { 1 } else { -1 };
         }
         let weights = [1.0f32; 64];
         let qac_qm = [1.0f32, 1.0, 1.0];
