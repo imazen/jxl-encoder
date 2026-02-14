@@ -14,6 +14,7 @@
 /// Reads `input[row*8 + col]`, writes `output[col*8 + row]`.
 ///
 /// Dispatches to SIMD when available; falls back to scalar otherwise.
+#[inline]
 pub fn transpose_8x8(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 64);
     debug_assert!(output.len() >= 64);
@@ -48,8 +49,9 @@ pub fn transpose_8x8(input: &[f32], output: &mut [f32]) {
 ///
 /// All operations are pure data movement — no arithmetic, bit-exact with scalar.
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
-fn transpose_8x8_avx2(token: archmage::X64V3Token, input: &[f32], output: &mut [f32]) {
+pub fn transpose_8x8_avx2(token: archmage::X64V3Token, input: &[f32], output: &mut [f32]) {
     use magetypes::simd::f32x8;
 
     // Load 8 rows
@@ -131,8 +133,9 @@ fn transpose_8x8_avx2(token: archmage::X64V3Token, input: &[f32], output: &mut [
 /// ```
 /// Each 4x4 transpose uses vtrn + 64-bit lane swap (2 stages, 4 instructions).
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
-fn transpose_8x8_neon(token: archmage::NeonToken, input: &[f32], output: &mut [f32]) {
+pub fn transpose_8x8_neon(token: archmage::NeonToken, input: &[f32], output: &mut [f32]) {
     use magetypes::simd::f32x4;
 
     // Load 8 rows as pairs of f32x4 (lo = cols 0-3, hi = cols 4-7)

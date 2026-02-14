@@ -24,6 +24,7 @@
 ///   [1] = top-right (y<4, x>=4)
 ///   [2] = bottom-left (y>=4, x<4)
 ///   [3] = bottom-right (y>=4, x>=4)
+#[inline]
 pub fn quantize_block_dct8(
     dct_coeffs: &[f32; 64],
     weights: &[f32; 64],
@@ -52,7 +53,8 @@ pub fn quantize_block_dct8(
     quantize_dct8_scalar(dct_coeffs, weights, qac_qm, thresholds, output);
 }
 
-fn quantize_dct8_scalar(
+#[inline]
+pub fn quantize_dct8_scalar(
     dct_coeffs: &[f32; 64],
     weights: &[f32; 64],
     qac_qm: f32,
@@ -74,8 +76,9 @@ fn quantize_dct8_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
-fn quantize_dct8_avx2(
+pub fn quantize_dct8_avx2(
     token: archmage::X64V3Token,
     dct_coeffs: &[f32; 64],
     weights: &[f32; 64],
@@ -148,8 +151,9 @@ fn quantize_dct8_avx2(
 // --- aarch64 NEON implementation ---
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
-fn quantize_dct8_neon(
+pub fn quantize_dct8_neon(
     token: archmage::NeonToken,
     dct_coeffs: &[f32; 64],
     weights: &[f32; 64],

@@ -20,6 +20,7 @@
 /// and is used as temporary storage for the input copy.
 ///
 /// Dispatches to the best available SIMD implementation at runtime.
+#[inline]
 pub fn gab_smooth_channel(
     plane: &mut [f32],
     scratch: &mut [f32],
@@ -61,7 +62,8 @@ pub fn gab_smooth_channel(
 // Scalar fallback
 // ============================================================================
 
-fn gab_smooth_scalar(
+#[inline]
+pub fn gab_smooth_scalar(
     output: &mut [f32],
     input: &[f32],
     width: usize,
@@ -107,9 +109,10 @@ use archmage::arcane;
 /// AVX2+FMA gab smooth: processes 8 pixels per iteration in interior rows.
 /// Border rows/columns use scalar fallback.
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[arcane]
 #[allow(clippy::too_many_arguments)]
-fn gab_smooth_avx2(
+pub fn gab_smooth_avx2(
     token: archmage::X64V3Token,
     output: &mut [f32],
     input: &[f32],
@@ -221,9 +224,10 @@ fn gab_smooth_avx2(
 
 /// NEON gab smooth: processes 4 pixels per iteration in interior rows.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn gab_smooth_neon(
+pub fn gab_smooth_neon(
     token: archmage::NeonToken,
     output: &mut [f32],
     input: &[f32],

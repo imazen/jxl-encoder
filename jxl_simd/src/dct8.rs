@@ -22,6 +22,7 @@ const WC_MULTIPLIERS_8: [f32; 4] = [0.509_795_6, 0.601_344_9, 0.899_976_2, 2.562
 ///
 /// Input: 64 f32 in row-major order. Output: 64 f32 in transposed layout.
 /// Dispatches to SIMD when available; falls back to scalar otherwise.
+#[inline]
 pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -47,6 +48,7 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 /// Compute scaled 8x8 inverse DCT with SIMD acceleration.
 ///
 /// Input: 64 f32 in transposed layout. Output: 64 f32 in row-major order.
+#[inline]
 pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -73,7 +75,8 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 // Scalar fallback — matches the encoder's existing implementation exactly
 // ============================================================================
 
-fn dct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
+#[inline]
+pub fn dct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut tmp = [0.0f32; 64];
 
     // Row DCTs
@@ -106,7 +109,8 @@ fn dct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
     output.copy_from_slice(&transposed);
 }
 
-fn idct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
+#[inline]
+pub fn idct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut tmp = [0.0f32; 64];
     tmp.copy_from_slice(input);
 
@@ -255,8 +259,9 @@ fn idct1d_8_scalar(mem: &mut [f32]) {
 // ============================================================================
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
-fn dct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
+pub fn dct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x8;
 
     // Load 8 rows
@@ -314,8 +319,9 @@ fn dct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f3
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
-fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
+pub fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x8;
 
     // Load 8 registers (input is in transposed layout)
@@ -671,8 +677,9 @@ fn transpose_8x8_regs(
 
 /// NEON 8x8 forward DCT: two-pass (4 columns at a time), in-register transpose.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
-fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
+pub fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x4;
 
     let scale = f32x4::splat(token, 0.125);
@@ -770,8 +777,9 @@ fn dct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32
 
 /// NEON 8x8 inverse DCT.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
-fn idct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
+pub fn idct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut [f32; 64]) {
     use magetypes::simd::f32x4;
 
     // Load as 8 rows × (lo, hi)

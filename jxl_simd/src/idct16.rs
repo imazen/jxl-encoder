@@ -51,6 +51,7 @@ const INV_WC16: [f32; 8] = [
 /// Input: 256 f32 in row-major order (coefficient domain).
 /// Output: 256 f32 in row-major order (spatial domain).
 /// Dispatches to AVX2 when available; falls back to scalar otherwise.
+#[inline]
 pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -77,7 +78,8 @@ pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 // Scalar fallback — matches jxl_encoder/src/vardct/dct/inverse.rs exactly
 // ============================================================================
 
-fn idct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
+#[inline]
+pub fn idct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
     let mut tmp = [0.0f32; 256];
 
     // IDCT on each row
@@ -400,9 +402,10 @@ fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8;
 
 /// AVX2 16x16 IDCT: process 8 rows at a time via batched 16-point IDCT.
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut [f32; 256]) {
+pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x8;
 
     let mut tmp = [0.0f32; 256];
@@ -475,6 +478,7 @@ fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut
 /// Input: 128 f32 in 8x16 layout (stride 16, coefficient domain — output of dct_16x8).
 /// Output: 128 f32 in 16x8 row-major order (stride 8, spatial domain).
 /// Dispatches to AVX2 when available; falls back to scalar otherwise.
+#[inline]
 pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -497,7 +501,8 @@ pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
     idct_16x8_scalar(input, output);
 }
 
-fn idct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
+#[inline]
+pub fn idct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Apply 8-point IDCT (with x8 scaling) to each of 16 rows (stride 8)
@@ -581,9 +586,10 @@ fn idct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
     let mut tmp = [0.0f32; 128];
@@ -636,6 +642,7 @@ fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut 
 /// Input: 128 f32 in 8x16 layout (stride 16, coefficient domain — output of dct_8x16).
 /// Output: 128 f32 in 8x16 row-major order (stride 16, spatial domain).
 /// Dispatches to AVX2 when available; falls back to scalar otherwise.
+#[inline]
 pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -658,7 +665,8 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
     idct_8x16_scalar(input, output);
 }
 
-fn idct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
+#[inline]
+pub fn idct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Apply 16-point IDCT (with x16 scaling) to each of 8 rows (stride 16)
@@ -682,9 +690,10 @@ fn idct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
     let mut tmp = [0.0f32; 128];
@@ -757,6 +766,7 @@ fn gather_col_neon(
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
 fn scatter_col_neon(
+    _token: archmage::NeonToken,
     v: magetypes::simd::f32x4,
     data: &mut [f32],
     base_row: usize,
@@ -942,7 +952,7 @@ fn neon_idct8_batch(
     }
     idct1d_8_batch_neon(token, &mut v);
     for j in 0..8 {
-        scatter_col_neon(v[j], data_out, base_row, j, stride);
+        scatter_col_neon(token, v[j], data_out, base_row, j, stride);
     }
 }
 
@@ -962,15 +972,16 @@ fn neon_idct16_batch(
     }
     idct1d_16_batch_neon(token, &mut v);
     for j in 0..16 {
-        scatter_col_neon(v[j], data_out, base_row, j, stride);
+        scatter_col_neon(token, v[j], data_out, base_row, j, stride);
     }
 }
 
 /// NEON 16x16 inverse DCT: process 4 rows at a time.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
+pub fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
     let mut tmp = [0.0f32; 256];
 
     // Pass 1: IDCT on rows (4 batches of 4 rows)
@@ -994,9 +1005,10 @@ fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut 
 
 /// NEON 16x8 inverse DCT.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Pass 1: 8-point IDCT on 16 rows (stride 8), 4 batches of 4 rows
@@ -1036,9 +1048,10 @@ fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [
 
 /// NEON 8x16 inverse DCT.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
-fn idct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
+pub fn idct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
     let mut tmp = [0.0f32; 128];
 
     // Pass 1: 16-point IDCT on 8 rows (stride 16), 2 batches of 4 rows

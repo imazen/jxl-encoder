@@ -15,6 +15,7 @@ bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = "2.0"
 byteorder = "1.4"
 jxl_simd = { package = "jxl-encoder-simd", path = "../jxl_simd" }
+archmage = "0.5"
 num-derive = "0.4"
 num-traits = "0.2"
 zenjpeg = { path = "../../zenjpeg/zenjpeg", features = ["decoder"], optional = true }

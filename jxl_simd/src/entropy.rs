@@ -35,6 +35,7 @@ pub struct EntropyCoeffResult {
 ///
 /// In pixel-domain mode: writes `error_coeffs[i] = weights[i] * (val - rval)`
 /// In coefficient-domain mode: accumulates info_loss stats and k_cost2 penalty.
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn entropy_estimate_coeffs(
     block_c: &[f32],
@@ -102,8 +103,9 @@ pub fn entropy_estimate_coeffs(
     )
 }
 
+#[inline]
 #[allow(clippy::too_many_arguments)]
-fn entropy_coeffs_scalar(
+pub fn entropy_coeffs_scalar(
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
@@ -156,9 +158,10 @@ fn entropy_coeffs_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn entropy_coeffs_avx2(
+pub fn entropy_coeffs_avx2(
     token: archmage::X64V3Token,
     block_c: &[f32],
     block_y: &[f32],
@@ -268,9 +271,10 @@ fn entropy_coeffs_avx2(
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn entropy_coeffs_neon(
+pub fn entropy_coeffs_neon(
     token: archmage::NeonToken,
     block_c: &[f32],
     block_y: &[f32],

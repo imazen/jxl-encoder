@@ -23,6 +23,7 @@
 ///
 /// The 6 weights (wc, wr, wd, w_big_r, wl, w_big_d) should already be
 /// normalized (sum to 1.0).
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn gaborish_5x5_channel(
     data: &mut [f32],
@@ -74,8 +75,9 @@ pub fn gaborish_5x5_channel(
 // Scalar fallback
 // ============================================================================
 
+#[inline]
 #[allow(clippy::too_many_arguments)]
-fn gaborish_5x5_scalar(
+pub fn gaborish_5x5_scalar(
     output: &mut [f32],
     input: &[f32],
     width: usize,
@@ -143,9 +145,10 @@ fn gaborish_5x5_scalar(
 /// AVX2+FMA gaborish 5x5: processes 8 pixels per iteration in interior region.
 /// Border pixels (within 2 of edge) use scalar fallback.
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn gaborish_5x5_avx2(
+pub fn gaborish_5x5_avx2(
     token: archmage::X64V3Token,
     output: &mut [f32],
     input: &[f32],
@@ -314,9 +317,10 @@ fn gaborish_5x5_avx2(
 
 /// NEON gaborish 5x5: processes 4 pixels per iteration in interior region.
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn gaborish_5x5_neon(
+pub fn gaborish_5x5_neon(
     token: archmage::NeonToken,
     output: &mut [f32],
     input: &[f32],

@@ -44,6 +44,7 @@ const NEG_CBRT_BIAS: [f32; 3] = [-0.155_954_2; 3];
 ///
 /// All buffers must be at least `n` elements. Uses SIMD for the inner loop.
 /// The cube root uses Newton-Raphson in f64 for precision.
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn linear_rgb_to_xyb_batch(
     r: &[f32],
@@ -86,6 +87,7 @@ pub fn linear_rgb_to_xyb_batch(
 ///
 /// Output is three separate channel slices, each of length `n`.
 /// This avoids the interleave overhead when the consumer needs planar data.
+#[inline]
 pub fn xyb_to_linear_rgb_planar(
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -122,6 +124,7 @@ pub fn xyb_to_linear_rgb_planar(
 /// Convert separate X, Y, B channel buffers to interleaved linear RGB.
 ///
 /// Output is `[R0, G0, B0, R1, G1, B1, ...]` with length `3 * n`.
+#[inline]
 pub fn xyb_to_linear_rgb_batch(
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -178,7 +181,8 @@ fn cbrt_fast(x: f32) -> f32 {
     t as f32
 }
 
-fn forward_xyb_scalar(
+#[inline]
+pub fn forward_xyb_scalar(
     r: &[f32],
     g: &[f32],
     b: &[f32],
@@ -214,7 +218,8 @@ fn forward_xyb_scalar(
     }
 }
 
-fn inverse_xyb_planar_scalar(
+#[inline]
+pub fn inverse_xyb_planar_scalar(
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
@@ -245,7 +250,8 @@ fn inverse_xyb_planar_scalar(
     }
 }
 
-fn inverse_xyb_scalar(
+#[inline]
+pub fn inverse_xyb_scalar(
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
@@ -282,9 +288,10 @@ fn inverse_xyb_scalar(
 // --- AVX2 implementations ---
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn forward_xyb_avx2(
+pub fn forward_xyb_avx2(
     token: archmage::X64V3Token,
     r: &[f32],
     g: &[f32],
@@ -376,8 +383,9 @@ fn forward_xyb_avx2(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
-fn inverse_xyb_avx2(
+pub fn inverse_xyb_avx2(
     token: archmage::X64V3Token,
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -453,9 +461,10 @@ fn inverse_xyb_avx2(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn inverse_xyb_planar_avx2(
+pub fn inverse_xyb_planar_avx2(
     token: archmage::X64V3Token,
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -527,9 +536,10 @@ fn inverse_xyb_planar_avx2(
 // --- aarch64 NEON implementations ---
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn forward_xyb_neon(
+pub fn forward_xyb_neon(
     token: archmage::NeonToken,
     r: &[f32],
     g: &[f32],
@@ -616,8 +626,9 @@ fn forward_xyb_neon(
 }
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
-fn inverse_xyb_neon(
+pub fn inverse_xyb_neon(
     token: archmage::NeonToken,
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -687,9 +698,10 @@ fn inverse_xyb_neon(
 }
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn inverse_xyb_planar_neon(
+pub fn inverse_xyb_planar_neon(
     token: archmage::NeonToken,
     xyb_x: &[f32],
     xyb_y: &[f32],

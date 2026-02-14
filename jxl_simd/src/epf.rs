@@ -36,6 +36,7 @@ const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 /// - `height`: Pixel height (= ysize_blocks × 8)
 /// - `sigma_scale`: Base sigma multiplier for this step
 /// - `border_sigma_mul`: Multiplier for block-edge pixels (typically 2/3)
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn epf_step2(
     in_x: &[f32],
@@ -113,8 +114,9 @@ pub fn epf_step2(
     );
 }
 
+#[inline]
 #[allow(clippy::too_many_arguments)]
-fn epf_step2_scalar(
+pub fn epf_step2_scalar(
     in_x: &[f32],
     in_y: &[f32],
     in_b: &[f32],
@@ -188,9 +190,10 @@ fn epf_step2_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn epf_step2_avx2(
+pub fn epf_step2_avx2(
     token: archmage::X64V3Token,
     in_x: &[f32],
     in_y: &[f32],
@@ -481,6 +484,7 @@ fn epf_step2_avx2(
 /// comparing center vs neighbor at each offset.
 ///
 /// Same parameters as `epf_step2`.
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn epf_step1(
     in_x: &[f32],
@@ -585,8 +589,9 @@ fn sad_3x3_plus_scalar(
     sad
 }
 
+#[inline]
 #[allow(clippy::too_many_arguments)]
-fn epf_step1_scalar(
+pub fn epf_step1_scalar(
     in_x: &[f32],
     in_y: &[f32],
     in_b: &[f32],
@@ -761,9 +766,10 @@ fn sad_3x3_plus_simd(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn epf_step1_avx2(
+pub fn epf_step1_avx2(
     token: archmage::X64V3Token,
     in_x: &[f32],
     in_y: &[f32],
@@ -1082,9 +1088,10 @@ fn scalar_step1_block(
 // ============================================================================
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn epf_step2_neon(
+pub fn epf_step2_neon(
     token: archmage::NeonToken,
     in_x: &[f32],
     in_y: &[f32],
@@ -1465,9 +1472,10 @@ fn sad_3x3_plus_neon(
 }
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
-fn epf_step1_neon(
+pub fn epf_step1_neon(
     token: archmage::NeonToken,
     in_x: &[f32],
     in_y: &[f32],
