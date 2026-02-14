@@ -1,5 +1,8 @@
 # jxl-encoder-simd
 
+[![crates.io](https://img.shields.io/crates/v/jxl-encoder-simd.svg)](https://crates.io/crates/jxl-encoder-simd)
+[![docs.rs](https://docs.rs/jxl-encoder-simd/badge.svg)](https://docs.rs/jxl-encoder-simd)
+
 SIMD-accelerated primitives for [jxl-encoder](https://crates.io/crates/jxl-encoder). Internal crate — you probably want `jxl-encoder` instead.
 
 `#![no_std]`, `#![forbid(unsafe_code)]`.
