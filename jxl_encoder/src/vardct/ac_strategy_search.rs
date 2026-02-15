@@ -27,6 +27,11 @@ pub(super) fn find_best_16x16_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
     scratch: &mut EntropyEstScratch,
+    // Multiplier applied to single-block entropy to favor existing choices.
+    // Matches libjxl's mul8x8 = 1.0 + (-0.4) / (distance + 1.4).
+    // Pass 1.0 for normal (aligned) evaluation. Pass < 1.0 for non-aligned
+    // pass to raise the bar for multi-block transforms.
+    favor_single_mul: f32,
 ) {
     // In pixel-domain mode (mask1x1.is_some()), entropy_mul is applied internally
     // by estimate_entropy_full using fixed values per transform. External multipliers
@@ -297,6 +302,17 @@ pub(super) fn find_best_16x16_transform(
             scratch,
         );
 
+    // Apply favor_single_mul to single-block costs (matches libjxl's mul8x8).
+    // This makes multi-block transforms harder to select at low distances,
+    // preventing marginal multi-block wins that hurt butteraugli.
+    if favor_single_mul != 1.0 {
+        for row in &mut entropy {
+            for val in row {
+                *val *= favor_single_mul;
+            }
+        }
+    }
+
     // Compare all options: four single-block, 16x8 split, 8x16 split, or one 16x16
     let cost_all_single = entropy[0][0] + entropy[0][1] + entropy[1][0] + entropy[1][1];
     let cost16x8 = (entropy_16x8_left).min(entropy[0][0] + entropy[1][0])
@@ -433,6 +449,7 @@ pub(super) fn find_best_32x32_transform(
                     mask1x1_stride,
                     ac_strategy,
                     scratch,
+                    1.0, // aligned pass: no single-block favoritism
                 );
             }
         }
@@ -574,6 +591,7 @@ pub(super) fn find_best_32x32_transform(
                 mask1x1_stride,
                 ac_strategy,
                 scratch,
+                1.0, // aligned pass: no single-block favoritism
             );
         }
     }
