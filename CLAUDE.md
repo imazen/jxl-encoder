@@ -253,7 +253,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 
 **F. Other**
 - No splines, dots detection (effort 7 features we skip)
-- Patches/dictionary: IMPLEMENTED (auto-detect, default-on)
+- Patches/dictionary: IMPLEMENTED (auto-detect, default-on, 21.3% corpus savings on screenshots)
 - EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
 
@@ -343,9 +343,14 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - 2 iterations converges for most images; +0.3 SSIM2 at equal file size vs baseline
 - [x] Patches/dictionary (default-on, auto-detect, `--no-patches` to disable)
   - Detects repeated rectangular patterns in screenshots/UI (text glyphs, icons, buttons)
-  - Packs unique patterns into modular reference frame, subtracts from VarDCT coefficients
-  - Cost-benefit heuristic prevents regressions on photos and complex content
-  - windows95: 20.4% savings; zero overhead on CLIC photos
+  - Detection matches libjxl FindTextLikePatches (L1 distance, 8-connected BFS/DFS,
+    background image with source pairs, has_similar check, kMinPeak filter)
+  - Packs unique patterns into modular reference frame (≤256×256), subtracts from VarDCT
+  - Cost-benefit gating: trial-encodes ref frame + dict, requires 2x savings/overhead ratio
+  - GB82-SC corpus (10 screenshots): 21.3% total savings, zero regressions
+    - windows95: 30.6%, terminal: 32.4%, imac_dark: 36.2%, imac_g3: 38.4%, imessage: 2.1%
+    - Beats cjxl on imac_dark (36.2% vs 0%) and imac_g3 (38.4% vs 0%)
+  - Zero overhead on CLIC photos (patches correctly produce nothing)
   - Verified with djxl, jxl-rs, jxl-oxide
 
 
@@ -406,11 +411,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 - [ ] **Splines** — Parametric encoding of smooth curves. High impact on specific
   content (power lines, horizons). High complexity.
 - [x] **Patches/Dictionary** — Repeated pattern detection for screenshots/UI.
-  Default-on (auto-detect), `--no-patches` to disable. Detects flat-background
-  regions, extracts foreground CCs, deduplicates by quantized XYB, packs unique
-  patterns into modular reference frame (FrameType::ReferenceOnly, slot 3,
-  save_before_ct=true). Cost-benefit heuristic prevents regressions on photos/complex
-  screenshots. windows95: 20.4% savings, synthetic glyphs: 61% savings.
+  Default-on (auto-detect), `--no-patches` to disable. Detection matches libjxl
+  FindTextLikePatches exactly. Cost-benefit gating with measured overhead prevents
+  regressions. GB82-SC corpus: 21.3% total savings (30-38% on 4 images, 0% elsewhere).
+  Beats cjxl on imac_dark (36.2% vs 0%) and imac_g3 (38.4% vs 0%).
   Verified with djxl, jxl-rs, and jxl-oxide.
 - [ ] **Dot detection** — Star fields, specular highlights. Very niche.
 
