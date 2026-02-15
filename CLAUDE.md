@@ -252,7 +252,8 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - **Predictor::Variable** for modular (effort 8+): adapts per-channel vs fixed predictor
 
 **F. Other**
-- No splines, patches/dictionary, dots detection (effort 7 features we skip)
+- No splines, dots detection (effort 7 features we skip)
+- Patches/dictionary: IMPLEMENTED (auto-detect, default-on)
 - EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
 
@@ -340,6 +341,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] Butteraugli quantization loop (default-on, 2 iterations, `--no-butteraugli` to disable)
   - Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles
   - 2 iterations converges for most images; +0.3 SSIM2 at equal file size vs baseline
+- [x] Patches/dictionary (default-on, auto-detect, `--no-patches` to disable)
+  - Detects repeated rectangular patterns in screenshots/UI (text glyphs, icons, buttons)
+  - Packs unique patterns into modular reference frame, subtracts from VarDCT coefficients
+  - Cost-benefit heuristic prevents regressions on photos and complex content
+  - windows95: 20.4% savings; zero overhead on CLIC photos
+  - Verified with djxl, jxl-rs, jxl-oxide
 
 
 ### Roadmap: Upgrading Beyond libjxl-tiny
@@ -398,7 +405,13 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   quality. Not a compression win, but important for web delivery.
 - [ ] **Splines** — Parametric encoding of smooth curves. High impact on specific
   content (power lines, horizons). High complexity.
-- [ ] **Patches/Dictionary** — Repeated pattern detection. Huge for screenshots/UI.
+- [x] **Patches/Dictionary** — Repeated pattern detection for screenshots/UI.
+  Default-on (auto-detect), `--no-patches` to disable. Detects flat-background
+  regions, extracts foreground CCs, deduplicates by quantized XYB, packs unique
+  patterns into modular reference frame (FrameType::ReferenceOnly, slot 3,
+  save_before_ct=true). Cost-benefit heuristic prevents regressions on photos/complex
+  screenshots. windows95: 20.4% savings, synthetic glyphs: 61% savings.
+  Verified with djxl, jxl-rs, and jxl-oxide.
 - [ ] **Dot detection** — Star fields, specular highlights. Very niche.
 
 ### What libjxl-tiny Does NOT Have (confirmed in coding_tools.md)
