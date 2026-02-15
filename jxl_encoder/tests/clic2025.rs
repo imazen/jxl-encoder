@@ -6976,3 +6976,381 @@ fn test_rd_regression() {
         );
     }
 }
+
+/// High-distance RD regression test: d=2.0 and d=3.0.
+///
+/// These distances exercise DCT32x32 (d>=2.0) and DCT64x64 (d>=3.0) strategies.
+/// This test catches quality regressions from broken non-square transforms
+/// (DCT32x16, DCT16x32, DCT64x32, DCT32x64) that produce catastrophic butteraugli
+/// (32-114) when enabled.
+///
+/// Run with: cargo test -p jxl-encoder --test clic2025 test_rd_regression_high_distance -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_rd_regression_high_distance() {
+    use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
+    use imgref::Img;
+    use rgb::RGB;
+    use std::io::Cursor;
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let project_root = std::path::Path::new(manifest_dir).parent().unwrap();
+
+    let corpus = codec_corpus::Corpus::new().expect("Failed to init codec-corpus");
+    let cid22_dir = corpus
+        .get("CID22/CID22-512/training")
+        .expect("Failed to download CID22-512 training set");
+
+    const CID22_NAMES: [&str; 5] = ["1001682", "1028637", "1029604", "106399", "1080721"];
+
+    struct TestImage {
+        name: String,
+        path: std::path::PathBuf,
+    }
+
+    let mut images = vec![TestImage {
+        name: "frymire".into(),
+        path: project_root.join("jxl_encoder/tests/images/frymire.png"),
+    }];
+    for name in &CID22_NAMES {
+        images.push(TestImage {
+            name: (*name).into(),
+            path: cid22_dir.join(format!("{name}.png")),
+        });
+    }
+
+    struct Baseline {
+        size: usize,
+        butteraugli: f64,
+        ssim2: f64,
+    }
+
+    struct ImageBaselines {
+        d200: Baseline,
+        d300: Baseline,
+    }
+
+    // To recalibrate: run the test with --nocapture and update from the output.
+    let baselines = [
+        // frymire (1118x1105)
+        ImageBaselines {
+            d200: Baseline {
+                size: 393617,
+                butteraugli: 3.503,
+                ssim2: 72.63,
+            },
+            d300: Baseline {
+                size: 311894,
+                butteraugli: 5.019,
+                ssim2: 64.64,
+            },
+        },
+        // 1001682 (512x512)
+        ImageBaselines {
+            d200: Baseline {
+                size: 31148,
+                butteraugli: 2.638,
+                ssim2: 71.44,
+            },
+            d300: Baseline {
+                size: 23093,
+                butteraugli: 3.223,
+                ssim2: 62.95,
+            },
+        },
+        // 1028637 (512x512)
+        ImageBaselines {
+            d200: Baseline {
+                size: 27922,
+                butteraugli: 2.728,
+                ssim2: 48.90,
+            },
+            d300: Baseline {
+                size: 21469,
+                butteraugli: 3.624,
+                ssim2: 43.47,
+            },
+        },
+        // 1029604 (512x512)
+        ImageBaselines {
+            d200: Baseline {
+                size: 39127,
+                butteraugli: 2.603,
+                ssim2: 70.56,
+            },
+            d300: Baseline {
+                size: 29726,
+                butteraugli: 3.356,
+                ssim2: 65.47,
+            },
+        },
+        // 106399 (512x512)
+        ImageBaselines {
+            d200: Baseline {
+                size: 29622,
+                butteraugli: 2.381,
+                ssim2: 72.61,
+            },
+            d300: Baseline {
+                size: 22483,
+                butteraugli: 2.985,
+                ssim2: 66.54,
+            },
+        },
+        // 1080721 (512x512)
+        ImageBaselines {
+            d200: Baseline {
+                size: 29474,
+                butteraugli: 2.175,
+                ssim2: 79.36,
+            },
+            d300: Baseline {
+                size: 23019,
+                butteraugli: 2.883,
+                ssim2: 75.18,
+            },
+        },
+    ];
+
+    let size_margin = 1.05;
+    let butteraugli_margin = 1.10;
+    let ssim2_margin = 1.0;
+
+    // Hard quality floors: catches catastrophic regressions from broken transforms.
+    // Butteraugli > 10 means severe artifacts visible to anyone.
+    let butteraugli_floor = 8.0;
+    // SSIM2 < 40 means the image is essentially destroyed.
+    let ssim2_floor = 40.0;
+
+    let params = ButteraugliParams::default();
+    let distances: [f32; 2] = [2.0, 3.0];
+    let mut failures: Vec<String> = Vec::new();
+
+    eprintln!("\n=== High-Distance RD Regression Test ===\n");
+
+    for dist in &distances {
+        eprintln!("--- Distance {:.1} ---\n", dist);
+        eprintln!(
+            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6}",
+            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base"
+        );
+        eprintln!("{}", "-".repeat(75));
+
+        for (i, image) in images.iter().enumerate() {
+            let img = match image::open(&image.path) {
+                Ok(img) => img,
+                Err(e) => {
+                    let msg = format!("{}: failed to open: {}", image.name, e);
+                    eprintln!("{}", msg);
+                    failures.push(msg);
+                    continue;
+                }
+            };
+
+            let (w, h) = img.dimensions();
+            let rgb = img.to_rgb8();
+
+            let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
+
+            let linear_rgb: Vec<f32> = rgb
+                .pixels()
+                .flat_map(|p| {
+                    [
+                        srgb_to_linear(p[0]),
+                        srgb_to_linear(p[1]),
+                        srgb_to_linear(p[2]),
+                    ]
+                })
+                .collect();
+
+            let orig_pixels: Vec<RGB<f32>> = linear_rgb
+                .chunks(3)
+                .map(|c| RGB::new(c[0], c[1], c[2]))
+                .collect();
+            let orig_img = Img::new(orig_pixels, w as usize, h as usize);
+
+            let encoder = jxl_encoder::vardct::VarDctEncoder::new(*dist);
+            let bytes = match encoder.encode(w as usize, h as usize, &linear_rgb, None) {
+                Ok(output) => output.data,
+                Err(e) => {
+                    let msg = format!("{} d={}: encode failed: {:?}", image.name, dist, e);
+                    eprintln!("{}", msg);
+                    failures.push(msg);
+                    continue;
+                }
+            };
+
+            let reader = Cursor::new(&bytes);
+            let mut jxl_image = match jxl_oxide::JxlImage::builder().read(reader) {
+                Ok(img) => img,
+                Err(e) => {
+                    let msg = format!("{} d={}: parse failed: {:?}", image.name, dist, e);
+                    eprintln!("{}", msg);
+                    failures.push(msg);
+                    continue;
+                }
+            };
+            jxl_image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
+
+            let render = match jxl_image.render_frame(0) {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = format!("{} d={}: decode failed: {:?}", image.name, dist, e);
+                    eprintln!("{}", msg);
+                    failures.push(msg);
+                    continue;
+                }
+            };
+
+            let fb = render.image_all_channels();
+            let decoded = fb.buf();
+
+            let dec_pixels: Vec<RGB<f32>> = decoded
+                .chunks(3)
+                .map(|c| RGB::new(c[0], c[1], c[2]))
+                .collect();
+            let dec_imgref = Img::new(dec_pixels, w as usize, h as usize);
+            let bfly = match butteraugli_linear(orig_img.as_ref(), dec_imgref.as_ref(), &params) {
+                Ok(result) => result.score,
+                Err(e) => {
+                    let msg = format!("{} d={}: butteraugli failed: {:?}", image.name, dist, e);
+                    eprintln!("{}", msg);
+                    failures.push(msg);
+                    continue;
+                }
+            };
+
+            let decoded_srgb: Vec<[u8; 3]> = decoded
+                .chunks(3)
+                .map(|rgb| {
+                    let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                    let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                    let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                    [r, g, b]
+                })
+                .collect();
+
+            let original_img = imgref::Img::new(original_srgb.clone(), w as usize, h as usize);
+            let decoded_img = imgref::Img::new(decoded_srgb, w as usize, h as usize);
+            let ssim2 = match fast_ssim2::compute_ssimulacra2(
+                original_img.as_ref(),
+                decoded_img.as_ref(),
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    let msg = format!("{} d={}: ssim2 failed: {:?}", image.name, dist, e);
+                    eprintln!("{}", msg);
+                    failures.push(msg);
+                    continue;
+                }
+            };
+
+            let base = if *dist == 2.0 {
+                &baselines[i].d200
+            } else {
+                &baselines[i].d300
+            };
+
+            let size = bytes.len();
+
+            // Skip relative assertions for uncalibrated baselines (size == 0)
+            if base.size == 0 {
+                eprintln!(
+                    "{:<10} {:>8} {:>8} {:>6} {:>7.3} {:>6} {:>7.2} {:>6}",
+                    image.name, size, "NEW", "", bfly, "", ssim2, ""
+                );
+            } else {
+                let size_pct = (size as f64 / base.size as f64 - 1.0) * 100.0;
+                let size_indicator = if size_pct <= 0.0 { "" } else { " !" };
+
+                eprintln!(
+                    "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>7.2} {:>6.2}",
+                    image.name,
+                    size,
+                    base.size,
+                    size_pct,
+                    size_indicator,
+                    bfly,
+                    base.butteraugli,
+                    ssim2,
+                    base.ssim2,
+                );
+
+                let size_limit = (base.size as f64 * size_margin) as usize;
+                if size > size_limit {
+                    failures.push(format!(
+                        "{} d={}: size {} > limit {} (baseline {} * {:.0}%)",
+                        image.name,
+                        dist,
+                        size,
+                        size_limit,
+                        base.size,
+                        size_margin * 100.0
+                    ));
+                }
+
+                let bfly_limit = base.butteraugli * butteraugli_margin;
+                if bfly > bfly_limit {
+                    failures.push(format!(
+                        "{} d={}: butteraugli {:.3} > limit {:.3} (baseline {:.3} * {:.0}%)",
+                        image.name,
+                        dist,
+                        bfly,
+                        bfly_limit,
+                        base.butteraugli,
+                        butteraugli_margin * 100.0
+                    ));
+                }
+
+                let ssim2_limit = base.ssim2 - ssim2_margin;
+                if ssim2 < ssim2_limit {
+                    failures.push(format!(
+                        "{} d={}: SSIM2 {:.2} < limit {:.2} (baseline {:.2} - {:.1})",
+                        image.name, dist, ssim2, ssim2_limit, base.ssim2, ssim2_margin
+                    ));
+                }
+            }
+
+            // Hard quality floors — catches catastrophic regressions from broken transforms.
+            // These fire regardless of whether baselines are calibrated.
+            if bfly > butteraugli_floor {
+                failures.push(format!(
+                    "{} d={}: CATASTROPHIC butteraugli {:.3} > floor {:.1} (broken transform?)",
+                    image.name, dist, bfly, butteraugli_floor
+                ));
+            }
+            if ssim2 < ssim2_floor {
+                failures.push(format!(
+                    "{} d={}: CATASTROPHIC SSIM2 {:.2} < floor {:.1} (broken transform?)",
+                    image.name, dist, ssim2, ssim2_floor
+                ));
+            }
+        }
+        eprintln!();
+    }
+
+    eprintln!("=== Summary ===\n");
+
+    if failures.is_empty() {
+        eprintln!("All images within quality thresholds.");
+        eprintln!(
+            "  Butteraugli floor: < {:.1} (catches broken transforms)",
+            butteraugli_floor
+        );
+        eprintln!(
+            "  SSIM2 floor: > {:.1} (catches broken transforms)",
+            ssim2_floor
+        );
+    } else {
+        eprintln!("REGRESSIONS DETECTED:");
+        for fail in &failures {
+            eprintln!("  - {}", fail);
+        }
+        panic!(
+            "\n{} regression(s) detected. See output above for details.",
+            failures.len()
+        );
+    }
+}

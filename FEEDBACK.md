@@ -52,3 +52,13 @@ User requested SIMD-accelerated idct_16x16 in jxl_simd crate. Batched 16-point I
 processes 8 rows at a time via f32x8. Gather/scatter for column-to-lane mapping.
 Pre-computed reciprocals for WC_MULTIPLIERS (mul instead of div). Max error vs scalar:
 0.003 absolute on ~192 magnitude values (relative ~1.5e-5, well within f32 precision).
+
+## 2026-02-14: Fix d>=2.0 quality and add regression tests
+User requested investigating catastrophic butteraugli at d>=2. Through systematic binary
+search: identified DCT32X64 as fundamentally broken (bfly 32-46 on 128x128 crops, appeared
+OK on 1024x1024 due to averaging). Disabled DCT32X64 from auto-selection, re-enabled DCT64X64
+(confirmed working at bfly 2.3-3.0). All non-square transforms now disabled: DCT32X16 (bfly 114),
+DCT16X32 (bfly 82), DCT64X32 (bfly 109), DCT32X64 (bfly 32-46), AFV0-3 (bfly 7-8). Square
+transforms (DCT8-DCT64X64) work correctly. Added high-distance RD regression test
+(test_rd_regression_high_distance) at d=2.0 and d=3.0 with hard butteraugli floor of 8.0 and
+SSIM2 floor of 40.0 to catch broken transform reintroduction.
