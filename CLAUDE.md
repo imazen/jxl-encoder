@@ -48,6 +48,39 @@ lack of advanced features (error diffusion, better cost models, etc.).
 When adding or modifying roundtrip tests, ensure BOTH jxl-rs and djxl are tested.
 Never omit jxl-rs from decoder validation.
 
+## CRITICAL: PNG Color Metadata Causes Bogus Butteraugli Scores
+
+**This has wasted days of investigation TWICE. Read this before any butteraugli comparison.**
+
+**The problem**: `butteraugli_main` (libjxl CLI) uses the CMS to linearize input images.
+Different PNG color metadata → different linearization → different scores, even for
+identical pixel data. This produces up to **2x score inflation** that looks like a quality bug.
+
+**How it happens**:
+- Most codec-corpus PNGs have `gAMA=0.45455 + cHRM` chunks (no `sRGB` chunk)
+- `butteraugli_main` linearizes these with pure gamma 2.2: `pixel^2.2`
+- Our JXL files declare `TransferFunction::Srgb` (the correct thing to do)
+- `butteraugli_main` linearizes JXL with sRGB TF: linear segment below 0.04045, then `((x+0.055)/1.055)^2.4`
+- These differ significantly in darks — gamma 2.2 vs sRGB TF diverge by up to 5% near black
+- Result: `butteraugli_main source.png our.jxl` compares gamma-2.2-linearized vs sRGB-linearized → inflated score
+
+**The fix — three valid approaches**:
+1. **Use Rust butteraugli** (always applies sRGB TF consistently to both images) — PREFERRED
+2. **Strip PNG metadata** before comparison: `convert source.png -strip stripped.png`
+3. **Add sRGB chunk** to source: both images linearize with sRGB TF
+
+**What does NOT work**:
+- Comparing `butteraugli_main source.png our.jxl` directly (metadata mismatch)
+- Decoding our JXL to PFM and comparing (PFM is assumed nonlinear sRGB by butteraugli_main)
+- Assuming inflated scores mean quality is bad (they might just mean metadata mismatch)
+
+**History**:
+- Feb 15, 2026: wasted a session investigating "2x worse external scores" — was metadata mismatch
+- Previously in butteraugli crate: similar TF mismatch caused months of wrong parity conclusions
+
+**The comparison scripts at `/tmp/run_cmp3.sh` use `butteraugli_main` and are UNRELIABLE
+unless source PNGs are metadata-stripped first.**
+
 ## Current Status: Full libjxl Parametric Quantization Weights
 
 The VarDCT encoder (`jxl_encoder/src/vardct/`) now uses full libjxl's default parametric
@@ -106,35 +139,32 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 15, 2026 — 6 CLIC2025 1024x1024 images, post butteraugli loop fix)
+### Quality Gap vs Full libjxl (Feb 15, 2026 — 12 CLIC2025 1024x1024 images)
 
-**Size comparison vs cjxl (average over 6 images):**
+**Measured with Rust butteraugli (native u8 decode, no TF mismatch). See `test_fair_comparison`.**
 
-| Distance | cjxl-rs avg | vs e5 | vs e7 |
-|----------|-------------|-------|-------|
-| d=0.5 | 396KB | +1.9% | +1.6% |
-| d=1.0 | 237KB | **-1.3%** | **-1.7%** |
-| d=2.0 | 136KB | **-3.2%** | **-4.3%** |
-| d=3.0 | 100KB | +0.4% | **-1.7%** |
+**Size and quality comparison vs cjxl (average over 12 images):**
 
-**Butteraugli quality at same distance (avg, lower=better):**
+| Distance | cjxl-rs avg | Size vs e5 | Size vs e7 | BA (rs) | BA (e5) | BA (e7) | BA vs e5 | BA vs e7 |
+|----------|-------------|-----------|-----------|---------|---------|---------|---------|---------|
+| d=0.5 | 364KB | +4.9% | +4.8% | 0.745 | 1.066 | 1.051 | **-30.1%** | **-29.1%** |
+| d=1.0 | 212KB | +0.7% | +0.2% | 1.384 | 1.615 | 1.606 | **-14.3%** | **-13.8%** |
+| d=2.0 | 114KB | **-0.9%** | **-2.3%** | 2.571 | 2.753 | 2.739 | **-6.6%** | **-6.1%** |
+| d=3.0 | 80KB | **-0.5%** | **-3.1%** | 3.518 | 3.525 | 3.479 | -0.2% | +1.1% |
 
-| Distance | cjxl-rs | cjxl-e5 | cjxl-e7 | vs e5 | vs e7 |
-|----------|---------|---------|---------|-------|-------|
-| d=0.5 | 0.779 | 1.017 | 1.008 | **-23.4%** | **-22.7%** |
-| d=1.0 | 1.375 | 1.426 | 1.412 | **-3.5%** | **-2.6%** |
-| d=2.0 | 2.452 | 2.520 | 2.569 | **-2.6%** | **-4.5%** |
-| d=3.0 | 3.406 | 3.317 | 3.375 | +2.6% | +0.9% |
+At d=0.5: 5% larger files but **30% better quality** — strong RD win.
+At d=1.0: near-equal size with **14% better quality**.
+At d=2.0: slightly smaller files with **7% better quality** — winning on both axes.
+At d=3.0: 0.5-3% smaller files, quality at parity.
 
-At d=0.5: slightly larger files but **massively** better quality (-23% butteraugli).
-At d=1.0-2.0: smaller files AND better quality — winning on BOTH axes.
-At d=3.0: within 3% on both size and quality — near parity.
+**Key insight**: At d=0.5, our butteraugli loop aggressively optimizes quality, producing
+smaller BA at the cost of slightly larger files. At d=2.0-3.0, file size is competitive
+or smaller, with quality at or above parity.
 
-**Progress from Feb 4 → Feb 15** (size gap vs e5):
-- d=0.5: +1.2% → +1.9% (slightly larger, but quality improved from -5% to -23%)
-- d=1.0: +2.6% → **-1.3%** (3.9pp improvement, quality improved from +13% to -3.5%)
-- d=2.0: +24% → **-3.2%** (27.2pp improvement, quality improved from +8.4% to -2.6%)
-- d=3.0: +22% → +0.4% (21.6pp improvement)
+**Measurement methodology**: cjxl writes `gamma(0.454550)` from source PNG gAMA chunks.
+We write sRGB TF. To avoid TF mismatch inflating scores, decode all JXLs to native u8
+(no color conversion) and compare with `butteraugli::butteraugli()` (sRGB u8 interface).
+Same treatment for both → fair comparison. See `test_fair_comparison` in `tests/clic2025.rs`.
 
 **Key fix**: Butteraugli loop was disabled at default effort (effort 7) and had inverted
 adjustment direction. Both bugs fixed Feb 15. The loop now correctly increases quant_field

@@ -7397,3 +7397,181 @@ fn test_rd_regression_high_distance() {
         );
     }
 }
+
+/// Fair quality comparison: cjxl-rs vs cjxl-e5 vs cjxl-e7 using Rust butteraugli.
+///
+/// CRITICAL: cjxl writes gamma(0.454550) from source gAMA, we write sRGB TF.
+/// If you decode to linear via jxl-oxide, the TF mismatch inflates cjxl's scores.
+/// Instead, decode to NATIVE u8 (no color conversion) and feed both source and
+/// decoded to butteraugli::butteraugli() which applies srgb_to_linear internally.
+/// Same treatment for both → fair comparison regardless of declared TF.
+///
+/// Pre-requisite: run `bash /tmp/fair_cmp.sh` to encode all images.
+///
+/// Run with: cargo test -p jxl-encoder --test clic2025 test_fair_comparison -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_fair_comparison() {
+    use butteraugli::ButteraugliParams;
+    use imgref::Img;
+    use rgb::RGB;
+    use std::io::Cursor;
+
+    let clic_dir = std::path::Path::new(env!("HOME"))
+        .join("work/codec-corpus/clic2025-1024");
+    let jxl_dir = std::path::Path::new("/tmp/fair_cmp");
+
+    let images: &[(&str, &str)] = &[
+        ("02809272", "02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"),
+        ("1b4ad095", "1b4ad095795ac552b38a21d51be7bfaee8e7d0a70619d84767814321df4ed062.png"),
+        ("50fe4c3d", "50fe4c3d47d864858e1aaa60fecef5c453b4e18d2b368718eeb5c1e249e0c902.png"),
+        ("870516c6", "870516c65d81fb9267de6865964083a9.png"),
+        ("8426ed22", "8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png"),
+        ("a36713f1", "a36713f1943dac6bc74dea50cadaee6f.png"),
+        ("0369d229", "0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png"),
+        ("097cb426", "097cb426910ba8ce2525dd8bb7fb1777.png"),
+        ("100a02c2", "100a02c269c5948392f283b2aa3bb4da.png"),
+        ("14ab4af2", "14ab4af28901fbeb1356b06d2d08ae06.png"),
+        ("0d154749", "0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png"),
+        ("07b9f93f", "07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png"),
+    ];
+
+    let params = ButteraugliParams::new()
+        .with_intensity_target(80.0);
+
+    // Helper: decode JXL to native u8 via jxl-oxide (NO color conversion).
+    // Returns raw u8 in whatever TF the JXL declares. This matches how we treat
+    // the source PNG (raw u8 without honoring gAMA), making the comparison fair.
+    let decode_jxl_u8 = |path: &std::path::Path| -> Option<(Vec<RGB<u8>>, usize, usize)> {
+        let data = std::fs::read(path).ok()?;
+        let reader = Cursor::new(&data);
+        let image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
+        // Don't request color encoding — get native rendering
+        let render = image.render_frame(0).ok()?;
+        let decoded = render.image_all_channels();
+        let w = decoded.width();
+        let h = decoded.height();
+        let buf = decoded.buf();
+        // f32 in native encoding [0,1] → quantize to u8
+        let pixels: Vec<RGB<u8>> = buf
+            .chunks(3)
+            .map(|c| {
+                RGB::new(
+                    (c[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                    (c[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                    (c[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                )
+            })
+            .collect();
+        Some((pixels, w, h))
+    };
+
+    for dist_str in &["0.5", "1.0", "2.0", "3.0"] {
+        eprintln!("\n=== Distance {} ===", dist_str);
+        eprintln!(
+            "{:<10}  {:>7} {:>6}  {:>7} {:>6}  {:>7} {:>6}",
+            "Image", "rs-KB", "rs-BA", "e5-KB", "e5-BA", "e7-KB", "e7-BA"
+        );
+        eprintln!("----------  ------- ------  ------- ------  ------- ------");
+
+        let mut sum_rs_size: f64 = 0.0;
+        let mut sum_e5_size: f64 = 0.0;
+        let mut sum_e7_size: f64 = 0.0;
+        let mut sum_rs_ba: f64 = 0.0;
+        let mut sum_e5_ba: f64 = 0.0;
+        let mut sum_e7_ba: f64 = 0.0;
+        let mut n = 0;
+
+        for (short, filename) in images {
+            let src_path = clic_dir.join(filename);
+            let img = match image::open(&src_path) {
+                Ok(i) => i,
+                Err(e) => {
+                    eprintln!("Skip {}: {}", short, e);
+                    continue;
+                }
+            };
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            let rgb = img.to_rgb8();
+
+            // Source as u8 (raw pixel values, no color management)
+            let src_pixels: Vec<RGB<u8>> = rgb
+                .pixels()
+                .map(|p| RGB::new(p[0], p[1], p[2]))
+                .collect();
+            let src_img = Img::new(src_pixels, w, h);
+
+            // Load and measure each encoder's output
+            let rs_path = jxl_dir.join(format!("rs_{}_d{}.jxl", short, dist_str));
+            let e5_path = jxl_dir.join(format!("e5_{}_d{}.jxl", short, dist_str));
+            let e7_path = jxl_dir.join(format!("e7_{}_d{}.jxl", short, dist_str));
+
+            let rs_size = std::fs::metadata(&rs_path).map(|m| m.len()).unwrap_or(0);
+            let e5_size = std::fs::metadata(&e5_path).map(|m| m.len()).unwrap_or(0);
+            let e7_size = std::fs::metadata(&e7_path).map(|m| m.len()).unwrap_or(0);
+
+            let measure = |path: &std::path::Path| -> f64 {
+                if let Some((pixels, pw, ph)) = decode_jxl_u8(path) {
+                    if pw != w || ph != h {
+                        return -1.0;
+                    }
+                    let dec_img = Img::new(pixels, w, h);
+                    // butteraugli() applies srgb_to_linear to BOTH images internally
+                    butteraugli::butteraugli(
+                        src_img.as_ref(),
+                        dec_img.as_ref(),
+                        &params,
+                    )
+                    .map(|r| r.score)
+                    .unwrap_or(-1.0)
+                } else {
+                    -1.0
+                }
+            };
+
+            let rs_ba = measure(&rs_path);
+            let e5_ba = measure(&e5_path);
+            let e7_ba = measure(&e7_path);
+
+            eprintln!(
+                "{:<10}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}",
+                short,
+                rs_size as f64 / 1024.0, rs_ba,
+                e5_size as f64 / 1024.0, e5_ba,
+                e7_size as f64 / 1024.0, e7_ba,
+            );
+
+            sum_rs_size += rs_size as f64;
+            sum_e5_size += e5_size as f64;
+            sum_e7_size += e7_size as f64;
+            sum_rs_ba += rs_ba;
+            sum_e5_ba += e5_ba;
+            sum_e7_ba += e7_ba;
+            n += 1;
+        }
+
+        if n > 0 {
+            let nf = n as f64;
+            eprintln!("----------  ------- ------  ------- ------  ------- ------");
+            eprintln!(
+                "{:<10}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}",
+                "AVERAGE",
+                sum_rs_size / nf / 1024.0, sum_rs_ba / nf,
+                sum_e5_size / nf / 1024.0, sum_e5_ba / nf,
+                sum_e7_size / nf / 1024.0, sum_e7_ba / nf,
+            );
+            let size_vs_e5 = (sum_rs_size - sum_e5_size) * 100.0 / sum_e5_size;
+            let size_vs_e7 = (sum_rs_size - sum_e7_size) * 100.0 / sum_e7_size;
+            let ba_vs_e5 = (sum_rs_ba - sum_e5_ba) * 100.0 / sum_e5_ba;
+            let ba_vs_e7 = (sum_rs_ba - sum_e7_ba) * 100.0 / sum_e7_ba;
+            eprintln!(
+                "  Size vs e5: {:+.1}%  Size vs e7: {:+.1}%",
+                size_vs_e5, size_vs_e7
+            );
+            eprintln!(
+                "  BA   vs e5: {:+.1}%  BA   vs e7: {:+.1}%  (negative = better)",
+                ba_vs_e5, ba_vs_e7
+            );
+        }
+    }
+}

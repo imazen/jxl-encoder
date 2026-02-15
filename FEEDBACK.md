@@ -1,5 +1,14 @@
 # Feedback Log
 
+## 2026-02-15: Multi-resolution butteraugli and v0.7 update
+
+User asked about color profile and butteraugli version. Investigation found:
+1. Butteraugli loop used single_resolution mode — libjxl uses multi-resolution (recursive Comparator)
+2. External butteraugli score inflation (2.52 vs 1.39) was PNG color metadata mismatch, not quality bug
+3. Source PNGs have gAMA chunk (gamma 2.2), our JXL declares sRGB TF — butteraugli_main linearizes differently
+4. With matched metadata: cjxl-rs beats cjxl-e5 on BOTH size (-1.3%) and quality (-3.5% BA) at d=1.0
+5. Updated butteraugli 0.6→0.7 (API cleanup only). Removed ineffective clamping code.
+
 ## 2026-02-15: Fix AFV corner strategies and enable auto-selection
 
 User asked to fix corner strategies. Root cause found: generate_afv_weights() in quant.rs
