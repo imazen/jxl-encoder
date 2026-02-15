@@ -503,7 +503,7 @@ impl VarDctEncoder {
                             }
                         }
                         RAW_STRATEGY_DCT32X16 => {
-                            // DCT32X16: 4×2 blocks, returns 8 DC values in row-major 4x2
+                            // DCT32X16: 4 block rows × 2 block cols, returns 8 DC values in 4×2 order
                             let coeffs_arr: [f32; 512] = dct_coeffs[1][..512]
                                 .try_into()
                                 .expect("512 coefficients for DCT32x16");
@@ -542,7 +542,7 @@ impl VarDctEncoder {
                             }
                         }
                         RAW_STRATEGY_DCT64X32 => {
-                            // DCT64X32: 8×4 blocks, returns 32 DC values in row-major 8x4
+                            // DCT64X32: 8 block rows × 4 block cols, returns 32 DC values in 8×4 order
                             let coeffs_arr: [f32; 2048] = dct_coeffs[1][..2048]
                                 .try_into()
                                 .expect("2048 coefficients for DCT64x32");

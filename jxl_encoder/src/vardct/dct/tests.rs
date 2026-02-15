@@ -812,6 +812,44 @@ fn test_dct_32x64_dc_extraction_constant() {
 }
 
 #[test]
+fn test_dct_32x16_dc_extraction_constant() {
+    let val = 42.0f32;
+    let input = [val; 512];
+    let mut output = [0.0f32; 512];
+    dct_32x16(&input, &mut output);
+
+    let dcs = dc_from_dct_32x16(&output);
+    for (i, &dc) in dcs.iter().enumerate() {
+        assert!(
+            (dc - val).abs() < 0.5,
+            "DC32x16[{}] = {}, expected ~{}",
+            i,
+            dc,
+            val
+        );
+    }
+}
+
+#[test]
+fn test_dct_16x32_dc_extraction_constant() {
+    let val = 42.0f32;
+    let input = [val; 512];
+    let mut output = [0.0f32; 512];
+    dct_16x32(&input, &mut output);
+
+    let dcs = dc_from_dct_16x32(&output);
+    for (i, &dc) in dcs.iter().enumerate() {
+        assert!(
+            (dc - val).abs() < 0.5,
+            "DC16x32[{}] = {}, expected ~{}",
+            i,
+            dc,
+            val
+        );
+    }
+}
+
+#[test]
 fn test_idct_8x4_roundtrip() {
     let input: [f32; 32] = core::array::from_fn(|i| ((i as f32 * 1.7).sin()) * 100.0);
     let mut coeffs = [0.0f32; 32];

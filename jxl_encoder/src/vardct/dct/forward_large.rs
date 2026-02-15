@@ -224,46 +224,50 @@ pub fn dct_16x32(input: &[f32; 512], output: &mut [f32; 512]) {
 /// Extract DC values from 32x16 DCT coefficients.
 /// Returns 8 DC values (for the 8 covered 8x8 blocks) in row-major 4x2 order.
 ///
-/// The LLF region is 4x2 coefficients at positions `[r*32+c]` for r in 0..4, c in 0..2
-/// in the 16x32 layout (stride 32). We apply `DCTTotalResampleScale<32, 4>` to rows
-/// and `DCTTotalResampleScale<16, 2>` to columns, then a 4x2 IDCT.
+/// DCT32x16 output is 16×32 (stride 32, no final transpose):
+///   row = horiz freq (16-dim, 2 blocks), col = vert freq (32-dim, 4 blocks)
+/// LLF region is 2×4 at positions `[r*32+c]` for r in 0..2, c in 0..4.
+/// We apply `DCTTotalResampleScale<16, 2>` to rows and `<32, 4>` to columns,
+/// then a 2×4 IDCT (skipping final transpose to produce 4×2 spatial output).
 pub fn dc_from_dct_32x16(coeffs: &[f32; 512]) -> [f32; 8] {
-    // Extract 4x2 LLF and apply resample scales
-    // Forward DCT32x16 scaled by 1/(32*16) = 1/512. The 4x2 IDCT will apply 4*2=8 scaling,
-    // so we need an additional 512/8 = 64 factor, but we use 8.0 to match observed behavior.
+    // Extract 2×4 LLF and apply resample scales.
+    // Compensation factor = 4.0: idct1d_4 has DC gain 1/4, inline 2-point has DC gain 1.
+    // Total LLF IDCT DC gain = 1/4, so we compensate with ×4.
     let mut block = [0.0f32; 8];
-    for iy in 0..4 {
-        for ix in 0..2 {
-            block[iy * 2 + ix] = coeffs[iy * 32 + ix]
-                * DCT_RESAMPLE_SCALE_32_TO_4[iy]
-                * DCT_RESAMPLE_SCALE_16_TO_2[ix]
-                * 8.0;
+    for iy in 0..2 {
+        for ix in 0..4 {
+            block[iy * 4 + ix] = coeffs[iy * 32 + ix]
+                * DCT_RESAMPLE_SCALE_16_TO_2[iy]
+                * DCT_RESAMPLE_SCALE_32_TO_4[ix]
+                * 4.0;
         }
     }
 
-    // 4x2 IDCT: IDCT rows (2-point) -> transpose -> IDCT cols (4-point)
-    // Since ROWS=4 >= COLS=2, this is ROWS >= COLS branch: IDCT rows -> transpose -> IDCT rows
+    // 2×4 IDCT (ROWS=2 < COLS=4): IDCT rows → transpose → IDCT rows.
+    // Skip final transpose: the 2×4 LLF has rows=horiz freq, cols=vert freq.
+    // After IDCT without final transpose, result is 4×2 = [block_row][block_col].
 
-    // IDCT on 2-element rows (4 rows)
-    for iy in 0..4 {
-        let a = block[iy * 2];
-        let b = block[iy * 2 + 1];
-        block[iy * 2] = a + b;
-        block[iy * 2 + 1] = a - b;
-    }
+    // IDCT on 4-element rows (2 rows) — converts vert freq → spatial block row
+    idct1d_4(&mut block[0..4]);
+    idct1d_4(&mut block[4..8]);
 
-    // Transpose 4x2 -> 2x4
+    // Transpose 2×4 → 4×2
     let mut transposed = [0.0f32; 8];
-    for iy in 0..4 {
-        for ix in 0..2 {
-            transposed[ix * 4 + iy] = block[iy * 2 + ix];
+    for iy in 0..2 {
+        for ix in 0..4 {
+            transposed[ix * 2 + iy] = block[iy * 4 + ix];
         }
     }
 
-    // IDCT on 4-element rows (2 rows)
-    idct1d_4(&mut transposed[0..4]);
-    idct1d_4(&mut transposed[4..8]);
+    // IDCT on 2-element rows (4 rows) — converts horiz freq → spatial block col
+    for iy in 0..4 {
+        let a = transposed[iy * 2];
+        let b = transposed[iy * 2 + 1];
+        transposed[iy * 2] = a + b;
+        transposed[iy * 2 + 1] = a - b;
+    }
 
+    // Result is 4×2 = [block_row * 2 + block_col], matching caller
     transposed
 }
 
@@ -273,18 +277,20 @@ pub fn dc_from_dct_32x16(coeffs: &[f32; 512]) -> [f32; 8] {
 /// The LLF region is 2x4 coefficients. We apply `DCTTotalResampleScale<16, 2>` to rows
 /// and `DCTTotalResampleScale<32, 4>` to columns, then a 2x4 IDCT.
 pub fn dc_from_dct_16x32(coeffs: &[f32; 512]) -> [f32; 8] {
-    // Extract 2x4 LLF and apply resample scales
+    // Extract 2×4 LLF and apply resample scales.
+    // Compensation factor = 4.0: idct1d_4 has DC gain 1/4, inline 2-point has DC gain 1.
+    // Total LLF IDCT DC gain = 1/4, so we compensate with ×4.
     let mut block = [0.0f32; 8];
     for iy in 0..2 {
         for ix in 0..4 {
             block[iy * 4 + ix] = coeffs[iy * 32 + ix]
                 * DCT_RESAMPLE_SCALE_16_TO_2[iy]
                 * DCT_RESAMPLE_SCALE_32_TO_4[ix]
-                * 8.0;
+                * 4.0;
         }
     }
 
-    // 2x4 IDCT: Since ROWS=2 < COLS=4, this is ROWS < COLS branch
+    // 2×4 IDCT: Since ROWS=2 < COLS=4, this is ROWS < COLS branch
     // IDCT rows -> transpose -> IDCT rows -> transpose back
 
     // IDCT on 4-element rows (2 rows)
@@ -531,46 +537,52 @@ pub fn dc_from_dct_64x64(coeffs: &[f32]) -> [f32; 64] {
 }
 
 /// Extract DC values from 64x32 DCT coefficients.
-/// Returns 32 DC values (for the 32 covered 8x8 blocks) in row-major 4x8 order.
+/// Returns 32 DC values (for the 32 covered 8x8 blocks) in row-major 8x4 order.
 ///
-/// The LLF region is 8x4 in the 32x64 layout (stride 64).
-/// Apply scale_64→8 for rows and scale_32→4 for cols, then 8x4 IDCT.
+/// DCT64x32 output is 32×64 (stride 64, no final transpose):
+///   row = horiz freq (32-dim, 4 blocks), col = vert freq (64-dim, 8 blocks)
+/// LLF region is 4×8 at positions `[r*64+c]` for r in 0..4, c in 0..8.
+/// We apply `DCTTotalResampleScale<32, 4>` to rows and `<64, 8>` to columns,
+/// then a 4×8 IDCT (skipping final transpose to produce 8×4 spatial output).
 ///
-/// Coverage: 4 cols × 8 rows of 8x8 blocks. DC output is 8 rows × 4 cols.
+/// Coverage: 8 block rows × 4 block cols. DC output is 8 rows × 4 cols.
 pub fn dc_from_dct_64x32(coeffs: &[f32]) -> [f32; 32] {
     debug_assert!(coeffs.len() >= 2048);
 
-    // Extract 8x4 LLF from the 32x64 layout (stride 64)
+    // Extract 4×8 LLF from the 32×64 layout (stride 64)
     let mut block = [0.0f32; 32];
-    for iy in 0..8 {
-        for ix in 0..4 {
-            block[iy * 4 + ix] = coeffs[iy * 64 + ix]
-                * DCT_RESAMPLE_SCALE_64_TO_8[iy]
-                * DCT_RESAMPLE_SCALE_32_TO_4[ix]
+    for iy in 0..4 {
+        for ix in 0..8 {
+            block[iy * 8 + ix] = coeffs[iy * 64 + ix]
+                * DCT_RESAMPLE_SCALE_32_TO_4[iy]
+                * DCT_RESAMPLE_SCALE_64_TO_8[ix]
                 * 4.0;
         }
     }
 
-    // 8x4 IDCT: ROWS=8 >= COLS=4, so IDCT rows -> transpose -> IDCT rows
+    // 4×8 IDCT (ROWS=4 < COLS=8): IDCT rows → transpose → IDCT rows.
+    // Skip final transpose: the 4×8 LLF has rows=horiz freq, cols=vert freq.
+    // After IDCT without final transpose, result is 8×4 = [block_row][block_col].
 
-    // IDCT on 4-element rows (8 rows)
-    for iy in 0..8 {
-        idct1d_4(&mut block[iy * 4..(iy + 1) * 4]);
+    // IDCT on 8-element rows (4 rows) — converts vert freq → spatial block row
+    for iy in 0..4 {
+        idct1d_8(&mut block[iy * 8..(iy + 1) * 8]);
     }
 
-    // Transpose 8x4 -> 4x8
+    // Transpose 4×8 → 8×4
     let mut transposed = [0.0f32; 32];
-    for iy in 0..8 {
-        for ix in 0..4 {
-            transposed[ix * 8 + iy] = block[iy * 4 + ix];
+    for iy in 0..4 {
+        for ix in 0..8 {
+            transposed[ix * 4 + iy] = block[iy * 8 + ix];
         }
     }
 
-    // IDCT on 8-element rows (4 rows)
-    for iy in 0..4 {
-        idct1d_8(&mut transposed[iy * 8..(iy + 1) * 8]);
+    // IDCT on 4-element rows (8 rows) — converts horiz freq → spatial block col
+    for iy in 0..8 {
+        idct1d_4(&mut transposed[iy * 4..(iy + 1) * 4]);
     }
 
+    // Result is 8×4 = [block_row * 4 + block_col], matching caller
     transposed
 }
 
