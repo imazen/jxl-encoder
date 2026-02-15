@@ -189,11 +189,15 @@ pub(super) fn find_best_16x16_transform(
                 *best_strat = RAW_STRATEGY_DCT2X2;
             }
 
-            // AFV0-3 DISABLED in auto-selection: produces butteraugli 7-8 (vs ~2.5
-            // for DCT8) when forced on a full image. In pixel-domain mode, the inverse
-            // AFV transform underestimates error causing over-selection. In coefficient-
-            // domain mode, quality is still 3x worse than expected. Investigate AFV
-            // quantization/dequantization before re-enabling.
+            // AFV0-3: corner strategies, one per block position in the 2x2 group
+            let afv_strategy = RAW_STRATEGY_AFV0 + (dy * 2 + dx) as u8;
+            let e_afv = eval!(afv_strategy, avoid_transforms_adjust);
+            let base_cost_afv = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
+            let cost_afv = base_cost_afv + mul8x8 * e_afv;
+            if cost_afv < *entropy_val {
+                *entropy_val = cost_afv;
+                *best_strat = afv_strategy;
+            }
         }
     }
 
