@@ -271,7 +271,7 @@ Strategy status:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
 
-**Unpushed**: 55 commits ahead of origin/main
+**Published**: v0.1.0 on crates.io (2026-02-14)
 
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
