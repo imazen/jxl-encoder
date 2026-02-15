@@ -1,5 +1,15 @@
 # Feedback Log
 
+## 2026-02-15: Fix AFV corner strategies and enable auto-selection
+
+User asked to fix corner strategies. Root cause found: generate_afv_weights() in quant.rs
+indexed DCT4x8 sub-weights with y*8 instead of y*16. DCT4x8 weights use a row-duplicated
+layout (base row y at duplicated rows 2*y and 2*y+1), so correct stride is 16 not 8.
+This caused 24/31 DCT4x8 weight positions to read wrong values. Fix: one-line change
+y*8 → y*16. Result: AFV butteraugli 7.58 → 2.52 (matching DCT8's 2.50). All 4 variants
+(AFV0-3) enabled in auto-selection with position-dependent kind (dy*2+dx). 603 tests pass,
+RD regression tests pass.
+
 ## 2026-02-14: Non-square DCT coefficient order fix
 
 User asked to continue debugging DCT32X16/DCT16X32 garbage quality (bfly 28-34). Root cause

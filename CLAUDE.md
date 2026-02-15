@@ -162,7 +162,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 19/27 implemented, 16 enabled (3 disabled: AFV0-3)**
+**A. AC Strategies — 19/27 implemented, 19 enabled**
 
 All AC strategies that libjxl evaluates through effort 9 are implemented. The remaining
 8 (DCT32x8, DCT8x32, DCT128+) are commented out or experimental in libjxl — never selected.
@@ -176,25 +176,19 @@ libjxl effort level strategy gating:
 Strategy status:
 - DCT32x16/DCT16x32: ENABLED at d>=2.0 (fixed Feb 14, 2026 — coefficient order bucket bug)
 - DCT64x32/DCT32x64: ENABLED at d>=3.0 (same fix)
-- AFV0-3: DISABLED — butteraugli 7-8 when forced. Pixel-domain underestimates error;
-  coefficient-domain still 3x worse than expected. Investigate quantization/dequantization.
+- AFV0-3: ENABLED (fixed Feb 15, 2026 — DCT4x8 sub-weight row indexing bug in generate_afv_weights)
 - DCT64x64: enabled at d>=3.0 (square transform, works correctly, bfly=2.3-3.0 on crops)
 - DCT32x32: enabled at d>=2.0 (square transform, works correctly)
 - DCT2x2/IDENTITY: auto-select (kFavor2X2 = -0.4, matches libjxl)
 
 Non-square transform bug RESOLVED (Feb 14, 2026):
 Root cause was bucket_to_cx_cy() in coeff_order.rs missing bucket 6 (DCT32X16/DCT16X32).
-STRATEGY_TO_BUCKET correctly mapped codes 10,11 to bucket 6, but bucket_to_cx_cy fell
-through to (0,0), causing custom orders to never be computed. The encoder used its own
-default order while the decoder used natural_coeff_order — 502/512 positions differed.
-Fix: add bucket 6 → (4,2), fix bucket 5 label (DCT32X8, not DCT32X16), switch all
-default orders to natural_coeff_order. Also fixed: non-square transforms were never
-DCT32x32, DCT64x64) work correctly. The pattern suggests a common root cause in the
-non-square forward DCT path or the flat buffer assembly for non-square layouts. The
-coefficient order stride mismatch (fixed for DCT32x16/DCT64x32) was ONE bug but not
-considered in best_cost comparison (code was commented out). Bucket 5 comment was
-wrong (said DCT32X16 but bucket 5 is DCT32X8). Default orders used our custom
-coefficient_layout_order which differed from libjxl's ComputeNaturalCoeffOrder.
+Fix: add bucket 6 → (4,2), fix bucket 5 label, switch default orders to natural_coeff_order.
+
+AFV quantization weight bug RESOLVED (Feb 15, 2026):
+Root cause was generate_afv_weights() indexing DCT4x8 sub-weights with y*8 instead of y*16.
+DCT4x8 weights use row-duplicated layout (base row y at rows 2y, 2y+1). Fixed: y*8 → y*16.
+Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants enabled.
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
 - Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
@@ -298,7 +292,7 @@ coefficient_layout_order which differed from libjxl's ComputeNaturalCoeffOrder.
 - [x] DCT32x16/DCT16x32: enabled at d>=2.0 (fixed Feb 14 — coefficient order bucket bug, bfly 4.6)
 - [x] DCT64x64: enabled at d>=3.0, verified with jxl-oxide and djxl
 - [x] DCT64x32/DCT32x64: enabled at d>=3.0 (fixed Feb 14 — same coefficient order fix, bfly 4.6)
-- [ ] AFV0-3: DISABLED from auto-selection — butteraugli 7-8 when forced (vs ~2.5 for DCT8). Investigate quantization.
+- [x] AFV0-3: ENABLED — fixed DCT4x8 sub-weight row indexing in generate_afv_weights (y*8 → y*16)
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
@@ -377,8 +371,8 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   Processes coefficients in zigzag order, propagates 1/4 error to next coefficient.
   Helps preserve smooth gradients at high compression (d > 2.0). Note: libjxl has the
   parameter but never implemented the actual diffusion - this is a novel implementation.
-- [x] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks. Working! All 4 variants
-  (AFV0-3) verified with jxl-oxide and djxl. Selection not yet integrated with strategy search.
+- [x] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks. All 4 variants
+  (AFV0-3) verified with jxl-oxide and djxl. Integrated with strategy search (position-dependent kind).
 
 **Tier 3: Content-specific / UX**
 
