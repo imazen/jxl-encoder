@@ -508,7 +508,7 @@ pub(super) fn find_best_32x32_transform(
             0.0,
             scratch,
         );
-    let _entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
+    let entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
 
     // Evaluate DCT16x32 costs (two transforms: at (0,0) and (2,0))
     // DCT16x32 covers 2 rows × 4 cols of 8x8 blocks
@@ -548,7 +548,7 @@ pub(super) fn find_best_32x32_transform(
             0.0,
             scratch,
         );
-    let _entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
+    let entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
 
     // Run four 16x16 evaluations (each covers 2×2 blocks)
     for qy in (0..4).step_by(2) {
@@ -631,25 +631,21 @@ pub(super) fn find_best_32x32_transform(
     }
 
     // Find the best option among: DCT32x32, DCT32x16 pair, DCT16x32 pair, 16x16 sub-evaluations
-    let best_cost = cost_sub;
+    let mut best_cost = cost_sub;
     let mut best_choice = 0u8; // 0 = keep sub, 1 = DCT32x32, 2 = DCT32x16, 3 = DCT16x32
 
     if entropy_32x32 < best_cost {
-        let _ = best_cost;
+        best_cost = entropy_32x32;
         best_choice = 1;
     }
-    // DCT32X16 and DCT16X32 DISABLED: both produce catastrophic butteraugli
-    // when forced individually (DCT32X16: 114+, DCT16X32: 82+). The coefficient
-    // order stride mismatch for DCT32X16 was fixed, but both transforms still
-    // produce garbage quality. DCT32X32 (square) and DCT32X64/DCT32X64 work
-    // fine. Investigate the 32x16/16x32 forward DCT or quantization path.
-    // if entropy_32x16_total < best_cost {
-    //     best_cost = entropy_32x16_total;
-    //     best_choice = 2;
-    // }
-    // if entropy_16x32_total < best_cost {
-    //     best_choice = 3;
-    // }
+    if entropy_32x16_total < best_cost {
+        best_cost = entropy_32x16_total;
+        best_choice = 2;
+    }
+    if entropy_16x32_total < best_cost {
+        let _ = best_cost;
+        best_choice = 3;
+    }
 
     match best_choice {
         1 => {
@@ -802,7 +798,7 @@ pub(super) fn find_best_64x64_transform(
             0.0,
             scratch,
         );
-    let _entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
+    let entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
 
     // Evaluate DCT32x64 costs (two transforms side by side)
     // DCT32x64 covers 4 rows × 8 cols of 8×8 blocks
@@ -843,7 +839,7 @@ pub(super) fn find_best_64x64_transform(
             0.0,
             scratch,
         );
-    let _entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
+    let entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
 
     // Run four 32x32 evaluations (each covers 4×4 blocks)
     for qy in (0..8).step_by(4) {
@@ -935,29 +931,21 @@ pub(super) fn find_best_64x64_transform(
     }
 
     // Find the best option
-    let best_cost = cost_sub;
+    let mut best_cost = cost_sub;
     let mut best_choice = 0u8; // 0=keep sub, 1=DCT64x64, 2=DCT64x32, 3=DCT32x64
 
     if entropy_64x64 < best_cost {
-        let _ = best_cost;
+        best_cost = entropy_64x64;
         best_choice = 1;
     }
-    // DCT64X32 DISABLED: produces butteraugli 109+ when forced individually.
-    // Coefficient order stride mismatch was fixed, but transform still produces
-    // garbage quality. Same root cause as DCT32X16/DCT16X32 — investigate the
-    // non-square forward DCT path (dct_64x32, dct_32x16, dct_16x32).
-    // if entropy_64x32_total < best_cost {
-    //     best_cost = entropy_64x32_total;
-    //     best_choice = 2;
-    // }
-
-    // DCT32X64 DISABLED: produces butteraugli 32-46 on 128x128 crops when forced.
-    // On 1024x1024 the bfly was 4.19 (misleadingly acceptable due to averaging).
-    // Same class of bug as the other non-square transforms. DCT64X64 (square) works.
-    // if entropy_32x64_total < best_cost {
-    //     let _ = best_cost;
-    //     best_choice = 3;
-    // }
+    if entropy_64x32_total < best_cost {
+        best_cost = entropy_64x32_total;
+        best_choice = 2;
+    }
+    if entropy_32x64_total < best_cost {
+        let _ = best_cost;
+        best_choice = 3;
+    }
 
     match best_choice {
         1 => {
@@ -965,14 +953,14 @@ pub(super) fn find_best_64x64_transform(
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X64);
         }
         2 => {
-            // Two DCT64x32 transforms win — DISABLED (broken individually)
-            // ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
-            // ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
+            // Two DCT64x32 transforms win
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
+            ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
         }
         3 => {
-            // Two DCT32x64 transforms win — DISABLED (broken individually)
-            // ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
-            // ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
+            // Two DCT32x64 transforms win
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
+            ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
         }
         _ => {
             // Keep the 32x32 sub-evaluation results (already in ac_strategy)
