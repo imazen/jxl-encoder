@@ -860,6 +860,31 @@ impl VarDctEncoder {
             Err(_) => return, // Bail on error (e.g., image too small)
         };
 
+        // Work in f32 during the loop for precision (libjxl uses float quant_field).
+        // Converting to u8 each iteration loses ~0.5-1.5 per value, accumulating over iters.
+        let mut qf_float: Vec<f32> = quant_field.iter().map(|&v| v as f32).collect();
+        let initial_qf_float: Vec<f32> = initial_quant_field.iter().map(|&v| v as f32).collect();
+
+        // Compute qf_lower/qf_higher deviation bounds (matching libjxl lines 968-976).
+        // These prevent the quant field from diverging too far from the initial field,
+        // avoiding oscillation and wild over/under-quantization.
+        let initial_qf_min = initial_qf_float
+            .iter()
+            .copied()
+            .reduce(f32::min)
+            .unwrap_or(1.0)
+            .max(1.0);
+        let initial_qf_max = initial_qf_float
+            .iter()
+            .copied()
+            .reduce(f32::max)
+            .unwrap_or(255.0);
+        let initial_qf_ratio = initial_qf_max / initial_qf_min;
+        let qf_max_deviation_low = (250.0 / initial_qf_ratio).sqrt();
+        let asymmetry = 2.0f32.min(qf_max_deviation_low);
+        let qf_lower = (initial_qf_min / (asymmetry * qf_max_deviation_low)).max(1.0);
+        let qf_higher = (initial_qf_max * (qf_max_deviation_low / asymmetry)).min(255.0);
+
         // Pre-allocate buffers reused across butteraugli iterations
         let mut qf_copy = vec![0u8; quant_field.len()];
         let sharpness = vec![4u8; num_blocks];
@@ -871,8 +896,10 @@ impl VarDctEncoder {
         let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
         for iter in 0..self.butteraugli_iters {
-            // Step 1: Quantize with current quant_field (reuses pre-allocated buffers)
-            qf_copy.copy_from_slice(quant_field);
+            // Step 1: Quantize with current quant_field (convert float→u8 for quantizer)
+            for (dst, &src) in qf_copy.iter_mut().zip(qf_float.iter()) {
+                *dst = (src.round() as u8).clamp(1, 255);
+            }
             self.transform_and_quantize_into(
                 xyb_x,
                 xyb_y,
@@ -998,19 +1025,19 @@ impl VarDctEncoder {
             // Higher qac (from higher qf) → larger quantized int → more precision.
             //
             // libjxl order: constrain toward initial (kOriginalComparisonRound=1),
-            // THEN adjust based on tile distances.
+            // THEN adjust based on tile distances. Both phases enforce qf_lower/qf_higher.
 
             // kOriginalComparisonRound = 1: constrain toward initial BEFORE adjustment.
             // Prevents oscillation by keeping qf from diverging too far from initial.
             if iter == 1 {
-                const K_INIT_MUL: f32 = 0.6;
+                const K_INIT_MUL: f64 = 0.6;
+                const K_ONE_MINUS_INIT_MUL: f64 = 1.0 - K_INIT_MUL;
                 for bi in 0..num_blocks {
-                    let init_qf = initial_quant_field[bi] as f32;
-                    let cur_qf = quant_field[bi] as f32;
-                    // Prevent qf from going too LOW (quality too bad).
-                    let clamp_val = (1.0 - K_INIT_MUL) * cur_qf + K_INIT_MUL * init_qf;
+                    let init_qf = initial_qf_float[bi] as f64;
+                    let cur_qf = qf_float[bi] as f64;
+                    let clamp_val = K_ONE_MINUS_INIT_MUL * cur_qf + K_INIT_MUL * init_qf;
                     if cur_qf < clamp_val {
-                        quant_field[bi] = (clamp_val.round() as u8).clamp(1, 255);
+                        qf_float[bi] = (clamp_val as f32).clamp(qf_lower, qf_higher);
                     }
                 }
             }
@@ -1026,34 +1053,36 @@ impl VarDctEncoder {
 
             for bi in 0..num_blocks {
                 let diff = tile_dist[bi] / target_distance;
-                let old_qf = quant_field[bi] as f32;
+                let old_qf = qf_float[bi];
 
-                let new_qf = if diff <= 1.0 {
+                if diff <= 1.0 {
                     // Quality is good enough — save bits by reducing precision.
-                    if cur_pow == 0.0 {
-                        old_qf // Don't touch good blocks on later iterations
-                    } else {
+                    if cur_pow != 0.0 {
                         // diff < 1 → pow(diff, 0.2) < 1 → qf decreases slightly.
-                        old_qf * (diff as f64).powf(cur_pow) as f32
+                        qf_float[bi] = old_qf * (diff as f64).powf(cur_pow) as f32;
                     }
+                    // cur_pow == 0: don't touch good blocks on later iterations
                 } else {
                     // Quality too bad — aggressively improve by increasing qf.
-                    let candidate = old_qf * diff;
-                    // Ensure at least 1 step change (matching libjxl's rounding check)
-                    if candidate.round() as u8 == old_qf as u8 {
-                        old_qf + 1.0
-                    } else {
-                        candidate
+                    qf_float[bi] = old_qf * diff;
+                    // Ensure at least 1 integer step change (matching libjxl's rounding check)
+                    if qf_float[bi].round() as u8 == old_qf.round() as u8 {
+                        qf_float[bi] = old_qf + 1.0;
                     }
-                };
-
-                quant_field[bi] = (new_qf.round() as u8).clamp(1, 255);
+                }
+                // Enforce deviation bounds after every adjustment (matching libjxl)
+                qf_float[bi] = qf_float[bi].clamp(qf_lower, qf_higher);
             }
 
             eprintln!(
                 "  Butteraugli iter {}: score={:.3} (target={:.3})",
                 iter, result.score, target_distance,
             );
+        }
+
+        // Convert float quant_field back to u8 for final encoding
+        for (dst, &src) in quant_field.iter_mut().zip(qf_float.iter()) {
+            *dst = (src.round() as u8).clamp(1, 255);
         }
     }
 
