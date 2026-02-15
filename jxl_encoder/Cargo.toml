@@ -26,7 +26,7 @@ zenjpeg = { version = "0.6.1", default-features = false, features = ["std", "dec
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features
 jxl-oxide = { version = "0.12.5", default-features = false, optional = true }
-butteraugli = { version = "0.5.1", optional = true }
+butteraugli = { version = "0.6", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 
@@ -61,7 +61,7 @@ jxl-jbr = "0.2.1"
 fast-ssim2 = { version = "0.6.5", features = ["imgref"] }
 yuvxyb = "0.4.1"
 # Butteraugli perceptual quality metric
-butteraugli = "0.5.1"
+butteraugli = "0.6"
 imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
