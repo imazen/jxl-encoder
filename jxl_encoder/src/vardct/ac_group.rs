@@ -103,10 +103,12 @@ fn coeff_order_32x32() -> &'static [u32] {
 }
 
 /// Default zig-zag coefficient order for DCT32x16 (512 coefficients).
-/// DCT32x16: 32 rows × 16 cols, LLF region is 4×2 (4 rows × 2 cols).
+/// DCT32x16 is a "tall" transform (covered_y=4 > covered_x=2), so the flat
+/// buffer assembly swaps dimensions: stride = max(4,2)*8 = 32. The coefficient
+/// order must use the swapped layout (16 rows × 32 cols, LLF 2×4) to match.
 static COEFF_ORDER_32X16: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_32x16() -> &'static [u32] {
-    COEFF_ORDER_32X16.get_or_init(|| Box::new(coefficient_layout_order(32, 16, 4, 2)))
+    COEFF_ORDER_32X16.get_or_init(|| Box::new(coefficient_layout_order(16, 32, 2, 4)))
 }
 
 /// Default zig-zag coefficient order for DCT16x32 (512 coefficients).
@@ -124,10 +126,12 @@ fn coeff_order_64x64() -> &'static [u32] {
 }
 
 /// Default zig-zag coefficient order for DCT64x32 (2048 coefficients).
-/// DCT64x32: 64 rows × 32 cols, LLF region is 8×4.
+/// DCT64x32 is a "tall" transform (covered_y=8 > covered_x=4), so the flat
+/// buffer assembly swaps dimensions: stride = max(8,4)*8 = 64. The coefficient
+/// order must use the swapped layout (32 rows × 64 cols, LLF 4×8) to match.
 static COEFF_ORDER_64X32: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_64x32() -> &'static [u32] {
-    COEFF_ORDER_64X32.get_or_init(|| Box::new(coefficient_layout_order(64, 32, 8, 4)))
+    COEFF_ORDER_64X32.get_or_init(|| Box::new(coefficient_layout_order(32, 64, 4, 8)))
 }
 
 /// Default zig-zag coefficient order for DCT32x64 (2048 coefficients).

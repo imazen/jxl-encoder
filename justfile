@@ -4,6 +4,10 @@
 rd-regression:
     cargo test -p jxl-encoder --test clic2025 test_rd_regression -- --ignored --nocapture
 
+# Run high-distance RD regression test (d=2.0 and d=3.0, exercises DCT32x32/DCT64x64)
+rd-regression-hd:
+    cargo test -p jxl-encoder --test clic2025 test_rd_regression_high_distance -- --ignored --nocapture
+
 # Compare cjxl-rs vs libwebp on CID22 validation set (41 images x 4 quality points)
 cid22-vs-webp:
     bash scripts/cid22_vs_webp.sh

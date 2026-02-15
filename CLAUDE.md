@@ -162,7 +162,7 @@ At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
 
 ### Remaining Gaps vs Full libjxl
 
-**A. AC Strategies — 19/27 implemented (complete for libjxl effort 7)**
+**A. AC Strategies — 19/27 implemented, 12 enabled (7 disabled due to quality bugs)**
 
 All AC strategies that libjxl evaluates through effort 9 are implemented. The remaining
 8 (DCT32x8, DCT8x32, DCT128+) are commented out or experimental in libjxl — never selected.
@@ -174,10 +174,23 @@ libjxl effort level strategy gating:
 - e8-9: Same strategies, quality gains come from cost model refinements
 
 Strategy status:
-- DCT32x16/DCT16x32: enabled at d>=2.0 (jxl-rs has a decoder bug, use jxl-oxide/djxl)
-- AFV0-3: auto-selection in both pixel-domain and coefficient-domain modes
-- DCT64x64/DCT64x32/DCT32x64: enabled at d>=3.0, hierarchical evaluation
+- DCT32x16/DCT16x32: DISABLED — catastrophic butteraugli (114+/82+) when forced. Coeff order
+  stride mismatch fixed for DCT32x16 but both still produce garbage. Investigate forward DCT.
+- DCT64x32/DCT32x64: DISABLED — catastrophic butteraugli (109+/32-46 on 128x128 crops).
+  Same class of bug as DCT32x16/DCT16x32 (non-square transforms). DCT32x64 appeared OK
+  on 1024x1024 (bfly=4.19) but 128x128 crops revealed the underlying quality bug.
+- AFV0-3: DISABLED — butteraugli 7-8 when forced. Pixel-domain underestimates error;
+  coefficient-domain still 3x worse than expected. Investigate quantization/dequantization.
+- DCT64x64: enabled at d>=3.0 (square transform, works correctly, bfly=2.3-3.0 on crops)
+- DCT32x32: enabled at d>=2.0 (square transform, works correctly)
 - DCT2x2/IDENTITY: auto-select (kFavor2X2 = -0.4, matches libjxl)
+
+Non-square transform bug summary (Feb 14, 2026):
+All non-square transforms produce garbage quality. Square transforms (DCT8, DCT16x16,
+DCT32x32, DCT64x64) work correctly. The pattern suggests a common root cause in the
+non-square forward DCT path or the flat buffer assembly for non-square layouts. The
+coefficient order stride mismatch (fixed for DCT32x16/DCT64x32) was ONE bug but not
+the only one — fixing it didn't restore quality.
 
 **B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
 - Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
@@ -278,9 +291,10 @@ Strategy status:
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
 - [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
 - [x] AC strategy selection (19 of 27: DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/DCT32x16/DCT16x32/DCT64x64/DCT64x32/DCT32x64/IDENTITY/DCT2X2/AFV0-3)
-- [x] DCT32x16/DCT16x32: enabled at d>=2.0, verified with jxl-oxide and djxl
-- [x] DCT64x64/DCT64x32/DCT32x64: enabled at d>=3.0, verified with jxl-oxide and djxl
-- [x] AFV0-3: fully implemented with auto-selection in both pixel-domain and coefficient-domain modes
+- [ ] DCT32x16/DCT16x32: DISABLED — broken quality (butteraugli 82-114). Coeff order fixed but forward DCT still wrong.
+- [x] DCT64x64: enabled at d>=3.0, verified with jxl-oxide and djxl
+- [ ] DCT64x32/DCT32x64: DISABLED — broken quality (butteraugli 32-109). Same non-square DCT bug.
+- [ ] AFV0-3: DISABLED from auto-selection — butteraugli 7-8 when forced (vs ~2.5 for DCT8). Investigate quantization.
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree

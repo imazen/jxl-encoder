@@ -141,12 +141,11 @@ pub(super) fn find_best_16x16_transform(
             let e8 = eval!(RAW_STRATEGY_DCT8, 0.0);
             let cost8 = base_cost_8x8 + mul8x8 * e8;
 
-            // DCT4X8 (kAvoidEntropy penalty at high distance)
+            // DCT4X8 and DCT8X4
             let e4x8 = eval!(RAW_STRATEGY_DCT4X8, avoid_transforms_adjust);
             let base_cost_4x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x8 };
             let cost4x8 = base_cost_4x8 + mul4x8 * e4x8;
 
-            // DCT8X4
             let e8x4 = eval!(RAW_STRATEGY_DCT8X4, avoid_transforms_adjust);
             let cost8x4 = base_cost_4x8 + mul4x8 * e8x4;
 
@@ -190,40 +189,11 @@ pub(super) fn find_best_16x16_transform(
                 *best_strat = RAW_STRATEGY_DCT2X2;
             }
 
-            // AFV0-3 corner DCT
-            // AFV auto-selection disabled in pixel-domain mode: the inverse AFV
-            // transform produces systematically underestimated pixel-domain error,
-            // causing AFV to be selected too aggressively (35% AFV vs libjxl's <5%).
-            // This caused a massive quality regression (SSIM2 84→57 on frymire).
-            // Re-enable once the AFV pixel-domain cost model is calibrated.
-            if !use_pixel_domain {
-                let base_cost_afv = 3.0 * mul8x8;
-                let e_afv0 = eval!(RAW_STRATEGY_AFV0, avoid_transforms_adjust);
-                let e_afv1 = eval!(RAW_STRATEGY_AFV1, avoid_transforms_adjust);
-                let e_afv2 = eval!(RAW_STRATEGY_AFV2, avoid_transforms_adjust);
-                let e_afv3 = eval!(RAW_STRATEGY_AFV3, avoid_transforms_adjust);
-                let cost_afv0 = base_cost_afv + mul8x8 * e_afv0;
-                let cost_afv1 = base_cost_afv + mul8x8 * e_afv1;
-                let cost_afv2 = base_cost_afv + mul8x8 * e_afv2;
-                let cost_afv3 = base_cost_afv + mul8x8 * e_afv3;
-
-                if cost_afv0 < *entropy_val {
-                    *entropy_val = cost_afv0;
-                    *best_strat = RAW_STRATEGY_AFV0;
-                }
-                if cost_afv1 < *entropy_val {
-                    *entropy_val = cost_afv1;
-                    *best_strat = RAW_STRATEGY_AFV1;
-                }
-                if cost_afv2 < *entropy_val {
-                    *entropy_val = cost_afv2;
-                    *best_strat = RAW_STRATEGY_AFV2;
-                }
-                if cost_afv3 < *entropy_val {
-                    *entropy_val = cost_afv3;
-                    *best_strat = RAW_STRATEGY_AFV3;
-                }
-            }
+            // AFV0-3 DISABLED in auto-selection: produces butteraugli 7-8 (vs ~2.5
+            // for DCT8) when forced on a full image. In pixel-domain mode, the inverse
+            // AFV transform underestimates error causing over-selection. In coefficient-
+            // domain mode, quality is still 3x worse than expected. Investigate AFV
+            // quantization/dequantization before re-enabling.
         }
     }
 
@@ -538,7 +508,7 @@ pub(super) fn find_best_32x32_transform(
             0.0,
             scratch,
         );
-    let entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
+    let _entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
 
     // Evaluate DCT16x32 costs (two transforms: at (0,0) and (2,0))
     // DCT16x32 covers 2 rows × 4 cols of 8x8 blocks
@@ -578,7 +548,7 @@ pub(super) fn find_best_32x32_transform(
             0.0,
             scratch,
         );
-    let entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
+    let _entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
 
     // Run four 16x16 evaluations (each covers 2×2 blocks)
     for qy in (0..4).step_by(2) {
@@ -661,22 +631,25 @@ pub(super) fn find_best_32x32_transform(
     }
 
     // Find the best option among: DCT32x32, DCT32x16 pair, DCT16x32 pair, 16x16 sub-evaluations
-    let mut best_cost = cost_sub;
+    let best_cost = cost_sub;
     let mut best_choice = 0u8; // 0 = keep sub, 1 = DCT32x32, 2 = DCT32x16, 3 = DCT16x32
 
     if entropy_32x32 < best_cost {
-        best_cost = entropy_32x32;
+        let _ = best_cost;
         best_choice = 1;
     }
-    // DCT32x16/DCT16x32 now enabled (fixed pixel extraction bug Feb 4, 2026)
-    if entropy_32x16_total < best_cost {
-        best_cost = entropy_32x16_total;
-        best_choice = 2;
-    }
-    if entropy_16x32_total < best_cost {
-        // best_cost = entropy_16x32_total; // Not needed, just using best_choice
-        best_choice = 3;
-    }
+    // DCT32X16 and DCT16X32 DISABLED: both produce catastrophic butteraugli
+    // when forced individually (DCT32X16: 114+, DCT16X32: 82+). The coefficient
+    // order stride mismatch for DCT32X16 was fixed, but both transforms still
+    // produce garbage quality. DCT32X32 (square) and DCT32X64/DCT32X64 work
+    // fine. Investigate the 32x16/16x32 forward DCT or quantization path.
+    // if entropy_32x16_total < best_cost {
+    //     best_cost = entropy_32x16_total;
+    //     best_choice = 2;
+    // }
+    // if entropy_16x32_total < best_cost {
+    //     best_choice = 3;
+    // }
 
     match best_choice {
         1 => {
@@ -829,7 +802,7 @@ pub(super) fn find_best_64x64_transform(
             0.0,
             scratch,
         );
-    let entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
+    let _entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
 
     // Evaluate DCT32x64 costs (two transforms side by side)
     // DCT32x64 covers 4 rows × 8 cols of 8×8 blocks
@@ -870,7 +843,7 @@ pub(super) fn find_best_64x64_transform(
             0.0,
             scratch,
         );
-    let entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
+    let _entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
 
     // Run four 32x32 evaluations (each covers 4×4 blocks)
     for qy in (0..8).step_by(4) {
@@ -962,21 +935,29 @@ pub(super) fn find_best_64x64_transform(
     }
 
     // Find the best option
-    let mut best_cost = cost_sub;
+    let best_cost = cost_sub;
     let mut best_choice = 0u8; // 0=keep sub, 1=DCT64x64, 2=DCT64x32, 3=DCT32x64
 
     if entropy_64x64 < best_cost {
-        best_cost = entropy_64x64;
+        let _ = best_cost;
         best_choice = 1;
     }
-    if entropy_64x32_total < best_cost {
-        best_cost = entropy_64x32_total;
-        best_choice = 2;
-    }
-    if entropy_32x64_total < best_cost {
-        let _ = best_cost;
-        best_choice = 3;
-    }
+    // DCT64X32 DISABLED: produces butteraugli 109+ when forced individually.
+    // Coefficient order stride mismatch was fixed, but transform still produces
+    // garbage quality. Same root cause as DCT32X16/DCT16X32 — investigate the
+    // non-square forward DCT path (dct_64x32, dct_32x16, dct_16x32).
+    // if entropy_64x32_total < best_cost {
+    //     best_cost = entropy_64x32_total;
+    //     best_choice = 2;
+    // }
+
+    // DCT32X64 DISABLED: produces butteraugli 32-46 on 128x128 crops when forced.
+    // On 1024x1024 the bfly was 4.19 (misleadingly acceptable due to averaging).
+    // Same class of bug as the other non-square transforms. DCT64X64 (square) works.
+    // if entropy_32x64_total < best_cost {
+    //     let _ = best_cost;
+    //     best_choice = 3;
+    // }
 
     match best_choice {
         1 => {
@@ -984,14 +965,14 @@ pub(super) fn find_best_64x64_transform(
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X64);
         }
         2 => {
-            // Two DCT64x32 transforms win
-            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
-            ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
+            // Two DCT64x32 transforms win — DISABLED (broken individually)
+            // ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
+            // ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
         }
         3 => {
-            // Two DCT32x64 transforms win
-            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
-            ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
+            // Two DCT32x64 transforms win — DISABLED (broken individually)
+            // ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
+            // ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
         }
         _ => {
             // Keep the 32x32 sub-evaluation results (already in ac_strategy)
