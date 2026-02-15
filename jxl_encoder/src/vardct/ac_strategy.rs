@@ -185,6 +185,88 @@ impl AcStrategyMap {
         }
     }
 
+    /// Get the raw packed byte at (bx, by).
+    /// The byte is `(raw_strategy << 1) | is_first`.
+    #[inline]
+    fn raw_byte(&self, bx: usize, by: usize) -> u8 {
+        self.data[by * self.xsize_blocks + bx]
+    }
+
+    /// Set the raw packed byte at (bx, by) directly.
+    /// Bypasses multi-block coverage logic — use only for save/restore.
+    #[inline]
+    fn set_raw_byte(&mut self, bx: usize, by: usize, byte: u8) {
+        self.data[by * self.xsize_blocks + bx] = byte;
+    }
+
+    /// Find the first block (top-left corner) of the transform that owns (bx, by).
+    /// Returns (first_x, first_y, raw_strategy).
+    fn find_first_block(&self, bx: usize, by: usize) -> (usize, usize, u8) {
+        if self.is_first(bx, by) {
+            return (bx, by, self.raw_strategy(bx, by));
+        }
+        // The first block is at some position (fx, fy) where fx <= bx and fy <= by.
+        // Walk up-left to find it. The strategy at (bx, by) tells us the raw strategy,
+        // so we know the coverage. We need to find the top-left corner.
+        let raw = self.raw_strategy(bx, by);
+        let cx = COVERED_X[raw as usize];
+        let cy = COVERED_Y[raw as usize];
+        // The first block must be at an aligned position for this strategy.
+        // For a transform covering cx×cy blocks, the first block (fx,fy) satisfies:
+        //   fx <= bx < fx + cx  →  fx = bx - (bx % cx) if aligned
+        //   fy <= by < fy + cy  →  fy = by - (by % cy) if aligned
+        // But with non-aligned matching, alignment isn't guaranteed.
+        // Instead, search backward.
+        let min_fy = by.saturating_sub(cy - 1);
+        for fy in (min_fy..=by).rev() {
+            let min_fx = bx.saturating_sub(cx - 1);
+            for fx in (min_fx..=bx).rev() {
+                if self.is_first(fx, fy) && self.raw_strategy(fx, fy) == raw {
+                    let fcx = COVERED_X[raw as usize];
+                    let fcy = COVERED_Y[raw as usize];
+                    if fx + fcx > bx && fy + fcy > by {
+                        return (fx, fy, raw);
+                    }
+                }
+            }
+        }
+        // Fallback: treat as single block
+        (bx, by, raw)
+    }
+
+    /// Check if a proposed `blocks × blocks` region at `(bx, by)` can be
+    /// re-evaluated without breaking any existing larger transform.
+    ///
+    /// Returns true if it's safe to call `find_best_16x16_transform` (blocks=2)
+    /// or `find_best_32x32_transform` (blocks=4) at this position.
+    ///
+    /// The check verifies that no existing transform extends both inside and
+    /// outside the proposed region (i.e., would need to be "split" by the new one).
+    fn can_evaluate_region(&self, bx: usize, by: usize, blocks: usize) -> bool {
+        // For each block in the proposed region, find its owning transform
+        // and check that the transform is fully contained within the region.
+        for dy in 0..blocks {
+            for dx in 0..blocks {
+                let x = bx + dx;
+                let y = by + dy;
+                if x >= self.xsize_blocks || y >= self.ysize_blocks {
+                    return false;
+                }
+                let (fx, fy, raw) = self.find_first_block(x, y);
+                let cx = COVERED_X[raw as usize];
+                let cy = COVERED_Y[raw as usize];
+                // The owning transform spans [fx, fx+cx) × [fy, fy+cy).
+                // It must be fully inside or fully outside the region [bx, bx+blocks) × [by, by+blocks).
+                // Since (x,y) is inside the region and inside the transform,
+                // the transform must be fully contained within the region.
+                if fx < bx || fy < by || fx + cx > bx + blocks || fy + cy > by + blocks {
+                    return false; // Transform extends outside the region
+                }
+            }
+        }
+        true
+    }
+
     /// Count the number of "first blocks" (= number of distinct transforms).
     #[cfg(test)]
     pub fn count_first_blocks(&self) -> usize {
@@ -1217,6 +1299,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        1.0,
                     );
                     cx += 2;
                 }
@@ -1264,6 +1347,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        1.0,
                     );
                     cx += 2;
                 }
@@ -1290,10 +1374,199 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        1.0,
                     );
                     cx += 2;
                 }
                 cy += 2;
+            }
+
+            // Favor 8×8 transforms at low distances when overriding aligned-pass choices.
+            // Matches libjxl enc_ac_strategy.cc:863-866.
+            let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
+
+            // Non-aligned matching: try 16×16/16×8/8×16 at non-2-aligned positions.
+            // This catches cases where the optimal block boundary straddles a 2-aligned
+            // position. Matches libjxl enc_ac_strategy.cc:1035-1044 (effort >= 6).
+            // Only accept results when a multi-block transform is selected — single-block
+            // re-evaluation at non-aligned positions can override good aligned-pass choices.
+            for cy in 0..tile_h.saturating_sub(1) {
+                for cx in 0..tile_w.saturating_sub(1) {
+                    // Skip 2-aligned positions (already evaluated in the aligned pass)
+                    if (cy | cx) % 2 == 0 {
+                        continue;
+                    }
+                    let abs_bx = tile_bx + cx;
+                    let abs_by = tile_by + cy;
+                    // Check that the proposed 2×2 region doesn't cross any existing
+                    // multi-block transform boundaries
+                    if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 2) {
+                        continue;
+                    }
+                    // Save current strategies for the 2×2 region
+                    let mut saved = [0u8; 4];
+                    for dy in 0..2usize {
+                        for dx in 0..2usize {
+                            saved[dy * 2 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                        }
+                    }
+                    // Reset all blocks in the region to DCT8 before re-evaluation.
+                    // This is necessary because find_best_16x16_transform skips
+                    // set() for DCT8 (treating it as default), but blocks may have
+                    // non-DCT8 strategies from the aligned pass.
+                    for dy in 0..2usize {
+                        for dx in 0..2usize {
+                            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+                        }
+                    }
+                    find_best_16x16_transform(
+                        xyb,
+                        stride,
+                        tile_bx,
+                        tile_by,
+                        cx,
+                        cy,
+                        distance,
+                        quant_field_float,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        &mut ac_strategy,
+                        &mut scratch,
+                        mul8x8,
+                    );
+                    // Only keep results if a multi-block transform was selected.
+                    // If only single-block strategies were chosen, the aligned pass
+                    // already found optimal single-block choices for these positions.
+                    let has_multi = (0..2usize).any(|dy| {
+                        (0..2usize).any(|dx| {
+                            let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                            COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
+                        })
+                    });
+                    if !has_multi {
+                        // Restore original aligned-pass strategies
+                        for dy in 0..2usize {
+                            for dx in 0..2usize {
+                                ac_strategy.set_raw_byte(
+                                    abs_bx + dx,
+                                    abs_by + dy,
+                                    saved[dy * 2 + dx],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
+            // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 7, step=2).
+            // Only at d>=2.0 where DCT32x32 is enabled.
+            if distance >= 2.0 {
+                for cy in (0..tile_h.saturating_sub(3)).step_by(2) {
+                    for cx in (0..tile_w.saturating_sub(3)).step_by(2) {
+                        // Skip 4-aligned positions (already evaluated in aligned pass)
+                        if (cy | cx) % 4 == 0 {
+                            continue;
+                        }
+                        let abs_bx = tile_bx + cx;
+                        let abs_by = tile_by + cy;
+                        if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 4) {
+                            continue;
+                        }
+                        // Save current strategies for the 4×4 region
+                        let mut saved = [0u8; 16];
+                        for dy in 0..4usize {
+                            for dx in 0..4usize {
+                                saved[dy * 4 + dx] =
+                                    ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                            }
+                        }
+                        // Reset all blocks in the 4×4 region to DCT8
+                        for dy in 0..4usize {
+                            for dx in 0..4usize {
+                                ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+                            }
+                        }
+                        find_best_32x32_transform(
+                            xyb,
+                            stride,
+                            tile_bx,
+                            tile_by,
+                            cx,
+                            cy,
+                            distance,
+                            quant_field_float,
+                            xsize_blocks,
+                            masking,
+                            ytox,
+                            ytob,
+                            mask1x1,
+                            mask1x1_stride,
+                            &mut ac_strategy,
+                            &mut scratch,
+                        );
+                        // Only keep results if a multi-block transform was selected
+                        let has_multi = (0..4usize).any(|dy| {
+                            (0..4usize).any(|dx| {
+                                let raw =
+                                    ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                                COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
+                            })
+                        });
+                        if !has_multi {
+                            // Restore original strategies
+                            for dy in 0..4usize {
+                                for dx in 0..4usize {
+                                    ac_strategy.set_raw_byte(
+                                        abs_bx + dx,
+                                        abs_by + dy,
+                                        saved[dy * 4 + dx],
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Validate strategy map consistency in debug builds
+    #[cfg(debug_assertions)]
+    {
+        for by in 0..ysize_blocks {
+            for bx in 0..xsize_blocks {
+                let raw = ac_strategy.raw_strategy(bx, by);
+                if ac_strategy.is_first(bx, by) {
+                    let cx = COVERED_X[raw as usize];
+                    let cy = COVERED_Y[raw as usize];
+                    // Verify all covered blocks have matching raw_strategy and is_first=false
+                    for iy in 0..cy {
+                        for ix in 0..cx {
+                            assert!(
+                                bx + ix < xsize_blocks && by + iy < ysize_blocks,
+                                "Transform at ({},{}) raw={} extends out of bounds: ({},{}) vs {}x{}",
+                                bx, by, raw, bx + ix, by + iy, xsize_blocks, ysize_blocks
+                            );
+                            assert_eq!(
+                                ac_strategy.raw_strategy(bx + ix, by + iy), raw,
+                                "Inconsistent raw_strategy at ({},{}) — expected {} (from first block ({},{})), got {}",
+                                bx + ix, by + iy, raw, bx, by, ac_strategy.raw_strategy(bx + ix, by + iy)
+                            );
+                            if (ix | iy) != 0 {
+                                assert!(
+                                    !ac_strategy.is_first(bx + ix, by + iy),
+                                    "Block ({},{}) should not be first (owned by ({},{}) raw={})",
+                                    bx + ix, by + iy, bx, by, raw
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
