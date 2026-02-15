@@ -310,7 +310,7 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xae3221c42c014352, // Updated: butteraugli loop enabled at effort 7 + fixed adjustment direction
+        0x9d2a9f32fb44bce2, // Updated: float qf + deviation bounds
     );
 }
 
@@ -329,7 +329,7 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xecdc3ab4254c88e5, // Updated: butteraugli loop enabled + fixed adjustment
+        0x5603401933cc398a, // Updated: float qf + deviation bounds
     );
 }
 
@@ -348,7 +348,7 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0x61827bcfa9ebfc6e, // Updated: butteraugli loop enabled + fixed adjustment
+        0x2c5a1d4a8bb64d34, // Updated: float qf + deviation bounds
     );
 }
 
@@ -367,7 +367,7 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x9a3b357d23e1577d, // Updated: butteraugli loop enabled + fixed adjustment
+        0x3c445f29b2489ed4, // Updated: float qf + deviation bounds
     );
 }
 
@@ -386,7 +386,7 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0xec2e7f4b1907e0bc, // Updated: butteraugli loop enabled + fixed adjustment
+        0x58a5334abe4f3dce, // Updated: float qf + deviation bounds
     );
 }
 
@@ -406,7 +406,7 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x71f73214af4177a9, // Updated: butteraugli loop enabled + fixed adjustment
+        0x83999128474aad4c, // Updated: float qf + deviation bounds
     );
 }
 
@@ -426,7 +426,7 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x5e2434f883b8209e, // Updated: butteraugli loop enabled + fixed adjustment
+        0x75b752c487f30914, // Updated: float qf + deviation bounds
     );
 }
 
@@ -446,7 +446,7 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xecdc3ab4254c88e5, // Updated: butteraugli loop enabled + fixed adjustment
+        0x5603401933cc398a, // Updated: float qf + deviation bounds
     );
 }
 
@@ -466,7 +466,7 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe53eeb97e9071c33, // Updated: butteraugli loop enabled + fixed adjustment
+        0x790a1cf616a15fd3, // Updated: float qf + deviation bounds
     );
 }
 
@@ -486,7 +486,7 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xae3221c42c014352, // Updated: butteraugli loop enabled + fixed adjustment
+        0x9d2a9f32fb44bce2, // Updated: float qf + deviation bounds
     );
 }
 
@@ -526,7 +526,7 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x46791f3fb33379b2, // Updated: butteraugli loop enabled + fixed adjustment
+        0x3a1632874102ca01, // Updated: float qf + deviation bounds
     );
 }
 
@@ -546,7 +546,7 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x8b1d7a3a1c737cfa, // Updated: butteraugli loop enabled + fixed adjustment
+        0x8b1d7a3a1c737cfa, // Updated: float qf + deviation bounds
     );
 }
 
@@ -651,7 +651,7 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xecdc3ab4254c88e5, // Updated: butteraugli loop enabled + fixed adjustment
+        0x5603401933cc398a, // Updated: float qf + deviation bounds
     );
 }
 
@@ -672,7 +672,7 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xecdc3ab4254c88e5, // Updated: butteraugli loop enabled + fixed adjustment
+        0x5603401933cc398a, // Updated: float qf + deviation bounds
     );
 }
 
@@ -691,7 +691,7 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x2a4a249f1a924feb, // Updated: butteraugli loop enabled + fixed adjustment
+        0xc9cc3618dd0c041f, // Updated: float qf + deviation bounds
     );
 }
 
@@ -710,7 +710,7 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xa8d6555b53e4ec27, // Updated: butteraugli loop enabled + fixed adjustment
+        0xa8d6555b53e4ec27, // Updated: float qf + deviation bounds
     );
 }
 
@@ -758,7 +758,7 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x764354c8577e5464, // Updated: butteraugli loop enabled + fixed adjustment
+        0x764354c8577e5464, // Updated: float qf + deviation bounds
     );
 }
 
