@@ -6631,24 +6631,24 @@ fn test_rd_regression() {
     }
 
     // To recalibrate: run `just rd-regression` and update from the output.
-    // Last updated: 2026-02-15 (post-AFV fix, commit 690b0f1)
+    // Last updated: 2026-02-15 (post butteraugli loop fix, commit 0c7d4b3)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d025: Baseline {
-                size: 1076519,
+                size: 1075408,
                 butteraugli: 1.543,
-                ssim2: 87.54,
+                ssim2: 87.59,
             },
             d050: Baseline {
-                size: 802418,
+                size: 802103,
                 butteraugli: 1.531,
-                ssim2: 85.24,
+                ssim2: 85.23,
             },
             d100: Baseline {
-                size: 577680,
+                size: 575498,
                 butteraugli: 2.033,
-                ssim2: 81.12,
+                ssim2: 81.30,
             },
         },
         // 1001682 (512x512)
@@ -6664,27 +6664,27 @@ fn test_rd_regression() {
                 ssim2: 85.67,
             },
             d100: Baseline {
-                size: 50212,
+                size: 50108,
                 butteraugli: 1.818,
-                ssim2: 80.71,
+                ssim2: 80.70,
             },
         },
         // 1028637 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 94067,
+                size: 94054,
                 butteraugli: 0.409,
                 ssim2: 60.48,
             },
             d050: Baseline {
-                size: 63946,
+                size: 64196,
                 butteraugli: 0.889,
                 ssim2: 58.63,
             },
             d100: Baseline {
-                size: 42875,
+                size: 43422,
                 butteraugli: 1.536,
-                ssim2: 55.65,
+                ssim2: 55.61,
             },
         },
         // 1029604 (512x512)
@@ -6700,7 +6700,7 @@ fn test_rd_regression() {
                 ssim2: 80.99,
             },
             d100: Baseline {
-                size: 65762,
+                size: 65756,
                 butteraugli: 1.633,
                 ssim2: 77.44,
             },
@@ -6718,9 +6718,9 @@ fn test_rd_regression() {
                 ssim2: 83.80,
             },
             d100: Baseline {
-                size: 48404,
-                butteraugli: 1.462,
-                ssim2: 80.34,
+                size: 48355,
+                butteraugli: 1.484,
+                ssim2: 80.32,
             },
         },
         // 1080721 (512x512)
@@ -6731,14 +6731,14 @@ fn test_rd_regression() {
                 ssim2: 87.71,
             },
             d050: Baseline {
-                size: 71933,
+                size: 71829,
                 butteraugli: 0.830,
-                ssim2: 86.31,
+                ssim2: 86.33,
             },
             d100: Baseline {
-                size: 46123,
+                size: 45809,
                 butteraugli: 1.327,
-                ssim2: 84.59,
+                ssim2: 84.66,
             },
         },
     ];
@@ -6758,10 +6758,10 @@ fn test_rd_regression() {
     for dist in &distances {
         eprintln!("--- Distance {:.2} ---\n", dist);
         eprintln!(
-            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6}",
-            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base"
+            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>7} {:>8} {:>6}",
+            "Image", "Size", "Base", "%", "Bfly", "Base", "B%", "SSIM2", "Base"
         );
-        eprintln!("{}", "-".repeat(75));
+        eprintln!("{}", "-".repeat(82));
 
         for (i, image) in images.iter().enumerate() {
             let img = match image::open(&image.path) {
@@ -6894,17 +6894,19 @@ fn test_rd_regression() {
             // Skip assertions for uncalibrated baselines (size == 0)
             if base.size == 0 {
                 eprintln!(
-                    "{:<10} {:>8} {:>8} {:>6} {:>7.3} {:>6} {:>7.2} {:>6}",
-                    image.name, size, "NEW", "", bfly, "", ssim2, ""
+                    "{:<10} {:>8} {:>8} {:>6} {:>7.3} {:>6} {:>7} {:>7.2} {:>6}",
+                    image.name, size, "NEW", "", bfly, "", "", ssim2, ""
                 );
                 continue;
             }
 
             let size_pct = (size as f64 / base.size as f64 - 1.0) * 100.0;
             let size_indicator = if size_pct <= 0.0 { "" } else { " !" };
+            let bfly_pct = (bfly / base.butteraugli - 1.0) * 100.0;
+            let bfly_indicator = if bfly_pct <= 0.05 { "" } else { "!" };
 
             eprintln!(
-                "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>7.2} {:>6.2}",
+                "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>+5.1}%{} {:>7.2} {:>6.2}",
                 image.name,
                 size,
                 base.size,
@@ -6912,6 +6914,8 @@ fn test_rd_regression() {
                 size_indicator,
                 bfly,
                 base.butteraugli,
+                bfly_pct,
+                bfly_indicator,
                 ssim2,
                 base.ssim2,
             );
@@ -7065,84 +7069,84 @@ fn test_rd_regression_high_distance() {
     }
 
     // To recalibrate: run the test with --nocapture and update from the output.
-    // Last updated: 2026-02-15 (post-AFV fix, commit 690b0f1)
+    // Last updated: 2026-02-15 (post butteraugli loop fix, commit 0c7d4b3)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d200: Baseline {
-                size: 401107,
+                size: 401218,
                 butteraugli: 3.472,
-                ssim2: 72.74,
+                ssim2: 72.83,
             },
             d300: Baseline {
-                size: 319217,
+                size: 318544,
                 butteraugli: 5.013,
-                ssim2: 65.00,
+                ssim2: 65.12,
             },
         },
         // 1001682 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 30970,
+                size: 31088,
                 butteraugli: 2.638,
-                ssim2: 71.47,
+                ssim2: 71.49,
             },
             d300: Baseline {
-                size: 22873,
+                size: 22986,
                 butteraugli: 3.223,
-                ssim2: 63.07,
+                ssim2: 63.08,
             },
         },
         // 1028637 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 27814,
+                size: 27815,
                 butteraugli: 2.634,
-                ssim2: 49.08,
+                ssim2: 49.07,
             },
             d300: Baseline {
-                size: 21603,
+                size: 21572,
                 butteraugli: 3.289,
-                ssim2: 43.58,
+                ssim2: 43.37,
             },
         },
         // 1029604 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 39825,
+                size: 39766,
                 butteraugli: 2.589,
-                ssim2: 70.67,
+                ssim2: 70.70,
             },
             d300: Baseline {
-                size: 29979,
+                size: 30072,
                 butteraugli: 3.362,
-                ssim2: 65.49,
+                ssim2: 65.51,
             },
         },
         // 106399 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 29699,
+                size: 29690,
                 butteraugli: 2.382,
-                ssim2: 72.57,
+                ssim2: 72.56,
             },
             d300: Baseline {
-                size: 22636,
+                size: 22539,
                 butteraugli: 2.985,
-                ssim2: 66.57,
+                ssim2: 66.52,
             },
         },
         // 1080721 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 29830,
+                size: 29593,
                 butteraugli: 2.018,
-                ssim2: 79.54,
+                ssim2: 79.56,
             },
             d300: Baseline {
-                size: 23062,
+                size: 23106,
                 butteraugli: 2.912,
-                ssim2: 75.10,
+                ssim2: 75.18,
             },
         },
     ];
@@ -7166,10 +7170,10 @@ fn test_rd_regression_high_distance() {
     for dist in &distances {
         eprintln!("--- Distance {:.1} ---\n", dist);
         eprintln!(
-            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>8} {:>6}",
-            "Image", "Size", "Base", "%", "Bfly", "Base", "SSIM2", "Base"
+            "{:<10} {:>8} {:>8} {:>6} {:>8} {:>6} {:>7} {:>8} {:>6}",
+            "Image", "Size", "Base", "%", "Bfly", "Base", "B%", "SSIM2", "Base"
         );
-        eprintln!("{}", "-".repeat(75));
+        eprintln!("{}", "-".repeat(82));
 
         for (i, image) in images.iter().enumerate() {
             let img = match image::open(&image.path) {
@@ -7293,15 +7297,17 @@ fn test_rd_regression_high_distance() {
             // Skip relative assertions for uncalibrated baselines (size == 0)
             if base.size == 0 {
                 eprintln!(
-                    "{:<10} {:>8} {:>8} {:>6} {:>7.3} {:>6} {:>7.2} {:>6}",
-                    image.name, size, "NEW", "", bfly, "", ssim2, ""
+                    "{:<10} {:>8} {:>8} {:>6} {:>7.3} {:>6} {:>7} {:>7.2} {:>6}",
+                    image.name, size, "NEW", "", bfly, "", "", ssim2, ""
                 );
             } else {
                 let size_pct = (size as f64 / base.size as f64 - 1.0) * 100.0;
                 let size_indicator = if size_pct <= 0.0 { "" } else { " !" };
+                let bfly_pct = (bfly / base.butteraugli - 1.0) * 100.0;
+                let bfly_indicator = if bfly_pct <= 0.05 { "" } else { "!" };
 
                 eprintln!(
-                    "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>7.2} {:>6.2}",
+                    "{:<10} {:>8} {:>8} {:>+5.1}%{} {:>7.3} {:>6.3} {:>+5.1}%{} {:>7.2} {:>6.2}",
                     image.name,
                     size,
                     base.size,
@@ -7309,6 +7315,8 @@ fn test_rd_regression_high_distance() {
                     size_indicator,
                     bfly,
                     base.butteraugli,
+                    bfly_pct,
+                    bfly_indicator,
                     ssim2,
                     base.ssim2,
                 );
