@@ -1481,8 +1481,7 @@ pub fn compute_ac_strategy(
                         let mut saved = [0u8; 16];
                         for dy in 0..4usize {
                             for dx in 0..4usize {
-                                saved[dy * 4 + dx] =
-                                    ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                                saved[dy * 4 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
                             }
                         }
                         // Reset all blocks in the 4×4 region to DCT8
@@ -1512,8 +1511,7 @@ pub fn compute_ac_strategy(
                         // Only keep results if a multi-block transform was selected
                         let has_multi = (0..4usize).any(|dy| {
                             (0..4usize).any(|dx| {
-                                let raw =
-                                    ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                                let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
                                 COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
                             })
                         });
@@ -1550,18 +1548,34 @@ pub fn compute_ac_strategy(
                             assert!(
                                 bx + ix < xsize_blocks && by + iy < ysize_blocks,
                                 "Transform at ({},{}) raw={} extends out of bounds: ({},{}) vs {}x{}",
-                                bx, by, raw, bx + ix, by + iy, xsize_blocks, ysize_blocks
+                                bx,
+                                by,
+                                raw,
+                                bx + ix,
+                                by + iy,
+                                xsize_blocks,
+                                ysize_blocks
                             );
                             assert_eq!(
-                                ac_strategy.raw_strategy(bx + ix, by + iy), raw,
+                                ac_strategy.raw_strategy(bx + ix, by + iy),
+                                raw,
                                 "Inconsistent raw_strategy at ({},{}) — expected {} (from first block ({},{})), got {}",
-                                bx + ix, by + iy, raw, bx, by, ac_strategy.raw_strategy(bx + ix, by + iy)
+                                bx + ix,
+                                by + iy,
+                                raw,
+                                bx,
+                                by,
+                                ac_strategy.raw_strategy(bx + ix, by + iy)
                             );
                             if (ix | iy) != 0 {
                                 assert!(
                                     !ac_strategy.is_first(bx + ix, by + iy),
                                     "Block ({},{}) should not be first (owned by ({},{}) raw={})",
-                                    bx + ix, by + iy, bx, by, raw
+                                    bx + ix,
+                                    by + iy,
+                                    bx,
+                                    by,
+                                    raw
                                 );
                             }
                         }

@@ -106,51 +106,39 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 3, 2026 — Updated Analysis)
+### Quality Gap vs Full libjxl (Feb 15, 2026 — 6 CLIC2025 1024x1024 images, post butteraugli loop fix)
 
-**RD Comparison — frymire.png (1118x1105), all defaults (gab ON, pixel-domain, ANS)**:
+**Size comparison vs cjxl (average over 6 images):**
 
-| d | Ours Size | Ours SSIM2 | cjxl e1 Size | e1 SSIM2 | cjxl e7 Size | e7 SSIM2 |
-|---|-----------|-----------|--------------|----------|--------------|----------|
-| 0.5 | 650KB | 83.19 | 877KB | 84.10 | 706KB | 88.76 |
-| 1.0 | 470KB | 75.34 | 637KB | 77.49 | 624KB | 84.32 |
-| 2.0 | 331KB | 64.35 | 433KB | 66.79 | 440KB | 78.23 |
-| 3.0 | 257KB | 53.96 | 362KB | 59.94 | 356KB | 72.61 |
+| Distance | cjxl-rs avg | vs e5 | vs e7 |
+|----------|-------------|-------|-------|
+| d=0.5 | 396KB | +1.9% | +1.6% |
+| d=1.0 | 237KB | **-1.3%** | **-1.7%** |
+| d=2.0 | 136KB | **-3.2%** | **-4.3%** |
+| d=3.0 | 100KB | +0.4% | **-1.7%** |
 
-K_AC_QUANT now matches libjxl (0.765). Distance parameters are directly comparable.
+**Butteraugli quality at same distance (avg, lower=better):**
 
-**Pixel-domain loss improvement** (SSIM2 delta over coefficient-domain, frymire.png):
-- d=0.5: +1.93, d=1.0: +1.13, d=2.0: +0.55, d=3.0: +0.21, d=4.0: +0.40, d=5.0: +0.66
+| Distance | cjxl-rs | cjxl-e5 | cjxl-e7 | vs e5 | vs e7 |
+|----------|---------|---------|---------|-------|-------|
+| d=0.5 | 0.779 | 1.017 | 1.008 | **-23.4%** | **-22.7%** |
+| d=1.0 | 1.375 | 1.426 | 1.412 | **-3.5%** | **-2.6%** |
+| d=2.0 | 2.452 | 2.520 | 2.569 | **-2.6%** | **-4.5%** |
+| d=3.0 | 3.406 | 3.317 | 3.375 | +2.6% | +0.9% |
 
-**Gaborish SSIM2 impact** (equal distance, frymire.png, pixel-domain):
-- d=0.5: -1.23 SSIM2 / -0.5% size
-- d=1.0: -1.49 SSIM2 / -2.6% size
-- d=2.0: -2.07 SSIM2 / -5.3% size
-- d=3.0: -2.46 SSIM2 / -6.9% size
-At equal file sizes, gab helps modestly (+0.6 SSIM2 at d=3.0).
+At d=0.5: slightly larger files but **massively** better quality (-23% butteraugli).
+At d=1.0-2.0: smaller files AND better quality — winning on BOTH axes.
+At d=3.0: within 3% on both size and quality — near parity.
 
-**cjxl effort level progression at d=3.0** (frymire.png):
-- e1 (DCT8+Huffman): 362KB / 59.94
-- e4 (multi-strategy, no gab): 337KB / 60.04
-- e5 (+gab, +adaptive quant, +pixel-domain): 331KB / 66.46
-- e7 (full 27 strategies): 356KB / 72.61
-The e4→e5 jump (+6.4 SSIM2) includes adaptive InitialQuantField, non-aligned
-transform search, 32x32 search, and full CfL mode — not just gaborish.
+**Progress from Feb 4 → Feb 15** (size gap vs e5):
+- d=0.5: +1.2% → +1.9% (slightly larger, but quality improved from -5% to -23%)
+- d=1.0: +2.6% → **-1.3%** (3.9pp improvement, quality improved from +13% to -3.5%)
+- d=2.0: +24% → **-3.2%** (27.2pp improvement, quality improved from +8.4% to -2.6%)
+- d=3.0: +22% → +0.4% (21.6pp improvement)
 
-**Gap vs cjxl e5 by distance** (CLIC2025 1024x1024, Feb 4, 2026):
-| Distance | Ours | e1 | e5 | Gap vs e1 | Gap vs e5 |
-|----------|------|-----|-----|-----------|-----------|
-| 0.5 | 363KB | N/A | 359KB | N/A | +1.2% |
-| 1.0 | 207KB | 242KB | 202KB | -14% | +2.6% |
-| 2.0 | 90KB | 107KB | 72KB | -16% | +24% |
-| 3.0 | 54KB | 68KB | 44KB | -21% | +22% |
-| 5.0 | 33KB | N/A | 26KB | N/A | +26% |
-
-At low distances (d<=1.0), we're within 3% of cjxl e5 and 14-16% better than e1.
-At high distances (d>=2.0), the gap widens to 22-26% vs e5, likely due to:
-- Iterative rate control (e5 reallocates bits across blocks)
-- More AC strategies (remaining 11 of 27)
-- DCT32x32/DCT32x16/DCT16x32 now enabled at d>=2.0, providing ~8% savings at d=2.0
+**Key fix**: Butteraugli loop was disabled at default effort (effort 7) and had inverted
+adjustment direction. Both bugs fixed Feb 15. The loop now correctly increases quant_field
+where quality is bad and decreases where quality is good.
 
 **What's confirmed correct**:
 - Parametric quantization weights match decoder expectations (all strategies)
@@ -223,7 +211,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
 **E. Effort 8+ Features**
-- **Butteraugli quantization loop** (effort 8+): IMPLEMENTED, DEFAULT-ON (2 iterations, `--no-butteraugli` to disable).
+- **Butteraugli quantization loop** (effort 5+): IMPLEMENTED, DEFAULT-ON (2 iterations, `--no-butteraugli` to disable).
   Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles.
   AC strategy is fixed; only quant_field changes. 2 iterations converges for most images.
   At d=1.0 on CLIC 1024x1024: -15% file size at -1.7 SSIM2; at equal file size +0.3 SSIM2.
