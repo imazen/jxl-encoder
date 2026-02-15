@@ -793,6 +793,74 @@ pub(crate) fn find_and_build(xyb: [&[f32]; 3], width: usize, height: usize) -> O
     if infos.is_empty() {
         return None;
     }
+
+    // Cost-benefit check: estimate if patches will save bytes.
+    //
+    // Costs:
+    //   1. Reference frame: ~8-12 bytes/pixel for modular XYB i32 encoding
+    //   2. Metadata: ~3-5 bytes per unique pattern + ~2-4 bytes per occurrence position
+    //
+    // Benefits:
+    //   1. VarDCT coefficient savings where patches are subtracted: ~2-4 bytes/pixel
+    //
+    // Conservative approach: require total patch coverage (in pixels) to be significantly
+    // larger than the reference frame + metadata cost. Also require minimum coverage
+    // as a fraction of image area (patches on <1% of the image rarely help).
+    let total_unique_pixels: usize = infos.iter().map(|p| p.patch.num_pixels()).sum();
+    let total_occurrences: usize = infos.iter().map(|p| p.positions.len()).sum();
+    let total_patch_pixels: usize = infos
+        .iter()
+        .map(|p| p.patch.num_pixels() * p.positions.len())
+        .sum();
+    let image_pixels = width * height;
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "PATCHES: {} unique patterns, {} total occurrences, {} unique pixels, {} total patch pixels ({:.1}% of image)",
+        infos.len(),
+        total_occurrences,
+        total_unique_pixels,
+        total_patch_pixels,
+        total_patch_pixels as f64 / image_pixels as f64 * 100.0
+    );
+
+    // Estimated reference frame cost in bytes (modular encoding of 3-channel i32)
+    // Modular encoding: ~4-6 bytes per pixel for XYB data + frame overhead
+    let ref_frame_cost = total_unique_pixels * 5 + infos.len() * 16 + 200;
+    // Estimated metadata cost in bytes (patches section: entropy-coded positions)
+    let metadata_cost = infos.len() * 6 + total_occurrences * 3;
+    // Estimated savings in bytes (VarDCT coefficients become zero/small where patches subtracted)
+    let estimated_savings = total_patch_pixels * 3;
+
+    let total_cost = ref_frame_cost + metadata_cost;
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "PATCHES: estimated cost={} bytes (ref={}, meta={}), savings={} bytes, ratio={:.1}x",
+        total_cost,
+        ref_frame_cost,
+        metadata_cost,
+        estimated_savings,
+        estimated_savings as f64 / total_cost as f64
+    );
+
+    // Require estimated savings to be at least 2x the cost
+    if estimated_savings < total_cost * 2 {
+        #[cfg(feature = "debug-tokens")]
+        eprintln!("PATCHES: skipping — cost exceeds benefit");
+        return None;
+    }
+
+    // Also require minimum image coverage (patches on <2% of image rarely help)
+    if total_patch_pixels * 50 < image_pixels {
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "PATCHES: skipping — too little coverage ({:.1}% < 2%)",
+            total_patch_pixels as f64 / image_pixels as f64 * 100.0
+        );
+        return None;
+    }
+
     build_patches_data(infos)
 }
 
