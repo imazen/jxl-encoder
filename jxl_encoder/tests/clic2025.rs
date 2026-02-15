@@ -7417,27 +7417,46 @@ fn test_fair_comparison() {
     use rgb::RGB;
     use std::io::Cursor;
 
-    let clic_dir = std::path::Path::new(env!("HOME"))
-        .join("work/codec-corpus/clic2025-1024");
+    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025-1024");
     let jxl_dir = std::path::Path::new("/tmp/fair_cmp");
 
     let images: &[(&str, &str)] = &[
-        ("02809272", "02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"),
-        ("1b4ad095", "1b4ad095795ac552b38a21d51be7bfaee8e7d0a70619d84767814321df4ed062.png"),
-        ("50fe4c3d", "50fe4c3d47d864858e1aaa60fecef5c453b4e18d2b368718eeb5c1e249e0c902.png"),
+        (
+            "02809272",
+            "02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png",
+        ),
+        (
+            "1b4ad095",
+            "1b4ad095795ac552b38a21d51be7bfaee8e7d0a70619d84767814321df4ed062.png",
+        ),
+        (
+            "50fe4c3d",
+            "50fe4c3d47d864858e1aaa60fecef5c453b4e18d2b368718eeb5c1e249e0c902.png",
+        ),
         ("870516c6", "870516c65d81fb9267de6865964083a9.png"),
-        ("8426ed22", "8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png"),
+        (
+            "8426ed22",
+            "8426ed2245c791232862b0a0b2a62a1f17031e8e6e38921fe939df0b3a05ac41.png",
+        ),
         ("a36713f1", "a36713f1943dac6bc74dea50cadaee6f.png"),
-        ("0369d229", "0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png"),
+        (
+            "0369d229",
+            "0369d229ba4c9965d5caeb38c359a027a810968eee930b81520b604e76b4df14.png",
+        ),
         ("097cb426", "097cb426910ba8ce2525dd8bb7fb1777.png"),
         ("100a02c2", "100a02c269c5948392f283b2aa3bb4da.png"),
         ("14ab4af2", "14ab4af28901fbeb1356b06d2d08ae06.png"),
-        ("0d154749", "0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png"),
-        ("07b9f93f", "07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png"),
+        (
+            "0d154749",
+            "0d154749c7771f58e89ad343653ec4e20d6f037da829f47f5598e5d0a4ab61f0.png",
+        ),
+        (
+            "07b9f93f",
+            "07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png",
+        ),
     ];
 
-    let params = ButteraugliParams::new()
-        .with_intensity_target(80.0);
+    let params = ButteraugliParams::new().with_intensity_target(80.0);
 
     // Helper: decode JXL to native u8 via jxl-oxide (NO color conversion).
     // Returns raw u8 in whatever TF the JXL declares. This matches how we treat
@@ -7495,10 +7514,8 @@ fn test_fair_comparison() {
             let rgb = img.to_rgb8();
 
             // Source as u8 (raw pixel values, no color management)
-            let src_pixels: Vec<RGB<u8>> = rgb
-                .pixels()
-                .map(|p| RGB::new(p[0], p[1], p[2]))
-                .collect();
+            let src_pixels: Vec<RGB<u8>> =
+                rgb.pixels().map(|p| RGB::new(p[0], p[1], p[2])).collect();
             let src_img = Img::new(src_pixels, w, h);
 
             // Load and measure each encoder's output
@@ -7517,13 +7534,9 @@ fn test_fair_comparison() {
                     }
                     let dec_img = Img::new(pixels, w, h);
                     // butteraugli() applies srgb_to_linear to BOTH images internally
-                    butteraugli::butteraugli(
-                        src_img.as_ref(),
-                        dec_img.as_ref(),
-                        &params,
-                    )
-                    .map(|r| r.score)
-                    .unwrap_or(-1.0)
+                    butteraugli::butteraugli(src_img.as_ref(), dec_img.as_ref(), &params)
+                        .map(|r| r.score)
+                        .unwrap_or(-1.0)
                 } else {
                     -1.0
                 }
@@ -7536,9 +7549,12 @@ fn test_fair_comparison() {
             eprintln!(
                 "{:<10}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}",
                 short,
-                rs_size as f64 / 1024.0, rs_ba,
-                e5_size as f64 / 1024.0, e5_ba,
-                e7_size as f64 / 1024.0, e7_ba,
+                rs_size as f64 / 1024.0,
+                rs_ba,
+                e5_size as f64 / 1024.0,
+                e5_ba,
+                e7_size as f64 / 1024.0,
+                e7_ba,
             );
 
             sum_rs_size += rs_size as f64;
@@ -7556,9 +7572,12 @@ fn test_fair_comparison() {
             eprintln!(
                 "{:<10}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}  {:>7.1} {:>6.3}",
                 "AVERAGE",
-                sum_rs_size / nf / 1024.0, sum_rs_ba / nf,
-                sum_e5_size / nf / 1024.0, sum_e5_ba / nf,
-                sum_e7_size / nf / 1024.0, sum_e7_ba / nf,
+                sum_rs_size / nf / 1024.0,
+                sum_rs_ba / nf,
+                sum_e5_size / nf / 1024.0,
+                sum_e5_ba / nf,
+                sum_e7_size / nf / 1024.0,
+                sum_e7_ba / nf,
             );
             let size_vs_e5 = (sum_rs_size - sum_e5_size) * 100.0 / sum_e5_size;
             let size_vs_e7 = (sum_rs_size - sum_e7_size) * 100.0 / sum_e7_size;

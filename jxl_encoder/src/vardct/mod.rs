@@ -35,6 +35,7 @@ pub(crate) mod epf;
 pub(crate) mod frame;
 mod gaborish;
 pub(crate) mod noise;
+pub(crate) mod patches;
 #[cfg(feature = "rate-control")]
 mod precomputed;
 #[cfg(feature = "rate-control")]

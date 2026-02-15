@@ -88,6 +88,11 @@ struct Args {
     #[arg(long)]
     no_pixel_domain_loss: bool,
 
+    /// Disable patches (dictionary-based repeated pattern detection).
+    /// Patches are on by default. Huge wins on screenshots, zero cost on photos.
+    #[arg(long)]
+    no_patches: bool,
+
     /// Enable LZ77 backward references for entropy coding.
     /// Compresses token streams before entropy coding (ANS only).
     #[arg(long)]
@@ -258,6 +263,7 @@ fn main() {
                     .with_denoise(args.denoise)
                     .with_error_diffusion(!args.no_error_diffusion)
                     .with_pixel_domain_loss(!args.no_pixel_domain_loss)
+                    .with_patches(!args.no_patches)
                     .with_lz77(args.lz77)
                     .with_lz77_method(lz77_method);
 
@@ -434,6 +440,7 @@ fn main() {
             .with_denoise(args.denoise)
             .with_error_diffusion(!args.no_error_diffusion)
             .with_pixel_domain_loss(!args.no_pixel_domain_loss)
+            .with_patches(!args.no_patches)
             .with_lz77(args.lz77)
             .with_lz77_method(lz77_method);
 

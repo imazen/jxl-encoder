@@ -674,6 +674,7 @@ pub struct LossyConfig {
     lz77: bool,
     lz77_method: Lz77Method,
     force_strategy: Option<u8>,
+    patches: bool,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters: u32,
     #[cfg(feature = "butteraugli-loop")]
@@ -696,6 +697,7 @@ impl LossyConfig {
             lz77: false,
             lz77_method: Lz77Method::Greedy,
             force_strategy: None,
+            patches: true,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: butteraugli_iters_for_effort(effort),
             #[cfg(feature = "butteraugli-loop")]
@@ -776,6 +778,13 @@ impl LossyConfig {
     /// Force a specific AC strategy for all blocks. `None` for auto-selection.
     pub fn with_force_strategy(mut self, strategy: Option<u8>) -> Self {
         self.force_strategy = strategy;
+        self
+    }
+
+    /// Enable/disable patches (dictionary-based repeated pattern detection).
+    /// Default: true. Huge wins on screenshots, zero cost on photos.
+    pub fn with_patches(mut self, enable: bool) -> Self {
+        self.patches = enable;
         self
     }
 
@@ -1234,6 +1243,7 @@ impl<'a> EncodeRequest<'a> {
         tiny.enable_lz77 = cfg.lz77;
         tiny.lz77_method = cfg.lz77_method;
         tiny.force_strategy = cfg.force_strategy;
+        tiny.enable_patches = cfg.patches;
         #[cfg(feature = "butteraugli-loop")]
         {
             tiny.butteraugli_iters = cfg.butteraugli_iters;
