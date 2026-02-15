@@ -367,7 +367,7 @@ impl VarDctEncoder {
         // Patches work in the XYB domain: detect repeated rectangular elements,
         // store unique patterns in a reference frame, subtract from image.
         let patches_data = if self.enable_patches {
-            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height)
+            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height, padded_width)
         } else {
             None
         };
