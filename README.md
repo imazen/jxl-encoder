@@ -55,7 +55,7 @@ At low distances (d <= 1.0), we're within 3% of cjxl effort 5 file sizes and 14-
 
 ## Feature coverage
 
-We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirrel), with 12 currently enabled. Seven non-square and corner strategies (DCT32x16, DCT16x32, DCT64x32, DCT32x64, AFV0-3) are implemented but disabled pending quality fixes. The remaining 8 strategies are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+).
+We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirrel), with 16 currently enabled. Three corner strategies (AFV0-3) are implemented but disabled pending quality fixes. The remaining 8 strategies are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+).
 
 ### Lossy (VarDCT) — comparison with libjxl
 
