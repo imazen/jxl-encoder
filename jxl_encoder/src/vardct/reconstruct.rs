@@ -598,7 +598,7 @@ fn restore_llf_from_dc(
         }
 
         RAW_STRATEGY_DCT32X16 => {
-            // 4x2 DC values (4 rows, 2 cols)
+            // 4x2 DC values (4 rows, 2 cols) — physical block layout
             let mut dc_grid = [0.0f32; 8];
             for iy in 0..4 {
                 for ix in 0..2 {
@@ -606,11 +606,12 @@ fn restore_llf_from_dc(
                 }
             }
 
-            // dc_from_dct_32x16:
-            //   block[iy*2+ix] = coeffs[iy*32+ix] * SCALE_32_TO_4[iy] * SCALE_16_TO_2[ix] * 8.0
-            //   4x2 IDCT: idct on 2-element rows, transpose 4x2->2x4, idct on 4-element rows
+            // Inverse of dc_from_dct_32x16:
+            //   Extraction reads 2×4 LLF at coeffs[iy*32+ix] for iy 0..2, ix 0..4
+            //   Scales: SCALE_16_TO_2[iy] * SCALE_32_TO_4[ix] * 4.0
+            //   IDCT: 4pt rows → transpose 2×4→4×2 → 2pt rows → 4×2 spatial output
             //
-            // Inverse: forward DCT
+            // Reconstruction: forward DCT (inverse of IDCT), write to same LLF positions.
 
             // Forward 2pt DCT on rows (4 rows of 2)
             let mut block = dc_grid;
@@ -628,11 +629,12 @@ fn restore_llf_from_dc(
             dct1d_4(&mut transposed[0..4]);
             dct1d_4(&mut transposed[4..8]);
 
-            // Write to LLF positions (stride 32 for 16x32 layout)
-            for iy in 0..4 {
-                for ix in 0..2 {
-                    let scale = DCT_RESAMPLE_SCALE_32_TO_4[iy] * DCT_RESAMPLE_SCALE_16_TO_2[ix];
-                    coeffs[iy * 32 + ix] = transposed[iy * 2 + ix] / (scale * 8.0);
+            // Write to 2×4 LLF positions (rows 0..2, cols 0..4, stride 32)
+            // Forward DCT gain: dct1d_2(2) × dct1d_4(4) = 8 → divide by 8
+            for iy in 0..2 {
+                for ix in 0..4 {
+                    let scale = DCT_RESAMPLE_SCALE_16_TO_2[iy] * DCT_RESAMPLE_SCALE_32_TO_4[ix];
+                    coeffs[iy * 32 + ix] = transposed[iy * 4 + ix] / (scale * 8.0);
                 }
             }
         }
@@ -646,11 +648,12 @@ fn restore_llf_from_dc(
                 }
             }
 
-            // dc_from_dct_16x32 (ROWS<COLS branch):
-            //   block[iy*4+ix] = coeffs[iy*32+ix] * SCALE_16_TO_2[iy] * SCALE_32_TO_4[ix] * 8.0
-            //   2x4 IDCT: idct on 4-element rows, transpose 2x4->4x2, idct on 2-element rows, transpose back
+            // Inverse of dc_from_dct_16x32 (ROWS<COLS branch):
+            //   Extraction reads 2×4 LLF at coeffs[iy*32+ix] for iy 0..2, ix 0..4
+            //   Scales: SCALE_16_TO_2[iy] * SCALE_32_TO_4[ix] * 4.0 (IDCT gain 1/4)
+            //   IDCT: 4pt rows → transpose 2×4→4×2 → 2pt rows → transpose 4×2→2×4 → 2×4 spatial output
             //
-            // Inverse:
+            // Reconstruction: forward DCT gain = dct1d_4(4) × dct1d_2(2) = 8 → divide by 8
             let mut block = dc_grid;
             // Forward 4pt DCT on rows (2 rows of 4)
             dct1d_4(&mut block[0..4]);
@@ -709,7 +712,7 @@ fn restore_llf_from_dc(
         }
 
         RAW_STRATEGY_DCT64X32 => {
-            // 8x4 DC values (8 rows, 4 cols)
+            // 8x4 DC values (8 rows, 4 cols) — physical block layout
             let mut dc_grid = [0.0f32; 32];
             for iy in 0..8 {
                 for ix in 0..4 {
@@ -717,11 +720,13 @@ fn restore_llf_from_dc(
                 }
             }
 
-            // dc_from_dct_64x32: ROWS=8 >= COLS=4
-            //   block[iy*4+ix] = coeffs[iy*64+ix] * SCALE_64_TO_8[iy] * SCALE_32_TO_4[ix] * 4.0
-            //   8x4 IDCT: idct on 4-element rows, transpose 8x4->4x8, idct on 8-element rows
+            // Inverse of dc_from_dct_64x32:
+            //   Extraction reads 4×8 LLF at coeffs[iy*64+ix] for iy 0..4, ix 0..8
+            //   Scales: SCALE_32_TO_4[iy] * SCALE_64_TO_8[ix] * 4.0
+            //   IDCT: 8pt rows → transpose 4×8→8×4 → 4pt rows → 8×4 spatial output
+            //
+            // Reconstruction: forward DCT, write to same LLF positions.
 
-            // Inverse: forward DCT
             let mut block = dc_grid;
             // Forward 4pt DCT on rows (8 rows of 4)
             for iy in 0..8 {
@@ -734,7 +739,7 @@ fn restore_llf_from_dc(
                     transposed[ix * 8 + iy] = block[iy * 4 + ix];
                 }
             }
-            // Forward 8pt DCT on rows (4 rows of 8)
+            // Forward 8pt DCT on rows (4 rows of 8), compensate dct1d_8 gain
             for iy in 0..4 {
                 let s = iy * 8;
                 dct1d_8(&mut transposed[s..s + 8]);
@@ -743,10 +748,12 @@ fn restore_llf_from_dc(
                 }
             }
 
-            for iy in 0..8 {
-                for ix in 0..4 {
-                    let scale = DCT_RESAMPLE_SCALE_64_TO_8[iy] * DCT_RESAMPLE_SCALE_32_TO_4[ix];
-                    coeffs[iy * 64 + ix] = transposed[iy * 4 + ix] / (scale * 4.0);
+            // Write to 4×8 LLF positions (rows 0..4, cols 0..8, stride 64)
+            // Forward DCT gain: dct1d_4(4) × dct1d_8/8(1) = 4 → divide by 4
+            for iy in 0..4 {
+                for ix in 0..8 {
+                    let scale = DCT_RESAMPLE_SCALE_32_TO_4[iy] * DCT_RESAMPLE_SCALE_64_TO_8[ix];
+                    coeffs[iy * 64 + ix] = transposed[iy * 8 + ix] / (scale * 4.0);
                 }
             }
         }
