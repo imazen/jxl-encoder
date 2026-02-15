@@ -66,6 +66,15 @@ const FLATNESS_THRESHOLD: f32 = 1e-4;
 /// Minimum neighbor ratio for screenshot-like blocks (8 of 9).
 const SCREENSHOT_FLAT_NEIGHBOR_RATIO: usize = 8;
 
+/// Minimum quantized value peak for a valid patch.
+const MIN_PEAK: i32 = 2;
+
+/// Radius for has_similar spatial consistency check.
+const HAS_SIMILAR_RADIUS: usize = 2;
+
+/// Threshold for has_similar check.
+const HAS_SIMILAR_THRESHOLD: f32 = 0.03;
+
 // ── Data Structures ────────────────────────────────────────────────────────────
 
 /// A patch quantized to i8 per channel, plus the original float pixels.
@@ -163,7 +172,8 @@ pub(crate) struct PatchesData {
 
 // ── Detection ──────────────────────────────────────────────────────────────────
 
-/// Compute weighted XYB distance between two pixels.
+/// Compute weighted XYB L1 distance between two pixels.
+/// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
 #[inline]
 fn xyb_distance(
     xyb: &[&[f32]; 3],
@@ -177,13 +187,13 @@ fn xyb_distance(
     let i2 = y2 * stride + x2;
     let mut dist = 0.0f32;
     for c in 0..3 {
-        let d = xyb[c][i1] - xyb[c][i2];
-        dist += d * d * CHANNEL_WEIGHTS[c];
+        dist += (xyb[c][i1] - xyb[c][i2]).abs() * CHANNEL_WEIGHTS[c];
     }
     dist
 }
 
-/// Compute weighted XYB distance between a pixel and a given color.
+/// Compute weighted XYB L1 distance between a pixel and a given color.
+/// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
 #[inline]
 fn xyb_distance_to_color(
     xyb: &[&[f32]; 3],
@@ -195,8 +205,36 @@ fn xyb_distance_to_color(
     let i = y * stride + x;
     let mut dist = 0.0f32;
     for c in 0..3 {
-        let d = xyb[c][i] - color[c];
-        dist += d * d * CHANNEL_WEIGHTS[c];
+        dist += (xyb[c][i] - color[c]).abs() * CHANNEL_WEIGHTS[c];
+    }
+    dist
+}
+
+/// Check if a pixel matches a given color within 1e-4 per channel.
+/// Matches libjxl `is_same_color`.
+#[inline]
+fn is_same_color(
+    planes: &[&[f32]; 3],
+    stride: usize,
+    x: usize,
+    y: usize,
+    color: &[f32; 3],
+) -> bool {
+    let i = y * stride + x;
+    for c in 0..3 {
+        if (planes[c][i] - color[c]).abs() > FLATNESS_THRESHOLD {
+            return false;
+        }
+    }
+    true
+}
+
+/// Compute weighted XYB L1 distance between two color values.
+#[inline]
+fn color_distance(c1: &[f32; 3], c2: &[f32; 3]) -> f32 {
+    let mut dist = 0.0f32;
+    for c in 0..3 {
+        dist += (c1[c] - c2[c]).abs() * CHANNEL_WEIGHTS[c];
     }
     dist
 }
@@ -225,246 +263,283 @@ fn is_flat_block(xyb: &[&[f32]; 3], stride: usize, bx: usize, by: usize) -> bool
 /// Detect text-like patches in an XYB image.
 ///
 /// Returns a list of unique patches with their occurrence positions.
-/// Port of libjxl `FindTextLikePatches`.
+/// Port of libjxl `FindTextLikePatches` — matches exact algorithm:
+/// L1 weighted distance, 8-connected BFS/DFS, (current,source) BFS pairs,
+/// first-found border reference, has_similar check, kMinPeak filter.
+///
+/// `stride` is the row pitch of the XYB buffers (may be larger than `width`
+/// due to padding). `width` and `height` define the actual image area to scan.
 pub(crate) fn find_text_like_patches(
     xyb: [&[f32]; 3],
     width: usize,
     height: usize,
+    stride: usize,
 ) -> Vec<PatchInfo> {
-    // Step 1: Grid scan — identify flat 4x4 blocks
     let bw = width / PATCH_SIDE;
     let bh = height / PATCH_SIDE;
     if bw < 3 || bh < 3 {
         return Vec::new();
     }
 
+    let xyb_ref = [xyb[0], xyb[1], xyb[2]];
+    let n = stride * height;
+
+    // Step 1: Find flat 4×4 blocks (all 16 pixels identical color).
     let mut is_flat = vec![false; bw * bh];
     for by in 0..bh {
         for bx in 0..bw {
-            is_flat[by * bw + bx] = is_flat_block(&[xyb[0], xyb[1], xyb[2]], width, bx, by);
+            is_flat[by * bw + bx] = is_flat_block(&xyb_ref, stride, bx, by);
         }
     }
 
-    // Step 2: Identify "screenshot-like" blocks (8+ of 9 neighbors are flat with same color)
-    let mut is_screenshot_like = vec![false; width * height];
-    for by in 1..bh.saturating_sub(1) {
+    // Step 2: Screenshot-like detection (block-level).
+    // Central block must be flat. Count 3×3 neighbor block origins (single pixel
+    // at top-left of each block) with same color. Must have 8+ of 9 matching.
+    // Matches libjxl: py from 1 to ph-3 inclusive, px from 1 to pw-2 inclusive.
+    let mut is_screenshot_like = vec![false; bw * bh];
+    let mut num_seeds = 0u32;
+    // bh.saturating_sub(2) as exclusive end → by goes from 1 to bh-3 inclusive
+    for by in 1..bh.saturating_sub(2) {
+        // bw.saturating_sub(1) as exclusive end → bx goes from 1 to bw-2 inclusive
         for bx in 1..bw.saturating_sub(1) {
             if !is_flat[by * bw + bx] {
                 continue;
             }
-            // Count flat neighbors with same color in 3x3 block grid
-            let ref_x = bx * PATCH_SIDE;
-            let ref_y = by * PATCH_SIDE;
-            let mut same_color_count = 0;
+            let base_x = bx * PATCH_SIDE;
+            let base_y = by * PATCH_SIDE;
+            let base_i = base_y * stride + base_x;
+            let base_color = [xyb[0][base_i], xyb[1][base_i], xyb[2][base_i]];
+
+            // Check 3×3 neighborhood — single pixel at each block origin
+            // (NOT checking if neighbor block is flat — matches libjxl)
+            let mut num_same = 0usize;
             for nby in by - 1..=by + 1 {
                 for nbx in bx - 1..=bx + 1 {
-                    if is_flat[nby * bw + nbx] {
-                        let nx = nbx * PATCH_SIDE;
-                        let ny = nby * PATCH_SIDE;
-                        if xyb_distance(&[xyb[0], xyb[1], xyb[2]], width, ref_x, ref_y, nx, ny)
-                            < FLATNESS_THRESHOLD
-                        {
-                            same_color_count += 1;
-                        }
+                    let ny = nby * PATCH_SIDE;
+                    let nx = nbx * PATCH_SIDE;
+                    if is_same_color(&xyb_ref, stride, nx, ny, &base_color) {
+                        num_same += 1;
                     }
                 }
             }
-            if same_color_count >= SCREENSHOT_FLAT_NEIGHBOR_RATIO {
-                // Mark all pixels in this 4x4 block as screenshot-like seeds
-                for dy in 0..PATCH_SIDE {
-                    for dx in 0..PATCH_SIDE {
-                        let px = bx * PATCH_SIDE + dx;
-                        let py = by * PATCH_SIDE + dy;
-                        if px < width && py < height {
-                            is_screenshot_like[py * width + px] = true;
-                        }
-                    }
-                }
+            if num_same >= SCREENSHOT_FLAT_NEIGHBOR_RATIO {
+                is_screenshot_like[by * bw + bx] = true;
+                num_seeds += 1;
             }
         }
     }
 
-    // Check if we have any screenshot-like regions at all
-    let has_screenshot = is_screenshot_like.iter().any(|&x| x);
-    if !has_screenshot {
+    if num_seeds == 0 {
         return Vec::new();
     }
 
-    // Step 3: Background flood-fill from screenshot-like seeds
-    let mut is_background = vec![false; width * height];
-    let mut queue = std::collections::VecDeque::new();
-    let mut pixel_distance = vec![u32::MAX; width * height];
+    // Step 3: BFS background flood-fill with (current, source) pairs.
+    // Each background pixel stores its seed's opsin color in the background image.
+    // Source propagates unchanged through BFS — Manhattan distance is from source.
+    let mut is_background = vec![false; n];
+    let mut background = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
+    // Queue entries: (cur_x, cur_y, src_x, src_y)
+    let mut queue: Vec<(usize, usize, usize, usize)> =
+        Vec::with_capacity(2 * num_seeds as usize * PATCH_SIDE * PATCH_SIDE);
 
-    // Seed from screenshot-like pixels
-    for y in 0..height {
-        for x in 0..width {
-            if is_screenshot_like[y * width + x] {
-                is_background[y * width + x] = true;
-                pixel_distance[y * width + x] = 0;
-                queue.push_back((x, y));
+    // Seed from screenshot-like block pixels
+    for by in 1..bh.saturating_sub(1) {
+        for bx in 1..bw.saturating_sub(1) {
+            if !is_screenshot_like[by * bw + bx] {
+                continue;
+            }
+            for y in by * PATCH_SIDE..(by + 1) * PATCH_SIDE {
+                for x in bx * PATCH_SIDE..(bx + 1) * PATCH_SIDE {
+                    if x < width && y < height {
+                        let i = y * stride + x;
+                        if !is_background[i] {
+                            is_background[i] = true;
+                            queue.push((x, y, x, y)); // source = self for seeds
+                        }
+                    }
+                }
             }
         }
     }
 
-    // BFS flood-fill
-    let xyb_ref = [xyb[0], xyb[1], xyb[2]];
-    while let Some((cx, cy)) = queue.pop_front() {
-        let cd = pixel_distance[cy * width + cx];
-        if cd >= DISTANCE_LIMIT as u32 {
-            continue;
+    // BFS flood-fill (8-connected, matches libjxl kSearchRadius=1)
+    let mut queue_front = 0;
+    while queue_front < queue.len() {
+        let (cx, cy, sx, sy) = queue[queue_front];
+        queue_front += 1;
+
+        // Store source color in background at current position
+        let ci = cy * stride + cx;
+        let si = sy * stride + sx;
+        for c in 0..3 {
+            background[c][ci] = xyb[c][si];
         }
 
-        for &(dx, dy) in &[(-1i32, 0), (1, 0), (0, -1i32), (0, 1)] {
-            let nx = cx as i32 + dx;
-            let ny = cy as i32 + dy;
-            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
-                continue;
-            }
-            let (nx, ny) = (nx as usize, ny as usize);
-            let ni = ny * width + nx;
-            if is_background[ni] {
-                continue;
-            }
-            // Check color similarity to the current background pixel
-            if xyb_distance(&xyb_ref, width, cx, cy, nx, ny) < SIMILAR_THRESHOLD {
-                is_background[ni] = true;
-                pixel_distance[ni] = cd + 1;
-                queue.push_back((nx, ny));
+        // 8-connected expansion
+        for dx in -1i32..=1 {
+            for dy in -1i32..=1 {
+                let nx = cx as i32 + dx;
+                let ny = cy as i32 + dy;
+                if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                    continue;
+                }
+                let (nxu, nyu) = (nx as usize, ny as usize);
+                let ni = nyu * stride + nxu;
+                if is_background[ni] {
+                    continue;
+                }
+                // Manhattan distance from source (not current!) to candidate
+                let manhattan = (nxu as isize - sx as isize).unsigned_abs()
+                    + (nyu as isize - sy as isize).unsigned_abs();
+                if manhattan > DISTANCE_LIMIT {
+                    continue;
+                }
+                // Similarity: compare source pixel to candidate pixel (L1 weighted)
+                if xyb_distance(&xyb_ref, stride, sx, sy, nxu, nyu) <= SIMILAR_THRESHOLD {
+                    is_background[ni] = true;
+                    queue.push((nxu, nyu, sx, sy)); // propagate source
+                }
             }
         }
     }
+    drop(queue);
 
-    // Step 4: Extract foreground connected components
-    let mut visited = vec![false; width * height];
+    // Step 4: Extract foreground connected components (8-connected DFS).
+    // Track border consistency: first background neighbor = reference,
+    // all subsequent must match reference via background image colors.
+    let mut visited = vec![false; n];
     let mut patches: Vec<(QuantizedPatch, u32, u32)> = Vec::new();
 
     for start_y in 0..height {
         for start_x in 0..width {
-            let si = start_y * width + start_x;
+            let si = start_y * stride + start_x;
             if is_background[si] || visited[si] {
                 continue;
             }
 
-            // DFS to find connected component
-            let mut cc_pixels: Vec<(usize, usize)> = Vec::new();
+            // DFS — always completes full CC (no early bounding box exit)
             let mut stack = vec![(start_x, start_y)];
             let mut min_x = start_x;
             let mut max_x = start_x;
             let mut min_y = start_y;
             let mut max_y = start_y;
+            let mut found_border = false;
+            let mut all_similar = true;
+            let mut reference: (usize, usize) = (0, 0);
 
             while let Some((px, py)) = stack.pop() {
-                let pi = py * width + px;
-                if visited[pi] || is_background[pi] {
+                let pi = py * stride + px;
+                if visited[pi] {
                     continue;
                 }
                 visited[pi] = true;
-                cc_pixels.push((px, py));
                 min_x = min_x.min(px);
                 max_x = max_x.max(px);
                 min_y = min_y.min(py);
                 max_y = max_y.max(py);
 
-                // Check if bounding box exceeds max patch size
-                if max_x - min_x >= MAX_PATCH_SIZE || max_y - min_y >= MAX_PATCH_SIZE {
-                    continue; // Stop growing but keep what we have
-                }
-
-                for &(dx, dy) in &[(-1i32, 0), (1, 0), (0, -1i32), (0, 1)] {
-                    let nx = px as i32 + dx;
-                    let ny = py as i32 + dy;
-                    if nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height {
-                        let (nx, ny) = (nx as usize, ny as usize);
-                        if !visited[ny * width + nx] && !is_background[ny * width + nx] {
-                            stack.push((nx, ny));
+                // 8-connected neighbors (kSearchRadius=1, skip self)
+                for ddx in -1i32..=1 {
+                    for ddy in -1i32..=1 {
+                        if ddx == 0 && ddy == 0 {
+                            continue;
+                        }
+                        let nx = px as i32 + ddx;
+                        let ny = py as i32 + ddy;
+                        if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                            continue;
+                        }
+                        let (nxu, nyu) = (nx as usize, ny as usize);
+                        let ni = nyu * stride + nxu;
+                        if !is_background[ni] {
+                            // Foreground neighbor — push to stack
+                            stack.push((nxu, nyu));
+                        } else {
+                            // Background neighbor — track border consistency
+                            if !found_border {
+                                reference = (nxu, nyu);
+                                found_border = true;
+                            } else {
+                                // is_similar_b: compare background colors at reference
+                                // and this neighbor (VERY_SIMILAR_THRESHOLD)
+                                let ri = reference.1 * stride + reference.0;
+                                let bg_ref =
+                                    [background[0][ri], background[1][ri], background[2][ri]];
+                                let bg_next =
+                                    [background[0][ni], background[1][ni], background[2][ni]];
+                                if color_distance(&bg_ref, &bg_next) > VERY_SIMILAR_THRESHOLD {
+                                    all_similar = false;
+                                }
+                            }
                         }
                     }
                 }
+            }
+
+            // Filter: must have border, consistent border, within max patch size
+            if !found_border
+                || !all_similar
+                || max_x - min_x >= MAX_PATCH_SIZE
+                || max_y - min_y >= MAX_PATCH_SIZE
+            {
+                continue;
             }
 
             let cc_w = max_x - min_x + 1;
             let cc_h = max_y - min_y + 1;
 
-            // Skip if too large
-            if cc_w > MAX_PATCH_SIZE || cc_h > MAX_PATCH_SIZE {
-                continue;
-            }
+            // Get border/reference color from background image
+            let ri = reference.1 * stride + reference.0;
+            let ref_color = [background[0][ri], background[1][ri], background[2][ri]];
 
-            // Skip tiny connected components
-            if cc_pixels.len() < 2 {
-                continue;
-            }
-
-            // Compute border color: average background pixel adjacent to the CC
-            let mut border_color = [0.0f32; 3];
-            let mut border_count = 0u32;
-            for &(px, py) in &cc_pixels {
-                for &(dx, dy) in &[(-1i32, 0), (1, 0), (0, -1i32), (0, 1)] {
-                    let nx = px as i32 + dx;
-                    let ny = py as i32 + dy;
-                    if nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height {
-                        let (nx, ny) = (nx as usize, ny as usize);
-                        if is_background[ny * width + nx] {
-                            let ni = ny * width + nx;
-                            for c in 0..3 {
-                                border_color[c] += xyb_ref[c][ni];
-                            }
-                            border_count += 1;
-                        }
+            // has_similar check: expanded bounding box (±kHasSimilarRadius) must
+            // contain at least one pixel similar to ref color (in opsin image).
+            let mut has_similar = false;
+            let hs_min_y = min_y.saturating_sub(HAS_SIMILAR_RADIUS);
+            let hs_max_y = (max_y + HAS_SIMILAR_RADIUS + 1).min(height);
+            let hs_min_x = min_x.saturating_sub(HAS_SIMILAR_RADIUS);
+            let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
+            for iy in hs_min_y..hs_max_y {
+                for ix in hs_min_x..hs_max_x {
+                    if xyb_distance_to_color(&xyb_ref, stride, ix, iy, &ref_color)
+                        <= HAS_SIMILAR_THRESHOLD
+                    {
+                        has_similar = true;
                     }
                 }
             }
-
-            if border_count == 0 {
-                continue;
-            }
-            for c in 0..3 {
-                border_color[c] /= border_count as f32;
-            }
-
-            // Check border color consistency: all background neighbors should have
-            // similar color (threshold=VERY_SIMILAR_THRESHOLD)
-            let mut border_consistent = true;
-            'border_check: for &(px, py) in &cc_pixels {
-                for &(dx, dy) in &[(-1i32, 0), (1, 0), (0, -1i32), (0, 1)] {
-                    let nx = px as i32 + dx;
-                    let ny = py as i32 + dy;
-                    if nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height {
-                        let (nx, ny) = (nx as usize, ny as usize);
-                        if is_background[ny * width + nx]
-                            && xyb_distance_to_color(&xyb_ref, width, nx, ny, &border_color)
-                                > VERY_SIMILAR_THRESHOLD
-                        {
-                            border_consistent = false;
-                            break 'border_check;
-                        }
-                    }
-                }
-            }
-            if !border_consistent {
+            if !has_similar {
                 continue;
             }
 
-            // Quantize the patch: pixel_value = xyb[pixel] - border_color
-            let n = cc_w * cc_h;
-            let mut qpixels = [vec![0i8; n], vec![0i8; n], vec![0i8; n]];
-            let mut fpixels = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
-
+            // Quantize the patch: pixel_value = opsin[pixel] - ref_color
+            let patch_n = cc_w * cc_h;
+            let mut qpixels = [vec![0i8; patch_n], vec![0i8; patch_n], vec![0i8; patch_n]];
+            let mut fpixels = [
+                vec![0.0f32; patch_n],
+                vec![0.0f32; patch_n],
+                vec![0.0f32; patch_n],
+            ];
+            let mut max_value = 0i32;
             for dy in 0..cc_h {
                 for dx in 0..cc_w {
                     let ix = min_x + dx;
                     let iy = min_y + dy;
-                    let src_i = iy * width + ix;
+                    let src_i = iy * stride + ix;
                     let dst_i = dy * cc_w + dx;
-
                     for c in 0..3 {
-                        let val = xyb_ref[c][src_i] - border_color[c];
+                        let val = xyb[c][src_i] - ref_color[c];
                         fpixels[c][dst_i] = val;
-                        // Quantize to i8 via truncation
                         let q = (val / CHANNEL_DEQUANT[c]) as i32;
                         qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
+                        max_value = max_value.max(q.abs());
                     }
                 }
+            }
+
+            // kMinPeak check: reject patches where max quantized magnitude < 2
+            if max_value < MIN_PEAK {
+                continue;
             }
 
             let patch = QuantizedPatch {
@@ -473,19 +548,16 @@ pub(crate) fn find_text_like_patches(
                 pixels: qpixels,
                 fpixels,
             };
-
             patches.push((patch, min_x as u32, min_y as u32));
         }
     }
 
     // Step 5: Sort and deduplicate patches
-    // Group patches by their quantized content
     use std::collections::HashMap;
     let mut patch_groups: HashMap<Vec<u8>, Vec<(u32, u32, QuantizedPatch)>> = HashMap::new();
 
     for (patch, x, y) in patches {
-        // Create a hash key from quantized pixels
-        let mut key = Vec::with_capacity(2 + patch.pixels[0].len() * 3);
+        let mut key = Vec::with_capacity(4 + patch.pixels[0].len() * 3);
         key.extend_from_slice(&(patch.xsize as u16).to_le_bytes());
         key.extend_from_slice(&(patch.ysize as u16).to_le_bytes());
         for c in 0..3 {
@@ -496,14 +568,12 @@ pub(crate) fn find_text_like_patches(
         patch_groups.entry(key).or_default().push((x, y, patch));
     }
 
-    // Convert to PatchInfo, only keeping patches with >= MIN_PATCH_OCCURRENCES
     let mut result: Vec<PatchInfo> = Vec::new();
     for (_key, group) in patch_groups {
         if group.len() < MIN_PATCH_OCCURRENCES {
             continue;
         }
         let positions: Vec<(u32, u32)> = group.iter().map(|(x, y, _)| (*x, *y)).collect();
-        // Use the first occurrence's float pixels (they should all be very similar)
         let patch = group.into_iter().next().unwrap().2;
         result.push(PatchInfo { patch, positions });
     }
@@ -598,6 +668,36 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
 
     // Sort by area (largest first) for better bin-packing
     infos.sort_by(|a, b| b.patch.num_pixels().cmp(&a.patch.num_pixels()));
+
+    // Limit reference frame to single modular group (256×256).
+    // Our encode_reference_frame uses single-group modular encoding, so the
+    // reference frame must fit. Drop least-useful patches (fewest total pixels
+    // contributed = area × occurrences) until it fits.
+    const MAX_REF_DIM: usize = 256;
+    loop {
+        let (ref_width, ref_height, _) = bin_pack_patches(&infos);
+        if ref_width <= MAX_REF_DIM && ref_height <= MAX_REF_DIM {
+            break;
+        }
+        // Drop the patch with the smallest per-occurrence benefit
+        // (fewest total covered pixels = area × occurrences)
+        let worst = infos
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| p.patch.num_pixels() * p.positions.len())
+            .map(|(i, _)| i);
+        if let Some(i) = worst {
+            infos.swap_remove(i);
+        }
+        if infos.is_empty() {
+            return None;
+        }
+        // After removing, re-check MIN_PATCH_OCCURRENCES isn't violated
+        infos.retain(|p| p.positions.len() >= MIN_PATCH_OCCURRENCES);
+        if infos.is_empty() {
+            return None;
+        }
+    }
 
     // Bin-pack into reference frame
     let (ref_width, ref_height, pack_positions) = bin_pack_patches(&infos);
@@ -788,80 +888,104 @@ pub(crate) fn encode_patches_section(
 /// Detect patches, build data structures, and return the result.
 ///
 /// Returns None if no useful patches were found (e.g., photo content).
-pub(crate) fn find_and_build(xyb: [&[f32]; 3], width: usize, height: usize) -> Option<PatchesData> {
-    let infos = find_text_like_patches(xyb, width, height);
+///
+/// Uses measured overhead (actual ref frame + dict encoding size) vs estimated
+/// savings to decide if patches are worthwhile. This mirrors libjxl's behavior
+/// where multi-attempt RD optimization rejects patches that don't help.
+pub(crate) fn find_and_build(
+    xyb: [&[f32]; 3],
+    width: usize,
+    height: usize,
+    stride: usize,
+) -> Option<PatchesData> {
+    let infos = find_text_like_patches(xyb, width, height, stride);
     if infos.is_empty() {
         return None;
     }
 
-    // Cost-benefit check: estimate if patches will save bytes.
-    //
-    // Costs:
-    //   1. Reference frame: ~8-12 bytes/pixel for modular XYB i32 encoding
-    //   2. Metadata: ~3-5 bytes per unique pattern + ~2-4 bytes per occurrence position
-    //
-    // Benefits:
-    //   1. VarDCT coefficient savings where patches are subtracted: ~2-4 bytes/pixel
-    //
-    // Conservative approach: require total patch coverage (in pixels) to be significantly
-    // larger than the reference frame + metadata cost. Also require minimum coverage
-    // as a fraction of image area (patches on <1% of the image rarely help).
-    let total_unique_pixels: usize = infos.iter().map(|p| p.patch.num_pixels()).sum();
-    let total_occurrences: usize = infos.iter().map(|p| p.positions.len()).sum();
+    // Compute coverage statistics before building
     let total_patch_pixels: usize = infos
         .iter()
         .map(|p| p.patch.num_pixels() * p.positions.len())
         .sum();
     let image_pixels = width * height;
-
     #[cfg(feature = "debug-tokens")]
-    eprintln!(
-        "PATCHES: {} unique patterns, {} total occurrences, {} unique pixels, {} total patch pixels ({:.1}% of image)",
-        infos.len(),
-        total_occurrences,
-        total_unique_pixels,
-        total_patch_pixels,
-        total_patch_pixels as f64 / image_pixels as f64 * 100.0
-    );
+    {
+        let total_unique_pixels: usize = infos.iter().map(|p| p.patch.num_pixels()).sum();
+        let total_occurrences: usize = infos.iter().map(|p| p.positions.len()).sum();
+        let coverage_pct = total_patch_pixels as f64 / image_pixels as f64 * 100.0;
+        eprintln!(
+            "PATCHES: {} unique patterns, {} total occurrences, {} unique pixels, {} total patch pixels ({:.1}% of image)",
+            infos.len(),
+            total_occurrences,
+            total_unique_pixels,
+            total_patch_pixels,
+            coverage_pct
+        );
+    }
 
-    // Estimated reference frame cost in bytes (modular encoding of 3-channel i32)
-    // Modular encoding: ~4-6 bytes per pixel for XYB data + frame overhead
-    let ref_frame_cost = total_unique_pixels * 5 + infos.len() * 16 + 200;
-    // Estimated metadata cost in bytes (patches section: entropy-coded positions)
-    let metadata_cost = infos.len() * 6 + total_occurrences * 3;
-    // Estimated savings in bytes (VarDCT coefficients become zero/small where patches subtracted)
-    let estimated_savings = total_patch_pixels * 3;
-
-    let total_cost = ref_frame_cost + metadata_cost;
-
-    #[cfg(feature = "debug-tokens")]
-    eprintln!(
-        "PATCHES: estimated cost={} bytes (ref={}, meta={}), savings={} bytes, ratio={:.1}x",
-        total_cost,
-        ref_frame_cost,
-        metadata_cost,
-        estimated_savings,
-        estimated_savings as f64 / total_cost as f64
-    );
-
-    // Require estimated savings to be at least 2x the cost
-    if estimated_savings < total_cost * 2 {
+    // Quick coverage filter: patches on <1% of the image never help.
+    // The overhead from the reference frame + dictionary always exceeds savings.
+    if total_patch_pixels * 100 < image_pixels {
         #[cfg(feature = "debug-tokens")]
-        eprintln!("PATCHES: skipping — cost exceeds benefit");
+        {
+            let coverage_pct = total_patch_pixels as f64 / image_pixels as f64 * 100.0;
+            eprintln!("PATCHES: skipping — too little coverage ({coverage_pct:.1}% < 1%)");
+        }
         return None;
     }
 
-    // Also require minimum image coverage (patches on <2% of image rarely help)
-    if total_patch_pixels * 50 < image_pixels {
+    let patches_data = build_patches_data(infos)?;
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "PATCHES: ref frame {}x{} ({} pixels)",
+        patches_data.ref_width,
+        patches_data.ref_height,
+        patches_data.ref_width * patches_data.ref_height
+    );
+
+    // Measure actual overhead by trial-encoding the reference frame and dictionary.
+    // This gives exact byte costs rather than rough estimates.
+    let ref_overhead = {
+        let mut w = BitWriter::new();
+        encode_reference_frame(&patches_data, true, &mut w).ok()?;
+        w.bits_written().div_ceil(8)
+    };
+    let dict_overhead = {
+        let mut w = BitWriter::new();
+        encode_patches_section(&patches_data, true, &mut w).ok()?;
+        w.bits_written().div_ceil(8)
+    };
+    let total_overhead = ref_overhead + dict_overhead;
+
+    // Estimate savings: patched pixels become near-zero after subtraction, compressing
+    // much better in VarDCT. Conservatively assume 1 byte saved per patched pixel
+    // (typical screenshots at d=1.0 are ~1.5-3 bytes/pixel, so saving ~50-70% of those).
+    let estimated_savings = total_patch_pixels;
+
+    #[cfg(feature = "debug-tokens")]
+    eprintln!(
+        "PATCHES: overhead={} bytes (ref={}, dict={}), estimated savings={} bytes, ratio={:.1}x",
+        total_overhead,
+        ref_overhead,
+        dict_overhead,
+        estimated_savings,
+        estimated_savings as f64 / total_overhead as f64
+    );
+
+    // Require estimated savings to exceed measured overhead with 2x margin.
+    // libjxl uses multi-attempt RD selection (try with/without patches, keep smaller).
+    // We approximate this by requiring a clear benefit before committing to patches.
+    if estimated_savings < total_overhead * 2 {
         #[cfg(feature = "debug-tokens")]
         eprintln!(
-            "PATCHES: skipping — too little coverage ({:.1}% < 2%)",
-            total_patch_pixels as f64 / image_pixels as f64 * 100.0
+            "PATCHES: skipping — overhead ({total_overhead}) exceeds benefit ({estimated_savings})"
         );
         return None;
     }
 
-    build_patches_data(infos)
+    Some(patches_data)
 }
 
 // ── Reference Frame Encoding ───────────────────────────────────────────────────
@@ -1047,7 +1171,7 @@ mod tests {
                 b[i] = (px as f32 + py as f32) / (w + h) as f32;
             }
         }
-        let result = find_text_like_patches([&x, &y, &b], w, h);
+        let result = find_text_like_patches([&x, &y, &b], w, h, w);
         assert!(result.is_empty(), "Photos should produce no patches");
     }
 
@@ -1084,7 +1208,7 @@ mod tests {
             }
         }
 
-        let result = find_text_like_patches([&x, &y, &b], w, h);
+        let result = find_text_like_patches([&x, &y, &b], w, h, w);
         // Should find at least one patch group with >= 2 occurrences
         // Note: the exact number depends on detection thresholds
         if !result.is_empty() {
