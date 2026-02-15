@@ -329,7 +329,7 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x5603401933cc398a, // Updated: float qf + deviation bounds
+        0x1298301e59733d02, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -426,7 +426,7 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x75b752c487f30914, // Updated: float qf + deviation bounds
+        0x5e2434f883b8209e, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -446,7 +446,7 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x5603401933cc398a, // Updated: float qf + deviation bounds
+        0x1298301e59733d02, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -526,7 +526,7 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x3a1632874102ca01, // Updated: float qf + deviation bounds
+        0x2ab5f77becafeda8, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -651,7 +651,7 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x5603401933cc398a, // Updated: float qf + deviation bounds
+        0x1298301e59733d02, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -672,7 +672,7 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x5603401933cc398a, // Updated: float qf + deviation bounds
+        0x1298301e59733d02, // Updated: multi-resolution butteraugli
     );
 }
 

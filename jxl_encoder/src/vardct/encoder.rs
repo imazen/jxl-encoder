@@ -848,8 +848,7 @@ impl VarDctEncoder {
         // the XYB conversion and frequency decomposition of the reference.
         let butteraugli_params = butteraugli::ButteraugliParams::new()
             .with_intensity_target(80.0)
-            .with_compute_diffmap(true)
-            .with_single_resolution(true);
+            .with_compute_diffmap(true);
         let reference = match butteraugli::ButteraugliReference::new_linear(
             linear_rgb,
             width,
