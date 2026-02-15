@@ -224,6 +224,11 @@ pub struct VarDctEncoder {
     /// ICC profile to embed in the codestream.
     /// When Some, writes has_icc=1 and encodes the profile after the file header.
     pub icc_profile: Option<Vec<u8>>,
+    /// Enable patches (dictionary-based repeated pattern detection).
+    /// When true, detects repeated rectangular elements (text glyphs, buttons, icons)
+    /// and stores unique patterns once in a reference frame. Huge wins on screenshots.
+    /// On by default for lossy encoding.
+    pub enable_patches: bool,
 }
 
 impl Default for VarDctEncoder {
@@ -249,6 +254,7 @@ impl Default for VarDctEncoder {
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
+            enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
         }
     }
 }
@@ -277,6 +283,7 @@ impl VarDctEncoder {
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
+            enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
         }
     }
 
@@ -355,6 +362,27 @@ impl VarDctEncoder {
         } else {
             None
         };
+
+        // Detect and subtract patches (before gaborish, after noise).
+        // Patches work in the XYB domain: detect repeated rectangular elements,
+        // store unique patterns in a reference frame, subtract from image.
+        let patches_data = if self.enable_patches {
+            super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height)
+        } else {
+            None
+        };
+        if let Some(ref pd) = patches_data {
+            let mut xyb = [
+                core::mem::take(&mut xyb_x),
+                core::mem::take(&mut xyb_y),
+                core::mem::take(&mut xyb_b),
+            ];
+            super::patches::subtract_patches(&mut xyb, padded_width, pd);
+            let [x, y, b] = xyb;
+            xyb_x = x;
+            xyb_y = y;
+            xyb_b = b;
+        }
 
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
@@ -573,6 +601,7 @@ impl VarDctEncoder {
                 &noise_params,
                 sharpness_map.as_deref(),
                 alpha,
+                patches_data.as_ref(),
             )?;
             return Ok(VarDctOutput {
                 data,
@@ -632,6 +661,7 @@ impl VarDctEncoder {
                 None,
                 &block_ctx_map,
                 None, // No learned tree in single-pass mode
+                None, // No patches in streaming mode
                 &mut dc_global,
             )?;
 
@@ -734,6 +764,7 @@ impl VarDctEncoder {
                 None,
                 &block_ctx_map,
                 None, // No learned tree in single-pass mode
+                None, // No patches in streaming mode
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();

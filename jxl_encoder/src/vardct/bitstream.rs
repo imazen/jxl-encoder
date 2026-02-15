@@ -195,10 +195,16 @@ impl VarDctEncoder {
         dc_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
         block_ctx_map: &BlockCtxMap,
         learned_tree_tokens: Option<&[(u32, u32)]>,
+        patches: Option<&super::patches::PatchesData>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
+
+        // Write patches section before noise (JXL spec ordering in LfGlobal)
+        if let Some(pd) = patches {
+            super::patches::encode_patches_section(pd, self.use_ans, writer)?;
+        }
 
         // Write noise parameters before dequant DC (decoder expects this order)
         if let Some(ref noise) = *noise_params {
@@ -896,6 +902,7 @@ impl VarDctEncoder {
             sharpness_map.as_deref(),
             alpha,
             Some(frame_options),
+            None, // No patches in animation frames
             writer,
         )?;
 
@@ -927,6 +934,7 @@ impl VarDctEncoder {
         noise_params: &Option<NoiseParams>,
         sharpness_map: Option<&[u8]>,
         alpha: Option<&[u8]>,
+        patches: Option<&super::patches::PatchesData>,
     ) -> Result<Vec<u8>> {
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
@@ -934,7 +942,15 @@ impl VarDctEncoder {
         let has_alpha = alpha.is_some();
         self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
 
-        // Write frame (header + TOC + sections)
+        // If patches present, write the reference frame before the main frame.
+        // The reference frame is a modular FrameType::ReferenceOnly frame that
+        // stores unique patch templates. The main frame then references it.
+        if let Some(pd) = patches {
+            super::patches::encode_reference_frame(pd, self.use_ans, &mut writer)?;
+            writer.zero_pad_to_byte();
+        }
+
+        // Write main VarDCT frame (header + TOC + sections)
         self.encode_two_pass_to_writer(
             width,
             height,
@@ -959,6 +975,7 @@ impl VarDctEncoder {
             sharpness_map,
             alpha,
             None,
+            patches,
             &mut writer,
         )?;
 
@@ -995,6 +1012,7 @@ impl VarDctEncoder {
         sharpness_map: Option<&[u8]>,
         alpha: Option<&[u8]>,
         frame_options: Option<&FrameOptions>,
+        patches: Option<&super::patches::PatchesData>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         // ── Pass 1: Collect tokens per section ──
@@ -1591,7 +1609,10 @@ impl VarDctEncoder {
             fh.epf_iters = params.epf_iters;
             fh.gaborish = self.enable_gaborish;
             if noise_params.is_some() {
-                fh.flags |= 0x01; // ENABLE_NOISE
+                fh.flags |= crate::headers::frame_header::ENABLE_NOISE;
+            }
+            if patches.is_some() {
+                fh.flags |= crate::headers::frame_header::PATCHES_FLAG;
             }
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
@@ -1632,6 +1653,7 @@ impl VarDctEncoder {
                 dc_lz77_params.as_ref(),
                 &block_ctx_map,
                 learned_tree_tokens.as_deref(),
+                patches,
                 &mut dc_global,
             )?;
 
@@ -1695,6 +1717,7 @@ impl VarDctEncoder {
                 dc_lz77_params.as_ref(),
                 &block_ctx_map,
                 learned_tree_tokens.as_deref(),
+                patches,
                 &mut dc_global,
             )?;
             // Multi-group alpha: write empty modular global sub-bitstream.

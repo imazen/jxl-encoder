@@ -86,6 +86,13 @@ pub enum BlendMode {
     Mul = 4,
 }
 
+/// Frame flag: enable noise synthesis.
+pub const ENABLE_NOISE: u64 = 0x01;
+/// Frame flag: enable patches (dictionary-based repeated patterns).
+pub const PATCHES_FLAG: u64 = 0x02;
+/// Frame flag: skip adaptive LF smoothing.
+pub const SKIP_ADAPTIVE_LF_SMOOTHING: u64 = 0x80;
+
 /// Frame header structure.
 ///
 /// Used by both VarDCT and Modular encoding paths. Fields are parameterized
@@ -99,7 +106,8 @@ pub struct FrameHeader {
     /// Whether the image metadata has xyb_encoded=true.
     /// Controls whether do_ycbcr is written (only when false).
     pub xyb_encoded: bool,
-    /// Frame flags (e.g., SKIP_ADAPTIVE_LF_SMOOTHING=0x80, ENABLE_NOISE=0x01).
+    /// Frame flags (bitfield: ENABLE_NOISE=0x01, PATCHES_FLAG=0x02,
+    /// SKIP_ADAPTIVE_LF_SMOOTHING=0x80).
     pub flags: u64,
     /// Whether the frame uses YCbCr color transform (only written when !xyb_encoded).
     pub do_ycbcr: bool,
