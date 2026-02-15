@@ -203,7 +203,11 @@ impl VarDctEncoder {
 
         // Write patches section before noise (JXL spec ordering in LfGlobal)
         if let Some(pd) = patches {
+            #[cfg(feature = "trace-bitstream")]
+            eprintln!("PATCHES_SECTION: start at bit {}", writer.bits_written());
             super::patches::encode_patches_section(pd, self.use_ans, writer)?;
+            #[cfg(feature = "trace-bitstream")]
+            eprintln!("PATCHES_SECTION: end at bit {}", writer.bits_written());
         }
 
         // Write noise parameters before dequant DC (decoder expects this order)
@@ -946,8 +950,20 @@ impl VarDctEncoder {
         // The reference frame is a modular FrameType::ReferenceOnly frame that
         // stores unique patch templates. The main frame then references it.
         if let Some(pd) = patches {
+            #[cfg(feature = "trace-bitstream")]
+            eprintln!(
+                "PATCHES: writing reference frame at bit {} (byte {})",
+                writer.bits_written(),
+                writer.bits_written() / 8
+            );
             super::patches::encode_reference_frame(pd, self.use_ans, &mut writer)?;
             writer.zero_pad_to_byte();
+            #[cfg(feature = "trace-bitstream")]
+            eprintln!(
+                "PATCHES: reference frame done, main frame starts at bit {} (byte {})",
+                writer.bits_written(),
+                writer.bits_written() / 8
+            );
         }
 
         // Write main VarDCT frame (header + TOC + sections)
