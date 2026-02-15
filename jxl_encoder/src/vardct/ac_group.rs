@@ -12,11 +12,11 @@
 //! Ported from libjxl-tiny enc_group.cc.
 
 use alloc::boxed::Box;
-use alloc::vec;
 use alloc::vec::Vec;
 use once_cell::race::OnceBox;
 
 use super::ac_context::{NON_ZERO_BUCKETS, ZERO_DENSITY_CONTEXT_COUNT, zero_density_context};
+use super::coeff_order::natural_coeff_order;
 use super::common::{DCT_BLOCK_SIZE, pack_signed};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
@@ -97,115 +97,37 @@ pub static COEFF_ORDER_16X16: [u32; 256] = [
 /// Default zig-zag coefficient order for DCT32x32 (1024 coefficients).
 /// Generated at runtime via CoefficientLayout scan: LLF positions first,
 /// then remaining AC positions in zig-zag order.
+/// Default coefficient orders use natural_coeff_order() to match the decoder's
+/// ComputeNaturalCoeffOrder. This ensures encoder and decoder agree on default
+/// ordering even when custom orders are not sent.
 static COEFF_ORDER_32X32: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_32x32() -> &'static [u32] {
-    COEFF_ORDER_32X32.get_or_init(|| Box::new(coefficient_layout_order(32, 32, 4, 4)))
+    COEFF_ORDER_32X32.get_or_init(|| Box::new(natural_coeff_order(4, 4)))
 }
 
-/// Default zig-zag coefficient order for DCT32x16 (512 coefficients).
-/// DCT32x16 is a "tall" transform (covered_y=4 > covered_x=2), so the flat
-/// buffer assembly swaps dimensions: stride = max(4,2)*8 = 32. The coefficient
-/// order must use the swapped layout (16 rows × 32 cols, LLF 2×4) to match.
 static COEFF_ORDER_32X16: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_32x16() -> &'static [u32] {
-    COEFF_ORDER_32X16.get_or_init(|| Box::new(coefficient_layout_order(16, 32, 2, 4)))
+    COEFF_ORDER_32X16.get_or_init(|| Box::new(natural_coeff_order(4, 2)))
 }
 
-/// Default zig-zag coefficient order for DCT16x32 (512 coefficients).
-/// DCT16x32: 16 rows × 32 cols, LLF region is 2×4 (2 rows × 4 cols).
 static COEFF_ORDER_16X32: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_16x32() -> &'static [u32] {
-    COEFF_ORDER_16X32.get_or_init(|| Box::new(coefficient_layout_order(16, 32, 2, 4)))
+    COEFF_ORDER_16X32.get_or_init(|| Box::new(natural_coeff_order(4, 2)))
 }
 
-/// Default zig-zag coefficient order for DCT64x64 (4096 coefficients).
-/// DCT64x64: 64 rows × 64 cols, LLF region is 8×8.
 static COEFF_ORDER_64X64: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_64x64() -> &'static [u32] {
-    COEFF_ORDER_64X64.get_or_init(|| Box::new(coefficient_layout_order(64, 64, 8, 8)))
+    COEFF_ORDER_64X64.get_or_init(|| Box::new(natural_coeff_order(8, 8)))
 }
 
-/// Default zig-zag coefficient order for DCT64x32 (2048 coefficients).
-/// DCT64x32 is a "tall" transform (covered_y=8 > covered_x=4), so the flat
-/// buffer assembly swaps dimensions: stride = max(8,4)*8 = 64. The coefficient
-/// order must use the swapped layout (32 rows × 64 cols, LLF 4×8) to match.
 static COEFF_ORDER_64X32: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_64x32() -> &'static [u32] {
-    COEFF_ORDER_64X32.get_or_init(|| Box::new(coefficient_layout_order(32, 64, 4, 8)))
+    COEFF_ORDER_64X32.get_or_init(|| Box::new(natural_coeff_order(8, 4)))
 }
 
-/// Default zig-zag coefficient order for DCT32x64 (2048 coefficients).
-/// DCT32x64: 32 rows × 64 cols, LLF region is 4×8.
 static COEFF_ORDER_32X64: OnceBox<Vec<u32>> = OnceBox::new();
 fn coeff_order_32x64() -> &'static [u32] {
-    COEFF_ORDER_32X64.get_or_init(|| Box::new(coefficient_layout_order(32, 64, 4, 8)))
-}
-
-/// Generate a coefficient order with LLF positions first, then AC in zig-zag.
-///
-/// For transforms larger than 8x8, the first `llf_x * llf_y` positions must be
-/// the LLF (Lowest Low Frequency) coefficients that will be filled from DC.
-/// The remaining positions are AC coefficients scanned in zig-zag order.
-///
-/// The LLF positions in our layout (stride = `cols`) are at:
-///   `lx * cols + ly` for lx in 0..llf_x, ly in 0..llf_y
-///
-/// This matches how `tokenize_ac_coefficients` skips the first `covered_blocks`
-/// entries (treating them as LLF) and encodes the rest as AC.
-fn coefficient_layout_order(rows: usize, cols: usize, llf_x: usize, llf_y: usize) -> Vec<u32> {
-    let size = rows * cols;
-    let mut order = Vec::with_capacity(size);
-
-    // Build set of LLF positions for quick lookup
-    let mut is_llf = vec![false; size];
-    for lx in 0..llf_x {
-        for ly in 0..llf_y {
-            let pos = lx * cols + ly;
-            is_llf[pos] = true;
-        }
-    }
-
-    // Phase 1: LLF positions in row-major order within the LLF region
-    for ly in 0..llf_y {
-        for lx in 0..llf_x {
-            order.push((lx * cols + ly) as u32);
-        }
-    }
-    debug_assert_eq!(order.len(), llf_x * llf_y);
-
-    // Phase 2: Remaining (non-LLF) positions in zig-zag diagonal scan
-    for d in 0..(rows + cols - 1) {
-        if d % 2 == 0 {
-            // Even diagonal: go from bottom-left to top-right
-            let r_start = d.min(rows - 1);
-            let r_end = if d >= cols { d - cols + 1 } else { 0 };
-            let mut r = r_start;
-            loop {
-                let c = d - r;
-                let pos = r * cols + c;
-                if !is_llf[pos] {
-                    order.push(pos as u32);
-                }
-                if r == r_end {
-                    break;
-                }
-                r -= 1;
-            }
-        } else {
-            // Odd diagonal: go from top-right to bottom-left
-            let r_start = if d >= cols { d - cols + 1 } else { 0 };
-            let r_end = d.min(rows - 1);
-            for r in r_start..=r_end {
-                let c = d - r;
-                let pos = r * cols + c;
-                if !is_llf[pos] {
-                    order.push(pos as u32);
-                }
-            }
-        }
-    }
-    debug_assert_eq!(order.len(), size);
-    order
+    COEFF_ORDER_32X64.get_or_init(|| Box::new(natural_coeff_order(8, 4)))
 }
 
 /// Get coefficient order based on AC strategy (bitstream code).
