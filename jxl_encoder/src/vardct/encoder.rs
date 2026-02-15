@@ -1430,8 +1430,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
-        const EXPECTED_HASH: u64 = 0xcb394243355216ae;
+        // Updated: AFV strategies enabled in auto-selection
+        const EXPECTED_HASH: u64 = 0xd91c3989788e5448;
         assert_eq!(
             hash,
             EXPECTED_HASH,

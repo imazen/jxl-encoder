@@ -816,7 +816,7 @@ fn generate_afv_weights() -> Vec<f32> {
                 if x == 0 && y == 0 {
                     continue; // Position (0,1) is DC tendency, already set
                 }
-                let idx4x8 = c * 64 + y * 8 + x; // DCT4x8 weights are in 8x8 interleaved format
+                let idx4x8 = c * 64 + y * 16 + x; // Row-duplicated layout: base row y at duplicated row 2*y
                 weights[start + (2 * y + 1) * 8 + x] = weights4x8[idx4x8];
             }
         }
