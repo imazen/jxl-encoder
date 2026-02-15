@@ -306,6 +306,8 @@ impl VarDctEncoder {
             assert_eq!(a.len(), width * height);
         }
 
+        crate::debug_rect::clear();
+
         // Calculate dimensions
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
         let ysize_blocks = div_ceil(height, BLOCK_DIM);
@@ -603,6 +605,7 @@ impl VarDctEncoder {
                 alpha,
                 patches_data.as_ref(),
             )?;
+            crate::debug_rect::flush("");
             return Ok(VarDctOutput {
                 data,
                 strategy_counts,
@@ -827,6 +830,7 @@ impl VarDctEncoder {
         }
 
         let strategy_counts = ac_strategy.strategy_histogram();
+        crate::debug_rect::flush("");
         Ok(VarDctOutput {
             data: writer.finish_with_padding(),
             strategy_counts,

@@ -16,6 +16,7 @@
 
 use super::common::pack_signed;
 use crate::bit_writer::BitWriter;
+use crate::debug_rect;
 use crate::entropy_coding::encode::{
     build_entropy_code_ans_with_options, build_entropy_code_with_options,
 };
@@ -329,6 +330,15 @@ pub(crate) fn find_text_like_patches(
         }
     }
 
+    debug_rect!(
+        "patches/seeds",
+        0,
+        0,
+        width,
+        height,
+        "{num_seeds} screenshot-like seeds from {bw}x{bh} block grid"
+    );
+
     if num_seeds == 0 {
         return Vec::new();
     }
@@ -402,6 +412,16 @@ pub(crate) fn find_text_like_patches(
             }
         }
     }
+    let bg_count = is_background.iter().filter(|&&b| b).count();
+    debug_rect!(
+        "patches/bfs",
+        0,
+        0,
+        width,
+        height,
+        "BFS background: {bg_count} pixels ({:.1}% of image)",
+        bg_count as f64 / (width * height) as f64 * 100.0
+    );
     drop(queue);
 
     // Step 4: Extract foreground connected components (8-connected DFS).
@@ -482,6 +502,21 @@ pub(crate) fn find_text_like_patches(
                 || max_x - min_x >= MAX_PATCH_SIZE
                 || max_y - min_y >= MAX_PATCH_SIZE
             {
+                let reason = if !found_border {
+                    "no border"
+                } else if !all_similar {
+                    "inconsistent border"
+                } else {
+                    "too large"
+                };
+                debug_rect!(
+                    "patches/cc_reject",
+                    min_x,
+                    min_y,
+                    max_x - min_x + 1,
+                    max_y - min_y + 1,
+                    "CC rejected: {reason}"
+                );
                 continue;
             }
 
@@ -509,6 +544,14 @@ pub(crate) fn find_text_like_patches(
                 }
             }
             if !has_similar {
+                debug_rect!(
+                    "patches/cc_reject",
+                    min_x,
+                    min_y,
+                    cc_w,
+                    cc_h,
+                    "CC rejected: no similar pixel in expanded bbox"
+                );
                 continue;
             }
 
@@ -539,8 +582,25 @@ pub(crate) fn find_text_like_patches(
 
             // kMinPeak check: reject patches where max quantized magnitude < 2
             if max_value < MIN_PEAK {
+                debug_rect!(
+                    "patches/cc_reject",
+                    min_x,
+                    min_y,
+                    cc_w,
+                    cc_h,
+                    "CC rejected: peak {max_value} < {MIN_PEAK}"
+                );
                 continue;
             }
+
+            debug_rect!(
+                "patches/cc_accept",
+                min_x,
+                min_y,
+                cc_w,
+                cc_h,
+                "CC accepted: {cc_w}x{cc_h} peak={max_value}"
+            );
 
             let patch = QuantizedPatch {
                 xsize: cc_w,
@@ -577,6 +637,19 @@ pub(crate) fn find_text_like_patches(
         let patch = group.into_iter().next().unwrap().2;
         result.push(PatchInfo { patch, positions });
     }
+
+    let total_dedup_occurrences: usize = result.iter().map(|p| p.positions.len()).sum();
+    debug_rect!(
+        "patches/dedup",
+        0,
+        0,
+        width,
+        height,
+        "{} unique patterns; {} total occurrences (from {} raw CCs)",
+        result.len(),
+        total_dedup_occurrences,
+        result.iter().map(|p| p.positions.len()).sum::<usize>()
+    );
 
     // Check minimum largest patch size
     let max_patch_pixels = result
@@ -767,6 +840,16 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
 ///
 /// The decoder will add them back using blend mode kAdd.
 pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &PatchesData) {
+    debug_rect!(
+        "patches/subtract",
+        0,
+        0,
+        0,
+        0,
+        "subtracting {} occurrences from {} unique refs",
+        patches.positions.len(),
+        patches.ref_positions.len()
+    );
     for pos in &patches.positions {
         let ref_pos = &patches.ref_positions[pos.ref_pos_idx];
         let pw = ref_pos.xsize as usize;
@@ -776,6 +859,15 @@ pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patch
         let pos_x = pos.x as usize;
         let pos_y = pos.y as usize;
 
+        debug_rect!(
+            "patches/sub_occurrence",
+            pos_x,
+            pos_y,
+            pw,
+            ph,
+            "ref[{}] at ({ref_x0};{ref_y0}) {pw}x{ph}",
+            pos.ref_pos_idx
+        );
         for dy in 0..ph {
             for dx in 0..pw {
                 let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
@@ -900,6 +992,7 @@ pub(crate) fn find_and_build(
 ) -> Option<PatchesData> {
     let infos = find_text_like_patches(xyb, width, height, stride);
     if infos.is_empty() {
+        debug_rect!("patches/detect", 0, 0, width, height, "no patches detected");
         return None;
     }
 
@@ -927,11 +1020,17 @@ pub(crate) fn find_and_build(
     // Quick coverage filter: patches on <1% of the image never help.
     // The overhead from the reference frame + dictionary always exceeds savings.
     if total_patch_pixels * 100 < image_pixels {
+        let coverage_pct = total_patch_pixels as f64 / image_pixels as f64 * 100.0;
+        debug_rect!(
+            "patches/coverage",
+            0,
+            0,
+            width,
+            height,
+            "rejected: {coverage_pct:.2}% coverage < 1%"
+        );
         #[cfg(feature = "debug-tokens")]
-        {
-            let coverage_pct = total_patch_pixels as f64 / image_pixels as f64 * 100.0;
-            eprintln!("PATCHES: skipping — too little coverage ({coverage_pct:.1}% < 1%)");
-        }
+        eprintln!("PATCHES: skipping — too little coverage ({coverage_pct:.1}% < 1%)");
         return None;
     }
 
@@ -974,16 +1073,47 @@ pub(crate) fn find_and_build(
         estimated_savings as f64 / total_overhead as f64
     );
 
+    debug_rect!(
+        "patches/cost",
+        0,
+        0,
+        width,
+        height,
+        "overhead={total_overhead}B (ref={ref_overhead} dict={dict_overhead}); savings_est={estimated_savings}B; ratio={:.1}x",
+        estimated_savings as f64 / total_overhead.max(1) as f64
+    );
+
     // Require estimated savings to exceed measured overhead with 2x margin.
     // libjxl uses multi-attempt RD selection (try with/without patches, keep smaller).
     // We approximate this by requiring a clear benefit before committing to patches.
     if estimated_savings < total_overhead * 2 {
+        debug_rect!(
+            "patches/decision",
+            0,
+            0,
+            width,
+            height,
+            "REJECTED: overhead {total_overhead}B > benefit {estimated_savings}B / 2"
+        );
         #[cfg(feature = "debug-tokens")]
         eprintln!(
             "PATCHES: skipping — overhead ({total_overhead}) exceeds benefit ({estimated_savings})"
         );
         return None;
     }
+
+    debug_rect!(
+        "patches/decision",
+        0,
+        0,
+        width,
+        height,
+        "ACCEPTED: {} unique refs in {}x{} frame; {} occurrences",
+        patches_data.ref_positions.len(),
+        patches_data.ref_width,
+        patches_data.ref_height,
+        patches_data.positions.len()
+    );
 
     Some(patches_data)
 }
