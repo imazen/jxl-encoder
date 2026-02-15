@@ -62,20 +62,20 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Feature | libjxl e5 | libjxl e7 | jxl-encoder |
 |---------|-----------|-----------|-------------|
 | AC strategies | 7 | 19 | 19 |
-| ANS entropy coding | Yes | Yes | Yes (default-on) |
+| ANS entropy coding (default-on) | Yes | Yes | Yes |
 | Adaptive quantization | Yes | Yes | Yes |
-| Pixel-domain loss (IDCT error + masking) | Yes | Yes | Yes (default-on) |
-| Chroma-from-luma | Yes | Yes | Yes (per-tile least-squares) |
-| Gaborish inverse pre-filter | Yes | Yes | Yes (default-on) |
-| Custom coefficient ordering | Yes | Yes | Yes (default-on) |
-| Butteraugli quant loop | Yes | Yes | Yes (default-on, 2 iterations) |
+| Pixel-domain loss (default-on) | Yes | Yes | Yes |
+| Chroma-from-luma (per-tile least-squares) | Yes | Yes | Yes |
+| Gaborish inverse pre-filter (default-on) | Yes | Yes | Yes |
+| Custom coefficient ordering (default-on) | Yes | Yes | Yes |
+| Butteraugli quant loop (default-on) | Yes | Yes | Yes (2 iterations) |
 | EPF per-block sharpness | Yes | Yes | Yes |
 | Content-adaptive block context map | Yes | Yes | Yes |
-| Error diffusion in AC quantization | No | Yes | Yes (default-on) |
-| Noise synthesis | Yes | Yes | Yes (opt-in) |
+| Error diffusion in AC quantization | No | No | Yes (default-on) |
+| Noise synthesis (auto in libjxl) | Yes | Yes | Yes (opt-in) |
 | Lossy + alpha (VarDCT RGB + modular alpha) | Yes | Yes | Yes |
 | JPEG re-encoding | Yes | Yes | Yes (opt-in feature) |
-| Animation | Yes | Yes | Yes (lossy + lossless) |
+| Animation (lossy + lossless) | Yes | Yes | Yes |
 | 16-bit / float input | Yes | Yes | Yes (Rgb16, Rgba16, Gray16, RgbLinearF32) |
 | Splines / patches / dots | No | Yes | No |
 
@@ -83,16 +83,16 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 
 | Feature | libjxl | jxl-encoder |
 |---------|--------|-------------|
-| RCT (reversible color transform) | All 42 variants | All 42 variants |
-| ANS entropy coding | Yes | Yes (default-on) |
-| Huffman entropy coding | Yes | Yes (fallback) |
+| RCT (reversible color transform, all 42 variants) | Yes | Yes |
+| ANS entropy coding (default-on) | Yes | Yes |
+| Huffman entropy coding (fallback) | Yes | Yes |
 | LZ77 RLE | Yes | Yes (opt-in) |
 | LZ77 backward references (hash chain) | Yes | Yes (opt-in) |
-| MA tree learning (context modeling) | Yes | Yes (14 predictors, 16 properties) |
+| MA tree learning (14 predictors, 16 properties) | Yes | Yes |
 | Weighted predictor | Yes | Yes (bit-exact match) |
-| Palette transform | Yes | Yes (auto-detect for graphics) |
+| Palette transform (auto-detect) | Yes | Yes |
 | Squeeze transform (Haar wavelet) | Yes | Yes |
-| Histogram clustering | Yes | Yes (pair-merge refinement) |
+| Histogram clustering | Full (kDefault) | Pair-merge refinement |
 | Multi-group encoding (any image size) | Yes | Yes |
 | RGBA / grayscale / alpha | Yes | Yes |
 | Lossy palette / delta palette | Yes | No |
@@ -106,7 +106,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Huffman (static + dynamic) | Yes | Yes |
 | HybridUint {4,2,0} | Yes | Yes |
 | LZ77 (RLE + greedy backref) | Yes | Yes |
-| Histogram clustering (pair-merge) | Yes | Yes |
+| Histogram clustering | Full (kDefault) | Pair-merge refinement |
 | Context map compression | Yes | Yes |
 | Content-adaptive block context map | Yes | Yes |
 
@@ -114,10 +114,10 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 
 | Feature | libjxl | jxl-encoder |
 |---------|--------|-------------|
-| ICC profile embedding | Yes | Yes (PredictICC + entropy coded) |
-| EXIF metadata | Yes | Yes (container box) |
-| XMP metadata | Yes | Yes (container box) |
-| Animation (lossy + lossless) | Yes | Yes (per-frame duration, loop count) |
+| ICC profile embedding (PredictICC + entropy coded) | Yes | Yes |
+| EXIF metadata (container box) | Yes | Yes |
+| XMP metadata (container box) | Yes | Yes |
+| Animation (lossy + lossless, per-frame duration) | Yes | Yes |
 | Multi-group framing (>256x256) | Yes | Yes |
 | Cancellation / limits | No | Yes (`&dyn Stop`, `Limits` struct) |
 
