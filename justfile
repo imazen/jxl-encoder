@@ -1,6 +1,6 @@
 # jxl-encoder-rs task runner
 
-# Run RD regression test (encodes 6 images at d=0.25 and d=0.5, ~3 min in debug)
+# Run RD regression test (encodes 6 images at d=0.25, d=0.5, d=1.0)
 rd-regression:
     cargo test -p jxl-encoder --test clic2025 test_rd_regression -- --ignored --nocapture
 
