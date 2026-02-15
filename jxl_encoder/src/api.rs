@@ -649,9 +649,11 @@ impl LosslessConfig {
 
 #[cfg(feature = "butteraugli-loop")]
 fn butteraugli_iters_for_effort(effort: u8) -> u32 {
+    // libjxl runs FindBestQuantization (butteraugli loop) at all efforts <= kKitten (e8).
+    // Default is 2 iterations, tortoise (e9+) gets 4.
     match effort {
-        0..=7 => 0,
-        8 => 2,
+        0..=4 => 0,
+        5..=8 => 2,
         _ => 4,
     }
 }

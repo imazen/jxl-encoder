@@ -991,15 +991,32 @@ impl VarDctEncoder {
                 }
             }
 
-            // Step 6: Adjust quant_field based on tile distances (matching libjxl)
+            // Step 6: Constrain and adjust quant_field based on tile distances.
             //
-            // libjxl convention: higher qf = finer quantization = better quality
-            // Our convention: higher qf = coarser quantization = WORSE quality
+            // Convention: higher qf = finer quantization = better quality (same as libjxl).
+            // quantize_coeff_ac: val = coef * inv_weight * qac * qm_mul
+            // Higher qac (from higher qf) → larger quantized int → more precision.
             //
-            // libjxl's adjustment when diff > 1 (quality too bad): qf *= diff (increase)
-            // For our inverted convention: when diff > 1, we DECREASE qf (= better quality)
-            //
-            // libjxl is ASYMMETRIC: aggressively fix bad blocks, barely touch good blocks.
+            // libjxl order: constrain toward initial (kOriginalComparisonRound=1),
+            // THEN adjust based on tile distances.
+
+            // kOriginalComparisonRound = 1: constrain toward initial BEFORE adjustment.
+            // Prevents oscillation by keeping qf from diverging too far from initial.
+            if iter == 1 {
+                const K_INIT_MUL: f32 = 0.6;
+                for bi in 0..num_blocks {
+                    let init_qf = initial_quant_field[bi] as f32;
+                    let cur_qf = quant_field[bi] as f32;
+                    // Prevent qf from going too LOW (quality too bad).
+                    let clamp_val = (1.0 - K_INIT_MUL) * cur_qf + K_INIT_MUL * init_qf;
+                    if cur_qf < clamp_val {
+                        quant_field[bi] = (clamp_val.round() as u8).clamp(1, 255);
+                    }
+                }
+            }
+
+            // Adjust quant_field based on tile distances.
+            // ASYMMETRIC: aggressively fix bad blocks, barely touch good blocks.
             // kPow = [0.2, 0.2, 0, 0, ...] — only iters 0-1 touch good blocks, gently.
             let cur_pow: f64 = if iter < 2 {
                 0.2 + (target_distance as f64 - 1.0) * 0.0 // kPowMod[0..1] = 0
@@ -1012,26 +1029,19 @@ impl VarDctEncoder {
                 let old_qf = quant_field[bi] as f32;
 
                 let new_qf = if diff <= 1.0 {
-                    // Quality is good enough — barely adjust (or don't)
+                    // Quality is good enough — save bits by reducing precision.
                     if cur_pow == 0.0 {
                         old_qf // Don't touch good blocks on later iterations
                     } else {
-                        // Our convention inverted: good quality = decrease qf slightly
-                        // libjxl: qf *= pow(diff, cur_pow) — slight decrease
-                        // Ours: qf *= 1/pow(diff, cur_pow) — slight increase (coarser)
-                        // Wait: diff < 1, pow(diff, 0.2) < 1, so libjxl decreases qf
-                        // In our convention, to save bits on over-quality blocks,
-                        // we INCREASE qf (coarser). So: qf / pow(diff, cur_pow)
-                        old_qf / (diff as f64).powf(cur_pow) as f32
+                        // diff < 1 → pow(diff, 0.2) < 1 → qf decreases slightly.
+                        old_qf * (diff as f64).powf(cur_pow) as f32
                     }
                 } else {
-                    // Quality too bad — aggressively improve
-                    // libjxl: qf *= diff (increase qf = better quality)
-                    // Ours: qf /= diff (decrease qf = better quality, inverted convention)
-                    let candidate = old_qf / diff;
+                    // Quality too bad — aggressively improve by increasing qf.
+                    let candidate = old_qf * diff;
                     // Ensure at least 1 step change (matching libjxl's rounding check)
-                    if candidate.round() as u8 == old_qf as u8 && old_qf > 1.0 {
-                        old_qf - 1.0
+                    if candidate.round() as u8 == old_qf as u8 {
+                        old_qf + 1.0
                     } else {
                         candidate
                     }
@@ -1040,32 +1050,10 @@ impl VarDctEncoder {
                 quant_field[bi] = (new_qf.round() as u8).clamp(1, 255);
             }
 
-            // kOriginalComparisonRound = 1: after iter 1, constrain toward initial
-            // to prevent oscillation. libjxl uses kInitMul=0.6 blend toward initial,
-            // but only clamps from BELOW (prevents qf from going too low = too coarse).
-            // In our inverted convention: prevent qf from going too HIGH = too coarse.
-            if iter == 1 {
-                const K_INIT_MUL: f32 = 0.6;
-                for bi in 0..num_blocks {
-                    let init_qf = initial_quant_field[bi] as f32;
-                    let cur_qf = quant_field[bi] as f32;
-                    // libjxl: clamp = (1-kInitMul)*cur + kInitMul*init
-                    // libjxl: if cur < clamp: cur = clamp (prevents going too low)
-                    // Our inverted: if cur > clamp: cur = clamp (prevents going too high/coarse)
-                    let clamp_val = (1.0 - K_INIT_MUL) * cur_qf + K_INIT_MUL * init_qf;
-                    if cur_qf > clamp_val {
-                        quant_field[bi] = (clamp_val.round() as u8).clamp(1, 255);
-                    }
-                }
-            }
-
             eprintln!(
                 "  Butteraugli iter {}: score={:.3} (target={:.3})",
                 iter, result.score, target_distance,
             );
-
-            // Re-adjust quant field for multi-block consistency
-            adjust_quant_field_with_distance(ac_strategy, quant_field, self.distance);
         }
     }
 
