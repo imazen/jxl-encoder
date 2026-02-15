@@ -1,5 +1,16 @@
 # Feedback Log
 
+## 2026-02-14: Non-square DCT coefficient order fix
+
+User asked to continue debugging DCT32X16/DCT16X32 garbage quality (bfly 28-34). Root cause
+found: bucket_to_cx_cy() in coeff_order.rs missing bucket 6 mapping. STRATEGY_TO_BUCKET
+correctly sent codes 10/11 to bucket 6, but bucket_to_cx_cy fell through to (0,0), causing
+custom orders to be skipped. Encoder used coefficient_layout_order while decoder used
+natural_coeff_order — 502/512 positions differed. Fix: add bucket 6→(4,2), fix bucket 5
+label (was DCT32X16, actually DCT32X8), switch default orders to natural_coeff_order,
+re-enable all 4 non-square strategies (DCT32X16, DCT16X32, DCT64X32, DCT32X64).
+Result: bfly 28-34 → 4.5-4.6. DCT32X16 produces 8% smaller files than DCT8 at equal quality.
+
 ## 2026-01-30: Dynamic Huffman codes implementation
 
 User requested implementation of dynamic Huffman codes for the tiny encoder as a two-pass optimization mode. Plan was pre-approved. Implementation completed in a single session — 5 files modified, 728 lines added, all 69 tests pass.
