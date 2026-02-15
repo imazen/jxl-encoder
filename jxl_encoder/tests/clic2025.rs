@@ -7893,12 +7893,19 @@ fn test_patches_screenshot_corpus_size() {
 #[test]
 #[ignore] // Requires codec corpus
 fn test_patches_no_regression_on_photos() {
-    let corpus = "/home/lilith/work/codec-corpus/subset1024";
-    let photos = [
-        "alessio-soggetti-unsplash.png",
-        "austin-neill-unsplash.png",
-        "brent-gorwin-unsplash.png",
-    ];
+    let corpus = "/home/lilith/work/codec-corpus/clic2025-1024";
+    let photos: Vec<String> = match std::fs::read_dir(corpus) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".png"))
+            .take(3)
+            .collect(),
+        Err(_) => {
+            eprintln!("Skipping: corpus not available at {}", corpus);
+            return;
+        }
+    };
 
     for name in &photos {
         let path = format!("{}/{}", corpus, name);
@@ -7922,25 +7929,66 @@ fn test_patches_no_regression_on_photos() {
     }
 }
 
-/// Hash-lock test for a small synthetic screenshot with known patches output.
+/// Synthetic screenshot test: 256x256 with many repeated glyphs.
+/// Verifies the full patches path: detect → pack → reference frame → subtract → encode → decode.
 #[test]
 fn test_patches_synthetic_screenshot_encode() {
-    // Create a 64x64 synthetic screenshot: solid background with repeated 8x8 glyphs
-    let w = 64usize;
-    let h = 64usize;
+    // 256x256 image: solid gray background with a grid of repeated 8x8 "glyphs"
+    let w = 256usize;
+    let h = 256usize;
     let mut pixels = vec![200u8; w * h * 3]; // Light gray background
 
-    // Draw a repeated 8x8 "glyph" (dark rectangle) at 4 positions
-    let glyph_positions = [(8, 8), (24, 8), (8, 24), (24, 24)];
-    for &(gx, gy) in &glyph_positions {
-        for dy in 0..8 {
-            for dx in 0..8 {
-                let px = gx + dx;
-                let py = gy + dy;
-                let idx = (py * w + px) * 3;
-                pixels[idx] = 40; // Dark glyph
-                pixels[idx + 1] = 40;
-                pixels[idx + 2] = 40;
+    // Create 3 different glyph patterns, each repeated many times in a grid
+    let glyphs: Vec<Vec<u8>> = vec![
+        // Glyph 0: solid dark block
+        vec![40; 8 * 8 * 3],
+        // Glyph 1: vertical bar
+        {
+            let mut g = vec![200u8; 8 * 8 * 3];
+            for y in 0..8 {
+                for x in 2..5 {
+                    let i = (y * 8 + x) * 3;
+                    g[i] = 60;
+                    g[i + 1] = 60;
+                    g[i + 2] = 60;
+                }
+            }
+            g
+        },
+        // Glyph 2: horizontal bar
+        {
+            let mut g = vec![200u8; 8 * 8 * 3];
+            for y in 2..5 {
+                for x in 0..8 {
+                    let i = (y * 8 + x) * 3;
+                    g[i] = 80;
+                    g[i + 1] = 80;
+                    g[i + 2] = 80;
+                }
+            }
+            g
+        },
+    ];
+
+    // Place glyphs in a grid: 16 columns × 12 rows = 192 occurrences
+    for row in 0..12 {
+        for col in 0..16 {
+            let gx = col * 16 + 4;
+            let gy = row * 20 + 4;
+            let glyph_idx = (row * 16 + col) % glyphs.len();
+            let glyph = &glyphs[glyph_idx];
+            for dy in 0..8 {
+                for dx in 0..8 {
+                    let px = gx + dx;
+                    let py = gy + dy;
+                    if px < w && py < h {
+                        let dst = (py * w + px) * 3;
+                        let src = (dy * 8 + dx) * 3;
+                        pixels[dst] = glyph[src];
+                        pixels[dst + 1] = glyph[src + 1];
+                        pixels[dst + 2] = glyph[src + 2];
+                    }
+                }
             }
         }
     }
@@ -7958,15 +8006,7 @@ fn test_patches_synthetic_screenshot_encode() {
         data_no_patches.len()
     );
 
-    // Write no-patches version for comparison
-    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder/patches");
-    std::fs::write(
-        "/mnt/v/output/jxl-encoder/patches/synthetic_no_patches.jxl",
-        &data_no_patches,
-    )
-    .unwrap();
-
-    // Verify no-patches version decodes
+    // Verify no-patches version decodes with jxl-oxide
     {
         let reader = Cursor::new(&data_no_patches);
         let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
@@ -7981,7 +8021,7 @@ fn test_patches_synthetic_screenshot_encode() {
         );
     }
 
-    // Encode with patches — should succeed regardless of whether patches fire
+    // Encode with patches enabled
     let data = jxl_encoder::LossyConfig::new(1.0)
         .with_patches(true)
         .with_butteraugli_iters(0)
@@ -7995,11 +8035,19 @@ fn test_patches_synthetic_screenshot_encode() {
         data.len()
     );
 
-    // Write to file for external verification
+    // Check if patches actually fired
+    let patches_fired = data.len() != data_no_patches.len();
+    eprintln!(
+        "  patches fired: {} (size diff: {} bytes)",
+        patches_fired,
+        data_no_patches.len() as i64 - data.len() as i64
+    );
+
+    // Verify patches version decodes with djxl
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder/patches");
     let test_path = "/mnt/v/output/jxl-encoder/patches/synthetic_test.jxl";
     std::fs::write(test_path, &data).unwrap();
 
-    // Try djxl
     let output =
         std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
             .args([
@@ -8008,46 +8056,26 @@ fn test_patches_synthetic_screenshot_encode() {
             ])
             .output();
     if let Ok(out) = output {
-        if out.status.success() {
-            eprintln!("  djxl decode: OK");
-        } else {
-            eprintln!(
-                "  djxl decode FAILED: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
+        assert!(
+            out.status.success(),
+            "djxl decode failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        eprintln!("  djxl decode: OK");
     }
 
-    // Try jxl-oxide — detailed error at each stage
+    // Verify with jxl-oxide
     let reader = Cursor::new(&data);
-    match jxl_oxide::JxlImage::builder().read(reader) {
-        Ok(mut image) => {
-            let header = image.image_header();
-            eprintln!(
-                "  jxl-oxide parsed header OK: {}x{}, xyb={}",
-                header.size.width, header.size.height, header.metadata.xyb_encoded,
-            );
-            image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb(
-                jxl_oxide::RenderingIntent::Relative,
-            ));
-            // Try rendering each frame
-            let num_frames = image.num_loaded_keyframes();
-            eprintln!("  jxl-oxide loaded {} keyframes", num_frames);
-            for i in 0..num_frames.max(1) {
-                match image.render_frame(i) {
-                    Ok(render) => {
-                        let fb = render.image_all_channels();
-                        eprintln!(
-                            "  jxl-oxide frame {} decode: OK ({}x{})",
-                            i,
-                            fb.width(),
-                            fb.height()
-                        );
-                    }
-                    Err(e) => eprintln!("  jxl-oxide frame {} render error: {:?}", i, e),
-                }
-            }
-        }
-        Err(e) => eprintln!("  jxl-oxide parse error: {:?}", e),
-    }
+    let mut image = jxl_oxide::JxlImage::builder()
+        .read(reader)
+        .expect("jxl-oxide parse failed");
+    image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb(
+        jxl_oxide::RenderingIntent::Relative,
+    ));
+    let render = image.render_frame(0).expect("jxl-oxide render failed");
+    eprintln!(
+        "  jxl-oxide decode: OK ({}x{})",
+        render.image_all_channels().width(),
+        render.image_all_channels().height()
+    );
 }
