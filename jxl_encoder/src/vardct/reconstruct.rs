@@ -384,13 +384,19 @@ fn reconstruct_xyb_impl(
                 }
             }
 
-            // Step 3: Transpose coefficients for rectangular transforms, then IDCT.
+            // Step 3: Transpose coefficients if needed, then IDCT.
             // The encoder stores coefficients in post-swap layout (cx >= cy, stride = cx*8).
-            // The IDCT functions expect the natural (physical) layout.
-            // For transpose_slots transforms, transpose from (cy_post × cx_post) to
-            // (cx_post × cy_post) = (covered_y × covered_x) layout.
+            //
+            // Most IDCT functions expect the post-swap layout directly (matching the
+            // forward DCT output). But idct_16x8 uses a gather/scatter implementation
+            // that expects the natural pixel layout (16×8, stride 8), so DCT16X8 needs
+            // a transpose from the post-swap 8×16 layout.
+            //
+            // idct_32x16 and idct_64x32 use explicit internal transposes and expect
+            // the post-swap layout — no transpose needed for those.
+            let needs_transpose = raw_strategy == RAW_STRATEGY_DCT16X8;
             for c in 0..3usize {
-                let idct_input = if transpose_slots {
+                let idct_input = if needs_transpose {
                     // Transpose from post-swap to natural layout using scratch
                     for y in 0..block_height {
                         for x in 0..block_width {
