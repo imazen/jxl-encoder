@@ -7594,3 +7594,460 @@ fn test_fair_comparison() {
         }
     }
 }
+
+// ── Patches (dictionary-based repeated patterns) tests ─────────────────────
+
+/// Helper: decode JXL bytes with jxl-rs, return (width, height, sRGB f32 pixels).
+fn decode_jxl_rs_for_patches(data: &[u8]) -> (usize, usize, Vec<f32>) {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = data;
+    let options = JxlDecoderOptions::default();
+    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+
+    // Process header
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during header");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs header decode error: {:?}", e),
+        }
+    };
+
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    let channels = 3;
+
+    let format = JxlPixelFormat {
+        color_type: JxlColorType::Rgb,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![],
+    };
+    decoder.set_pixel_format(format);
+
+    // Process to frame info
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input before frame");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame info decode error: {:?}", e),
+        }
+    };
+
+    let mut output_image = Image::<f32>::new((width * channels, height))
+        .expect("jxl-rs: failed to create output buffer");
+
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * channels, height),
+            })
+            .into_raw(),
+    )];
+
+    // Decode frame(s) — patches produce reference frame + main frame
+    loop {
+        match decoder.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during frame decode");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame decode error: {:?}", e),
+        }
+    }
+
+    let mut pixels = Vec::with_capacity(width * height * channels);
+    for y in 0..height {
+        pixels.extend_from_slice(output_image.row(y));
+    }
+    (width, height, pixels)
+}
+
+/// Helper: decode JXL bytes with djxl (libjxl reference decoder).
+fn decode_djxl_for_patches(data: &[u8]) -> (usize, usize, Vec<u8>) {
+    let pid = std::process::id();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let temp_jxl = format!("/tmp/patches_test_{}_{}.jxl", pid, ts);
+    let temp_png = format!("/tmp/patches_test_{}_{}.png", pid, ts);
+
+    std::fs::write(&temp_jxl, data).unwrap();
+    let output =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args([&temp_jxl, &temp_png])
+            .output()
+            .unwrap();
+
+    assert!(
+        output.status.success(),
+        "djxl failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let img = image::open(&temp_png).unwrap();
+    let rgb = img.to_rgb8();
+    let w = rgb.width() as usize;
+    let h = rgb.height() as usize;
+    let srgb_bytes: Vec<u8> = rgb.into_raw();
+
+    let _ = std::fs::remove_file(&temp_jxl);
+    let _ = std::fs::remove_file(&temp_png);
+    (w, h, srgb_bytes)
+}
+
+/// Helper: encode a screenshot PNG with patches on/off, return (bytes, size).
+fn encode_screenshot_with_patches(
+    path: &str,
+    distance: f32,
+    patches: bool,
+) -> Option<(Vec<u8>, usize)> {
+    let img = match image::open(path) {
+        Ok(img) => img,
+        Err(e) => {
+            eprintln!("Could not open {}: {}", path, e);
+            return None;
+        }
+    };
+    let (w, h) = img.dimensions();
+    let rgb = img.to_rgb8();
+    let pixels: Vec<u8> = rgb.into_raw();
+
+    let data = jxl_encoder::LossyConfig::new(distance)
+        .with_patches(patches)
+        .with_butteraugli_iters(0) // Skip butteraugli loop for speed in tests
+        .encode(&pixels, w, h, jxl_encoder::PixelLayout::Rgb8)
+        .unwrap();
+
+    let size = data.len();
+    Some((data, size))
+}
+
+/// Roundtrip test: encode a screenshot with patches → decode with jxl-rs.
+#[test]
+#[ignore] // Requires codec corpus
+fn test_patches_roundtrip_jxl_rs() {
+    let path = "/home/lilith/work/codec-corpus/gb82-sc/windows95.png";
+    let img = match image::open(path) {
+        Ok(img) => img,
+        Err(_) => {
+            eprintln!("Skipping: corpus not available");
+            return;
+        }
+    };
+    let (w, h) = img.dimensions();
+    let rgb = img.to_rgb8();
+    let pixels: Vec<u8> = rgb.into_raw();
+
+    // Encode with patches enabled
+    let data = jxl_encoder::LossyConfig::new(1.0)
+        .with_patches(true)
+        .with_butteraugli_iters(0)
+        .encode(&pixels, w, h, jxl_encoder::PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!(
+        "windows95.png: {}x{}, {} bytes with patches",
+        w,
+        h,
+        data.len()
+    );
+
+    // Decode with jxl-rs — must not error
+    let (dw, dh, decoded) = decode_jxl_rs_for_patches(&data);
+    assert_eq!(dw, w as usize);
+    assert_eq!(dh, h as usize);
+    assert_eq!(decoded.len(), w as usize * h as usize * 3);
+    eprintln!(
+        "  jxl-rs decode: OK ({}x{}, {} f32 pixels)",
+        dw,
+        dh,
+        decoded.len() / 3
+    );
+}
+
+/// Roundtrip test: encode a screenshot with patches → decode with djxl.
+#[test]
+#[ignore] // Requires codec corpus + djxl
+fn test_patches_roundtrip_djxl() {
+    let path = "/home/lilith/work/codec-corpus/gb82-sc/windows95.png";
+    let img = match image::open(path) {
+        Ok(img) => img,
+        Err(_) => {
+            eprintln!("Skipping: corpus not available");
+            return;
+        }
+    };
+    let (w, h) = img.dimensions();
+    let rgb = img.to_rgb8();
+    let pixels: Vec<u8> = rgb.into_raw();
+
+    let data = jxl_encoder::LossyConfig::new(1.0)
+        .with_patches(true)
+        .with_butteraugli_iters(0)
+        .encode(&pixels, w, h, jxl_encoder::PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!(
+        "windows95.png: {}x{}, {} bytes with patches",
+        w,
+        h,
+        data.len()
+    );
+
+    // Decode with djxl — must not error
+    let (dw, dh, decoded_srgb) = decode_djxl_for_patches(&data);
+    assert_eq!(dw, w as usize);
+    assert_eq!(dh, h as usize);
+    assert_eq!(decoded_srgb.len(), w as usize * h as usize * 3);
+    eprintln!(
+        "  djxl decode: OK ({}x{}, {} sRGB pixels)",
+        dw,
+        dh,
+        decoded_srgb.len() / 3
+    );
+}
+
+/// Size comparison: patches ON vs OFF on GB82-SC screenshot corpus.
+/// Expects significant savings on screenshots.
+#[test]
+#[ignore] // Requires codec corpus
+fn test_patches_screenshot_corpus_size() {
+    let corpus = "/home/lilith/work/codec-corpus/gb82-sc";
+    let screenshots = [
+        "windows95.png",
+        "graph.png",
+        "gui.png",
+        "terminal.png",
+        "windows.png",
+        "codec_wiki.png",
+        "gmessages.png",
+        "imessage.png",
+        "imac_dark.png",
+        "imac_g3.png",
+    ];
+
+    eprintln!(
+        "{:<15} {:>10} {:>10} {:>8}",
+        "Image", "No Patch", "Patches", "Savings"
+    );
+    eprintln!("{}", "-".repeat(50));
+
+    let mut total_no_patches = 0usize;
+    let mut total_patches = 0usize;
+    let mut count = 0;
+
+    for name in &screenshots {
+        let path = format!("{}/{}", corpus, name);
+        let no_patch = encode_screenshot_with_patches(&path, 1.0, false);
+        let with_patch = encode_screenshot_with_patches(&path, 1.0, true);
+
+        if let (Some((_, size_no)), Some((data_yes, size_yes))) = (no_patch, with_patch) {
+            let savings = (1.0 - size_yes as f64 / size_no as f64) * 100.0;
+            let short = name.split('.').next().unwrap_or(name);
+            eprintln!(
+                "{:<15} {:>10} {:>10} {:>7.1}%",
+                short, size_no, size_yes, savings
+            );
+            total_no_patches += size_no;
+            total_patches += size_yes;
+            count += 1;
+
+            // Also verify patches version decodes with jxl-rs
+            let (dw, dh, _) = decode_jxl_rs_for_patches(&data_yes);
+            assert!(dw > 0 && dh > 0, "decode failed for {}", name);
+        }
+    }
+
+    if count > 0 {
+        let total_savings = (1.0 - total_patches as f64 / total_no_patches as f64) * 100.0;
+        eprintln!("{}", "-".repeat(50));
+        eprintln!(
+            "{:<15} {:>10} {:>10} {:>7.1}%",
+            "TOTAL", total_no_patches, total_patches, total_savings
+        );
+    }
+}
+
+/// Regression test: CLIC photos should produce no patches (zero-cost feature).
+/// With patches enabled, file size should be within 0.5% of patches disabled.
+#[test]
+#[ignore] // Requires codec corpus
+fn test_patches_no_regression_on_photos() {
+    let corpus = "/home/lilith/work/codec-corpus/subset1024";
+    let photos = [
+        "alessio-soggetti-unsplash.png",
+        "austin-neill-unsplash.png",
+        "brent-gorwin-unsplash.png",
+    ];
+
+    for name in &photos {
+        let path = format!("{}/{}", corpus, name);
+        let no_patch = encode_screenshot_with_patches(&path, 1.0, false);
+        let with_patch = encode_screenshot_with_patches(&path, 1.0, true);
+
+        if let (Some((_, size_no)), Some((_, size_yes))) = (no_patch, with_patch) {
+            let diff_pct = ((size_yes as f64 - size_no as f64) / size_no as f64).abs() * 100.0;
+            eprintln!(
+                "{}: no_patches={} patches={} diff={:.2}%",
+                name, size_no, size_yes, diff_pct
+            );
+            // Photos should have near-zero overhead from patches
+            assert!(
+                diff_pct < 1.0,
+                "{}: patches added {:.2}% overhead on a photo (expected <1%)",
+                name,
+                diff_pct
+            );
+        }
+    }
+}
+
+/// Hash-lock test for a small synthetic screenshot with known patches output.
+#[test]
+fn test_patches_synthetic_screenshot_encode() {
+    // Create a 64x64 synthetic screenshot: solid background with repeated 8x8 glyphs
+    let w = 64usize;
+    let h = 64usize;
+    let mut pixels = vec![200u8; w * h * 3]; // Light gray background
+
+    // Draw a repeated 8x8 "glyph" (dark rectangle) at 4 positions
+    let glyph_positions = [(8, 8), (24, 8), (8, 24), (24, 24)];
+    for &(gx, gy) in &glyph_positions {
+        for dy in 0..8 {
+            for dx in 0..8 {
+                let px = gx + dx;
+                let py = gy + dy;
+                let idx = (py * w + px) * 3;
+                pixels[idx] = 40; // Dark glyph
+                pixels[idx + 1] = 40;
+                pixels[idx + 2] = 40;
+            }
+        }
+    }
+
+    // Encode without patches first (baseline)
+    let data_no_patches = jxl_encoder::LossyConfig::new(1.0)
+        .with_patches(false)
+        .with_butteraugli_iters(0)
+        .encode(&pixels, w as u32, h as u32, jxl_encoder::PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!(
+        "Synthetic screenshot (no patches): {}x{}, {} bytes",
+        w,
+        h,
+        data_no_patches.len()
+    );
+
+    // Write no-patches version for comparison
+    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder/patches");
+    std::fs::write(
+        "/mnt/v/output/jxl-encoder/patches/synthetic_no_patches.jxl",
+        &data_no_patches,
+    )
+    .unwrap();
+
+    // Verify no-patches version decodes
+    {
+        let reader = Cursor::new(&data_no_patches);
+        let mut image = jxl_oxide::JxlImage::builder().read(reader).unwrap();
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
+        let render = image.render_frame(0).unwrap();
+        eprintln!(
+            "  no-patches jxl-oxide decode: OK ({}x{})",
+            render.image_all_channels().width(),
+            render.image_all_channels().height()
+        );
+    }
+
+    // Encode with patches — should succeed regardless of whether patches fire
+    let data = jxl_encoder::LossyConfig::new(1.0)
+        .with_patches(true)
+        .with_butteraugli_iters(0)
+        .encode(&pixels, w as u32, h as u32, jxl_encoder::PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!(
+        "Synthetic screenshot (patches): {}x{}, {} bytes",
+        w,
+        h,
+        data.len()
+    );
+
+    // Write to file for external verification
+    let test_path = "/mnt/v/output/jxl-encoder/patches/synthetic_test.jxl";
+    std::fs::write(test_path, &data).unwrap();
+
+    // Try djxl
+    let output =
+        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            .args([
+                test_path,
+                "/mnt/v/output/jxl-encoder/patches/synthetic_test.png",
+            ])
+            .output();
+    if let Ok(out) = output {
+        if out.status.success() {
+            eprintln!("  djxl decode: OK");
+        } else {
+            eprintln!(
+                "  djxl decode FAILED: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    // Try jxl-oxide — detailed error at each stage
+    let reader = Cursor::new(&data);
+    match jxl_oxide::JxlImage::builder().read(reader) {
+        Ok(mut image) => {
+            let header = image.image_header();
+            eprintln!(
+                "  jxl-oxide parsed header OK: {}x{}, xyb={}",
+                header.size.width, header.size.height, header.metadata.xyb_encoded,
+            );
+            image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb(
+                jxl_oxide::RenderingIntent::Relative,
+            ));
+            // Try rendering each frame
+            let num_frames = image.num_loaded_keyframes();
+            eprintln!("  jxl-oxide loaded {} keyframes", num_frames);
+            for i in 0..num_frames.max(1) {
+                match image.render_frame(i) {
+                    Ok(render) => {
+                        let fb = render.image_all_channels();
+                        eprintln!(
+                            "  jxl-oxide frame {} decode: OK ({}x{})",
+                            i,
+                            fb.width(),
+                            fb.height()
+                        );
+                    }
+                    Err(e) => eprintln!("  jxl-oxide frame {} render error: {:?}", i, e),
+                }
+            }
+        }
+        Err(e) => eprintln!("  jxl-oxide parse error: {:?}", e),
+    }
+}

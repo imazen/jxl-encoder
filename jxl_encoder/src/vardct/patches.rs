@@ -722,13 +722,13 @@ pub(crate) fn encode_patches_section(
         // reference_frame_id
         tokens.push(Token::new(1, ref_pos.ref_id));
 
-        // xsize - 1, ysize - 1
-        tokens.push(Token::new(2, ref_pos.xsize - 1));
-        tokens.push(Token::new(2, ref_pos.ysize - 1));
-
-        // ref_x0, ref_y0
+        // ref_x0, ref_y0 (ctx 3) — MUST come before size per JXL spec
         tokens.push(Token::new(3, ref_pos.x0));
         tokens.push(Token::new(3, ref_pos.y0));
+
+        // xsize - 1, ysize - 1 (ctx 2) — AFTER position
+        tokens.push(Token::new(2, ref_pos.xsize - 1));
+        tokens.push(Token::new(2, ref_pos.ysize - 1));
 
         // Count occurrences for this ref_patch
         let positions_for_ref: Vec<&PatchPosition> = patches
@@ -764,6 +764,9 @@ pub(crate) fn encode_patches_section(
             prev_y = pos.y;
         }
     }
+
+    // Write LZ77 disabled flag (required by Decoder::parse — reads lz77_enabled first)
+    writer.write(1, 0)?; // lz77_enabled = false
 
     // Build and write entropy code for patch tokens
     if use_ans {
@@ -816,18 +819,27 @@ pub(crate) fn encode_reference_frame(
     let mut fh = FrameHeader::lossless();
     fh.frame_type = FrameType::ReferenceOnly;
     fh.encoding = Encoding::Modular;
-    fh.xyb_encoded = true; // This is XYB data
+    fh.xyb_encoded = true; // File-level property inherited by all frames
     fh.save_as_reference = PATCH_FRAME_REFERENCE_ID;
     fh.save_before_ct = true;
     fh.is_last = false; // Not the last frame
     fh.flags = 0;
     fh.gaborish = false;
     fh.epf_iters = 0;
-    // Set dimensions to the reference frame size
+    // Set dimensions to the reference frame size (via have_crop mechanism)
     fh.width = ref_w as u32;
     fh.height = ref_h as u32;
 
+    #[cfg(feature = "trace-bitstream")]
+    let ref_frame_start = writer.bits_written();
     fh.write(writer)?;
+    #[cfg(feature = "trace-bitstream")]
+    eprintln!(
+        "PATCHES: ref frame header written, bits {}-{} ({} bits)",
+        ref_frame_start,
+        writer.bits_written(),
+        writer.bits_written() - ref_frame_start
+    );
 
     // Convert XYB float data to i32 for modular encoding.
     // Use a fixed-point scale factor. JXL modular uses i32 samples.
@@ -852,17 +864,39 @@ pub(crate) fn encode_reference_frame(
         has_alpha: false,
     };
 
-    // Use the modular frame encoder for the data section
+    // Use the modular frame encoder for the data section.
+    // Use the same encode path that works for lossless frames.
     use crate::modular::encode::write_improved_modular_stream;
     let mut section_writer = BitWriter::new();
     write_improved_modular_stream(&image, &mut section_writer, use_ans)?;
     let section_data = section_writer.finish();
 
-    // Write TOC (single section)
+    // Write TOC (single section for small reference frames).
+    // Use the modular frame encoder's TOC format (same as VarDCT).
+    #[cfg(feature = "trace-bitstream")]
+    eprintln!(
+        "PATCHES: ref frame TOC starts at bit {}, section_data={} bytes",
+        writer.bits_written(),
+        section_data.len()
+    );
     crate::vardct::frame::write_toc(&[section_data.len()], writer)?;
+
+    #[cfg(feature = "trace-bitstream")]
+    eprintln!(
+        "PATCHES: ref frame section data starts at bit {} (byte {})",
+        writer.bits_written(),
+        writer.bits_written() / 8
+    );
 
     // Write section data
     writer.append_bytes(&section_data)?;
+
+    #[cfg(feature = "trace-bitstream")]
+    eprintln!(
+        "PATCHES: ref frame ends at bit {} (byte {})",
+        writer.bits_written(),
+        writer.bits_written() / 8
+    );
 
     Ok(())
 }

@@ -288,16 +288,25 @@ impl FrameHeader {
             writer.write(3, self.b_qm_scale as u64)?;
         }
 
-        // num_passes (U32: 1, 2, 3, 4+u(3))
-        writer.write_u32_coder(self.num_passes, 1, 2, 3, 4, 3)?;
-        // TODO: if num_passes > 1, write pass-specific data
-
-        // have_crop (only for non-LfFrame, non-ReferenceOnly)
+        // num_passes: not present for ReferenceOnly frames (libjxl spec)
         if self.frame_type != FrameType::ReferenceOnly {
+            // num_passes (U32: 1, 2, 3, 4+u(3))
+            writer.write_u32_coder(self.num_passes, 1, 2, 3, 4, 3)?;
+            // TODO: if num_passes > 1, write pass-specific data
+        }
+
+        // have_crop: present for all frame types except LfFrame
+        if self.frame_type != FrameType::LfFrame {
             let have_crop = self.x0 != 0 || self.y0 != 0 || self.width != 0 || self.height != 0;
             writer.write_bit(have_crop)?;
             if have_crop {
-                self.write_crop(writer)?;
+                // x0, y0: only for Regular/SkipProgressive frames (not ReferenceOnly)
+                if self.frame_type != FrameType::ReferenceOnly {
+                    self.write_crop_origin(writer)?;
+                }
+                // width, height: always present when have_crop
+                Self::write_crop_u32(writer, self.width)?;
+                Self::write_crop_u32(writer, self.height)?;
             }
         }
 
@@ -341,12 +350,20 @@ impl FrameHeader {
         // save_as_reference (only when !is_last and not LfFrame)
         if !self.is_last && self.frame_type != FrameType::LfFrame {
             writer.write(2, self.save_as_reference as u64)?;
-            // save_before_ct: written when frame resets canvas and can be referenced.
-            // Condition matches decoder: resets_canvas && (duration==0 || save_as_reference!=0)
-            let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
-            let resets_canvas = self.blend_mode == BlendMode::Replace && full_frame;
-            if resets_canvas && (self.duration == 0 || self.save_as_reference != 0) {
+
+            // save_before_ct has two independent conditions (libjxl spec):
+            // 1. ReferenceOnly frames: ALWAYS present (default true)
+            // 2. Normal frames that reset canvas and can be referenced: present (default false)
+            if self.frame_type == FrameType::ReferenceOnly {
                 writer.write_bit(self.save_before_ct)?;
+            } else {
+                let full_frame =
+                    self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
+                let resets_canvas = self.blend_mode == BlendMode::Replace && full_frame;
+                let can_be_referenced = self.duration == 0 || self.save_as_reference != 0;
+                if resets_canvas && can_be_referenced && normal_frame {
+                    writer.write_bit(self.save_before_ct)?;
+                }
             }
         }
 
@@ -366,8 +383,8 @@ impl FrameHeader {
     ///
     /// Crop dimensions use U32(Bits(8), Bits(11)+256, Bits(14)+2048, Bits(30)+18432).
     /// x0/y0 are packed-signed first, then encoded with the same distribution.
-    fn write_crop(&self, writer: &mut BitWriter) -> Result<()> {
-        // x0, y0 as UnpackSigned
+    /// Writes crop origin (x0, y0) as UnpackSigned values.
+    fn write_crop_origin(&self, writer: &mut BitWriter) -> Result<()> {
         let x0u = if self.x0 >= 0 {
             (self.x0 as u32) << 1
         } else {
@@ -378,12 +395,8 @@ impl FrameHeader {
         } else {
             (((-self.y0 - 1) as u32) << 1) | 1
         };
-
         Self::write_crop_u32(writer, x0u)?;
         Self::write_crop_u32(writer, y0u)?;
-        Self::write_crop_u32(writer, self.width)?;
-        Self::write_crop_u32(writer, self.height)?;
-
         Ok(())
     }
 
