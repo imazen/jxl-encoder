@@ -39,6 +39,8 @@ debug-tokens = []
 debug-dc = []
 # Print AC strategy selection histogram
 debug-ac-strategy = []
+# Spatial decision logging — writes sidecar CSV with per-rect decisions
+debug-rect = []
 # Guard flag — no behavioral effect (multi-group works correctly)
 safe-mode = []
 # Iterative rate control for improved distance targeting.

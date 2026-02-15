@@ -21,6 +21,7 @@ path = "src/main.rs"
 default = ["jxl_encoder/std", "jxl_encoder/safe-mode", "butteraugli-loop"]
 debug-tokens = ["jxl_encoder/debug-tokens"]
 debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
+debug-rect = ["jxl_encoder/debug-rect"]
 # Enable iterative rate control for improved distance targeting
 rate-control = ["jxl_encoder/rate-control"]
 # Enable butteraugli quantization loop for per-block quality refinement

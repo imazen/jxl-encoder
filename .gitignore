@@ -11,3 +11,5 @@ test_baselines/
 test_images/
 *.zst
 callgrind.out.*
+debug_rect.csv
+*.debug_rect.csv

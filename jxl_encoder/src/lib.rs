@@ -15,6 +15,7 @@ pub mod api;
 pub mod bit_writer;
 pub mod color;
 pub mod container;
+pub mod debug_rect;
 pub mod entropy_coding;
 pub mod error;
 pub mod headers;
