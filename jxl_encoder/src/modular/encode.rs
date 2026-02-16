@@ -1235,7 +1235,7 @@ fn write_palette_transform(
 ///   Val(0) = default squeeze (decoder computes parameters)
 /// - For each squeeze: horizontal(1 bit), in_place(1 bit),
 ///   begin_c(U32), num_c(U32(Val(1),Val(2),Val(3),BitsOffset(4,4)))
-fn write_squeeze_transform(
+pub(crate) fn write_squeeze_transform(
     writer: &mut BitWriter,
     params: &[super::squeeze::SqueezeParams],
 ) -> Result<()> {

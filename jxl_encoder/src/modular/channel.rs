@@ -146,6 +146,40 @@ impl Channel {
         }
     }
 
+    /// Extracts a region from this channel, accounting for hshift/vshift.
+    ///
+    /// The rect is specified in full-resolution image coordinates. It is
+    /// downshifted by `hshift`/`vshift` and clamped to channel bounds.
+    /// Returns `None` if the shifted region has zero area.
+    pub fn extract_shifted_region(
+        &self,
+        rect_x0: usize,
+        rect_y0: usize,
+        rect_xsize: usize,
+        rect_ysize: usize,
+    ) -> Option<Channel> {
+        let x0 = rect_x0 >> self.hshift;
+        let y0 = rect_y0 >> self.vshift;
+        let xsize = (rect_xsize >> self.hshift).min(self.width.saturating_sub(x0));
+        let ysize = (rect_ysize >> self.vshift).min(self.height.saturating_sub(y0));
+
+        if xsize == 0 || ysize == 0 {
+            return None;
+        }
+
+        let mut data = Vec::with_capacity(xsize * ysize);
+        for y in 0..ysize {
+            for x in 0..xsize {
+                data.push(self.get(x0 + x, y0 + y));
+            }
+        }
+
+        let mut ch = Channel::from_vec(data, xsize, ysize).ok()?;
+        ch.hshift = self.hshift;
+        ch.vshift = self.vshift;
+        Some(ch)
+    }
+
     /// Gets a pixel, clamping coordinates to valid range.
     #[inline]
     pub fn get_clamped_to_edge(&self, x: isize, y: isize) -> i32 {

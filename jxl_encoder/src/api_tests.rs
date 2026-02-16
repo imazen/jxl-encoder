@@ -4167,3 +4167,154 @@ fn bench_encode_256x256() {
         "bench_encode_256x256: {per_iter:?}/iter, {mpixels_per_sec:.2} MP/s, {size} bytes output"
     );
 }
+
+/// Test squeeze multi-group: 300x300 grayscale (4 groups, simpler channel layout)
+#[test]
+fn test_squeeze_multigroup_gray_300x300() {
+    use crate::{LosslessConfig, PixelLayout};
+
+    let mut data = vec![0u8; 300 * 300];
+    for y in 0..300 {
+        for x in 0..300 {
+            data[y * 300 + x] = ((x * 2 + y) % 256) as u8;
+        }
+    }
+
+    let bytes = LosslessConfig::new()
+        .with_squeeze(true)
+        .with_effort(9)
+        .encode(&data, 300, 300, PixelLayout::Gray8)
+        .unwrap();
+
+    eprintln!("Squeeze multi-group gray 300x300: {} bytes", bytes.len());
+    crate::test_helpers::save_test_output("squeeze", "squeeze_multigroup_gray_300x300.jxl", &bytes);
+
+    // Decode with jxl-rs
+    let decoded_img =
+        crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
+    assert_eq!(decoded_img.width, 300);
+    assert_eq!(decoded_img.height, 300);
+
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+
+    let mut diff_count = 0;
+    for (&orig, &dec) in data.iter().zip(decoded.iter()) {
+        if orig != dec {
+            diff_count += 1;
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "Squeeze multi-group gray: {diff_count} pixel differences"
+    );
+}
+
+/// Test squeeze multi-group: 300x300 RGB (4 groups, simpler)
+#[test]
+fn test_squeeze_multigroup_rgb_300x300() {
+    use crate::{LosslessConfig, PixelLayout};
+
+    let mut data = vec![0u8; 300 * 300 * 3];
+    for y in 0..300 {
+        for x in 0..300 {
+            let i = (y * 300 + x) * 3;
+            data[i] = (x % 256) as u8;
+            data[i + 1] = (y % 256) as u8;
+            data[i + 2] = ((x + y) % 256) as u8;
+        }
+    }
+
+    let bytes = LosslessConfig::new()
+        .with_squeeze(true)
+        .with_effort(9)
+        .encode(&data, 300, 300, PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!("Squeeze multi-group RGB 300x300: {} bytes", bytes.len());
+    crate::test_helpers::save_test_output("squeeze", "squeeze_multigroup_rgb_300x300.jxl", &bytes);
+
+    // Decode with jxl-rs
+    let decoded_img =
+        crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
+    assert_eq!(decoded_img.width, 300);
+    assert_eq!(decoded_img.height, 300);
+
+    // Check pixel-exact decode
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+
+    let mut diff_count = 0;
+    for (&orig, &dec) in data.iter().zip(decoded.iter()) {
+        if orig != dec {
+            diff_count += 1;
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "Squeeze multi-group RGB 300: {diff_count} pixel differences"
+    );
+}
+
+/// Test squeeze multi-group: 512x512 RGB (4 groups)
+#[test]
+fn test_squeeze_multigroup_rgb_512x512() {
+    use crate::{LosslessConfig, PixelLayout};
+
+    let mut data = vec![0u8; 512 * 512 * 3];
+    for y in 0..512 {
+        for x in 0..512 {
+            let i = (y * 512 + x) * 3;
+            data[i] = (x % 256) as u8;
+            data[i + 1] = (y % 256) as u8;
+            data[i + 2] = ((x + y) % 256) as u8;
+        }
+    }
+
+    let bytes = LosslessConfig::new()
+        .with_squeeze(true)
+        .with_effort(9)
+        .encode(&data, 512, 512, PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!("Squeeze multi-group RGB 512x512: {} bytes", bytes.len());
+    crate::test_helpers::save_test_output("squeeze", "squeeze_multigroup_rgb_512x512.jxl", &bytes);
+
+    // Decode with jxl-rs
+    let decoded_img =
+        crate::test_helpers::decode_with_jxl_rs(&bytes).expect("jxl-rs decode failed");
+    assert_eq!(decoded_img.width, 512);
+    assert_eq!(decoded_img.height, 512);
+
+    // Check pixel-exact decode
+    let decoded: Vec<u8> = decoded_img
+        .pixels
+        .iter()
+        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect();
+
+    let mut diff_count = 0;
+    for (i, (&orig, &dec)) in data.iter().zip(decoded.iter()).enumerate() {
+        if orig != dec {
+            diff_count += 1;
+            if diff_count <= 5 {
+                let pixel = i / 3;
+                let channel = i % 3;
+                eprintln!(
+                    "Mismatch at pixel {} ch {}: orig={} decoded={}",
+                    pixel, channel, orig, dec
+                );
+            }
+        }
+    }
+    assert_eq!(
+        diff_count, 0,
+        "Squeeze multi-group: {diff_count} pixel differences"
+    );
+}

@@ -165,6 +165,9 @@ impl FrameEncoder {
             for byte in section_data {
                 writer.write_u8(byte)?;
             }
+        } else if self.options.use_squeeze {
+            // Multi-group with squeeze: apply global squeeze, partition channels
+            self.encode_modular_multi_group_squeeze(image, writer)?;
         } else {
             // Multi-group: separate TOC entries for global and each group
             self.encode_modular_multi_group(image, writer)?;
@@ -315,6 +318,397 @@ impl FrameEncoder {
         self.write_toc_multi(writer, &section_sizes)?;
 
         // Step 7: Append all section data in same order
+        for byte in lf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in lf_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+        for byte in hf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in pass_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encodes a modular image using multi-group format with squeeze (Haar wavelet) transform.
+    ///
+    /// After squeeze, channels are partitioned by resolution:
+    /// - **LfGlobal**: channels small enough to fit in GROUP_DIM (tree + histogram + data)
+    /// - **LfGroup**: channels with min(hshift, vshift) >= 3 (DC-group-sized regions)
+    /// - **PassGroup**: channels with min(hshift, vshift) < 3 (group-sized regions)
+    fn encode_modular_multi_group_squeeze(
+        &self,
+        image: &ModularImage,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        use super::encode::{
+            write_gradient_tree_tokens, write_squeeze_transform, write_tree_histogram_for_gradient,
+        };
+        use super::predictor::pack_signed;
+        use super::squeeze::{apply_squeeze, default_squeeze_params};
+        use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans};
+        use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+        use crate::entropy_coding::token::Token as AnsToken;
+
+        const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
+            split_exponent: 4,
+            split: 16,
+            msb_in_token: 2,
+            lsb_in_token: 0,
+        };
+
+        let num_groups = self.num_groups();
+        let num_lf_groups = self.num_lf_groups();
+        let lf_group_dim = GROUP_DIM * 8; // 2048
+
+        // Step 1: Apply squeeze transform
+        let squeeze_params = default_squeeze_params(image);
+        let mut squeezed = image.clone();
+        apply_squeeze(&mut squeezed, &squeeze_params)?;
+
+        #[cfg(test)]
+        {
+            eprintln!(
+                "SQUEEZE_MULTI: {} steps, {} → {} channels, image {}x{}",
+                squeeze_params.len(),
+                image.channels.len(),
+                squeezed.channels.len(),
+                self.width,
+                self.height,
+            );
+            for (i, ch) in squeezed.channels.iter().enumerate() {
+                eprintln!(
+                    "  ch[{}]: {}x{} hshift={} vshift={} min_shift={}",
+                    i,
+                    ch.width(),
+                    ch.height(),
+                    ch.hshift,
+                    ch.vshift,
+                    ch.hshift.min(ch.vshift),
+                );
+            }
+        }
+
+        // Step 2: Partition channels by size/shift
+        // Global channels: both dimensions <= GROUP_DIM
+        let global_cutoff = squeezed
+            .channels
+            .iter()
+            .position(|c| c.width() > GROUP_DIM || c.height() > GROUP_DIM)
+            .unwrap_or(squeezed.channels.len());
+
+        crate::trace::debug_eprintln!(
+            "SQUEEZE_MULTI: {} global channels (<={}x{}), {} group channels",
+            global_cutoff,
+            GROUP_DIM,
+            GROUP_DIM,
+            squeezed.channels.len() - global_cutoff,
+        );
+
+        // Classify non-global channels by shift bracket
+        // LfGroup: min(hshift, vshift) >= 3
+        // PassGroup: min(hshift, vshift) < 3
+        let mut lf_channel_indices: Vec<usize> = Vec::new();
+        let mut pass_channel_indices: Vec<usize> = Vec::new();
+        for i in global_cutoff..squeezed.channels.len() {
+            let ch = &squeezed.channels[i];
+            let min_shift = ch.hshift.min(ch.vshift);
+            if min_shift >= 3 {
+                lf_channel_indices.push(i);
+            } else {
+                pass_channel_indices.push(i);
+            }
+        }
+
+        #[cfg(test)]
+        eprintln!(
+            "SQUEEZE_MULTI: {} global, {} LfGroup (shift>=3), {} PassGroup (shift<3) channels",
+            global_cutoff,
+            lf_channel_indices.len(),
+            pass_channel_indices.len(),
+        );
+
+        // Step 3: Collect residuals from ALL channels for histogram building
+        let predict_gradient = |left: i32, top: i32, topleft: i32| -> i32 {
+            let grad = left + top - topleft;
+            grad.clamp(left.min(top), left.max(top))
+        };
+
+        let collect_channel_residuals = |channel: &super::channel::Channel| -> Vec<u32> {
+            let w = channel.width();
+            let h = channel.height();
+            let mut residuals = Vec::with_capacity(w * h);
+            for y in 0..h {
+                for x in 0..w {
+                    let pixel = channel.get(x, y);
+                    let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
+                    let top = if y > 0 { channel.get(x, y - 1) } else { left };
+                    let topleft = if x > 0 && y > 0 {
+                        channel.get(x - 1, y - 1)
+                    } else {
+                        left
+                    };
+                    let prediction = predict_gradient(left, top, topleft);
+                    residuals.push(pack_signed(pixel - prediction));
+                }
+            }
+            residuals
+        };
+
+        // 3a: Global channel residuals (full channels)
+        let mut all_residuals: Vec<u32> = Vec::new();
+        for i in 0..global_cutoff {
+            all_residuals.extend(collect_channel_residuals(&squeezed.channels[i]));
+        }
+
+        // 3b: LfGroup channel residuals (cropped to each DC group rect)
+        let mut lf_group_channel_data: Vec<Vec<Vec<u32>>> = vec![Vec::new(); num_lf_groups]; // [lf_group_idx][channel_within_group] = residuals
+        for &ch_idx in &lf_channel_indices {
+            let ch = &squeezed.channels[ch_idx];
+            for (lg, lg_channels) in lf_group_channel_data
+                .iter_mut()
+                .enumerate()
+                .take(num_lf_groups)
+            {
+                let lg_x = lg % self.width.div_ceil(lf_group_dim);
+                let lg_y = lg / self.width.div_ceil(lf_group_dim);
+                let rect_x0 = lg_x * lf_group_dim;
+                let rect_y0 = lg_y * lf_group_dim;
+                if let Some(cropped) =
+                    ch.extract_shifted_region(rect_x0, rect_y0, lf_group_dim, lf_group_dim)
+                {
+                    let residuals = collect_channel_residuals(&cropped);
+                    all_residuals.extend(&residuals);
+                    lg_channels.push(residuals);
+                }
+            }
+        }
+
+        // 3c: PassGroup channel residuals (cropped to each group rect)
+        let mut pass_group_channel_data: Vec<Vec<Vec<u32>>> = vec![Vec::new(); num_groups]; // [group_idx][channel_within_group] = residuals
+        for &ch_idx in &pass_channel_indices {
+            let ch = &squeezed.channels[ch_idx];
+            for (g, g_channels) in pass_group_channel_data
+                .iter_mut()
+                .enumerate()
+                .take(num_groups)
+            {
+                let (x_start, y_start, x_end, y_end) = self.group_bounds(g);
+                let gw = x_end - x_start;
+                let gh = y_end - y_start;
+                if let Some(cropped) = ch.extract_shifted_region(x_start, y_start, gw, gh) {
+                    let residuals = collect_channel_residuals(&cropped);
+                    all_residuals.extend(&residuals);
+                    g_channels.push(residuals);
+                }
+            }
+        }
+
+        // Step 4: Build histogram and entropy codes
+        let mut max_token: u32 = 0;
+        for &r in &all_residuals {
+            let (token, _, _) = MODULAR_HYBRID_UINT.encode(r);
+            max_token = max_token.max(token);
+        }
+
+        // Step 5: Write LfGlobal section
+        let mut lf_global_writer = BitWriter::new();
+
+        // dc_quant.all_default = true
+        lf_global_writer.write(1, 1)?;
+        // has_tree = true
+        lf_global_writer.write(1, 1)?;
+
+        // Tree histogram + tokens (gradient predictor)
+        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(&mut lf_global_writer)?;
+        write_gradient_tree_tokens(&mut lf_global_writer, &tree_depths, &tree_codes)?;
+
+        // Data histogram (Huffman or ANS) — covers ALL channels across ALL sections
+        let use_ans = self.options.use_ans;
+
+        // Build the entropy coding state
+        enum EntropyState {
+            Huffman {
+                depths: Vec<u8>,
+                codes: Vec<u16>,
+            },
+            Ans {
+                code: crate::entropy_coding::encode::OwnedAnsEntropyCode,
+            },
+        }
+
+        let entropy_state = if use_ans {
+            let tokens: Vec<AnsToken> =
+                all_residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+            let code = build_entropy_code_ans(&tokens, 1);
+            super::section::write_ans_modular_header(&mut lf_global_writer, &code)?;
+            EntropyState::Ans { code }
+        } else {
+            let histogram_size = (max_token + 1) as usize;
+            let mut histogram = vec![0u32; histogram_size];
+            for &r in &all_residuals {
+                let (token, _, _) = MODULAR_HYBRID_UINT.encode(r);
+                histogram[token as usize] += 1;
+            }
+            let (depths, codes) = super::encode::write_hybrid_data_histogram(
+                &mut lf_global_writer,
+                &histogram,
+                max_token,
+            )?;
+            EntropyState::Huffman { depths, codes }
+        };
+
+        // GroupHeader for global modular stream — includes squeeze transform
+        lf_global_writer.write(1, 1)?; // use_global_tree = true
+        lf_global_writer.write(1, 1)?; // wp_params.default_wp = true
+        lf_global_writer.write(2, 1)?; // nb_transforms = 1
+        write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+
+        // Encode global channel data (small channels that fit within GROUP_DIM)
+        let encode_residuals =
+            |residuals: &[u32], writer: &mut BitWriter, state: &EntropyState| -> Result<()> {
+                match state {
+                    EntropyState::Huffman { depths, codes } => {
+                        for &r in residuals {
+                            let (token, extra_bits, num_extra) = MODULAR_HYBRID_UINT.encode(r);
+                            let depth = depths.get(token as usize).copied().unwrap_or(0);
+                            let code = codes.get(token as usize).copied().unwrap_or(0);
+                            if depth > 0 {
+                                writer.write(depth as usize, code as u64)?;
+                            }
+                            if num_extra > 0 {
+                                writer.write(num_extra as usize, extra_bits as u64)?;
+                            }
+                        }
+                    }
+                    EntropyState::Ans { code } => {
+                        let tokens: Vec<AnsToken> =
+                            residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+                        write_tokens_ans(&tokens, code, None, writer)?;
+                    }
+                }
+                Ok(())
+            };
+
+        // Write global channel residuals
+        let mut global_residuals: Vec<u32> = Vec::new();
+        for i in 0..global_cutoff {
+            global_residuals.extend(collect_channel_residuals(&squeezed.channels[i]));
+        }
+        encode_residuals(&global_residuals, &mut lf_global_writer, &entropy_state)?;
+
+        lf_global_writer.zero_pad_to_byte();
+        let lf_global_data = lf_global_writer.finish();
+
+        crate::trace::debug_eprintln!(
+            "SQUEEZE_MULTI: LfGlobal = {} bytes ({} global channels)",
+            lf_global_data.len(),
+            global_cutoff,
+        );
+
+        // Step 6: Write LfGroup sections
+        let mut lf_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_lf_groups);
+        for (_lg, lg_channels) in lf_group_channel_data.iter().enumerate().take(num_lf_groups) {
+            let mut lg_writer = BitWriter::new();
+
+            if lg_channels.is_empty() {
+                // Empty LfGroup (no channels assigned)
+                lf_group_data.push(lg_writer.finish());
+                continue;
+            }
+
+            // GroupHeader
+            lg_writer.write(1, 1)?; // use_global_tree = true
+            lg_writer.write(1, 1)?; // wp_params.default_wp = true
+            lg_writer.write(2, 0)?; // nb_transforms = 0
+
+            // Concatenate all channel residuals for this section, then encode once.
+            // ANS requires a single encoder per section (one ANS state per section).
+            let mut section_residuals: Vec<u32> = Vec::new();
+            for channel_residuals in lg_channels {
+                section_residuals.extend(channel_residuals);
+            }
+            encode_residuals(&section_residuals, &mut lg_writer, &entropy_state)?;
+
+            lg_writer.zero_pad_to_byte();
+            let data = lg_writer.finish();
+            crate::trace::debug_eprintln!(
+                "SQUEEZE_MULTI: LfGroup[{}] = {} bytes ({} channels)",
+                _lg,
+                data.len(),
+                lg_channels.len(),
+            );
+            lf_group_data.push(data);
+        }
+
+        // Step 7: HfGlobal is empty for modular
+        let hf_global_data: Vec<u8> = Vec::new();
+
+        // Step 8: Write PassGroup sections
+        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
+        for (_g, g_channels) in pass_group_channel_data.iter().enumerate().take(num_groups) {
+            let mut pg_writer = BitWriter::new();
+
+            if g_channels.is_empty() {
+                // Empty PassGroup (no channels assigned)
+                pass_group_data.push(pg_writer.finish());
+                continue;
+            }
+
+            // GroupHeader
+            pg_writer.write(1, 1)?; // use_global_tree = true
+            pg_writer.write(1, 1)?; // wp_params.default_wp = true
+            pg_writer.write(2, 0)?; // nb_transforms = 0
+
+            // Concatenate all channel residuals for this section, then encode once.
+            // ANS requires a single encoder per section (one ANS state per section).
+            let mut section_residuals: Vec<u32> = Vec::new();
+            for channel_residuals in g_channels {
+                section_residuals.extend(channel_residuals);
+            }
+            encode_residuals(&section_residuals, &mut pg_writer, &entropy_state)?;
+
+            pg_writer.zero_pad_to_byte();
+            let data = pg_writer.finish();
+            crate::trace::debug_eprintln!(
+                "SQUEEZE_MULTI: PassGroup[{}] = {} bytes ({} channels)",
+                _g,
+                data.len(),
+                g_channels.len(),
+            );
+            pass_group_data.push(data);
+        }
+
+        // Step 9: Assemble TOC and sections
+        // Section order: LfGlobal, LfGroup[0..n], HfGlobal, PassGroup[0..m]
+        let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
+        section_sizes.push(lf_global_data.len());
+        for data in &lf_group_data {
+            section_sizes.push(data.len());
+        }
+        section_sizes.push(hf_global_data.len());
+        for data in &pass_group_data {
+            section_sizes.push(data.len());
+        }
+
+        #[cfg(test)]
+        eprintln!(
+            "SQUEEZE_MULTI: {} sections, sizes = {:?}",
+            section_sizes.len(),
+            section_sizes,
+        );
+
+        self.write_toc_multi(writer, &section_sizes)?;
+
+        // Write all section data
         for byte in lf_global_data {
             writer.write_u8(byte)?;
         }
