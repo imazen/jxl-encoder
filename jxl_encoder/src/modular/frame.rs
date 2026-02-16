@@ -188,8 +188,13 @@ impl FrameEncoder {
         } else if self.options.use_squeeze
             && !super::squeeze::default_squeeze_params(image).is_empty()
         {
-            // Multi-group with squeeze: apply global squeeze, partition channels
-            self.encode_modular_multi_group_squeeze(image, writer)?;
+            if self.options.use_tree_learning && self.options.use_ans {
+                // Multi-group with squeeze + tree learning: best compression
+                self.encode_modular_multi_group_squeeze_with_tree(image, writer)?;
+            } else {
+                // Multi-group with squeeze: gradient predictor, single context
+                self.encode_modular_multi_group_squeeze(image, writer)?;
+            }
         } else {
             // Multi-group: separate TOC entries for global and each group
             self.encode_modular_multi_group(image, writer)?;
@@ -761,6 +766,387 @@ impl FrameEncoder {
             section_sizes.len(),
             section_sizes,
         );
+
+        self.write_toc_multi(writer, &section_sizes)?;
+
+        // Write all section data
+        for byte in lf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in lf_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+        for byte in hf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in pass_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encodes a multi-group modular image with squeeze + tree learning.
+    ///
+    /// This combines the Haar wavelet (squeeze) transform with learned MA tree
+    /// for multi-context ANS encoding across all sections. The tree is learned
+    /// from the full squeezed image and shared across all sections.
+    ///
+    /// Pipeline: RCT -> squeeze -> partition channels -> gather samples ->
+    /// learn tree -> collect residuals per section -> multi-context ANS
+    fn encode_modular_multi_group_squeeze_with_tree(
+        &self,
+        image: &ModularImage,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        use super::encode::{write_rct_transform, write_squeeze_transform, write_tree};
+        use super::rct::{RctType, forward_rct};
+        use super::squeeze::{apply_squeeze, default_squeeze_params};
+        use super::tree::count_contexts;
+        use super::tree_learn::{
+            TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
+            gather_samples,
+        };
+        use crate::entropy_coding::encode::{
+            build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans,
+        };
+        use crate::entropy_coding::token::Token as AnsToken;
+
+        let num_groups = self.num_groups();
+        let num_lf_groups = self.num_lf_groups();
+        let lf_group_dim = GROUP_DIM * 8; // 2048
+
+        // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
+        let squeeze_params = default_squeeze_params(image);
+        let mut squeezed = image.clone();
+        let has_rct = squeezed.channels.len() >= 3;
+        if has_rct {
+            forward_rct(&mut squeezed.channels, 0, RctType::YCOCG)?;
+        }
+        apply_squeeze(&mut squeezed, &squeeze_params)?;
+
+        crate::trace::debug_eprintln!(
+            "SQUEEZE_TREE_MULTI: {} steps, {} → {} channels, image {}x{}",
+            squeeze_params.len(),
+            image.channels.len(),
+            squeezed.channels.len(),
+            self.width,
+            self.height,
+        );
+
+        // Step 2: Partition channels by size/shift
+        let global_cutoff = squeezed
+            .channels
+            .iter()
+            .position(|c| c.width() > GROUP_DIM || c.height() > GROUP_DIM)
+            .unwrap_or(squeezed.channels.len());
+
+        let mut lf_channel_indices: Vec<usize> = Vec::new();
+        let mut pass_channel_indices: Vec<usize> = Vec::new();
+        for i in global_cutoff..squeezed.channels.len() {
+            let ch = &squeezed.channels[i];
+            let min_shift = ch.hshift.min(ch.vshift);
+            if min_shift >= 3 {
+                lf_channel_indices.push(i);
+            } else {
+                pass_channel_indices.push(i);
+            }
+        }
+
+        crate::trace::debug_eprintln!(
+            "SQUEEZE_TREE_MULTI: {} global, {} LfGroup, {} PassGroup channels",
+            global_cutoff,
+            lf_channel_indices.len(),
+            pass_channel_indices.len(),
+        );
+
+        // Step 3: Build sub-images for each section and gather samples
+        let mut samples = TreeSamples::new();
+
+        // 3a: Global channels (full, no cropping needed)
+        let global_sub = ModularImage {
+            channels: squeezed.channels[..global_cutoff].to_vec(),
+            bit_depth: squeezed.bit_depth,
+            is_grayscale: squeezed.is_grayscale,
+            has_alpha: false,
+        };
+        // group_id=0 for global section, channel_offset=0
+        gather_samples(&mut samples, &global_sub, 0);
+
+        // 3b: LfGroup channels — crop to each LfGroup rect
+        let num_lf_groups_x = self.width.div_ceil(lf_group_dim);
+        // Store cropped sub-images: [lf_group_idx] = Vec<Channel>
+        let mut lf_group_sub_images: Vec<Vec<super::channel::Channel>> =
+            vec![Vec::new(); num_lf_groups];
+        for &ch_idx in &lf_channel_indices {
+            let ch = &squeezed.channels[ch_idx];
+            for (lg, lg_channels) in lf_group_sub_images.iter_mut().enumerate() {
+                let lg_x = lg % num_lf_groups_x;
+                let lg_y = lg / num_lf_groups_x;
+                if let Some(cropped) = ch.extract_grid_cell(lg_x, lg_y, lf_group_dim) {
+                    lg_channels.push(cropped);
+                }
+            }
+        }
+        // Gather samples from LfGroup sub-images
+        // The first LfGroup channel in the squeezed image is at lf_channel_indices[0],
+        // but we don't need channel_offset here because LfGroup channels form a separate
+        // sub-image with their own local channel indices for the decoder.
+        // Actually — the decoder uses a SINGLE tree across all sections. Property[0] = channel
+        // index within the sub-image (modular stream). For squeeze multi-group, the decoder
+        // reconstructs each section as a separate modular sub-image. The global section has
+        // channels 0..gc, each LfGroup section has its own channels (starting from 0),
+        // and each PassGroup section has its own channels (starting from 0).
+        //
+        // BUT — the tree was trained on the full image where these had specific channel indices.
+        // The decoder assigns local indices per-section. So we need channel_offset to map:
+        //   - Global: channels 0..gc → offset 0 (correct by default)
+        //   - LfGroup: decoder's ch[0..n] → should map to squeezed ch[lf_channel_indices[0]..end]
+        //   - PassGroup: decoder's ch[0..n] → should map to squeezed ch[pass_channel_indices[0]..end]
+        //
+        // Wait — I need to verify what the decoder actually does. Let me think about this more carefully.
+        //
+        // In JXL multi-group modular, the decoder processes:
+        //   1. LfGlobal: reads tree, histograms, then decodes channels 0..gc using the tree
+        //   2. LfGroup[i]: each section is a new modular stream with its own GroupHeader.
+        //      The decoder maps these channels to the overall image by shift classification.
+        //      Within each section, channels start from index 0.
+        //   3. PassGroup[i]: same — channels start from index 0 within each section.
+        //
+        // The tree's property[0] (channel index) sees 0..n within each section.
+        // So for tree learning to work correctly across sections, we should:
+        //   - Either use a channel_offset to remap local indices to global indices (what PLAN.md suggests)
+        //   - Or accept that the tree splits on local channel indices (may be less optimal)
+        //
+        // libjxl's approach: the tree IS global, but each section's channels are numbered locally.
+        // The tree learns to split on "channel 0 vs channel 1" etc. which means different things
+        // in different sections. But typically LfGroup has 0 or 3 channels (one per color component)
+        // and PassGroup has 3 channels too, so the splits transfer well.
+        //
+        // For simplicity and correctness: use local channel indices (no offset) with per-section
+        // group_id to disambiguate. This matches how the decoder will traverse the tree.
+        for (lg, lg_channels) in lf_group_sub_images.iter().enumerate() {
+            if lg_channels.is_empty() {
+                continue;
+            }
+            let sub_image = ModularImage {
+                channels: lg_channels.clone(),
+                bit_depth: squeezed.bit_depth,
+                is_grayscale: squeezed.is_grayscale,
+                has_alpha: false,
+            };
+            // group_id for LfGroup sections — offset by 1 to distinguish from global (0)
+            gather_samples(&mut samples, &sub_image, (lg + 1) as u32);
+        }
+
+        // 3c: PassGroup channels — crop to each group rect
+        let num_groups_x = self.num_groups_x();
+        let mut pass_group_sub_images: Vec<Vec<super::channel::Channel>> =
+            vec![Vec::new(); num_groups];
+        for &ch_idx in &pass_channel_indices {
+            let ch = &squeezed.channels[ch_idx];
+            for (g, g_channels) in pass_group_sub_images.iter_mut().enumerate() {
+                let gx = g % num_groups_x;
+                let gy = g / num_groups_x;
+                if let Some(cropped) = ch.extract_grid_cell(gx, gy, GROUP_DIM) {
+                    g_channels.push(cropped);
+                }
+            }
+        }
+        // Gather samples from PassGroup sub-images
+        for (g, g_channels) in pass_group_sub_images.iter().enumerate() {
+            if g_channels.is_empty() {
+                continue;
+            }
+            let sub_image = ModularImage {
+                channels: g_channels.clone(),
+                bit_depth: squeezed.bit_depth,
+                is_grayscale: squeezed.is_grayscale,
+                has_alpha: false,
+            };
+            // group_id offset: after global (0) and LfGroups (1..num_lf_groups)
+            gather_samples(&mut samples, &sub_image, (num_lf_groups + 1 + g) as u32);
+        }
+
+        // Step 4: Learn tree
+        let tree_params = TreeLearningParams::for_effort(self.options.effort);
+        let tree = compute_best_tree(&mut samples, &tree_params);
+        let num_contexts = count_contexts(&tree) as usize;
+
+        crate::trace::debug_eprintln!(
+            "SQUEEZE_TREE_MULTI: {} tree nodes, {} contexts from {} samples",
+            tree.len(),
+            num_contexts,
+            samples.num_samples,
+        );
+
+        // Step 5: Collect residuals per section with the learned tree
+        // Global section tokens
+        let global_tokens = collect_residuals_with_tree(&global_sub, &tree, 0);
+
+        // LfGroup section tokens
+        let mut lf_group_tokens: Vec<Vec<AnsToken>> = Vec::with_capacity(num_lf_groups);
+        for (lg, lg_channels) in lf_group_sub_images.iter().enumerate() {
+            if lg_channels.is_empty() {
+                lf_group_tokens.push(Vec::new());
+                continue;
+            }
+            let sub_image = ModularImage {
+                channels: lg_channels.clone(),
+                bit_depth: squeezed.bit_depth,
+                is_grayscale: squeezed.is_grayscale,
+                has_alpha: false,
+            };
+            let tokens = collect_residuals_with_tree(&sub_image, &tree, (lg + 1) as u32);
+            lf_group_tokens.push(tokens);
+        }
+
+        // PassGroup section tokens
+        let mut pass_group_tokens: Vec<Vec<AnsToken>> = Vec::with_capacity(num_groups);
+        for (g, g_channels) in pass_group_sub_images.iter().enumerate() {
+            if g_channels.is_empty() {
+                pass_group_tokens.push(Vec::new());
+                continue;
+            }
+            let sub_image = ModularImage {
+                channels: g_channels.clone(),
+                bit_depth: squeezed.bit_depth,
+                is_grayscale: squeezed.is_grayscale,
+                has_alpha: false,
+            };
+            let tokens =
+                collect_residuals_with_tree(&sub_image, &tree, (num_lf_groups + 1 + g) as u32);
+            pass_group_tokens.push(tokens);
+        }
+
+        // Step 6: Build ANS codes from ALL tokens
+        let mut all_tokens: Vec<AnsToken> = Vec::new();
+        all_tokens.extend(&global_tokens);
+        for lg_tokens in &lf_group_tokens {
+            all_tokens.extend(lg_tokens);
+        }
+        for pg_tokens in &pass_group_tokens {
+            all_tokens.extend(pg_tokens);
+        }
+        let code = build_entropy_code_ans(&all_tokens, num_contexts);
+
+        // Step 7: Write LfGlobal section
+        let mut lf_global_writer = BitWriter::new();
+
+        // dc_quant.all_default = true
+        lf_global_writer.write(1, 1)?;
+        // has_tree = true
+        lf_global_writer.write(1, 1)?;
+
+        // Write the learned tree
+        write_tree(&mut lf_global_writer, &tree)?;
+
+        // Write ANS histogram (multi-context if num_contexts > 1)
+        if num_contexts > 1 {
+            lf_global_writer.write(1, 0)?; // lz77.enabled = 0
+            write_entropy_code_ans(&code, &mut lf_global_writer)?;
+        } else {
+            super::section::write_ans_modular_header(&mut lf_global_writer, &code)?;
+        }
+
+        // GroupHeader for global modular stream — includes RCT (if RGB) + squeeze transform
+        lf_global_writer.write(1, 1)?; // use_global_tree = true
+        lf_global_writer.write(1, 1)?; // wp_params.default_wp = true
+        if has_rct {
+            // nb_transforms = 2: U32 BitsOffset(4,2), offset=0
+            lf_global_writer.write(2, 2)?;
+            lf_global_writer.write(4, 0)?;
+            write_rct_transform(&mut lf_global_writer, 0, RctType::YCOCG)?;
+            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+        } else {
+            lf_global_writer.write(2, 1)?; // nb_transforms = 1
+            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+        }
+
+        // Write global channel tokens
+        write_tokens_ans(&global_tokens, &code, None, &mut lf_global_writer)?;
+
+        lf_global_writer.zero_pad_to_byte();
+        let lf_global_data = lf_global_writer.finish();
+
+        crate::trace::debug_eprintln!(
+            "SQUEEZE_TREE_MULTI: LfGlobal = {} bytes ({} global channels, {} contexts)",
+            lf_global_data.len(),
+            global_cutoff,
+            num_contexts,
+        );
+
+        // Step 8: Write LfGroup sections
+        let mut lf_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_lf_groups);
+        for lg_tokens in &lf_group_tokens {
+            let mut lg_writer = BitWriter::new();
+
+            if lg_tokens.is_empty() {
+                lf_group_data.push(lg_writer.finish());
+                continue;
+            }
+
+            // GroupHeader
+            lg_writer.write(1, 1)?; // use_global_tree = true
+            lg_writer.write(1, 1)?; // wp_params.default_wp = true
+            lg_writer.write(2, 0)?; // nb_transforms = 0
+
+            write_tokens_ans(lg_tokens, &code, None, &mut lg_writer)?;
+
+            lg_writer.zero_pad_to_byte();
+            let data = lg_writer.finish();
+            crate::trace::debug_eprintln!(
+                "SQUEEZE_TREE_MULTI: LfGroup = {} bytes ({} tokens)",
+                data.len(),
+                lg_tokens.len(),
+            );
+            lf_group_data.push(data);
+        }
+
+        // Step 9: HfGlobal is empty for modular
+        let hf_global_data: Vec<u8> = Vec::new();
+
+        // Step 10: Write PassGroup sections
+        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
+        for pg_tokens in &pass_group_tokens {
+            let mut pg_writer = BitWriter::new();
+
+            if pg_tokens.is_empty() {
+                pass_group_data.push(pg_writer.finish());
+                continue;
+            }
+
+            // GroupHeader
+            pg_writer.write(1, 1)?; // use_global_tree = true
+            pg_writer.write(1, 1)?; // wp_params.default_wp = true
+            pg_writer.write(2, 0)?; // nb_transforms = 0
+
+            write_tokens_ans(pg_tokens, &code, None, &mut pg_writer)?;
+
+            pg_writer.zero_pad_to_byte();
+            let data = pg_writer.finish();
+            crate::trace::debug_eprintln!(
+                "SQUEEZE_TREE_MULTI: PassGroup = {} bytes ({} tokens)",
+                data.len(),
+                pg_tokens.len(),
+            );
+            pass_group_data.push(data);
+        }
+
+        // Step 11: Assemble TOC and sections
+        let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
+        section_sizes.push(lf_global_data.len());
+        for data in &lf_group_data {
+            section_sizes.push(data.len());
+        }
+        section_sizes.push(hf_global_data.len());
+        for data in &pass_group_data {
+            section_sizes.push(data.len());
+        }
 
         self.write_toc_multi(writer, &section_sizes)?;
 

@@ -199,8 +199,21 @@ fn compute_spec_properties(
 
 /// Gather samples from all channels in an image for tree learning.
 pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id: u32) {
+    gather_samples_with_offset(samples, image, group_id, 0);
+}
+
+/// Gather samples with a channel index offset.
+///
+/// When gathering from a sub-image that represents channels [offset..offset+N] of a larger
+/// image, pass `channel_offset = offset` so property[0] (channel index) matches the tree.
+pub fn gather_samples_with_offset(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+) {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
-        gather_channel_samples(samples, channel, ch_idx as u32, group_id);
+        gather_channel_samples(samples, channel, ch_idx as u32 + channel_offset, group_id);
     }
 }
 
@@ -724,6 +737,20 @@ pub fn collect_residuals_with_tree(
     tree: &Tree,
     group_id: u32,
 ) -> Vec<crate::entropy_coding::token::Token> {
+    collect_residuals_with_tree_offset(image, tree, group_id, 0)
+}
+
+/// Collect residuals using a learned tree, with a channel index offset.
+///
+/// When collecting from a sub-image that represents channels [offset..offset+N] of a larger
+/// image, pass `channel_offset = offset` so property[0] (channel index) matches the tree
+/// that was trained on the full image.
+pub fn collect_residuals_with_tree_offset(
+    image: &ModularImage,
+    tree: &Tree,
+    group_id: u32,
+    channel_offset: u32,
+) -> Vec<crate::entropy_coding::token::Token> {
     use crate::entropy_coding::token::Token as AnsToken;
 
     let mut tokens = Vec::new();
@@ -748,7 +775,7 @@ pub fn collect_residuals_with_tree(
                 let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
 
                 let props = compute_spec_properties(
-                    ch_idx as u32,
+                    ch_idx as u32 + channel_offset,
                     group_id,
                     x,
                     y,
