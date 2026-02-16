@@ -260,14 +260,14 @@ pub fn write_global_modular_section(
 pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
     writer: &mut BitWriter,
-    max_nodes: usize,
-    split_threshold: f64,
+    effort: u8,
     rct_type: Option<RctType>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
+        gather_samples,
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
@@ -277,8 +277,9 @@ pub fn write_global_modular_section_with_tree(
         gather_samples(&mut samples, group_image, group_idx as u32);
     }
 
-    // Step 2: Learn tree
-    let tree = compute_best_tree(&mut samples, max_nodes, split_threshold);
+    // Step 2: Learn tree with effort-dependent parameters
+    let params = TreeLearningParams::for_effort(effort);
+    let tree = compute_best_tree(&mut samples, &params);
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(

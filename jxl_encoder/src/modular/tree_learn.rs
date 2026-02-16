@@ -45,31 +45,79 @@ const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Average4,
 ];
 
-/// Properties to consider for splits. Indices into the spec property array.
-/// Skip GroupId (1) which is redundant for single-group images.
-/// WpMaxError (15) requires bit-exact WP state matching between encoder and decoder.
-/// Our WP golden-number test passes (bit-exact with jxl-rs), so property 15 should be safe.
-/// However, 128x128 gray gradient roundtrip failed with property 15 enabled.
-/// Root cause TBD. Disabled until debugged.
-const SPLIT_PROPERTIES: &[usize] = &[
+/// Non-squeeze lossless property order, matching libjxl's enc_modular.cc.
+/// Properties are ordered by likelihood of being useful for non-squeeze residuals.
+/// GroupId (1) is removed when num_groups < 30 (which is always true for us currently).
+const PROP_ORDER_NO_SQUEEZE: &[usize] = &[
     0,  // Channel
-    2,  // Y
-    3,  // X
-    4,  // |N|
-    5,  // |W|
-    6,  // N
-    7,  // W
+    15, // WpMaxError
     9,  // W + N - NW (gradient)
     10, // W - NW
     11, // NW - N
     12, // N - NE
     13, // N - NN
     14, // W - WW
-    15, // WpMaxError (re-enabled for testing)
+    2,  // Y
+    3,  // X
+    4,  // |N|
+    5,  // |W|
+    6,  // N
+    7,  // W
+    8,  // W - prev_gradient
 ];
 
-/// Maximum number of quantized threshold buckets per property.
-const MAX_QUANT_BUCKETS: usize = 256;
+/// Parameters for tree learning, effort-dependent.
+///
+/// Matches libjxl's enc_modular.cc speed tier configuration:
+/// - Squirrel (e7): first 7 properties, max 48 property values, threshold 131
+/// - Kitten (e8): first 10 properties, max 96 property values, threshold 89
+/// - Tortoise (e9/e10): all properties, max 256 property values, threshold 75
+pub struct TreeLearningParams {
+    /// Properties to consider for splits, in priority order.
+    pub properties: &'static [usize],
+    /// Maximum number of quantized threshold buckets per property.
+    pub max_property_values: usize,
+    /// Split threshold: a split must save at least this many bits to be accepted.
+    pub split_threshold: f64,
+    /// Maximum tree nodes.
+    pub max_nodes: usize,
+}
+
+impl TreeLearningParams {
+    /// Create tree learning parameters for the given effort level.
+    ///
+    /// Matches libjxl's speed tier mapping (effort = 10 - speed_tier):
+    /// - effort 5 (Hare, speed_tier=5): 4 properties, 24 buckets, threshold 145
+    /// - effort 6 (Wombat, speed_tier=4): 5 properties, 32 buckets, threshold 131
+    /// - effort 7 (Squirrel, speed_tier=3): 7 properties, 48 buckets, threshold 117
+    /// - effort 8 (Kitten, speed_tier=2): 10 properties, 96 buckets, threshold 103
+    /// - effort 9-10 (Tortoise/Glacier): all properties, 256 buckets, threshold 89/75
+    pub fn for_effort(effort: u8) -> Self {
+        let order = PROP_ORDER_NO_SQUEEZE;
+        // speed_tier = 10 - effort (libjxl convention)
+        let speed_tier = 10u8.saturating_sub(effort);
+        let (num_props, max_property_values) = match effort {
+            0..=4 => (3, 16),        // Below Hare
+            5 => (4, 24),            // Hare
+            6 => (5, 32),            // Wombat
+            7 => (7, 48),            // Squirrel
+            8 => (10, 96),           // Kitten
+            _ => (order.len(), 256), // Tortoise/Glacier
+        };
+
+        // libjxl formula: threshold = 75 + 14 * speed_tier
+        let threshold_base = 75.0 + 14.0 * speed_tier as f64;
+
+        let num_props = num_props.min(order.len());
+
+        Self {
+            properties: &order[..num_props],
+            max_property_values,
+            split_threshold: threshold_base,
+            max_nodes: 256,
+        }
+    }
+}
 
 /// Collected samples for tree learning.
 pub struct TreeSamples {
@@ -77,6 +125,9 @@ pub struct TreeSamples {
     pub num_samples: usize,
     /// Residual token per predictor: residual_tokens[predictor_idx][sample_idx].
     residual_tokens: Vec<Vec<u32>>,
+    /// Extra bits per predictor: extra_bits[predictor_idx][sample_idx].
+    /// These are the HybridUint extra bits (non-token part), matching libjxl's ResidualToken.nbits.
+    extra_bits: Vec<Vec<u32>>,
     /// Spec-matching property values: props[property_idx][sample_idx].
     /// These are the actual (unquantized) property values.
     props: Vec<Vec<i32>>,
@@ -95,6 +146,7 @@ impl TreeSamples {
         Self {
             num_samples: 0,
             residual_tokens: vec![Vec::new(); num_predictors],
+            extra_bits: vec![Vec::new(); num_predictors],
             props: vec![Vec::new(); NUM_PROPERTIES],
         }
     }
@@ -204,8 +256,9 @@ fn gather_channel_samples(
                 };
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
-                let (token, _extra_bits, _num_extra) = GATHER_HYBRID_UINT.encode(packed);
+                let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
                 samples.residual_tokens[pred_idx].push(token);
+                samples.extra_bits[pred_idx].push(num_extra);
             }
 
             // Update WP error tracking with actual pixel value
@@ -266,7 +319,15 @@ struct SplitCandidate {
 /// 2. For each property and threshold, compute entropy of left/right partitions.
 /// 3. Split on the (property, threshold) that reduces entropy most.
 /// 4. Repeat until no beneficial split or max_nodes reached.
-pub fn compute_best_tree(samples: &mut TreeSamples, max_nodes: usize, threshold: f64) -> Tree {
+///
+/// Parameters are effort-dependent via `TreeLearningParams`:
+/// - `params.properties`: which properties to consider for splits
+/// - `params.max_property_values`: max quantization buckets per property
+/// - `params.split_threshold`: minimum bits saved for a split to be accepted
+/// - `params.max_nodes`: maximum tree nodes
+pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams) -> Tree {
+    let max_nodes = params.max_nodes;
+    let threshold = params.split_threshold;
     let n = samples.num_samples;
     if n == 0 {
         // Empty samples: return single gradient leaf
@@ -328,7 +389,8 @@ pub fn compute_best_tree(samples: &mut TreeSamples, max_nodes: usize, threshold:
         }
 
         // Find best split across all properties and thresholds
-        let best_split = find_best_split(samples, range, histogram_size, candidate.base_bits);
+        let best_split =
+            find_best_split(samples, range, histogram_size, candidate.base_bits, params);
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -419,13 +481,14 @@ struct BestSplit {
 
 /// Find the best (property, threshold) split for the given samples.
 ///
-/// For each property in SPLIT_PROPERTIES, try a set of threshold values
+/// For each property in params.properties, try a set of threshold values
 /// and pick the one that minimizes total entropy of both sides.
 fn find_best_split(
     samples: &TreeSamples,
     indices: &[usize],
     histogram_size: usize,
     base_bits: f64,
+    params: &TreeLearningParams,
 ) -> Option<BestSplit> {
     let count = indices.len();
     if count < 2 {
@@ -435,27 +498,25 @@ fn find_best_split(
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
 
-    for &prop_idx in SPLIT_PROPERTIES {
+    for &prop_idx in params.properties {
         // Collect unique sorted property values for threshold candidates
-        let thresholds = compute_thresholds(samples, indices, prop_idx);
+        let thresholds = compute_thresholds(samples, indices, prop_idx, params.max_property_values);
         if thresholds.is_empty() {
             continue;
         }
 
         for &splitval in &thresholds {
             // Count tokens on each side for each predictor
-            let (left_counts, left_total, right_counts, right_total) =
+            let (left_side, right_side) =
                 count_split(samples, indices, prop_idx, splitval, histogram_size);
 
-            if left_total == 0 || right_total == 0 {
+            if left_side.total == 0 || right_side.total == 0 {
                 continue; // Degenerate split
             }
 
             // Find best predictor for each side
-            let (left_pred, left_bits) =
-                best_predictor_from_counts(&left_counts, left_total, histogram_size);
-            let (right_pred, right_bits) =
-                best_predictor_from_counts(&right_counts, right_total, histogram_size);
+            let (left_pred, left_bits) = best_predictor_from_counts(&left_side);
+            let (right_pred, right_bits) = best_predictor_from_counts(&right_side);
 
             let total = left_bits + right_bits;
             if total < best_bits {
@@ -475,8 +536,13 @@ fn find_best_split(
 }
 
 /// Compute threshold candidates for a property. Returns sorted unique values,
-/// subsampled to at most MAX_QUANT_BUCKETS if there are too many.
-fn compute_thresholds(samples: &TreeSamples, indices: &[usize], prop_idx: usize) -> Vec<i32> {
+/// subsampled to at most `max_buckets` if there are too many.
+fn compute_thresholds(
+    samples: &TreeSamples,
+    indices: &[usize],
+    prop_idx: usize,
+    max_buckets: usize,
+) -> Vec<i32> {
     let props = &samples.props[prop_idx];
     let mut values: Vec<i32> = indices.iter().map(|&i| props[i]).collect();
     values.sort_unstable();
@@ -488,7 +554,7 @@ fn compute_thresholds(samples: &TreeSamples, indices: &[usize], prop_idx: usize)
 
     // Use midpoints between consecutive unique values as thresholds.
     // This ensures both sides are non-empty for each threshold.
-    if values.len() <= MAX_QUANT_BUCKETS + 1 {
+    if values.len() <= max_buckets + 1 {
         // Use all midpoints
         values
             .windows(2)
@@ -499,73 +565,74 @@ fn compute_thresholds(samples: &TreeSamples, indices: &[usize], prop_idx: usize)
             .collect()
     } else {
         // Subsample: pick evenly spaced thresholds
-        let step = values.len() / MAX_QUANT_BUCKETS;
+        let step = values.len() / max_buckets;
         values.iter().step_by(step.max(1)).copied().collect()
     }
 }
 
+/// Per-side split statistics: token histogram counts and total extra bits per predictor.
+struct SplitSideCounts {
+    /// Token histogram: counts[pred][token].
+    counts: Vec<Vec<u32>>,
+    /// Total extra bits per predictor.
+    extra_bits: Vec<u64>,
+    /// Number of samples on this side.
+    total: u32,
+}
+
 /// Count tokens on left (prop <= splitval) and right (prop > splitval) sides
 /// for each predictor.
-/// Returns (left_counts[pred][token], left_total, right_counts[pred][token], right_total).
 fn count_split(
     samples: &TreeSamples,
     indices: &[usize],
     prop_idx: usize,
     splitval: i32,
     histogram_size: usize,
-) -> (Vec<Vec<u32>>, u32, Vec<Vec<u32>>, u32) {
+) -> (SplitSideCounts, SplitSideCounts) {
     let num_pred = samples.num_predictors();
-    let mut left_counts = vec![vec![0u32; histogram_size]; num_pred];
-    let mut right_counts = vec![vec![0u32; histogram_size]; num_pred];
-    let mut left_total = 0u32;
-    let mut right_total = 0u32;
+    let mut left = SplitSideCounts {
+        counts: vec![vec![0u32; histogram_size]; num_pred],
+        extra_bits: vec![0u64; num_pred],
+        total: 0,
+    };
+    let mut right = SplitSideCounts {
+        counts: vec![vec![0u32; histogram_size]; num_pred],
+        extra_bits: vec![0u64; num_pred],
+        total: 0,
+    };
 
     let props = &samples.props[prop_idx];
 
     for &idx in indices {
         let pval = props[idx];
-        if pval <= splitval {
-            left_total += 1;
-            for (counts, tokens) in left_counts
-                .iter_mut()
-                .zip(samples.residual_tokens.iter())
-                .take(num_pred)
-            {
-                let tok = tokens[idx] as usize;
-                if tok < histogram_size {
-                    counts[tok] += 1;
-                }
-            }
+        let side = if pval <= splitval {
+            left.total += 1;
+            &mut left
         } else {
-            right_total += 1;
-            for (counts, tokens) in right_counts
-                .iter_mut()
-                .zip(samples.residual_tokens.iter())
-                .take(num_pred)
-            {
-                let tok = tokens[idx] as usize;
-                if tok < histogram_size {
-                    counts[tok] += 1;
-                }
+            right.total += 1;
+            &mut right
+        };
+        for pred in 0..num_pred {
+            let tok = samples.residual_tokens[pred][idx] as usize;
+            if tok < histogram_size {
+                side.counts[pred][tok] += 1;
             }
+            side.extra_bits[pred] += samples.extra_bits[pred][idx] as u64;
         }
     }
 
-    (left_counts, left_total, right_counts, right_total)
+    (left, right)
 }
 
-/// Find the predictor with lowest entropy from pre-counted histograms.
-/// Returns (best_predictor_idx, best_bits).
-fn best_predictor_from_counts(
-    counts: &[Vec<u32>],
-    total: u32,
-    _histogram_size: usize,
-) -> (usize, f64) {
+/// Find the predictor with lowest total cost from pre-counted histograms.
+/// Total cost = Shannon entropy of tokens + extra bits (matching libjxl).
+/// Returns (best_predictor_idx, best_total_bits).
+fn best_predictor_from_counts(side: &SplitSideCounts) -> (usize, f64) {
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
 
-    for (pred_idx, hist) in counts.iter().enumerate() {
-        let bits = estimate_bits(hist, total);
+    for (pred_idx, hist) in side.counts.iter().enumerate() {
+        let bits = estimate_bits(hist, side.total) + side.extra_bits[pred_idx] as f64;
         if bits < best_bits {
             best_bits = bits;
             best_pred = pred_idx;
@@ -592,7 +659,8 @@ fn find_best_predictor(samples: &TreeSamples, indices: &[usize], histogram_size:
     best_pred
 }
 
-/// Compute Shannon entropy for a given predictor's residuals over the indexed samples.
+/// Compute total cost for a given predictor's residuals over the indexed samples.
+/// Returns Shannon entropy of tokens + total extra bits (matching libjxl's cost model).
 fn compute_predictor_entropy(
     samples: &TreeSamples,
     indices: &[usize],
@@ -600,8 +668,10 @@ fn compute_predictor_entropy(
     histogram_size: usize,
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx];
+    let ebits = &samples.extra_bits[predictor_idx];
     let mut counts = vec![0u32; histogram_size];
     let mut total = 0u32;
+    let mut tot_extra: u64 = 0;
 
     for &idx in indices {
         let tok = tokens[idx] as usize;
@@ -609,9 +679,10 @@ fn compute_predictor_entropy(
             counts[tok] += 1;
             total += 1;
         }
+        tot_extra += ebits[idx] as u64;
     }
 
-    estimate_bits(&counts, total)
+    estimate_bits(&counts, total) + tot_extra as f64
 }
 
 /// Partition indices in-place so that indices with property <= splitval come first.
@@ -787,7 +858,8 @@ mod tests {
         let mut samples = TreeSamples::new();
         gather_samples(&mut samples, &image, 0);
 
-        let tree = compute_best_tree(&mut samples, 256, 1.0);
+        let params = TreeLearningParams::for_effort(9);
+        let tree = compute_best_tree(&mut samples, &params);
         // Should have at least 1 node (the root leaf)
         assert!(!tree.is_empty());
         // Root should be a leaf
@@ -826,7 +898,8 @@ mod tests {
         let mut samples = TreeSamples::new();
         gather_samples(&mut samples, &image, 0);
 
-        let tree = compute_best_tree(&mut samples, 256, 0.1);
+        let params = TreeLearningParams::for_effort(9);
+        let tree = compute_best_tree(&mut samples, &params);
 
         // Count leaves
         let num_leaves = tree.iter().filter(|n| n.property < 0).count();

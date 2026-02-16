@@ -895,7 +895,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x8bb5d758261529c5, // Updated: re-enabled property 15 (wp_max_error) in tree learning
+        0x92fdebdb05c79ab8, // Updated: effort-dependent tree params (e7: 7 props, 48 buckets)
     );
 }
 

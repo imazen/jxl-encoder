@@ -514,7 +514,7 @@ impl LosslessConfig {
     /// This adjusts all effort-dependent defaults:
     /// - **e1–3**: Huffman encoding
     /// - **e4–7**: + ANS entropy coding
-    /// - **e8**: + content-adaptive tree learning
+    /// - **e8**: + content-adaptive tree learning (10 props at e8, 15 at e9+)
     /// - **e9–10**: + LZ77 backward references
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.

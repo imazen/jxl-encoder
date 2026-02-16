@@ -1970,14 +1970,14 @@ pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()
 pub fn write_modular_stream_with_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
-    max_nodes: usize,
-    split_threshold: f64,
+    effort: u8,
     rct: bool,
 ) -> Result<()> {
     use super::rct::{RctType, forward_rct};
     use super::tree::count_contexts;
     use super::tree_learn::{
-        TreeSamples, collect_residuals_with_tree, compute_best_tree, gather_samples,
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
+        gather_samples,
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
@@ -1997,9 +1997,22 @@ pub fn write_modular_stream_with_tree(
     let mut samples = TreeSamples::new();
     gather_samples(&mut samples, &work_image, 0);
 
-    // Step 2: Learn tree
-    let tree = compute_best_tree(&mut samples, max_nodes, split_threshold);
+    // Step 2: Learn tree with effort-dependent parameters
+    let params = TreeLearningParams::for_effort(effort);
+    let tree = compute_best_tree(&mut samples, &params);
     let num_contexts = count_contexts(&tree) as usize;
+
+    crate::trace::debug_eprintln!(
+        "TREE_LEARN: effort={}, {} props, {} max_buckets, threshold={:.0}, \
+         {} nodes, {} leaves/contexts, {} samples",
+        effort,
+        params.properties.len(),
+        params.max_property_values,
+        params.split_threshold,
+        tree.len(),
+        num_contexts,
+        samples.num_samples
+    );
 
     // Step 3: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
