@@ -895,7 +895,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xe36bec1989a3c90b, // Updated: fixed predictor formulas 10-13 (AverageWNW, AverageNNW, AverageNNE, AverageAll)
+        0x8bb5d758261529c5, // Updated: re-enabled property 15 (wp_max_error) in tree learning
     );
 }
 
