@@ -1977,7 +1977,7 @@ pub fn write_modular_stream_with_tree(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        gather_samples,
+        compute_gather_stride, gather_samples_strided,
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
@@ -1993,9 +1993,15 @@ pub fn write_modular_stream_with_tree(
         (image.clone(), None)
     };
 
-    // Step 1: Gather samples
+    // Step 1: Gather samples (with subsampling for large images)
+    let total_pixels: usize = work_image
+        .channels
+        .iter()
+        .map(|ch| ch.width() * ch.height())
+        .sum();
+    let stride = compute_gather_stride(total_pixels);
     let mut samples = TreeSamples::new();
-    gather_samples(&mut samples, &work_image, 0);
+    gather_samples_strided(&mut samples, &work_image, 0, 0, stride);
 
     // Step 2: Learn tree with effort-dependent parameters
     let params = TreeLearningParams::for_effort(effort);
@@ -2093,7 +2099,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        gather_samples,
+        compute_gather_stride, gather_samples_strided,
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
@@ -2122,9 +2128,15 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         has_rct,
     );
 
-    // Step 3: Gather samples from squeezed image
+    // Step 3: Gather samples from squeezed image (with subsampling for large images)
+    let total_pixels: usize = transformed
+        .channels
+        .iter()
+        .map(|ch| ch.width() * ch.height())
+        .sum();
+    let stride = compute_gather_stride(total_pixels);
     let mut samples = TreeSamples::new();
-    gather_samples(&mut samples, &transformed, 0);
+    gather_samples_strided(&mut samples, &transformed, 0, 0, stride);
 
     // Step 4: Learn tree with effort-dependent parameters
     let tree_params = TreeLearningParams::for_effort(effort);

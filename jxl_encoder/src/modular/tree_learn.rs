@@ -197,32 +197,64 @@ fn compute_spec_properties(
     props
 }
 
-/// Gather samples from all channels in an image for tree learning.
+/// Gather samples from all channels in an image for tree learning (no subsampling).
+///
+/// For production use on large images, prefer `gather_samples_strided` with a stride
+/// computed by `compute_gather_stride` to avoid O(n^2) tree learning time.
+#[cfg(test)]
 pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id: u32) {
-    gather_samples_with_offset(samples, image, group_id, 0);
+    gather_samples_strided(samples, image, group_id, 0, 1);
 }
 
-/// Gather samples with a channel index offset.
+/// Gather samples with stride-based subsampling.
 ///
-/// When gathering from a sub-image that represents channels [offset..offset+N] of a larger
-/// image, pass `channel_offset = offset` so property[0] (channel index) matches the tree.
-pub fn gather_samples_with_offset(
+/// When `stride > 1`, only every `stride`-th pixel in scan order is sampled.
+/// Use `compute_gather_stride` to determine the appropriate stride.
+pub fn gather_samples_strided(
     samples: &mut TreeSamples,
     image: &ModularImage,
     group_id: u32,
     channel_offset: u32,
+    stride: usize,
 ) {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
-        gather_channel_samples(samples, channel, ch_idx as u32 + channel_offset, group_id);
+        gather_channel_samples(
+            samples,
+            channel,
+            ch_idx as u32 + channel_offset,
+            group_id,
+            stride,
+        );
     }
 }
 
-/// Gather samples from a single channel.
+/// Maximum number of samples to gather for tree learning.
+/// Higher = better tree quality but slower. 256K gives good quality and
+/// keeps tree learning under 10s on 1024x1024 images.
+pub const MAX_TREE_SAMPLES: usize = 256 * 1024;
+
+/// Compute the stride for subsampling based on total pixel count.
+///
+/// Call this with the total pixel count across ALL images/groups that will
+/// be gathered, then pass the stride to `gather_samples_strided`.
+pub fn compute_gather_stride(total_pixels: usize) -> usize {
+    if total_pixels > MAX_TREE_SAMPLES {
+        total_pixels.div_ceil(MAX_TREE_SAMPLES)
+    } else {
+        1
+    }
+}
+
+/// Gather samples from a single channel with stride-based subsampling.
+///
+/// When `stride > 1`, only every `stride`-th pixel in scan order is sampled.
+/// WP state is still updated for every pixel to maintain correct error tracking.
 fn gather_channel_samples(
     samples: &mut TreeSamples,
     channel: &Channel,
     channel_idx: u32,
     group_id: u32,
+    stride: usize,
 ) {
     let width = channel.width();
     let height = channel.height();
@@ -237,6 +269,9 @@ fn gather_channel_samples(
     // Property 8 = W - prev_gradient. At the start of each row, prev_gradient = 0.
     let mut prev_gradient: i32;
 
+    // Counter for subsampling: only gather when counter == 0
+    let mut subsample_counter: usize = 0;
+
     for y in 0..height {
         prev_gradient = 0;
         for x in 0..width {
@@ -247,46 +282,57 @@ fn gather_channel_samples(
             // Compute WP prediction and max_error property
             let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
 
-            let props = compute_spec_properties(
-                channel_idx,
-                group_id,
-                x,
-                y,
-                &n,
-                prev_gradient,
-                wp_max_error,
-            );
-
-            // Update prev_gradient for next pixel
-            prev_gradient = props[9]; // gradient = W + N - NW
-
-            // Compute residual for each candidate predictor
-            for (pred_idx, &predictor) in CANDIDATE_PREDICTORS.iter().enumerate() {
-                let prediction = if predictor == Predictor::Weighted {
-                    wp_pred as i32
-                } else {
-                    predictor.predict_from_neighbors(&n)
-                };
-                let residual = pixel - prediction;
-                let packed = pack_signed(residual);
-                let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
-                samples.residual_tokens[pred_idx].push(token);
-                samples.extra_bits[pred_idx].push(num_extra);
-            }
-
-            // Update WP error tracking with actual pixel value
+            // Always update WP error tracking to maintain state continuity
             wp_state.update_errors(pixel, x, y, width);
 
-            // Store property values
-            for (prop_list, &val) in samples
-                .props
-                .iter_mut()
-                .zip(props.iter())
-                .take(NUM_PROPERTIES)
-            {
-                prop_list.push(val);
+            // Subsample: only gather every stride-th pixel
+            if subsample_counter == 0 {
+                let props = compute_spec_properties(
+                    channel_idx,
+                    group_id,
+                    x,
+                    y,
+                    &n,
+                    prev_gradient,
+                    wp_max_error,
+                );
+
+                // Update prev_gradient for next pixel
+                prev_gradient = props[9]; // gradient = W + N - NW
+
+                // Compute residual for each candidate predictor
+                for (pred_idx, &predictor) in CANDIDATE_PREDICTORS.iter().enumerate() {
+                    let prediction = if predictor == Predictor::Weighted {
+                        wp_pred as i32
+                    } else {
+                        predictor.predict_from_neighbors(&n)
+                    };
+                    let residual = pixel - prediction;
+                    let packed = pack_signed(residual);
+                    let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
+                    samples.residual_tokens[pred_idx].push(token);
+                    samples.extra_bits[pred_idx].push(num_extra);
+                }
+
+                // Store property values
+                for (prop_list, &val) in samples
+                    .props
+                    .iter_mut()
+                    .zip(props.iter())
+                    .take(NUM_PROPERTIES)
+                {
+                    prop_list.push(val);
+                }
+                samples.num_samples += 1;
+
+                subsample_counter = stride - 1;
+            } else {
+                // Still need to track gradient for subsequent pixels
+                let grad = n.w.wrapping_add(n.n).wrapping_sub(n.nw);
+                prev_gradient = grad;
+
+                subsample_counter -= 1;
             }
-            samples.num_samples += 1;
         }
     }
 }
