@@ -1,5 +1,12 @@
 # Feedback Log
 
+## 2026-02-15: Squeeze multi-group research
+
+User asked for detailed research on how libjxl handles squeeze transforms in multi-group
+modular encoding — specifically channel-to-group assignment after squeeze. Traced through
+enc_modular.cc, squeeze.cc, dec_modular.cc, dec_frame.cc, and frame_dimensions.h to
+build complete understanding of the shift-based assignment mechanism.
+
 ## 2026-02-15: Multi-resolution butteraugli and v0.7 update
 
 User asked about color profile and butteraugli version. Investigation found:
