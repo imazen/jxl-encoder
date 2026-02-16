@@ -142,12 +142,16 @@ impl FrameEncoder {
                     &mut section_writer,
                     self.options.use_ans,
                 )?;
-            } else if self.options.use_tree_learning && self.options.use_ans {
+            } else if self.options.use_tree_learning
+                && self.options.use_ans
+                && super::palette::should_use_palette(image).is_none()
+            {
+                // Tree learning path: skip for images that benefit from palette
+                // (palette + tree learning has a meta-channel encoding mismatch)
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
-                    256,                       // max_nodes
-                    1.0,                       // split_threshold
+                    self.options.effort,       // effort-dependent tree params
                     image.channels.len() >= 3, // RCT for RGB
                 )?;
             } else if image.channels.len() >= 3 {
@@ -243,8 +247,7 @@ impl FrameEncoder {
             write_global_modular_section_with_tree(
                 &group_images,
                 &mut lf_global_writer,
-                256, // max_nodes
-                1.0, // split_threshold
+                self.options.effort, // effort-dependent tree params
                 rct_type,
             )?
         } else {
