@@ -1292,7 +1292,9 @@ pub(crate) fn encode_reference_frame(
     };
 
     // Use the modular frame encoder for the data section.
-    // Use the same encode path that works for lossless frames.
+    // Fixed gradient prediction with LZ77 RLE. Tree learning was tested but
+    // produces larger output on small reference frames (161x144) due to
+    // tree + histogram overhead exceeding the compression benefit.
     use crate::modular::encode::write_improved_modular_stream;
     let mut section_writer = BitWriter::new();
     write_improved_modular_stream(&image, &mut section_writer, use_ans)?;
