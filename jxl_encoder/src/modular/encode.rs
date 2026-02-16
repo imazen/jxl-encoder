@@ -24,9 +24,9 @@ use crate::modular::channel::ModularImage;
 use crate::modular::rct::{RctType, forward_rct};
 
 // LZ77 constants (from zune-jpegxl)
-const K_NUM_RAW_SYMBOLS: usize = 19;
-const K_NUM_LZ77: usize = 33;
-const K_LZ77_MIN_LENGTH: usize = 7;
+pub(crate) const K_NUM_RAW_SYMBOLS: usize = 19;
+pub(crate) const K_NUM_LZ77: usize = 33;
+pub(crate) const K_LZ77_MIN_LENGTH: usize = 7;
 
 /// Pack a signed integer into an unsigned one (zigzag encoding).
 /// 0 -> 0, -1 -> 1, 1 -> 2, -2 -> 3, 2 -> 4, etc.
@@ -39,7 +39,7 @@ pub fn pack_signed(value: i32) -> u32 {
 /// This matches libjxl's default length_uint_config.
 /// Returns (token, nbits, bits)
 #[inline]
-fn encode_hybrid_uint_lz77_length(value: u32) -> (u32, u32, u32) {
+pub(crate) fn encode_hybrid_uint_lz77_length(value: u32) -> (u32, u32, u32) {
     // LZ77 length uses HybridUintConfig{0, 0, 0} (same as raw symbols)
     encode_hybrid_uint_000(value)
 }
@@ -47,7 +47,7 @@ fn encode_hybrid_uint_lz77_length(value: u32) -> (u32, u32, u32) {
 /// Encode a hybrid uint for raw symbols (split_exponent=0, msb_in_token=0, lsb_in_token=0).
 /// Returns (token, nbits, bits)
 #[inline]
-fn encode_hybrid_uint_000(value: u32) -> (u32, u32, u32) {
+pub(crate) fn encode_hybrid_uint_000(value: u32) -> (u32, u32, u32) {
     if value == 0 {
         (0, 0, 0)
     } else {
@@ -59,7 +59,7 @@ fn encode_hybrid_uint_000(value: u32) -> (u32, u32, u32) {
 }
 
 /// Residual with run-length information.
-enum Token {
+pub(crate) enum Token {
     /// A raw residual value
     Raw(u32),
     /// An LZ77 run of zeros (count includes the K_LZ77_MIN_LENGTH offset)
@@ -349,10 +349,10 @@ fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
 }
 
 /// LZ77 min_symbol value - symbols >= this are LZ77 length tokens
-const K_LZ77_MIN_SYMBOL: usize = 224;
+pub(crate) const K_LZ77_MIN_SYMBOL: usize = 224;
 
 /// Build a single sparse histogram for symbols [0..K_NUM_RAW_SYMBOLS) and [K_LZ77_MIN_SYMBOL..K_LZ77_MIN_SYMBOL+K_NUM_LZ77)
-fn build_sparse_histogram(tokens: &[Token]) -> Vec<u64> {
+pub(crate) fn build_sparse_histogram(tokens: &[Token]) -> Vec<u64> {
     // Sparse alphabet: 19 raw symbols + 33 LZ77 symbols = 52 symbols
     // We'll encode raw [0..18] directly, LZ77 as [224..256]
     let total_symbols = K_LZ77_MIN_SYMBOL + K_NUM_LZ77;
@@ -517,7 +517,7 @@ fn write_varint16(writer: &mut BitWriter, value: u16) -> Result<()> {
 
 /// Write the LZ77-enabled histogram using sparse alphabet.
 /// Returns (depths, codes) for the full sparse alphabet [0..257]
-fn write_sparse_lz77_histogram(
+pub(crate) fn write_sparse_lz77_histogram(
     writer: &mut BitWriter,
     sparse_counts: &[u64],
 ) -> Result<(Vec<u8>, Vec<u16>)> {

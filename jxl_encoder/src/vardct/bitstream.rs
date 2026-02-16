@@ -1853,10 +1853,11 @@ impl VarDctEncoder {
 
     /// Write a modular sub-bitstream for alpha data in a region (used by both global and HF groups).
     ///
-    /// Format: GroupHeader → local tree → LZ77(disabled) → entropy code → alpha residuals
+    /// Format: GroupHeader → local tree → LZ77 header → entropy code → alpha residuals
     ///
-    /// Uses gradient prediction (predictor 5) and HybridUint {4,2,0}, matching the
-    /// default modular encoding path. Each sub-bitstream is independent (fresh decoder state).
+    /// Uses gradient prediction (predictor 5) with LZ77 RLE for efficient encoding of
+    /// mostly-uniform alpha channels (e.g. fully opaque screenshots). Each sub-bitstream
+    /// is independent (fresh decoder state).
     fn write_modular_alpha_subbitstream(
         alpha: &[u8],
         stride: usize,
@@ -1866,18 +1867,13 @@ impl VarDctEncoder {
         region_height: usize,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        use crate::entropy_coding::hybrid_uint::HybridUintConfig;
         use crate::modular::encode::{
-            write_gradient_tree_tokens, write_tree_histogram_for_gradient,
+            K_LZ77_MIN_LENGTH, K_LZ77_MIN_SYMBOL, Token, build_sparse_histogram,
+            encode_hybrid_uint_000, encode_hybrid_uint_lz77_length, write_gradient_tree_tokens,
+            write_hybrid_data_histogram, write_sparse_lz77_histogram,
+            write_tree_histogram_for_gradient,
         };
         use crate::modular::predictor::pack_signed;
-
-        let hybrid_config = HybridUintConfig {
-            split_exponent: 4,
-            split: 16,
-            msb_in_token: 2,
-            lsb_in_token: 0,
-        };
 
         // GroupHeader: use_global_tree=0, wp default, no transforms
         writer.write(1, 0)?; // use_global_tree = false
@@ -1888,10 +1884,11 @@ impl VarDctEncoder {
         let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-        // Collect residuals using gradient prediction
-        let num_pixels = region_width * region_height;
-        let mut tokens = Vec::with_capacity(num_pixels);
-        let mut max_token: u32 = 0;
+        // Collect residuals with LZ77 RLE detection
+        let mut tokens = Vec::new();
+        let mut current_run = 0usize;
+        let mut num_decoded = 0usize;
+        let mut last_value = u32::MAX; // impossible initial value prevents LZ77 from first pixel
 
         for y in 0..region_height {
             for x in 0..region_width {
@@ -1920,38 +1917,124 @@ impl VarDctEncoder {
                 let prediction = grad.clamp(left.min(top), left.max(top));
                 let residual = pixel - prediction;
                 let packed = pack_signed(residual);
-                let (token, _, _) = hybrid_config.encode(packed);
-                max_token = max_token.max(token);
-                tokens.push(Token {
-                    context: 0,
-                    value: packed,
-                    is_lz77_length: false,
-                });
+
+                // LZ77 RLE: copies the last residual value
+                let can_use_lz77 = num_decoded > 0 && packed == last_value;
+
+                if can_use_lz77 {
+                    current_run += 1;
+                } else {
+                    // Flush accumulated run
+                    if current_run > K_LZ77_MIN_LENGTH {
+                        tokens.push(Token::Lz77Run(current_run));
+                        num_decoded += current_run;
+                    } else {
+                        for _ in 0..current_run {
+                            tokens.push(Token::Raw(last_value));
+                            num_decoded += 1;
+                        }
+                    }
+                    current_run = 0;
+                    tokens.push(Token::Raw(packed));
+                    num_decoded += 1;
+                    last_value = packed;
+                }
             }
         }
 
-        // Build and write entropy code (single context, Huffman)
-        // Use the simple Huffman path to avoid ANS complexity in modular sub-bitstreams.
-        let histogram_size = (max_token + 1) as usize;
-        let mut histogram = vec![0u32; histogram_size];
-        for t in &tokens {
-            let (token, _, _) = hybrid_config.encode(t.value);
-            histogram[token as usize] += 1;
+        // Flush final run
+        if current_run > K_LZ77_MIN_LENGTH {
+            tokens.push(Token::Lz77Run(current_run));
+        } else {
+            for _ in 0..current_run {
+                tokens.push(Token::Raw(last_value));
+            }
         }
 
-        use crate::modular::encode::write_hybrid_data_histogram;
-        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+        // Check if we have LZ77 runs
+        let num_lz77_runs = tokens
+            .iter()
+            .filter(|t| matches!(t, Token::Lz77Run(_)))
+            .count();
 
-        // Write tokens
-        for t in &tokens {
-            let (token, extra_bits, num_extra) = hybrid_config.encode(t.value);
-            // Write Huffman code for token
-            let depth = depths[token as usize];
-            let code = codes[token as usize];
-            writer.write(depth as usize, code as u64)?;
-            // Write extra bits
-            if num_extra > 0 {
-                writer.write(num_extra as usize, extra_bits as u64)?;
+        if num_lz77_runs > 0 {
+            // LZ77-enabled path: sparse alphabet with LZ77 symbols
+            let sparse_counts = build_sparse_histogram(&tokens);
+            let (depths, codes) = write_sparse_lz77_histogram(writer, &sparse_counts)?;
+
+            // Encode tokens
+            for token in &tokens {
+                match token {
+                    Token::Raw(value) => {
+                        let (tok, nbits, extra) = encode_hybrid_uint_000(*value);
+                        let symbol = tok as usize;
+                        if depths[symbol] > 0 {
+                            writer.write(depths[symbol] as usize, codes[symbol] as u64)?;
+                        }
+                        if nbits > 0 {
+                            writer.write(nbits as usize, extra as u64)?;
+                        }
+                    }
+                    Token::Lz77Run(count) => {
+                        let adjusted = count - K_LZ77_MIN_LENGTH;
+                        let (tok, nbits, extra) = encode_hybrid_uint_lz77_length(adjusted as u32);
+                        let symbol = K_LZ77_MIN_SYMBOL + tok as usize;
+                        if depths[symbol] > 0 {
+                            writer.write(depths[symbol] as usize, codes[symbol] as u64)?;
+                        }
+                        if nbits > 0 {
+                            writer.write(nbits as usize, extra as u64)?;
+                        }
+                        // Distance symbol for distance=1 (RLE):
+                        // SPECIAL_DISTANCES[1] = (1, 0) → distance = dist_multiplier*0 + 1 = 1
+                        let (dist_tok, dist_nbits, dist_extra) = encode_hybrid_uint_000(1);
+                        if depths[dist_tok as usize] > 0 {
+                            writer.write(
+                                depths[dist_tok as usize] as usize,
+                                codes[dist_tok as usize] as u64,
+                            )?;
+                        }
+                        if dist_nbits > 0 {
+                            writer.write(dist_nbits as usize, dist_extra as u64)?;
+                        }
+                    }
+                }
+            }
+        } else {
+            // No LZ77 runs: use the simpler non-LZ77 path with HybridUint {4,2,0}
+            use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+            let hybrid_config = HybridUintConfig {
+                split_exponent: 4,
+                split: 16,
+                msb_in_token: 2,
+                lsb_in_token: 0,
+            };
+
+            let mut max_token: u32 = 0;
+            let mut histogram_data = Vec::with_capacity(tokens.len());
+            for token in &tokens {
+                if let Token::Raw(value) = token {
+                    let (tok, extra_bits, num_extra) = hybrid_config.encode(*value);
+                    max_token = max_token.max(tok);
+                    histogram_data.push((tok, extra_bits, num_extra));
+                }
+            }
+
+            let histogram_size = (max_token + 1) as usize;
+            let mut histogram = vec![0u32; histogram_size];
+            for &(tok, _, _) in &histogram_data {
+                histogram[tok as usize] += 1;
+            }
+
+            let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+            for &(token, extra_bits, num_extra) in &histogram_data {
+                let depth = depths[token as usize];
+                let code = codes[token as usize];
+                writer.write(depth as usize, code as u64)?;
+                if num_extra > 0 {
+                    writer.write(num_extra as usize, extra_bits as u64)?;
+                }
             }
         }
 
