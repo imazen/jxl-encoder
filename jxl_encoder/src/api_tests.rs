@@ -4350,3 +4350,334 @@ fn test_squeeze_multigroup_rgb_512x512() {
         "Squeeze multi-group: {diff_count} pixel differences"
     );
 }
+
+/// Test RGB lossless encoding at many sizes, checking both jxl-rs and djxl.
+/// This test was created to investigate decode failures for certain RGB image sizes.
+#[test]
+#[ignore]
+fn test_rgb_lossless_djxl_sweep() {
+    use std::process::Command;
+
+    let mut failures_jxlrs = Vec::new();
+    let mut failures_djxl = Vec::new();
+    let mut total = 0;
+
+    for w in 4..40 {
+        for h in 4..40 {
+            total += 1;
+            // Hash-based pixels: guaranteed all unique colors -> RCT path (not palette)
+            let mut data = vec![0u8; w * h * 3];
+            for y in 0..h {
+                for x in 0..w {
+                    let idx = (y * w + x) * 3;
+                    let v = (x as u32)
+                        .wrapping_mul(2654435761)
+                        .wrapping_add((y as u32).wrapping_mul(2246822519));
+                    data[idx] = (v & 0xFF) as u8;
+                    data[idx + 1] = ((v >> 8) & 0xFF) as u8;
+                    data[idx + 2] = ((v >> 16) & 0xFF) as u8;
+                }
+            }
+
+            let encoded = LosslessConfig::new()
+                .with_tree_learning(false)
+                .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+                .unwrap_or_else(|e| panic!("{}x{}: encoding failed: {}", w, h, e));
+
+            // Test jxl-rs in-process
+            match crate::test_helpers::decode_with_jxl_rs(&encoded) {
+                Ok(img) => {
+                    let decoded: Vec<u8> = img
+                        .pixels
+                        .iter()
+                        .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                        .collect();
+                    if decoded != data {
+                        failures_jxlrs.push(format!("{}x{} (data mismatch)", w, h));
+                    }
+                }
+                Err(e) => {
+                    failures_jxlrs.push(format!("{}x{} ({})", w, h, e));
+                }
+            }
+
+            // Test djxl
+            let path = format!("/tmp/sweep_{}x{}.jxl", w, h);
+            std::fs::write(&path, &encoded).unwrap();
+            let output = Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+                .args([&path, &format!("/tmp/sweep_{}x{}.png", w, h)])
+                .output();
+            match output {
+                Ok(o) if !o.status.success() => {
+                    failures_djxl.push(format!("{}x{}", w, h));
+                }
+                Err(e) => {
+                    failures_djxl.push(format!("{}x{} (launch: {})", w, h, e));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    eprintln!("\nRGB lossless sweep: {} total sizes tested", total);
+    eprintln!("  jxl-rs failures: {} / {}", failures_jxlrs.len(), total);
+    for f in &failures_jxlrs[..failures_jxlrs.len().min(20)] {
+        eprintln!("    FAIL (jxl-rs): {}", f);
+    }
+    eprintln!("  djxl failures: {} / {}", failures_djxl.len(), total);
+    for f in &failures_djxl[..failures_djxl.len().min(20)] {
+        eprintln!("    FAIL (djxl): {}", f);
+    }
+
+    // The test itself checks if there are djxl failures
+    assert!(
+        failures_djxl.is_empty(),
+        "djxl decode failures: {}/{} sizes failed. First 10: {:?}",
+        failures_djxl.len(),
+        total,
+        &failures_djxl[..failures_djxl.len().min(10)]
+    );
+}
+
+/// Test RGB lossless encoding with gradient pattern that previously failed.
+/// Pattern: (x*32+y*20+c*80)%256 - produces few unique colors, uses RCT path.
+#[test]
+#[ignore]
+fn test_rgb_lossless_gradient_pattern_sweep() {
+    use std::process::Command;
+
+    let mut failures_djxl = Vec::new();
+    let mut failures_jxlrs = Vec::new();
+    let mut total = 0;
+
+    // Test both with and without tree learning
+    for use_tree in [false, true] {
+        for w in 4..40 {
+            for h in 4..40 {
+                total += 1;
+                let mut data = vec![0u8; w * h * 3];
+                for y in 0..h {
+                    for x in 0..w {
+                        let idx = (y * w + x) * 3;
+                        data[idx] = ((x * 32 + y * 20 + 0 * 80) % 256) as u8;
+                        data[idx + 1] = ((x * 32 + y * 20 + 1 * 80) % 256) as u8;
+                        data[idx + 2] = ((x * 32 + y * 20 + 2 * 80) % 256) as u8;
+                    }
+                }
+
+                let encoded = LosslessConfig::new()
+                    .with_tree_learning(use_tree)
+                    .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+                    .unwrap_or_else(|e| {
+                        panic!("{}x{} tree={}: encoding failed: {}", w, h, use_tree, e)
+                    });
+
+                // Test jxl-rs in-process
+                match crate::test_helpers::decode_with_jxl_rs(&encoded) {
+                    Ok(img) => {
+                        let decoded: Vec<u8> = img
+                            .pixels
+                            .iter()
+                            .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                            .collect();
+                        if decoded != data {
+                            failures_jxlrs
+                                .push(format!("{}x{} tree={} (data mismatch)", w, h, use_tree));
+                        }
+                    }
+                    Err(e) => {
+                        failures_jxlrs.push(format!("{}x{} tree={} ({})", w, h, use_tree, e));
+                    }
+                }
+
+                // Test djxl
+                let tree_str = if use_tree { "tree" } else { "notree" };
+                let path = format!("/tmp/grad_{}x{}_{}.jxl", w, h, tree_str);
+                std::fs::write(&path, &encoded).unwrap();
+                let output = Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+                    .args([&path, &format!("/tmp/grad_{}x{}_{}.png", w, h, tree_str)])
+                    .output();
+                match output {
+                    Ok(o) if !o.status.success() => {
+                        failures_djxl.push(format!("{}x{} tree={}", w, h, use_tree));
+                    }
+                    Err(e) => {
+                        failures_djxl
+                            .push(format!("{}x{} tree={} (launch: {})", w, h, use_tree, e));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "\nRGB gradient pattern sweep: {} total tests ({} sizes x 2 tree modes)",
+        total,
+        total / 2
+    );
+    eprintln!("  jxl-rs failures: {} / {}", failures_jxlrs.len(), total);
+    for f in &failures_jxlrs[..failures_jxlrs.len().min(20)] {
+        eprintln!("    FAIL (jxl-rs): {}", f);
+    }
+    eprintln!("  djxl failures: {} / {}", failures_djxl.len(), total);
+    for f in &failures_djxl[..failures_djxl.len().min(30)] {
+        eprintln!("    FAIL (djxl): {}", f);
+    }
+
+    assert!(
+        failures_djxl.is_empty(),
+        "djxl decode failures: {}/{} tests failed",
+        failures_djxl.len(),
+        total
+    );
+}
+
+/// Test tree learning RCT path on various failing cases.
+#[test]
+#[ignore]
+fn test_tree_learning_debug_single() {
+    let cases: Vec<(&str, usize, usize, Box<dyn Fn(usize, usize) -> [u8; 3]>)> = vec![
+        // Gradient pattern
+        (
+            "gradient_11x13",
+            11,
+            13,
+            Box::new(|x, y| {
+                [
+                    ((x * 255) / 10.max(1)) as u8,
+                    ((y * 255) / 12.max(1)) as u8,
+                    128,
+                ]
+            }),
+        ),
+        // 8-color pattern
+        (
+            "8colors_16x16",
+            16,
+            16,
+            Box::new(|x, y| {
+                let colors: [[u8; 3]; 8] = [
+                    [255, 0, 0],
+                    [0, 255, 0],
+                    [0, 0, 255],
+                    [255, 255, 0],
+                    [255, 0, 255],
+                    [0, 255, 255],
+                    [0, 0, 0],
+                    [255, 255, 255],
+                ];
+                colors[(x + y * 3) % 8]
+            }),
+        ),
+        // XY gradient 256x256
+        (
+            "xy_256x256",
+            256,
+            256,
+            Box::new(|x, y| [x as u8, y as u8, ((x + y) % 256) as u8]),
+        ),
+    ];
+
+    for (name, w, h, pixel_fn) in &cases {
+        let mut data = vec![0u8; w * h * 3];
+        for y in 0..*h {
+            for x in 0..*w {
+                let idx = (y * w + x) * 3;
+                let c = pixel_fn(x, y);
+                data[idx] = c[0];
+                data[idx + 1] = c[1];
+                data[idx + 2] = c[2];
+            }
+        }
+
+        let encoded = LosslessConfig::new()
+            .with_tree_learning(true)
+            .encode(&data, *w as u32, *h as u32, PixelLayout::Rgb8)
+            .unwrap();
+
+        let path = format!("/tmp/tree_debug_{}.jxl", name);
+        std::fs::write(&path, &encoded).unwrap();
+
+        // Decode with jxl-rs
+        let jxlrs_ok = match crate::test_helpers::decode_with_jxl_rs(&encoded) {
+            Ok(img) => {
+                let decoded: Vec<u8> = img
+                    .pixels
+                    .iter()
+                    .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                    .collect();
+                let diffs: usize = data
+                    .iter()
+                    .zip(decoded.iter())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                if diffs > 0 {
+                    eprintln!("{}: jxl-rs {diffs} diffs", name);
+                }
+                diffs == 0
+            }
+            Err(e) => {
+                eprintln!("{}: jxl-rs ERROR: {}", name, e);
+                false
+            }
+        };
+
+        // Decode with djxl and verify pixels
+        let djxl_png_path = format!("/tmp/tree_debug_{}.png", name);
+        let djxl_status =
+            std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+                .args([&path, &djxl_png_path])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+        let djxl_ok = if djxl_status {
+            // Compare decoded pixels
+            let decoded_img = image::open(&djxl_png_path).ok();
+            if let Some(decoded_img) = decoded_img {
+                let decoded_rgb = decoded_img.to_rgb8();
+                let decoded_bytes = decoded_rgb.as_raw();
+                let diffs: usize = data
+                    .iter()
+                    .zip(decoded_bytes.iter())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                if diffs > 0 {
+                    eprintln!(
+                        "{}: djxl {diffs} pixel diffs (of {} total bytes)",
+                        name,
+                        data.len().min(decoded_bytes.len())
+                    );
+                    // Print first few diffs
+                    let mut printed = 0;
+                    for (i, (a, b)) in data.iter().zip(decoded_bytes.iter()).enumerate() {
+                        if a != b && printed < 10 {
+                            let ch = ["R", "G", "B"][i % 3];
+                            let px = i / 3;
+                            let py = px / w;
+                            let px = px % w;
+                            eprintln!("  diff at ({px},{py}) {ch}: expected {a}, got {b}");
+                            printed += 1;
+                        }
+                    }
+                }
+                diffs == 0
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        eprintln!(
+            "{} ({}x{}): {} bytes, jxl-rs={} djxl={}",
+            name,
+            w,
+            h,
+            encoded.len(),
+            if jxlrs_ok { "PASS" } else { "FAIL" },
+            if djxl_ok { "PASS" } else { "FAIL" },
+        );
+    }
+}

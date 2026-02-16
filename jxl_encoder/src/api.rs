@@ -497,7 +497,7 @@ impl LosslessConfig {
         Self {
             effort,
             use_ans: effort >= 4,
-            tree_learning: effort >= 8,
+            tree_learning: effort >= 7,
             squeeze: false, // squeeze hurts without tree-learned predictors
             lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
@@ -513,8 +513,8 @@ impl LosslessConfig {
     ///
     /// This adjusts all effort-dependent defaults:
     /// - **e1–3**: Huffman encoding
-    /// - **e4–7**: + ANS entropy coding
-    /// - **e8**: + content-adaptive tree learning
+    /// - **e4–6**: + ANS entropy coding
+    /// - **e7**: + content-adaptive tree learning
     /// - **e9–10**: + LZ77 backward references
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
@@ -1193,6 +1193,8 @@ impl<'a> EncodeRequest<'a> {
         writer.zero_pad_to_byte();
 
         // Encode frame
+        // Tree learning is only validated for 8-bit images; disable for 16-bit.
+        let use_tree_learning = cfg.tree_learning && image.bit_depth <= 8;
         let frame_encoder = FrameEncoder::new(
             w,
             h,
@@ -1200,7 +1202,7 @@ impl<'a> EncodeRequest<'a> {
                 use_modular: true,
                 effort: cfg.effort,
                 use_ans: cfg.use_ans,
-                use_tree_learning: cfg.tree_learning,
+                use_tree_learning,
                 use_squeeze: cfg.squeeze,
                 have_animation: false,
                 duration: 0,
@@ -1471,6 +1473,8 @@ fn encode_animation_lossless(
         }
         .map_err(EncodeError::from)?;
 
+        // Tree learning is only validated for 8-bit images; disable for 16-bit.
+        let use_tree_learning = cfg.tree_learning && image.bit_depth <= 8;
         let frame_encoder = FrameEncoder::new(
             frame_w,
             frame_h,
@@ -1478,7 +1482,7 @@ fn encode_animation_lossless(
                 use_modular: true,
                 effort: cfg.effort,
                 use_ans: cfg.use_ans,
-                use_tree_learning: cfg.tree_learning,
+                use_tree_learning,
                 use_squeeze: cfg.squeeze,
                 have_animation: true,
                 duration: frame.duration,
