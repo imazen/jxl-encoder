@@ -549,11 +549,7 @@ fn test_lossless_crop_identical_frames() {
         },
     ];
 
-    // Use effort 4 (ANS, no tree learning) to keep encoding overhead stable.
-    // This test is about identical-frame crop detection, not compression quality.
-    let config = LosslessConfig::new().with_effort(4);
-
-    let data = config
+    let data = LosslessConfig::new()
         .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &frames)
         .expect("encode failed");
 
@@ -579,7 +575,7 @@ fn test_lossless_crop_identical_frames() {
             duration: 1,
         },
     ];
-    let diff_data = config
+    let diff_data = LosslessConfig::new()
         .encode_animation(64, 64, PixelLayout::Rgb8, &animation, &diff_frames)
         .expect("diff encode failed");
 
