@@ -1305,7 +1305,6 @@ pub(crate) fn write_squeeze_transform(
 /// When an image has few unique colors (≤256 for 8-bit), palette encoding
 /// replaces multi-channel data with a palette meta-channel + index channel.
 /// This provides 19-57% compression improvement on graphics/screenshots.
-#[allow(dead_code)] // TODO: ANS bugs in palette path, re-enable after fixing
 pub fn write_modular_stream_with_palette(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -1540,11 +1539,10 @@ pub fn write_modular_stream_with_rct(
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
-    // TODO: Palette in RCT path has ANS bugs (checksum mismatch on small images,
-    // histogram normalization failure on degenerate checkerboards). Disable until fixed.
-    // if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
-    //     return write_modular_stream_with_palette(image, writer, use_ans, begin_c, num_c);
-    // }
+    // Check if palette is more beneficial than RCT
+    if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
+        return write_modular_stream_with_palette(image, writer, use_ans, begin_c, num_c);
+    }
 
     // Only apply RCT to RGB images (3+ channels)
     if image.channels.len() < 3 {
@@ -1795,10 +1793,10 @@ pub fn write_modular_stream_with_rct_weighted(
 ) -> Result<()> {
     use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
 
-    // TODO: Palette in RCT path has ANS bugs — disabled until fixed
-    // if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
-    //     return write_modular_stream_with_palette(image, writer, use_ans, begin_c, num_c);
-    // }
+    // Check if palette is more beneficial
+    if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
+        return write_modular_stream_with_palette(image, writer, use_ans, begin_c, num_c);
+    }
 
     if image.channels.len() < 3 {
         return write_modular_stream_with_weighted(image, writer, use_ans);
