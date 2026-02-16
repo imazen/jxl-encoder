@@ -1981,29 +1981,16 @@ pub fn write_modular_stream_with_tree(
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
-    // Apply palette if beneficial (RGB+ only in tree learning path), otherwise RCT
-    let palette_info: Option<(usize, usize, usize)>; // (begin_c, num_c, nb_colors)
-    let palette_candidate = if image.channels.len() >= 3 {
-        super::palette::should_use_palette(image)
-    } else {
-        None
-    };
-    let (work_image, rct_type) = if let Some((begin_c, num_c)) = palette_candidate {
-        let analysis = super::palette::analyze_palette(image, begin_c, num_c, 256);
+    // Tree learning uses RCT only (not palette) because palette+tree has a
+    // meta-channel encoding mismatch that causes decoder failures.
+    // The non-tree path (write_modular_stream_with_rct) handles palette correctly.
+    let (work_image, rct_type) = if rct && image.channels.len() >= 3 {
         let mut transformed = image.clone();
-        let nb_colors = super::palette::apply_palette(&mut transformed, begin_c, num_c, &analysis)?;
-        palette_info = Some((begin_c, num_c, nb_colors));
-        (transformed, None)
+        let rct_type = RctType::YCOCG;
+        forward_rct(&mut transformed.channels, 0, rct_type)?;
+        (transformed, Some(rct_type))
     } else {
-        palette_info = None;
-        if rct && image.channels.len() >= 3 {
-            let mut transformed = image.clone();
-            let rct_type = RctType::YCOCG;
-            forward_rct(&mut transformed.channels, 0, rct_type)?;
-            (transformed, Some(rct_type))
-        } else {
-            (image.clone(), None)
-        }
+        (image.clone(), None)
     };
 
     // Step 1: Gather samples
@@ -2013,12 +2000,6 @@ pub fn write_modular_stream_with_tree(
     // Step 2: Learn tree
     let tree = compute_best_tree(&mut samples, max_nodes, split_threshold);
     let num_contexts = count_contexts(&tree) as usize;
-
-    crate::trace::debug_eprintln!(
-        "TREE_LEARN: {} nodes, {} leaves/contexts",
-        tree.len(),
-        num_contexts
-    );
 
     // Step 3: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
@@ -2052,10 +2033,7 @@ pub fn write_modular_stream_with_tree(
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_header.all_default = true
 
-    if let Some((begin_c, num_c, nb_colors)) = palette_info {
-        writer.write(2, 1)?; // num_transforms = 1
-        write_palette_transform(writer, begin_c, num_c, nb_colors)?;
-    } else if let Some(rct_type) = rct_type {
+    if let Some(rct_type) = rct_type {
         writer.write(2, 1)?; // num_transforms = 1
         write_rct_transform(writer, 0, rct_type)?;
     } else {
@@ -2064,10 +2042,17 @@ pub fn write_modular_stream_with_tree(
 
     // Debug: verify ANS encoding correctness
     #[cfg(debug_assertions)]
-    if num_contexts > 1
-        && crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code).is_err()
     {
-        eprintln!("ANS ROUNDTRIP VERIFICATION FAILED for tree learning data");
+        let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
+        if roundtrip_result.is_err() {
+            eprintln!(
+                "ANS ROUNDTRIP VERIFICATION FAILED for tree learning data (num_contexts={}, num_histograms={}, tokens={}): {:?}",
+                num_contexts,
+                code.histograms.len(),
+                tokens.len(),
+                roundtrip_result
+            );
+        }
     }
 
     // Write ANS tokens

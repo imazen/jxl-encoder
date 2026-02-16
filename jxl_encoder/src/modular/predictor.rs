@@ -34,13 +34,13 @@ pub enum Predictor {
     TopLeft = 8,
     /// Left-left neighbor (2 pixels left).
     LeftLeft = 9,
-    /// Average of average and gradient.
+    /// Average of west and north-west: (W + NW) / 2
     Average1 = 10,
-    /// Average of average and left.
+    /// Average of north and north-west: (N + NW) / 2
     Average2 = 11,
-    /// Average of average and top.
+    /// Average of north and north-east: (N + NE) / 2
     Average3 = 12,
-    /// Average of top and top-right.
+    /// Weighted average: (6N - 2NN + 7W + WW + NE2 + 3NE + 8) / 16
     Average4 = 13,
 }
 
@@ -105,20 +105,14 @@ impl Predictor {
             Predictor::TopRight => n.ne,
             Predictor::TopLeft => n.nw,
             Predictor::LeftLeft => n.ww,
-            Predictor::Average1 => {
-                let avg = (n.w + n.n) / 2;
-                let grad = n.w.saturating_add(n.n).saturating_sub(n.nw);
-                (avg + grad) / 2
+            Predictor::Average1 => (n.w + n.nw) / 2,
+            Predictor::Average2 => (n.n + n.nw) / 2,
+            Predictor::Average3 => (n.n + n.ne) / 2,
+            Predictor::Average4 => {
+                // AverageAll: (6*N - 2*NN + 7*W + WW + NEE + 3*NE + 8) / 16
+                // where NEE = toprightright = pixel at (x+2, y-1)
+                (6 * n.n - 2 * n.nn + 7 * n.w + n.ww + n.nee + 3 * n.ne + 8) / 16
             }
-            Predictor::Average2 => {
-                let avg = (n.w + n.n) / 2;
-                (avg + n.w) / 2
-            }
-            Predictor::Average3 => {
-                let avg = (n.w + n.n) / 2;
-                (avg + n.n) / 2
-            }
-            Predictor::Average4 => (n.n + n.ne) / 2,
         }
     }
 }
@@ -138,6 +132,8 @@ pub struct Neighbors {
     pub nn: i32,
     /// West-west (2 pixels left) neighbor.
     pub ww: i32,
+    /// Northeast-east (top-right of top-right, pixel at x+2, y-1). Used by AverageAll predictor.
+    pub nee: i32,
 }
 
 impl Neighbors {
@@ -180,6 +176,12 @@ impl Neighbors {
 
         let nn = if y > 1 { channel.get(x, y - 2) } else { n };
 
+        let nee = if x + 2 < width && y > 0 {
+            channel.get(x + 2, y - 1)
+        } else {
+            ne
+        };
+
         Self {
             n,
             w,
@@ -187,6 +189,7 @@ impl Neighbors {
             ne,
             nn,
             ww,
+            nee,
         }
     }
 
@@ -237,6 +240,12 @@ impl Neighbors {
             n
         };
 
+        let nee = if let Some(prev) = prev_row {
+            if x + 2 < prev.len() { prev[x + 2] } else { ne }
+        } else {
+            ne
+        };
+
         Self {
             n,
             w,
@@ -244,6 +253,7 @@ impl Neighbors {
             ne,
             nn,
             ww,
+            nee,
         }
     }
 }
@@ -672,6 +682,7 @@ mod tests {
             ne: 100,
             nn: 100,
             ww: 100,
+            nee: 100,
         };
 
         let (pred, _prop) = wp.predict_and_property(4, 2, xsize, &neighbors);
@@ -697,6 +708,7 @@ mod tests {
                 ne: (x * 10) as i32,
                 nn: 0,
                 ww: if x > 1 { ((x - 2) * 10) as i32 } else { 0 },
+                nee: 0,
             };
 
             let (_pred, _prop) = wp.predict_and_property(x, 1, xsize, &neighbors);
@@ -750,6 +762,7 @@ mod tests {
                 nw: rng.next() as i32 % 256, // topleft
                 nn: rng.next() as i32 % 256, // toptop
                 ww: 0,
+                nee: 0,
             };
             let res = state.predict_and_property(x, y, xsize, &neighbors);
             state.update_errors((rng.next() % 256) as i32, x, y, xsize);
