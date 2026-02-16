@@ -63,6 +63,7 @@ fn average(x: i32, y: i32) -> i32 {
 /// Forward horizontal squeeze of a single channel.
 ///
 /// Input channel (w, h) → average channel ((w+1)/2, h) + residual channel (w-(w+1)/2, h).
+/// Both output channels inherit vshift and get hshift+1 (matching libjxl MetaSqueeze).
 fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
     let w = channel.width();
     let h = channel.height();
@@ -71,6 +72,12 @@ fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
 
     let mut avg = Channel::new(avg_w, h)?;
     let mut res = Channel::new(res_w, h)?;
+
+    // Both avg and res get incremented hshift, same vshift (matching libjxl MetaSqueeze)
+    avg.hshift = channel.hshift + 1;
+    avg.vshift = channel.vshift;
+    res.hshift = channel.hshift + 1;
+    res.vshift = channel.vshift;
 
     for y in 0..h {
         for x in 0..res_w {
@@ -109,6 +116,7 @@ fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
 /// Forward vertical squeeze of a single channel.
 ///
 /// Input channel (w, h) → average channel (w, (h+1)/2) + residual channel (w, h-(h+1)/2).
+/// Both output channels inherit hshift and get vshift+1 (matching libjxl MetaSqueeze).
 fn fwd_v_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
     let w = channel.width();
     let h = channel.height();
@@ -117,6 +125,12 @@ fn fwd_v_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
 
     let mut avg = Channel::new(w, avg_h)?;
     let mut res = Channel::new(w, res_h)?;
+
+    // Both avg and res get incremented vshift, same hshift (matching libjxl MetaSqueeze)
+    avg.hshift = channel.hshift;
+    avg.vshift = channel.vshift + 1;
+    res.hshift = channel.hshift;
+    res.vshift = channel.vshift + 1;
 
     for y in 0..res_h {
         for x in 0..w {
