@@ -815,6 +815,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
+                self.effort,
             )
         };
 
