@@ -367,7 +367,7 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x3c445f29b2489ed4, // Updated: float qf + deviation bounds
+        0x51bd996721483326, // Updated: LZ77 RLE for alpha sub-bitstream
     );
 }
 
