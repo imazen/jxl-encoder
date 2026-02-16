@@ -443,6 +443,22 @@ impl VarDctEncoder {
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
 
+        debug_rect!(
+            "enc/params",
+            0,
+            0,
+            width,
+            height,
+            "global_scale={} quant_dc={} scale={:.4} inv_scale={:.4} epf_iters={} chrom_x={:.3} chrom_b={:.3}",
+            params.global_scale,
+            params.quant_dc,
+            params.scale,
+            params.inv_scale,
+            params.epf_iters,
+            chromacity_x,
+            chromacity_b
+        );
+
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
 
@@ -478,13 +494,17 @@ impl VarDctEncoder {
             0,
             width,
             height,
-            "d={:.2} gab={} cfl={} pixel_loss={} patches={} bfly_iters={}",
+            "d={:.2} gab={} cfl={} pixel_loss={} patches={} bfly_iters={} noise={} denoise={} ac_strat={} err_diff={}",
             self.distance,
             self.enable_gaborish,
             self.cfl_enabled,
             self.pixel_domain_loss,
             self.enable_patches,
-            self.butteraugli_iters
+            self.butteraugli_iters,
+            self.enable_noise,
+            self.enable_denoise,
+            self.ac_strategy_enabled,
+            self.error_diffusion
         );
 
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
@@ -523,6 +543,73 @@ impl VarDctEncoder {
                 }
             );
             ac_strategy.print_histogram();
+        }
+
+        // Log AC strategy distribution
+        {
+            let mut counts = [0u32; 27];
+            for by in 0..ysize_blocks {
+                for bx in 0..xsize_blocks {
+                    if ac_strategy.is_first(bx, by) {
+                        let s = ac_strategy.raw_strategy(bx, by) as usize;
+                        if s < counts.len() {
+                            counts[s] += 1;
+                        }
+                    }
+                }
+            }
+            let total: u32 = counts.iter().sum();
+            // Format top strategies
+            let names = [
+                "DCT8",
+                "HORNETS",
+                "DCT2x2",
+                "DCT4x4",
+                "DCT16x16",
+                "DCT32x32",
+                "DCT8x16",
+                "DCT8x4",
+                "DCT4x8",
+                "AFV0",
+                "AFV1",
+                "AFV2",
+                "AFV3",
+                "DCT64x64",
+                "DCT64x32",
+                "DCT32x64",
+                "DCT128x128",
+                "DCT128x64",
+                "DCT64x128",
+                "DCT256x256",
+                "DCT256x128",
+                "DCT128x256",
+                "IDENTITY",
+                "DCT16x8",
+                "DCT32x16",
+                "DCT16x32",
+                "DCT8x32",
+            ];
+            let mut parts = alloc::string::String::new();
+            for (i, &c) in counts.iter().enumerate() {
+                if c > 0 {
+                    if !parts.is_empty() {
+                        parts.push(' ');
+                    }
+                    let name = names.get(i).copied().unwrap_or("?");
+                    let pct = c as f32 / total.max(1) as f32 * 100.0;
+                    parts.push_str(&alloc::format!("{}={:.0}%", name, pct));
+                }
+            }
+            debug_rect!(
+                "enc/ac_strategy",
+                0,
+                0,
+                width,
+                height,
+                "total={} {}",
+                total,
+                parts
+            );
         }
 
         // Adjust quant field for multi-block transforms.
@@ -1152,6 +1239,29 @@ impl VarDctEncoder {
                 qf_float[bi] = qf_float[bi].clamp(qf_lower, qf_higher);
             }
 
+            // Log per-iteration summary
+            let qf_min = qf_float.iter().copied().reduce(f32::min).unwrap_or(1.0);
+            let qf_max = qf_float.iter().copied().reduce(f32::max).unwrap_or(255.0);
+            let qf_sum: f64 = qf_float.iter().map(|&v| v as f64).sum();
+            let qf_avg = qf_sum / qf_float.len() as f64;
+            let td_max = tile_dist.iter().copied().reduce(f32::max).unwrap_or(0.0);
+            let bad_blocks = tile_dist.iter().filter(|&&d| d > target_distance).count();
+            debug_rect!(
+                "bfly/iter",
+                0,
+                0,
+                width,
+                height,
+                "iter={} score={:.3} target={:.3} qf_avg={:.1} qf=[{:.0};{:.0}] td_max={:.2} bad_blocks={}",
+                iter,
+                result.score,
+                target_distance,
+                qf_avg,
+                qf_min,
+                qf_max,
+                td_max,
+                bad_blocks
+            );
             eprintln!(
                 "  Butteraugli iter {}: score={:.3} (target={:.3})",
                 iter, result.score, target_distance,

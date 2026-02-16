@@ -196,15 +196,20 @@ pub fn compute_cfl_map(
                 find_best_multiplier(&coeffs_yx, &coeffs_x, num_ac, 0.0, K_DISTANCE_MULTIPLIER_AC);
             ytob[tile_idx] =
                 find_best_multiplier(&coeffs_yb, &coeffs_b, num_ac, 1.0, K_DISTANCE_MULTIPLIER_AC);
+            // Compute Y energy for this tile (how much luma AC content)
+            let y_energy: f32 = coeffs_yx[..num_ac].iter().map(|v| v * v).sum();
+            let num_blocks = (tile_bx1 - tile_bx0) * (tile_by1 - tile_by0);
             debug_rect!(
                 "cfl/tile",
                 tile_bx0 * 8,
                 tile_by0 * 8,
                 (tile_bx1 - tile_bx0) * 8,
                 (tile_by1 - tile_by0) * 8,
-                "ytox={} ytob={}",
+                "ytox={} ytob={} | blocks={} y_energy={:.0}",
                 ytox[tile_idx],
-                ytob[tile_idx]
+                ytob[tile_idx],
+                num_blocks,
+                y_energy
             );
         }
     }

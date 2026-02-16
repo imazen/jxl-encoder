@@ -118,12 +118,15 @@ impl VarDctEncoder {
     /// Ported from libjxl enc_group.cc:104-328. Only applies to DCT8+ strategies
     /// (skips IDENTITY, DCT2X2, DCT4X4, DCT4X8, DCT8X4). Implements 6 heuristics:
     ///
-    /// 1. Threshold reduction for multi-block transforms
+    /// 1. Threshold reduction for multi-block transforms (A)
     /// 2. Sparse block Y-channel quant boost + threshold adjustment (B)
     /// 3. High-frequency corner quant increase (C)
     /// 4. DCT8 flatness detection quant boost (D)
     /// 5. Large transform error correction (E)
     /// 6. Activity-based quant reduction + threshold adjustment (F)
+    ///
+    /// Returns `(heuristics_fired, sum_of_vals, sum_of_error, activity)` for debug logging.
+    /// `heuristics_fired` is a bitmask: bit 0=A, 1=B, 2=C, 3=D, 4=E, 5=F.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn adjust_quant_block_ac(
         block_coeffs: &[f32],
@@ -138,7 +141,7 @@ impl VarDctEncoder {
         ysize: usize, // cy (8x8 blocks in y)
         thresholds: &mut [f32; 4],
         quant: &mut i32,
-    ) {
+    ) -> (u8, f32, f32, i32) {
         const QUANT_MAX: i32 = 256;
 
         // Skip partial block kinds (small transforms)
@@ -147,11 +150,13 @@ impl VarDctEncoder {
             | RAW_STRATEGY_DCT2X2
             | RAW_STRATEGY_DCT4X4
             | RAW_STRATEGY_DCT4X8
-            | RAW_STRATEGY_DCT8X4 => return,
+            | RAW_STRATEGY_DCT8X4 => return (0, 0.0, 0.0, 0),
             _ => {}
         }
 
-        // (1) Threshold reduction for large transforms
+        let mut heuristics_fired: u8 = 0;
+
+        // (A) Threshold reduction for large transforms
         if xsize > 1 || ysize > 1 {
             let adj = (0.003 * (xsize * ysize) as f32).clamp(0.0, 0.08);
             for t in thresholds.iter_mut() {
@@ -160,6 +165,7 @@ impl VarDctEncoder {
                     *t = 0.54;
                 }
             }
+            heuristics_fired |= 0x01; // A
         }
 
         // Pre-scan: compute statistics over non-LLF coefficients
@@ -206,8 +212,9 @@ impl VarDctEncoder {
             }
         }
 
-        // (2) Sparse block Y-channel handling (B heuristic)
+        // (B) Sparse block Y-channel handling
         if c == 1 && (sum_of_vals * 8.0) < (xsize * ysize) as f32 {
+            heuristics_fired |= 0x02; // B
             const K_LIMIT: [f64; 4] = [0.46, 0.46, 0.46, 0.46];
             const K_MUL: [f64; 4] = [0.9999, 0.9999, 0.9999, 0.9999];
 
@@ -237,11 +244,12 @@ impl VarDctEncoder {
             }
         }
 
-        // (3) High-frequency corner penalty (C heuristic)
+        // (C) High-frequency corner penalty
         {
             let all = hf_nonzeros[0] + hf_nonzeros[1] + hf_nonzeros[2] + hf_nonzeros[3] + 1.0;
             let mul = [70.0f32, 30.0, 60.0];
             if mul[c] * sum_of_highest_freq >= all {
+                heuristics_fired |= 0x04; // C
                 *quant += (mul[c] * sum_of_highest_freq / all) as i32;
                 if *quant >= QUANT_MAX {
                     *quant = QUANT_MAX - 1;
@@ -249,10 +257,11 @@ impl VarDctEncoder {
             }
         }
 
-        // (4) DCT8 flatness detection (D heuristic)
+        // (D) DCT8 flatness detection
         if raw_strategy == 0 {
             // DCT8: if block is very flat (few nonzeros), increase quant to reduce blocking
             if hf_nonzeros[0] + hf_nonzeros[1] + hf_nonzeros[2] + hf_nonzeros[3] < 11.0 {
+                heuristics_fired |= 0x08; // D
                 *quant += 1;
                 if *quant >= QUANT_MAX {
                     *quant = QUANT_MAX - 1;
@@ -260,7 +269,7 @@ impl VarDctEncoder {
             }
         }
 
-        // (5) Large transform error correction (E heuristic)
+        // (E) Large transform error correction
         {
             #[allow(clippy::excessive_precision)]
             const K_MUL1: [[f64; 3]; 4] = [
@@ -320,6 +329,7 @@ impl VarDctEncoder {
                 let threshold = K_MUL1[ix][c] * area + K_MUL2[ix][c] * norm_vals;
 
                 if norm_error > threshold {
+                    heuristics_fired |= 0x10; // E
                     let step = (norm_error / threshold) as i32;
                     let step = step.clamp(0, 2);
                     *quant += step;
@@ -330,7 +340,7 @@ impl VarDctEncoder {
             }
         }
 
-        // (6) Activity-based quant reduction (F heuristic)
+        // (F) Activity-based quant reduction
         {
             let div = (xsize * ysize) as i32;
             let mut activity = (hf_nonzeros[0] as i32 + div / 2) / div;
@@ -350,7 +360,11 @@ impl VarDctEncoder {
             if qp < orig_qp_limit {
                 qp = orig_qp_limit;
             }
+            if qp != *quant {
+                heuristics_fired |= 0x20; // F
+            }
             *quant = qp;
+            (heuristics_fired, sum_of_vals, sum_of_error, activity)
         }
     }
 

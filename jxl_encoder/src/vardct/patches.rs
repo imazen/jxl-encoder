@@ -1027,6 +1027,27 @@ pub(crate) fn find_and_build(
         .iter()
         .map(|p| p.patch.num_pixels() * p.positions.len())
         .sum();
+    let total_unique = infos.len();
+    let total_occurrences: usize = infos.iter().map(|p| p.positions.len()).sum();
+    let max_patch_size = infos
+        .iter()
+        .map(|p| p.patch.xsize.max(p.patch.ysize))
+        .max()
+        .unwrap_or(0) as usize;
+    let coverage_pct = total_patch_pixels as f64 / (width * height) as f64 * 100.0;
+    debug_rect!(
+        "patches/detect",
+        0,
+        0,
+        width,
+        height,
+        "found {} unique; {} occurrences; max_size={}; coverage={:.1}%; total_pixels={}",
+        total_unique,
+        total_occurrences,
+        max_patch_size,
+        coverage_pct,
+        total_patch_pixels
+    );
     let image_pixels = width * height;
     #[cfg(feature = "debug-tokens")]
     {
@@ -1134,11 +1155,14 @@ pub(crate) fn find_and_build(
         0,
         width,
         height,
-        "ACCEPTED: {} unique refs in {}x{} frame; {} occurrences",
+        "ACCEPTED: {} unique refs in {}x{} frame; {} occurrences; overhead={}B; savings_est={}B; ratio={:.1}x",
         patches_data.ref_positions.len(),
         patches_data.ref_width,
         patches_data.ref_height,
-        patches_data.positions.len()
+        patches_data.positions.len(),
+        total_overhead,
+        estimated_savings,
+        estimated_savings as f64 / total_overhead.max(1) as f64
     );
 
     Some(patches_data)
