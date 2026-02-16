@@ -751,6 +751,14 @@ fn read_png(
     let info = reader.next_frame(&mut buf)?;
     buf.truncate(info.buffer_size());
 
+    // PNG stores 16-bit samples as big-endian. Our encoder expects native-endian u16.
+    // On little-endian platforms, swap each u16's bytes.
+    if info.bit_depth == png::BitDepth::Sixteen && cfg!(target_endian = "little") {
+        for pair in buf.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+    }
+
     Ok((
         info.width,
         info.height,
