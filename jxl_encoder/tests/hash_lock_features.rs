@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x42776671449c94f6, // Updated: squeeze disabled by default (no tree learning)
+        0x92fdebdb05c79ab8, // Updated: tree learning default-on at effort 7
     );
 }
 
@@ -798,7 +798,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         0x4610698f0cf81821,
-        0x12a22a85203fb8b5, // Updated: squeeze disabled by default
+        0xdc2187e39f8742de, // Updated: tree learning default-on at effort 7
     );
 }
 
@@ -817,7 +817,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         0x492393a4c3f29174,
-        0x4735390df85eaf31, // Updated: palette disabled in RCT path
+        0xa1b74eb185b688bb, // Updated: tree learning default-on at effort 7
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0x541ac8f8cf83a921, // Updated: squeeze disabled by default
+        0xb0d25ee557c8759e, // Updated: tree learning default-on at effort 7
     );
 }
 
@@ -881,6 +881,8 @@ fn lossless_no_ans_huffman() {
 
 #[test]
 fn lossless_with_tree_learning() {
+    // Now redundant with defaults (tree learning is default-on at effort 7),
+    // but kept for backwards compatibility testing.
     let data = LosslessConfig::new()
         .with_tree_learning(true)
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
@@ -895,7 +897,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x92fdebdb05c79ab8, // Updated: effort-dependent tree params (e7: 7 props, 48 buckets)
+        0x92fdebdb05c79ab8, // Same as defaults (tree learning is default-on at effort 7)
     );
 }
 
@@ -921,6 +923,8 @@ fn lossless_with_squeeze() {
 
 #[test]
 fn lossless_with_lz77_greedy() {
+    // Note: tree learning (default-on at effort 7) takes priority over LZ77,
+    // so this produces the same output as defaults. LZ77 is silently ignored.
     let data = LosslessConfig::new()
         .with_lz77(true)
         .with_lz77_method(Lz77Method::Greedy)
@@ -936,12 +940,14 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x42776671449c94f6, // Updated: squeeze disabled by default
+        0x92fdebdb05c79ab8, // Updated: tree learning default-on at effort 7 (supersedes LZ77)
     );
 }
 
 #[test]
 fn lossless_with_lz77_rle() {
+    // Note: tree learning (default-on at effort 7) takes priority over LZ77,
+    // so this produces the same output as defaults. LZ77 is silently ignored.
     let data = LosslessConfig::new()
         .with_lz77(true)
         .with_lz77_method(Lz77Method::Rle)
@@ -957,7 +963,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x42776671449c94f6, // Updated: squeeze disabled by default
+        0x92fdebdb05c79ab8, // Updated: tree learning default-on at effort 7 (supersedes LZ77)
     );
 }
 
@@ -1021,6 +1027,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x746fc0f4b62c4354, // Updated: squeeze disabled by default
+        0xa0a304f824aa84a5, // Updated: tree learning default-on at effort 7
     );
 }
