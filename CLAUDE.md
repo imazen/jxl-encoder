@@ -1229,29 +1229,32 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 ### Lossless Compression Status (Feb 16, 2026)
 
-**Default path (effort 7)**: RCT (YCoCg) + gradient prediction + ANS. No squeeze, no tree learning.
+**Default path (effort 7)**: RCT (YCoCg) + learned MA tree + multi-context ANS.
+Tree learning enabled by default at effort >= 7 with 14 candidate predictors
+including Weighted. Select predictor fix (Feb 16) resolved inverted comparison
+that was causing 22-63% regressions.
 
-**Squeeze disabled by default** — measured 9-15% WORSE than no-squeeze on 8 CLIC photos,
-48-128% WORSE on 10 screenshots. Root cause: squeeze benefits require tree-learned adaptive
-prediction (WP, per-context predictor selection). Without tree learning, squeeze's single
-gradient predictor on Haar coefficients is worse than direct gradient prediction on raw pixels.
-Users can still opt in with `.with_squeeze(true)`.
+**Squeeze disabled by default** — hurts compression even WITH tree learning:
+- Photos (1024x1024 CLIC): squeeze+tree 1334KB vs tree-only 1163KB (+14.7%)
+- Screenshots (imac_dark): squeeze+tree 1828KB vs tree-only 1128KB (+62%)
+Tree-learned adaptive prediction handles spatial correlations more efficiently
+than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true)`.
 
-**Tree learning (effort 8, opt-in)**: RCT + learned MA tree + multi-context ANS. Predictor
-formulas 10-13 fixed Feb 16 (were producing wrong residuals). Currently makes photos 22-63%
-LARGER due to tree overhead exceeding savings. Needs Weighted Predictor (property 15 fix)
-and context count pruning to be competitive. Verified pixel-exact on gradient/8color/xy images.
+**Compression vs cjxl (1024x1024 CLIC photo, default effort 7)**:
+- Tree-only: 1163KB vs cjxl e7 1056KB (+10.1%)
+- Previous (no tree): 1569KB vs cjxl e7 1056KB (+48.5%)
+- Improvement from tree learning: -25.9% file size
 
-**Compression vs cjxl (8 CLIC 1024x1024 photos, default effort 7)**:
-- vs cjxl e1: +1.0% (at parity)
-- vs cjxl e7: +28.5% (gap from tree learning + WP predictor)
+**Performance issue**: Tree learning on 1024x1024 takes ~5 minutes (release build).
+Root cause: O(n * props * thresholds) per tree node with no sample subsampling or
+deduplication. libjxl uses hash-based sample deduplication with counts. Affects both
+squeeze and non-squeeze paths equally.
 
 **Known issues**:
-- Screenshots are 100-700% larger than cjxl e7 (needs tree learning + patches for lossless)
-- Tree learning on 16-bit images is broken (auto-disabled, needs investigation)
+- Tree learning is slow on large images (5 min for 1024x1024, needs subsampling)
+- Screenshots still 80%+ larger than cjxl e7 (gap from no-squeeze, no lossless patches)
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
   (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
-- `with_effort()` now correctly preserves `.squeeze` setting from prior calls
 
 **All lossless output verified pixel-exact** via djxl and jxl-rs on:
 - 8 CLIC 1024x1024 photos, 10 screenshots, RGBA, grayscale, 4x4, 13x17, 16x16, 32x32, 257x1, 300x300, 512x512
