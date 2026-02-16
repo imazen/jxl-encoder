@@ -51,7 +51,15 @@ pub fn analyze_palette(
 
     let num_colors = color_counts.len();
 
-    if num_colors > max_colors || num_colors <= 1 {
+    // Palette is not useful when:
+    // - Too many colors (exceeds max)
+    // - Only 1 color (no benefit)
+    // - Colors ≥ 50% of pixel count (palette + index overhead exceeds savings)
+    //   The palette channel itself is (num_colors × num_c) values, so the break-even
+    //   point is roughly when palette overhead equals channel elimination savings.
+    let num_pixels = width * height;
+    let too_many_relative = num_c >= 2 && num_colors * 2 > num_pixels;
+    if num_colors > max_colors || num_colors <= 1 || too_many_relative {
         return PaletteAnalysis {
             use_palette: false,
             num_colors,

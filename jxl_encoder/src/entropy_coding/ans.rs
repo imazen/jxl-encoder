@@ -692,6 +692,16 @@ impl ANSEncodingHistogram {
         }
 
         if best.cost == f32::MAX {
+            // Debug: dump histogram info
+            eprintln!(
+                "ANS rebalance FAILED: alphabet_size={}, num_symbols={}, total_count={}",
+                alphabet_size, num_symbols, histo.total_count
+            );
+            for (i, &c) in histo.counts.iter().enumerate() {
+                if c > 0 {
+                    eprintln!("  symbol {}: count={}", i, c);
+                }
+            }
             return Err(Error::InvalidHistogram(
                 "Failed to rebalance histogram".to_string(),
             ));
@@ -777,25 +787,57 @@ impl ANSEncodingHistogram {
         }
         self.counts[omit_pos] = remainder;
 
-        // Verify omit_pos is the FIRST symbol with the highest logcount.
+        // Ensure omit_pos is the FIRST symbol with the highest logcount.
         // The decoder re-derives omit_pos by scanning symbols in order and picking
         // the first one with the maximum logcount. We must ensure that after
         // rebalancing, no EARLIER symbol has the same or higher logcount.
+        //
+        // If a non-omit symbol has too-high logcount, reduce it and give the
+        // freed count to omit_pos. This handles the case where two symbols have
+        // nearly-equal very high counts (e.g. 2048 and 2046 in a 2-color image).
+        for _ in 0..10 {
+            let omit_logcount = floor_log2(self.counts[omit_pos] as u32) + 1;
+            let mut adjusted = false;
+            for i in 0..self.alphabet_size {
+                if i == omit_pos || self.counts[i] <= 0 {
+                    continue;
+                }
+                let logcount = floor_log2(self.counts[i] as u32) + 1;
+                let needs_fix =
+                    logcount > omit_logcount || (logcount == omit_logcount && i < omit_pos);
+                if needs_fix {
+                    // Reduce this symbol to the highest value with a lower logcount
+                    let target_logcount = if i < omit_pos {
+                        omit_logcount - 1
+                    } else {
+                        omit_logcount
+                    };
+                    let max_allowed = (1i32 << target_logcount) - 1;
+                    let reduction = self.counts[i] - max_allowed.max(1);
+                    if reduction > 0 {
+                        self.counts[i] -= reduction;
+                        self.counts[omit_pos] += reduction;
+                        adjusted = true;
+                    }
+                }
+            }
+            if !adjusted {
+                break;
+            }
+        }
+
+        // Final verification
         let omit_logcount = floor_log2(self.counts[omit_pos] as u32) + 1;
         for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
-            if i == omit_pos {
+            if i == omit_pos || count <= 0 {
                 continue;
             }
-            if count > 0 {
-                let logcount = floor_log2(count as u32) + 1;
-                if logcount > omit_logcount {
-                    // Higher logcount - decoder picks this instead
-                    return false;
-                }
-                if logcount == omit_logcount && i < omit_pos {
-                    // Same logcount but earlier position - decoder picks this instead
-                    return false;
-                }
+            let logcount = floor_log2(count as u32) + 1;
+            if logcount > omit_logcount {
+                return false;
+            }
+            if logcount == omit_logcount && i < omit_pos {
+                return false;
             }
         }
 
