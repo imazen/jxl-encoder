@@ -551,4 +551,67 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_decode_sparse_histogram_roundtrip() {
+        // Reproduce the exact histogram that fails:
+        // alphabet_size=36, symbols at positions 1 (4092), 31 (2), 35 (2)
+        // This is the histogram that caused gradient_256 tree learning to fail.
+        let mut raw_counts = vec![0i32; 40]; // padded to HISTOGRAM_ROUNDING
+        raw_counts[1] = 196000; // dominant symbol
+        raw_counts[31] = 100; // rare symbol
+        raw_counts[35] = 100; // rare symbol
+        let histo = Histogram::from_counts(&raw_counts);
+
+        let ans_histo =
+            ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise).unwrap();
+
+        println!("Sparse histogram:");
+        println!(
+            "  method={}, alphabet_size={}, omit_pos={}",
+            ans_histo.method, ans_histo.alphabet_size, ans_histo.omit_pos
+        );
+        println!("  non-zero counts:");
+        for (i, &c) in ans_histo.counts.iter().enumerate() {
+            if c != 0 {
+                println!("    [{}] = {}", i, c);
+            }
+        }
+
+        let mut writer = BitWriter::new();
+        ans_histo.write(&mut writer).unwrap();
+        // Add padding so decoder's peek(7) doesn't read past end
+        writer.write(8, 0).unwrap();
+        writer.zero_pad_to_byte();
+        let bytes = writer.finish();
+
+        println!(
+            "  encoded bytes ({} bytes): {:02x?}",
+            bytes.len(),
+            &bytes[..bytes.len().min(32)]
+        );
+
+        // Decode it back
+        let mut br = BitReader::new(&bytes);
+        let decoded = AnsHistogram::decode(&mut br, 6).unwrap();
+
+        println!("  decoded frequencies:");
+        for (i, &f) in decoded.frequencies.iter().enumerate() {
+            if f != 0 {
+                println!("    [{}] = {}", i, f);
+            }
+        }
+
+        // Verify frequencies match
+        let sum: u16 = decoded.frequencies.iter().sum();
+        assert_eq!(sum, 4096, "Sum should be 4096 but got {}", sum);
+
+        for i in 0..ans_histo.alphabet_size {
+            assert_eq!(
+                decoded.frequencies[i], ans_histo.counts[i] as u16,
+                "Frequency mismatch at symbol {}: encoder wrote {}, decoder read {}",
+                i, ans_histo.counts[i], decoded.frequencies[i]
+            );
+        }
+    }
 }
