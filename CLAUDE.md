@@ -464,8 +464,9 @@ Tree learning produces 22-63% LARGER files than gradient-only encoding on real p
 3. **No context pruning**: libjxl limits context count based on image size and
    complexity. Our tree learning always allows up to 256 nodes regardless.
 
-**Blockers**: Tasks #3 (match libjxl parameters) and #4 (fix property 15/WP) must
-be completed before tree learning can be competitive on photos.
+Property 15 (wp_max_error) is now fixed (was blocked by predictor formula bug).
+Remaining blocker: context count pruning (libjxl limits contexts based on image
+size/complexity, our tree learning always allows up to 256 nodes).
 
 ### Tree Learning Broken on 16-bit Images (Feb 16, 2026)
 
@@ -1204,9 +1205,9 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 **GAPS (ranked by compression impact)**:
 
-1. **Property 15 (wp_max_error) disabled in tree learning** — WP predictor is a candidate,
-   but property 15 causes encoder/decoder tree traversal mismatch on 128x128+ images.
-   WP core is bit-exact. Impact: minor (WP still selectable, just can't split on its error).
+1. ~~**Property 15 (wp_max_error) disabled in tree learning**~~ — FIXED (Feb 16, 2026).
+   Root cause was predictor formulas 10-13 being wrong, which corrupted WP error state.
+   With correct formulas, property 15 works correctly. Re-enabled for all tree learning.
 
 2. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
 
