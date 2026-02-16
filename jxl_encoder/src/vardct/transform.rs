@@ -646,7 +646,7 @@ impl VarDctEncoder {
                             1.0
                         };
                         let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
-                        Self::adjust_quant_block_ac(
+                        let (hflags, vals, err, activity) = Self::adjust_quant_block_ac(
                             &dct_coeffs[c],
                             weights_c,
                             orig_qac,
@@ -662,6 +662,21 @@ impl VarDctEncoder {
                         );
                         if c == 1 {
                             thresholds_y = thres;
+                            // Log Y-channel heuristics (most impactful)
+                            debug_rect!(
+                                "quant/heur",
+                                bx * 8,
+                                by * 8,
+                                cx * 8,
+                                cy * 8,
+                                "c=Y flags={:06b} vals={:.0} err={:.1} act={} q={}→{}",
+                                hflags,
+                                vals,
+                                err,
+                                activity,
+                                quant_int,
+                                quant_c
+                            );
                         }
                         max_quant = max_quant.max(quant_c);
                     }
@@ -676,10 +691,11 @@ impl VarDctEncoder {
                         by * 8,
                         cx * 8,
                         cy * 8,
-                        "strat={} q={}→{}",
+                        "strat={} q={}→{} qac={:.1}",
                         raw_strategy,
                         quant_before,
-                        quant_field[quant_idx]
+                        quant_field[quant_idx],
+                        qac
                     );
                 }
 

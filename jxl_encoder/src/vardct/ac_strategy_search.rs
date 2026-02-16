@@ -326,13 +326,33 @@ pub(super) fn find_best_16x16_transform(
     let best_rect = cost16x8.min(cost8x16);
     let best_large = best_rect.min(cost16x16);
 
+    // Gather input context for the decision
+    let qi = abs_by * xsize_blocks + abs_bx;
+    let qf_avg = if qi + 1 + xsize_blocks < quant_field.len() {
+        (quant_field[qi]
+            + quant_field[qi + 1]
+            + quant_field[qi + xsize_blocks]
+            + quant_field[qi + 1 + xsize_blocks])
+            / 4.0
+    } else {
+        quant_field.get(qi).copied().unwrap_or(0.0)
+    };
+    let mask_avg = if qi + 1 + xsize_blocks < masking.len() {
+        (masking[qi]
+            + masking[qi + 1]
+            + masking[qi + xsize_blocks]
+            + masking[qi + 1 + xsize_blocks])
+            / 4.0
+    } else {
+        masking.get(qi).copied().unwrap_or(0.0)
+    };
     debug_rect!(
         "acs/16x16",
         abs_bx * 8,
         abs_by * 8,
         16,
         16,
-        "winner={} singles={:.0} 16x16={:.0} 16x8={:.0} 8x16={:.0}",
+        "winner={} singles={:.0} 16x16={:.0} 16x8={:.0} 8x16={:.0} | qf={:.1} mask={:.2} mul8={:.2} mul16={:.2}",
         if best_large >= cost_all_single {
             "singles"
         } else if cost16x16 <= best_rect {
@@ -345,7 +365,11 @@ pub(super) fn find_best_16x16_transform(
         cost_all_single,
         cost16x16,
         cost16x8,
-        cost8x16
+        cost8x16,
+        qf_avg,
+        mask_avg,
+        mul8x8,
+        mul16x16
     );
 
     // Only use a non-single-block strategy if it beats four single-block transforms
@@ -700,12 +724,14 @@ pub(super) fn find_best_32x32_transform(
             abs_by * 8,
             32,
             32,
-            "winner={} sub={:.0} 32x32={:.0} 32x16={:.0} 16x32={:.0}",
+            "winner={} sub={:.0} 32x32={:.0} 32x16={:.0} 16x32={:.0} | mul32={:.2} mul16={:.2}",
             choices[best_choice as usize],
             cost_sub,
             entropy_32x32,
             entropy_32x16_total,
-            entropy_16x32_total
+            entropy_16x32_total,
+            mul32x32,
+            mul32x16
         );
     }
 
@@ -1017,12 +1043,14 @@ pub(super) fn find_best_64x64_transform(
             abs_by * 8,
             64,
             64,
-            "winner={} sub={:.0} 64x64={:.0} 64x32={:.0} 32x64={:.0}",
+            "winner={} sub={:.0} 64x64={:.0} 64x32={:.0} 32x64={:.0} | mul64={:.2} mul32={:.2}",
             choices[best_choice as usize],
             cost_sub,
             entropy_64x64,
             entropy_64x32_total,
-            entropy_32x64_total
+            entropy_32x64_total,
+            mul64x64,
+            mul64x32
         );
     }
 
