@@ -498,7 +498,7 @@ impl LosslessConfig {
             effort,
             use_ans: effort >= 4,
             tree_learning: effort >= 7,
-            squeeze: effort >= 7, // squeeze benefits from tree-learned adaptive prediction
+            squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
             lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
         }
@@ -533,6 +533,10 @@ impl LosslessConfig {
     }
 
     /// Enable/disable squeeze (Haar wavelet) transform (default: false).
+    ///
+    /// Squeeze is disabled by default because tree learning provides better
+    /// compression on both photos and screenshots. Squeeze can still be
+    /// enabled via `.with_squeeze(true)` for experimentation.
     pub fn with_squeeze(mut self, enable: bool) -> Self {
         self.squeeze = enable;
         self
