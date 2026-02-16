@@ -267,14 +267,20 @@ pub fn write_global_modular_section_with_tree(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        gather_samples,
+        compute_gather_stride, gather_samples_strided,
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
-    // Step 1: Gather samples from all groups
+    // Step 1: Gather samples from all groups (with subsampling for large images)
+    let total_pixels: usize = images
+        .iter()
+        .flat_map(|img| img.channels.iter())
+        .map(|ch| ch.width() * ch.height())
+        .sum();
+    let stride = compute_gather_stride(total_pixels);
     let mut samples = TreeSamples::new();
     for (group_idx, group_image) in images.iter().enumerate() {
-        gather_samples(&mut samples, group_image, group_idx as u32);
+        gather_samples_strided(&mut samples, group_image, group_idx as u32, 0, stride);
     }
 
     // Step 2: Learn tree with effort-dependent parameters

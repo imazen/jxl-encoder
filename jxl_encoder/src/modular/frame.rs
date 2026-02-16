@@ -809,7 +809,7 @@ impl FrameEncoder {
         use super::tree::count_contexts;
         use super::tree_learn::{
             TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-            gather_samples,
+            compute_gather_stride, gather_samples_strided,
         };
         use crate::entropy_coding::encode::{
             build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans,
@@ -865,6 +865,13 @@ impl FrameEncoder {
         );
 
         // Step 3: Build sub-images for each section and gather samples
+        // Compute stride from total pixel count for subsampling
+        let total_pixels: usize = squeezed
+            .channels
+            .iter()
+            .map(|ch| ch.width() * ch.height())
+            .sum();
+        let stride = compute_gather_stride(total_pixels);
         let mut samples = TreeSamples::new();
 
         // 3a: Global channels (full, no cropping needed)
@@ -875,7 +882,7 @@ impl FrameEncoder {
             has_alpha: false,
         };
         // group_id=0 for global section, channel_offset=0
-        gather_samples(&mut samples, &global_sub, 0);
+        gather_samples_strided(&mut samples, &global_sub, 0, 0, stride);
 
         // 3b: LfGroup channels — crop to each LfGroup rect
         let num_lf_groups_x = self.width.div_ceil(lf_group_dim);
@@ -940,7 +947,7 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             // group_id for LfGroup sections — offset by 1 to distinguish from global (0)
-            gather_samples(&mut samples, &sub_image, (lg + 1) as u32);
+            gather_samples_strided(&mut samples, &sub_image, (lg + 1) as u32, 0, stride);
         }
 
         // 3c: PassGroup channels — crop to each group rect
@@ -969,7 +976,13 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             // group_id offset: after global (0) and LfGroups (1..num_lf_groups)
-            gather_samples(&mut samples, &sub_image, (num_lf_groups + 1 + g) as u32);
+            gather_samples_strided(
+                &mut samples,
+                &sub_image,
+                (num_lf_groups + 1 + g) as u32,
+                0,
+                stride,
+            );
         }
 
         // Step 4: Learn tree
