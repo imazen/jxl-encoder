@@ -880,6 +880,32 @@ pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patch
     }
 }
 
+/// Add patches back to XYB planes (inverse of [`subtract_patches`]).
+///
+/// Used by the butteraugli loop to simulate the decoder's reconstruction,
+/// which adds patches via blend mode kAdd after IDCT + gab + EPF.
+pub(crate) fn add_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &PatchesData) {
+    for pos in &patches.positions {
+        let ref_pos = &patches.ref_positions[pos.ref_pos_idx];
+        let pw = ref_pos.xsize as usize;
+        let ph = ref_pos.ysize as usize;
+        let ref_x0 = ref_pos.x0 as usize;
+        let ref_y0 = ref_pos.y0 as usize;
+        let pos_x = pos.x as usize;
+        let pos_y = pos.y as usize;
+
+        for dy in 0..ph {
+            for dx in 0..pw {
+                let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
+                let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
+                for c in 0..3 {
+                    xyb[c][img_i] += patches.ref_image[c][ref_i];
+                }
+            }
+        }
+    }
+}
+
 // ── Bitstream Encoding ─────────────────────────────────────────────────────────
 
 /// Encode the patches section in LfGlobal.

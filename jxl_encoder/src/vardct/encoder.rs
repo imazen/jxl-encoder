@@ -550,6 +550,7 @@ impl VarDctEncoder {
                 &initial_quant_field,
                 &cfl_map,
                 &ac_strategy,
+                patches_data.as_ref(),
             );
         }
 
@@ -907,6 +908,7 @@ impl VarDctEncoder {
         initial_quant_field: &[u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
+        patches_data: Option<&super::patches::PatchesData>,
     ) {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
@@ -1015,6 +1017,11 @@ impl VarDctEncoder {
                     padded_width,
                     padded_height,
                 );
+            }
+
+            // Step 2b: Add patches back (decoder applies patches after gab+EPF via blend kAdd)
+            if let Some(pd) = patches_data {
+                super::patches::add_patches(&mut planes, padded_width, pd);
             }
 
             // Step 3: Convert reconstructed XYB to planar linear RGB (in-place, no interleave)

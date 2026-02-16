@@ -843,6 +843,7 @@ impl VarDctEncoder {
                 &initial_quant_field,
                 &cfl_map,
                 &ac_strategy,
+                None, // No patches in this code path
             );
         }
 
