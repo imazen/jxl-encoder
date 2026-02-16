@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
+        0xf0d772cc2eb33502, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -798,7 +798,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         0x4610698f0cf81821,
-        0x39669447b1f02670, // Updated: squeeze now default at effort 7
+        0x39c7dee1bc98a9c0, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -817,7 +817,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         0x492393a4c3f29174,
-        0x53ed5576720b420f, // Updated: squeeze now default at effort 7
+        0xce1917cbcef75aa8, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0x1e04095a3d5ff69d, // Updated: squeeze now default at effort 7
+        0x3f9da4e4c1ec4b05, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -875,7 +875,7 @@ fn lossless_no_ans_huffman() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xbf7d287fca998721, // Updated: squeeze now default at effort 7
+        0xf1e90c9ddde45c0c, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -895,7 +895,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
+        0xf0d772cc2eb33502, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -915,7 +915,7 @@ fn lossless_with_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x84b3b2f884be6872,
+        0xf0d772cc2eb33502, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -936,7 +936,7 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
+        0xf0d772cc2eb33502, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -957,7 +957,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
+        0xf0d772cc2eb33502, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -978,7 +978,7 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x84b3b2f884be6872,
+        0xf0d772cc2eb33502, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }
 
@@ -1002,7 +1002,7 @@ fn lossless_all_off() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x613d6f1ab42ace8d,
+        0x72f288c2ad0c943d, // Updated: RCT (YCoCg) now applied to non-squeeze paths
     );
 }
 
@@ -1021,6 +1021,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x2da9b8a29c62734d, // Updated: squeeze now default at effort 7
+        0x4aa0db87c22912ba, // Updated: RCT (YCoCg) now applied before squeeze
     );
 }

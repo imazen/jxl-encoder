@@ -1111,7 +1111,11 @@ pub fn write_simple_modular_stream(
 /// - TransformId: 2 bits (selector 0 = RCT)
 /// - begin_c: 2 bits selector + 3 bits value = 5 bits for value 0
 /// - rct_type: 2 bits (selector 0 = 6 = YCoCg)
-fn write_rct_transform(writer: &mut BitWriter, begin_c: usize, rct_type: RctType) -> Result<()> {
+pub(crate) fn write_rct_transform(
+    writer: &mut BitWriter,
+    begin_c: usize,
+    rct_type: RctType,
+) -> Result<()> {
     // TransformId: U32(Val(0)=RCT, Val(1)=Palette, Val(2)=Squeeze, Val(3)=Invalid)
     // RCT = selector 0 = 2 bits "00"
     writer.write(2, 0)?;
@@ -1421,15 +1425,23 @@ pub fn write_modular_stream_with_squeeze(
         }
     }
 
-    // Apply forward squeeze
+    // Apply RCT (YCoCg) before squeeze for RGB images to decorrelate channels
     let mut transformed = image.clone();
+    let has_rct = transformed.channels.len() >= 3;
+    if has_rct {
+        let rct_type = RctType::YCOCG;
+        forward_rct(&mut transformed.channels, 0, rct_type)?;
+    }
+
+    // Apply forward squeeze
     apply_squeeze(&mut transformed, &params)?;
 
     crate::trace::debug_eprintln!(
-        "SQUEEZE: {} steps, {} → {} channels",
+        "SQUEEZE: {} steps, {} → {} channels, rct={}",
         params.len(),
         image.channels.len(),
-        transformed.channels.len()
+        transformed.channels.len(),
+        has_rct,
     );
 
     // Collect residuals with gradient prediction on all transformed channels
@@ -1473,11 +1485,19 @@ pub fn write_modular_stream_with_squeeze(
         let (tokens, code) = build_ans_modular_code(&residuals);
         write_ans_modular_header(writer, &code)?;
 
-        // GroupHeader with 1 transform (Squeeze)
+        // GroupHeader with transforms: RCT (if RGB) + Squeeze
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_header.all_default = true
-        writer.write(2, 1)?; // num_transforms = 1
-        write_squeeze_transform(writer, &params)?;
+        if has_rct {
+            // num_transforms = 2: U32 BitsOffset(4,2), offset=0
+            writer.write(2, 2)?;
+            writer.write(4, 0)?;
+            write_rct_transform(writer, 0, RctType::YCOCG)?;
+            write_squeeze_transform(writer, &params)?;
+        } else {
+            writer.write(2, 1)?; // num_transforms = 1
+            write_squeeze_transform(writer, &params)?;
+        }
 
         write_ans_modular_tokens(writer, &tokens, &code)?;
     } else {
@@ -1485,11 +1505,19 @@ pub fn write_modular_stream_with_squeeze(
         let histogram = build_token_histogram(&encoded, max_token);
         let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
 
-        // GroupHeader with 1 transform (Squeeze)
+        // GroupHeader with transforms: RCT (if RGB) + Squeeze
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_header.all_default = true
-        writer.write(2, 1)?; // num_transforms = 1
-        write_squeeze_transform(writer, &params)?;
+        if has_rct {
+            // num_transforms = 2: U32 BitsOffset(4,2), offset=0
+            writer.write(2, 2)?;
+            writer.write(4, 0)?;
+            write_rct_transform(writer, 0, RctType::YCOCG)?;
+            write_squeeze_transform(writer, &params)?;
+        } else {
+            writer.write(2, 1)?; // num_transforms = 1
+            write_squeeze_transform(writer, &params)?;
+        }
 
         write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
     }

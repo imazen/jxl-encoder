@@ -135,8 +135,7 @@ impl FrameEncoder {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
 
-            if self.options.use_squeeze
-                && !super::squeeze::default_squeeze_params(image).is_empty()
+            if self.options.use_squeeze && !super::squeeze::default_squeeze_params(image).is_empty()
             {
                 super::encode::write_modular_stream_with_squeeze(
                     image,
@@ -150,6 +149,12 @@ impl FrameEncoder {
                     256,                       // max_nodes
                     1.0,                       // split_threshold
                     image.channels.len() >= 3, // RCT for RGB
+                )?;
+            } else if image.channels.len() >= 3 {
+                super::encode::write_modular_stream_with_rct(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
                 )?;
             } else {
                 write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
@@ -204,11 +209,30 @@ impl FrameEncoder {
             num_lf_groups
         );
 
-        // Step 1: Extract each group image
+        // Step 0: Apply RCT (YCoCg) to full image for RGB before extracting groups
+        let has_rct = image.channels.len() >= 3;
+        let rct_type = if has_rct {
+            Some(super::rct::RctType::YCOCG)
+        } else {
+            None
+        };
+        let transformed;
+        let source_image = if has_rct {
+            transformed = {
+                let mut img = image.clone();
+                super::rct::forward_rct(&mut img.channels, 0, super::rct::RctType::YCOCG)?;
+                img
+            };
+            &transformed
+        } else {
+            image
+        };
+
+        // Step 1: Extract each group image (from RCT-transformed image if applicable)
         let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
         for group_idx in 0..num_groups {
             let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
-            let group_image = image.extract_region(x_start, y_start, x_end, y_end)?;
+            let group_image = source_image.extract_region(x_start, y_start, x_end, y_end)?;
             group_images.push(group_image);
         }
 
@@ -221,6 +245,7 @@ impl FrameEncoder {
                 &mut lf_global_writer,
                 256, // max_nodes
                 1.0, // split_threshold
+                rct_type,
             )?
         } else {
             // Standard path: collect residuals with gradient predictor
@@ -248,6 +273,7 @@ impl FrameEncoder {
                 max_token,
                 &mut lf_global_writer,
                 self.options.use_ans,
+                rct_type,
             )?
         };
         let lf_global_data = lf_global_writer.finish();
@@ -354,9 +380,11 @@ impl FrameEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         use super::encode::{
-            write_gradient_tree_tokens, write_squeeze_transform, write_tree_histogram_for_gradient,
+            write_gradient_tree_tokens, write_rct_transform, write_squeeze_transform,
+            write_tree_histogram_for_gradient,
         };
         use super::predictor::pack_signed;
+        use super::rct::{RctType, forward_rct};
         use super::squeeze::{apply_squeeze, default_squeeze_params};
         use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans};
         use crate::entropy_coding::hybrid_uint::HybridUintConfig;
@@ -373,9 +401,13 @@ impl FrameEncoder {
         let num_lf_groups = self.num_lf_groups();
         let lf_group_dim = GROUP_DIM * 8; // 2048
 
-        // Step 1: Apply squeeze transform
+        // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
+        let has_rct = squeezed.channels.len() >= 3;
+        if has_rct {
+            forward_rct(&mut squeezed.channels, 0, RctType::YCOCG)?;
+        }
         apply_squeeze(&mut squeezed, &squeeze_params)?;
 
         #[cfg(test)]
@@ -570,11 +602,19 @@ impl FrameEncoder {
             EntropyState::Huffman { depths, codes }
         };
 
-        // GroupHeader for global modular stream — includes squeeze transform
+        // GroupHeader for global modular stream — includes RCT (if RGB) + squeeze transform
         lf_global_writer.write(1, 1)?; // use_global_tree = true
         lf_global_writer.write(1, 1)?; // wp_params.default_wp = true
-        lf_global_writer.write(2, 1)?; // nb_transforms = 1
-        write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+        if has_rct {
+            // nb_transforms = 2: U32 BitsOffset(4,2), offset=0
+            lf_global_writer.write(2, 2)?;
+            lf_global_writer.write(4, 0)?;
+            write_rct_transform(&mut lf_global_writer, 0, RctType::YCOCG)?;
+            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+        } else {
+            lf_global_writer.write(2, 1)?; // nb_transforms = 1
+            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+        }
 
         // Encode global channel data (small channels that fit within GROUP_DIM)
         let encode_residuals =

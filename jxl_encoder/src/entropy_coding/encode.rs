@@ -1154,12 +1154,26 @@ pub fn build_entropy_code_ans_with_options(
         ans_distributions.push(ans_dist);
     }
 
-    // Use log_alpha_size=8 when LZ77 is enabled (symbols up to 255),
-    // otherwise log_alpha_size=6 (symbols up to 63).
+    // Compute log_alpha_size from the actual max symbol across all histograms.
+    // Must be at least 5, at most 8 (JXL spec: stored as 2-bit value + 5).
+    let max_alphabet_size = ans_histograms
+        .iter()
+        .map(|h| h.counts.len())
+        .max()
+        .unwrap_or(1);
     let log_alpha_size = if lz77.is_some_and(|p| p.enabled) {
+        // LZ77 needs at least 8 to accommodate length symbols
         8
-    } else {
+    } else if max_alphabet_size <= (1 << ANS_LOG_ALPHA_SIZE) {
         ANS_LOG_ALPHA_SIZE
+    } else {
+        // Need larger alphabet: compute minimum log_alpha_size
+        let min_bits = if max_alphabet_size <= 1 {
+            5
+        } else {
+            (max_alphabet_size - 1).ilog2() as usize + 1
+        };
+        min_bits.clamp(5, 8)
     };
 
     let code = OwnedAnsEntropyCode {
