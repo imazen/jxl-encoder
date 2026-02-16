@@ -1190,6 +1190,29 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 ~~**Palette + tree learning integration**~~ — DONE (Feb 6, 2026). Auto-detect for RGB in tree learning path.
 
+### Lossless Compression Status (Feb 16, 2026)
+
+**Default path (effort 7)**: RCT (YCoCg) + gradient prediction + ANS. No squeeze, no tree learning.
+
+**Squeeze disabled by default** — measured 9-15% WORSE than no-squeeze on 8 CLIC photos,
+48-128% WORSE on 10 screenshots. Root cause: squeeze benefits require tree-learned adaptive
+prediction (WP, per-context predictor selection). Without tree learning, squeeze's single
+gradient predictor on Haar coefficients is worse than direct gradient prediction on raw pixels.
+Users can still opt in with `.with_squeeze(true)`.
+
+**Compression vs cjxl (8 CLIC 1024x1024 photos)**:
+- vs cjxl e1: +1.0% (at parity)
+- vs cjxl e7: +28.5% (gap from tree learning + WP predictor)
+
+**Known issues**:
+- Screenshots are 100-700% larger than cjxl e7 (needs tree learning + patches for lossless)
+- Palette+ANS path has a checksum mismatch bug for images with many unique colors
+  (not triggered in practice due to improved palette heuristic that skips when colors ≥ 50% of pixels)
+- `with_effort()` now correctly preserves `.squeeze` setting from prior calls
+
+**All lossless output verified pixel-exact** via djxl and jxl-rs on:
+- 8 CLIC 1024x1024 photos, 10 screenshots, RGBA, grayscale, 4x4, 13x17, 16x16, 32x32, 257x1, 300x300, 512x512
+
 ## API Convergence TODOs
 
 See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec comparison.
