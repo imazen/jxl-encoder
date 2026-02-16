@@ -9,9 +9,11 @@
 
 use super::channel::ModularImage;
 use super::encode::{
-    write_gradient_tree_tokens, write_hybrid_data_histogram, write_tree_histogram_for_gradient,
+    write_gradient_tree_tokens, write_hybrid_data_histogram, write_rct_transform,
+    write_tree_histogram_for_gradient,
 };
 use super::predictor::pack_signed;
+use super::rct::RctType;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans,
@@ -184,6 +186,7 @@ pub fn write_global_modular_section(
     max_token: u32,
     writer: &mut BitWriter,
     use_ans: bool,
+    rct_type: Option<RctType>,
 ) -> Result<GlobalModularState> {
     crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: Starting global section (ans={})",
@@ -211,7 +214,7 @@ pub fn write_global_modular_section(
         // Write GlobalModular's ModularHeader
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_params.default_wp = true
-        writer.write(2, 0)?; // nb_transforms = 0
+        write_global_transforms(writer, rct_type)?;
 
         // Byte-align at end of global section
         writer.zero_pad_to_byte();
@@ -228,7 +231,7 @@ pub fn write_global_modular_section(
         // Write GlobalModular's ModularHeader
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_params.default_wp = true
-        writer.write(2, 0)?; // nb_transforms = 0
+        write_global_transforms(writer, rct_type)?;
 
         // Byte-align at end of global section
         writer.zero_pad_to_byte();
@@ -259,6 +262,7 @@ pub fn write_global_modular_section_with_tree(
     writer: &mut BitWriter,
     max_nodes: usize,
     split_threshold: f64,
+    rct_type: Option<RctType>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::tree::count_contexts;
@@ -316,11 +320,22 @@ pub fn write_global_modular_section_with_tree(
     // GroupHeader (global modular group)
     writer.write(1, 1)?; // use_global_tree = true
     writer.write(1, 1)?; // wp_params.default_wp = true
-    writer.write(2, 0)?; // nb_transforms = 0
+    write_global_transforms(writer, rct_type)?;
 
     writer.zero_pad_to_byte();
 
     Ok(GlobalModularState::AnsWithTree { code, tree })
+}
+
+/// Write num_transforms + optional RCT transform for the global GroupHeader.
+fn write_global_transforms(writer: &mut BitWriter, rct_type: Option<RctType>) -> Result<()> {
+    if let Some(rct) = rct_type {
+        writer.write(2, 1)?; // nb_transforms = 1
+        write_rct_transform(writer, 0, rct)?;
+    } else {
+        writer.write(2, 0)?; // nb_transforms = 0
+    }
+    Ok(())
 }
 
 /// Collect packed residuals from a group image using gradient prediction.
