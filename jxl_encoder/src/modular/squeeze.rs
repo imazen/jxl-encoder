@@ -183,25 +183,35 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
     let mut w = image.channels[0].width();
     let mut h = image.channels[0].height();
 
+    // Skip squeeze entirely if both dimensions are already small
+    if w <= MAX_FIRST_PREVIEW_SIZE && h <= MAX_FIRST_PREVIEW_SIZE {
+        return params;
+    }
+
     // 4:2:0 chroma squeeze if channels 1 and 2 have same dimensions as channel 0
+    // Skip squeeze directions that would produce 0-sized residual channels.
     if nb_channels > 2
         && image.channels[1].width() == w
         && image.channels[1].height() == h
         && image.channels[2].width() == w
         && image.channels[2].height() == h
     {
-        params.push(SqueezeParams {
-            horizontal: true,
-            in_place: false,
-            begin_c: 1,
-            num_c: 2,
-        });
-        params.push(SqueezeParams {
-            horizontal: false,
-            in_place: false,
-            begin_c: 1,
-            num_c: 2,
-        });
+        if w > 1 {
+            params.push(SqueezeParams {
+                horizontal: true,
+                in_place: false,
+                begin_c: 1,
+                num_c: 2,
+            });
+        }
+        if h > 1 {
+            params.push(SqueezeParams {
+                horizontal: false,
+                in_place: false,
+                begin_c: 1,
+                num_c: 2,
+            });
+        }
     }
 
     let wide = w > h;

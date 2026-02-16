@@ -135,7 +135,9 @@ impl FrameEncoder {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
 
-            if self.options.use_squeeze {
+            if self.options.use_squeeze
+                && !super::squeeze::default_squeeze_params(image).is_empty()
+            {
                 super::encode::write_modular_stream_with_squeeze(
                     image,
                     &mut section_writer,
@@ -165,7 +167,9 @@ impl FrameEncoder {
             for byte in section_data {
                 writer.write_u8(byte)?;
             }
-        } else if self.options.use_squeeze {
+        } else if self.options.use_squeeze
+            && !super::squeeze::default_squeeze_params(image).is_empty()
+        {
             // Multi-group with squeeze: apply global squeeze, partition channels
             self.encode_modular_multi_group_squeeze(image, writer)?;
         } else {
@@ -470,6 +474,9 @@ impl FrameEncoder {
         }
 
         // 3b: LfGroup channel residuals (cropped to each DC group rect)
+        // Use extract_grid_cell matching decoder's get_grid_rect: computes regions
+        // in channel space via grid_dim = (group_dim >> hshift, group_dim >> vshift).
+        let num_lf_groups_x = self.width.div_ceil(lf_group_dim);
         let mut lf_group_channel_data: Vec<Vec<Vec<u32>>> = vec![Vec::new(); num_lf_groups]; // [lf_group_idx][channel_within_group] = residuals
         for &ch_idx in &lf_channel_indices {
             let ch = &squeezed.channels[ch_idx];
@@ -478,13 +485,9 @@ impl FrameEncoder {
                 .enumerate()
                 .take(num_lf_groups)
             {
-                let lg_x = lg % self.width.div_ceil(lf_group_dim);
-                let lg_y = lg / self.width.div_ceil(lf_group_dim);
-                let rect_x0 = lg_x * lf_group_dim;
-                let rect_y0 = lg_y * lf_group_dim;
-                if let Some(cropped) =
-                    ch.extract_shifted_region(rect_x0, rect_y0, lf_group_dim, lf_group_dim)
-                {
+                let lg_x = lg % num_lf_groups_x;
+                let lg_y = lg / num_lf_groups_x;
+                if let Some(cropped) = ch.extract_grid_cell(lg_x, lg_y, lf_group_dim) {
                     let residuals = collect_channel_residuals(&cropped);
                     all_residuals.extend(&residuals);
                     lg_channels.push(residuals);
@@ -493,6 +496,8 @@ impl FrameEncoder {
         }
 
         // 3c: PassGroup channel residuals (cropped to each group rect)
+        // Use extract_grid_cell matching decoder's get_grid_rect logic.
+        let num_groups_x = self.num_groups_x();
         let mut pass_group_channel_data: Vec<Vec<Vec<u32>>> = vec![Vec::new(); num_groups]; // [group_idx][channel_within_group] = residuals
         for &ch_idx in &pass_channel_indices {
             let ch = &squeezed.channels[ch_idx];
@@ -501,10 +506,9 @@ impl FrameEncoder {
                 .enumerate()
                 .take(num_groups)
             {
-                let (x_start, y_start, x_end, y_end) = self.group_bounds(g);
-                let gw = x_end - x_start;
-                let gh = y_end - y_start;
-                if let Some(cropped) = ch.extract_shifted_region(x_start, y_start, gw, gh) {
+                let gx = g % num_groups_x;
+                let gy = g / num_groups_x;
+                if let Some(cropped) = ch.extract_grid_cell(gx, gy, GROUP_DIM) {
                     let residuals = collect_channel_residuals(&cropped);
                     all_residuals.extend(&residuals);
                     g_channels.push(residuals);

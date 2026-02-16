@@ -1184,8 +1184,9 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 6. **16-bit/float input, animation, streaming ANS** — NOT IMPLEMENTED. Format/UX gaps.
 
-7. **Squeeze in multi-group** — Squeeze transform only works for single-group (<= 256x256).
-   Multi-group path uses pre-squeeze channel data.
+7. ~~**Squeeze in multi-group**~~ — DONE (Feb 15, 2026). Squeeze transform works for multi-group
+   images. Channels assigned by shift: global (both dims ≤256), LfGroup (min_shift≥3),
+   PassGroup (shift<3). ANS fix: one encoder state per section (concatenate channel residuals).
 
 ~~**Palette + tree learning integration**~~ — DONE (Feb 6, 2026). Auto-detect for RGB in tree learning path.
 

@@ -116,7 +116,7 @@ struct Args {
     #[arg(long, conflicts_with = "tree_learning")]
     no_tree_learning: bool,
 
-    /// Enable squeeze (Haar wavelet) transform (on by default at effort 9+).
+    /// Enable squeeze (Haar wavelet) transform (on by default at effort 7+).
     /// For lossless encoding.
     #[arg(long)]
     squeeze: bool,
