@@ -369,11 +369,15 @@ impl VarDctEncoder {
         // Detect and subtract patches (before gaborish, after noise).
         // Patches work in the XYB domain: detect repeated rectangular elements,
         // store unique patterns in a reference frame, subtract from image.
-        let patches_data = if self.enable_patches {
+        let mut patches_data = if self.enable_patches {
             super::patches::find_and_build([&xyb_x, &xyb_y, &xyb_b], width, height, padded_width)
         } else {
             None
         };
+        // Quantize ref_image so subtract/add use the same values the decoder will reconstruct.
+        if let Some(ref mut pd) = patches_data {
+            pd.quantize_ref_image();
+        }
         if let Some(ref pd) = patches_data {
             let mut xyb = [
                 core::mem::take(&mut xyb_x),

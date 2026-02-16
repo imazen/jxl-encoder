@@ -171,6 +171,33 @@ pub(crate) struct PatchesData {
     pub ref_height: usize,
 }
 
+impl PatchesData {
+    /// Roundtrip the reference image through integer quantization to match decoder.
+    ///
+    /// The encoder subtracts patch values before VarDCT encoding, and the decoder
+    /// adds them back from the modular reference frame. The reference frame stores
+    /// integers (XYB scaled by InvDCQuant), so there's quantization error.
+    ///
+    /// This method replaces ref_image with the values the decoder will reconstruct,
+    /// ensuring subtract/add in the encoder match the decoder exactly.
+    pub fn quantize_ref_image(&mut self) {
+        const DC_QUANT_X: f32 = 1.0 / 4096.0;
+        const DC_QUANT_Y: f32 = 1.0 / 512.0;
+        const DC_QUANT_B: f32 = 1.0 / 256.0;
+        let n = self.ref_width * self.ref_height;
+        for i in 0..n {
+            let x_int = (self.ref_image[0][i] * 4096.0).round() as i32;
+            let y_int = (self.ref_image[1][i] * 512.0).round() as i32;
+            let b_int = (self.ref_image[2][i] * 256.0).round() as i32;
+            // Roundtrip: int → float using decoder's DC quant factors
+            self.ref_image[0][i] = x_int as f32 * DC_QUANT_X;
+            self.ref_image[1][i] = y_int as f32 * DC_QUANT_Y;
+            // B roundtrips through: round(B*256)/256 (B-Y cancels in decoder)
+            self.ref_image[2][i] = b_int as f32 * DC_QUANT_B;
+        }
+    }
+}
+
 // ── Detection ──────────────────────────────────────────────────────────────────
 
 /// Compute weighted XYB L1 distance between two pixels.
@@ -1214,21 +1241,49 @@ pub(crate) fn encode_reference_frame(
     );
 
     // Convert XYB float data to i32 for modular encoding.
-    // Use a fixed-point scale factor. JXL modular uses i32 samples.
-    // For patches, we scale by 2^15 = 32768 to preserve precision.
-    const SCALE: f32 = 32768.0;
+    //
+    // The decoder uses LfQuantFactors (DC quant) to convert back:
+    //   X_float = ch1_int * DCQuant[0]   where DCQuant[0] = 1/4096
+    //   Y_float = ch0_int * DCQuant[1]   where DCQuant[1] = 1/512
+    //   B_float = (ch2_int + ch0_int) * DCQuant[2]  where DCQuant[2] = 1/256
+    //
+    // Since we signal all_default=true for DC quant, the inverse factors are:
+    //   INV_DC_QUANT = [4096.0, 512.0, 256.0]  (X, Y, B)
+    //
+    // Modular channels are stored as: [0=Y, 1=X, 2=B-Y]
+    // B-Y subtraction is done in integer space after scaling.
+    const INV_DC_QUANT_X: f32 = 4096.0;
+    const INV_DC_QUANT_Y: f32 = 512.0;
+    const INV_DC_QUANT_B: f32 = 256.0;
     let n = ref_w * ref_h;
 
-    // Build a modular image from i32 channels
+    // Build modular channels in decoder order: [Y, X, B-Y]
     use crate::modular::channel::{Channel, ModularImage};
-    let mut mod_channels = Vec::with_capacity(3);
-    for c in 0..3 {
-        let mut ch_data = Vec::with_capacity(n);
-        for i in 0..n {
-            ch_data.push((patches.ref_image[c][i] * SCALE).round() as i32);
-        }
-        mod_channels.push(Channel::from_vec(ch_data, ref_w, ref_h)?);
+
+    // Channel 0: Y (from ref_image[1], which is the Y plane in XYB)
+    let mut ch_y = Vec::with_capacity(n);
+    for i in 0..n {
+        ch_y.push((patches.ref_image[1][i] * INV_DC_QUANT_Y).round() as i32);
     }
+
+    // Channel 1: X (from ref_image[0], which is the X plane in XYB)
+    let mut ch_x = Vec::with_capacity(n);
+    for i in 0..n {
+        ch_x.push((patches.ref_image[0][i] * INV_DC_QUANT_X).round() as i32);
+    }
+
+    // Channel 2: B-Y (B scaled by INV_DC_QUANT_B, minus Y_int from channel 0)
+    let mut ch_by = Vec::with_capacity(n);
+    for i in 0..n {
+        let b_int = (patches.ref_image[2][i] * INV_DC_QUANT_B).round() as i32;
+        ch_by.push(b_int - ch_y[i]);
+    }
+
+    let mod_channels = vec![
+        Channel::from_vec(ch_y, ref_w, ref_h)?,
+        Channel::from_vec(ch_x, ref_w, ref_h)?,
+        Channel::from_vec(ch_by, ref_w, ref_h)?,
+    ];
     let image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
