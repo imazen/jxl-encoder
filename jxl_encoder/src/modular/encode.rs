@@ -2075,6 +2075,131 @@ pub fn write_modular_stream_with_tree(
     Ok(())
 }
 
+/// Write a single-group modular stream using squeeze + tree learning.
+///
+/// Combines the Haar wavelet (squeeze) transform with learned MA tree
+/// for multi-context ANS encoding. This gives the benefits of both:
+/// - Squeeze decorrelates spatial frequencies (better for smooth gradients)
+/// - Tree learning adapts prediction and contexts per-channel/per-region
+///
+/// Pipeline: RCT → squeeze → gather samples → learn tree → collect residuals → ANS
+pub fn write_modular_stream_with_squeeze_and_tree(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    effort: u8,
+) -> Result<()> {
+    use super::rct::{RctType, forward_rct};
+    use super::squeeze::{apply_squeeze, default_squeeze_params};
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
+        gather_samples,
+    };
+    use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
+
+    let params = default_squeeze_params(image);
+    if params.is_empty() {
+        // Image too small for squeeze, fall back to tree learning without squeeze
+        return write_modular_stream_with_tree(image, writer, effort, image.channels.len() >= 3);
+    }
+
+    // Step 1: Apply RCT (YCoCg) before squeeze for RGB images
+    let mut transformed = image.clone();
+    let has_rct = transformed.channels.len() >= 3;
+    if has_rct {
+        let rct_type = RctType::YCOCG;
+        forward_rct(&mut transformed.channels, 0, rct_type)?;
+    }
+
+    // Step 2: Apply forward squeeze
+    apply_squeeze(&mut transformed, &params)?;
+
+    crate::trace::debug_eprintln!(
+        "SQUEEZE+TREE: {} squeeze steps, {} → {} channels, rct={}",
+        params.len(),
+        image.channels.len(),
+        transformed.channels.len(),
+        has_rct,
+    );
+
+    // Step 3: Gather samples from squeezed image
+    let mut samples = TreeSamples::new();
+    gather_samples(&mut samples, &transformed, 0);
+
+    // Step 4: Learn tree with effort-dependent parameters
+    let tree_params = TreeLearningParams::for_effort(effort);
+    let tree = compute_best_tree(&mut samples, &tree_params);
+    let num_contexts = count_contexts(&tree) as usize;
+
+    crate::trace::debug_eprintln!(
+        "SQUEEZE+TREE: effort={}, {} nodes, {} contexts, {} samples",
+        effort,
+        tree.len(),
+        num_contexts,
+        samples.num_samples
+    );
+
+    // Step 5: Collect residuals with learned tree
+    let tokens = collect_residuals_with_tree(&transformed, &tree, 0);
+
+    // Step 6: Build multi-context ANS code
+    let code = build_entropy_code_ans(&tokens, num_contexts);
+
+    // Step 7: Write bitstream
+    // dc_quant.all_default = true
+    writer.write(1, 1)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Write the learned tree
+    write_tree(writer, &tree)?;
+
+    // Write ANS data histogram
+    if num_contexts > 1 {
+        writer.write(1, 0)?; // lz77.enabled = 0
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        use super::section::write_ans_modular_header;
+        write_ans_modular_header(writer, &code)?;
+    }
+
+    // GroupHeader with transforms: RCT (if RGB) + Squeeze
+    writer.write(1, 1)?; // use_global_tree = true
+    writer.write(1, 1)?; // wp_header.all_default = true
+
+    if has_rct {
+        // num_transforms = 2: U32 BitsOffset(4,2), offset=0
+        writer.write(2, 2)?;
+        writer.write(4, 0)?;
+        write_rct_transform(writer, 0, RctType::YCOCG)?;
+        write_squeeze_transform(writer, &params)?;
+    } else {
+        writer.write(2, 1)?; // num_transforms = 1
+        write_squeeze_transform(writer, &params)?;
+    }
+
+    // Debug: verify ANS encoding correctness
+    #[cfg(debug_assertions)]
+    {
+        let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
+        if roundtrip_result.is_err() {
+            eprintln!(
+                "ANS ROUNDTRIP VERIFICATION FAILED for squeeze+tree data (num_contexts={}, num_histograms={}, tokens={}): {:?}",
+                num_contexts,
+                code.histograms.len(),
+                tokens.len(),
+                roundtrip_result
+            );
+        }
+    }
+
+    // Write ANS tokens
+    write_tokens_ans(&tokens, &code, None, writer)?;
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
 // ===== Multi-group support =====
 // These functions are now in the section module for better organization
 
