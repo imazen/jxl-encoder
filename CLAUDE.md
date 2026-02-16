@@ -446,7 +446,33 @@ Key patterns to watch for when working on this codebase:
 
 ## Known Bugs (ACTIVE)
 
-(None currently active)
+### Tree Learning Makes Lossless Files Larger on Photos (Feb 16, 2026)
+
+**Status**: ACTIVE — tree learning remains at effort >= 8 (opt-in only)
+
+Tree learning produces 22-63% LARGER files than gradient-only encoding on real photos
+(measured on CLIC 128x128 and 256x256 crops). Root causes:
+
+1. **Tree overhead exceeds savings**: The learned tree + multi-context ANS histograms
+   add significant per-context overhead. For a 128x128 photo, the tree creates many
+   contexts that fragment histograms into small buckets with high per-symbol overhead.
+
+2. **No Weighted Predictor**: Without WP as a candidate (property 15 disabled), tree
+   learning can only choose from spatial predictors 0-13. WP is libjxl's primary
+   tool for lossless photo compression — it adapts without needing extra contexts.
+
+3. **No context pruning**: libjxl limits context count based on image size and
+   complexity. Our tree learning always allows up to 256 nodes regardless.
+
+**Blockers**: Tasks #3 (match libjxl parameters) and #4 (fix property 15/WP) must
+be completed before tree learning can be competitive on photos.
+
+### Tree Learning Broken on 16-bit Images (Feb 16, 2026)
+
+**Status**: ACTIVE — tree learning auto-disabled for bit_depth > 8
+
+8x8 RGBA16 with tree learning produces `InvalidSqueezeParams` from jxl-oxide and ANS
+roundtrip failures. Not investigated yet. Guard added in api.rs.
 
 ## Investigation Notes
 
@@ -1166,6 +1192,16 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 - Tree learning expanded to 14 candidate predictors (all spatial + Weighted)
 - WP golden-number test confirms bit-exact match with jxl-rs/libjxl
 
+**FIXED** (Feb 16, 2026):
+- Predictor formulas 10-13 were WRONG (caused decode failures when tree selected these predictors):
+  - 10: was ((W+N)/2+gradient)/2, fixed to (W+NW)/2 (AverageWestAndNorthWest)
+  - 11: was ((W+N)/2+W)/2, fixed to (N+NW)/2 (AverageNorthAndNorthWest)
+  - 12: was ((W+N)/2+N)/2, fixed to (N+NE)/2 (AverageNorthAndNorthEast)
+  - 13: was (N+NE)/2, fixed to (6N-2NN+7W+WW+NEE+3NE+8)/16 (AverageAll)
+  - Added `nee` (x+2,y-1) neighbor to Neighbors struct for AverageAll
+  - Root cause of all tree-learned decode failures on 8colors/xy_256 test images
+- Palette disabled in tree-learning path (meta-channel encoding mismatch causes failures)
+
 **GAPS (ranked by compression impact)**:
 
 1. **Property 15 (wp_max_error) disabled in tree learning** — WP predictor is a candidate,
@@ -1200,14 +1236,20 @@ prediction (WP, per-context predictor selection). Without tree learning, squeeze
 gradient predictor on Haar coefficients is worse than direct gradient prediction on raw pixels.
 Users can still opt in with `.with_squeeze(true)`.
 
-**Compression vs cjxl (8 CLIC 1024x1024 photos)**:
+**Tree learning (effort 8, opt-in)**: RCT + learned MA tree + multi-context ANS. Predictor
+formulas 10-13 fixed Feb 16 (were producing wrong residuals). Currently makes photos 22-63%
+LARGER due to tree overhead exceeding savings. Needs Weighted Predictor (property 15 fix)
+and context count pruning to be competitive. Verified pixel-exact on gradient/8color/xy images.
+
+**Compression vs cjxl (8 CLIC 1024x1024 photos, default effort 7)**:
 - vs cjxl e1: +1.0% (at parity)
 - vs cjxl e7: +28.5% (gap from tree learning + WP predictor)
 
 **Known issues**:
 - Screenshots are 100-700% larger than cjxl e7 (needs tree learning + patches for lossless)
+- Tree learning on 16-bit images is broken (auto-disabled, needs investigation)
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
-  (not triggered in practice due to improved palette heuristic that skips when colors ≥ 50% of pixels)
+  (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
 - `with_effort()` now correctly preserves `.squeeze` setting from prior calls
 
 **All lossless output verified pixel-exact** via djxl and jxl-rs on:
