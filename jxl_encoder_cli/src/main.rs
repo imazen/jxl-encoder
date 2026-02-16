@@ -93,28 +93,37 @@ struct Args {
     #[arg(long)]
     no_patches: bool,
 
-    /// Enable LZ77 backward references for entropy coding.
-    /// Compresses token streams before entropy coding (ANS only).
+    /// Enable LZ77 backward references (on by default at effort 9+).
     #[arg(long)]
     lz77: bool,
 
-    /// LZ77 method to use (requires --lz77).
+    /// Disable LZ77 backward references.
+    #[arg(long, conflicts_with = "lz77")]
+    no_lz77: bool,
+
+    /// LZ77 method to use when LZ77 is active.
     /// - rle: Only matches consecutive identical tokens (fast, limited on photos)
     /// - greedy: Hash chain backward references (default, slower but better compression)
     #[arg(long, value_name = "METHOD", default_value = "greedy")]
     lz77_method: String,
 
-    /// Enable content-adaptive MA tree learning for lossless encoding.
-    /// Learns optimal predictors and entropy contexts per image region.
-    /// ANS-only (requires ANS, will be forced on). Off by default.
+    /// Enable content-adaptive MA tree learning (on by default at effort 8+).
+    /// ANS-only (implies ANS). For lossless encoding.
     #[arg(long)]
     tree_learning: bool,
 
-    /// Enable squeeze (Haar wavelet) transform for lossless encoding.
-    /// Decomposes channels into multi-resolution average+residual pairs.
-    /// Enables progressive decoding. Off by default.
+    /// Disable content-adaptive MA tree learning.
+    #[arg(long, conflicts_with = "tree_learning")]
+    no_tree_learning: bool,
+
+    /// Enable squeeze (Haar wavelet) transform (on by default at effort 9+).
+    /// For lossless encoding.
     #[arg(long)]
     squeeze: bool,
+
+    /// Disable squeeze (Haar wavelet) transform.
+    #[arg(long, conflicts_with = "squeeze")]
+    no_squeeze: bool,
 
     /// Enable iterative rate control for improved distance targeting.
     /// Encodes multiple times, adjusting quantization to match target distance.
@@ -128,7 +137,7 @@ struct Args {
     rc_iterations: usize,
 
     /// Number of butteraugli quantization loop iterations.
-    /// Default depends on effort: e7=0, e8=2, e9+=4 (matching libjxl).
+    /// Default depends on effort: e1-4=0, e5-8=2, e9+=4 (matching libjxl).
     /// Requires the butteraugli-loop feature. Use --no-butteraugli to disable.
     #[arg(long, value_name = "N")]
     butteraugli_iters: Option<u32>,
@@ -257,15 +266,34 @@ fn main() {
             let encoded = if distance > 0.0 && lossy_supported {
                 let mut cfg = LossyConfig::new(distance)
                     .with_effort(args.effort)
-                    .with_ans(!args.no_ans)
-                    .with_gaborish(!args.no_gaborish)
-                    .with_noise(args.noise || args.denoise)
-                    .with_denoise(args.denoise)
-                    .with_error_diffusion(!args.no_error_diffusion)
-                    .with_pixel_domain_loss(!args.no_pixel_domain_loss)
-                    .with_patches(!args.no_patches)
-                    .with_lz77(args.lz77)
                     .with_lz77_method(lz77_method);
+                if args.no_ans {
+                    cfg = cfg.with_ans(false);
+                }
+                if args.no_gaborish {
+                    cfg = cfg.with_gaborish(false);
+                }
+                if args.noise || args.denoise {
+                    cfg = cfg.with_noise(true);
+                }
+                if args.denoise {
+                    cfg = cfg.with_denoise(true);
+                }
+                if args.no_error_diffusion {
+                    cfg = cfg.with_error_diffusion(false);
+                }
+                if args.no_pixel_domain_loss {
+                    cfg = cfg.with_pixel_domain_loss(false);
+                }
+                if args.no_patches {
+                    cfg = cfg.with_patches(false);
+                }
+                if args.lz77 {
+                    cfg = cfg.with_lz77(true);
+                }
+                if args.no_lz77 {
+                    cfg = cfg.with_lz77(false);
+                }
 
                 if args.dct8_only {
                     cfg = cfg.with_force_strategy(Some(0));
@@ -288,12 +316,38 @@ fn main() {
 
                 cfg.encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
             } else {
-                LosslessConfig::new()
-                    .with_effort(args.effort)
-                    .with_ans(!args.no_ans || args.tree_learning)
-                    .with_tree_learning(args.tree_learning)
-                    .with_squeeze(args.squeeze)
-                    .encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
+                {
+                    let mut lcfg = LosslessConfig::new().with_effort(args.effort);
+                    if args.no_ans {
+                        lcfg = lcfg.with_ans(false);
+                    }
+                    if args.tree_learning {
+                        lcfg = lcfg.with_tree_learning(true).with_ans(true);
+                    }
+                    if args.no_tree_learning {
+                        lcfg = lcfg.with_tree_learning(false);
+                    }
+                    if args.squeeze {
+                        lcfg = lcfg.with_squeeze(true);
+                    }
+                    if args.no_squeeze {
+                        lcfg = lcfg.with_squeeze(false);
+                    }
+                    if args.lz77 {
+                        lcfg = lcfg.with_lz77(true);
+                    }
+                    if args.no_lz77 {
+                        lcfg = lcfg.with_lz77(false);
+                    }
+                    lcfg
+                }
+                .encode_animation(
+                    apng.width,
+                    apng.height,
+                    layout,
+                    &animation,
+                    &anim_frames,
+                )
             };
 
             let encoded = match encoded {
@@ -431,18 +485,37 @@ fn main() {
 
     // Encode using new API
     let encoded = if distance > 0.0 && lossy_supported {
-        // Lossy VarDCT path
+        // Lossy VarDCT path — effort sets defaults, flags override
         let mut cfg = LossyConfig::new(distance)
             .with_effort(args.effort)
-            .with_ans(!args.no_ans)
-            .with_gaborish(!args.no_gaborish)
-            .with_noise(args.noise || args.denoise)
-            .with_denoise(args.denoise)
-            .with_error_diffusion(!args.no_error_diffusion)
-            .with_pixel_domain_loss(!args.no_pixel_domain_loss)
-            .with_patches(!args.no_patches)
-            .with_lz77(args.lz77)
             .with_lz77_method(lz77_method);
+        if args.no_ans {
+            cfg = cfg.with_ans(false);
+        }
+        if args.no_gaborish {
+            cfg = cfg.with_gaborish(false);
+        }
+        if args.noise || args.denoise {
+            cfg = cfg.with_noise(true);
+        }
+        if args.denoise {
+            cfg = cfg.with_denoise(true);
+        }
+        if args.no_error_diffusion {
+            cfg = cfg.with_error_diffusion(false);
+        }
+        if args.no_pixel_domain_loss {
+            cfg = cfg.with_pixel_domain_loss(false);
+        }
+        if args.no_patches {
+            cfg = cfg.with_patches(false);
+        }
+        if args.lz77 {
+            cfg = cfg.with_lz77(true);
+        }
+        if args.no_lz77 {
+            cfg = cfg.with_lz77(false);
+        }
 
         if args.dct8_only {
             cfg = cfg.with_force_strategy(Some(0));
@@ -475,13 +548,36 @@ fn main() {
             // Rate control needs the internal VarDctEncoder for multi-pass
             use jxl_encoder::vardct::VarDctEncoder;
             let mut tiny = VarDctEncoder::new(distance);
-            tiny.use_ans = !args.no_ans;
+            tiny.effort = args.effort;
+            // Rate control doesn't go through LossyConfig, so apply effort defaults manually
+            tiny.use_ans = if args.no_ans { false } else { args.effort >= 4 };
+            tiny.optimize_codes = args.effort >= 2;
+            tiny.custom_orders = args.effort >= 3;
+            tiny.ac_strategy_enabled = args.effort >= 3;
             tiny.enable_noise = args.noise || args.denoise;
             tiny.enable_denoise = args.denoise;
-            tiny.enable_gaborish = !args.no_gaborish;
-            tiny.error_diffusion = !args.no_error_diffusion;
-            tiny.pixel_domain_loss = !args.no_pixel_domain_loss;
-            tiny.enable_lz77 = args.lz77;
+            tiny.enable_gaborish = if args.no_gaborish {
+                false
+            } else {
+                args.effort >= 3
+            };
+            tiny.error_diffusion = if args.no_error_diffusion {
+                false
+            } else {
+                args.effort >= 3
+            };
+            tiny.pixel_domain_loss = if args.no_pixel_domain_loss {
+                false
+            } else {
+                args.effort >= 5
+            };
+            tiny.enable_lz77 = if args.lz77 {
+                true
+            } else if args.no_lz77 {
+                false
+            } else {
+                args.effort >= 9
+            };
             tiny.lz77_method = lz77_method;
             if args.dct8_only {
                 tiny.force_strategy = Some(0);
@@ -531,11 +627,29 @@ fn main() {
         }
     } else {
         // Lossless modular path (or lossy RGBA/gray which falls through to modular)
-        let cfg = LosslessConfig::new()
-            .with_effort(args.effort)
-            .with_ans(!args.no_ans || args.tree_learning)
-            .with_tree_learning(args.tree_learning)
-            .with_squeeze(args.squeeze);
+        let mut cfg = LosslessConfig::new().with_effort(args.effort);
+        if args.no_ans {
+            cfg = cfg.with_ans(false);
+        }
+        if args.tree_learning {
+            cfg = cfg.with_tree_learning(true).with_ans(true);
+        }
+        if args.no_tree_learning {
+            cfg = cfg.with_tree_learning(false);
+        }
+        if args.squeeze {
+            cfg = cfg.with_squeeze(true);
+        }
+        if args.no_squeeze {
+            cfg = cfg.with_squeeze(false);
+        }
+        if args.lz77 {
+            cfg = cfg.with_lz77(true);
+        }
+        if args.no_lz77 {
+            cfg = cfg.with_lz77(false);
+        }
+        let cfg = cfg;
 
         let mut req = cfg.encode_request(width, height, layout);
         if let Some(ref meta) = metadata {

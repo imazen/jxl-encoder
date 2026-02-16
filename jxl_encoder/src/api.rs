@@ -487,27 +487,42 @@ pub struct LosslessConfig {
 
 impl Default for LosslessConfig {
     fn default() -> Self {
-        Self {
-            effort: 7,
-            use_ans: true,
-            squeeze: false,
-            tree_learning: false,
-            lz77: false,
-            lz77_method: Lz77Method::Greedy,
-        }
+        Self::with_effort_level(7)
     }
 }
 
 impl LosslessConfig {
-    /// Create a new lossless config with defaults.
+    fn with_effort_level(effort: u8) -> Self {
+        let effort = effort.clamp(1, 10);
+        Self {
+            effort,
+            use_ans: effort >= 4,
+            tree_learning: effort >= 8,
+            squeeze: effort >= 9,
+            lz77: effort >= 9,
+            lz77_method: Lz77Method::Greedy,
+        }
+    }
+
+    /// Create a new lossless config with defaults (effort 7).
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Set effort level (1–10). Higher = slower, better compression.
-    pub fn with_effort(mut self, effort: u8) -> Self {
-        self.effort = effort;
-        self
+    /// Set effort level (1–10). Higher effort = slower, better compression.
+    ///
+    /// This adjusts all effort-dependent defaults:
+    /// - **e1–3**: Huffman encoding
+    /// - **e4–7**: + ANS entropy coding
+    /// - **e8**: + content-adaptive tree learning
+    /// - **e9–10**: + LZ77 backward references, squeeze (Haar wavelet)
+    ///
+    /// Individual `with_*()` calls after `with_effort()` override these defaults.
+    pub fn with_effort(self, effort: u8) -> Self {
+        let mut new = Self::with_effort_level(effort);
+        // Preserve lz77_method since it's not effort-derived
+        new.lz77_method = self.lz77_method;
+        new
     }
 
     /// Enable/disable ANS entropy coding (default: true).
@@ -682,22 +697,26 @@ pub struct LossyConfig {
 }
 
 impl LossyConfig {
-    /// Create with butteraugli distance (1.0 = high quality).
+    /// Create with butteraugli distance (1.0 = high quality). Default effort 7.
     pub fn new(distance: f32) -> Self {
-        let effort = 7;
+        Self::new_with_effort(distance, 7)
+    }
+
+    fn new_with_effort(distance: f32, effort: u8) -> Self {
+        let effort = effort.clamp(1, 10);
         Self {
             distance,
             effort,
-            use_ans: true,
-            gaborish: true,
+            use_ans: effort >= 4,
+            gaborish: effort >= 3,
             noise: false,
             denoise: false,
-            error_diffusion: true,
-            pixel_domain_loss: true,
-            lz77: false,
+            error_diffusion: effort >= 3,
+            pixel_domain_loss: effort >= 5,
+            lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
             force_strategy: None,
-            patches: true,
+            patches: effort >= 5,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: butteraugli_iters_for_effort(effort),
             #[cfg(feature = "butteraugli-loop")]
@@ -711,17 +730,31 @@ impl LossyConfig {
         Ok(Self::new(distance))
     }
 
-    /// Set effort level (1–10).
+    /// Set effort level (1–10). Higher effort = slower, better compression.
     ///
-    /// Also adjusts butteraugli iterations to match libjxl's effort gating,
-    /// unless [`with_butteraugli_iters`](Self::with_butteraugli_iters) was called explicitly.
-    pub fn with_effort(mut self, effort: u8) -> Self {
-        self.effort = effort;
+    /// This adjusts all effort-dependent defaults:
+    /// - **e1–2**: DCT8 only, Huffman, no gaborish/patches/butteraugli
+    /// - **e3**: + gaborish, error diffusion, Huffman
+    /// - **e4**: + ANS entropy coding, multi-block AC strategies
+    /// - **e5–7**: + patches, pixel-domain loss, butteraugli loop (2 iters)
+    /// - **e8**: same as e7, reserved for future cost model refinements
+    /// - **e9–10**: + LZ77 backward references, 4 butteraugli iterations
+    ///
+    /// Individual `with_*()` calls after `with_effort()` override these defaults.
+    pub fn with_effort(self, effort: u8) -> Self {
+        let mut new = Self::new_with_effort(self.distance, effort);
+        // Preserve settings that are never effort-derived (always opt-in)
+        new.noise = self.noise;
+        new.denoise = self.denoise;
+        new.force_strategy = self.force_strategy;
+        new.lz77_method = self.lz77_method;
+        // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
-        if !self.butteraugli_iters_explicit {
-            self.butteraugli_iters = butteraugli_iters_for_effort(effort);
+        if self.butteraugli_iters_explicit {
+            new.butteraugli_iters = self.butteraugli_iters;
+            new.butteraugli_iters_explicit = true;
         }
-        self
+        new
     }
 
     /// Enable/disable ANS entropy coding (default: true).
@@ -1232,9 +1265,11 @@ impl<'a> EncodeRequest<'a> {
         };
 
         let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
+        tiny.effort = cfg.effort;
         tiny.use_ans = cfg.use_ans;
-        tiny.optimize_codes = true;
-        tiny.custom_orders = true;
+        tiny.optimize_codes = cfg.effort >= 2;
+        tiny.custom_orders = cfg.effort >= 3;
+        tiny.ac_strategy_enabled = cfg.effort >= 3;
         tiny.enable_noise = cfg.noise;
         tiny.enable_denoise = cfg.denoise;
         tiny.enable_gaborish = cfg.gaborish;
@@ -1480,9 +1515,11 @@ fn encode_animation_lossy(
 
     // Set up VarDCT encoder
     let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
+    tiny.effort = cfg.effort;
     tiny.use_ans = cfg.use_ans;
-    tiny.optimize_codes = true;
-    tiny.custom_orders = true;
+    tiny.optimize_codes = cfg.effort >= 2;
+    tiny.custom_orders = cfg.effort >= 3;
+    tiny.ac_strategy_enabled = cfg.effort >= 3;
     tiny.enable_noise = cfg.noise;
     tiny.enable_denoise = cfg.denoise;
     tiny.enable_gaborish = cfg.gaborish;

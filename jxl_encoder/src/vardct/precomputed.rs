@@ -96,6 +96,7 @@ impl EncoderPrecomputed {
         enable_denoise: bool,
         enable_gaborish: bool,
         force_strategy: Option<u8>,
+        effort: u8,
     ) -> Self {
         use super::ac_strategy::compute_ac_strategy;
         use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float};
@@ -231,6 +232,7 @@ impl EncoderPrecomputed {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
+                effort,
             )
         };
 

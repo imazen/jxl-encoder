@@ -1210,6 +1210,7 @@ pub fn compute_ac_strategy(
     cfl_map: &CflMap,
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
+    effort: u8,
 ) -> AcStrategyMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
@@ -1233,10 +1234,14 @@ pub fn compute_ac_strategy(
             let ytox = cfl_map.ytox_at(tx, ty);
             let ytob = cfl_map.ytob_at(tx, ty);
 
-            // Process 8×8 block groups first (64×64), then 4×4 (32×32), then 2×2 (16×16)
+            // Process hierarchically: 8×8 block groups (64×64) at e7+,
+            // then 4×4 (32×32) at e5+, then always 2×2 (16×16).
+            let try_64 = effort >= 7;
+            let try_32 = effort >= 5;
+
             let mut cy = 0;
-            // Process 8-row bands: try DCT64x64/DCT64x32/DCT32x64
-            while cy + 7 < tile_h {
+            // Process 8-row bands: try DCT64x64/DCT64x32/DCT32x64 at effort 7+
+            while try_64 && cy + 7 < tile_h {
                 let mut cx = 0;
                 while cx + 7 < tile_w {
                     find_best_64x64_transform(
@@ -1260,7 +1265,7 @@ pub fn compute_ac_strategy(
                     cx += 8;
                 }
                 // Remaining cols in this 8-row band: 4-block groups, then 2-block groups
-                while cx + 3 < tile_w {
+                while try_32 && cx + 3 < tile_w {
                     find_best_32x32_transform(
                         xyb,
                         stride,
@@ -1305,8 +1310,8 @@ pub fn compute_ac_strategy(
                 }
                 cy += 8;
             }
-            // Remaining rows: 4-row bands for 32×32, then 2-row bands for 16×16
-            while cy + 3 < tile_h {
+            // Remaining rows: 4-row bands for 32×32 at effort 5+, then 2-row bands for 16×16
+            while try_32 && cy + 3 < tile_h {
                 let mut cx = 0;
                 while cx + 3 < tile_w {
                     find_best_32x32_transform(
@@ -1390,7 +1395,8 @@ pub fn compute_ac_strategy(
             // position. Matches libjxl enc_ac_strategy.cc:1035-1044 (effort >= 6).
             // Only accept results when a multi-block transform is selected — single-block
             // re-evaluation at non-aligned positions can override good aligned-pass choices.
-            for cy in 0..tile_h.saturating_sub(1) {
+            // Skip entirely at effort <= 5 (non-aligned passes are e6+ in libjxl).
+            for cy in if effort >= 6 { 0 } else { tile_h }..tile_h.saturating_sub(1) {
                 for cx in 0..tile_w.saturating_sub(1) {
                     // Skip 2-aligned positions (already evaluated in the aligned pass)
                     if (cy | cx) % 2 == 0 {
@@ -1464,8 +1470,8 @@ pub fn compute_ac_strategy(
 
             // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
             // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 7, step=2).
-            // Only at d>=2.0 where DCT32x32 is enabled.
-            if distance >= 2.0 {
+            // Only at d>=2.0 where DCT32x32 is enabled, and effort >= 7.
+            if distance >= 2.0 && effort >= 7 {
                 for cy in (0..tile_h.saturating_sub(3)).step_by(2) {
                     for cx in (0..tile_w.saturating_sub(3)).step_by(2) {
                         // Skip 4-aligned positions (already evaluated in aligned pass)

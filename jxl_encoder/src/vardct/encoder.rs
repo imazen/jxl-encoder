@@ -124,6 +124,8 @@ pub struct VarDctOutput {
 pub struct VarDctEncoder {
     /// Target distance (quality). 1.0 = visually lossless.
     pub distance: f32,
+    /// Effort level (1–10). Controls AC strategy gating and search depth.
+    pub effort: u8,
     /// Use dynamic Huffman codes built from actual token frequencies.
     /// When true (default), uses a two-pass mode: collect tokens first, build optimal codes, then write.
     /// When false, uses pre-computed static codes (streaming, single-pass).
@@ -236,6 +238,7 @@ impl Default for VarDctEncoder {
     fn default() -> Self {
         Self {
             distance: 1.0,
+            effort: 7,
             optimize_codes: true,
             enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
             use_ans: true,             // ANS produces 4-10% smaller files than Huffman
@@ -265,6 +268,7 @@ impl VarDctEncoder {
     pub fn new(distance: f32) -> Self {
         Self {
             distance,
+            effort: 7,
             optimize_codes: true,
             enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
             use_ans: true,             // ANS produces 4-10% smaller files than Huffman
@@ -532,6 +536,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
+                self.effort,
             )
         };
 
@@ -1331,6 +1336,7 @@ impl VarDctEncoder {
             self.enable_denoise,
             self.enable_gaborish,
             self.force_strategy,
+            self.effort,
         );
 
         // Run rate control loop
