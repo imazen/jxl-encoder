@@ -253,7 +253,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 
 **F. Other**
 - No splines, dots detection (effort 7 features we skip)
-- Patches/dictionary: IMPLEMENTED (auto-detect, default-on, 21.3% corpus savings on screenshots)
+- Patches/dictionary: IMPLEMENTED (auto-detect, default-on, 33.3% corpus savings, 29.6% smaller than cjxl e7)
 - EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
 
@@ -347,10 +347,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
     background image with source pairs, has_similar check, kMinPeak filter)
   - Packs unique patterns into modular reference frame (≤256×256), subtracts from VarDCT
   - Cost-benefit gating: trial-encodes ref frame + dict, requires 2x savings/overhead ratio
-  - GB82-SC corpus (10 screenshots): 21.3% total savings, zero regressions
-    - windows95: 30.6%, terminal: 32.4%, imac_dark: 36.2%, imac_g3: 38.4%, imessage: 2.1%
-    - Beats cjxl on imac_dark (36.2% vs 0%) and imac_g3 (38.4% vs 0%)
+  - GB82-SC corpus (10 screenshots): 33.3% total savings, 29.6% smaller than cjxl e7
+    - imac_dark: -46%, imac_g3: -44.5%, windows: -29%, codec_wiki: -9.5%, imessage: -9.8%
+    - terminal: +28% (cjxl extracts more patches), gui: +13.5% (RGBA), graph: +7.6%
+  - RGBA alpha uses LZ77 RLE (gui.png: 234KB→49KB, 4.8x improvement)
   - Zero overhead on CLIC photos (patches correctly produce nothing)
+  - Indexed/palette PNGs now supported via EXPAND transformation
   - Verified with djxl, jxl-rs, jxl-oxide
 
 
@@ -413,8 +415,11 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 - [x] **Patches/Dictionary** — Repeated pattern detection for screenshots/UI.
   Default-on (auto-detect), `--no-patches` to disable. Detection matches libjxl
   FindTextLikePatches exactly. Cost-benefit gating with measured overhead prevents
-  regressions. GB82-SC corpus: 21.3% total savings (30-38% on 4 images, 0% elsewhere).
-  Beats cjxl on imac_dark (36.2% vs 0%) and imac_g3 (38.4% vs 0%).
+  regressions. GB82-SC corpus (10 screenshots): 33.3% total savings with patches,
+  29.6% smaller than cjxl e7 overall (1,560KB vs 2,216KB). Beats cjxl on 6/10 images
+  including imac_dark (-46%), imac_g3 (-44.5%), windows (-29%).
+  RGBA alpha channel uses LZ77 RLE for efficient encoding of mostly-opaque regions
+  (gui.png: 234KB → 49KB after LZ77 fix, only 13.5% larger than cjxl vs 5.4x before).
   Verified with djxl, jxl-rs, and jxl-oxide.
 - [ ] **Dot detection** — Star fields, specular highlights. Very niche.
 
