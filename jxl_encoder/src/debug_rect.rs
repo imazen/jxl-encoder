@@ -151,3 +151,159 @@ pub fn query_overlapping(qx: i64, qy: i64, qw: i64, qh: i64) -> Vec<String> {
 pub fn query_overlapping(_qx: i64, _qy: i64, _qw: i64, _qh: i64) -> Vec<String> {
     Vec::new()
 }
+
+/// Find the block with the largest per-pixel absolute difference between two images.
+///
+/// Scans `block_size × block_size` blocks (with stride `block_size`) across the image.
+/// Returns `(x, y, block_w, block_h, max_block_sad)` for the worst block.
+///
+/// `img_a` and `img_b` must have the same dimensions: `width * height * channels` bytes,
+/// row-major, interleaved channels.
+#[cfg(feature = "debug-rect")]
+pub fn find_worst_block(
+    img_a: &[u8],
+    img_b: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    block_size: usize,
+) -> (usize, usize, usize, usize, f64) {
+    assert_eq!(img_a.len(), img_b.len());
+    assert!(img_a.len() >= width * height * channels);
+    assert!(block_size > 0);
+
+    let mut worst_x = 0;
+    let mut worst_y = 0;
+    let mut worst_sad = 0.0_f64;
+
+    let mut by = 0;
+    while by < height {
+        let bh = block_size.min(height - by);
+        let mut bx = 0;
+        while bx < width {
+            let bw = block_size.min(width - bx);
+            let mut sad = 0.0_f64;
+            for dy in 0..bh {
+                let row = (by + dy) * width * channels + bx * channels;
+                for dx_c in 0..(bw * channels) {
+                    let a = img_a[row + dx_c] as f64;
+                    let b = img_b[row + dx_c] as f64;
+                    sad += (a - b).abs();
+                }
+            }
+            if sad > worst_sad {
+                worst_sad = sad;
+                worst_x = bx;
+                worst_y = by;
+            }
+            bx += block_size;
+        }
+        by += block_size;
+    }
+
+    let final_w = block_size.min(width - worst_x);
+    let final_h = block_size.min(height - worst_y);
+    (worst_x, worst_y, final_w, final_h, worst_sad)
+}
+
+#[cfg(not(feature = "debug-rect"))]
+pub fn find_worst_block(
+    _img_a: &[u8],
+    _img_b: &[u8],
+    _width: usize,
+    _height: usize,
+    _channels: usize,
+    _block_size: usize,
+) -> (usize, usize, usize, usize, f64) {
+    (0, 0, 0, 0, 0.0)
+}
+
+/// Diff two decoded images and return the worst block plus all overlapping debug entries.
+///
+/// Convenience wrapper: finds the worst `block_size × block_size` block by SAD,
+/// then queries the debug log for all decisions affecting that block.
+///
+/// Returns `(x, y, w, h, sad, overlapping_rows)`.
+#[cfg(feature = "debug-rect")]
+pub fn diff_and_query(
+    img_a: &[u8],
+    img_b: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    block_size: usize,
+) -> (usize, usize, usize, usize, f64, Vec<String>) {
+    let (x, y, w, h, sad) = find_worst_block(img_a, img_b, width, height, channels, block_size);
+    let rows = query_overlapping(x as i64, y as i64, w as i64, h as i64);
+    (x, y, w, h, sad, rows)
+}
+
+#[cfg(not(feature = "debug-rect"))]
+pub fn diff_and_query(
+    _img_a: &[u8],
+    _img_b: &[u8],
+    _width: usize,
+    _height: usize,
+    _channels: usize,
+    _block_size: usize,
+) -> (usize, usize, usize, usize, f64, Vec<String>) {
+    (0, 0, 0, 0, 0.0, Vec::new())
+}
+
+/// Find the top N worst blocks by SAD, returning them sorted worst-first.
+///
+/// Each entry is `(x, y, w, h, sad)`.
+#[cfg(feature = "debug-rect")]
+pub fn find_worst_blocks(
+    img_a: &[u8],
+    img_b: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    block_size: usize,
+    top_n: usize,
+) -> Vec<(usize, usize, usize, usize, f64)> {
+    assert_eq!(img_a.len(), img_b.len());
+    assert!(img_a.len() >= width * height * channels);
+    assert!(block_size > 0);
+
+    let mut blocks: Vec<(usize, usize, usize, usize, f64)> = Vec::new();
+
+    let mut by = 0;
+    while by < height {
+        let bh = block_size.min(height - by);
+        let mut bx = 0;
+        while bx < width {
+            let bw = block_size.min(width - bx);
+            let mut sad = 0.0_f64;
+            for dy in 0..bh {
+                let row = (by + dy) * width * channels + bx * channels;
+                for dx_c in 0..(bw * channels) {
+                    let a = img_a[row + dx_c] as f64;
+                    let b = img_b[row + dx_c] as f64;
+                    sad += (a - b).abs();
+                }
+            }
+            blocks.push((bx, by, bw, bh, sad));
+            bx += block_size;
+        }
+        by += block_size;
+    }
+
+    blocks.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap_or(core::cmp::Ordering::Equal));
+    blocks.truncate(top_n);
+    blocks
+}
+
+#[cfg(not(feature = "debug-rect"))]
+pub fn find_worst_blocks(
+    _img_a: &[u8],
+    _img_b: &[u8],
+    _width: usize,
+    _height: usize,
+    _channels: usize,
+    _block_size: usize,
+    _top_n: usize,
+) -> Vec<(usize, usize, usize, usize, f64)> {
+    Vec::new()
+}
