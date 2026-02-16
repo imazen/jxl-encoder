@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xe36bec1989a3c90b, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x42776671449c94f6, // Updated: squeeze disabled by default (no tree learning)
     );
 }
 
@@ -798,7 +798,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         0x4610698f0cf81821,
-        0x693c05c758859937, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x12a22a85203fb8b5, // Updated: squeeze disabled by default
     );
 }
 
@@ -817,7 +817,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         0x492393a4c3f29174,
-        0xfac2d199c89bda9d, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x4735390df85eaf31, // Updated: palette disabled in RCT path
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0xe67e02089f94d8d4, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x541ac8f8cf83a921, // Updated: squeeze disabled by default
     );
 }
 
@@ -855,7 +855,7 @@ fn lossless_gray_32x32() {
         true,
         false,
         0xd7858d308a0845e5,
-        0x5bc229be3d8bab74, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0xb3eb8879c469235d, // Updated: squeeze disabled by default
     );
 }
 
@@ -936,7 +936,7 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xe36bec1989a3c90b, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x42776671449c94f6, // Updated: squeeze disabled by default
     );
 }
 
@@ -957,7 +957,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xe36bec1989a3c90b, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x42776671449c94f6, // Updated: squeeze disabled by default
     );
 }
 
@@ -1021,6 +1021,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x89ae02e7bb229618, // Updated: tree learning at effort 7, fixed predictor formulas 10-13
+        0x746fc0f4b62c4354, // Updated: squeeze disabled by default
     );
 }

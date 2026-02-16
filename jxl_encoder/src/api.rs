@@ -497,7 +497,7 @@ impl LosslessConfig {
         Self {
             effort,
             use_ans: effort >= 4,
-            tree_learning: effort >= 7,
+            tree_learning: effort >= 8,
             squeeze: false, // squeeze hurts without tree-learned predictors
             lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
@@ -513,8 +513,8 @@ impl LosslessConfig {
     ///
     /// This adjusts all effort-dependent defaults:
     /// - **e1–3**: Huffman encoding
-    /// - **e4–6**: + ANS entropy coding
-    /// - **e7**: + content-adaptive tree learning
+    /// - **e4–7**: + ANS entropy coding
+    /// - **e8**: + content-adaptive tree learning
     /// - **e9–10**: + LZ77 backward references
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
