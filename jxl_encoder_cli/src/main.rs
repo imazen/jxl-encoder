@@ -623,7 +623,9 @@ fn read_png(
     path: &PathBuf,
 ) -> Result<(u32, u32, png::ColorType, png::BitDepth, Vec<u8>), Box<dyn std::error::Error>> {
     let file = BufReader::new(File::open(path)?);
-    let decoder = png::Decoder::new(file);
+    let mut decoder = png::Decoder::new(file);
+    // Expand palette/indexed PNGs to RGB/RGBA, expand low-bit-depth grayscale to 8-bit
+    decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info()?;
 
     let mut buf = vec![
