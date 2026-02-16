@@ -1453,6 +1453,10 @@ pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -
         // Write histogram to bits
         let mut writer = BitWriter::new();
         histo.write(&mut writer)?;
+        // Add padding bytes so the decoder's peek(7) doesn't read past the end.
+        // In a real bitstream, more data follows the histogram. In this isolated
+        // test, we add explicit zero padding.
+        writer.write(8, 0)?;
         writer.zero_pad_to_byte();
         let bytes = writer.finish();
 

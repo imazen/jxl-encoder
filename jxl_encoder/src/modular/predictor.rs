@@ -84,11 +84,15 @@ impl Predictor {
             Predictor::Top => n.n,
             Predictor::Average0 => (n.w + n.n) / 2,
             Predictor::Select => {
-                // Median-like selection
-                if n.w.abs_diff(n.nw) < n.n.abs_diff(n.nw) {
-                    n.n
-                } else {
+                // Select predictor (matches JXL spec):
+                // p = W + N - NW
+                // if abs(p - W) < abs(p - N) then W else N
+                // Since p - W = N - NW and p - N = W - NW:
+                // if abs(N - NW) < abs(W - NW) then W else N
+                if n.n.abs_diff(n.nw) < n.w.abs_diff(n.nw) {
                     n.w
+                } else {
+                    n.n
                 }
             }
             Predictor::Gradient => {

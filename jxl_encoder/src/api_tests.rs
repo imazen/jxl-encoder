@@ -1849,6 +1849,66 @@ mod decoder_validation {
         eprintln!("multi_group_256x256_lossy: PASSED jxl-oxide (VarDCT WIP)");
     }
 
+    /// Test tree learning with Select predictor at various sizes and efforts.
+    /// Validates that the Select predictor (predictor 4) produces correct
+    /// predictions matching the JXL spec: p = W + N - NW;
+    /// if |p-W| < |p-N| then W else N.
+    #[test]
+    fn test_tree_learning_select_predictor() {
+        // Use gradient data that exercises the Select predictor
+        // (tree learning at effort 7+ selects it for some contexts)
+        for size in [64, 192, 256] {
+            let mut data = vec![0u8; size * size * 3];
+            for y in 0..size {
+                for x in 0..size {
+                    let idx = (y * size + x) * 3;
+                    data[idx] = (x & 0xFF) as u8;
+                    data[idx + 1] = (y & 0xFF) as u8;
+                    data[idx + 2] = ((x + y) % 256) as u8;
+                }
+            }
+
+            for effort in [6, 7, 8] {
+                let encoded = LosslessConfig::new()
+                    .with_effort(effort)
+                    .with_tree_learning(true)
+                    .encode(&data, size as u32, size as u32, PixelLayout::Rgb8)
+                    .unwrap();
+
+                let decoded =
+                    crate::test_helpers::decode_with_jxl_rs(&encoded).unwrap_or_else(|e| {
+                        panic!(
+                            "jxl-rs decode failed for {}x{} e{}: {:?}",
+                            size, size, effort, e
+                        )
+                    });
+
+                // Verify pixel-exact roundtrip (decoded pixels are f32 0.0-1.0)
+                let decoded_u8: Vec<u8> = decoded
+                    .pixels
+                    .iter()
+                    .map(|&v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
+                    .collect();
+                assert_eq!(
+                    decoded_u8.len(),
+                    data.len(),
+                    "decoded length mismatch for {}x{} e{}",
+                    size,
+                    size,
+                    effort
+                );
+                assert_eq!(
+                    &decoded_u8[..],
+                    &data[..],
+                    "pixel data mismatch for {}x{} e{}",
+                    size,
+                    size,
+                    effort
+                );
+            }
+        }
+    }
+
     /// Test multi-group encoding with actual multiple groups (>256x256)
     #[test]
     fn test_encode_multigroup_300x300() {
