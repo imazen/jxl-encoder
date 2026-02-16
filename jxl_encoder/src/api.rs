@@ -498,7 +498,7 @@ impl LosslessConfig {
             effort,
             use_ans: effort >= 4,
             tree_learning: effort >= 8,
-            squeeze: effort >= 9,
+            squeeze: effort >= 7,
             lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
         }

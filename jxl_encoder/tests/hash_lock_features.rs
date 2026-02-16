@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x613d6f1ab42ace8d,
+        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -798,7 +798,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         0x4610698f0cf81821,
-        0x5217cd2d54af8dbf,
+        0x39669447b1f02670, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -817,7 +817,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         0x492393a4c3f29174,
-        0xf3e34b97bc235c6d,
+        0x53ed5576720b420f, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0x352eda930e119163,
+        0x1e04095a3d5ff69d, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -855,7 +855,7 @@ fn lossless_gray_32x32() {
         true,
         false,
         0xd7858d308a0845e5,
-        0xb3eb8879c469235d,
+        0x3d45576bf287d269, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -875,7 +875,7 @@ fn lossless_no_ans_huffman() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x613d6f1ab42ace8d,
+        0xbf7d287fca998721, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -895,7 +895,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xdcb0543fbf062bd8,
+        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -936,7 +936,7 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x613d6f1ab42ace8d,
+        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -957,7 +957,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x613d6f1ab42ace8d,
+        0x84b3b2f884be6872, // Updated: squeeze now default at effort 7
     );
 }
 
@@ -1021,6 +1021,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x1852b8db8adf5444,
+        0x2da9b8a29c62734d, // Updated: squeeze now default at effort 7
     );
 }

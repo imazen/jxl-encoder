@@ -180,6 +180,52 @@ impl Channel {
         Some(ch)
     }
 
+    /// Extracts a grid cell region matching the decoder's get_grid_rect logic.
+    ///
+    /// Given a group position (gx, gy) and group_dim (the image-level group size,
+    /// typically 256), computes the channel-space sub-region for this group.
+    ///
+    /// This matches jxl-rs `ModularChannel::get_grid_rect`:
+    ///   grid_dim = (group_dim >> hshift, group_dim >> vshift)
+    ///   bx = gx * grid_dim.0, by = gy * grid_dim.1
+    ///   size = (min(chan_w - bx, grid_dim.0), min(chan_h - by, grid_dim.1))
+    ///
+    /// Returns None if the sub-region has zero area.
+    pub fn extract_grid_cell(&self, gx: usize, gy: usize, group_dim: usize) -> Option<Channel> {
+        let grid_w = group_dim >> self.hshift;
+        let grid_h = group_dim >> self.vshift;
+
+        if grid_w == 0 || grid_h == 0 {
+            return None;
+        }
+
+        let bx = gx * grid_w;
+        let by = gy * grid_h;
+
+        if bx >= self.width || by >= self.height {
+            return None;
+        }
+
+        let xsize = (self.width - bx).min(grid_w);
+        let ysize = (self.height - by).min(grid_h);
+
+        if xsize == 0 || ysize == 0 {
+            return None;
+        }
+
+        let mut data = Vec::with_capacity(xsize * ysize);
+        for y in 0..ysize {
+            for x in 0..xsize {
+                data.push(self.get(bx + x, by + y));
+            }
+        }
+
+        let mut ch = Channel::from_vec(data, xsize, ysize).ok()?;
+        ch.hshift = self.hshift;
+        ch.vshift = self.vshift;
+        Some(ch)
+    }
+
     /// Gets a pixel, clamping coordinates to valid range.
     #[inline]
     pub fn get_clamped_to_edge(&self, x: isize, y: isize) -> i32 {
