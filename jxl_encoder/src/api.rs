@@ -498,7 +498,7 @@ impl LosslessConfig {
             effort,
             use_ans: effort >= 4,
             tree_learning: effort >= 7,
-            squeeze: false, // squeeze hurts without tree-learned predictors
+            squeeze: effort >= 7, // squeeze benefits from tree-learned adaptive prediction
             lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
         }

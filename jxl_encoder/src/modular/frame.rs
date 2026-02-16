@@ -134,9 +134,18 @@ impl FrameEncoder {
         if num_groups == 1 {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
+            let has_squeeze = self.options.use_squeeze
+                && !super::squeeze::default_squeeze_params(image).is_empty();
 
-            if self.options.use_squeeze && !super::squeeze::default_squeeze_params(image).is_empty()
-            {
+            if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
+                // Combined squeeze + tree learning: best compression
+                super::encode::write_modular_stream_with_squeeze_and_tree(
+                    image,
+                    &mut section_writer,
+                    self.options.effort,
+                )?;
+            } else if has_squeeze {
+                // Squeeze without tree learning (lower effort levels)
                 super::encode::write_modular_stream_with_squeeze(
                     image,
                     &mut section_writer,
@@ -146,7 +155,7 @@ impl FrameEncoder {
                 && self.options.use_ans
                 && super::palette::should_use_palette(image).is_none()
             {
-                // Tree learning path: skip for images that benefit from palette
+                // Tree learning without squeeze: skip for images that benefit from palette
                 // (palette + tree learning has a meta-channel encoding mismatch)
                 write_modular_stream_with_tree(
                     image,
