@@ -8,6 +8,7 @@
 //! against the base DCT8 cost to find the optimal transform for each region.
 
 use super::ac_strategy::*;
+use crate::debug_rect;
 
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub(super) fn find_best_16x16_transform(
@@ -324,6 +325,28 @@ pub(super) fn find_best_16x16_transform(
     // Find best non-single-block cost (minimum of 16x8, 8x16, 16x16)
     let best_rect = cost16x8.min(cost8x16);
     let best_large = best_rect.min(cost16x16);
+
+    debug_rect!(
+        "acs/16x16",
+        abs_bx * 8,
+        abs_by * 8,
+        16,
+        16,
+        "winner={} singles={:.0} 16x16={:.0} 16x8={:.0} 8x16={:.0}",
+        if best_large >= cost_all_single {
+            "singles"
+        } else if cost16x16 <= best_rect {
+            "16x16"
+        } else if cost16x8 < cost8x16 {
+            "16x8"
+        } else {
+            "8x16"
+        },
+        cost_all_single,
+        cost16x16,
+        cost16x8,
+        cost8x16
+    );
 
     // Only use a non-single-block strategy if it beats four single-block transforms
     if best_large >= cost_all_single {
@@ -669,6 +692,23 @@ pub(super) fn find_best_32x32_transform(
         best_choice = 3;
     }
 
+    {
+        let choices = ["sub", "32x32", "32x16", "16x32"];
+        debug_rect!(
+            "acs/32x32",
+            abs_bx * 8,
+            abs_by * 8,
+            32,
+            32,
+            "winner={} sub={:.0} 32x32={:.0} 32x16={:.0} 16x32={:.0}",
+            choices[best_choice as usize],
+            cost_sub,
+            entropy_32x32,
+            entropy_32x16_total,
+            entropy_16x32_total
+        );
+    }
+
     match best_choice {
         1 => {
             // DCT32x32 wins
@@ -967,6 +1007,23 @@ pub(super) fn find_best_64x64_transform(
     if entropy_32x64_total < best_cost {
         let _ = best_cost;
         best_choice = 3;
+    }
+
+    {
+        let choices = ["sub", "64x64", "64x32", "32x64"];
+        debug_rect!(
+            "acs/64x64",
+            abs_bx * 8,
+            abs_by * 8,
+            64,
+            64,
+            "winner={} sub={:.0} 64x64={:.0} 64x32={:.0} 32x64={:.0}",
+            choices[best_choice as usize],
+            cost_sub,
+            entropy_64x64,
+            entropy_64x32_total,
+            entropy_32x64_total
+        );
     }
 
     match best_choice {

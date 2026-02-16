@@ -27,6 +27,7 @@ use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use super::quant::INV_DC_QUANT;
 use super::quantize::adjust_quant_bias;
+use crate::debug_rect;
 
 /// Pre-allocated output buffers for `transform_and_quantize`.
 ///
@@ -664,10 +665,22 @@ impl VarDctEncoder {
                         }
                         max_quant = max_quant.max(quant_c);
                     }
+                    let quant_before = quant_field[quant_idx];
                     quant_int = max_quant;
                     // Write adjusted quant back (decoder sees this in AC metadata)
                     quant_field[quant_idx] = quant_int.clamp(1, 255) as u8;
                     qac = params.scale * quant_int as f32;
+                    debug_rect!(
+                        "quant/adjust",
+                        bx * 8,
+                        by * 8,
+                        cx * 8,
+                        cy * 8,
+                        "strat={} q={}→{}",
+                        raw_strategy,
+                        quant_before,
+                        quant_field[quant_idx]
+                    );
                 }
 
                 // ── Step 3: Quantize Y AC with thresholding ────────────────

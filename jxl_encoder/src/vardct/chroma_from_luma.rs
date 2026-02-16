@@ -10,6 +10,7 @@
 use super::common::*;
 use super::dct::dct_8x8;
 use super::quant;
+use crate::debug_rect;
 
 /// Inverse of the color factor used in CfL ratio conversion.
 /// `ytox_ratio(x) = x * K_INV_COLOR_FACTOR`
@@ -195,6 +196,16 @@ pub fn compute_cfl_map(
                 find_best_multiplier(&coeffs_yx, &coeffs_x, num_ac, 0.0, K_DISTANCE_MULTIPLIER_AC);
             ytob[tile_idx] =
                 find_best_multiplier(&coeffs_yb, &coeffs_b, num_ac, 1.0, K_DISTANCE_MULTIPLIER_AC);
+            debug_rect!(
+                "cfl/tile",
+                tile_bx0 * 8,
+                tile_by0 * 8,
+                (tile_bx1 - tile_bx0) * 8,
+                (tile_by1 - tile_by0) * 8,
+                "ytox={} ytob={}",
+                ytox[tile_idx],
+                ytob[tile_idx]
+            );
         }
     }
 

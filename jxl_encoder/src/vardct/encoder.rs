@@ -15,6 +15,7 @@ use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::debug_rect;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, OwnedEntropyCode, write_entropy_code_ans, write_tokens, write_tokens_ans,
 };
@@ -471,6 +472,21 @@ impl VarDctEncoder {
             None
         };
 
+        debug_rect!(
+            "enc/config",
+            0,
+            0,
+            width,
+            height,
+            "d={:.2} gab={} cfl={} pixel_loss={} patches={} bfly_iters={}",
+            self.distance,
+            self.enable_gaborish,
+            self.cfl_enabled,
+            self.pixel_domain_loss,
+            self.enable_patches,
+            self.butteraugli_iters
+        );
+
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
         let ac_strategy = if let Some(forced) = self.force_strategy {
             // Force a specific strategy for all blocks that fit
@@ -534,6 +550,27 @@ impl VarDctEncoder {
                 &initial_quant_field,
                 &cfl_map,
                 &ac_strategy,
+            );
+        }
+
+        // Log quant field statistics after all adjustments
+        {
+            let qf = &quant_field;
+            let sum: u64 = qf.iter().map(|&v| v as u64).sum();
+            let avg = sum as f32 / qf.len() as f32;
+            let min = qf.iter().copied().min().unwrap_or(0);
+            let max = qf.iter().copied().max().unwrap_or(0);
+            debug_rect!(
+                "enc/quant_field",
+                0,
+                0,
+                width,
+                height,
+                "final avg={:.1} min={} max={} blocks={}",
+                avg,
+                min,
+                max,
+                qf.len()
             );
         }
 
