@@ -1229,10 +1229,10 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 ### Lossless Compression Status (Feb 16, 2026)
 
-**Default path (effort 7)**: RCT (YCoCg) + learned MA tree + multi-context ANS.
-Tree learning enabled by default at effort >= 7 with 14 candidate predictors
-including Weighted. Select predictor fix (Feb 16) resolved inverted comparison
-that was causing 22-63% regressions.
+**Default path (effort 7)**: RCT selection (best of 7 candidates) + learned MA tree +
+multi-context ANS. Tree learning enabled by default at effort >= 7 with 14 candidate
+predictors including Weighted. Sample cap at 65K for effort 7 (7-11s encode time on
+1024x1024, down from 264s with 1M samples, +0.5% size).
 
 **Squeeze disabled by default** — hurts compression even WITH tree learning:
 - Photos (1024x1024 CLIC): squeeze+tree 1334KB vs tree-only 1163KB (+14.7%)
@@ -1240,19 +1240,27 @@ that was causing 22-63% regressions.
 Tree-learned adaptive prediction handles spatial correlations more efficiently
 than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true)`.
 
-**Compression vs cjxl (1024x1024 CLIC photo, default effort 7)**:
-- Tree-only: 1163KB vs cjxl e7 1056KB (+10.1%)
-- Previous (no tree): 1569KB vs cjxl e7 1056KB (+48.5%)
-- Improvement from tree learning: -25.9% file size
+**Compression vs cjxl (8 CLIC 1024x1024 photos, effort 7)**:
+- cjxl-rs total: 8,602KB (avg 1,075KB/image)
+- vs cjxl e1: **-15.3%** (we beat e1)
+- vs cjxl e7: **+7.7%** (down from +28.5% before RCT fix + tree learning)
+- Per-image range: +3.3% to +10.7% vs cjxl e7
+- Encode time: 7-11s per image (release build)
 
-**Performance issue**: Tree learning on 1024x1024 takes ~5 minutes (release build).
-Root cause: O(n * props * thresholds) per tree node with no sample subsampling or
-deduplication. libjxl uses hash-based sample deduplication with counts. Affects both
-squeeze and non-squeeze paths equally.
+**Key fixes in this session**:
+- RCT type U32 encoding offset: was BitsOffset(6, 18), correct is BitsOffset(6, 10).
+  Decoder read wrong rct_type for swap permutations (3,4,5). Now all 42 RCT variants work.
+- Tree learning sample cap: effort-dependent (65K at e7, 131K at e8, 524K at e9+).
+  37x speedup with only +0.5% size increase.
+
+**Remaining gap vs cjxl e7 (~7.7%)**:
+- cjxl uses Weighted predictor with variable per-context selection (Predictor::Variable)
+- cjxl uses more sophisticated histogram clustering (kDefault vs our pair-merge)
+- cjxl uses prefix-sum cumulative histograms for O(1) split evaluation in tree learning
+- cjxl has more tree learning samples and deduplication with counts
 
 **Known issues**:
-- Tree learning is slow on large images (5 min for 1024x1024, needs subsampling)
-- Screenshots still 80%+ larger than cjxl e7 (gap from no-squeeze, no lossless patches)
+- Screenshots still much larger than cjxl e7 (needs lossless patches, not yet implemented)
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
   (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
 
