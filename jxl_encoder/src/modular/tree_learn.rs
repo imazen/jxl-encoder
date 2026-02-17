@@ -606,10 +606,19 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
     // Build the tree
     let mut tree: Tree = Vec::new();
 
+    // Reusable buffer for entropy computation (avoids per-call Vec allocation).
+    let mut entropy_counts = vec![0u32; histogram_size];
+
     // Start with root node
-    let root_predictor = find_best_predictor(samples, &indices[..n], histogram_size);
-    let root_bits =
-        compute_predictor_entropy(samples, &indices[..n], root_predictor, histogram_size);
+    let root_predictor =
+        find_best_predictor(samples, &indices[..n], histogram_size, &mut entropy_counts);
+    let root_bits = compute_predictor_entropy(
+        samples,
+        &indices[..n],
+        root_predictor,
+        histogram_size,
+        &mut entropy_counts,
+    );
 
     // LIFO stack for greedy splitting
     let mut stack: Vec<SplitCandidate> = Vec::new();
@@ -697,12 +706,14 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     &indices[candidate.start..abs_mid],
                     split.left_predictor,
                     histogram_size,
+                    &mut entropy_counts,
                 );
                 let right_bits = compute_predictor_entropy(
                     samples,
                     &indices[abs_mid..candidate.end],
                     split.right_predictor,
                     histogram_size,
+                    &mut entropy_counts,
                 );
 
                 stack.push(SplitCandidate {
@@ -794,7 +805,7 @@ const HISTO_PADDED: usize = 128;
 const HISTO_MASK: usize = HISTO_PADDED - 1;
 
 /// Pre-allocated workspace for find_best_split, reused across calls.
-/// Avoids per-call Vec allocation and resize overhead (~1.8B instructions in profile).
+/// Avoids per-call Vec allocation and resize overhead.
 struct SplitWorkspace {
     count_increase: Vec<u32>,
     extra_bits_increase: Vec<u64>,
@@ -808,11 +819,6 @@ struct SplitWorkspace {
     sorted_by_bucket: Vec<usize>,
     bucket_starts: Vec<usize>,
     bucket_write_pos: Vec<usize>,
-    /// Materialized tokens in bucket-sorted order, filled per-predictor.
-    /// Enables bounds-check-free iteration in the inner loop via iterators.
-    sorted_tokens: Vec<u8>,
-    /// Materialized extra_bits in bucket-sorted order, filled per-predictor.
-    sorted_ebits: Vec<u8>,
 }
 
 /// Maximum samples used for split evaluation per node.
@@ -842,8 +848,6 @@ impl SplitWorkspace {
             sorted_by_bucket: vec![0usize; max_count],
             bucket_starts: vec![0usize; max_buckets + 2],
             bucket_write_pos: vec![0usize; max_buckets],
-            sorted_tokens: vec![0u8; max_count],
-            sorted_ebits: vec![0u8; max_count],
         }
     }
 }
@@ -936,21 +940,21 @@ fn find_best_split(
     let eval_count = count.div_ceil(eval_stride);
     let cost_scale = count as f64 / eval_count as f64;
 
-    // Use pre-allocated workspace buffers
-    let count_increase = &mut ws.count_increase;
-    let extra_bits_increase = &mut ws.extra_bits_increase;
-    let bucket_counts = &mut ws.bucket_counts;
-    let right_counts = &mut ws.right_counts;
-    let left_counts = &mut ws.left_counts;
-    let best_l_cost = &mut ws.best_l_cost;
-    let best_r_cost = &mut ws.best_r_cost;
-    let best_l_pred = &mut ws.best_l_pred;
-    let best_r_pred = &mut ws.best_r_pred;
-    let sorted_by_bucket = &mut ws.sorted_by_bucket;
-    let bucket_starts = &mut ws.bucket_starts;
-    let bucket_write_pos = &mut ws.bucket_write_pos;
-    let sorted_tokens = &mut ws.sorted_tokens;
-    let sorted_ebits = &mut ws.sorted_ebits;
+    // Pre-slice workspace buffers to avoid repeated Vec deref overhead.
+    // Each Vec deref goes through raw_vec.ptr() + from_raw_parts() (~434M overhead
+    // in profile). Slicing once here gives &mut [T] for all subsequent access.
+    let count_increase = ws.count_increase.as_mut_slice();
+    let extra_bits_increase = ws.extra_bits_increase.as_mut_slice();
+    let bucket_counts = ws.bucket_counts.as_mut_slice();
+    let right_counts = ws.right_counts.as_mut_slice();
+    let left_counts = ws.left_counts.as_mut_slice();
+    let best_l_cost = ws.best_l_cost.as_mut_slice();
+    let best_r_cost = ws.best_r_cost.as_mut_slice();
+    let best_l_pred = ws.best_l_pred.as_mut_slice();
+    let best_r_pred = ws.best_r_pred.as_mut_slice();
+    let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
+    let bucket_starts = ws.bucket_starts.as_mut_slice();
+    let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
 
     // Count-based property pruning: for very small nodes, only try the first few properties.
     let num_props = if count >= 256 {
@@ -1019,23 +1023,9 @@ fn find_best_split(
         best_l_pred[..local_num_thresholds].fill(0);
         best_r_pred[..local_num_thresholds].fill(0);
 
-        let total_sorted = bucket_starts[local_num_buckets];
-
         for pred in 0..num_pred {
             let tokens = &samples.residual_tokens[pred];
             let ebits = &samples.extra_bits[pred];
-
-            // Materialize tokens/ebits into bucket-sorted order for this predictor.
-            // Converts indirect indexing (sorted_by_bucket[i] → tokens[idx]) into
-            // sequential arrays, enabling bounds-check-free inner loop below.
-            for (&idx, (st, se)) in sorted_by_bucket[..total_sorted].iter().zip(
-                sorted_tokens[..total_sorted]
-                    .iter_mut()
-                    .zip(sorted_ebits[..total_sorted].iter_mut()),
-            ) {
-                *st = tokens[idx];
-                *se = ebits[idx];
-            }
 
             // Clear only effective_histo entries per bucket (HISTO_PADDED stride
             // leaves gaps that are never read). Same total bytes as original code.
@@ -1050,15 +1040,12 @@ fn find_best_split(
                 let ci_base = local_bucket * HISTO_PADDED;
                 let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
                 let mut eb_sum: u64 = 0;
-                // Inner loop: bounds-check-free.
-                // - sorted_tokens/sorted_ebits: iterator zip, no bounds checks
-                // - ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
-                for (&tok, &eb) in sorted_tokens[start..end]
-                    .iter()
-                    .zip(sorted_ebits[start..end].iter())
-                {
+                // Inner loop: uses sorted_by_bucket indices directly into token/ebit arrays.
+                // ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
+                for &idx in &sorted_by_bucket[start..end] {
+                    let tok = tokens[idx];
                     ci_slice[tok as usize & HISTO_MASK] += 1;
-                    eb_sum += eb as u64;
+                    eb_sum += ebits[idx] as u64;
                 }
                 extra_bits_increase[local_bucket] = eb_sum;
             }
@@ -1181,13 +1168,19 @@ fn find_best_split(
 }
 
 /// Find the best predictor for the given sample indices.
-fn find_best_predictor(samples: &TreeSamples, indices: &[usize], histogram_size: usize) -> usize {
+fn find_best_predictor(
+    samples: &TreeSamples,
+    indices: &[usize],
+    histogram_size: usize,
+    counts_buf: &mut [u32],
+) -> usize {
     let num_pred = samples.num_predictors();
     let mut best_pred = 0;
     let mut best_bits = f64::MAX;
 
     for pred_idx in 0..num_pred {
-        let bits = compute_predictor_entropy(samples, indices, pred_idx, histogram_size);
+        let bits =
+            compute_predictor_entropy(samples, indices, pred_idx, histogram_size, counts_buf);
         if bits < best_bits {
             best_bits = bits;
             best_pred = pred_idx;
@@ -1203,28 +1196,31 @@ fn find_best_predictor(samples: &TreeSamples, indices: &[usize], histogram_size:
 /// threshold comparison — the sweep in find_best_split uses nlog2n, but the
 /// parent's base_bits must use the same formula as the old code to avoid
 /// inflated base_bits that accept too many splits (10x tree size regression).
+///
+/// `counts_buf` is a reusable histogram buffer (len >= histogram_size), cleared on entry.
 fn compute_predictor_entropy(
     samples: &TreeSamples,
     indices: &[usize],
     predictor_idx: usize,
     histogram_size: usize,
+    counts_buf: &mut [u32],
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx];
     let ebits = &samples.extra_bits[predictor_idx];
-    let mut counts = vec![0u32; histogram_size];
+    counts_buf[..histogram_size].fill(0);
     let mut total = 0u32;
     let mut tot_extra: u64 = 0;
 
     for &idx in indices {
         let tok = tokens[idx] as usize;
         if tok < histogram_size {
-            counts[tok] += 1;
+            counts_buf[tok] += 1;
             total += 1;
         }
         tot_extra += ebits[idx] as u64;
     }
 
-    estimate_bits(&counts, total) + tot_extra as f64
+    estimate_bits(&counts_buf[..histogram_size], total) + tot_extra as f64
 }
 
 /// Partition indices in-place so that indices with property <= splitval come first.
