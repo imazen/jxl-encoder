@@ -445,6 +445,10 @@ impl AnsReader {
             )))
         }
     }
+
+    pub fn state(&self) -> u32 {
+        self.0
+    }
 }
 
 #[cfg(test)]

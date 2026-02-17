@@ -6,13 +6,12 @@
 //! Validates that the encoder handles degenerate inputs without panicking and
 //! produces valid, decodable output. Both lossless and lossy paths are tested.
 //!
-//! ## Known ANS bug (found Feb 17, 2026)
+//! ## ANS monochrome gradient bug (FIXED Feb 17, 2026)
 //!
-//! Monochrome RGB gradients (R=G=B) at certain sizes produce invalid ANS bitstreams.
-//! Root cause: after RCT YCoCg, Co and Cg channels are all-zero. Combined with gradient
-//! prediction making Y residuals mostly-zero (after first row), the ANS encoder produces
-//! a corrupted bitstream for this extremely degenerate distribution. Huffman mode works
-//! fine for the same content. Tests for these cases are marked `#[ignore]`.
+//! Monochrome RGB gradients (R=G=B) with >=256 unique colors triggered a palette transform
+//! encoding bug: `nb_colors` field used wrong bit widths for u2S selectors 1 and 2
+//! (11 bits instead of 10, 14 instead of 12). This caused a 1-bit shift that corrupted
+//! subsequent ANS state reading. Fixed in encode_transforms.rs.
 
 use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
 
@@ -380,7 +379,6 @@ fn pathological_solid_color_300x300() {
 /// after RCT YCoCg (Co=0, Cg=0) + gradient prediction (Y≈0 after first row).
 /// Huffman mode works fine. Filed as known bug.
 #[test]
-#[ignore = "ANS encoder bug on degenerate monochrome gradient distributions"]
 fn pathological_horizontal_gradient_mono_256x256() {
     let mut data = vec![0u8; 256 * 256 * 3];
     for y in 0..256 {
@@ -391,12 +389,32 @@ fn pathological_horizontal_gradient_mono_256x256() {
             data[idx + 2] = x as u8;
         }
     }
+    // Save ANS file for external decoder testing
+    let encoded_ans = LosslessConfig::new()
+        .encode(&data, 256, 256, PixelLayout::Rgb8)
+        .unwrap();
+    std::fs::write("/tmp/mono_gradient_ans.jxl", &encoded_ans).unwrap();
+    eprintln!("ANS: {} bytes", encoded_ans.len());
+
+    // Save Huffman file for comparison
+    let encoded_huff = LosslessConfig::new()
+        .with_ans(false)
+        .encode(&data, 256, 256, PixelLayout::Rgb8)
+        .unwrap();
+    std::fs::write("/tmp/mono_gradient_huff.jxl", &encoded_huff).unwrap();
+    eprintln!("Huffman: {} bytes", encoded_huff.len());
+
+    // Try to decode both with jxl-rs
+    eprintln!("Decoding Huffman...");
+    let (hw, hh, hpix) = decode_jxl_rs(&encoded_huff);
+    eprintln!("Huffman decoded OK: {}x{}", hw, hh);
+
+    eprintln!("Decoding ANS...");
     lossless_roundtrip_rgb(&data, 256, 256, "h_gradient_mono_256x256");
 }
 
 /// Same ANS bug as horizontal_gradient_mono_256x256.
 #[test]
-#[ignore = "ANS encoder bug on degenerate monochrome gradient distributions"]
 fn pathological_vertical_gradient_mono_256x256() {
     let mut data = vec![0u8; 256 * 256 * 3];
     for y in 0..256 {
@@ -412,7 +430,6 @@ fn pathological_vertical_gradient_mono_256x256() {
 
 /// Same ANS bug — diagonal variant.
 #[test]
-#[ignore = "ANS encoder bug on degenerate monochrome gradient distributions"]
 fn pathological_diagonal_gradient_mono_256x256() {
     let mut data = vec![0u8; 256 * 256 * 3];
     for y in 0..256 {
@@ -675,4 +692,230 @@ fn pathological_257x256() {
 fn pathological_512x512_multigroup() {
     let data = lcg_bytes(66, 512 * 512 * 3);
     lossless_roundtrip_rgb(&data, 512, 512, "noise_512x512");
+}
+
+/// Test: RCT+ANS path (no palette, no tree learning) with a non-degenerate distribution
+/// This exercises write_modular_stream_with_rct -> ANS directly
+#[test]
+fn pathological_rct_ans_no_palette() {
+    // Random noise RGB image - too many colors for palette, effort 4 = ANS without tree learning
+    let data = lcg_bytes(42, 16 * 16 * 3);
+    let encoded = LosslessConfig::new()
+        .with_effort(4) // ANS enabled, tree learning disabled
+        .encode(&data, 16, 16, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("RCT+ANS (no palette, no tree): {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: Palette+ANS with a NON-degenerate distribution (varied colors)
+/// This tests the palette path but with a normal histogram
+#[test]
+fn pathological_palette_ans_varied() {
+    // Image with exactly 8 unique colors (triggers palette), but varied distribution
+    let mut data = vec![0u8; 16 * 16 * 3];
+    for y in 0..16usize {
+        for x in 0..16usize {
+            let idx = (y * 16 + x) * 3;
+            let color = ((x + y * 3) % 8) as u8;
+            data[idx] = color * 30;
+            data[idx + 1] = color * 20;
+            data[idx + 2] = color * 10;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 16, 16, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS (varied): {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: palette+Huffman with the exact degenerate distribution (should work)
+#[test]
+fn pathological_palette_huffman_degenerate() {
+    let mut data = vec![0u8; 256 * 256 * 3];
+    for y in 0..256 {
+        for x in 0..256 {
+            let idx = (y * 256 + x) * 3;
+            data[idx] = x as u8;
+            data[idx + 1] = x as u8;
+            data[idx + 2] = x as u8;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .with_ans(false)
+        .encode(&data, 256, 256, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+Huffman (degenerate): {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: smaller monochrome gradient (4x4) with palette+ANS
+#[test]
+fn pathological_palette_ans_mono_4x4() {
+    let mut data = vec![0u8; 4 * 4 * 3];
+    for y in 0..4 {
+        for x in 0..4 {
+            let idx = (y * 4 + x) * 3;
+            data[idx] = (x * 64) as u8;
+            data[idx + 1] = (x * 64) as u8;
+            data[idx + 2] = (x * 64) as u8;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 4, 4, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS mono 4x4: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: 16x16 monochrome gradient with palette+ANS
+#[test]
+fn pathological_palette_ans_mono_16x16() {
+    let mut data = vec![0u8; 16 * 16 * 3];
+    for y in 0..16 {
+        for x in 0..16 {
+            let idx = (y * 16 + x) * 3;
+            let v = (x * 16) as u8;
+            data[idx] = v;
+            data[idx + 1] = v;
+            data[idx + 2] = v;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 16, 16, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS mono 16x16: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: 32x32 monochrome gradient with palette+ANS
+#[test]
+fn pathological_palette_ans_mono_32x32() {
+    let mut data = vec![0u8; 32 * 32 * 3];
+    for y in 0..32 {
+        for x in 0..32 {
+            let idx = (y * 32 + x) * 3;
+            let v = (x * 8) as u8;
+            data[idx] = v;
+            data[idx + 1] = v;
+            data[idx + 2] = v;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 32, 32, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS mono 32x32: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: 64x64 monochrome gradient with palette+ANS
+#[test]
+fn pathological_palette_ans_mono_64x64() {
+    let mut data = vec![0u8; 64 * 64 * 3];
+    for y in 0..64 {
+        for x in 0..64 {
+            let idx = (y * 64 + x) * 3;
+            let v = (x * 4) as u8;
+            data[idx] = v;
+            data[idx + 1] = v;
+            data[idx + 2] = v;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 64, 64, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS mono 64x64: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: 128x128 monochrome gradient with palette+ANS (128 colors, x*2 step)
+#[test]
+fn pathological_palette_ans_mono_128x128() {
+    let mut data = vec![0u8; 128 * 128 * 3];
+    for y in 0..128 {
+        for x in 0..128 {
+            let idx = (y * 128 + x) * 3;
+            let v = (x * 2) as u8;
+            data[idx] = v;
+            data[idx + 1] = v;
+            data[idx + 2] = v;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 128, 128, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS mono 128x128: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: palette+ANS with EXACTLY 2 non-zero symbols but smaller image
+/// Force 2-symbol distribution: solid image (all same color)
+#[test]
+fn pathological_palette_ans_2symbols_16x16() {
+    // 16x16 solid color image -> palette with 1 color
+    // After palette + gradient pred, all residuals should be 0
+    // => 1 non-zero symbol (symbol 0), method=1
+    let data = vec![128u8; 16 * 16 * 3];
+    let encoded = LosslessConfig::new()
+        .encode(&data, 16, 16, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS 2sym 16x16: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: 256x2 mono gradient (minimum height that triggers bug per known bug description)
+#[test]
+fn pathological_palette_ans_mono_256x2() {
+    let mut data = vec![0u8; 256 * 2 * 3];
+    for y in 0..2 {
+        for x in 0..256 {
+            let idx = (y * 256 + x) * 3;
+            data[idx] = x as u8;
+            data[idx + 1] = x as u8;
+            data[idx + 2] = x as u8;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 256, 2, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Palette+ANS mono 256x2: {} bytes", encoded.len());
+    std::fs::write("/tmp/mono_256x2_ans.jxl", &encoded).unwrap();
+    // Also try Huffman for comparison
+    let encoded_huff = LosslessConfig::new()
+        .with_ans(false)
+        .encode(&data, 256, 2, PixelLayout::Rgb8)
+        .unwrap();
+    std::fs::write("/tmp/mono_256x2_huff.jxl", &encoded_huff).unwrap();
+    eprintln!("Huffman version: {} bytes", encoded_huff.len());
+    let (dw, dh, _) = decode_jxl_rs(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
+}
+
+/// Test: Gray8 256x256 gradient with ANS (method=1, no palette)
+/// This produces the same degenerate 2-symbol distribution but goes through
+/// write_improved_modular_stream instead of write_modular_stream_with_palette.
+#[test]
+fn pathological_gray_gradient_ans_method1() {
+    let mut data = vec![0u8; 256 * 256];
+    for y in 0..256 {
+        for x in 0..256 {
+            data[y * 256 + x] = x as u8;
+        }
+    }
+    let encoded = LosslessConfig::new()
+        .encode(&data, 256, 256, PixelLayout::Gray8)
+        .unwrap();
+    eprintln!("Gray8 ANS gradient: {} bytes", encoded.len());
+    let (dw, dh, _) = decode_jxl_rs_gray(&encoded);
+    eprintln!("Decoded OK: {}x{}", dw, dh);
 }
