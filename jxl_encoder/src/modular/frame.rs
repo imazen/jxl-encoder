@@ -227,22 +227,18 @@ impl FrameEncoder {
             num_lf_groups
         );
 
-        // Step 0: Apply RCT (YCoCg) to full image for RGB before extracting groups
+        // Step 0: Apply best RCT to full image for RGB before extracting groups
         let has_rct = image.channels.len() >= 3;
-        let rct_type = if has_rct {
-            Some(super::rct::RctType::YCOCG)
-        } else {
-            None
-        };
         let transformed;
+        let rct_type;
         let source_image = if has_rct {
-            transformed = {
-                let mut img = image.clone();
-                super::rct::forward_rct(&mut img.channels, 0, super::rct::RctType::YCOCG)?;
-                img
-            };
+            let (selected_rct, rct_image) =
+                super::encode::select_best_rct(image, self.options.effort);
+            rct_type = Some(selected_rct);
+            transformed = rct_image;
             &transformed
         } else {
+            rct_type = None;
             image
         };
 
