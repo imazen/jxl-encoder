@@ -284,15 +284,25 @@ pub fn write_global_modular_section_with_tree(
     }
 
     // Step 2: Learn tree with effort-dependent parameters
-    let params = TreeLearningParams::for_effort(effort);
+    let pixel_fraction = if total_pixels > 0 {
+        samples.num_samples as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let params = TreeLearningParams::for_effort(effort).with_pixel_fraction(pixel_fraction);
     let tree = compute_best_tree(&mut samples, &params);
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(
-        "GLOBAL_MODULAR_TREE: {} nodes, {} leaves/contexts from {} samples",
+        "GLOBAL_MODULAR_TREE: {} nodes, {} leaves/contexts from {} samples \
+         (pixel_fraction={:.3}, threshold={:.1}*{:.3}={:.1})",
         tree.len(),
         num_contexts,
-        samples.num_samples
+        samples.num_samples,
+        pixel_fraction,
+        params.split_threshold,
+        pixel_fraction * 0.9 + 0.1,
+        params.split_threshold * (pixel_fraction * 0.9 + 0.1),
     );
 
     // Step 3: Collect residuals from all groups with tree

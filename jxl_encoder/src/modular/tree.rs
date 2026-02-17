@@ -367,6 +367,78 @@ pub fn adaptive_gradient_weighted_tree() -> Tree {
     ]
 }
 
+/// Validate tree structure matching libjxl's ValidateTree in dec_ma.cc.
+///
+/// Tracks property ranges as the tree narrows them through splits.
+/// Returns Ok(()) if valid, Err with details of the failing node.
+///
+/// Convention: lchild = value <= splitval, rchild = value > splitval.
+///
+/// But the decoder reads BFS where first child is "lchild" (value > splitval)
+/// and second child is "rchild" (value <= splitval). So we map:
+/// - Our rchild → decoder lchild: range [val+1, u]
+/// - Our lchild → decoder rchild: range [l, val]
+pub fn validate_tree_djxl(tree: &Tree) -> Result<(), String> {
+    if tree.is_empty() {
+        return Ok(());
+    }
+
+    let mut num_properties = 0i32;
+    for node in tree {
+        if node.property >= num_properties {
+            num_properties = node.property + 1;
+        }
+    }
+    let np = num_properties as usize;
+
+    // Track (lo, hi) range per property per node
+    // Range is [lo, hi] inclusive; split at val requires lo <= val && val < hi
+    // (in libjxl terms: u > val, meaning hi > val)
+    let mut ranges: Vec<(i32, i32)> = vec![(i32::MIN, i32::MAX); np * tree.len()];
+
+    for (i, node) in tree.iter().enumerate() {
+        if node.property < 0 {
+            continue; // leaf
+        }
+        let p = node.property as usize;
+        let val = node.splitval;
+        let lo = ranges[i * np + p].0;
+        let hi = ranges[i * np + p].1;
+
+        // libjxl check: if (l > val || u <= val) return FAILURE
+        if lo > val || hi <= val {
+            return Err(format!(
+                "Node {} (property={}, splitval={}): range [{}, {}] invalid \
+                 (lo > val = {}, hi <= val = {})",
+                i,
+                node.property,
+                val,
+                lo,
+                hi,
+                lo > val,
+                hi <= val
+            ));
+        }
+
+        let lchild = node.lchild; // value <= splitval
+        let rchild = node.rchild; // value > splitval
+
+        // Copy all property ranges to children
+        for pp in 0..np {
+            ranges[rchild * np + pp] = ranges[i * np + pp];
+            ranges[lchild * np + pp] = ranges[i * np + pp];
+        }
+
+        // Narrow property p for children
+        // rchild (value > splitval): lo = val + 1
+        ranges[rchild * np + p] = (val + 1, hi);
+        // lchild (value <= splitval): hi = val
+        ranges[lchild * np + p] = (lo, val);
+    }
+
+    Ok(())
+}
+
 /// Count the number of unique context IDs used in a tree.
 pub fn count_contexts(tree: &Tree) -> u32 {
     tree.iter()

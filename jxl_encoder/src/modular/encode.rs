@@ -1136,11 +1136,11 @@ pub(crate) fn write_rct_transform(
         writer.write(13, (begin_c - 1096) as u64)?;
     }
 
-    // rct_type: U32(Val(6), Bits(2), BitsOffset(4, 2), BitsOffset(6, 18), 6)
+    // rct_type: U32(Val(6), Bits(2), BitsOffset(4, 2), BitsOffset(6, 10), 6)
     // Val(6) = YCoCg at selector 0
     // Bits(2) = 0-3 at selector 1
     // BitsOffset(4, 2) = 2-17 at selector 2
-    // BitsOffset(6, 18) = 18-81 at selector 3
+    // BitsOffset(6, 10) = 10-73 at selector 3
     let rct_val = rct_type.0 as u64;
     if rct_val == 6 {
         writer.write(2, 0)?; // selector 0 = Val(6)
@@ -1148,14 +1148,14 @@ pub(crate) fn write_rct_transform(
         // 0-1 encoded as Bits(2) at selector 1, but 0 and 1 need 2 bits
         writer.write(2, 1)?;
         writer.write(2, rct_val)?;
-    } else if rct_val < 18 {
-        // 2-17 encoded as BitsOffset(4, 2) at selector 2
+    } else if rct_val < 10 {
+        // 2-9 encoded as BitsOffset(4, 2) at selector 2
         writer.write(2, 2)?;
         writer.write(4, rct_val - 2)?;
     } else {
-        // 18-81 encoded as BitsOffset(6, 18) at selector 3
+        // 10-73 encoded as BitsOffset(6, 10) at selector 3
         writer.write(2, 3)?;
-        writer.write(6, rct_val - 18)?;
+        writer.write(6, rct_val - 10)?;
     }
 
     Ok(())
@@ -1549,9 +1549,9 @@ pub fn write_modular_stream_with_rct(
         return write_simple_modular_stream(image, writer, use_ans);
     }
 
-    // Clone the image and apply forward RCT
+    // Clone the image and apply forward RCT (YCoCg)
     let mut transformed = image.clone();
-    let rct_type = RctType::YCOCG; // Best for typical images
+    let rct_type = RctType::YCOCG;
     forward_rct(&mut transformed.channels, 0, rct_type)?;
 
     crate::trace::debug_eprintln!(
@@ -1954,6 +1954,183 @@ pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()
     Ok(())
 }
 
+/// Fast cost estimate for an image using gradient prediction.
+///
+/// Matches libjxl's `EstimateCost()` in enc_modular_simd.cc.
+/// Uses clamped gradient prediction with residuals bucketed by local complexity
+/// (max neighbor difference). Returns total estimated bits.
+fn estimate_cost(image: &ModularImage) -> f64 {
+    use super::predictor::pack_signed;
+    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+
+    let config = HybridUintConfig::new(4, 2, 0);
+    let cutoffs: &[u32] = &[
+        0, 1, 3, 5, 7, 11, 15, 23, 31, 47, 63, 95, 127, 191, 255, 392, 500,
+    ];
+    let nc = cutoffs.len() + 1; // 18 context buckets
+
+    let mut total_bits: f64 = 0.0;
+    let mut extra_bits: u64 = 0;
+    let mut histograms: Vec<Vec<u32>> = vec![vec![]; nc];
+
+    for ch in &image.channels {
+        let w = ch.width();
+        let h = ch.height();
+        if w == 0 || h == 0 {
+            continue;
+        }
+
+        for y in 0..h {
+            for x in 0..w {
+                let val = ch.data()[y * w + x];
+                let left = if x > 0 {
+                    ch.data()[y * w + x - 1]
+                } else if y > 0 {
+                    ch.data()[(y - 1) * w + x]
+                } else {
+                    0
+                };
+                let top = if y > 0 {
+                    ch.data()[(y - 1) * w + x]
+                } else {
+                    left
+                };
+                let topleft = if x > 0 && y > 0 {
+                    ch.data()[(y - 1) * w + x - 1]
+                } else {
+                    left
+                };
+
+                let max_diff = left.max(top).max(topleft) - left.min(top).min(topleft);
+                let max_diff = max_diff as u32;
+
+                // Find context bucket (count how many cutoffs are > max_diff)
+                let mut ctx = 0usize;
+                for &c in cutoffs {
+                    if max_diff < c {
+                        ctx += 1;
+                    }
+                }
+
+                // Gradient prediction residual
+                let grad = left + top - topleft;
+                let pred = grad.max(left.min(top)).min(left.max(top)); // clamped gradient
+                let res = val - pred;
+                let packed = pack_signed(res);
+
+                let (token, _bits, nbits) = config.encode(packed);
+                if histograms[ctx].len() <= token as usize {
+                    histograms[ctx].resize(token as usize + 1, 0);
+                }
+                histograms[ctx][token as usize] += 1;
+                extra_bits += nbits as u64;
+            }
+        }
+
+        // Sum Shannon entropy per context bucket, then reset
+        for hist in &mut histograms {
+            let total: u32 = hist.iter().sum();
+            if total > 0 {
+                let total_f = total as f64;
+                for &count in hist.iter() {
+                    if count > 0 {
+                        let p = count as f64 / total_f;
+                        total_bits -= count as f64 * p.log2();
+                    }
+                }
+            }
+            hist.clear();
+        }
+    }
+
+    total_bits + extra_bits as f64
+}
+
+/// RCT variants to try at each effort level, matching libjxl's enc_modular.cc.
+/// The order is: identity, YCoCg, YCbCr-like, GBR+SubGR, RBG+YCoCg, BGR+YCoCg, GBR+YCoCg.
+#[allow(clippy::identity_op, clippy::erasing_op)]
+const RCT_CANDIDATES: &[u8] = &[
+    0 * 7 + 0, // identity (no transform)
+    0 * 7 + 6, // YCoCg
+    0 * 7 + 5, // type 5
+    1 * 7 + 3, // GBR + SubGR
+    3 * 7 + 5, // RBG + type 5
+    5 * 7 + 5, // BGR + type 5
+    1 * 7 + 5, // GBR + type 5
+];
+
+/// Select the best RCT variant by trying candidates and picking the lowest cost.
+///
+/// Returns the RctType and the transformed image. At effort 7, tries 7 RCT variants
+/// matching libjxl's kSquirrel behavior.
+fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, ModularImage) {
+    use super::rct::{RctType, forward_rct};
+
+    let nb_rcts_to_try = match effort {
+        0..=4 => 0, // No RCT selection below Hare
+        5 => 4,     // Hare
+        6 => 5,     // Wombat
+        7 => 7,     // Squirrel
+        8 => 9,     // Kitten
+        _ => 19,    // Tortoise/Glacier
+    };
+
+    if nb_rcts_to_try == 0 || image.channels.len() < 3 {
+        // Default to YCoCg
+        let mut transformed = image.clone();
+        forward_rct(&mut transformed.channels, 0, RctType::YCOCG).ok();
+        return (RctType::YCOCG, transformed);
+    }
+
+    let mut best_cost = f64::MAX;
+    let mut best_rct = RctType::YCOCG;
+    let mut best_image = None;
+
+    for (i, &rct_val) in RCT_CANDIDATES.iter().enumerate() {
+        if i >= nb_rcts_to_try {
+            break;
+        }
+        let rct_type = RctType(rct_val);
+
+        if rct_type.is_noop() {
+            // Identity: estimate cost of the original image
+            let cost = estimate_cost(image);
+            eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
+            if cost < best_cost {
+                best_cost = cost;
+                best_rct = rct_type;
+                best_image = Some(image.clone());
+            }
+        } else {
+            let mut transformed = image.clone();
+            if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
+                let cost = estimate_cost(&transformed);
+                eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_rct = rct_type;
+                    best_image = Some(transformed);
+                }
+            }
+        }
+    }
+
+    let work_image = best_image.unwrap_or_else(|| {
+        let mut t = image.clone();
+        forward_rct(&mut t.channels, 0, RctType::YCOCG).ok();
+        t
+    });
+
+    crate::trace::debug_eprintln!(
+        "RCT_SELECT: best={} (cost={:.0}), tried {} variants",
+        best_rct.0,
+        best_cost,
+        nb_rcts_to_try.min(RCT_CANDIDATES.len()),
+    );
+
+    (best_rct, work_image)
+}
+
 /// Write a modular stream using a learned MA tree with multi-context ANS.
 ///
 /// This is the single-group version. For multi-group, see section.rs.
@@ -1973,7 +2150,6 @@ pub fn write_modular_stream_with_tree(
     effort: u8,
     rct: bool,
 ) -> Result<()> {
-    use super::rct::{RctType, forward_rct};
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
@@ -1981,14 +2157,12 @@ pub fn write_modular_stream_with_tree(
     };
     use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
 
+    // Select best RCT variant by trying multiple candidates (effort-dependent).
     // Tree learning uses RCT only (not palette) because palette+tree has a
     // meta-channel encoding mismatch that causes decoder failures.
-    // The non-tree path (write_modular_stream_with_rct) handles palette correctly.
     let (work_image, rct_type) = if rct && image.channels.len() >= 3 {
-        let mut transformed = image.clone();
-        let rct_type = RctType::YCOCG;
-        forward_rct(&mut transformed.channels, 0, rct_type)?;
-        (transformed, Some(rct_type))
+        let (selected_rct, transformed) = select_best_rct(image, effort);
+        (transformed, Some(selected_rct))
     } else {
         (image.clone(), None)
     };
@@ -2004,17 +2178,24 @@ pub fn write_modular_stream_with_tree(
     gather_samples_strided(&mut samples, &work_image, 0, 0, stride);
 
     // Step 2: Learn tree with effort-dependent parameters
-    let params = TreeLearningParams::for_effort(effort);
+    let pixel_fraction = if total_pixels > 0 {
+        samples.num_samples as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let params = TreeLearningParams::for_effort(effort).with_pixel_fraction(pixel_fraction);
     let tree = compute_best_tree(&mut samples, &params);
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(
-        "TREE_LEARN: effort={}, {} props, {} max_buckets, threshold={:.0}, \
+        "TREE_LEARN: effort={}, {} props, {} max_buckets, threshold={:.0}*{:.3}={:.1}, \
          {} nodes, {} leaves/contexts, {} samples",
         effort,
         params.properties.len(),
         params.max_property_values,
         params.split_threshold,
+        params.pixel_fraction * 0.9 + 0.1,
+        params.split_threshold * (params.pixel_fraction * 0.9 + 0.1),
         tree.len(),
         num_contexts,
         samples.num_samples
@@ -2139,16 +2320,22 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     gather_samples_strided(&mut samples, &transformed, 0, 0, stride);
 
     // Step 4: Learn tree with effort-dependent parameters
-    let tree_params = TreeLearningParams::for_effort(effort);
+    let pixel_fraction = if total_pixels > 0 {
+        samples.num_samples as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let tree_params = TreeLearningParams::for_effort(effort).with_pixel_fraction(pixel_fraction);
     let tree = compute_best_tree(&mut samples, &tree_params);
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(
-        "SQUEEZE+TREE: effort={}, {} nodes, {} contexts, {} samples",
+        "SQUEEZE+TREE: effort={}, {} nodes, {} contexts, {} samples (pf={:.3})",
         effort,
         tree.len(),
         num_contexts,
-        samples.num_samples
+        samples.num_samples,
+        pixel_fraction,
     );
 
     // Step 5: Collect residuals with learned tree
@@ -2303,6 +2490,43 @@ mod tests {
         // - rct_type=6: 2 bits (00)
         // Total: 9 bits
         assert_eq!(writer.bits_written(), 9);
+    }
+
+    #[test]
+    fn test_rct_type_u32_encoding() {
+        use crate::modular::rct::RctType;
+
+        // Verify that write_rct_transform produces correct bit lengths
+        // for all rct_type values. The U32 distribution is:
+        // U32(Val(6), Bits(2), BitsOffset(4, 2), BitsOffset(6, 10))
+        // TransformId (2 bits) + begin_c (5 bits for 0) + rct_type
+        let base_bits = 2 + 5; // TransformId + begin_c=0
+
+        for rct_val in 0..42u8 {
+            let rct_type = RctType(rct_val);
+            let mut writer = BitWriter::new();
+            write_rct_transform(&mut writer, 0, rct_type).unwrap();
+
+            let expected_rct_bits = if rct_val == 6 {
+                2 // selector only (Val(6))
+            } else if rct_val < 2 {
+                2 + 2 // selector + Bits(2)
+            } else if rct_val < 10 {
+                2 + 4 // selector + BitsOffset(4, 2)
+            } else {
+                2 + 6 // selector + BitsOffset(6, 10)
+            };
+            let total_expected = base_bits + expected_rct_bits;
+
+            assert_eq!(
+                writer.bits_written(),
+                total_expected,
+                "Wrong bit count for rct_type={}: expected {} bits, got {}",
+                rct_val,
+                total_expected,
+                writer.bits_written()
+            );
+        }
     }
 
     #[test]

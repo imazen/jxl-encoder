@@ -10,7 +10,7 @@
 
 use super::channel::{Channel, ModularImage};
 use super::predictor::{Neighbors, Predictor, WeightedPredictorState, pack_signed};
-use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts};
+use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts, validate_tree_djxl};
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
 /// HybridUint config used during sample gathering: {4, 1, 2}.
@@ -77,10 +77,16 @@ pub struct TreeLearningParams {
     pub properties: &'static [usize],
     /// Maximum number of quantized threshold buckets per property.
     pub max_property_values: usize,
-    /// Split threshold: a split must save at least this many bits to be accepted.
+    /// Base split threshold: scaled by `pixel_fraction * 0.9 + 0.1` to get effective threshold.
+    /// A split must save at least `effective_threshold` bits to be accepted.
     pub split_threshold: f64,
-    /// Maximum tree nodes.
+    /// Maximum tree nodes (libjxl uses 1<<22, effectively unlimited).
     pub max_nodes: usize,
+    /// Fraction of pixels actually sampled (num_samples / total_pixels).
+    /// Used to scale the split threshold: effective = threshold * (fraction * 0.9 + 0.1).
+    /// Matches libjxl's `required_cost = pixel_fraction * 0.9 + 0.1` in LearnTree().
+    /// Set to 1.0 if all pixels are sampled (no subsampling).
+    pub pixel_fraction: f64,
 }
 
 impl TreeLearningParams {
@@ -114,8 +120,17 @@ impl TreeLearningParams {
             properties: &order[..num_props],
             max_property_values,
             split_threshold: threshold_base,
-            max_nodes: 256,
+            max_nodes: 4096,
+            pixel_fraction: 1.0,
         }
+    }
+
+    /// Set the pixel fraction (num_samples / total_pixels) for threshold scaling.
+    /// This matches libjxl's `required_cost = pixel_fraction * 0.9 + 0.1`.
+    #[must_use]
+    pub fn with_pixel_fraction(mut self, fraction: f64) -> Self {
+        self.pixel_fraction = fraction.clamp(0.0, 1.0);
+        self
     }
 }
 
@@ -229,9 +244,9 @@ pub fn gather_samples_strided(
 }
 
 /// Maximum number of samples to gather for tree learning.
-/// Higher = better tree quality but slower. 256K gives good quality and
-/// keeps tree learning under 10s on 1024x1024 images.
-pub const MAX_TREE_SAMPLES: usize = 256 * 1024;
+/// Higher = better tree quality but slower. 1M samples with pixel_fraction scaling
+/// gives threshold ~73 bits (close to libjxl's 64.4) for 1024x1024 RGB images.
+pub const MAX_TREE_SAMPLES: usize = 1024 * 1024;
 
 /// Compute the stride for subsampling based on total pixel count.
 ///
@@ -386,7 +401,11 @@ struct SplitCandidate {
 /// - `params.max_nodes`: maximum tree nodes
 pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams) -> Tree {
     let max_nodes = params.max_nodes;
-    let threshold = params.split_threshold;
+    // Scale threshold by pixel_fraction, matching libjxl's required_cost formula.
+    // When only a fraction of pixels are sampled, the entropy estimates are noisier
+    // but the threshold needs to be lower to allow the tree to grow appropriately.
+    let required_cost = params.pixel_fraction * 0.9 + 0.1;
+    let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
         // Empty samples: return single gradient leaf
@@ -513,6 +532,51 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
 
     // Assign sequential context IDs to leaves
     assign_sequential_contexts(&mut tree);
+
+    // Validate tree structure (matching libjxl's ValidateTree in dec_ma.cc).
+    // If any node violates property range constraints, collapse it to a leaf.
+    // This prevents djxl decode failures from adversarial or edge-case inputs.
+    loop {
+        match validate_tree_djxl(&tree) {
+            Ok(()) => break,
+            Err(msg) => {
+                eprintln!("Tree validation: fixing invalid node: {}", msg);
+                // Extract the node index from the error message
+                let node_idx = msg
+                    .strip_prefix("Node ")
+                    .and_then(|s| s.split_whitespace().next())
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .expect("validate_tree_djxl error format changed");
+                // Collapse this split node to a leaf with gradient predictor
+                tree[node_idx] = PropertyDecisionNode {
+                    property: -1,
+                    splitval: 0,
+                    predictor: super::predictor::Predictor::Gradient,
+                    predictor_offset: 0,
+                    multiplier: 1,
+                    lchild: 0,
+                    rchild: 0,
+                    context_id: 0,
+                };
+                // Re-assign contexts and re-validate
+                assign_sequential_contexts(&mut tree);
+            }
+        }
+    }
+
+    let num_leaves = tree.iter().filter(|n| n.property == -1).count();
+    eprintln!(
+        "compute_best_tree: {} samples, pf={:.3}, threshold={:.1} (base={:.0}*rc={:.3}), \
+         {} nodes, {} leaves, max_nodes={}",
+        n,
+        params.pixel_fraction,
+        threshold,
+        params.split_threshold,
+        required_cost,
+        tree.len(),
+        num_leaves,
+        max_nodes,
+    );
 
     tree
 }

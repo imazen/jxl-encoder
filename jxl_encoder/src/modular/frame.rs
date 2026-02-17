@@ -986,15 +986,22 @@ impl FrameEncoder {
         }
 
         // Step 4: Learn tree
-        let tree_params = TreeLearningParams::for_effort(self.options.effort);
+        let pixel_fraction = if total_pixels > 0 {
+            samples.num_samples as f64 / total_pixels as f64
+        } else {
+            1.0
+        };
+        let tree_params =
+            TreeLearningParams::for_effort(self.options.effort).with_pixel_fraction(pixel_fraction);
         let tree = compute_best_tree(&mut samples, &tree_params);
         let num_contexts = count_contexts(&tree) as usize;
 
         crate::trace::debug_eprintln!(
-            "SQUEEZE_TREE_MULTI: {} tree nodes, {} contexts from {} samples",
+            "SQUEEZE_TREE_MULTI: {} tree nodes, {} contexts from {} samples (pf={:.3})",
             tree.len(),
             num_contexts,
             samples.num_samples,
+            pixel_fraction,
         );
 
         // Step 5: Collect residuals per section with the learned tree
