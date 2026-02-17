@@ -1,12 +1,10 @@
 # Handoff: Matching libjxl Lossless Compression
 
-## The Gap
+## Status: BEATS cjxl e7 on photos
 
-Our lossless encoder at effort 7 produces files **28.5% larger** than cjxl e7 on 1024x1024 photos and **100-700% larger** on screenshots. We're at parity with cjxl e1.
+Our lossless encoder at effort 7 produces files **0.7% smaller** than cjxl e7 on 8 CLIC 1024x1024 photos (7/8 images equal or better). Screenshots are still larger for terminal/text content (needs lossless patches).
 
-**The entire gap comes from one missing feature: tree learning at effort 7.**
-
-libjxl e7 (SpeedTier::kSquirrel) uses full MA (Meta-Adaptive) tree learning for lossless. Our encoder gates tree learning to effort 8+. Everything else is in place.
+**The gap was closed by**: tree learning at effort 7, matching libjxl's 50% pixel sampling rate, non-simple context maps, per-histogram HybridUint config optimization, RCT selection, and removing the split threshold floor.
 
 ## What We Have (Working, Verified)
 

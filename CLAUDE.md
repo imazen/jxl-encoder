@@ -1229,11 +1229,12 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 ### Lossless Compression Status (Feb 16, 2026)
 
-**AT PARITY WITH cjxl e7** on CLIC photos. Average gap: +0.4% (some images beat cjxl e7).
+**BEATS cjxl e7** on CLIC photos. Average: **-0.7%** (7 of 8 images equal or smaller).
 
 **Default path (effort 7)**: RCT selection (best of 7 candidates) + learned MA tree +
-multi-context ANS with up to 64 histograms. Tree learning enabled by default at effort >= 7
-with 14 candidate predictors including Weighted. 262K sample cap (8.3% of 1024x1024 pixels).
+multi-context ANS with up to 96 histograms + per-histogram HybridUint config optimization.
+Tree learning with 50% pixel sampling (matching libjxl's nb_repeats=0.5), 14 candidate
+predictors including Weighted, no threshold floor.
 
 **Squeeze disabled by default** — hurts compression even WITH tree learning:
 - Photos (1024x1024 CLIC): squeeze+tree 1334KB vs tree-only 1163KB (+14.7%)
@@ -1242,11 +1243,10 @@ Tree-learned adaptive prediction handles spatial correlations more efficiently
 than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true)`.
 
 **Compression vs cjxl (8 CLIC 1024x1024 photos, effort 7)**:
-- cjxl-rs total: 8,024KB (avg 1,003KB/image)
-- vs cjxl e1: **-21.0%** (21% smaller than cjxl e1)
-- vs cjxl e7: **+0.4%** (AT PARITY — 5 of 8 images beat cjxl e7)
-- Per-image range: -4.2% to +2.7% vs cjxl e7
-- Encode time: 6-12s per image (release build, single-threaded)
+- cjxl-rs total: 7,930KB (avg 991KB/image)
+- vs cjxl e7: **-0.7%** (7 of 8 images equal or smaller)
+- Per-image range: -5.7% to +1.2% vs cjxl e7
+- Encode time: 35-60s per image (release build, single-threaded, 10x slower due to deeper tree learning)
 
 **Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
 1. Tree learning sample cap (65K): +28.5% → +7.7%
@@ -1256,11 +1256,16 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 5. Threshold floor 0.40: +5.8% → +3.7%
 6. Non-simple context map (64 histograms): +3.7% → +1.8%
 7. RCT selection for multi-group: +1.8% → +0.4%
+8. 96 max histograms: +0.4% → +0.3%
+9. Per-histogram HybridUint configs: +0.3% → +0.2%
+10. 50% pixel sampling + remove threshold floor: +0.2% → **-0.7%**
 
 **Known issues**:
-- Screenshots still much larger than cjxl e7 (needs lossless patches, not yet implemented)
+- Screenshots still larger than cjxl e7 (imac_dark -4.9%, codec_wiki +0.7%, windows +18%, terminal +166%)
+  Terminal needs lossless patches (not yet implemented for lossless mode)
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
   (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
+- Encode time 10x slower than previous due to deeper tree learning (matches libjxl's sampling depth)
 
 **All lossless output verified pixel-exact** via djxl and jxl-rs on:
 - 8 CLIC 1024x1024 photos, 10 screenshots, RGBA, grayscale, 4x4, 13x17, 16x16, 32x32, 257x1, 300x300, 512x512
