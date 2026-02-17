@@ -9,6 +9,9 @@
 
 pub(crate) mod channel;
 pub(crate) mod encode;
+mod encode_primitives;
+mod encode_transforms;
+mod encode_tree;
 pub(crate) mod frame;
 pub(crate) mod palette;
 pub(crate) mod predictor;
