@@ -586,8 +586,8 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         }
     }
 
-    let num_leaves = tree.iter().filter(|n| n.property == -1).count();
-    eprintln!(
+    let _num_leaves = tree.iter().filter(|n| n.property == -1).count();
+    crate::trace::debug_eprintln!(
         "compute_best_tree: {} samples, pf={:.3}, threshold={:.1} (base={:.0}*rc={:.3}), \
          {} nodes, {} leaves, max_nodes={}",
         n,
@@ -596,7 +596,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         params.split_threshold,
         required_cost,
         tree.len(),
-        num_leaves,
+        _num_leaves,
         max_nodes,
     );
 

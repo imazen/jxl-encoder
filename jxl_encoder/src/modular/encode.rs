@@ -2099,7 +2099,7 @@ pub(crate) fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, Mod
         if rct_type.is_noop() {
             // Identity: estimate cost of the original image
             let cost = estimate_cost(image);
-            eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
+            crate::trace::debug_eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
             if cost < best_cost {
                 best_cost = cost;
                 best_rct = rct_type;
@@ -2109,7 +2109,7 @@ pub(crate) fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, Mod
             let mut transformed = image.clone();
             if forward_rct(&mut transformed.channels, 0, rct_type).is_ok() {
                 let cost = estimate_cost(&transformed);
-                eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
+                crate::trace::debug_eprintln!("  RCT {:2}: cost={:.0}", rct_val, cost);
                 if cost < best_cost {
                     best_cost = cost;
                     best_rct = rct_type;
