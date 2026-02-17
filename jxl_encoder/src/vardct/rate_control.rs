@@ -13,6 +13,7 @@ use super::adaptive_quant::quantize_quant_field;
 use super::frame::DistanceParams;
 use super::precomputed::EncoderPrecomputed;
 use super::tile_distmap::{TileDistMap, compute_butteraugli_diffmap};
+use crate::debug_rect;
 use crate::error::Result;
 
 /// Configuration for iterative rate control.
@@ -98,8 +99,13 @@ pub fn encode_with_rate_control(
             Some(d) => d,
             None => {
                 // Decode failed - return encoded data anyway
-                eprintln!(
-                    "[rate_control] Warning: decode failed on iteration {}",
+                debug_rect!(
+                    "rate_ctrl/warn",
+                    0,
+                    0,
+                    precomputed.width,
+                    precomputed.height,
+                    "decode failed on iteration {}",
                     iter
                 );
                 return Ok((encoded, iter));

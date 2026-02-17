@@ -11,6 +11,7 @@
 //! Based on techniques from zune-jpegxl.
 
 use crate::bit_writer::BitWriter;
+use crate::debug_rect;
 use crate::entropy_coding::encode::{
     OwnedAnsEntropyCode, build_entropy_code_ans, write_tokens_ans,
 };
@@ -2249,8 +2250,13 @@ pub fn write_modular_stream_with_tree(
     {
         let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
         if roundtrip_result.is_err() {
-            eprintln!(
-                "ANS ROUNDTRIP VERIFICATION FAILED for tree learning data (num_contexts={}, num_histograms={}, tokens={}): {:?}",
+            debug_rect!(
+                "ans/verify",
+                0,
+                0,
+                image.width(),
+                image.height(),
+                "ROUNDTRIP FAILED for tree learning data (ctx={} histo={} tokens={}): {:?}",
                 num_contexts,
                 code.histograms.len(),
                 tokens.len(),
@@ -2386,8 +2392,13 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     {
         let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
         if roundtrip_result.is_err() {
-            eprintln!(
-                "ANS ROUNDTRIP VERIFICATION FAILED for squeeze+tree data (num_contexts={}, num_histograms={}, tokens={}): {:?}",
+            debug_rect!(
+                "ans/verify",
+                0,
+                0,
+                image.width(),
+                image.height(),
+                "ROUNDTRIP FAILED for squeeze+tree data (ctx={} histo={} tokens={}): {:?}",
                 num_contexts,
                 code.histograms.len(),
                 tokens.len(),

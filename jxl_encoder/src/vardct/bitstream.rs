@@ -18,6 +18,7 @@ use super::noise::{NoiseParams, write_noise_params};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
+use crate::debug_rect;
 use crate::entropy_coding::encode::{
     build_entropy_code_ans_with_options, build_entropy_code_with_options,
 };
@@ -1158,12 +1159,28 @@ impl VarDctEncoder {
                 .unwrap_or(0);
             let dc_count: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum();
             let md_count: usize = ac_metadata_tokens_per_group.iter().map(|t| t.len()).sum();
-            eprintln!(
-                "Tokens: DC {} (max_ctx={}), AC_metadata {} (max_ctx={})",
-                dc_count, dc_ctx_max, md_count, ac_md_ctx_max
+            debug_rect!(
+                "tokens/stats",
+                0,
+                0,
+                width,
+                height,
+                "DC {} (max_ctx={}) AC_metadata {} (max_ctx={})",
+                dc_count,
+                dc_ctx_max,
+                md_count,
+                ac_md_ctx_max
             );
             if let Some(total) = learned_dc_num_contexts {
-                eprintln!("Total contexts expected: {}", total);
+                debug_rect!(
+                    "tokens/stats",
+                    0,
+                    0,
+                    width,
+                    height,
+                    "Total contexts expected: {}",
+                    total
+                );
             }
         }
 

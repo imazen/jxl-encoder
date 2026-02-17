@@ -1760,15 +1760,11 @@ pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -
         let decoded = match AnsHistogram::decode(&mut br, code.log_alpha_size) {
             Ok(d) => d,
             Err(e) => {
+                #[cfg(feature = "debug-rect")]
                 eprintln!(
-                    "  {} histogram[{}]: DECODE FAILED - {} (method={}, alphabet_size={}, omit_pos={})",
+                    "{} histo[{}]: DECODE FAILED - {} (method={} alpha={} omit={})",
                     label, i, e, histo.method, histo.alphabet_size, histo.omit_pos
                 );
-                eprintln!(
-                    "    counts[..16]: {:?}",
-                    &histo.counts[..histo.counts.len().min(16)]
-                );
-                eprintln!("    bytes: {:02x?}", &bytes[..bytes.len().min(32)]);
                 return Err(e);
             }
         };
@@ -1780,48 +1776,50 @@ pub fn verify_histogram_serialization(code: &OwnedAnsEntropyCode, label: &str) -
             let got = decoded.frequencies[j];
             if expected != got {
                 if !mismatch {
+                    #[cfg(feature = "debug-rect")]
                     eprintln!(
-                        "  {} histogram[{}]: FREQUENCY MISMATCH (method={}, alphabet_size={})",
+                        "{} histo[{}]: FREQ MISMATCH (method={} alpha={})",
                         label, i, histo.method, histo.alphabet_size
                     );
                 }
-                eprintln!("    symbol[{}]: expected={}, got={}", j, expected, got);
+                #[cfg(feature = "debug-rect")]
+                eprintln!("sym[{}]: expected={} got={}", j, expected, got);
                 mismatch = true;
             }
         }
 
         if mismatch {
-            eprintln!("    counts: {:?}", &histo.counts[..histo.alphabet_size]);
-            // Check omit_pos: what would the decoder pick vs what encoder used?
-            let mut encoder_omit_logcount = 0u32;
-            let mut encoder_omit = 0;
-            for (k, &c) in histo.counts.iter().enumerate().take(histo.alphabet_size) {
-                if c > 0 {
-                    let lc = crate::entropy_coding::ans::floor_log2_ans(c as u32) + 1;
-                    if lc > encoder_omit_logcount {
-                        encoder_omit_logcount = lc;
-                        encoder_omit = k;
+            #[cfg(feature = "debug-rect")]
+            {
+                eprintln!("counts: {:?}", &histo.counts[..histo.alphabet_size]);
+                // Check omit_pos: what would the decoder pick vs what encoder used?
+                let mut encoder_omit_logcount = 0u32;
+                let mut encoder_omit = 0;
+                for (k, &c) in histo.counts.iter().enumerate().take(histo.alphabet_size) {
+                    if c > 0 {
+                        let lc = crate::entropy_coding::ans::floor_log2_ans(c as u32) + 1;
+                        if lc > encoder_omit_logcount {
+                            encoder_omit_logcount = lc;
+                            encoder_omit = k;
+                        }
                     }
                 }
-            }
-            eprintln!(
-                "    encoder omit_pos={} (from stored histo: method={}, omit_pos={})",
-                encoder_omit, histo.method, histo.omit_pos
-            );
-            eprintln!(
-                "    encoder omit logcount={}, count at omit={}",
-                encoder_omit_logcount, histo.counts[histo.omit_pos]
-            );
-            // Check what decoder would see
-            for k in 0..histo.alphabet_size.min(40) {
-                let c = histo.counts[k];
-                if c > 0 {
-                    let lc = crate::entropy_coding::ans::floor_log2_ans(c as u32) + 1;
-                    if lc == encoder_omit_logcount {
-                        eprintln!(
-                            "    symbol[{}]: count={}, logcount={} (same as max)",
-                            k, c, lc
-                        );
+                eprintln!(
+                    "omit_pos={} (stored: method={} omit={})",
+                    encoder_omit, histo.method, histo.omit_pos
+                );
+                eprintln!(
+                    "omit logcount={} count_at_omit={}",
+                    encoder_omit_logcount, histo.counts[histo.omit_pos]
+                );
+                // Check what decoder would see
+                for k in 0..histo.alphabet_size.min(40) {
+                    let c = histo.counts[k];
+                    if c > 0 {
+                        let lc = crate::entropy_coding::ans::floor_log2_ans(c as u32) + 1;
+                        if lc == encoder_omit_logcount {
+                            eprintln!("sym[{}]: count={} logcount={} (same as max)", k, c, lc);
+                        }
                     }
                 }
             }
@@ -1957,7 +1955,8 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
 
     // Step 4: Decode tokens and compare
     let mut mismatches = 0;
-    for (i, token) in tokens.iter().enumerate() {
+    #[allow(clippy::unused_enumerate_index)] // _i used in #[cfg(feature = "debug-rect")] output
+    for (_i, token) in tokens.iter().enumerate() {
         let ctx = token.context as usize;
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let decoder_hist = &decoder_histograms[dist_idx];
@@ -1978,9 +1977,10 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
         // Compare token (ANS symbol)
         if decoded_symbol != expected_encoded.token {
             if mismatches < 5 {
+                #[cfg(feature = "debug-rect")]
                 eprintln!(
-                    "ANS roundtrip MISMATCH at token[{}]: ctx={}, val={}, expected_tok={}, decoded_tok={}, state=0x{:08x}",
-                    i, ctx, token.value, expected_encoded.token, decoded_symbol, ans_reader.0
+                    "MISMATCH token[{}]: ctx={} val={} exp={} got={} state=0x{:08x}",
+                    _i, ctx, token.value, expected_encoded.token, decoded_symbol, ans_reader.0
                 );
             }
             mismatches += 1;
@@ -1989,9 +1989,10 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
         // Compare extra bits
         if decoded_extra != expected_encoded.bits {
             if mismatches < 5 {
+                #[cfg(feature = "debug-rect")]
                 eprintln!(
-                    "ANS roundtrip extra bits MISMATCH at token[{}]: expected_bits=0x{:x}, decoded_bits=0x{:x}",
-                    i, expected_encoded.bits, decoded_extra
+                    "BITS MISMATCH token[{}]: exp=0x{:x} got=0x{:x}",
+                    _i, expected_encoded.bits, decoded_extra
                 );
             }
             mismatches += 1;
