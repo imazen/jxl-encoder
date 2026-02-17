@@ -687,14 +687,30 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     ..Default::default()
                 };
 
-                // Push children with cached costs from find_best_split
-                // (avoids redundant compute_predictor_entropy calls)
+                // Recompute child costs from ALL samples (not the eval subset).
+                // The eval subset's costs are scaled by cost_scale which introduces
+                // error at high strides. Re-scoring with full samples prevents error
+                // accumulation down the tree. This is O(N) per split — negligible
+                // compared to the O(N*P*K) search.
+                let left_bits = compute_predictor_entropy(
+                    samples,
+                    &indices[candidate.start..abs_mid],
+                    split.left_predictor,
+                    histogram_size,
+                );
+                let right_bits = compute_predictor_entropy(
+                    samples,
+                    &indices[abs_mid..candidate.end],
+                    split.right_predictor,
+                    histogram_size,
+                );
+
                 stack.push(SplitCandidate {
                     node_idx: rchild_idx,
                     start: abs_mid,
                     end: candidate.end,
                     best_predictor: split.right_predictor,
-                    base_bits: split.right_bits,
+                    base_bits: right_bits,
                 });
 
                 stack.push(SplitCandidate {
@@ -702,7 +718,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     start: candidate.start,
                     end: abs_mid,
                     best_predictor: split.left_predictor,
-                    base_bits: split.left_bits,
+                    base_bits: left_bits,
                 });
             }
             _ => {
@@ -770,6 +786,13 @@ fn finalize_leaf(tree: &mut Tree, candidate: &SplitCandidate) {
     };
 }
 
+/// Padded histogram size for count_increase: next power of 2 above typical
+/// histogram_size (~56 for 8-bit, HybridUint {4,1,2}). Using a power-of-2
+/// stride with bitmask indexing eliminates bounds checks: `tok & HISTO_MASK`
+/// is guaranteed < HISTO_PADDED. Set to 128 for safety margin.
+const HISTO_PADDED: usize = 128;
+const HISTO_MASK: usize = HISTO_PADDED - 1;
+
 /// Pre-allocated workspace for find_best_split, reused across calls.
 /// Avoids per-call Vec allocation and resize overhead (~1.8B instructions in profile).
 struct SplitWorkspace {
@@ -785,6 +808,11 @@ struct SplitWorkspace {
     sorted_by_bucket: Vec<usize>,
     bucket_starts: Vec<usize>,
     bucket_write_pos: Vec<usize>,
+    /// Materialized tokens in bucket-sorted order, filled per-predictor.
+    /// Enables bounds-check-free iteration in the inner loop via iterators.
+    sorted_tokens: Vec<u8>,
+    /// Materialized extra_bits in bucket-sorted order, filled per-predictor.
+    sorted_ebits: Vec<u8>,
 }
 
 /// Maximum samples used for split evaluation per node.
@@ -795,8 +823,14 @@ const MAX_EVAL_SAMPLES: usize = 8192;
 
 impl SplitWorkspace {
     fn new(max_count: usize, histogram_size: usize, max_buckets: usize) -> Self {
+        assert!(
+            histogram_size <= HISTO_PADDED,
+            "histogram_size {} exceeds HISTO_PADDED {}",
+            histogram_size,
+            HISTO_PADDED
+        );
         Self {
-            count_increase: vec![0u32; max_buckets * histogram_size],
+            count_increase: vec![0u32; max_buckets * HISTO_PADDED],
             extra_bits_increase: vec![0u64; max_buckets],
             bucket_counts: vec![0u32; max_buckets],
             right_counts: vec![0u32; histogram_size],
@@ -808,6 +842,8 @@ impl SplitWorkspace {
             sorted_by_bucket: vec![0usize; max_count],
             bucket_starts: vec![0usize; max_buckets + 2],
             bucket_write_pos: vec![0usize; max_buckets],
+            sorted_tokens: vec![0u8; max_count],
+            sorted_ebits: vec![0u8; max_count],
         }
     }
 }
@@ -819,10 +855,6 @@ struct BestSplit {
     left_predictor: usize,
     right_predictor: usize,
     total_bits: f64,
-    /// Cached cost for left child (avoids redundant compute_predictor_entropy).
-    left_bits: f64,
-    /// Cached cost for right child (avoids redundant compute_predictor_entropy).
-    right_bits: f64,
 }
 
 /// Find the best (property, threshold) split for the given samples.
@@ -917,6 +949,8 @@ fn find_best_split(
     let sorted_by_bucket = &mut ws.sorted_by_bucket;
     let bucket_starts = &mut ws.bucket_starts;
     let bucket_write_pos = &mut ws.bucket_write_pos;
+    let sorted_tokens = &mut ws.sorted_tokens;
+    let sorted_ebits = &mut ws.sorted_ebits;
 
     // Count-based property pruning: for very small nodes, only try the first few properties.
     let num_props = if count >= 256 {
@@ -957,7 +991,6 @@ fn find_best_split(
         // Effective number of buckets for this node
         let local_num_buckets = bmax - bmin + 1;
 
-        let ci_size = local_num_buckets * effective_histo;
         let local_num_thresholds = bmax - bmin;
 
         // Counting sort: group eval samples by bucket
@@ -986,24 +1019,46 @@ fn find_best_split(
         best_l_pred[..local_num_thresholds].fill(0);
         best_r_pred[..local_num_thresholds].fill(0);
 
+        let total_sorted = bucket_starts[local_num_buckets];
+
         for pred in 0..num_pred {
             let tokens = &samples.residual_tokens[pred];
             let ebits = &samples.extra_bits[pred];
 
-            // Collect count_increase by iterating bucket groups
-            count_increase[..ci_size].fill(0);
+            // Materialize tokens/ebits into bucket-sorted order for this predictor.
+            // Converts indirect indexing (sorted_by_bucket[i] → tokens[idx]) into
+            // sequential arrays, enabling bounds-check-free inner loop below.
+            for (&idx, (st, se)) in sorted_by_bucket[..total_sorted].iter().zip(
+                sorted_tokens[..total_sorted]
+                    .iter_mut()
+                    .zip(sorted_ebits[..total_sorted].iter_mut()),
+            ) {
+                *st = tokens[idx];
+                *se = ebits[idx];
+            }
+
+            // Clear only effective_histo entries per bucket (HISTO_PADDED stride
+            // leaves gaps that are never read). Same total bytes as original code.
+            for b in 0..local_num_buckets {
+                count_increase[b * HISTO_PADDED..b * HISTO_PADDED + effective_histo].fill(0);
+            }
             extra_bits_increase[..local_num_buckets].fill(0);
 
             for local_bucket in 0..local_num_buckets {
                 let start = bucket_starts[local_bucket];
                 let end = bucket_starts[local_bucket + 1];
-                let ci_base = local_bucket * effective_histo;
-                let ci_slice = &mut count_increase[ci_base..ci_base + effective_histo];
+                let ci_base = local_bucket * HISTO_PADDED;
+                let ci_slice = &mut count_increase[ci_base..ci_base + HISTO_PADDED];
                 let mut eb_sum: u64 = 0;
-                for &idx in &sorted_by_bucket[start..end] {
-                    let tok = tokens[idx] as usize;
-                    ci_slice[tok] += 1;
-                    eb_sum += ebits[idx] as u64;
+                // Inner loop: bounds-check-free.
+                // - sorted_tokens/sorted_ebits: iterator zip, no bounds checks
+                // - ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
+                for (&tok, &eb) in sorted_tokens[start..end]
+                    .iter()
+                    .zip(sorted_ebits[start..end].iter())
+                {
+                    ci_slice[tok as usize & HISTO_MASK] += 1;
+                    eb_sum += eb as u64;
                 }
                 extra_bits_increase[local_bucket] = eb_sum;
             }
@@ -1013,7 +1068,7 @@ fn find_best_split(
             let mut right_extra: u64 = 0;
             let mut right_total: u32 = eval_count as u32;
             for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
-                let ci_base = local_bucket * effective_histo;
+                let ci_base = local_bucket * HISTO_PADDED;
                 let ci_row = &count_increase[ci_base..ci_base + effective_histo];
                 for (rc, &ci) in right_counts[..effective_histo]
                     .iter_mut()
@@ -1043,7 +1098,7 @@ fn find_best_split(
                 }
 
                 // Move bucket from right to left using zip iterators
-                let ci_base = local_k * effective_histo;
+                let ci_base = local_k * HISTO_PADDED;
                 let ci_row = &count_increase[ci_base..ci_base + effective_histo];
                 for ((ci, left), right) in ci_row
                     .iter()
@@ -1117,8 +1172,6 @@ fn find_best_split(
                     left_predictor: best_l_pred[local_k],
                     right_predictor: best_r_pred[local_k],
                     total_bits: total,
-                    left_bits: l_scaled,
-                    right_bits: r_scaled,
                 });
             }
         }
