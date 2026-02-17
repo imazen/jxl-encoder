@@ -20,6 +20,8 @@ mod adaptive_quant;
 mod afv;
 mod bitstream;
 mod block_extract;
+#[cfg(feature = "butteraugli-loop")]
+mod butteraugli_loop;
 pub(crate) mod chroma_from_luma;
 pub(crate) mod cluster;
 mod coeff_order;
@@ -30,6 +32,7 @@ mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
 pub(crate) mod encoder;
+pub(crate) mod entropy_code;
 #[allow(dead_code)] // Used in upcoming EPF sharpness selection
 pub(crate) mod epf;
 pub(crate) mod frame;
