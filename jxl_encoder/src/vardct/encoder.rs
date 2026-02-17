@@ -1575,8 +1575,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: unified file header (Phase 1 — shared FileHeader::write())
-        const EXPECTED_HASH: u64 = 0x1578d7de62b7489d;
+        // Updated: per-histogram HybridUint config optimization
+        const EXPECTED_HASH: u64 = 0xf743f5c30a677c68;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1604,8 +1604,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: butteraugli default off (effort-gated, VarDctEncoder defaults to 0 iters)
-        const EXPECTED_HASH: u64 = 0x2cf2e7aae4f14de7;
+        // Updated: per-histogram HybridUint config optimization
+        const EXPECTED_HASH: u64 = 0xbfde6a6515511bb;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1645,8 +1645,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: AFV strategies enabled in auto-selection
-        const EXPECTED_HASH: u64 = 0xd91c3989788e5448;
+        // Updated: per-histogram HybridUint config optimization
+        const EXPECTED_HASH: u64 = 0xd4ee064dbc430b41;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1681,8 +1681,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: full libjxl adaptive quantization pipeline
-        const EXPECTED_HASH: u64 = 0x5324c4f675e42ff7;
+        // Updated: per-histogram HybridUint config optimization
+        const EXPECTED_HASH: u64 = 0x5256b4e484f6426e;
         assert_eq!(
             hash,
             EXPECTED_HASH,

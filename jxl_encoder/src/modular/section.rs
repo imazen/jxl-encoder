@@ -157,11 +157,20 @@ pub(super) fn write_ans_modular_header(
     let las = code.log_alpha_size;
     writer.write(2, (las - 5) as u64)?;
 
-    // HybridUint config: {4, 2, 0}
+    // HybridUint config (per-histogram optimized, or default {4,2,0})
+    let config = code
+        .uint_configs
+        .first()
+        .copied()
+        .unwrap_or(crate::entropy_coding::hybrid_uint::HybridUintConfig::default_config());
     let se_bits = ceil_log2_nonzero(las as u32 + 1);
-    writer.write(se_bits as usize, 4)?; // split_exponent = 4
-    writer.write(3, 2)?; // msb_in_token = 2
-    writer.write(2, 0)?; // lsb_in_token = 0
+    writer.write(se_bits as usize, config.split_exponent as u64)?;
+    if (config.split_exponent as usize) != las {
+        let msb_bits = ceil_log2_nonzero(config.split_exponent + 1);
+        writer.write(msb_bits as usize, config.msb_in_token as u64)?;
+        let lsb_bits = ceil_log2_nonzero(config.split_exponent - config.msb_in_token + 1);
+        writer.write(lsb_bits as usize, config.lsb_in_token as u64)?;
+    }
 
     // Write the single ANS distribution
     code.histograms[0].write(writer)?;

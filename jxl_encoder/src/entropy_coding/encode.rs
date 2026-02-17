@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 use super::context_map::move_to_front_transform;
+use super::hybrid_uint::HybridUintConfig;
 use super::lz77::Lz77Params;
 use super::token::{Lz77UintCoder, Token, UintCoder};
 use crate::bit_writer::BitWriter;
@@ -31,6 +32,29 @@ fn encode_token_value(token: &Token, lz77: Option<&Lz77Params>) -> (EncodedUint,
     } else {
         let encoded = UintCoder::encode(token.value);
         (encoded, encoded.token)
+    }
+}
+
+/// Encode a token's value using a specific HybridUint config (for per-histogram configs).
+#[inline]
+fn encode_token_value_with_config(
+    token: &Token,
+    lz77: Option<&Lz77Params>,
+    config: &HybridUintConfig,
+) -> (EncodedUint, u32) {
+    if token.is_lz77_length {
+        let lz77 = lz77.expect("LZ77 length token without LZ77 params");
+        let encoded = Lz77UintCoder::encode(token.value);
+        let sym = encoded.token + lz77.min_symbol;
+        (encoded, sym)
+    } else {
+        let (tok, bits, nbits) = config.encode(token.value);
+        let encoded = EncodedUint {
+            token: tok,
+            nbits,
+            bits,
+        };
+        (encoded, tok)
     }
 }
 
@@ -1055,6 +1079,9 @@ pub struct OwnedAnsEntropyCode {
     pub distributions: Vec<AnsDistribution>,
     /// Log2 of alphabet size. 6 for normal, 8 when LZ77 is enabled.
     pub log_alpha_size: usize,
+    /// Per-histogram HybridUint configs (one per histogram).
+    /// When empty, all histograms use the default {4, 2, 0} config.
+    pub uint_configs: Vec<HybridUintConfig>,
 }
 
 impl OwnedAnsEntropyCode {
@@ -1139,16 +1166,87 @@ pub fn build_entropy_code_ans_with_options(
         num_contexts
     );
 
-    // Build ANS histograms and distributions from clustered histograms
-    let mut ans_histograms = Vec::with_capacity(result.histograms.len());
-    let mut ans_distributions = Vec::with_capacity(result.histograms.len());
+    // Optimize per-histogram HybridUint configs (matches libjxl kFast method).
+    // Try 4 configs per histogram and pick the cheapest.
+    let num_histograms = result.histograms.len();
+    let uint_configs = optimize_uint_configs_fast(tokens, &context_map, num_histograms, lz77);
 
-    for histo in &result.histograms {
-        // Create ANS encoding histogram (normalized)
-        let ans_histo = ANSEncodingHistogram::from_histogram(histo, ANSHistogramStrategy::Precise)
+    // Build ANS histograms and distributions with the optimized configs.
+    // We need to rebuild histograms because different configs produce different token distributions.
+    let mut ans_histograms = Vec::with_capacity(num_histograms);
+    let mut ans_distributions = Vec::with_capacity(num_histograms);
+
+    // Collect raw values per histogram to rebuild with optimal configs
+    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    for token in tokens {
+        if token.is_lz77_length {
+            continue; // LZ77 length tokens always use Lz77UintCoder, not affected by config
+        }
+        let ctx = token.context as usize;
+        if ctx < context_map.len() {
+            let histo_idx = context_map[ctx] as usize;
+            if histo_idx < num_histograms {
+                values_per_histo[histo_idx].push(token.value);
+            }
+        }
+    }
+
+    // Also collect LZ77 length tokens per histogram (they use Lz77UintCoder, config doesn't change)
+    let mut lz77_tokens_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    if let Some(lz77_params) = lz77 {
+        for token in tokens {
+            if token.is_lz77_length {
+                let ctx = token.context as usize;
+                if ctx < context_map.len() {
+                    let histo_idx = context_map[ctx] as usize;
+                    if histo_idx < num_histograms {
+                        let encoded = Lz77UintCoder::encode(token.value);
+                        let sym = encoded.token + lz77_params.min_symbol;
+                        lz77_tokens_per_histo[histo_idx].push(sym);
+                    }
+                }
+            }
+        }
+    }
+
+    for h in 0..num_histograms {
+        let config = &uint_configs[h];
+        // Build histogram from values re-encoded with the optimal config
+        let mut max_sym = 0usize;
+        for &val in &values_per_histo[h] {
+            let (tok, _, _) = config.encode(val);
+            let sym = tok as usize + 1;
+            if sym > max_sym {
+                max_sym = sym;
+            }
+        }
+        for &sym in &lz77_tokens_per_histo[h] {
+            let s = sym as usize + 1;
+            if s > max_sym {
+                max_sym = s;
+            }
+        }
+        max_sym = max_sym.max(1);
+
+        let mut counts = vec![0u32; max_sym];
+        for &val in &values_per_histo[h] {
+            let (tok, _, _) = config.encode(val);
+            counts[tok as usize] += 1;
+        }
+        for &sym in &lz77_tokens_per_histo[h] {
+            counts[sym as usize] += 1;
+        }
+
+        // Build EnhancedHistogram from counts for ANS normalization
+        let mut histo = EnhancedHistogram::with_capacity(max_sym);
+        for (sym, &count) in counts.iter().enumerate() {
+            for _ in 0..count {
+                histo.add(sym);
+            }
+        }
+
+        let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
             .expect("ANS histogram normalization failed");
-
-        // Build ANS distribution for encoding
         let ans_dist = AnsDistribution::from_normalized_counts(&ans_histo.counts)
             .expect("ANS distribution building failed");
 
@@ -1183,14 +1281,16 @@ pub fn build_entropy_code_ans_with_options(
         histograms: ans_histograms,
         distributions: ans_distributions,
         log_alpha_size,
+        uint_configs,
     };
 
     // Validate: every token in the stream must have a valid, non-zero frequency
     // in the distribution it maps to.
     for (i, token) in tokens.iter().enumerate() {
         let ctx = token.context as usize;
-        let (_encoded, sym) = encode_token_value(token, lz77);
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+        let config = &code.uint_configs[dist_idx];
+        let (_encoded, sym) = encode_token_value_with_config(token, lz77, config);
         let dist = &code.distributions[dist_idx];
         let tok = sym as usize;
         if tok >= dist.symbols.len() {
@@ -1213,6 +1313,107 @@ pub fn build_entropy_code_ans_with_options(
     }
 
     code
+}
+
+/// Optimize HybridUint config per histogram cluster (matches libjxl kFast method).
+///
+/// For each histogram, tries 4 configs and picks the one with lowest estimated cost
+/// (Shannon entropy of re-encoded tokens + extra bits + signaling cost).
+fn optimize_uint_configs_fast(
+    tokens: &[Token],
+    context_map: &[u8],
+    num_histograms: usize,
+    lz77: Option<&Lz77Params>,
+) -> Vec<HybridUintConfig> {
+    use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
+
+    // The 4 configs libjxl tries at effort 7 (kFast)
+    let candidates = [
+        HybridUintConfig::new(4, 2, 0), // default
+        HybridUintConfig::new(4, 1, 2), // parity
+        HybridUintConfig::new(0, 0, 0), // varlenuint (smallest alphabet)
+        HybridUintConfig::new(2, 0, 1), // ctxmap-style
+    ];
+
+    // Collect raw values per histogram
+    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    for token in tokens {
+        if token.is_lz77_length {
+            continue; // LZ77 tokens always use Lz77UintCoder
+        }
+        let ctx = token.context as usize;
+        if ctx < context_map.len() {
+            let histo_idx = context_map[ctx] as usize;
+            if histo_idx < num_histograms {
+                values_per_histo[histo_idx].push(token.value);
+            }
+        }
+    }
+
+    let max_alpha = ANS_MAX_ALPHABET_SIZE;
+
+    let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
+
+    for h in 0..num_histograms {
+        let values = &values_per_histo[h];
+        if values.is_empty() {
+            continue;
+        }
+
+        let max_value = values.iter().copied().max().unwrap_or(0);
+        let mut best_cost = f64::MAX;
+
+        for &cfg in &candidates {
+            // Check that the max token fits in the alphabet
+            let (max_tok, _, _) = cfg.encode(max_value);
+            let max_tok_with_lsb = max_tok | ((1u32 << cfg.lsb_in_token) - 1);
+            if max_tok_with_lsb as usize >= max_alpha {
+                continue;
+            }
+            if let Some(lz77_params) = lz77
+                && max_tok_with_lsb >= lz77_params.min_symbol
+            {
+                continue;
+            }
+
+            // Re-encode all values with this config
+            let capacity = max_tok_with_lsb as usize + 1;
+            let mut counts = vec![0u32; capacity];
+            let mut extra_bits_total: u64 = 0;
+            for &val in values {
+                let (tok, _, nbits) = cfg.encode(val);
+                counts[tok as usize] += 1;
+                extra_bits_total += nbits as u64;
+            }
+
+            // Compute Shannon entropy cost of the token histogram
+            let total = values.len() as f64;
+            let mut entropy_cost = 0.0f64;
+            for &count in &counts {
+                if count > 0 {
+                    let p = count as f64 / total;
+                    entropy_cost -= count as f64 * p.log2();
+                }
+            }
+
+            // Total cost = entropy (in bits) + extra bits + signaling cost
+            let signaling_cost = if cfg.split_exponent == 0 {
+                0.0
+            } else {
+                ceil_log2_nonzero_usize(cfg.split_exponent as usize + 1) as f64
+                    + ceil_log2_nonzero_usize((cfg.split_exponent - cfg.msb_in_token) as usize + 1)
+                        as f64
+            };
+            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost;
+
+            if cost < best_cost {
+                best_cost = cost;
+                best_configs[h] = cfg;
+            }
+        }
+    }
+
+    best_configs
 }
 
 /// Write ANS entropy code header (context map + distributions).
@@ -1257,8 +1458,9 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
 
     // Write HybridUint configs for each histogram
     let _cfg_start = writer.bits_written();
-    for _ in &code.histograms {
-        write_hybrid_uint_config(las, writer)?;
+    for (i, _) in code.histograms.iter().enumerate() {
+        let config = code.uint_configs.get(i).copied().unwrap_or_default();
+        write_hybrid_uint_config_value(las, &config, writer)?;
     }
 
     #[cfg(feature = "debug-tokens")]
@@ -1414,13 +1616,15 @@ fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
     cost * total
 }
 
-/// Write HybridUint config (split_exponent, msb_in_token, lsb_in_token).
-///
-/// Uses the same config as our UintCoder: split=4, msb=2, lsb=0.
-fn write_hybrid_uint_config(log_alpha_size: usize, writer: &mut BitWriter) -> Result<()> {
-    let split_exponent = 4u32;
-    let msb_in_token = 2u32;
-    let lsb_in_token = 0u32;
+/// Write HybridUint config with specific split/msb/lsb values.
+fn write_hybrid_uint_config_value(
+    log_alpha_size: usize,
+    config: &HybridUintConfig,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let split_exponent = config.split_exponent;
+    let msb_in_token = config.msb_in_token;
+    let lsb_in_token = config.lsb_in_token;
 
     // CeilLog2Nonzero(log_alpha_size + 1) bits for split_exponent
     let se_bits = ceil_log2_nonzero_usize(log_alpha_size + 1);
@@ -1481,7 +1685,13 @@ pub fn write_tokens_ans(
     #[allow(clippy::unused_enumerate_index)]
     for (_i, token) in tokens.iter().rev().enumerate() {
         let ctx = token.context as usize;
-        let (encoded, sym) = encode_token_value(token, lz77);
+        let dist_idx_for_cfg = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+        let config = code
+            .uint_configs
+            .get(dist_idx_for_cfg)
+            .copied()
+            .unwrap_or_default();
+        let (encoded, sym) = encode_token_value_with_config(token, lz77, &config);
 
         // Get the distribution for this context
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
@@ -1755,31 +1965,33 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
         // Decode one ANS symbol
         let decoded_symbol = decoder_hist.read(&mut br2, &mut ans_reader.0);
 
-        // Read extra bits (HybridUint)
-        let expected = UintCoder::encode(token.value);
-        let decoded_extra = if expected.nbits > 0 {
-            br2.read(expected.nbits as usize).unwrap_or(0) as u32
+        // Read extra bits (HybridUint) — use per-histogram config
+        let config = code.uint_configs.get(dist_idx).copied().unwrap_or_default();
+        let (expected_encoded, _expected_sym) =
+            encode_token_value_with_config(token, None, &config);
+        let decoded_extra = if expected_encoded.nbits > 0 {
+            br2.read(expected_encoded.nbits as usize).unwrap_or(0) as u32
         } else {
             0
         };
 
         // Compare token (ANS symbol)
-        if decoded_symbol != expected.token {
+        if decoded_symbol != expected_encoded.token {
             if mismatches < 5 {
                 eprintln!(
                     "ANS roundtrip MISMATCH at token[{}]: ctx={}, val={}, expected_tok={}, decoded_tok={}, state=0x{:08x}",
-                    i, ctx, token.value, expected.token, decoded_symbol, ans_reader.0
+                    i, ctx, token.value, expected_encoded.token, decoded_symbol, ans_reader.0
                 );
             }
             mismatches += 1;
         }
 
         // Compare extra bits
-        if decoded_extra != expected.bits {
+        if decoded_extra != expected_encoded.bits {
             if mismatches < 5 {
                 eprintln!(
                     "ANS roundtrip extra bits MISMATCH at token[{}]: expected_bits=0x{:x}, decoded_bits=0x{:x}",
-                    i, expected.bits, decoded_extra
+                    i, expected_encoded.bits, decoded_extra
                 );
             }
             mismatches += 1;
