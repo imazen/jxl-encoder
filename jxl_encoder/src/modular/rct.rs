@@ -10,13 +10,13 @@
 //! RCT types encode: permutation (rct_type / 7) and transform (rct_type % 7).
 //!
 //! Permutations (0-5): RGB, GBR, BRG, RBG, GRB, BGR
-//! Transforms (0-6):
+//! Transforms (0-6) — libjxl uses `second = type >> 1`, `third = type & 1`:
 //!   0: No transform (permutation only)
-//!   1: Second -= First
-//!   2: Second -= (First + Third) >> 1
+//!   1: Third -= First
+//!   2: Second -= First
 //!   3: Second -= First, Third -= First
-//!   4: Second -= (First + Third) >> 1, Third -= First
-//!   5: Second -= First, Third -= (First + Second_orig) >> 1
+//!   4: Second -= (First + Third) >> 1
+//!   5: Second -= (First + Third) >> 1, Third -= First
 //!   6: YCoCg (most effective for typical images)
 
 use crate::error::{Error, Result};
@@ -93,7 +93,7 @@ pub fn forward_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) 
     // Apply transform row by row
     // We need to work around borrow checker by copying data
     for y in 0..h {
-        // Read the three rows
+        // Read from PERMUTED input indices (permutation selects which channel is "first", etc.)
         let row0: Vec<i32> = channels[begin_c + idx0].row(y).to_vec();
         let row1: Vec<i32> = channels[begin_c + idx1].row(y).to_vec();
         let row2: Vec<i32> = channels[begin_c + idx2].row(y).to_vec();
@@ -101,10 +101,13 @@ pub fn forward_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) 
         // Apply transform
         let (out0, out1, out2) = forward_rct_row_copy(&row0, &row1, &row2, transform);
 
-        // Write back
-        channels[begin_c + idx0].row_mut(y).copy_from_slice(&out0);
-        channels[begin_c + idx1].row_mut(y).copy_from_slice(&out1);
-        channels[begin_c + idx2].row_mut(y).copy_from_slice(&out2);
+        // Write back SEQUENTIALLY to channels 0, 1, 2.
+        // libjxl encoder writes transformed output to sequential indices.
+        // The decoder reads sequentially, applies inverse transform, then
+        // applies the permutation to outputs to recover the original channel order.
+        channels[begin_c].row_mut(y).copy_from_slice(&out0);
+        channels[begin_c + 1].row_mut(y).copy_from_slice(&out1);
+        channels[begin_c + 2].row_mut(y).copy_from_slice(&out2);
     }
 
     Ok(())
@@ -137,41 +140,43 @@ fn forward_rct_row_copy(
     let mut out1 = c1.to_vec();
     let mut out2 = c2.to_vec();
 
+    // libjxl decomposition: second = transform >> 1, third = transform & 1
+    // second: 0=noop, 1=subtract First, 2=subtract (First+Third)>>1
+    // third: 0=noop, 1=subtract First from Third
     match transform {
         0 => {
             // No transform (permutation only handled by caller)
         }
         1 => {
-            // Second -= First
+            // third=1: Third -= First
+            for x in 0..w {
+                out2[x] = c2[x] - c0[x];
+            }
+        }
+        2 => {
+            // second=1: Second -= First
             for x in 0..w {
                 out1[x] = c1[x] - c0[x];
             }
         }
-        2 => {
-            // Second -= (First + Third) >> 1
-            for x in 0..w {
-                out1[x] = c1[x] - ((c0[x] + c2[x]) >> 1);
-            }
-        }
         3 => {
-            // Second -= First, Third -= First
+            // second=1, third=1: Second -= First, Third -= First
             for x in 0..w {
                 out1[x] = c1[x] - c0[x];
                 out2[x] = c2[x] - c0[x];
             }
         }
         4 => {
-            // Second -= (First + Third) >> 1, Third -= First
+            // second=2: Second -= (First + Third) >> 1
             for x in 0..w {
-                out2[x] = c2[x] - c0[x];
                 out1[x] = c1[x] - ((c0[x] + c2[x]) >> 1);
             }
         }
         5 => {
-            // Second -= First, Third -= (First + Second_orig) >> 1
+            // second=2, third=1: Second -= (First + Third) >> 1, Third -= First
             for x in 0..w {
-                out1[x] = c1[x] - c0[x];
-                out2[x] = c2[x] - ((c0[x] + c1[x]) >> 1);
+                out1[x] = c1[x] - ((c0[x] + c2[x]) >> 1);
+                out2[x] = c2[x] - c0[x];
             }
         }
         6 => {
@@ -222,19 +227,20 @@ pub fn inverse_rct(channels: &mut [Channel], begin_c: usize, rct_type: RctType) 
     let permutation = rct_type.permutation();
     let transform = rct_type.transform();
 
-    // Get permuted output indices (inverse of forward permutation)
+    // Decoder convention: read sequentially, apply inverse transform,
+    // then write to permuted output indices to recover original channel order.
     let (idx0, idx1, idx2) = permute_indices(permutation);
 
     for y in 0..h {
-        // Read the three rows
-        let row0: Vec<i32> = channels[begin_c + idx0].row(y).to_vec();
-        let row1: Vec<i32> = channels[begin_c + idx1].row(y).to_vec();
-        let row2: Vec<i32> = channels[begin_c + idx2].row(y).to_vec();
+        // Read SEQUENTIALLY from channels 0, 1, 2
+        let row0: Vec<i32> = channels[begin_c].row(y).to_vec();
+        let row1: Vec<i32> = channels[begin_c + 1].row(y).to_vec();
+        let row2: Vec<i32> = channels[begin_c + 2].row(y).to_vec();
 
         // Apply inverse transform
         let (out0, out1, out2) = inverse_rct_row_copy(&row0, &row1, &row2, transform);
 
-        // Write back
+        // Write back to PERMUTED output indices
         channels[begin_c + idx0].row_mut(y).copy_from_slice(&out0);
         channels[begin_c + idx1].row_mut(y).copy_from_slice(&out1);
         channels[begin_c + idx2].row_mut(y).copy_from_slice(&out2);
@@ -255,41 +261,45 @@ fn inverse_rct_row_copy(
     let mut out1 = c1.to_vec();
     let mut out2 = c2.to_vec();
 
+    // Inverse of libjxl transforms: second = type >> 1, third = type & 1
+    // Must reverse the forward operations in reverse order.
     match transform {
         0 => {
             // No transform
         }
         1 => {
-            // Second += First
+            // Inverse of: Third -= First → Third += First
+            for x in 0..w {
+                out2[x] = c2[x] + c0[x];
+            }
+        }
+        2 => {
+            // Inverse of: Second -= First → Second += First
             for x in 0..w {
                 out1[x] = c1[x] + c0[x];
             }
         }
-        2 => {
-            // Second += (First + Third) >> 1
+        3 => {
+            // Inverse of: Second -= First, Third -= First
+            // → Third += First, Second += First (order doesn't matter here)
+            for x in 0..w {
+                out1[x] = c1[x] + c0[x];
+                out2[x] = c2[x] + c0[x];
+            }
+        }
+        4 => {
+            // Inverse of: Second -= (First + Third) >> 1
+            // → Second += (First + Third) >> 1
             for x in 0..w {
                 out1[x] = c1[x] + ((c0[x] + c2[x]) >> 1);
             }
         }
-        3 => {
-            // Third += First, Second += First
-            for x in 0..w {
-                out2[x] = c2[x] + c0[x];
-                out1[x] = c1[x] + c0[x];
-            }
-        }
-        4 => {
-            // Third += First, Second += (First + Third_new) >> 1
+        5 => {
+            // Inverse of: Second -= (First + Third) >> 1, Third -= First
+            // Reverse order: Third += First FIRST, then Second += (First + Third_new) >> 1
             for x in 0..w {
                 out2[x] = c2[x] + c0[x];
                 out1[x] = c1[x] + ((c0[x] + out2[x]) >> 1);
-            }
-        }
-        5 => {
-            // Second += First, Third += (First + Second_new) >> 1
-            for x in 0..w {
-                out1[x] = c1[x] + c0[x];
-                out2[x] = c2[x] + ((c0[x] + out1[x]) >> 1);
             }
         }
         6 => {

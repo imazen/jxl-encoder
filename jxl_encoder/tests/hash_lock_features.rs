@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x92fdebdb05c79ab8, // Updated: tree learning default-on at effort 7
+        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -798,7 +798,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         0x4610698f0cf81821,
-        0xdc2187e39f8742de, // Updated: tree learning default-on at effort 7
+        0xaebcd7d1948f10e7, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0xb0d25ee557c8759e, // Updated: tree learning default-on at effort 7
+        0xda8126da7e005e07, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -897,7 +897,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x92fdebdb05c79ab8, // Same as defaults (tree learning is default-on at effort 7)
+        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -940,7 +940,7 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x92fdebdb05c79ab8, // Updated: tree learning default-on at effort 7 (supersedes LZ77)
+        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
     );
 }
 
@@ -963,7 +963,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x92fdebdb05c79ab8, // Updated: tree learning default-on at effort 7 (supersedes LZ77)
+        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
     );
 }
 
@@ -1027,6 +1027,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xa0a304f824aa84a5, // Updated: tree learning default-on at effort 7
+        0xf503371b5b822d1f, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
