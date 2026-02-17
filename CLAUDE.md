@@ -1259,7 +1259,7 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 - cjxl-rs total: 7,930KB (avg 991KB/image)
 - vs cjxl e7: **-0.7%** (7 of 8 images equal or smaller)
 - Per-image range: -5.7% to +1.2% vs cjxl e7
-- Encode time: 35-60s per image (release build, single-threaded, 10x slower due to deeper tree learning)
+- Encode time: ~14s per 1024x1024 image (release build, single-threaded, after 86x tree learning speedup)
 
 **Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
 1. Tree learning sample cap (65K): +28.5% → +7.7%
@@ -1278,7 +1278,8 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
   Terminal needs lossless patches (not yet implemented for lossless mode)
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
   (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
-- Encode time 10x slower than previous due to deeper tree learning (matches libjxl's sampling depth)
+- Tree learning optimized Feb 17, 2026: 86x speedup via count_increase buckets, incremental entropy,
+  u8 tokens, counting sort, and nlog2n lookup table. 1024x1024 photo: ~14s (was ~120s).
 
 **All lossless output verified pixel-exact** via djxl and jxl-rs on:
 - 8 CLIC 1024x1024 photos, 10 screenshots, RGBA, grayscale, 4x4, 13x17, 16x16, 32x32, 257x1, 300x300, 512x512
