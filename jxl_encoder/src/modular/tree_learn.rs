@@ -120,7 +120,7 @@ impl TreeLearningParams {
             properties: &order[..num_props],
             max_property_values,
             split_threshold: threshold_base,
-            max_nodes: 4096,
+            max_nodes: 8192,
             pixel_fraction: 1.0,
         }
     }
@@ -249,9 +249,9 @@ pub fn gather_samples_strided(
 pub fn max_tree_samples(effort: u8) -> usize {
     match effort {
         0..=6 => 32_768,
-        7 => 65_536,
-        8 => 131_072,
-        _ => 524_288,
+        7 => 262_144,
+        8 => 524_288,
+        _ => 1_048_576,
     }
 }
 
