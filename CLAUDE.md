@@ -468,6 +468,26 @@ Property 15 (wp_max_error) is now fixed (was blocked by predictor formula bug).
 Remaining blocker: context count pruning (libjxl limits contexts based on image
 size/complexity, our tree learning always allows up to 256 nodes).
 
+### ANS Encoder Bug on Degenerate Monochrome Gradients (Feb 17, 2026)
+
+**Status**: ACTIVE — tests ignored in `tests/pathological.rs`
+
+Monochrome RGB gradients (R=G=B for all pixels) produce invalid ANS bitstreams that
+all three decoders (jxl-rs, jxl-oxide, djxl) reject. Trigger conditions:
+- RGB image with R=G=B (monochrome), AND
+- Smooth gradient content (not noise or solid), AND
+- Image has >=2 rows (256x1 works, 256x2 fails)
+
+After RCT YCoCg, Co=0 and Cg=0 (all-zero channels). Gradient prediction makes Y
+residuals mostly-zero (exact prediction from row above). The resulting extremely skewed
+distribution (>99% zeros with a few non-zero first-row residuals) triggers an ANS
+encoder/decoder mismatch. Symptoms: `AnsChecksumMismatch` or `SectionTooShort`.
+
+Huffman mode works correctly for the same content (`with_ans(false)`).
+
+Doesn't affect real-world usage (real photos never have R=G=B for all pixels).
+Gray8 encoding works fine — only the RGB→RCT→ANS path is affected.
+
 ### Tree Learning Broken on 16-bit Images (Feb 16, 2026)
 
 **Status**: ACTIVE — tree learning auto-disabled for bit_depth > 8
