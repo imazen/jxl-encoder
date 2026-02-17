@@ -27,7 +27,7 @@ const NUM_PROPERTIES: usize = 16;
 
 /// Candidate predictors for tree learning.
 /// All 14 predictors (0-13). Weighted (6) uses WP state which is bit-exact with jxl-rs.
-/// Property 15 (wp_max_error) is disabled in SPLIT_PROPERTIES pending debugging.
+/// Property 15 (wp_max_error) is included in PROP_ORDER_NO_SQUEEZE and used at effort >= 7.
 const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Zero,
     Predictor::Left,
