@@ -1122,9 +1122,9 @@ pub fn build_entropy_code_ans_with_options(
         ClusteringType::Fast
     };
 
-    // Allow up to 64 clusters — non-simple context map format supports arbitrary counts.
-    // The cost-based clustering algorithm will merge down to the optimal count.
-    let max_histograms = num_contexts.min(64);
+    // Allow up to 96 clusters — non-simple context map format supports arbitrary counts.
+    // Tested: 64→96 helps marginally, >96 has diminishing returns due to context map overhead.
+    let max_histograms = num_contexts.min(96);
     let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, max_histograms)
         .expect("ANS clustering failed");
 
