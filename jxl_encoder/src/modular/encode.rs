@@ -2063,7 +2063,7 @@ const RCT_CANDIDATES: &[u8] = &[
 ///
 /// Returns the RctType and the transformed image. At effort 7, tries 7 RCT variants
 /// matching libjxl's kSquirrel behavior.
-fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, ModularImage) {
+pub(crate) fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, ModularImage) {
     use super::rct::{RctType, forward_rct};
 
     let nb_rcts_to_try = match effort {
