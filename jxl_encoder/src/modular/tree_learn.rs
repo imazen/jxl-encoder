@@ -243,18 +243,26 @@ pub fn gather_samples_strided(
     }
 }
 
-/// Maximum number of samples to gather for tree learning.
-/// Higher = better tree quality but slower. 1M samples with pixel_fraction scaling
-/// gives threshold ~73 bits (close to libjxl's 64.4) for 1024x1024 RGB images.
-pub const MAX_TREE_SAMPLES: usize = 1024 * 1024;
+/// Maximum number of samples to gather for tree learning, per effort level.
+/// libjxl uses 16K/group at e7, 65K at e8, 262K at e9. Our single-group approach
+/// means we use a global cap. Lower = faster tree learning with slightly less optimal trees.
+pub fn max_tree_samples(effort: u8) -> usize {
+    match effort {
+        0..=6 => 32_768,
+        7 => 65_536,
+        8 => 131_072,
+        _ => 524_288,
+    }
+}
 
-/// Compute the stride for subsampling based on total pixel count.
+/// Compute the stride for subsampling based on total pixel count and effort level.
 ///
 /// Call this with the total pixel count across ALL images/groups that will
 /// be gathered, then pass the stride to `gather_samples_strided`.
-pub fn compute_gather_stride(total_pixels: usize) -> usize {
-    if total_pixels > MAX_TREE_SAMPLES {
-        total_pixels.div_ceil(MAX_TREE_SAMPLES)
+pub fn compute_gather_stride(total_pixels: usize, effort: u8) -> usize {
+    let max_samples = max_tree_samples(effort);
+    if total_pixels > max_samples {
+        total_pixels.div_ceil(max_samples)
     } else {
         1
     }
