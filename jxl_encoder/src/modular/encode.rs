@@ -394,7 +394,6 @@ pub fn write_modular_stream_with_palette(
 
     // Collect residuals with gradient prediction on transformed channels
     let mut residuals = Vec::new();
-    let mut max_residual: u32 = 0;
 
     for channel in &transformed.channels {
         let width = channel.width();
@@ -417,7 +416,6 @@ pub fn write_modular_stream_with_palette(
                 let packed = pack_signed(residual);
 
                 residuals.push(packed);
-                max_residual = max_residual.max(packed);
             }
         }
     }
@@ -431,6 +429,7 @@ pub fn write_modular_stream_with_palette(
 
     if use_ans {
         let (tokens, code) = build_ans_modular_code(&residuals);
+
         write_ans_modular_header(writer, &code)?;
 
         // GroupHeader with 1 transform (Palette)

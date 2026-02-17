@@ -75,7 +75,7 @@ pub(crate) fn write_rct_transform(
 /// - TransformId: 2 bits (selector 1 = Palette)
 /// - begin_c: U32(Bits(3), BitsOffset(6,8), BitsOffset(10,72), BitsOffset(13,1096))
 /// - num_c: U32(Val(1), Val(3), Val(4), BitsOffset(13,1))
-/// - nb_colors: U32(BitsOffset(8,0), BitsOffset(11,256), BitsOffset(14,1280), BitsOffset(16,5376))
+/// - nb_colors: U32(Bits(8), BitsOffset(10,256), BitsOffset(12,1280), BitsOffset(16,5376))
 /// - nb_deltas: U32(Val(0), BitsOffset(8,1), BitsOffset(10,257), BitsOffset(16,1281))
 /// - predictor: 4 bits (0=Zero for lossless)
 pub(super) fn write_palette_transform(
@@ -114,16 +114,16 @@ pub(super) fn write_palette_transform(
         }
     }
 
-    // nb_colors: U32(BitsOffset(8,0), BitsOffset(11,256), BitsOffset(14,1280), BitsOffset(16,5376))
+    // nb_colors: U32(Bits(8), BitsOffset(10, 256), BitsOffset(12, 1280), BitsOffset(16, 5376))
     if nb_colors < 256 {
         writer.write(2, 0)?;
         writer.write(8, nb_colors as u64)?;
-    } else if nb_colors < 256 + 2048 {
+    } else if nb_colors < 1280 {
         writer.write(2, 1)?;
-        writer.write(11, (nb_colors - 256) as u64)?;
-    } else if nb_colors < 1280 + 16384 {
+        writer.write(10, (nb_colors - 256) as u64)?;
+    } else if nb_colors < 5376 {
         writer.write(2, 2)?;
-        writer.write(14, (nb_colors - 1280) as u64)?;
+        writer.write(12, (nb_colors - 1280) as u64)?;
     } else {
         writer.write(2, 3)?;
         writer.write(16, (nb_colors - 5376) as u64)?;

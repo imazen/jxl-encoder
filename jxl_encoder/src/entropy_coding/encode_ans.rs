@@ -987,3 +987,219 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
 
     Ok(())
 }
+
+/// Test ANS roundtrip using PARSED histogram (not known distributions).
+///
+/// This exercises the exact format that a real decoder uses:
+/// write_ans_modular_header → parse histogram from bitstream → decode tokens.
+/// Unlike verify_ans_roundtrip which builds decoder histograms from encoder's
+/// known distributions, this test catches format mismatches where our encoder
+/// and our internal decoder agree but external decoders (jxl-rs, djxl) disagree.
+#[cfg(debug_assertions)]
+pub fn verify_ans_roundtrip_parsed(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Result<()> {
+    use crate::entropy_coding::ans_decode::{AnsHistogram, AnsReader, BitReader};
+
+    #[inline]
+    fn ceil_log2_nonzero(x: u32) -> u32 {
+        if x <= 1 {
+            0
+        } else {
+            u32::BITS - (x - 1).leading_zeros()
+        }
+    }
+
+    if tokens.is_empty() {
+        return Ok(());
+    }
+
+    assert_eq!(
+        code.histograms.len(),
+        1,
+        "verify_ans_roundtrip_parsed only supports single-distribution"
+    );
+
+    // Write exactly what the modular encoder writes: header + tokens
+    let mut writer = BitWriter::new();
+    // Inline the modular ANS header format:
+    // lz77.enabled = 0
+    writer.write(1, 0)?;
+    // No context map for num_dist=1
+    // use_prefix_code = 0 (ANS)
+    writer.write(1, 0)?;
+    // log_alpha_size - 5 (2 bits)
+    let las = code.log_alpha_size;
+    writer.write(2, (las - 5) as u64)?;
+    // HybridUint config
+    let config = code
+        .uint_configs
+        .first()
+        .copied()
+        .unwrap_or(crate::entropy_coding::hybrid_uint::HybridUintConfig::default_config());
+    let se_bits = ceil_log2_nonzero(las as u32 + 1) as usize;
+    writer.write(se_bits, config.split_exponent as u64)?;
+    if (config.split_exponent as usize) != las {
+        let msb_bits = ceil_log2_nonzero(config.split_exponent + 1) as usize;
+        writer.write(msb_bits, config.msb_in_token as u64)?;
+        let lsb_bits = ceil_log2_nonzero(config.split_exponent - config.msb_in_token + 1) as usize;
+        writer.write(lsb_bits, config.lsb_in_token as u64)?;
+    }
+    // Write the single ANS distribution
+    code.histograms[0].write(&mut writer)?;
+    let header_bits = writer.bits_written();
+    write_tokens_ans(tokens, code, None, &mut writer)?;
+    writer.zero_pad_to_byte();
+    let encoded_bytes = writer.finish();
+
+    eprintln!(
+        "verify_ans_roundtrip_parsed: header={} bits, total={} bytes",
+        header_bits,
+        encoded_bytes.len()
+    );
+
+    // Now parse it back exactly as a decoder would
+    let mut br = BitReader::new(&encoded_bytes);
+
+    // 1. lz77.enabled
+    let lz77_enabled = br.read(1)?;
+    assert_eq!(lz77_enabled, 0, "expected lz77.enabled=0");
+
+    // 2. context_map skipped for num_dist=1
+
+    // 3. use_prefix_code
+    let use_prefix_code = br.read(1)?;
+    assert_eq!(use_prefix_code, 0, "expected use_prefix_code=0 (ANS)");
+
+    // 4. log_alpha_size
+    let las = br.read(2)? as usize + 5;
+    eprintln!("  parsed log_alpha_size={}", las);
+    assert_eq!(las, code.log_alpha_size, "log_alpha_size mismatch");
+
+    // 5. HybridUint config
+    let se_bits = ceil_log2_nonzero(las as u32 + 1) as usize;
+    let split_exponent = br.read(se_bits)? as u32;
+    let (msb_in_token, lsb_in_token) = if split_exponent != las as u32 {
+        let msb_bits = ceil_log2_nonzero(split_exponent + 1) as usize;
+        let msb = br.read(msb_bits)? as u32;
+        let lsb_bits = ceil_log2_nonzero(split_exponent - msb + 1) as usize;
+        let lsb = br.read(lsb_bits)? as u32;
+        (msb, lsb)
+    } else {
+        (0, 0)
+    };
+    let expected_config = code
+        .uint_configs
+        .first()
+        .copied()
+        .unwrap_or(crate::entropy_coding::hybrid_uint::HybridUintConfig::default_config());
+    eprintln!(
+        "  parsed uint_config: se={} msb={} lsb={} (expected se={} msb={} lsb={})",
+        split_exponent,
+        msb_in_token,
+        lsb_in_token,
+        expected_config.split_exponent,
+        expected_config.msb_in_token,
+        expected_config.lsb_in_token
+    );
+    assert_eq!(
+        split_exponent, expected_config.split_exponent,
+        "split_exponent mismatch"
+    );
+    assert_eq!(
+        msb_in_token, expected_config.msb_in_token,
+        "msb_in_token mismatch"
+    );
+    assert_eq!(
+        lsb_in_token, expected_config.lsb_in_token,
+        "lsb_in_token mismatch"
+    );
+
+    // 6. Parse the ANS histogram (this is what jxl-rs does)
+    let parsed_histo = AnsHistogram::decode(&mut br, las)?;
+    let bits_after_histo = br.bits_read();
+    eprintln!(
+        "  histogram parsed OK at bit {}, freqs: {:?}",
+        bits_after_histo,
+        &parsed_histo.frequencies[..parsed_histo.frequencies.len().min(10)]
+    );
+
+    // Compare parsed frequencies with encoder's distribution
+    for (i, sym) in code.distributions[0].symbols.iter().enumerate() {
+        let parsed_freq = parsed_histo.frequencies.get(i).copied().unwrap_or(0);
+        if parsed_freq != sym.freq {
+            eprintln!(
+                "  FREQ MISMATCH at symbol {}: encoder={} parsed={}",
+                i, sym.freq, parsed_freq
+            );
+            return Err(Error::Bitstream(format!(
+                "Parsed histogram frequency mismatch at symbol {}: encoder={} parsed={}",
+                i, sym.freq, parsed_freq
+            )));
+        }
+    }
+    eprintln!("  frequencies match encoder's distribution");
+
+    // 7. Read 32-bit ANS state
+    let mut ans_reader = AnsReader::init(&mut br)?;
+    eprintln!("  ANS initial state: 0x{:08x}", ans_reader.state());
+
+    // 8. Decode tokens
+    let config = crate::entropy_coding::hybrid_uint::HybridUintConfig {
+        split_exponent,
+        split: 1 << split_exponent,
+        msb_in_token,
+        lsb_in_token,
+    };
+    let mut mismatches = 0;
+    for (i, token) in tokens.iter().enumerate() {
+        let (expected_encoded, _) =
+            crate::entropy_coding::encode::encode_token_value_with_config(token, None, &config);
+
+        // Decode ANS symbol
+        let decoded_symbol = parsed_histo.read(&mut br, &mut ans_reader.0);
+
+        // Read extra bits
+        let decoded_extra = if expected_encoded.nbits > 0 {
+            br.read(expected_encoded.nbits as usize).unwrap_or(0) as u32
+        } else {
+            0
+        };
+
+        if decoded_symbol != expected_encoded.token || decoded_extra != expected_encoded.bits {
+            if mismatches < 5 {
+                eprintln!(
+                    "  MISMATCH token[{}]: val={} exp_tok={} got_tok={} exp_bits=0x{:x} got_bits=0x{:x}",
+                    i,
+                    token.value,
+                    expected_encoded.token,
+                    decoded_symbol,
+                    expected_encoded.bits,
+                    decoded_extra
+                );
+            }
+            mismatches += 1;
+        }
+    }
+
+    // 9. Check final state
+    if let Err(e) = ans_reader.check_final_state() {
+        eprintln!(
+            "  FINAL STATE FAILED: {} mismatches, state=0x{:08x}",
+            mismatches,
+            ans_reader.state()
+        );
+        return Err(Error::Bitstream(format!(
+            "ANS parsed roundtrip final state check failed ({} mismatches): {}",
+            mismatches, e
+        )));
+    }
+
+    if mismatches > 0 {
+        return Err(Error::Bitstream(format!(
+            "ANS parsed roundtrip had {} mismatches",
+            mismatches
+        )));
+    }
+
+    eprintln!("  ANS parsed roundtrip OK: {} tokens", tokens.len());
+    Ok(())
+}

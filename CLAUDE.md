@@ -468,25 +468,18 @@ Property 15 (wp_max_error) is now fixed (was blocked by predictor formula bug).
 Remaining blocker: context count pruning (libjxl limits contexts based on image
 size/complexity, our tree learning always allows up to 256 nodes).
 
-### ANS Encoder Bug on Degenerate Monochrome Gradients (Feb 17, 2026)
+### ~~ANS Encoder Bug on Degenerate Monochrome Gradients~~ (RESOLVED Feb 17, 2026)
 
-**Status**: ACTIVE — tests ignored in `tests/pathological.rs`
+**Status**: RESOLVED — root cause was wrong bit widths in palette transform `nb_colors` encoding.
 
-Monochrome RGB gradients (R=G=B for all pixels) produce invalid ANS bitstreams that
-all three decoders (jxl-rs, jxl-oxide, djxl) reject. Trigger conditions:
-- RGB image with R=G=B (monochrome), AND
-- Smooth gradient content (not noise or solid), AND
-- Image has >=2 rows (256x1 works, 256x2 fails)
+`write_palette_transform` in `encode_transforms.rs` used 11-bit and 14-bit fields for
+`nb_colors` u2S selectors 1 and 2, but the JXL spec requires 10-bit and 12-bit. This caused
+a 1-2 bit shift in the bitstream that corrupted subsequent ANS state reading. Only triggered
+when `nb_colors >= 256` (selector 1+), which is why only the 256x2 monochrome gradient test
+failed — all other palette tests had `nb_colors < 256` using the correct 8-bit selector 0.
 
-After RCT YCoCg, Co=0 and Cg=0 (all-zero channels). Gradient prediction makes Y
-residuals mostly-zero (exact prediction from row above). The resulting extremely skewed
-distribution (>99% zeros with a few non-zero first-row residuals) triggers an ANS
-encoder/decoder mismatch. Symptoms: `AnsChecksumMismatch` or `SectionTooShort`.
-
-Huffman mode works correctly for the same content (`with_ans(false)`).
-
-Doesn't affect real-world usage (real photos never have R=G=B for all pixels).
-Gray8 encoding works fine — only the RGB→RCT→ANS path is affected.
+Fix: `write(11, ...) → write(10, ...)` and `write(14, ...) → write(12, ...)` in
+`encode_transforms.rs:117-130`. All 3 previously-ignored tests now pass.
 
 ### Tree Learning Broken on 16-bit Images (Feb 16, 2026)
 
