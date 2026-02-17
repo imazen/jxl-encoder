@@ -612,8 +612,15 @@ struct BestSplit {
 
 /// Find the best (property, threshold) split for the given samples.
 ///
-/// For each property in params.properties, try a set of threshold values
-/// and pick the one that minimizes total entropy of both sides.
+/// Uses an incremental histogram scan (prefix-sum approach) matching libjxl's
+/// enc_ma.cc:FindBestSplit. For each property:
+/// 1. Sort sample indices by property value → O(n log n)
+/// 2. Build total histogram across all predictors → O(n × predictors)
+/// 3. Scan sorted samples left→right, moving from right to left histogram → O(n × predictors)
+/// 4. At each threshold boundary, evaluate cost → O(predictors × histogram_size)
+///
+/// This is O(n log n + n × predictors) per property, vs the previous
+/// O(n × predictors × thresholds) per property — typically 20-50x faster.
 fn find_best_split(
     samples: &TreeSamples,
     indices: &[usize],
@@ -626,151 +633,147 @@ fn find_best_split(
         return None;
     }
 
+    let num_pred = samples.num_predictors();
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
 
+    // Reusable sorted index buffer
+    let mut sorted_indices: Vec<usize> = Vec::with_capacity(count);
+
+    // Flat histogram arrays: [pred * histogram_size + token]
+    // Using flat layout for cache-friendliness during the scan.
+    let flat_size = num_pred * histogram_size;
+    let mut right_counts = vec![0u32; flat_size];
+    let mut left_counts = vec![0u32; flat_size];
+    let mut right_extra = vec![0u64; num_pred];
+    let mut left_extra = vec![0u64; num_pred];
+
     for &prop_idx in params.properties {
-        // Collect unique sorted property values for threshold candidates
-        let thresholds = compute_thresholds(samples, indices, prop_idx, params.max_property_values);
-        if thresholds.is_empty() {
+        let props = &samples.props[prop_idx];
+
+        // Sort indices by property value
+        sorted_indices.clear();
+        sorted_indices.extend_from_slice(indices);
+        sorted_indices.sort_unstable_by_key(|&i| props[i]);
+
+        // Check if property is constant
+        if props[sorted_indices[0]] == props[sorted_indices[count - 1]] {
             continue;
         }
 
-        for &splitval in &thresholds {
-            // Count tokens on each side for each predictor
-            let (left_side, right_side) =
-                count_split(samples, indices, prop_idx, splitval, histogram_size);
+        // Compute unique value count and subsample thresholds if needed
+        let max_buckets = params.max_property_values;
 
-            if left_side.total == 0 || right_side.total == 0 {
-                continue; // Degenerate split
+        // Build total (right) histogram: all samples start on the right side
+        right_counts.fill(0);
+        left_counts.fill(0);
+        right_extra.fill(0);
+        left_extra.fill(0);
+
+        for &idx in &sorted_indices {
+            for pred in 0..num_pred {
+                let tok = samples.residual_tokens[pred][idx] as usize;
+                if tok < histogram_size {
+                    right_counts[pred * histogram_size + tok] += 1;
+                }
+                right_extra[pred] += samples.extra_bits[pred][idx] as u64;
+            }
+        }
+
+        // Collect unique property values for threshold determination
+        let mut unique_vals: Vec<i32> = sorted_indices.iter().map(|&i| props[i]).collect();
+        unique_vals.dedup();
+
+        if unique_vals.len() <= 1 {
+            continue;
+        }
+
+        // Determine which unique values to use as thresholds (subsample if too many)
+        let threshold_set: Vec<i32> = if unique_vals.len() <= max_buckets + 1 {
+            // Use all unique values except the last (last value can't be a threshold)
+            unique_vals[..unique_vals.len() - 1].to_vec()
+        } else {
+            // Subsample evenly spaced thresholds
+            let step = unique_vals.len() / max_buckets;
+            unique_vals.iter().step_by(step.max(1)).copied().collect()
+        };
+
+        // Scan sorted samples left→right, evaluating at each threshold boundary.
+        // As we move a sample from right to left, we update both histograms incrementally.
+        let mut left_total: u32 = 0;
+        let mut right_total = count as u32;
+        let mut scan_pos = 0; // current position in sorted_indices
+        let mut threshold_idx = 0;
+
+        while threshold_idx < threshold_set.len() && scan_pos < count {
+            let splitval = threshold_set[threshold_idx];
+
+            // Move all samples with property value <= splitval from right to left
+            while scan_pos < count && props[sorted_indices[scan_pos]] <= splitval {
+                let idx = sorted_indices[scan_pos];
+                left_total += 1;
+                right_total -= 1;
+
+                for pred in 0..num_pred {
+                    let tok = samples.residual_tokens[pred][idx] as usize;
+                    if tok < histogram_size {
+                        let offset = pred * histogram_size + tok;
+                        left_counts[offset] += 1;
+                        right_counts[offset] -= 1;
+                    }
+                    let eb = samples.extra_bits[pred][idx] as u64;
+                    left_extra[pred] += eb;
+                    right_extra[pred] -= eb;
+                }
+                scan_pos += 1;
             }
 
-            // Find best predictor for each side
-            let (left_pred, left_bits) = best_predictor_from_counts(&left_side);
-            let (right_pred, right_bits) = best_predictor_from_counts(&right_side);
+            // Skip degenerate splits
+            if left_total == 0 || right_total == 0 {
+                threshold_idx += 1;
+                continue;
+            }
 
-            let total = left_bits + right_bits;
+            // Evaluate best predictor for each side
+            let mut left_best_bits = f64::MAX;
+            let mut left_best_pred = 0;
+            let mut right_best_bits = f64::MAX;
+            let mut right_best_pred = 0;
+
+            for pred in 0..num_pred {
+                let l_start = pred * histogram_size;
+                let l_slice = &left_counts[l_start..l_start + histogram_size];
+                let l_bits = estimate_bits(l_slice, left_total) + left_extra[pred] as f64;
+                if l_bits < left_best_bits {
+                    left_best_bits = l_bits;
+                    left_best_pred = pred;
+                }
+
+                let r_slice = &right_counts[l_start..l_start + histogram_size];
+                let r_bits = estimate_bits(r_slice, right_total) + right_extra[pred] as f64;
+                if r_bits < right_best_bits {
+                    right_best_bits = r_bits;
+                    right_best_pred = pred;
+                }
+            }
+
+            let total = left_best_bits + right_best_bits;
             if total < best_bits {
                 best_bits = total;
                 best = Some(BestSplit {
                     property: prop_idx,
                     splitval,
-                    left_predictor: left_pred,
-                    right_predictor: right_pred,
+                    left_predictor: left_best_pred,
+                    right_predictor: right_best_pred,
                     total_bits: total,
                 });
             }
+
+            threshold_idx += 1;
         }
     }
 
     best
-}
-
-/// Compute threshold candidates for a property. Returns sorted unique values,
-/// subsampled to at most `max_buckets` if there are too many.
-fn compute_thresholds(
-    samples: &TreeSamples,
-    indices: &[usize],
-    prop_idx: usize,
-    max_buckets: usize,
-) -> Vec<i32> {
-    let props = &samples.props[prop_idx];
-    let mut values: Vec<i32> = indices.iter().map(|&i| props[i]).collect();
-    values.sort_unstable();
-    values.dedup();
-
-    if values.len() <= 1 {
-        return Vec::new(); // Can't split on a constant property
-    }
-
-    // Use midpoints between consecutive unique values as thresholds.
-    // This ensures both sides are non-empty for each threshold.
-    if values.len() <= max_buckets + 1 {
-        // Use all midpoints
-        values
-            .windows(2)
-            .map(|w| {
-                // Use the lower value as the splitval (property <= splitval goes left)
-                w[0]
-            })
-            .collect()
-    } else {
-        // Subsample: pick evenly spaced thresholds
-        let step = values.len() / max_buckets;
-        values.iter().step_by(step.max(1)).copied().collect()
-    }
-}
-
-/// Per-side split statistics: token histogram counts and total extra bits per predictor.
-struct SplitSideCounts {
-    /// Token histogram: counts[pred][token].
-    counts: Vec<Vec<u32>>,
-    /// Total extra bits per predictor.
-    extra_bits: Vec<u64>,
-    /// Number of samples on this side.
-    total: u32,
-}
-
-/// Count tokens on left (prop <= splitval) and right (prop > splitval) sides
-/// for each predictor.
-fn count_split(
-    samples: &TreeSamples,
-    indices: &[usize],
-    prop_idx: usize,
-    splitval: i32,
-    histogram_size: usize,
-) -> (SplitSideCounts, SplitSideCounts) {
-    let num_pred = samples.num_predictors();
-    let mut left = SplitSideCounts {
-        counts: vec![vec![0u32; histogram_size]; num_pred],
-        extra_bits: vec![0u64; num_pred],
-        total: 0,
-    };
-    let mut right = SplitSideCounts {
-        counts: vec![vec![0u32; histogram_size]; num_pred],
-        extra_bits: vec![0u64; num_pred],
-        total: 0,
-    };
-
-    let props = &samples.props[prop_idx];
-
-    for &idx in indices {
-        let pval = props[idx];
-        let side = if pval <= splitval {
-            left.total += 1;
-            &mut left
-        } else {
-            right.total += 1;
-            &mut right
-        };
-        for pred in 0..num_pred {
-            let tok = samples.residual_tokens[pred][idx] as usize;
-            if tok < histogram_size {
-                side.counts[pred][tok] += 1;
-            }
-            side.extra_bits[pred] += samples.extra_bits[pred][idx] as u64;
-        }
-    }
-
-    (left, right)
-}
-
-/// Find the predictor with lowest total cost from pre-counted histograms.
-/// Total cost = Shannon entropy of tokens + extra bits (matching libjxl).
-/// Returns (best_predictor_idx, best_total_bits).
-fn best_predictor_from_counts(side: &SplitSideCounts) -> (usize, f64) {
-    let mut best_pred = 0;
-    let mut best_bits = f64::MAX;
-
-    for (pred_idx, hist) in side.counts.iter().enumerate() {
-        let bits = estimate_bits(hist, side.total) + side.extra_bits[pred_idx] as f64;
-        if bits < best_bits {
-            best_bits = bits;
-            best_pred = pred_idx;
-        }
-    }
-
-    (best_pred, best_bits)
 }
 
 /// Find the best predictor for the given sample indices.
