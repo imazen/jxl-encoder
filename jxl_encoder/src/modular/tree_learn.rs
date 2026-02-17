@@ -413,6 +413,10 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
     // When only a fraction of pixels are sampled, the entropy estimates are noisier
     // but the threshold needs to be lower to allow the tree to grow appropriately.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
+    // Floor at 0.25 to prevent over-splitting with low pixel_fraction.
+    // Without floor: 262K samples / 3.1M pixels = pf=0.083 → rc=0.175 → threshold=20.5
+    // With floor: rc=0.25 → threshold=29.3. Closer to libjxl's 64 bits at pf=0.5.
+    let required_cost = required_cost.max(0.40);
     let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
