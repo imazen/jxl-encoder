@@ -475,8 +475,15 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         }
 
         // Find best split across all properties and thresholds
-        let best_split =
-            find_best_split(samples, range, histogram_size, candidate.base_bits, params);
+        let best_split = find_best_split(
+            samples,
+            range,
+            histogram_size,
+            candidate.base_bits,
+            params,
+            candidate.best_predictor,
+            threshold,
+        );
 
         match best_split {
             Some(split) if candidate.base_bits - split.total_bits > threshold => {
@@ -621,12 +628,18 @@ struct BestSplit {
 ///
 /// This is O(n log n + n × predictors) per property, vs the previous
 /// O(n × predictors × thresholds) per property — typically 20-50x faster.
+///
+/// `parent_predictor`: the predictor index of the parent node. A penalty is applied
+/// when a child would use a different predictor, matching libjxl's change_pred_penalty
+/// formula: `800 / (100 + threshold)` bits per changed child.
 fn find_best_split(
     samples: &TreeSamples,
     indices: &[usize],
     histogram_size: usize,
     base_bits: f64,
     params: &TreeLearningParams,
+    parent_predictor: usize,
+    threshold: f64,
 ) -> Option<BestSplit> {
     let count = indices.len();
     if count < 2 {
@@ -636,6 +649,17 @@ fn find_best_split(
     let num_pred = samples.num_predictors();
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
+
+    // Predictor change penalty matching libjxl's enc_ma.cc:303
+    // Discourages splits that change the predictor, preventing tree overfitting.
+    // The penalty is 800/(100+threshold) bits per child that changes predictor.
+    let change_pred_penalty = 800.0 / (100.0 + threshold);
+
+    // Index of the Weighted predictor in CANDIDATE_PREDICTORS
+    let weighted_idx = CANDIDATE_PREDICTORS
+        .iter()
+        .position(|&p| p == Predictor::Weighted)
+        .unwrap_or(usize::MAX);
 
     // Reusable sorted index buffer
     let mut sorted_indices: Vec<usize> = Vec::with_capacity(count);
@@ -757,7 +781,16 @@ fn find_best_split(
                 }
             }
 
-            let total = left_best_bits + right_best_bits;
+            // Apply predictor change penalty matching libjxl enc_ma.cc:303.
+            // No penalty for moving AWAY from Weighted (encourages faster predictors).
+            let mut total = left_best_bits + right_best_bits;
+            if left_best_pred != parent_predictor && parent_predictor != weighted_idx {
+                total += change_pred_penalty;
+            }
+            if right_best_pred != parent_predictor && parent_predictor != weighted_idx {
+                total += change_pred_penalty;
+            }
+
             if total < best_bits {
                 best_bits = total;
                 best = Some(BestSplit {
