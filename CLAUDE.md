@@ -1229,10 +1229,11 @@ palette transform (lossless), squeeze transform (Haar wavelet).
 
 ### Lossless Compression Status (Feb 16, 2026)
 
+**AT PARITY WITH cjxl e7** on CLIC photos. Average gap: +0.4% (some images beat cjxl e7).
+
 **Default path (effort 7)**: RCT selection (best of 7 candidates) + learned MA tree +
-multi-context ANS. Tree learning enabled by default at effort >= 7 with 14 candidate
-predictors including Weighted. Sample cap at 65K for effort 7 (7-11s encode time on
-1024x1024, down from 264s with 1M samples, +0.5% size).
+multi-context ANS with up to 64 histograms. Tree learning enabled by default at effort >= 7
+with 14 candidate predictors including Weighted. 262K sample cap (8.3% of 1024x1024 pixels).
 
 **Squeeze disabled by default** — hurts compression even WITH tree learning:
 - Photos (1024x1024 CLIC): squeeze+tree 1334KB vs tree-only 1163KB (+14.7%)
@@ -1241,23 +1242,20 @@ Tree-learned adaptive prediction handles spatial correlations more efficiently
 than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true)`.
 
 **Compression vs cjxl (8 CLIC 1024x1024 photos, effort 7)**:
-- cjxl-rs total: 8,602KB (avg 1,075KB/image)
-- vs cjxl e1: **-15.3%** (we beat e1)
-- vs cjxl e7: **+7.7%** (down from +28.5% before RCT fix + tree learning)
-- Per-image range: +3.3% to +10.7% vs cjxl e7
-- Encode time: 7-11s per image (release build)
+- cjxl-rs total: 8,024KB (avg 1,003KB/image)
+- vs cjxl e1: **-21.0%** (21% smaller than cjxl e1)
+- vs cjxl e7: **+0.4%** (AT PARITY — 5 of 8 images beat cjxl e7)
+- Per-image range: -4.2% to +2.7% vs cjxl e7
+- Encode time: 6-12s per image (release build, single-threaded)
 
-**Key fixes in this session**:
-- RCT type U32 encoding offset: was BitsOffset(6, 18), correct is BitsOffset(6, 10).
-  Decoder read wrong rct_type for swap permutations (3,4,5). Now all 42 RCT variants work.
-- Tree learning sample cap: effort-dependent (65K at e7, 131K at e8, 524K at e9+).
-  37x speedup with only +0.5% size increase.
-
-**Remaining gap vs cjxl e7 (~7.7%)**:
-- cjxl uses Weighted predictor with variable per-context selection (Predictor::Variable)
-- cjxl uses more sophisticated histogram clustering (kDefault vs our pair-merge)
-- cjxl uses prefix-sum cumulative histograms for O(1) split evaluation in tree learning
-- cjxl has more tree learning samples and deduplication with counts
+**Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
+1. Tree learning sample cap (65K): +28.5% → +7.7%
+2. Prefix-sum split evaluation: speed-only (3-5x faster)
+3. 256K samples + 8192 max_nodes: +7.7% → +6.5%
+4. Predictor change penalty: +6.5% → +5.8%
+5. Threshold floor 0.40: +5.8% → +3.7%
+6. Non-simple context map (64 histograms): +3.7% → +1.8%
+7. RCT selection for multi-group: +1.8% → +0.4%
 
 **Known issues**:
 - Screenshots still much larger than cjxl e7 (needs lossless patches, not yet implemented)
