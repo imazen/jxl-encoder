@@ -310,7 +310,7 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9d2a9f32fb44bce2, // Updated: float qf + deviation bounds
+        0xd9df8be0eab59c93, // Updated: float qf + deviation bounds
     );
 }
 
@@ -329,7 +329,7 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1298301e59733d02, // Updated: multi-resolution butteraugli
+        0x22e3c4ece5c935ce, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -348,7 +348,7 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0x2c5a1d4a8bb64d34, // Updated: float qf + deviation bounds
+        0x4dc24d6db81c59e5, // Updated: float qf + deviation bounds
     );
 }
 
@@ -367,7 +367,7 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x51bd996721483326, // Updated: LZ77 RLE for alpha sub-bitstream
+        0x52da04c868458d0f, // Updated: LZ77 RLE for alpha sub-bitstream
     );
 }
 
@@ -386,7 +386,7 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0x58a5334abe4f3dce, // Updated: float qf + deviation bounds
+        0xe929e45c973a825b, // Updated: float qf + deviation bounds
     );
 }
 
@@ -426,7 +426,7 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x5e2434f883b8209e, // Updated: multi-resolution butteraugli
+        0x26b3a054ce6ab05f, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -446,7 +446,7 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1298301e59733d02, // Updated: multi-resolution butteraugli
+        0x22e3c4ece5c935ce, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -466,7 +466,7 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x790a1cf616a15fd3, // Updated: float qf + deviation bounds
+        0x5e436056a6eabfa1, // Updated: float qf + deviation bounds
     );
 }
 
@@ -486,7 +486,7 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9d2a9f32fb44bce2, // Updated: float qf + deviation bounds
+        0xd9df8be0eab59c93, // Updated: float qf + deviation bounds
     );
 }
 
@@ -506,7 +506,7 @@ fn lossy_no_butteraugli() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xbba7dbf4d847a448,
+        0x9506f854bc0d536c,
     );
 }
 
@@ -526,7 +526,7 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x2ab5f77becafeda8, // Updated: multi-resolution butteraugli
+        0x158111bbc92c1055, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -546,7 +546,7 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x8b1d7a3a1c737cfa, // Updated: float qf + deviation bounds
+        0xdd387a5c85257213, // Updated: float qf + deviation bounds
     );
 }
 
@@ -567,7 +567,7 @@ fn lossy_force_identity() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x1c6f3ab39b54e55b,
+        0x77bd74b2b317c082,
     );
 }
 
@@ -588,7 +588,7 @@ fn lossy_force_dct2x2() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x2bb092a623b577dd,
+        0xec2dd26a95b3f887,
     );
 }
 
@@ -609,7 +609,7 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xacb4374610639248,
+        0xcea94d97bd9325c6,
     );
 }
 
@@ -630,7 +630,7 @@ fn lossy_force_afv0() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x3900a859ae482069,
+        0x1a09ac618728d725,
     );
 }
 
@@ -651,7 +651,7 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1298301e59733d02, // Updated: multi-resolution butteraugli
+        0x22e3c4ece5c935ce, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -672,7 +672,7 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1298301e59733d02, // Updated: multi-resolution butteraugli
+        0x22e3c4ece5c935ce, // Updated: multi-resolution butteraugli
     );
 }
 
@@ -691,7 +691,7 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xc9cc3618dd0c041f, // Updated: float qf + deviation bounds
+        0xb7dc99409443c669, // Updated: float qf + deviation bounds
     );
 }
 
@@ -710,7 +710,7 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xa8d6555b53e4ec27, // Updated: float qf + deviation bounds
+        0xe61f69db0c3bedf2, // Updated: float qf + deviation bounds
     );
 }
 
@@ -758,7 +758,7 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x764354c8577e5464, // Updated: float qf + deviation bounds
+        0xc66ecb8438eb5a46, // Updated: float qf + deviation bounds
     );
 }
 
@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -798,7 +798,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         0x4610698f0cf81821,
-        0xaebcd7d1948f10e7, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0x16d5504f8c104725, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -817,7 +817,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         0x492393a4c3f29174,
-        0xa1b74eb185b688bb, // Updated: tree learning default-on at effort 7
+        0x7233318f8fc138a4, // Updated: tree learning default-on at effort 7
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0xda8126da7e005e07, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0xbbcb62bc2b40bafa, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -897,7 +897,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
 
@@ -917,7 +917,7 @@ fn lossless_with_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xcff4671720bd211a, // Updated: squeeze+tree combined path at effort 7
+        0xf49d3ce2c7050a87, // Updated: squeeze+tree combined path at effort 7
     );
 }
 
@@ -940,7 +940,7 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
+        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
     );
 }
 
@@ -963,7 +963,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9cfeabdf155f47cc, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
+        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
     );
 }
 
@@ -984,7 +984,7 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xcff4671720bd211a, // Updated: squeeze+tree combined path at effort 7
+        0xf49d3ce2c7050a87, // Updated: squeeze+tree combined path at effort 7
     );
 }
 
@@ -1027,6 +1027,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xf503371b5b822d1f, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0xdd50cccc7250b5b1, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
     );
 }
