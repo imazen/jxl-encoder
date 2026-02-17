@@ -244,14 +244,18 @@ pub fn gather_samples_strided(
 }
 
 /// Maximum number of samples to gather for tree learning, per effort level.
-/// libjxl uses 16K/group at e7, 65K at e8, 262K at e9. Our single-group approach
-/// means we use a global cap. Lower = faster tree learning with slightly less optimal trees.
-pub fn max_tree_samples(effort: u8) -> usize {
+///
+/// libjxl uses `nb_repeats = 0.5` at all efforts >= 5, meaning 50% of pixels per channel
+/// are sampled. For a 1024x1024 RGB image, that's ~1.57M samples from 3.1M total pixels.
+///
+/// We use a fraction-based approach: at effort 7+, sample 50% of total pixels (matching
+/// libjxl's nb_repeats=0.5). At lower efforts, use smaller fixed caps for speed.
+pub fn max_tree_samples(effort: u8, total_pixels: usize) -> usize {
     match effort {
-        0..=6 => 32_768,
-        7 => 262_144,
-        8 => 524_288,
-        _ => 1_048_576,
+        0..=4 => 32_768,
+        5..=6 => 65_536,
+        // effort 7+: match libjxl's nb_repeats=0.5 (50% of pixels)
+        _ => (total_pixels / 2).max(65_536),
     }
 }
 
@@ -260,7 +264,7 @@ pub fn max_tree_samples(effort: u8) -> usize {
 /// Call this with the total pixel count across ALL images/groups that will
 /// be gathered, then pass the stride to `gather_samples_strided`.
 pub fn compute_gather_stride(total_pixels: usize, effort: u8) -> usize {
-    let max_samples = max_tree_samples(effort);
+    let max_samples = max_tree_samples(effort, total_pixels);
     if total_pixels > max_samples {
         total_pixels.div_ceil(max_samples)
     } else {
@@ -413,10 +417,9 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
     // When only a fraction of pixels are sampled, the entropy estimates are noisier
     // but the threshold needs to be lower to allow the tree to grow appropriately.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
-    // Floor at 0.25 to prevent over-splitting with low pixel_fraction.
-    // Without floor: 262K samples / 3.1M pixels = pf=0.083 → rc=0.175 → threshold=20.5
-    // With floor: rc=0.25 → threshold=29.3. Closer to libjxl's 64 bits at pf=0.5.
-    let required_cost = required_cost.max(0.40);
+    // No floor: libjxl uses required_cost = pixel_fraction * 0.9 + 0.1 directly.
+    // Threshold scales naturally with sample count — fewer samples → lower threshold
+    // → same per-sample sensitivity. The per-sample threshold determines split quality.
     let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
