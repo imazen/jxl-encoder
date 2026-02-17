@@ -871,7 +871,7 @@ impl FrameEncoder {
             .iter()
             .map(|ch| ch.width() * ch.height())
             .sum();
-        let stride = compute_gather_stride(total_pixels);
+        let stride = compute_gather_stride(total_pixels, self.options.effort);
         let mut samples = TreeSamples::new();
 
         // 3a: Global channels (full, no cropping needed)

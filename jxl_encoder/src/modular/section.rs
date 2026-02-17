@@ -277,7 +277,7 @@ pub fn write_global_modular_section_with_tree(
         .flat_map(|img| img.channels.iter())
         .map(|ch| ch.width() * ch.height())
         .sum();
-    let stride = compute_gather_stride(total_pixels);
+    let stride = compute_gather_stride(total_pixels, effort);
     let mut samples = TreeSamples::new();
     for (group_idx, group_image) in images.iter().enumerate() {
         gather_samples_strided(&mut samples, group_image, group_idx as u32, 0, stride);

@@ -2173,7 +2173,7 @@ pub fn write_modular_stream_with_tree(
         .iter()
         .map(|ch| ch.width() * ch.height())
         .sum();
-    let stride = compute_gather_stride(total_pixels);
+    let stride = compute_gather_stride(total_pixels, effort);
     let mut samples = TreeSamples::new();
     gather_samples_strided(&mut samples, &work_image, 0, 0, stride);
 
@@ -2315,7 +2315,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .iter()
         .map(|ch| ch.width() * ch.height())
         .sum();
-    let stride = compute_gather_stride(total_pixels);
+    let stride = compute_gather_stride(total_pixels, effort);
     let mut samples = TreeSamples::new();
     gather_samples_strided(&mut samples, &transformed, 0, 0, stride);
 
