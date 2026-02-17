@@ -917,7 +917,7 @@ fn lossless_with_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xf49d3ce2c7050a87, // Updated: squeeze+tree combined path at effort 7
+        0xa73e81227bf51700, // Updated: tree learning pre-quantization + nlog2n entropy formula
     );
 }
 
@@ -984,7 +984,7 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xf49d3ce2c7050a87, // Updated: squeeze+tree combined path at effort 7
+        0xa73e81227bf51700, // Updated: tree learning pre-quantization + nlog2n entropy formula
     );
 }
 
