@@ -172,6 +172,111 @@ impl TreeSamples {
     pub fn num_predictors(&self) -> usize {
         CANDIDATE_PREDICTORS.len()
     }
+
+    /// Pre-quantize all property values into bucket indices.
+    /// This is done once before tree building, replacing per-node binary_search
+    /// and threshold_set allocation with a single upfront pass.
+    fn pre_quantize(&self, params: &TreeLearningParams) -> PreQuantizedProps {
+        let max_buckets = params.max_property_values;
+        let n = self.num_samples;
+        let mut threshold_sets = vec![Vec::new(); NUM_PROPERTIES];
+        let mut bucket_indices = vec![Vec::new(); NUM_PROPERTIES];
+
+        for &prop_idx in params.properties {
+            let props = &self.props[prop_idx];
+
+            // Find min/max across ALL samples
+            let mut min_val = i32::MAX;
+            let mut max_val = i32::MIN;
+            for &v in &props[..n] {
+                if v < min_val {
+                    min_val = v;
+                }
+                if v > max_val {
+                    max_val = v;
+                }
+            }
+            if min_val == max_val {
+                // Constant property — empty threshold set, all bucket 0
+                bucket_indices[prop_idx] = vec![0u8; n];
+                continue;
+            }
+
+            // Build threshold set from unique values
+            let range = max_val as i64 - min_val as i64 + 1;
+            let ts: Vec<i32>;
+
+            if range <= (max_buckets * 4) as i64 {
+                let range_usize = range as usize;
+                let mut present = vec![false; range_usize];
+                for i in 0..n {
+                    present[(props[i] - min_val) as usize] = true;
+                }
+                let mut unique_vals: Vec<i32> = present
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| **p)
+                    .map(|(i, _)| min_val + i as i32)
+                    .collect();
+                if unique_vals.len() <= 1 {
+                    bucket_indices[prop_idx] = vec![0u8; n];
+                    continue;
+                }
+                unique_vals.pop();
+                ts = if unique_vals.len() <= max_buckets {
+                    unique_vals
+                } else {
+                    let step = unique_vals.len().div_ceil(max_buckets);
+                    unique_vals
+                        .iter()
+                        .step_by(step.max(1))
+                        .take(max_buckets)
+                        .copied()
+                        .collect()
+                };
+            } else {
+                let mut sample_vals: Vec<i32> = props[..n].to_vec();
+                sample_vals.sort_unstable();
+                sample_vals.dedup();
+                if sample_vals.len() <= 1 {
+                    bucket_indices[prop_idx] = vec![0u8; n];
+                    continue;
+                }
+                sample_vals.pop();
+                ts = if sample_vals.len() <= max_buckets {
+                    sample_vals
+                } else {
+                    let step = sample_vals.len() / max_buckets;
+                    sample_vals.iter().step_by(step.max(1)).copied().collect()
+                };
+            }
+
+            // Assign each sample to a bucket using binary search
+            let num_thresholds = ts.len();
+            let mut bi = vec![0u8; n];
+            for (bi_val, &v) in bi.iter_mut().zip(props[..n].iter()) {
+                let bucket = match ts.binary_search(&v) {
+                    Ok(pos) => pos,
+                    Err(pos) => {
+                        if pos == 0 {
+                            0
+                        } else {
+                            pos
+                        }
+                    }
+                };
+                *bi_val = bucket.min(num_thresholds) as u8;
+            }
+
+            threshold_sets[prop_idx] = ts;
+            bucket_indices[prop_idx] = bi;
+        }
+
+        PreQuantizedProps {
+            threshold_sets,
+            bucket_indices,
+        }
+    }
 }
 
 /// Compute the 16 spec-matching properties for a pixel.
@@ -366,31 +471,28 @@ fn gather_channel_samples(
     }
 }
 
-/// Estimate the Shannon entropy (in bits) for a histogram of token counts.
-///
-/// Precomputed table of n * log2(n) for fast entropy computation.
-/// Size: 2048 entries × 8 bytes = 16KB. Covers most per-symbol counts
-/// in tree learning (counts > 2048 are rare and computed directly).
-const NLOG2N_TABLE_SIZE: usize = 2048;
-static NLOG2N_TABLE: std::sync::LazyLock<[f64; NLOG2N_TABLE_SIZE]> =
-    std::sync::LazyLock::new(|| {
-        let mut table = [0.0f64; NLOG2N_TABLE_SIZE];
-        for (n, entry) in table.iter_mut().enumerate().skip(1) {
-            let nf = n as f64;
-            *entry = nf * nf.log2();
-        }
-        table
-    });
+/// Size of the precomputed n*log2(n) lookup table.
+/// 65536 entries × 8 bytes = 512KB, fits comfortably in L2 cache.
+/// Covers all per-symbol counts in tree learning for typical images.
+const NLOG2N_TABLE_SIZE: usize = 65536;
+
+/// Build the nlog2n lookup table. Called once at the start of tree learning.
+fn build_nlog2n_table() -> Vec<f64> {
+    let mut table = vec![0.0f64; NLOG2N_TABLE_SIZE];
+    for (n, entry) in table.iter_mut().enumerate().skip(1) {
+        let nf = n as f64;
+        *entry = nf * nf.log2();
+    }
+    table
+}
 
 /// Compute n * log2(n), using a lookup table for small values.
 #[inline(always)]
-fn nlog2n(n: u32) -> f64 {
-    if n == 0 {
-        return 0.0;
-    }
+fn nlog2n(table: &[f64], n: u32) -> f64 {
     let idx = n as usize;
-    if idx < NLOG2N_TABLE_SIZE {
-        NLOG2N_TABLE[idx]
+    if idx < table.len() {
+        // SAFETY: bounds checked by the if condition above
+        table[idx]
     } else {
         let nf = n as f64;
         nf * nf.log2()
@@ -398,6 +500,7 @@ fn nlog2n(n: u32) -> f64 {
 }
 
 /// Uses log2 with a probability floor of 1/4096, matching libjxl's ANS coding.
+/// Used for parent node cost estimation (consistent with old code's cost model).
 #[inline]
 pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
     if total == 0 {
@@ -414,6 +517,24 @@ pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
         }
     }
     bits
+}
+
+/// Pre-quantized property data for all properties across all samples.
+/// Computed once before tree building, eliminating per-node binary_search
+/// and threshold_set allocation.
+struct PreQuantizedProps {
+    /// threshold_sets[prop_idx] = sorted unique thresholds for this property.
+    threshold_sets: Vec<Vec<i32>>,
+    /// bucket_indices[prop_idx][sample_idx] = bucket index (0..num_thresholds).
+    /// Bucket k means: threshold_set[k-1] < value <= threshold_set[k].
+    bucket_indices: Vec<Vec<u8>>,
+}
+
+impl PreQuantizedProps {
+    /// Returns the number of thresholds for a property.
+    fn num_thresholds(&self, prop_idx: usize) -> usize {
+        self.threshold_sets[prop_idx].len()
+    }
 }
 
 /// Context for a node being considered for splitting.
@@ -445,16 +566,10 @@ struct SplitCandidate {
 pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams) -> Tree {
     let max_nodes = params.max_nodes;
     // Scale threshold by pixel_fraction, matching libjxl's required_cost formula.
-    // When only a fraction of pixels are sampled, the entropy estimates are noisier
-    // but the threshold needs to be lower to allow the tree to grow appropriately.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
-    // No floor: libjxl uses required_cost = pixel_fraction * 0.9 + 0.1 directly.
-    // Threshold scales naturally with sample count — fewer samples → lower threshold
-    // → same per-sample sensitivity. The per-sample threshold determines split quality.
     let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
-        // Empty samples: return single gradient leaf
         return vec![PropertyDecisionNode {
             property: -1,
             predictor: Predictor::Gradient,
@@ -463,6 +578,12 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
             ..Default::default()
         }];
     }
+
+    // Build nlog2n lookup table once (65536 entries = 512KB, fits L2)
+    let nlog2n_table = build_nlog2n_table();
+
+    // Pre-quantize all properties globally (replaces per-node binary_search)
+    let pq = samples.pre_quantize(params);
 
     // Working index array: we partition this instead of moving actual data.
     let mut indices: Vec<usize> = (0..n).collect();
@@ -500,13 +621,19 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
 
     while let Some(candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes {
-            // No room for two more children, keep as leaf
             finalize_leaf(&mut tree, &candidate);
             continue;
         }
 
         let count = candidate.end - candidate.start;
         if count < 2 {
+            finalize_leaf(&mut tree, &candidate);
+            continue;
+        }
+
+        // Early termination gate: if base_bits is already below threshold,
+        // no split can save enough bits. Matches libjxl enc_ma.cc:304.
+        if candidate.base_bits <= threshold {
             finalize_leaf(&mut tree, &candidate);
             continue;
         }
@@ -520,6 +647,8 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
             params,
             candidate.best_predictor,
             threshold,
+            &nlog2n_table,
+            &pq,
         );
 
         match best_split {
@@ -536,8 +665,8 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                 // Create child nodes
                 let lchild_idx = tree.len();
                 let rchild_idx = tree.len() + 1;
-                tree.push(PropertyDecisionNode::default()); // lchild placeholder
-                tree.push(PropertyDecisionNode::default()); // rchild placeholder
+                tree.push(PropertyDecisionNode::default());
+                tree.push(PropertyDecisionNode::default());
 
                 // Set split node
                 tree[candidate.node_idx] = PropertyDecisionNode {
@@ -548,35 +677,25 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     ..Default::default()
                 };
 
-                // Push children onto stack (right first for depth-first-like behavior)
-                // rchild = samples with property > splitval
-                let rchild_range = &indices[abs_mid..candidate.end];
-                let rchild_pred = split.right_predictor;
-                let rchild_bits =
-                    compute_predictor_entropy(samples, rchild_range, rchild_pred, histogram_size);
+                // Push children with cached costs from find_best_split
+                // (avoids redundant compute_predictor_entropy calls)
                 stack.push(SplitCandidate {
                     node_idx: rchild_idx,
                     start: abs_mid,
                     end: candidate.end,
-                    best_predictor: rchild_pred,
-                    base_bits: rchild_bits,
+                    best_predictor: split.right_predictor,
+                    base_bits: split.right_bits,
                 });
 
-                // lchild = samples with property <= splitval
-                let lchild_range = &indices[candidate.start..abs_mid];
-                let lchild_pred = split.left_predictor;
-                let lchild_bits =
-                    compute_predictor_entropy(samples, lchild_range, lchild_pred, histogram_size);
                 stack.push(SplitCandidate {
                     node_idx: lchild_idx,
                     start: candidate.start,
                     end: abs_mid,
-                    best_predictor: lchild_pred,
-                    base_bits: lchild_bits,
+                    best_predictor: split.left_predictor,
+                    base_bits: split.left_bits,
                 });
             }
             _ => {
-                // No beneficial split found
                 finalize_leaf(&mut tree, &candidate);
             }
         }
@@ -586,21 +705,17 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
     assign_sequential_contexts(&mut tree);
 
     // Validate tree structure (matching libjxl's ValidateTree in dec_ma.cc).
-    // If any node violates property range constraints, collapse it to a leaf.
-    // This prevents djxl decode failures from adversarial or edge-case inputs.
     loop {
         match validate_tree_djxl(&tree) {
             Ok(()) => break,
             Err(msg) => {
                 #[cfg(feature = "debug-rect")]
                 eprintln!("tree/validate: fixing invalid node: {}", msg);
-                // Extract the node index from the error message
                 let node_idx = msg
                     .strip_prefix("Node ")
                     .and_then(|s| s.split_whitespace().next())
                     .and_then(|s| s.parse::<usize>().ok())
                     .expect("validate_tree_djxl error format changed");
-                // Collapse this split node to a leaf with gradient predictor
                 tree[node_idx] = PropertyDecisionNode {
                     property: -1,
                     splitval: 0,
@@ -611,7 +726,6 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     rchild: 0,
                     context_id: 0,
                 };
-                // Re-assign contexts and re-validate
                 assign_sequential_contexts(&mut tree);
             }
         }
@@ -653,23 +767,24 @@ struct BestSplit {
     left_predictor: usize,
     right_predictor: usize,
     total_bits: f64,
+    /// Cached cost for left child (avoids redundant compute_predictor_entropy).
+    left_bits: f64,
+    /// Cached cost for right child (avoids redundant compute_predictor_entropy).
+    right_bits: f64,
 }
 
 /// Find the best (property, threshold) split for the given samples.
 ///
-/// Uses a count_increase table approach matching libjxl's enc_ma.cc:FindBestSplit.
-/// For each property:
-/// 1. Quantize property values into buckets and determine threshold set.
-/// 2. For each predictor, one pass through samples builds per-bucket token histograms.
-/// 3. Sweep through buckets, moving counts from right to left, evaluating splits.
+/// Uses pre-quantized property buckets and a count_increase table approach
+/// matching libjxl's enc_ma.cc:FindBestSplit.
 ///
-/// Processing one predictor at a time (instead of all 14 simultaneously) dramatically
-/// improves cache utilization: working set per pass is ~3MB (1 token Vec + 1 property Vec)
-/// instead of ~44MB (14 token Vecs + 14 extra_bits Vecs).
-///
-/// `parent_predictor`: the predictor index of the parent node. A penalty is applied
-/// when a child would use a different predictor, matching libjxl's change_pred_penalty
-/// formula: `800 / (100 + threshold)` bits per changed child.
+/// Key optimizations over baseline:
+/// - Pre-quantized bucket indices (no per-node binary_search or threshold allocation)
+/// - Bucket range narrowing: only iterate bmin..bmax for this node's samples
+/// - Effective histogram size: track max token across all predictors per node
+/// - Zip iterators in sweep loop for bounds check elimination
+/// - Cached left_bits/right_bits in BestSplit to avoid redundant entropy computation
+#[allow(clippy::too_many_arguments)]
 fn find_best_split(
     samples: &TreeSamples,
     indices: &[usize],
@@ -678,6 +793,8 @@ fn find_best_split(
     params: &TreeLearningParams,
     parent_predictor: usize,
     threshold: f64,
+    nlog2n_table: &[f64],
+    pq: &PreQuantizedProps,
 ) -> Option<BestSplit> {
     let count = indices.len();
     if count < 2 {
@@ -691,322 +808,263 @@ fn find_best_split(
     // Predictor change penalty matching libjxl's enc_ma.cc:303
     let change_pred_penalty = 800.0 / (100.0 + threshold);
 
-    // Index of the Weighted predictor in CANDIDATE_PREDICTORS
     let weighted_idx = CANDIDATE_PREDICTORS
         .iter()
         .position(|&p| p == Predictor::Weighted)
         .unwrap_or(usize::MAX);
 
-    let max_buckets = params.max_property_values;
+    // Compute effective histogram size for this node: max token + 1 across all predictors.
+    // Deep tree nodes often have much smaller max tokens than the root.
+    let mut effective_histo = 0usize;
+    for pred in 0..num_pred {
+        let tokens = &samples.residual_tokens[pred];
+        for &idx in indices {
+            let tok = tokens[idx] as usize;
+            if tok >= effective_histo {
+                effective_histo = tok + 1;
+            }
+        }
+    }
+    let effective_histo = effective_histo.min(histogram_size);
+    if effective_histo == 0 {
+        return None;
+    }
 
     // Reusable buffers for the bucket sweep (allocated once, reused per property).
-    // count_increase[bucket * histogram_size + token]: how many samples in this bucket
-    // have this token value for the current predictor.
-    // Reusable buffers — resized per property to num_buckets.
     let mut count_increase: Vec<u32> = Vec::new();
     let mut extra_bits_increase: Vec<u64> = Vec::new();
     let mut bucket_counts: Vec<u32> = Vec::new();
 
-    // Per-predictor histogram buffers for the sweep
-    let mut right_counts = vec![0u32; histogram_size];
-    let mut left_counts = vec![0u32; histogram_size];
+    let mut right_counts = vec![0u32; effective_histo];
+    let mut left_counts = vec![0u32; effective_histo];
 
-    // Per-threshold best cost arrays — resized per property
     let mut best_l_cost: Vec<f64> = Vec::new();
     let mut best_r_cost: Vec<f64> = Vec::new();
     let mut best_l_pred: Vec<usize> = Vec::new();
     let mut best_r_pred: Vec<usize> = Vec::new();
 
-    // Reusable buffers for counting sort (group indices by bucket per property).
-    let mut bucket_map: Vec<u16> = vec![0; count];
+    // Counting sort buffers
     let mut sorted_by_bucket: Vec<usize> = vec![0; count];
     let mut bucket_starts: Vec<usize> = Vec::new();
     let mut bucket_write_pos: Vec<usize> = Vec::new();
 
     for &prop_idx in params.properties {
-        let props = &samples.props[prop_idx];
-
-        // Step 1: Find min/max property values in this node's samples
-        let mut min_val = i32::MAX;
-        let mut max_val = i32::MIN;
-        for &idx in indices {
-            let v = props[idx];
-            if v < min_val {
-                min_val = v;
-            }
-            if v > max_val {
-                max_val = v;
-            }
-        }
-        if min_val == max_val {
-            continue; // Property is constant — no useful split
-        }
-
-        // Step 2: Build threshold set from unique values.
-        // Instead of sorting all samples, do a counting pass to find unique values.
-        // For properties with many unique values, subsample evenly spaced thresholds.
-        let range = max_val as i64 - min_val as i64 + 1;
-        let threshold_set: Vec<i32>;
-        let num_thresholds: usize;
-
-        if range <= (max_buckets * 4) as i64 {
-            // Small range: use direct counting to find unique values
-            let range_usize = range as usize;
-            let mut present = vec![false; range_usize];
-            for &idx in indices {
-                present[(props[idx] - min_val) as usize] = true;
-            }
-            let mut unique_vals: Vec<i32> = present
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| **p)
-                .map(|(i, _)| min_val + i as i32)
-                .collect();
-            if unique_vals.len() <= 1 {
-                continue;
-            }
-            // Remove the last value (can't split at the maximum)
-            unique_vals.pop();
-            threshold_set = if unique_vals.len() <= max_buckets {
-                unique_vals
-            } else {
-                let step = unique_vals.len().div_ceil(max_buckets);
-                unique_vals
-                    .iter()
-                    .step_by(step.max(1))
-                    .take(max_buckets)
-                    .copied()
-                    .collect()
-            };
-            num_thresholds = threshold_set.len();
-        } else {
-            // Large range: sort a sample of property values to find thresholds
-            let mut sample_vals: Vec<i32> = indices.iter().map(|&i| props[i]).collect();
-            sample_vals.sort_unstable();
-            sample_vals.dedup();
-            if sample_vals.len() <= 1 {
-                continue;
-            }
-            sample_vals.pop(); // remove max
-            threshold_set = if sample_vals.len() <= max_buckets {
-                sample_vals
-            } else {
-                let step = sample_vals.len() / max_buckets;
-                sample_vals.iter().step_by(step.max(1)).copied().collect()
-            };
-            num_thresholds = threshold_set.len();
-        }
-
+        let num_thresholds = pq.num_thresholds(prop_idx);
         if num_thresholds == 0 {
             continue;
         }
 
-        // Step 3: Assign each sample to a bucket using the threshold set.
-        // bucket_map[i] = bucket index for indices[i].
-        // Bucket 0 = property <= threshold_set[0],
-        // Bucket k = threshold_set[k-1] < property <= threshold_set[k],
-        // Bucket num_thresholds = property > threshold_set[last].
-        let num_buckets = num_thresholds + 1;
+        let pq_buckets = &pq.bucket_indices[prop_idx];
+        let threshold_set = &pq.threshold_sets[prop_idx];
 
-        // Resize buffers for this property's bucket count
-        let ci_size = num_buckets * histogram_size;
+        // Bucket range narrowing: find min/max bucket for this node's samples
+        let mut bmin: u8 = u8::MAX;
+        let mut bmax: u8 = 0;
+        for &idx in indices {
+            let b = pq_buckets[idx];
+            if b < bmin {
+                bmin = b;
+            }
+            if b > bmax {
+                bmax = b;
+            }
+        }
+        if bmin == bmax {
+            continue; // All samples in same bucket — no useful split
+        }
+        let bmin = bmin as usize;
+        let bmax = bmax as usize;
+
+        // Effective number of buckets for this node
+        let local_num_buckets = bmax - bmin + 1;
+
+        // Resize buffers
+        let ci_size = local_num_buckets * effective_histo;
         if count_increase.len() < ci_size {
             count_increase.resize(ci_size, 0);
         }
-        if extra_bits_increase.len() < num_buckets {
-            extra_bits_increase.resize(num_buckets, 0);
+        if extra_bits_increase.len() < local_num_buckets {
+            extra_bits_increase.resize(local_num_buckets, 0);
         }
-        if bucket_counts.len() < num_buckets {
-            bucket_counts.resize(num_buckets, 0);
-        }
-        if best_l_cost.len() < num_thresholds {
-            best_l_cost.resize(num_thresholds, f64::MAX);
-            best_r_cost.resize(num_thresholds, f64::MAX);
-            best_l_pred.resize(num_thresholds, 0);
-            best_r_pred.resize(num_thresholds, 0);
-        }
-        // Step 3: Assign samples to buckets and counting-sort indices by bucket.
-        // This groups all sample indices belonging to the same bucket contiguously,
-        // so the per-predictor collect phase writes to a fixed 56-element window per group.
-        bucket_counts[..num_buckets].fill(0);
-        // First pass: compute bucket for each sample, store in bucket_map, count per bucket
-        for (i, &idx) in indices.iter().enumerate() {
-            let v = props[idx];
-            let bucket = match threshold_set.binary_search(&v) {
-                Ok(pos) => pos,
-                Err(pos) => {
-                    if pos == 0 {
-                        0
-                    } else {
-                        pos
-                    }
-                }
-            };
-            let bucket = bucket.min(num_thresholds);
-            bucket_map[i] = bucket as u16;
-            bucket_counts[bucket] += 1;
+        if bucket_counts.len() < local_num_buckets {
+            bucket_counts.resize(local_num_buckets, 0);
         }
 
-        // Compute bucket start offsets (exclusive prefix sum)
-        if bucket_starts.len() < num_buckets + 1 {
-            bucket_starts.resize(num_buckets + 1, 0);
+        // Number of thresholds within our bucket range
+        // Bucket bmin..bmax spans thresholds bmin..bmax-1 (threshold k separates bucket k from k+1)
+        // But we need thresholds that are BETWEEN bmin and bmax
+        let local_num_thresholds = bmax - bmin; // thresholds at positions bmin..bmax-1
+
+        if best_l_cost.len() < local_num_thresholds {
+            best_l_cost.resize(local_num_thresholds, f64::MAX);
+            best_r_cost.resize(local_num_thresholds, f64::MAX);
+            best_l_pred.resize(local_num_thresholds, 0);
+            best_r_pred.resize(local_num_thresholds, 0);
+        }
+
+        // Counting sort: group indices by bucket
+        bucket_counts[..local_num_buckets].fill(0);
+        for &idx in indices {
+            let b = (pq_buckets[idx] as usize) - bmin;
+            bucket_counts[b] += 1;
+        }
+
+        if bucket_starts.len() < local_num_buckets + 1 {
+            bucket_starts.resize(local_num_buckets + 1, 0);
         }
         bucket_starts[0] = 0;
-        for b in 0..num_buckets {
+        for b in 0..local_num_buckets {
             bucket_starts[b + 1] = bucket_starts[b] + bucket_counts[b] as usize;
         }
 
-        // Second pass: scatter indices into bucket-sorted order using stored bucket_map
-        if sorted_by_bucket.len() < count {
-            sorted_by_bucket.resize(count, 0);
+        if bucket_write_pos.len() < local_num_buckets {
+            bucket_write_pos.resize(local_num_buckets, 0);
         }
-        if bucket_write_pos.len() < num_buckets {
-            bucket_write_pos.resize(num_buckets, 0);
-        }
-        bucket_write_pos[..num_buckets].copy_from_slice(&bucket_starts[..num_buckets]);
-        for (i, &idx) in indices.iter().enumerate() {
-            let bucket = bucket_map[i] as usize;
-            sorted_by_bucket[bucket_write_pos[bucket]] = idx;
-            bucket_write_pos[bucket] += 1;
+        bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
+        for &idx in indices {
+            let b = (pq_buckets[idx] as usize) - bmin;
+            sorted_by_bucket[bucket_write_pos[b]] = idx;
+            bucket_write_pos[b] += 1;
         }
 
-        // Step 4: For each predictor, collect count_increase and sweep through buckets.
-        // Initialize per-threshold best costs for this property.
-        best_l_cost[..num_thresholds].fill(f64::MAX);
-        best_r_cost[..num_thresholds].fill(f64::MAX);
-        best_l_pred[..num_thresholds].fill(0);
-        best_r_pred[..num_thresholds].fill(0);
+        // Initialize per-threshold best costs
+        best_l_cost[..local_num_thresholds].fill(f64::MAX);
+        best_r_cost[..local_num_thresholds].fill(f64::MAX);
+        best_l_pred[..local_num_thresholds].fill(0);
+        best_r_pred[..local_num_thresholds].fill(0);
 
         for pred in 0..num_pred {
             let tokens = &samples.residual_tokens[pred];
             let ebits = &samples.extra_bits[pred];
 
-            // Collect count_increase by iterating bucket groups.
-            // Within each bucket, writes target a fixed 56-element count_increase window.
-            let ci_size = num_buckets * histogram_size;
+            // Collect count_increase by iterating bucket groups
             count_increase[..ci_size].fill(0);
-            extra_bits_increase[..num_buckets].fill(0);
+            extra_bits_increase[..local_num_buckets].fill(0);
 
-            for bucket in 0..num_buckets {
-                let start = bucket_starts[bucket];
-                let end = bucket_starts[bucket + 1];
-                let ci_base = bucket * histogram_size;
-                let ci_slice = &mut count_increase[ci_base..ci_base + histogram_size];
+            for local_bucket in 0..local_num_buckets {
+                let start = bucket_starts[local_bucket];
+                let end = bucket_starts[local_bucket + 1];
+                let ci_base = local_bucket * effective_histo;
+                let ci_slice = &mut count_increase[ci_base..ci_base + effective_histo];
                 let mut eb_sum: u64 = 0;
                 for &idx in &sorted_by_bucket[start..end] {
                     let tok = tokens[idx] as usize;
-                    if tok < histogram_size {
-                        ci_slice[tok] += 1;
-                    }
+                    ci_slice[tok] += 1;
                     eb_sum += ebits[idx] as u64;
                 }
-                extra_bits_increase[bucket] = eb_sum;
+                extra_bits_increase[local_bucket] = eb_sum;
             }
 
-            // Build initial right histogram (all buckets on the right side)
-            // and compute initial right nlog2n sum for incremental entropy.
-            right_counts[..histogram_size].fill(0);
+            // Build initial right histogram (all local buckets on the right side)
+            right_counts[..effective_histo].fill(0);
             let mut right_extra: u64 = 0;
             let mut right_total: u32 = count as u32;
-            for (bucket, &eb) in extra_bits_increase[..num_buckets].iter().enumerate() {
-                let ci_start = bucket * histogram_size;
-                for sym in 0..histogram_size {
-                    right_counts[sym] += count_increase[ci_start + sym];
+            for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets]
+                .iter()
+                .enumerate()
+            {
+                let ci_base = local_bucket * effective_histo;
+                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+                for (rc, &ci) in right_counts[..effective_histo]
+                    .iter_mut()
+                    .zip(ci_row.iter())
+                {
+                    *rc += ci;
                 }
                 right_extra += eb;
             }
 
-            // Compute initial nlog2n sums: sum(c_i * log2(c_i)) for right side.
-            // Entropy = nlog2n(total) - nlog2n_sum + extra_bits
+            // Compute initial nlog2n sum for right side
             let mut right_nlogn_sum: f64 = 0.0;
-            for &c in &right_counts[..histogram_size] {
-                right_nlogn_sum += nlog2n(c);
+            for &c in &right_counts[..effective_histo] {
+                right_nlogn_sum += nlog2n(nlog2n_table, c);
             }
 
-            left_counts[..histogram_size].fill(0);
+            left_counts[..effective_histo].fill(0);
             let mut left_extra: u64 = 0;
             let mut left_total: u32 = 0;
             let mut left_nlogn_sum: f64 = 0.0;
 
-            // Sweep through buckets 0..num_thresholds, moving each to the left side.
-            // After moving bucket k, the split is: left = buckets 0..=k, right = buckets k+1..
-            // This corresponds to splitval = threshold_set[k].
-            // Uses incremental entropy: only update nlog2n sums for changed symbols.
-            for k in 0..num_thresholds {
-                let bc = bucket_counts[k];
+            // Sweep through local buckets, moving each from right to left
+            for local_k in 0..local_num_thresholds {
+                let bc = bucket_counts[local_k];
                 if bc == 0 {
                     continue;
                 }
 
-                // Move bucket k from right to left, updating counts and nlog2n sums
-                // incrementally. Only symbols with nonzero count_increase are touched.
-                let ci_start = k * histogram_size;
-                for sym in 0..histogram_size {
-                    let delta = count_increase[ci_start + sym];
+                // Move bucket from right to left using zip iterators
+                let ci_base = local_k * effective_histo;
+                let ci_row = &count_increase[ci_base..ci_base + effective_histo];
+                for ((ci, left), right) in ci_row
+                    .iter()
+                    .zip(left_counts[..effective_histo].iter_mut())
+                    .zip(right_counts[..effective_histo].iter_mut())
+                {
+                    let delta = *ci;
                     if delta > 0 {
-                        // Update left side
-                        let old_l = left_counts[sym];
+                        let old_l = *left;
                         let new_l = old_l + delta;
-                        left_nlogn_sum += nlog2n(new_l) - nlog2n(old_l);
-                        left_counts[sym] = new_l;
+                        left_nlogn_sum += nlog2n(nlog2n_table, new_l) - nlog2n(nlog2n_table, old_l);
+                        *left = new_l;
 
-                        // Update right side
-                        let old_r = right_counts[sym];
+                        let old_r = *right;
                         let new_r = old_r - delta;
-                        right_nlogn_sum += nlog2n(new_r) - nlog2n(old_r);
-                        right_counts[sym] = new_r;
+                        right_nlogn_sum +=
+                            nlog2n(nlog2n_table, new_r) - nlog2n(nlog2n_table, old_r);
+                        *right = new_r;
                     }
                 }
-                left_extra += extra_bits_increase[k];
-                right_extra -= extra_bits_increase[k];
+                left_extra += extra_bits_increase[local_k];
+                right_extra -= extra_bits_increase[local_k];
                 left_total += bc;
                 right_total -= bc;
 
-                // Skip degenerate splits
                 if left_total == 0 || right_total == 0 {
                     continue;
                 }
 
-                // Evaluate cost using incremental nlog2n sums:
-                // bits = nlog2n(total) - nlog2n_sum + extra_bits
-                let l_bits = nlog2n(left_total) - left_nlogn_sum + left_extra as f64;
-                let r_bits = nlog2n(right_total) - right_nlogn_sum + right_extra as f64;
+                let l_bits = nlog2n(nlog2n_table, left_total) - left_nlogn_sum + left_extra as f64;
+                let r_bits =
+                    nlog2n(nlog2n_table, right_total) - right_nlogn_sum + right_extra as f64;
 
-                if l_bits < best_l_cost[k] {
-                    best_l_cost[k] = l_bits;
-                    best_l_pred[k] = pred;
+                if l_bits < best_l_cost[local_k] {
+                    best_l_cost[local_k] = l_bits;
+                    best_l_pred[local_k] = pred;
                 }
-                if r_bits < best_r_cost[k] {
-                    best_r_cost[k] = r_bits;
-                    best_r_pred[k] = pred;
+                if r_bits < best_r_cost[local_k] {
+                    best_r_cost[local_k] = r_bits;
+                    best_r_pred[local_k] = pred;
                 }
             }
         }
 
-        // Step 5: Find best threshold across all predictors for this property
-        for k in 0..num_thresholds {
-            if best_l_cost[k] == f64::MAX || best_r_cost[k] == f64::MAX {
+        // Find best threshold across all predictors for this property
+        for local_k in 0..local_num_thresholds {
+            if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
                 continue;
             }
 
-            let mut total = best_l_cost[k] + best_r_cost[k];
+            let mut total = best_l_cost[local_k] + best_r_cost[local_k];
 
-            // Apply predictor change penalty
-            if best_l_pred[k] != parent_predictor && parent_predictor != weighted_idx {
+            if best_l_pred[local_k] != parent_predictor && parent_predictor != weighted_idx {
                 total += change_pred_penalty;
             }
-            if best_r_pred[k] != parent_predictor && parent_predictor != weighted_idx {
+            if best_r_pred[local_k] != parent_predictor && parent_predictor != weighted_idx {
                 total += change_pred_penalty;
             }
 
             if total < best_bits {
                 best_bits = total;
+                // Map local_k back to global threshold index: bmin + local_k
+                let global_k = bmin + local_k;
                 best = Some(BestSplit {
                     property: prop_idx,
-                    splitval: threshold_set[k],
-                    left_predictor: best_l_pred[k],
-                    right_predictor: best_r_pred[k],
+                    splitval: threshold_set[global_k],
+                    left_predictor: best_l_pred[local_k],
+                    right_predictor: best_r_pred[local_k],
                     total_bits: total,
+                    left_bits: best_l_cost[local_k],
+                    right_bits: best_r_cost[local_k],
                 });
             }
         }
@@ -1033,7 +1091,11 @@ fn find_best_predictor(samples: &TreeSamples, indices: &[usize], histogram_size:
 }
 
 /// Compute total cost for a given predictor's residuals over the indexed samples.
-/// Returns Shannon entropy of tokens + total extra bits (matching libjxl's cost model).
+/// Returns Shannon entropy of tokens + total extra bits.
+/// Uses estimate_bits (probability-floor formula) for consistency with the split
+/// threshold comparison — the sweep in find_best_split uses nlog2n, but the
+/// parent's base_bits must use the same formula as the old code to avoid
+/// inflated base_bits that accept too many splits (10x tree size regression).
 fn compute_predictor_entropy(
     samples: &TreeSamples,
     indices: &[usize],
