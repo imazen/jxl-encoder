@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0x1964d8806c80f558, // Updated: tree learning count_increase optimization changes split decisions
+        0xbbcb62bc2b40bafa, // Updated: eval sample cap + predictor pruning changes tree structure
     );
 }
 
