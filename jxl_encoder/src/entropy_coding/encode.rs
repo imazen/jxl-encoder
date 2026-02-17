@@ -8,6 +8,7 @@
 
 #![allow(dead_code)]
 
+use super::context_map::move_to_front_transform;
 use super::lz77::Lz77Params;
 use super::token::{Lz77UintCoder, Token, UintCoder};
 use crate::bit_writer::BitWriter;
@@ -1121,9 +1122,10 @@ pub fn build_entropy_code_ans_with_options(
         ClusteringType::Fast
     };
 
-    // Limit to 8 clusters to use simple context map format
-    // (simple format supports max 3 bits per entry = 8 histograms)
-    let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, 8)
+    // Allow up to 64 clusters — non-simple context map format supports arbitrary counts.
+    // The cost-based clustering algorithm will merge down to the optimal count.
+    let max_histograms = num_contexts.min(64);
+    let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, max_histograms)
         .expect("ANS clustering failed");
 
     let context_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
@@ -1290,6 +1292,9 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
 }
 
 /// Write context map for ANS entropy code.
+///
+/// Supports both simple format (≤8 histograms, raw bits) and non-simple format
+/// (>8 histograms, Huffman-encoded with optional MTF transform).
 fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
     let num_histograms = code.histograms.len();
 
@@ -1297,14 +1302,12 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
         // Simple context map: all contexts map to histogram 0
         writer.write(1, 1)?; // simple_context_map = true
         writer.write(2, 0)?; // nbits = 0
-    } else if num_histograms <= 8
-        && code
-            .context_map
-            .iter()
-            .all(|&c| (c as usize) < num_histograms)
-    {
+        return Ok(());
+    }
+
+    if num_histograms <= 8 {
         // Simple context map with multiple histograms
-        // bits_per_entry: 0 = all zeros (handled above), 1 = 2 histos, 2 = 4 histos, 3 = 8 histos
+        // bits_per_entry: 1 = 2 histos, 2 = 4 histos, 3 = 8 histos
         let nbits = if num_histograms <= 2 {
             1
         } else if num_histograms <= 4 {
@@ -1314,19 +1317,101 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
         };
         writer.write(1, 1)?; // simple_context_map = true
         writer.write(2, nbits as u64)?;
-
         for &ctx in &code.context_map {
             writer.write(nbits, ctx as u64)?;
         }
-    } else {
-        // Complex context map is not yet implemented for ANS
-        return Err(Error::NotImplemented(format!(
-            "ANS context map with {} histograms (max 8)",
-            num_histograms
-        )));
+        return Ok(());
+    }
+
+    // Non-simple context map for > 8 histograms.
+    // Format: is_simple=0, use_mtf, then Huffman-encoded context map entries.
+    //
+    // Try both direct and MTF, pick whichever has lower estimated cost.
+    let direct_tokens = &code.context_map;
+    let mtf_tokens = move_to_front_transform(&code.context_map);
+
+    let direct_cost = estimate_context_map_cost(direct_tokens);
+    let mtf_cost = estimate_context_map_cost(&mtf_tokens);
+    let use_mtf = mtf_cost < direct_cost;
+    let tokens: &[u8] = if use_mtf { &mtf_tokens } else { direct_tokens };
+
+    // is_simple=0, use_mtf, lz77_enabled=0 (3 bits packed)
+    let header_bits = if use_mtf { 0b010u64 } else { 0b000u64 };
+    writer.write(3, header_bits)?;
+
+    // Now write a Huffman-encoded entropy code for the context map values.
+    // Since num_contexts=1 for the context map's own entropy code, no inner context map.
+
+    // use_prefix_code = 1 (Huffman)
+    writer.write(1, 1)?;
+
+    // HybridUint config: split=4, msb=2, lsb=0 (same as our UintCoder)
+    writer.write(4, 4)?; // split_exponent = 4
+    writer.write(3, 2)?; // msb_in_token = 2
+    writer.write(2, 0)?; // lsb_in_token = 0
+
+    // Build histogram of encoded token symbols
+    let mut histogram = [0u32; ALPHABET_SIZE];
+    for &t in tokens {
+        let encoded = UintCoder::encode(t as u32);
+        histogram[encoded.token as usize] += 1;
+    }
+
+    // Find alphabet length (trim trailing zeros)
+    let mut length = ALPHABET_SIZE;
+    while length > 0 && histogram[length - 1] == 0 {
+        length -= 1;
+    }
+    length = length.max(1);
+
+    // Create Huffman tree
+    let mut depths = [0u8; ALPHABET_SIZE];
+    create_huffman_tree(&histogram, length, 15, &mut depths);
+
+    let mut bits = [0u16; ALPHABET_SIZE];
+    convert_bit_depths_to_symbols(&depths, &mut bits);
+
+    // Write alphabet size
+    write_var_len_uint16(length - 1, writer)?;
+
+    // Write prefix code tree
+    if length > 1 {
+        let pc = PrefixCode { depths, bits };
+        write_prefix_code(&pc, writer)?;
+    }
+
+    // Write encoded context map entries
+    for &t in tokens {
+        let encoded = UintCoder::encode(t as u32);
+        let tok = encoded.token as usize;
+        let depth = depths[tok] as usize;
+        let b = bits[tok] as u64;
+        let data = b | ((encoded.bits as u64) << depth);
+        let total_bits = depth + encoded.nbits as usize;
+        writer.write(total_bits, data)?;
     }
 
     Ok(())
+}
+
+/// Estimate the Shannon entropy cost of a byte sequence (for context map cost comparison).
+fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
+    if tokens.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0u32; 256];
+    for &t in tokens {
+        counts[t as usize] += 1;
+    }
+    let total = tokens.len() as f64;
+    let mut cost = 0.0;
+    for &c in &counts {
+        if c > 0 {
+            let p = c as f64 / total;
+            cost -= p * p.log2();
+        }
+    }
+    cost * total
 }
 
 /// Write HybridUint config (split_exponent, msb_in_token, lsb_in_token).
