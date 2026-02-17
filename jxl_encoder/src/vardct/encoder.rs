@@ -1271,10 +1271,6 @@ impl VarDctEncoder {
                 td_max,
                 bad_blocks
             );
-            eprintln!(
-                "  Butteraugli iter {}: score={:.3} (target={:.3})",
-                iter, result.score, target_distance,
-            );
         }
 
         // Convert float quant_field back to u8 for final encoding

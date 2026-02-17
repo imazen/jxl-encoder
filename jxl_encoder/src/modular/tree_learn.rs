@@ -562,7 +562,8 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         match validate_tree_djxl(&tree) {
             Ok(()) => break,
             Err(msg) => {
-                eprintln!("Tree validation: fixing invalid node: {}", msg);
+                #[cfg(feature = "debug-rect")]
+                eprintln!("tree/validate: fixing invalid node: {}", msg);
                 // Extract the node index from the error message
                 let node_idx = msg
                     .strip_prefix("Node ")
