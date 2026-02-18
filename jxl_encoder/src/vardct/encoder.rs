@@ -1179,8 +1179,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: per-histogram HybridUint config optimization
-        const EXPECTED_HASH: u64 = 0xf743f5c30a677c68;
+        // Updated: effort-gate AdjustQuantBlockAC (skip at effort > 5)
+        const EXPECTED_HASH: u64 = 0xaf55dee6f2eb7104;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1249,8 +1249,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: ANS alias table log_alpha_size consistency fix
-        const EXPECTED_HASH: u64 = 0xfd203da322970f5;
+        // Updated: effort-gate AdjustQuantBlockAC (skip at effort > 5)
+        const EXPECTED_HASH: u64 = 0xfc464d25c91698e6;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1285,8 +1285,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: per-histogram HybridUint config optimization
-        const EXPECTED_HASH: u64 = 0x5256b4e484f6426e;
+        // Updated: effort-gate AdjustQuantBlockAC (skip at effort > 5)
+        const EXPECTED_HASH: u64 = 0x23d4ed8c95894351;
         assert_eq!(
             hash,
             EXPECTED_HASH,

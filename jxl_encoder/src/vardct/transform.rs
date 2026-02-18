@@ -624,79 +624,84 @@ impl VarDctEncoder {
                 }
 
                 // ── Step 2c: AdjustQuantBlockAC ──────────────────────────────
-                // Ported from libjxl enc_group.cc. Adjusts per-block quant and
-                // Y thresholds based on coefficient statistics across all 3 channels.
-                // Takes max quant adjustment across channels, saves Y thresholds.
+                // Ported from libjxl enc_group.cc QuantizeRoundtripYBlockAC.
+                // At effort <= 5 (Hare): adjusts per-block quant and Y thresholds
+                // based on coefficient statistics across all 3 channels.
+                // At effort > 5: uses fixed thresholds, no per-block adjustment.
                 let mut thresholds_y;
                 let qac;
                 {
                     let quant_idx = by * xsize_blocks + bx;
                     let mut quant_int = quant_field[quant_idx] as i32;
-                    let orig_qac = params.scale * quant_int as f32;
-                    thresholds_y = [0.58f32, 0.64, 0.64, 0.64];
-                    let mut max_quant = quant_int;
-                    for &c in &[1usize, 0, 2] {
-                        let mut thres = [0.58f32, 0.64, 0.64, 0.64];
-                        let mut quant_c = quant_int;
-                        let qm_mul = if c == 0 {
-                            x_qm_mul
-                        } else if c == 2 {
-                            b_qm_mul
-                        } else {
-                            1.0
-                        };
-                        let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
-                        let (hflags, vals, err, activity) = Self::adjust_quant_block_ac(
-                            &dct_coeffs[c],
-                            weights_c,
-                            orig_qac,
-                            qm_mul,
-                            c,
-                            raw_strategy,
-                            block_width,
-                            block_height,
-                            cx,
-                            cy,
-                            &mut thres,
-                            &mut quant_c,
-                        );
-                        if c == 1 {
-                            thresholds_y = thres;
-                            // Log Y-channel heuristics (most impactful)
-                            debug_rect!(
-                                "quant/heur",
-                                bx * 8,
-                                by * 8,
-                                cx * 8,
-                                cy * 8,
-                                "c=Y flags={:06b} vals={:.0} err={:.1} act={} q={}→{}",
-                                hflags,
-                                vals,
-                                err,
-                                activity,
-                                quant_int,
-                                quant_c
+                    if self.effort <= 5 {
+                        // effort <= Hare: run AdjustQuantBlockAC for all 3 channels
+                        let orig_qac = params.scale * quant_int as f32;
+                        thresholds_y = [0.58f32, 0.64, 0.64, 0.64];
+                        let mut max_quant = quant_int;
+                        for &c in &[1usize, 0, 2] {
+                            let mut thres = [0.58f32, 0.64, 0.64, 0.64];
+                            let mut quant_c = quant_int;
+                            let qm_mul = if c == 0 {
+                                x_qm_mul
+                            } else if c == 2 {
+                                b_qm_mul
+                            } else {
+                                1.0
+                            };
+                            let weights_c = super::quant::quant_weights(raw_strategy as usize, c);
+                            let (hflags, vals, err, activity) = Self::adjust_quant_block_ac(
+                                &dct_coeffs[c],
+                                weights_c,
+                                orig_qac,
+                                qm_mul,
+                                c,
+                                raw_strategy,
+                                block_width,
+                                block_height,
+                                cx,
+                                cy,
+                                &mut thres,
+                                &mut quant_c,
                             );
+                            if c == 1 {
+                                thresholds_y = thres;
+                                debug_rect!(
+                                    "quant/heur",
+                                    bx * 8,
+                                    by * 8,
+                                    cx * 8,
+                                    cy * 8,
+                                    "c=Y flags={:06b} vals={:.0} err={:.1} act={} q={}→{}",
+                                    hflags,
+                                    vals,
+                                    err,
+                                    activity,
+                                    quant_int,
+                                    quant_c
+                                );
+                            }
+                            max_quant = max_quant.max(quant_c);
                         }
-                        max_quant = max_quant.max(quant_c);
+                        let quant_before = quant_field[quant_idx];
+                        quant_int = max_quant;
+                        quant_field[quant_idx] = quant_int.clamp(1, 255) as u8;
+                        debug_rect!(
+                            "quant/adjust",
+                            bx * 8,
+                            by * 8,
+                            cx * 8,
+                            cy * 8,
+                            "strat={} q={}→{} (e<=5 AdjustQuantBlockAC)",
+                            raw_strategy,
+                            quant_before,
+                            quant_field[quant_idx]
+                        );
+                    } else {
+                        // effort > Hare: fixed thresholds, no per-block adjustment
+                        // (enc_group.cc:358-363)
+                        thresholds_y = [0.56f32, 0.62, 0.62, 0.62];
                     }
-                    let quant_before = quant_field[quant_idx];
-                    quant_int = max_quant;
-                    // Write adjusted quant back (decoder sees this in AC metadata)
-                    quant_field[quant_idx] = quant_int.clamp(1, 255) as u8;
                     qac = params.scale * quant_int as f32;
-                    debug_rect!(
-                        "quant/adjust",
-                        bx * 8,
-                        by * 8,
-                        cx * 8,
-                        cy * 8,
-                        "strat={} q={}→{} qac={:.1}",
-                        raw_strategy,
-                        quant_before,
-                        quant_field[quant_idx],
-                        qac
-                    );
                 }
 
                 // ── Step 3: Quantize Y AC with thresholding ────────────────
