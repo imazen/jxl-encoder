@@ -148,6 +148,8 @@ pub struct VarDctEncoder {
     /// and stores unique patterns once in a reference frame. Huge wins on screenshots.
     /// On by default for lossy encoding.
     pub enable_patches: bool,
+    /// Encoder mode: Reference (match libjxl) or Experimental (own improvements).
+    pub encoder_mode: crate::api::EncoderMode,
     /// Manual splines to overlay on the image (opt-in, None by default).
     pub splines: Option<Vec<crate::vardct::splines::Spline>>,
     /// Progressive encoding mode (Single, QuantizedAcFullAc, DcVlfLfAc).
@@ -181,6 +183,7 @@ impl Default for VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
             progressive: crate::api::ProgressiveMode::Single,
         }
@@ -213,6 +216,7 @@ impl VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
             progressive: crate::api::ProgressiveMode::Single,
         }

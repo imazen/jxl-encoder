@@ -142,6 +142,11 @@ struct Args {
     #[arg(long, conflicts_with = "progressive")]
     qprogressive: bool,
 
+    /// Use experimental encoder mode (encoder-specific improvements).
+    /// Default is reference mode (matches libjxl algorithm choices).
+    #[arg(long)]
+    experimental: bool,
+
     /// Enable iterative rate control for improved distance targeting.
     /// Encodes multiple times, adjusting quantization to match target distance.
     /// Requires the rate-control feature. Off by default.
@@ -319,6 +324,9 @@ fn main() {
                 if args.qprogressive {
                     cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
                 }
+                if args.experimental {
+                    cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
+                }
 
                 if args.dct8_only {
                     cfg = cfg.with_force_strategy(Some(0));
@@ -369,6 +377,9 @@ fn main() {
                     }
                     if args.lossy_palette {
                         lcfg = lcfg.with_lossy_palette(true);
+                    }
+                    if args.experimental {
+                        lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
                     }
                     lcfg
                 }
@@ -554,6 +565,9 @@ fn main() {
         if args.qprogressive {
             cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
         }
+        if args.experimental {
+            cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
+        }
 
         if args.dct8_only {
             cfg = cfg.with_force_strategy(Some(0));
@@ -698,6 +712,9 @@ fn main() {
         }
         if args.lossy_palette {
             cfg = cfg.with_lossy_palette(true);
+        }
+        if args.experimental {
+            cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
         }
         let cfg = cfg;
 

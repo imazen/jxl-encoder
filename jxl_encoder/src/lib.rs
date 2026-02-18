@@ -30,8 +30,8 @@ pub mod vardct;
 // Re-export new API as primary
 pub use api::{
     AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
-    EncodeStats, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
-    ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
+    EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method,
+    PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
 pub use vardct::splines::{Spline, SplinePoint};
 
