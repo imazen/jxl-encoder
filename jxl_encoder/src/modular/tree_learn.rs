@@ -8,6 +8,8 @@
 //! that assigns optimal predictors and entropy contexts per image region.
 //! Port of libjxl's `FindBestSplit` algorithm from `enc_ma.cc`.
 
+use core::cmp::Ordering;
+
 use super::channel::{Channel, ModularImage};
 use super::predictor::{Neighbors, Predictor, WeightedPredictorState, pack_signed};
 use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts, validate_tree_djxl};
@@ -148,6 +150,9 @@ pub struct TreeSamples {
     /// Spec-matching property values: props[property_idx][sample_idx].
     /// These are the actual (unquantized) property values.
     props: Vec<Vec<i32>>,
+    /// Sample counts after deduplication: sample_counts[sample_idx].
+    /// Before dedup, all 1s. After dedup, each unique sample's count of merged originals.
+    sample_counts: Vec<u32>,
 }
 
 impl Default for TreeSamples {
@@ -165,6 +170,7 @@ impl TreeSamples {
             residual_tokens: vec![Vec::new(); num_predictors],
             extra_bits: vec![Vec::new(); num_predictors],
             props: vec![Vec::new(); NUM_PROPERTIES],
+            sample_counts: Vec::new(),
         }
     }
 
@@ -542,6 +548,133 @@ impl PreQuantizedProps {
     }
 }
 
+/// Deduplicate samples with identical quantized properties and residuals.
+///
+/// Matching libjxl's approach: after pre-quantization, many pixels in smooth regions
+/// have identical (bucket indices, tokens, extra bits) tuples. Merging these with counts
+/// reduces the inner loop iterations in FindBestSplit by 1.4-10x on typical photos.
+///
+/// Uses composite-key sort: sort by (property buckets, then tokens + ebits), then merge
+/// consecutive identical samples. The sort order also provides good spatial locality for
+/// the tree builder's property-bucket grouping (samples in the same bucket are contiguous).
+fn dedup_samples(
+    samples: &mut TreeSamples,
+    pq: &mut PreQuantizedProps,
+    params: &TreeLearningParams,
+) {
+    let n = samples.num_samples;
+    if n <= 1 {
+        samples.sample_counts = vec![1; n];
+        return;
+    }
+
+    let num_pred = samples.num_predictors();
+    let properties = params.properties;
+
+    // Sort sample indices by composite key: property buckets first (for spatial locality
+    // in the tree builder), then tokens + ebits per predictor.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_unstable_by(|&a, &b| {
+        for &prop_idx in properties {
+            let bi = &pq.bucket_indices[prop_idx];
+            if !bi.is_empty() {
+                match bi[a].cmp(&bi[b]) {
+                    Ordering::Equal => {}
+                    ord => return ord,
+                }
+            }
+        }
+        for pred in 0..num_pred {
+            match samples.residual_tokens[pred][a].cmp(&samples.residual_tokens[pred][b]) {
+                Ordering::Equal => {}
+                ord => return ord,
+            }
+            match samples.extra_bits[pred][a].cmp(&samples.extra_bits[pred][b]) {
+                Ordering::Equal => {}
+                ord => return ord,
+            }
+        }
+        Ordering::Equal
+    });
+
+    // Walk sorted order, merge consecutive identical samples
+    let mut unique_indices: Vec<usize> = Vec::with_capacity(n / 2);
+    let mut counts: Vec<u32> = Vec::with_capacity(n / 2);
+
+    unique_indices.push(order[0]);
+    counts.push(1);
+
+    for &curr in &order[1..] {
+        let prev = *unique_indices.last().unwrap();
+        if is_same_sample(prev, curr, samples, pq, properties, num_pred) {
+            *counts.last_mut().unwrap() += 1;
+        } else {
+            unique_indices.push(curr);
+            counts.push(1);
+        }
+    }
+
+    let num_unique = unique_indices.len();
+
+    // Compact all parallel arrays to contain only unique samples.
+    // The composite-key sort order is preserved, giving good spatial locality
+    // when the tree builder groups samples by property bucket.
+    for pred in 0..num_pred {
+        let old_tokens = &samples.residual_tokens[pred];
+        let old_ebits = &samples.extra_bits[pred];
+        let new_tokens: Vec<u8> = unique_indices.iter().map(|&i| old_tokens[i]).collect();
+        let new_ebits: Vec<u8> = unique_indices.iter().map(|&i| old_ebits[i]).collect();
+        samples.residual_tokens[pred] = new_tokens;
+        samples.extra_bits[pred] = new_ebits;
+    }
+    for prop_idx in 0..NUM_PROPERTIES {
+        let old_props = &samples.props[prop_idx];
+        if old_props.is_empty() {
+            continue;
+        }
+        let new_props: Vec<i32> = unique_indices.iter().map(|&i| old_props[i]).collect();
+        samples.props[prop_idx] = new_props;
+    }
+    for prop_idx in 0..NUM_PROPERTIES {
+        let old_bi = &pq.bucket_indices[prop_idx];
+        if old_bi.is_empty() {
+            continue;
+        }
+        let new_bi: Vec<u8> = unique_indices.iter().map(|&i| old_bi[i]).collect();
+        pq.bucket_indices[prop_idx] = new_bi;
+    }
+
+    samples.num_samples = num_unique;
+    samples.sample_counts = counts;
+}
+
+/// Check if two samples have identical keys (quantized properties + residuals).
+#[inline]
+fn is_same_sample(
+    a: usize,
+    b: usize,
+    samples: &TreeSamples,
+    pq: &PreQuantizedProps,
+    properties: &[usize],
+    num_pred: usize,
+) -> bool {
+    for &prop_idx in properties {
+        let bi = &pq.bucket_indices[prop_idx];
+        if !bi.is_empty() && bi[a] != bi[b] {
+            return false;
+        }
+    }
+    for pred in 0..num_pred {
+        if samples.residual_tokens[pred][a] != samples.residual_tokens[pred][b] {
+            return false;
+        }
+        if samples.extra_bits[pred][a] != samples.extra_bits[pred][b] {
+            return false;
+        }
+    }
+    true
+}
+
 /// Context for a node being considered for splitting.
 struct SplitCandidate {
     /// Index into the tree's node vector.
@@ -569,7 +702,6 @@ struct SplitCandidate {
 /// - `params.split_threshold`: minimum bits saved for a split to be accepted
 /// - `params.max_nodes`: maximum tree nodes
 pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams) -> Tree {
-    let max_nodes = params.max_nodes;
     // Scale threshold by pixel_fraction, matching libjxl's required_cost formula.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
     let threshold = params.split_threshold * required_cost;
@@ -588,7 +720,15 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
     let nlog2n_table = build_nlog2n_table();
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
-    let pq = samples.pre_quantize(params);
+    let mut pq = samples.pre_quantize(params);
+
+    // Sample deduplication: group samples with identical (quantized props, tokens, ebits).
+    // Matching libjxl's approach, this reduces inner loop iterations on typical photos,
+    // eliminating the need for the per-node eval sample cap.
+    dedup_samples(samples, &mut pq, params);
+    let n = samples.num_samples; // Update n to unique count
+
+    let max_nodes = params.max_nodes;
 
     // Working index array: we partition this instead of moving actual data.
     let mut indices: Vec<usize> = (0..n).collect();
@@ -821,12 +961,6 @@ struct SplitWorkspace {
     bucket_write_pos: Vec<usize>,
 }
 
-/// Maximum samples used for split evaluation per node.
-/// Larger nodes use strided subsampling. The split decision is found on this subset,
-/// then applied to all samples. 8192 gives ~160 samples per bucket with 49 buckets,
-/// which is sufficient for accurate entropy estimation.
-const MAX_EVAL_SAMPLES: usize = 8192;
-
 impl SplitWorkspace {
     fn new(max_count: usize, histogram_size: usize, max_buckets: usize) -> Self {
         assert!(
@@ -895,6 +1029,12 @@ fn find_best_split(
     let mut best: Option<BestSplit> = None;
     let mut best_bits = base_bits;
 
+    let sample_counts = &samples.sample_counts;
+
+    // Compute weighted total: sum of sample_counts for this node's samples.
+    // After dedup, each unique sample represents `count` original samples.
+    let weighted_total: u32 = indices.iter().map(|&i| sample_counts[i]).sum();
+
     // Predictor change penalty matching libjxl's enc_ma.cc:303
     let change_pred_penalty = 800.0 / (100.0 + threshold);
 
@@ -906,13 +1046,12 @@ fn find_best_split(
     // Count-based predictor pruning: for small nodes, only evaluate a subset
     // of predictors. The most important are Gradient(5), Weighted(6), and the
     // parent's predictor. This reduces inner loop iterations for deep nodes.
-    // More aggressive than before: at 512+ use 10 predictors (was 14 at 1024+),
-    // since predictors 10-13 (Average1-4) rarely win on real images.
-    let num_pred = if count >= 2048 {
+    // Use weighted_total (original sample count) for thresholds.
+    let num_pred = if weighted_total >= 2048 {
         total_num_pred // All 14
-    } else if count >= 512 {
+    } else if weighted_total >= 512 {
         10 // First 10: Zero..Weighted + TopRight, TopLeft, LeftLeft
-    } else if count >= 64 {
+    } else if weighted_total >= 64 {
         7 // First 7: Zero, Left, Top, Average0, Select, Gradient, Weighted
     } else {
         4 // First 4: Zero, Left, Top, Average0
@@ -927,18 +1066,6 @@ fn find_best_split(
     if effective_histo == 0 {
         return None;
     }
-
-    // Per-node evaluation sample cap: for large nodes, use a strided subset.
-    // The split decision (property + threshold) is found on the subset,
-    // then applied to ALL samples by partition_indices in the caller.
-    // Cached child costs are scaled by (full_count / eval_count).
-    let eval_stride = if count > MAX_EVAL_SAMPLES {
-        count / MAX_EVAL_SAMPLES
-    } else {
-        1
-    };
-    let eval_count = count.div_ceil(eval_stride);
-    let cost_scale = count as f64 / eval_count as f64;
 
     // Pre-slice workspace buffers to avoid repeated Vec deref overhead.
     // Each Vec deref goes through raw_vec.ptr() + from_raw_parts() (~434M overhead
@@ -957,9 +1084,10 @@ fn find_best_split(
     let bucket_write_pos = ws.bucket_write_pos.as_mut_slice();
 
     // Count-based property pruning: for very small nodes, only try the first few properties.
-    let num_props = if count >= 256 {
+    // Use weighted_total (original sample count) for thresholds since count is now unique samples.
+    let num_props = if weighted_total >= 256 {
         params.properties.len()
-    } else if count >= 32 {
+    } else if weighted_total >= 32 {
         params.properties.len().min(4)
     } else {
         params.properties.len().min(2)
@@ -974,11 +1102,11 @@ fn find_best_split(
         let pq_buckets = &pq.bucket_indices[prop_idx];
         let threshold_set = &pq.threshold_sets[prop_idx];
 
-        // Bucket range narrowing: find min/max bucket for this node's eval samples
+        // Bucket range narrowing: find min/max bucket for this node's samples
         let mut bmin: u8 = u8::MAX;
         let mut bmax: u8 = 0;
-        for i in (0..count).step_by(eval_stride) {
-            let b = pq_buckets[indices[i]];
+        for &idx in indices {
+            let b = pq_buckets[idx];
             if b < bmin {
                 bmin = b;
             }
@@ -997,21 +1125,24 @@ fn find_best_split(
 
         let local_num_thresholds = bmax - bmin;
 
-        // Counting sort: group eval samples by bucket
-        bucket_counts[..local_num_buckets].fill(0);
-        for i in (0..count).step_by(eval_stride) {
-            let b = (pq_buckets[indices[i]] as usize) - bmin;
-            bucket_counts[b] += 1;
+        // Counting sort: group unique samples by bucket.
+        // bucket_counts tracks the NUMBER OF UNIQUE SAMPLES per bucket (for sorted_by_bucket sizing).
+        // We compute weighted counts separately for the sweep.
+        let mut unique_per_bucket = [0u32; 256];
+        bucket_counts[..local_num_buckets].fill(0); // weighted counts for sweep
+        for &idx in indices {
+            let b = (pq_buckets[idx] as usize) - bmin;
+            unique_per_bucket[b] += 1;
+            bucket_counts[b] += sample_counts[idx];
         }
 
         bucket_starts[0] = 0;
         for b in 0..local_num_buckets {
-            bucket_starts[b + 1] = bucket_starts[b] + bucket_counts[b] as usize;
+            bucket_starts[b + 1] = bucket_starts[b] + unique_per_bucket[b] as usize;
         }
 
         bucket_write_pos[..local_num_buckets].copy_from_slice(&bucket_starts[..local_num_buckets]);
-        for i in (0..count).step_by(eval_stride) {
-            let idx = indices[i];
+        for &idx in indices {
             let b = (pq_buckets[idx] as usize) - bmin;
             sorted_by_bucket[bucket_write_pos[b]] = idx;
             bucket_write_pos[b] += 1;
@@ -1042,10 +1173,12 @@ fn find_best_split(
                 let mut eb_sum: u64 = 0;
                 // Inner loop: uses sorted_by_bucket indices directly into token/ebit arrays.
                 // ci_slice[tok & HISTO_MASK]: bitmask guarantees < HISTO_PADDED = ci_slice.len()
+                // Each unique sample contributes its count (dedup weight).
                 for &idx in &sorted_by_bucket[start..end] {
                     let tok = tokens[idx];
-                    ci_slice[tok as usize & HISTO_MASK] += 1;
-                    eb_sum += ebits[idx] as u64;
+                    let sc = sample_counts[idx];
+                    ci_slice[tok as usize & HISTO_MASK] += sc;
+                    eb_sum += ebits[idx] as u64 * sc as u64;
                 }
                 extra_bits_increase[local_bucket] = eb_sum;
             }
@@ -1053,7 +1186,7 @@ fn find_best_split(
             // Build initial right histogram (all local buckets on the right side)
             right_counts[..effective_histo].fill(0);
             let mut right_extra: u64 = 0;
-            let mut right_total: u32 = eval_count as u32;
+            let mut right_total: u32 = weighted_total;
             for (local_bucket, &eb) in extra_bits_increase[..local_num_buckets].iter().enumerate() {
                 let ci_base = local_bucket * HISTO_PADDED;
                 let ci_row = &count_increase[ci_base..ci_base + effective_histo];
@@ -1131,16 +1264,13 @@ fn find_best_split(
         }
 
         // Find best threshold across all predictors for this property.
-        // When using strided evaluation (cost_scale > 1.0), scale the sweep costs
-        // to match base_bits which is computed from ALL samples.
+        // With dedup, all unique samples are evaluated (no striding), so no scaling needed.
         for local_k in 0..local_num_thresholds {
             if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
                 continue;
             }
 
-            let l_scaled = best_l_cost[local_k] * cost_scale;
-            let r_scaled = best_r_cost[local_k] * cost_scale;
-            let mut total = l_scaled + r_scaled;
+            let mut total = best_l_cost[local_k] + best_r_cost[local_k];
 
             if best_l_pred[local_k] != parent_predictor && parent_predictor != weighted_idx {
                 total += change_pred_penalty;
@@ -1191,7 +1321,7 @@ fn find_best_predictor(
 }
 
 /// Compute total cost for a given predictor's residuals over the indexed samples.
-/// Returns Shannon entropy of tokens + total extra bits.
+/// Returns Shannon entropy of tokens + total extra bits, weighted by sample counts.
 /// Uses estimate_bits (probability-floor formula) for consistency with the split
 /// threshold comparison — the sweep in find_best_split uses nlog2n, but the
 /// parent's base_bits must use the same formula as the old code to avoid
@@ -1207,17 +1337,19 @@ fn compute_predictor_entropy(
 ) -> f64 {
     let tokens = &samples.residual_tokens[predictor_idx];
     let ebits = &samples.extra_bits[predictor_idx];
+    let sample_counts = &samples.sample_counts;
     counts_buf[..histogram_size].fill(0);
     let mut total = 0u32;
     let mut tot_extra: u64 = 0;
 
     for &idx in indices {
+        let count = sample_counts[idx];
         let tok = tokens[idx] as usize;
         if tok < histogram_size {
-            counts_buf[tok] += 1;
-            total += 1;
+            counts_buf[tok] += count;
+            total += count;
         }
-        tot_extra += ebits[idx] as u64;
+        tot_extra += ebits[idx] as u64 * count as u64;
     }
 
     estimate_bits(&counts_buf[..histogram_size], total) + tot_extra as f64

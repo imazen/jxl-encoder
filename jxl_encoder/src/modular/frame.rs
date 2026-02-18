@@ -870,6 +870,16 @@ impl FrameEncoder {
         let stride = compute_gather_stride(total_pixels, self.options.effort);
         let mut samples = TreeSamples::new();
 
+        // Compute stream_id values matching the decoder's ModularStreamId formula.
+        // The decoder assigns stream_id = property[1] during tree traversal:
+        //   GlobalData:    0
+        //   ModularLF(g):  1 + num_lf_groups + g
+        //   ModularHF(p,g): 1 + 3*num_lf_groups + NUM_QUANT_TABLES + num_groups*p + g
+        // These must match between encoder (tree training + residual collection) and decoder.
+        const NUM_QUANT_TABLES: usize = 17;
+        let stream_id_lf_base = 1 + num_lf_groups;
+        let stream_id_hf_base = 1 + 3 * num_lf_groups + NUM_QUANT_TABLES;
+
         // 3a: Global channels (full, no cropping needed)
         let global_sub = ModularImage {
             channels: squeezed.channels[..global_cutoff].to_vec(),
@@ -942,8 +952,14 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            // group_id for LfGroup sections — offset by 1 to distinguish from global (0)
-            gather_samples_strided(&mut samples, &sub_image, (lg + 1) as u32, 0, stride);
+            // stream_id for LfGroup: ModularLF(lg) = 1 + num_lf_groups + lg
+            gather_samples_strided(
+                &mut samples,
+                &sub_image,
+                (stream_id_lf_base + lg) as u32,
+                0,
+                stride,
+            );
         }
 
         // 3c: PassGroup channels — crop to each group rect
@@ -971,11 +987,11 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            // group_id offset: after global (0) and LfGroups (1..num_lf_groups)
+            // stream_id for PassGroup: ModularHF(pass=0, group=g) = 1 + 3*num_lf_groups + 17 + g
             gather_samples_strided(
                 &mut samples,
                 &sub_image,
-                (num_lf_groups + 1 + g) as u32,
+                (stream_id_hf_base + g) as u32,
                 0,
                 stride,
             );
@@ -1017,7 +1033,8 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            let tokens = collect_residuals_with_tree(&sub_image, &tree, (lg + 1) as u32);
+            let tokens =
+                collect_residuals_with_tree(&sub_image, &tree, (stream_id_lf_base + lg) as u32);
             lf_group_tokens.push(tokens);
         }
 
@@ -1035,7 +1052,7 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             let tokens =
-                collect_residuals_with_tree(&sub_image, &tree, (num_lf_groups + 1 + g) as u32);
+                collect_residuals_with_tree(&sub_image, &tree, (stream_id_hf_base + g) as u32);
             pass_group_tokens.push(tokens);
         }
 
