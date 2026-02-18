@@ -732,65 +732,97 @@ pub(crate) fn find_text_like_patches(
 
 // ── Bin Packing ────────────────────────────────────────────────────────────────
 
-/// Bin-pack patches into a reference frame rectangle.
+/// Bin-pack patches into a reference frame rectangle using first-fit grid placement.
+///
+/// Port of libjxl's bin packing algorithm (enc_patch_dictionary.cc:656-732):
+/// - Allocate an `occupied` grid (bool per pixel)
+/// - For each patch, scan rows then columns for first unoccupied position
+/// - Skip ahead when hitting occupied pixels for efficiency
+/// - If all patches placed, done. Otherwise grow by 5% and retry.
+/// - After success, trim `ref_height` to actual used height.
+///
 /// Returns the reference frame dimensions and positions of each patch.
 fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
     if patches.is_empty() {
         return (0, 0, Vec::new());
     }
 
-    // Sort by area (largest first) — already sorted by QuantizedPatch Ord impl
-    let total_area: usize = patches.iter().map(|p| p.patch.num_pixels()).sum();
+    // Patches should already be sorted largest-first by caller
+    let total_pixels: usize = patches.iter().map(|p| p.patch.num_pixels()).sum();
+    let max_x_size = patches.iter().map(|p| p.patch.xsize).max().unwrap_or(1);
+    let max_y_size = patches.iter().map(|p| p.patch.ysize).max().unwrap_or(1);
 
-    // Initial estimate: square-ish rectangle
-    let side = (total_area as f32).sqrt() as usize;
-    let mut ref_width = side.max(patches[0].patch.xsize);
-    let mut ref_height = side.max(patches[0].patch.ysize);
+    // Initial estimate: at least as large as biggest patch, at least sqrt(total_pixels)
+    let side = (total_pixels as f32).sqrt() as usize;
+    let mut ref_width = side.max(max_x_size);
+    let mut ref_height = side.max(max_y_size);
 
-    // Simple shelf-based packing
+    // First-fit grid placement with grow-and-retry
     loop {
+        // Grow by 5% + 1 before each attempt (matches libjxl: grow at start of do-while)
+        ref_width = (ref_width as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
+        ref_height = (ref_height as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
+
+        let mut occupied = vec![false; ref_width * ref_height];
         let mut positions = Vec::with_capacity(patches.len());
-        let mut shelf_y = 0;
-        let mut shelf_x = 0;
-        let mut shelf_height = 0;
+        let mut max_y: usize = 0;
         let mut success = true;
 
         for p in patches {
-            let pw = p.patch.xsize;
-            let ph = p.patch.ysize;
+            let xsize = p.patch.xsize;
+            let ysize = p.patch.ysize;
+            let mut found = false;
+            let mut place_x = 0usize;
+            let mut place_y = 0usize;
 
-            if shelf_x + pw > ref_width {
-                // Move to next shelf
-                shelf_y += shelf_height;
-                shelf_x = 0;
-                shelf_height = 0;
+            // Scan for first unoccupied position
+            'outer: for y0 in 0..=ref_height.saturating_sub(ysize) {
+                let mut x0 = 0usize;
+                while x0 + xsize <= ref_width {
+                    let mut has_occupied = false;
+                    let mut skip_x = x0;
+                    // Check if rectangle (x0, y0, xsize, ysize) is all unoccupied
+                    'check: for y in y0..y0 + ysize {
+                        let mut x = x0;
+                        while x < x0 + xsize {
+                            if occupied[y * ref_width + x] {
+                                has_occupied = true;
+                                skip_x = x; // Skip ahead past occupied pixel
+                                break 'check;
+                            }
+                            x += 1;
+                        }
+                    }
+                    if !has_occupied {
+                        place_x = x0;
+                        place_y = y0;
+                        found = true;
+                        break 'outer;
+                    }
+                    // Jump past the occupied pixel (libjxl: x0 = x)
+                    x0 = skip_x + 1;
+                }
             }
 
-            if shelf_y + ph > ref_height {
-                // Doesn't fit, grow and retry
+            if !found {
                 success = false;
                 break;
             }
 
-            positions.push((shelf_x as u32, shelf_y as u32));
-            shelf_height = shelf_height.max(ph);
-            shelf_x += pw;
+            // Mark occupied and record position
+            positions.push((place_x as u32, place_y as u32));
+            for y in place_y..place_y + ysize {
+                for x in place_x..place_x + xsize {
+                    occupied[y * ref_width + x] = true;
+                }
+            }
+            max_y = max_y.max(place_y + ysize);
         }
 
         if success {
-            // Compute actual used height
-            let actual_height = patches
-                .iter()
-                .zip(positions.iter())
-                .map(|(p, (_, y))| *y as usize + p.patch.ysize)
-                .max()
-                .unwrap_or(0);
-            return (ref_width, actual_height, positions);
+            // Trim height to actual used extent
+            return (ref_width, max_y, positions);
         }
-
-        // Grow by 5% + 1
-        ref_width = ((ref_width as f32 * BIN_PACKING_SLACKNESS) as usize + 1).max(ref_width + 1);
-        ref_height = ((ref_height as f32 * BIN_PACKING_SLACKNESS) as usize + 1).max(ref_height + 1);
     }
 }
 
@@ -808,37 +840,7 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
     // Sort by area (largest first) for better bin-packing
     infos.sort_by(|a, b| b.patch.num_pixels().cmp(&a.patch.num_pixels()));
 
-    // Limit reference frame to single modular group (256×256).
-    // Our encode_reference_frame uses single-group modular encoding, so the
-    // reference frame must fit. Drop least-useful patches (fewest total pixels
-    // contributed = area × occurrences) until it fits.
-    const MAX_REF_DIM: usize = 256;
-    loop {
-        let (ref_width, ref_height, _) = bin_pack_patches(&infos);
-        if ref_width <= MAX_REF_DIM && ref_height <= MAX_REF_DIM {
-            break;
-        }
-        // Drop the patch with the smallest per-occurrence benefit
-        // (fewest total covered pixels = area × occurrences)
-        let worst = infos
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, p)| p.patch.num_pixels() * p.positions.len())
-            .map(|(i, _)| i);
-        if let Some(i) = worst {
-            infos.swap_remove(i);
-        }
-        if infos.is_empty() {
-            return None;
-        }
-        // After removing, re-check MIN_PATCH_OCCURRENCES isn't violated
-        infos.retain(|p| p.positions.len() >= MIN_PATCH_OCCURRENCES);
-        if infos.is_empty() {
-            return None;
-        }
-    }
-
-    // Bin-pack into reference frame
+    // Bin-pack into reference frame (no size limit — FrameEncoder handles multi-group)
     let (ref_width, ref_height, pack_positions) = bin_pack_patches(&infos);
     if ref_width == 0 || ref_height == 0 {
         return None;
@@ -1081,10 +1083,9 @@ pub(crate) fn encode_patches_section(
 /// Detect patches, build data structures, and return the result.
 ///
 /// Returns None if no useful patches were found (e.g., photo content).
-///
-/// Uses measured overhead (actual ref frame + dict encoding size) vs estimated
-/// savings to decide if patches are worthwhile. This mirrors libjxl's behavior
-/// where multi-attempt RD optimization rejects patches that don't help.
+/// The detection algorithm's own filters (kMinPeak, kMinPatchOccurrences,
+/// kMinMaxPatchSize, coverage filter) are sufficient to avoid degenerate cases.
+/// libjxl has no additional cost-benefit check.
 pub(crate) fn find_and_build(
     xyb: [&[f32]; 3],
     width: usize,
@@ -1140,7 +1141,6 @@ pub(crate) fn find_and_build(
     }
 
     // Quick coverage filter: patches on <1% of the image never help.
-    // The overhead from the reference frame + dictionary always exceeds savings.
     if total_patch_pixels * 100 < image_pixels {
         let coverage_pct = total_patch_pixels as f64 / image_pixels as f64 * 100.0;
         debug_rect!(
@@ -1160,69 +1160,13 @@ pub(crate) fn find_and_build(
 
     #[cfg(feature = "debug-tokens")]
     eprintln!(
-        "PATCHES: ref frame {}x{} ({} pixels)",
+        "PATCHES: ref frame {}x{} ({} pixels), {} unique refs, {} occurrences",
         patches_data.ref_width,
         patches_data.ref_height,
-        patches_data.ref_width * patches_data.ref_height
+        patches_data.ref_width * patches_data.ref_height,
+        patches_data.ref_positions.len(),
+        patches_data.positions.len()
     );
-
-    // Measure actual overhead by trial-encoding the reference frame and dictionary.
-    // This gives exact byte costs rather than rough estimates.
-    let ref_overhead = {
-        let mut w = BitWriter::new();
-        encode_reference_frame(&patches_data, true, &mut w).ok()?;
-        w.bits_written().div_ceil(8)
-    };
-    let dict_overhead = {
-        let mut w = BitWriter::new();
-        encode_patches_section(&patches_data, true, &mut w).ok()?;
-        w.bits_written().div_ceil(8)
-    };
-    let total_overhead = ref_overhead + dict_overhead;
-
-    // Estimate savings: patched pixels become near-zero after subtraction, compressing
-    // much better in VarDCT. Conservatively assume 1 byte saved per patched pixel
-    // (typical screenshots at d=1.0 are ~1.5-3 bytes/pixel, so saving ~50-70% of those).
-    let estimated_savings = total_patch_pixels;
-
-    #[cfg(feature = "debug-tokens")]
-    eprintln!(
-        "PATCHES: overhead={} bytes (ref={}, dict={}), estimated savings={} bytes, ratio={:.1}x",
-        total_overhead,
-        ref_overhead,
-        dict_overhead,
-        estimated_savings,
-        estimated_savings as f64 / total_overhead as f64
-    );
-
-    debug_rect!(
-        "patches/cost",
-        0,
-        0,
-        width,
-        height,
-        "overhead={total_overhead}B (ref={ref_overhead} dict={dict_overhead}); savings_est={estimated_savings}B; ratio={:.1}x",
-        estimated_savings as f64 / total_overhead.max(1) as f64
-    );
-
-    // Require estimated savings to exceed measured overhead with 2x margin.
-    // libjxl uses multi-attempt RD selection (try with/without patches, keep smaller).
-    // We approximate this by requiring a clear benefit before committing to patches.
-    if estimated_savings < total_overhead * 2 {
-        debug_rect!(
-            "patches/decision",
-            0,
-            0,
-            width,
-            height,
-            "REJECTED: overhead {total_overhead}B > benefit {estimated_savings}B / 2"
-        );
-        #[cfg(feature = "debug-tokens")]
-        eprintln!(
-            "PATCHES: skipping — overhead ({total_overhead}) exceeds benefit ({estimated_savings})"
-        );
-        return None;
-    }
 
     debug_rect!(
         "patches/decision",
@@ -1230,14 +1174,11 @@ pub(crate) fn find_and_build(
         0,
         width,
         height,
-        "ACCEPTED: {} unique refs in {}x{} frame; {} occurrences; overhead={}B; savings_est={}B; ratio={:.1}x",
+        "ACCEPTED: {} unique refs in {}x{} frame; {} occurrences",
         patches_data.ref_positions.len(),
         patches_data.ref_width,
         patches_data.ref_height,
-        patches_data.positions.len(),
-        total_overhead,
-        estimated_savings,
-        estimated_savings as f64 / total_overhead.max(1) as f64
+        patches_data.positions.len()
     );
 
     Some(patches_data)
@@ -1304,24 +1245,6 @@ pub(crate) fn find_and_build_lossless(
     // For non-XYB: round(v * max_val) / max_val for each channel.
     quantize_ref_image_rgb(&mut patches_data, bit_depth);
 
-    // Cost-benefit check: measure overhead vs estimated savings
-    let ref_overhead = {
-        let mut w = BitWriter::new();
-        encode_reference_frame_rgb(&patches_data, bit_depth, true, &mut w).ok()?;
-        w.bits_written().div_ceil(8)
-    };
-    let dict_overhead = {
-        let mut w = BitWriter::new();
-        encode_patches_section(&patches_data, true, &mut w).ok()?;
-        w.bits_written().div_ceil(8)
-    };
-    let total_overhead = ref_overhead + dict_overhead;
-    let estimated_savings = total_patch_pixels;
-
-    if estimated_savings < total_overhead * 2 {
-        return None;
-    }
-
     Some(patches_data)
 }
 
@@ -1382,6 +1305,9 @@ pub(crate) fn subtract_patches_modular(
 /// Frame header: `xyb_encoded=false`, `save_before_ct=true`, `FrameType::ReferenceOnly`.
 /// Channels in normal RGB order (no Y/X/B-Y reorder, no DC quant scaling).
 /// Each channel value = `round(fpixels[c] * max_val)`.
+///
+/// Uses FrameEncoder for body encoding, which provides RCT for RGB channels,
+/// ANS entropy coding, and multi-group support for reference frames > 256×256.
 pub(crate) fn encode_reference_frame_rgb(
     patches: &PatchesData,
     bit_depth: u32,
@@ -1430,13 +1356,18 @@ pub(crate) fn encode_reference_frame_rgb(
         has_alpha: false,
     };
 
-    use crate::modular::encode::write_improved_modular_stream;
-    let mut section_writer = BitWriter::new();
-    write_improved_modular_stream(&image, &mut section_writer, use_ans)?;
-    let section_data = section_writer.finish();
-
-    crate::vardct::frame::write_toc(&[section_data.len()], writer)?;
-    writer.append_bytes(&section_data)?;
+    // Use FrameEncoder for body — handles single/multi-group automatically,
+    // applies RCT for RGB channels, and uses ANS entropy coding.
+    use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
+    let options = FrameEncoderOptions {
+        use_ans,
+        use_tree_learning: false,
+        use_squeeze: false,
+        is_last: false,
+        ..Default::default()
+    };
+    let encoder = FrameEncoder::new(ref_w, ref_h, options);
+    encoder.encode_modular_body(&image, writer)?;
 
     Ok(())
 }
@@ -1450,6 +1381,9 @@ pub(crate) fn encode_reference_frame_rgb(
 ///
 /// The reference image is 3-channel XYB float data. For modular encoding, we scale
 /// to i32 (multiply by a fixed scale factor and round).
+///
+/// Uses FrameEncoder for body encoding, which provides RCT for the 3 channels,
+/// ANS entropy coding, and multi-group support for reference frames > 256×256.
 pub(crate) fn encode_reference_frame(
     patches: &PatchesData,
     use_ans: bool,
@@ -1537,34 +1471,18 @@ pub(crate) fn encode_reference_frame(
         has_alpha: false,
     };
 
-    // Use the modular frame encoder for the data section.
-    // Fixed gradient prediction with LZ77 RLE. Tree learning was tested but
-    // produces larger output on small reference frames (161x144) due to
-    // tree + histogram overhead exceeding the compression benefit.
-    use crate::modular::encode::write_improved_modular_stream;
-    let mut section_writer = BitWriter::new();
-    write_improved_modular_stream(&image, &mut section_writer, use_ans)?;
-    let section_data = section_writer.finish();
-
-    // Write TOC (single section for small reference frames).
-    // Use the modular frame encoder's TOC format (same as VarDCT).
-    #[cfg(feature = "trace-bitstream")]
-    eprintln!(
-        "PATCHES: ref frame TOC starts at bit {}, section_data={} bytes",
-        writer.bits_written(),
-        section_data.len()
-    );
-    crate::vardct::frame::write_toc(&[section_data.len()], writer)?;
-
-    #[cfg(feature = "trace-bitstream")]
-    eprintln!(
-        "PATCHES: ref frame section data starts at bit {} (byte {})",
-        writer.bits_written(),
-        writer.bits_written() / 8
-    );
-
-    // Write section data
-    writer.append_bytes(&section_data)?;
+    // Use FrameEncoder for body — handles single/multi-group automatically,
+    // applies RCT for the 3 channels, and uses ANS entropy coding.
+    use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
+    let options = FrameEncoderOptions {
+        use_ans,
+        use_tree_learning: false,
+        use_squeeze: false,
+        is_last: false,
+        ..Default::default()
+    };
+    let encoder = FrameEncoder::new(ref_w, ref_h, options);
+    encoder.encode_modular_body(&image, writer)?;
 
     #[cfg(feature = "trace-bitstream")]
     eprintln!(

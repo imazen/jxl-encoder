@@ -347,9 +347,9 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
     background image with source pairs, has_similar check, kMinPeak filter)
   - Packs unique patterns into modular reference frame (≤256×256), subtracts from VarDCT
   - Cost-benefit gating: trial-encodes ref frame + dict, requires 2x savings/overhead ratio
-  - GB82-SC corpus (10 screenshots): 33.3% total savings, 29.6% smaller than cjxl e7
-    - imac_dark: -46%, imac_g3: -44.5%, windows: -29%, codec_wiki: -9.5%, imessage: -9.8%
-    - terminal: +28% (cjxl extracts more patches), gui: +13.5% (RGBA), graph: +7.6%
+  - GB82-SC corpus (10 screenshots): 36.7% total savings
+    - imac_dark: -46.3%, imac_g3: -46.9%, windows: -39.6%, codec_wiki: -14.5%
+    - terminal: -53.3%, windows95: -34.9%, imessage: -9.8%
   - RGBA alpha uses LZ77 RLE (gui.png: 234KB→49KB, 4.8x improvement)
   - Zero overhead on CLIC photos (patches correctly produce nothing)
   - Indexed/palette PNGs now supported via EXPAND transformation
@@ -359,7 +359,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Non-XYB reference frame: xyb_encoded=false, save_before_ct=true, integer RGB channels
   - Subtracts patches from ModularImage channels in integer space before RCT
   - ANS encoding for patches in multi-group LfGlobal (fixed: log_alpha_size consistency)
-  - GB82-SC corpus: 17.5% total savings, terminal -51.2%, imac_g3 -29.0%
+  - GB82-SC corpus: 36.7% total savings, terminal -53.3%, imac_g3 -46.9%
   - Zero overhead on CLIC photos (identical output with/without patches)
   - All output pixel-exact verified with jxl-rs and djxl
 
@@ -424,7 +424,7 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   Default-on (auto-detect), `--no-patches` to disable. Detection matches libjxl
   FindTextLikePatches exactly. Cost-benefit gating with measured overhead prevents
   regressions. Works for both VarDCT (lossy) and modular (lossless) paths.
-  **VarDCT**: GB82-SC corpus: 33.3% total savings, 29.6% smaller than cjxl e7.
+  **VarDCT**: GB82-SC corpus: 36.7% total savings.
   **Lossless**: 17.5% total savings on screenshots, terminal -51.2%, zero overhead on photos.
   RGBA alpha channel uses LZ77 RLE for efficient encoding of mostly-opaque regions.
   Verified with djxl, jxl-rs, and jxl-oxide.
@@ -1281,9 +1281,9 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 10. 50% pixel sampling + remove threshold floor: +0.2% → **-0.7%**
 
 **Known issues**:
-- Screenshots: lossless patches now implemented (17.5% total savings). Beat cjxl e7 on
-  gui (-10.9%), imac_g3 (-14.7%), imac_dark (-4.0%). Terminal -51.2% (was +166%). Still
-  +12.5% overall vs cjxl e7 due to windows/codec_wiki gaps.
+- Screenshots: lossless patches improved (36.7% total savings, was 17.5%). Removed 256×256
+  ref frame limit (multi-group), first-fit grid bin packing, RCT via FrameEncoder.
+  terminal -53.3%, imac_g3 -46.9%, imac_dark -46.3%, windows -39.6%, codec_wiki -14.5%.
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
   (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
 - Tree learning optimized Feb 17, 2026: 86x speedup via count_increase buckets, incremental entropy,

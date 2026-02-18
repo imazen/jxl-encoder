@@ -1331,6 +1331,46 @@ impl FrameEncoder {
         Ok(())
     }
 
+    /// Encode modular image body (TOC + sections) without writing a frame header.
+    ///
+    /// Caller is responsible for writing the frame header before calling this.
+    /// This enables encoding reference frames with custom frame headers (e.g.,
+    /// `FrameType::ReferenceOnly`, `save_before_ct=true`) while getting full
+    /// FrameEncoder features (RCT, multi-group, histogram optimization, ANS).
+    pub(crate) fn encode_modular_body(
+        &self,
+        image: &ModularImage,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let num_groups = self.num_groups();
+
+        if num_groups == 1 {
+            // Single group: all sections combined into one TOC entry
+            let mut section_writer = BitWriter::new();
+
+            if image.channels.len() >= 3 {
+                super::encode::write_modular_stream_with_rct(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                )?;
+            } else {
+                write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+            }
+
+            let section_data = section_writer.finish();
+            self.write_toc(writer, section_data.len())?;
+            for byte in section_data {
+                writer.write_u8(byte)?;
+            }
+        } else {
+            // Multi-group: use the standard multi-group encoder (no patches in body)
+            self.encode_modular_multi_group_inner(image, writer, None)?;
+        }
+
+        Ok(())
+    }
+
     /// Writes the table of contents with a single section.
     fn write_toc(&self, writer: &mut BitWriter, section_size: usize) -> Result<()> {
         self.write_toc_multi(writer, &[section_size])
