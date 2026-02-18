@@ -744,7 +744,14 @@ impl VarDctEncoder {
             )?;
 
             let mut ac_global = BitWriter::with_capacity(4096);
-            self.write_ac_global(num_groups, &ac_code, 0, None, None, &mut ac_global)?;
+            self.write_ac_global(
+                num_groups,
+                core::slice::from_ref(&ac_code),
+                0,
+                None,
+                &[None],
+                &mut ac_global,
+            )?;
 
             let mut ac_group_writer = BitWriter::with_capacity(num_blocks * 100);
             self.write_ac_group(
@@ -852,7 +859,14 @@ impl VarDctEncoder {
 
             // AC Global section
             let mut ac_global = BitWriter::with_capacity(4096);
-            self.write_ac_global(num_groups, &ac_code, 0, None, None, &mut ac_global)?;
+            self.write_ac_global(
+                num_groups,
+                core::slice::from_ref(&ac_code),
+                0,
+                None,
+                &[None],
+                &mut ac_global,
+            )?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 

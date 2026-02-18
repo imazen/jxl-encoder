@@ -873,6 +873,7 @@ impl LossyConfig {
         new.noise = self.noise;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
+        new.progressive = self.progressive;
         // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters_explicit {

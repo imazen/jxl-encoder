@@ -15,6 +15,7 @@ use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_regi
 use super::encoder::{BuiltEntropyCode, VarDctEncoder};
 use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
+use crate::api::ProgressiveMode;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
@@ -28,6 +29,114 @@ use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use crate::headers::extra_channels::ExtraChannelInfo;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
+
+/// Progressive pass configuration computed from ProgressiveMode.
+struct ProgressivePassConfig {
+    /// Number of passes (1 for Single mode).
+    num_passes: u32,
+    /// Shift per pass (num_passes - 1 elements). Last pass has implicit shift=0.
+    /// The encoder right-shifts coefficients by this amount before encoding;
+    /// the decoder left-shifts before accumulating.
+    shifts: Vec<u32>,
+    /// Number of downsampling brackets.
+    num_ds: u32,
+    /// Downsample factors per bracket (1, 2, 4, or 8).
+    ds_downsample: Vec<u32>,
+    /// Last pass index per bracket.
+    ds_last_pass: Vec<u32>,
+}
+
+impl ProgressivePassConfig {
+    fn from_mode(mode: ProgressiveMode) -> Self {
+        match mode {
+            ProgressiveMode::Single => Self {
+                num_passes: 1,
+                shifts: Vec::new(),
+                num_ds: 0,
+                ds_downsample: Vec::new(),
+                ds_last_pass: Vec::new(),
+            },
+            ProgressiveMode::QuantizedAcFullAc => Self {
+                // 2-pass: coarse (shift=1) → refinement (shift=0)
+                num_passes: 2,
+                shifts: vec![1],
+                num_ds: 1,
+                ds_downsample: vec![2],
+                ds_last_pass: vec![0],
+            },
+            ProgressiveMode::DcVlfLfAc => Self {
+                // 3-pass: very coarse (shift=2) → medium (shift=0) → final (shift=0)
+                // Matches libjxl's kDcVlfLfAc preset
+                num_passes: 3,
+                shifts: vec![2, 0],
+                num_ds: 2,
+                ds_downsample: vec![8, 4],
+                ds_last_pass: vec![0, 1],
+            },
+        }
+    }
+
+    fn is_progressive(&self) -> bool {
+        self.num_passes > 1
+    }
+
+    fn shift_for_pass(&self, pass: usize) -> u32 {
+        if pass < self.shifts.len() {
+            self.shifts[pass]
+        } else {
+            0
+        }
+    }
+}
+
+/// Right-shift with symmetric rounding (libjxl convention).
+/// The encoder right-shifts before encoding; the decoder left-shifts on decode.
+fn shift_right_round(v: i32, shift: u32) -> i32 {
+    if shift == 0 {
+        return v;
+    }
+    let s = 1i32 << shift;
+    if v >= 0 {
+        (v + (s >> 1)) >> shift
+    } else {
+        -((-v + (s >> 1)) >> shift)
+    }
+}
+
+/// Split a quantized coefficient block into per-pass residuals.
+///
+/// For each pass p:
+/// - Compute `encoded = shift_right_round(residual, shift[p])`
+/// - `decoded = encoded << shift[p]`
+/// - residual for next pass = residual - decoded
+///
+/// Returns a vector of per-pass coefficient blocks (same layout as input).
+fn split_coefficients_into_passes(
+    coefficients: &[i32],
+    pass_config: &ProgressivePassConfig,
+) -> Vec<Vec<i32>> {
+    let num_passes = pass_config.num_passes as usize;
+    let size = coefficients.len();
+
+    let mut per_pass: Vec<Vec<i32>> = Vec::with_capacity(num_passes);
+    let mut residual: Vec<i32> = coefficients.to_vec();
+
+    for pass in 0..num_passes {
+        let shift = pass_config.shift_for_pass(pass);
+        let mut pass_coeffs = vec![0i32; size];
+
+        for (i, r) in residual.iter_mut().enumerate() {
+            let encoded = shift_right_round(*r, shift);
+            pass_coeffs[i] = encoded;
+            let decoded = encoded << shift;
+            *r -= decoded;
+        }
+
+        per_pass.push(pass_coeffs);
+    }
+
+    per_pass
+}
 
 impl VarDctEncoder {
     /// Build a `FileHeader` for VarDCT encoding from current encoder settings.
@@ -354,13 +463,18 @@ impl VarDctEncoder {
 
     /// Write AC global section.
     #[allow(clippy::too_many_arguments)]
+    /// Write HfGlobal section.
+    ///
+    /// For progressive encoding (`ac_codes.len() > 1`), the decoder reads per-pass
+    /// data: used_orders, coeff_orders, and histograms for each pass.
+    /// The dequant matrices and num_histograms are written once (shared).
     pub(crate) fn write_ac_global(
         &self,
         num_groups: usize,
-        ac_code: &BuiltEntropyCode,
+        ac_codes: &[BuiltEntropyCode],
         used_orders: u32,
         coeff_order_tokens: Option<&[Token]>,
-        ac_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
+        ac_lz77_params: &[Option<crate::entropy_coding::lz77::Lz77Params>],
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -373,43 +487,47 @@ impl VarDctEncoder {
             writer.write(num_histo_bits as usize, 0)?;
         }
 
-        // Write used_orders via u2S(0x5F, 0x13, 0x00, U(13))
-        if used_orders == 0x5F {
-            writer.write(2, 0)?; // selector 0 = 0x5F
-        } else if used_orders == 0x13 {
-            writer.write(2, 1)?; // selector 1 = 0x13
-        } else if used_orders == 0 {
-            writer.write(2, 2)?; // selector 2 = 0
-        } else {
-            writer.write(2, 3)?; // selector 3 = U(13)
-            writer.write(13, used_orders as u64)?;
-        }
+        // Per-pass: used_orders, coeff_orders, histograms
+        let num_passes = ac_codes.len();
+        for pass in 0..num_passes {
+            // Write used_orders via u2S(0x5F, 0x13, 0x00, U(13))
+            if used_orders == 0x5F {
+                writer.write(2, 0)?; // selector 0 = 0x5F
+            } else if used_orders == 0x13 {
+                writer.write(2, 1)?; // selector 1 = 0x13
+            } else if used_orders == 0 {
+                writer.write(2, 2)?; // selector 2 = 0
+            } else {
+                writer.write(2, 3)?; // selector 3 = U(13)
+                writer.write(13, used_orders as u64)?;
+            }
 
-        // Write permutation data if we have custom orders
-        if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
-            super::coeff_order::build_and_write_coeff_orders(tokens, self.use_ans, writer)?;
-        }
+            // Write permutation data if we have custom orders
+            if let Some(tokens) = coeff_order_tokens.filter(|_| used_orders != 0) {
+                super::coeff_order::build_and_write_coeff_orders(tokens, self.use_ans, writer)?;
+            }
 
-        // Write LZ77 params
-        Self::write_lz77_header(ac_lz77_params, writer)?;
+            // Write LZ77 params for this pass
+            Self::write_lz77_header(ac_lz77_params[pass].as_ref(), writer)?;
 
-        #[cfg(feature = "debug-tokens")]
-        let before_ac_code = writer.bits_written();
+            #[cfg(feature = "debug-tokens")]
+            let before_ac_code = writer.bits_written();
 
-        // Write entropy code
-        self.write_entropy_code_header(ac_code, writer)?;
+            // Write entropy code for this pass
+            self.write_entropy_code_header(&ac_codes[pass], writer)?;
 
-        #[cfg(feature = "debug-tokens")]
-        {
-            let after_ac_code = writer.bits_written();
-            debug_log!("AC_global breakdown:");
-            debug_log!("  header: {} bits", before_ac_code - start_bits);
-            debug_log!(
-                "  ac_entropy_code: {} bits ({} contexts, {} histograms)",
-                after_ac_code - before_ac_code,
-                ac_code.num_contexts(),
-                ac_code.num_histograms()
-            );
+            #[cfg(feature = "debug-tokens")]
+            {
+                let after_ac_code = writer.bits_written();
+                debug_log!("AC_global pass {} breakdown:", pass);
+                debug_log!("  header: {} bits", before_ac_code - start_bits);
+                debug_log!(
+                    "  ac_entropy_code: {} bits ({} contexts, {} histograms)",
+                    after_ac_code - before_ac_code,
+                    ac_codes[pass].num_contexts(),
+                    ac_codes[pass].num_histograms()
+                );
+            }
         }
 
         Ok(())
@@ -962,7 +1080,7 @@ impl VarDctEncoder {
         _ysize_dc_groups: usize,
         num_groups: usize,
         num_dc_groups: usize,
-        num_sections: usize,
+        _num_sections: usize,
         quant_dc: &[Vec<Vec<i16>>; 3],
         quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
         nzeros: &[Vec<Vec<u8>>; 3],
@@ -1155,12 +1273,37 @@ impl VarDctEncoder {
             ysize_blocks,
         );
 
-        // AC section tokens: one Vec<Token> per ac_group
-        // Pre-allocate scratch buffer for multi-block coefficient assembly
+        // ── Progressive pass configuration ──
+        let pass_config = ProgressivePassConfig::from_mode(self.progressive);
+        let num_passes = pass_config.num_passes as usize;
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "[PROGRESSIVE] mode={:?}, num_passes={}, num_groups={}",
+            self.progressive, num_passes, num_groups
+        );
+
+        // Override num_sections for progressive: each pass has its own HfGroup sections
+        let num_sections = 2 + num_dc_groups + num_groups * num_passes;
+
+        // AC section tokens: per-pass per-group
+        // ac_section_tokens_per_pass[pass][group] = Vec<Token>
         const MAX_BLOCK_SIZE: usize = 4096;
         let mut full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
+        let mut pass_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
 
-        let mut ac_section_tokens: Vec<Vec<Token>> = Vec::with_capacity(num_groups);
+        let mut ac_section_tokens_per_pass: Vec<Vec<Vec<Token>>> =
+            vec![Vec::with_capacity(num_groups); num_passes];
+
+        // For progressive encoding, we need per-pass nzeros grids for prediction.
+        // pass_nzeros_grids[pass][channel][row][col] = shifted nzeros for that pass.
+        let mut pass_nzeros_grids: Vec<[Vec<Vec<u8>>; 3]> = if pass_config.is_progressive() {
+            (0..num_passes)
+                .map(|_| core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         for group_idx in 0..num_groups {
             let group_x = group_idx % xsize_groups;
             let group_y = group_idx / xsize_groups;
@@ -1170,7 +1313,12 @@ impl VarDctEncoder {
             let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
 
             let region_blocks = (end_bx - start_bx) * (end_by - start_by);
-            let mut tokens = Vec::with_capacity(region_blocks * 64 * 3); // ~64 coeffs * 3 channels per block
+
+            // Initialize per-pass token vecs for this group
+            let mut pass_tokens: Vec<Vec<Token>> = (0..num_passes)
+                .map(|_| Vec::with_capacity(region_blocks * 64 * 3 / num_passes))
+                .collect();
+
             for by in start_by..end_by {
                 for bx in start_bx..end_bx {
                     if !ac_strategy.is_first(bx, by) {
@@ -1184,26 +1332,7 @@ impl VarDctEncoder {
                     let strategy_code = ac_strategy.strategy_code(bx, by);
 
                     for &c in &[1usize, 0, 2] {
-                        // Raw (unshifted) nzeros for bitstream token
-                        let nz = raw_nzeros[c][by][bx];
-                        let local_bx = bx - start_bx;
-                        // Prediction uses shifted nzeros from neighbors
-                        let row_top = if by > start_by {
-                            Some(nzeros[c][by - 1].as_slice())
-                        } else {
-                            None
-                        };
-                        let predicted_nz = if local_bx == 0 {
-                            match row_top {
-                                Some(top) => top[bx] as i32,
-                                None => 32,
-                            }
-                        } else {
-                            predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
-                        };
                         // Get custom order for this (bucket, channel) if available
-                        // IMPORTANT: get_custom_order's strategy_bucket() expects
-                        // bitstream strategy codes (0,4,5,6,7), not raw (0-4).
                         let custom_ord = custom_order_map.as_ref().and_then(|orders| {
                             super::coeff_order::get_custom_order(
                                 orders,
@@ -1213,27 +1342,13 @@ impl VarDctEncoder {
                             )
                         });
 
-                        if covered_blocks == 1 {
-                            // collect_ac_coefficients expects raw_strategy, not bitstream code
-                            let qf_val = quant_field[by * xsize_blocks + bx] as u32;
-                            let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
-                            collect_ac_coefficients_into(
-                                &mut tokens,
-                                &quant_ac[c][by][bx],
-                                raw_strategy,
-                                nz,
-                                predicted_nz,
-                                block_ctx,
-                                block_ctx_map.num_ctxs,
-                                custom_ord,
-                            );
+                        let qf_val = quant_field[by * xsize_blocks + bx] as u32;
+                        let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
+
+                        // Assemble the full coefficient block
+                        let full_block: &[i32] = if covered_blocks == 1 {
+                            &quant_ac[c][by][bx]
                         } else {
-                            // Assemble contiguous buffer in flat layout.
-                            // collect_ac_coefficients uses COEFF_ORDER which indexes into a flat
-                            // cx*8 × cy*8 layout (stride = cx*8), not 8x8 block slots.
-                            //
-                            // NOTE: For rectangular transforms, cx >= cy after swap, so stride = cx * 8.
-                            // covered_x may differ from cx for DCT16x8/DCT8x16.
                             let (cx, _cy) = if covered_y > covered_x {
                                 (covered_y, covered_x)
                             } else {
@@ -1241,7 +1356,7 @@ impl VarDctEncoder {
                             };
                             let transpose_slots = covered_y > covered_x;
                             let stride = cx * BLOCK_DIM;
-                            let full_block = &mut full_block_scratch[..size];
+                            let fb = &mut full_block_scratch[..size];
                             #[allow(clippy::needless_range_loop)]
                             for idx in 0..size {
                                 let y = idx / stride;
@@ -1256,33 +1371,32 @@ impl VarDctEncoder {
                                 } else {
                                     (coef_slot_y, coef_slot_x)
                                 };
-                                full_block[idx] =
+                                fb[idx] =
                                     quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
                             }
+                            &full_block_scratch[..size]
+                        };
 
-                            #[cfg(feature = "debug-tokens")]
-                            if raw_strategy == 4 && c == 1 && bx == 0 && by == 0 {
-                                // Debug: count nonzeros in full_block for DCT32x32
-                                let nz_count = full_block.iter().filter(|&&v| v != 0).count();
-                                eprintln!(
-                                    "[DCT32x32 two-pass debug] full_block for Y at (0,0): {} nonzeros out of {}",
-                                    nz_count, size
-                                );
-                                if nz_count > 0 && nz_count <= 20 {
-                                    for (i, &v) in full_block.iter().enumerate() {
-                                        if v != 0 {
-                                            eprintln!("  [{:4}] = {}", i, v);
-                                        }
-                                    }
+                        if !pass_config.is_progressive() {
+                            // Single-pass: use original nzeros and collect directly
+                            let nz = raw_nzeros[c][by][bx];
+                            let local_bx = bx - start_bx;
+                            let row_top = if by > start_by {
+                                Some(nzeros[c][by - 1].as_slice())
+                            } else {
+                                None
+                            };
+                            let predicted_nz = if local_bx == 0 {
+                                match row_top {
+                                    Some(top) => top[bx] as i32,
+                                    None => 32,
                                 }
-                            }
-
-                            // collect_ac_coefficients expects raw_strategy, not bitstream code
-                            let qf_val = quant_field[by * xsize_blocks + bx] as u32;
-                            let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
+                            } else {
+                                predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
+                            };
 
                             collect_ac_coefficients_into(
-                                &mut tokens,
+                                &mut pass_tokens[0],
                                 full_block,
                                 raw_strategy,
                                 nz,
@@ -1291,18 +1405,86 @@ impl VarDctEncoder {
                                 block_ctx_map.num_ctxs,
                                 custom_ord,
                             );
+                        } else {
+                            // Multi-pass: split coefficients and tokenize per-pass
+                            let pass_blocks =
+                                split_coefficients_into_passes(full_block, &pass_config);
+
+                            for (pass, pass_coeffs) in pass_blocks.iter().enumerate() {
+                                // Count non-zeros for this pass's coefficients
+                                // (skip covered_blocks positions = LLF coefficients)
+                                let pass_nz: u16 = pass_coeffs[covered_blocks..]
+                                    .iter()
+                                    .filter(|&&v| v != 0)
+                                    .count()
+                                    as u16;
+
+                                // Compute shifted nzeros for prediction context
+                                // Must use ceiling division to match decoder's shrc():
+                                // (nzeros + covered_blocks - 1) >> log2(covered_blocks)
+                                let log2_cb = covered_blocks.ilog2() as usize;
+                                let shifted_nz = (pass_nz as usize + covered_blocks - 1) >> log2_cb;
+                                let shifted_nz_u8 = shifted_nz.min(255) as u8;
+
+                                // Store per-pass nzeros for neighbor prediction
+                                for dy in 0..covered_y {
+                                    for dx in 0..covered_x {
+                                        pass_nzeros_grids[pass][c][by + dy][bx + dx] =
+                                            shifted_nz_u8;
+                                    }
+                                }
+
+                                // Predict nzeros from neighbors in this pass's grid
+                                let local_bx = bx - start_bx;
+                                let row_top = if by > start_by {
+                                    Some(pass_nzeros_grids[pass][c][by - 1].as_slice())
+                                } else {
+                                    None
+                                };
+                                let predicted_nz = if local_bx == 0 {
+                                    match row_top {
+                                        Some(top) => top[bx] as i32,
+                                        None => 32,
+                                    }
+                                } else {
+                                    predict_from_top_and_left(
+                                        row_top,
+                                        &pass_nzeros_grids[pass][c][by],
+                                        bx,
+                                        32,
+                                    )
+                                };
+
+                                // Tokenize this pass's coefficients
+                                let pb = &mut pass_block_scratch[..size];
+                                pb.copy_from_slice(pass_coeffs);
+                                collect_ac_coefficients_into(
+                                    &mut pass_tokens[pass],
+                                    pb,
+                                    raw_strategy,
+                                    pass_nz,
+                                    predicted_nz,
+                                    block_ctx,
+                                    block_ctx_map.num_ctxs,
+                                    custom_ord,
+                                );
+                            }
                         }
                     }
                 }
             }
-            ac_section_tokens.push(tokens);
+
+            for (pass, tokens) in pass_tokens.into_iter().enumerate() {
+                ac_section_tokens_per_pass[pass].push(tokens);
+            }
         }
 
         // ── Apply LZ77 if enabled (ANS only, before building codes) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
         let mut dc_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
-        let mut ac_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
+        let mut ac_lz77_params_per_pass: Vec<Option<crate::entropy_coding::lz77::Lz77Params>> =
+            vec![None; num_passes];
 
         // Distance multiplier for special distance codes.
         // The decoder derives dist_multiplier = max(channel_widths) for each
@@ -1420,54 +1602,61 @@ impl VarDctEncoder {
                 eprintln!("[LZ77] DC LZ77 not beneficial (threshold not met)");
             }
 
-            // Apply LZ77 to AC token streams (each AC group independently)
+            // Apply LZ77 to AC token streams per-pass (each pass independently)
             let ac_num_ctx = block_ctx_map.num_ac_contexts();
-            let merged_ac = {
-                let mut m = Vec::new();
-                for section in &ac_section_tokens {
-                    m.extend_from_slice(section);
-                }
-                m
-            };
-            #[cfg(feature = "debug-tokens")]
-            eprintln!(
-                "[LZ77] AC merged tokens: {}, num_contexts: {}",
-                merged_ac.len(),
-                ac_num_ctx
-            );
-
-            if let Some((_lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
-                &merged_ac,
-                ac_num_ctx,
-                false,
-                self.lz77_method,
-                ac_distance_multiplier,
-            ) {
+            for pass in 0..num_passes {
+                let merged_ac = {
+                    let mut m = Vec::new();
+                    for section in &ac_section_tokens_per_pass[pass] {
+                        m.extend_from_slice(section);
+                    }
+                    m
+                };
                 #[cfg(feature = "debug-tokens")]
                 eprintln!(
-                    "[LZ77] AC LZ77 ACTIVATED: {} -> {} tokens",
+                    "[LZ77] AC pass {} merged tokens: {}, num_contexts: {}",
+                    pass,
                     merged_ac.len(),
-                    _lz77_tokens.len()
+                    ac_num_ctx
                 );
-                ac_lz77_params = Some(params);
-                let mut new_ac_sections = Vec::with_capacity(num_groups);
-                for tokens in &ac_section_tokens {
-                    if let Some((lz77_ac, _)) = crate::entropy_coding::lz77::apply_lz77(
-                        tokens,
-                        ac_num_ctx,
-                        false,
-                        self.lz77_method,
-                        ac_distance_multiplier,
-                    ) {
-                        new_ac_sections.push(lz77_ac);
-                    } else {
-                        new_ac_sections.push(tokens.clone());
+
+                if let Some((_lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
+                    &merged_ac,
+                    ac_num_ctx,
+                    false,
+                    self.lz77_method,
+                    ac_distance_multiplier,
+                ) {
+                    #[cfg(feature = "debug-tokens")]
+                    eprintln!(
+                        "[LZ77] AC pass {} LZ77 ACTIVATED: {} -> {} tokens",
+                        pass,
+                        merged_ac.len(),
+                        _lz77_tokens.len()
+                    );
+                    ac_lz77_params_per_pass[pass] = Some(params);
+                    let mut new_sections = Vec::with_capacity(num_groups);
+                    for tokens in &ac_section_tokens_per_pass[pass] {
+                        if let Some((lz77_ac, _)) = crate::entropy_coding::lz77::apply_lz77(
+                            tokens,
+                            ac_num_ctx,
+                            false,
+                            self.lz77_method,
+                            ac_distance_multiplier,
+                        ) {
+                            new_sections.push(lz77_ac);
+                        } else {
+                            new_sections.push(tokens.clone());
+                        }
                     }
+                    ac_section_tokens_per_pass[pass] = new_sections;
+                } else {
+                    #[cfg(feature = "debug-tokens")]
+                    eprintln!(
+                        "[LZ77] AC pass {} LZ77 not beneficial (threshold not met)",
+                        pass
+                    );
                 }
-                ac_section_tokens = new_ac_sections;
-            } else {
-                #[cfg(feature = "debug-tokens")]
-                eprintln!("[LZ77] AC LZ77 not beneficial (threshold not met)");
             }
         }
 
@@ -1519,49 +1708,42 @@ impl VarDctEncoder {
             ))
         };
 
-        // Merge all AC section tokens for frequency counting
-        let ac_num_contexts = if ac_lz77_params.is_some() {
-            block_ctx_map.num_ac_contexts() + 1 // +1 for LZ77 distance context
-        } else {
-            block_ctx_map.num_ac_contexts()
-        };
-        let total_ac_tokens: usize = ac_section_tokens.iter().map(|t| t.len()).sum();
-        let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
-        for section in &ac_section_tokens {
-            all_ac_tokens.extend_from_slice(section);
+        // Build per-pass AC entropy codes
+        let base_ac_num_contexts = block_ctx_map.num_ac_contexts();
+        let mut ac_built_codes: Vec<BuiltEntropyCode> = Vec::with_capacity(num_passes);
+        for pass in 0..num_passes {
+            let ac_num_contexts = if ac_lz77_params_per_pass[pass].is_some() {
+                base_ac_num_contexts + 1 // +1 for LZ77 distance context
+            } else {
+                base_ac_num_contexts
+            };
+            let total_ac_tokens: usize = ac_section_tokens_per_pass[pass]
+                .iter()
+                .map(|t| t.len())
+                .sum();
+            let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
+            for section in &ac_section_tokens_per_pass[pass] {
+                all_ac_tokens.extend_from_slice(section);
+            }
+
+            let ac_built_code = if self.use_ans {
+                BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
+                    &all_ac_tokens,
+                    ac_num_contexts,
+                    self.enhanced_clustering,
+                    ac_lz77_params_per_pass[pass].as_ref(),
+                    None,
+                ))
+            } else {
+                BuiltEntropyCode::Huffman(build_entropy_code_with_options(
+                    &all_ac_tokens,
+                    ac_num_contexts,
+                    self.enhanced_clustering,
+                    ac_lz77_params_per_pass[pass].as_ref(),
+                ))
+            };
+            ac_built_codes.push(ac_built_code);
         }
-
-        let ac_built_code = if self.use_ans {
-            BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
-                &all_ac_tokens,
-                ac_num_contexts,
-                self.enhanced_clustering,
-                ac_lz77_params.as_ref(),
-                None,
-            ))
-        } else {
-            BuiltEntropyCode::Huffman(build_entropy_code_with_options(
-                &all_ac_tokens,
-                ac_num_contexts,
-                self.enhanced_clustering,
-                ac_lz77_params.as_ref(),
-            ))
-        };
-
-        // ── ANS invariant verification (debug builds only) ──
-        // DISABLED: The local verification decoder has a bug that produces false positives
-        // for certain histogram patterns (e.g., 256x256 solid color images). The actual
-        // encoding is valid - djxl decodes these files correctly. Rely on external decoder
-        // testing (djxl, jxl-rs) instead of this broken verification.
-        // TODO: Fix verify_histogram_serialization to handle all histogram method types correctly
-        // if self.use_ans {
-        //     if let BuiltEntropyCode::Ans(ref dc_ans) = dc_built_code {
-        //         verify_histogram_serialization(dc_ans, "DC")?;
-        //     }
-        //     if let BuiltEntropyCode::Ans(ref ac_ans) = ac_built_code {
-        //         verify_histogram_serialization(ac_ans, "AC")?;
-        //     }
-        // }
 
         // ── Tokenize coefficient orders (if custom) ──
         let coeff_order_tokens = if used_orders != 0 {
@@ -1597,6 +1779,15 @@ impl VarDctEncoder {
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
 
+            // Progressive pass configuration
+            if pass_config.is_progressive() {
+                fh.num_passes = pass_config.num_passes;
+                fh.pass_shifts = pass_config.shifts.clone();
+                fh.num_ds = pass_config.num_ds;
+                fh.ds_downsample = pass_config.ds_downsample.clone();
+                fh.ds_last_pass = pass_config.ds_last_pass.clone();
+            }
+
             // Apply animation frame options if provided
             if let Some(opts) = frame_options {
                 fh.have_animation = opts.have_animation;
@@ -1622,7 +1813,8 @@ impl VarDctEncoder {
         }
 
         let num_blocks = xsize_blocks * ysize_blocks;
-        if num_sections == 4 {
+        // Single combined section: only when 1 group AND 1 pass (non-progressive)
+        if num_groups == 1 && num_dc_groups == 1 && num_passes == 1 {
             // Single-group: combine sections at the bit level
             let mut dc_global = BitWriter::with_capacity(4096);
             self.write_dc_global(
@@ -1660,17 +1852,17 @@ impl VarDctEncoder {
             let mut ac_global = BitWriter::with_capacity(4096);
             self.write_ac_global(
                 num_groups,
-                &ac_built_code,
+                &ac_built_codes,
                 used_orders,
                 coeff_order_tokens.as_deref(),
-                ac_lz77_params.as_ref(),
+                &ac_lz77_params_per_pass,
                 &mut ac_global,
             )?;
 
             let mut ac_group_writer = BitWriter::with_capacity(num_blocks * 100);
-            ac_built_code.write_tokens(
-                &ac_section_tokens[0],
-                ac_lz77_params.as_ref(),
+            ac_built_codes[0].write_tokens(
+                &ac_section_tokens_per_pass[0][0],
+                ac_lz77_params_per_pass[0].as_ref(),
                 &mut ac_group_writer,
             )?;
 
@@ -1729,51 +1921,87 @@ impl VarDctEncoder {
                 sections.push(dc_group.finish());
             }
 
-            // AC Global
+            // AC Global (HfGlobal)
             let mut ac_global = BitWriter::with_capacity(4096);
             self.write_ac_global(
                 num_groups,
-                &ac_built_code,
+                &ac_built_codes,
                 used_orders,
                 coeff_order_tokens.as_deref(),
-                ac_lz77_params.as_ref(),
+                &ac_lz77_params_per_pass,
                 &mut ac_global,
             )?;
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
-            // AC groups
+            // AC groups: Section order is pass-major, group-minor
+            // Section index = 2 + num_dc_groups + pass * num_groups + group
             let blocks_per_ac_group = (256 / 8) * (256 / 8);
-            for (group_idx, ac_tokens) in ac_section_tokens.iter().enumerate() {
-                let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
-                ac_built_code.write_tokens(
-                    ac_tokens,
-                    ac_lz77_params.as_ref(),
-                    &mut ac_group_writer,
-                )?;
-                // Multi-group alpha: write modular HF sub-bitstream for this group
-                if let Some(alpha_data) = &alpha {
-                    let group_x = group_idx % xsize_groups;
-                    let group_y = group_idx / xsize_groups;
-                    let x0 = group_x * GROUP_DIM;
-                    let y0 = group_y * GROUP_DIM;
-                    let gw = GROUP_DIM.min(width - x0);
-                    let gh = GROUP_DIM.min(height - y0);
-                    Self::write_modular_alpha_group(
-                        alpha_data,
-                        width,
-                        x0,
-                        y0,
-                        gw,
-                        gh,
+            for pass in 0..num_passes {
+                for (group_idx, ac_tokens) in ac_section_tokens_per_pass[pass].iter().enumerate() {
+                    let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
+                    ac_built_codes[pass].write_tokens(
+                        ac_tokens,
+                        ac_lz77_params_per_pass[pass].as_ref(),
                         &mut ac_group_writer,
                     )?;
+                    // Multi-group alpha: write modular HF sub-bitstream only in LAST pass
+                    if pass == num_passes - 1
+                        && let Some(alpha_data) = &alpha
+                    {
+                        let group_x = group_idx % xsize_groups;
+                        let group_y = group_idx / xsize_groups;
+                        let x0 = group_x * GROUP_DIM;
+                        let y0 = group_y * GROUP_DIM;
+                        let gw = GROUP_DIM.min(width - x0);
+                        let gh = GROUP_DIM.min(height - y0);
+                        Self::write_modular_alpha_group(
+                            alpha_data,
+                            width,
+                            x0,
+                            y0,
+                            gw,
+                            gh,
+                            &mut ac_group_writer,
+                        )?;
+                    }
+                    ac_group_writer.zero_pad_to_byte();
+                    sections.push(ac_group_writer.finish());
                 }
-                ac_group_writer.zero_pad_to_byte();
-                sections.push(ac_group_writer.finish());
             }
 
             let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
+
+            #[cfg(feature = "debug-tokens")]
+            {
+                eprintln!(
+                    "[SECTIONS] num_sections={}, num_passes={}, num_groups={}, num_dc_groups={}",
+                    section_sizes.len(),
+                    num_passes,
+                    num_groups,
+                    num_dc_groups
+                );
+                for (i, sz) in section_sizes.iter().enumerate() {
+                    let label = if i == 0 {
+                        "LfGlobal"
+                    } else if i <= num_dc_groups {
+                        "LfGroup"
+                    } else if i == num_dc_groups + 1 {
+                        "HfGlobal"
+                    } else {
+                        "HfGroup"
+                    };
+                    let pass_group = if i > num_dc_groups + 1 {
+                        let idx = i - num_dc_groups - 2;
+                        let pass = idx / num_groups;
+                        let group = idx % num_groups;
+                        format!(" (pass={}, group={})", pass, group)
+                    } else {
+                        String::new()
+                    };
+                    eprintln!("  section[{}]: {} = {} bytes{}", i, label, sz, pass_group);
+                }
+            }
 
             write_toc(&section_sizes, writer)?;
             for section in sections {

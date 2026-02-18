@@ -4,7 +4,7 @@
 
 //! Tests for the encoder — uses the public LosslessConfig/LossyConfig API.
 
-use crate::{LosslessConfig, PixelLayout};
+use crate::{LosslessConfig, LossyConfig, PixelLayout, ProgressiveMode};
 
 mod tests {
     use crate::{LosslessConfig, LossyConfig, PixelLayout};
@@ -4740,4 +4740,343 @@ fn test_tree_learning_debug_single() {
             if djxl_ok { "PASS" } else { "FAIL" },
         );
     }
+}
+
+/// Minimal progressive test: 64x64, effort 1 (no custom orders, no LZ77, no butteraugli)
+#[test]
+#[ignore]
+fn test_progressive_minimal() {
+    use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+
+    let w = 128;
+    let h = 128;
+    let mut data = vec![128u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            data[idx] = (x * 2).min(255) as u8;
+            data[idx + 1] = (y * 2).min(255) as u8;
+            data[idx + 2] = 128;
+        }
+    }
+
+    // Test across effort levels to exercise different code paths
+    // e1-2: DCT8 only; e3: multi-block transforms + custom orders; e5: ANS + pixel-domain loss
+    for effort in [1, 3, 5] {
+        let encoded = LossyConfig::new(2.0)
+            .with_progressive(ProgressiveMode::QuantizedAcFullAc)
+            .with_effort(effort)
+            .with_butteraugli_iters(0)
+            .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+            .unwrap();
+
+        let r = decode_with_jxl_rs(&encoded);
+        eprintln!(
+            "Progressive e{}: {} bytes, jxl-rs={}",
+            effort,
+            encoded.len(),
+            if r.is_ok() { "OK" } else { "FAIL" }
+        );
+        assert!(
+            r.is_ok(),
+            "Progressive e{} jxl-rs decode failed: {:?}",
+            effort,
+            r.err()
+        );
+    }
+
+    // Full roundtrip with both decoders at effort 1 (minimal features)
+    let encoded = LossyConfig::new(2.0)
+        .with_progressive(ProgressiveMode::QuantizedAcFullAc)
+        .with_effort(1)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+
+    let result_djxl = decode_with_djxl(&encoded);
+    assert!(result_djxl.is_ok(), "djxl decode failed");
+}
+
+/// Test progressive VarDCT encoding (2-pass quantized mode)
+#[test]
+#[ignore]
+fn test_progressive_qprogressive_roundtrip() {
+    use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+
+    // Generate a 128x128 gradient test image (single group, uses multi-section path)
+    let w = 128;
+    let h = 128;
+    let mut data = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            data[idx] = (x * 2).min(255) as u8;
+            data[idx + 1] = (y * 2).min(255) as u8;
+            data[idx + 2] = (x + y).min(255) as u8;
+        }
+    }
+
+    // Encode with 2-pass progressive
+    let encoded = LossyConfig::new(1.0)
+        .with_progressive(ProgressiveMode::QuantizedAcFullAc)
+        .with_effort(5) // lower effort for faster test
+        .with_butteraugli_iters(0)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!(
+        "Progressive 2-pass: {} bytes ({} pixels)",
+        encoded.len(),
+        w * h
+    );
+
+    // Save for debugging
+    let path = "/tmp/test_progressive_qprog.jxl";
+    std::fs::write(path, &encoded).ok();
+
+    // Decode with jxl-rs
+    let result = decode_with_jxl_rs(&encoded);
+    match &result {
+        Ok(decoded) => {
+            eprintln!(
+                "jxl-rs: OK, {}x{} {} channels",
+                decoded.width, decoded.height, decoded.channels
+            );
+            assert_eq!(decoded.width, w);
+            assert_eq!(decoded.height, h);
+        }
+        Err(e) => {
+            eprintln!("jxl-rs: FAILED: {}", e);
+        }
+    }
+    assert!(result.is_ok(), "jxl-rs decode failed");
+
+    // Decode with djxl
+    let result_djxl = decode_with_djxl(&encoded);
+    match &result_djxl {
+        Ok(decoded) => {
+            eprintln!(
+                "djxl: OK, {}x{} {} channels",
+                decoded.width, decoded.height, decoded.channels
+            );
+            assert_eq!(decoded.width, w);
+            assert_eq!(decoded.height, h);
+        }
+        Err(e) => {
+            eprintln!("djxl: FAILED: {}", e);
+        }
+    }
+    assert!(result_djxl.is_ok(), "djxl decode failed");
+}
+
+/// Test progressive VarDCT encoding with multi-group image (300x300 = 4 groups)
+#[test]
+#[ignore]
+fn test_progressive_multigroup() {
+    use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+
+    // 300x300 → 2×2 = 4 groups. Use pseudo-random pattern for variety.
+    let w = 300;
+    let h = 300;
+    let mut data = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            let v = ((x * 37 + y * 53 + 123) % 256) as u8;
+            data[idx] = v;
+            data[idx + 1] = v.wrapping_add(80);
+            data[idx + 2] = v.wrapping_add(160);
+        }
+    }
+
+    // Encode without progressive for comparison
+    let nonprog = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_butteraugli_iters(0)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+
+    // Encode with 2-pass progressive, effort 5
+    let encoded = LossyConfig::new(2.0)
+        .with_progressive(ProgressiveMode::QuantizedAcFullAc)
+        .with_effort(5)
+        .with_butteraugli_iters(0)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!(
+        "Non-progressive: {} bytes, Progressive 2-pass: {} bytes ({}x{})",
+        nonprog.len(),
+        encoded.len(),
+        w,
+        h
+    );
+    assert_ne!(
+        nonprog.len(),
+        encoded.len(),
+        "Progressive should produce different file size than non-progressive"
+    );
+
+    let path = "/tmp/test_progressive_multigroup.jxl";
+    std::fs::write(path, &encoded).ok();
+
+    // Decode with jxl-rs — get detailed error
+    let result = decode_with_jxl_rs(&encoded);
+    match &result {
+        Ok(decoded) => {
+            eprintln!(
+                "jxl-rs: OK, {}x{} {} channels",
+                decoded.width, decoded.height, decoded.channels
+            );
+        }
+        Err(e) => {
+            eprintln!("jxl-rs: FAILED: {:?}", e);
+        }
+    }
+    assert!(
+        result.is_ok(),
+        "jxl-rs decode failed for multi-group progressive"
+    );
+
+    // Also test with djxl
+    let result_djxl = decode_with_djxl(&encoded);
+    match &result_djxl {
+        Ok(decoded) => {
+            eprintln!(
+                "djxl: OK, {}x{} {} channels",
+                decoded.width, decoded.height, decoded.channels
+            );
+        }
+        Err(e) => {
+            eprintln!("djxl: FAILED: {}", e);
+        }
+    }
+    assert!(
+        result_djxl.is_ok(),
+        "djxl decode failed for multi-group progressive"
+    );
+}
+
+/// Test progressive VarDCT encoding with real photo (content-dependent bug)
+#[test]
+#[ignore]
+fn test_progressive_multigroup_photo() {
+    use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+
+    // Load a real CLIC photo crop (300x300 from 1024x1024)
+    let path = "/tmp/test300.png";
+    if !std::path::Path::new(path).exists() {
+        eprintln!("Skipping: {} not found", path);
+        return;
+    }
+    let img = image::open(path).unwrap().to_rgb8();
+    let w = img.width() as usize;
+    let h = img.height() as usize;
+    let data = img.as_raw().as_slice();
+    eprintln!("Photo: {}x{}, {} bytes", w, h, data.len());
+
+    // Encode with 2-pass progressive
+    let encoded = LossyConfig::new(2.0)
+        .with_progressive(ProgressiveMode::QuantizedAcFullAc)
+        .with_effort(5)
+        .with_butteraugli_iters(0)
+        .encode(data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!("Progressive 2-pass photo: {} bytes", encoded.len());
+    std::fs::write("/tmp/test_progressive_photo.jxl", &encoded).ok();
+
+    // Decode with jxl-rs
+    let result = decode_with_jxl_rs(&encoded);
+    match &result {
+        Ok(decoded) => {
+            eprintln!("jxl-rs: OK, {}x{}", decoded.width, decoded.height);
+        }
+        Err(e) => {
+            eprintln!("jxl-rs: FAILED: {:?}", e);
+        }
+    }
+
+    // Decode with djxl
+    let result_djxl = decode_with_djxl(&encoded);
+    match &result_djxl {
+        Ok(decoded) => {
+            eprintln!("djxl: OK, {}x{}", decoded.width, decoded.height);
+        }
+        Err(e) => {
+            eprintln!("djxl: FAILED: {}", e);
+        }
+    }
+
+    assert!(result.is_ok(), "jxl-rs decode failed for photo progressive");
+    assert!(
+        result_djxl.is_ok(),
+        "djxl decode failed for photo progressive"
+    );
+}
+
+/// Test progressive VarDCT encoding (3-pass DC/VLF/LF/AC mode)
+#[test]
+#[ignore]
+fn test_progressive_3pass_roundtrip() {
+    use crate::test_helpers::{decode_with_djxl, decode_with_jxl_rs};
+
+    // 128x128 gradient
+    let w = 128;
+    let h = 128;
+    let mut data = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 3;
+            data[idx] = (x * 2).min(255) as u8;
+            data[idx + 1] = (y * 2).min(255) as u8;
+            data[idx + 2] = (x + y).min(255) as u8;
+        }
+    }
+
+    // Encode with 3-pass progressive
+    let encoded = LossyConfig::new(1.0)
+        .with_progressive(ProgressiveMode::DcVlfLfAc)
+        .with_effort(5)
+        .with_butteraugli_iters(0)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+
+    eprintln!(
+        "Progressive 3-pass: {} bytes ({} pixels)",
+        encoded.len(),
+        w * h
+    );
+
+    let path = "/tmp/test_progressive_3pass.jxl";
+    std::fs::write(path, &encoded).ok();
+
+    // Decode with jxl-rs
+    let result = decode_with_jxl_rs(&encoded);
+    match &result {
+        Ok(decoded) => {
+            eprintln!(
+                "jxl-rs: OK, {}x{} {} channels",
+                decoded.width, decoded.height, decoded.channels
+            );
+        }
+        Err(e) => {
+            eprintln!("jxl-rs: FAILED: {}", e);
+        }
+    }
+    assert!(result.is_ok(), "jxl-rs decode failed");
+
+    // Decode with djxl
+    let result_djxl = decode_with_djxl(&encoded);
+    match &result_djxl {
+        Ok(decoded) => {
+            eprintln!(
+                "djxl: OK, {}x{} {} channels",
+                decoded.width, decoded.height, decoded.channels
+            );
+        }
+        Err(e) => {
+            eprintln!("djxl: FAILED: {}", e);
+        }
+    }
+    assert!(result_djxl.is_ok(), "djxl decode failed");
 }
