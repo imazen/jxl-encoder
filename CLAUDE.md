@@ -228,13 +228,13 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in)
   Learns per-pixel predictor/context selection, multi-context ANS encoding
 - HybridUint {4,2,0} for modular (was raw split=15, now matches libjxl default)
-- LZ77 with RLE and backward-reference methods (`--lz77` flag, ANS-only, two-pass only)
-  - RLE method: matches consecutive identical tokens (fast, limited on photos)
-  - Greedy method: hash chain backward references (default when enabled)
-  - Both methods decoder-validated with jxl-rs, jxl-oxide, and djxl
-  - Greedy backref uses correct per-subimage dist_multiplier (xsize_blocks for DC,
-    max(channel_widths) for AC metadata) matching decoder's SPECIAL_DISTANCES table
-    (threshold not met), mainly helps modular/graphics content
+- LZ77 with RLE, greedy, and optimal methods (default-on at effort >= 7, ANS-only)
+  - RLE method: consecutive identical tokens (effort 7, fast)
+  - Greedy method: hash chain backward references (effort 8)
+  - Optimal method: Viterbi DP minimum-cost parse (effort 9+, best compression)
+  - All methods decoder-validated with jxl-rs, jxl-oxide, and djxl
+  - Integrated into tree-learned modular paths (single-group and multi-group squeeze)
+  - Per-section dist_multiplier matches decoder's per-subimage computation
 - Content-adaptive block context map (default-on in two-pass, QF-based splitting,
   ~0.5% average savings on large images, verified with jxl-rs and djxl)
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
@@ -247,7 +247,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   At d=1.0 on CLIC 1024x1024: -15% file size at -1.7 SSIM2; at equal file size +0.3 SSIM2.
   RD improvement comes from redistributing bits from over-quality to under-quality blocks.
 - **Fine-grained AC strategy search** (effort 9): step=1 instead of step=2 for 32x32+ blocks
-- **Optimal LZ77** (effort 9): exhaustive search vs our greedy hash chain
+- ~~**Optimal LZ77**~~ DONE: Viterbi DP parser at effort 9+, greedy at e8, RLE at e7
 - ~~**Full histogram clustering**~~ DONE: pair-merge enabled for both VarDCT and modular tree-learned paths
 - **Predictor::Variable** for modular (effort 8+): adapts per-channel vs fixed predictor
 
@@ -330,10 +330,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] Noise synthesis (`--noise` flag, opt-in, estimates and encodes noise params)
 - [x] Gaborish inverse (default-on, `--no-gaborish` to disable)
 - [x] Pixel-domain loss (default-on, `--no-pixel-domain-loss` to disable)
-- [x] LZ77 backward references (`--lz77` flag, opt-in, ANS two-pass only)
-  - RLE method: `--lz77-method rle` (consecutive identical tokens only)
-  - Greedy method: `--lz77-method greedy` (hash chain matching, default when enabled)
-  - Both decoder-validated; known interaction issues with forced DCT2x2/IDENTITY strategies
+- [x] LZ77 backward references (default-on at effort >= 7, ANS two-pass only)
+  - RLE method: `--lz77-method rle` (effort 7, consecutive identical tokens)
+  - Greedy method: `--lz77-method greedy` (effort 8, hash chain matching)
+  - Optimal method: `--lz77-method optimal` (effort 9+, Viterbi DP minimum-cost parse)
+  - Integrated into tree-learned paths (single-group, multi-group squeeze)
+  - All methods decoder-validated with jxl-rs, jxl-oxide, and djxl
 - [x] Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in, multi-context ANS)
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 - [x] Per-block EPF sharpness selection (auto, Phase 4 of reconstruction plan)
@@ -1225,11 +1227,14 @@ palette transform (lossless), squeeze transform (Haar wavelet), lossless patches
    With correct formulas, property 15 works correctly. Re-enabled for all tree learning.
 
 2. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
+   Note: Our tree learning with all 14 candidate predictors IS libjxl's "Variable" mode.
+   "Best" is a lossy-only speed optimization (2 predictors instead of 14) — it's *worse* quality.
 
-3. **Optimal LZ77 (effort 9)** — NOT IMPLEMENTED. Exhaustive vs greedy matching. ~1-2%.
+3. ~~**Optimal LZ77 (effort 9)**~~ — DONE (Feb 18, 2026). Viterbi DP minimum-cost parse.
+   Integrated into tree-learned modular paths. Effort-gated: RLE at e7, Greedy at e8, Optimal at e9+.
 
-4. **Effort-level tuning** — No effort-dependent property count, clustering mode, tree mode,
-   or LZ77 mode selection. Everything manual via CLI flags.
+4. ~~**Effort-level tuning for LZ77**~~ — DONE (Feb 18, 2026). LZ77 method now auto-selected by effort:
+   e7=RLE, e8=Greedy, e9+=Optimal. Tree learning and LZ77 are no longer mutually exclusive.
 
 5. **Lossy palette / delta palette** — Only lossless palette implemented. Lossy needs
    nb_deltas>0, predictor selection, and delta row encoding.

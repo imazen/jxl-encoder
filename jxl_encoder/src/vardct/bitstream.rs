@@ -112,64 +112,7 @@ impl VarDctEncoder {
         lz77: Option<&crate::entropy_coding::lz77::Lz77Params>,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        #[cfg(feature = "debug-tokens")]
-        let start_bits = writer.bits_written();
-
-        if let Some(params) = lz77 {
-            #[cfg(feature = "debug-tokens")]
-            eprintln!(
-                "[LZ77-header] Writing enabled=true, min_symbol={}, min_length={}, distance_context={}",
-                params.min_symbol, params.min_length, params.distance_context
-            );
-
-            writer.write(1, 1)?; // lz77 enabled
-
-            // min_symbol: U32(Val(224), Val(512), Val(4096), BitsOffset(15,8))
-            match params.min_symbol {
-                224 => writer.write(2, 0)?,  // selector 0 = Val(224)
-                512 => writer.write(2, 1)?,  // selector 1 = Val(512)
-                4096 => writer.write(2, 2)?, // selector 2 = Val(4096)
-                v => {
-                    writer.write(2, 3)?; // selector 3 = BitsOffset(15, 8)
-                    writer.write(15, (v - 8) as u64)?;
-                }
-            }
-
-            // min_length: U32(Val(3), Val(4), BitsOffset(2,5), BitsOffset(8,9))
-            match params.min_length {
-                3 => writer.write(2, 0)?, // selector 0 = Val(3)
-                4 => writer.write(2, 1)?, // selector 1 = Val(4)
-                v @ 5..=8 => {
-                    writer.write(2, 2)?; // selector 2 = BitsOffset(2, 5)
-                    writer.write(2, (v - 5) as u64)?;
-                }
-                v => {
-                    writer.write(2, 3)?; // selector 3 = BitsOffset(8, 9)
-                    writer.write(8, (v - 9) as u64)?;
-                }
-            }
-
-            // length_uint_config: HybridUintConfig(0, 0, 0)
-            // EncodeUintConfig with log_alpha_size = 8:
-            //   write(CeilLog2Nonzero(8 + 1), split_exponent=0) → write(4, 0)
-            //   since split_exponent(0) != log_alpha_size(8):
-            //     CeilLog2Nonzero(0 + 1) = CeilLog2Nonzero(1) = 0, so 0 bits for msb
-            //     CeilLog2Nonzero(0 - 0 + 1) = CeilLog2Nonzero(1) = 0, so 0 bits for lsb
-            //   Total: 4 bits (msb and lsb are implicit when split_exponent=0)
-            writer.write(4, 0)?; // split_exponent = 0
-            // msb_in_token and lsb_in_token need 0 bits each (CeilLog2Nonzero(1) = 0)
-
-            #[cfg(feature = "debug-tokens")]
-            eprintln!(
-                "[LZ77-header] Total bits written: {} (1+2+2+4=9 expected)",
-                writer.bits_written() - start_bits
-            );
-        } else {
-            writer.write(1, 0)?; // no lz77
-            #[cfg(feature = "debug-tokens")]
-            eprintln!("[LZ77-header] Writing enabled=false");
-        }
-        Ok(())
+        crate::entropy_coding::lz77::write_lz77_header(lz77, writer)
     }
 
     /// Write DC global section (LfGlobal).

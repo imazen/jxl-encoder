@@ -271,6 +271,8 @@ pub fn write_global_modular_section_with_tree(
     writer: &mut BitWriter,
     effort: u8,
     rct_type: Option<RctType>,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::tree::count_contexts;
@@ -280,6 +282,7 @@ pub fn write_global_modular_section_with_tree(
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::write_lz77_header;
 
     // Step 1: Gather samples from all groups (with subsampling for large images)
     let total_pixels: usize = images
@@ -324,12 +327,25 @@ pub fn write_global_modular_section_with_tree(
         all_tokens.extend(group_tokens);
     }
 
+    // Note: LZ77 is NOT applied in this path. The per-group sections
+    // (write_group_modular_section) re-collect tokens independently without LZ77.
+    // Applying LZ77 to the combined stream would cause a histogram mismatch because
+    // the ANS code would include LZ77 symbols that per-group sections don't emit.
+    // The squeeze multi-group path (frame.rs) handles LZ77 correctly per-section.
+    let _ = (use_lz77, lz77_method); // suppress unused warnings
+    let lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+
     // Step 4: Build multi-context ANS code with enhanced clustering
     let code = build_entropy_code_ans_with_options(
         &all_tokens,
-        num_contexts,
+        ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
-        None, // no LZ77
+        lz77_params.as_ref(),
         Some(total_pixels),
     );
 
@@ -342,13 +358,11 @@ pub fn write_global_modular_section_with_tree(
     // Write the learned tree
     write_tree(writer, &tree)?;
 
-    // Write ANS data histogram.
-    // JXL spec: context map is only written when num_contexts > 1.
-    if num_contexts > 1 {
-        writer.write(1, 0)?; // lz77.enabled = 0
+    // Write LZ77 header + ANS data histogram.
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
         write_entropy_code_ans(&code, writer)?;
     } else {
-        // write_ans_modular_header writes lz77.enabled=0 + omits context map
         write_ans_modular_header(writer, &code)?;
     }
 
