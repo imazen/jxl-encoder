@@ -159,7 +159,7 @@ struct Args {
     rc_iterations: usize,
 
     /// Number of butteraugli quantization loop iterations.
-    /// Default depends on effort: e1-4=0, e5-8=2, e9+=4 (matching libjxl).
+    /// Default depends on effort: e1-7=0, e8=2, e9+=4 (matching libjxl).
     /// Requires the butteraugli-loop feature. Use --no-butteraugli to disable.
     #[arg(long, value_name = "N")]
     butteraugli_iters: Option<u32>,
