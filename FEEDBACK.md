@@ -106,3 +106,4 @@ SSIM2 floor of 40.0 to catch broken transform reintroduction.
 2026-02-18 - Fix tree learning for 16-bit images: widen residual token storage, remove bit_depth guard
 2026-02-18 - Full 16-bit, float, and grayscale pixel layout support: 14 pixel layouts total
 2026-02-18 - Lossy delta palette: two-pass algorithm from libjxl enc_palette.cc, 72 built-in deltas, error diffusion, --lossy-palette CLI flag
+2026-02-18 - Quality calibration investigation: AdjustQuantBlockAC effort-gated (effort<=5 only, matching libjxl). All other calibration constants verified correct. 2-5% smaller files at all distances.

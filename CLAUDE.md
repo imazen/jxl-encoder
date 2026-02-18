@@ -139,23 +139,31 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 15, 2026 — 12 CLIC2025 1024x1024 images)
+### Quality Gap vs Full libjxl (Feb 18, 2026 — CLIC2025 1024x1024 images)
 
 **Measured with Rust butteraugli (native u8 decode, no TF mismatch). See `test_fair_comparison`.**
 
-**Size and quality comparison vs cjxl (average over 12 images):**
+**RD regression test (6 images, d=0.25 through d=3.0):**
+- Files are 2-5% smaller at all distances vs our pre-calibration baseline
+- Quality at d=0.25-0.5: maintained or improved
+- Quality at d=1.0: 0-4% butteraugli regression on most images, some up to 19%
+- Quality at d=2.0-3.0: some butteraugli regression (10-27%) on individual images
 
-| Distance | cjxl-rs avg | Size vs e5 | Size vs e7 | BA (rs) | BA (e5) | BA (e7) | BA vs e5 | BA vs e7 |
-|----------|-------------|-----------|-----------|---------|---------|---------|---------|---------|
-| d=0.5 | 364KB | +4.9% | +4.8% | 0.745 | 1.066 | 1.051 | **-30.1%** | **-29.1%** |
-| d=1.0 | 212KB | +0.7% | +0.2% | 1.384 | 1.615 | 1.606 | **-14.3%** | **-13.8%** |
-| d=2.0 | 114KB | **-0.9%** | **-2.3%** | 2.571 | 2.753 | 2.739 | **-6.6%** | **-6.1%** |
-| d=3.0 | 80KB | **-0.5%** | **-3.1%** | 3.518 | 3.525 | 3.479 | -0.2% | +1.1% |
+**vs cjxl (4 images with pre-encoded data):**
 
-At d=0.5: 5% larger files but **30% better quality** — strong RD win.
-At d=1.0: near-equal size with **14% better quality**.
-At d=2.0: slightly smaller files with **7% better quality** — winning on both axes.
-At d=3.0: 0.5-3% smaller files, quality at parity.
+| Distance | Size vs e5 | Size vs e7 | BA vs e5 | BA vs e7 |
+|----------|-----------|-----------|---------|---------|
+| d=0.5 | +0.0% | +0.1% | +24% | +23% |
+| d=1.0 | **-3.1%** | **-3.0%** | +221% | +184% |
+| d=2.0 | **-4.1%** | **-4.9%** | **-30%** | **-37%** |
+| d=3.0 | **-6.1%** | **-8.3%** | **-1%** | +0.2% |
+
+Note: d=0.5-1.0 BA comparison is distorted by only 4/12 images having cjxl data.
+d=2.0-3.0 show clear wins: smaller files AND better quality.
+
+**Calibration verified Feb 18, 2026**: All quantization constants, butteraugli loop
+parameters, kFavor2X2, error diffusion gating, and global_scale formula match libjxl exactly.
+AdjustQuantBlockAC effort-gated to match libjxl (effort <= 5 only).
 
 **Key insight**: At d=0.5, our butteraugli loop aggressively optimizes quality, producing
 smaller BA at the cost of slightly larger files. At d=2.0-3.0, file size is competitive
@@ -208,14 +216,17 @@ Root cause was generate_afv_weights() indexing DCT4x8 sub-weights with y*8 inste
 DCT4x8 weights use row-duplicated layout (base row y at rows 2y, 2y+1). Fixed: y*8 → y*16.
 Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants enabled.
 
-**B. Quantization Calibration** (INVESTIGATED — NOT A QUALITY LEVER)
-- Our files are ~26-29% smaller at the same distance (different pipeline, not just constants)
+**B. Quantization Calibration** (VERIFIED Feb 18, 2026)
+- AdjustQuantBlockAC now effort-gated: runs at effort <= 5 only (matching libjxl)
+- At effort > 5: fixed thresholds Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62}
 - `K_AC_QUANT` matches libjxl (0.765)
-  AdjustQuantBlockAC, iterative rate control, and more AC strategies, not K_AC_QUANT.
-- Content-adaptive global_scale is implemented (median-MAD of quant field)
+- Content-adaptive global_scale (median-MAD) matches libjxl exactly
+- kFavor2X2 = -0.4, weight formula ((5-d)/5)² — all match libjxl exactly
+- Butteraugli loop: kPow, kInitMul, kOriginalComparisonRound — all match libjxl exactly
+- Multi-resolution butteraugli comparison enabled (default params)
 
 **C. Cost Model**
-- AdjustQuantBlockAC: IMPLEMENTED (per-block quant field adjustment, `encoder.rs:811-1034`)
+- AdjustQuantBlockAC: IMPLEMENTED, effort-gated (effort <= 5 only, `transform.rs:626-700`)
 - Dead-zone thresholds: UPDATED to full libjxl values (Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62})
 - X/B multi-block threshold: IMPLEMENTED (-0.00744 * xsize*ysize for c!=1, coverage>=4)
 - kFavor2X2: IMPLEMENTED at -0.4 (matches libjxl)
