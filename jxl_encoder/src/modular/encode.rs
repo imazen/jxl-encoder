@@ -437,7 +437,7 @@ pub fn write_modular_stream_with_palette(
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_header.all_default = true
         writer.write(2, 1)?; // num_transforms = 1
-        write_palette_transform(writer, begin_c, num_c, nb_colors)?;
+        write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
 
         write_ans_modular_tokens(writer, &tokens, &code)?;
     } else {
@@ -449,7 +449,111 @@ pub fn write_modular_stream_with_palette(
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_header.all_default = true
         writer.write(2, 1)?; // num_transforms = 1
-        write_palette_transform(writer, begin_c, num_c, nb_colors)?;
+        write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
+
+        write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
+    }
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
+/// Write modular stream with lossy delta palette transform.
+///
+/// Uses a two-pass algorithm matching libjxl's FwdPalette:
+/// 1. Discovers frequent color deltas (residuals from prediction)
+/// 2. Applies palette with error diffusion using discovered deltas
+///
+/// The lossy palette quantizes colors to a small palette + delta entries,
+/// producing smaller files at the cost of some color accuracy.
+pub fn write_modular_stream_with_lossy_palette(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    begin_c: usize,
+    num_c: usize,
+    max_palette_colors: usize,
+) -> Result<()> {
+    use super::palette::apply_lossy_palette;
+
+    let mut transformed = image.clone();
+    let result = apply_lossy_palette(&mut transformed, begin_c, num_c, max_palette_colors);
+
+    let result = match result {
+        Some(r) => r,
+        None => {
+            // Lossy palette not beneficial, fall back to lossless RCT
+            if image.channels.len() >= 3 {
+                return write_modular_stream_with_rct(image, writer, use_ans);
+            } else {
+                return write_simple_modular_stream(image, writer, use_ans);
+            }
+        }
+    };
+
+    let nb_colors = result.nb_colors;
+    let nb_deltas = result.nb_deltas;
+    let predictor = result.predictor;
+
+    crate::trace::debug_eprintln!(
+        "LOSSY PALETTE: {} colors + {} deltas, predictor={}, {} channels → palette + index",
+        nb_colors,
+        nb_deltas,
+        predictor,
+        num_c,
+    );
+
+    // Collect residuals with gradient prediction on transformed channels
+    let mut residuals = Vec::new();
+    for channel in &transformed.channels {
+        let width = channel.width();
+        let height = channel.height();
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
+                let top = if y > 0 { channel.get(x, y - 1) } else { left };
+                let topleft = if x > 0 && y > 0 {
+                    channel.get(x - 1, y - 1)
+                } else {
+                    left
+                };
+                let prediction = predict_gradient(left, top, topleft);
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+                residuals.push(packed);
+            }
+        }
+    }
+
+    // === Global section ===
+    writer.write(1, 1)?; // dc_quant.all_default = true
+    writer.write(1, 1)?; // has_tree = true
+
+    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
+    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+
+    if use_ans {
+        let (tokens, code) = build_ans_modular_code(&residuals);
+        write_ans_modular_header(writer, &code)?;
+
+        // GroupHeader with 1 transform (Palette)
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 1)?; // num_transforms = 1
+        write_palette_transform(writer, begin_c, num_c, nb_colors, nb_deltas, predictor)?;
+
+        write_ans_modular_tokens(writer, &tokens, &code)?;
+    } else {
+        let (encoded, max_token) = encode_residuals_hybrid(&residuals);
+        let histogram = build_token_histogram(&encoded, max_token);
+        let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+
+        // GroupHeader with 1 transform (Palette)
+        writer.write(1, 1)?; // use_global_tree = true
+        writer.write(1, 1)?; // wp_header.all_default = true
+        writer.write(2, 1)?; // num_transforms = 1
+        write_palette_transform(writer, begin_c, num_c, nb_colors, nb_deltas, predictor)?;
 
         write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
     }

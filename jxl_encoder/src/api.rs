@@ -530,6 +530,7 @@ pub struct LosslessConfig {
     lz77: bool,
     lz77_method: Lz77Method,
     patches: bool,
+    lossy_palette: bool,
 }
 
 impl Default for LosslessConfig {
@@ -553,6 +554,7 @@ impl LosslessConfig {
                 _ => Lz77Method::Optimal,
             },
             patches: effort >= 5,
+            lossy_palette: false,
         }
     }
 
@@ -619,6 +621,17 @@ impl LosslessConfig {
         self
     }
 
+    /// Enable/disable lossy delta palette (default: false).
+    ///
+    /// When enabled, uses quantized palette with delta entries and error diffusion
+    /// for near-lossless encoding. This is NOT pixel-exact — it trades some color
+    /// accuracy for significantly smaller files on images with many colors.
+    /// Matching libjxl's modular lossy palette mode.
+    pub fn with_lossy_palette(mut self, enable: bool) -> Self {
+        self.lossy_palette = enable;
+        self
+    }
+
     // ── Getters ───────────────────────────────────────────────────────
 
     /// Current effort level.
@@ -654,6 +667,11 @@ impl LosslessConfig {
     /// Whether patches (dictionary-based repeated pattern detection) are enabled.
     pub fn patches(&self) -> bool {
         self.patches
+    }
+
+    /// Whether lossy delta palette is enabled.
+    pub fn lossy_palette(&self) -> bool {
+        self.lossy_palette
     }
 
     // ── Request / fluent encode ─────────────────────────────────────
@@ -1326,6 +1344,7 @@ impl<'a> EncodeRequest<'a> {
                 use_squeeze: cfg.squeeze,
                 enable_lz77: cfg.lz77,
                 lz77_method: cfg.lz77_method,
+                lossy_palette: cfg.lossy_palette,
                 have_animation: false,
                 duration: 0,
                 is_last: true,
@@ -1649,6 +1668,7 @@ fn encode_animation_lossless(
                 use_squeeze: cfg.squeeze,
                 enable_lz77: cfg.lz77,
                 lz77_method: cfg.lz77_method,
+                lossy_palette: cfg.lossy_palette,
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
@@ -2363,5 +2383,44 @@ mod tests {
             .with_stop(&Unstoppable)
             .encode(&pixels);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lossy_palette_encode() {
+        // 16x16 RGB image with 4 colors + slight noise
+        let colors = [[255u8, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
+        let mut pixels = Vec::with_capacity(16 * 16 * 3);
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                let ci = ((y / 4) * 4 + x / 4) as usize % 4;
+                let noise = ((x.wrapping_mul(7).wrapping_add(y.wrapping_mul(13))) % 5) as i16 - 2;
+                for c in 0..3 {
+                    let v = (colors[ci][c] as i16 + noise).clamp(0, 255) as u8;
+                    pixels.push(v);
+                }
+            }
+        }
+        let cfg = LosslessConfig::new()
+            .with_lossy_palette(true)
+            .with_ans(true);
+        let result = cfg.encode(&pixels, 16, 16, PixelLayout::Rgb8);
+        assert!(
+            result.is_ok(),
+            "lossy palette encode failed: {:?}",
+            result.err()
+        );
+        let jxl = result.unwrap();
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A], "JXL signature");
+
+        // Verify jxl-oxide can parse and decode it
+        let cursor = std::io::Cursor::new(&jxl);
+        let reader = std::io::BufReader::new(cursor);
+        let image = jxl_oxide::JxlImage::builder()
+            .read(reader)
+            .expect("jxl-oxide parse");
+        assert!(
+            image.width() > 0,
+            "decoded image should have non-zero width"
+        );
     }
 }

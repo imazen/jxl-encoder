@@ -34,6 +34,8 @@ pub struct FrameEncoderOptions {
     pub enable_lz77: bool,
     /// LZ77 method to use when enable_lz77 is true.
     pub lz77_method: Lz77Method,
+    /// Use lossy delta palette for near-lossless modular encoding.
+    pub lossy_palette: bool,
     /// Whether this frame is part of an animation (enables duration field in header).
     pub have_animation: bool,
     /// Duration of this frame in ticks (only used when have_animation is true).
@@ -54,6 +56,7 @@ impl Default for FrameEncoderOptions {
             use_squeeze: false,
             enable_lz77: false,
             lz77_method: Lz77Method::Rle,
+            lossy_palette: false,
             have_animation: false,
             duration: 0,
             is_last: true,
@@ -162,7 +165,17 @@ impl FrameEncoder {
             let has_squeeze = self.options.use_squeeze
                 && !super::squeeze::default_squeeze_params(image).is_empty();
 
-            if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
+            if self.options.lossy_palette && image.channels.len() >= 3 {
+                let max_colors = 1usize << image.bit_depth.min(12);
+                super::encode::write_modular_stream_with_lossy_palette(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                    0,
+                    image.channels.len().min(3),
+                    max_colors,
+                )?;
+            } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 super::encode::write_modular_stream_with_squeeze_and_tree(
                     image,
                     &mut section_writer,
@@ -254,7 +267,18 @@ impl FrameEncoder {
             let has_squeeze = self.options.use_squeeze
                 && !super::squeeze::default_squeeze_params(image).is_empty();
 
-            if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
+            if self.options.lossy_palette && image.channels.len() >= 3 {
+                // Lossy delta palette: near-lossless with error diffusion
+                let max_colors = 1usize << image.bit_depth.min(12);
+                super::encode::write_modular_stream_with_lossy_palette(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                    0,
+                    image.channels.len().min(3),
+                    max_colors,
+                )?;
+            } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 // Combined squeeze + tree learning: best compression
                 super::encode::write_modular_stream_with_squeeze_and_tree(
                     image,
