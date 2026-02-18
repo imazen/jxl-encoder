@@ -934,9 +934,8 @@ impl FrameEncoder {
             TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
             compute_gather_stride, gather_samples_strided,
         };
-        use crate::entropy_coding::encode::{
-            build_entropy_code_ans, write_entropy_code_ans, write_tokens_ans,
-        };
+        use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+        use crate::entropy_coding::encode::{write_entropy_code_ans, write_tokens_ans};
         use crate::entropy_coding::token::Token as AnsToken;
 
         let num_groups = self.num_groups();
@@ -1130,8 +1129,9 @@ impl FrameEncoder {
         } else {
             1.0
         };
-        let tree_params =
-            TreeLearningParams::for_effort(self.options.effort).with_pixel_fraction(pixel_fraction);
+        let tree_params = TreeLearningParams::for_effort(self.options.effort)
+            .with_pixel_fraction(pixel_fraction)
+            .with_total_pixels(total_pixels);
         let tree = compute_best_tree(&mut samples, &tree_params);
         let num_contexts = count_contexts(&tree) as usize;
 
@@ -1192,7 +1192,13 @@ impl FrameEncoder {
         for pg_tokens in &pass_group_tokens {
             all_tokens.extend(pg_tokens);
         }
-        let code = build_entropy_code_ans(&all_tokens, num_contexts);
+        let code = build_entropy_code_ans_with_options(
+            &all_tokens,
+            num_contexts,
+            true, // enhanced clustering (pair-merge refinement)
+            None, // no LZ77
+            Some(total_pixels),
+        );
 
         // Step 7: Write LfGlobal section
         let mut lf_global_writer = BitWriter::new();

@@ -278,7 +278,8 @@ pub fn write_global_modular_section_with_tree(
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_gather_stride, gather_samples_strided,
     };
-    use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
 
     // Step 1: Gather samples from all groups (with subsampling for large images)
     let total_pixels: usize = images
@@ -298,7 +299,9 @@ pub fn write_global_modular_section_with_tree(
     } else {
         1.0
     };
-    let params = TreeLearningParams::for_effort(effort).with_pixel_fraction(pixel_fraction);
+    let params = TreeLearningParams::for_effort(effort)
+        .with_pixel_fraction(pixel_fraction)
+        .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &params);
     let num_contexts = count_contexts(&tree) as usize;
 
@@ -321,8 +324,14 @@ pub fn write_global_modular_section_with_tree(
         all_tokens.extend(group_tokens);
     }
 
-    // Step 4: Build multi-context ANS code
-    let code = build_entropy_code_ans(&all_tokens, num_contexts);
+    // Step 4: Build multi-context ANS code with enhanced clustering
+    let code = build_entropy_code_ans_with_options(
+        &all_tokens,
+        num_contexts,
+        true, // enhanced clustering (pair-merge refinement)
+        None, // no LZ77
+        Some(total_pixels),
+    );
 
     // Step 5: Write bitstream
     // dc_quant.all_default = true

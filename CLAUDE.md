@@ -222,7 +222,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - Note: libjxl uses Round() with thresholds, same as us (previous "truncation" claim was wrong)
 
 **D. Entropy Coding**
-- Enhanced histogram clustering: ENABLED by default (pair-merge refinement, benefits ANS header savings)
+- Enhanced histogram clustering: ENABLED for both VarDCT (pair-merge) and modular tree-learned paths
 - ANS now default for both VarDCT and modular lossless paths
 - Modular ANS: 0.5-1.7% savings on photos, 19-57% on graphics (single-context)
 - Content-adaptive MA tree learning for modular (`--tree-learning` flag, opt-in)
@@ -248,7 +248,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   RD improvement comes from redistributing bits from over-quality to under-quality blocks.
 - **Fine-grained AC strategy search** (effort 9): step=1 instead of step=2 for 32x32+ blocks
 - **Optimal LZ77** (effort 9): exhaustive search vs our greedy hash chain
-- **Full histogram clustering** (effort 8+): kDefault vs our kFast-equivalent pair-merge
+- ~~**Full histogram clustering**~~ DONE: pair-merge enabled for both VarDCT and modular tree-learned paths
 - **Predictor::Variable** for modular (effort 8+): adapts per-channel vs fixed predictor
 
 **F. Other**
@@ -453,27 +453,22 @@ Key patterns to watch for when working on this codebase:
 
 ## Known Bugs (ACTIVE)
 
-### Tree Learning Makes Lossless Files Larger on Photos (Feb 16, 2026)
+### ~~Tree Learning Makes Lossless Files Larger on Photos~~ (MITIGATED Feb 18, 2026)
 
-**Status**: ACTIVE — tree learning remains at effort >= 8 (opt-in only)
+**Status**: MITIGATED — context count pruning and enhanced clustering now scale with image size.
 
-Tree learning produces 22-63% LARGER files than gradient-only encoding on real photos
-(measured on CLIC 128x128 and 256x256 crops). Root causes:
+Previously tree learning produced 22-63% LARGER files on small photos (128x128, 256x256 crops)
+due to tree/histogram overhead dominating small files. Three fixes applied:
 
-1. **Tree overhead exceeds savings**: The learned tree + multi-context ANS histograms
-   add significant per-context overhead. For a 128x128 photo, the tree creates many
-   contexts that fragment histograms into small buckets with high per-symbol overhead.
+1. **Context count pruning**: `with_total_pixels()` on `TreeLearningParams` caps `max_nodes`
+   to `total_pixels / 512` (min 16). Effect: 1024x1024→5859, 128x128→93, 64x64→23.
+2. **Histogram count scaling**: `total_pixel_hint` in `build_entropy_code_ans_with_options`
+   caps `max_histograms` to `total_pixels / 2048` (min 1). Effect: 1024x1024→96, 128x128→23.
+3. **Enhanced clustering for modular**: Tree-learned paths now use `ClusteringType::Best`
+   (pair-merge refinement) instead of `ClusteringType::Fast` (k-means only).
 
-2. **No Weighted Predictor**: Without WP as a candidate (property 15 disabled), tree
-   learning can only choose from spatial predictors 0-13. WP is libjxl's primary
-   tool for lossless photo compression — it adapts without needing extra contexts.
-
-3. **No context pruning**: libjxl limits context count based on image size and
-   complexity. Our tree learning always allows up to 256 nodes regardless.
-
-Property 15 (wp_max_error) is now fixed (was blocked by predictor formula bug).
-Remaining blocker: context count pruning (libjxl limits contexts based on image
-size/complexity, our tree learning always allows up to 256 nodes).
+Property 15 (wp_max_error) and predictors 10-13 were fixed in Feb 16, 2026.
+Tree learning is default-on at effort >= 5 and beats cjxl e7 by 0.7% on 1024x1024 photos.
 
 ### ~~ANS Encoder Bug on Degenerate Monochrome Gradients~~ (RESOLVED Feb 17, 2026)
 

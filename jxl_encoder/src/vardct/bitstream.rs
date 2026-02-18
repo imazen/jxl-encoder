@@ -1565,6 +1565,7 @@ impl VarDctEncoder {
                 dc_num_contexts,
                 self.enhanced_clustering,
                 dc_lz77_params.as_ref(),
+                None,
             ))
         } else {
             BuiltEntropyCode::Huffman(build_entropy_code_with_options(
@@ -1593,6 +1594,7 @@ impl VarDctEncoder {
                 ac_num_contexts,
                 self.enhanced_clustering,
                 ac_lz77_params.as_ref(),
+                None,
             ))
         } else {
             BuiltEntropyCode::Huffman(build_entropy_code_with_options(

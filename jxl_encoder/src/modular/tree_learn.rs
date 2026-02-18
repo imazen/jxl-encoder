@@ -134,6 +134,16 @@ impl TreeLearningParams {
         self.pixel_fraction = fraction.clamp(0.0, 1.0);
         self
     }
+
+    /// Scale max_nodes with total pixel count to prevent tree overhead from
+    /// dominating on small images. For 1024x1024 RGB (~3M pixels) this caps
+    /// at 5859 (below default 8192). For 128x128 RGB (~48K pixels) this caps
+    /// at 93, preventing hundreds of sparse contexts.
+    #[must_use]
+    pub fn with_total_pixels(mut self, total_pixels: usize) -> Self {
+        self.max_nodes = self.max_nodes.min((total_pixels / 512).max(16));
+        self
+    }
 }
 
 /// Collected samples for tree learning.
