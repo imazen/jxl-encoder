@@ -372,10 +372,11 @@ impl FrameEncoder {
 
         // If patches are provided, write patches section first in LfGlobal
         if let Some(pd) = patches {
-            // Force Huffman for patches section in multi-group LfGlobal.
-            // ANS patches + ANS modular in the same section causes decoder read
-            // misalignment (works fine in single-group and in VarDCT multi-group).
-            crate::vardct::patches::encode_patches_section(pd, false, &mut lf_global_writer)?;
+            crate::vardct::patches::encode_patches_section(
+                pd,
+                self.options.use_ans,
+                &mut lf_global_writer,
+            )?;
         }
 
         let global_state = if self.options.use_tree_learning && self.options.use_ans {

@@ -170,6 +170,7 @@ pub fn build_entropy_code_ans_with_options(
         }
     }
 
+    // Phase 1: Build normalized histograms to determine alphabet sizes.
     for h in 0..num_histograms {
         let config = &uint_configs[h];
         // Build histogram from values re-encoded with the optimal config
@@ -208,14 +209,12 @@ pub fn build_entropy_code_ans_with_options(
 
         let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
             .expect("ANS histogram normalization failed");
-        let ans_dist = AnsDistribution::from_normalized_counts(&ans_histo.counts)
-            .expect("ANS distribution building failed");
-
         ans_histograms.push(ans_histo);
-        ans_distributions.push(ans_dist);
     }
 
-    // Compute log_alpha_size from the actual max symbol across all histograms.
+    // Phase 2: Compute global log_alpha_size from the max alphabet across all histograms.
+    // This value is written to the bitstream header and used by the decoder for ALL
+    // distributions. Every distribution's alias table must be built with this same value.
     // Must be at least 5, at most 8 (JXL spec: stored as 2-bit value + 5).
     let max_alphabet_size = ans_histograms
         .iter()
@@ -236,6 +235,16 @@ pub fn build_entropy_code_ans_with_options(
         };
         min_bits.clamp(5, 8)
     };
+
+    // Phase 3: Build distributions with the global log_alpha_size.
+    for ans_histo in &ans_histograms {
+        let ans_dist = AnsDistribution::from_normalized_counts_with_log_alpha(
+            &ans_histo.counts,
+            log_alpha_size,
+        )
+        .expect("ANS distribution building failed");
+        ans_distributions.push(ans_dist);
+    }
 
     let code = OwnedAnsEntropyCode {
         context_map,

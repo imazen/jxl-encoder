@@ -234,8 +234,9 @@ impl AnsDistribution {
             .map(|&f| AnsEncSymbolInfo::new(f))
             .collect();
 
-        // Build reverse map (alias table)
-        Self::build_reverse_maps(&mut symbols)?;
+        // Build reverse map (alias table) using default log_alpha_size for this alphabet
+        let log_alpha_size = Self::default_log_alpha_size(symbols.len());
+        Self::build_reverse_maps(&mut symbols, log_alpha_size)?;
 
         Ok(Self {
             symbols,
@@ -270,6 +271,20 @@ impl AnsDistribution {
     /// when building distributions from ANSEncodingHistogram which has
     /// already done the normalization.
     pub fn from_normalized_counts(counts: &[i32]) -> Result<Self> {
+        let log_alpha_size = Self::default_log_alpha_size(counts.len());
+        Self::from_normalized_counts_with_log_alpha(counts, log_alpha_size)
+    }
+
+    /// Creates a distribution from pre-normalized counts with explicit log_alpha_size.
+    ///
+    /// Use this when multiple distributions share a single header (e.g., multi-histogram
+    /// ANS). The `log_alpha_size` must match the value written to the bitstream header,
+    /// NOT the per-distribution default. The decoder reads one global log_alpha_size
+    /// and uses it for all distributions in the group.
+    pub fn from_normalized_counts_with_log_alpha(
+        counts: &[i32],
+        log_alpha_size: usize,
+    ) -> Result<Self> {
         if counts.is_empty() {
             return Err(Error::InvalidHistogram("empty distribution".to_string()));
         }
@@ -289,14 +304,33 @@ impl AnsDistribution {
             .map(|&c| AnsEncSymbolInfo::new(c.max(0) as u16))
             .collect();
 
-        // Build reverse maps
-        Self::build_reverse_maps(&mut symbols)?;
+        // Build reverse maps with the caller-specified log_alpha_size
+        Self::build_reverse_maps(&mut symbols, log_alpha_size)?;
 
         Ok(Self {
             symbols,
             log_alpha_size: ANS_LOG_TAB_SIZE,
             total: ANS_TAB_SIZE,
         })
+    }
+
+    /// Computes the default log_alpha_size for a given alphabet size.
+    ///
+    /// This is the value that would be written to the bitstream header for a
+    /// standalone distribution. For multi-histogram contexts, use the global
+    /// log_alpha_size from the header instead.
+    fn default_log_alpha_size(alphabet_size: usize) -> usize {
+        use super::encode_ans::ANS_LOG_ALPHA_SIZE;
+        if alphabet_size <= (1 << ANS_LOG_ALPHA_SIZE) {
+            ANS_LOG_ALPHA_SIZE
+        } else {
+            let min_bits = if alphabet_size <= 1 {
+                5
+            } else {
+                (alphabet_size - 1).ilog2() as usize + 1
+            };
+            min_bits.clamp(5, 8)
+        }
     }
 
     /// Builds reverse maps for all symbols using the alias table method.
@@ -306,7 +340,12 @@ impl AnsDistribution {
     /// for each symbol s and remainder r in [0, freq[s]), what idx to output.
     ///
     /// This exactly mirrors the decoder's build_alias_map and read methods.
-    fn build_reverse_maps(symbols: &mut [AnsEncSymbolInfo]) -> Result<()> {
+    ///
+    /// `log_alpha_size` MUST match the value written to the bitstream header, since
+    /// the decoder uses it to split 12-bit indices into (bucket, position) pairs.
+    /// When multiple distributions share a header, they all use the same global
+    /// log_alpha_size — passing a per-distribution value causes alias table mismatch.
+    fn build_reverse_maps(symbols: &mut [AnsEncSymbolInfo], log_alpha_size: usize) -> Result<()> {
         let alphabet_size = symbols.len();
         if alphabet_size == 0 {
             return Ok(());
@@ -338,15 +377,6 @@ impl AnsDistribution {
             return Ok(());
         }
 
-        // Build the alias table exactly like jxl-rs decoder does.
-        // Standard JXL ANS uses log_alpha_size=6 (64 buckets). We only increase
-        // it when the alphabet is too large for 64 buckets.
-        let log_alpha_size = if alphabet_size <= 64 {
-            6 // Standard value, matches decoder expectations
-        } else {
-            let min_bits = (alphabet_size - 1).ilog2() as usize + 1;
-            min_bits.min(ANS_LOG_TAB_SIZE as usize)
-        };
         let table_size = 1usize << log_alpha_size;
         let log_bucket_size = ANS_LOG_TAB_SIZE as usize - log_alpha_size;
         let bucket_size = 1u16 << log_bucket_size;

@@ -358,7 +358,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Reuses VarDCT patch detection with RGB colorspace constants (PatchColorspaceInfo)
   - Non-XYB reference frame: xyb_encoded=false, save_before_ct=true, integer RGB channels
   - Subtracts patches from ModularImage channels in integer space before RCT
-  - Multi-group LfGlobal forces Huffman for patches section (ANS interaction bug)
+  - ANS encoding for patches in multi-group LfGlobal (fixed: log_alpha_size consistency)
   - GB82-SC corpus: 17.5% total savings, terminal -51.2%, imac_g3 -29.0%
   - Zero overhead on CLIC photos (identical output with/without patches)
   - All output pixel-exact verified with jxl-rs and djxl
