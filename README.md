@@ -32,7 +32,7 @@ let jxl = LossyConfig::new(1.0)
     .encode(&pixels)?;
 ```
 
-Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `RgbLinearF32`.
+Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`, `GrayAlphaLinearF32`.
 
 ## CLI
 
@@ -51,11 +51,11 @@ cjxl-rs --help
 
 ## Lossy quality vs libjxl
 
-At low distances (d <= 1.0), we're within 3% of cjxl effort 5 file sizes and 14-16% smaller than effort 1. At higher distances (d >= 2.0), the gap widens to ~22-26% vs effort 5 — mostly due to missing iterative rate control and full histogram clustering.
+At d=0.5, files are ~5% larger but 30% better butteraugli quality. At d=1.0, near-equal size with 14% better quality. At d=2.0+, equal or smaller files at comparable quality. Measured on 12 CLIC2025 1024x1024 images vs cjxl effort 5/7.
 
 ## Feature coverage
 
-We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirrel), with 16 currently enabled. Three corner strategies (AFV0-3) are implemented but disabled pending quality fixes. The remaining 8 strategies are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+).
+We implement all 19 AC strategies that libjxl evaluates through effort 9, all enabled. The remaining 8 strategies are either commented out in libjxl (DCT32x8, DCT8x32) or experimental/unused (DCT128+). Effort 9 adds fine-grained strategy search (step=1 for 32x32+ blocks).
 
 ### Lossy (VarDCT) — comparison with libjxl
 
@@ -76,8 +76,10 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Lossy + alpha (VarDCT RGB + modular alpha) | Yes | Yes | Yes |
 | JPEG re-encoding | Yes | Yes | Yes (opt-in feature) |
 | Animation (lossy + lossless) | Yes | Yes | Yes |
-| 16-bit / float input | Yes | Yes | Yes (Rgb16, Rgba16, Gray16, RgbLinearF32) |
-| Splines / patches / dots | No | Yes | No |
+| 16-bit / float input | Yes | Yes | Yes (14 pixel layouts) |
+| Patches / dictionary (default-on for screenshots) | No | Yes | Yes |
+| Fine-grained AC strategy search | Yes | Yes | Yes (effort 9+) |
+| Splines / dots | No | Yes | No |
 
 ### Lossless (Modular) — comparison with libjxl
 
@@ -86,8 +88,9 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | RCT (reversible color transform, all 42 variants) | Yes | Yes |
 | ANS entropy coding (default-on) | Yes | Yes |
 | Huffman entropy coding (fallback) | Yes | Yes |
-| LZ77 RLE | Yes | Yes (opt-in) |
-| LZ77 backward references (hash chain) | Yes | Yes (opt-in) |
+| LZ77 RLE (effort 7) | Yes | Yes (default-on) |
+| LZ77 greedy backref (effort 8) | Yes | Yes (default-on) |
+| LZ77 optimal Viterbi DP (effort 9+) | Yes | Yes (default-on) |
 | MA tree learning (14 predictors, 16 properties) | Yes | Yes |
 | Weighted predictor | Yes | Yes (bit-exact match) |
 | Palette transform (auto-detect) | Yes | Yes |
@@ -95,8 +98,9 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Histogram clustering | Full (kDefault) | Pair-merge refinement |
 | Multi-group encoding (any image size) | Yes | Yes |
 | RGBA / grayscale / alpha | Yes | Yes |
-| Lossy palette / delta palette | Yes | No |
-| Best/Variable predictors (effort 8+) | Yes | No |
+| Lossy palette / delta palette (opt-in) | Yes | Yes |
+| 16-bit / float input | Yes | Yes |
+| Best/Variable predictors (effort 8+) | Yes | No (tree learning is equivalent) |
 
 ### Entropy coding
 
@@ -105,7 +109,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | ANS (asymmetric numeral systems) | Yes | Yes |
 | Huffman (static + dynamic) | Yes | Yes |
 | HybridUint {4,2,0} | Yes | Yes |
-| LZ77 (RLE + greedy backref) | Yes | Yes |
+| LZ77 (RLE + greedy + optimal Viterbi DP) | Yes | Yes |
 | Histogram clustering | Full (kDefault) | Pair-merge refinement |
 | Context map compression | Yes | Yes |
 | Content-adaptive block context map | Yes | Yes |
@@ -126,14 +130,8 @@ We implement all 19 AC strategies that libjxl evaluates through effort 7 (Squirr
 | Feature | libjxl | Impact | Notes |
 |---------|--------|--------|-------|
 | Splines | e7+ | Content-specific | Parametric curves (power lines, horizons) |
-| Patches / dictionary | e7+ | Large for screenshots | Repeated pattern detection |
 | Dots detection | e7+ | Niche | Star fields, specular highlights |
 | Progressive encoding | All | UX only | Multi-pass for incremental decode |
-| Lossy palette / delta palette | All | Moderate | Only lossless palette implemented |
-| Best/Variable predictors | e8+ | ~1-2% | Per-channel adaptive predictor |
-| Full histogram clustering | e8+ | ~1-2% | kDefault vs our pair-merge |
-| Optimal LZ77 | e9 | ~1-2% | Exhaustive vs greedy matching |
-| Fine-grained strategy search | e9 | Minor | step=1 vs step=2 for 32x32+ |
 
 ## AC strategy coverage
 
