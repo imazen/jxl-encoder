@@ -152,6 +152,10 @@ pub struct VarDctEncoder {
     pub encoder_mode: crate::api::EncoderMode,
     /// Manual splines to overlay on the image (opt-in, None by default).
     pub splines: Option<Vec<crate::vardct::splines::Spline>>,
+    /// Whether the input is grayscale. When true, the file header signals
+    /// ColorSpace::Gray instead of RGB. VarDCT still operates in XYB (3 channels)
+    /// internally — this only affects the output colorspace the decoder targets.
+    pub is_grayscale: bool,
     /// Progressive encoding mode (Single, QuantizedAcFullAc, DcVlfLfAc).
     /// When not Single, AC coefficients are split across multiple passes with
     /// shift-based precision reduction for early preview rendering.
@@ -185,6 +189,7 @@ impl Default for VarDctEncoder {
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
+            is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
         }
     }
@@ -218,6 +223,7 @@ impl VarDctEncoder {
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
+            is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
         }
     }

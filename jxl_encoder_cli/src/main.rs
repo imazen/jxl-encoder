@@ -284,7 +284,13 @@ fn main() {
                 })
                 .collect();
 
-            let lossy_supported = matches!(layout, PixelLayout::Rgb8 | PixelLayout::Rgba8);
+            let lossy_supported = matches!(
+                layout,
+                PixelLayout::Rgb8
+                    | PixelLayout::Rgba8
+                    | PixelLayout::Gray8
+                    | PixelLayout::GrayAlpha8
+            );
 
             let encoded = if distance > 0.0 && lossy_supported {
                 let mut cfg = LossyConfig::new(distance)
@@ -513,7 +519,7 @@ fn main() {
         None
     };
 
-    // Lossy VarDCT supported for RGB/RGBA layouts (8-bit and 16-bit)
+    // Lossy VarDCT supported for RGB/RGBA/Gray layouts (8-bit, 16-bit, f32)
     let lossy_supported = matches!(
         layout,
         PixelLayout::Rgb8
@@ -523,6 +529,13 @@ fn main() {
             | PixelLayout::Rgb16
             | PixelLayout::Rgba16
             | PixelLayout::RgbLinearF32
+            | PixelLayout::RgbaLinearF32
+            | PixelLayout::Gray8
+            | PixelLayout::GrayAlpha8
+            | PixelLayout::Gray16
+            | PixelLayout::GrayAlpha16
+            | PixelLayout::GrayLinearF32
+            | PixelLayout::GrayAlphaLinearF32
     );
 
     // Encode using new API
