@@ -263,7 +263,8 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - ~~**Predictor::Variable**~~ ALREADY DONE: tree learning with all 14 predictors IS Variable mode
 
 **F. Other**
-- No splines, dots detection (effort 7 features we skip)
+- Splines: IMPLEMENTED (manual API, opt-in via `LossyConfig::with_splines()`)
+- No dots detection (effort 7 feature we skip)
 - Patches/dictionary: IMPLEMENTED (auto-detect, default-on, 33.3% corpus savings, 29.6% smaller than cjxl e7)
 - EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
@@ -389,6 +390,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Per-pass entropy codes, pass-major section ordering, frame header Passes struct
   - Works with all AC strategies (DCT8 through DCT64x64) and multi-group images
   - Verified with jxl-rs and djxl at effort 1-5
+- [x] Splines (manual API, opt-in via `LossyConfig::with_splines()`)
+  - Gaussian-blurred parametric curves for thin features (power lines, horizons, hair)
+  - Full pipeline: Catmull-Rom → resampling → continuous IDCT → Gaussian splatting
+  - Quantization with CfL decorrelation, ANS encoding with 6 spline contexts
+  - Encoder subtracts splines from XYB, decoder adds back after reconstruction
+  - Verified with jxl-rs and djxl
 
 
 ### Roadmap: Upgrading Beyond libjxl-tiny
@@ -446,8 +453,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 - [x] **Progressive encoding** — Multi-pass coefficient splitting for incremental
   quality. `--progressive` (2-pass quantized) and `--qprogressive` (3-pass DC/VLF/LF/AC).
   Per-pass entropy codes, pass-major section layout, verified with jxl-rs and djxl.
-- [ ] **Splines** — Parametric encoding of smooth curves. High impact on specific
-  content (power lines, horizons). High complexity.
+- [x] **Splines** — Manual API for Gaussian-blurred parametric curves (power lines,
+  horizons). `LossyConfig::with_splines()`. Full pipeline: Catmull-Rom interpolation,
+  quantization with CfL decorrelation, ANS encoding (6 contexts), subtract/add in
+  encoder/decoder reconstruction. Verified with jxl-rs and djxl.
 - [x] **Patches/Dictionary** — Repeated pattern detection for screenshots/UI.
   Default-on (auto-detect), `--no-patches` to disable. Detection matches libjxl
   FindTextLikePatches exactly. Cost-benefit gating with measured overhead prevents
