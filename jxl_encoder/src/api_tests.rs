@@ -5080,3 +5080,139 @@ fn test_progressive_3pass_roundtrip() {
     }
     assert!(result_djxl.is_ok(), "djxl decode failed");
 }
+
+// ── Spline roundtrip tests ──────────────────────────────────────────────────
+
+/// Test that encoding with a simple diagonal spline produces a valid JXL that
+/// jxl-rs can decode.
+#[test]
+fn test_splines_roundtrip_jxl_rs() {
+    use crate::test_helpers::decode_with_jxl_rs;
+    use crate::{LossyConfig, PixelLayout, Spline, SplinePoint};
+
+    let (width, height) = (128, 128);
+    // Medium-gray background so the spline is visible.
+    let data = vec![128u8; width * height * 3];
+
+    // One diagonal spline with Y luminance, small sigma.
+    let spline = Spline {
+        control_points: vec![
+            SplinePoint::new(10.0, 10.0),
+            SplinePoint::new(60.0, 60.0),
+            SplinePoint::new(110.0, 110.0),
+        ],
+        color_dct: {
+            let mut dct = [[0.0f32; 32]; 3];
+            dct[1][0] = 0.3; // Y DC — visible luminance
+            dct
+        },
+        sigma_dct: {
+            let mut s = [0.0f32; 32];
+            s[0] = 1.5; // sigma DC — narrow line
+            s
+        },
+    };
+
+    let encoded = LossyConfig::new(1.0)
+        .with_splines(vec![spline])
+        .encode(&data, width as u32, height as u32, PixelLayout::Rgb8)
+        .expect("encoding with splines failed");
+
+    // Save for manual inspection.
+    crate::test_helpers::save_test_output("splines", "diagonal_d1.jxl", &encoded);
+
+    // Decode with jxl-rs — this is the primary validation.
+    let decoded = decode_with_jxl_rs(&encoded).expect("jxl-rs failed to decode spline JXL");
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+    eprintln!(
+        "test_splines_roundtrip_jxl_rs: PASSED ({} bytes, {}x{} decoded)",
+        encoded.len(),
+        decoded.width,
+        decoded.height,
+    );
+}
+
+/// Test that encoding with splines produces a valid JXL that djxl can decode.
+#[test]
+fn test_splines_roundtrip_djxl() {
+    use crate::test_helpers::decode_with_djxl;
+    use crate::{LossyConfig, PixelLayout, Spline, SplinePoint};
+
+    let (width, height) = (128, 128);
+    let data = vec![128u8; width * height * 3];
+
+    let spline = Spline {
+        control_points: vec![
+            SplinePoint::new(10.0, 10.0),
+            SplinePoint::new(60.0, 60.0),
+            SplinePoint::new(110.0, 110.0),
+        ],
+        color_dct: {
+            let mut dct = [[0.0f32; 32]; 3];
+            dct[1][0] = 0.3;
+            dct
+        },
+        sigma_dct: {
+            let mut s = [0.0f32; 32];
+            s[0] = 1.5;
+            s
+        },
+    };
+
+    let encoded = LossyConfig::new(1.0)
+        .with_splines(vec![spline])
+        .encode(&data, width as u32, height as u32, PixelLayout::Rgb8)
+        .expect("encoding with splines failed");
+
+    crate::test_helpers::save_test_output("splines", "diagonal_d1_djxl.jxl", &encoded);
+
+    let decoded = decode_with_djxl(&encoded).expect("djxl failed to decode spline JXL");
+    assert_eq!(decoded.width, width);
+    assert_eq!(decoded.height, height);
+    eprintln!(
+        "test_splines_roundtrip_djxl: PASSED ({} bytes, {}x{} decoded)",
+        encoded.len(),
+        decoded.width,
+        decoded.height,
+    );
+}
+
+/// Test that encoding WITHOUT splines produces identical output to baseline.
+/// Ensures the spline plumbing doesn't regress anything when unused.
+#[test]
+fn test_no_splines_baseline() {
+    use crate::{LossyConfig, PixelLayout};
+
+    let (width, height) = (32, 32);
+    let mut data = vec![0u8; width * height * 3];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            data[idx] = (x * 8) as u8;
+            data[idx + 1] = (y * 8) as u8;
+            data[idx + 2] = 128;
+        }
+    }
+
+    // Encode without splines (normal path).
+    let encoded_no_splines = LossyConfig::new(1.0)
+        .encode(&data, width as u32, height as u32, PixelLayout::Rgb8)
+        .expect("encoding without splines failed");
+
+    // Encode with empty splines vec — should be identical to no-splines.
+    let encoded_empty = LossyConfig::new(1.0)
+        .with_splines(vec![])
+        .encode(&data, width as u32, height as u32, PixelLayout::Rgb8)
+        .expect("encoding with empty splines failed");
+
+    assert_eq!(
+        encoded_no_splines.len(),
+        encoded_empty.len(),
+        "empty splines should produce identical output to no-splines"
+    );
+    assert_eq!(
+        encoded_no_splines, encoded_empty,
+        "empty splines should produce byte-identical output"
+    );
+}

@@ -90,6 +90,8 @@ pub enum BlendMode {
 pub const ENABLE_NOISE: u64 = 0x01;
 /// Frame flag: enable patches (dictionary-based repeated patterns).
 pub const PATCHES_FLAG: u64 = 0x02;
+/// Frame flag: enable splines.
+pub const SPLINES_FLAG: u64 = 0x10;
 /// Frame flag: skip adaptive LF smoothing.
 pub const SKIP_ADAPTIVE_LF_SMOOTHING: u64 = 0x80;
 
