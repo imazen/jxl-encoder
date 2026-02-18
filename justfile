@@ -36,3 +36,19 @@ bench-platforms:
 
 # Run all cross-compilation targets
 test-cross: test-i686 test-armv7
+
+# Generate cjxl reference CSV (~40 min, run once per cjxl version)
+generate-reference:
+    bash scripts/generate_cjxl_reference.sh
+
+# Encode with cjxl-rs and compare against reference (~30 min)
+rd-compare:
+    cargo build --release -p jxl-encoder-cli
+    bash scripts/measure_cjxl_rs.sh
+    python3 scripts/rd_report.py
+
+# Quick comparison: 10 CLIC + 5 CID22 + all screenshots (~5 min)
+rd-compare-quick:
+    cargo build --release -p jxl-encoder-cli
+    bash scripts/measure_cjxl_rs.sh --quick
+    python3 scripts/rd_report.py

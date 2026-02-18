@@ -19,7 +19,7 @@ use std::time::Instant;
 #[command(name = "cjxl-rs")]
 #[command(author, version, about = "JPEG XL encoder in Rust", long_about = None)]
 struct Args {
-    /// Input image file (PNG)
+    /// Input image file (PNG or PNM)
     #[arg(required = true)]
     input: PathBuf,
 
@@ -234,223 +234,244 @@ fn main() {
         }
     };
 
+    // Determine input format from extension
+    let ext = args
+        .input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let is_pnm = matches!(ext.as_str(), "pnm" | "ppm" | "pgm" | "pfm" | "pam");
+
     // Check for APNG (animated PNG) — handle before single-frame path
     let start = Instant::now();
-    match read_apng(&args.input) {
-        Ok(Some(apng)) => {
-            if !args.quiet {
-                println!(
-                    "APNG:     {}x{} {:?}, {} frames, {} loops",
-                    apng.width,
-                    apng.height,
-                    apng.color_type,
-                    apng.frames.len(),
-                    apng.num_loops
+    if !is_pnm {
+        match read_apng(&args.input) {
+            Ok(Some(apng)) => {
+                if !args.quiet {
+                    println!(
+                        "APNG:     {}x{} {:?}, {} frames, {} loops",
+                        apng.width,
+                        apng.height,
+                        apng.color_type,
+                        apng.frames.len(),
+                        apng.num_loops
+                    );
+                }
+
+                let layout = if apng.has_alpha {
+                    PixelLayout::Rgba8
+                } else {
+                    PixelLayout::Rgb8
+                };
+
+                // Build animation params
+                let (tps_numerator, tps_denominator) = if let Some(fps) = args.fps {
+                    (fps, 1)
+                } else {
+                    (1000, 1) // millisecond precision
+                };
+
+                let num_loops = args.loops.unwrap_or(apng.num_loops);
+
+                let animation = AnimationParams {
+                    tps_numerator,
+                    tps_denominator,
+                    num_loops,
+                };
+
+                // Build frames with durations
+                let anim_frames: Vec<AnimationFrame<'_>> = apng
+                    .frames
+                    .iter()
+                    .map(|f| AnimationFrame {
+                        pixels: &f.pixels,
+                        duration: if args.fps.is_some() {
+                            1 // 1 tick per frame when fps is explicit
+                        } else {
+                            f.delay_ms // millisecond ticks
+                        },
+                    })
+                    .collect();
+
+                let lossy_supported = matches!(
+                    layout,
+                    PixelLayout::Rgb8
+                        | PixelLayout::Rgba8
+                        | PixelLayout::Gray8
+                        | PixelLayout::GrayAlpha8
                 );
-            }
 
-            let layout = if apng.has_alpha {
-                PixelLayout::Rgba8
-            } else {
-                PixelLayout::Rgb8
-            };
-
-            // Build animation params
-            let (tps_numerator, tps_denominator) = if let Some(fps) = args.fps {
-                (fps, 1)
-            } else {
-                (1000, 1) // millisecond precision
-            };
-
-            let num_loops = args.loops.unwrap_or(apng.num_loops);
-
-            let animation = AnimationParams {
-                tps_numerator,
-                tps_denominator,
-                num_loops,
-            };
-
-            // Build frames with durations
-            let anim_frames: Vec<AnimationFrame<'_>> = apng
-                .frames
-                .iter()
-                .map(|f| AnimationFrame {
-                    pixels: &f.pixels,
-                    duration: if args.fps.is_some() {
-                        1 // 1 tick per frame when fps is explicit
-                    } else {
-                        f.delay_ms // millisecond ticks
-                    },
-                })
-                .collect();
-
-            let lossy_supported = matches!(
-                layout,
-                PixelLayout::Rgb8
-                    | PixelLayout::Rgba8
-                    | PixelLayout::Gray8
-                    | PixelLayout::GrayAlpha8
-            );
-
-            let encoded = if distance > 0.0 && lossy_supported {
-                let mut cfg = LossyConfig::new(distance)
-                    .with_effort(args.effort)
-                    .with_lz77_method(lz77_method);
-                if args.no_ans {
-                    cfg = cfg.with_ans(false);
-                }
-                if args.no_gaborish {
-                    cfg = cfg.with_gaborish(false);
-                }
-                if args.noise || args.denoise {
-                    cfg = cfg.with_noise(true);
-                }
-                if args.denoise {
-                    cfg = cfg.with_denoise(true);
-                }
-                if args.no_error_diffusion {
-                    cfg = cfg.with_error_diffusion(false);
-                }
-                if args.no_pixel_domain_loss {
-                    cfg = cfg.with_pixel_domain_loss(false);
-                }
-                if args.no_patches {
-                    cfg = cfg.with_patches(false);
-                }
-                if args.lz77 {
-                    cfg = cfg.with_lz77(true);
-                }
-                if args.no_lz77 {
-                    cfg = cfg.with_lz77(false);
-                }
-
-                if args.progressive {
-                    cfg = cfg.with_progressive(ProgressiveMode::DcVlfLfAc);
-                }
-                if args.qprogressive {
-                    cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
-                }
-                if args.experimental {
-                    cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
-                }
-
-                if args.dct8_only {
-                    cfg = cfg.with_force_strategy(Some(0));
-                }
-                if let Some(s) = args.force_strategy {
-                    cfg = cfg.with_force_strategy(Some(s));
-                }
-
-                #[cfg(feature = "butteraugli-loop")]
-                {
-                    if args.no_butteraugli {
-                        cfg = cfg.with_butteraugli_iters(0);
-                    } else if let Some(n) = args.butteraugli_iters {
-                        cfg = cfg.with_butteraugli_iters(n);
-                    }
-                    if !args.quiet && cfg.butteraugli_iters() > 0 {
-                        println!("Butteraugli loop: {} iterations", cfg.butteraugli_iters());
-                    }
-                }
-
-                cfg.encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
-            } else {
-                {
-                    let mut lcfg = LosslessConfig::new().with_effort(args.effort);
+                let encoded = if distance > 0.0 && lossy_supported {
+                    let mut cfg = LossyConfig::new(distance)
+                        .with_effort(args.effort)
+                        .with_lz77_method(lz77_method);
                     if args.no_ans {
-                        lcfg = lcfg.with_ans(false);
+                        cfg = cfg.with_ans(false);
                     }
-                    if args.tree_learning {
-                        lcfg = lcfg.with_tree_learning(true).with_ans(true);
+                    if args.no_gaborish {
+                        cfg = cfg.with_gaborish(false);
                     }
-                    if args.no_tree_learning {
-                        lcfg = lcfg.with_tree_learning(false);
+                    if args.noise || args.denoise {
+                        cfg = cfg.with_noise(true);
                     }
-                    if args.squeeze {
-                        lcfg = lcfg.with_squeeze(true);
+                    if args.denoise {
+                        cfg = cfg.with_denoise(true);
                     }
-                    if args.no_squeeze {
-                        lcfg = lcfg.with_squeeze(false);
+                    if args.no_error_diffusion {
+                        cfg = cfg.with_error_diffusion(false);
+                    }
+                    if args.no_pixel_domain_loss {
+                        cfg = cfg.with_pixel_domain_loss(false);
                     }
                     if args.no_patches {
-                        lcfg = lcfg.with_patches(false);
+                        cfg = cfg.with_patches(false);
                     }
                     if args.lz77 {
-                        lcfg = lcfg.with_lz77(true);
+                        cfg = cfg.with_lz77(true);
                     }
                     if args.no_lz77 {
-                        lcfg = lcfg.with_lz77(false);
+                        cfg = cfg.with_lz77(false);
                     }
-                    if args.lossy_palette {
-                        lcfg = lcfg.with_lossy_palette(true);
+
+                    if args.progressive {
+                        cfg = cfg.with_progressive(ProgressiveMode::DcVlfLfAc);
+                    }
+                    if args.qprogressive {
+                        cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
                     }
                     if args.experimental {
-                        lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
+                        cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
                     }
-                    lcfg
-                }
-                .encode_animation(
-                    apng.width,
-                    apng.height,
-                    layout,
-                    &animation,
-                    &anim_frames,
-                )
-            };
 
-            let encoded = match encoded {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Error encoding animation: {}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            let encode_time = start.elapsed();
-
-            match write_output(&args.output, &encoded) {
-                Ok(()) => {}
-                Err(e) => {
-                    eprintln!("Error writing output: {}", e);
-                    std::process::exit(1);
-                }
-            }
-
-            let input_size = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
-            let output_size = encoded.len() as u64;
-
-            if !args.quiet {
-                println!();
-                println!("Input size:  {} bytes", input_size);
-                println!("Output size: {} bytes", output_size);
-                println!(
-                    "Ratio:       {:.2}x",
-                    if input_size > 0 {
-                        output_size as f64 / input_size as f64
-                    } else {
-                        0.0
+                    if args.dct8_only {
+                        cfg = cfg.with_force_strategy(Some(0));
                     }
-                );
-                println!("Time:        {:.2?}", encode_time);
-            } else {
-                println!("{}", args.output.display());
+                    if let Some(s) = args.force_strategy {
+                        cfg = cfg.with_force_strategy(Some(s));
+                    }
+
+                    #[cfg(feature = "butteraugli-loop")]
+                    {
+                        if args.no_butteraugli {
+                            cfg = cfg.with_butteraugli_iters(0);
+                        } else if let Some(n) = args.butteraugli_iters {
+                            cfg = cfg.with_butteraugli_iters(n);
+                        }
+                        if !args.quiet && cfg.butteraugli_iters() > 0 {
+                            println!("Butteraugli loop: {} iterations", cfg.butteraugli_iters());
+                        }
+                    }
+
+                    cfg.encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
+                } else {
+                    {
+                        let mut lcfg = LosslessConfig::new().with_effort(args.effort);
+                        if args.no_ans {
+                            lcfg = lcfg.with_ans(false);
+                        }
+                        if args.tree_learning {
+                            lcfg = lcfg.with_tree_learning(true).with_ans(true);
+                        }
+                        if args.no_tree_learning {
+                            lcfg = lcfg.with_tree_learning(false);
+                        }
+                        if args.squeeze {
+                            lcfg = lcfg.with_squeeze(true);
+                        }
+                        if args.no_squeeze {
+                            lcfg = lcfg.with_squeeze(false);
+                        }
+                        if args.no_patches {
+                            lcfg = lcfg.with_patches(false);
+                        }
+                        if args.lz77 {
+                            lcfg = lcfg.with_lz77(true);
+                        }
+                        if args.no_lz77 {
+                            lcfg = lcfg.with_lz77(false);
+                        }
+                        if args.lossy_palette {
+                            lcfg = lcfg.with_lossy_palette(true);
+                        }
+                        if args.experimental {
+                            lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
+                        }
+                        lcfg
+                    }
+                    .encode_animation(
+                        apng.width,
+                        apng.height,
+                        layout,
+                        &animation,
+                        &anim_frames,
+                    )
+                };
+
+                let encoded = match encoded {
+                    Ok(data) => data,
+                    Err(e) => {
+                        eprintln!("Error encoding animation: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+
+                let encode_time = start.elapsed();
+
+                match write_output(&args.output, &encoded) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!("Error writing output: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+
+                let input_size = std::fs::metadata(&args.input).map(|m| m.len()).unwrap_or(0);
+                let output_size = encoded.len() as u64;
+
+                if !args.quiet {
+                    println!();
+                    println!("Input size:  {} bytes", input_size);
+                    println!("Output size: {} bytes", output_size);
+                    println!(
+                        "Ratio:       {:.2}x",
+                        if input_size > 0 {
+                            output_size as f64 / input_size as f64
+                        } else {
+                            0.0
+                        }
+                    );
+                    println!("Time:        {:.2?}", encode_time);
+                } else {
+                    println!("{}", args.output.display());
+                }
+
+                return;
             }
-
-            return;
+            Ok(None) => {} // Not animated, fall through to single-frame path
+            Err(e) => {
+                eprintln!("Error reading input: {}", e);
+                std::process::exit(1);
+            }
         }
-        Ok(None) => {} // Not animated, fall through to single-frame path
-        Err(e) => {
-            eprintln!("Error reading input: {}", e);
-            std::process::exit(1);
-        }
-    }
+    } // end if !is_pnm
 
-    // Read PNG (single frame)
-    let (width, height, color_type, bit_depth, data) = match read_png(&args.input) {
-        Ok(result) => result,
-        Err(e) => {
-            eprintln!("Error reading input: {}", e);
-            std::process::exit(1);
+    // Read image (PNG or PNM single frame)
+    let (width, height, color_type, bit_depth, data) = if is_pnm {
+        match read_pnm(&args.input) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("Error reading PNM input: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        match read_png(&args.input) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("Error reading input: {}", e);
+                std::process::exit(1);
+            }
         }
     };
 
@@ -854,6 +875,124 @@ fn write_output(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
     writer.write_all(data)?;
     writer.flush()?;
     Ok(())
+}
+
+/// Read a PNM file (P5 = PGM grayscale, P6 = PPM RGB). Supports 8-bit and 16-bit.
+#[allow(clippy::type_complexity)]
+fn read_pnm(
+    path: &PathBuf,
+) -> Result<(u32, u32, png::ColorType, png::BitDepth, Vec<u8>), Box<dyn std::error::Error>> {
+    use std::io::BufRead;
+    let file = BufReader::new(File::open(path)?);
+    let mut lines = file.lines();
+
+    // Read magic
+    let magic = lines.next().ok_or("Empty PNM file")??;
+    let magic = magic.trim();
+    let (color_type, channels) = match magic {
+        "P5" => (png::ColorType::Grayscale, 1),
+        "P6" => (png::ColorType::Rgb, 3),
+        _ => return Err(format!("Unsupported PNM magic: {}", magic).into()),
+    };
+
+    // Read dimensions and maxval, skipping comments
+    let mut tokens: Vec<String> = Vec::new();
+    for line in &mut lines {
+        let line = line?;
+        let line = line.trim().to_string();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        tokens.extend(line.split_whitespace().map(String::from));
+        if tokens.len() >= 3 {
+            break;
+        }
+    }
+    if tokens.len() < 3 {
+        return Err("PNM header incomplete: need width, height, maxval".into());
+    }
+
+    let width: u32 = tokens[0].parse()?;
+    let height: u32 = tokens[1].parse()?;
+    let maxval: u32 = tokens[2].parse()?;
+
+    let bit_depth = if maxval <= 255 {
+        png::BitDepth::Eight
+    } else if maxval <= 65535 {
+        png::BitDepth::Sixteen
+    } else {
+        return Err(format!("Unsupported PNM maxval: {}", maxval).into());
+    };
+
+    // Reconstruct the reader from remaining buffered data
+    // The pixel data starts right after the newline following maxval.
+    // Re-open and skip header bytes to get to pixel data.
+    let raw = std::fs::read(path)?;
+    // Find the pixel data start: after magic line, then after width/height/maxval tokens
+    let mut pos = 0;
+    // We need to skip: magic line + dimension/maxval lines (skipping comments)
+    // Simpler: scan for the third non-comment number, then skip past the next newline/whitespace
+    let mut nums_found = 0;
+    // Skip magic line
+    while pos < raw.len() && raw[pos] != b'\n' {
+        pos += 1;
+    }
+    pos += 1; // skip the newline
+
+    // Parse remaining header (width, height, maxval)
+    while pos < raw.len() && nums_found < 3 {
+        // Skip whitespace/newlines
+        while pos < raw.len()
+            && (raw[pos] == b' ' || raw[pos] == b'\n' || raw[pos] == b'\r' || raw[pos] == b'\t')
+        {
+            pos += 1;
+        }
+        if pos < raw.len() && raw[pos] == b'#' {
+            // Skip comment line
+            while pos < raw.len() && raw[pos] != b'\n' {
+                pos += 1;
+            }
+            continue;
+        }
+        // Skip the number
+        while pos < raw.len()
+            && raw[pos] != b' '
+            && raw[pos] != b'\n'
+            && raw[pos] != b'\r'
+            && raw[pos] != b'\t'
+        {
+            pos += 1;
+        }
+        nums_found += 1;
+    }
+    // Skip the single whitespace byte after maxval (required by PNM spec)
+    if pos < raw.len() {
+        pos += 1;
+    }
+
+    let pixel_data = &raw[pos..];
+    let bytes_per_sample = if maxval <= 255 { 1 } else { 2 };
+    let expected = (width as usize) * (height as usize) * channels * bytes_per_sample;
+
+    if pixel_data.len() < expected {
+        return Err(format!(
+            "PNM pixel data too short: {} bytes, expected {}",
+            pixel_data.len(),
+            expected
+        )
+        .into());
+    }
+
+    let mut data = pixel_data[..expected].to_vec();
+
+    // PNM 16-bit is big-endian. Convert to native-endian (same as PNG path).
+    if bytes_per_sample == 2 && cfg!(target_endian = "little") {
+        for pair in data.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+    }
+
+    Ok((width, height, color_type, bit_depth, data))
 }
 
 struct ApngFrameData {
