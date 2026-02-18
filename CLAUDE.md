@@ -354,6 +354,14 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Zero overhead on CLIC photos (patches correctly produce nothing)
   - Indexed/palette PNGs now supported via EXPAND transformation
   - Verified with djxl, jxl-rs, jxl-oxide
+- [x] Lossless patches (default-on at effort >= 5, `--no-patches` to disable)
+  - Reuses VarDCT patch detection with RGB colorspace constants (PatchColorspaceInfo)
+  - Non-XYB reference frame: xyb_encoded=false, save_before_ct=true, integer RGB channels
+  - Subtracts patches from ModularImage channels in integer space before RCT
+  - Multi-group LfGlobal forces Huffman for patches section (ANS interaction bug)
+  - GB82-SC corpus: 17.5% total savings, terminal -51.2%, imac_g3 -29.0%
+  - Zero overhead on CLIC photos (identical output with/without patches)
+  - All output pixel-exact verified with jxl-rs and djxl
 
 
 ### Roadmap: Upgrading Beyond libjxl-tiny
@@ -415,11 +423,10 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 - [x] **Patches/Dictionary** — Repeated pattern detection for screenshots/UI.
   Default-on (auto-detect), `--no-patches` to disable. Detection matches libjxl
   FindTextLikePatches exactly. Cost-benefit gating with measured overhead prevents
-  regressions. GB82-SC corpus (10 screenshots): 33.3% total savings with patches,
-  29.6% smaller than cjxl e7 overall (1,560KB vs 2,216KB). Beats cjxl on 6/10 images
-  including imac_dark (-46%), imac_g3 (-44.5%), windows (-29%).
-  RGBA alpha channel uses LZ77 RLE for efficient encoding of mostly-opaque regions
-  (gui.png: 234KB → 49KB after LZ77 fix, only 13.5% larger than cjxl vs 5.4x before).
+  regressions. Works for both VarDCT (lossy) and modular (lossless) paths.
+  **VarDCT**: GB82-SC corpus: 33.3% total savings, 29.6% smaller than cjxl e7.
+  **Lossless**: 17.5% total savings on screenshots, terminal -51.2%, zero overhead on photos.
+  RGBA alpha channel uses LZ77 RLE for efficient encoding of mostly-opaque regions.
   Verified with djxl, jxl-rs, and jxl-oxide.
 - [ ] **Dot detection** — Star fields, specular highlights. Very niche.
 
@@ -1197,7 +1204,7 @@ by image content — gradient images with regular DC patterns benefit most.
 **AT PARITY**: RCT (all 42 variants), ANS + Huffman, HybridUint {4,2,0}, LZ77 (RLE + hash chain),
 histogram clustering, tree learning (ID3, 16 properties, 256 quantization buckets), 14/14
 predictors (including Weighted), multi-group encoding, RGBA/grayscale, context map compression,
-palette transform (lossless), squeeze transform (Haar wavelet).
+palette transform (lossless), squeeze transform (Haar wavelet), lossless patches (default-on).
 
 **COMPLETED** (Feb 6, 2026):
 - Palette transform (TransformId=1): auto-detect, lossless, 19-57% on graphics. Verified jxl-rs + djxl.
@@ -1274,8 +1281,9 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 10. 50% pixel sampling + remove threshold floor: +0.2% → **-0.7%**
 
 **Known issues**:
-- Screenshots still larger than cjxl e7 (imac_dark -4.9%, codec_wiki +0.7%, windows +18%, terminal +166%)
-  Terminal needs lossless patches (not yet implemented for lossless mode)
+- Screenshots: lossless patches now implemented (17.5% total savings). Beat cjxl e7 on
+  gui (-10.9%), imac_g3 (-14.7%), imac_dark (-4.0%). Terminal -51.2% (was +166%). Still
+  +12.5% overall vs cjxl e7 due to windows/codec_wiki gaps.
 - Palette+ANS path has a checksum mismatch bug for images with many unique colors
   (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
 - Tree learning optimized Feb 17, 2026: 86x speedup via count_increase buckets, incremental entropy,
