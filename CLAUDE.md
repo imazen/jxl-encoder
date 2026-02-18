@@ -260,7 +260,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - ~~**Fine-grained AC strategy search**~~ DONE (effort 9): step=1 instead of step=2 for 32x32+ blocks
 - ~~**Optimal LZ77**~~ DONE: Viterbi DP parser at effort 9+, greedy at e8, RLE at e7
 - ~~**Full histogram clustering**~~ DONE: pair-merge enabled for both VarDCT and modular tree-learned paths
-- **Predictor::Variable** for modular (effort 8+): adapts per-channel vs fixed predictor
+- ~~**Predictor::Variable**~~ ALREADY DONE: tree learning with all 14 predictors IS Variable mode
 
 **F. Other**
 - No splines, dots detection (effort 7 features we skip)
@@ -1248,9 +1248,10 @@ transform (Haar wavelet), lossless patches (default-on).
    Root cause was predictor formulas 10-13 being wrong, which corrupted WP error state.
    With correct formulas, property 15 works correctly. Re-enabled for all tree learning.
 
-2. **Best/Variable predictors (14, 15)** — NOT IMPLEMENTED. Effort 8+ only. ~1-2% on mixed.
-   Note: Our tree learning with all 14 candidate predictors IS libjxl's "Variable" mode.
-   "Best" is a lossy-only speed optimization (2 predictors instead of 14) — it's *worse* quality.
+2. ~~**Best/Variable predictors (14, 15)**~~ — ALREADY DONE. Our tree learning with all 14
+   candidate predictors IS libjxl's `Predictor::Variable` mode (effort ≤7 in libjxl).
+   `Predictor::Best` is a speed optimization (only Gradient+Weighted) for effort 8+ — it's
+   *worse* quality, not better. Both are encoder-only; the decoder just sees per-leaf predictors.
 
 3. ~~**Optimal LZ77 (effort 9)**~~ — DONE (Feb 18, 2026). Viterbi DP minimum-cost parse.
    Integrated into tree-learned modular paths. Effort-gated: RLE at e7, Greedy at e8, Optimal at e9+.
