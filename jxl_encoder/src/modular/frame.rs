@@ -95,6 +95,112 @@ impl FrameEncoder {
         }
     }
 
+    /// Encodes a modular image into a frame with optional patches.
+    ///
+    /// When patches are provided, sets PATCHES_FLAG in the frame header and
+    /// writes the patches section at the start of LfGlobal data.
+    pub(crate) fn encode_modular_with_patches(
+        &self,
+        image: &ModularImage,
+        color_encoding: &ColorEncoding,
+        writer: &mut BitWriter,
+        patches: Option<&crate::vardct::patches::PatchesData>,
+    ) -> Result<()> {
+        if patches.is_none() {
+            return self.encode_modular(image, color_encoding, writer);
+        }
+        let patches = patches.unwrap();
+
+        // Compute num_extra_channels from image
+        let num_extra_channels = if image.has_alpha { 1 } else { 0 };
+
+        // Write frame header with PATCHES_FLAG
+        {
+            use crate::headers::frame_header::PATCHES_FLAG;
+            let mut fh = FrameHeader::lossless();
+            fh.flags |= PATCHES_FLAG;
+            fh.ec_upsampling = vec![1; num_extra_channels];
+            fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
+            fh.have_animation = self.options.have_animation;
+            fh.duration = self.options.duration;
+            fh.is_last = self.options.is_last;
+            if let Some(ref crop) = self.options.crop {
+                fh.x0 = crop.x0;
+                fh.y0 = crop.y0;
+                fh.width = crop.width;
+                fh.height = crop.height;
+                fh.blend_mode = BlendMode::Replace;
+                fh.blend_source = 1;
+            }
+            if self.options.have_animation && !self.options.is_last {
+                fh.save_as_reference = 1;
+            }
+            fh.write(writer)?;
+        }
+
+        let num_groups = self.num_groups();
+
+        if num_groups == 1 {
+            // Single group: combine patches section + modular data into one TOC entry
+            let mut section_writer = BitWriter::new();
+
+            // Write patches section first (within the single TOC section)
+            crate::vardct::patches::encode_patches_section(
+                patches,
+                self.options.use_ans,
+                &mut section_writer,
+            )?;
+
+            // Then write modular data (same logic as encode_modular)
+            let has_squeeze = self.options.use_squeeze
+                && !super::squeeze::default_squeeze_params(image).is_empty();
+
+            if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
+                super::encode::write_modular_stream_with_squeeze_and_tree(
+                    image,
+                    &mut section_writer,
+                    self.options.effort,
+                )?;
+            } else if has_squeeze {
+                super::encode::write_modular_stream_with_squeeze(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                )?;
+            } else if self.options.use_tree_learning
+                && self.options.use_ans
+                && super::palette::should_use_palette(image).is_none()
+            {
+                write_modular_stream_with_tree(
+                    image,
+                    &mut section_writer,
+                    self.options.effort,
+                    image.channels.len() >= 3,
+                )?;
+            } else if image.channels.len() >= 3 {
+                super::encode::write_modular_stream_with_rct(
+                    image,
+                    &mut section_writer,
+                    self.options.use_ans,
+                )?;
+            } else {
+                write_improved_modular_stream(image, &mut section_writer, self.options.use_ans)?;
+            }
+
+            let section_data = section_writer.finish();
+            self.write_toc(writer, section_data.len())?;
+            for byte in section_data {
+                writer.write_u8(byte)?;
+            }
+        } else {
+            // Multi-group with patches: patches section goes into LfGlobal.
+            // Squeeze + patches is not yet supported; use non-squeeze multi-group path.
+            self.encode_modular_multi_group_inner(image, writer, Some(patches))?;
+        }
+
+        Ok(())
+    }
+
     /// Encodes a modular image into a frame.
     pub fn encode_modular(
         &self,
@@ -215,6 +321,17 @@ impl FrameEncoder {
         image: &ModularImage,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        self.encode_modular_multi_group_inner(image, writer, None)
+    }
+
+    /// Inner multi-group encoder that accepts optional patches.
+    /// When patches are provided, writes patches section at the start of LfGlobal.
+    fn encode_modular_multi_group_inner(
+        &self,
+        image: &ModularImage,
+        writer: &mut BitWriter,
+        patches: Option<&crate::vardct::patches::PatchesData>,
+    ) -> Result<()> {
         let num_groups = self.num_groups();
         let num_lf_groups = self.num_lf_groups();
         let num_passes = 1;
@@ -250,8 +367,17 @@ impl FrameEncoder {
             group_images.push(group_image);
         }
 
-        // Step 2: Write LfGlobal section (tree + histogram)
+        // Step 2: Write LfGlobal section (patches + tree + histogram)
         let mut lf_global_writer = BitWriter::new();
+
+        // If patches are provided, write patches section first in LfGlobal
+        if let Some(pd) = patches {
+            // Force Huffman for patches section in multi-group LfGlobal.
+            // ANS patches + ANS modular in the same section causes decoder read
+            // misalignment (works fine in single-group and in VarDCT multi-group).
+            crate::vardct::patches::encode_patches_section(pd, false, &mut lf_global_writer)?;
+        }
+
         let global_state = if self.options.use_tree_learning && self.options.use_ans {
             // Tree learning path: gather samples, learn tree, build multi-context ANS
             write_global_modular_section_with_tree(
