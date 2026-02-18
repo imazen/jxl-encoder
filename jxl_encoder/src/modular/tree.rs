@@ -440,13 +440,24 @@ pub fn validate_tree_djxl(tree: &Tree) -> Result<(), String> {
 }
 
 /// Count the number of unique context IDs used in a tree.
+/// Count the number of BFS-reachable leaf contexts in the tree.
+///
+/// Only counts leaves reachable from root via BFS traversal, ignoring
+/// unreachable orphan nodes that may exist after tree validation.
 pub fn count_contexts(tree: &Tree) -> u32 {
-    tree.iter()
-        .filter(|n| n.property < 0)
-        .map(|n| n.context_id)
-        .max()
-        .map(|m| m + 1)
-        .unwrap_or(1)
+    let mut count = 0u32;
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(0usize);
+
+    while let Some(idx) = queue.pop_front() {
+        if tree[idx].property < 0 {
+            count += 1;
+        } else {
+            queue.push_back(tree[idx].rchild);
+            queue.push_back(tree[idx].lchild);
+        }
+    }
+    count.max(1)
 }
 
 /// Assign context IDs to leaf nodes sequentially in BFS order.
@@ -455,7 +466,9 @@ pub fn count_contexts(tree: &Tree) -> u32 {
 /// during BFS deserialization (rchild first, then lchild — matching
 /// `collect_tree_tokens`). We must use the same traversal order here so that
 /// context IDs in the encoder match what the decoder derives.
-pub fn assign_sequential_contexts(tree: &mut Tree) {
+///
+/// Returns the number of contexts assigned.
+pub fn assign_sequential_contexts(tree: &mut Tree) -> u32 {
     let mut next_context = 0u32;
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(0usize);
@@ -472,6 +485,7 @@ pub fn assign_sequential_contexts(tree: &mut Tree) {
             queue.push_back(lchild);
         }
     }
+    next_context
 }
 
 #[cfg(test)]

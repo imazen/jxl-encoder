@@ -12,6 +12,7 @@
 //! here so consumers can continue using `crate::modular::encode::*`.
 
 use crate::bit_writer::BitWriter;
+#[allow(unused_imports)]
 use crate::debug_rect;
 use crate::entropy_coding::encode::write_tokens_ans;
 use crate::error::Result;
