@@ -1584,6 +1584,7 @@ impl<'a> EncodeRequest<'a> {
         tiny.enable_patches = cfg.patches;
         tiny.encoder_mode = cfg.mode;
         tiny.splines = cfg.splines.clone();
+        tiny.is_grayscale = self.layout.is_grayscale();
         tiny.progressive = cfg.progressive;
         #[cfg(feature = "butteraugli-loop")]
         {

@@ -5216,3 +5216,110 @@ fn test_no_splines_baseline() {
         "empty splines should produce byte-identical output"
     );
 }
+
+/// Test lossy VarDCT encoding of grayscale input (Gray8).
+/// Validates that the file header correctly signals ColorSpace::Gray
+/// and that jxl-rs can decode the output.
+#[test]
+fn test_lossy_grayscale_roundtrip_jxl_rs() {
+    use crate::test_helpers::decode_with_jxl_rs;
+    use crate::{LossyConfig, PixelLayout};
+
+    // 32x32 grayscale gradient
+    let mut data = vec![0u8; 32 * 32];
+    for y in 0..32 {
+        for x in 0..32 {
+            data[y * 32 + x] = ((x * 8 + y * 4) % 256) as u8;
+        }
+    }
+
+    let encoded = LossyConfig::new(1.0)
+        .with_effort(5)
+        .encode(&data, 32, 32, PixelLayout::Gray8)
+        .expect("grayscale lossy encoding failed");
+
+    // Verify JXL signature
+    assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+
+    // Decode with jxl-rs
+    let decoded = decode_with_jxl_rs(&encoded).expect("jxl-rs failed to decode grayscale lossy");
+    assert_eq!(decoded.width, 32);
+    assert_eq!(decoded.height, 32);
+    // Grayscale VarDCT output should be 1 channel (decoder converts XYB → gray)
+    assert_eq!(decoded.channels, 1, "expected 1 channel for grayscale output");
+
+    // Verify lossy quality: pixels should be somewhat close to originals
+    let mut max_diff = 0.0f32;
+    for y in 0..32 {
+        for x in 0..32 {
+            let original = data[y * 32 + x] as f32 / 255.0;
+            let decoded_val = decoded.get(x, y, 0);
+            let diff = (original - decoded_val).abs();
+            max_diff = max_diff.max(diff);
+        }
+    }
+    eprintln!("Grayscale lossy d=1.0: max pixel diff = {:.4}", max_diff);
+    assert!(
+        max_diff < 0.15,
+        "max pixel diff {:.4} too high for d=1.0",
+        max_diff
+    );
+}
+
+/// Test lossy VarDCT encoding of grayscale+alpha input (GrayAlpha8).
+#[test]
+fn test_lossy_grayscale_alpha_roundtrip_jxl_rs() {
+    use crate::test_helpers::decode_with_jxl_rs;
+    use crate::{LossyConfig, PixelLayout};
+
+    // 16x16 grayscale+alpha
+    let mut data = vec![0u8; 16 * 16 * 2];
+    for y in 0..16 {
+        for x in 0..16 {
+            let idx = (y * 16 + x) * 2;
+            data[idx] = ((x * 16 + y * 8) % 256) as u8; // gray
+            data[idx + 1] = 255; // alpha = opaque
+        }
+    }
+
+    let encoded = LossyConfig::new(1.0)
+        .with_effort(5)
+        .encode(&data, 16, 16, PixelLayout::GrayAlpha8)
+        .expect("grayscale+alpha lossy encoding failed");
+
+    assert_eq!(&encoded[0..2], &[0xFF, 0x0A]);
+
+    let decoded =
+        decode_with_jxl_rs(&encoded).expect("jxl-rs failed to decode grayscale+alpha lossy");
+    assert_eq!(decoded.width, 16);
+    assert_eq!(decoded.height, 16);
+    // Should be 2 channels: gray + alpha
+    assert_eq!(
+        decoded.channels, 2,
+        "expected 2 channels for grayscale+alpha output"
+    );
+}
+
+/// Test lossy grayscale decodes with djxl (libjxl reference decoder).
+#[test]
+fn test_lossy_grayscale_roundtrip_djxl() {
+    use crate::test_helpers::decode_with_djxl;
+    use crate::{LossyConfig, PixelLayout};
+
+    // 32x32 grayscale gradient
+    let mut data = vec![0u8; 32 * 32];
+    for y in 0..32 {
+        for x in 0..32 {
+            data[y * 32 + x] = ((x * 8 + y * 4) % 256) as u8;
+        }
+    }
+
+    let encoded = LossyConfig::new(1.0)
+        .with_effort(5)
+        .encode(&data, 32, 32, PixelLayout::Gray8)
+        .expect("grayscale lossy encoding failed");
+
+    let decoded = decode_with_djxl(&encoded).expect("djxl failed to decode grayscale lossy");
+    assert_eq!(decoded.width, 32);
+    assert_eq!(decoded.height, 32);
+}

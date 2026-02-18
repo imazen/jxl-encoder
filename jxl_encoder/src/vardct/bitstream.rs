@@ -155,8 +155,12 @@ impl VarDctEncoder {
             BitDepth::uint8()
         };
 
-        let mut color_encoding = ColorEncoding::srgb();
-        // VarDCT uses Relative rendering intent (matches libjxl-tiny)
+        let mut color_encoding = if self.is_grayscale {
+            ColorEncoding::gray()
+        } else {
+            ColorEncoding::srgb()
+        };
+        // VarDCT uses Relative rendering intent (matches libjxl)
         color_encoding.rendering_intent = RenderingIntent::Relative;
         if self.icc_profile.is_some() {
             color_encoding.want_icc = true;
