@@ -407,6 +407,28 @@ impl ModularImage {
         })
     }
 
+    /// Creates a new modular image from 8-bit grayscale + alpha data (2 bytes per pixel).
+    pub fn from_grayalpha8(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        if data.len() != width * height * 2 {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        let mut gray = Channel::new(width, height)?;
+        let mut alpha = Channel::new(width, height)?;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 2;
+                gray.set(x, y, data[idx] as i32);
+                alpha.set(x, y, data[idx + 1] as i32);
+            }
+        }
+        Ok(Self {
+            channels: vec![gray, alpha],
+            bit_depth: 8,
+            is_grayscale: true,
+            has_alpha: true,
+        })
+    }
+
     /// Creates a new modular image from native-endian 16-bit grayscale data.
     ///
     /// Input is 2 bytes per pixel (native-endian u16).
@@ -426,6 +448,31 @@ impl ModularImage {
             bit_depth: 16,
             is_grayscale: true,
             has_alpha: false,
+        })
+    }
+
+    /// Creates a new modular image from native-endian 16-bit grayscale + alpha data.
+    ///
+    /// Input is 4 bytes per pixel (native-endian u16 gray, u16 alpha).
+    pub fn from_grayalpha16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        if data.len() != width * height * 4 {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        let pixels: &[u16] = bytemuck::cast_slice(data);
+        let mut gray = Channel::new(width, height)?;
+        let mut alpha = Channel::new(width, height)?;
+        for y in 0..height {
+            for x in 0..width {
+                let idx = (y * width + x) * 2;
+                gray.set(x, y, pixels[idx] as i32);
+                alpha.set(x, y, pixels[idx + 1] as i32);
+            }
+        }
+        Ok(Self {
+            channels: vec![gray, alpha],
+            bit_depth: 16,
+            is_grayscale: true,
+            has_alpha: true,
         })
     }
 
