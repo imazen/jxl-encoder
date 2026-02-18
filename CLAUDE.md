@@ -383,6 +383,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] 16-bit pixel input (Rgb16, Rgba16, Gray16, GrayAlpha16)
 - [x] Float pixel input (RgbLinearF32, RgbaLinearF32, GrayLinearF32, GrayAlphaLinearF32)
 - [x] Grayscale lossless encoding (Gray8, Gray16, GrayLinearF32, with/without alpha)
+- [x] Progressive VarDCT encoding (`--progressive` 3-pass, `--qprogressive` 2-pass)
+  - 2-pass (QuantizedAcFullAc): Pass 0 all AC at half precision (shift=1), Pass 1 residual refinement
+  - 3-pass (DcVlfLfAc): Pass 0 DC+VLF (2 coeffs, 4x downsample), Pass 1 +LLF (3 coeffs, 2x), Pass 2 full AC
+  - Per-pass entropy codes, pass-major section ordering, frame header Passes struct
+  - Works with all AC strategies (DCT8 through DCT64x64) and multi-group images
+  - Verified with jxl-rs and djxl at effort 1-5
 
 
 ### Roadmap: Upgrading Beyond libjxl-tiny
@@ -437,8 +443,9 @@ Features ranked by compression impact. The tiny encoder is the base for all work
 
 **Tier 3: Content-specific / UX**
 
-- [ ] **Progressive encoding** — Multi-pass coefficient splitting for incremental
-  quality. Not a compression win, but important for web delivery.
+- [x] **Progressive encoding** — Multi-pass coefficient splitting for incremental
+  quality. `--progressive` (2-pass quantized) and `--qprogressive` (3-pass DC/VLF/LF/AC).
+  Per-pass entropy codes, pass-major section layout, verified with jxl-rs and djxl.
 - [ ] **Splines** — Parametric encoding of smooth curves. High impact on specific
   content (power lines, horizons). High complexity.
 - [x] **Patches/Dictionary** — Repeated pattern detection for screenshots/UI.
