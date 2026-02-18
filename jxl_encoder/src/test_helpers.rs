@@ -84,9 +84,10 @@ pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
     let basic_info = decoder.basic_info().clone();
     let (width, height) = basic_info.size;
 
-    // Request f32 RGB format
+    // Request f32 format for color + extra channels
     let default_format = decoder.current_pixel_format();
     let num_channels = default_format.color_type.samples_per_pixel();
+    let num_extra = default_format.extra_channel_format.len();
 
     let requested_format = JxlPixelFormat {
         color_type: default_format.color_type,
@@ -116,10 +117,21 @@ pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
         }
     };
 
-    // Create output buffer
+    // Create output buffers (color + optional extra channels like alpha)
     let mut color_buffer = Image::<f32>::new((width * num_channels, height)).map_err(|e| {
         crate::error::Error::InvalidInput(format!("jxl-rs buffer alloc error: {:?}", e))
     })?;
+
+    let mut extra_buffers: Vec<Image<f32>> = (0..num_extra)
+        .map(|_| {
+            Image::<f32>::new((width, height)).map_err(|e| {
+                crate::error::Error::InvalidInput(format!(
+                    "jxl-rs extra buffer alloc error: {:?}",
+                    e
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let mut buffers: Vec<_> = vec![JxlOutputBuffer::from_image_rect_mut(
         color_buffer
@@ -129,6 +141,15 @@ pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
             })
             .into_raw(),
     )];
+    for eb in &mut extra_buffers {
+        buffers.push(JxlOutputBuffer::from_image_rect_mut(
+            eb.get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width, height),
+            })
+            .into_raw(),
+        ));
+    }
 
     // Decode frame
     loop {
@@ -147,17 +168,32 @@ pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
         }
     }
 
-    // Extract pixels from buffer
-    let mut pixels = Vec::with_capacity(width * height * num_channels);
+    // Extract pixels: interleave color + extra channels
+    let total_channels = num_channels + num_extra;
+    let mut pixels = Vec::with_capacity(width * height * total_channels);
     for y in 0..height {
-        let row = color_buffer.row(y);
-        pixels.extend_from_slice(row);
+        let color_row = color_buffer.row(y);
+        if num_extra == 0 {
+            pixels.extend_from_slice(color_row);
+        } else {
+            // Interleave: for each pixel, emit color channels then extra channels
+            let extra_rows: Vec<&[f32]> = extra_buffers.iter().map(|eb| eb.row(y)).collect();
+            for x in 0..width {
+                for c in 0..num_channels {
+                    pixels.push(color_row[x * num_channels + c]);
+                }
+                for (ec, extra_row) in extra_rows.iter().enumerate() {
+                    let _ = ec;
+                    pixels.push(extra_row[x]);
+                }
+            }
+        }
     }
 
     Ok(DecodedImage {
         width,
         height,
-        channels: num_channels,
+        channels: total_channels,
         pixels,
     })
 }
