@@ -238,8 +238,16 @@ pub enum PixelLayout {
     Rgba16,
     /// 16-bit grayscale, 2 bytes per pixel — native-endian u16.
     Gray16,
+    /// 16-bit grayscale + alpha, 4 bytes per pixel — native-endian u16.
+    GrayAlpha16,
     /// Linear f32 RGB, 12 bytes per pixel. Skips sRGB→linear conversion.
     RgbLinearF32,
+    /// Linear f32 RGBA, 16 bytes per pixel. Skips sRGB→linear conversion.
+    RgbaLinearF32,
+    /// Linear f32 grayscale, 4 bytes per pixel.
+    GrayLinearF32,
+    /// Linear f32 grayscale + alpha, 8 bytes per pixel.
+    GrayAlphaLinearF32,
 }
 
 impl PixelLayout {
@@ -253,31 +261,69 @@ impl PixelLayout {
             Self::Rgb16 => 6,
             Self::Rgba16 => 8,
             Self::Gray16 => 2,
+            Self::GrayAlpha16 => 4,
             Self::RgbLinearF32 => 12,
+            Self::RgbaLinearF32 => 16,
+            Self::GrayLinearF32 => 4,
+            Self::GrayAlphaLinearF32 => 8,
         }
     }
 
     /// Whether this layout uses linear (not gamma-encoded) values.
     pub const fn is_linear(self) -> bool {
-        matches!(self, Self::RgbLinearF32)
+        matches!(
+            self,
+            Self::RgbLinearF32
+                | Self::RgbaLinearF32
+                | Self::GrayLinearF32
+                | Self::GrayAlphaLinearF32
+        )
     }
 
     /// Whether this layout uses 16-bit samples.
     pub const fn is_16bit(self) -> bool {
-        matches!(self, Self::Rgb16 | Self::Rgba16 | Self::Gray16)
+        matches!(
+            self,
+            Self::Rgb16 | Self::Rgba16 | Self::Gray16 | Self::GrayAlpha16
+        )
+    }
+
+    /// Whether this layout uses f32 samples.
+    pub const fn is_f32(self) -> bool {
+        matches!(
+            self,
+            Self::RgbLinearF32
+                | Self::RgbaLinearF32
+                | Self::GrayLinearF32
+                | Self::GrayAlphaLinearF32
+        )
     }
 
     /// Whether this layout includes an alpha channel.
     pub const fn has_alpha(self) -> bool {
         matches!(
             self,
-            Self::Rgba8 | Self::Bgra8 | Self::GrayAlpha8 | Self::Rgba16
+            Self::Rgba8
+                | Self::Bgra8
+                | Self::GrayAlpha8
+                | Self::Rgba16
+                | Self::GrayAlpha16
+                | Self::RgbaLinearF32
+                | Self::GrayAlphaLinearF32
         )
     }
 
     /// Whether this layout is grayscale.
     pub const fn is_grayscale(self) -> bool {
-        matches!(self, Self::Gray8 | Self::GrayAlpha8 | Self::Gray16)
+        matches!(
+            self,
+            Self::Gray8
+                | Self::GrayAlpha8
+                | Self::Gray16
+                | Self::GrayAlpha16
+                | Self::GrayLinearF32
+                | Self::GrayAlphaLinearF32
+        )
     }
 }
 
@@ -1198,9 +1244,11 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(pixels, 3), w, h),
             PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(pixels, 4), w, h),
             PixelLayout::Gray8 => ModularImage::from_gray8(pixels, w, h),
+            PixelLayout::GrayAlpha8 => ModularImage::from_grayalpha8(pixels, w, h),
             PixelLayout::Rgb16 => ModularImage::from_rgb16_native(pixels, w, h),
             PixelLayout::Rgba16 => ModularImage::from_rgba16_native(pixels, w, h),
             PixelLayout::Gray16 => ModularImage::from_gray16_native(pixels, w, h),
+            PixelLayout::GrayAlpha16 => ModularImage::from_grayalpha16_native(pixels, w, h),
             other => return Err(EncodeError::UnsupportedPixelLayout(other)),
         }
         .map_err(EncodeError::from)?;
@@ -1312,7 +1360,8 @@ impl<'a> EncodeRequest<'a> {
         let w = self.width as usize;
         let h = self.height as usize;
 
-        // Build linear f32 RGB and extract alpha from input layout
+        // Build linear f32 RGB and extract alpha from input layout.
+        // Grayscale layouts are expanded to RGB (R=G=B) for VarDCT encoding.
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(pixels, 3), None, false),
             PixelLayout::Bgr8 => (
@@ -1331,18 +1380,46 @@ impl<'a> EncodeRequest<'a> {
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
             }
+            PixelLayout::Gray8 => (gray_u8_to_linear_f32_rgb(pixels, 1), None, false),
+            PixelLayout::GrayAlpha8 => {
+                let rgb = gray_u8_to_linear_f32_rgb(pixels, 2);
+                let alpha = extract_alpha(pixels, 2, 1);
+                (rgb, Some(alpha), false)
+            }
             PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(pixels, 3), None, true),
             PixelLayout::Rgba16 => {
                 let rgb = srgb_u16_to_linear_f32(pixels, 4);
                 let alpha = extract_alpha_u16(pixels, 4, 3);
                 (rgb, Some(alpha), true)
             }
+            PixelLayout::Gray16 => (gray_u16_to_linear_f32_rgb(pixels, 1), None, true),
+            PixelLayout::GrayAlpha16 => {
+                let rgb = gray_u16_to_linear_f32_rgb(pixels, 2);
+                let alpha = extract_alpha_u16(pixels, 2, 1);
+                (rgb, Some(alpha), true)
+            }
             PixelLayout::RgbLinearF32 => {
                 let floats: &[f32] = bytemuck::cast_slice(pixels);
                 (floats.to_vec(), None, false)
             }
-            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 | PixelLayout::Gray16 => {
-                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
+            PixelLayout::RgbaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let rgb: Vec<f32> = floats
+                    .chunks(4)
+                    .flat_map(|px| [px[0], px[1], px[2]])
+                    .collect();
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha), false)
+            }
+            PixelLayout::GrayLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                (gray_f32_to_linear_f32_rgb(floats, 1), None, false)
+            }
+            PixelLayout::GrayAlphaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let rgb = gray_f32_to_linear_f32_rgb(floats, 2);
+                let alpha = extract_alpha_f32(floats, 2, 1);
+                (rgb, Some(alpha), false)
             }
         };
 
@@ -1462,9 +1539,11 @@ fn encode_animation_lossless(
         PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(frames[0].pixels, 3), w, h),
         PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(frames[0].pixels, 4), w, h),
         PixelLayout::Gray8 => ModularImage::from_gray8(frames[0].pixels, w, h),
+        PixelLayout::GrayAlpha8 => ModularImage::from_grayalpha8(frames[0].pixels, w, h),
         PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frames[0].pixels, w, h),
         PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frames[0].pixels, w, h),
         PixelLayout::Gray16 => ModularImage::from_gray16_native(frames[0].pixels, w, h),
+        PixelLayout::GrayAlpha16 => ModularImage::from_grayalpha16_native(frames[0].pixels, w, h),
         other => return Err(EncodeError::UnsupportedPixelLayout(other)),
     }
     .map_err(EncodeError::from)?;
@@ -1545,9 +1624,15 @@ fn encode_animation_lossless(
                 ModularImage::from_rgba8(&bgr_to_rgb(frame_pixels, 4), frame_w, frame_h)
             }
             PixelLayout::Gray8 => ModularImage::from_gray8(frame_pixels, frame_w, frame_h),
+            PixelLayout::GrayAlpha8 => {
+                ModularImage::from_grayalpha8(frame_pixels, frame_w, frame_h)
+            }
             PixelLayout::Rgb16 => ModularImage::from_rgb16_native(frame_pixels, frame_w, frame_h),
             PixelLayout::Rgba16 => ModularImage::from_rgba16_native(frame_pixels, frame_w, frame_h),
             PixelLayout::Gray16 => ModularImage::from_gray16_native(frame_pixels, frame_w, frame_h),
+            PixelLayout::GrayAlpha16 => {
+                ModularImage::from_grayalpha16_native(frame_pixels, frame_w, frame_h)
+            }
             other => return Err(EncodeError::UnsupportedPixelLayout(other)),
         }
         .map_err(EncodeError::from)?;
@@ -1696,18 +1781,46 @@ fn encode_animation_lossy(
                 let alpha = extract_alpha(src_pixels, 4, 3);
                 (rgb, Some(alpha))
             }
+            PixelLayout::Gray8 => (gray_u8_to_linear_f32_rgb(src_pixels, 1), None),
+            PixelLayout::GrayAlpha8 => {
+                let rgb = gray_u8_to_linear_f32_rgb(src_pixels, 2);
+                let alpha = extract_alpha(src_pixels, 2, 1);
+                (rgb, Some(alpha))
+            }
             PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3), None),
             PixelLayout::Rgba16 => {
                 let rgb = srgb_u16_to_linear_f32(src_pixels, 4);
                 let alpha = extract_alpha_u16(src_pixels, 4, 3);
                 (rgb, Some(alpha))
             }
+            PixelLayout::Gray16 => (gray_u16_to_linear_f32_rgb(src_pixels, 1), None),
+            PixelLayout::GrayAlpha16 => {
+                let rgb = gray_u16_to_linear_f32_rgb(src_pixels, 2);
+                let alpha = extract_alpha_u16(src_pixels, 2, 1);
+                (rgb, Some(alpha))
+            }
             PixelLayout::RgbLinearF32 => {
                 let floats: &[f32] = bytemuck::cast_slice(src_pixels);
                 (floats.to_vec(), None)
             }
-            PixelLayout::Gray8 | PixelLayout::GrayAlpha8 | PixelLayout::Gray16 => {
-                return Err(EncodeError::UnsupportedPixelLayout(layout));
+            PixelLayout::RgbaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let rgb: Vec<f32> = floats
+                    .chunks(4)
+                    .flat_map(|px| [px[0], px[1], px[2]])
+                    .collect();
+                let alpha = extract_alpha_f32(floats, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::GrayLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                (gray_f32_to_linear_f32_rgb(floats, 1), None)
+            }
+            PixelLayout::GrayAlphaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(src_pixels);
+                let rgb = gray_f32_to_linear_f32_rgb(floats, 2);
+                let alpha = extract_alpha_f32(floats, 2, 1);
+                (rgb, Some(alpha))
             }
         };
 
@@ -1926,6 +2039,45 @@ fn extract_alpha(data: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
     data.chunks(stride).map(|px| px[alpha_offset]).collect()
 }
 
+/// Extract alpha from interleaved f32 pixel data, converting to u8 (0..255).
+fn extract_alpha_f32(data: &[f32], stride: usize, alpha_offset: usize) -> Vec<u8> {
+    data.chunks(stride)
+        .map(|px| (px[alpha_offset].clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
+        .collect()
+}
+
+/// Expand 8-bit sRGB grayscale to linear f32 RGB (gray→R=G=B).
+fn gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = srgb_to_linear(px[0]);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand 16-bit sRGB grayscale to linear f32 RGB (gray→R=G=B).
+fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            let v = srgb_to_linear_f(px[0] as f32 / 65535.0);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand linear f32 grayscale to linear f32 RGB (gray→R=G=B).
+fn gray_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = px[0];
+            [v, v, v]
+        })
+        .collect()
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1964,25 +2116,56 @@ mod tests {
         assert_eq!(PixelLayout::Bgr8.bytes_per_pixel(), 3);
         assert_eq!(PixelLayout::Bgra8.bytes_per_pixel(), 4);
         assert_eq!(PixelLayout::Gray8.bytes_per_pixel(), 1);
+        assert_eq!(PixelLayout::GrayAlpha8.bytes_per_pixel(), 2);
         assert_eq!(PixelLayout::Rgb16.bytes_per_pixel(), 6);
         assert_eq!(PixelLayout::Rgba16.bytes_per_pixel(), 8);
         assert_eq!(PixelLayout::Gray16.bytes_per_pixel(), 2);
+        assert_eq!(PixelLayout::GrayAlpha16.bytes_per_pixel(), 4);
+        assert_eq!(PixelLayout::RgbLinearF32.bytes_per_pixel(), 12);
+        assert_eq!(PixelLayout::RgbaLinearF32.bytes_per_pixel(), 16);
+        assert_eq!(PixelLayout::GrayLinearF32.bytes_per_pixel(), 4);
+        assert_eq!(PixelLayout::GrayAlphaLinearF32.bytes_per_pixel(), 8);
+        // Linear
         assert!(!PixelLayout::Rgb8.is_linear());
         assert!(PixelLayout::RgbLinearF32.is_linear());
+        assert!(PixelLayout::RgbaLinearF32.is_linear());
+        assert!(PixelLayout::GrayLinearF32.is_linear());
+        assert!(PixelLayout::GrayAlphaLinearF32.is_linear());
         assert!(!PixelLayout::Rgb16.is_linear());
+        // Alpha
         assert!(!PixelLayout::Rgb8.has_alpha());
         assert!(PixelLayout::Rgba8.has_alpha());
         assert!(PixelLayout::Bgra8.has_alpha());
         assert!(PixelLayout::GrayAlpha8.has_alpha());
         assert!(PixelLayout::Rgba16.has_alpha());
+        assert!(PixelLayout::GrayAlpha16.has_alpha());
+        assert!(PixelLayout::RgbaLinearF32.has_alpha());
+        assert!(PixelLayout::GrayAlphaLinearF32.has_alpha());
         assert!(!PixelLayout::Rgb16.has_alpha());
+        assert!(!PixelLayout::RgbLinearF32.has_alpha());
+        // 16-bit
         assert!(PixelLayout::Rgb16.is_16bit());
         assert!(PixelLayout::Rgba16.is_16bit());
         assert!(PixelLayout::Gray16.is_16bit());
+        assert!(PixelLayout::GrayAlpha16.is_16bit());
         assert!(!PixelLayout::Rgb8.is_16bit());
+        assert!(!PixelLayout::RgbLinearF32.is_16bit());
+        // f32
+        assert!(PixelLayout::RgbLinearF32.is_f32());
+        assert!(PixelLayout::RgbaLinearF32.is_f32());
+        assert!(PixelLayout::GrayLinearF32.is_f32());
+        assert!(PixelLayout::GrayAlphaLinearF32.is_f32());
+        assert!(!PixelLayout::Rgb8.is_f32());
+        assert!(!PixelLayout::Rgb16.is_f32());
+        // Grayscale
         assert!(PixelLayout::Gray8.is_grayscale());
+        assert!(PixelLayout::GrayAlpha8.is_grayscale());
         assert!(PixelLayout::Gray16.is_grayscale());
+        assert!(PixelLayout::GrayAlpha16.is_grayscale());
+        assert!(PixelLayout::GrayLinearF32.is_grayscale());
+        assert!(PixelLayout::GrayAlphaLinearF32.is_grayscale());
         assert!(!PixelLayout::Rgb16.is_grayscale());
+        assert!(!PixelLayout::RgbLinearF32.is_grayscale());
     }
 
     #[test]
@@ -2057,15 +2240,84 @@ mod tests {
     }
 
     #[test]
-    fn test_lossy_unsupported_gray() {
+    fn test_lossy_gray8() {
+        // Grayscale input → RGB expansion → VarDCT (XYB)
         let pixels = vec![128u8; 8 * 8];
-        let result = LossyConfig::new(1.0)
+        let result = LossyConfig::new(2.0)
+            .with_gaborish(false)
             .encode_request(8, 8, PixelLayout::Gray8)
             .encode(&pixels);
-        assert!(matches!(
-            result.as_ref().map_err(|e| e.error()),
-            Err(EncodeError::UnsupportedPixelLayout(_))
-        ));
+        assert!(result.is_ok(), "lossy Gray8 should encode: {result:?}");
+    }
+
+    #[test]
+    fn test_lossy_gray_alpha8() {
+        let pixels: Vec<u8> = (0..8 * 8).flat_map(|_| [128u8, 255]).collect();
+        let result = LossyConfig::new(2.0)
+            .with_gaborish(false)
+            .encode_request(8, 8, PixelLayout::GrayAlpha8)
+            .encode(&pixels);
+        assert!(result.is_ok(), "lossy GrayAlpha8 should encode: {result:?}");
+    }
+
+    #[test]
+    fn test_lossy_gray16() {
+        let pixels_u16: Vec<u16> = (0..8 * 8).map(|_| 32768u16).collect();
+        let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+        let result = LossyConfig::new(2.0)
+            .with_gaborish(false)
+            .encode_request(8, 8, PixelLayout::Gray16)
+            .encode(pixels);
+        assert!(result.is_ok(), "lossy Gray16 should encode: {result:?}");
+    }
+
+    #[test]
+    fn test_lossy_rgba_linear_f32() {
+        let pixels_f32: Vec<f32> = (0..8 * 8).flat_map(|_| [0.5f32, 0.3, 0.7, 1.0]).collect();
+        let pixels: &[u8] = bytemuck::cast_slice(&pixels_f32);
+        let result = LossyConfig::new(2.0)
+            .with_gaborish(false)
+            .encode_request(8, 8, PixelLayout::RgbaLinearF32)
+            .encode(pixels);
+        assert!(
+            result.is_ok(),
+            "lossy RgbaLinearF32 should encode: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_lossy_gray_linear_f32() {
+        let pixels_f32: Vec<f32> = (0..8 * 8).map(|_| 0.5f32).collect();
+        let pixels: &[u8] = bytemuck::cast_slice(&pixels_f32);
+        let result = LossyConfig::new(2.0)
+            .with_gaborish(false)
+            .encode_request(8, 8, PixelLayout::GrayLinearF32)
+            .encode(pixels);
+        assert!(
+            result.is_ok(),
+            "lossy GrayLinearF32 should encode: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_lossless_grayalpha8() {
+        let pixels: Vec<u8> = (0..8 * 8).flat_map(|_| [200u8, 255]).collect();
+        let result = LosslessConfig::new().encode(&pixels, 8, 8, PixelLayout::GrayAlpha8);
+        assert!(
+            result.is_ok(),
+            "lossless GrayAlpha8 should encode: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_lossless_grayalpha16() {
+        let pixels_u16: Vec<u16> = (0..8 * 8).flat_map(|_| [32768u16, 65535]).collect();
+        let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+        let result = LosslessConfig::new().encode(pixels, 8, 8, PixelLayout::GrayAlpha16);
+        assert!(
+            result.is_ok(),
+            "lossless GrayAlpha16 should encode: {result:?}"
+        );
     }
 
     #[test]
