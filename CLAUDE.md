@@ -506,11 +506,12 @@ Fix: `write(11, ...) → write(10, ...)` and `write(14, ...) → write(12, ...)`
 
 ### ~~Tree Learning Broken on 16-bit Images~~ (RESOLVED Feb 18, 2026)
 
-**Status**: RESOLVED — tree learning now works on 16-bit images.
+**Status**: FULLY RESOLVED — tree learning works on all 16-bit pixel layouts.
 
-Root cause was residual_tokens being stored as u8 (overflowed for 16-bit values >255).
-Fixed by widening token storage and removing the bit_depth > 8 guard in api.rs.
-Verified with 8x8 and 16x16 RGBA16 roundtrip tests (jxl-rs + djxl).
+Two issues: (1) residual_tokens stored as u8 (overflowed >255), fixed by widening token storage.
+(2) `decode_with_jxl_rs` test helper didn't handle alpha extra channels (WrongBufferCount error
+for RGBA16). Fixed by allocating separate extra channel buffers and interleaving output.
+Verified: 32x32 RGB16, 8x8 RGBA16, 8x8 RGB16, 16x16 Gray16 — all pixel-exact via jxl-rs.
 
 ## Investigation Notes
 

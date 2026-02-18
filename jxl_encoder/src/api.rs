@@ -2577,4 +2577,63 @@ mod tests {
         write_modular_stream_with_palette(&image, &mut writer, true, 0, 3)
             .expect("palette encode with 256 unique colors must not fail");
     }
+
+    #[test]
+    fn test_16bit_tree_learning() {
+        // Test multiple 16-bit scenarios that previously failed
+        for &(w, h, layout, label) in &[
+            (32u32, 32u32, PixelLayout::Rgb16, "32x32 RGB16"),
+            (8, 8, PixelLayout::Rgba16, "8x8 RGBA16"),
+            (8, 8, PixelLayout::Rgb16, "8x8 RGB16"),
+            (16, 16, PixelLayout::Gray16, "16x16 Gray16"),
+        ] {
+            let nc = layout.bytes_per_pixel()
+                / if layout.is_16bit() {
+                    2
+                } else if layout.is_f32() {
+                    4
+                } else {
+                    1
+                };
+            let mut pixels = vec![0u16; (w * h) as usize * nc];
+            for y in 0..h {
+                for x in 0..w {
+                    let idx = ((y * w + x) as usize) * nc;
+                    pixels[idx] = (x * 2048) as u16;
+                    if nc >= 2 {
+                        pixels[idx + 1] = (y * 2048) as u16;
+                    }
+                    if nc >= 3 {
+                        pixels[idx + 2] = ((x + y) * 1024) as u16;
+                    }
+                    if nc >= 4 {
+                        pixels[idx + 3] = 65535; // opaque alpha
+                    }
+                }
+            }
+            let bytes: Vec<u8> = pixels.iter().flat_map(|v| v.to_ne_bytes()).collect();
+
+            let cfg = LosslessConfig::new().with_effort(7).with_ans(true);
+            let jxl = cfg
+                .encode(&bytes, w, h, layout)
+                .unwrap_or_else(|e| panic!("{}: encode failed: {}", label, e));
+
+            let decoded = crate::test_helpers::decode_with_jxl_rs(&jxl)
+                .unwrap_or_else(|e| panic!("{}: jxl-rs decode failed: {}", label, e));
+            assert_eq!(decoded.width, w as usize, "{}: width", label);
+            assert_eq!(decoded.height, h as usize, "{}: height", label);
+
+            let scale = 65535.0;
+            let mut mismatches = 0;
+            for i in 0..pixels.len() {
+                let dec = (decoded.pixels[i] * scale).round().clamp(0.0, scale) as u16;
+                if pixels[i] != dec && mismatches < 3 {
+                    eprintln!("{}: mismatch[{}]: orig={} dec={}", label, i, pixels[i], dec);
+                    mismatches += 1;
+                }
+            }
+            assert_eq!(mismatches, 0, "{}: {} mismatches", label, mismatches);
+            eprintln!("{}: PASS ({} bytes)", label, jxl.len());
+        }
+    }
 }
