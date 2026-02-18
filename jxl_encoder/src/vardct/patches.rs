@@ -53,10 +53,40 @@ const MIN_MAX_PATCH_SIZE: usize = 20;
 const BIN_PACKING_SLACKNESS: f32 = 1.05;
 
 /// XYB channel dequantization constants (quantize float patch pixels to i8).
-const CHANNEL_DEQUANT: [f32; 3] = [0.01615, 0.08875, 0.1922];
+const CHANNEL_DEQUANT_XYB: [f32; 3] = [0.01615, 0.08875, 0.1922];
 
 /// XYB channel weights for distance computation.
-const CHANNEL_WEIGHTS: [f32; 3] = [30.0, 3.0, 1.0];
+const CHANNEL_WEIGHTS_XYB: [f32; 3] = [30.0, 3.0, 1.0];
+
+/// RGB channel dequantization constants for non-XYB (lossless) patches.
+/// From libjxl: kChannelDequant when !is_xyb = {20/255, 22/255, 20/255}.
+const CHANNEL_DEQUANT_RGB: [f32; 3] = [20.0 / 255.0, 22.0 / 255.0, 20.0 / 255.0];
+
+/// RGB channel weights for non-XYB (lossless) patches.
+/// From libjxl: kChannelWeights when !is_xyb = {0.017*255, 0.02*255, 0.017*255}.
+const CHANNEL_WEIGHTS_RGB: [f32; 3] = [0.017 * 255.0, 0.02 * 255.0, 0.017 * 255.0];
+
+/// Colorspace-dependent constants for patch detection.
+struct PatchColorspaceInfo {
+    channel_dequant: [f32; 3],
+    channel_weights: [f32; 3],
+}
+
+impl PatchColorspaceInfo {
+    fn xyb() -> Self {
+        Self {
+            channel_dequant: CHANNEL_DEQUANT_XYB,
+            channel_weights: CHANNEL_WEIGHTS_XYB,
+        }
+    }
+
+    fn rgb() -> Self {
+        Self {
+            channel_dequant: CHANNEL_DEQUANT_RGB,
+            channel_weights: CHANNEL_WEIGHTS_RGB,
+        }
+    }
+}
 
 /// Number of entropy contexts for patches encoding.
 const NUM_PATCH_CONTEXTS: usize = 10;
@@ -200,40 +230,42 @@ impl PatchesData {
 
 // ── Detection ──────────────────────────────────────────────────────────────────
 
-/// Compute weighted XYB L1 distance between two pixels.
+/// Compute weighted L1 distance between two pixels.
 /// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
 #[inline]
-fn xyb_distance(
-    xyb: &[&[f32]; 3],
+fn weighted_distance(
+    planes: &[&[f32]; 3],
     stride: usize,
     x1: usize,
     y1: usize,
     x2: usize,
     y2: usize,
+    cs: &PatchColorspaceInfo,
 ) -> f32 {
     let i1 = y1 * stride + x1;
     let i2 = y2 * stride + x2;
     let mut dist = 0.0f32;
     for c in 0..3 {
-        dist += (xyb[c][i1] - xyb[c][i2]).abs() * CHANNEL_WEIGHTS[c];
+        dist += (planes[c][i1] - planes[c][i2]).abs() * cs.channel_weights[c];
     }
     dist
 }
 
-/// Compute weighted XYB L1 distance between a pixel and a given color.
+/// Compute weighted L1 distance between a pixel and a given color.
 /// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
 #[inline]
-fn xyb_distance_to_color(
-    xyb: &[&[f32]; 3],
+fn weighted_distance_to_color(
+    planes: &[&[f32]; 3],
     stride: usize,
     x: usize,
     y: usize,
     color: &[f32; 3],
+    cs: &PatchColorspaceInfo,
 ) -> f32 {
     let i = y * stride + x;
     let mut dist = 0.0f32;
     for c in 0..3 {
-        dist += (xyb[c][i] - color[c]).abs() * CHANNEL_WEIGHTS[c];
+        dist += (planes[c][i] - color[c]).abs() * cs.channel_weights[c];
     }
     dist
 }
@@ -257,12 +289,12 @@ fn is_same_color(
     true
 }
 
-/// Compute weighted XYB L1 distance between two color values.
+/// Compute weighted L1 distance between two color values.
 #[inline]
-fn color_distance(c1: &[f32; 3], c2: &[f32; 3]) -> f32 {
+fn color_distance(c1: &[f32; 3], c2: &[f32; 3], cs: &PatchColorspaceInfo) -> f32 {
     let mut dist = 0.0f32;
     for c in 0..3 {
-        dist += (c1[c] - c2[c]).abs() * CHANNEL_WEIGHTS[c];
+        dist += (c1[c] - c2[c]).abs() * cs.channel_weights[c];
     }
     dist
 }
@@ -288,21 +320,28 @@ fn is_flat_block(xyb: &[&[f32]; 3], stride: usize, bx: usize, by: usize) -> bool
     true
 }
 
-/// Detect text-like patches in an XYB image.
+/// Detect text-like patches in an image.
 ///
 /// Returns a list of unique patches with their occurrence positions.
 /// Port of libjxl `FindTextLikePatches` — matches exact algorithm:
 /// L1 weighted distance, 8-connected BFS/DFS, (current,source) BFS pairs,
 /// first-found border reference, has_similar check, kMinPeak filter.
 ///
-/// `stride` is the row pitch of the XYB buffers (may be larger than `width`
+/// `stride` is the row pitch of the plane buffers (may be larger than `width`
 /// due to padding). `width` and `height` define the actual image area to scan.
+/// `is_xyb` selects XYB colorspace constants (true) or RGB constants (false).
 pub(crate) fn find_text_like_patches(
     xyb: [&[f32]; 3],
     width: usize,
     height: usize,
     stride: usize,
+    is_xyb: bool,
 ) -> Vec<PatchInfo> {
+    let cs = if is_xyb {
+        PatchColorspaceInfo::xyb()
+    } else {
+        PatchColorspaceInfo::rgb()
+    };
     let bw = width / PATCH_SIDE;
     let bh = height / PATCH_SIDE;
     if bw < 3 || bh < 3 {
@@ -432,7 +471,7 @@ pub(crate) fn find_text_like_patches(
                     continue;
                 }
                 // Similarity: compare source pixel to candidate pixel (L1 weighted)
-                if xyb_distance(&xyb_ref, stride, sx, sy, nxu, nyu) <= SIMILAR_THRESHOLD {
+                if weighted_distance(&xyb_ref, stride, sx, sy, nxu, nyu, &cs) <= SIMILAR_THRESHOLD {
                     is_background[ni] = true;
                     queue.push((nxu, nyu, sx, sy)); // propagate source
                 }
@@ -514,7 +553,7 @@ pub(crate) fn find_text_like_patches(
                                     [background[0][ri], background[1][ri], background[2][ri]];
                                 let bg_next =
                                     [background[0][ni], background[1][ni], background[2][ni]];
-                                if color_distance(&bg_ref, &bg_next) > VERY_SIMILAR_THRESHOLD {
+                                if color_distance(&bg_ref, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
                                     all_similar = false;
                                 }
                             }
@@ -563,7 +602,7 @@ pub(crate) fn find_text_like_patches(
             let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
             for iy in hs_min_y..hs_max_y {
                 for ix in hs_min_x..hs_max_x {
-                    if xyb_distance_to_color(&xyb_ref, stride, ix, iy, &ref_color)
+                    if weighted_distance_to_color(&xyb_ref, stride, ix, iy, &ref_color, &cs)
                         <= HAS_SIMILAR_THRESHOLD
                     {
                         has_similar = true;
@@ -600,7 +639,7 @@ pub(crate) fn find_text_like_patches(
                     for c in 0..3 {
                         let val = xyb[c][src_i] - ref_color[c];
                         fpixels[c][dst_i] = val;
-                        let q = (val / CHANNEL_DEQUANT[c]) as i32;
+                        let q = (val / cs.channel_dequant[c]) as i32;
                         qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
                         max_value = max_value.max(q.abs());
                     }
@@ -835,6 +874,15 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
             xsize: info.patch.xsize as u32,
             ysize: info.patch.ysize as u32,
         });
+        debug_assert!(
+            (rx as usize + info.patch.xsize) <= ref_width
+                && (ry as usize + info.patch.ysize) <= ref_height,
+            "ref position ({rx},{ry}) + size ({}x{}) exceeds ref frame {}x{}",
+            info.patch.xsize,
+            info.patch.ysize,
+            ref_width,
+            ref_height
+        );
 
         // Sort positions for better delta encoding
         let mut sorted_pos = info.positions.clone();
@@ -1043,7 +1091,7 @@ pub(crate) fn find_and_build(
     height: usize,
     stride: usize,
 ) -> Option<PatchesData> {
-    let infos = find_text_like_patches(xyb, width, height, stride);
+    let infos = find_text_like_patches(xyb, width, height, stride, true);
     if infos.is_empty() {
         debug_rect!("patches/detect", 0, 0, width, height, "no patches detected");
         return None;
@@ -1195,9 +1243,207 @@ pub(crate) fn find_and_build(
     Some(patches_data)
 }
 
-// ── Reference Frame Encoding ───────────────────────────────────────────────────
+// ── Lossless Patches ──────────────────────────────────────────────────────────
 
-/// Encode the reference frame containing all unique patch templates.
+/// Detect patches for lossless (non-XYB) encoding.
+///
+/// Converts u8 pixels to f32 [0, 1] for detection, uses RGB colorspace constants.
+/// Returns None if no useful patches were found.
+///
+/// The reference frame pixels are stored as f32 values in [0, 1] range (relative
+/// to background), and must be roundtripped through integer quantization to match
+/// the decoder's reconstruction.
+pub(crate) fn find_and_build_lossless(
+    pixels: &[u8],
+    width: usize,
+    height: usize,
+    num_channels: usize,
+    bit_depth: u32,
+) -> Option<PatchesData> {
+    if width < 16 || height < 16 || num_channels < 3 {
+        return None;
+    }
+
+    let max_val = ((1u32 << bit_depth) - 1) as f32;
+    let inv_max = 1.0 / max_val;
+    let n = width * height;
+
+    // Convert to planar f32 [0, 1] — detection needs 3 channels
+    let mut planes = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
+    for i in 0..n {
+        let base = i * num_channels;
+        for c in 0..3 {
+            planes[c][i] = pixels[base + c] as f32 * inv_max;
+        }
+    }
+
+    let infos = find_text_like_patches(
+        [&planes[0], &planes[1], &planes[2]],
+        width,
+        height,
+        width,
+        false, // RGB colorspace
+    );
+    if infos.is_empty() {
+        return None;
+    }
+
+    // Coverage filter (same as lossy)
+    let total_patch_pixels: usize = infos
+        .iter()
+        .map(|p| p.patch.num_pixels() * p.positions.len())
+        .sum();
+    let image_pixels = width * height;
+    if total_patch_pixels * 100 < image_pixels {
+        return None;
+    }
+
+    let mut patches_data = build_patches_data(infos)?;
+
+    // Roundtrip ref image through integer quantization to match decoder.
+    // For non-XYB: round(v * max_val) / max_val for each channel.
+    quantize_ref_image_rgb(&mut patches_data, bit_depth);
+
+    // Cost-benefit check: measure overhead vs estimated savings
+    let ref_overhead = {
+        let mut w = BitWriter::new();
+        encode_reference_frame_rgb(&patches_data, bit_depth, true, &mut w).ok()?;
+        w.bits_written().div_ceil(8)
+    };
+    let dict_overhead = {
+        let mut w = BitWriter::new();
+        encode_patches_section(&patches_data, true, &mut w).ok()?;
+        w.bits_written().div_ceil(8)
+    };
+    let total_overhead = ref_overhead + dict_overhead;
+    let estimated_savings = total_patch_pixels;
+
+    if estimated_savings < total_overhead * 2 {
+        return None;
+    }
+
+    Some(patches_data)
+}
+
+/// Roundtrip reference image through integer quantization for non-XYB (lossless).
+///
+/// The decoder reconstructs integer channel values from the modular reference frame.
+/// We must match this exactly by rounding to the integer grid.
+fn quantize_ref_image_rgb(patches: &mut PatchesData, bit_depth: u32) {
+    let max_val = ((1u32 << bit_depth) - 1) as f32;
+    let n = patches.ref_width * patches.ref_height;
+    for c in 0..3 {
+        for i in 0..n {
+            let int_val = (patches.ref_image[c][i] * max_val).round() as i32;
+            patches.ref_image[c][i] = int_val as f32 / max_val;
+        }
+    }
+}
+
+/// Subtract patches from a ModularImage's channels in integer space.
+///
+/// For each patch occurrence at (px, py) and each color channel, computes the
+/// integer reference value and subtracts it from the channel data.
+/// The decoder will add them back using blend mode kAdd.
+pub(crate) fn subtract_patches_modular(
+    image: &mut crate::modular::channel::ModularImage,
+    patches: &PatchesData,
+    bit_depth: u32,
+) {
+    let max_val = ((1u32 << bit_depth) - 1) as f32;
+    let num_channels = 3.min(image.channels.len());
+
+    for pos in &patches.positions {
+        let ref_pos = &patches.ref_positions[pos.ref_pos_idx];
+        let pw = ref_pos.xsize as usize;
+        let ph = ref_pos.ysize as usize;
+        let ref_x0 = ref_pos.x0 as usize;
+        let ref_y0 = ref_pos.y0 as usize;
+        let pos_x = pos.x as usize;
+        let pos_y = pos.y as usize;
+
+        for dy in 0..ph {
+            for dx in 0..pw {
+                let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
+                let img_x = pos_x + dx;
+                let img_y = pos_y + dy;
+                for c in 0..num_channels {
+                    let ref_int = (patches.ref_image[c][ref_i] * max_val).round() as i32;
+                    let current = image.channels[c].get(img_x, img_y);
+                    image.channels[c].set(img_x, img_y, current - ref_int);
+                }
+            }
+        }
+    }
+}
+
+/// Encode a non-XYB reference frame for lossless patches.
+///
+/// Frame header: `xyb_encoded=false`, `save_before_ct=true`, `FrameType::ReferenceOnly`.
+/// Channels in normal RGB order (no Y/X/B-Y reorder, no DC quant scaling).
+/// Each channel value = `round(fpixels[c] * max_val)`.
+pub(crate) fn encode_reference_frame_rgb(
+    patches: &PatchesData,
+    bit_depth: u32,
+    use_ans: bool,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
+
+    let ref_w = patches.ref_width;
+    let ref_h = patches.ref_height;
+    let max_val = ((1u32 << bit_depth) - 1) as f32;
+    let n = ref_w * ref_h;
+
+    // Build frame header for reference-only frame (non-XYB)
+    let mut fh = FrameHeader::lossless();
+    fh.frame_type = FrameType::ReferenceOnly;
+    fh.encoding = Encoding::Modular;
+    fh.xyb_encoded = false; // Non-XYB: raw RGB integer channels
+    fh.save_as_reference = PATCH_FRAME_REFERENCE_ID;
+    fh.save_before_ct = true;
+    fh.is_last = false;
+    fh.flags = 0;
+    fh.gaborish = false;
+    fh.epf_iters = 0;
+    fh.width = ref_w as u32;
+    fh.height = ref_h as u32;
+
+    fh.write(writer)?;
+
+    // Build modular channels in RGB order (no Y/X/B-Y reorder for non-XYB)
+    use crate::modular::channel::{Channel, ModularImage};
+
+    let mut channels = Vec::with_capacity(3);
+    for c in 0..3 {
+        let mut data = Vec::with_capacity(n);
+        for i in 0..n {
+            data.push((patches.ref_image[c][i] * max_val).round() as i32);
+        }
+        channels.push(Channel::from_vec(data, ref_w, ref_h)?);
+    }
+
+    let image = ModularImage {
+        channels,
+        bit_depth,
+        is_grayscale: false,
+        has_alpha: false,
+    };
+
+    use crate::modular::encode::write_improved_modular_stream;
+    let mut section_writer = BitWriter::new();
+    write_improved_modular_stream(&image, &mut section_writer, use_ans)?;
+    let section_data = section_writer.finish();
+
+    crate::vardct::frame::write_toc(&[section_data.len()], writer)?;
+    writer.append_bytes(&section_data)?;
+
+    Ok(())
+}
+
+// ── Reference Frame Encoding (XYB) ──────────────────────────────────────────
+
+/// Encode the XYB reference frame containing all unique patch templates.
 ///
 /// This writes a complete modular FrameType::ReferenceOnly frame to the writer.
 /// The frame saves to reference slot 3 with save_before_ct=true.
@@ -1348,12 +1594,13 @@ mod tests {
     }
 
     #[test]
-    fn test_xyb_distance_zero() {
+    fn test_weighted_distance_zero() {
         let x = vec![1.0f32; 4];
         let y = vec![2.0f32; 4];
         let b = vec![3.0f32; 4];
-        let xyb: [&[f32]; 3] = [&x, &y, &b];
-        let dist = xyb_distance(&xyb, 2, 0, 0, 1, 0);
+        let planes: [&[f32]; 3] = [&x, &y, &b];
+        let cs = PatchColorspaceInfo::xyb();
+        let dist = weighted_distance(&planes, 2, 0, 0, 1, 0, &cs);
         assert_eq!(dist, 0.0);
     }
 
@@ -1408,7 +1655,7 @@ mod tests {
                 b[i] = (px as f32 + py as f32) / (w + h) as f32;
             }
         }
-        let result = find_text_like_patches([&x, &y, &b], w, h, w);
+        let result = find_text_like_patches([&x, &y, &b], w, h, w, true);
         assert!(result.is_empty(), "Photos should produce no patches");
     }
 
@@ -1445,7 +1692,7 @@ mod tests {
             }
         }
 
-        let result = find_text_like_patches([&x, &y, &b], w, h, w);
+        let result = find_text_like_patches([&x, &y, &b], w, h, w, true);
         // Should find at least one patch group with >= 2 occurrences
         // Note: the exact number depends on detection thresholds
         if !result.is_empty() {

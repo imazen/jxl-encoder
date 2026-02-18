@@ -333,6 +333,9 @@ fn main() {
                     if args.no_squeeze {
                         lcfg = lcfg.with_squeeze(false);
                     }
+                    if args.no_patches {
+                        lcfg = lcfg.with_patches(false);
+                    }
                     if args.lz77 {
                         lcfg = lcfg.with_lz77(true);
                     }
@@ -642,6 +645,9 @@ fn main() {
         }
         if args.no_squeeze {
             cfg = cfg.with_squeeze(false);
+        }
+        if args.no_patches {
+            cfg = cfg.with_patches(false);
         }
         if args.lz77 {
             cfg = cfg.with_lz77(true);

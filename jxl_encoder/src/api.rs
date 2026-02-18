@@ -483,6 +483,7 @@ pub struct LosslessConfig {
     tree_learning: bool,
     lz77: bool,
     lz77_method: Lz77Method,
+    patches: bool,
 }
 
 impl Default for LosslessConfig {
@@ -501,6 +502,7 @@ impl LosslessConfig {
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
             lz77: effort >= 9,
             lz77_method: Lz77Method::Greedy,
+            patches: effort >= 5,
         }
     }
 
@@ -524,6 +526,13 @@ impl LosslessConfig {
         new.lz77_method = self.lz77_method;
         new.squeeze = self.squeeze;
         new
+    }
+
+    /// Enable/disable patches (dictionary-based repeated pattern detection).
+    /// Default: true at effort >= 5. Huge wins on screenshots, zero cost on photos.
+    pub fn with_patches(mut self, enable: bool) -> Self {
+        self.patches = enable;
+        self
     }
 
     /// Enable/disable ANS entropy coding (default: true).
@@ -590,6 +599,11 @@ impl LosslessConfig {
     /// Current LZ77 method.
     pub fn lz77_method(&self) -> Lz77Method {
         self.lz77_method
+    }
+
+    /// Whether patches (dictionary-based repeated pattern detection) are enabled.
+    pub fn patches(&self) -> bool {
+        self.patches
     }
 
     // ── Request / fluent encode ─────────────────────────────────────
@@ -1152,8 +1166,26 @@ impl<'a> EncodeRequest<'a> {
         let w = self.width as usize;
         let h = self.height as usize;
 
+        // Normalize pixels to RGB8 for detection if needed (BGR swap)
+        let rgb_pixels;
+        let detection_pixels: &[u8] = match self.layout {
+            PixelLayout::Bgr8 => {
+                rgb_pixels = bgr_to_rgb(pixels, 3);
+                &rgb_pixels
+            }
+            PixelLayout::Bgra8 => {
+                rgb_pixels = bgr_to_rgb(pixels, 4);
+                &rgb_pixels
+            }
+            _ => {
+                rgb_pixels = Vec::new();
+                let _ = &rgb_pixels;
+                pixels
+            }
+        };
+
         // Build ModularImage from pixel layout
-        let image = match self.layout {
+        let mut image = match self.layout {
             PixelLayout::Rgb8 => ModularImage::from_rgb8(pixels, w, h),
             PixelLayout::Rgba8 => ModularImage::from_rgba8(pixels, w, h),
             PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(pixels, 3), w, h),
@@ -1165,6 +1197,22 @@ impl<'a> EncodeRequest<'a> {
             other => return Err(EncodeError::UnsupportedPixelLayout(other)),
         }
         .map_err(EncodeError::from)?;
+
+        // Detect patches for lossless mode (RGB 8-bit only, non-grayscale)
+        let num_channels = self.layout.bytes_per_pixel();
+        let can_use_patches =
+            cfg.patches && !image.is_grayscale && image.bit_depth <= 8 && num_channels >= 3;
+        let patches_data = if can_use_patches {
+            crate::vardct::patches::find_and_build_lossless(
+                detection_pixels,
+                w,
+                h,
+                num_channels,
+                image.bit_depth,
+            )
+        } else {
+            None
+        };
 
         // Build file header
         let mut file_header = if image.is_grayscale {
@@ -1196,6 +1244,20 @@ impl<'a> EncodeRequest<'a> {
         }
         writer.zero_pad_to_byte();
 
+        // Write reference frame and subtract patches from image if detected
+        if let Some(ref pd) = patches_data {
+            crate::vardct::patches::encode_reference_frame_rgb(
+                pd,
+                image.bit_depth,
+                cfg.use_ans,
+                &mut writer,
+            )
+            .map_err(EncodeError::from)?;
+            writer.zero_pad_to_byte();
+            let bd = image.bit_depth;
+            crate::vardct::patches::subtract_patches_modular(&mut image, pd, bd);
+        }
+
         // Encode frame
         // Tree learning is only validated for 8-bit images; disable for 16-bit.
         let use_tree_learning = cfg.tree_learning && image.bit_depth <= 8;
@@ -1216,7 +1278,12 @@ impl<'a> EncodeRequest<'a> {
         );
         let color_encoding = ColorEncoding::srgb();
         frame_encoder
-            .encode_modular(&image, &color_encoding, &mut writer)
+            .encode_modular_with_patches(
+                &image,
+                &color_encoding,
+                &mut writer,
+                patches_data.as_ref(),
+            )
             .map_err(EncodeError::from)?;
 
         let stats = EncodeStats {
