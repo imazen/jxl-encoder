@@ -83,6 +83,8 @@ pub(super) fn write_palette_transform(
     begin_c: usize,
     num_c: usize,
     nb_colors: usize,
+    nb_deltas: usize,
+    predictor: u8,
 ) -> Result<()> {
     // TransformId: U32(Val(0)=RCT, Val(1)=Palette, Val(2)=Squeeze, Val(3)=Invalid)
     // Palette = selector 1 = 2 bits "01"
@@ -130,11 +132,21 @@ pub(super) fn write_palette_transform(
     }
 
     // nb_deltas: U32(Val(0), BitsOffset(8,1), BitsOffset(10,257), BitsOffset(16,1281))
-    // For lossless: nb_deltas = 0 → selector 0
-    writer.write(2, 0)?;
+    if nb_deltas == 0 {
+        writer.write(2, 0)?; // selector 0 = Val(0)
+    } else if nb_deltas <= 256 {
+        writer.write(2, 1)?; // selector 1 = BitsOffset(8, 1)
+        writer.write(8, (nb_deltas - 1) as u64)?;
+    } else if nb_deltas <= 1280 {
+        writer.write(2, 2)?; // selector 2 = BitsOffset(10, 257)
+        writer.write(10, (nb_deltas - 257) as u64)?;
+    } else {
+        writer.write(2, 3)?; // selector 3 = BitsOffset(16, 1281)
+        writer.write(16, (nb_deltas - 1281) as u64)?;
+    }
 
-    // predictor: 4 bits (0 = Zero predictor for lossless with nb_deltas=0)
-    writer.write(4, 0)?;
+    // predictor: 4 bits (0=Zero, 4=ClampedGradient, etc.)
+    writer.write(4, predictor as u64)?;
 
     Ok(())
 }

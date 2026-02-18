@@ -125,6 +125,12 @@ struct Args {
     #[arg(long, conflicts_with = "squeeze")]
     no_squeeze: bool,
 
+    /// Enable lossy delta palette for near-lossless modular encoding.
+    /// Quantizes colors to a small palette + delta entries with error diffusion.
+    /// NOT pixel-exact — trades color accuracy for smaller files.
+    #[arg(long)]
+    lossy_palette: bool,
+
     /// Enable iterative rate control for improved distance targeting.
     /// Encodes multiple times, adjusting quantization to match target distance.
     /// Requires the rate-control feature. Off by default.
@@ -342,6 +348,9 @@ fn main() {
                     }
                     if args.no_lz77 {
                         lcfg = lcfg.with_lz77(false);
+                    }
+                    if args.lossy_palette {
+                        lcfg = lcfg.with_lossy_palette(true);
                     }
                     lcfg
                 }
@@ -655,6 +664,9 @@ fn main() {
         }
         if args.no_lz77 {
             cfg = cfg.with_lz77(false);
+        }
+        if args.lossy_palette {
+            cfg = cfg.with_lossy_palette(true);
         }
         let cfg = cfg;
 
