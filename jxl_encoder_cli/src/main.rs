@@ -205,6 +205,7 @@ fn main() {
     let lz77_method = match args.lz77_method.to_lowercase().as_str() {
         "rle" => Lz77Method::Rle,
         "greedy" => Lz77Method::Greedy,
+        "optimal" => Lz77Method::Optimal,
         other => {
             eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
             Lz77Method::Greedy

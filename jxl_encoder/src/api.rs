@@ -500,8 +500,12 @@ impl LosslessConfig {
             use_ans: effort >= 4,
             tree_learning: effort >= 7,
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
-            lz77: effort >= 9,
-            lz77_method: Lz77Method::Greedy,
+            lz77: effort >= 7,
+            lz77_method: match effort {
+                0..=7 => Lz77Method::Rle,
+                8 => Lz77Method::Greedy,
+                _ => Lz77Method::Optimal,
+            },
             patches: effort >= 5,
         }
     }
@@ -515,15 +519,15 @@ impl LosslessConfig {
     ///
     /// This adjusts all effort-dependent defaults:
     /// - **e1–3**: Huffman encoding
-    /// - **e4–7**: + ANS entropy coding
-    /// - **e8**: + content-adaptive tree learning (10 props at e8, 15 at e9+)
-    /// - **e9–10**: + LZ77 backward references
+    /// - **e4–6**: + ANS entropy coding
+    /// - **e7**: + content-adaptive tree learning, LZ77 RLE
+    /// - **e8**: + LZ77 greedy hash chain
+    /// - **e9–10**: + LZ77 optimal (Viterbi DP)
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
     pub fn with_effort(self, effort: u8) -> Self {
         let mut new = Self::with_effort_level(effort);
         // Preserve settings that aren't effort-derived
-        new.lz77_method = self.lz77_method;
         new.squeeze = self.squeeze;
         new
     }
@@ -732,8 +736,12 @@ impl LossyConfig {
             denoise: false,
             error_diffusion: effort >= 3,
             pixel_domain_loss: effort >= 5,
-            lz77: effort >= 9,
-            lz77_method: Lz77Method::Greedy,
+            lz77: effort >= 7,
+            lz77_method: match effort {
+                0..=7 => Lz77Method::Rle,
+                8 => Lz77Method::Greedy,
+                _ => Lz77Method::Optimal,
+            },
             force_strategy: None,
             patches: effort >= 5,
             #[cfg(feature = "butteraugli-loop")]
@@ -755,9 +763,9 @@ impl LossyConfig {
     /// - **e1–2**: DCT8 only, Huffman, no gaborish/patches/butteraugli
     /// - **e3**: + gaborish, error diffusion, Huffman
     /// - **e4**: + ANS entropy coding, multi-block AC strategies
-    /// - **e5–7**: + patches, pixel-domain loss, butteraugli loop (2 iters)
-    /// - **e8**: same as e7, reserved for future cost model refinements
-    /// - **e9–10**: + LZ77 backward references, 4 butteraugli iterations
+    /// - **e5–7**: + patches, pixel-domain loss, butteraugli loop (2 iters), LZ77 RLE
+    /// - **e8**: + LZ77 greedy hash chain
+    /// - **e9–10**: + LZ77 optimal (Viterbi DP), 4 butteraugli iterations
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
     pub fn with_effort(self, effort: u8) -> Self {
@@ -766,7 +774,6 @@ impl LossyConfig {
         new.noise = self.noise;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
-        new.lz77_method = self.lz77_method;
         // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters_explicit {
@@ -1270,6 +1277,8 @@ impl<'a> EncodeRequest<'a> {
                 use_ans: cfg.use_ans,
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
+                enable_lz77: cfg.lz77,
+                lz77_method: cfg.lz77_method,
                 have_animation: false,
                 duration: 0,
                 is_last: true,
@@ -1555,6 +1564,8 @@ fn encode_animation_lossless(
                 use_ans: cfg.use_ans,
                 use_tree_learning,
                 use_squeeze: cfg.squeeze,
+                enable_lz77: cfg.lz77,
+                lz77_method: cfg.lz77_method,
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,

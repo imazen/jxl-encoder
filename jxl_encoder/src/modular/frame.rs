@@ -12,6 +12,7 @@ use super::encode::{
 use super::section::write_global_modular_section_with_tree;
 use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::lz77::Lz77Method;
 use crate::error::Result;
 use crate::headers::ColorEncoding;
 use crate::headers::frame_header::{BlendMode, FrameCrop, FrameHeader};
@@ -29,6 +30,10 @@ pub struct FrameEncoderOptions {
     pub use_tree_learning: bool,
     /// Use squeeze (Haar wavelet) transform for modular encoding.
     pub use_squeeze: bool,
+    /// Enable LZ77 compression on modular token streams.
+    pub enable_lz77: bool,
+    /// LZ77 method to use when enable_lz77 is true.
+    pub lz77_method: Lz77Method,
     /// Whether this frame is part of an animation (enables duration field in header).
     pub have_animation: bool,
     /// Duration of this frame in ticks (only used when have_animation is true).
@@ -47,6 +52,8 @@ impl Default for FrameEncoderOptions {
             use_ans: false,
             use_tree_learning: false,
             use_squeeze: false,
+            enable_lz77: false,
+            lz77_method: Lz77Method::Rle,
             have_animation: false,
             duration: 0,
             is_last: true,
@@ -160,6 +167,8 @@ impl FrameEncoder {
                     image,
                     &mut section_writer,
                     self.options.effort,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
                 )?;
             } else if has_squeeze {
                 super::encode::write_modular_stream_with_squeeze(
@@ -176,6 +185,8 @@ impl FrameEncoder {
                     &mut section_writer,
                     self.options.effort,
                     image.channels.len() >= 3,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
                 )?;
             } else if image.channels.len() >= 3 {
                 super::encode::write_modular_stream_with_rct(
@@ -249,6 +260,8 @@ impl FrameEncoder {
                     image,
                     &mut section_writer,
                     self.options.effort,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
                 )?;
             } else if has_squeeze {
                 // Squeeze without tree learning (lower effort levels)
@@ -268,6 +281,8 @@ impl FrameEncoder {
                     &mut section_writer,
                     self.options.effort,       // effort-dependent tree params
                     image.channels.len() >= 3, // RCT for RGB
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
                 )?;
             } else if image.channels.len() >= 3 {
                 super::encode::write_modular_stream_with_rct(
@@ -386,6 +401,8 @@ impl FrameEncoder {
                 &mut lf_global_writer,
                 self.options.effort, // effort-dependent tree params
                 rct_type,
+                self.options.enable_lz77,
+                self.options.lz77_method,
             )?
         } else {
             // Standard path: collect residuals with gradient predictor
@@ -1145,7 +1162,7 @@ impl FrameEncoder {
 
         // Step 5: Collect residuals per section with the learned tree
         // Global section tokens
-        let global_tokens = collect_residuals_with_tree(&global_sub, &tree, 0);
+        let mut global_tokens = collect_residuals_with_tree(&global_sub, &tree, 0);
 
         // LfGroup section tokens
         let mut lf_group_tokens: Vec<Vec<AnsToken>> = Vec::with_capacity(num_lf_groups);
@@ -1183,6 +1200,78 @@ impl FrameEncoder {
             pass_group_tokens.push(tokens);
         }
 
+        // Step 5b: Optionally apply LZ77 to each section's tokens independently
+        // IMPORTANT: dist_multiplier must be computed PER-SECTION from that section's
+        // channel widths, because the decoder creates a fresh LZ77 state per section
+        // with dist_multiplier = max(section_channel_widths).
+        let use_lz77 = self.options.enable_lz77;
+        let lz77_method = self.options.lz77_method;
+        let lz77_params = if use_lz77 {
+            use crate::entropy_coding::lz77::apply_lz77;
+
+            let try_lz77 = |tokens: &[AnsToken], dist_multiplier: i32| -> Vec<AnsToken> {
+                if tokens.is_empty() {
+                    return tokens.to_vec();
+                }
+                match apply_lz77(tokens, num_contexts, false, lz77_method, dist_multiplier) {
+                    Some((lz77_tokens, _)) => lz77_tokens,
+                    None => tokens.to_vec(),
+                }
+            };
+
+            // Global section: dist_multiplier from global channels
+            let global_dm = squeezed.channels[..global_cutoff]
+                .iter()
+                .map(|c| c.width())
+                .max()
+                .unwrap_or(0) as i32;
+            global_tokens = try_lz77(&global_tokens, global_dm);
+
+            // LfGroup sections: dist_multiplier from each LfGroup's channels
+            for (lg, lg_tokens) in lf_group_tokens.iter_mut().enumerate() {
+                let dm = lf_group_sub_images[lg]
+                    .iter()
+                    .map(|c| c.width())
+                    .max()
+                    .unwrap_or(0) as i32;
+                *lg_tokens = try_lz77(lg_tokens, dm);
+            }
+
+            // PassGroup sections: dist_multiplier from each PassGroup's channels
+            for (g, pg_tokens) in pass_group_tokens.iter_mut().enumerate() {
+                let dm = pass_group_sub_images[g]
+                    .iter()
+                    .map(|c| c.width())
+                    .max()
+                    .unwrap_or(0) as i32;
+                *pg_tokens = try_lz77(pg_tokens, dm);
+            }
+
+            // Check if any section has LZ77 references
+            let has_lz77 = global_tokens.iter().any(|t| t.is_lz77_length)
+                || lf_group_tokens
+                    .iter()
+                    .any(|ts| ts.iter().any(|t| t.is_lz77_length))
+                || pass_group_tokens
+                    .iter()
+                    .any(|ts| ts.iter().any(|t| t.is_lz77_length));
+
+            if has_lz77 {
+                let mut params = crate::entropy_coding::lz77::Lz77Params::new(num_contexts, false);
+                params.enabled = true;
+                Some(params)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let ans_num_contexts = if lz77_params.is_some() {
+            num_contexts + 1
+        } else {
+            num_contexts
+        };
+
         // Step 6: Build ANS codes from ALL tokens
         let mut all_tokens: Vec<AnsToken> = Vec::new();
         all_tokens.extend(&global_tokens);
@@ -1194,9 +1283,9 @@ impl FrameEncoder {
         }
         let code = build_entropy_code_ans_with_options(
             &all_tokens,
-            num_contexts,
+            ans_num_contexts,
             true, // enhanced clustering (pair-merge refinement)
-            None, // no LZ77
+            lz77_params.as_ref(),
             Some(total_pixels),
         );
 
@@ -1211,9 +1300,12 @@ impl FrameEncoder {
         // Write the learned tree
         write_tree(&mut lf_global_writer, &tree)?;
 
-        // Write ANS histogram (multi-context if num_contexts > 1)
-        if num_contexts > 1 {
-            lf_global_writer.write(1, 0)?; // lz77.enabled = 0
+        // Write LZ77 header + ANS histogram
+        if ans_num_contexts > 1 {
+            crate::entropy_coding::lz77::write_lz77_header(
+                lz77_params.as_ref(),
+                &mut lf_global_writer,
+            )?;
             write_entropy_code_ans(&code, &mut lf_global_writer)?;
         } else {
             super::section::write_ans_modular_header(&mut lf_global_writer, &code)?;
@@ -1234,7 +1326,12 @@ impl FrameEncoder {
         }
 
         // Write global channel tokens
-        write_tokens_ans(&global_tokens, &code, None, &mut lf_global_writer)?;
+        write_tokens_ans(
+            &global_tokens,
+            &code,
+            lz77_params.as_ref(),
+            &mut lf_global_writer,
+        )?;
 
         lf_global_writer.zero_pad_to_byte();
         let lf_global_data = lf_global_writer.finish();
@@ -1261,7 +1358,7 @@ impl FrameEncoder {
             lg_writer.write(1, 1)?; // wp_params.default_wp = true
             lg_writer.write(2, 0)?; // nb_transforms = 0
 
-            write_tokens_ans(lg_tokens, &code, None, &mut lg_writer)?;
+            write_tokens_ans(lg_tokens, &code, lz77_params.as_ref(), &mut lg_writer)?;
 
             lg_writer.zero_pad_to_byte();
             let data = lg_writer.finish();
@@ -1291,7 +1388,7 @@ impl FrameEncoder {
             pg_writer.write(1, 1)?; // wp_params.default_wp = true
             pg_writer.write(2, 0)?; // nb_transforms = 0
 
-            write_tokens_ans(pg_tokens, &code, None, &mut pg_writer)?;
+            write_tokens_ans(pg_tokens, &code, lz77_params.as_ref(), &mut pg_writer)?;
 
             pg_writer.zero_pad_to_byte();
             let data = pg_writer.finish();

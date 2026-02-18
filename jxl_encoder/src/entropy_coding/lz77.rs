@@ -15,6 +15,8 @@
 use hashbrown::HashMap;
 
 use super::token::{Lz77UintCoder, Token, UintCoder};
+use crate::bit_writer::BitWriter;
+use crate::error::Result;
 
 /// Maximum window size for LZ77 matching (1MB, matches libjxl).
 const WINDOW_SIZE: usize = 1 << 20;
@@ -174,6 +176,57 @@ impl Lz77Params {
     }
 }
 
+/// Write LZ77 header to the bitstream.
+///
+/// If `lz77` is `Some`, writes `enabled=1` followed by min_symbol, min_length,
+/// and length_uint_config. If `None`, writes `enabled=0`.
+///
+/// JXL spec format:
+/// ```text
+/// Bool(enabled)
+/// if enabled:
+///   U32(Val(224), Val(512), Val(4096), BitsOffset(15,8))  // min_symbol
+///   U32(Val(3), Val(4), BitsOffset(2,5), BitsOffset(8,9)) // min_length
+///   EncodeUintConfig(length_uint_config, log_alpha_size=8)
+/// ```
+pub fn write_lz77_header(lz77: Option<&Lz77Params>, writer: &mut BitWriter) -> Result<()> {
+    if let Some(params) = lz77 {
+        writer.write(1, 1)?; // lz77 enabled
+
+        // min_symbol: U32(Val(224), Val(512), Val(4096), BitsOffset(15,8))
+        match params.min_symbol {
+            224 => writer.write(2, 0)?,  // selector 0 = Val(224)
+            512 => writer.write(2, 1)?,  // selector 1 = Val(512)
+            4096 => writer.write(2, 2)?, // selector 2 = Val(4096)
+            v => {
+                writer.write(2, 3)?; // selector 3 = BitsOffset(15, 8)
+                writer.write(15, (v - 8) as u64)?;
+            }
+        }
+
+        // min_length: U32(Val(3), Val(4), BitsOffset(2,5), BitsOffset(8,9))
+        match params.min_length {
+            3 => writer.write(2, 0)?, // selector 0 = Val(3)
+            4 => writer.write(2, 1)?, // selector 1 = Val(4)
+            v @ 5..=8 => {
+                writer.write(2, 2)?; // selector 2 = BitsOffset(2, 5)
+                writer.write(2, (v - 5) as u64)?;
+            }
+            v => {
+                writer.write(2, 3)?; // selector 3 = BitsOffset(8, 9)
+                writer.write(8, (v - 9) as u64)?;
+            }
+        }
+
+        // length_uint_config: HybridUintConfig(0, 0, 0)
+        // split_exponent=0 → 4 bits, msb/lsb need 0 bits each
+        writer.write(4, 0)?;
+    } else {
+        writer.write(1, 0)?; // no lz77
+    }
+    Ok(())
+}
+
 /// Estimate per-symbol bit cost from histograms, matching libjxl's SymbolCostEstimator.
 struct SymbolCostEstimator {
     /// Flat array: bits[ctx * max_alphabet_size + sym]
@@ -268,7 +321,6 @@ impl SymbolCostEstimator {
     }
 
     /// Cost of encoding an LZ77 length token using histogram-based estimation.
-    #[allow(dead_code)] // Used for optimal LZ77 mode (future)
     fn len_cost(&self, ctx: usize, len: u32, lz77: &Lz77Params) -> f32 {
         // HybridUintConfig(1, 0, 0) for LZ77 length
         let (tok, nbits) = if len == 0 {
@@ -282,7 +334,6 @@ impl SymbolCostEstimator {
     }
 
     /// Cost of encoding an LZ77 distance token using histogram-based estimation.
-    #[allow(dead_code)] // Used for optimal LZ77 mode (future)
     fn dist_cost_sce(&self, dist_symbol: u32, lz77: &Lz77Params) -> f32 {
         let (tok, nbits) = UintCoder::encode(dist_symbol).into();
         nbits as f32 + self.symbol_cost(lz77.distance_context as usize, tok as usize)
@@ -731,12 +782,20 @@ pub fn apply_lz77_rle(
     tokens: &[Token],
     num_contexts: usize,
     force_huffman: bool,
+    distance_multiplier: i32,
 ) -> Option<(Vec<Token>, Lz77Params)> {
     if tokens.is_empty() {
         return None;
     }
 
     let mut lz77 = Lz77Params::new(num_contexts, force_huffman);
+
+    // Compute the distance symbol that encodes distance=1 (repeat previous value).
+    // When dist_multiplier == 0: decoder uses distance_sym directly, so sym=0 → distance=0+1=1.
+    // When dist_multiplier > 0: decoder uses special distance table.
+    //   SPECIAL_DISTANCES[1] = (1, 0) → distance = 1 + dm*0 = 1 for any dm.
+    //   SPECIAL_DISTANCES[0] = (0, 1) → distance = 0 + dm*1 = dm (WRONG for RLE).
+    let rle_distance_symbol: u32 = if distance_multiplier > 0 { 1 } else { 0 };
 
     // First pass: build cost estimator from the original tokens (no LZ77 tokens yet).
     // We pass the original tokens to estimate costs, matching libjxl.
@@ -797,9 +856,8 @@ pub fn apply_lz77_rle(
         let lz77_len = (num_to_copy - lz77.min_length as usize) as u32;
         out.push(Token::lz77_length(tokens[i].context, lz77_len));
 
-        // Emit distance token (distance_symbol=0 means distance 1 = "repeat previous",
-        // since num_special_distances=0 for RLE)
-        out.push(Token::new(lz77.distance_context, 0));
+        // Emit distance token encoding distance=1 (repeat previous value)
+        out.push(Token::new(lz77.distance_context, rle_distance_symbol));
 
         bit_decrease += literal_cost - lz77_cost;
         i += num_to_copy;
@@ -841,19 +899,24 @@ pub enum Lz77Method {
     /// Fast but limited compression on photographic content.
     #[default]
     Rle,
-    /// Full backward references with hash chains.
+    /// Full backward references with hash chains (greedy matching).
     /// Finds matches at arbitrary distances within a sliding window.
     /// 1-3% better compression on photos, slower.
     Greedy,
+    /// Optimal backward references via Viterbi DP (from libjxl ApplyLZ77_Optimal).
+    /// Considers all viable matches at each position and finds the minimum-cost
+    /// parse via dynamic programming. Best compression, slowest.
+    Optimal,
 }
 
 /// Apply LZ77 compression using the specified method.
 ///
 /// - `Lz77Method::Rle`: RLE-only (fast, limited compression)
 /// - `Lz77Method::Greedy`: Hash chain backward references (slower, better compression)
+/// - `Lz77Method::Optimal`: Viterbi DP optimal parse (slowest, best compression)
 ///
 /// For photographic content, `Greedy` typically provides 1-3% additional compression
-/// over RLE-only. For graphics/text with runs of identical values, RLE may be sufficient.
+/// over RLE-only. `Optimal` finds the minimum-cost parse via dynamic programming.
 ///
 /// Returns `Some((transformed_tokens, params))` if LZ77 is beneficial,
 /// or `None` if the savings are insufficient.
@@ -865,11 +928,200 @@ pub fn apply_lz77(
     distance_multiplier: i32,
 ) -> Option<(Vec<Token>, Lz77Params)> {
     match method {
-        Lz77Method::Rle => apply_lz77_rle(tokens, num_contexts, force_huffman),
+        Lz77Method::Rle => apply_lz77_rle(tokens, num_contexts, force_huffman, distance_multiplier),
         Lz77Method::Greedy => {
             apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier)
         }
+        Lz77Method::Optimal => {
+            apply_lz77_optimal(tokens, num_contexts, force_huffman, distance_multiplier)
+        }
     }
+}
+
+/// Apply optimal LZ77 with Viterbi DP parsing (from libjxl `ApplyLZ77_Optimal`).
+///
+/// Uses dynamic programming to find the minimum-cost parse of the token stream.
+/// First runs greedy LZ77 to build a cost model, then uses that model with
+/// forward-pass DP to find the optimal literal/match decisions at each position.
+///
+/// Returns `Some((transformed_tokens, params))` if LZ77 is beneficial,
+/// or `None` if the savings are insufficient.
+pub fn apply_lz77_optimal(
+    tokens: &[Token],
+    num_contexts: usize,
+    force_huffman: bool,
+    distance_multiplier: i32,
+) -> Option<(Vec<Token>, Lz77Params)> {
+    if tokens.is_empty() {
+        return None;
+    }
+
+    // Step 1: Run greedy LZ77 to get a cost estimate.
+    // If greedy doesn't help, optimal won't either.
+    let greedy_result =
+        apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier);
+    let greedy_tokens = match &greedy_result {
+        Some((t, _)) => t,
+        None => return None,
+    };
+
+    let mut lz77 = Lz77Params::new(num_contexts, force_huffman);
+    lz77.enabled = true;
+
+    // Step 2: Build cost estimator from greedy result (num_contexts + 1 for distance ctx).
+    let sce = SymbolCostEstimator::new(num_contexts + 1, force_huffman, greedy_tokens, &lz77);
+
+    // Step 3: Compute cumulative symbol costs for the original (non-LZ77) stream.
+    let mut sym_cost = vec![0.0f32; tokens.len() + 1];
+    for (i, token) in tokens.iter().enumerate() {
+        let e = UintCoder::encode(token.value);
+        let cost = sce.symbol_cost(token.context as usize, e.token as usize) + e.nbits as f32;
+        sym_cost[i + 1] = sym_cost[i] + cost;
+    }
+
+    // Step 4: Forward DP pass.
+    let max_distance = tokens.len();
+    let min_length = lz77.min_length as usize;
+    let max_length = tokens.len();
+
+    let mut window_size = 1usize;
+    while window_size < max_distance && window_size < WINDOW_SIZE {
+        window_size <<= 1;
+    }
+
+    let mut chain = HashChain::new(
+        tokens,
+        window_size,
+        min_length,
+        max_length,
+        distance_multiplier,
+    );
+
+    // MatchInfo for backtrace: len=1 means literal, dist_symbol stored as +1 (0 = literal).
+    struct PrefixInfo {
+        len: u32,
+        dist_symbol: u32, // 0 = literal, >0 = LZ77 match (actual dist_symbol + 1)
+        ctx: u32,
+        total_cost: f32,
+    }
+
+    let n = tokens.len();
+    let mut prefix_costs: Vec<PrefixInfo> = (0..=n)
+        .map(|_| PrefixInfo {
+            len: 0,
+            dist_symbol: 0,
+            ctx: 0,
+            total_cost: f32::MAX,
+        })
+        .collect();
+    prefix_costs[0].total_cost = 0.0;
+
+    let mut rle_length = 0usize;
+    let mut skip_lz77 = 0usize;
+    let mut dist_symbols: Vec<u32> = Vec::new();
+
+    for i in 0..n {
+        chain.update(i);
+
+        // Literal cost
+        let lit_cost = prefix_costs[i].total_cost + sym_cost[i + 1] - sym_cost[i];
+        if prefix_costs[i + 1].total_cost > lit_cost {
+            prefix_costs[i + 1].dist_symbol = 0;
+            prefix_costs[i + 1].len = 1;
+            prefix_costs[i + 1].ctx = tokens[i].context;
+            prefix_costs[i + 1].total_cost = lit_cost;
+        }
+
+        if skip_lz77 > 0 {
+            skip_lz77 -= 1;
+            continue;
+        }
+
+        // Collect all matches: for each length, keep the cheapest dist_symbol.
+        dist_symbols.clear();
+        chain.find_matches(i, max_distance, |len, dist_symbol| {
+            if dist_symbols.len() <= len {
+                dist_symbols.resize(len + 1, dist_symbol as u32);
+            }
+            if (dist_symbol as u32) < dist_symbols[len] {
+                dist_symbols[len] = dist_symbol as u32;
+            }
+        });
+
+        if dist_symbols.len() <= min_length {
+            continue;
+        }
+
+        // Normalize: for each length, use the best dist_symbol from any longer match.
+        {
+            let mut best_cost = dist_symbols[dist_symbols.len() - 1];
+            for j in (min_length..dist_symbols.len()).rev() {
+                if dist_symbols[j] < best_cost {
+                    best_cost = dist_symbols[j];
+                }
+                dist_symbols[j] = best_cost;
+            }
+        }
+
+        // Evaluate each match length.
+        for (j, &dsym) in dist_symbols.iter().enumerate().skip(min_length) {
+            let target = i + j;
+            if target > n {
+                break;
+            }
+            let lz77_cost =
+                sce.len_cost(tokens[i].context as usize, (j - min_length) as u32, &lz77)
+                    + sce.dist_cost_sce(dsym, &lz77);
+            let cost = prefix_costs[i].total_cost + lz77_cost;
+            if prefix_costs[target].total_cost > cost {
+                prefix_costs[target].len = j as u32;
+                prefix_costs[target].dist_symbol = dsym + 1; // +1 to distinguish from literal
+                prefix_costs[target].ctx = tokens[i].context;
+                prefix_costs[target].total_cost = cost;
+            }
+        }
+
+        // RLE skip optimization: avoid O(n^2) on long runs of same distance.
+        let last_dist = dist_symbols[dist_symbols.len() - 1];
+        if (last_dist == 0 && distance_multiplier == 0)
+            || (last_dist == 1 && distance_multiplier != 0)
+        {
+            rle_length += 1;
+        } else {
+            rle_length = 0;
+        }
+        if rle_length >= 8 && dist_symbols.len() > 9 {
+            skip_lz77 = dist_symbols.len() - 10;
+            rle_length = 0;
+        }
+    }
+
+    // Step 5: Backtrace from end to beginning.
+    let mut out = Vec::with_capacity(n);
+    let mut pos = n;
+    while pos > 0 {
+        let info = &prefix_costs[pos];
+        let is_lz77 = info.dist_symbol != 0;
+
+        if is_lz77 {
+            let dist_symbol = info.dist_symbol - 1;
+            out.push(Token::new(lz77.distance_context, dist_symbol));
+        }
+
+        let val = if is_lz77 {
+            info.len - min_length as u32
+        } else {
+            tokens[pos - 1].value
+        };
+        let mut tok = Token::new(info.ctx, val);
+        tok.is_lz77_length = is_lz77;
+        out.push(tok);
+
+        pos -= info.len as usize;
+    }
+
+    out.reverse();
+    Some((out, lz77))
 }
 
 /// Try both LZ77 methods and return the one with better compression.
@@ -884,7 +1136,7 @@ pub fn apply_lz77_best(
     force_huffman: bool,
     distance_multiplier: i32,
 ) -> Option<(Vec<Token>, Lz77Params)> {
-    let rle_result = apply_lz77_rle(tokens, num_contexts, force_huffman);
+    let rle_result = apply_lz77_rle(tokens, num_contexts, force_huffman, distance_multiplier);
     let backref_result =
         apply_lz77_backref(tokens, num_contexts, force_huffman, distance_multiplier);
 
@@ -922,7 +1174,7 @@ mod tests {
     fn test_no_rle_on_short_stream() {
         // Very short streams shouldn't trigger LZ77
         let tokens = vec![Token::new(0, 5), Token::new(0, 5), Token::new(0, 5)];
-        assert!(apply_lz77_rle(&tokens, 1, false).is_none());
+        assert!(apply_lz77_rle(&tokens, 1, false, 0).is_none());
     }
 
     #[test]
@@ -935,7 +1187,7 @@ mod tests {
             tokens.push(Token::new(0, 5));
         }
 
-        let result = apply_lz77_rle(&tokens, 1, false);
+        let result = apply_lz77_rle(&tokens, 1, false, 0);
         if let Some((lz77_tokens, params)) = result {
             assert!(params.enabled);
             // Should be much shorter than the original
@@ -963,7 +1215,7 @@ mod tests {
             tokens.push(Token::new(0, i + 100));
         }
 
-        if let Some((lz77_tokens, params)) = apply_lz77_rle(&tokens, 1, false) {
+        if let Some((lz77_tokens, params)) = apply_lz77_rle(&tokens, 1, false, 0) {
             assert!(params.enabled);
             assert!(lz77_tokens.len() < tokens.len());
             // The first token should be preserved literally
@@ -974,7 +1226,7 @@ mod tests {
 
     #[test]
     fn test_empty_stream() {
-        assert!(apply_lz77_rle(&[], 1, false).is_none());
+        assert!(apply_lz77_rle(&[], 1, false, 0).is_none());
     }
 
     // Tests for backward-reference LZ77
@@ -1028,7 +1280,7 @@ mod tests {
             }
         }
 
-        let rle_result = apply_lz77_rle(&tokens, 1, false);
+        let rle_result = apply_lz77_rle(&tokens, 1, false, 0);
         let backref_result = apply_lz77_backref(&tokens, 1, false, 0);
 
         // RLE should not find matches (no consecutive identical values)

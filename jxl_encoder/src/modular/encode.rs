@@ -1024,6 +1024,8 @@ pub fn write_modular_stream_with_tree(
     writer: &mut BitWriter,
     effort: u8,
     rct: bool,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
@@ -1032,6 +1034,7 @@ pub fn write_modular_stream_with_tree(
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
     // Select best RCT variant by trying multiple candidates (effort-dependent).
     // Tree learning uses RCT only (not palette) because palette+tree has a
@@ -1082,12 +1085,34 @@ pub fn write_modular_stream_with_tree(
     // Step 3: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
 
+    // Step 3b: Optionally apply LZ77 to the token stream
+    let dist_multiplier = work_image
+        .channels
+        .iter()
+        .map(|c| c.width())
+        .max()
+        .unwrap_or(0) as i32;
+    let (tokens, lz77_params) = if use_lz77 {
+        // LZ77 application
+        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+            None => (tokens, None),
+        }
+    } else {
+        (tokens, None)
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+
     // Step 4: Build multi-context ANS code with enhanced clustering
     let code = build_entropy_code_ans_with_options(
         &tokens,
-        num_contexts,
+        ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
-        None, // no LZ77
+        lz77_params.as_ref(),
         Some(total_pixels),
     );
 
@@ -1100,15 +1125,11 @@ pub fn write_modular_stream_with_tree(
     // Write the learned tree
     write_tree(writer, &tree)?;
 
-    // Write ANS data histogram.
-    // JXL spec: context map is only written when num_contexts > 1.
-    // write_entropy_code_ans doesn't write lz77 (caller handles it).
-    // write_ans_modular_header includes lz77.enabled=0 itself.
-    if num_contexts > 1 {
-        writer.write(1, 0)?; // lz77.enabled = 0
+    // Write LZ77 header + ANS data histogram.
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
         write_entropy_code_ans(&code, writer)?;
     } else {
-        // write_ans_modular_header writes lz77.enabled=0 + omits context map
         use super::section::write_ans_modular_header;
         write_ans_modular_header(writer, &code)?;
     }
@@ -1124,9 +1145,9 @@ pub fn write_modular_stream_with_tree(
         writer.write(2, 0)?; // num_transforms = 0
     }
 
-    // Debug: verify ANS encoding correctness
+    // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
     #[cfg(debug_assertions)]
-    {
+    if lz77_params.is_none() {
         let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
         if roundtrip_result.is_err() {
             debug_rect!(
@@ -1145,7 +1166,7 @@ pub fn write_modular_stream_with_tree(
     }
 
     // Write ANS tokens
-    write_tokens_ans(&tokens, &code, None, writer)?;
+    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
 
     writer.zero_pad_to_byte();
     Ok(())
@@ -1163,6 +1184,8 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
     effort: u8,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<()> {
     use super::rct::{RctType, forward_rct};
     use super::squeeze::{apply_squeeze, default_squeeze_params};
@@ -1173,11 +1196,19 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
     let params = default_squeeze_params(image);
     if params.is_empty() {
         // Image too small for squeeze, fall back to tree learning without squeeze
-        return write_modular_stream_with_tree(image, writer, effort, image.channels.len() >= 3);
+        return write_modular_stream_with_tree(
+            image,
+            writer,
+            effort,
+            image.channels.len() >= 3,
+            use_lz77,
+            lz77_method,
+        );
     }
 
     // Step 1: Apply RCT (YCoCg) before squeeze for RGB images
@@ -1233,12 +1264,33 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     // Step 5: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&transformed, &tree, 0);
 
+    // Step 5b: Optionally apply LZ77 to the token stream
+    let dist_multiplier = transformed
+        .channels
+        .iter()
+        .map(|c| c.width())
+        .max()
+        .unwrap_or(0) as i32;
+    let (tokens, lz77_params) = if use_lz77 {
+        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+            None => (tokens, None),
+        }
+    } else {
+        (tokens, None)
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+
     // Step 6: Build multi-context ANS code with enhanced clustering
     let code = build_entropy_code_ans_with_options(
         &tokens,
-        num_contexts,
+        ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
-        None, // no LZ77
+        lz77_params.as_ref(),
         Some(total_pixels),
     );
 
@@ -1251,9 +1303,9 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     // Write the learned tree
     write_tree(writer, &tree)?;
 
-    // Write ANS data histogram
-    if num_contexts > 1 {
-        writer.write(1, 0)?; // lz77.enabled = 0
+    // Write LZ77 header + ANS data histogram
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
         write_entropy_code_ans(&code, writer)?;
     } else {
         use super::section::write_ans_modular_header;
@@ -1275,9 +1327,9 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         write_squeeze_transform(writer, &params)?;
     }
 
-    // Debug: verify ANS encoding correctness
+    // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
     #[cfg(debug_assertions)]
-    {
+    if lz77_params.is_none() {
         let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
         if roundtrip_result.is_err() {
             debug_rect!(
@@ -1296,7 +1348,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     }
 
     // Write ANS tokens
-    write_tokens_ans(&tokens, &code, None, writer)?;
+    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
 
     writer.zero_pad_to_byte();
     Ok(())
