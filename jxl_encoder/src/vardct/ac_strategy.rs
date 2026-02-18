@@ -1469,11 +1469,13 @@ pub fn compute_ac_strategy(
             }
 
             // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
-            // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 7, step=2).
+            // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 7).
+            // step=1 at effort 9+ (fine-grained search), step=2 otherwise.
             // Only at d>=2.0 where DCT32x32 is enabled, and effort >= 7.
             if distance >= 2.0 && effort >= 7 {
-                for cy in (0..tile_h.saturating_sub(3)).step_by(2) {
-                    for cx in (0..tile_w.saturating_sub(3)).step_by(2) {
+                let step = if effort >= 9 { 1 } else { 2 };
+                for cy in (0..tile_h.saturating_sub(3)).step_by(step) {
+                    for cx in (0..tile_w.saturating_sub(3)).step_by(step) {
                         // Skip 4-aligned positions (already evaluated in aligned pass)
                         if (cy | cx) % 4 == 0 {
                             continue;
