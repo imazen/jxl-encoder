@@ -31,7 +31,7 @@ pub mod vardct;
 pub use api::{
     AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
     EncodeStats, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
-    Quality, ResultAtExt, Stop, Unstoppable, at,
+    ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
 
 /// Group dimension in pixels (256x256 groups).

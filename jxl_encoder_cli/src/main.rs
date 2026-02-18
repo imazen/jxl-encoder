@@ -8,6 +8,7 @@
 use clap::Parser;
 use jxl_encoder::{
     AnimationFrame, AnimationParams, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
+    ProgressiveMode,
 };
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
@@ -130,6 +131,16 @@ struct Args {
     /// NOT pixel-exact — trades color accuracy for smaller files.
     #[arg(long)]
     lossy_palette: bool,
+
+    /// Enable 3-pass progressive encoding (DC/VLF → LF → Full AC).
+    /// Enables staged previews at reduced quality before full decode.
+    #[arg(long)]
+    progressive: bool,
+
+    /// Enable 2-pass quantized progressive encoding.
+    /// All AC at reduced precision first, then full precision refinement.
+    #[arg(long, conflicts_with = "progressive")]
+    qprogressive: bool,
 
     /// Enable iterative rate control for improved distance targeting.
     /// Encodes multiple times, adjusting quantization to match target distance.
@@ -300,6 +311,13 @@ fn main() {
                 }
                 if args.no_lz77 {
                     cfg = cfg.with_lz77(false);
+                }
+
+                if args.progressive {
+                    cfg = cfg.with_progressive(ProgressiveMode::DcVlfLfAc);
+                }
+                if args.qprogressive {
+                    cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
                 }
 
                 if args.dct8_only {
@@ -530,6 +548,13 @@ fn main() {
             cfg = cfg.with_lz77(false);
         }
 
+        if args.progressive {
+            cfg = cfg.with_progressive(ProgressiveMode::DcVlfLfAc);
+        }
+        if args.qprogressive {
+            cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
+        }
+
         if args.dct8_only {
             cfg = cfg.with_force_strategy(Some(0));
         }
@@ -597,6 +622,12 @@ fn main() {
             }
             if let Some(s) = args.force_strategy {
                 tiny.force_strategy = Some(s);
+            }
+            if args.progressive {
+                tiny.progressive = ProgressiveMode::DcVlfLfAc;
+            }
+            if args.qprogressive {
+                tiny.progressive = ProgressiveMode::QuantizedAcFullAc;
             }
 
             let linear_rgb = srgb_u8_to_linear_f32(&data);
