@@ -246,7 +246,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   AC strategy is fixed; only quant_field changes. 2 iterations converges for most images.
   At d=1.0 on CLIC 1024x1024: -15% file size at -1.7 SSIM2; at equal file size +0.3 SSIM2.
   RD improvement comes from redistributing bits from over-quality to under-quality blocks.
-- **Fine-grained AC strategy search** (effort 9): step=1 instead of step=2 for 32x32+ blocks
+- ~~**Fine-grained AC strategy search**~~ DONE (effort 9): step=1 instead of step=2 for 32x32+ blocks
 - ~~**Optimal LZ77**~~ DONE: Viterbi DP parser at effort 9+, greedy at e8, RLE at e7
 - ~~**Full histogram clustering**~~ DONE: pair-merge enabled for both VarDCT and modular tree-learned paths
 - **Predictor::Variable** for modular (effort 8+): adapts per-channel vs fixed predictor
@@ -364,6 +364,14 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - GB82-SC corpus: 36.7% total savings, terminal -53.3%, imac_g3 -46.9%
   - Zero overhead on CLIC photos (identical output with/without patches)
   - All output pixel-exact verified with jxl-rs and djxl
+- [x] Lossy delta palette (`--lossy-palette`, near-lossless with error diffusion)
+  - Two-pass algorithm: discover frequent deltas, apply with error diffusion
+  - 72 built-in deltas, implicit color cubes (4^3 + 5^3), perceptual color distance
+  - Single-group only (<=256x256). Verified with djxl and jxl-oxide
+- [x] Fine-grained AC strategy search (effort 9+, step=1 for 32x32+ blocks)
+- [x] 16-bit pixel input (Rgb16, Rgba16, Gray16, GrayAlpha16)
+- [x] Float pixel input (RgbLinearF32, RgbaLinearF32, GrayLinearF32, GrayAlphaLinearF32)
+- [x] Grayscale lossless encoding (Gray8, Gray16, GrayLinearF32, with/without alpha)
 
 
 ### Roadmap: Upgrading Beyond libjxl-tiny
@@ -485,12 +493,13 @@ failed — all other palette tests had `nb_colors < 256` using the correct 8-bit
 Fix: `write(11, ...) → write(10, ...)` and `write(14, ...) → write(12, ...)` in
 `encode_transforms.rs:117-130`. All 3 previously-ignored tests now pass.
 
-### Tree Learning Broken on 16-bit Images (Feb 16, 2026)
+### ~~Tree Learning Broken on 16-bit Images~~ (RESOLVED Feb 18, 2026)
 
-**Status**: ACTIVE — tree learning auto-disabled for bit_depth > 8
+**Status**: RESOLVED — tree learning now works on 16-bit images.
 
-8x8 RGBA16 with tree learning produces `InvalidSqueezeParams` from jxl-oxide and ANS
-roundtrip failures. Not investigated yet. Guard added in api.rs.
+Root cause was residual_tokens being stored as u8 (overflowed for 16-bit values >255).
+Fixed by widening token storage and removing the bit_depth > 8 guard in api.rs.
+Verified with 8x8 and 16x16 RGBA16 roundtrip tests (jxl-rs + djxl).
 
 ## Investigation Notes
 
@@ -1198,10 +1207,11 @@ by image content — gradient images with regular DC patterns benefit most.
 
 ### Modular Encoder Parity vs libjxl (Feb 6, 2026)
 
-**AT PARITY**: RCT (all 42 variants), ANS + Huffman, HybridUint {4,2,0}, LZ77 (RLE + hash chain),
-histogram clustering, tree learning (ID3, 16 properties, 256 quantization buckets), 14/14
-predictors (including Weighted), multi-group encoding, RGBA/grayscale, context map compression,
-palette transform (lossless), squeeze transform (Haar wavelet), lossless patches (default-on).
+**AT PARITY**: RCT (all 42 variants), ANS + Huffman, HybridUint {4,2,0}, LZ77 (RLE + greedy +
+optimal Viterbi DP), histogram clustering, tree learning (ID3, 16 properties, 256 quantization
+buckets), 14/14 predictors (including Weighted), multi-group encoding, RGBA/grayscale, 16-bit,
+float input, context map compression, palette transform (lossless + lossy delta), squeeze
+transform (Haar wavelet), lossless patches (default-on).
 
 **COMPLETED** (Feb 6, 2026):
 - Palette transform (TransformId=1): auto-detect, lossless, 19-57% on graphics. Verified jxl-rs + djxl.
@@ -1236,10 +1246,13 @@ palette transform (lossless), squeeze transform (Haar wavelet), lossless patches
 4. ~~**Effort-level tuning for LZ77**~~ — DONE (Feb 18, 2026). LZ77 method now auto-selected by effort:
    e7=RLE, e8=Greedy, e9+=Optimal. Tree learning and LZ77 are no longer mutually exclusive.
 
-5. **Lossy palette / delta palette** — Only lossless palette implemented. Lossy needs
-   nb_deltas>0, predictor selection, and delta row encoding.
+5. ~~**Lossy palette / delta palette**~~ — DONE (Feb 18, 2026). Two-pass algorithm from libjxl:
+   72 built-in deltas, implicit color cubes, error diffusion, perceptual color distance.
+   API: `LosslessConfig::with_lossy_palette(true)`, CLI: `--lossy-palette`. Single-group only.
 
-6. **16-bit/float input, animation, streaming ANS** — NOT IMPLEMENTED. Format/UX gaps.
+6. **16-bit input**: DONE (Feb 18, 2026). Full 16-bit pixel layout support (Rgb16, Rgba16,
+   Gray16, GrayAlpha16). Tree learning works on 16-bit. Float input (RgbaLinearF32, etc.) also supported.
+   **Animation, streaming ANS**: NOT IMPLEMENTED.
 
 7. ~~**Squeeze in multi-group**~~ — DONE (Feb 15, 2026). Squeeze transform works for multi-group
    images. Channels assigned by shift: global (both dims ≤256), LfGroup (min_shift≥3),
@@ -1252,9 +1265,10 @@ palette transform (lossless), squeeze transform (Haar wavelet), lossless patches
 **BEATS cjxl e7** on CLIC photos. Average: **-0.7%** (7 of 8 images equal or smaller).
 
 **Default path (effort 7)**: RCT selection (best of 7 candidates) + learned MA tree +
-multi-context ANS with up to 96 histograms + per-histogram HybridUint config optimization.
-Tree learning with 50% pixel sampling (matching libjxl's nb_repeats=0.5), 14 candidate
-predictors including Weighted, no threshold floor.
+multi-context ANS with up to 96 histograms + per-histogram HybridUint config optimization +
+LZ77 RLE. Tree learning with 50% pixel sampling (matching libjxl's nb_repeats=0.5), 14
+candidate predictors including Weighted, no threshold floor. Effort 8 uses greedy LZ77,
+effort 9+ uses optimal Viterbi DP LZ77. 16-bit and float input supported.
 
 **Squeeze disabled by default** — hurts compression even WITH tree learning:
 - Photos (1024x1024 CLIC): squeeze+tree 1334KB vs tree-only 1163KB (+14.7%)

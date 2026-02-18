@@ -101,3 +101,8 @@ transforms (DCT8-DCT64X64) work correctly. Added high-distance RD regression tes
 SSIM2 floor of 40.0 to catch broken transform reintroduction.
 2026-02-18 00:52 - Implement improved lossless patches compression: remove MAX_REF_DIM 256 limit, first-fit grid bin packing, FrameEncoder for ref frames (RCT+multi-group), remove cost-benefit checks
 2026-02-18 - Enhanced clustering + context count pruning for modular tree learning: enable pair-merge clustering for tree-learned paths, scale max_histograms and max_nodes with total_pixels to prevent overhead domination on small images
+2026-02-18 - LZ77 + tree learning integration: wire LZ77 into tree-learned modular paths, optimal Viterbi DP parser at effort 9+, effort-level tuning (RLE@e7, greedy@e8, optimal@e9+)
+2026-02-18 - Fine-grained AC strategy search at effort 9+: step=1 for 32x32+ blocks
+2026-02-18 - Fix tree learning for 16-bit images: widen residual token storage, remove bit_depth guard
+2026-02-18 - Full 16-bit, float, and grayscale pixel layout support: 14 pixel layouts total
+2026-02-18 - Lossy delta palette: two-pass algorithm from libjxl enc_palette.cc, 72 built-in deltas, error diffusion, --lossy-palette CLI flag
