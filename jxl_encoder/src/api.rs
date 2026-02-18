@@ -1266,8 +1266,7 @@ impl<'a> EncodeRequest<'a> {
         }
 
         // Encode frame
-        // Tree learning is only validated for 8-bit images; disable for 16-bit.
-        let use_tree_learning = cfg.tree_learning && image.bit_depth <= 8;
+        let use_tree_learning = cfg.tree_learning;
         let frame_encoder = FrameEncoder::new(
             w,
             h,
@@ -1553,8 +1552,7 @@ fn encode_animation_lossless(
         }
         .map_err(EncodeError::from)?;
 
-        // Tree learning is only validated for 8-bit images; disable for 16-bit.
-        let use_tree_learning = cfg.tree_learning && image.bit_depth <= 8;
+        let use_tree_learning = cfg.tree_learning;
         let frame_encoder = FrameEncoder::new(
             frame_w,
             frame_h,
