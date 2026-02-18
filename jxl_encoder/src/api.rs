@@ -2423,4 +2423,95 @@ mod tests {
             "decoded image should have non-zero width"
         );
     }
+
+    #[test]
+    fn test_lossy_palette_multi_group() {
+        // 300x300 RGB image with ~20 dominant colors + noise (>256x256 = multi-group)
+        let colors = [
+            [255u8, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [255, 255, 0],
+            [255, 0, 255],
+            [0, 255, 255],
+            [128, 128, 128],
+            [64, 64, 64],
+        ];
+        let mut pixels = Vec::with_capacity(300 * 300 * 3);
+        for y in 0..300u32 {
+            for x in 0..300u32 {
+                let ci = ((y / 40) * 8 + x / 40) as usize % colors.len();
+                let noise = ((x.wrapping_mul(7).wrapping_add(y.wrapping_mul(13))) % 7) as i16 - 3;
+                for c in 0..3 {
+                    let v = (colors[ci][c] as i16 + noise).clamp(0, 255) as u8;
+                    pixels.push(v);
+                }
+            }
+        }
+
+        // Encode with lossy palette + ANS (multi-group)
+        let cfg = LosslessConfig::new()
+            .with_lossy_palette(true)
+            .with_ans(true);
+        let jxl = cfg
+            .encode(&pixels, 300, 300, PixelLayout::Rgb8)
+            .expect("lossy palette multi-group encode");
+        assert_eq!(&jxl[..2], &[0xFF, 0x0A], "JXL signature");
+        assert!(jxl.len() < 300 * 300 * 3, "should compress");
+
+        // Save to disk for inspection
+        std::fs::write("/mnt/v/output/lossy_palette_multi.jxl", &jxl).ok();
+        eprintln!(
+            "LOSSY_PALETTE_MULTI test: encoded {} bytes ({}x{})",
+            jxl.len(),
+            300,
+            300
+        );
+
+        // Try djxl decode first for better error messages
+        let djxl_result = std::process::Command::new("djxl")
+            .args([
+                "/mnt/v/output/lossy_palette_multi.jxl",
+                "/mnt/v/output/lossy_palette_multi.png",
+            ])
+            .output();
+        if let Ok(output) = djxl_result {
+            eprintln!(
+                "djxl: status={}, stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        // Verify jxl-rs can decode it
+        let decoded = crate::test_helpers::decode_with_jxl_rs(&jxl).expect("jxl-rs decode failed");
+        assert_eq!(decoded.width, 300);
+        assert_eq!(decoded.height, 300);
+        assert_eq!(decoded.channels, 3);
+
+        // Verify lossy quality: each pixel should be within 50 of original (delta palette error)
+        // decoded.pixels is f32 in [0.0, 1.0] — convert to u8 for comparison
+        let mut max_error = 0i32;
+        let mut error_pos = (0, 0, 0);
+        for i in 0..pixels.len() {
+            let dec_u8 = (decoded.pixels[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+            let diff = (pixels[i] as i32 - dec_u8 as i32).abs();
+            if diff > max_error {
+                max_error = diff;
+                let pixel = i / 3;
+                error_pos = (pixel % 300, pixel / 300, i % 3);
+            }
+        }
+        let err_idx = error_pos.1 * 300 * 3 + error_pos.0 * 3 + error_pos.2;
+        let dec_u8 = (decoded.pixels[err_idx] * 255.0).round().clamp(0.0, 255.0) as u8;
+        eprintln!(
+            "max_error={} at ({},{}) ch={}, orig={} decoded={}",
+            max_error, error_pos.0, error_pos.1, error_pos.2, pixels[err_idx], dec_u8,
+        );
+        assert!(
+            max_error <= 80,
+            "lossy palette max error {} too large (expected <= 80)",
+            max_error
+        );
+    }
 }

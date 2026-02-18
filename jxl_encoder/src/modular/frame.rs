@@ -330,6 +330,9 @@ impl FrameEncoder {
             for byte in section_data {
                 writer.write_u8(byte)?;
             }
+        } else if self.options.lossy_palette && image.channels.len() >= 3 {
+            // Multi-group lossy palette: palette meta in LfGlobal, index across groups
+            self.encode_modular_multi_group_lossy_palette(image, writer)?;
         } else if self.options.use_squeeze
             && !super::squeeze::default_squeeze_params(image).is_empty()
         {
@@ -529,6 +532,293 @@ impl FrameEncoder {
         self.write_toc_multi(writer, &section_sizes)?;
 
         // Step 7: Append all section data in same order
+        for byte in lf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in lf_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+        for byte in hf_global_data {
+            writer.write_u8(byte)?;
+        }
+        for data in pass_group_data {
+            for byte in data {
+                writer.write_u8(byte)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Encodes a modular image using multi-group format with lossy (delta) palette.
+    ///
+    /// After applying the lossy palette transform, the channel layout is:
+    /// - Channel 0: palette meta-channel (width=total_size, height=num_c) — SMALL
+    /// - Channel 1: index channel (width=image_width, height=image_height) — LARGE
+    /// - Channel 2+: optional alpha/extra channels
+    ///
+    /// The palette meta-channel goes into LfGlobal (alongside the tree + histogram).
+    /// The index and extra channels are split across PassGroups by 256x256 regions.
+    /// The palette transform descriptor is written in the LfGlobal GroupHeader.
+    fn encode_modular_multi_group_lossy_palette(
+        &self,
+        image: &ModularImage,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        use super::encode::{
+            write_gradient_tree_tokens, write_hybrid_data_histogram,
+            write_tree_histogram_for_gradient,
+        };
+        use super::encode_transforms::write_palette_transform;
+        use super::predictor::pack_signed;
+        use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans};
+        use crate::entropy_coding::hybrid_uint::HybridUintConfig;
+        use crate::entropy_coding::token::Token as AnsToken;
+
+        const MODULAR_HYBRID_UINT: HybridUintConfig = HybridUintConfig {
+            split_exponent: 4,
+            split: 16,
+            msb_in_token: 2,
+            lsb_in_token: 0,
+        };
+
+        let num_groups = self.num_groups();
+        let num_lf_groups = self.num_lf_groups();
+
+        // Step 1: Apply lossy palette to full image
+        let mut transformed = image.clone();
+        let max_colors = 1usize << image.bit_depth.min(12);
+        let num_c = image.channels.len().min(3);
+        let result = super::palette::apply_lossy_palette(&mut transformed, 0, num_c, max_colors);
+        let result = match result {
+            Some(r) => r,
+            None => {
+                // Lossy palette not beneficial, fall back to standard multi-group
+                return self.encode_modular_multi_group_inner(image, writer, None);
+            }
+        };
+
+        crate::trace::debug_eprintln!(
+            "LOSSY_PALETTE_MULTI: {} colors + {} deltas, predictor={}, {} → {} channels, {}x{}",
+            result.nb_colors,
+            result.nb_deltas,
+            result.predictor,
+            image.channels.len(),
+            transformed.channels.len(),
+            self.width,
+            self.height,
+        );
+
+        // After palette: transformed.channels = [palette_meta, index, ...extra]
+        // Separate palette_meta (small, global) from spatial channels (split across groups)
+        let palette_meta = transformed.channels[0].clone();
+
+        // Build a ModularImage of only the spatial channels (index + alpha)
+        let spatial_image = ModularImage {
+            channels: transformed.channels[1..].to_vec(),
+            bit_depth: transformed.bit_depth,
+            is_grayscale: transformed.is_grayscale,
+            has_alpha: transformed.has_alpha,
+        };
+
+        // Step 2: Extract group images from spatial channels only
+        let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
+        for group_idx in 0..num_groups {
+            let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
+            let group_image = spatial_image.extract_region(x_start, y_start, x_end, y_end)?;
+            group_images.push(group_image);
+        }
+
+        // Step 3: Collect ALL residuals (palette_meta + all groups) for histogram
+        let predict_gradient = |left: i32, top: i32, topleft: i32| -> i32 {
+            let grad = left + top - topleft;
+            grad.clamp(left.min(top), left.max(top))
+        };
+
+        let collect_channel_residuals = |channel: &super::channel::Channel| -> Vec<u32> {
+            let w = channel.width();
+            let h = channel.height();
+            let mut residuals = Vec::with_capacity(w * h);
+            for y in 0..h {
+                for x in 0..w {
+                    let pixel = channel.get(x, y);
+                    let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
+                    let top = if y > 0 { channel.get(x, y - 1) } else { left };
+                    let topleft = if x > 0 && y > 0 {
+                        channel.get(x - 1, y - 1)
+                    } else {
+                        left
+                    };
+                    let prediction = predict_gradient(left, top, topleft);
+                    residuals.push(pack_signed(pixel - prediction));
+                }
+            }
+            residuals
+        };
+
+        // Palette meta-channel residuals (goes to LfGlobal)
+        let palette_residuals = collect_channel_residuals(&palette_meta);
+
+        // All residuals: palette_meta + all group spatial channels
+        let mut all_residuals = palette_residuals.clone();
+        for group_image in &group_images {
+            for channel in &group_image.channels {
+                all_residuals.extend(collect_channel_residuals(channel));
+            }
+        }
+
+        // Step 4: Build histogram and entropy codes
+        let mut max_token: u32 = 0;
+        for &r in &all_residuals {
+            let (token, _, _) = MODULAR_HYBRID_UINT.encode(r);
+            max_token = max_token.max(token);
+        }
+
+        // Step 5: Write LfGlobal section
+        let mut lf_global_writer = BitWriter::new();
+
+        // dc_quant.all_default = true
+        lf_global_writer.write(1, 1)?;
+        // has_tree = true
+        lf_global_writer.write(1, 1)?;
+
+        // Tree histogram + tokens (gradient predictor)
+        let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(&mut lf_global_writer)?;
+        write_gradient_tree_tokens(&mut lf_global_writer, &tree_depths, &tree_codes)?;
+
+        // Build entropy coding state
+        let use_ans = self.options.use_ans;
+
+        enum EntropyState {
+            Huffman {
+                depths: Vec<u8>,
+                codes: Vec<u16>,
+            },
+            Ans {
+                code: crate::entropy_coding::encode::OwnedAnsEntropyCode,
+            },
+        }
+
+        let entropy_state = if use_ans {
+            let tokens: Vec<AnsToken> =
+                all_residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+            let code = build_entropy_code_ans(&tokens, 1);
+            super::section::write_ans_modular_header(&mut lf_global_writer, &code)?;
+            EntropyState::Ans { code }
+        } else {
+            let histogram_size = (max_token + 1) as usize;
+            let mut histogram = vec![0u32; histogram_size];
+            for &r in &all_residuals {
+                let (token, _, _) = MODULAR_HYBRID_UINT.encode(r);
+                histogram[token as usize] += 1;
+            }
+            let (depths, codes) =
+                write_hybrid_data_histogram(&mut lf_global_writer, &histogram, max_token)?;
+            EntropyState::Huffman { depths, codes }
+        };
+
+        // GroupHeader with palette transform
+        lf_global_writer.write(1, 1)?; // use_global_tree = true
+        lf_global_writer.write(1, 1)?; // wp_params.default_wp = true
+        lf_global_writer.write(2, 1)?; // nb_transforms = 1
+        write_palette_transform(
+            &mut lf_global_writer,
+            0,
+            num_c,
+            result.nb_colors,
+            result.nb_deltas,
+            result.predictor,
+        )?;
+
+        // Encode palette_meta residuals in LfGlobal
+        let encode_residuals =
+            |residuals: &[u32], writer: &mut BitWriter, state: &EntropyState| -> Result<()> {
+                match state {
+                    EntropyState::Huffman { depths, codes } => {
+                        for &r in residuals {
+                            let (token, extra_bits, num_extra) = MODULAR_HYBRID_UINT.encode(r);
+                            let depth = depths.get(token as usize).copied().unwrap_or(0);
+                            let code = codes.get(token as usize).copied().unwrap_or(0);
+                            if depth > 0 {
+                                writer.write(depth as usize, code as u64)?;
+                            }
+                            if num_extra > 0 {
+                                writer.write(num_extra as usize, extra_bits as u64)?;
+                            }
+                        }
+                    }
+                    EntropyState::Ans { code } => {
+                        let tokens: Vec<AnsToken> =
+                            residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
+                        write_tokens_ans(&tokens, code, None, writer)?;
+                    }
+                }
+                Ok(())
+            };
+
+        encode_residuals(&palette_residuals, &mut lf_global_writer, &entropy_state)?;
+
+        lf_global_writer.zero_pad_to_byte();
+        let lf_global_data = lf_global_writer.finish();
+
+        crate::trace::debug_eprintln!(
+            "LOSSY_PALETTE_MULTI: LfGlobal = {} bytes (palette_meta {}x{})",
+            lf_global_data.len(),
+            palette_meta.width(),
+            palette_meta.height(),
+        );
+
+        // Step 6: HfGlobal is empty for modular
+        let hf_global_data: Vec<u8> = Vec::new();
+
+        // Step 7: LfGroup sections are empty for modular
+        let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
+
+        // Step 8: Write each PassGroup's data
+        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
+        #[allow(clippy::unused_enumerate_index)]
+        for (_g, group_image) in group_images.iter().enumerate() {
+            let mut group_writer = BitWriter::new();
+
+            // GroupHeader
+            group_writer.write(1, 1)?; // use_global_tree = true
+            group_writer.write(1, 1)?; // wp_params.default_wp = true
+            group_writer.write(2, 0)?; // nb_transforms = 0
+
+            // Collect and encode spatial channel residuals for this group
+            let mut section_residuals: Vec<u32> = Vec::new();
+            for channel in &group_image.channels {
+                section_residuals.extend(collect_channel_residuals(channel));
+            }
+            encode_residuals(&section_residuals, &mut group_writer, &entropy_state)?;
+
+            group_writer.zero_pad_to_byte();
+            let data = group_writer.finish();
+            crate::trace::debug_eprintln!(
+                "LOSSY_PALETTE_MULTI: PassGroup[{}] = {} bytes",
+                _g,
+                data.len(),
+            );
+            pass_group_data.push(data);
+        }
+
+        // Step 9: Assemble TOC and sections
+        // Section order: LfGlobal, LfGroup[0..n], HfGlobal, PassGroup[0..m]
+        let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
+        section_sizes.push(lf_global_data.len());
+        for data in &lf_group_data {
+            section_sizes.push(data.len());
+        }
+        section_sizes.push(hf_global_data.len());
+        for data in &pass_group_data {
+            section_sizes.push(data.len());
+        }
+
+        self.write_toc_multi(writer, &section_sizes)?;
+
+        // Write all section data in same order
         for byte in lf_global_data {
             writer.write_u8(byte)?;
         }
