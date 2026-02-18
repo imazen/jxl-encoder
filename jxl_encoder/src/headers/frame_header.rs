@@ -123,8 +123,18 @@ pub struct FrameHeader {
     pub x_qm_scale: u32,
     /// B channel quant matrix scale (VarDCT only, 3 bits, range 0-7).
     pub b_qm_scale: u32,
-    /// Number of passes (1-10).
+    /// Number of passes (1-11).
     pub num_passes: u32,
+    /// Per-pass shift values (num_passes - 1 elements). Last pass implicitly has shift=0.
+    /// Each shift is 0-3 bits: coefficients are right-shifted before encoding,
+    /// left-shifted by the decoder before accumulation.
+    pub pass_shifts: Vec<u32>,
+    /// Number of downsampling brackets (0-4).
+    pub num_ds: u32,
+    /// Downsample factors per bracket (1, 2, 4, or 8).
+    pub ds_downsample: Vec<u32>,
+    /// Last pass index per downsampling bracket.
+    pub ds_last_pass: Vec<u32>,
     /// X offset for cropped frames.
     pub x0: i32,
     /// Y offset for cropped frames.
@@ -179,6 +189,10 @@ impl Default for FrameHeader {
             x_qm_scale: 2,
             b_qm_scale: 2,
             num_passes: 1,
+            pass_shifts: Vec::new(),
+            num_ds: 0,
+            ds_downsample: Vec::new(),
+            ds_last_pass: Vec::new(),
             x0: 0,
             y0: 0,
             width: 0,
@@ -292,7 +306,9 @@ impl FrameHeader {
         if self.frame_type != FrameType::ReferenceOnly {
             // num_passes (U32: 1, 2, 3, 4+u(3))
             writer.write_u32_coder(self.num_passes, 1, 2, 3, 4, 3)?;
-            // TODO: if num_passes > 1, write pass-specific data
+            if self.num_passes != 1 {
+                self.write_passes(writer)?;
+            }
         }
 
         // have_crop: present for all frame types except LfFrame
@@ -506,6 +522,38 @@ impl FrameHeader {
         Ok(())
     }
 
+    /// Writes the Passes struct when num_passes > 1.
+    ///
+    /// Format (from jxl-rs decoder):
+    /// - num_ds: u2S(0, 1, 2, Bits(1)+3)
+    /// - shift[0..num_passes-1]: Bits(2) each
+    /// - downsample[0..num_ds]: u2S(1, 2, 4, 8)
+    /// - last_pass[0..num_ds]: u2S(0, 1, 2, Bits(3))
+    fn write_passes(&self, writer: &mut BitWriter) -> Result<()> {
+        // num_ds: u2S(0, 1, 2, Bits(1)+3)
+        writer.write_u32_coder(self.num_ds, 0, 1, 2, 3, 1)?;
+
+        // shift[0..num_passes-1]: Bits(2) each
+        for i in 0..self.num_passes.saturating_sub(1) as usize {
+            let shift = self.pass_shifts.get(i).copied().unwrap_or(0);
+            writer.write(2, shift as u64)?;
+        }
+
+        // downsample[0..num_ds]: u2S(1, 2, 4, 8)
+        for i in 0..self.num_ds as usize {
+            let ds = self.ds_downsample.get(i).copied().unwrap_or(1);
+            writer.write_u32_coder(ds, 1, 2, 4, 8, 0)?;
+        }
+
+        // last_pass[0..num_ds]: u2S(0, 1, 2, Bits(3))
+        for i in 0..self.num_ds as usize {
+            let lp = self.ds_last_pass.get(i).copied().unwrap_or(0);
+            writer.write_u32_coder(lp, 0, 1, 2, 0, 3)?;
+        }
+
+        Ok(())
+    }
+
     /// Returns true if all fields match the decoder's "all_default" frame header.
     ///
     /// The all_default frame header is: Regular VarDCT, no flags, do_ycbcr=true,
@@ -524,6 +572,7 @@ impl FrameHeader {
             && self.x_qm_scale == 2
             && self.b_qm_scale == 2
             && self.num_passes == 1
+            && self.pass_shifts.is_empty()
             && self.x0 == 0
             && self.y0 == 0
             && self.width == 0

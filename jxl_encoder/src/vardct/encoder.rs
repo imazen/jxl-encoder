@@ -148,6 +148,10 @@ pub struct VarDctEncoder {
     /// and stores unique patterns once in a reference frame. Huge wins on screenshots.
     /// On by default for lossy encoding.
     pub enable_patches: bool,
+    /// Progressive encoding mode (Single, QuantizedAcFullAc, DcVlfLfAc).
+    /// When not Single, AC coefficients are split across multiple passes with
+    /// shift-based precision reduction for early preview rendering.
+    pub progressive: crate::api::ProgressiveMode,
 }
 
 impl Default for VarDctEncoder {
@@ -175,6 +179,7 @@ impl Default for VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            progressive: crate::api::ProgressiveMode::Single,
         }
     }
 }
@@ -205,6 +210,7 @@ impl VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            progressive: crate::api::ProgressiveMode::Single,
         }
     }
 

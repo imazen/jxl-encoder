@@ -747,6 +747,39 @@ impl LosslessConfig {
     }
 }
 
+// ── ProgressiveMode ──────────────────────────────────────────────────────────
+
+/// Progressive encoding mode for VarDCT.
+///
+/// Progressive encoding splits AC coefficients across multiple passes by
+/// reducing precision. Decoders can render a coarse preview after early passes,
+/// improving user experience for web delivery.
+///
+/// The shift mechanism works by right-shifting quantized coefficients before
+/// encoding in early passes. The decoder left-shifts and accumulates, so the
+/// final result is exact (lossless reconstruction of the quantized coefficients).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ProgressiveMode {
+    /// Single pass (default). No progressive rendering.
+    #[default]
+    Single,
+    /// 2-pass quantized progressive.
+    ///
+    /// - Pass 0: All AC coefficients right-shifted by 1 bit (coarse)
+    /// - Pass 1: Residual at full precision
+    ///
+    /// Provides quick 2x-downsampled preview, then full quality refinement.
+    QuantizedAcFullAc,
+    /// 3-pass progressive (DC/VLF → LF → Full AC).
+    ///
+    /// - Pass 0: All AC coefficients right-shifted by 2 bits (very coarse, 8x downsample hint)
+    /// - Pass 1: Residual right-shifted by 1 bit (medium, 4x downsample hint)
+    /// - Pass 2: Final residual at full precision
+    ///
+    /// Provides staged refinement: blurry preview → sharper → final.
+    DcVlfLfAc,
+}
+
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
 #[cfg(feature = "butteraugli-loop")]
@@ -777,6 +810,7 @@ pub struct LossyConfig {
     lz77_method: Lz77Method,
     force_strategy: Option<u8>,
     patches: bool,
+    progressive: ProgressiveMode,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters: u32,
     #[cfg(feature = "butteraugli-loop")]
@@ -808,6 +842,7 @@ impl LossyConfig {
             },
             force_strategy: None,
             patches: effort >= 5,
+            progressive: ProgressiveMode::Single,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: butteraugli_iters_for_effort(effort),
             #[cfg(feature = "butteraugli-loop")]
@@ -911,6 +946,15 @@ impl LossyConfig {
         self
     }
 
+    /// Set progressive encoding mode (default: Single = no progressive).
+    ///
+    /// Progressive encoding splits AC coefficients across multiple passes,
+    /// allowing decoders to render coarse previews before the full file is received.
+    pub fn with_progressive(mut self, mode: ProgressiveMode) -> Self {
+        self.progressive = mode;
+        self
+    }
+
     /// Set butteraugli quantization loop iterations explicitly.
     ///
     /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
@@ -977,6 +1021,11 @@ impl LossyConfig {
     /// Forced AC strategy, if any.
     pub fn force_strategy(&self) -> Option<u8> {
         self.force_strategy
+    }
+
+    /// Current progressive mode.
+    pub fn progressive(&self) -> ProgressiveMode {
+        self.progressive
     }
 
     /// Butteraugli quantization loop iterations.
@@ -1457,6 +1506,7 @@ impl<'a> EncodeRequest<'a> {
         tiny.lz77_method = cfg.lz77_method;
         tiny.force_strategy = cfg.force_strategy;
         tiny.enable_patches = cfg.patches;
+        tiny.progressive = cfg.progressive;
         #[cfg(feature = "butteraugli-loop")]
         {
             tiny.butteraugli_iters = cfg.butteraugli_iters;
@@ -1718,6 +1768,7 @@ fn encode_animation_lossy(
     tiny.enable_lz77 = cfg.lz77;
     tiny.lz77_method = cfg.lz77_method;
     tiny.force_strategy = cfg.force_strategy;
+    tiny.progressive = cfg.progressive;
     #[cfg(feature = "butteraugli-loop")]
     {
         tiny.butteraugli_iters = cfg.butteraugli_iters;
