@@ -297,6 +297,8 @@ pub fn analyze_palette(
     //   The palette channel itself is (num_colors × num_c) values, so the break-even
     //   point is roughly when palette overhead equals channel elimination savings.
     let num_pixels = width * height;
+    // Palette is less useful when color count approaches pixel count:
+    // palette channel overhead (num_colors × num_c values) exceeds savings.
     let too_many_relative = num_c >= 2 && num_colors * 2 > num_pixels;
     if num_colors > max_colors || num_colors <= 1 || too_many_relative {
         return PaletteAnalysis {

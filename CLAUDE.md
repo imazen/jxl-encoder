@@ -1259,7 +1259,8 @@ transform (Haar wavelet), lossless patches (default-on).
 
 5. ~~**Lossy palette / delta palette**~~ — DONE (Feb 18, 2026). Two-pass algorithm from libjxl:
    72 built-in deltas, implicit color cubes, error diffusion, perceptual color distance.
-   API: `LosslessConfig::with_lossy_palette(true)`, CLI: `--lossy-palette`. Single-group only.
+   API: `LosslessConfig::with_lossy_palette(true)`, CLI: `--lossy-palette`.
+   Multi-group support added: palette meta in LfGlobal, index across PassGroups.
 
 6. **16-bit input**: DONE (Feb 18, 2026). Full 16-bit pixel layout support (Rgb16, Rgba16,
    Gray16, GrayAlpha16). Tree learning works on 16-bit. Float input (RgbaLinearF32, etc.) also supported.
@@ -1309,8 +1310,8 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 - Screenshots: lossless patches improved (36.7% total savings, was 17.5%). Removed 256×256
   ref frame limit (multi-group), first-fit grid bin packing, RCT via FrameEncoder.
   terminal -53.3%, imac_g3 -46.9%, imac_dark -46.3%, windows -39.6%, codec_wiki -14.5%.
-- Palette+ANS path has a checksum mismatch bug for images with many unique colors
-  (not triggered in practice due to improved palette heuristic that skips when colors >= 50% of pixels)
+- ~~Palette+ANS checksum mismatch~~ RESOLVED: root cause was u2S bit width bug in
+  write_palette_transform (fixed Feb 17). Regression test: `test_palette_256_colors_regression`
 - Tree learning optimized Feb 17, 2026: 86x speedup via count_increase buckets, incremental entropy,
   u8 tokens, counting sort, and nlog2n lookup table. 1024x1024 photo: ~14s (was ~120s).
 
