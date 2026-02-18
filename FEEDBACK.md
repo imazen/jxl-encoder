@@ -99,3 +99,4 @@ DCT16X32 (bfly 82), DCT64X32 (bfly 109), DCT32X64 (bfly 32-46), AFV0-3 (bfly 7-8
 transforms (DCT8-DCT64X64) work correctly. Added high-distance RD regression test
 (test_rd_regression_high_distance) at d=2.0 and d=3.0 with hard butteraugli floor of 8.0 and
 SSIM2 floor of 40.0 to catch broken transform reintroduction.
+2026-02-18 00:52 - Implement improved lossless patches compression: remove MAX_REF_DIM 256 limit, first-fit grid bin packing, FrameEncoder for ref frames (RCT+multi-group), remove cost-benefit checks
