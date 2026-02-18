@@ -2514,4 +2514,67 @@ mod tests {
             max_error
         );
     }
+
+    #[test]
+    fn test_palette_256_colors_regression() {
+        // Regression test for palette+ANS checksum mismatch with many unique colors.
+        // Root cause was u2S bit width bug in write_palette_transform (fixed Feb 17, 2026):
+        // nb_colors selectors 1-2 used 11/14 bits instead of 10/12 bits. Triggered when
+        // nb_colors >= 256 (selector 1). Two test cases:
+        //
+        // 1. 32x32 with 256 unique colors via standard API (passes 50% heuristic)
+        // 2. 16x16 with 256 unique colors via internal API (bypasses heuristic)
+        use crate::modular::channel::{Channel, ModularImage};
+        use crate::modular::encode::write_modular_stream_with_palette;
+
+        // Test 1: 32x32 through standard API (256 colors, each used 4x)
+        let mut pixels = Vec::with_capacity(32 * 32 * 3);
+        for i in 0..1024u32 {
+            let idx = (i / 4) as u8;
+            pixels.push(idx);
+            pixels.push(((idx as u32 * 7 + 13) & 0xFF) as u8);
+            pixels.push(((idx as u32 * 31 + 97) & 0xFF) as u8);
+        }
+        let cfg = LosslessConfig::new().with_ans(true);
+        let jxl = cfg
+            .encode(&pixels, 32, 32, PixelLayout::Rgb8)
+            .expect("palette 256-colors encode");
+        let decoded = crate::test_helpers::decode_with_jxl_rs(&jxl).expect("jxl-rs decode failed");
+        for i in 0..pixels.len() {
+            let dec_u8 = (decoded.pixels[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+            assert_eq!(
+                pixels[i], dec_u8,
+                "32x32: mismatch at byte {}: orig={} decoded={}",
+                i, pixels[i], dec_u8
+            );
+        }
+
+        // Test 2: 16x16 via internal API (bypasses 50% heuristic)
+        let mut channels = Vec::new();
+        for c in 0..3 {
+            let mut ch = Channel::new(16, 16).unwrap();
+            for y in 0..16 {
+                for x in 0..16 {
+                    let idx = y * 16 + x;
+                    let val = match c {
+                        0 => idx as i32,
+                        1 => ((idx * 3 + 17) & 0xFF) as i32,
+                        2 => (255 - idx) as i32,
+                        _ => 0,
+                    };
+                    ch.set(x, y, val);
+                }
+            }
+            channels.push(ch);
+        }
+        let image = ModularImage {
+            channels,
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let mut writer = crate::bit_writer::BitWriter::new();
+        write_modular_stream_with_palette(&image, &mut writer, true, 0, 3)
+            .expect("palette encode with 256 unique colors must not fail");
+    }
 }
