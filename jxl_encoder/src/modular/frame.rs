@@ -36,6 +36,8 @@ pub struct FrameEncoderOptions {
     pub lz77_method: Lz77Method,
     /// Use lossy delta palette for near-lossless modular encoding.
     pub lossy_palette: bool,
+    /// Encoder mode: Reference (match libjxl) or Experimental (own improvements).
+    pub encoder_mode: crate::api::EncoderMode,
     /// Whether this frame is part of an animation (enables duration field in header).
     pub have_animation: bool,
     /// Duration of this frame in ticks (only used when have_animation is true).
@@ -57,6 +59,7 @@ impl Default for FrameEncoderOptions {
             enable_lz77: false,
             lz77_method: Lz77Method::Rle,
             lossy_palette: false,
+            encoder_mode: crate::api::EncoderMode::Reference,
             have_animation: false,
             duration: 0,
             is_last: true,

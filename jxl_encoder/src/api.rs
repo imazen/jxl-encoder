@@ -524,6 +524,7 @@ pub struct AnimationFrame<'a> {
 #[derive(Clone, Debug)]
 pub struct LosslessConfig {
     effort: u8,
+    mode: EncoderMode,
     use_ans: bool,
     squeeze: bool,
     tree_learning: bool,
@@ -544,6 +545,7 @@ impl LosslessConfig {
         let effort = effort.clamp(1, 10);
         Self {
             effort,
+            mode: EncoderMode::Reference,
             use_ans: effort >= 4,
             tree_learning: effort >= 7,
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
@@ -576,8 +578,23 @@ impl LosslessConfig {
     pub fn with_effort(self, effort: u8) -> Self {
         let mut new = Self::with_effort_level(effort);
         // Preserve settings that aren't effort-derived
+        new.mode = self.mode;
         new.squeeze = self.squeeze;
         new
+    }
+
+    /// Set encoder mode (default: [`EncoderMode::Reference`]).
+    ///
+    /// `Reference` matches libjxl's algorithm choices for comparable output.
+    /// `Experimental` enables encoder-specific improvements.
+    pub fn with_mode(mut self, mode: EncoderMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Current encoder mode.
+    pub fn mode(&self) -> EncoderMode {
+        self.mode
     }
 
     /// Enable/disable patches (dictionary-based repeated pattern detection).
@@ -747,6 +764,32 @@ impl LosslessConfig {
     }
 }
 
+// ── EncoderMode ──────────────────────────────────────────────────────────────
+
+/// Controls whether the encoder matches libjxl's algorithm choices or uses
+/// its own improvements.
+///
+/// Both modes produce valid JPEG XL bitstreams decodable by any conformant
+/// decoder. The difference is in *encoder-side* decisions: strategy selection
+/// heuristics, cost models, entropy coding parameters, tree learning, etc.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum EncoderMode {
+    /// Match libjxl's algorithm choices at the configured effort level.
+    ///
+    /// Output is statistically equivalent to `cjxl` at the same effort and
+    /// distance — same RD curve within measurement noise. Use this when
+    /// comparing against libjxl or when reproducibility matters.
+    #[default]
+    Reference,
+
+    /// Use encoder-specific improvements and research features.
+    ///
+    /// May produce better rate-distortion performance than libjxl at the
+    /// same effort level, but output will differ. Use this for production
+    /// encoding where quality per byte is the goal.
+    Experimental,
+}
+
 // ── ProgressiveMode ──────────────────────────────────────────────────────────
 
 /// Progressive encoding mode for VarDCT.
@@ -800,6 +843,7 @@ fn butteraugli_iters_for_effort(effort: u8) -> u32 {
 pub struct LossyConfig {
     distance: f32,
     effort: u8,
+    mode: EncoderMode,
     use_ans: bool,
     gaborish: bool,
     noise: bool,
@@ -829,6 +873,7 @@ impl LossyConfig {
         Self {
             distance,
             effort,
+            mode: EncoderMode::Reference,
             use_ans: effort >= 4,
             gaborish: effort >= 3,
             noise: false,
@@ -872,6 +917,7 @@ impl LossyConfig {
     pub fn with_effort(self, effort: u8) -> Self {
         let mut new = Self::new_with_effort(self.distance, effort);
         // Preserve settings that are never effort-derived (always opt-in)
+        new.mode = self.mode;
         new.noise = self.noise;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
@@ -884,6 +930,20 @@ impl LossyConfig {
             new.butteraugli_iters_explicit = true;
         }
         new
+    }
+
+    /// Set encoder mode (default: [`EncoderMode::Reference`]).
+    ///
+    /// `Reference` matches libjxl's algorithm choices for comparable output.
+    /// `Experimental` enables encoder-specific improvements.
+    pub fn with_mode(mut self, mode: EncoderMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Current encoder mode.
+    pub fn mode(&self) -> EncoderMode {
+        self.mode
     }
 
     /// Enable/disable ANS entropy coding (default: true).
@@ -1409,6 +1469,7 @@ impl<'a> EncodeRequest<'a> {
                 enable_lz77: cfg.lz77,
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
+                encoder_mode: cfg.mode,
                 have_animation: false,
                 duration: 0,
                 is_last: true,
@@ -1521,6 +1582,7 @@ impl<'a> EncodeRequest<'a> {
         tiny.lz77_method = cfg.lz77_method;
         tiny.force_strategy = cfg.force_strategy;
         tiny.enable_patches = cfg.patches;
+        tiny.encoder_mode = cfg.mode;
         tiny.splines = cfg.splines.clone();
         tiny.progressive = cfg.progressive;
         #[cfg(feature = "butteraugli-loop")]
@@ -1735,6 +1797,7 @@ fn encode_animation_lossless(
                 enable_lz77: cfg.lz77,
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
+                encoder_mode: cfg.mode,
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
