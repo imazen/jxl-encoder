@@ -249,18 +249,28 @@ impl VarDctEncoder {
         block_ctx_map: &BlockCtxMap,
         learned_tree_tokens: Option<&[(u32, u32)]>,
         patches: Option<&super::patches::PatchesData>,
+        splines: Option<&super::splines::SplinesData>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
         let start_bits = writer.bits_written();
 
-        // Write patches section before noise (JXL spec ordering in LfGlobal)
+        // Write patches section before splines (JXL spec ordering in LfGlobal)
         if let Some(pd) = patches {
             #[cfg(feature = "trace-bitstream")]
             eprintln!("PATCHES_SECTION: start at bit {}", writer.bits_written());
             super::patches::encode_patches_section(pd, self.use_ans, writer)?;
             #[cfg(feature = "trace-bitstream")]
             eprintln!("PATCHES_SECTION: end at bit {}", writer.bits_written());
+        }
+
+        // Write splines section (after patches, before noise)
+        if let Some(sd) = splines {
+            #[cfg(feature = "trace-bitstream")]
+            eprintln!("SPLINES_SECTION: start at bit {}", writer.bits_written());
+            super::splines::encode_splines_section(sd, writer)?;
+            #[cfg(feature = "trace-bitstream")]
+            eprintln!("SPLINES_SECTION: end at bit {}", writer.bits_written());
         }
 
         // Write noise parameters before dequant DC (decoder expects this order)
@@ -907,6 +917,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 &ac_strategy,
                 None, // No patches in this code path
+                None, // No splines in this code path
             );
         }
 
@@ -971,6 +982,7 @@ impl VarDctEncoder {
             alpha,
             Some(frame_options),
             None, // No patches in animation frames
+            None, // No splines in animation frames
             writer,
         )?;
 
@@ -1003,6 +1015,7 @@ impl VarDctEncoder {
         sharpness_map: Option<&[u8]>,
         alpha: Option<&[u8]>,
         patches: Option<&super::patches::PatchesData>,
+        splines: Option<&super::splines::SplinesData>,
     ) -> Result<Vec<u8>> {
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
@@ -1056,6 +1069,7 @@ impl VarDctEncoder {
             alpha,
             None,
             patches,
+            splines,
             &mut writer,
         )?;
 
@@ -1093,6 +1107,7 @@ impl VarDctEncoder {
         alpha: Option<&[u8]>,
         frame_options: Option<&FrameOptions>,
         patches: Option<&super::patches::PatchesData>,
+        splines: Option<&super::splines::SplinesData>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         // ── Pass 1: Collect tokens per section ──
@@ -1776,6 +1791,9 @@ impl VarDctEncoder {
             if patches.is_some() {
                 fh.flags |= crate::headers::frame_header::PATCHES_FLAG;
             }
+            if splines.is_some() {
+                fh.flags |= crate::headers::frame_header::SPLINES_FLAG;
+            }
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
 
@@ -1826,6 +1844,7 @@ impl VarDctEncoder {
                 &block_ctx_map,
                 learned_tree_tokens.as_deref(),
                 patches,
+                splines,
                 &mut dc_global,
             )?;
 
@@ -1890,6 +1909,7 @@ impl VarDctEncoder {
                 &block_ctx_map,
                 learned_tree_tokens.as_deref(),
                 patches,
+                splines,
                 &mut dc_global,
             )?;
             // Multi-group alpha: write empty modular global sub-bitstream.

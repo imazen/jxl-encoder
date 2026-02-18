@@ -51,6 +51,7 @@ impl VarDctEncoder {
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
+        splines_data: Option<&super::splines::SplinesData>,
     ) {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
@@ -164,6 +165,11 @@ impl VarDctEncoder {
             // Step 2b: Add patches back (decoder applies patches after gab+EPF via blend kAdd)
             if let Some(pd) = patches_data {
                 super::patches::add_patches(&mut planes, padded_width, pd);
+            }
+
+            // Step 2c: Add splines back (decoder adds splines after patches)
+            if let Some(sd) = splines_data {
+                super::splines::add_splines(&mut planes, padded_width, width, height, sd);
             }
 
             // Step 3: Convert reconstructed XYB to planar linear RGB (in-place, no interleave)

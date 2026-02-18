@@ -33,6 +33,7 @@ pub use api::{
     EncodeStats, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method, PixelLayout,
     ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
+pub use vardct::splines::{Spline, SplinePoint};
 
 /// Group dimension in pixels (256x256 groups).
 pub const GROUP_DIM: usize = 256;

@@ -148,6 +148,8 @@ pub struct VarDctEncoder {
     /// and stores unique patterns once in a reference frame. Huge wins on screenshots.
     /// On by default for lossy encoding.
     pub enable_patches: bool,
+    /// Manual splines to overlay on the image (opt-in, None by default).
+    pub splines: Option<Vec<crate::vardct::splines::Spline>>,
     /// Progressive encoding mode (Single, QuantizedAcFullAc, DcVlfLfAc).
     /// When not Single, AC coefficients are split across multiple passes with
     /// shift-based precision reduction for early preview rendering.
@@ -179,6 +181,7 @@ impl Default for VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            splines: None,
             progressive: crate::api::ProgressiveMode::Single,
         }
     }
@@ -210,6 +213,7 @@ impl VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            splines: None,
             progressive: crate::api::ProgressiveMode::Single,
         }
     }
@@ -316,6 +320,39 @@ impl VarDctEncoder {
             xyb_y = y;
             xyb_b = b;
         }
+
+        // Build and subtract splines (after patches, before gaborish).
+        // Splines are additive overlays: encoder subtracts, decoder adds back.
+        // Uses default DC CfL params (y_to_x=0.0, y_to_b=1.0) since we write default DC cmap.
+        let splines_data = if let Some(ref splines) = self.splines {
+            if !splines.is_empty() {
+                let sd = super::splines::SplinesData::from_splines(
+                    splines.clone(),
+                    0,   // quantization_adjustment
+                    0.0, // y_to_x (default DC CfL)
+                    1.0, // y_to_b (default DC CfL)
+                    width,
+                    height,
+                );
+                {
+                    let mut xyb = [
+                        core::mem::take(&mut xyb_x),
+                        core::mem::take(&mut xyb_y),
+                        core::mem::take(&mut xyb_b),
+                    ];
+                    super::splines::subtract_splines(&mut xyb, padded_width, width, height, &sd);
+                    let [x, y, b] = xyb;
+                    xyb_x = x;
+                    xyb_y = y;
+                    xyb_b = b;
+                }
+                Some(sd)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
@@ -569,6 +606,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 &ac_strategy,
                 patches_data.as_ref(),
+                splines_data.as_ref(),
             );
         }
 
@@ -660,6 +698,7 @@ impl VarDctEncoder {
                 sharpness_map.as_deref(),
                 alpha,
                 patches_data.as_ref(),
+                splines_data.as_ref(),
             )?;
             crate::debug_rect::flush("");
             return Ok(VarDctOutput {
@@ -721,6 +760,7 @@ impl VarDctEncoder {
                 &block_ctx_map,
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
+                None, // No splines in streaming mode
                 &mut dc_global,
             )?;
 
@@ -831,6 +871,7 @@ impl VarDctEncoder {
                 &block_ctx_map,
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
+                None, // No splines in streaming mode
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();

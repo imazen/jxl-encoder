@@ -810,6 +810,7 @@ pub struct LossyConfig {
     lz77_method: Lz77Method,
     force_strategy: Option<u8>,
     patches: bool,
+    splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters: u32,
@@ -842,6 +843,7 @@ impl LossyConfig {
             },
             force_strategy: None,
             patches: effort >= 5,
+            splines: None,
             progressive: ProgressiveMode::Single,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: butteraugli_iters_for_effort(effort),
@@ -873,6 +875,7 @@ impl LossyConfig {
         new.noise = self.noise;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
+        new.splines = self.splines;
         new.progressive = self.progressive;
         // Preserve explicit butteraugli override
         #[cfg(feature = "butteraugli-loop")]
@@ -944,6 +947,17 @@ impl LossyConfig {
     /// Default: true. Huge wins on screenshots, zero cost on photos.
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = enable;
+        self
+    }
+
+    /// Set manual splines to overlay on the image.
+    ///
+    /// Splines are Gaussian-blurred parametric curves overlaid additively.
+    /// They encode thin features (power lines, horizons) efficiently.
+    /// The encoder subtracts splines from XYB before VarDCT; the decoder
+    /// adds them back after reconstruction. Default: `None`.
+    pub fn with_splines(mut self, splines: Vec<crate::vardct::splines::Spline>) -> Self {
+        self.splines = Some(splines);
         self
     }
 
@@ -1507,6 +1521,7 @@ impl<'a> EncodeRequest<'a> {
         tiny.lz77_method = cfg.lz77_method;
         tiny.force_strategy = cfg.force_strategy;
         tiny.enable_patches = cfg.patches;
+        tiny.splines = cfg.splines.clone();
         tiny.progressive = cfg.progressive;
         #[cfg(feature = "butteraugli-loop")]
         {
