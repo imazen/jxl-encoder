@@ -159,6 +159,7 @@ fn assert_hashes(
     bit_depth_16: bool,
     expected_header: u64,
     expected_frame: u64,
+    expected_size: usize,
 ) {
     let (hdr, frm) = hash_split(
         data,
@@ -168,6 +169,12 @@ fn assert_hashes(
         has_alpha,
         is_gray,
         bit_depth_16,
+    );
+    assert_eq!(
+        data.len(),
+        expected_size,
+        "{name}: SIZE mismatch: got {}, expected {expected_size}",
+        data.len(),
     );
     assert_eq!(
         hdr,
@@ -310,7 +317,8 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xa287e4ae96b94523, // Updated: effort-gate AdjustQuantBlockAC
+        0x9506f854bc0d536c, // Updated: butteraugli loop off at e7 (matches libjxl)
+        349,                // lossy_defaults_rgb_32x32
     );
 }
 
@@ -329,7 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdcb6e28568b349f1, // Updated: effort-gate AdjustQuantBlockAC
+        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
+        3449,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -348,7 +357,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0x4761002e84571555, // Updated: effort-gate AdjustQuantBlockAC
+        0xf118369d7b822ad2, // Updated: butteraugli loop off at e7
+        653,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -367,7 +377,8 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0xe709388be30c1782, // Updated: effort-gate AdjustQuantBlockAC
+        0x4ae3a20a0b7b4096, // Updated: butteraugli loop off at e7
+        785,                // lossy_rgba_32x32
     );
 }
 
@@ -386,7 +397,8 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0x35ac6c9f70ae115d, // Updated: effort-gate AdjustQuantBlockAC
+        0x7e550f00df6767ea, // Updated: butteraugli loop off at e7
+        341,                // lossy_rgb16_32x32
     );
 }
 
@@ -406,7 +418,8 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x1c7fa661c7af400c, // Updated: effort-gate AdjustQuantBlockAC
+        0x10d494f850db0fb5, // Updated: butteraugli loop off at e7
+        293,                // lossy_no_ans_huffman
     );
 }
 
@@ -426,7 +439,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x26b3a054ce6ab05f, // Updated: multi-resolution butteraugli
+        0x786b9ec76dd02e63, // Updated: butteraugli loop off at e7
+        371,                // lossy_no_gaborish
     );
 }
 
@@ -446,7 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdcb6e28568b349f1, // Updated: effort-gate AdjustQuantBlockAC
+        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
+        3449,               // lossy_with_noise
     );
 }
 
@@ -466,7 +481,8 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x5e436056a6eabfa1, // Updated: float qf + deviation bounds
+        0x8ab07fad69675714, // Updated: butteraugli loop off at e7
+        349,                // lossy_no_error_diffusion
     );
 }
 
@@ -486,7 +502,8 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xa287e4ae96b94523, // Updated: effort-gate AdjustQuantBlockAC
+        0x9506f854bc0d536c, // Updated: butteraugli loop off at e7
+        349,                // lossy_no_pixel_domain_loss
     );
 }
 
@@ -507,6 +524,7 @@ fn lossy_no_butteraugli() {
         false,
         0x3ba5403031c1499f,
         0x9506f854bc0d536c,
+        349, // lossy_no_butteraugli
     );
 }
 
@@ -526,7 +544,8 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x7e5231e490b0d7e7, // Updated: effort-gate AdjustQuantBlockAC
+        0xcd61bbfffe06231d, // Updated: butteraugli loop off at e7
+        410,                // lossy_force_dct8
     );
 }
 
@@ -546,7 +565,8 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xdd387a5c85257213, // Updated: float qf + deviation bounds
+        0xf43f6fcfb44f0cd9, // Updated: butteraugli loop off at e7
+        317,                // lossy_force_dct16x16
     );
 }
 
@@ -568,6 +588,7 @@ fn lossy_force_identity() {
         false,
         0x3ba5403031c1499f,
         0x73c9f051e8ed7cd7, // Updated: effort-gate AdjustQuantBlockAC
+        585,                // lossy_force_identity
     );
 }
 
@@ -589,6 +610,7 @@ fn lossy_force_dct2x2() {
         false,
         0x3ba5403031c1499f,
         0xec2dd26a95b3f887,
+        512, // lossy_force_dct2x2
     );
 }
 
@@ -610,6 +632,7 @@ fn lossy_force_dct4x4() {
         false,
         0x3ba5403031c1499f,
         0xda69323384341679, // Updated: effort-gate AdjustQuantBlockAC
+        555,                // lossy_force_dct4x4
     );
 }
 
@@ -631,6 +654,7 @@ fn lossy_force_afv0() {
         false,
         0x3ba5403031c1499f,
         0x1a09ac618728d725,
+        558, // lossy_force_afv0
     );
 }
 
@@ -651,7 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdcb6e28568b349f1, // Updated: effort-gate AdjustQuantBlockAC
+        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
+        3449,               // lossy_with_lz77_greedy
     );
 }
 
@@ -672,7 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdcb6e28568b349f1, // Updated: effort-gate AdjustQuantBlockAC
+        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
+        3449,               // lossy_with_lz77_rle
     );
 }
 
@@ -691,7 +717,8 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x931f6ff2a5ab918f, // Updated: effort-gate AdjustQuantBlockAC
+        0x183a96813f848d08, // Updated: butteraugli loop off at e7
+        400,                // lossy_distance_05
     );
 }
 
@@ -710,7 +737,8 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe61f69db0c3bedf2, // Updated: float qf + deviation bounds
+        0xa30aff693dd0760c, // Updated: butteraugli loop off at e7
+        284,                // lossy_distance_3
     );
 }
 
@@ -740,6 +768,7 @@ fn lossy_all_off() {
         false,
         0x3ba5403031c1499f,
         0xf3320090011f75db, // Updated: effort-gate AdjustQuantBlockAC
+        393,                // lossy_all_off
     );
 }
 
@@ -758,7 +787,8 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xc14142c44b5815b1, // Updated: effort-gate AdjustQuantBlockAC
+        0xd59f85cadcf0c884, // Updated: butteraugli loop off at e7
+        335,                // lossy_bgr8
     );
 }
 
@@ -780,6 +810,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         0x6a695d8f2209b4e5,
         0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        132,                // lossless_defaults_rgb_32x32
     );
 }
 
@@ -799,6 +830,7 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         0x4610698f0cf81821,
         0x16d5504f8c104725, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        6978,               // lossless_defaults_rgb_48x48_noise
     );
 }
 
@@ -818,6 +850,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         0x492393a4c3f29174,
         0xbed6cafa23cebd77, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        797,                // lossless_defaults_rgb_13x17
     );
 }
 
@@ -837,6 +870,7 @@ fn lossless_rgba_32x32() {
         false,
         0x68b6bf8f2098c6eb,
         0xbae35472cbaf6dd8, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        148,                // lossless_rgba_32x32
     );
 }
 
@@ -856,6 +890,7 @@ fn lossless_gray_32x32() {
         false,
         0xd7858d308a0845e5,
         0xb3eb8879c469235d, // Updated: squeeze disabled by default
+        451,                // lossless_gray_32x32
     );
 }
 
@@ -876,6 +911,7 @@ fn lossless_no_ans_huffman() {
         false,
         0x6a695d8f2209b4e5,
         0x72f288c2ad0c943d, // Updated: squeeze disabled by default
+        621,                // lossless_no_ans_huffman
     );
 }
 
@@ -898,6 +934,7 @@ fn lossless_with_tree_learning() {
         false,
         0x6a695d8f2209b4e5,
         0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        132,                // lossless_with_tree_learning
     );
 }
 
@@ -918,6 +955,7 @@ fn lossless_with_squeeze() {
         false,
         0x6a695d8f2209b4e5,
         0x48e4346586752ae2, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        324,                // lossless_with_squeeze
     );
 }
 
@@ -941,6 +979,7 @@ fn lossless_with_lz77_greedy() {
         false,
         0x6a695d8f2209b4e5,
         0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        132,                // lossless_with_lz77_greedy
     );
 }
 
@@ -964,6 +1003,7 @@ fn lossless_with_lz77_rle() {
         false,
         0x6a695d8f2209b4e5,
         0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        132,                // lossless_with_lz77_rle
     );
 }
 
@@ -985,6 +1025,7 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         0x6a695d8f2209b4e5,
         0x48e4346586752ae2, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        324,                // lossless_tree_learning_and_squeeze
     );
 }
 
@@ -1009,6 +1050,7 @@ fn lossless_all_off() {
         false,
         0x6a695d8f2209b4e5,
         0x72f288c2ad0c943d, // Updated: RCT (YCoCg) now applied to non-squeeze paths
+        621,                // lossless_all_off
     );
 }
 
@@ -1028,5 +1070,6 @@ fn lossless_bgr8() {
         false,
         0x6a695d8f2209b4e5,
         0x18c57fb704f2a20a, // Updated: enhanced clustering + total_pixel scaling for tree learning
+        132,                // lossless_bgr8
     );
 }

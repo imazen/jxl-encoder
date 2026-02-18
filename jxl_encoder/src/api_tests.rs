@@ -5246,7 +5246,10 @@ fn test_lossy_grayscale_roundtrip_jxl_rs() {
     assert_eq!(decoded.width, 32);
     assert_eq!(decoded.height, 32);
     // Grayscale VarDCT output should be 1 channel (decoder converts XYB → gray)
-    assert_eq!(decoded.channels, 1, "expected 1 channel for grayscale output");
+    assert_eq!(
+        decoded.channels, 1,
+        "expected 1 channel for grayscale output"
+    );
 
     // Verify lossy quality: pixels should be somewhat close to originals
     let mut max_diff = 0.0f32;

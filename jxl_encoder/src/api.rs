@@ -827,11 +827,12 @@ pub enum ProgressiveMode {
 
 #[cfg(feature = "butteraugli-loop")]
 fn butteraugli_iters_for_effort(effort: u8) -> u32 {
-    // libjxl runs FindBestQuantization (butteraugli loop) at all efforts <= kKitten (e8).
-    // Default is 2 iterations, tortoise (e9+) gets 4.
+    // libjxl: FindBestQuantization gated by speed_tier <= kKitten (effort >= 8).
+    // kDefaultButteraugliIters = 2, kTortoise (effort 9+) gets kMaxButteraugliIters = 4.
+    // Efforts 1-7 have NO butteraugli loop in libjxl.
     match effort {
-        0..=4 => 0,
-        5..=8 => 2,
+        0..=7 => 0,
+        8 => 2,
         _ => 4,
     }
 }
@@ -870,24 +871,27 @@ impl LossyConfig {
 
     fn new_with_effort(distance: f32, effort: u8) -> Self {
         let effort = effort.clamp(1, 10);
+        // Effort gating matches libjxl's SpeedTier mapping:
+        // e1=Lightning, e2=Thunder, e3=Falcon, e4=Cheetah, e5=Hare,
+        // e6=Wombat, e7=Squirrel(default), e8=Kitten, e9=Tortoise, e10=Glacier
         Self {
             distance,
             effort,
             mode: EncoderMode::Reference,
-            use_ans: effort >= 4,
-            gaborish: effort >= 3,
+            use_ans: effort >= 4,  // kCheetah: clustering + coeff reorder
+            gaborish: effort >= 5, // kHare: gab, initial quant field
             noise: false,
             denoise: false,
-            error_diffusion: effort >= 3,
-            pixel_domain_loss: effort >= 5,
-            lz77: effort >= 7,
+            error_diffusion: effort >= 7, // kSquirrel (libjxl: kWombat=e6, but tied to AC strategy)
+            pixel_domain_loss: effort >= 5, // kHare: full AC strategy heuristics
+            lz77: effort >= 7,            // kSquirrel: modular LZ77 RLE
             lz77_method: match effort {
-                0..=7 => Lz77Method::Rle,
-                8 => Lz77Method::Greedy,
-                _ => Lz77Method::Optimal,
+                0..=7 => Lz77Method::Rle, // kSquirrel: RLE only
+                8 => Lz77Method::Greedy,  // kKitten: hash chain
+                _ => Lz77Method::Optimal, // kTortoise: Viterbi DP
             },
             force_strategy: None,
-            patches: effort >= 5,
+            patches: effort >= 7, // kSquirrel: patches, dots, splines
             splines: None,
             progressive: ProgressiveMode::Single,
             #[cfg(feature = "butteraugli-loop")]
@@ -1570,9 +1574,9 @@ impl<'a> EncodeRequest<'a> {
         let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
         tiny.effort = cfg.effort;
         tiny.use_ans = cfg.use_ans;
-        tiny.optimize_codes = cfg.effort >= 2;
-        tiny.custom_orders = cfg.effort >= 3;
-        tiny.ac_strategy_enabled = cfg.effort >= 3;
+        tiny.optimize_codes = cfg.effort >= 4; // kCheetah: two-pass + clustering
+        tiny.custom_orders = cfg.effort >= 4; // kCheetah: coefficient reordering
+        tiny.ac_strategy_enabled = cfg.effort >= 5; // kHare: full AC strategy search
         tiny.enable_noise = cfg.noise;
         tiny.enable_denoise = cfg.denoise;
         tiny.enable_gaborish = cfg.gaborish;
