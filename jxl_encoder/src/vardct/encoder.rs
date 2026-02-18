@@ -1249,8 +1249,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: per-histogram HybridUint config optimization
-        const EXPECTED_HASH: u64 = 0xd4ee064dbc430b41;
+        // Updated: ANS alias table log_alpha_size consistency fix
+        const EXPECTED_HASH: u64 = 0xfd203da322970f5;
         assert_eq!(
             hash,
             EXPECTED_HASH,
