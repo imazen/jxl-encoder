@@ -107,3 +107,5 @@ SSIM2 floor of 40.0 to catch broken transform reintroduction.
 2026-02-18 - Full 16-bit, float, and grayscale pixel layout support: 14 pixel layouts total
 2026-02-18 - Lossy delta palette: two-pass algorithm from libjxl enc_palette.cc, 72 built-in deltas, error diffusion, --lossy-palette CLI flag
 2026-02-18 - Quality calibration investigation: AdjustQuantBlockAC effort-gated (effort<=5 only, matching libjxl). All other calibration constants verified correct. 2-5% smaller files at all distances.
+2026-02-18 - Fix lossy palette for multi-group images: palette meta in LfGlobal, index across PassGroups. Verified djxl+jxl-rs.
+2026-02-18 - Palette+ANS checksum bug confirmed already fixed by u2S bit width fix (Feb 17). Added regression test with 256 colors.
