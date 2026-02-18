@@ -779,7 +779,7 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -817,7 +817,7 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         0x492393a4c3f29174,
-        0x7233318f8fc138a4, // Updated: tree learning default-on at effort 7
+        0xbed6cafa23cebd77, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -836,7 +836,7 @@ fn lossless_rgba_32x32() {
         false,
         false,
         0x68b6bf8f2098c6eb,
-        0xbbcb62bc2b40bafa, // Updated: eval sample cap + predictor pruning changes tree structure
+        0xbae35472cbaf6dd8, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -897,7 +897,7 @@ fn lossless_with_tree_learning() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -917,7 +917,7 @@ fn lossless_with_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xa73e81227bf51700, // Updated: tree learning pre-quantization + nlog2n entropy formula
+        0x48e4346586752ae2, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -940,7 +940,7 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
+        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -963,7 +963,7 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0x9507d81f8347029b, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18) (supersedes LZ77)
+        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -984,7 +984,7 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xa73e81227bf51700, // Updated: tree learning pre-quantization + nlog2n entropy formula
+        0x48e4346586752ae2, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }
 
@@ -1027,6 +1027,6 @@ fn lossless_bgr8() {
         false,
         false,
         0x6a695d8f2209b4e5,
-        0xdd50cccc7250b5b1, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
+        0x18c57fb704f2a20a, // Updated: enhanced clustering + total_pixel scaling for tree learning
     );
 }

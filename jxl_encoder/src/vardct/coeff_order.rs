@@ -454,6 +454,7 @@ pub fn build_and_write_coeff_orders(
             NUM_PERMUTATION_CONTEXTS,
             false, // no enhanced clustering for permutation
             None,  // no LZ77 for permutation data
+            None,  // no pixel hint for permutation data
         );
         write_entropy_code_ans(&code, writer)?;
         write_tokens_ans(tokens, &code, None, writer)?;

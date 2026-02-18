@@ -100,3 +100,4 @@ transforms (DCT8-DCT64X64) work correctly. Added high-distance RD regression tes
 (test_rd_regression_high_distance) at d=2.0 and d=3.0 with hard butteraugli floor of 8.0 and
 SSIM2 floor of 40.0 to catch broken transform reintroduction.
 2026-02-18 00:52 - Implement improved lossless patches compression: remove MAX_REF_DIM 256 limit, first-fit grid bin packing, FrameEncoder for ref frames (RCT+multi-group), remove cost-benefit checks
+2026-02-18 - Enhanced clustering + context count pruning for modular tree learning: enable pair-merge clustering for tree-learned paths, scale max_histograms and max_nodes with total_pixels to prevent overhead domination on small images

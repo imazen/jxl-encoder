@@ -1030,7 +1030,8 @@ pub fn write_modular_stream_with_tree(
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_gather_stride, gather_samples_strided,
     };
-    use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
 
     // Select best RCT variant by trying multiple candidates (effort-dependent).
     // Tree learning uses RCT only (not palette) because palette+tree has a
@@ -1058,7 +1059,9 @@ pub fn write_modular_stream_with_tree(
     } else {
         1.0
     };
-    let params = TreeLearningParams::for_effort(effort).with_pixel_fraction(pixel_fraction);
+    let params = TreeLearningParams::for_effort(effort)
+        .with_pixel_fraction(pixel_fraction)
+        .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &params);
     let num_contexts = count_contexts(&tree) as usize;
 
@@ -1079,8 +1082,14 @@ pub fn write_modular_stream_with_tree(
     // Step 3: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
 
-    // Step 4: Build multi-context ANS code
-    let code = build_entropy_code_ans(&tokens, num_contexts);
+    // Step 4: Build multi-context ANS code with enhanced clustering
+    let code = build_entropy_code_ans_with_options(
+        &tokens,
+        num_contexts,
+        true, // enhanced clustering (pair-merge refinement)
+        None, // no LZ77
+        Some(total_pixels),
+    );
 
     // Step 5: Write bitstream
     // dc_quant.all_default = true
@@ -1162,7 +1171,8 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_gather_stride, gather_samples_strided,
     };
-    use crate::entropy_coding::encode::{build_entropy_code_ans, write_entropy_code_ans};
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
 
     let params = default_squeeze_params(image);
     if params.is_empty() {
@@ -1205,7 +1215,9 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     } else {
         1.0
     };
-    let tree_params = TreeLearningParams::for_effort(effort).with_pixel_fraction(pixel_fraction);
+    let tree_params = TreeLearningParams::for_effort(effort)
+        .with_pixel_fraction(pixel_fraction)
+        .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &tree_params);
     let num_contexts = count_contexts(&tree) as usize;
 
@@ -1221,8 +1233,14 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     // Step 5: Collect residuals with learned tree
     let tokens = collect_residuals_with_tree(&transformed, &tree, 0);
 
-    // Step 6: Build multi-context ANS code
-    let code = build_entropy_code_ans(&tokens, num_contexts);
+    // Step 6: Build multi-context ANS code with enhanced clustering
+    let code = build_entropy_code_ans_with_options(
+        &tokens,
+        num_contexts,
+        true, // enhanced clustering (pair-merge refinement)
+        None, // no LZ77
+        Some(total_pixels),
+    );
 
     // Step 7: Write bitstream
     // dc_quant.all_default = true

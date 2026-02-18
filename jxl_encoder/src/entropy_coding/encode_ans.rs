@@ -59,17 +59,20 @@ impl OwnedAnsEntropyCode {
 /// 3. Normalizes each cluster histogram to sum to 4096.
 /// 4. Builds ANS distributions for encoding.
 pub fn build_entropy_code_ans(tokens: &[Token], num_contexts: usize) -> OwnedAnsEntropyCode {
-    build_entropy_code_ans_with_options(tokens, num_contexts, false, None)
+    build_entropy_code_ans_with_options(tokens, num_contexts, false, None, None)
 }
 
 /// Build an ANS entropy code with optional enhanced clustering.
 ///
 /// When `lz77` is Some, LZ77 length tokens use Lz77UintCoder and are offset by min_symbol.
+/// When `total_pixel_hint` is Some, max_histograms is capped to `total_pixels / 2048` (min 1)
+/// to prevent header overhead from dominating on small images.
 pub fn build_entropy_code_ans_with_options(
     tokens: &[Token],
     num_contexts: usize,
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
     use crate::entropy_coding::cluster::{
         ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
@@ -112,7 +115,13 @@ pub fn build_entropy_code_ans_with_options(
 
     // Allow up to 96 clusters — non-simple context map format supports arbitrary counts.
     // Tested: 64→96 helps marginally, >96 has diminishing returns due to context map overhead.
-    let max_histograms = num_contexts.min(96);
+    let mut max_histograms = num_contexts.min(96);
+    // Scale down for small images: each histogram needs ~36 bytes ANS header overhead,
+    // so for a 128x128 RGB image (~48K values), 96 histograms = ~3.4KB overhead (21% of file).
+    // Cap to total_pixels/2048 so overhead stays proportional to content.
+    if let Some(tp) = total_pixel_hint {
+        max_histograms = max_histograms.min((tp / 2048).max(1));
+    }
     let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, max_histograms)
         .expect("ANS clustering failed");
 
