@@ -76,6 +76,23 @@ pub fn pixel_domain_loss(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return pixel_domain_loss_wasm128(
+                token,
+                pixel_error,
+                mask,
+                mask_row_base,
+                mask_stride,
+                mask_offset,
+                block_width,
+                block_height,
+            );
+        }
+    }
+
     // Scalar fallback
     pixel_domain_loss_scalar(
         pixel_error,
@@ -230,6 +247,71 @@ pub fn pixel_domain_loss_neon(
             let m2_raw = m2_v.raw();
             let m2_lo = f64x2::from_float64x2_t(token, vcvt_f64_f32(vget_low_f32(m2_raw)));
             let m2_hi = f64x2::from_float64x2_t(token, vcvt_high_f64_f32(m2_raw));
+
+            // m4 = m2 * m2, m8 = m4 * m4 (in f64)
+            let m4_lo = m2_lo * m2_lo;
+            let m4_hi = m2_hi * m2_hi;
+            let m8_lo = m4_lo * m4_lo;
+            let m8_hi = m4_hi * m4_hi;
+
+            acc_lo += m8_lo;
+            acc_hi += m8_hi;
+
+            px += 4;
+        }
+    }
+
+    acc_lo.reduce_add() + acc_hi.reduce_add()
+}
+
+// ============================================================================
+// wasm32 SIMD128 implementation
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+pub fn pixel_domain_loss_wasm128(
+    token: archmage::Wasm128Token,
+    pixel_error: &[f32],
+    mask: &[f32],
+    mask_row_base: usize,
+    mask_stride: usize,
+    mask_offset: f32,
+    block_width: usize,
+    block_height: usize,
+) -> f64 {
+    use core::arch::wasm32::*;
+    use magetypes::simd::{f32x4, f64x2};
+
+    let offset_v = f32x4::splat(token, mask_offset);
+    let mut acc_lo = f64x2::zero(token);
+    let mut acc_hi = f64x2::zero(token);
+
+    for py in 0..block_height {
+        let mask_row_start = mask_row_base + py * mask_stride;
+        let error_row_start = py * block_width;
+        let mask_row = &mask[mask_row_start..mask_row_start + block_width];
+        let error_row = &pixel_error[error_row_start..error_row_start + block_width];
+
+        let mut px = 0;
+        while px < block_width {
+            let mask_v = f32x4::from_slice(token, &mask_row[px..]);
+            let error_v = f32x4::from_slice(token, &error_row[px..]);
+
+            // masked = (mask + offset) * error (in f32)
+            let masked_v = (mask_v + offset_v) * error_v;
+
+            // m2 = masked * masked (in f32)
+            let m2_v = masked_v * masked_v;
+
+            // Convert f32x4 m2 to two f64x2 vectors via WASM intrinsics
+            let m2_raw = m2_v.raw();
+            let m2_lo = f64x2::from_v128(token, f64x2_promote_low_f32x4(m2_raw));
+            // Shuffle high pair to low position, then promote
+            let high_shuffled = i32x4_shuffle::<2, 3, 0, 1>(m2_raw, m2_raw);
+            let m2_hi = f64x2::from_v128(token, f64x2_promote_low_f32x4(high_shuffled));
 
             // m4 = m2 * m2, m8 = m4 * m4 (in f64)
             let m4_lo = m2_lo * m2_lo;

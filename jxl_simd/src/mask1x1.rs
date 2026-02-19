@@ -97,6 +97,15 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize, output: &mut 
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            compute_mask1x1_wasm128(token, xyb_y, width, height, output);
+            return;
+        }
+    }
+
     compute_mask1x1_scalar(xyb_y, width, height, output);
 }
 
@@ -294,6 +303,153 @@ pub fn compute_mask1x1_avx2(
 #[archmage::arcane]
 pub fn compute_mask1x1_neon(
     token: archmage::NeonToken,
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    output: &mut [f32],
+) {
+    use magetypes::simd::{f32x4, i32x4};
+
+    // Images too small for SIMD interior
+    if width < 6 || height < 3 {
+        compute_mask1x1_scalar(xyb_y, width, height, output);
+        return;
+    }
+
+    let quarter = f32x4::splat(token, 0.25);
+    let gamma_off = f32x4::splat(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x4::splat(token, 0.0);
+    let eps_v = f32x4::splat(token, EPSILON);
+    let k_num_mul_v = f32x4::splat(token, K_NUM_MUL);
+    let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
+    let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
+    let one_v = f32x4::splat(token, 1.0);
+    let ln2_v = f32x4::splat(token, LN2);
+    let k_offset_v = f32x4::splat(token, K_OFFSET);
+    let k_mul_v = f32x4::splat(token, K_MUL);
+
+    // fast_log2f constants
+    let log2_offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
+    let log2_p0_v = f32x4::splat(token, LOG2_P0);
+    let log2_p1_v = f32x4::splat(token, LOG2_P1);
+    let log2_p2_v = f32x4::splat(token, LOG2_P2);
+    let log2_q0_v = f32x4::splat(token, LOG2_Q0);
+    let log2_q1_v = f32x4::splat(token, LOG2_Q1);
+    let log2_q2_v = f32x4::splat(token, LOG2_Q2);
+
+    // SIMD fast_log2f via integer bit manipulation (f32x4 version)
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn fast_log2f_x4(
+        x: f32x4,
+        offset: i32x4,
+        p0: f32x4,
+        p1: f32x4,
+        p2: f32x4,
+        q0: f32x4,
+        q1: f32x4,
+        q2: f32x4,
+        one: f32x4,
+    ) -> f32x4 {
+        let x_bits: i32x4 = x.bitcast_i32x4();
+        let exp_bits = x_bits - offset;
+        let exp_shifted = exp_bits.shr_arithmetic::<23>();
+        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+        let mantissa = mantissa_bits.bitcast_f32x4();
+        let exp_val = exp_shifted.to_f32x4();
+        let frac = mantissa - one;
+        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+        num / den + exp_val
+    }
+
+    for y in 0..height {
+        let y1 = y.saturating_sub(1);
+        let y2 = (y + 1).min(height - 1);
+        let r_top = y1 * width;
+        let r_cur = y * width;
+        let r_bot = y2 * width;
+
+        // Scalar for first pixel (x=0)
+        {
+            let base = 0.25 * (xyb_y[r_top] + xyb_y[r_bot] + xyb_y[r_cur] + xyb_y[r_cur + 1]);
+            let pv = xyb_y[r_cur];
+            let gammac = ratio_of_derivatives_scalar(pv + MATCH_GAMMA_OFFSET);
+            let diff = (gammac * (pv - base)).abs();
+            let diff = fast_log2f(1.0 + diff) * LN2;
+            output[r_cur] = K_MUL / (diff + K_OFFSET);
+        }
+
+        // SIMD interior: need left (x-1) and right (x+1)
+        let simd_end = if width > 5 { width - 1 - 4 + 1 } else { 1 };
+        let mut x = 1;
+
+        while x < simd_end {
+            let top = f32x4::from_slice(token, &xyb_y[r_top + x..]);
+            let bot = f32x4::from_slice(token, &xyb_y[r_bot + x..]);
+            let left = f32x4::from_slice(token, &xyb_y[r_cur + x - 1..]);
+            let right = f32x4::from_slice(token, &xyb_y[r_cur + x + 1..]);
+            let center = f32x4::from_slice(token, &xyb_y[r_cur + x..]);
+
+            let base = quarter * (top + bot + left + right);
+
+            let v = (center + gamma_off).max(zero);
+            let v2 = v * v;
+            let v3 = v2 * v;
+            let num = k_num_mul_v.mul_add(v2, eps_v);
+            let den = k_den_mul_v.mul_add(v3, k_v_offset_v);
+            let gammac = den / num;
+
+            let diff = (gammac * (center - base)).abs();
+
+            let arg = one_v + diff;
+            let log2_val = fast_log2f_x4(
+                arg,
+                log2_offset,
+                log2_p0_v,
+                log2_p1_v,
+                log2_p2_v,
+                log2_q0_v,
+                log2_q1_v,
+                log2_q2_v,
+                one_v,
+            );
+            let ln_val = log2_val * ln2_v;
+
+            let result = k_mul_v / (ln_val + k_offset_v);
+
+            let out_arr: &mut [f32; 4] =
+                (&mut output[r_cur + x..r_cur + x + 4]).try_into().unwrap();
+            result.store(out_arr);
+
+            x += 4;
+        }
+
+        // Scalar remainder (right edge)
+        while x < width {
+            let x1 = x.saturating_sub(1);
+            let x2 = (x + 1).min(width - 1);
+            let base = 0.25
+                * (xyb_y[r_top + x] + xyb_y[r_bot + x] + xyb_y[r_cur + x1] + xyb_y[r_cur + x2]);
+            let pv = xyb_y[r_cur + x];
+            let gammac = ratio_of_derivatives_scalar(pv + MATCH_GAMMA_OFFSET);
+            let diff = (gammac * (pv - base)).abs();
+            let diff = fast_log2f(1.0 + diff) * LN2;
+            output[r_cur + x] = K_MUL / (diff + K_OFFSET);
+            x += 1;
+        }
+    }
+}
+
+// ============================================================================
+// wasm32 SIMD128 implementation
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn compute_mask1x1_wasm128(
+    token: archmage::Wasm128Token,
     xyb_y: &[f32],
     width: usize,
     height: usize,

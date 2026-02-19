@@ -56,6 +56,15 @@ pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            dct_16x16_wasm128(token, input, output);
+            return;
+        }
+    }
+
     dct_16x16_scalar(input, output);
 }
 
@@ -529,6 +538,15 @@ pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            dct_16x8_wasm128(token, input, output);
+            return;
+        }
+    }
+
     dct_16x8_scalar(input, output);
 }
 
@@ -698,6 +716,15 @@ pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
         use archmage::SimdToken;
         if let Some(token) = archmage::NeonToken::summon() {
             dct_8x16_neon(token, input, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            dct_8x16_wasm128(token, input, output);
             return;
         }
     }
@@ -1134,6 +1161,344 @@ pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     let mut pass2_out = [0.0f32; 128];
     for batch in 0..4 {
         neon_dct8_batch(token, &transposed, &mut pass2_out, batch * 4, 8, scale8);
+    }
+
+    // Final transpose 16x8 -> 8x16 (ROWS < COLS)
+    for row in 0..16 {
+        for col in 0..8 {
+            output[col * 16 + row] = pass2_out[row * 8 + col];
+        }
+    }
+}
+
+// ============================================================================
+// wasm32 SIMD128 implementations
+// ============================================================================
+
+/// Gather column `j` from 4 consecutive rows starting at `base_row` (stride `s`).
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn gather_col_wasm128(
+    token: archmage::Wasm128Token,
+    data: &[f32],
+    base_row: usize,
+    j: usize,
+    s: usize,
+) -> magetypes::simd::f32x4 {
+    magetypes::simd::f32x4::from_array(
+        token,
+        [
+            data[base_row * s + j],
+            data[(base_row + 1) * s + j],
+            data[(base_row + 2) * s + j],
+            data[(base_row + 3) * s + j],
+        ],
+    )
+}
+
+/// Scatter f32x4 lanes back to column `j` of 4 consecutive rows (stride `s`).
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn scatter_col_wasm128(
+    _token: archmage::Wasm128Token,
+    v: magetypes::simd::f32x4,
+    data: &mut [f32],
+    base_row: usize,
+    j: usize,
+    s: usize,
+) {
+    let mut lane = [0.0f32; 4];
+    v.store(&mut lane);
+    for r in 0..4 {
+        data[(base_row + r) * s + j] = lane[r];
+    }
+}
+
+/// WASM128 batched 4-point forward DCT on f32x4 arrays.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn dct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 4]) {
+    use magetypes::simd::f32x4;
+
+    let sqrt2 = f32x4::splat(token, SQRT2);
+    let wc4_0 = f32x4::splat(token, WC_MULTIPLIERS_4[0]);
+    let wc4_1 = f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+
+    let a0 = v[0] + v[3];
+    let a1 = v[1] + v[2];
+    let s0 = v[0] - v[3];
+    let s1 = v[1] - v[2];
+
+    let fh0 = a0 + a1;
+    let fh1 = a0 - a1;
+
+    let s0 = s0 * wc4_0;
+    let s1 = s1 * wc4_1;
+    let sh0 = s0 + s1;
+    let sh1 = s0 - s1;
+    let sh0 = sqrt2.mul_add(sh0, sh1);
+
+    v[0] = fh0;
+    v[1] = sh0;
+    v[2] = fh1;
+    v[3] = sh1;
+}
+
+/// WASM128 batched 8-point forward DCT on f32x4 arrays.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 8]) {
+    use magetypes::simd::f32x4;
+
+    let sqrt2 = f32x4::splat(token, SQRT2);
+
+    let a0 = v[0] + v[7];
+    let a1 = v[1] + v[6];
+    let a2 = v[2] + v[5];
+    let a3 = v[3] + v[4];
+    let s0 = v[0] - v[7];
+    let s1 = v[1] - v[6];
+    let s2 = v[2] - v[5];
+    let s3 = v[3] - v[4];
+
+    let mut first_half = [a0, a1, a2, a3];
+    dct1d_4_batch_wasm128(token, &mut first_half);
+
+    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+    let mut second_half = [s0, s1, s2, s3];
+    dct1d_4_batch_wasm128(token, &mut second_half);
+
+    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[1] += second_half[2];
+    second_half[2] += second_half[3];
+
+    v[0] = first_half[0];
+    v[1] = second_half[0];
+    v[2] = first_half[1];
+    v[3] = second_half[1];
+    v[4] = first_half[2];
+    v[5] = second_half[2];
+    v[6] = first_half[3];
+    v[7] = second_half[3];
+}
+
+/// WASM128 batched 16-point forward DCT on f32x4 arrays.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn dct1d_16_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 16]) {
+    use magetypes::simd::f32x4;
+
+    let sqrt2 = f32x4::splat(token, SQRT2);
+
+    let a0 = v[0] + v[15];
+    let a1 = v[1] + v[14];
+    let a2 = v[2] + v[13];
+    let a3 = v[3] + v[12];
+    let a4 = v[4] + v[11];
+    let a5 = v[5] + v[10];
+    let a6 = v[6] + v[9];
+    let a7 = v[7] + v[8];
+    let s0 = v[0] - v[15];
+    let s1 = v[1] - v[14];
+    let s2 = v[2] - v[13];
+    let s3 = v[3] - v[12];
+    let s4 = v[4] - v[11];
+    let s5 = v[5] - v[10];
+    let s6 = v[6] - v[9];
+    let s7 = v[7] - v[8];
+
+    let mut first_half = [a0, a1, a2, a3, a4, a5, a6, a7];
+    dct1d_8_batch_wasm128(token, &mut first_half);
+
+    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_16[0]);
+    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_16[1]);
+    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_16[2]);
+    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_16[3]);
+    let s4 = s4 * f32x4::splat(token, WC_MULTIPLIERS_16[4]);
+    let s5 = s5 * f32x4::splat(token, WC_MULTIPLIERS_16[5]);
+    let s6 = s6 * f32x4::splat(token, WC_MULTIPLIERS_16[6]);
+    let s7 = s7 * f32x4::splat(token, WC_MULTIPLIERS_16[7]);
+    let mut second_half = [s0, s1, s2, s3, s4, s5, s6, s7];
+    dct1d_8_batch_wasm128(token, &mut second_half);
+
+    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[1] += second_half[2];
+    second_half[2] += second_half[3];
+    second_half[3] += second_half[4];
+    second_half[4] += second_half[5];
+    second_half[5] += second_half[6];
+    second_half[6] += second_half[7];
+
+    v[0] = first_half[0];
+    v[1] = second_half[0];
+    v[2] = first_half[1];
+    v[3] = second_half[1];
+    v[4] = first_half[2];
+    v[5] = second_half[2];
+    v[6] = first_half[3];
+    v[7] = second_half[3];
+    v[8] = first_half[4];
+    v[9] = second_half[4];
+    v[10] = first_half[5];
+    v[11] = second_half[5];
+    v[12] = first_half[6];
+    v[13] = second_half[6];
+    v[14] = first_half[7];
+    v[15] = second_half[7];
+}
+
+/// Process a batch of 4 rows through gather -> 8-point DCT -> scale -> scatter.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+#[allow(clippy::needless_range_loop)]
+fn wasm128_dct8_batch(
+    token: archmage::Wasm128Token,
+    data_in: &[f32],
+    data_out: &mut [f32],
+    base_row: usize,
+    stride: usize,
+    scale: magetypes::simd::f32x4,
+) {
+    let mut v = [magetypes::simd::f32x4::zero(token); 8];
+    for j in 0..8 {
+        v[j] = gather_col_wasm128(token, data_in, base_row, j, stride);
+    }
+    dct1d_8_batch_wasm128(token, &mut v);
+    for j in 0..8 {
+        v[j] *= scale;
+    }
+    for j in 0..8 {
+        scatter_col_wasm128(token, v[j], data_out, base_row, j, stride);
+    }
+}
+
+/// Process a batch of 4 rows through gather -> 16-point DCT -> scale -> scatter.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+#[allow(clippy::needless_range_loop)]
+fn wasm128_dct16_batch(
+    token: archmage::Wasm128Token,
+    data_in: &[f32],
+    data_out: &mut [f32],
+    base_row: usize,
+    stride: usize,
+    scale: magetypes::simd::f32x4,
+) {
+    let mut v = [magetypes::simd::f32x4::zero(token); 16];
+    for j in 0..16 {
+        v[j] = gather_col_wasm128(token, data_in, base_row, j, stride);
+    }
+    dct1d_16_batch_wasm128(token, &mut v);
+    for j in 0..16 {
+        v[j] *= scale;
+    }
+    for j in 0..16 {
+        scatter_col_wasm128(token, v[j], data_out, base_row, j, stride);
+    }
+}
+
+/// WASM128 16x16 forward DCT: process 4 rows at a time.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn dct_16x16_wasm128(
+    token: archmage::Wasm128Token,
+    input: &[f32; 256],
+    output: &mut [f32; 256],
+) {
+    use magetypes::simd::f32x4;
+    let scale = f32x4::splat(token, 1.0 / 16.0);
+    let mut tmp = [0.0f32; 256];
+
+    // Pass 1: Forward DCT on rows (4 batches of 4 rows)
+    for batch in 0..4 {
+        wasm128_dct16_batch(token, input, &mut tmp, batch * 4, 16, scale);
+    }
+
+    // Transpose 16x16
+    let mut transposed = [0.0f32; 256];
+    for r in 0..16 {
+        for c in 0..16 {
+            transposed[c * 16 + r] = tmp[r * 16 + c];
+        }
+    }
+
+    // Pass 2: Forward DCT on columns (4 batches of 4 rows)
+    for batch in 0..4 {
+        wasm128_dct16_batch(token, &transposed, output, batch * 4, 16, scale);
+    }
+}
+
+/// WASM128 16x8 forward DCT.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn dct_16x8_wasm128(
+    token: archmage::Wasm128Token,
+    input: &[f32; 128],
+    output: &mut [f32; 128],
+) {
+    use magetypes::simd::f32x4;
+    let scale8 = f32x4::splat(token, 1.0 / 8.0);
+    let scale16 = f32x4::splat(token, 1.0 / 16.0);
+    let mut tmp = [0.0f32; 128];
+
+    // Pass 1: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
+    for batch in 0..4 {
+        wasm128_dct8_batch(token, input, &mut tmp, batch * 4, 8, scale8);
+    }
+
+    // Transpose 16x8 -> 8x16
+    let mut transposed = [0.0f32; 128];
+    for row in 0..16 {
+        for col in 0..8 {
+            transposed[col * 16 + row] = tmp[row * 8 + col];
+        }
+    }
+
+    // Pass 2: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
+    for batch in 0..2 {
+        wasm128_dct16_batch(token, &transposed, output, batch * 4, 16, scale16);
+    }
+}
+
+/// WASM128 8x16 forward DCT.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn dct_8x16_wasm128(
+    token: archmage::Wasm128Token,
+    input: &[f32; 128],
+    output: &mut [f32; 128],
+) {
+    use magetypes::simd::f32x4;
+    let scale8 = f32x4::splat(token, 1.0 / 8.0);
+    let scale16 = f32x4::splat(token, 1.0 / 16.0);
+    let mut tmp = [0.0f32; 128];
+
+    // Pass 1: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
+    for batch in 0..2 {
+        wasm128_dct16_batch(token, input, &mut tmp, batch * 4, 16, scale16);
+    }
+
+    // Transpose 8x16 -> 16x8
+    let mut transposed = [0.0f32; 128];
+    for row in 0..8 {
+        for col in 0..16 {
+            transposed[col * 8 + row] = tmp[row * 16 + col];
+        }
+    }
+
+    // Pass 2: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
+    let mut pass2_out = [0.0f32; 128];
+    for batch in 0..4 {
+        wasm128_dct8_batch(token, &transposed, &mut pass2_out, batch * 4, 8, scale8);
     }
 
     // Final transpose 16x8 -> 8x16 (ROWS < COLS)
