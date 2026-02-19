@@ -41,13 +41,24 @@ pub(super) fn find_best_16x16_transform(
     // are 1.0. In coefficient-domain mode, use libjxl-tiny distance-dependent multipliers.
     let use_pixel_domain = mask1x1.is_some();
 
-    // Distance-dependent multipliers - only used in coefficient-domain mode.
-    // Constants from EffortProfile (libjxl enc_ac_strategy.cc:790-818).
+    // Distance-dependent multipliers from EffortProfile (libjxl enc_ac_strategy.cc:790-818).
+    //
+    // In pixel-domain mode: libjxl normalizes 8×8 entropy_mul (÷0.8) then multiplies the
+    // TOTAL 8×8 cost (including loss) by mul8x8. Larger transforms use raw entropy_mul
+    // internally with no external multiplier. So: mul8x8 for all 8×8-class, 1.0 for rest.
+    //
+    // IMPORTANT: pixel-domain mul8x8 uses libjxl's RAW constants (-0.4, 1.0, 1.4), NOT
+    // the EffortProfile k8x8 which has a 0.75 factor baked in for coefficient-domain mode.
+    //
+    // In coefficient-domain mode: each size class has its own distance-dependent multiplier.
+    let compute_mul = |k: (f32, f32, f32)| k.1 + k.0 / (distance + k.2);
     let (mul8x8, mul16x8, mul16x16, mul4x8, mul4x4) = if use_pixel_domain {
-        // In pixel-domain mode, entropy_mul is handled internally. No external multiplier.
-        (1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32)
+        // libjxl enc_ac_strategy.cc:863-866: k8x8mul1=-0.4, k8x8mul2=1.0, k8x8base=1.4
+        let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
+        // libjxl applies mul8x8 to ALL 8×8-class transforms (DCT8/4x8/8x4/4x4/AFV/ID/2x2)
+        // Larger transforms: entropy_mul is applied internally, no external mul.
+        (mul8x8, 1.0_f32, 1.0_f32, mul8x8, mul8x8)
     } else {
-        let compute_mul = |k: (f32, f32, f32)| k.1 + k.0 / (distance + k.2);
         (
             compute_mul(profile.k8x8),
             compute_mul(profile.k16x8),
@@ -660,10 +671,12 @@ pub(super) fn find_best_32x32_transform(
 
     // Compute the combined cost of the four 16x16 sub-evaluations.
     // We need to re-estimate using whatever strategies were selected.
-    // In pixel-domain mode, entropy_mul is applied internally — external multiplier is 1.0.
-    // In coefficient-domain mode, use distance-dependent multipliers matching find_best_16x16_transform.
+    // In pixel-domain mode: 8×8-class costs get mul8x8 (libjxl applies it post-hoc),
+    // larger transforms get 1.0 (entropy_mul applied internally).
+    // In coefficient-domain mode: distance-dependent multipliers per size class.
     let (sub_mul8x8, sub_mul16x8, sub_mul16x16) = if use_pixel_domain {
-        (1.0_f32, 1.0_f32, 1.0_f32)
+        let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
+        (mul8x8, 1.0_f32, 1.0_f32)
     } else {
         let k8x8mul1: f32 = -0.55 * 0.75;
         let k8x8mul2: f32 = 1.073_575_8 * 0.75;
@@ -1001,7 +1014,8 @@ pub(super) fn find_best_64x64_transform(
     }
 
     // Compute the combined cost of the four 32x32 sub-evaluations.
-    // In pixel-domain mode, entropy_mul is applied internally — external multiplier is 1.0.
+    // In pixel-domain mode: 8×8-class costs get mul8x8 (libjxl stores them with mul8x8 applied),
+    // larger transforms get 1.0 (entropy_mul applied internally by EstimateEntropy).
     let mut cost_sub = 0.0f32;
     for iy in 0..8 {
         for ix in 0..8 {
@@ -1011,7 +1025,21 @@ pub(super) fn find_best_64x64_transform(
             let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
 
             let mul = if use_pixel_domain {
-                1.0_f32
+                let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
+                // 8×8-class transforms: mul8x8. Larger transforms: 1.0.
+                match sub_raw {
+                    RAW_STRATEGY_DCT8
+                    | RAW_STRATEGY_DCT4X8
+                    | RAW_STRATEGY_DCT8X4
+                    | RAW_STRATEGY_DCT4X4
+                    | RAW_STRATEGY_IDENTITY
+                    | RAW_STRATEGY_DCT2X2
+                    | RAW_STRATEGY_AFV0
+                    | RAW_STRATEGY_AFV1
+                    | RAW_STRATEGY_AFV2
+                    | RAW_STRATEGY_AFV3 => mul8x8,
+                    _ => 1.0_f32,
+                }
             } else {
                 let k8x8mul1: f32 = -0.55 * 0.75;
                 let k8x8mul2: f32 = 1.073_575_8 * 0.75;

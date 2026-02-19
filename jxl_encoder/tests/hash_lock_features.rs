@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
-        3142,               // lossy_defaults_rgb_48x48_noise
+        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
+        3606,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
-        3142,               // lossy_with_noise
+        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
+        3606,               // lossy_with_noise
     );
 }
 
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
-        3142,               // lossy_with_lz77_greedy
+        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
+        3606,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
-        3142,               // lossy_with_lz77_rle
+        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
+        3606,               // lossy_with_lz77_rle
     );
 }
 
