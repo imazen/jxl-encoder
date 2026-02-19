@@ -1258,8 +1258,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: effort-gate AdjustQuantBlockAC (skip at effort > 5)
-        const EXPECTED_HASH: u64 = 0xaf55dee6f2eb7104;
+        // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        const EXPECTED_HASH: u64 = 0xf743f5c30a677c68;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1328,8 +1328,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: effort-gate AdjustQuantBlockAC (skip at effort > 5)
-        const EXPECTED_HASH: u64 = 0xfc464d25c91698e6;
+        // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        const EXPECTED_HASH: u64 = 0x0fd203da322970f5;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1364,8 +1364,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: effort-gate AdjustQuantBlockAC (skip at effort > 5)
-        const EXPECTED_HASH: u64 = 0x23d4ed8c95894351;
+        // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        const EXPECTED_HASH: u64 = 0x5256b4e484f6426e;
         assert_eq!(
             hash,
             EXPECTED_HASH,

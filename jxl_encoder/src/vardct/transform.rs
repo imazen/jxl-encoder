@@ -625,16 +625,17 @@ impl VarDctEncoder {
 
                 // ── Step 2c: AdjustQuantBlockAC ──────────────────────────────
                 // Ported from libjxl enc_group.cc QuantizeRoundtripYBlockAC.
-                // At effort <= 5 (Hare): adjusts per-block quant and Y thresholds
-                // based on coefficient statistics across all 3 channels.
-                // At effort > 5: uses fixed thresholds, no per-block adjustment.
+                // libjxl gates on speed_tier <= kHare (effort >= 5):
+                // adjusts per-block quant and Y thresholds based on coefficient
+                // statistics across all 3 channels.
+                // At effort < 5: uses fixed thresholds, no per-block adjustment.
                 let mut thresholds_y;
                 let qac;
                 {
                     let quant_idx = by * xsize_blocks + bx;
                     let mut quant_int = quant_field[quant_idx] as i32;
-                    if self.effort <= 5 {
-                        // effort <= Hare: run AdjustQuantBlockAC for all 3 channels
+                    if self.effort >= 5 {
+                        // effort >= Hare: run AdjustQuantBlockAC for all 3 channels
                         let orig_qac = params.scale * quant_int as f32;
                         thresholds_y = [0.58f32, 0.64, 0.64, 0.64];
                         let mut max_quant = quant_int;
@@ -691,13 +692,13 @@ impl VarDctEncoder {
                             by * 8,
                             cx * 8,
                             cy * 8,
-                            "strat={} q={}→{} (e<=5 AdjustQuantBlockAC)",
+                            "strat={} q={}→{} (e>=5 AdjustQuantBlockAC)",
                             raw_strategy,
                             quant_before,
                             quant_field[quant_idx]
                         );
                     } else {
-                        // effort > Hare: fixed thresholds, no per-block adjustment
+                        // effort < Hare: fixed thresholds, no per-block adjustment
                         // (enc_group.cc:358-363)
                         thresholds_y = [0.56f32, 0.62, 0.62, 0.62];
                     }
