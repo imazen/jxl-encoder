@@ -674,6 +674,39 @@ impl VarDctEncoder {
             );
         }
 
+        // Dump AC strategy and quant field maps for comparison with libjxl.
+        // Set JXL_DUMP_MAPS=/tmp/prefix to enable. Maps are written as CSV.
+        #[cfg(feature = "debug-rect")]
+        if let Ok(prefix) = std::env::var("JXL_DUMP_MAPS") {
+            use std::io::Write;
+            // AC strategy map
+            if let Ok(mut f) = std::fs::File::create(format!("{prefix}_acs.csv")) {
+                for by in 0..ysize_blocks {
+                    for bx in 0..xsize_blocks {
+                        if bx > 0 {
+                            let _ = write!(f, ",");
+                        }
+                        let _ = write!(f, "{}", ac_strategy.raw_strategy(bx, by));
+                    }
+                    let _ = writeln!(f);
+                }
+                eprintln!("DIAG: wrote {prefix}_acs.csv ({xsize_blocks}x{ysize_blocks})");
+            }
+            // Quant field map
+            if let Ok(mut f) = std::fs::File::create(format!("{prefix}_qf.csv")) {
+                for by in 0..ysize_blocks {
+                    for bx in 0..xsize_blocks {
+                        if bx > 0 {
+                            let _ = write!(f, ",");
+                        }
+                        let _ = write!(f, "{}", quant_field[by * xsize_blocks + bx]);
+                    }
+                    let _ = writeln!(f);
+                }
+                eprintln!("DIAG: wrote {prefix}_qf.csv ({xsize_blocks}x{ysize_blocks})");
+            }
+        }
+
         // CfL pass 2: recompute CfL map using actual AC strategies and per-block
         // quantization weighting. Uses the same FindBestMultiplier as pass 1 but
         // with strategy-specific DCTs and quant-weighted coefficients.
