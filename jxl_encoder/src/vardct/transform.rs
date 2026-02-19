@@ -634,13 +634,13 @@ impl VarDctEncoder {
                 {
                     let quant_idx = by * xsize_blocks + bx;
                     let mut quant_int = quant_field[quant_idx] as i32;
-                    if self.effort >= 5 {
+                    if self.profile.adjust_quant_ac {
                         // effort >= Hare: run AdjustQuantBlockAC for all 3 channels
                         let orig_qac = params.scale * quant_int as f32;
-                        thresholds_y = [0.58f32, 0.64, 0.64, 0.64];
+                        thresholds_y = self.profile.adjust_thresholds;
                         let mut max_quant = quant_int;
                         for &c in &[1usize, 0, 2] {
-                            let mut thres = [0.58f32, 0.64, 0.64, 0.64];
+                            let mut thres = self.profile.adjust_thresholds;
                             let mut quant_c = quant_int;
                             let qm_mul = if c == 0 {
                                 x_qm_mul
@@ -700,7 +700,7 @@ impl VarDctEncoder {
                     } else {
                         // effort < Hare: fixed thresholds, no per-block adjustment
                         // (enc_group.cc:358-363)
-                        thresholds_y = [0.56f32, 0.62, 0.62, 0.62];
+                        thresholds_y = self.profile.fixed_thresholds_y;
                     }
                     qac = params.scale * quant_int as f32;
                 }

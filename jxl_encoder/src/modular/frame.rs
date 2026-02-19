@@ -38,6 +38,8 @@ pub struct FrameEncoderOptions {
     pub lossy_palette: bool,
     /// Encoder mode: Reference (match libjxl) or Experimental (own improvements).
     pub encoder_mode: crate::api::EncoderMode,
+    /// Effort profile with all effort-derived parameters.
+    pub profile: crate::effort::EffortProfile,
     /// Whether this frame is part of an animation (enables duration field in header).
     pub have_animation: bool,
     /// Duration of this frame in ticks (only used when have_animation is true).
@@ -62,6 +64,7 @@ impl Default for FrameEncoderOptions {
             lz77_method: Lz77Method::Rle,
             lossy_palette: false,
             encoder_mode: crate::api::EncoderMode::Reference,
+            profile: crate::effort::EffortProfile::lossless(7, crate::api::EncoderMode::Reference),
             have_animation: false,
             duration: 0,
             is_last: true,
@@ -185,7 +188,7 @@ impl FrameEncoder {
                 super::encode::write_modular_stream_with_squeeze_and_tree(
                     image,
                     &mut section_writer,
-                    self.options.effort,
+                    &self.options.profile,
                     self.options.enable_lz77,
                     self.options.lz77_method,
                 )?;
@@ -202,7 +205,7 @@ impl FrameEncoder {
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
-                    self.options.effort,
+                    &self.options.profile,
                     image.channels.len() >= 3,
                     self.options.enable_lz77,
                     self.options.lz77_method,
@@ -289,7 +292,7 @@ impl FrameEncoder {
                 super::encode::write_modular_stream_with_squeeze_and_tree(
                     image,
                     &mut section_writer,
-                    self.options.effort,
+                    &self.options.profile,
                     self.options.enable_lz77,
                     self.options.lz77_method,
                 )?;
@@ -309,7 +312,7 @@ impl FrameEncoder {
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
-                    self.options.effort,       // effort-dependent tree params
+                    &self.options.profile,     // effort-dependent tree params
                     image.channels.len() >= 3, // RCT for RGB
                     self.options.enable_lz77,
                     self.options.lz77_method,
@@ -398,7 +401,7 @@ impl FrameEncoder {
         let rct_type;
         let source_image = if has_rct {
             let (selected_rct, rct_image) =
-                super::encode::select_best_rct(image, self.options.effort);
+                super::encode::select_best_rct(image, self.options.profile.nb_rcts_to_try);
             rct_type = Some(selected_rct);
             transformed = rct_image;
             &transformed
@@ -432,7 +435,7 @@ impl FrameEncoder {
             write_global_modular_section_with_tree(
                 &group_images,
                 &mut lf_global_writer,
-                self.options.effort, // effort-dependent tree params
+                &self.options.profile, // effort-dependent tree params
                 rct_type,
                 self.options.enable_lz77,
                 self.options.lz77_method,
@@ -1269,7 +1272,7 @@ impl FrameEncoder {
         use super::tree::count_contexts;
         use super::tree_learn::{
             TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-            compute_gather_stride, gather_samples_strided,
+            compute_gather_stride_from_profile, gather_samples_strided,
         };
         use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
         use crate::entropy_coding::encode::{write_entropy_code_ans, write_tokens_ans};
@@ -1330,7 +1333,7 @@ impl FrameEncoder {
             .iter()
             .map(|ch| ch.width() * ch.height())
             .sum();
-        let stride = compute_gather_stride(total_pixels, self.options.effort);
+        let stride = compute_gather_stride_from_profile(total_pixels, &self.options.profile);
         let mut samples = TreeSamples::new();
 
         // Compute stream_id values matching the decoder's ModularStreamId formula.
@@ -1466,7 +1469,7 @@ impl FrameEncoder {
         } else {
             1.0
         };
-        let tree_params = TreeLearningParams::for_effort(self.options.effort)
+        let tree_params = TreeLearningParams::from_profile(&self.options.profile)
             .with_pixel_fraction(pixel_fraction)
             .with_total_pixels(total_pixels);
         let tree = compute_best_tree(&mut samples, &tree_params);
@@ -1776,7 +1779,7 @@ impl FrameEncoder {
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
-                    self.options.effort,
+                    &self.options.profile,
                     use_rct,
                     self.options.enable_lz77,
                     self.options.lz77_method,

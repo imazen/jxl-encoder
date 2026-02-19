@@ -92,30 +92,39 @@ pub struct TreeLearningParams {
 }
 
 impl TreeLearningParams {
-    /// Create tree learning parameters for the given effort level.
+    /// Create tree learning parameters from an [`EffortProfile`].
     ///
-    /// Matches libjxl's speed tier mapping (effort = 10 - speed_tier):
-    /// - effort 5 (Hare, speed_tier=5): 4 properties, 24 buckets, threshold 145
-    /// - effort 6 (Wombat, speed_tier=4): 5 properties, 32 buckets, threshold 131
-    /// - effort 7 (Squirrel, speed_tier=3): 7 properties, 48 buckets, threshold 117
-    /// - effort 8 (Kitten, speed_tier=2): 10 properties, 96 buckets, threshold 103
-    /// - effort 9-10 (Tortoise/Glacier): all properties, 256 buckets, threshold 89/75
+    /// Reads `tree_num_properties`, `tree_max_buckets`, and `tree_threshold_base`
+    /// from the profile instead of computing them from effort inline.
+    pub fn from_profile(profile: &crate::effort::EffortProfile) -> Self {
+        let order = PROP_ORDER_NO_SQUEEZE;
+        let num_props = (profile.tree_num_properties as usize).min(order.len());
+
+        Self {
+            properties: &order[..num_props],
+            max_property_values: profile.tree_max_buckets as usize,
+            split_threshold: profile.tree_threshold_base as f64,
+            max_nodes: 8192,
+            pixel_fraction: 1.0,
+        }
+    }
+
+    /// Create tree learning parameters for the given effort level (test use only).
+    ///
+    /// Production code should use [`from_profile`](Self::from_profile) instead.
+    #[cfg(test)]
     pub fn for_effort(effort: u8) -> Self {
         let order = PROP_ORDER_NO_SQUEEZE;
-        // speed_tier = 10 - effort (libjxl convention)
         let speed_tier = 10u8.saturating_sub(effort);
         let (num_props, max_property_values) = match effort {
-            0..=4 => (3, 16),        // Below Hare
-            5 => (4, 24),            // Hare
-            6 => (5, 32),            // Wombat
-            7 => (7, 48),            // Squirrel
-            8 => (10, 96),           // Kitten
-            _ => (order.len(), 256), // Tortoise/Glacier
+            0..=4 => (3, 16),
+            5 => (4, 24),
+            6 => (5, 32),
+            7 => (7, 48),
+            8 => (10, 96),
+            _ => (order.len(), 256),
         };
-
-        // libjxl formula: threshold = 75 + 14 * speed_tier
         let threshold_base = 75.0 + 14.0 * speed_tier as f64;
-
         let num_props = num_props.min(order.len());
 
         Self {
@@ -343,7 +352,7 @@ fn compute_spec_properties(
 /// Gather samples from all channels in an image for tree learning (no subsampling).
 ///
 /// For production use on large images, prefer `gather_samples_strided` with a stride
-/// computed by `compute_gather_stride` to avoid O(n^2) tree learning time.
+/// computed by `compute_gather_stride_from_profile` to avoid O(n^2) tree learning time.
 #[cfg(test)]
 pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id: u32) {
     gather_samples_strided(samples, image, group_id, 0, 1);
@@ -352,7 +361,7 @@ pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id:
 /// Gather samples with stride-based subsampling.
 ///
 /// When `stride > 1`, only every `stride`-th pixel in scan order is sampled.
-/// Use `compute_gather_stride` to determine the appropriate stride.
+/// Use `compute_gather_stride_from_profile` to determine the appropriate stride.
 pub fn gather_samples_strided(
     samples: &mut TreeSamples,
     image: &ModularImage,
@@ -371,28 +380,29 @@ pub fn gather_samples_strided(
     }
 }
 
-/// Maximum number of samples to gather for tree learning, per effort level.
+/// Compute maximum tree samples from an [`EffortProfile`].
 ///
-/// libjxl uses `nb_repeats = 0.5` at all efforts >= 5, meaning 50% of pixels per channel
-/// are sampled. For a 1024x1024 RGB image, that's ~1.57M samples from 3.1M total pixels.
-///
-/// We use a fraction-based approach: at effort 7+, sample 50% of total pixels (matching
-/// libjxl's nb_repeats=0.5). At lower efforts, use smaller fixed caps for speed.
-pub fn max_tree_samples(effort: u8, total_pixels: usize) -> usize {
-    match effort {
-        0..=4 => 32_768,
-        5..=6 => 65_536,
-        // effort 7+: match libjxl's nb_repeats=0.5 (50% of pixels)
-        _ => (total_pixels / 2).max(65_536),
+/// Uses `tree_max_samples_fixed` (when > 0) or `tree_sample_fraction` (when > 0).
+pub fn max_tree_samples_from_profile(
+    profile: &crate::effort::EffortProfile,
+    total_pixels: usize,
+) -> usize {
+    if profile.tree_sample_fraction > 0.0 {
+        // Fraction-based: e.g. 50% of pixels, min 65K
+        ((total_pixels as f32 * profile.tree_sample_fraction) as usize).max(65_536)
+    } else if profile.tree_max_samples_fixed > 0 {
+        profile.tree_max_samples_fixed as usize
+    } else {
+        32_768
     }
 }
 
-/// Compute the stride for subsampling based on total pixel count and effort level.
-///
-/// Call this with the total pixel count across ALL images/groups that will
-/// be gathered, then pass the stride to `gather_samples_strided`.
-pub fn compute_gather_stride(total_pixels: usize, effort: u8) -> usize {
-    let max_samples = max_tree_samples(effort, total_pixels);
+/// Compute the stride for subsampling from an [`EffortProfile`].
+pub fn compute_gather_stride_from_profile(
+    total_pixels: usize,
+    profile: &crate::effort::EffortProfile,
+) -> usize {
+    let max_samples = max_tree_samples_from_profile(profile, total_pixels);
     if total_pixels > max_samples {
         total_pixels.div_ceil(max_samples)
     } else {

@@ -16,6 +16,7 @@ pub mod bit_writer;
 pub mod color;
 pub mod container;
 pub mod debug_rect;
+pub mod effort;
 pub mod entropy_coding;
 pub mod error;
 pub mod headers;
@@ -33,6 +34,7 @@ pub use api::{
     EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method,
     PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
+pub use effort::EffortProfile;
 pub use vardct::splines::{Spline, SplinePoint};
 
 /// Group dimension in pixels (256x256 groups).

@@ -9,6 +9,7 @@
 
 use super::ac_strategy::*;
 use crate::debug_rect;
+use crate::effort::EffortProfile;
 
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub(super) fn find_best_16x16_transform(
@@ -33,43 +34,27 @@ pub(super) fn find_best_16x16_transform(
     // Pass 1.0 for normal (aligned) evaluation. Pass < 1.0 for non-aligned
     // pass to raise the bar for multi-block transforms.
     favor_single_mul: f32,
+    profile: &EffortProfile,
 ) {
     // In pixel-domain mode (mask1x1.is_some()), entropy_mul is applied internally
     // by estimate_entropy_full using fixed values per transform. External multipliers
     // are 1.0. In coefficient-domain mode, use libjxl-tiny distance-dependent multipliers.
     let use_pixel_domain = mask1x1.is_some();
 
-    // Distance-dependent multipliers (from libjxl-tiny) - only used in coefficient-domain mode
+    // Distance-dependent multipliers - only used in coefficient-domain mode.
+    // Constants from EffortProfile (libjxl enc_ac_strategy.cc:790-818).
     let (mul8x8, mul16x8, mul16x16, mul4x8, mul4x4) = if use_pixel_domain {
         // In pixel-domain mode, entropy_mul is handled internally. No external multiplier.
         (1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32, 1.0_f32)
     } else {
-        let k8x8mul1: f32 = -0.55 * 0.75;
-        let k8x8mul2: f32 = 1.073_575_8 * 0.75;
-        let k8x8base: f32 = 1.4;
-        let m8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
-
-        let k8x16mul1: f32 = -0.55;
-        let k8x16mul2: f32 = 0.901_958_8;
-        let k8x16base: f32 = 1.6;
-        let m16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
-
-        let k16x16mul1: f32 = -0.65;
-        let k16x16mul2: f32 = 0.88;
-        let k16x16base: f32 = 1.8;
-        let m16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
-
-        let k4x8mul1: f32 = -0.50 * 0.75;
-        let k4x8mul2: f32 = 0.88;
-        let k4x8base: f32 = 1.3;
-        let m4x8 = k4x8mul2 + k4x8mul1 / (distance + k4x8base);
-
-        let k4x4mul1: f32 = -0.45 * 0.75;
-        let k4x4mul2: f32 = 0.85;
-        let k4x4base: f32 = 1.2;
-        let m4x4 = k4x4mul2 + k4x4mul1 / (distance + k4x4base);
-
-        (m8x8, m16x8, m16x16, m4x8, m4x4)
+        let compute_mul = |k: (f32, f32, f32)| k.1 + k.0 / (distance + k.2);
+        (
+            compute_mul(profile.k8x8),
+            compute_mul(profile.k16x8),
+            compute_mul(profile.k16x16),
+            compute_mul(profile.k4x8),
+            compute_mul(profile.k4x4),
+        )
     };
 
     // Base cost added for DCT8 transforms (from libjxl-tiny)
@@ -81,14 +66,13 @@ pub(super) fn find_best_16x16_transform(
     // NOT as post-hoc cost multipliers (which would incorrectly scale loss too).
 
     // kFavor2X2AtHighQuality: bonus for IDENTITY/DCT2X2 at distance < 5.0.
-    // Matches libjxl enc_ac_strategy.cc:585-590: -0.4 * ((5-d)/5)^2
-    // AdjustQuantBlockAC is now implemented, which prevents over-selection.
+    // Matches libjxl enc_ac_strategy.cc:585-590.
     let favor_weight = if distance < 5.0 {
         ((5.0 - distance) / 5.0_f32).powi(2)
     } else {
         0.0
     };
-    let favor_2x2_adjust = -0.4 * favor_weight; // matches libjxl
+    let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
 
     // kAvoidEntropyOfTransforms: penalty for non-DCT/non-2x2/non-IDENTITY at distance > 4.0
     let avoid_transforms_adjust = if distance > 4.0 {
@@ -97,13 +81,18 @@ pub(super) fn find_best_16x16_transform(
         } else {
             1.0
         };
-        0.5 * mul // positive = increases entropy_mul = higher cost
+        profile.k_avoid_transforms_base * mul
     } else {
         0.0
     };
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
+    let cost_bases = (
+        profile.k_info_loss_mul_base,
+        profile.k_zeros_mul_base,
+        profile.k_cost_delta_base,
+    );
 
     // Evaluate four 8×8 blocks with DCT8, DCT4X8, DCT8X4, DCT4X4, IDENTITY, DCT2X2
     // Track entropy and best strategy for each block
@@ -138,6 +127,7 @@ pub(super) fn find_best_16x16_transform(
                         mask1x1,
                         mask1x1_stride,
                         $adjust,
+                        cost_bases,
                         scratch,
                     )
                 };
@@ -224,6 +214,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_16x8_right = mul16x8
@@ -242,6 +233,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
 
@@ -262,6 +254,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_8x16_bottom = mul16x8
@@ -280,6 +273,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
 
@@ -300,6 +294,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
 
@@ -470,6 +465,7 @@ pub(super) fn find_best_32x32_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
     scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
 ) -> bool {
     // Large transforms (32x32, 32x16, 16x32) average large pixel blocks, which
     // works well for smooth content but produces blur on high-contrast edges.
@@ -497,6 +493,7 @@ pub(super) fn find_best_32x32_transform(
                     ac_strategy,
                     scratch,
                     1.0, // aligned pass: no single-block favoritism
+                    profile,
                 );
             }
         }
@@ -508,6 +505,11 @@ pub(super) fn find_best_32x32_transform(
     // using libjxl's static constants (1.48 for DCT32x32, 1.49 for DCT32x16).
     // In coefficient-domain mode, use distance-dependent multipliers.
     let use_pixel_domain = mask1x1.is_some();
+    let cost_bases = (
+        profile.k_info_loss_mul_base,
+        profile.k_zeros_mul_base,
+        profile.k_cost_delta_base,
+    );
     let (mul32x32, mul32x16) = if use_pixel_domain {
         (1.0_f32, 1.0_f32)
     } else {
@@ -543,6 +545,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
 
@@ -564,6 +567,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_32x16_1 = mul32x16
@@ -582,6 +586,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
@@ -604,6 +609,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_16x32_1 = mul32x16
@@ -622,6 +628,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
@@ -647,6 +654,7 @@ pub(super) fn find_best_32x32_transform(
                 ac_strategy,
                 scratch,
                 1.0, // aligned pass: no single-block favoritism
+                profile,
             );
         }
     }
@@ -708,6 +716,7 @@ pub(super) fn find_best_32x32_transform(
                 mask1x1,
                 mask1x1_stride,
                 0.0,
+                cost_bases,
                 scratch,
             );
             cost_sub += base + mul * e;
@@ -799,6 +808,7 @@ pub(super) fn find_best_64x64_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
     scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
 ) {
     // DCT64 transforms only at d >= 3.0
     if distance < 3.0 {
@@ -822,6 +832,7 @@ pub(super) fn find_best_64x64_transform(
                     mask1x1_stride,
                     ac_strategy,
                     scratch,
+                    profile,
                 );
             }
         }
@@ -832,6 +843,11 @@ pub(super) fn find_best_64x64_transform(
     // using libjxl's static constants (2.25 for DCT64x64, 2.25 for DCT64x32).
     // In coefficient-domain mode, use distance-dependent multipliers.
     let use_pixel_domain = mask1x1.is_some();
+    let cost_bases = (
+        profile.k_info_loss_mul_base,
+        profile.k_zeros_mul_base,
+        profile.k_cost_delta_base,
+    );
     let (mul64x64, mul64x32) = if use_pixel_domain {
         (1.0_f32, 1.0_f32)
     } else {
@@ -867,6 +883,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
 
@@ -889,6 +906,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_64x32_1 = mul64x32
@@ -907,6 +925,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
@@ -930,6 +949,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_32x64_1 = mul64x32
@@ -948,6 +968,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1,
             mask1x1_stride,
             0.0,
+            cost_bases,
             scratch,
         );
     let entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
@@ -972,6 +993,7 @@ pub(super) fn find_best_64x64_transform(
                 mask1x1_stride,
                 ac_strategy,
                 scratch,
+                profile,
             );
         }
     }
@@ -1042,6 +1064,7 @@ pub(super) fn find_best_64x64_transform(
                 mask1x1,
                 mask1x1_stride,
                 0.0,
+                cost_bases,
                 scratch,
             );
             cost_sub += base + mul * e;

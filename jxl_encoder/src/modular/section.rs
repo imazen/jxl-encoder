@@ -269,7 +269,7 @@ pub fn write_global_modular_section(
 pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
     writer: &mut BitWriter,
-    effort: u8,
+    profile: &crate::effort::EffortProfile,
     rct_type: Option<RctType>,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
@@ -278,7 +278,7 @@ pub fn write_global_modular_section_with_tree(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride, gather_samples_strided,
+        compute_gather_stride_from_profile, gather_samples_strided,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -290,7 +290,7 @@ pub fn write_global_modular_section_with_tree(
         .flat_map(|img| img.channels.iter())
         .map(|ch| ch.width() * ch.height())
         .sum();
-    let stride = compute_gather_stride(total_pixels, effort);
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
     for (group_idx, group_image) in images.iter().enumerate() {
         gather_samples_strided(&mut samples, group_image, group_idx as u32, 0, stride);
@@ -302,7 +302,7 @@ pub fn write_global_modular_section_with_tree(
     } else {
         1.0
     };
-    let params = TreeLearningParams::for_effort(effort)
+    let params = TreeLearningParams::from_profile(profile)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &params);

@@ -843,6 +843,7 @@ impl VarDctEncoder {
             xsize_blocks,
             ysize_blocks,
             distance_for_iqf,
+            self.profile.k_ac_quant,
         );
 
         let mut params =
@@ -898,7 +899,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
-                self.effort,
+                &self.profile,
             )
         };
 
