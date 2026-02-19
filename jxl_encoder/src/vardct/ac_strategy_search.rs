@@ -137,18 +137,46 @@ pub(super) fn find_best_16x16_transform(
             let e8 = eval!(RAW_STRATEGY_DCT8, 0.0);
             let cost8 = base_cost_8x8 + mul8x8 * e8;
 
-            // DCT4X8 and DCT8X4
-            let e4x8 = eval!(RAW_STRATEGY_DCT4X8, avoid_transforms_adjust);
-            let base_cost_4x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x8 };
-            let cost4x8 = base_cost_4x8 + mul4x8 * e4x8;
+            // Pick the best single-block strategy
+            *entropy_val = cost8;
+            *best_strat = RAW_STRATEGY_DCT8;
 
-            let e8x4 = eval!(RAW_STRATEGY_DCT8X4, avoid_transforms_adjust);
-            let cost8x4 = base_cost_4x8 + mul4x8 * e8x4;
+            // DCT4X8, DCT8X4, DCT4X4, AFV: gated by try_dct4x8_afv (effort >= 6 in libjxl)
+            if profile.try_dct4x8_afv {
+                let e4x8 = eval!(RAW_STRATEGY_DCT4X8, avoid_transforms_adjust);
+                let base_cost_4x8 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x8 };
+                let cost4x8 = base_cost_4x8 + mul4x8 * e4x8;
 
-            // DCT4X4
-            let e4x4 = eval!(RAW_STRATEGY_DCT4X4, avoid_transforms_adjust);
-            let base_cost_4x4 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x4 };
-            let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
+                let e8x4 = eval!(RAW_STRATEGY_DCT8X4, avoid_transforms_adjust);
+                let cost8x4 = base_cost_4x8 + mul4x8 * e8x4;
+
+                let e4x4 = eval!(RAW_STRATEGY_DCT4X4, avoid_transforms_adjust);
+                let base_cost_4x4 = if use_pixel_domain { 0.0 } else { 3.0 * mul4x4 };
+                let cost4x4 = base_cost_4x4 + mul4x4 * e4x4;
+
+                if cost4x8 < *entropy_val {
+                    *entropy_val = cost4x8;
+                    *best_strat = RAW_STRATEGY_DCT4X8;
+                }
+                if cost8x4 < *entropy_val {
+                    *entropy_val = cost8x4;
+                    *best_strat = RAW_STRATEGY_DCT8X4;
+                }
+                if cost4x4 < *entropy_val {
+                    *entropy_val = cost4x4;
+                    *best_strat = RAW_STRATEGY_DCT4X4;
+                }
+
+                // AFV0-3: corner strategies, one per block position in the 2x2 group
+                let afv_strategy = RAW_STRATEGY_AFV0 + (dy * 2 + dx) as u8;
+                let e_afv = eval!(afv_strategy, avoid_transforms_adjust);
+                let base_cost_afv = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
+                let cost_afv = base_cost_afv + mul8x8 * e_afv;
+                if cost_afv < *entropy_val {
+                    *entropy_val = cost_afv;
+                    *best_strat = afv_strategy;
+                }
+            }
 
             // IDENTITY (kFavor2X2 bonus at low distance)
             let e_identity = eval!(RAW_STRATEGY_IDENTITY, favor_2x2_adjust);
@@ -160,22 +188,6 @@ pub(super) fn find_best_16x16_transform(
             let base_cost_dct2 = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
             let cost_dct2 = base_cost_dct2 + mul8x8 * e_dct2;
 
-            // Pick the best single-block strategy
-            *entropy_val = cost8;
-            *best_strat = RAW_STRATEGY_DCT8;
-
-            if cost4x8 < *entropy_val {
-                *entropy_val = cost4x8;
-                *best_strat = RAW_STRATEGY_DCT4X8;
-            }
-            if cost8x4 < *entropy_val {
-                *entropy_val = cost8x4;
-                *best_strat = RAW_STRATEGY_DCT8X4;
-            }
-            if cost4x4 < *entropy_val {
-                *entropy_val = cost4x4;
-                *best_strat = RAW_STRATEGY_DCT4X4;
-            }
             if cost_identity < *entropy_val {
                 *entropy_val = cost_identity;
                 *best_strat = RAW_STRATEGY_IDENTITY;
@@ -183,16 +195,6 @@ pub(super) fn find_best_16x16_transform(
             if cost_dct2 < *entropy_val {
                 *entropy_val = cost_dct2;
                 *best_strat = RAW_STRATEGY_DCT2X2;
-            }
-
-            // AFV0-3: corner strategies, one per block position in the 2x2 group
-            let afv_strategy = RAW_STRATEGY_AFV0 + (dy * 2 + dx) as u8;
-            let e_afv = eval!(afv_strategy, avoid_transforms_adjust);
-            let base_cost_afv = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
-            let cost_afv = base_cost_afv + mul8x8 * e_afv;
-            if cost_afv < *entropy_val {
-                *entropy_val = cost_afv;
-                *best_strat = afv_strategy;
             }
         }
     }

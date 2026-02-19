@@ -237,6 +237,20 @@ impl EncoderPrecomputed {
             )
         };
 
+        // CfL two-pass refinement after AC strategy selection
+        let mut cfl_map = cfl_map;
+        if profile.cfl_two_pass && cfl_enabled {
+            super::chroma_from_luma::refine_cfl_map(
+                &mut cfl_map,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+            );
+        }
+
         Self {
             width,
             height,

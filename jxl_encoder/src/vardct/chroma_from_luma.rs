@@ -208,6 +208,159 @@ pub fn compute_cfl_map(
     }
 }
 
+/// Refine a CfL map by testing neighboring values (±1) for each tile.
+///
+/// For each tile, evaluates the sum of squared residuals at the current
+/// ytox/ytob values and their ±1 neighbors, picking the combination that
+/// minimizes residual energy. This second pass accounts for quantization
+/// effects that the initial least-squares fit doesn't capture.
+///
+/// Called when `cfl_two_pass` is enabled (effort >= 7 in libjxl).
+pub fn refine_cfl_map(
+    cfl_map: &mut CflMap,
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+) {
+    let xsize_tiles = cfl_map.xsize_tiles;
+    let ysize_tiles = cfl_map.ysize_tiles;
+
+    // Pre-compute inverse quant weights
+    let qw_x = quant::quant_weights(0, 0);
+    let qw_b = quant::quant_weights(0, 2);
+    let mut inv_qm_x = [0.0f32; DCT_BLOCK_SIZE];
+    let mut inv_qm_b = [0.0f32; DCT_BLOCK_SIZE];
+    for i in 0..DCT_BLOCK_SIZE {
+        inv_qm_x[i] = 1.0 / qw_x[i];
+        inv_qm_b[i] = 1.0 / qw_b[i];
+    }
+
+    let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
+    let mut dct_y_coeffs = vec![0.0f32; max_coeffs_per_tile];
+    let mut dct_x_coeffs = vec![0.0f32; max_coeffs_per_tile];
+    let mut dct_b_coeffs = vec![0.0f32; max_coeffs_per_tile];
+
+    for ty in 0..ysize_tiles {
+        for tx in 0..xsize_tiles {
+            let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
+            let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
+            let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+            let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+
+            let mut num_ac = 0usize;
+
+            // DCT all blocks in this tile and weight by inverse quant
+            for by in tile_by0..tile_by1 {
+                for bx in tile_bx0..tile_bx1 {
+                    let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
+
+                    let x0 = bx * BLOCK_DIM;
+                    for dy in 0..BLOCK_DIM {
+                        let src = (by * BLOCK_DIM + dy) * stride + x0;
+                        let dst = dy * BLOCK_DIM;
+                        block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
+                        block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
+                        block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
+                    }
+
+                    let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut dct_x = [0.0f32; DCT_BLOCK_SIZE];
+                    let mut dct_b = [0.0f32; DCT_BLOCK_SIZE];
+                    dct_8x8(&block_y, &mut dct_y);
+                    dct_8x8(&block_x, &mut dct_x);
+                    dct_8x8(&block_b, &mut dct_b);
+
+                    // Zero DC
+                    dct_y[0] = 0.0;
+                    dct_x[0] = 0.0;
+                    dct_b[0] = 0.0;
+
+                    // Weight by inverse quant matrices
+                    for i in 0..DCT_BLOCK_SIZE {
+                        dct_y_coeffs[num_ac + i] = dct_y[i] * inv_qm_x[i];
+                        dct_x_coeffs[num_ac + i] = dct_x[i] * inv_qm_x[i];
+                        dct_b_coeffs[num_ac + i] = dct_b[i] * inv_qm_b[i];
+                    }
+                    num_ac += DCT_BLOCK_SIZE;
+                }
+            }
+
+            let tile_idx = ty * xsize_tiles + tx;
+            let cur_ytox = cfl_map.ytox[tile_idx];
+            let cur_ytob = cfl_map.ytob[tile_idx];
+
+            // Try ytox: current, current-1, current+1
+            let best_ytox = refine_value(
+                cur_ytox,
+                &dct_y_coeffs[..num_ac],
+                &dct_x_coeffs[..num_ac],
+                0.0, // base for X
+            );
+
+            // Try ytob: current, current-1, current+1
+            // For B channel, we also need Y coeffs weighted by B quant
+            let mut dct_y_bweighted = vec![0.0f32; num_ac];
+            {
+                let mut idx = 0;
+                for by in tile_by0..tile_by1 {
+                    for bx in tile_bx0..tile_bx1 {
+                        let _ = (by, bx);
+                        for i in 0..DCT_BLOCK_SIZE {
+                            dct_y_bweighted[idx + i] =
+                                dct_y_coeffs[idx + i] * inv_qm_b[i] / inv_qm_x[i];
+                        }
+                        idx += DCT_BLOCK_SIZE;
+                    }
+                }
+            }
+            let best_ytob = refine_value(
+                cur_ytob,
+                &dct_y_bweighted[..num_ac],
+                &dct_b_coeffs[..num_ac],
+                1.0, // base for B
+            );
+
+            cfl_map.ytox[tile_idx] = best_ytox;
+            cfl_map.ytob[tile_idx] = best_ytob;
+        }
+    }
+}
+
+/// Try value, value-1, value+1 and return the one with lowest residual cost.
+fn refine_value(current: i8, y_coeffs: &[f32], c_coeffs: &[f32], base: f32) -> i8 {
+    let candidates = [
+        current,
+        current.saturating_sub(1),
+        current.saturating_add(1),
+    ];
+
+    let mut best_val = current;
+    let mut best_cost = f32::MAX;
+
+    for &val in &candidates {
+        let ratio = base + val as f32 * (1.0 / 84.0);
+        let cost: f32 = y_coeffs
+            .iter()
+            .zip(c_coeffs.iter())
+            .map(|(&y, &c)| {
+                let residual = c - ratio * y;
+                residual * residual
+            })
+            .sum();
+        if cost < best_cost {
+            best_cost = cost;
+            best_val = val;
+        }
+    }
+
+    best_val
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1334,6 +1334,17 @@ impl FrameEncoder {
             .map(|ch| ch.width() * ch.height())
             .sum();
         let stride = compute_gather_stride_from_profile(total_pixels, &self.options.profile);
+
+        // Find best WP parameters (effort-dependent search)
+        let wp_params = if self.options.profile.wp_num_param_sets > 0 {
+            super::predictor::find_best_wp_params(
+                &squeezed.channels,
+                self.options.profile.wp_num_param_sets,
+            )
+        } else {
+            super::predictor::WeightedPredictorParams::default()
+        };
+
         let mut samples = TreeSamples::new();
 
         // Compute stream_id values matching the decoder's ModularStreamId formula.
@@ -1354,7 +1365,7 @@ impl FrameEncoder {
             has_alpha: false,
         };
         // group_id=0 for global section, channel_offset=0
-        gather_samples_strided(&mut samples, &global_sub, 0, 0, stride);
+        gather_samples_strided(&mut samples, &global_sub, 0, 0, stride, &wp_params);
 
         // 3b: LfGroup channels — crop to each LfGroup rect
         let num_lf_groups_x = self.width.div_ceil(lf_group_dim);
@@ -1425,6 +1436,7 @@ impl FrameEncoder {
                 (stream_id_lf_base + lg) as u32,
                 0,
                 stride,
+                &wp_params,
             );
         }
 
@@ -1460,6 +1472,7 @@ impl FrameEncoder {
                 (stream_id_hf_base + g) as u32,
                 0,
                 stride,
+                &wp_params,
             );
         }
 
@@ -1485,7 +1498,7 @@ impl FrameEncoder {
 
         // Step 5: Collect residuals per section with the learned tree
         // Global section tokens
-        let mut global_tokens = collect_residuals_with_tree(&global_sub, &tree, 0);
+        let mut global_tokens = collect_residuals_with_tree(&global_sub, &tree, 0, &wp_params);
 
         // LfGroup section tokens
         let mut lf_group_tokens: Vec<Vec<AnsToken>> = Vec::with_capacity(num_lf_groups);
@@ -1500,8 +1513,12 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            let tokens =
-                collect_residuals_with_tree(&sub_image, &tree, (stream_id_lf_base + lg) as u32);
+            let tokens = collect_residuals_with_tree(
+                &sub_image,
+                &tree,
+                (stream_id_lf_base + lg) as u32,
+                &wp_params,
+            );
             lf_group_tokens.push(tokens);
         }
 
@@ -1518,8 +1535,12 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            let tokens =
-                collect_residuals_with_tree(&sub_image, &tree, (stream_id_hf_base + g) as u32);
+            let tokens = collect_residuals_with_tree(
+                &sub_image,
+                &tree,
+                (stream_id_hf_base + g) as u32,
+                &wp_params,
+            );
             pass_group_tokens.push(tokens);
         }
 
@@ -1636,7 +1657,7 @@ impl FrameEncoder {
 
         // GroupHeader for global modular stream — includes RCT (if RGB) + squeeze transform
         lf_global_writer.write(1, 1)?; // use_global_tree = true
-        lf_global_writer.write(1, 1)?; // wp_params.default_wp = true
+        super::encode::write_wp_header(&mut lf_global_writer, &wp_params)?;
         if has_rct {
             // nb_transforms = 2: U32 BitsOffset(4,2), offset=0
             lf_global_writer.write(2, 2)?;
@@ -1678,7 +1699,7 @@ impl FrameEncoder {
 
             // GroupHeader
             lg_writer.write(1, 1)?; // use_global_tree = true
-            lg_writer.write(1, 1)?; // wp_params.default_wp = true
+            super::encode::write_wp_header(&mut lg_writer, &wp_params)?;
             lg_writer.write(2, 0)?; // nb_transforms = 0
 
             write_tokens_ans(lg_tokens, &code, lz77_params.as_ref(), &mut lg_writer)?;
@@ -1708,7 +1729,7 @@ impl FrameEncoder {
 
             // GroupHeader
             pg_writer.write(1, 1)?; // use_global_tree = true
-            pg_writer.write(1, 1)?; // wp_params.default_wp = true
+            super::encode::write_wp_header(&mut pg_writer, &wp_params)?;
             pg_writer.write(2, 0)?; // nb_transforms = 0
 
             write_tokens_ans(pg_tokens, &code, lz77_params.as_ref(), &mut pg_writer)?;

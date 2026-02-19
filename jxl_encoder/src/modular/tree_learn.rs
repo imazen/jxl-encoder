@@ -11,7 +11,9 @@
 use core::cmp::Ordering;
 
 use super::channel::{Channel, ModularImage};
-use super::predictor::{Neighbors, Predictor, WeightedPredictorState, pack_signed};
+use super::predictor::{
+    Neighbors, Predictor, WeightedPredictorParams, WeightedPredictorState, pack_signed,
+};
 use super::tree::{PropertyDecisionNode, Tree, assign_sequential_contexts, validate_tree_djxl};
 use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
@@ -355,7 +357,14 @@ fn compute_spec_properties(
 /// computed by `compute_gather_stride_from_profile` to avoid O(n^2) tree learning time.
 #[cfg(test)]
 pub fn gather_samples(samples: &mut TreeSamples, image: &ModularImage, group_id: u32) {
-    gather_samples_strided(samples, image, group_id, 0, 1);
+    gather_samples_strided(
+        samples,
+        image,
+        group_id,
+        0,
+        1,
+        &WeightedPredictorParams::default(),
+    );
 }
 
 /// Gather samples with stride-based subsampling.
@@ -368,6 +377,7 @@ pub fn gather_samples_strided(
     group_id: u32,
     channel_offset: u32,
     stride: usize,
+    wp_params: &WeightedPredictorParams,
 ) {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         gather_channel_samples(
@@ -376,6 +386,7 @@ pub fn gather_samples_strided(
             ch_idx as u32 + channel_offset,
             group_id,
             stride,
+            wp_params,
         );
     }
 }
@@ -420,6 +431,7 @@ fn gather_channel_samples(
     channel_idx: u32,
     group_id: u32,
     stride: usize,
+    wp_params: &WeightedPredictorParams,
 ) {
     let width = channel.width();
     let height = channel.height();
@@ -428,7 +440,7 @@ fn gather_channel_samples(
     }
 
     // WP state for computing weighted predictions and property 15
-    let mut wp_state = WeightedPredictorState::with_defaults(width);
+    let mut wp_state = WeightedPredictorState::new(wp_params, width);
 
     // prev_gradient tracks the gradient from the previous pixel in scan order.
     // Property 8 = W - prev_gradient. At the start of each row, prev_gradient = 0.
@@ -1413,8 +1425,9 @@ pub fn collect_residuals_with_tree(
     image: &ModularImage,
     tree: &Tree,
     group_id: u32,
+    wp_params: &WeightedPredictorParams,
 ) -> Vec<crate::entropy_coding::token::Token> {
-    collect_residuals_with_tree_offset(image, tree, group_id, 0)
+    collect_residuals_with_tree_offset(image, tree, group_id, 0, wp_params)
 }
 
 /// Collect residuals using a learned tree, with a channel index offset.
@@ -1427,6 +1440,7 @@ pub fn collect_residuals_with_tree_offset(
     tree: &Tree,
     group_id: u32,
     channel_offset: u32,
+    wp_params: &WeightedPredictorParams,
 ) -> Vec<crate::entropy_coding::token::Token> {
     use crate::entropy_coding::token::Token as AnsToken;
 
@@ -1439,7 +1453,7 @@ pub fn collect_residuals_with_tree_offset(
             continue;
         }
 
-        let mut wp_state = WeightedPredictorState::with_defaults(width);
+        let mut wp_state = WeightedPredictorState::new(wp_params, width);
         let mut prev_gradient: i32;
 
         for y in 0..height {
@@ -1624,7 +1638,8 @@ mod tests {
         }];
 
         let image = ModularImage::from_gray8(&[100u8; 16], 4, 4).unwrap();
-        let tokens = collect_residuals_with_tree(&image, &tree, 0);
+        let tokens =
+            collect_residuals_with_tree(&image, &tree, 0, &WeightedPredictorParams::default());
 
         assert_eq!(tokens.len(), 16);
         // All tokens should have context 0

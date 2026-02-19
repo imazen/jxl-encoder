@@ -117,6 +117,8 @@ pub enum GlobalModularState {
         code: OwnedAnsEntropyCode,
         /// The learned MA tree for per-pixel predictor/context selection.
         tree: super::tree::Tree,
+        /// WP parameters used during tree learning and residual collection.
+        wp_params: super::predictor::WeightedPredictorParams,
     },
 }
 
@@ -275,6 +277,8 @@ pub fn write_global_modular_section_with_tree(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
+    use super::encode::write_wp_header;
+    use super::predictor::WeightedPredictorParams;
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
@@ -283,6 +287,18 @@ pub fn write_global_modular_section_with_tree(
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
     use crate::entropy_coding::lz77::write_lz77_header;
+
+    // Step 0: Find best WP parameters (effort-dependent search)
+    let all_channels: Vec<&super::channel::Channel> =
+        images.iter().flat_map(|img| img.channels.iter()).collect();
+    let wp_params = if profile.wp_num_param_sets > 0 {
+        // Collect channel references for cost estimation
+        let channels_for_wp: Vec<super::channel::Channel> =
+            all_channels.iter().map(|c| (*c).clone()).collect();
+        super::predictor::find_best_wp_params(&channels_for_wp, profile.wp_num_param_sets)
+    } else {
+        WeightedPredictorParams::default()
+    };
 
     // Step 1: Gather samples from all groups (with subsampling for large images)
     let total_pixels: usize = images
@@ -293,7 +309,14 @@ pub fn write_global_modular_section_with_tree(
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
     for (group_idx, group_image) in images.iter().enumerate() {
-        gather_samples_strided(&mut samples, group_image, group_idx as u32, 0, stride);
+        gather_samples_strided(
+            &mut samples,
+            group_image,
+            group_idx as u32,
+            0,
+            stride,
+            &wp_params,
+        );
     }
 
     // Step 2: Learn tree with effort-dependent parameters
@@ -323,7 +346,8 @@ pub fn write_global_modular_section_with_tree(
     // Step 3: Collect residuals from all groups with tree
     let mut all_tokens = Vec::new();
     for (group_idx, group_image) in images.iter().enumerate() {
-        let group_tokens = collect_residuals_with_tree(group_image, &tree, group_idx as u32);
+        let group_tokens =
+            collect_residuals_with_tree(group_image, &tree, group_idx as u32, &wp_params);
         all_tokens.extend(group_tokens);
     }
 
@@ -368,12 +392,16 @@ pub fn write_global_modular_section_with_tree(
 
     // GroupHeader (global modular group)
     writer.write(1, 1)?; // use_global_tree = true
-    writer.write(1, 1)?; // wp_params.default_wp = true
+    write_wp_header(writer, &wp_params)?;
     write_global_transforms(writer, rct_type)?;
 
     writer.zero_pad_to_byte();
 
-    Ok(GlobalModularState::AnsWithTree { code, tree })
+    Ok(GlobalModularState::AnsWithTree {
+        code,
+        tree,
+        wp_params,
+    })
 }
 
 /// Write num_transforms + optional RCT transform for the global GroupHeader.
@@ -433,7 +461,15 @@ pub fn write_group_modular_section(
 
     // GroupHeader
     writer.write(1, 1)?; // use_global_tree = true
-    writer.write(1, 1)?; // wp_header.all_default = true
+    // Write WP params matching the global section's params
+    match state {
+        GlobalModularState::AnsWithTree { wp_params, .. } => {
+            super::encode::write_wp_header(writer, wp_params)?;
+        }
+        _ => {
+            writer.write(1, 1)?; // wp_params.default_wp = true
+        }
+    }
     writer.write(2, 0)?; // num_transforms = 0
 
     match state {
@@ -479,9 +515,14 @@ pub fn write_group_modular_section(
             let tokens: Vec<AnsToken> = residuals.iter().map(|&r| AnsToken::new(0, r)).collect();
             write_tokens_ans(&tokens, code, None, writer)?;
         }
-        GlobalModularState::AnsWithTree { code, tree } => {
+        GlobalModularState::AnsWithTree {
+            code,
+            tree,
+            wp_params,
+        } => {
             // Collect residuals using the learned tree (multi-context)
-            let tokens = super::tree_learn::collect_residuals_with_tree(group_image, tree, 0);
+            let tokens =
+                super::tree_learn::collect_residuals_with_tree(group_image, tree, 0, wp_params);
             write_tokens_ans(&tokens, code, None, writer)?;
         }
     }

@@ -317,7 +317,7 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9506f854bc0d536c, // Updated: butteraugli loop off at e7 (matches libjxl)
+        0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
         349,                // lossy_defaults_rgb_32x32
     );
 }
@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        3244,               // lossy_defaults_rgb_48x48_noise
+        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
+        3269,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -357,8 +357,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0x9265f10ca66ae92e, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        653,                // lossy_defaults_rgb_13x17
+        0xba8f53c05670133c, // Updated: patch cost-benefit gating
+        656,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -377,8 +377,8 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x4ae3a20a0b7b4096, // Updated: butteraugli loop off at e7
-        785,                // lossy_rgba_32x32
+        0x8993f978dcb88d1f, // Updated: patch cost-benefit gating
+        786,                // lossy_rgba_32x32
     );
 }
 
@@ -397,7 +397,7 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0x63ddebb97c1c467d, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        0xf8e73551aabd215c, // Updated: patch cost-benefit gating
         341,                // lossy_rgb16_32x32
     );
 }
@@ -418,7 +418,7 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x10d494f850db0fb5, // Updated: butteraugli loop off at e7
+        0x099fbafbad085de5, // Updated: patch cost-benefit gating
         293,                // lossy_no_ans_huffman
     );
 }
@@ -439,8 +439,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x7cad1b06a4ad9196, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        371,                // lossy_no_gaborish
+        0x82b462945728c5a0, // Updated: patch cost-benefit gating
+        369,                // lossy_no_gaborish
     );
 }
 
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        3244,               // lossy_with_noise
+        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
+        3269,               // lossy_with_noise
     );
 }
 
@@ -481,7 +481,7 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x8ab07fad69675714, // Updated: butteraugli loop off at e7
+        0xbc4230ffa85dc40a, // Updated: patch cost-benefit gating
         349,                // lossy_no_error_diffusion
     );
 }
@@ -502,7 +502,7 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9506f854bc0d536c, // Updated: butteraugli loop off at e7
+        0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
         349,                // lossy_no_pixel_domain_loss
     );
 }
@@ -523,7 +523,7 @@ fn lossy_no_butteraugli() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9506f854bc0d536c,
+        0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
         349, // lossy_no_butteraugli
     );
 }
@@ -544,8 +544,8 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe048ea37aff41a53, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        418,                // lossy_force_dct8
+        0x8fffa0e078733d87, // Updated: patch cost-benefit gating
+        419,                // lossy_force_dct8
     );
 }
 
@@ -565,7 +565,7 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xf43f6fcfb44f0cd9, // Updated: butteraugli loop off at e7
+        0xd717df8d0daa8acf, // Updated: patch cost-benefit gating
         317,                // lossy_force_dct16x16
     );
 }
@@ -631,8 +631,8 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcea94d97bd9325c6, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        553,                // lossy_force_dct4x4
+        0xc9e6ba8f0dfcbe75, // Updated: patch cost-benefit gating
+        551,                // lossy_force_dct4x4
     );
 }
 
@@ -653,7 +653,7 @@ fn lossy_force_afv0() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x1a09ac618728d725,
+        0xd806f39e18d6a16b, // Updated: patch cost-benefit gating
         558, // lossy_force_afv0
     );
 }
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        3244,               // lossy_with_lz77_greedy
+        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
+        3269,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        3244,               // lossy_with_lz77_rle
+        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
+        3269,               // lossy_with_lz77_rle
     );
 }
 
@@ -717,7 +717,7 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x183a96813f848d08, // Updated: butteraugli loop off at e7
+        0x1f08929e3c53d92e, // Updated: patch cost-benefit gating
         400,                // lossy_distance_05
     );
 }
@@ -737,8 +737,8 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9422b4569cddac77, // Updated: pixel-domain entropy_mul fix removes double-counting
-        270,                // lossy_distance_3 (pixel-domain entropy_mul fix)
+        0x3feb9ad697f0bf9d, // Updated: patch cost-benefit gating
+        270,                // lossy_distance_3
     );
 }
 
@@ -767,7 +767,7 @@ fn lossy_all_off() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x869dcd8cef21fd5a, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        0xf7b7eef007f098c9, // Updated: patch cost-benefit gating
         403,                // lossy_all_off
     );
 }
@@ -787,7 +787,7 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xd59f85cadcf0c884, // Updated: butteraugli loop off at e7
+        0x03260f4e4006f0d0, // Updated: patch cost-benefit gating
         335,                // lossy_bgr8
     );
 }

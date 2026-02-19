@@ -848,7 +848,9 @@ impl VarDctEncoder {
 
         let mut params =
             DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
-        params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
+        if self.profile.chromacity_adjustment {
+            params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
+        }
 
         let mut quant_field =
             super::adaptive_quant::quantize_quant_field(&quant_field_float, params.inv_scale);
@@ -946,26 +948,27 @@ impl VarDctEncoder {
             &ac_strategy,
         );
 
-        let sharpness_map = if params.epf_iters > 0 && self.distance >= 0.5 {
-            let mask = mask1x1.unwrap_or_else(|| {
-                super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
-            });
-            Some(super::epf::compute_epf_sharpness(
-                [&xyb_x, &xyb_y, &xyb_b],
-                &transform_out.quant_dc,
-                &transform_out.quant_ac,
-                &quant_field,
-                &mask,
-                &params,
-                &cfl_map,
-                &ac_strategy,
-                self.enable_gaborish,
-                xsize_blocks,
-                ysize_blocks,
-            ))
-        } else {
-            None
-        };
+        let sharpness_map =
+            if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
+                let mask = mask1x1.unwrap_or_else(|| {
+                    super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
+                });
+                Some(super::epf::compute_epf_sharpness(
+                    [&xyb_x, &xyb_y, &xyb_b],
+                    &transform_out.quant_dc,
+                    &transform_out.quant_ac,
+                    &quant_field,
+                    &mask,
+                    &params,
+                    &cfl_map,
+                    &ac_strategy,
+                    self.enable_gaborish,
+                    xsize_blocks,
+                    ysize_blocks,
+                ))
+            } else {
+                None
+            };
 
         let strategy_counts = ac_strategy.strategy_histogram();
 
@@ -1730,7 +1733,7 @@ impl VarDctEncoder {
             BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
                 &all_dc_tokens,
                 dc_num_contexts,
-                self.enhanced_clustering,
+                self.profile.enhanced_clustering_vardct,
                 dc_lz77_params.as_ref(),
                 None,
             ))
@@ -1738,7 +1741,7 @@ impl VarDctEncoder {
             BuiltEntropyCode::Huffman(build_entropy_code_with_options(
                 &all_dc_tokens,
                 dc_num_contexts,
-                self.enhanced_clustering,
+                self.profile.enhanced_clustering_vardct,
                 dc_lz77_params.as_ref(),
             ))
         };
@@ -1765,7 +1768,7 @@ impl VarDctEncoder {
                 BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
                     &all_ac_tokens,
                     ac_num_contexts,
-                    self.enhanced_clustering,
+                    self.profile.enhanced_clustering_vardct,
                     ac_lz77_params_per_pass[pass].as_ref(),
                     None,
                 ))
@@ -1773,7 +1776,7 @@ impl VarDctEncoder {
                 BuiltEntropyCode::Huffman(build_entropy_code_with_options(
                     &all_ac_tokens,
                     ac_num_contexts,
-                    self.enhanced_clustering,
+                    self.profile.enhanced_clustering_vardct,
                     ac_lz77_params_per_pass[pass].as_ref(),
                 ))
             };
