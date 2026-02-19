@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
-        3449,               // lossy_defaults_rgb_48x48_noise
+        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        3244,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -357,7 +357,7 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0xf118369d7b822ad2, // Updated: butteraugli loop off at e7
+        0x9265f10ca66ae92e, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
         653,                // lossy_defaults_rgb_13x17
     );
 }
@@ -397,7 +397,7 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0x7e550f00df6767ea, // Updated: butteraugli loop off at e7
+        0x63ddebb97c1c467d, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
         341,                // lossy_rgb16_32x32
     );
 }
@@ -439,7 +439,7 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x786b9ec76dd02e63, // Updated: butteraugli loop off at e7
+        0x7cad1b06a4ad9196, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
         371,                // lossy_no_gaborish
     );
 }
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
-        3449,               // lossy_with_noise
+        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        3244,               // lossy_with_noise
     );
 }
 
@@ -544,8 +544,8 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcd61bbfffe06231d, // Updated: butteraugli loop off at e7
-        410,                // lossy_force_dct8
+        0xe048ea37aff41a53, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        418,                // lossy_force_dct8
     );
 }
 
@@ -587,8 +587,8 @@ fn lossy_force_identity() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x73c9f051e8ed7cd7, // Updated: effort-gate AdjustQuantBlockAC
-        585,                // lossy_force_identity
+        0x77bd74b2b317c082, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        580,                // lossy_force_identity
     );
 }
 
@@ -631,8 +631,8 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xda69323384341679, // Updated: effort-gate AdjustQuantBlockAC
-        555,                // lossy_force_dct4x4
+        0xcea94d97bd9325c6, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        553,                // lossy_force_dct4x4
     );
 }
 
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
-        3449,               // lossy_with_lz77_greedy
+        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        3244,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x1f902c2214f5c761, // Updated: butteraugli loop off at e7
-        3449,               // lossy_with_lz77_rle
+        0x9d7b9f0e8fc6b3d2, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        3244,               // lossy_with_lz77_rle
     );
 }
 
@@ -767,8 +767,8 @@ fn lossy_all_off() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xf3320090011f75db, // Updated: effort-gate AdjustQuantBlockAC
-        393,                // lossy_all_off
+        0x869dcd8cef21fd5a, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
+        403,                // lossy_all_off
     );
 }
 
