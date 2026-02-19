@@ -1561,7 +1561,8 @@ impl<'a> EncodeRequest<'a> {
         enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
         enc.enable_noise = cfg.noise;
         enc.enable_denoise = cfg.denoise;
-        enc.enable_gaborish = cfg.gaborish;
+        // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
+        enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
         enc.enable_lz77 = cfg.lz77;
@@ -1832,7 +1833,8 @@ fn encode_animation_lossy(
     enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
     enc.enable_noise = cfg.noise;
     enc.enable_denoise = cfg.denoise;
-    enc.enable_gaborish = cfg.gaborish;
+    // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
+    enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
     enc.error_diffusion = cfg.error_diffusion;
     enc.pixel_domain_loss = cfg.pixel_domain_loss;
     enc.enable_lz77 = cfg.lz77;
