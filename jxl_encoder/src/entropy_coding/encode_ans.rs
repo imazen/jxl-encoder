@@ -884,18 +884,20 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
     // and build decoder tables from the encoder's known frequencies.
 
     // Build decoder histograms directly from the encoder's known distributions
+    let log_alpha_size = code.log_alpha_size;
+    let table_size = 1usize << log_alpha_size;
     let decoder_histograms: Vec<AnsHistogram> = code
         .distributions
         .iter()
         .map(|dist| {
-            // Build frequency array for the decoder
-            let mut freqs = vec![0u16; dist.symbols.len().max(64)];
+            // Build frequency array padded to alias table size
+            let mut freqs = vec![0u16; dist.symbols.len().max(table_size)];
             for (i, sym) in dist.symbols.iter().enumerate() {
                 freqs[i] = sym.freq;
             }
 
             // Build alias map using the decoder's method
-            let log_bucket_size = 12 - 6; // LOG_SUM_PROBS - log_alpha_size
+            let log_bucket_size = 12 - log_alpha_size; // LOG_SUM_PROBS - log_alpha_size
             let bucket_size = 1u16 << log_bucket_size;
             let bucket_mask = bucket_size as u32 - 1;
 

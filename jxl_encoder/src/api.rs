@@ -1478,6 +1478,7 @@ impl<'a> EncodeRequest<'a> {
                 duration: 0,
                 is_last: true,
                 crop: None,
+                skip_rct: false,
             },
         );
         let color_encoding = ColorEncoding::srgb();
@@ -1807,6 +1808,7 @@ fn encode_animation_lossless(
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
                 crop,
+                skip_rct: false,
             },
         );
         frame_encoder
