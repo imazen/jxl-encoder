@@ -717,8 +717,8 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x2921c3f85a1b3675, // Updated: CfL Newton convergence fallback to LS
-        350,                // lossy_distance_05
+        0x097402cdfe7f023d, // gab OFF at d<=0.5 (libjxl enc_frame.cc:281)
+        369,                // lossy_distance_05 (gab OFF → larger)
     );
 }
 
