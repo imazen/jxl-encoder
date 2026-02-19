@@ -496,6 +496,16 @@ pub(crate) fn find_text_like_patches(
     let mut visited = vec![false; n];
     let mut patches: Vec<(QuantizedPatch, u32, u32)> = Vec::new();
 
+    // Diagnostic counters (zero-cost when debug-rect is disabled)
+    let mut stat_raw_ccs = 0u32;
+    let mut stat_reject_no_border = 0u32;
+    let mut stat_reject_inconsistent = 0u32;
+    let mut stat_reject_too_large = 0u32;
+    let mut stat_reject_no_similar = 0u32;
+    let mut stat_reject_low_peak = 0u32;
+    let mut stat_accepted = 0u32;
+    let mut stat_accepted_pixels = 0u64;
+
     for start_y in 0..height {
         for start_x in 0..width {
             let si = start_y * stride + start_x;
@@ -562,12 +572,21 @@ pub(crate) fn find_text_like_patches(
                 }
             }
 
+            stat_raw_ccs += 1;
+
             // Filter: must have border, consistent border, within max patch size
             if !found_border
                 || !all_similar
                 || max_x - min_x >= MAX_PATCH_SIZE
                 || max_y - min_y >= MAX_PATCH_SIZE
             {
+                if !found_border {
+                    stat_reject_no_border += 1;
+                } else if !all_similar {
+                    stat_reject_inconsistent += 1;
+                } else {
+                    stat_reject_too_large += 1;
+                }
                 let reason = if !found_border {
                     "no border"
                 } else if !all_similar {
@@ -610,6 +629,7 @@ pub(crate) fn find_text_like_patches(
                 }
             }
             if !has_similar {
+                stat_reject_no_similar += 1;
                 debug_rect!(
                     "patches/cc_reject",
                     min_x,
@@ -648,6 +668,7 @@ pub(crate) fn find_text_like_patches(
 
             // kMinPeak check: reject patches where max quantized magnitude < 2
             if max_value < MIN_PEAK {
+                stat_reject_low_peak += 1;
                 debug_rect!(
                     "patches/cc_reject",
                     min_x,
@@ -659,6 +680,8 @@ pub(crate) fn find_text_like_patches(
                 continue;
             }
 
+            stat_accepted += 1;
+            stat_accepted_pixels += (cc_w * cc_h) as u64;
             debug_rect!(
                 "patches/cc_accept",
                 min_x,
@@ -694,6 +717,20 @@ pub(crate) fn find_text_like_patches(
         patch_groups.entry(key).or_default().push((x, y, patch));
     }
 
+    let stat_unique_before_min_occ = patch_groups.len() as u32;
+    let stat_singleton_groups = patch_groups
+        .values()
+        .filter(|g| g.len() < MIN_PATCH_OCCURRENCES)
+        .count() as u32;
+
+    // Collect singletons for diagnostic analysis
+    #[cfg(test)]
+    let singleton_patches: Vec<QuantizedPatch> = patch_groups
+        .values()
+        .filter(|g| g.len() < MIN_PATCH_OCCURRENCES)
+        .map(|g| g[0].2.clone())
+        .collect();
+
     let mut result: Vec<PatchInfo> = Vec::new();
     for (_key, group) in patch_groups {
         if group.len() < MIN_PATCH_OCCURRENCES {
@@ -705,6 +742,10 @@ pub(crate) fn find_text_like_patches(
     }
 
     let total_dedup_occurrences: usize = result.iter().map(|p| p.positions.len()).sum();
+    let total_patch_pixels: u64 = result
+        .iter()
+        .map(|p| p.patch.num_pixels() as u64 * p.positions.len() as u64)
+        .sum();
     debug_rect!(
         "patches/dedup",
         0,
@@ -716,6 +757,151 @@ pub(crate) fn find_text_like_patches(
         total_dedup_occurrences,
         result.iter().map(|p| p.positions.len()).sum::<usize>()
     );
+
+    debug_rect!(
+        "patches/summary",
+        0,
+        0,
+        width,
+        height,
+        "PIPELINE: seeds={num_seeds} bg={bg_count}({:.1}%) raw_ccs={stat_raw_ccs} \
+         reject[no_border={stat_reject_no_border} inconsistent={stat_reject_inconsistent} \
+         too_large={stat_reject_too_large} no_similar={stat_reject_no_similar} \
+         low_peak={stat_reject_low_peak}] accepted={stat_accepted}({stat_accepted_pixels}px) \
+         unique_before_min_occ={stat_unique_before_min_occ} singletons={stat_singleton_groups} \
+         final_unique={} final_occ={total_dedup_occurrences} coverage={total_patch_pixels}px({:.1}%)",
+        bg_count as f64 / (width * height) as f64 * 100.0,
+        result.len(),
+        total_patch_pixels as f64 / (width * height) as f64 * 100.0
+    );
+
+    // Also print to stderr for test visibility (always, not just debug-rect)
+    #[cfg(test)]
+    {
+        eprintln!("=== PATCH DETECTION PIPELINE ({width}x{height}) ===");
+        eprintln!("  Seeds: {num_seeds}");
+        eprintln!(
+            "  BFS background: {bg_count} pixels ({:.1}%)",
+            bg_count as f64 / (width * height) as f64 * 100.0
+        );
+        eprintln!("  Raw foreground CCs: {stat_raw_ccs}");
+        eprintln!(
+            "  Rejected: no_border={stat_reject_no_border} inconsistent={stat_reject_inconsistent} too_large={stat_reject_too_large} no_similar={stat_reject_no_similar} low_peak={stat_reject_low_peak}"
+        );
+        eprintln!(
+            "  Accepted CCs: {stat_accepted} ({stat_accepted_pixels} pixels in bounding boxes)"
+        );
+        eprintln!("  Unique patterns (before min_occ): {stat_unique_before_min_occ}");
+        eprintln!("  Singletons (occ < {MIN_PATCH_OCCURRENCES}): {stat_singleton_groups}");
+        eprintln!(
+            "  Final: {} unique, {total_dedup_occurrences} occurrences, {total_patch_pixels} patch pixels ({:.1}%)",
+            result.len(),
+            total_patch_pixels as f64 / (width * height) as f64 * 100.0
+        );
+
+        // Singleton analysis: for each singleton, find closest match in accepted set
+        eprintln!(
+            "\n  Singleton analysis ({} singletons):",
+            singleton_patches.len()
+        );
+        let mut dim_mismatch = 0u32;
+        let mut quant_mismatch = 0u32;
+        for sp in &singleton_patches {
+            // Find best match among accepted patches (same dimensions first)
+            let mut best_same_dim_diff = i32::MAX;
+            let mut best_any_diff = i32::MAX;
+            let mut best_same_dim_occ = 0usize;
+            for p in &result {
+                if p.patch.xsize == sp.xsize && p.patch.ysize == sp.ysize {
+                    let mut max_diff = 0i32;
+                    for c in 0..3 {
+                        for k in 0..sp.pixels[c].len() {
+                            max_diff = max_diff
+                                .max((sp.pixels[c][k] as i32 - p.patch.pixels[c][k] as i32).abs());
+                        }
+                    }
+                    if max_diff < best_same_dim_diff {
+                        best_same_dim_diff = max_diff;
+                        best_same_dim_occ = p.positions.len();
+                    }
+                }
+                // Also check ±1 dimension matches
+                if sp.xsize.abs_diff(p.patch.xsize) <= 1
+                    && sp.ysize.abs_diff(p.patch.ysize) <= 1
+                    && (sp.xsize != p.patch.xsize || sp.ysize != p.patch.ysize)
+                {
+                    // Different dimensions but close - compute overlap area diff
+                    let min_w = sp.xsize.min(p.patch.xsize);
+                    let min_h = sp.ysize.min(p.patch.ysize);
+                    let mut max_diff = 0i32;
+                    for c in 0..3 {
+                        for dy in 0..min_h {
+                            for dx in 0..min_w {
+                                let si = dy * sp.xsize + dx;
+                                let pi = dy * p.patch.xsize + dx;
+                                max_diff = max_diff.max(
+                                    (sp.pixels[c][si] as i32 - p.patch.pixels[c][pi] as i32).abs(),
+                                );
+                            }
+                        }
+                    }
+                    if max_diff < best_any_diff {
+                        best_any_diff = max_diff;
+                    }
+                }
+            }
+            if best_same_dim_diff <= 3 {
+                quant_mismatch += 1;
+                if best_same_dim_diff <= 1 {
+                    eprintln!(
+                        "    Singleton {}x{}: near-match to {}occ pattern (max_diff={})",
+                        sp.xsize, sp.ysize, best_same_dim_occ, best_same_dim_diff
+                    );
+                }
+            } else if best_any_diff <= 3 {
+                dim_mismatch += 1;
+            }
+        }
+        eprintln!(
+            "  Singleton causes: {} quant_mismatch (same dim, diff<=3), {} dim_mismatch (±1 dim, diff<=3), {} other",
+            quant_mismatch,
+            dim_mismatch,
+            singleton_patches.len() as u32 - quant_mismatch - dim_mismatch
+        );
+
+        // Dimension histogram of singletons vs accepted
+        let mut singleton_dims: std::collections::HashMap<(usize, usize), u32> =
+            std::collections::HashMap::new();
+        for sp in &singleton_patches {
+            *singleton_dims.entry((sp.xsize, sp.ysize)).or_default() += 1;
+        }
+        let mut accepted_dims: std::collections::HashMap<(usize, usize), u32> =
+            std::collections::HashMap::new();
+        for p in &result {
+            *accepted_dims
+                .entry((p.patch.xsize, p.patch.ysize))
+                .or_default() += 1;
+        }
+        eprintln!("\n  Singleton dimensions vs accepted:");
+        let mut all_dims: Vec<_> = singleton_dims
+            .keys()
+            .chain(accepted_dims.keys())
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        all_dims.sort();
+        for d in all_dims {
+            let s = singleton_dims.get(&d).copied().unwrap_or(0);
+            let a = accepted_dims.get(&d).copied().unwrap_or(0);
+            if s > 0 || a > 3 {
+                eprintln!(
+                    "    {}x{}: {} singletons, {} accepted patterns",
+                    d.0, d.1, s, a
+                );
+            }
+        }
+    }
 
     // Check minimum largest patch size
     let max_patch_pixels = result
@@ -1357,16 +1543,17 @@ pub(crate) fn encode_reference_frame_rgb(
         has_alpha: false,
     };
 
-    // Use FrameEncoder for body — handles single/multi-group automatically,
-    // applies RCT for RGB channels, and uses ANS entropy coding.
-    // Tree learning adapts prediction to packed glyphs against zero background.
+    // Use FrameEncoder for body — handles single/multi-group automatically.
+    // libjxl uses simple Gradient predictor with RCT for reference frames
+    // (enc_patch_dictionary.cc: "Use gradient predictor and not Predictor::Best").
+    // Tree learning overhead exceeds benefit on small ref frames (<256×256).
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
     let options = FrameEncoderOptions {
         use_ans,
-        use_tree_learning: true,
+        use_tree_learning: false,
         use_squeeze: false,
         is_last: false,
-        ..Default::default()
+        ..Default::default() // skip_rct=false → RCT applied to RGB channels
     };
     let encoder = FrameEncoder::new(ref_w, ref_h, options);
     encoder.encode_modular_body(&image, writer)?;
@@ -1476,12 +1663,17 @@ pub(crate) fn encode_reference_frame(
     // Use FrameEncoder for body — handles single/multi-group automatically.
     // Tree learning adapts prediction to packed glyphs; skip_rct avoids
     // counterproductive YCoCg on already-decorrelated Y/X/B-Y channels.
+    // LZ77 RLE compresses the long zero runs between packed patches.
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
+    // libjxl uses simple Gradient predictor with RCT for reference frames
+    // (enc_patch_dictionary.cc line 821: "Use gradient predictor and not Predictor::Best").
+    // Tree learning overhead exceeds benefit on small ref frames (<256×256).
+    // RCT decorrelates the Y/X/B-Y channels further for entropy coding.
     let options = FrameEncoderOptions {
         use_ans,
-        use_tree_learning: true,
+        use_tree_learning: false,
         use_squeeze: false,
-        skip_rct: true,
+        skip_rct: false, // Enable RCT — matches libjxl behavior
         is_last: false,
         ..Default::default()
     };
@@ -1620,6 +1812,208 @@ mod tests {
         if !result.is_empty() {
             let total_occurrences: usize = result.iter().map(|p| p.positions.len()).sum();
             assert!(total_occurrences >= 2, "Should have at least 2 occurrences");
+        }
+    }
+
+    /// Test reference frame integer value ranges for XYB patches.
+    #[test]
+    #[ignore]
+    fn test_ref_frame_value_ranges() {
+        let path =
+            std::path::Path::new(env!("HOME")).join("work/codec-corpus/gb82-sc/terminal.png");
+        if !path.exists() {
+            eprintln!("Skipping: {path:?} not found");
+            return;
+        }
+        let img = image::open(&path).unwrap().to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let pixels = img.as_raw();
+        let n = w * h;
+        let mut r = vec![0.0f32; n];
+        let mut g = vec![0.0f32; n];
+        let mut b = vec![0.0f32; n];
+        for i in 0..n {
+            r[i] = pixels[i * 3] as f32;
+            g[i] = pixels[i * 3 + 1] as f32;
+            b[i] = pixels[i * 3 + 2] as f32;
+        }
+        let mut x_out = vec![0.0f32; n];
+        let mut y_out = vec![0.0f32; n];
+        let mut b_out = vec![0.0f32; n];
+        crate::color::xyb::srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+
+        let result = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true);
+        let patches_data = build_patches_data(result).unwrap();
+
+        let ref_w = patches_data.ref_width;
+        let ref_h = patches_data.ref_height;
+        let ref_n = ref_w * ref_h;
+        eprintln!("Reference frame: {ref_w}x{ref_h} = {ref_n} pixels");
+
+        const INV_DC_QUANT_X: f32 = 4096.0;
+        const INV_DC_QUANT_Y: f32 = 512.0;
+        const INV_DC_QUANT_B: f32 = 256.0;
+
+        // Compute integer channel ranges
+        let mut ch_y_min = i32::MAX;
+        let mut ch_y_max = i32::MIN;
+        let mut ch_x_min = i32::MAX;
+        let mut ch_x_max = i32::MIN;
+        let mut ch_by_min = i32::MAX;
+        let mut ch_by_max = i32::MIN;
+        let mut nonzero_y = 0u32;
+        let mut nonzero_x = 0u32;
+        let mut nonzero_by = 0u32;
+
+        for i in 0..ref_n {
+            let y_int = (patches_data.ref_image[1][i] * INV_DC_QUANT_Y).round() as i32;
+            let x_int = (patches_data.ref_image[0][i] * INV_DC_QUANT_X).round() as i32;
+            let b_int = (patches_data.ref_image[2][i] * INV_DC_QUANT_B).round() as i32;
+            let by_int = b_int - y_int;
+
+            ch_y_min = ch_y_min.min(y_int);
+            ch_y_max = ch_y_max.max(y_int);
+            ch_x_min = ch_x_min.min(x_int);
+            ch_x_max = ch_x_max.max(x_int);
+            ch_by_min = ch_by_min.min(by_int);
+            ch_by_max = ch_by_max.max(by_int);
+            if y_int != 0 {
+                nonzero_y += 1;
+            }
+            if x_int != 0 {
+                nonzero_x += 1;
+            }
+            if by_int != 0 {
+                nonzero_by += 1;
+            }
+        }
+
+        eprintln!(
+            "Channel Y:  range [{ch_y_min}, {ch_y_max}], {nonzero_y} nonzero ({:.1}%)",
+            nonzero_y as f64 / ref_n as f64 * 100.0
+        );
+        eprintln!(
+            "Channel X:  range [{ch_x_min}, {ch_x_max}], {nonzero_x} nonzero ({:.1}%)",
+            nonzero_x as f64 / ref_n as f64 * 100.0
+        );
+        eprintln!(
+            "Channel BY: range [{ch_by_min}, {ch_by_max}], {nonzero_by} nonzero ({:.1}%)",
+            nonzero_by as f64 / ref_n as f64 * 100.0
+        );
+    }
+
+    /// Diagnostic test: run patch detection on terminal.png and print pipeline stats.
+    /// Use `cargo test -p jxl_encoder --lib patches::tests::test_terminal_patch_coverage -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn test_terminal_patch_coverage() {
+        let path =
+            std::path::Path::new(env!("HOME")).join("work/codec-corpus/gb82-sc/terminal.png");
+        if !path.exists() {
+            eprintln!("Skipping: {path:?} not found");
+            return;
+        }
+        let img = image::open(&path).unwrap().to_rgb8();
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let pixels = img.as_raw();
+        eprintln!("Loaded terminal.png: {w}x{h}");
+
+        // Convert to planar sRGB f32
+        let n = w * h;
+        let mut r = vec![0.0f32; n];
+        let mut g = vec![0.0f32; n];
+        let mut b = vec![0.0f32; n];
+        for i in 0..n {
+            r[i] = pixels[i * 3] as f32;
+            g[i] = pixels[i * 3 + 1] as f32;
+            b[i] = pixels[i * 3 + 2] as f32;
+        }
+
+        // Convert to XYB
+        let mut x_out = vec![0.0f32; n];
+        let mut y_out = vec![0.0f32; n];
+        let mut b_out = vec![0.0f32; n];
+        crate::color::xyb::srgb_image_to_xyb(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+
+        // Run detection (eprintln stats from cfg(test) instrumentation)
+        let result = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true);
+
+        // Print size distribution
+        let mut size_dist: std::collections::HashMap<(usize, usize), (usize, usize)> =
+            std::collections::HashMap::new();
+        for p in &result {
+            let entry = size_dist
+                .entry((p.patch.xsize, p.patch.ysize))
+                .or_insert((0, 0));
+            entry.0 += 1; // unique patterns at this size
+            entry.1 += p.positions.len(); // total occurrences
+        }
+        let mut sizes: Vec<_> = size_dist.into_iter().collect();
+        sizes.sort_by_key(|&((w, h), _)| std::cmp::Reverse(w * h));
+        eprintln!("\nPatch size distribution:");
+        for ((pw, ph), (unique, occ)) in &sizes {
+            eprintln!("  {pw}x{ph}: {unique} unique, {occ} occurrences");
+        }
+
+        // Print top patches by occurrence count
+        let mut by_occ: Vec<_> = result.iter().enumerate().collect();
+        by_occ.sort_by_key(|(_, p)| std::cmp::Reverse(p.positions.len()));
+        eprintln!("\nTop 20 patches by occurrence:");
+        for (i, (_, p)) in by_occ.iter().take(20).enumerate() {
+            eprintln!(
+                "  #{}: {}x{} with {} occurrences",
+                i + 1,
+                p.patch.xsize,
+                p.patch.ysize,
+                p.positions.len()
+            );
+        }
+
+        // Analyze near-miss dedup: find singletons that are close to popular patterns
+        // Count singleton dimensions
+        let _all_patches = find_text_like_patches([&x_out, &y_out, &b_out], w, h, w, true);
+        // Re-run to get raw CCs with their positions (need to access raw data)
+        // For now, just analyze the final result's dimension distribution
+        eprintln!("\nAnalyzing dedup quality...");
+
+        // Build ALL patches including singletons (re-do dedup manually)
+        // We'll work with what we have — check if similar-size patches exist
+        // that differ only slightly in quantized values
+        let mut all_by_dim: std::collections::HashMap<(usize, usize), Vec<usize>> =
+            std::collections::HashMap::new();
+        for (i, p) in result.iter().enumerate() {
+            all_by_dim
+                .entry((p.patch.xsize, p.patch.ysize))
+                .or_default()
+                .push(i);
+        }
+
+        // Check for patches at same dimensions that could be merged with tolerance
+        eprintln!("\nPer-dimension grouping (final patches only):");
+        for ((pw, ph), indices) in &all_by_dim {
+            if indices.len() >= 2 {
+                // Compare pairs within same dimension
+                let mut max_diff = 0i32;
+                for i in 0..indices.len() {
+                    for j in (i + 1)..indices.len() {
+                        let a = &result[indices[i]].patch;
+                        let b_patch = &result[indices[j]].patch;
+                        let mut diff = 0i32;
+                        for c in 0..3 {
+                            for k in 0..a.pixels[c].len() {
+                                diff = diff.max(
+                                    (a.pixels[c][k] as i32 - b_patch.pixels[c][k] as i32).abs(),
+                                );
+                            }
+                        }
+                        max_diff = max_diff.max(diff);
+                    }
+                }
+                eprintln!(
+                    "  {pw}x{ph}: {} patterns, max quantized diff between any pair: {max_diff}",
+                    indices.len()
+                );
+            }
         }
     }
 }
