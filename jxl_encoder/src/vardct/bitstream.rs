@@ -262,10 +262,17 @@ impl VarDctEncoder {
         // Write patches section before splines (JXL spec ordering in LfGlobal)
         if let Some(pd) = patches {
             #[cfg(feature = "trace-bitstream")]
-            eprintln!("PATCHES_SECTION: start at bit {}", writer.bits_written());
+            let patch_start = writer.bits_written();
             super::patches::encode_patches_section(pd, self.use_ans, writer)?;
             #[cfg(feature = "trace-bitstream")]
-            eprintln!("PATCHES_SECTION: end at bit {}", writer.bits_written());
+            {
+                let patch_dict_bytes = (writer.bits_written() - patch_start).div_ceil(8);
+                eprintln!(
+                    "PATCHES: dict section = {} bytes ({} tokens)",
+                    patch_dict_bytes,
+                    pd.ref_positions.len() + pd.positions.len() * 3
+                );
+            }
         }
 
         // Write splines section (after patches, before noise)
@@ -1032,19 +1039,27 @@ impl VarDctEncoder {
         // stores unique patch templates. The main frame then references it.
         if let Some(pd) = patches {
             #[cfg(feature = "trace-bitstream")]
+            let ref_frame_start = writer.bits_written();
+            #[cfg(feature = "trace-bitstream")]
             eprintln!(
                 "PATCHES: writing reference frame at bit {} (byte {})",
-                writer.bits_written(),
-                writer.bits_written() / 8
+                ref_frame_start,
+                ref_frame_start / 8
             );
             super::patches::encode_reference_frame(pd, self.use_ans, &mut writer)?;
             writer.zero_pad_to_byte();
             #[cfg(feature = "trace-bitstream")]
-            eprintln!(
-                "PATCHES: reference frame done, main frame starts at bit {} (byte {})",
-                writer.bits_written(),
-                writer.bits_written() / 8
-            );
+            {
+                let ref_frame_bytes = (writer.bits_written() - ref_frame_start).div_ceil(8);
+                eprintln!(
+                    "PATCHES: ref frame {}x{} = {} bytes, {} unique patches, {} occurrences",
+                    pd.ref_width,
+                    pd.ref_height,
+                    ref_frame_bytes,
+                    pd.ref_positions.len(),
+                    pd.positions.len()
+                );
+            }
         }
 
         // Write main VarDCT frame (header + TOC + sections)
