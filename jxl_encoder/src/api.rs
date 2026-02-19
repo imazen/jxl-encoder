@@ -542,20 +542,16 @@ impl Default for LosslessConfig {
 
 impl LosslessConfig {
     fn with_effort_level(effort: u8) -> Self {
-        let effort = effort.clamp(1, 10);
+        let profile = crate::effort::EffortProfile::lossless(effort, EncoderMode::Reference);
         Self {
-            effort,
+            effort: profile.effort,
             mode: EncoderMode::Reference,
-            use_ans: effort >= 4,
-            tree_learning: effort >= 7,
+            use_ans: profile.use_ans,
+            tree_learning: profile.tree_learning,
             squeeze: false, // squeeze hurts even with tree learning (14-62% larger on both photos and screenshots)
-            lz77: effort >= 7,
-            lz77_method: match effort {
-                0..=7 => Lz77Method::Rle,
-                8 => Lz77Method::Greedy,
-                _ => Lz77Method::Optimal,
-            },
-            patches: effort >= 5,
+            lz77: profile.lz77,
+            lz77_method: profile.lz77_method,
+            patches: profile.patches,
             lossy_palette: false,
         }
     }
@@ -825,18 +821,6 @@ pub enum ProgressiveMode {
 
 // ── LossyConfig ─────────────────────────────────────────────────────────────
 
-#[cfg(feature = "butteraugli-loop")]
-fn butteraugli_iters_for_effort(effort: u8) -> u32 {
-    // libjxl: FindBestQuantization gated by speed_tier <= kKitten (effort >= 8).
-    // kDefaultButteraugliIters = 2, kTortoise (effort 9+) gets kMaxButteraugliIters = 4.
-    // Efforts 1-7 have NO butteraugli loop in libjxl.
-    match effort {
-        0..=7 => 0,
-        8 => 2,
-        _ => 4,
-    }
-}
-
 /// Lossy (VarDCT) encoding configuration.
 ///
 /// No `Default` — distance/quality is a required choice.
@@ -870,32 +854,25 @@ impl LossyConfig {
     }
 
     fn new_with_effort(distance: f32, effort: u8) -> Self {
-        let effort = effort.clamp(1, 10);
-        // Effort gating matches libjxl's SpeedTier mapping:
-        // e1=Lightning, e2=Thunder, e3=Falcon, e4=Cheetah, e5=Hare,
-        // e6=Wombat, e7=Squirrel(default), e8=Kitten, e9=Tortoise, e10=Glacier
+        let profile = crate::effort::EffortProfile::lossy(effort, EncoderMode::Reference);
         Self {
             distance,
-            effort,
+            effort: profile.effort,
             mode: EncoderMode::Reference,
-            use_ans: effort >= 4,  // kCheetah: clustering + coeff reorder
-            gaborish: effort >= 5, // kHare: gab, initial quant field
+            use_ans: profile.use_ans,
+            gaborish: profile.gaborish,
             noise: false,
             denoise: false,
-            error_diffusion: effort >= 7, // kSquirrel (libjxl: kWombat=e6, but tied to AC strategy)
-            pixel_domain_loss: effort >= 5, // kHare: full AC strategy heuristics
-            lz77: effort >= 7,            // kSquirrel: modular LZ77 RLE
-            lz77_method: match effort {
-                0..=7 => Lz77Method::Rle, // kSquirrel: RLE only
-                8 => Lz77Method::Greedy,  // kKitten: hash chain
-                _ => Lz77Method::Optimal, // kTortoise: Viterbi DP
-            },
+            error_diffusion: profile.error_diffusion,
+            pixel_domain_loss: profile.pixel_domain_loss,
+            lz77: profile.lz77,
+            lz77_method: profile.lz77_method,
             force_strategy: None,
-            patches: effort >= 7, // kSquirrel: patches, dots, splines
+            patches: profile.patches,
             splines: None,
             progressive: ProgressiveMode::Single,
             #[cfg(feature = "butteraugli-loop")]
-            butteraugli_iters: butteraugli_iters_for_effort(effort),
+            butteraugli_iters: profile.butteraugli_iters,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters_explicit: false,
         }
@@ -1474,6 +1451,7 @@ impl<'a> EncodeRequest<'a> {
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
+                profile: crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode),
                 have_animation: false,
                 duration: 0,
                 is_last: true,
@@ -1572,12 +1550,14 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
+        let profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
         let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
         tiny.effort = cfg.effort;
+        tiny.profile = profile;
         tiny.use_ans = cfg.use_ans;
-        tiny.optimize_codes = cfg.effort >= 4; // kCheetah: two-pass + clustering
-        tiny.custom_orders = cfg.effort >= 4; // kCheetah: coefficient reordering
-        tiny.ac_strategy_enabled = cfg.effort >= 5; // kHare: full AC strategy search
+        tiny.optimize_codes = tiny.profile.optimize_codes;
+        tiny.custom_orders = tiny.profile.custom_orders;
+        tiny.ac_strategy_enabled = tiny.profile.ac_strategy_enabled;
         tiny.enable_noise = cfg.noise;
         tiny.enable_denoise = cfg.denoise;
         tiny.enable_gaborish = cfg.gaborish;
@@ -1804,6 +1784,7 @@ fn encode_animation_lossless(
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
+                profile: crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode),
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
@@ -1840,12 +1821,14 @@ fn encode_animation_lossy(
     let num_frames = frames.len();
 
     // Set up VarDCT encoder
+    let profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
     let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
     tiny.effort = cfg.effort;
+    tiny.profile = profile;
     tiny.use_ans = cfg.use_ans;
-    tiny.optimize_codes = cfg.effort >= 2;
-    tiny.custom_orders = cfg.effort >= 3;
-    tiny.ac_strategy_enabled = cfg.effort >= 3;
+    tiny.optimize_codes = tiny.profile.optimize_codes;
+    tiny.custom_orders = tiny.profile.custom_orders;
+    tiny.ac_strategy_enabled = tiny.profile.ac_strategy_enabled;
     tiny.enable_noise = cfg.noise;
     tiny.enable_denoise = cfg.denoise;
     tiny.enable_gaborish = cfg.gaborish;

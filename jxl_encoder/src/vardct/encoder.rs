@@ -42,6 +42,9 @@ pub struct VarDctEncoder {
     pub distance: f32,
     /// Effort level (1–10). Controls AC strategy gating and search depth.
     pub effort: u8,
+    /// Centralized effort-derived decisions. All effort-gated constants and
+    /// thresholds are read from this profile instead of inline `if effort >= N`.
+    pub profile: crate::effort::EffortProfile,
     /// Use dynamic Huffman codes built from actual token frequencies.
     /// When true (default), uses a two-pass mode: collect tokens first, build optimal codes, then write.
     /// When false, uses pre-computed static codes (streaming, single-pass).
@@ -167,6 +170,7 @@ impl Default for VarDctEncoder {
         Self {
             distance: 1.0,
             effort: 7,
+            profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
             enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
             use_ans: true,             // ANS produces 4-10% smaller files than Huffman
@@ -201,6 +205,7 @@ impl VarDctEncoder {
         Self {
             distance,
             effort: 7,
+            profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
             enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
             use_ans: true,             // ANS produces 4-10% smaller files than Huffman
@@ -417,6 +422,7 @@ impl VarDctEncoder {
             xsize_blocks,
             ysize_blocks,
             distance_for_iqf,
+            self.profile.k_ac_quant,
         );
 
         // Step 2: Compute distance params with content-adaptive global_scale.
@@ -513,7 +519,7 @@ impl VarDctEncoder {
                 &cfl_map,
                 mask1x1.as_deref(),
                 padded_width,
-                self.effort,
+                &self.profile,
             )
         };
 
@@ -1019,7 +1025,7 @@ impl VarDctEncoder {
             self.enable_denoise,
             self.enable_gaborish,
             self.force_strategy,
-            self.effort,
+            &self.profile,
         );
 
         // Run rate control loop

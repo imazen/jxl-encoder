@@ -278,10 +278,9 @@ pub fn compute_quant_field_float(
     xsize_blocks: usize,
     ysize_blocks: usize,
     distance: f32,
+    k_ac_quant: f32,
 ) -> (Vec<f32>, Vec<f32>) {
-    // Full libjxl K_AC_QUANT
-    const K_AC_QUANT: f32 = 0.765;
-    let scale = K_AC_QUANT / distance;
+    let scale = k_ac_quant / distance;
 
     let tile_x0_pixels = 0;
     let tile_y0_pixels = 0;
@@ -386,6 +385,7 @@ pub fn compute_adaptive_quant_field(
         xsize_blocks,
         ysize_blocks,
         distance,
+        0.765, // K_AC_QUANT default
     );
     let raw_quant_field = quantize_quant_field(&quant_field_float, inv_scale);
     (raw_quant_field, masking, quant_field_float)

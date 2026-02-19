@@ -27,6 +27,7 @@ use super::dct::{
     identity_transform, inverse_dct2x2_transform, inverse_identity_transform,
 };
 use super::quant::quant_weights;
+use crate::effort::EffortProfile;
 
 /// Pre-allocated scratch buffers for entropy estimation.
 /// Avoids per-call heap allocations in the hot `estimate_entropy_full` loop.
@@ -324,12 +325,9 @@ const CHANNEL_MUL: [f64; 3] = [
     1.26677008064,    // B channel: 1.03^8
 ];
 
-/// Base entropy estimation constants for full libjxl pixel-domain loss model.
-/// From libjxl enc_ac_strategy.cc:1111-1113
-/// These are SCALED by distance before use via `compute_scaled_constants()`.
-const K_INFO_LOSS_MULTIPLIER_BASE: f32 = 1.2;
-const K_COST_DELTA_BASE: f32 = 10.833_273;
-const K_ZEROS_MUL_BASE: f32 = 9.308_906;
+/// Default pixel-domain cost model base constants (info_loss, zeros, cost_delta).
+/// From libjxl enc_ac_strategy.cc:1111-1113.
+pub(super) const DEFAULT_COST_BASES: (f32, f32, f32) = (1.2, 9.308_906, 10.833_273);
 
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
 const K_BIAS: f32 = 0.137_317_43;
@@ -339,11 +337,15 @@ const K_POW_COST_DELTA: f32 = 0.367_029_4;
 
 /// Compute distance-scaled constants for full libjxl cost model.
 /// At d=1.0, returns the base values. At higher distances, increases all values.
-pub(super) fn compute_scaled_constants(distance: f32) -> (f32, f32, f32) {
+///
+/// `bases` is `(info_loss_mul_base, zeros_mul_base, cost_delta_base)` from
+/// [`EffortProfile`](crate::effort::EffortProfile).
+pub(super) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) -> (f32, f32, f32) {
+    let (info_loss_base, zeros_base, cost_delta_base) = bases;
     let ratio = (distance + K_BIAS) / (1.0 + K_BIAS);
-    let info_loss_mul = K_INFO_LOSS_MULTIPLIER_BASE * ratio.powf(K_POW_INFO_LOSS);
-    let zeros_mul = K_ZEROS_MUL_BASE * ratio.powf(K_POW_ZEROS_MUL);
-    let cost_delta = K_COST_DELTA_BASE * ratio.powf(K_POW_COST_DELTA);
+    let info_loss_mul = info_loss_base * ratio.powf(K_POW_INFO_LOSS);
+    let zeros_mul = zeros_base * ratio.powf(K_POW_ZEROS_MUL);
+    let cost_delta = cost_delta_base * ratio.powf(K_POW_COST_DELTA);
     (info_loss_mul, cost_delta, zeros_mul)
 }
 
@@ -434,6 +436,7 @@ pub(super) fn estimate_entropy(
         None,
         0,
         0.0,
+        DEFAULT_COST_BASES,
         &mut scratch,
     )
 }
@@ -465,6 +468,7 @@ pub(super) fn estimate_entropy_with_mask(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul_adjust: f32,
+    pixel_domain_cost_bases: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     // In pixel-domain mode, use fixed entropy_mul values per transform
@@ -493,6 +497,7 @@ pub(super) fn estimate_entropy_with_mask(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
+        pixel_domain_cost_bases,
         scratch,
     )
 }
@@ -526,6 +531,7 @@ pub(super) fn estimate_entropy_full(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
+    pixel_domain_cost_bases: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     #[cfg(target_arch = "x86_64")]
@@ -548,6 +554,7 @@ pub(super) fn estimate_entropy_full(
                 mask1x1,
                 mask1x1_stride,
                 entropy_mul,
+                pixel_domain_cost_bases,
                 scratch,
             );
         }
@@ -572,6 +579,7 @@ pub(super) fn estimate_entropy_full(
                 mask1x1,
                 mask1x1_stride,
                 entropy_mul,
+                pixel_domain_cost_bases,
                 scratch,
             );
         }
@@ -591,6 +599,7 @@ pub(super) fn estimate_entropy_full(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
+        pixel_domain_cost_bases,
         scratch,
     )
 }
@@ -614,6 +623,7 @@ fn estimate_entropy_full_avx2(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
+    pixel_domain_cost_bases: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     estimate_entropy_full_impl(
@@ -631,6 +641,7 @@ fn estimate_entropy_full_avx2(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
+        pixel_domain_cost_bases,
         scratch,
     )
 }
@@ -654,6 +665,7 @@ fn estimate_entropy_full_neon(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
+    pixel_domain_cost_bases: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     estimate_entropy_full_impl(
@@ -671,6 +683,7 @@ fn estimate_entropy_full_neon(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
+        pixel_domain_cost_bases,
         scratch,
     )
 }
@@ -692,6 +705,7 @@ fn estimate_entropy_full_impl(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
+    pixel_domain_cost_bases: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     let cx = COVERED_X[raw_strategy as usize];
@@ -706,7 +720,7 @@ fn estimate_entropy_full_impl(
     // In pixel-domain mode: use distance-scaled constants
     // In coefficient-domain mode: use libjxl-tiny static constants
     let (k_info_loss_mul, k_cost_delta, k_zeros_mul) = if use_pixel_domain {
-        compute_scaled_constants(distance)
+        compute_scaled_constants(distance, pixel_domain_cost_bases)
     } else {
         // libjxl-tiny style constants (not distance-scaled)
         (138.0_f32, 5.335_918_5_f32, 7.565_053_4_f32)
@@ -1210,7 +1224,7 @@ pub fn compute_ac_strategy(
     cfl_map: &CflMap,
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
-    effort: u8,
+    profile: &EffortProfile,
 ) -> AcStrategyMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
@@ -1236,8 +1250,8 @@ pub fn compute_ac_strategy(
 
             // Process hierarchically: 8×8 block groups (64×64) at e7+,
             // then 4×4 (32×32) at e5+, then always 2×2 (16×16).
-            let try_64 = effort >= 7;
-            let try_32 = effort >= 5;
+            let try_64 = profile.try_dct64;
+            let try_32 = profile.try_dct32;
 
             let mut cy = 0;
             // Process 8-row bands: try DCT64x64/DCT64x32/DCT32x64 at effort 7+
@@ -1261,6 +1275,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        profile,
                     );
                     cx += 8;
                 }
@@ -1283,6 +1298,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        profile,
                     );
                     cx += 4;
                 }
@@ -1305,6 +1321,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        profile,
                     );
                     cx += 2;
                 }
@@ -1331,6 +1348,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        profile,
                     );
                     cx += 4;
                 }
@@ -1353,6 +1371,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        profile,
                     );
                     cx += 2;
                 }
@@ -1380,6 +1399,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        profile,
                     );
                     cx += 2;
                 }
@@ -1388,15 +1408,14 @@ pub fn compute_ac_strategy(
 
             // Favor 8×8 transforms at low distances when overriding aligned-pass choices.
             // Matches libjxl enc_ac_strategy.cc:863-866.
-            let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
+            let mul8x8 = 1.0 + profile.k_favor_2x2 / (distance + 1.4);
 
             // Non-aligned matching: try 16×16/16×8/8×16 at non-2-aligned positions.
             // This catches cases where the optimal block boundary straddles a 2-aligned
             // position. Matches libjxl enc_ac_strategy.cc:1035-1044 (effort >= 6).
             // Only accept results when a multi-block transform is selected — single-block
             // re-evaluation at non-aligned positions can override good aligned-pass choices.
-            // Skip entirely at effort <= 5 (non-aligned passes are e6+ in libjxl).
-            for cy in if effort >= 6 { 0 } else { tile_h }..tile_h.saturating_sub(1) {
+            for cy in if profile.non_aligned_eval { 0 } else { tile_h }..tile_h.saturating_sub(1) {
                 for cx in 0..tile_w.saturating_sub(1) {
                     // Skip 2-aligned positions (already evaluated in the aligned pass)
                     if (cy | cx) % 2 == 0 {
@@ -1443,6 +1462,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         mul8x8,
+                        profile,
                     );
                     // Only keep results if a multi-block transform was selected.
                     // If only single-block strategies were chosen, the aligned pass
@@ -1470,10 +1490,9 @@ pub fn compute_ac_strategy(
 
             // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
             // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 7).
-            // step=1 at effort 9+ (fine-grained search), step=2 otherwise.
-            // Only at d>=2.0 where DCT32x32 is enabled, and effort >= 7.
-            if distance >= 2.0 && effort >= 7 {
-                let step = if effort >= 9 { 1 } else { 2 };
+            // Only at d>=2.0 where DCT32x32 is enabled.
+            if distance >= 2.0 && profile.try_dct64 {
+                let step = profile.fine_grained_step as usize;
                 for cy in (0..tile_h.saturating_sub(3)).step_by(step) {
                     for cx in (0..tile_w.saturating_sub(3)).step_by(step) {
                         // Skip 4-aligned positions (already evaluated in aligned pass)
@@ -1515,6 +1534,7 @@ pub fn compute_ac_strategy(
                             mask1x1_stride,
                             &mut ac_strategy,
                             &mut scratch,
+                            profile,
                         );
                         // Only keep results if a multi-block transform was selected
                         let has_multi = (0..4usize).any(|dy| {
@@ -1718,6 +1738,7 @@ mod tests {
         let mask1x1 = vec![0.5f32; n];
 
         let mut scratch = EntropyEstScratch::new();
+        let cost_bases = (1.2_f32, 9.308_906_f32, 10.833_273_f32);
 
         // Calculate coefficient-domain loss (without mask1x1)
         let ent_coeff = estimate_entropy_full(
@@ -1735,6 +1756,7 @@ mod tests {
             None,
             0,
             1.0, // entropy_mul = 1.0 for coefficient-domain (caller applies mul8x8)
+            cost_bases,
             &mut scratch,
         );
 
@@ -1754,6 +1776,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8), // Normalized entropy_mul for DCT8 = 1.0
+            cost_bases,
             &mut scratch,
         );
 
@@ -1806,6 +1829,7 @@ mod tests {
         let mask1x1: Vec<f32> = (0..n).map(|i| 0.3 + (i % 7) as f32 * 0.1).collect();
 
         let mut scratch = EntropyEstScratch::new();
+        let cost_bases = (1.2_f32, 9.308_906_f32, 10.833_273_f32);
 
         // Test DCT8
         let ent_dct8 = estimate_entropy_full(
@@ -1823,6 +1847,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8),
+            cost_bases,
             &mut scratch,
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
@@ -1844,6 +1869,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
+            cost_bases,
             &mut scratch,
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
@@ -1865,6 +1891,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
+            cost_bases,
             &mut scratch,
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
@@ -1886,6 +1913,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16),
+            cost_bases,
             &mut scratch,
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);

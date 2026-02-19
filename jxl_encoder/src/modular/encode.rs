@@ -1042,17 +1042,10 @@ const RCT_CANDIDATES: &[u8] = &[
 ///
 /// Returns the RctType and the transformed image. At effort 7, tries 7 RCT variants
 /// matching libjxl's kSquirrel behavior.
-pub(crate) fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, ModularImage) {
+pub(crate) fn select_best_rct(image: &ModularImage, nb_rcts_to_try: u8) -> (RctType, ModularImage) {
     use super::rct::{RctType, forward_rct};
 
-    let nb_rcts_to_try = match effort {
-        0..=4 => 0, // No RCT selection below Hare
-        5 => 4,     // Hare
-        6 => 5,     // Wombat
-        7 => 7,     // Squirrel
-        8 => 9,     // Kitten
-        _ => 19,    // Tortoise/Glacier
-    };
+    let nb_rcts_to_try = nb_rcts_to_try as usize;
 
     if nb_rcts_to_try == 0 || image.channels.len() < 3 {
         // Default to YCoCg
@@ -1126,7 +1119,7 @@ pub(crate) fn select_best_rct(image: &ModularImage, effort: u8) -> (RctType, Mod
 pub fn write_modular_stream_with_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
-    effort: u8,
+    profile: &crate::effort::EffortProfile,
     rct: bool,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
@@ -1134,7 +1127,7 @@ pub fn write_modular_stream_with_tree(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride, gather_samples_strided,
+        compute_gather_stride_from_profile, gather_samples_strided,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1144,7 +1137,7 @@ pub fn write_modular_stream_with_tree(
     // Tree learning uses RCT only (not palette) because palette+tree has a
     // meta-channel encoding mismatch that causes decoder failures.
     let (work_image, rct_type) = if rct && image.channels.len() >= 3 {
-        let (selected_rct, transformed) = select_best_rct(image, effort);
+        let (selected_rct, transformed) = select_best_rct(image, profile.nb_rcts_to_try);
         (transformed, Some(selected_rct))
     } else {
         (image.clone(), None)
@@ -1156,7 +1149,7 @@ pub fn write_modular_stream_with_tree(
         .iter()
         .map(|ch| ch.width() * ch.height())
         .sum();
-    let stride = compute_gather_stride(total_pixels, effort);
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
     gather_samples_strided(&mut samples, &work_image, 0, 0, stride);
 
@@ -1166,7 +1159,7 @@ pub fn write_modular_stream_with_tree(
     } else {
         1.0
     };
-    let params = TreeLearningParams::for_effort(effort)
+    let params = TreeLearningParams::from_profile(profile)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &params);
@@ -1175,7 +1168,7 @@ pub fn write_modular_stream_with_tree(
     crate::trace::debug_eprintln!(
         "TREE_LEARN: effort={}, {} props, {} max_buckets, threshold={:.0}*{:.3}={:.1}, \
          {} nodes, {} leaves/contexts, {} samples",
-        effort,
+        profile.effort,
         params.properties.len(),
         params.max_property_values,
         params.split_threshold,
@@ -1287,7 +1280,7 @@ pub fn write_modular_stream_with_tree(
 pub fn write_modular_stream_with_squeeze_and_tree(
     image: &ModularImage,
     writer: &mut BitWriter,
-    effort: u8,
+    profile: &crate::effort::EffortProfile,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<()> {
@@ -1296,7 +1289,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride, gather_samples_strided,
+        compute_gather_stride_from_profile, gather_samples_strided,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1308,7 +1301,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         return write_modular_stream_with_tree(
             image,
             writer,
-            effort,
+            profile,
             image.channels.len() >= 3,
             use_lz77,
             lz77_method,
@@ -1340,7 +1333,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .iter()
         .map(|ch| ch.width() * ch.height())
         .sum();
-    let stride = compute_gather_stride(total_pixels, effort);
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
     gather_samples_strided(&mut samples, &transformed, 0, 0, stride);
 
@@ -1350,7 +1343,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     } else {
         1.0
     };
-    let tree_params = TreeLearningParams::for_effort(effort)
+    let tree_params = TreeLearningParams::from_profile(profile)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &tree_params);
@@ -1358,7 +1351,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
 
     crate::trace::debug_eprintln!(
         "SQUEEZE+TREE: effort={}, {} nodes, {} contexts, {} samples (pf={:.3})",
-        effort,
+        profile.effort,
         tree.len(),
         num_contexts,
         samples.num_samples,
