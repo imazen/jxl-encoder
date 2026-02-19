@@ -57,6 +57,7 @@ pub use archmage::X64V3Token;
 pub use adaptive_quant::{compute_pre_erosion, per_block_modulations};
 pub use block_l2::compute_block_l2_errors;
 pub use cfl::find_best_multiplier as cfl_find_best_multiplier;
+pub use cfl::find_best_multiplier_newton as cfl_find_best_multiplier_newton;
 pub use dct8::{dct_8x8, idct_8x8};
 pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
 pub use dequant::dequant_block_dct8;
@@ -76,6 +77,7 @@ pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rg
 
 pub use adaptive_quant::{compute_pre_erosion_scalar, per_block_modulations_scalar};
 pub use block_l2::compute_block_l2_errors_scalar;
+pub use cfl::find_best_multiplier_newton_scalar as cfl_find_best_multiplier_newton_scalar;
 pub use cfl::find_best_multiplier_scalar as cfl_find_best_multiplier_scalar;
 pub use dct8::{dct_8x8_scalar, idct_8x8_scalar};
 pub use dct16::{dct_8x16_scalar, dct_16x8_scalar, dct_16x16_scalar};

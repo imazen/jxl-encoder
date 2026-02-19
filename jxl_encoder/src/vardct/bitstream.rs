@@ -863,6 +863,7 @@ impl VarDctEncoder {
                 padded_height,
                 xsize_blocks,
                 ysize_blocks,
+                self.profile.cfl_newton,
             )
         } else {
             CflMap::zeros(

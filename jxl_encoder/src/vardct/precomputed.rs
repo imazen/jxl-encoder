@@ -198,6 +198,7 @@ impl EncoderPrecomputed {
                 padded_height,
                 xsize_blocks,
                 ysize_blocks,
+                profile.cfl_newton,
             )
         } else {
             CflMap::zeros(

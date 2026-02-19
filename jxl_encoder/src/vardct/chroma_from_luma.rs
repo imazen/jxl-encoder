@@ -74,16 +74,27 @@ impl CflMap {
 /// Find the best integer multiplier for a chroma-from-luma linear model.
 /// SIMD-accelerated via jxl_simd.
 ///
-/// Minimizes `sum_i (base * values_m[i] - values_s[i] + x/84 * values_m[i])^2 + distance_mul * x^2`
-/// via least-squares with L2 regularization.
+/// When `use_newton` is false (effort < 7):
+///   Minimizes `sum_i (base * values_m[i] - values_s[i] + x/84 * values_m[i])^2 + distance_mul * x^2`
+///   via least-squares with L2 regularization. Fast, single-pass.
+///
+/// When `use_newton` is true (effort >= 7):
+///   Minimizes `1/3 * sum((|ax+b|+1)^2 - 1) + distance_mul * x^2 * num`
+///   via Newton's method with perceptual cost. More robust to outliers.
+///   Matches libjxl enc_chroma_from_luma.cc at speed_tier <= kSquirrel.
 fn find_best_multiplier(
     values_m: &[f32],
     values_s: &[f32],
     num: usize,
     base: f32,
     distance_mul: f32,
+    use_newton: bool,
 ) -> i8 {
-    jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
+    if use_newton {
+        jxl_simd::cfl_find_best_multiplier_newton(values_m, values_s, num, base, distance_mul)
+    } else {
+        jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
+    }
 }
 
 /// Compute the CfL map for an entire image.
@@ -96,6 +107,7 @@ fn find_best_multiplier(
 /// `buf_height` is the padded height. Both must be multiples of 8.
 ///
 /// Ported from libjxl-tiny's `ComputeCmapTile`.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_cfl_map(
     xyb_x: &[f32],
     xyb_y: &[f32],
@@ -104,6 +116,7 @@ pub fn compute_cfl_map(
     buf_height: usize,
     xsize_blocks: usize,
     ysize_blocks: usize,
+    use_newton: bool,
 ) -> CflMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
@@ -179,10 +192,22 @@ pub fn compute_cfl_map(
             }
 
             let tile_idx = ty * xsize_tiles + tx;
-            ytox[tile_idx] =
-                find_best_multiplier(&coeffs_yx, &coeffs_x, num_ac, 0.0, K_DISTANCE_MULTIPLIER_AC);
-            ytob[tile_idx] =
-                find_best_multiplier(&coeffs_yb, &coeffs_b, num_ac, 1.0, K_DISTANCE_MULTIPLIER_AC);
+            ytox[tile_idx] = find_best_multiplier(
+                &coeffs_yx,
+                &coeffs_x,
+                num_ac,
+                0.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
+            );
+            ytob[tile_idx] = find_best_multiplier(
+                &coeffs_yb,
+                &coeffs_b,
+                num_ac,
+                1.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
+            );
             // Compute Y energy for this tile (how much luma AC content)
             let y_energy: f32 = coeffs_yx[..num_ac].iter().map(|v| v * v).sum();
             let num_blocks = (tile_bx1 - tile_bx0) * (tile_by1 - tile_by0);
@@ -382,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_find_best_multiplier_zero_input() {
-        assert_eq!(find_best_multiplier(&[], &[], 0, 0.0, 1e-3), 0);
+        assert_eq!(find_best_multiplier(&[], &[], 0, 0.0, 1e-3, false), 0);
     }
 
     #[test]
@@ -390,7 +415,7 @@ mod tests {
         // When values_m and values_s are uncorrelated, the multiplier should be near 0
         let m = [1.0, 0.0, -1.0, 0.0];
         let s = [0.0, 1.0, 0.0, -1.0];
-        let result = find_best_multiplier(&m, &s, 4, 0.0, 1e-3);
+        let result = find_best_multiplier(&m, &s, 4, 0.0, 1e-3, false);
         assert_eq!(result, 0);
     }
 
@@ -404,7 +429,7 @@ mod tests {
         let base = 0.0;
         let m: Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) * 10.0).collect();
         let s: Vec<f32> = m.iter().map(|&v| base * v + factor / 84.0 * v).collect();
-        let result = find_best_multiplier(&m, &s, 64, base, 1e-3);
+        let result = find_best_multiplier(&m, &s, 64, base, 1e-3, false);
         // Optimization yields ~42.0, towards_zero bias subtracts 2.6 → ~39
         let expected = (factor - 2.6).round();
         assert!(
@@ -446,6 +471,7 @@ mod tests {
             height,
             xsize_blocks,
             ysize_blocks,
+            false, // use_newton
         );
 
         // Uniform image: all AC coefficients are 0 except DC,
