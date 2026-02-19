@@ -69,6 +69,9 @@ pub struct EffortProfile {
     pub epf_dynamic_sharpness: bool,
     /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
     pub cfl_two_pass: bool,
+    /// Use Newton's method (perceptual cost model) for CfL fitting (effort >= 7 in libjxl).
+    /// When false, uses fast least-squares fitting (quadratic cost, single-pass).
+    pub cfl_newton: bool,
 
     // ─── Quantization ────────────────────────────────────────────────────
     /// Use adaptive (content-dependent) quant field via InitialQuantField.
@@ -196,6 +199,7 @@ impl EffortProfile {
             enhanced_clustering_vardct: effort >= 9,
             epf_dynamic_sharpness: effort >= 6,
             cfl_two_pass: effort >= 7,
+            cfl_newton: effort >= 7,
 
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
@@ -282,6 +286,7 @@ impl EffortProfile {
             enhanced_clustering_vardct: false,
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
+            cfl_newton: false,
 
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,
@@ -391,6 +396,7 @@ mod tests {
         assert!(!p.enhanced_clustering_vardct); // e9+
         assert!(p.epf_dynamic_sharpness); // e6+
         assert!(p.cfl_two_pass); // e7+
+        assert!(p.cfl_newton); // e7+
         assert!(p.use_adaptive_quant);
         assert!(p.adjust_quant_ac);
         assert_eq!(p.initial_q_numerator, 0.39);
@@ -421,6 +427,7 @@ mod tests {
         assert!(!p.enhanced_clustering_vardct); // e9+
         assert!(!p.epf_dynamic_sharpness); // e6+
         assert!(!p.cfl_two_pass); // e7+
+        assert!(!p.cfl_newton); // e7+
         assert!(p.use_adaptive_quant);
         assert!(p.adjust_quant_ac);
         assert_eq!(p.initial_q_numerator, 0.39);

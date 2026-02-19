@@ -317,8 +317,8 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe2c69f623472cf68, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        315,                // lossy_defaults_rgb_32x32
+        0xa5bab441af87f0d6, // Updated: CfL Newton's method at effort >= 7
+        321,                // lossy_defaults_rgb_32x32
     );
 }
 
@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x386fcba26e86c925, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        3128,               // lossy_defaults_rgb_48x48_noise
+        0x22e66128a23c7f6f, // Updated: CfL Newton's method at effort >= 7
+        3745,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -357,8 +357,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0xbbcc0981062759c8, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        665,                // lossy_defaults_rgb_13x17
+        0x90beacc98fa47af2, // Updated: CfL Newton's method at effort >= 7
+        699,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -377,8 +377,8 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x2c0b89b46ceb3f83, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        751,                // lossy_rgba_32x32
+        0x2f73e22e171a4b34, // Updated: CfL Newton's method at effort >= 7
+        758,                // lossy_rgba_32x32
     );
 }
 
@@ -397,8 +397,8 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0x246518bbdd1e7320, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        319,                // lossy_rgb16_32x32
+        0x2723bba636e40a0e, // Updated: CfL Newton's method at effort >= 7
+        321,                // lossy_rgb16_32x32
     );
 }
 
@@ -418,8 +418,8 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x4f0cae9d40d59487, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        266,                // lossy_no_ans_huffman
+        0xbd5e1d7c34007332, // Updated: CfL Newton's method at effort >= 7
+        272,                // lossy_no_ans_huffman
     );
 }
 
@@ -439,8 +439,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xac63f268e9b4f69c, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        329,                // lossy_no_gaborish
+        0xca79c6553fc100dc, // Updated: CfL Newton's method at effort >= 7
+        334,                // lossy_no_gaborish
     );
 }
 
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x386fcba26e86c925, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        3128,               // lossy_with_noise
+        0x22e66128a23c7f6f, // Updated: CfL Newton's method at effort >= 7
+        3745,               // lossy_with_noise
     );
 }
 
@@ -481,8 +481,8 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x13acaced7bd670d4, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        314,                // lossy_no_error_diffusion
+        0x312ba0cd5d18f7aa, // Updated: CfL Newton's method at effort >= 7
+        322,                // lossy_no_error_diffusion
     );
 }
 
@@ -502,8 +502,8 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe2c69f623472cf68, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        315,                // lossy_no_pixel_domain_loss
+        0xa5bab441af87f0d6, // Updated: CfL Newton's method at effort >= 7
+        321,                // lossy_no_pixel_domain_loss
     );
 }
 
@@ -523,8 +523,8 @@ fn lossy_no_butteraugli() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe2c69f623472cf68, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        315,                // lossy_no_butteraugli
+        0xa5bab441af87f0d6, // Updated: CfL Newton's method at effort >= 7
+        321,                // lossy_no_butteraugli
     );
 }
 
@@ -544,8 +544,8 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x5c47ce8d8ee6b2be, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        410,                // lossy_force_dct8
+        0xf5b474e3e75df9f8, // Updated: CfL Newton's method at effort >= 7
+        414,                // lossy_force_dct8
     );
 }
 
@@ -565,8 +565,8 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe2c69f623472cf68, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        315,                // lossy_force_dct16x16
+        0xa5bab441af87f0d6, // Updated: CfL Newton's method at effort >= 7
+        321,                // lossy_force_dct16x16
     );
 }
 
@@ -587,8 +587,8 @@ fn lossy_force_identity() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x02ef2487cf4355ed, // Updated: fix global_scale effort-matched parity
-        570,                // lossy_force_identity
+        0x4bd43f1ad4fcaa1c, // Updated: CfL Newton's method at effort >= 7
+        682,                // lossy_force_identity
     );
 }
 
@@ -609,8 +609,8 @@ fn lossy_force_dct2x2() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x16fa005a7adbd25c,
-        519, // lossy_force_dct2x2
+        0x4f60716680efee4d, // Updated: CfL Newton's method at effort >= 7
+        539,                // lossy_force_dct2x2
     );
 }
 
@@ -631,8 +631,8 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x5154d825a71b4d2f, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        520,                // lossy_force_dct4x4
+        0x48151e519f80793b, // Updated: CfL Newton's method at effort >= 7
+        552,                // lossy_force_dct4x4
     );
 }
 
@@ -653,8 +653,8 @@ fn lossy_force_afv0() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x19af7f193a7ef3c2, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        527,                // lossy_force_afv0
+        0x362f0dbf5dbf47a3, // Updated: CfL Newton's method at effort >= 7
+        556,                // lossy_force_afv0
     );
 }
 
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x386fcba26e86c925, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        3128,               // lossy_with_lz77_greedy
+        0x22e66128a23c7f6f, // Updated: CfL Newton's method at effort >= 7
+        3745,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0x386fcba26e86c925, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        3128,               // lossy_with_lz77_rle
+        0x22e66128a23c7f6f, // Updated: CfL Newton's method at effort >= 7
+        3745,               // lossy_with_lz77_rle
     );
 }
 
@@ -717,8 +717,8 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x4ba5b235edff27a6, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        352,                // lossy_distance_05
+        0x2c14af0202551100, // Updated: CfL Newton's method at effort >= 7
+        359,                // lossy_distance_05
     );
 }
 
@@ -737,8 +737,8 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xb4beae9bfb84a4be, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
-        271,                // lossy_distance_3
+        0xe077f0e0c2330f5d, // Updated: CfL Newton's method at effort >= 7
+        275,                // lossy_distance_3
     );
 }
 
@@ -767,7 +767,7 @@ fn lossy_all_off() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x90560b11e606e7f7, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
+        0x66a9ef6b15fa4155, // Updated: CfL Newton's method at effort >= 7
         391,                // lossy_all_off
     );
 }
@@ -787,7 +787,7 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x5594b4e2fb562a31, // Updated: CfL distance_mul 1e-3→1e-9 (match libjxl)
+        0xe65a2b10bc66967f, // Updated: CfL Newton's method at effort >= 7
         309,                // lossy_bgr8
     );
 }
