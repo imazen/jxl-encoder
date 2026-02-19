@@ -6631,114 +6631,114 @@ fn test_rd_regression() {
     }
 
     // To recalibrate: run `just rd-regression` and update from the output.
-    // Last updated: 2026-02-18 (effort-gate AdjustQuantBlockAC: skip at effort > 5)
+    // Last updated: 2026-02-19 (CfL two-pass + WP param search + effort gating)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d025: Baseline {
-                size: 1049376,
-                butteraugli: 1.542,
-                ssim2: 87.53,
+                size: 1050874,
+                butteraugli: 1.544,
+                ssim2: 87.61,
             },
             d050: Baseline {
-                size: 784284,
-                butteraugli: 1.555,
-                ssim2: 85.29,
+                size: 786173,
+                butteraugli: 1.532,
+                ssim2: 85.33,
             },
             d100: Baseline {
-                size: 560898,
-                butteraugli: 2.058,
-                ssim2: 81.01,
+                size: 563996,
+                butteraugli: 2.032,
+                ssim2: 81.30,
             },
         },
         // 1001682 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 116382,
-                butteraugli: 0.438,
-                ssim2: 88.05,
+                size: 117628,
+                butteraugli: 0.458,
+                ssim2: 88.09,
             },
             d050: Baseline {
-                size: 76447,
-                butteraugli: 0.938,
-                ssim2: 85.46,
+                size: 78388,
+                butteraugli: 0.961,
+                ssim2: 85.73,
             },
             d100: Baseline {
-                size: 48554,
-                butteraugli: 1.727,
-                ssim2: 80.24,
+                size: 49718,
+                butteraugli: 1.818,
+                ssim2: 80.84,
             },
         },
         // 1028637 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 89209,
-                butteraugli: 0.450,
-                ssim2: 60.45,
+                size: 93425,
+                butteraugli: 0.404,
+                ssim2: 60.46,
             },
             d050: Baseline {
-                size: 60663,
-                butteraugli: 0.868,
-                ssim2: 58.36,
+                size: 63663,
+                butteraugli: 0.866,
+                ssim2: 58.59,
             },
             d100: Baseline {
-                size: 41298,
-                butteraugli: 1.591,
-                ssim2: 55.08,
+                size: 43506,
+                butteraugli: 1.536,
+                ssim2: 55.50,
             },
         },
         // 1029604 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 146360,
-                butteraugli: 0.508,
-                ssim2: 82.30,
+                size: 151602,
+                butteraugli: 0.497,
+                ssim2: 82.34,
             },
             d050: Baseline {
-                size: 98798,
-                butteraugli: 0.905,
-                ssim2: 80.76,
+                size: 104118,
+                butteraugli: 0.896,
+                ssim2: 80.99,
             },
             d100: Baseline {
-                size: 62369,
-                butteraugli: 1.691,
-                ssim2: 76.85,
+                size: 65570,
+                butteraugli: 1.605,
+                ssim2: 77.48,
             },
         },
         // 106399 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 122985,
-                butteraugli: 0.579,
-                ssim2: 85.43,
+                size: 124941,
+                butteraugli: 0.601,
+                ssim2: 85.45,
             },
             d050: Baseline {
-                size: 75696,
-                butteraugli: 0.921,
-                ssim2: 83.56,
+                size: 77564,
+                butteraugli: 0.904,
+                ssim2: 83.70,
             },
             d100: Baseline {
-                size: 46269,
-                butteraugli: 1.774,
-                ssim2: 79.58,
+                size: 48179,
+                butteraugli: 1.484,
+                ssim2: 80.36,
             },
         },
         // 1080721 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 108247,
+                size: 110655,
                 butteraugli: 0.423,
-                ssim2: 87.56,
+                ssim2: 87.68,
             },
             d050: Baseline {
-                size: 67881,
-                butteraugli: 0.829,
-                ssim2: 86.17,
+                size: 70915,
+                butteraugli: 0.830,
+                ssim2: 86.41,
             },
             d100: Baseline {
-                size: 43486,
-                butteraugli: 1.525,
-                ssim2: 83.88,
+                size: 45466,
+                butteraugli: 1.327,
+                ssim2: 84.53,
             },
         },
     ];
@@ -7069,84 +7069,84 @@ fn test_rd_regression_high_distance() {
     }
 
     // To recalibrate: run the test with --nocapture and update from the output.
-    // Last updated: 2026-02-18 (fix: pixel-domain entropy_mul double-counting)
+    // Last updated: 2026-02-19 (CfL two-pass + WP param search + effort gating)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d200: Baseline {
-                size: 386774,
-                butteraugli: 3.452,
-                ssim2: 72.19,
+                size: 395868,
+                butteraugli: 3.477,
+                ssim2: 72.78,
             },
             d300: Baseline {
-                size: 304998,
-                butteraugli: 5.525,
-                ssim2: 64.27,
+                size: 311905,
+                butteraugli: 5.579,
+                ssim2: 64.70,
             },
         },
         // 1001682 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 28817,
-                butteraugli: 2.825,
-                ssim2: 70.90,
+                size: 29439,
+                butteraugli: 2.698,
+                ssim2: 71.40,
             },
             d300: Baseline {
-                size: 20585,
-                butteraugli: 3.556,
-                ssim2: 61.14,
+                size: 20935,
+                butteraugli: 3.575,
+                ssim2: 61.64,
             },
         },
         // 1028637 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 26298,
-                butteraugli: 2.915,
-                ssim2: 48.20,
+                size: 27631,
+                butteraugli: 2.714,
+                ssim2: 48.66,
             },
             d300: Baseline {
-                size: 20394,
+                size: 21587,
                 butteraugli: 3.779,
-                ssim2: 41.06,
+                ssim2: 42.00,
             },
         },
         // 1029604 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 38741,
-                butteraugli: 2.787,
-                ssim2: 70.39,
+                size: 40155,
+                butteraugli: 2.666,
+                ssim2: 70.90,
             },
             d300: Baseline {
-                size: 28724,
-                butteraugli: 3.911,
-                ssim2: 64.99,
+                size: 29495,
+                butteraugli: 3.364,
+                ssim2: 65.43,
             },
         },
         // 106399 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 28833,
-                butteraugli: 2.667,
-                ssim2: 72.11,
+                size: 29838,
+                butteraugli: 2.556,
+                ssim2: 72.79,
             },
             d300: Baseline {
-                size: 21539,
-                butteraugli: 3.633,
-                ssim2: 65.82,
+                size: 22316,
+                butteraugli: 2.866,
+                ssim2: 66.35,
             },
         },
         // 1080721 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 29070,
-                butteraugli: 2.558,
-                ssim2: 78.72,
+                size: 30376,
+                butteraugli: 2.114,
+                ssim2: 79.50,
             },
             d300: Baseline {
-                size: 22241,
-                butteraugli: 3.597,
-                ssim2: 73.83,
+                size: 23038,
+                butteraugli: 3.087,
+                ssim2: 74.87,
             },
         },
     ];
