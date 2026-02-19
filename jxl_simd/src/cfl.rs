@@ -231,6 +231,7 @@ pub fn find_best_multiplier_wasm128(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -240,19 +241,26 @@ mod tests {
         let values_s: alloc::vec::Vec<f32> =
             (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
 
-        let ref_result = find_best_multiplier_scalar(&values_m, &values_s, num, 0.0, 1e-3);
-        let test_result = find_best_multiplier(&values_m, &values_s, num, 0.0, 1e-3);
-        assert_eq!(
-            ref_result, test_result,
-            "base=0.0: scalar={ref_result} dispatch={test_result}"
-        );
+        let ref0 = find_best_multiplier_scalar(&values_m, &values_s, num, 0.0, 1e-3);
+        let ref1 = find_best_multiplier_scalar(&values_m, &values_s, num, 1.0, 1e-3);
 
-        let ref_result = find_best_multiplier_scalar(&values_m, &values_s, num, 1.0, 1e-3);
-        let test_result = find_best_multiplier(&values_m, &values_s, num, 1.0, 1e-3);
-        assert_eq!(
-            ref_result, test_result,
-            "base=1.0: scalar={ref_result} dispatch={test_result}"
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let test0 = find_best_multiplier(&values_m, &values_s, num, 0.0, 1e-3);
+                assert_eq!(
+                    ref0, test0,
+                    "base=0.0: scalar={ref0} dispatch={test0} [{perm}]"
+                );
+
+                let test1 = find_best_multiplier(&values_m, &values_s, num, 1.0, 1e-3);
+                assert_eq!(
+                    ref1, test1,
+                    "base=1.0: scalar={ref1} dispatch={test1} [{perm}]"
+                );
+            },
         );
+        std::eprintln!("{report}");
     }
 
     #[test]

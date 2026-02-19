@@ -1482,6 +1482,7 @@ fn pre_erosion_pixel(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -1491,20 +1492,25 @@ mod tests {
         let xyb_y: Vec<f32> = (0..w * h).map(|i| 0.1 + 0.001 * (i % 37) as f32).collect();
 
         let (ref_out, ref_w, ref_h) = compute_pre_erosion_scalar(&xyb_y, w, h, 0, 0, w, h);
-        let (test_out, test_w, test_h) = compute_pre_erosion(&xyb_y, w, h, 0, 0, w, h);
 
-        assert_eq!(ref_w, test_w);
-        assert_eq!(ref_h, test_h);
-        for i in 0..ref_out.len() {
-            let diff = (ref_out[i] - test_out[i]).abs();
-            assert!(
-                diff < 1e-4,
-                "pre_erosion mismatch at {}: scalar={} dispatch={}",
-                i,
-                ref_out[i],
-                test_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let (test_out, test_w, test_h) = compute_pre_erosion(&xyb_y, w, h, 0, 0, w, h);
+                assert_eq!(ref_w, test_w, "[{perm}]");
+                assert_eq!(ref_h, test_h, "[{perm}]");
+                for i in 0..ref_out.len() {
+                    let diff = (ref_out[i] - test_out[i]).abs();
+                    assert!(
+                        diff < 1e-4,
+                        "pre_erosion mismatch at {i}: scalar={} dispatch={} [{perm}]",
+                        ref_out[i],
+                        test_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1524,7 +1530,6 @@ mod tests {
         let xb = w / 8;
         let yb = h / 8;
 
-        // Run scalar
         let mut aq_ref = vec![0.5_f32; xb * yb];
         per_block_modulations_scalar(
             &xyb_x,
@@ -1541,32 +1546,35 @@ mod tests {
             xb,
         );
 
-        // Run dispatch
-        let mut aq_test = vec![0.5_f32; xb * yb];
-        per_block_modulations(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            stride,
-            1.0,
-            0.765,
-            0,
-            0,
-            xb,
-            yb,
-            &mut aq_test,
-            xb,
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut aq_test = vec![0.5_f32; xb * yb];
+                per_block_modulations(
+                    &xyb_x,
+                    &xyb_y,
+                    &xyb_b,
+                    stride,
+                    1.0,
+                    0.765,
+                    0,
+                    0,
+                    xb,
+                    yb,
+                    &mut aq_test,
+                    xb,
+                );
+                for i in 0..aq_ref.len() {
+                    let diff = (aq_ref[i] - aq_test[i]).abs();
+                    assert!(
+                        diff < 1e-3,
+                        "modulations mismatch at {i}: scalar={} dispatch={} [{perm}]",
+                        aq_ref[i],
+                        aq_test[i]
+                    );
+                }
+            },
         );
-
-        for i in 0..aq_ref.len() {
-            let diff = (aq_ref[i] - aq_test[i]).abs();
-            assert!(
-                diff < 1e-3,
-                "modulations mismatch at {}: scalar={} dispatch={}",
-                i,
-                aq_ref[i],
-                aq_test[i]
-            );
-        }
+        std::eprintln!("{report}");
     }
 }

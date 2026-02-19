@@ -66,6 +66,23 @@ pub fn compute_block_l2_errors(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return compute_block_l2_errors_wasm128(
+                token,
+                original,
+                reconstructed,
+                mask1x1,
+                xsize_blocks,
+                ysize_blocks,
+                padded_width,
+                nblocks,
+            );
+        }
+    }
+
     compute_block_l2_errors_scalar(
         original,
         reconstructed,
@@ -242,8 +259,73 @@ pub fn compute_block_l2_errors_neon(
     errors
 }
 
+// ============================================================================
+// wasm32 SIMD128 implementation
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+pub fn compute_block_l2_errors_wasm128(
+    token: archmage::Wasm128Token,
+    original: [&[f32]; 3],
+    reconstructed: [&[f32]; 3],
+    mask1x1: &[f32],
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    padded_width: usize,
+    nblocks: usize,
+) -> Vec<f32> {
+    use magetypes::simd::f32x4;
+
+    let w_x = f32x4::splat(token, CHANNEL_WEIGHTS[0]);
+    let w_b = f32x4::splat(token, CHANNEL_WEIGHTS[2]);
+
+    let mut errors = vec![0.0f32; nblocks];
+
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            let block_idx = by * xsize_blocks + bx;
+            let mut acc = f32x4::zero(token);
+
+            for py in 0..8 {
+                let row_start = (by * 8 + py) * padded_width + bx * 8;
+
+                // Process 8 pixels as two f32x4 chunks
+                for half in 0..2usize {
+                    let off = row_start + half * 4;
+
+                    let mask_v = f32x4::from_slice(token, &mask1x1[off..]);
+                    let mask_sq = mask_v * mask_v;
+
+                    let orig_x = f32x4::from_slice(token, &original[0][off..]);
+                    let recon_x = f32x4::from_slice(token, &reconstructed[0][off..]);
+                    let diff_x = orig_x - recon_x;
+                    acc += w_x * mask_sq * diff_x * diff_x;
+
+                    let orig_y = f32x4::from_slice(token, &original[1][off..]);
+                    let recon_y = f32x4::from_slice(token, &reconstructed[1][off..]);
+                    let diff_y = orig_y - recon_y;
+                    acc += mask_sq * diff_y * diff_y;
+
+                    let orig_b = f32x4::from_slice(token, &original[2][off..]);
+                    let recon_b = f32x4::from_slice(token, &reconstructed[2][off..]);
+                    let diff_b = orig_b - recon_b;
+                    acc += w_b * mask_sq * diff_b * diff_b;
+                }
+            }
+
+            errors[block_idx] = acc.reduce_add();
+        }
+    }
+
+    errors
+}
+
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
     use alloc::vec;
 
@@ -289,7 +371,6 @@ mod tests {
         let padded_width = xsize_blocks * 8;
         let n = padded_width * ysize_blocks * 8;
 
-        // Create varied test data
         let mut orig0 = vec![0.0f32; n];
         let mut orig1 = vec![0.0f32; n];
         let mut orig2 = vec![0.0f32; n];
@@ -309,14 +390,6 @@ mod tests {
             mask[i] = 0.5 + (f * 0.007).sin().abs() * 0.5;
         }
 
-        let simd_result = compute_block_l2_errors(
-            [&orig0, &orig1, &orig2],
-            [&recon0, &recon1, &recon2],
-            &mask,
-            xsize_blocks,
-            ysize_blocks,
-        );
-
         let scalar_result = compute_block_l2_errors_scalar(
             [&orig0, &orig1, &orig2],
             [&recon0, &recon1, &recon2],
@@ -327,21 +400,30 @@ mod tests {
             xsize_blocks * ysize_blocks,
         );
 
-        assert_eq!(simd_result.len(), scalar_result.len());
-        for (i, (&s, &sc)) in simd_result.iter().zip(scalar_result.iter()).enumerate() {
-            let rel_err = if sc.abs() > 1e-10 {
-                ((s - sc) / sc).abs()
-            } else {
-                (s - sc).abs()
-            };
-            assert!(
-                rel_err < 1e-5,
-                "Block {} SIMD {} vs scalar {} rel_err {}",
-                i,
-                s,
-                sc,
-                rel_err
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let simd_result = compute_block_l2_errors(
+                    [&orig0, &orig1, &orig2],
+                    [&recon0, &recon1, &recon2],
+                    &mask,
+                    xsize_blocks,
+                    ysize_blocks,
+                );
+                assert_eq!(simd_result.len(), scalar_result.len(), "[{perm}]");
+                for (i, (&s, &sc)) in simd_result.iter().zip(scalar_result.iter()).enumerate() {
+                    let rel_err = if sc.abs() > 1e-10 {
+                        ((s - sc) / sc).abs()
+                    } else {
+                        (s - sc).abs()
+                    };
+                    assert!(
+                        rel_err < 1e-5,
+                        "Block {i} SIMD {s} vs scalar {sc} rel_err {rel_err} [{perm}]",
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

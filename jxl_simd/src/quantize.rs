@@ -49,6 +49,15 @@ pub fn quantize_block_dct8(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            quantize_dct8_wasm128(token, dct_coeffs, weights, qac_qm, thresholds, output);
+            return;
+        }
+    }
+
     quantize_dct8_scalar(dct_coeffs, weights, qac_qm, thresholds, output);
 }
 
@@ -199,10 +208,58 @@ pub fn quantize_dct8_neon(
     output[0] = 0;
 }
 
+// --- wasm32 SIMD128 implementation ---
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_dct8_wasm128(
+    token: archmage::Wasm128Token,
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    use magetypes::simd::f32x4;
+
+    let qac_qm_v = f32x4::splat(token, qac_qm);
+    let zero_f = f32x4::zero(token);
+
+    let thr = [
+        f32x4::splat(token, thresholds[0]),
+        f32x4::splat(token, thresholds[1]),
+        f32x4::splat(token, thresholds[2]),
+        f32x4::splat(token, thresholds[3]),
+    ];
+
+    // Process 16 chunks of 4 elements (2 per row, 8 rows)
+    for row in 0..8 {
+        let thr_row = if row < 4 { 0 } else { 2 };
+        for half in 0..2usize {
+            let base = row * 8 + half * 4;
+            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice(token, &weights[base..]);
+            let t = thr[thr_row + half];
+
+            let val = coeffs / w * qac_qm_v;
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(t);
+            let rounded = val.round();
+            let result = f32x4::blend(mask, rounded, zero_f);
+            let result_i32 = result.to_i32x4();
+            result_i32.store((&mut output[base..base + 4]).try_into().unwrap());
+        }
+    }
+
+    output[0] = 0;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     extern crate alloc;
+    extern crate std;
 
     #[test]
     fn test_quantize_dct8_matches_scalar() {
@@ -220,34 +277,40 @@ mod tests {
         let mut ref_out = [0i32; 64];
         quantize_dct8_scalar(&coeffs, &weights, qac_qm, &thresholds, &mut ref_out);
 
-        let mut simd_out = [0i32; 64];
-        quantize_block_dct8(&coeffs, &weights, qac_qm, &thresholds, &mut simd_out);
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0i32; 64];
+                quantize_block_dct8(&coeffs, &weights, qac_qm, &thresholds, &mut simd_out);
 
-        // DC must be 0
-        assert_eq!(simd_out[0], 0, "DC must be 0");
-        assert_eq!(ref_out[0], 0, "DC must be 0 (ref)");
+                // DC must be 0
+                assert_eq!(simd_out[0], 0, "DC must be 0 [{perm}]");
+                assert_eq!(ref_out[0], 0, "DC must be 0 (ref) [{perm}]");
 
-        // Compare all AC coefficients — may differ by 1 at rounding boundaries
-        let mut max_diff = 0i32;
-        let mut diff_count = 0;
-        for i in 1..64 {
-            let diff = (simd_out[i] - ref_out[i]).abs();
-            if diff > 0 {
-                diff_count += 1;
-            }
-            max_diff = max_diff.max(diff);
-        }
-        assert!(
-            max_diff <= 1,
-            "Max quantization diff: {} (at most 1 due to FP rounding boundary)",
-            max_diff
+                // Compare all AC coefficients — may differ by 1 at rounding boundaries
+                let mut max_diff = 0i32;
+                let mut diff_count = 0;
+                for i in 1..64 {
+                    let diff = (simd_out[i] - ref_out[i]).abs();
+                    if diff > 0 {
+                        diff_count += 1;
+                    }
+                    max_diff = max_diff.max(diff);
+                }
+                assert!(
+                    max_diff <= 1,
+                    "Max quantization diff: {} (at most 1 due to FP rounding boundary) [{perm}]",
+                    max_diff
+                );
+                // Allow up to ~5% of coefficients to differ by 1 at rounding boundaries
+                assert!(
+                    diff_count <= 3,
+                    "Too many differing coefficients: {}/63 [{perm}]",
+                    diff_count
+                );
+            },
         );
-        // Allow up to ~5% of coefficients to differ by 1 at rounding boundaries
-        assert!(
-            diff_count <= 3,
-            "Too many differing coefficients: {}/63",
-            diff_count
-        );
+        std::eprintln!("{report}");
     }
 
     #[test]
