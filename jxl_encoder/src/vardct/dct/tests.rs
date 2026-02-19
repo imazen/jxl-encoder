@@ -988,3 +988,63 @@ fn test_idct_32x64_roundtrip() {
         max_err
     );
 }
+
+#[test]
+fn test_idct_4x8_full_roundtrip() {
+    let input: [f32; 64] = core::array::from_fn(|i| (i as f32 * 0.3).sin() * 50.0);
+    let mut coeffs = [0.0f32; 64];
+    dct_4x8_full(&input, &mut coeffs);
+    let mut output = [0.0f32; 64];
+    idct_4x8_full(&coeffs, &mut output);
+
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-4,
+        "idct_4x8_full roundtrip max error {} too large",
+        max_err
+    );
+}
+
+#[test]
+fn test_idct_8x4_full_roundtrip() {
+    let input: [f32; 64] = core::array::from_fn(|i| (i as f32 * 0.7).cos() * 30.0);
+    let mut coeffs = [0.0f32; 64];
+    dct_8x4_full(&input, &mut coeffs);
+    let mut output = [0.0f32; 64];
+    idct_8x4_full(&coeffs, &mut output);
+
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-4,
+        "idct_8x4_full roundtrip max error {} too large",
+        max_err
+    );
+}
+
+#[test]
+fn test_idct_4x4_full_roundtrip() {
+    let input: [f32; 64] = core::array::from_fn(|i| (i as f32 * 0.5 + 1.0).sin() * 40.0);
+    let mut coeffs = [0.0f32; 64];
+    dct_4x4_full(&input, &mut coeffs);
+    let mut output = [0.0f32; 64];
+    idct_4x4_full(&coeffs, &mut output);
+
+    let max_err = input
+        .iter()
+        .zip(output.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_err < 1e-4,
+        "idct_4x4_full roundtrip max error {} too large",
+        max_err
+    );
+}

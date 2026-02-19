@@ -22,9 +22,10 @@ use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
-    dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, idct_8x8, idct_8x16,
-    idct_16x8, idct_16x16, idct_16x32, idct_32x16, idct_32x32, idct_32x64, idct_64x32, idct_64x64,
-    identity_transform, inverse_dct2x2_transform, inverse_identity_transform,
+    dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, idct_4x4_full,
+    idct_4x8_full, idct_8x4_full, idct_8x8, idct_8x16, idct_16x8, idct_16x16, idct_16x32,
+    idct_32x16, idct_32x32, idct_32x64, idct_64x32, idct_64x64, identity_transform,
+    inverse_dct2x2_transform, inverse_identity_transform,
 };
 use super::quant::quant_weights;
 use crate::effort::EffortProfile;
@@ -934,13 +935,22 @@ fn estimate_entropy_full_impl(
         // SIMD-accelerated coefficient processing (biggest encoder hotspot).
         // Processes all coefficients including LLF — both libjxl and libjxl-tiny
         // include LLF in entropy/nzeros estimation.
+        //
+        // In pixel-domain mode: use quant_norm16 (L16 norm for 4+ blocks, max for
+        // 1-2 blocks) matching libjxl enc_ac_strategy.cc:415.
+        // In coefficient-domain mode: use max(quant_field) (libjxl-tiny style).
+        let quant_for_coeffs = if use_pixel_domain {
+            quant_norm16
+        } else {
+            quant
+        };
         let coeff_result = jxl_simd::entropy_estimate_coeffs(
             &block[offset_c..offset_c + size],
             &block[offset_y..offset_y + size],
             weights,
             size,
             cmap_factor,
-            quant,
+            quant_for_coeffs,
             k_cost_delta,
             K_COST2,
             use_pixel_domain,
@@ -1035,11 +1045,29 @@ fn estimate_entropy_full_impl(
 /// Writes pixel-domain error in row-major layout into `output`.
 pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], output: &mut [f32]) {
     match raw_strategy {
-        RAW_STRATEGY_DCT8 | RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4 => {
+        RAW_STRATEGY_DCT8 => {
             let mut input = [0.0f32; 64];
             input.copy_from_slice(&error_coeffs[..64]);
             let mut tmp = [0.0f32; 64];
             idct_8x8(&input, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
+        }
+        RAW_STRATEGY_DCT4X8 => {
+            let input: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
+            let mut tmp = [0.0f32; 64];
+            idct_4x8_full(input, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
+        }
+        RAW_STRATEGY_DCT8X4 => {
+            let input: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
+            let mut tmp = [0.0f32; 64];
+            idct_8x4_full(input, &mut tmp);
+            output[..64].copy_from_slice(&tmp);
+        }
+        RAW_STRATEGY_DCT4X4 => {
+            let input: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
+            let mut tmp = [0.0f32; 64];
+            idct_4x4_full(input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
