@@ -41,7 +41,14 @@ pub fn find_best_multiplier(
     {
         use archmage::SimdToken;
         if let Some(token) = archmage::Wasm128Token::summon() {
-            return find_best_multiplier_wasm128(token, values_m, values_s, num, base, distance_mul);
+            return find_best_multiplier_wasm128(
+                token,
+                values_m,
+                values_s,
+                num,
+                base,
+                distance_mul,
+            );
         }
     }
 
