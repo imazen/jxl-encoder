@@ -510,7 +510,7 @@ impl VarDctEncoder {
             self.cfl_enabled,
             self.pixel_domain_loss,
             self.enable_patches,
-            self.butteraugli_iters,
+            self.profile.butteraugli_iters,
             self.enable_noise,
             self.enable_denoise,
             self.ac_strategy_enabled,
