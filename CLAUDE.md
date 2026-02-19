@@ -149,28 +149,33 @@ Improvements made Feb 3, 2026:
 - Quality at d=1.0: 0-4% butteraugli regression on most images, some up to 19%
 - Quality at d=2.0-3.0: some butteraugli regression (10-27%) on individual images
 
-**vs cjxl e7 (109 images, 9 distances, CSV reference: `reference/cjxl_reference.csv`):**
+**vs cjxl e7 (25 images, 9 distances, 225 comparisons, CSV reference: `reference/cjxl_reference.csv`):**
 
-Updated 2026-02-19. Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at efforts 5-8.
+Updated 2026-02-19 (after mul8x8 fix). Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7.
 
 | Distance | Median Size | Avg Size | Avg Butteraugli | Avg SSIM2 |
 |----------|-------------|----------|-----------------|-----------|
-| d=0.25 | +0.8% | +1.9% | -1.2% | -0.15 |
-| d=0.5 | **-3.7%** | -1.1% | +3.0% | -0.49 |
-| d=1.0 | **-2.5%** | -1.2% | +14.1% | -1.18 |
-| d=1.5 | -0.7% | +2.0% | +4.6% | -1.16 |
-| d=2.0 | -0.3% | +2.4% | +13.0% | -1.95 |
-| d=3.0 | +1.8% | +2.8% | +11.8% | -2.62 |
-| d=5.0 | +5.7% | +4.5% | +7.9% | -2.91 |
+| d=0.25 | +0.2% | +0.7% | +32.7% | -0.17 |
+| d=0.5 | **-5.2%** | **-5.7%** | +15.1% | -0.54 |
+| d=1.0 | **-4.1%** | **-9.4%** | +29.0% | -1.31 |
+| d=1.5 | **-2.4%** | **-6.4%** | +25.5% | -1.70 |
+| d=2.0 | **-1.0%** | **-4.8%** | +21.8% | -2.31 |
+| d=2.5 | +0.4% | **-3.7%** | +22.2% | -2.10 |
+| d=3.0 | +3.8% | +3.0% | +22.8% | -3.20 |
+| d=4.0 | +3.9% | +4.1% | +23.2% | -3.70 |
+| d=5.0 | +5.9% | +5.3% | +14.0% | -4.00 |
+
+Grand summary: avg size -1.87% (median +0.63%), total bytes -16.13%, avg SSIM2 -2.115, avg bfly +0.444.
+Size wins: 98/225 (44%). Encode time: 5.28x slower (229.9s vs 43.6s for all 225 encodes).
 
 **Key patterns**:
-- **Size**: competitive at d=0.25-1.0 (median -3.7% to +0.8%), gap widens at high d (+1.8% to +5.7%)
-- **Quality**: butteraugli 3-14% worse on average, SSIM2 -0.5 to -3.0 points
-- **Three consistent outliers** (reduced after distance gate fix):
-  - `cid22/1418519` (PNG ratio 0.305, smooth/simple): was +17%, now +4.6% at d=1.0
-  - `cid22/1279330` (PNG ratio 0.438): was +12%, now +7.7% at d=1.0
-  - `clic2025/100a02c2` (2048x1365): was +9%, now +2.0% at d=1.0
-- **One consistently better image**: `cid22/1044329` (PNG ratio 0.634, complex): avg -5% size
+- **Size**: strong wins at d=0.5-2.5 (median -5.2% to +0.4%), gap widens at d>=3.0 (+3.8% to +5.9%)
+- **Quality**: butteraugli 14-33% worse on average, SSIM2 -0.2 to -4.0 points
+- **mul8x8 fix** (fa4b5b8): libjxl's 8×8-class cost discount was missing in pixel-domain mode.
+  Improved avg size from -1.2% to -9.4% at d=1.0. Butteraugli worsened because more bits go to
+  large transforms (better compression) at the expense of per-pixel fidelity.
+- **Screenshots** (gb82-sc corpus): consistently 12-45% larger. Patches help but our VarDCT cost
+  model over-compresses screenshot content vs cjxl.
 - **Butteraugli loop**: cjxl e8→e7 comparison shows loop buys 1-4% size + 7% butteraugli at d=1.0.
   Neither encoder has butteraugli loop at e7 (libjxl gates at kKitten = effort 8).
 
