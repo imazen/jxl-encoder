@@ -524,7 +524,7 @@ fn lossy_no_butteraugli() {
         false,
         0x3ba5403031c1499f,
         0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
-        349, // lossy_no_butteraugli
+        349,                // lossy_no_butteraugli
     );
 }
 
@@ -654,7 +654,7 @@ fn lossy_force_afv0() {
         false,
         0x3ba5403031c1499f,
         0xd806f39e18d6a16b, // Updated: patch cost-benefit gating
-        558, // lossy_force_afv0
+        558,                // lossy_force_afv0
     );
 }
 
