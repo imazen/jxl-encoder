@@ -71,11 +71,10 @@ impl CflMap {
 }
 
 /// Find the best integer multiplier for a chroma-from-luma linear model.
+/// SIMD-accelerated via jxl_simd.
 ///
 /// Minimizes `sum_i (base * values_m[i] - values_s[i] + x/84 * values_m[i])^2 + distance_mul * x^2`
 /// via least-squares with L2 regularization.
-///
-/// Ported from libjxl-tiny's `FindBestMultiplier`.
 fn find_best_multiplier(
     values_m: &[f32],
     values_s: &[f32],
@@ -83,20 +82,7 @@ fn find_best_multiplier(
     base: f32,
     distance_mul: f32,
 ) -> i8 {
-    if num == 0 {
-        return 0;
-    }
-    let mut sum_aa = 0.0f32;
-    let mut sum_ab = 0.0f32;
-    for i in 0..num {
-        // color residual = a*x + b, where a = values_m[i] / 84, b = base * values_m[i] - values_s[i]
-        let a = K_INV_COLOR_FACTOR * values_m[i];
-        let b = base * values_m[i] - values_s[i];
-        sum_aa += a * a;
-        sum_ab += a * b;
-    }
-    let x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
-    x.round().clamp(-128.0, 127.0) as i8
+    jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
 }
 
 /// Compute the CfL map for an entire image.

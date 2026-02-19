@@ -27,6 +27,7 @@ extern crate alloc;
 
 mod adaptive_quant;
 mod block_l2;
+mod cfl;
 mod dct16;
 mod dct8;
 mod dequant;
@@ -52,6 +53,7 @@ pub use archmage::X64V3Token;
 
 pub use adaptive_quant::{compute_pre_erosion, per_block_modulations};
 pub use block_l2::compute_block_l2_errors;
+pub use cfl::find_best_multiplier as cfl_find_best_multiplier;
 pub use dct8::{dct_8x8, idct_8x8};
 pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
 pub use dequant::dequant_block_dct8;
@@ -70,6 +72,7 @@ pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rg
 
 pub use adaptive_quant::{compute_pre_erosion_scalar, per_block_modulations_scalar};
 pub use block_l2::compute_block_l2_errors_scalar;
+pub use cfl::find_best_multiplier_scalar as cfl_find_best_multiplier_scalar;
 pub use dct8::{dct_8x8_scalar, idct_8x8_scalar};
 pub use dct16::{dct_8x16_scalar, dct_16x8_scalar, dct_16x16_scalar};
 pub use dequant::dequant_dct8_scalar;
@@ -90,6 +93,8 @@ pub use xyb::{forward_xyb_scalar, inverse_xyb_planar_scalar, inverse_xyb_scalar}
 pub use adaptive_quant::{compute_pre_erosion_avx2, per_block_modulations_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use block_l2::compute_block_l2_errors_avx2;
+#[cfg(target_arch = "x86_64")]
+pub use cfl::find_best_multiplier_avx2 as cfl_find_best_multiplier_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use dct8::{dct_8x8_avx2, idct_8x8_avx2};
 #[cfg(target_arch = "x86_64")]
@@ -123,6 +128,8 @@ pub use xyb::{forward_xyb_avx2, inverse_xyb_avx2, inverse_xyb_planar_avx2};
 pub use adaptive_quant::{compute_pre_erosion_neon, per_block_modulations_neon};
 #[cfg(target_arch = "aarch64")]
 pub use block_l2::compute_block_l2_errors_neon;
+#[cfg(target_arch = "aarch64")]
+pub use cfl::find_best_multiplier_neon as cfl_find_best_multiplier_neon;
 #[cfg(target_arch = "aarch64")]
 pub use dct8::{dct_8x8_neon, idct_8x8_neon};
 #[cfg(target_arch = "aarch64")]
