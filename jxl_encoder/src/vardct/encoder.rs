@@ -319,10 +319,11 @@ impl VarDctEncoder {
         } else {
             None
         };
-        // Cost-benefit gating: trial-encode the reference frame and estimate whether
-        // patch overhead exceeds VarDCT savings. At high distances (d>=3), the VarDCT
-        // savings per patch pixel drop while ref frame overhead stays constant.
-        if let Some(ref pd) = patches_data
+        // Cost-benefit gating for experimental mode only.
+        // libjxl uses patches unconditionally when detected (no cost check),
+        // so reference mode skips this to match.
+        if matches!(self.encoder_mode, crate::api::EncoderMode::Experimental)
+            && let Some(ref pd) = patches_data
             && !pd.is_cost_effective(self.distance, self.use_ans)
         {
             patches_data = None;
