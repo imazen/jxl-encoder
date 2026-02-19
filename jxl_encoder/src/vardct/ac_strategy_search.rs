@@ -503,17 +503,25 @@ pub(super) fn find_best_32x32_transform(
         return false;
     }
 
-    // At higher distances (d >= 2.0), evaluate DCT32x32, DCT32x16, DCT16x32 as options
-    let k32x32mul1: f32 = -0.75;
-    let k32x32mul2: f32 = 1.2; // Very conservative
-    let k32x32base: f32 = 2.0;
-    let mul32x32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
+    // At higher distances (d >= 2.0), evaluate DCT32x32, DCT32x16, DCT16x32 as options.
+    // In pixel-domain mode, entropy_mul is applied internally by estimate_entropy_with_mask
+    // using libjxl's static constants (1.48 for DCT32x32, 1.49 for DCT32x16).
+    // In coefficient-domain mode, use distance-dependent multipliers.
+    let use_pixel_domain = mask1x1.is_some();
+    let (mul32x32, mul32x16) = if use_pixel_domain {
+        (1.0_f32, 1.0_f32)
+    } else {
+        let k32x32mul1: f32 = -0.75;
+        let k32x32mul2: f32 = 1.2;
+        let k32x32base: f32 = 2.0;
+        let m32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
 
-    // DCT32x16/DCT16x32 use similar multipliers to DCT32x32
-    let k32x16mul1: f32 = -0.70;
-    let k32x16mul2: f32 = 1.1;
-    let k32x16base: f32 = 2.0;
-    let mul32x16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
+        let k32x16mul1: f32 = -0.70;
+        let k32x16mul2: f32 = 1.1;
+        let k32x16base: f32 = 2.0;
+        let m16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
+        (m32, m16)
+    };
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
@@ -645,6 +653,26 @@ pub(super) fn find_best_32x32_transform(
 
     // Compute the combined cost of the four 16x16 sub-evaluations.
     // We need to re-estimate using whatever strategies were selected.
+    // In pixel-domain mode, entropy_mul is applied internally — external multiplier is 1.0.
+    // In coefficient-domain mode, use distance-dependent multipliers matching find_best_16x16_transform.
+    let (sub_mul8x8, sub_mul16x8, sub_mul16x16) = if use_pixel_domain {
+        (1.0_f32, 1.0_f32, 1.0_f32)
+    } else {
+        let k8x8mul1: f32 = -0.55 * 0.75;
+        let k8x8mul2: f32 = 1.073_575_8 * 0.75;
+        let k8x8base: f32 = 1.4;
+        let m8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
+        let k8x16mul1: f32 = -0.55;
+        let k8x16mul2: f32 = 0.901_958_8;
+        let k8x16base: f32 = 1.6;
+        let m16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
+        let k16x16mul1: f32 = -0.65;
+        let k16x16mul2: f32 = 0.88;
+        let k16x16base: f32 = 1.8;
+        let m16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
+        (m8, m16x8, m16x16)
+    };
+
     let mut cost_sub = 0.0f32;
     for iy in 0..4 {
         for ix in 0..4 {
@@ -652,28 +680,15 @@ pub(super) fn find_best_32x32_transform(
                 continue;
             }
             let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
-            // Distance-dependent multipliers (must match find_best_16x16_transform)
-            let k8x8mul1: f32 = -0.55 * 0.75;
-            let k8x8mul2: f32 = 1.073_575_8 * 0.75;
-            let k8x8base: f32 = 1.4;
-            let mul8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
-            let k8x16mul1: f32 = -0.55;
-            let k8x16mul2: f32 = 0.901_958_8;
-            let k8x16base: f32 = 1.6;
-            let mul16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
-            let k16x16mul1: f32 = -0.65;
-            let k16x16mul2: f32 = 0.88;
-            let k16x16base: f32 = 1.8;
-            let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
 
             let mul = match sub_raw {
-                RAW_STRATEGY_DCT8 => mul8x8,
-                RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => mul16x8,
-                RAW_STRATEGY_DCT16X16 => mul16x16,
-                _ => mul8x8,
+                RAW_STRATEGY_DCT8 => sub_mul8x8,
+                RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => sub_mul16x8,
+                RAW_STRATEGY_DCT16X16 => sub_mul16x16,
+                _ => sub_mul8x8,
             };
-            let base = if sub_raw == RAW_STRATEGY_DCT8 {
-                3.0 * mul8x8
+            let base = if !use_pixel_domain && sub_raw == RAW_STRATEGY_DCT8 {
+                3.0 * sub_mul8x8
             } else {
                 0.0
             };
@@ -813,16 +828,24 @@ pub(super) fn find_best_64x64_transform(
         return;
     }
 
-    // Conservative multipliers for DCT64 transforms
-    let k64x64mul1: f32 = -0.80;
-    let k64x64mul2: f32 = 1.3;
-    let k64x64base: f32 = 2.5;
-    let mul64x64 = k64x64mul2 + k64x64mul1 / (distance + k64x64base);
+    // In pixel-domain mode, entropy_mul is applied internally by estimate_entropy_with_mask
+    // using libjxl's static constants (2.25 for DCT64x64, 2.25 for DCT64x32).
+    // In coefficient-domain mode, use distance-dependent multipliers.
+    let use_pixel_domain = mask1x1.is_some();
+    let (mul64x64, mul64x32) = if use_pixel_domain {
+        (1.0_f32, 1.0_f32)
+    } else {
+        let k64x64mul1: f32 = -0.80;
+        let k64x64mul2: f32 = 1.3;
+        let k64x64base: f32 = 2.5;
+        let m64 = k64x64mul2 + k64x64mul1 / (distance + k64x64base);
 
-    let k64x32mul1: f32 = -0.75;
-    let k64x32mul2: f32 = 1.2;
-    let k64x32base: f32 = 2.5;
-    let mul64x32 = k64x32mul2 + k64x32mul1 / (distance + k64x32base);
+        let k64x32mul1: f32 = -0.75;
+        let k64x32mul2: f32 = 1.2;
+        let k64x32base: f32 = 2.5;
+        let m32 = k64x32mul2 + k64x32mul1 / (distance + k64x32base);
+        (m64, m32)
+    };
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
@@ -953,7 +976,8 @@ pub(super) fn find_best_64x64_transform(
         }
     }
 
-    // Compute the combined cost of the four 32x32 sub-evaluations
+    // Compute the combined cost of the four 32x32 sub-evaluations.
+    // In pixel-domain mode, entropy_mul is applied internally — external multiplier is 1.0.
     let mut cost_sub = 0.0f32;
     for iy in 0..8 {
         for ix in 0..8 {
@@ -961,38 +985,44 @@ pub(super) fn find_best_64x64_transform(
                 continue;
             }
             let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
-            // Distance-dependent multipliers (must match find_best_32x32/16x16_transform)
-            let k8x8mul1: f32 = -0.55 * 0.75;
-            let k8x8mul2: f32 = 1.073_575_8 * 0.75;
-            let k8x8base: f32 = 1.4;
-            let mul8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
-            let k8x16mul1: f32 = -0.55;
-            let k8x16mul2: f32 = 0.901_958_8;
-            let k8x16base: f32 = 1.6;
-            let mul16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
-            let k16x16mul1: f32 = -0.65;
-            let k16x16mul2: f32 = 0.88;
-            let k16x16base: f32 = 1.8;
-            let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
-            let k32x32mul1: f32 = -0.75;
-            let k32x32mul2: f32 = 1.2;
-            let k32x32base: f32 = 2.0;
-            let mul32x32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
-            let k32x16mul1: f32 = -0.70;
-            let k32x16mul2: f32 = 1.1;
-            let k32x16base: f32 = 2.0;
-            let mul32x16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
 
-            let mul = match sub_raw {
-                RAW_STRATEGY_DCT8 => mul8x8,
-                RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => mul16x8,
-                RAW_STRATEGY_DCT16X16 => mul16x16,
-                RAW_STRATEGY_DCT32X32 => mul32x32,
-                RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => mul32x16,
-                _ => mul8x8,
+            let mul = if use_pixel_domain {
+                1.0_f32
+            } else {
+                let k8x8mul1: f32 = -0.55 * 0.75;
+                let k8x8mul2: f32 = 1.073_575_8 * 0.75;
+                let k8x8base: f32 = 1.4;
+                let mul8x8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
+                let k8x16mul1: f32 = -0.55;
+                let k8x16mul2: f32 = 0.901_958_8;
+                let k8x16base: f32 = 1.6;
+                let mul16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
+                let k16x16mul1: f32 = -0.65;
+                let k16x16mul2: f32 = 0.88;
+                let k16x16base: f32 = 1.8;
+                let mul16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
+                let k32x32mul1: f32 = -0.75;
+                let k32x32mul2: f32 = 1.2;
+                let k32x32base: f32 = 2.0;
+                let mul32x32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
+                let k32x16mul1: f32 = -0.70;
+                let k32x16mul2: f32 = 1.1;
+                let k32x16base: f32 = 2.0;
+                let mul32x16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
+                match sub_raw {
+                    RAW_STRATEGY_DCT8 => mul8x8,
+                    RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => mul16x8,
+                    RAW_STRATEGY_DCT16X16 => mul16x16,
+                    RAW_STRATEGY_DCT32X32 => mul32x32,
+                    RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => mul32x16,
+                    _ => mul8x8,
+                }
             };
-            let base = if sub_raw == RAW_STRATEGY_DCT8 {
-                3.0 * mul8x8
+            let base = if !use_pixel_domain && sub_raw == RAW_STRATEGY_DCT8 {
+                let k8x8mul1: f32 = -0.55 * 0.75;
+                let k8x8mul2: f32 = 1.073_575_8 * 0.75;
+                let k8x8base: f32 = 1.4;
+                3.0 * (k8x8mul2 + k8x8mul1 / (distance + k8x8base))
             } else {
                 0.0
             };
