@@ -432,6 +432,7 @@ fn neon_dequant_4(
 mod tests {
     use super::*;
     extern crate alloc;
+    extern crate std;
 
     #[test]
     fn test_dequant_dct8_matches_scalar() {
@@ -457,7 +458,6 @@ mod tests {
         let x_factor = 0.15f32;
         let b_factor = 1.05f32;
 
-        // Scalar reference
         let mut ref_x = [0.0f32; 64];
         let mut ref_y = [0.0f32; 64];
         let mut ref_b = [0.0f32; 64];
@@ -466,46 +466,25 @@ mod tests {
             b_factor, &mut ref_x, &mut ref_y, &mut ref_b,
         );
 
-        // SIMD
-        let mut out_x = [0.0f32; 64];
-        let mut out_y = [0.0f32; 64];
-        let mut out_b = [0.0f32; 64];
-        dequant_block_dct8(
-            &quant_x, &quant_y, &quant_b, &weights_x, &weights_y, &weights_b, qac_qm, x_factor,
-            b_factor, &mut out_x, &mut out_y, &mut out_b,
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut out_x = [0.0f32; 64];
+                let mut out_y = [0.0f32; 64];
+                let mut out_b = [0.0f32; 64];
+                dequant_block_dct8(
+                    &quant_x, &quant_y, &quant_b, &weights_x, &weights_y, &weights_b, qac_qm,
+                    x_factor, b_factor, &mut out_x, &mut out_y, &mut out_b,
+                );
+                let eps = 1e-5;
+                for i in 0..64 {
+                    assert!((out_x[i] - ref_x[i]).abs() < eps, "X[{i}] [{perm}]");
+                    assert!((out_y[i] - ref_y[i]).abs() < eps, "Y[{i}] [{perm}]");
+                    assert!((out_b[i] - ref_b[i]).abs() < eps, "B[{i}] [{perm}]");
+                }
+            },
         );
-
-        // Compare — DC (index 0) should be 0 from both paths
-        let eps = 1e-5;
-        for i in 0..64 {
-            let diff_x = (out_x[i] - ref_x[i]).abs();
-            let diff_y = (out_y[i] - ref_y[i]).abs();
-            let diff_b = (out_b[i] - ref_b[i]).abs();
-            assert!(
-                diff_x < eps,
-                "X[{}] mismatch: simd={}, ref={}, diff={}",
-                i,
-                out_x[i],
-                ref_x[i],
-                diff_x
-            );
-            assert!(
-                diff_y < eps,
-                "Y[{}] mismatch: simd={}, ref={}, diff={}",
-                i,
-                out_y[i],
-                ref_y[i],
-                diff_y
-            );
-            assert!(
-                diff_b < eps,
-                "B[{}] mismatch: simd={}, ref={}, diff={}",
-                i,
-                out_b[i],
-                ref_b[i],
-                diff_b
-            );
-        }
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -541,31 +520,30 @@ mod tests {
         let weights = [1.0f32; 64];
         let qac_qm = [1.0f32, 1.0, 1.0];
 
-        let mut out_x = [0.0f32; 64];
-        let mut out_y = [0.0f32; 64];
-        let mut out_b = [0.0f32; 64];
         let mut ref_x = [0.0f32; 64];
         let mut ref_y = [0.0f32; 64];
         let mut ref_b = [0.0f32; 64];
-
-        dequant_block_dct8(
-            &quant, &quant, &quant, &weights, &weights, &weights, qac_qm, 0.0, 0.0, &mut out_x,
-            &mut out_y, &mut out_b,
-        );
         dequant_dct8_scalar(
             &quant, &quant, &quant, &weights, &weights, &weights, qac_qm, 0.0, 0.0, &mut ref_x,
             &mut ref_y, &mut ref_b,
         );
 
-        let eps = 1e-6;
-        for i in 1..64 {
-            assert!(
-                (out_y[i] - ref_y[i]).abs() < eps,
-                "Y[{}]: simd={}, ref={}",
-                i,
-                out_y[i],
-                ref_y[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut out_x = [0.0f32; 64];
+                let mut out_y = [0.0f32; 64];
+                let mut out_b = [0.0f32; 64];
+                dequant_block_dct8(
+                    &quant, &quant, &quant, &weights, &weights, &weights, qac_qm, 0.0, 0.0,
+                    &mut out_x, &mut out_y, &mut out_b,
+                );
+                let eps = 1e-6;
+                for i in 1..64 {
+                    assert!((out_y[i] - ref_y[i]).abs() < eps, "Y[{i}] [{perm}]");
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

@@ -250,6 +250,7 @@ pub fn pixel_domain_loss_neon(
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
     use alloc::vec;
 
     #[test]
@@ -299,16 +300,6 @@ mod tests {
         }
         let mask_offset = 0.7f32;
 
-        let simd_result = pixel_domain_loss(
-            &pixel_error,
-            &mask,
-            0,
-            mask_stride,
-            mask_offset,
-            block_width,
-            block_height,
-        );
-
         let scalar_result = pixel_domain_loss_scalar(
             &pixel_error,
             &mask,
@@ -319,14 +310,30 @@ mod tests {
             block_height,
         );
 
-        let rel_err = ((simd_result - scalar_result) / scalar_result.max(1e-20)).abs();
-        assert!(
-            rel_err < 1e-6,
-            "SIMD ({}) vs scalar ({}) relative error {} too large",
-            simd_result,
-            scalar_result,
-            rel_err
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let simd_result = pixel_domain_loss(
+                    &pixel_error,
+                    &mask,
+                    0,
+                    mask_stride,
+                    mask_offset,
+                    block_width,
+                    block_height,
+                );
+
+                let rel_err = ((simd_result - scalar_result) / scalar_result.max(1e-20)).abs();
+                assert!(
+                    rel_err < 1e-6,
+                    "SIMD ({}) vs scalar ({}) relative error {} too large [{perm}]",
+                    simd_result,
+                    scalar_result,
+                    rel_err
+                );
+            },
         );
+        std::eprintln!("{report}");
     }
 
     #[test]

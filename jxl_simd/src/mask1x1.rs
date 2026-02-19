@@ -436,6 +436,7 @@ pub fn compute_mask1x1_neon(
 mod tests {
     use super::*;
     extern crate alloc;
+    extern crate std;
     use alloc::vec;
 
     #[test]
@@ -523,20 +524,30 @@ mod tests {
             *val = (i as f32 * 0.001).sin().abs() * 0.3;
         }
 
-        let mut output = vec![0.0f32; width * height];
-        compute_mask1x1(&xyb_y, width, height, &mut output);
-
-        // Compare with scalar
+        // Scalar reference
         let mut scalar_out = vec![0.0f32; width * height];
         compute_mask1x1_scalar(&xyb_y, width, height, &mut scalar_out);
 
-        let mut max_diff = 0.0f32;
-        for i in 0..width * height {
-            let diff = (output[i] - scalar_out[i]).abs();
-            max_diff = max_diff.max(diff);
-        }
+        // Dispatch — test all token permutations
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut output = vec![0.0f32; width * height];
+                compute_mask1x1(&xyb_y, width, height, &mut output);
 
-        // SIMD and scalar use same fast_log2f, should be very close
-        assert!(max_diff < 1e-4, "SIMD vs scalar max_diff = {max_diff}");
+                let mut max_diff = 0.0f32;
+                for i in 0..width * height {
+                    let diff = (output[i] - scalar_out[i]).abs();
+                    max_diff = max_diff.max(diff);
+                }
+
+                // SIMD and scalar use same fast_log2f, should be very close
+                assert!(
+                    max_diff < 1e-4,
+                    "SIMD vs scalar max_diff = {max_diff} [{perm}]"
+                );
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

@@ -768,6 +768,7 @@ pub fn inverse_xyb_planar_neon(
 mod tests {
     use super::*;
     extern crate alloc;
+    extern crate std;
     use alloc::vec;
     use alloc::vec::Vec;
 
@@ -811,34 +812,37 @@ mod tests {
             b_ref[i] = s;
         }
 
-        // SIMD version
-        let mut x_out = vec![0.0f32; n];
-        let mut y_out = vec![0.0f32; n];
-        let mut b_out = vec![0.0f32; n];
-        linear_rgb_to_xyb_batch(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+        // Dispatch — test all token permutations
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut x_out = vec![0.0f32; n];
+                let mut y_out = vec![0.0f32; n];
+                let mut b_out = vec![0.0f32; n];
+                linear_rgb_to_xyb_batch(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
 
-        let mut max_err = 0.0f32;
-        for i in 0..n {
-            let ex = (x_out[i] - x_ref[i]).abs();
-            let ey = (y_out[i] - y_ref[i]).abs();
-            let eb = (b_out[i] - b_ref[i]).abs();
-            max_err = max_err.max(ex).max(ey).max(eb);
-            assert!(
-                ex < 1e-5 && ey < 1e-5 && eb < 1e-5,
-                "Pixel {}: SIMD=({},{},{}), ref=({},{},{}), err=({},{},{})",
-                i,
-                x_out[i],
-                y_out[i],
-                b_out[i],
-                x_ref[i],
-                y_ref[i],
-                b_ref[i],
-                ex,
-                ey,
-                eb
-            );
-        }
-        assert!(max_err < 1e-5, "Max error {:.2e} exceeds 1e-5", max_err);
+                for i in 0..n {
+                    let ex = (x_out[i] - x_ref[i]).abs();
+                    let ey = (y_out[i] - y_ref[i]).abs();
+                    let eb = (b_out[i] - b_ref[i]).abs();
+                    assert!(
+                        ex < 1e-5 && ey < 1e-5 && eb < 1e-5,
+                        "Pixel {}: SIMD=({},{},{}), ref=({},{},{}), err=({},{},{}) [{perm}]",
+                        i,
+                        x_out[i],
+                        y_out[i],
+                        b_out[i],
+                        x_ref[i],
+                        y_ref[i],
+                        b_ref[i],
+                        ex,
+                        ey,
+                        eb
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     /// Sweep test: compare SIMD inverse XYB against reference scalar.
@@ -860,24 +864,27 @@ mod tests {
         let mut ref_rgb = vec![0.0f32; n * 3];
         inverse_xyb_scalar(&xyb_x, &xyb_y, &xyb_b, &mut ref_rgb, n);
 
-        // SIMD version
-        let mut simd_rgb = vec![0.0f32; n * 3];
-        xyb_to_linear_rgb_batch(&xyb_x, &xyb_y, &xyb_b, &mut simd_rgb, n);
+        // Dispatch — test all token permutations
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_rgb = vec![0.0f32; n * 3];
+                xyb_to_linear_rgb_batch(&xyb_x, &xyb_y, &xyb_b, &mut simd_rgb, n);
 
-        let mut max_err = 0.0f32;
-        for i in 0..n * 3 {
-            let err = (simd_rgb[i] - ref_rgb[i]).abs();
-            max_err = max_err.max(err);
-            assert!(
-                err < 1e-5,
-                "Component {}: SIMD={}, ref={}, err={:.2e}",
-                i,
-                simd_rgb[i],
-                ref_rgb[i],
-                err
-            );
-        }
-        assert!(max_err < 1e-5, "Max error {:.2e} exceeds 1e-5", max_err);
+                for i in 0..n * 3 {
+                    let err = (simd_rgb[i] - ref_rgb[i]).abs();
+                    assert!(
+                        err < 1e-5,
+                        "Component {}: SIMD={}, ref={}, err={:.2e} [{perm}]",
+                        i,
+                        simd_rgb[i],
+                        ref_rgb[i],
+                        err
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     /// Roundtrip test: RGB → XYB → RGB should be approximately identity.
@@ -963,31 +970,37 @@ mod tests {
             b_ref[i] = s;
         }
 
-        // SIMD
-        let mut x_out = vec![0.0f32; n];
-        let mut y_out = vec![0.0f32; n];
-        let mut b_out = vec![0.0f32; n];
-        linear_rgb_to_xyb_batch(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
+        // Dispatch — test all token permutations
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut x_out = vec![0.0f32; n];
+                let mut y_out = vec![0.0f32; n];
+                let mut b_out = vec![0.0f32; n];
+                linear_rgb_to_xyb_batch(&r, &g, &b, &mut x_out, &mut y_out, &mut b_out);
 
-        for i in 0..n {
-            let ex = (x_out[i] - x_ref[i]).abs();
-            let ey = (y_out[i] - y_ref[i]).abs();
-            let eb = (b_out[i] - b_ref[i]).abs();
-            assert!(
-                ex < 1e-5 && ey < 1e-5 && eb < 1e-5,
-                "Edge case {:?}: SIMD=({},{},{}), ref=({},{},{}), err=({:.2e},{:.2e},{:.2e})",
-                test_cases[i],
-                x_out[i],
-                y_out[i],
-                b_out[i],
-                x_ref[i],
-                y_ref[i],
-                b_ref[i],
-                ex,
-                ey,
-                eb
-            );
-        }
+                for i in 0..n {
+                    let ex = (x_out[i] - x_ref[i]).abs();
+                    let ey = (y_out[i] - y_ref[i]).abs();
+                    let eb = (b_out[i] - b_ref[i]).abs();
+                    assert!(
+                        ex < 1e-5 && ey < 1e-5 && eb < 1e-5,
+                        "Edge case {:?}: SIMD=({},{},{}), ref=({},{},{}), err=({:.2e},{:.2e},{:.2e}) [{perm}]",
+                        test_cases[i],
+                        x_out[i],
+                        y_out[i],
+                        b_out[i],
+                        x_ref[i],
+                        y_ref[i],
+                        b_ref[i],
+                        ex,
+                        ey,
+                        eb
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     /// Test that planar inverse matches interleaved inverse.
@@ -1005,33 +1018,64 @@ mod tests {
             b[i] = (t * 2.0).min(1.0);
         }
 
-        // Forward XYB
+        // Use scalar forward to get deterministic XYB input
         let mut x = vec![0.0f32; n];
         let mut y = vec![0.0f32; n];
         let mut bv = vec![0.0f32; n];
-        linear_rgb_to_xyb_batch(&r, &g, &b, &mut x, &mut y, &mut bv);
+        forward_xyb_scalar(&r, &g, &b, &mut x, &mut y, &mut bv, n);
 
-        // Interleaved inverse
-        let mut interleaved = vec![0.0f32; n * 3];
-        xyb_to_linear_rgb_batch(&x, &y, &bv, &mut interleaved, n);
+        // Scalar reference for interleaved inverse
+        let mut ref_rgb = vec![0.0f32; n * 3];
+        inverse_xyb_scalar(&x, &y, &bv, &mut ref_rgb, n);
 
-        // Planar inverse
-        let mut pr = vec![0.0f32; n];
-        let mut pg = vec![0.0f32; n];
-        let mut pb = vec![0.0f32; n];
-        xyb_to_linear_rgb_planar(&x, &y, &bv, &mut pr, &mut pg, &mut pb, n);
+        // Scalar reference for planar inverse
+        let mut ref_r = vec![0.0f32; n];
+        let mut ref_g = vec![0.0f32; n];
+        let mut ref_b = vec![0.0f32; n];
+        inverse_xyb_planar_scalar(&x, &y, &bv, &mut ref_r, &mut ref_g, &mut ref_b, n);
 
-        for i in 0..n {
-            let ir = interleaved[i * 3];
-            let ig = interleaved[i * 3 + 1];
-            let ib = interleaved[i * 3 + 2];
-            assert!(
-                (pr[i] - ir).abs() < 1e-6 && (pg[i] - ig).abs() < 1e-6 && (pb[i] - ib).abs() < 1e-6,
-                "Planar/interleaved mismatch at {i}: planar=({},{},{}) interleaved=({ir},{ig},{ib})",
-                pr[i],
-                pg[i],
-                pb[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                // Interleaved inverse
+                let mut interleaved = vec![0.0f32; n * 3];
+                xyb_to_linear_rgb_batch(&x, &y, &bv, &mut interleaved, n);
+
+                // Planar inverse
+                let mut pr = vec![0.0f32; n];
+                let mut pg = vec![0.0f32; n];
+                let mut pb = vec![0.0f32; n];
+                xyb_to_linear_rgb_planar(&x, &y, &bv, &mut pr, &mut pg, &mut pb, n);
+
+                for i in 0..n {
+                    let ir = interleaved[i * 3];
+                    let ig = interleaved[i * 3 + 1];
+                    let ib = interleaved[i * 3 + 2];
+                    // Both dispatch paths must match scalar
+                    assert!(
+                        (ir - ref_rgb[i * 3]).abs() < 1e-5,
+                        "Interleaved R mismatch at {i}: got {ir}, ref {} [{perm}]",
+                        ref_rgb[i * 3]
+                    );
+                    assert!(
+                        (pr[i] - ref_r[i]).abs() < 1e-5,
+                        "Planar R mismatch at {i}: got {}, ref {} [{perm}]",
+                        pr[i],
+                        ref_r[i]
+                    );
+                    // And they must match each other
+                    assert!(
+                        (pr[i] - ir).abs() < 1e-6
+                            && (pg[i] - ig).abs() < 1e-6
+                            && (pb[i] - ib).abs() < 1e-6,
+                        "Planar/interleaved mismatch at {i}: planar=({},{},{}) interleaved=({ir},{ig},{ib}) [{perm}]",
+                        pr[i],
+                        pg[i],
+                        pb[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

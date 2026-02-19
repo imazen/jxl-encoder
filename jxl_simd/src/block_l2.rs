@@ -244,6 +244,7 @@ pub fn compute_block_l2_errors_neon(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
     use alloc::vec;
 
@@ -289,7 +290,6 @@ mod tests {
         let padded_width = xsize_blocks * 8;
         let n = padded_width * ysize_blocks * 8;
 
-        // Create varied test data
         let mut orig0 = vec![0.0f32; n];
         let mut orig1 = vec![0.0f32; n];
         let mut orig2 = vec![0.0f32; n];
@@ -309,14 +309,6 @@ mod tests {
             mask[i] = 0.5 + (f * 0.007).sin().abs() * 0.5;
         }
 
-        let simd_result = compute_block_l2_errors(
-            [&orig0, &orig1, &orig2],
-            [&recon0, &recon1, &recon2],
-            &mask,
-            xsize_blocks,
-            ysize_blocks,
-        );
-
         let scalar_result = compute_block_l2_errors_scalar(
             [&orig0, &orig1, &orig2],
             [&recon0, &recon1, &recon2],
@@ -327,21 +319,30 @@ mod tests {
             xsize_blocks * ysize_blocks,
         );
 
-        assert_eq!(simd_result.len(), scalar_result.len());
-        for (i, (&s, &sc)) in simd_result.iter().zip(scalar_result.iter()).enumerate() {
-            let rel_err = if sc.abs() > 1e-10 {
-                ((s - sc) / sc).abs()
-            } else {
-                (s - sc).abs()
-            };
-            assert!(
-                rel_err < 1e-5,
-                "Block {} SIMD {} vs scalar {} rel_err {}",
-                i,
-                s,
-                sc,
-                rel_err
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let simd_result = compute_block_l2_errors(
+                    [&orig0, &orig1, &orig2],
+                    [&recon0, &recon1, &recon2],
+                    &mask,
+                    xsize_blocks,
+                    ysize_blocks,
+                );
+                assert_eq!(simd_result.len(), scalar_result.len(), "[{perm}]");
+                for (i, (&s, &sc)) in simd_result.iter().zip(scalar_result.iter()).enumerate() {
+                    let rel_err = if sc.abs() > 1e-10 {
+                        ((s - sc) / sc).abs()
+                    } else {
+                        (s - sc).abs()
+                    };
+                    assert!(
+                        rel_err < 1e-5,
+                        "Block {i} SIMD {s} vs scalar {sc} rel_err {rel_err} [{perm}]",
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

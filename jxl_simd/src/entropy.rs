@@ -375,6 +375,7 @@ pub fn entropy_coeffs_neon(
 mod tests {
     use super::*;
     extern crate alloc;
+    extern crate std;
     use alloc::vec;
     use alloc::vec::Vec;
 
@@ -406,51 +407,43 @@ mod tests {
             &mut error_ref,
         );
 
-        // SIMD
-        let mut error_simd = vec![0.0f32; n];
-        let simd_result = entropy_estimate_coeffs(
-            &block_c,
-            &block_y,
-            &weights,
-            n,
-            cmap_factor,
-            quant,
-            k_cost_delta,
-            k_cost2,
-            true,
-            &mut error_simd,
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut error_simd = vec![0.0f32; n];
+                let simd_result = entropy_estimate_coeffs(
+                    &block_c,
+                    &block_y,
+                    &weights,
+                    n,
+                    cmap_factor,
+                    quant,
+                    k_cost_delta,
+                    k_cost2,
+                    true,
+                    &mut error_simd,
+                );
+                let rel_eps = 0.005;
+                let entropy_rel = (simd_result.entropy_sum - ref_result.entropy_sum).abs()
+                    / ref_result.entropy_sum.abs();
+                assert!(
+                    entropy_rel < rel_eps,
+                    "entropy_sum rel_err={entropy_rel:.4} [{perm}]"
+                );
+                let nz_rel = (simd_result.nzeros_sum - ref_result.nzeros_sum).abs()
+                    / ref_result.nzeros_sum.abs().max(1.0);
+                assert!(nz_rel < 0.05, "nzeros_sum rel_err={nz_rel:.4} [{perm}]");
+                let mut max_err = 0.0f32;
+                for i in 0..n {
+                    max_err = max_err.max((error_simd[i] - error_ref[i]).abs());
+                }
+                assert!(
+                    max_err < 0.5,
+                    "Error coeffs max diff: {max_err:.2e} [{perm}]"
+                );
+            },
         );
-
-        // FP differences from division ordering (x*(1/w) vs x/w) can cause
-        // different rounding decisions, so use relative tolerance
-        let rel_eps = 0.005; // 0.5% relative error
-        let entropy_rel =
-            (simd_result.entropy_sum - ref_result.entropy_sum).abs() / ref_result.entropy_sum.abs();
-        assert!(
-            entropy_rel < rel_eps,
-            "entropy_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.entropy_sum,
-            ref_result.entropy_sum,
-            entropy_rel * 100.0
-        );
-        // nzeros can differ slightly due to rounding boundary differences
-        let nz_rel = (simd_result.nzeros_sum - ref_result.nzeros_sum).abs()
-            / ref_result.nzeros_sum.abs().max(1.0);
-        assert!(
-            nz_rel < 0.05, // 5% tolerance for nzeros
-            "nzeros_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.nzeros_sum,
-            ref_result.nzeros_sum,
-            nz_rel * 100.0
-        );
-
-        // Error coeffs can differ by up to ~weight when rounding boundary
-        // decisions change (x*(1/w) vs x/w gives different ULPs near 0.5)
-        let mut max_err = 0.0f32;
-        for i in 0..n {
-            max_err = max_err.max((error_simd[i] - error_ref[i]).abs());
-        }
-        assert!(max_err < 0.5, "Error coeffs max diff: {:.2e}", max_err);
+        std::eprintln!("{report}");
     }
 
     /// Verify SIMD matches scalar for coefficient-domain mode.
@@ -480,57 +473,38 @@ mod tests {
             &mut error_ref,
         );
 
-        let mut error_simd = vec![0.0f32; n];
-        let simd_result = entropy_estimate_coeffs(
-            &block_c,
-            &block_y,
-            &weights,
-            n,
-            cmap_factor,
-            quant,
-            k_cost_delta,
-            k_cost2,
-            false,
-            &mut error_simd,
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut error_simd = vec![0.0f32; n];
+                let simd_result = entropy_estimate_coeffs(
+                    &block_c,
+                    &block_y,
+                    &weights,
+                    n,
+                    cmap_factor,
+                    quant,
+                    k_cost_delta,
+                    k_cost2,
+                    false,
+                    &mut error_simd,
+                );
+                let rel_eps = 0.005;
+                let entropy_rel = (simd_result.entropy_sum - ref_result.entropy_sum).abs()
+                    / ref_result.entropy_sum.abs();
+                assert!(entropy_rel < rel_eps, "entropy_sum [{perm}]");
+                let nz_rel = (simd_result.nzeros_sum - ref_result.nzeros_sum).abs()
+                    / ref_result.nzeros_sum.abs().max(1.0);
+                assert!(nz_rel < 0.05, "nzeros_sum [{perm}]");
+                let il_rel = (simd_result.info_loss_sum - ref_result.info_loss_sum).abs()
+                    / ref_result.info_loss_sum.abs().max(1.0);
+                assert!(il_rel < rel_eps, "info_loss_sum [{perm}]");
+                let il2_rel = (simd_result.info_loss2_sum - ref_result.info_loss2_sum).abs()
+                    / ref_result.info_loss2_sum.abs().max(1.0);
+                assert!(il2_rel < rel_eps, "info_loss2_sum [{perm}]");
+            },
         );
-
-        let rel_eps = 0.005;
-        let entropy_rel =
-            (simd_result.entropy_sum - ref_result.entropy_sum).abs() / ref_result.entropy_sum.abs();
-        assert!(
-            entropy_rel < rel_eps,
-            "entropy_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.entropy_sum,
-            ref_result.entropy_sum,
-            entropy_rel * 100.0
-        );
-        let nz_rel = (simd_result.nzeros_sum - ref_result.nzeros_sum).abs()
-            / ref_result.nzeros_sum.abs().max(1.0);
-        assert!(
-            nz_rel < 0.05,
-            "nzeros_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.nzeros_sum,
-            ref_result.nzeros_sum,
-            nz_rel * 100.0
-        );
-        let il_rel = (simd_result.info_loss_sum - ref_result.info_loss_sum).abs()
-            / ref_result.info_loss_sum.abs().max(1.0);
-        assert!(
-            il_rel < rel_eps,
-            "info_loss_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.info_loss_sum,
-            ref_result.info_loss_sum,
-            il_rel * 100.0
-        );
-        let il2_rel = (simd_result.info_loss2_sum - ref_result.info_loss2_sum).abs()
-            / ref_result.info_loss2_sum.abs().max(1.0);
-        assert!(
-            il2_rel < rel_eps,
-            "info_loss2_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.info_loss2_sum,
-            ref_result.info_loss2_sum,
-            il2_rel * 100.0
-        );
+        std::eprintln!("{report}");
     }
 
     /// Test with non-multiple-of-8 sizes (remainder handling).
@@ -555,46 +529,42 @@ mod tests {
             &mut error_ref,
         );
 
-        let mut error_simd = vec![0.0f32; n];
-        let simd_result = entropy_estimate_coeffs(
-            &block_c,
-            &block_y,
-            &weights,
-            n,
-            0.2,
-            4.0,
-            5.335,
-            4.463,
-            true,
-            &mut error_simd,
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut error_simd = vec![0.0f32; n];
+                let simd_result = entropy_estimate_coeffs(
+                    &block_c,
+                    &block_y,
+                    &weights,
+                    n,
+                    0.2,
+                    4.0,
+                    5.335,
+                    4.463,
+                    true,
+                    &mut error_simd,
+                );
+                let rel_eps = 0.005;
+                let entropy_rel = (simd_result.entropy_sum - ref_result.entropy_sum).abs()
+                    / ref_result.entropy_sum.abs().max(1.0);
+                assert!(entropy_rel < rel_eps, "entropy_sum [{perm}]");
+                let nz_rel = (simd_result.nzeros_sum - ref_result.nzeros_sum).abs()
+                    / ref_result.nzeros_sum.abs().max(1.0);
+                assert!(nz_rel < 0.05, "nzeros_sum [{perm}]");
+                let max_err = error_simd
+                    .iter()
+                    .zip(error_ref.iter())
+                    .take(n)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    max_err < 0.01,
+                    "Error coeffs max diff: {max_err:.2e} [{perm}]"
+                );
+            },
         );
-
-        let rel_eps = 0.005;
-        let entropy_rel = (simd_result.entropy_sum - ref_result.entropy_sum).abs()
-            / ref_result.entropy_sum.abs().max(1.0);
-        assert!(
-            entropy_rel < rel_eps,
-            "entropy_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.entropy_sum,
-            ref_result.entropy_sum,
-            entropy_rel * 100.0
-        );
-        let nz_rel = (simd_result.nzeros_sum - ref_result.nzeros_sum).abs()
-            / ref_result.nzeros_sum.abs().max(1.0);
-        assert!(
-            nz_rel < 0.05,
-            "nzeros_sum: SIMD={}, ref={}",
-            simd_result.nzeros_sum,
-            ref_result.nzeros_sum
-        );
-
-        let max_err = error_simd
-            .iter()
-            .zip(error_ref.iter())
-            .take(n)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
-        assert!(max_err < 0.01, "Error coeffs max diff: {:.2e}", max_err);
+        std::eprintln!("{report}");
     }
 
     /// Test with large blocks (DCT64x64 = 4096 coefficients).
@@ -619,38 +589,48 @@ mod tests {
             &mut error_ref,
         );
 
-        let mut error_simd = vec![0.0f32; n];
-        let simd_result = entropy_estimate_coeffs(
-            &block_c,
-            &block_y,
-            &weights,
-            n,
-            0.1,
-            2.0,
-            5.335,
-            4.463,
-            true,
-            &mut error_simd,
-        );
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut error_simd = vec![0.0f32; n];
+                let simd_result = entropy_estimate_coeffs(
+                    &block_c,
+                    &block_y,
+                    &weights,
+                    n,
+                    0.1,
+                    2.0,
+                    5.335,
+                    4.463,
+                    true,
+                    &mut error_simd,
+                );
 
-        // Large block: use relative tolerance
-        let rel_eps = 0.005;
-        let entropy_rel =
-            (simd_result.entropy_sum - ref_result.entropy_sum).abs() / ref_result.entropy_sum.abs();
-        assert!(
-            entropy_rel < rel_eps,
-            "entropy_sum: SIMD={}, ref={}, rel_err={:.4}%",
-            simd_result.entropy_sum,
-            ref_result.entropy_sum,
-            entropy_rel * 100.0
-        );
+                // Large block: use relative tolerance
+                let rel_eps = 0.005;
+                let entropy_rel = (simd_result.entropy_sum - ref_result.entropy_sum).abs()
+                    / ref_result.entropy_sum.abs();
+                assert!(
+                    entropy_rel < rel_eps,
+                    "entropy_sum: SIMD={}, ref={}, rel_err={:.4}% [{perm}]",
+                    simd_result.entropy_sum,
+                    ref_result.entropy_sum,
+                    entropy_rel * 100.0
+                );
 
-        let max_err = error_simd
-            .iter()
-            .zip(error_ref.iter())
-            .take(n)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0f32, f32::max);
-        assert!(max_err < 1e-3, "Error coeffs max diff: {:.2e}", max_err);
+                let max_err = error_simd
+                    .iter()
+                    .zip(error_ref.iter())
+                    .take(n)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f32, f32::max);
+                assert!(
+                    max_err < 1e-3,
+                    "Error coeffs max diff: {:.2e} [{perm}]",
+                    max_err
+                );
+            },
+        );
+        std::eprintln!("{report}");
     }
 }
