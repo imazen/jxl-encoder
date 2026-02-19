@@ -582,17 +582,6 @@ pub fn estimate_noise_params(
     if params.has_any() { Some(params) } else { None }
 }
 
-/// Interpolate the noise LUT at a given intensity value.
-///
-/// Used by the denoising pre-filter to estimate per-pixel noise variance.
-fn interpolate_noise_lut(params: &NoiseParams, intensity: f32) -> f32 {
-    let (idx, frac) = index_and_frac(intensity);
-    if idx >= NUM_NOISE_POINTS - 1 {
-        return params.lut[NUM_NOISE_POINTS - 1];
-    }
-    params.lut[idx] * (1.0 - frac) + params.lut[idx + 1] * frac
-}
-
 /// Apply Wiener denoising to XYB channels in-place.
 ///
 /// Uses the estimated noise parameters to apply a conservative per-pixel Wiener
@@ -652,7 +641,7 @@ pub fn denoise_xyb(
     );
 }
 
-/// Wiener filter for a single channel.
+/// Wiener filter for a single channel. SIMD-accelerated via jxl_simd.
 ///
 /// For each pixel, estimates local signal variance from a 5x5 window,
 /// subtracts the expected noise variance, and applies:
@@ -668,43 +657,15 @@ fn denoise_channel(
     params: &NoiseParams,
     denoise_scale: f32,
 ) {
-    const RADIUS: usize = 2; // 5x5 window
-    const EPS: f32 = 1e-10;
-
-    for py in 0..height {
-        for px in 0..width {
-            let idx = py * width + px;
-            let y_val = y_channel[idx];
-            let sigma = interpolate_noise_lut(params, y_val.abs()) * denoise_scale;
-            let noise_var = sigma * sigma;
-            if noise_var < EPS {
-                continue;
-            }
-
-            let y_start = py.saturating_sub(RADIUS);
-            let y_end = (py + RADIUS + 1).min(height);
-            let x_start = px.saturating_sub(RADIUS);
-            let x_end = (px + RADIUS + 1).min(width);
-
-            let mut sum = 0.0f32;
-            let mut sum_sq = 0.0f32;
-            let mut count = 0.0f32;
-            for ny in y_start..y_end {
-                for nx in x_start..x_end {
-                    let v = orig[ny * width + nx];
-                    sum += v;
-                    sum_sq += v * v;
-                    count += 1.0;
-                }
-            }
-
-            let mean = sum / count;
-            let variance = ((sum_sq / count) - mean * mean).max(0.0);
-            let signal_var = (variance - noise_var).max(0.0);
-            let wiener = signal_var / (signal_var + noise_var);
-            dest[idx] = mean + (orig[idx] - mean) * wiener;
-        }
-    }
+    jxl_simd::denoise_channel(
+        dest,
+        orig,
+        y_channel,
+        width,
+        height,
+        &params.lut,
+        denoise_scale,
+    )
 }
 
 /// Compute the quality coefficient for noise synthesis from encoding distance.
@@ -922,25 +883,6 @@ mod tests {
             before_rmse,
             after_rmse,
         );
-    }
-
-    #[test]
-    fn test_interpolate_noise_lut() {
-        let params = NoiseParams {
-            lut: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
-        };
-
-        // At intensity 0.0 → idx=0, frac=0 → 0.1
-        let v = interpolate_noise_lut(&params, 0.0);
-        assert!((v - 0.1).abs() < 1e-5);
-
-        // At intensity 1.0 → idx=6, frac=0.0 → lut[6] = 0.7
-        let v = interpolate_noise_lut(&params, 1.0);
-        assert!((v - 0.7).abs() < 1e-5);
-
-        // Mid-range: 0.5 → idx=3, frac=0.0 → 0.4
-        let v = interpolate_noise_lut(&params, 0.5);
-        assert!((v - 0.4).abs() < 1e-5);
     }
 
     #[test]
