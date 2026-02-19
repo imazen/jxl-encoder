@@ -141,5 +141,6 @@ for corpus in $CORPORA; do
 done
 
 echo "" >&2
-echo "Done. $((n - skipped)) new rows written ($skipped skipped). Total in CSV: $((n - skipped + ${#DONE[@]}))" >&2
+done_count=${#DONE[@]:-0}
+echo "Done. $((n - skipped)) new rows written ($skipped skipped). Total in CSV: $((n - skipped + done_count))" >&2
 echo "Output: $OUTCSV" >&2
