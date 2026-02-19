@@ -49,6 +49,15 @@ pub fn quantize_block_dct8(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            quantize_dct8_wasm128(token, dct_coeffs, weights, qac_qm, thresholds, output);
+            return;
+        }
+    }
+
     quantize_dct8_scalar(dct_coeffs, weights, qac_qm, thresholds, output);
 }
 
@@ -170,6 +179,53 @@ pub fn quantize_dct8_neon(
     // row 0-3 hi (cols 4-7): thresholds[1]
     // row 4-7 lo (cols 0-3): thresholds[2]
     // row 4-7 hi (cols 4-7): thresholds[3]
+    let thr = [
+        f32x4::splat(token, thresholds[0]),
+        f32x4::splat(token, thresholds[1]),
+        f32x4::splat(token, thresholds[2]),
+        f32x4::splat(token, thresholds[3]),
+    ];
+
+    // Process 16 chunks of 4 elements (2 per row, 8 rows)
+    for row in 0..8 {
+        let thr_row = if row < 4 { 0 } else { 2 };
+        for half in 0..2usize {
+            let base = row * 8 + half * 4;
+            let coeffs = f32x4::from_slice(token, &dct_coeffs[base..]);
+            let w = f32x4::from_slice(token, &weights[base..]);
+            let t = thr[thr_row + half];
+
+            let val = coeffs / w * qac_qm_v;
+            let abs_val = val.abs();
+            let mask = abs_val.simd_ge(t);
+            let rounded = val.round();
+            let result = f32x4::blend(mask, rounded, zero_f);
+            let result_i32 = result.to_i32x4();
+            result_i32.store((&mut output[base..base + 4]).try_into().unwrap());
+        }
+    }
+
+    output[0] = 0;
+}
+
+// --- wasm32 SIMD128 implementation ---
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn quantize_dct8_wasm128(
+    token: archmage::Wasm128Token,
+    dct_coeffs: &[f32; 64],
+    weights: &[f32; 64],
+    qac_qm: f32,
+    thresholds: &[f32; 4],
+    output: &mut [i32; 64],
+) {
+    use magetypes::simd::f32x4;
+
+    let qac_qm_v = f32x4::splat(token, qac_qm);
+    let zero_f = f32x4::zero(token);
+
     let thr = [
         f32x4::splat(token, thresholds[0]),
         f32x4::splat(token, thresholds[1]),
