@@ -737,8 +737,8 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xa30aff693dd0760c, // Updated: butteraugli loop off at e7
-        284,                // lossy_distance_3
+        0x9422b4569cddac77, // Updated: pixel-domain entropy_mul fix removes double-counting
+        270,                // lossy_distance_3 (pixel-domain entropy_mul fix)
     );
 }
 
