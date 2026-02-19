@@ -328,12 +328,12 @@ const CHANNEL_MUL: [f64; 3] = [
 /// From libjxl enc_ac_strategy.cc:1111-1113
 /// These are SCALED by distance before use via `compute_scaled_constants()`.
 const K_INFO_LOSS_MULTIPLIER_BASE: f32 = 1.2;
-const K_COST_DELTA_BASE: f32 = 10.833_274;
+const K_COST_DELTA_BASE: f32 = 10.833_273;
 const K_ZEROS_MUL_BASE: f32 = 9.308_906;
 
-/// Distance scaling exponents from libjxl enc_ac_strategy.cc:1119-1123
-const K_BIAS: f32 = 0.137_317_4;
-const K_POW_INFO_LOSS: f32 = 0.336_778_1;
+/// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
+const K_BIAS: f32 = 0.137_317_43;
+const K_POW_INFO_LOSS: f32 = 0.336_778_07;
 const K_POW_ZEROS_MUL: f32 = 0.509_909_3;
 const K_POW_COST_DELTA: f32 = 0.367_029_4;
 
