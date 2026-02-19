@@ -202,6 +202,36 @@ pub(crate) struct PatchesData {
 }
 
 impl PatchesData {
+    /// Check whether patches are cost-effective at the given distance.
+    ///
+    /// Trial-encodes the reference frame to measure actual overhead, then estimates
+    /// VarDCT savings from patch subtraction. Returns false if overhead exceeds
+    /// estimated savings (with 2x safety margin).
+    ///
+    /// At high distances (d>=3), VarDCT savings per pixel drop while ref frame
+    /// overhead stays constant, causing patches to hurt rather than help.
+    pub fn is_cost_effective(&self, distance: f32, use_ans: bool) -> bool {
+        let ref_overhead = trial_encode_ref_frame_bytes(self, use_ans);
+        if ref_overhead == usize::MAX {
+            return false;
+        }
+        // Estimate dictionary section overhead: ~5 bytes per ref position + ~5 per occurrence
+        let dict_overhead_est = self.ref_positions.len() * 5 + self.positions.len() * 5;
+        let total_overhead = ref_overhead.saturating_add(dict_overhead_est);
+        // Sum total patch pixels across all occurrences
+        let total_patch_pixels: usize = self
+            .positions
+            .iter()
+            .map(|pos| {
+                let rp = &self.ref_positions[pos.ref_pos_idx];
+                (rp.xsize as usize) * (rp.ysize as usize)
+            })
+            .sum();
+        // Each patch pixel saves roughly (0.3 / distance) bytes of VarDCT data
+        let savings_est = (total_patch_pixels as f64 / (distance.max(0.5) as f64) * 0.3) as usize;
+        savings_est >= 2 * total_overhead
+    }
+
     /// Roundtrip the reference image through integer quantization to match decoder.
     ///
     /// The encoder subtracts patch values before VarDCT encoding, and the decoder
@@ -1484,6 +1514,20 @@ pub(crate) fn subtract_patches_modular(
                 }
             }
         }
+    }
+}
+
+/// Trial-encode the XYB reference frame and return the byte count.
+///
+/// Used for cost-benefit gating: if the reference frame overhead exceeds
+/// the estimated VarDCT savings from patch subtraction, skip patches entirely.
+pub(crate) fn trial_encode_ref_frame_bytes(patches: &PatchesData, use_ans: bool) -> usize {
+    let mut writer = BitWriter::new();
+    if encode_reference_frame(patches, use_ans, &mut writer).is_ok() {
+        writer.zero_pad_to_byte();
+        writer.bytes_written()
+    } else {
+        usize::MAX // On error, signal "don't use patches"
     }
 }
 
