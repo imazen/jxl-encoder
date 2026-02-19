@@ -28,6 +28,10 @@ test-aarch64:
 test-wasm:
     CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --" cargo test -p jxl-encoder --target wasm32-wasip1 --no-default-features --features safe-mode --lib -- api::tests
 
+# Test jxl-encoder-simd under WASM SIMD128 (requires wasmtime)
+test-wasm-simd:
+    RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --" cargo test -p jxl-encoder-simd --target wasm32-wasip1
+
 # Run encode benchmark on all platforms
 bench-platforms:
     @echo "=== x86_64 native ===" && cargo run --example wasm_bench -p jxl-encoder --release --no-default-features --features safe-mode
