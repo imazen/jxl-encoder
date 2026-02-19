@@ -469,12 +469,11 @@ pub(super) fn find_best_32x32_transform(
     scratch: &mut EntropyEstScratch,
     profile: &EffortProfile,
 ) -> bool {
-    // Large transforms (32x32, 32x16, 16x32) average large pixel blocks, which
-    // works well for smooth content but produces blur on high-contrast edges.
-    // The cost model correctly avoids them for high-contrast blocks.
-    // Enable at d >= 2.0 where compression benefit outweighs edge blur risk.
-    if distance < 2.0 {
-        // At low distances, evaluate 16x16 and smaller transforms only
+    // Evaluate DCT32x32, DCT32x16, DCT16x32 at d >= 0.5.
+    // libjxl evaluates all strategies at all distances, but our cost model
+    // under-penalizes large transforms at very low distances (d < 0.5),
+    // causing butteraugli regressions. Gate at d=0.5 as a compromise.
+    if distance < 0.5 {
         for qy in (0..4).step_by(2) {
             for qx in (0..4).step_by(2) {
                 find_best_16x16_transform(
@@ -494,15 +493,13 @@ pub(super) fn find_best_32x32_transform(
                     mask1x1_stride,
                     ac_strategy,
                     scratch,
-                    1.0, // aligned pass: no single-block favoritism
+                    1.0,
                     profile,
                 );
             }
         }
         return false;
     }
-
-    // At higher distances (d >= 2.0), evaluate DCT32x32, DCT32x16, DCT16x32 as options.
     // In pixel-domain mode, entropy_mul is applied internally by estimate_entropy_with_mask
     // using libjxl's static constants (1.48 for DCT32x32, 1.49 for DCT32x16).
     // In coefficient-domain mode, use distance-dependent multipliers.
@@ -812,9 +809,12 @@ pub(super) fn find_best_64x64_transform(
     scratch: &mut EntropyEstScratch,
     profile: &EffortProfile,
 ) {
-    // DCT64 transforms only at d >= 3.0
-    if distance < 3.0 {
-        // At lower distances, fall through to 32x32 evaluation
+    // Evaluate DCT64x64, DCT64x32, DCT32x64 at all distances.
+    // The cost model naturally avoids them when smaller transforms are better.
+    // libjxl evaluates all available strategies at all distances.
+    if distance < 1.0 {
+        // At very low distances (d<1.0), skip DCT64 — the quality cost is extreme
+        // and the cost model can't fully capture the loss from 64x64 averaging.
         for qy in (0..8).step_by(4) {
             for qx in (0..8).step_by(4) {
                 find_best_32x32_transform(
