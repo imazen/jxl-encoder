@@ -13,6 +13,7 @@ use super::ac_strategy::{
     RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
     RAW_STRATEGY_DCT32X64, RAW_STRATEGY_DCT64X32, RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
 };
+use super::afv::{RAW_STRATEGY_AFV0, RAW_STRATEGY_AFV1, RAW_STRATEGY_AFV2, RAW_STRATEGY_AFV3};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE};
 use super::encoder::VarDctEncoder;
 
@@ -145,12 +146,17 @@ impl VarDctEncoder {
         const QUANT_MAX: i32 = 256;
 
         // Skip partial block kinds (small transforms)
+        // Skip partial block kinds — matches libjxl enc_group.cc kPartialBlockKinds
         match raw_strategy {
             RAW_STRATEGY_IDENTITY
             | RAW_STRATEGY_DCT2X2
             | RAW_STRATEGY_DCT4X4
             | RAW_STRATEGY_DCT4X8
-            | RAW_STRATEGY_DCT8X4 => return (0, 0.0, 0.0, 0),
+            | RAW_STRATEGY_DCT8X4
+            | RAW_STRATEGY_AFV0
+            | RAW_STRATEGY_AFV1
+            | RAW_STRATEGY_AFV2
+            | RAW_STRATEGY_AFV3 => return (0, 0.0, 0.0, 0),
             _ => {}
         }
 
