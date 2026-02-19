@@ -314,6 +314,14 @@ impl VarDctEncoder {
         } else {
             None
         };
+        // Cost-benefit gating: trial-encode the reference frame and estimate whether
+        // patch overhead exceeds VarDCT savings. At high distances (d>=3), the VarDCT
+        // savings per patch pixel drop while ref frame overhead stays constant.
+        if let Some(ref pd) = patches_data
+            && !pd.is_cost_effective(self.distance, self.use_ans)
+        {
+            patches_data = None;
+        }
         // Quantize ref_image so subtract/add use the same values the decoder will reconstruct.
         if let Some(ref mut pd) = patches_data {
             pd.quantize_ref_image();
