@@ -1359,10 +1359,11 @@ pub(crate) fn encode_reference_frame_rgb(
 
     // Use FrameEncoder for body — handles single/multi-group automatically,
     // applies RCT for RGB channels, and uses ANS entropy coding.
+    // Tree learning adapts prediction to packed glyphs against zero background.
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
     let options = FrameEncoderOptions {
         use_ans,
-        use_tree_learning: false,
+        use_tree_learning: true,
         use_squeeze: false,
         is_last: false,
         ..Default::default()
@@ -1472,13 +1473,15 @@ pub(crate) fn encode_reference_frame(
         has_alpha: false,
     };
 
-    // Use FrameEncoder for body — handles single/multi-group automatically,
-    // applies RCT for the 3 channels, and uses ANS entropy coding.
+    // Use FrameEncoder for body — handles single/multi-group automatically.
+    // Tree learning adapts prediction to packed glyphs; skip_rct avoids
+    // counterproductive YCoCg on already-decorrelated Y/X/B-Y channels.
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
     let options = FrameEncoderOptions {
         use_ans,
-        use_tree_learning: false,
+        use_tree_learning: true,
         use_squeeze: false,
+        skip_rct: true,
         is_last: false,
         ..Default::default()
     };

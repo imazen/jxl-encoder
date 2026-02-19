@@ -46,6 +46,8 @@ pub struct FrameEncoderOptions {
     pub is_last: bool,
     /// Optional crop rectangle for this frame (None = full frame).
     pub crop: Option<FrameCrop>,
+    /// Skip RCT even for 3-channel images (e.g., XYB channels already decorrelated).
+    pub skip_rct: bool,
 }
 
 impl Default for FrameEncoderOptions {
@@ -64,6 +66,7 @@ impl Default for FrameEncoderOptions {
             duration: 0,
             is_last: true,
             crop: None,
+            skip_rct: false,
         }
     }
 }
@@ -390,7 +393,7 @@ impl FrameEncoder {
         );
 
         // Step 0: Apply best RCT to full image for RGB before extracting groups
-        let has_rct = image.channels.len() >= 3;
+        let has_rct = image.channels.len() >= 3 && !self.options.skip_rct;
         let transformed;
         let rct_type;
         let source_image = if has_rct {
@@ -1768,7 +1771,17 @@ impl FrameEncoder {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
 
-            if image.channels.len() >= 3 {
+            let use_rct = image.channels.len() >= 3 && !self.options.skip_rct;
+            if self.options.use_tree_learning && self.options.use_ans {
+                write_modular_stream_with_tree(
+                    image,
+                    &mut section_writer,
+                    self.options.effort,
+                    use_rct,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                )?;
+            } else if use_rct {
                 super::encode::write_modular_stream_with_rct(
                     image,
                     &mut section_writer,
