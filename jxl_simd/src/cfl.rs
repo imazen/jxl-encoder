@@ -37,6 +37,14 @@ pub fn find_best_multiplier(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return find_best_multiplier_wasm128(token, values_m, values_s, num, base, distance_mul);
+        }
+    }
+
     find_best_multiplier_scalar(values_m, values_s, num, base, distance_mul)
 }
 
@@ -118,6 +126,56 @@ pub fn find_best_multiplier_avx2(
 #[archmage::arcane]
 pub fn find_best_multiplier_neon(
     token: archmage::NeonToken,
+    values_m: &[f32],
+    values_s: &[f32],
+    num: usize,
+    base: f32,
+    distance_mul: f32,
+) -> i8 {
+    use magetypes::simd::f32x4;
+
+    if num == 0 {
+        return 0;
+    }
+
+    let inv_cf = f32x4::splat(token, K_INV_COLOR_FACTOR);
+    let base_v = f32x4::splat(token, base);
+    let mut acc_aa = f32x4::splat(token, 0.0);
+    let mut acc_ab = f32x4::splat(token, 0.0);
+
+    let simd_end = num & !3;
+    let mut i = 0;
+    while i < simd_end {
+        let m = f32x4::from_slice(token, &values_m[i..]);
+        let s = f32x4::from_slice(token, &values_s[i..]);
+        let a = inv_cf * m;
+        let b = base_v * m - s;
+        acc_aa = a.mul_add(a, acc_aa);
+        acc_ab = a.mul_add(b, acc_ab);
+        i += 4;
+    }
+
+    let aa_arr: [f32; 4] = acc_aa.into();
+    let ab_arr: [f32; 4] = acc_ab.into();
+    let mut sum_aa: f32 = aa_arr.iter().sum();
+    let mut sum_ab: f32 = ab_arr.iter().sum();
+
+    while i < num {
+        let a = K_INV_COLOR_FACTOR * values_m[i];
+        let b = base * values_m[i] - values_s[i];
+        sum_aa += a * a;
+        sum_ab += a * b;
+        i += 1;
+    }
+
+    let x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
+    x.round().clamp(-128.0, 127.0) as i8
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+pub fn find_best_multiplier_wasm128(
+    token: archmage::Wasm128Token,
     values_m: &[f32],
     values_s: &[f32],
     num: usize,
