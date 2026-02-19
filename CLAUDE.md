@@ -166,19 +166,25 @@ Updated 2026-02-19. Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at eff
 **Key patterns**:
 - **Size**: competitive at d=0.25-1.0 (median -3.7% to +0.8%), gap widens at high d (+1.8% to +5.7%)
 - **Quality**: butteraugli 3-14% worse on average, SSIM2 -0.5 to -3.0 points
-- **Three consistent outliers** (always 10-32% larger):
-  - `cid22/1418519` (PNG ratio 0.305, smooth/simple): avg +17% size, but often BETTER quality
-  - `cid22/1279330` (PNG ratio 0.438): avg +12% size
-  - `clic2025/100a02c2` (2048x1365): avg +9% size at d >= 1.5
+- **Three consistent outliers** (reduced after distance gate fix):
+  - `cid22/1418519` (PNG ratio 0.305, smooth/simple): was +17%, now +4.6% at d=1.0
+  - `cid22/1279330` (PNG ratio 0.438): was +12%, now +7.7% at d=1.0
+  - `clic2025/100a02c2` (2048x1365): was +9%, now +2.0% at d=1.0
 - **One consistently better image**: `cid22/1044329` (PNG ratio 0.634, complex): avg -5% size
 - **Butteraugli loop**: cjxl e8→e7 comparison shows loop buys 1-4% size + 7% butteraugli at d=1.0.
   Neither encoder has butteraugli loop at e7 (libjxl gates at kKitten = effort 8).
 
-**Root cause analysis for outliers** (partially addressed Feb 19, 2026):
-- global_scale was computed from adaptive quant field content instead of fixed effort-matched q
-  values. Fixed in eb14b65. Reduced 1418519 gap from ~19.6% to ~13.1% at d=1.0 e7.
-- Remaining gap on smooth content: different quant_field distribution (ours: avg=8.6 vs cjxl: avg=7.8)
-  and different AC strategy mix (ours: 44% DCT16 vs cjxl: 60% DCT8 with more DCT32/DCT64)
+**Root cause analysis for outliers** (addressed Feb 19, 2026):
+- **global_scale bug** (eb14b65): was computed from adaptive quant field median/MAD instead of
+  fixed effort-matched q values. libjxl uses q=0.39/d at e>=5. Reduced 1418519 gap ~19.6%→~13.1%.
+- **AC strategy distance gates** (c64d576): DCT32 was gated at d>=2.0, DCT64 at d>=3.0 — preventing
+  large transforms from being evaluated on smooth content at d=1.0. libjxl has NO distance gates.
+  Lowered to d>=0.5 and d>=1.0. Reduced 1418519 gap ~13.1%→~4.6%, 100a02c2 ~4.8%→~2.0%.
+- **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
+  implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
+- **Cost model calibration**: our pixel-domain loss doesn't perfectly match libjxl's, causing
+  occasional over-selection of DCT32/64 on complex images (+1.4% size, +20% bfly on 1080721).
+  Full ungating (matching libjxl) requires cost model improvements.
 - Gap widening at high distances → distance-scaled cost model constants may need tuning
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 
@@ -205,11 +211,11 @@ libjxl effort level strategy gating:
 - e8-9: Same strategies, quality gains come from cost model refinements
 
 Strategy status:
-- DCT32x16/DCT16x32: ENABLED at d>=2.0 (fixed Feb 14, 2026 — coefficient order bucket bug)
-- DCT64x32/DCT32x64: ENABLED at d>=3.0 (same fix)
+- DCT32x16/DCT16x32: ENABLED at d>=0.5 (fixed Feb 14, gate lowered Feb 19)
+- DCT64x32/DCT32x64: ENABLED at d>=1.0 (fixed Feb 14, gate lowered Feb 19)
 - AFV0-3: ENABLED (fixed Feb 15, 2026 — DCT4x8 sub-weight row indexing bug in generate_afv_weights)
-- DCT64x64: enabled at d>=3.0 (square transform, works correctly, bfly=2.3-3.0 on crops)
-- DCT32x32: enabled at d>=2.0 (square transform, works correctly)
+- DCT64x64: enabled at d>=1.0 (square transform, works correctly, bfly=2.3-3.0 on crops)
+- DCT32x32: enabled at d>=0.5 (square transform, works correctly)
 - DCT2x2/IDENTITY: auto-select (kFavor2X2 = -0.4, matches libjxl)
 
 Non-square transform bug RESOLVED (Feb 14, 2026):
