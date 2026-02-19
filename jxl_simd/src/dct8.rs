@@ -41,6 +41,15 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            dct_8x8_wasm128(token, input, output);
+            return;
+        }
+    }
+
     dct_8x8_scalar(input, output);
 }
 
@@ -63,6 +72,15 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
         use archmage::SimdToken;
         if let Some(token) = archmage::NeonToken::summon() {
             idct_8x8_neon(token, input, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            idct_8x8_wasm128(token, input, output);
             return;
         }
     }
@@ -1082,8 +1100,410 @@ fn neon_transpose_4x4(
     )
 }
 
+// ============================================================================
+// wasm32 SIMD128 implementation
+// ============================================================================
+
+/// WASM128 8x8 forward DCT: two-pass (4 columns at a time), in-register transpose.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn dct_8x8_wasm128(token: archmage::Wasm128Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    use magetypes::simd::f32x4;
+
+    let scale = f32x4::splat(token, 0.125);
+
+    // Pass 1: Column-DCT on left 4 columns
+    let l0 = f32x4::from_slice(token, &input[0..]);
+    let l1 = f32x4::from_slice(token, &input[8..]);
+    let l2 = f32x4::from_slice(token, &input[16..]);
+    let l3 = f32x4::from_slice(token, &input[24..]);
+    let l4 = f32x4::from_slice(token, &input[32..]);
+    let l5 = f32x4::from_slice(token, &input[40..]);
+    let l6 = f32x4::from_slice(token, &input[48..]);
+    let l7 = f32x4::from_slice(token, &input[56..]);
+
+    let (l0, l1, l2, l3, l4, l5, l6, l7) = wasm128_dct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
+    let l0 = l0 * scale;
+    let l1 = l1 * scale;
+    let l2 = l2 * scale;
+    let l3 = l3 * scale;
+    let l4 = l4 * scale;
+    let l5 = l5 * scale;
+    let l6 = l6 * scale;
+    let l7 = l7 * scale;
+
+    // Pass 2: Column-DCT on right 4 columns
+    let h0 = f32x4::from_slice(token, &input[4..]);
+    let h1 = f32x4::from_slice(token, &input[12..]);
+    let h2 = f32x4::from_slice(token, &input[20..]);
+    let h3 = f32x4::from_slice(token, &input[28..]);
+    let h4 = f32x4::from_slice(token, &input[36..]);
+    let h5 = f32x4::from_slice(token, &input[44..]);
+    let h6 = f32x4::from_slice(token, &input[52..]);
+    let h7 = f32x4::from_slice(token, &input[60..]);
+
+    let (h0, h1, h2, h3, h4, h5, h6, h7) = wasm128_dct1d_8(token, h0, h1, h2, h3, h4, h5, h6, h7);
+    let h0 = h0 * scale;
+    let h1 = h1 * scale;
+    let h2 = h2 * scale;
+    let h3 = h3 * scale;
+    let h4 = h4 * scale;
+    let h5 = h5 * scale;
+    let h6 = h6 * scale;
+    let h7 = h7 * scale;
+
+    // In-register 8x8 transpose using four 4x4 sub-transposes
+    let (a0, a1, a2, a3) = wasm128_transpose_4x4(token, l0, l1, l2, l3);
+    let (b0, b1, b2, b3) = wasm128_transpose_4x4(token, h0, h1, h2, h3);
+    let (c0, c1, c2, c3) = wasm128_transpose_4x4(token, l4, l5, l6, l7);
+    let (d0, d1, d2, d3) = wasm128_transpose_4x4(token, h4, h5, h6, h7);
+
+    // Pass 3: Row-DCT on left 4 columns
+    let (a0, a1, a2, a3, b0, b1, b2, b3) = wasm128_dct1d_8(token, a0, a1, a2, a3, b0, b1, b2, b3);
+    let a0 = a0 * scale;
+    let a1 = a1 * scale;
+    let a2 = a2 * scale;
+    let a3 = a3 * scale;
+    let b0 = b0 * scale;
+    let b1 = b1 * scale;
+    let b2 = b2 * scale;
+    let b3 = b3 * scale;
+
+    // Pass 4: Row-DCT on right 4 columns
+    let (c0, c1, c2, c3, d0, d1, d2, d3) = wasm128_dct1d_8(token, c0, c1, c2, c3, d0, d1, d2, d3);
+    let c0 = c0 * scale;
+    let c1 = c1 * scale;
+    let c2 = c2 * scale;
+    let c3 = c3 * scale;
+    let d0 = d0 * scale;
+    let d1 = d1 * scale;
+    let d2 = d2 * scale;
+    let d3 = d3 * scale;
+
+    // Store — interleave left (a/b) and right (c/d) halves for each row
+    a0.store((&mut output[0..4]).try_into().unwrap());
+    c0.store((&mut output[4..8]).try_into().unwrap());
+    a1.store((&mut output[8..12]).try_into().unwrap());
+    c1.store((&mut output[12..16]).try_into().unwrap());
+    a2.store((&mut output[16..20]).try_into().unwrap());
+    c2.store((&mut output[20..24]).try_into().unwrap());
+    a3.store((&mut output[24..28]).try_into().unwrap());
+    c3.store((&mut output[28..32]).try_into().unwrap());
+    b0.store((&mut output[32..36]).try_into().unwrap());
+    d0.store((&mut output[36..40]).try_into().unwrap());
+    b1.store((&mut output[40..44]).try_into().unwrap());
+    d1.store((&mut output[44..48]).try_into().unwrap());
+    b2.store((&mut output[48..52]).try_into().unwrap());
+    d2.store((&mut output[52..56]).try_into().unwrap());
+    b3.store((&mut output[56..60]).try_into().unwrap());
+    d3.store((&mut output[60..64]).try_into().unwrap());
+}
+
+/// WASM128 8x8 inverse DCT.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn idct_8x8_wasm128(token: archmage::Wasm128Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    use magetypes::simd::f32x4;
+
+    // Load as 8 rows × (lo, hi)
+    let l0 = f32x4::from_slice(token, &input[0..]);
+    let h0 = f32x4::from_slice(token, &input[4..]);
+    let l1 = f32x4::from_slice(token, &input[8..]);
+    let h1 = f32x4::from_slice(token, &input[12..]);
+    let l2 = f32x4::from_slice(token, &input[16..]);
+    let h2 = f32x4::from_slice(token, &input[20..]);
+    let l3 = f32x4::from_slice(token, &input[24..]);
+    let h3 = f32x4::from_slice(token, &input[28..]);
+    let l4 = f32x4::from_slice(token, &input[32..]);
+    let h4 = f32x4::from_slice(token, &input[36..]);
+    let l5 = f32x4::from_slice(token, &input[40..]);
+    let h5 = f32x4::from_slice(token, &input[44..]);
+    let l6 = f32x4::from_slice(token, &input[48..]);
+    let h6 = f32x4::from_slice(token, &input[52..]);
+    let l7 = f32x4::from_slice(token, &input[56..]);
+    let h7 = f32x4::from_slice(token, &input[60..]);
+
+    // Inverse row-DCT: left half
+    let (l0, l1, l2, l3, l4, l5, l6, l7) = wasm128_idct1d_8(token, l0, l1, l2, l3, l4, l5, l6, l7);
+    // Inverse row-DCT: right half
+    let (h0, h1, h2, h3, h4, h5, h6, h7) = wasm128_idct1d_8(token, h0, h1, h2, h3, h4, h5, h6, h7);
+
+    // Transpose 8x8 (four 4x4 sub-transposes)
+    let (a0, a1, a2, a3) = wasm128_transpose_4x4(token, l0, l1, l2, l3);
+    let (b0, b1, b2, b3) = wasm128_transpose_4x4(token, h0, h1, h2, h3);
+    let (c0, c1, c2, c3) = wasm128_transpose_4x4(token, l4, l5, l6, l7);
+    let (d0, d1, d2, d3) = wasm128_transpose_4x4(token, h4, h5, h6, h7);
+
+    // Inverse column-DCT: left half
+    let (a0, a1, a2, a3, b0, b1, b2, b3) = wasm128_idct1d_8(token, a0, a1, a2, a3, b0, b1, b2, b3);
+    // Inverse column-DCT: right half
+    let (c0, c1, c2, c3, d0, d1, d2, d3) = wasm128_idct1d_8(token, c0, c1, c2, c3, d0, d1, d2, d3);
+
+    // Store row-major
+    a0.store((&mut output[0..4]).try_into().unwrap());
+    c0.store((&mut output[4..8]).try_into().unwrap());
+    a1.store((&mut output[8..12]).try_into().unwrap());
+    c1.store((&mut output[12..16]).try_into().unwrap());
+    a2.store((&mut output[16..20]).try_into().unwrap());
+    c2.store((&mut output[20..24]).try_into().unwrap());
+    a3.store((&mut output[24..28]).try_into().unwrap());
+    c3.store((&mut output[28..32]).try_into().unwrap());
+    b0.store((&mut output[32..36]).try_into().unwrap());
+    d0.store((&mut output[36..40]).try_into().unwrap());
+    b1.store((&mut output[40..44]).try_into().unwrap());
+    d1.store((&mut output[44..48]).try_into().unwrap());
+    b2.store((&mut output[48..52]).try_into().unwrap());
+    d2.store((&mut output[52..56]).try_into().unwrap());
+    b3.store((&mut output[56..60]).try_into().unwrap());
+    d3.store((&mut output[60..64]).try_into().unwrap());
+}
+
+/// WASM128 vectorized 8-point forward DCT butterfly (f32x4, 4 independent DCTs).
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn wasm128_dct1d_8(
+    token: archmage::Wasm128Token,
+    r0: magetypes::simd::f32x4,
+    r1: magetypes::simd::f32x4,
+    r2: magetypes::simd::f32x4,
+    r3: magetypes::simd::f32x4,
+    r4: magetypes::simd::f32x4,
+    r5: magetypes::simd::f32x4,
+    r6: magetypes::simd::f32x4,
+    r7: magetypes::simd::f32x4,
+) -> (
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+) {
+    use magetypes::simd::f32x4;
+
+    let sqrt2 = f32x4::splat(token, SQRT2);
+
+    let a0 = r0 + r7;
+    let a1 = r1 + r6;
+    let a2 = r2 + r5;
+    let a3 = r3 + r4;
+    let s0 = r0 - r7;
+    let s1 = r1 - r6;
+    let s2 = r2 - r5;
+    let s3 = r3 - r4;
+
+    let b0 = a0 + a3;
+    let b1 = a1 + a2;
+    let b2 = a0 - a3;
+    let b3 = a1 - a2;
+
+    let c0 = b0 + b1;
+    let c1 = b0 - b1;
+
+    let b2 = b2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
+    let b3 = b3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+
+    let d0 = b2 + b3;
+    let d1 = b2 - b3;
+    let d0 = sqrt2.mul_add(d0, d1);
+
+    let fh0 = c0;
+    let fh1 = d0;
+    let fh2 = c1;
+    let fh3 = d1;
+
+    let s0 = s0 * f32x4::splat(token, WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat(token, WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat(token, WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat(token, WC_MULTIPLIERS_8[3]);
+
+    let e0 = s0 + s3;
+    let e1 = s1 + s2;
+    let e2 = s0 - s3;
+    let e3 = s1 - s2;
+
+    let f0 = e0 + e1;
+    let f1 = e0 - e1;
+
+    let e2 = e2 * f32x4::splat(token, WC_MULTIPLIERS_4[0]);
+    let e3 = e3 * f32x4::splat(token, WC_MULTIPLIERS_4[1]);
+
+    let g0 = e2 + e3;
+    let g1 = e2 - e3;
+    let g0 = sqrt2.mul_add(g0, g1);
+
+    let sh0 = f0;
+    let sh1 = g0;
+    let sh2 = f1;
+    let sh3 = g1;
+
+    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh1 = sh1 + sh2;
+    let sh2 = sh2 + sh3;
+
+    (fh0, sh0, fh1, sh1, fh2, sh2, fh3, sh3)
+}
+
+/// WASM128 vectorized 8-point inverse DCT butterfly (f32x4).
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn wasm128_idct1d_8(
+    token: archmage::Wasm128Token,
+    r0: magetypes::simd::f32x4,
+    r1: magetypes::simd::f32x4,
+    r2: magetypes::simd::f32x4,
+    r3: magetypes::simd::f32x4,
+    r4: magetypes::simd::f32x4,
+    r5: magetypes::simd::f32x4,
+    r6: magetypes::simd::f32x4,
+    r7: magetypes::simd::f32x4,
+) -> (
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+) {
+    use magetypes::simd::f32x4;
+
+    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+
+    let fh0 = r0;
+    let sh0 = r1;
+    let fh1 = r2;
+    let sh1 = r3;
+    let fh2 = r4;
+    let sh2 = r5;
+    let fh3 = r6;
+    let sh3 = r7;
+
+    let sh2 = sh2 - sh3;
+    let sh1 = sh1 - sh2;
+    let sh0 = (sh0 - sh1) * inv_sqrt2;
+
+    let f0 = sh0;
+    let g0 = sh1;
+    let f1 = sh2;
+    let g1 = sh3;
+
+    let g0 = (g0 - g1) * inv_sqrt2;
+
+    let e2p = g0 + g1;
+    let e3p = g0 - g1;
+
+    let e2 = e2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let e3 = e3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+
+    let e0p = f0 + f1;
+    let e1p = f0 - f1;
+
+    let s0 = e0p + e2;
+    let s3 = e0p - e2;
+    let s1 = e1p + e3;
+    let s2 = e1p - e3;
+
+    let s0 = s0 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[0]);
+    let s1 = s1 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[1]);
+    let s2 = s2 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[2]);
+    let s3 = s3 * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_8[3]);
+
+    let c0 = fh0;
+    let d0 = fh1;
+    let c1 = fh2;
+    let d1 = fh3;
+
+    let d0_in = (d0 - d1) * inv_sqrt2;
+
+    let b2p = d0_in + d1;
+    let b3p = d0_in - d1;
+
+    let b2 = b2p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[0]);
+    let b3 = b3p * f32x4::splat(token, 1.0 / WC_MULTIPLIERS_4[1]);
+
+    let b0p = c0 + c1;
+    let b1p = c0 - c1;
+
+    let a0 = b0p + b2;
+    let a3 = b0p - b2;
+    let a1 = b1p + b3;
+    let a2 = b1p - b3;
+
+    let out0 = a0 + s0;
+    let out7 = a0 - s0;
+    let out1 = a1 + s1;
+    let out6 = a1 - s1;
+    let out2 = a2 + s2;
+    let out5 = a2 - s2;
+    let out3 = a3 + s3;
+    let out4 = a3 - s3;
+
+    (out0, out1, out2, out3, out4, out5, out6, out7)
+}
+
+/// WASM128 in-register 4x4 transpose using i32x4_shuffle.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+#[allow(clippy::type_complexity)]
+fn wasm128_transpose_4x4(
+    token: archmage::Wasm128Token,
+    r0: magetypes::simd::f32x4,
+    r1: magetypes::simd::f32x4,
+    r2: magetypes::simd::f32x4,
+    r3: magetypes::simd::f32x4,
+) -> (
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+    magetypes::simd::f32x4,
+) {
+    use core::arch::wasm32::*;
+    use magetypes::simd::f32x4;
+
+    let r0 = r0.raw();
+    let r1 = r1.raw();
+    let r2 = r2.raw();
+    let r3 = r3.raw();
+
+    // Stage 1: interleave pairs
+    // t0 = [r0[0], r1[0], r0[1], r1[1]]
+    let t0 = i32x4_shuffle::<0, 4, 1, 5>(r0, r1);
+    // t1 = [r0[2], r1[2], r0[3], r1[3]]
+    let t1 = i32x4_shuffle::<2, 6, 3, 7>(r0, r1);
+    // t2 = [r2[0], r3[0], r2[1], r3[1]]
+    let t2 = i32x4_shuffle::<0, 4, 1, 5>(r2, r3);
+    // t3 = [r2[2], r3[2], r2[3], r3[3]]
+    let t3 = i32x4_shuffle::<2, 6, 3, 7>(r2, r3);
+
+    // Stage 2: combine 64-bit pairs
+    // out0 = [r0[0], r1[0], r2[0], r3[0]]
+    let out0 = i64x2_shuffle::<0, 2>(t0, t2);
+    // out1 = [r0[1], r1[1], r2[1], r3[1]]
+    let out1 = i64x2_shuffle::<1, 3>(t0, t2);
+    // out2 = [r0[2], r1[2], r2[2], r3[2]]
+    let out2 = i64x2_shuffle::<0, 2>(t1, t3);
+    // out3 = [r0[3], r1[3], r2[3], r3[3]]
+    let out3 = i64x2_shuffle::<1, 3>(t1, t3);
+
+    (
+        f32x4::from_v128(token, out0),
+        f32x4::from_v128(token, out1),
+        f32x4::from_v128(token, out2),
+        f32x4::from_v128(token, out3),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -1111,65 +1531,32 @@ mod tests {
 
     #[test]
     fn test_vectorized_butterfly_vs_scalar() {
-        // Test a single 1D DCT by putting the same 8 values
-        // in all lanes of the 8 registers, running vectorized butterfly,
-        // and comparing lane 0 of the outputs to scalar dct1d_8.
         let input = [1.0f32, 0.5, -0.3, 0.8, -0.1, 0.6, -0.4, 0.9];
-        let mut scalar_out = input;
-        dct1d_8_scalar(&mut scalar_out);
-
-        // Test SIMD via full dct_8x8:
-        // Create input where row 0 = input, all other rows = 0
-        // After column-DCT: all 8 column-DCT outputs contain row 0 value (since other rows are 0)
-        // Actually that doesn't test what I want.
-
-        // Instead, create a diagonal matrix where each row has the same values
-        // This won't isolate the butterfly. Let me think differently.
-        //
-        // The vectorized butterfly processes 8 *independent* 1D DCTs at once.
-        // Each lane represents one independent DCT.
-        // In the full dct_8x8, the first butterfly processes columns (one column per lane).
-        //
-        // To test: create a matrix where column 0 = input values, all other columns = 0.
-        // Then the column-DCT output for lane 0 = scalar DCT of input.
 
         let mut block = [0.0f32; 64];
-        // Set column 0 to our test values (row-major: block[r*8 + 0] = input[r])
         for r in 0..8 {
             block[r * 8] = input[r];
         }
-
-        let mut dct_out = [0.0f32; 64];
         let mut scalar_2d_out = [0.0f32; 64];
-
-        dct_8x8(&block, &mut dct_out);
         dct_8x8_scalar(&block, &mut scalar_2d_out);
 
-        // Compare all 64 values
-        let mut max_diff = 0.0f32;
-        for i in 0..64 {
-            let diff = (dct_out[i] - scalar_2d_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-            }
-        }
-
-        // Also print the first few values for debugging
-        for i in 0..8 {
-            let d = (dct_out[i] - scalar_2d_out[i]).abs();
-            if d > 1e-5 {
-                panic!(
-                    "Mismatch at [{}]: simd={:.6} scalar={:.6} diff={:.6}",
-                    i, dct_out[i], scalar_2d_out[i], d
-                );
-            }
-        }
-
-        assert!(
-            max_diff < 1e-5,
-            "Max diff between SIMD and scalar dct_8x8: {}",
-            max_diff
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut dct_out = [0.0f32; 64];
+                dct_8x8(&block, &mut dct_out);
+                for i in 0..64 {
+                    let diff = (dct_out[i] - scalar_2d_out[i]).abs();
+                    assert!(
+                        diff < 1e-5,
+                        "Mismatch at [{i}]: simd={:.6} scalar={:.6} diff={diff:.6} [{perm}]",
+                        dct_out[i],
+                        scalar_2d_out[i],
+                    );
+                }
+            },
         );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1178,22 +1565,25 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.37 + 1.5).cos();
         }
-
         let mut scalar_out = [0.0f32; 64];
-        let mut simd_out = [0.0f32; 64];
-
         dct_8x8_scalar(&input, &mut scalar_out);
-        dct_8x8(&input, &mut simd_out);
 
-        for i in 0..64 {
-            assert!(
-                (scalar_out[i] - simd_out[i]).abs() < 1e-5,
-                "DCT mismatch at {}: scalar={} simd={}",
-                i,
-                scalar_out[i],
-                simd_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 64];
+                dct_8x8(&input, &mut simd_out);
+                for i in 0..64 {
+                    assert!(
+                        (scalar_out[i] - simd_out[i]).abs() < 1e-5,
+                        "DCT mismatch at {i}: scalar={} simd={} [{perm}]",
+                        scalar_out[i],
+                        simd_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1202,22 +1592,25 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.37 + 1.5).cos();
         }
-
         let mut scalar_out = [0.0f32; 64];
-        let mut simd_out = [0.0f32; 64];
-
         idct_8x8_scalar(&input, &mut scalar_out);
-        idct_8x8(&input, &mut simd_out);
 
-        for i in 0..64 {
-            assert!(
-                (scalar_out[i] - simd_out[i]).abs() < 1e-5,
-                "IDCT mismatch at {}: scalar={} simd={}",
-                i,
-                scalar_out[i],
-                simd_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 64];
+                idct_8x8(&input, &mut simd_out);
+                for i in 0..64 {
+                    assert!(
+                        (scalar_out[i] - simd_out[i]).abs() < 1e-5,
+                        "IDCT mismatch at {i}: scalar={} simd={} [{perm}]",
+                        scalar_out[i],
+                        simd_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1226,20 +1619,24 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = (i as f32 * 0.1).sin();
         }
-        let mut dct_out = [0.0f32; 64];
-        let mut idct_out = [0.0f32; 64];
 
-        dct_8x8(&input, &mut dct_out);
-        idct_8x8(&dct_out, &mut idct_out);
-
-        for i in 0..64 {
-            assert!(
-                (input[i] - idct_out[i]).abs() < 1e-4,
-                "SIMD roundtrip mismatch at {}: {} vs {}",
-                i,
-                input[i],
-                idct_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut dct_out = [0.0f32; 64];
+                let mut idct_out = [0.0f32; 64];
+                dct_8x8(&input, &mut dct_out);
+                idct_8x8(&dct_out, &mut idct_out);
+                for i in 0..64 {
+                    assert!(
+                        (input[i] - idct_out[i]).abs() < 1e-4,
+                        "SIMD roundtrip mismatch at {i}: {} vs {} [{perm}]",
+                        input[i],
+                        idct_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }
