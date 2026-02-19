@@ -51,11 +51,24 @@ pub struct EffortProfile {
     pub try_dct32: bool,
     /// Try DCT64x64/DCT64x32/DCT32x64 transforms.
     pub try_dct64: bool,
+    /// Try DCT4x8/DCT8x4/DCT4x4/AFV transforms (effort >= 6 in libjxl).
+    pub try_dct4x8_afv: bool,
     /// Enable non-aligned evaluation pass (odd-aligned 16x16 regions).
     pub non_aligned_eval: bool,
     /// Step size for fine-grained AC strategy search on 32x32+ blocks.
     /// 1 = every position (effort 9+), 2 = every other (default).
     pub fine_grained_step: u8,
+
+    // ─── VarDCT pipeline options ──────────────────────────────────────────
+    /// Apply pixel-level chromacity adjustments (effort >= 7 in libjxl).
+    pub chromacity_adjustment: bool,
+    /// Use pair-merge clustering for VarDCT entropy codes (effort >= 9 in libjxl).
+    /// When false, uses fast k-means-only clustering.
+    pub enhanced_clustering_vardct: bool,
+    /// Compute per-block dynamic EPF sharpness (effort >= 6 in libjxl).
+    pub epf_dynamic_sharpness: bool,
+    /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
+    pub cfl_two_pass: bool,
 
     // ─── Quantization ────────────────────────────────────────────────────
     /// Enable per-block AdjustQuantBlockAC (effort >= 5 in libjxl).
@@ -97,6 +110,11 @@ pub struct EffortProfile {
     // ─── RCT selection ───────────────────────────────────────────────────
     /// Number of RCT variants to try (0 = no selection, use YCoCg).
     pub nb_rcts_to_try: u8,
+
+    // ─── WP parameter search ───────────────────────────────────────────────
+    /// Number of weighted predictor parameter sets to try (0 = default only).
+    /// libjxl: 2 at effort 8 (kKitten), 5 at effort 9+ (kTortoise).
+    pub wp_num_param_sets: u8,
 
     // ─── Tree learning parameters ────────────────────────────────────────
     /// Number of MA tree properties to evaluate.
@@ -161,8 +179,15 @@ impl EffortProfile {
             ac_strategy_enabled: effort >= 5,
             try_dct32: effort >= 5,
             try_dct64: effort >= 7,
+            try_dct4x8_afv: effort >= 6,
             non_aligned_eval: effort >= 6,
             fine_grained_step: if effort >= 9 { 1 } else { 2 },
+
+            // ── VarDCT pipeline ──
+            chromacity_adjustment: effort >= 7,
+            enhanced_clustering_vardct: effort >= 9,
+            epf_dynamic_sharpness: effort >= 6,
+            cfl_two_pass: effort >= 7,
 
             // ── Quantization ──
             adjust_quant_ac: effort >= 5,
@@ -193,6 +218,13 @@ impl EffortProfile {
                 7 => 7,
                 8 => 9,
                 _ => 19,
+            },
+
+            // ── WP parameter search ──
+            wp_num_param_sets: match effort {
+                0..=7 => 0,
+                8 => 2,
+                _ => 5,
             },
 
             // ── Tree learning ──
@@ -231,8 +263,15 @@ impl EffortProfile {
             ac_strategy_enabled: false,
             try_dct32: false,
             try_dct64: false,
+            try_dct4x8_afv: false,
             non_aligned_eval: false,
             fine_grained_step: 2,
+
+            // ── VarDCT pipeline (N/A for lossless) ──
+            chromacity_adjustment: false,
+            enhanced_clustering_vardct: false,
+            epf_dynamic_sharpness: false,
+            cfl_two_pass: false,
 
             // ── Quantization (N/A for lossless) ──
             adjust_quant_ac: false,
@@ -262,6 +301,13 @@ impl EffortProfile {
                 7 => 7,
                 8 => 9,
                 _ => 19,
+            },
+
+            // ── WP parameter search ──
+            wp_num_param_sets: match effort {
+                0..=7 => 0,
+                8 => 2,
+                _ => 5,
             },
 
             // ── Tree learning ──
@@ -326,12 +372,18 @@ mod tests {
         assert!(p.ac_strategy_enabled);
         assert!(p.try_dct32);
         assert!(p.try_dct64);
+        assert!(p.try_dct4x8_afv); // e6+
         assert!(p.non_aligned_eval);
         assert_eq!(p.fine_grained_step, 2);
+        assert!(p.chromacity_adjustment); // e7+
+        assert!(!p.enhanced_clustering_vardct); // e9+
+        assert!(p.epf_dynamic_sharpness); // e6+
+        assert!(p.cfl_two_pass); // e7+
         assert!(p.adjust_quant_ac);
         assert_eq!(p.k_favor_2x2, -0.4);
         assert_eq!(p.k_ac_quant, 0.765);
         assert_eq!(p.nb_rcts_to_try, 7);
+        assert_eq!(p.wp_num_param_sets, 0); // e8+
         assert_eq!(p.tree_num_properties, 7);
         assert_eq!(p.tree_max_buckets, 48);
     }
@@ -349,10 +401,16 @@ mod tests {
         assert!(p.ac_strategy_enabled);
         assert!(p.try_dct32);
         assert!(!p.try_dct64); // e7+
+        assert!(!p.try_dct4x8_afv); // e6+
         assert!(!p.non_aligned_eval); // e6+
+        assert!(!p.chromacity_adjustment); // e7+
+        assert!(!p.enhanced_clustering_vardct); // e9+
+        assert!(!p.epf_dynamic_sharpness); // e6+
+        assert!(!p.cfl_two_pass); // e7+
         assert!(p.adjust_quant_ac);
         assert_eq!(p.butteraugli_iters, 0);
         assert_eq!(p.nb_rcts_to_try, 4);
+        assert_eq!(p.wp_num_param_sets, 0); // e8+
     }
 
     #[test]
@@ -361,7 +419,9 @@ mod tests {
         assert_eq!(p.lz77_method, Lz77Method::Optimal);
         assert_eq!(p.butteraugli_iters, 4);
         assert_eq!(p.fine_grained_step, 1);
+        assert!(p.enhanced_clustering_vardct); // e9+
         assert_eq!(p.nb_rcts_to_try, 19);
+        assert_eq!(p.wp_num_param_sets, 5); // e9+
         assert_eq!(p.tree_num_properties, 15);
         assert_eq!(p.tree_max_buckets, 256);
     }
@@ -372,6 +432,8 @@ mod tests {
         assert_eq!(p.lz77_method, Lz77Method::Greedy);
         assert_eq!(p.butteraugli_iters, 2);
         assert_eq!(p.fine_grained_step, 2);
+        assert!(!p.enhanced_clustering_vardct); // e9+
+        assert_eq!(p.wp_num_param_sets, 2); // e8
     }
 
     #[test]

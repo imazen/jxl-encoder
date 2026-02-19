@@ -1143,6 +1143,13 @@ pub fn write_modular_stream_with_tree(
         (image.clone(), None)
     };
 
+    // Step 0: Find best WP parameters (effort-dependent search)
+    let wp_params = if profile.wp_num_param_sets > 0 {
+        super::predictor::find_best_wp_params(&work_image.channels, profile.wp_num_param_sets)
+    } else {
+        super::predictor::WeightedPredictorParams::default()
+    };
+
     // Step 1: Gather samples (with subsampling for large images)
     let total_pixels: usize = work_image
         .channels
@@ -1151,7 +1158,7 @@ pub fn write_modular_stream_with_tree(
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
-    gather_samples_strided(&mut samples, &work_image, 0, 0, stride);
+    gather_samples_strided(&mut samples, &work_image, 0, 0, stride, &wp_params);
 
     // Step 2: Learn tree with effort-dependent parameters
     let pixel_fraction = if total_pixels > 0 {
@@ -1180,7 +1187,7 @@ pub fn write_modular_stream_with_tree(
     );
 
     // Step 3: Collect residuals with learned tree
-    let tokens = collect_residuals_with_tree(&work_image, &tree, 0);
+    let tokens = collect_residuals_with_tree(&work_image, &tree, 0, &wp_params);
 
     // Step 3b: Optionally apply LZ77 to the token stream
     let dist_multiplier = work_image
@@ -1233,7 +1240,7 @@ pub fn write_modular_stream_with_tree(
 
     // GroupHeader
     writer.write(1, 1)?; // use_global_tree = true
-    writer.write(1, 1)?; // wp_header.all_default = true
+    write_wp_header(writer, &wp_params)?;
 
     if let Some(rct_type) = rct_type {
         writer.write(2, 1)?; // num_transforms = 1
@@ -1327,6 +1334,13 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         has_rct,
     );
 
+    // Step 2b: Find best WP parameters (effort-dependent search)
+    let wp_params = if profile.wp_num_param_sets > 0 {
+        super::predictor::find_best_wp_params(&transformed.channels, profile.wp_num_param_sets)
+    } else {
+        super::predictor::WeightedPredictorParams::default()
+    };
+
     // Step 3: Gather samples from squeezed image (with subsampling for large images)
     let total_pixels: usize = transformed
         .channels
@@ -1335,7 +1349,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
-    gather_samples_strided(&mut samples, &transformed, 0, 0, stride);
+    gather_samples_strided(&mut samples, &transformed, 0, 0, stride, &wp_params);
 
     // Step 4: Learn tree with effort-dependent parameters
     let pixel_fraction = if total_pixels > 0 {
@@ -1359,7 +1373,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     );
 
     // Step 5: Collect residuals with learned tree
-    let tokens = collect_residuals_with_tree(&transformed, &tree, 0);
+    let tokens = collect_residuals_with_tree(&transformed, &tree, 0, &wp_params);
 
     // Step 5b: Optionally apply LZ77 to the token stream
     let dist_multiplier = transformed
@@ -1411,7 +1425,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
 
     // GroupHeader with transforms: RCT (if RGB) + Squeeze
     writer.write(1, 1)?; // use_global_tree = true
-    writer.write(1, 1)?; // wp_header.all_default = true
+    write_wp_header(writer, &wp_params)?;
 
     if has_rct {
         // num_transforms = 2: U32 BitsOffset(4,2), offset=0

@@ -172,7 +172,7 @@ impl Default for VarDctEncoder {
             effort: 7,
             profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
-            enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
+            enhanced_clustering: true, // Profile-driven: e9+ for Best, Fast otherwise
             use_ans: true,             // ANS produces 4-10% smaller files than Huffman
             cfl_enabled: true,
             ac_strategy_enabled: true,
@@ -207,7 +207,7 @@ impl VarDctEncoder {
             effort: 7,
             profile: crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference),
             optimize_codes: true,
-            enhanced_clustering: true, // Pair-merge refinement helps ANS (larger header savings)
+            enhanced_clustering: true, // Profile-driven: e9+ for Best, Fast otherwise
             use_ans: true,             // ANS produces 4-10% smaller files than Huffman
             cfl_enabled: true,
             ac_strategy_enabled: true,
@@ -432,7 +432,10 @@ impl VarDctEncoder {
             DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
-        params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
+        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
+        if self.profile.chromacity_adjustment {
+            params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
+        }
 
         debug_rect!(
             "enc/params",
@@ -454,7 +457,7 @@ impl VarDctEncoder {
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
 
         // Compute per-tile chroma-from-luma map
-        let cfl_map = if self.cfl_enabled {
+        let mut cfl_map = if self.cfl_enabled {
             compute_cfl_map(
                 &xyb_x,
                 &xyb_y,
@@ -655,6 +658,21 @@ impl VarDctEncoder {
             );
         }
 
+        // CfL two-pass refinement: try ±1 for each tile's ytox/ytob after AC strategy
+        // is determined, to account for quantization effects.
+        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl.
+        if self.profile.cfl_two_pass && self.cfl_enabled {
+            super::chroma_from_luma::refine_cfl_map(
+                &mut cfl_map,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+            );
+        }
+
         // Perform DCT and quantization (XYB data is padded to block boundaries)
         let transform_out = self.transform_and_quantize(
             &xyb_x,
@@ -674,26 +692,28 @@ impl VarDctEncoder {
         let raw_nzeros = &transform_out.raw_nzeros;
 
         // Compute per-block EPF sharpness map when EPF is active
-        let sharpness_map = if params.epf_iters > 0 && self.distance >= 0.5 {
-            let mask = mask1x1.unwrap_or_else(|| {
-                super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
-            });
-            Some(super::epf::compute_epf_sharpness(
-                [&xyb_x, &xyb_y, &xyb_b],
-                quant_dc,
-                quant_ac,
-                &quant_field,
-                &mask,
-                &params,
-                &cfl_map,
-                &ac_strategy,
-                self.enable_gaborish,
-                xsize_blocks,
-                ysize_blocks,
-            ))
-        } else {
-            None
-        };
+        // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl
+        let sharpness_map =
+            if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
+                let mask = mask1x1.unwrap_or_else(|| {
+                    super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
+                });
+                Some(super::epf::compute_epf_sharpness(
+                    [&xyb_x, &xyb_y, &xyb_b],
+                    quant_dc,
+                    quant_ac,
+                    &quant_field,
+                    &mask,
+                    &params,
+                    &cfl_map,
+                    &ac_strategy,
+                    self.enable_gaborish,
+                    xsize_blocks,
+                    ysize_blocks,
+                ))
+            } else {
+                None
+            };
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
         if self.optimize_codes {
@@ -1069,10 +1089,13 @@ impl VarDctEncoder {
             DistanceParams::compute_from_quant_field(self.distance, &precomputed.quant_field_float);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
-        params.apply_chromacity_adjustment(
-            precomputed.chromacity_x_pixelized,
-            precomputed.chromacity_b_pixelized,
-        );
+        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
+        if self.profile.chromacity_adjustment {
+            params.apply_chromacity_adjustment(
+                precomputed.chromacity_x_pixelized,
+                precomputed.chromacity_b_pixelized,
+            );
+        }
 
         // Perform DCT and quantization using precomputed XYB data
         let transform_out = self.transform_and_quantize(
@@ -1264,8 +1287,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        const EXPECTED_HASH: u64 = 0xf743f5c30a677c68;
+        // Updated: centralize effort gating + CfL two-pass refinement
+        const EXPECTED_HASH: u64 = 0x6492127990b31b6c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1370,8 +1393,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        const EXPECTED_HASH: u64 = 0x5256b4e484f6426e;
+        // Updated: centralize effort gating + CfL two-pass refinement
+        const EXPECTED_HASH: u64 = 0x4b0bbaae02233220;
         assert_eq!(
             hash,
             EXPECTED_HASH,

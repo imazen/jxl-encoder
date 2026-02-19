@@ -335,6 +335,71 @@ impl WeightedPredictorParams {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
+
+    /// Get parameter set by mode index (0–4), matching libjxl's PredictorMode().
+    ///
+    /// - Mode 0: Default (lossless16)
+    /// - Mode 1: lossless8 variant
+    /// - Mode 2: West-biased lossless8
+    /// - Mode 3: North-biased lossless8
+    /// - Mode 4: Generic/balanced
+    pub fn for_mode(mode: u8) -> Self {
+        match mode {
+            0 => Self::default(),
+            1 => Self {
+                p1c: 8,
+                p2c: 8,
+                p3ca: 4,
+                p3cb: 0,
+                p3cc: 3,
+                p3cd: 23,
+                p3ce: 2,
+                w0: 0xd,
+                w1: 0xc,
+                w2: 0xc,
+                w3: 0xb,
+            },
+            2 => Self {
+                p1c: 10,
+                p2c: 9,
+                p3ca: 7,
+                p3cb: 0,
+                p3cc: 0,
+                p3cd: 16,
+                p3ce: 9,
+                w0: 0xd,
+                w1: 0xc,
+                w2: 0xd,
+                w3: 0xc,
+            },
+            3 => Self {
+                p1c: 16,
+                p2c: 8,
+                p3ca: 0,
+                p3cb: 16,
+                p3cc: 0,
+                p3cd: 23,
+                p3ce: 0,
+                w0: 0xd,
+                w1: 0xd,
+                w2: 0xc,
+                w3: 0xc,
+            },
+            _ => Self {
+                p1c: 10,
+                p2c: 10,
+                p3ca: 5,
+                p3cb: 5,
+                p3cc: 5,
+                p3cd: 12,
+                p3ce: 4,
+                w0: 0xd,
+                w1: 0xc,
+                w2: 0xc,
+                w3: 0xc,
+            },
+        }
+    }
 }
 
 impl PartialEq for WeightedPredictorParams {
@@ -597,6 +662,96 @@ pub fn unpack_signed(value: u32) -> i32 {
     } else {
         -((value / 2) as i32) - 1
     }
+}
+
+/// Estimate the total encoding cost of using a WP parameter set on the given channels.
+///
+/// Runs the weighted predictor over every pixel, computes residuals, and
+/// estimates Shannon entropy + HybridUint extra bits as a cost proxy.
+/// Matching libjxl's EstimateWPCost (enc_modular.cc:238-287).
+pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorParams) -> f64 {
+    // Use 256-bin histogram for entropy estimation
+    const NUM_BINS: usize = 256;
+    let mut histogram = [0u32; NUM_BINS];
+    let mut total_extra_bits = 0u64;
+    let mut total_samples = 0u64;
+
+    for channel in channels {
+        let width = channel.width();
+        let height = channel.height();
+        if width == 0 || height == 0 {
+            continue;
+        }
+
+        let mut wp_state = WeightedPredictorState::new(params, width);
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = channel.get(x, y);
+                let neighbors = Neighbors::gather(channel, x, y);
+                let prediction = wp_state.predict(x, y, width, &neighbors);
+
+                let residual = pixel - prediction;
+                let packed = pack_signed(residual);
+
+                // Bin the packed residual for histogram
+                let bin = if packed < NUM_BINS as u32 {
+                    packed as usize
+                } else {
+                    // For large residuals, count extra bits needed
+                    let bits = 32 - packed.leading_zeros();
+                    total_extra_bits += bits as u64;
+                    NUM_BINS - 1
+                };
+                histogram[bin] += 1;
+                total_samples += 1;
+
+                wp_state.update_errors(pixel, x, y, width);
+            }
+        }
+    }
+
+    if total_samples == 0 {
+        return 0.0;
+    }
+
+    // Estimate Shannon entropy from histogram
+    let total_f = total_samples as f64;
+    let mut entropy = 0.0f64;
+    for &count in &histogram {
+        if count > 0 {
+            let p = count as f64 / total_f;
+            entropy -= p * p.log2();
+        }
+    }
+
+    // Total cost = entropy bits + extra bits for large values
+    entropy * total_f + total_extra_bits as f64
+}
+
+/// Find the best WP parameter set by trying `num_sets` modes (0..num_sets).
+///
+/// Returns the best `WeightedPredictorParams` and whether it differs from default.
+/// At effort 8 (kKitten): `num_sets=2` (modes 0-1).
+/// At effort 9+ (kTortoise): `num_sets=5` (modes 0-4).
+pub fn find_best_wp_params(channels: &[super::Channel], num_sets: u8) -> WeightedPredictorParams {
+    if num_sets <= 1 {
+        return WeightedPredictorParams::default();
+    }
+
+    let mut best_cost = f64::MAX;
+    let mut best_mode = 0u8;
+
+    for mode in 0..num_sets.min(5) {
+        let params = WeightedPredictorParams::for_mode(mode);
+        let cost = estimate_wp_cost(channels, &params);
+        if cost < best_cost {
+            best_cost = cost;
+            best_mode = mode;
+        }
+    }
+
+    WeightedPredictorParams::for_mode(best_mode)
 }
 
 #[cfg(test)]
