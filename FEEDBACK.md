@@ -110,3 +110,4 @@ SSIM2 floor of 40.0 to catch broken transform reintroduction.
 2026-02-18 - Fix lossy palette for multi-group images: palette meta in LfGlobal, index across PassGroups. Verified djxl+jxl-rs.
 2026-02-18 - Palette+ANS checksum bug confirmed already fixed by u2S bit width fix (Feb 17). Added regression test with 256 colors.
 2026-02-19 02:49 UTC — Implement tree learning for patch reference frames + skip RCT for XYB, fix ANS verify log_alpha_size bug
+2026-02-19: Implemented CfL pass 2 with actual AC strategies + Newton (d49c207)

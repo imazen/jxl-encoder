@@ -335,7 +335,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 ### What Works
 - [x] XYB color space conversion (linear sRGB input)
 - [x] Adaptive quantization (per-block perceptual masking, full pipeline)
-- [x] Chroma-from-luma (per-tile ytox/ytob via least-squares)
+- [x] Chroma-from-luma (per-tile ytox/ytob, Newton at e7+, pass 2 with actual AC strategies)
 - [x] AC strategy selection (19 of 27: DCT8/DCT4x4/DCT4x8/DCT8x4/DCT16x8/DCT8x16/DCT16x16/DCT32x32/DCT32x16/DCT16x32/DCT64x64/DCT64x32/DCT32x64/IDENTITY/DCT2X2/AFV0-3)
 - [x] DCT32x16/DCT16x32: enabled at d>=2.0 (fixed Feb 14 — coefficient order bucket bug, bfly 4.6)
 - [x] DCT64x64: enabled at d>=3.0, verified with jxl-oxide and djxl
