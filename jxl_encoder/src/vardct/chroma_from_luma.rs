@@ -7,8 +7,10 @@
 //! Determines per-tile linear models for the X and B channels from the Y channel.
 //! Ported from libjxl-tiny's `enc_chroma_from_luma.cc`.
 
+use super::ac_strategy::{AcStrategyMap, COVERED_X, COVERED_Y};
 use super::common::*;
 use super::dct::dct_8x8;
+use super::encoder::VarDctEncoder;
 use super::quant;
 use crate::debug_rect;
 
@@ -234,14 +236,19 @@ pub fn compute_cfl_map(
     }
 }
 
-/// Refine a CfL map by testing neighboring values (±1) for each tile.
+/// CfL pass 2: recompute CfL map using actual AC strategies and per-block
+/// quantization weighting.
 ///
-/// For each tile, evaluates the sum of squared residuals at the current
-/// ytox/ytob values and their ±1 neighbors, picking the combination that
-/// minimizes residual energy. This second pass accounts for quantization
-/// effects that the initial least-squares fit doesn't capture.
+/// Unlike pass 1 (`compute_cfl_map`) which forces DCT8 and q=1, pass 2 uses
+/// the actual AC strategy per block and weights coefficients by the per-block
+/// quantization factor and strategy-specific inverse quant matrices. This
+/// produces better CfL values because the fitting accounts for how the encoder
+/// will actually encode each block.
 ///
-/// Called when `cfl_two_pass` is enabled (effort >= 7 in libjxl).
+/// Matches libjxl `ComputeTile` with `use_dct8=false` in enc_chroma_from_luma.cc.
+///
+/// Called after AC strategy selection and quant field computation.
+#[allow(clippy::too_many_arguments)]
 pub fn refine_cfl_map(
     cfl_map: &mut CflMap,
     xyb_x: &[f32],
@@ -250,24 +257,26 @@ pub fn refine_cfl_map(
     stride: usize,
     xsize_blocks: usize,
     ysize_blocks: usize,
+    ac_strategy: &AcStrategyMap,
+    quant_field: &[u8],
+    quant_scale: f32,
+    use_newton: bool,
 ) {
     let xsize_tiles = cfl_map.xsize_tiles;
     let ysize_tiles = cfl_map.ysize_tiles;
 
-    // Pre-compute inverse quant weights
-    let qw_x = quant::quant_weights(0, 0);
-    let qw_b = quant::quant_weights(0, 2);
-    let mut inv_qm_x = [0.0f32; DCT_BLOCK_SIZE];
-    let mut inv_qm_b = [0.0f32; DCT_BLOCK_SIZE];
-    for i in 0..DCT_BLOCK_SIZE {
-        inv_qm_x[i] = 1.0 / qw_x[i];
-        inv_qm_b[i] = 1.0 / qw_b[i];
-    }
-
+    // Max coefficients per tile: 8×8 blocks × 64 coefficients = 4096
     let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
-    let mut dct_y_coeffs = vec![0.0f32; max_coeffs_per_tile];
-    let mut dct_x_coeffs = vec![0.0f32; max_coeffs_per_tile];
-    let mut dct_b_coeffs = vec![0.0f32; max_coeffs_per_tile];
+    let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
+    let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
+    let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
+    let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
+
+    // DCT output buffers (max size for DCT64x64 = 4096 coefficients)
+    const MAX_COEFF_AREA: usize = 4096;
+    let mut dct_y = vec![0.0f32; MAX_COEFF_AREA];
+    let mut dct_x = vec![0.0f32; MAX_COEFF_AREA];
+    let mut dct_b = vec![0.0f32; MAX_COEFF_AREA];
 
     for ty in 0..ysize_tiles {
         for tx in 0..xsize_tiles {
@@ -278,113 +287,87 @@ pub fn refine_cfl_map(
 
             let mut num_ac = 0usize;
 
-            // DCT all blocks in this tile and weight by inverse quant
             for by in tile_by0..tile_by1 {
                 for bx in tile_bx0..tile_bx1 {
-                    let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
-
-                    let x0 = bx * BLOCK_DIM;
-                    for dy in 0..BLOCK_DIM {
-                        let src = (by * BLOCK_DIM + dy) * stride + x0;
-                        let dst = dy * BLOCK_DIM;
-                        block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
-                        block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
-                        block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
+                    // Only process first blocks of multi-block transforms
+                    if !ac_strategy.is_first(bx, by) {
+                        continue;
                     }
 
-                    let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut dct_x = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut dct_b = [0.0f32; DCT_BLOCK_SIZE];
-                    dct_8x8(&block_y, &mut dct_y);
-                    dct_8x8(&block_x, &mut dct_x);
-                    dct_8x8(&block_b, &mut dct_b);
+                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                    let covered_x = COVERED_X[raw_strategy as usize];
+                    let covered_y = COVERED_Y[raw_strategy as usize];
 
-                    // Zero DC
-                    dct_y[0] = 0.0;
-                    dct_x[0] = 0.0;
-                    dct_b[0] = 0.0;
-
-                    // Weight by inverse quant matrices
-                    for i in 0..DCT_BLOCK_SIZE {
-                        dct_y_coeffs[num_ac + i] = dct_y[i] * inv_qm_x[i];
-                        dct_x_coeffs[num_ac + i] = dct_x[i] * inv_qm_x[i];
-                        dct_b_coeffs[num_ac + i] = dct_b[i] * inv_qm_b[i];
+                    // Skip blocks whose strategy is wider/taller than the tile
+                    // (matches libjxl: acs.covered_blocks_x() + x0 > x1)
+                    if covered_x + tile_bx0 > tile_bx1 || covered_y + tile_by0 > tile_by1 {
+                        continue;
                     }
-                    num_ac += DCT_BLOCK_SIZE;
+
+                    // Apply forward DCT for each channel using actual strategy
+                    VarDctEncoder::apply_dct(xyb_y, stride, bx, by, raw_strategy, &mut dct_y);
+                    VarDctEncoder::apply_dct(xyb_x, stride, bx, by, raw_strategy, &mut dct_x);
+                    VarDctEncoder::apply_dct(xyb_b, stride, bx, by, raw_strategy, &mut dct_b);
+
+                    // CoefficientLayout: ensure cx >= cy (matches libjxl)
+                    let (cx, cy) = if covered_x >= covered_y {
+                        (covered_x, covered_y)
+                    } else {
+                        (covered_y, covered_x)
+                    };
+
+                    // Zero LLF positions: block[cx * 8 * iy + ix] for iy in 0..cy, ix in 0..cx
+                    for iy in 0..cy {
+                        for ix in 0..cx {
+                            let pos = cx * BLOCK_DIM * iy + ix;
+                            dct_y[pos] = 0.0;
+                            dct_x[pos] = 0.0;
+                            dct_b[pos] = 0.0;
+                        }
+                    }
+
+                    // Per-block quantization factor (libjxl: quantizer->Scale() * 128 * qq)
+                    let qq = quant_field[by * xsize_blocks + bx] as f32;
+                    let q = quant_scale * 128.0 * qq;
+
+                    // Get strategy-specific quant weights (1/InvMatrix in libjxl terms)
+                    let qw_x = quant::quant_weights(raw_strategy as usize, 0);
+                    let qw_b = quant::quant_weights(raw_strategy as usize, 2);
+
+                    // Accumulate weighted coefficients: coeff * q * InvMatrix
+                    // where InvMatrix[i] = 1.0 / quant_weights[i]
+                    let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
+                    for i in 0..num_coeffs {
+                        let qqm_x = q / qw_x[i];
+                        let qqm_b = q / qw_b[i];
+                        coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
+                        coeffs_x[num_ac + i] = dct_x[i] * qqm_x;
+                        coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;
+                        coeffs_b[num_ac + i] = dct_b[i] * qqm_b;
+                    }
+                    num_ac += num_coeffs;
                 }
             }
 
             let tile_idx = ty * xsize_tiles + tx;
-            let cur_ytox = cfl_map.ytox[tile_idx];
-            let cur_ytob = cfl_map.ytob[tile_idx];
-
-            // Try ytox: current, current-1, current+1
-            let best_ytox = refine_value(
-                cur_ytox,
-                &dct_y_coeffs[..num_ac],
-                &dct_x_coeffs[..num_ac],
-                0.0, // base for X
+            cfl_map.ytox[tile_idx] = find_best_multiplier(
+                &coeffs_yx,
+                &coeffs_x,
+                num_ac,
+                0.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
             );
-
-            // Try ytob: current, current-1, current+1
-            // For B channel, we also need Y coeffs weighted by B quant
-            let mut dct_y_bweighted = vec![0.0f32; num_ac];
-            {
-                let mut idx = 0;
-                for by in tile_by0..tile_by1 {
-                    for bx in tile_bx0..tile_bx1 {
-                        let _ = (by, bx);
-                        for i in 0..DCT_BLOCK_SIZE {
-                            dct_y_bweighted[idx + i] =
-                                dct_y_coeffs[idx + i] * inv_qm_b[i] / inv_qm_x[i];
-                        }
-                        idx += DCT_BLOCK_SIZE;
-                    }
-                }
-            }
-            let best_ytob = refine_value(
-                cur_ytob,
-                &dct_y_bweighted[..num_ac],
-                &dct_b_coeffs[..num_ac],
-                1.0, // base for B
+            cfl_map.ytob[tile_idx] = find_best_multiplier(
+                &coeffs_yb,
+                &coeffs_b,
+                num_ac,
+                1.0,
+                K_DISTANCE_MULTIPLIER_AC,
+                use_newton,
             );
-
-            cfl_map.ytox[tile_idx] = best_ytox;
-            cfl_map.ytob[tile_idx] = best_ytob;
         }
     }
-}
-
-/// Try value, value-1, value+1 and return the one with lowest residual cost.
-fn refine_value(current: i8, y_coeffs: &[f32], c_coeffs: &[f32], base: f32) -> i8 {
-    let candidates = [
-        current,
-        current.saturating_sub(1),
-        current.saturating_add(1),
-    ];
-
-    let mut best_val = current;
-    let mut best_cost = f32::MAX;
-
-    for &val in &candidates {
-        let ratio = base + val as f32 * (1.0 / 84.0);
-        let cost: f32 = y_coeffs
-            .iter()
-            .zip(c_coeffs.iter())
-            .map(|(&y, &c)| {
-                let residual = c - ratio * y;
-                residual * residual
-            })
-            .sum();
-        if cost < best_cost {
-            best_cost = cost;
-            best_val = val;
-        }
-    }
-
-    best_val
 }
 
 #[cfg(test)]

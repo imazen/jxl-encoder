@@ -199,10 +199,7 @@ impl EffortProfile {
             enhanced_clustering_vardct: effort >= 9,
             epf_dynamic_sharpness: effort >= 6,
             cfl_two_pass: effort >= 7,
-            // Newton CfL matches libjxl but causes 5-50% size regression without
-            // a proper pass 2 (actual AC strategies + quant weighting). Disabled
-            // until CfL pass 2 recomputation is implemented.
-            cfl_newton: false,
+            cfl_newton: effort >= 7,
 
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
@@ -399,7 +396,7 @@ mod tests {
         assert!(!p.enhanced_clustering_vardct); // e9+
         assert!(p.epf_dynamic_sharpness); // e6+
         assert!(p.cfl_two_pass); // e7+
-        assert!(!p.cfl_newton); // disabled until pass 2 implemented
+        assert!(p.cfl_newton); // e7+ with pass 2
         assert!(p.use_adaptive_quant);
         assert!(p.adjust_quant_ac);
         assert_eq!(p.initial_q_numerator, 0.39);

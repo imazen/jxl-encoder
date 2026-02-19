@@ -674,8 +674,9 @@ impl VarDctEncoder {
             );
         }
 
-        // CfL two-pass refinement: try ±1 for each tile's ytox/ytob after AC strategy
-        // is determined, to account for quantization effects.
+        // CfL pass 2: recompute CfL map using actual AC strategies and per-block
+        // quantization weighting. Uses the same FindBestMultiplier as pass 1 but
+        // with strategy-specific DCTs and quant-weighted coefficients.
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl.
         if self.profile.cfl_two_pass && self.cfl_enabled {
             super::chroma_from_luma::refine_cfl_map(
@@ -686,6 +687,10 @@ impl VarDctEncoder {
                 padded_width,
                 xsize_blocks,
                 ysize_blocks,
+                &ac_strategy,
+                &quant_field,
+                params.scale,
+                self.profile.cfl_newton,
             );
         }
 
@@ -1301,8 +1306,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: disable CfL Newton (causes regression without pass 2)
-        const EXPECTED_HASH: u64 = 0x8e3855cfba82de2b;
+        // Updated: CfL pass 2 with actual AC strategies + Newton
+        const EXPECTED_HASH: u64 = 0xc51abf6f9d2fc933;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1371,8 +1376,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: disable CfL Newton (causes regression without pass 2)
-        const EXPECTED_HASH: u64 = 0x5f4f631b2291961f;
+        // Updated: CfL pass 2 with actual AC strategies + Newton
+        const EXPECTED_HASH: u64 = 0x2c694d561316f1bb;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1407,8 +1412,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: disable CfL Newton (causes regression without pass 2)
-        const EXPECTED_HASH: u64 = 0xe73eeabbb5221327;
+        // Updated: CfL pass 2 with actual AC strategies + Newton
+        const EXPECTED_HASH: u64 = 0xba03ce109a9833dc;
         assert_eq!(
             hash,
             EXPECTED_HASH,
