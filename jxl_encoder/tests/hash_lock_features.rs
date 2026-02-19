@@ -317,8 +317,8 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcd39819c99eb0d42, // Updated: CfL pass 2 with actual AC strategies + Newton
-        316,                // lossy_defaults_rgb_32x32
+        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        314,                // lossy_defaults_rgb_32x32
     );
 }
 
@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xbfe80479e6777036, // Updated: CfL pass 2 with actual AC strategies + Newton
-        3684,               // lossy_defaults_rgb_48x48_noise
+        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
+        3142,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -357,8 +357,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0xfc043d4e7ef80a29, // Updated: CfL pass 2 with actual AC strategies + Newton
-        666,                // lossy_defaults_rgb_13x17
+        0xaeae688c7e881310, // Updated: CfL Newton convergence fallback to LS
+        664,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -377,8 +377,8 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x6ff806cf8a3e9968, // Updated: CfL pass 2 with actual AC strategies + Newton
-        753,                // lossy_rgba_32x32
+        0x300043b00d9a4799, // Updated: CfL Newton convergence fallback to LS
+        751,                // lossy_rgba_32x32
     );
 }
 
@@ -397,8 +397,8 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0x6ebeb158f2539575, // Updated: CfL pass 2 with actual AC strategies + Newton
-        318,                // lossy_rgb16_32x32
+        0xe1019b0aa90f497f, // Updated: CfL Newton convergence fallback to LS
+        316,                // lossy_rgb16_32x32
     );
 }
 
@@ -418,8 +418,8 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x4a914cddcba5d77a, // Updated: CfL pass 2 with actual AC strategies + Newton
-        266,                // lossy_no_ans_huffman
+        0xde400a454a388477, // Updated: CfL Newton convergence fallback to LS
+        265,                // lossy_no_ans_huffman
     );
 }
 
@@ -439,8 +439,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xd60fd7a3a1b0194a, // Updated: CfL pass 2 with actual AC strategies + Newton
-        327,                // lossy_no_gaborish
+        0x13a92156fe21ccb5, // Updated: CfL Newton convergence fallback to LS
+        329,                // lossy_no_gaborish
     );
 }
 
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xbfe80479e6777036, // Updated: CfL pass 2 with actual AC strategies + Newton
-        3684,               // lossy_with_noise
+        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
+        3142,               // lossy_with_noise
     );
 }
 
@@ -481,8 +481,8 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcfd04a7e3a39b6e5, // Updated: CfL pass 2 with actual AC strategies + Newton
-        316,                // lossy_no_error_diffusion
+        0x9098671c5c15d838, // Updated: CfL Newton convergence fallback to LS
+        314,                // lossy_no_error_diffusion
     );
 }
 
@@ -502,8 +502,8 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcd39819c99eb0d42, // Updated: CfL pass 2 with actual AC strategies + Newton
-        316,                // lossy_no_pixel_domain_loss
+        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        314,                // lossy_no_pixel_domain_loss
     );
 }
 
@@ -523,8 +523,8 @@ fn lossy_no_butteraugli() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcd39819c99eb0d42, // Updated: CfL pass 2 with actual AC strategies + Newton
-        316,                // lossy_no_butteraugli
+        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        314,                // lossy_no_butteraugli
     );
 }
 
@@ -544,8 +544,8 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xaf3016e6d7ae2c68, // Updated: CfL pass 2 with actual AC strategies + Newton
-        421,                // lossy_force_dct8
+        0x4e7311085222db5f, // Updated: CfL Newton convergence fallback to LS
+        412,                // lossy_force_dct8
     );
 }
 
@@ -565,8 +565,8 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xcd39819c99eb0d42, // Updated: CfL pass 2 with actual AC strategies + Newton
-        316,                // lossy_force_dct16x16
+        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        314,                // lossy_force_dct16x16
     );
 }
 
@@ -587,8 +587,8 @@ fn lossy_force_identity() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x57222323acde8068, // Updated: CfL pass 2 with actual AC strategies + Newton
-        865,                // lossy_force_identity
+        0x02ef2487cf4355ed, // Updated: CfL Newton convergence fallback to LS
+        570,                // lossy_force_identity
     );
 }
 
@@ -609,8 +609,8 @@ fn lossy_force_dct2x2() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe1937e748e91b4dc, // Updated: CfL pass 2 with actual AC strategies + Newton
-        769,                // lossy_force_dct2x2
+        0x16fa005a7adbd25c, // Updated: CfL Newton convergence fallback to LS
+        519,                // lossy_force_dct2x2
     );
 }
 
@@ -631,8 +631,8 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x36332bbd35c9123f, // Updated: CfL pass 2 with actual AC strategies + Newton
-        528,                // lossy_force_dct4x4
+        0xaa2f6f49f4ced1fb, // Updated: CfL Newton convergence fallback to LS
+        526,                // lossy_force_dct4x4
     );
 }
 
@@ -653,8 +653,8 @@ fn lossy_force_afv0() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x12b54e01f7d95409, // Updated: CfL pass 2 with actual AC strategies + Newton
-        540,                // lossy_force_afv0
+        0xadd208f5f46de37f, // Updated: CfL Newton convergence fallback to LS
+        537,                // lossy_force_afv0
     );
 }
 
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xbfe80479e6777036, // Updated: CfL pass 2 with actual AC strategies + Newton
-        3684,               // lossy_with_lz77_greedy
+        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
+        3142,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xbfe80479e6777036, // Updated: CfL pass 2 with actual AC strategies + Newton
-        3684,               // lossy_with_lz77_rle
+        0x88d2eed7793b69f9, // Updated: CfL Newton convergence fallback to LS
+        3142,               // lossy_with_lz77_rle
     );
 }
 
@@ -717,7 +717,7 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x0b0376220ca0beb5, // Updated: CfL pass 2 with actual AC strategies + Newton
+        0x2921c3f85a1b3675, // Updated: CfL Newton convergence fallback to LS
         350,                // lossy_distance_05
     );
 }
@@ -737,8 +737,8 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x928d92469b6af6c1, // Updated: CfL pass 2 with actual AC strategies + Newton
-        271,                // lossy_distance_3
+        0x8e0f6107c74bc24f, // Updated: CfL Newton convergence fallback to LS
+        269,                // lossy_distance_3
     );
 }
 
@@ -767,8 +767,8 @@ fn lossy_all_off() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x928c4a1441679b1c, // Updated: CfL pass 2 with actual AC strategies + Newton
-        397,                // lossy_all_off
+        0xf6952e7df2514805, // Updated: CfL Newton convergence fallback to LS
+        393,                // lossy_all_off
     );
 }
 
@@ -787,8 +787,8 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xd8b73ab7d05a255e, // Updated: CfL pass 2 with actual AC strategies + Newton
-        309,                // lossy_bgr8
+        0x2225a004e74b3fd7, // Updated: CfL Newton convergence fallback to LS
+        310,                // lossy_bgr8
     );
 }
 

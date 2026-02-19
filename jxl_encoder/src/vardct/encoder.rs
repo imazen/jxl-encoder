@@ -1306,8 +1306,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: CfL pass 2 with actual AC strategies + Newton
-        const EXPECTED_HASH: u64 = 0xc51abf6f9d2fc933;
+        // Updated: CfL Newton convergence fallback to LS
+        const EXPECTED_HASH: u64 = 0xc7209e03a59cd708;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1376,8 +1376,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: CfL pass 2 with actual AC strategies + Newton
-        const EXPECTED_HASH: u64 = 0x2c694d561316f1bb;
+        // Updated: CfL Newton convergence fallback to LS
+        const EXPECTED_HASH: u64 = 0x5f4f631b2291961f;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1412,8 +1412,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: CfL pass 2 with actual AC strategies + Newton
-        const EXPECTED_HASH: u64 = 0xba03ce109a9833dc;
+        // Updated: CfL Newton convergence fallback to LS
+        const EXPECTED_HASH: u64 = 0x51d67b00b8be794d;
         assert_eq!(
             hash,
             EXPECTED_HASH,

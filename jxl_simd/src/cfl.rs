@@ -306,6 +306,10 @@ pub fn find_best_multiplier_newton(
 }
 
 /// Scalar Newton's method for CfL multiplier.
+///
+/// Falls back to least-squares if Newton doesn't converge (e.g., at high
+/// distances where coefficient magnitudes are small relative to eps=100,
+/// causing oscillation in the numerical derivative approximation).
 pub fn find_best_multiplier_newton_scalar(
     values_m: &[f32],
     values_s: &[f32],
@@ -319,6 +323,7 @@ pub fn find_best_multiplier_newton_scalar(
 
     let coeffx2 = NEWTON_COEFF * 2.0;
     let mut x = 0.0_f32;
+    let mut converged = false;
 
     for _ in 0..NEWTON_MAX_ITERS {
         let mut fd = 2.0 * distance_mul * num as f32 * x;
@@ -372,11 +377,17 @@ pub fn find_best_multiplier_newton_scalar(
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
         if step.abs() < NEWTON_CONVERGENCE {
+            converged = true;
             break;
         }
     }
 
-    bias_and_quantize(x)
+    if converged {
+        bias_and_quantize(x)
+    } else {
+        // Newton didn't converge — fall back to LS
+        find_best_multiplier_scalar(values_m, values_s, num, base, distance_mul)
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -404,6 +415,7 @@ pub fn find_best_multiplier_newton_avx2(
 
     let simd_end = num & !7;
     let mut x = 0.0_f32;
+    let mut converged = false;
 
     for _ in 0..NEWTON_MAX_ITERS {
         let x_v = f32x8::splat(token, x);
@@ -499,11 +511,17 @@ pub fn find_best_multiplier_newton_avx2(
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
         if step.abs() < NEWTON_CONVERGENCE {
+            converged = true;
             break;
         }
     }
 
-    bias_and_quantize(x)
+    if converged {
+        bias_and_quantize(x)
+    } else {
+        // Newton didn't converge — fall back to LS
+        find_best_multiplier_avx2(token, values_m, values_s, num, base, distance_mul)
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -531,6 +549,7 @@ pub fn find_best_multiplier_newton_neon(
 
     let simd_end = num & !3;
     let mut x = 0.0_f32;
+    let mut converged = false;
 
     for _ in 0..NEWTON_MAX_ITERS {
         let x_v = f32x4::splat(token, x);
@@ -623,11 +642,17 @@ pub fn find_best_multiplier_newton_neon(
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
         if step.abs() < NEWTON_CONVERGENCE {
+            converged = true;
             break;
         }
     }
 
-    bias_and_quantize(x)
+    if converged {
+        bias_and_quantize(x)
+    } else {
+        // Newton didn't converge — fall back to LS
+        find_best_multiplier_neon(token, values_m, values_s, num, base, distance_mul)
+    }
 }
 
 #[cfg(test)]
