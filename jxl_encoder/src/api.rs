@@ -1551,41 +1551,41 @@ impl<'a> EncodeRequest<'a> {
         };
 
         let profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
-        let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
-        tiny.effort = cfg.effort;
-        tiny.profile = profile;
-        tiny.use_ans = cfg.use_ans;
-        tiny.optimize_codes = tiny.profile.optimize_codes;
-        tiny.custom_orders = tiny.profile.custom_orders;
-        tiny.ac_strategy_enabled = tiny.profile.ac_strategy_enabled;
-        tiny.enable_noise = cfg.noise;
-        tiny.enable_denoise = cfg.denoise;
-        tiny.enable_gaborish = cfg.gaborish;
-        tiny.error_diffusion = cfg.error_diffusion;
-        tiny.pixel_domain_loss = cfg.pixel_domain_loss;
-        tiny.enable_lz77 = cfg.lz77;
-        tiny.lz77_method = cfg.lz77_method;
-        tiny.force_strategy = cfg.force_strategy;
-        tiny.enable_patches = cfg.patches;
-        tiny.encoder_mode = cfg.mode;
-        tiny.splines = cfg.splines.clone();
-        tiny.is_grayscale = self.layout.is_grayscale();
-        tiny.progressive = cfg.progressive;
+        let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
+        enc.effort = cfg.effort;
+        enc.profile = profile;
+        enc.use_ans = cfg.use_ans;
+        enc.optimize_codes = enc.profile.optimize_codes;
+        enc.custom_orders = enc.profile.custom_orders;
+        enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
+        enc.enable_noise = cfg.noise;
+        enc.enable_denoise = cfg.denoise;
+        enc.enable_gaborish = cfg.gaborish;
+        enc.error_diffusion = cfg.error_diffusion;
+        enc.pixel_domain_loss = cfg.pixel_domain_loss;
+        enc.enable_lz77 = cfg.lz77;
+        enc.lz77_method = cfg.lz77_method;
+        enc.force_strategy = cfg.force_strategy;
+        enc.enable_patches = cfg.patches;
+        enc.encoder_mode = cfg.mode;
+        enc.splines = cfg.splines.clone();
+        enc.is_grayscale = self.layout.is_grayscale();
+        enc.progressive = cfg.progressive;
         #[cfg(feature = "butteraugli-loop")]
         {
-            tiny.butteraugli_iters = cfg.butteraugli_iters;
+            enc.butteraugli_iters = cfg.butteraugli_iters;
         }
 
-        tiny.bit_depth_16 = bit_depth_16;
+        enc.bit_depth_16 = bit_depth_16;
 
         // ICC profile from metadata
         if let Some(meta) = self.metadata
             && let Some(icc) = meta.icc_profile
         {
-            tiny.icc_profile = Some(icc.to_vec());
+            enc.icc_profile = Some(icc.to_vec());
         }
 
-        let output = tiny
+        let output = enc
             .encode(w, h, &linear_rgb, alpha.as_deref())
             .map_err(EncodeError::from)?;
 
@@ -1822,35 +1822,35 @@ fn encode_animation_lossy(
 
     // Set up VarDCT encoder
     let profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
-    let mut tiny = crate::vardct::VarDctEncoder::new(cfg.distance);
-    tiny.effort = cfg.effort;
-    tiny.profile = profile;
-    tiny.use_ans = cfg.use_ans;
-    tiny.optimize_codes = tiny.profile.optimize_codes;
-    tiny.custom_orders = tiny.profile.custom_orders;
-    tiny.ac_strategy_enabled = tiny.profile.ac_strategy_enabled;
-    tiny.enable_noise = cfg.noise;
-    tiny.enable_denoise = cfg.denoise;
-    tiny.enable_gaborish = cfg.gaborish;
-    tiny.error_diffusion = cfg.error_diffusion;
-    tiny.pixel_domain_loss = cfg.pixel_domain_loss;
-    tiny.enable_lz77 = cfg.lz77;
-    tiny.lz77_method = cfg.lz77_method;
-    tiny.force_strategy = cfg.force_strategy;
-    tiny.progressive = cfg.progressive;
+    let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
+    enc.effort = cfg.effort;
+    enc.profile = profile;
+    enc.use_ans = cfg.use_ans;
+    enc.optimize_codes = enc.profile.optimize_codes;
+    enc.custom_orders = enc.profile.custom_orders;
+    enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
+    enc.enable_noise = cfg.noise;
+    enc.enable_denoise = cfg.denoise;
+    enc.enable_gaborish = cfg.gaborish;
+    enc.error_diffusion = cfg.error_diffusion;
+    enc.pixel_domain_loss = cfg.pixel_domain_loss;
+    enc.enable_lz77 = cfg.lz77;
+    enc.lz77_method = cfg.lz77_method;
+    enc.force_strategy = cfg.force_strategy;
+    enc.progressive = cfg.progressive;
     #[cfg(feature = "butteraugli-loop")]
     {
-        tiny.butteraugli_iters = cfg.butteraugli_iters;
+        enc.butteraugli_iters = cfg.butteraugli_iters;
     }
 
     // Detect alpha and 16-bit from layout
     let has_alpha = layout.has_alpha();
     let bit_depth_16 = matches!(layout, PixelLayout::Rgb16 | PixelLayout::Rgba16);
-    tiny.bit_depth_16 = bit_depth_16;
+    enc.bit_depth_16 = bit_depth_16;
 
     // Build file header from VarDCT encoder (sets xyb_encoded, rendering_intent, etc.)
     // then add animation metadata
-    let mut file_header = tiny.build_file_header(w, h, has_alpha);
+    let mut file_header = enc.build_file_header(w, h, has_alpha);
     file_header.metadata.animation = Some(AnimationHeader {
         tps_numerator: animation.tps_numerator,
         tps_denominator: animation.tps_denominator,
@@ -1860,7 +1860,7 @@ fn encode_animation_lossy(
 
     let mut writer = BitWriter::with_capacity(w * h * 4);
     file_header.write(&mut writer).map_err(EncodeError::from)?;
-    if let Some(ref icc) = tiny.icc_profile {
+    if let Some(ref icc) = enc.icc_profile {
         crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
     }
     writer.zero_pad_to_byte();
@@ -1972,7 +1972,7 @@ fn encode_animation_lossy(
             crop,
         };
 
-        tiny.encode_frame_to_writer(
+        enc.encode_frame_to_writer(
             frame_w,
             frame_h,
             &linear_rgb,
