@@ -7069,84 +7069,84 @@ fn test_rd_regression_high_distance() {
     }
 
     // To recalibrate: run the test with --nocapture and update from the output.
-    // Last updated: 2026-02-18 (effort-gate AdjustQuantBlockAC: skip at effort > 5)
+    // Last updated: 2026-02-18 (fix: pixel-domain entropy_mul double-counting)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d200: Baseline {
-                size: 387336,
+                size: 386774,
                 butteraugli: 3.452,
-                ssim2: 72.38,
+                ssim2: 72.19,
             },
             d300: Baseline {
-                size: 305208,
+                size: 304998,
                 butteraugli: 5.525,
-                ssim2: 64.76,
+                ssim2: 64.27,
             },
         },
         // 1001682 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 29985,
-                butteraugli: 3.148,
-                ssim2: 70.74,
+                size: 28817,
+                butteraugli: 2.825,
+                ssim2: 70.90,
             },
             d300: Baseline {
-                size: 22284,
-                butteraugli: 3.485,
-                ssim2: 62.75,
+                size: 20585,
+                butteraugli: 3.556,
+                ssim2: 61.14,
             },
         },
         // 1028637 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 26434,
-                butteraugli: 3.114,
-                ssim2: 48.43,
+                size: 26298,
+                butteraugli: 2.915,
+                ssim2: 48.20,
             },
             d300: Baseline {
-                size: 20436,
-                butteraugli: 3.721,
-                ssim2: 42.24,
+                size: 20394,
+                butteraugli: 3.779,
+                ssim2: 41.06,
             },
         },
         // 1029604 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 38092,
-                butteraugli: 2.727,
-                ssim2: 70.06,
+                size: 38741,
+                butteraugli: 2.787,
+                ssim2: 70.39,
             },
             d300: Baseline {
-                size: 29083,
-                butteraugli: 3.715,
-                ssim2: 65.04,
+                size: 28724,
+                butteraugli: 3.911,
+                ssim2: 64.99,
             },
         },
         // 106399 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 28495,
-                butteraugli: 2.476,
-                ssim2: 72.01,
+                size: 28833,
+                butteraugli: 2.667,
+                ssim2: 72.11,
             },
             d300: Baseline {
-                size: 21849,
+                size: 21539,
                 butteraugli: 3.633,
-                ssim2: 66.20,
+                ssim2: 65.82,
             },
         },
         // 1080721 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 28066,
-                butteraugli: 2.571,
-                ssim2: 78.84,
+                size: 29070,
+                butteraugli: 2.558,
+                ssim2: 78.72,
             },
             d300: Baseline {
-                size: 22093,
-                butteraugli: 3.599,
-                ssim2: 74.02,
+                size: 22241,
+                butteraugli: 3.597,
+                ssim2: 73.83,
             },
         },
     ];
