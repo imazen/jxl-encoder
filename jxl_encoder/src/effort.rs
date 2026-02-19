@@ -71,8 +71,16 @@ pub struct EffortProfile {
     pub cfl_two_pass: bool,
 
     // ─── Quantization ────────────────────────────────────────────────────
+    /// Use adaptive (content-dependent) quant field via InitialQuantField.
+    /// When false (effort < 5), uses flat quant field = 0.79/distance.
+    /// Matches libjxl enc_heuristics.cc:1097-1128.
+    pub use_adaptive_quant: bool,
     /// Enable per-block AdjustQuantBlockAC (effort >= 5 in libjxl).
     pub adjust_quant_ac: bool,
+    /// Numerator for the effort-fixed q parameter used in global_scale computation.
+    /// libjxl: 0.39 at effort >= 5, 0.79 at effort < 5.
+    /// global_scale = 65536 * (initial_q_numerator / distance) / 5.0
+    pub initial_q_numerator: f32,
     /// Fixed thresholds for Y channel when adjust_quant_ac is false.
     /// From libjxl enc_group.cc:358.
     pub fixed_thresholds_y: [f32; 4],
@@ -190,7 +198,9 @@ impl EffortProfile {
             cfl_two_pass: effort >= 7,
 
             // ── Quantization ──
+            use_adaptive_quant: effort >= 5,
             adjust_quant_ac: effort >= 5,
+            initial_q_numerator: if effort >= 5 { 0.39 } else { 0.79 },
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
 
@@ -274,7 +284,9 @@ impl EffortProfile {
             cfl_two_pass: false,
 
             // ── Quantization (N/A for lossless) ──
+            use_adaptive_quant: false,
             adjust_quant_ac: false,
+            initial_q_numerator: 0.39,
             fixed_thresholds_y: [0.56, 0.62, 0.62, 0.62],
             adjust_thresholds: [0.58, 0.64, 0.64, 0.64],
 
@@ -379,7 +391,9 @@ mod tests {
         assert!(!p.enhanced_clustering_vardct); // e9+
         assert!(p.epf_dynamic_sharpness); // e6+
         assert!(p.cfl_two_pass); // e7+
+        assert!(p.use_adaptive_quant);
         assert!(p.adjust_quant_ac);
+        assert_eq!(p.initial_q_numerator, 0.39);
         assert_eq!(p.k_favor_2x2, -0.4);
         assert_eq!(p.k_ac_quant, 0.765);
         assert_eq!(p.nb_rcts_to_try, 7);
@@ -407,7 +421,9 @@ mod tests {
         assert!(!p.enhanced_clustering_vardct); // e9+
         assert!(!p.epf_dynamic_sharpness); // e6+
         assert!(!p.cfl_two_pass); // e7+
+        assert!(p.use_adaptive_quant);
         assert!(p.adjust_quant_ac);
+        assert_eq!(p.initial_q_numerator, 0.39);
         assert_eq!(p.butteraugli_iters, 0);
         assert_eq!(p.nb_rcts_to_try, 4);
         assert_eq!(p.wp_num_param_sets, 0); // e8+
@@ -443,7 +459,9 @@ mod tests {
         assert!(!p.optimize_codes);
         assert!(!p.gaborish);
         assert!(!p.ac_strategy_enabled);
+        assert!(!p.use_adaptive_quant);
         assert!(!p.adjust_quant_ac);
+        assert_eq!(p.initial_q_numerator, 0.79);
     }
 
     #[test]

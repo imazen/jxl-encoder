@@ -169,24 +169,17 @@ impl DistanceParams {
         Self::compute_internal(distance, None)
     }
 
-    /// Compute distance-dependent parameters matching full libjxl's approach.
+    /// Compute distance-dependent parameters from the effort profile.
     ///
-    /// libjxl computes global_scale from a fixed `q` parameter, NOT from the
-    /// quant field content. The quant field is adaptive, but global_scale is
-    /// derived from effort-dependent constants:
+    /// Uses `profile.initial_q_numerator` to determine the global_scale:
     /// - Effort < 5 (speed_tier > kHare): q = 0.79 / distance
     /// - Effort >= 5 (speed_tier <= kHare): q = 0.39 / distance
     ///
     /// The adaptive median/MAD formula is ONLY used inside the butteraugli
     /// quantization loop (effort >= 8), where SetQuantField recomputes
     /// global_scale after each iteration.
-    pub fn compute_for_effort(distance: f32, effort: u8) -> Self {
-        // libjxl enc_heuristics.cc:1105 (effort < 5) and :1127 (effort >= 5)
-        let q = if effort >= 5 {
-            0.39 / distance
-        } else {
-            0.79 / distance
-        };
+    pub fn compute_for_profile(distance: f32, profile: &crate::effort::EffortProfile) -> Self {
+        let q = profile.initial_q_numerator / distance;
         Self::compute_from_q(distance, q)
     }
 
@@ -199,7 +192,7 @@ impl DistanceParams {
     ///
     /// NOTE: In libjxl, this is ONLY called inside the butteraugli quantization
     /// loop (effort >= 8). At effort 5-7, global_scale uses the fixed formula
-    /// from `compute_for_effort()`. Use this method only for butteraugli loop
+    /// from `compute_for_profile()`. Use this method only for butteraugli loop
     /// refinement.
     #[allow(dead_code)]
     pub fn compute_from_quant_field(distance: f32, quant_field: &[f32]) -> Self {
