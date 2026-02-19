@@ -174,8 +174,11 @@ Updated 2026-02-19. Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at eff
 - **Butteraugli loop**: cjxl e8→e7 comparison shows loop buys 1-4% size + 7% butteraugli at d=1.0.
   Neither encoder has butteraugli loop at e7 (libjxl gates at kKitten = effort 8).
 
-**Root cause hypotheses for outliers**:
-- Low-complexity images (1418519, 1279330) are worst → our cost model may over-allocate bits to smooth content
+**Root cause analysis for outliers** (partially addressed Feb 19, 2026):
+- global_scale was computed from adaptive quant field content instead of fixed effort-matched q
+  values. Fixed in eb14b65. Reduced 1418519 gap from ~19.6% to ~13.1% at d=1.0 e7.
+- Remaining gap on smooth content: different quant_field distribution (ours: avg=8.6 vs cjxl: avg=7.8)
+  and different AC strategy mix (ours: 44% DCT16 vs cjxl: 60% DCT8 with more DCT32/DCT64)
 - Gap widening at high distances → distance-scaled cost model constants may need tuning
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 
@@ -185,7 +188,7 @@ Updated 2026-02-19. Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at eff
 - Quantization formula matches C++ (val = coeff * inv_dequant_matrix * qac * qm_mul)
 - IDCT roundtrip error < 1e-6 for all sizes
 - Weight tables are pure parametric without bias (confirmed via jxl-oxide source)
-- Content-adaptive global_scale from quant field median/MAD (matches libjxl)
+- global_scale from fixed q values (0.39/d at e>=5, 0.79/d at e<5), matching libjxl exactly
 - All effort gating matches libjxl (EffortProfile centralization, Feb 19, 2026)
 
 ### Remaining Gaps vs Full libjxl
@@ -218,11 +221,15 @@ Root cause was generate_afv_weights() indexing DCT4x8 sub-weights with y*8 inste
 DCT4x8 weights use row-duplicated layout (base row y at rows 2y, 2y+1). Fixed: y*8 → y*16.
 Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants enabled.
 
-**B. Quantization Calibration** (VERIFIED Feb 18, 2026)
+**B. Quantization Calibration** (VERIFIED Feb 19, 2026)
 - AdjustQuantBlockAC now effort-gated: runs at effort >= 5 (matching libjxl speed_tier <= kHare)
 - At effort < 5: fixed thresholds Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62}
 - `K_AC_QUANT` matches libjxl (0.765)
-- Content-adaptive global_scale (median-MAD) matches libjxl exactly
+- global_scale from effort-matched fixed q: 0.39/d at e>=5, 0.79/d at e<5 (matches libjxl exactly)
+  - Previous bug: computed global_scale from quant field median/MAD at all effort levels
+  - libjxl only uses adaptive median/MAD in the butteraugli loop (effort >= 8)
+  - Fix (eb14b65): -5.4% file size on smooth content at d=1.0 e7
+- At effort < 5: flat quant field = 0.79/d (matches libjxl SetQuant path)
 - kFavor2X2 = -0.4, weight formula ((5-d)/5)² — all match libjxl exactly
 - Butteraugli loop: kPow, kInitMul, kOriginalComparisonRound — all match libjxl exactly
 - Multi-resolution butteraugli comparison enabled (default params)
@@ -250,6 +257,8 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Per-section dist_multiplier matches decoder's per-subimage computation
 - Content-adaptive block context map (default-on in two-pass, QF-based splitting,
   ~0.5% average savings on large images, verified with jxl-rs and djxl)
+- Context map encoding: simple vs non-simple cost comparison (matches libjxl EncodeContextMap,
+  saves bits when context map is large and repetitive with few histograms)
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
