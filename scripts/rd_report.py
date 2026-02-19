@@ -79,12 +79,21 @@ def main():
 
     effort = str(args.effort)
 
-    # Collect comparisons
+    # Collect comparisons (require dimension match to avoid invalid comparisons)
     comparisons = []  # list of dicts with deltas
+    dim_mismatches = []
     for (corpus, image, dist), rs_row in rs_index.items():
         ref_key = (corpus, image, dist, effort)
         ref_row = ref_index.get(ref_key)
         if ref_row is None:
+            continue
+
+        # Validate dimensions match — different resolutions are not comparable
+        if rs_row["width"] != ref_row["width"] or rs_row["height"] != ref_row["height"]:
+            dim_mismatches.append(
+                f"  {corpus}/{image}: rs={rs_row['width']}x{rs_row['height']} "
+                f"ref={ref_row['width']}x{ref_row['height']}"
+            )
             continue
 
         ref_size = int(ref_row["size_bytes"])
@@ -116,6 +125,13 @@ def main():
             "ref_wall": ref_wall,
             "rs_wall": rs_wall,
         })
+
+    if dim_mismatches:
+        unique = sorted(set(dim_mismatches))
+        print(f"\nWARNING: Skipped {len(dim_mismatches)} comparisons with dimension mismatches:", file=sys.stderr)
+        for m in unique:
+            print(m, file=sys.stderr)
+        print(file=sys.stderr)
 
     if not comparisons:
         print("No matching comparisons found. Check that both CSVs have overlapping images/distances.")

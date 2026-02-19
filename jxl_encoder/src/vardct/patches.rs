@@ -229,7 +229,20 @@ impl PatchesData {
             .sum();
         // Each patch pixel saves roughly (0.3 / distance) bytes of VarDCT data
         let savings_est = (total_patch_pixels as f64 / (distance.max(0.5) as f64) * 0.3) as usize;
-        savings_est >= 2 * total_overhead
+        let effective = savings_est >= 2 * total_overhead;
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "PATCHES cost_effective: d={:.2} ref_overhead={} dict_overhead={} total_overhead={} \
+             patch_pixels={} savings_est={} effective={}",
+            distance,
+            ref_overhead,
+            dict_overhead_est,
+            total_overhead,
+            total_patch_pixels,
+            savings_est,
+            effective
+        );
+        effective
     }
 
     /// Roundtrip the reference image through integer quantization to match decoder.
