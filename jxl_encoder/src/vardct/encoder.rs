@@ -415,11 +415,9 @@ impl VarDctEncoder {
         // Step 1: Compute float quant field.
         //
         // libjxl effort gating (enc_heuristics.cc:1097-1128):
-        // - effort < 5 (speed_tier > kHare): flat quant field = 0.79/distance
+        // - effort < 5 (speed_tier > kHare): flat quant field = q_numerator/distance
         // - effort >= 5 (speed_tier <= kHare): adaptive via InitialQuantField
-        let use_adaptive_quant = self.profile.effort >= 5;
-
-        let (quant_field_float, masking) = if use_adaptive_quant {
+        let (quant_field_float, masking) = if self.profile.use_adaptive_quant {
             compute_quant_field_float(
                 &xyb_x,
                 &xyb_y,
@@ -433,7 +431,7 @@ impl VarDctEncoder {
             )
         } else {
             // Flat quant field for low effort (matches libjxl enc_heuristics.cc:1105-1106)
-            let q = 0.79 / self.distance;
+            let q = self.profile.initial_q_numerator / self.distance;
             let flat_qf = vec![q; xsize_blocks * ysize_blocks];
             let masking_val = 1.0 / (q + 0.001);
             let flat_masking = vec![masking_val; xsize_blocks * ysize_blocks];
@@ -442,12 +440,10 @@ impl VarDctEncoder {
 
         // Step 2: Compute distance params with effort-matched global_scale.
         //
-        // libjxl computes global_scale from a fixed q parameter, NOT from the
-        // quant field content. The adaptive median/MAD formula is only used
-        // inside the butteraugli loop (effort >= 8).
-        // - effort < 5: q = 0.79/d → global_scale = 65536 * 0.79 / 5.0
-        // - effort >= 5: q = 0.39/d → global_scale = 65536 * 0.39 / 5.0
-        let mut params = DistanceParams::compute_for_effort(self.distance, self.profile.effort);
+        // Uses profile.initial_q_numerator for q = numerator / distance.
+        // The adaptive median/MAD formula is only used inside the butteraugli
+        // loop (effort >= 8).
+        let mut params = DistanceParams::compute_for_profile(self.distance, &self.profile);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
@@ -1102,11 +1098,10 @@ impl VarDctEncoder {
         let mut quant_field = quant_field.to_vec();
         adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
 
-        // Compute distance params with effort-matched global_scale
-        let mut params = DistanceParams::compute_for_effort(self.distance, self.profile.effort);
+        // Compute distance params from effort profile
+        let mut params = DistanceParams::compute_for_profile(self.distance, &self.profile);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
-        // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
         if self.profile.chromacity_adjustment {
             params.apply_chromacity_adjustment(
                 precomputed.chromacity_x_pixelized,

@@ -71,8 +71,8 @@ pub fn encode_with_rate_control(
 ) -> Result<(Vec<u8>, usize)> {
     let target = encoder.distance;
 
-    // Compute distance params with effort-matched global_scale
-    let params = DistanceParams::compute_for_effort(target, encoder.profile.effort);
+    // Compute distance params from effort profile
+    let params = DistanceParams::compute_for_profile(target, &encoder.profile);
 
     // Initialize quant field
     let mut quant_field = quantize_quant_field(&precomputed.quant_field_float, params.inv_scale);
