@@ -6631,7 +6631,7 @@ fn test_rd_regression() {
     }
 
     // To recalibrate: run `just rd-regression` and update from the output.
-    // Last updated: 2026-02-19 (fix global_scale to effort-matched fixed q)
+    // Last updated: 2026-02-19 (lower AC strategy distance gates: DCT32 d>=0.5, DCT64 d>=1.0)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
@@ -6641,14 +6641,14 @@ fn test_rd_regression() {
                 ssim2: 87.60,
             },
             d050: Baseline {
-                size: 794467,
+                size: 792524,
                 butteraugli: 1.639,
-                ssim2: 85.76,
+                ssim2: 85.40,
             },
             d100: Baseline {
-                size: 573136,
+                size: 572688,
                 butteraugli: 1.924,
-                ssim2: 81.83,
+                ssim2: 81.57,
             },
         },
         // 1001682 (512x512)
@@ -6659,14 +6659,14 @@ fn test_rd_regression() {
                 ssim2: 88.00,
             },
             d050: Baseline {
-                size: 80404,
+                size: 78535,
                 butteraugli: 1.010,
-                ssim2: 85.92,
+                ssim2: 85.91,
             },
             d100: Baseline {
-                size: 51051,
-                butteraugli: 1.664,
-                ssim2: 81.11,
+                size: 49617,
+                butteraugli: 1.871,
+                ssim2: 80.65,
             },
         },
         // 1028637 (512x512)
@@ -6677,14 +6677,14 @@ fn test_rd_regression() {
                 ssim2: 60.39,
             },
             d050: Baseline {
-                size: 62695,
+                size: 62659,
                 butteraugli: 0.880,
-                ssim2: 58.66,
+                ssim2: 58.70,
             },
             d100: Baseline {
-                size: 43133,
+                size: 42711,
                 butteraugli: 1.481,
-                ssim2: 55.44,
+                ssim2: 55.46,
             },
         },
         // 1029604 (512x512)
@@ -6695,14 +6695,14 @@ fn test_rd_regression() {
                 ssim2: 82.33,
             },
             d050: Baseline {
-                size: 105731,
+                size: 105268,
                 butteraugli: 0.941,
-                ssim2: 81.06,
+                ssim2: 81.05,
             },
             d100: Baseline {
-                size: 66850,
+                size: 66573,
                 butteraugli: 1.669,
-                ssim2: 77.61,
+                ssim2: 77.58,
             },
         },
         // 106399 (512x512)
@@ -6713,14 +6713,14 @@ fn test_rd_regression() {
                 ssim2: 85.39,
             },
             d050: Baseline {
-                size: 76861,
-                butteraugli: 0.866,
-                ssim2: 83.66,
+                size: 72231,
+                butteraugli: 0.862,
+                ssim2: 83.71,
             },
             d100: Baseline {
-                size: 47931,
-                butteraugli: 1.393,
-                ssim2: 80.16,
+                size: 47011,
+                butteraugli: 1.430,
+                ssim2: 80.00,
             },
         },
         // 1080721 (512x512)
@@ -6731,14 +6731,14 @@ fn test_rd_regression() {
                 ssim2: 87.41,
             },
             d050: Baseline {
-                size: 68061,
+                size: 67299,
                 butteraugli: 0.809,
-                ssim2: 86.18,
+                ssim2: 86.16,
             },
             d100: Baseline {
-                size: 43421,
-                butteraugli: 1.603,
-                ssim2: 84.08,
+                size: 44009,
+                butteraugli: 1.922,
+                ssim2: 84.05,
             },
         },
     ];
@@ -7069,14 +7069,14 @@ fn test_rd_regression_high_distance() {
     }
 
     // To recalibrate: run the test with --nocapture and update from the output.
-    // Last updated: 2026-02-19 (fix global_scale to effort-matched fixed q)
+    // Last updated: 2026-02-19 (lower AC strategy distance gates: DCT32 d>=0.5, DCT64 d>=1.0)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d200: Baseline {
-                size: 404267,
+                size: 404528,
                 butteraugli: 3.287,
-                ssim2: 73.46,
+                ssim2: 73.48,
             },
             d300: Baseline {
                 size: 320088,
@@ -7087,9 +7087,9 @@ fn test_rd_regression_high_distance() {
         // 1001682 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 30038,
+                size: 29957,
                 butteraugli: 2.637,
-                ssim2: 71.77,
+                ssim2: 71.61,
             },
             d300: Baseline {
                 size: 20805,
@@ -7100,9 +7100,9 @@ fn test_rd_regression_high_distance() {
         // 1028637 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 27637,
-                butteraugli: 2.713,
-                ssim2: 48.61,
+                size: 27584,
+                butteraugli: 2.761,
+                ssim2: 47.95,
             },
             d300: Baseline {
                 size: 21402,
@@ -7126,9 +7126,9 @@ fn test_rd_regression_high_distance() {
         // 106399 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 29764,
+                size: 29515,
                 butteraugli: 2.396,
-                ssim2: 72.28,
+                ssim2: 72.13,
             },
             d300: Baseline {
                 size: 22219,
@@ -7139,9 +7139,9 @@ fn test_rd_regression_high_distance() {
         // 1080721 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 29043,
+                size: 28678,
                 butteraugli: 2.487,
-                ssim2: 78.84,
+                ssim2: 78.78,
             },
             d300: Baseline {
                 size: 22221,
