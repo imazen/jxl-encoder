@@ -887,12 +887,13 @@ impl LossyConfig {
     /// Set effort level (1–10). Higher effort = slower, better compression.
     ///
     /// This adjusts all effort-dependent defaults:
-    /// - **e1–2**: DCT8 only, Huffman, no gaborish/patches/butteraugli
-    /// - **e3**: + gaborish, error diffusion, Huffman
-    /// - **e4**: + ANS entropy coding, multi-block AC strategies
-    /// - **e5–7**: + patches, pixel-domain loss, butteraugli loop (2 iters), LZ77 RLE
-    /// - **e8**: + LZ77 greedy hash chain
-    /// - **e9–10**: + LZ77 optimal (Viterbi DP), 4 butteraugli iterations
+    /// - **e1–3**: DCT8 only, Huffman, no gaborish/patches/butteraugli
+    /// - **e4**: + ANS entropy coding, custom coefficient orders
+    /// - **e5**: + gaborish, pixel-domain loss, AC strategy search, AdjustQuantBlockAC
+    /// - **e6**: + DCT4x8/AFV strategies, non-aligned eval, EPF dynamic sharpness
+    /// - **e7**: + patches, error diffusion, CfL two-pass, LZ77 RLE, DCT64 strategies
+    /// - **e8**: + butteraugli loop (2 iters), LZ77 greedy, WP param search (2 modes)
+    /// - **e9–10**: + LZ77 optimal (Viterbi DP), 4 butteraugli iters, WP search (5 modes)
     ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
     pub fn with_effort(self, effort: u8) -> Self {

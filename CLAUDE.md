@@ -149,34 +149,35 @@ Improvements made Feb 3, 2026:
 - Quality at d=1.0: 0-4% butteraugli regression on most images, some up to 19%
 - Quality at d=2.0-3.0: some butteraugli regression (10-27%) on individual images
 
-**vs cjxl (4 images with pre-encoded data):**
+**vs cjxl e7 (109 images, 9 distances, CSV reference: `reference/cjxl_reference.csv`):**
 
-| Distance | Size vs e5 | Size vs e7 | BA vs e5 | BA vs e7 |
-|----------|-----------|-----------|---------|---------|
-| d=0.5 | +0.0% | +0.1% | +24% | +23% |
-| d=1.0 | **-3.1%** | **-3.0%** | +221% | +184% |
-| d=2.0 | **-4.1%** | **-4.9%** | **-30%** | **-37%** |
-| d=3.0 | **-6.1%** | **-8.3%** | **-1%** | +0.2% |
+Updated 2026-02-19. Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at efforts 5-8.
 
-Note: d=0.5-1.0 BA comparison is distorted by only 4/12 images having cjxl data.
-d=2.0-3.0 show clear wins: smaller files AND better quality.
+| Distance | Median Size | Avg Size | Avg Butteraugli | Avg SSIM2 |
+|----------|-------------|----------|-----------------|-----------|
+| d=0.25 | +0.8% | +1.9% | -1.2% | -0.15 |
+| d=0.5 | **-3.7%** | -1.1% | +3.0% | -0.49 |
+| d=1.0 | **-2.5%** | -1.2% | +14.1% | -1.18 |
+| d=1.5 | -0.7% | +2.0% | +4.6% | -1.16 |
+| d=2.0 | -0.3% | +2.4% | +13.0% | -1.95 |
+| d=3.0 | +1.8% | +2.8% | +11.8% | -2.62 |
+| d=5.0 | +5.7% | +4.5% | +7.9% | -2.91 |
 
-**Calibration verified Feb 18, 2026**: All quantization constants, butteraugli loop
-parameters, kFavor2X2, error diffusion gating, and global_scale formula match libjxl exactly.
-AdjustQuantBlockAC effort-gated to match libjxl (effort >= 5, i.e. speed_tier <= kHare).
+**Key patterns**:
+- **Size**: competitive at d=0.25-1.0 (median -3.7% to +0.8%), gap widens at high d (+1.8% to +5.7%)
+- **Quality**: butteraugli 3-14% worse on average, SSIM2 -0.5 to -3.0 points
+- **Three consistent outliers** (always 10-32% larger):
+  - `cid22/1418519` (PNG ratio 0.305, smooth/simple): avg +17% size, but often BETTER quality
+  - `cid22/1279330` (PNG ratio 0.438): avg +12% size
+  - `clic2025/100a02c2` (2048x1365): avg +9% size at d >= 1.5
+- **One consistently better image**: `cid22/1044329` (PNG ratio 0.634, complex): avg -5% size
+- **Butteraugli loop**: cjxl e8→e7 comparison shows loop buys 1-4% size + 7% butteraugli at d=1.0.
+  Neither encoder has butteraugli loop at e7 (libjxl gates at kKitten = effort 8).
 
-**Key insight**: At d=0.5, our butteraugli loop aggressively optimizes quality, producing
-smaller BA at the cost of slightly larger files. At d=2.0-3.0, file size is competitive
-or smaller, with quality at or above parity.
-
-**Measurement methodology**: cjxl writes `gamma(0.454550)` from source PNG gAMA chunks.
-We write sRGB TF. To avoid TF mismatch inflating scores, decode all JXLs to native u8
-(no color conversion) and compare with `butteraugli::butteraugli()` (sRGB u8 interface).
-Same treatment for both → fair comparison. See `test_fair_comparison` in `tests/clic2025.rs`.
-
-**Key fix**: Butteraugli loop was disabled at default effort (effort 7) and had inverted
-adjustment direction. Both bugs fixed Feb 15. The loop now correctly increases quant_field
-where quality is bad and decreases where quality is good.
+**Root cause hypotheses for outliers**:
+- Low-complexity images (1418519, 1279330) are worst → our cost model may over-allocate bits to smooth content
+- Gap widening at high distances → distance-scaled cost model constants may need tuning
+- Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 
 **What's confirmed correct**:
 - Parametric quantization weights match decoder expectations (all strategies)
@@ -185,6 +186,7 @@ where quality is bad and decreases where quality is good.
 - IDCT roundtrip error < 1e-6 for all sizes
 - Weight tables are pure parametric without bias (confirmed via jxl-oxide source)
 - Content-adaptive global_scale from quant field median/MAD (matches libjxl)
+- All effort gating matches libjxl (EffortProfile centralization, Feb 19, 2026)
 
 ### Remaining Gaps vs Full libjxl
 
