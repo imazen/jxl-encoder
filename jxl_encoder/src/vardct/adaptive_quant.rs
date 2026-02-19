@@ -19,96 +19,11 @@
 
 use super::common::clamp;
 
-// --- Fast math approximations (ported from fast_math-inl.h) ---
-
-/// Fast base-2 logarithm approximation. L1 error ~3.9E-6.
-///
-/// Uses rational polynomial approximation of log1p(x)/log(2).
-fn fast_log2f(x: f32) -> f32 {
-    let x_bits = x.to_bits() as i32;
-    let exp_bits = x_bits.wrapping_sub(0x3f2aaaab_u32 as i32); // subtract 2/3
-    let exp_shifted = exp_bits >> 23;
-    let mantissa = f32::from_bits((x_bits.wrapping_sub(exp_shifted << 23)) as u32);
-    let exp_val = exp_shifted as f32;
-
-    let frac = mantissa - 1.0;
-
-    // Rational polynomial coefficients (degree 2/2)
-    let p0 = -1.850_383_3e-6_f32;
-    let p1 = 1.428_716_f32;
-    let p2 = 0.742_458_7_f32;
-
-    let q0 = 0.990_328_14_f32;
-    let q1 = 1.009_671_9_f32;
-    let q2 = 0.174_093_43_f32;
-
-    let num = p0 + frac * (p1 + frac * p2);
-    let den = q0 + frac * (q1 + frac * q2);
-
-    num / den + exp_val
-}
-
-/// Fast base-2 power approximation. Max relative error ~3e-7.
-fn fast_pow2f(x: f32) -> f32 {
-    let floorx = x.floor();
-    let exp = f32::from_bits(((floorx as i32 + 127) << 23) as u32);
-    let frac = x - floorx;
-
-    let num = frac + 1.017_490_63e+01;
-    let num = num * frac + 4.886_877_98e+01;
-    let num = num * frac + 9.855_065_91e+01;
-    let num = num * exp;
-
-    let den = frac * 2.102_429_58e-01 + (-2.223_288_56e-02);
-    let den = den * frac + (-1.944_149_9e+01);
-    let den = den * frac + 9.855_066_33e+01;
-
-    num / den
-}
-
-// --- SimpleGamma constants (full libjxl) ---
-
-const SG_MUL: f32 = 226.77216153508914_f32;
-const SG_MUL2: f32 = 1.0 / 73.377132366608819_f32;
-const K_INV_LOG2E: f32 = 0.693147180559945_f32; // ln(2) = 1/log2(e)
-const SG_RET_MUL: f32 = SG_MUL2 * 18.6580932135_f32 * K_INV_LOG2E;
-const SG_V_OFFSET: f32 = 7.7825991679894591_f32;
-
-/// Ratio of derivatives of cubic root to simple gamma.
-///
-/// Maps from opsin (cubic root of photons) space to butteraugli's
-/// log-gamma psychovisual space.
-///
-/// When `invert` is false: returns den/num (used in pre-erosion).
-/// When `invert` is true: returns num/den (used in gamma modulation).
-fn ratio_of_derivatives(v: f32, invert: bool) -> f32 {
-    let epsilon = 1e-2_f32;
-    let v = v.max(0.0);
-
-    let k_num_mul = SG_RET_MUL * 3.0 * SG_MUL;
-    let k_v_offset = SG_V_OFFSET * K_INV_LOG2E + epsilon;
-    let k_den_mul = K_INV_LOG2E * SG_MUL;
-
-    let v2 = v * v;
-
-    let num = k_num_mul * v2 + epsilon;
-    let den = k_den_mul * v * v2 + k_v_offset;
-
-    if invert { num / den } else { den / num }
-}
-
-// --- Masking ---
-
-/// MaskingSqrt: converts accumulated diff values through masking function.
-/// Full libjxl constants.
-fn masking_sqrt(v: f32) -> f32 {
-    const K_LOG_OFFSET: f32 = 27.505837037000106_f32;
-    const K_MUL: f32 = 211.66567973503678_f32;
-    let mul_v = K_MUL * 1e8;
-    0.25 * (v * mul_v.sqrt() + K_LOG_OFFSET).sqrt()
-}
+// Fast math helpers and masking sub-functions have been migrated to jxl_simd.
+// compute_pre_erosion and per_block_modulations now delegate to jxl_simd SIMD implementations.
 
 /// Insert `v` into the smallest-4 tracking variables if it's smaller than `min3`.
+/// Used by `fuzzy_erosion()` (which remains local — operates on small downsampled data).
 #[inline(always)]
 fn store_min4(v: f32, min0: &mut f32, min1: &mut f32, min2: &mut f32, min3: &mut f32) {
     if v < *min3 {
@@ -130,161 +45,10 @@ fn store_min4(v: f32, min0: &mut f32, min1: &mut f32, min2: &mut f32, min3: &mut
     }
 }
 
-/// ComputeMask: modulates exponent based on out_val.
-/// Full libjxl constants.
-fn compute_mask(out_val: f32) -> f32 {
-    const K_BASE: f32 = -0.7647_f32;
-    const K_MUL4: f32 = 9.4708735624378946_f32;
-    const K_MUL2: f32 = 17.35036561631863_f32;
-    const K_OFFSET2: f32 = 302.59587815579727_f32;
-    const K_MUL3: f32 = 6.7943250517376494_f32;
-    const K_OFFSET3: f32 = 3.7179635626140772_f32;
-    const K_OFFSET4: f32 = 0.25 * K_OFFSET3;
-    const K_MUL0: f32 = 0.80061762862741759_f32;
-
-    // Avoid division by zero
-    let v1 = (out_val * K_MUL0).max(1e-3);
-    let v2 = 1.0 / (v1 + K_OFFSET2);
-    let v3 = 1.0 / (v1 * v1 + K_OFFSET3);
-    let v4 = 1.0 / (v1 * v1 + K_OFFSET4);
-
-    K_BASE + K_MUL4 * v4 + K_MUL2 * v2 + K_MUL3 * v3
-}
-
-/// HfModulation: adjust quantization based on high-frequency content.
-/// Full libjxl version: uses valmin_y clamp, kMul_y=-0.38, kOffset=0.42.
-///
-/// The buffer must be padded to at least (y+8) rows and (x+8) columns with
-/// edge-replicated values, so no bounds checking is needed.
-fn hf_modulation(x: usize, y: usize, xyb_y: &[f32], stride: usize, out_val: f32) -> f32 {
-    let mut sum_y = 0.0_f32;
-    const VALMIN_Y: f32 = 0.0206;
-
-    for dy in 0..8 {
-        let py = y + dy;
-        let py_next = if dy == 7 { py } else { py + 1 };
-
-        for dx in 0..8 {
-            let px = x + dx;
-            let p_y = xyb_y[py * stride + px];
-
-            // Right neighbor difference (skip last column), clamped to valmin_y
-            if dx < 7 {
-                let pr_y = xyb_y[py * stride + px + 1];
-                sum_y += (p_y - pr_y).abs().min(VALMIN_Y);
-            }
-
-            // Below neighbor difference, clamped to valmin_y
-            let pd_y = xyb_y[py_next * stride + px];
-            sum_y += (p_y - pd_y).abs().min(VALMIN_Y);
-        }
-    }
-
-    const K_MUL_Y: f32 = -0.38;
-    const K_OFFSET: f32 = 0.42;
-
-    let scalar_sum_y = sum_y * K_MUL_Y + K_OFFSET;
-
-    out_val + scalar_sum_y
-}
-
-/// BlueModulation: adjust quantization based on blue content.
-/// Replaces libjxl-tiny's ColorModulation.
-///
-/// Based on the idea that M and L cone activations saturate S (blue) receptors,
-/// and S reception becomes more important when both M and L levels are low.
-///
-/// The buffer must be padded to at least (y+8) rows and (x+8) columns with
-/// edge-replicated values, so no bounds checking is needed.
-#[allow(clippy::too_many_arguments)]
-fn blue_modulation(
-    x: usize,
-    y: usize,
-    xyb_x: &[f32],
-    xyb_y: &[f32],
-    xyb_b: &[f32],
-    stride: usize,
-    out_val: f32,
-) -> f32 {
-    const K_LIMIT: f32 = 0.010474084867598155;
-    const K_OFFSET: f32 = 0.0031994768654636393;
-
-    let mut sum = 0.0_f32;
-
-    for dy in 0..8 {
-        let py = y + dy;
-        for dx in 0..8 {
-            let px = x + dx;
-            let idx = py * stride + px;
-            let p_x = xyb_x[idx];
-            let p_b = xyb_b[idx];
-            let p_y_raw = xyb_y[idx] + K_OFFSET;
-            let p_y_effective = p_y_raw + p_x.abs();
-
-            if p_b > p_y_effective {
-                sum += (p_b - p_y_effective).min(K_LIMIT);
-            }
-        }
-    }
-
-    // If it is all blue, don't boost — all blue likely means low frequency blue.
-    if sum >= 32.0 * K_LIMIT {
-        sum = 64.0 * K_LIMIT - sum;
-    }
-
-    const K_MAX_LIMIT: f32 = 15.463398341612438;
-    if sum >= K_MAX_LIMIT * K_LIMIT {
-        sum = K_MAX_LIMIT * K_LIMIT;
-    }
-
-    const K_MUL: f32 = 0.90590804735610064;
-    sum *= K_MUL;
-
-    out_val + sum
-}
-
-/// GammaModulation: adjust quantization based on gamma approximation.
-/// Full libjxl version: positive kGamma = 0.1006.
-///
-/// The buffer must be padded to at least (y+8) rows and (x+8) columns with
-/// edge-replicated values, so no bounds checking is needed.
-fn gamma_modulation(
-    x: usize,
-    y: usize,
-    xyb_x: &[f32],
-    xyb_y: &[f32],
-    stride: usize,
-    out_val: f32,
-) -> f32 {
-    const K_BIAS: f32 = 0.16;
-    let mut overall_ratio = 0.0_f32;
-
-    for dy in 0..8 {
-        let py = y + dy;
-        for dx in 0..8 {
-            let px = x + dx;
-            let idx = py * stride + px;
-            let iny = xyb_y[idx] + K_BIAS;
-            let inx = xyb_x[idx];
-            let r = iny - inx;
-            let g = iny + inx;
-            let ratio_r = ratio_of_derivatives(r, true);
-            let ratio_g = ratio_of_derivatives(g, true);
-            overall_ratio += ratio_r + ratio_g;
-        }
-    }
-
-    overall_ratio *= 0.5 / 64.0;
-
-    // Full libjxl: positive kGamma (libjxl-tiny was negative)
-    const K_GAMMA: f32 = 0.1005613337192697_f32;
-    out_val + K_GAMMA * fast_log2f(overall_ratio)
-}
-
 /// Compute pre-erosion map from XYB planes.
 ///
 /// Full libjxl version: Y channel only (no X channel), with limit=0.2 clamp
-/// before MaskingSqrt.
+/// before MaskingSqrt. SIMD-accelerated via jxl_simd.
 ///
 /// Output dimensions: ceil(tile_pixel_w / 4) × ceil(tile_pixel_h / 4).
 #[allow(clippy::too_many_arguments)]
@@ -297,85 +61,7 @@ fn compute_pre_erosion(
     tile_x1: usize,
     tile_y1: usize,
 ) -> (Vec<f32>, usize, usize) {
-    const MATCH_GAMMA_OFFSET: f32 = 0.019;
-    const LIMIT: f32 = 0.2;
-
-    // Extend tile region by 4 pixels for border handling.
-    let x0 = if tile_x0 > 0 { tile_x0 - 4 } else { 0 };
-    let x1 = if tile_x1 < width {
-        tile_x1 + 4
-    } else {
-        tile_x1
-    };
-    let y_start = if tile_y0 > 0 { tile_y0 - 4 } else { 0 };
-    let y_end = if tile_y1 < height {
-        tile_y1 + 4
-    } else {
-        tile_y1
-    };
-
-    let diff_width = x1 - x0;
-    let pre_erosion_w = diff_width / 4;
-    let pre_erosion_h = (y_end - y_start) / 4;
-
-    let mut diff_buffer = vec![0.0_f32; diff_width];
-    let mut pre_erosion = vec![0.0_f32; pre_erosion_w * pre_erosion_h];
-
-    // max_x / max_y: clamp coordinates to actual image bounds (edge replication)
-    let max_x = width - 1;
-    let max_y = height - 1;
-
-    for y in y_start..y_end {
-        let yc = y.min(max_y);
-        let y2 = (y + 1).min(max_y);
-        let y1 = if y > 0 { (y - 1).min(max_y) } else { 0 };
-
-        for x in x0..x1 {
-            let xc = x.min(max_x);
-            let x2 = (x + 1).min(max_x);
-            let x1_local = if x > 0 { (x - 1).min(max_x) } else { 0 };
-
-            // Y channel base (average of 4 neighbors) — Y only, no X channel
-            let base = 0.25
-                * (xyb_y[y2 * width + xc]
-                    + xyb_y[y1 * width + xc]
-                    + xyb_y[yc * width + x1_local]
-                    + xyb_y[yc * width + x2]);
-
-            let gammac = ratio_of_derivatives(xyb_y[yc * width + xc] + MATCH_GAMMA_OFFSET, false);
-
-            let mut diff = gammac * (xyb_y[yc * width + xc] - base);
-            diff *= diff;
-
-            // Full libjxl: clamp to limit before MaskingSqrt
-            if diff >= LIMIT {
-                diff = LIMIT;
-            }
-
-            diff = masking_sqrt(diff);
-
-            let local_x = x - x0;
-            if (y - y_start) % 4 != 0 {
-                diff_buffer[local_x] += diff;
-            } else {
-                diff_buffer[local_x] = diff;
-            }
-        }
-
-        // At every 4th row (y%4 == 3), downsample horizontally by 4
-        if (y - y_start) % 4 == 3 {
-            let row_y = (y - y_start) / 4;
-            for bx in 0..pre_erosion_w {
-                let sum = diff_buffer[bx * 4]
-                    + diff_buffer[bx * 4 + 1]
-                    + diff_buffer[bx * 4 + 2]
-                    + diff_buffer[bx * 4 + 3];
-                pre_erosion[row_y * pre_erosion_w + bx] = sum * 0.25;
-            }
-        }
-    }
-
-    (pre_erosion, pre_erosion_w, pre_erosion_h)
+    jxl_simd::compute_pre_erosion(xyb_y, width, height, tile_x0, tile_y0, tile_x1, tile_y1)
 }
 
 /// FuzzyErosion: 3×3 min-4 weighted sum, then 2x downsample.
@@ -543,6 +229,7 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
 // mask1x1-specific weights (same 5x5 kernel structure, ~10x faster via AVX2).
 
 /// PerBlockModulations: apply all modulations and convert exponent to multiplier.
+/// SIMD-accelerated via jxl_simd.
 ///
 /// Full libjxl order: ComputeMask → GammaModulation → HfModulation → Min(Hf, BlueModulation) → exp2
 ///
@@ -562,42 +249,20 @@ fn per_block_modulations(
     aq_map: &mut [f32],
     aq_map_w: usize,
 ) {
-    let base_level = 0.48 * scale;
-    let k_dampen_ramp_start = 2.0_f32;
-    let k_dampen_ramp_end = 14.0_f32;
-    let mut dampen = 1.0_f32;
-    if butteraugli_target >= k_dampen_ramp_start {
-        dampen = 1.0
-            - ((butteraugli_target - k_dampen_ramp_start)
-                / (k_dampen_ramp_end - k_dampen_ramp_start));
-        if dampen < 0.0 {
-            dampen = 0.0;
-        }
-    }
-    let mul = scale * dampen;
-    let add = (1.0 - dampen) * base_level;
-
-    for iy in 0..rect_h_blocks {
-        let block_iy = rect_y0_blocks + iy;
-        let py = block_iy * 8;
-        for ix in 0..rect_w_blocks {
-            let block_ix = rect_x0_blocks + ix;
-            let px = block_ix * 8;
-
-            let mut out_val = aq_map[iy * aq_map_w + ix];
-
-            // Full libjxl order: Mask → Gamma → then both Hf and Blue from mask_val → Min
-            out_val = compute_mask(out_val);
-            out_val = gamma_modulation(px, py, xyb_x, xyb_y, stride, out_val);
-            let mask_val = out_val; // after Mask+Gamma, input to both Hf and Blue
-            let after_hf = hf_modulation(px, py, xyb_y, stride, mask_val);
-            let after_blue = blue_modulation(px, py, xyb_x, xyb_y, xyb_b, stride, mask_val);
-            out_val = after_hf.min(after_blue);
-
-            // Convert from exponent to multiplicative field
-            aq_map[iy * aq_map_w + ix] = fast_pow2f(out_val * 1.442_695_f32) * mul + add;
-        }
-    }
+    jxl_simd::per_block_modulations(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        stride,
+        butteraugli_target,
+        scale,
+        rect_x0_blocks,
+        rect_y0_blocks,
+        rect_w_blocks,
+        rect_h_blocks,
+        aq_map,
+        aq_map_w,
+    );
 }
 
 /// Compute the adaptive quantization field for the entire image.
@@ -730,45 +395,8 @@ pub fn compute_adaptive_quant_field(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_fast_log2f() {
-        let v = fast_log2f(1.0);
-        assert!((v - 0.0).abs() < 0.001, "fast_log2f(1.0) = {}", v);
-
-        let v = fast_log2f(2.0);
-        assert!((v - 1.0).abs() < 0.001, "fast_log2f(2.0) = {}", v);
-
-        let v = fast_log2f(4.0);
-        assert!((v - 2.0).abs() < 0.001, "fast_log2f(4.0) = {}", v);
-
-        let v = fast_log2f(0.5);
-        assert!((v - (-1.0)).abs() < 0.001, "fast_log2f(0.5) = {}", v);
-    }
-
-    #[test]
-    fn test_fast_pow2f() {
-        let v = fast_pow2f(0.0);
-        assert!((v - 1.0).abs() < 0.001, "fast_pow2f(0.0) = {}", v);
-
-        let v = fast_pow2f(1.0);
-        assert!((v - 2.0).abs() < 0.01, "fast_pow2f(1.0) = {}", v);
-
-        let v = fast_pow2f(-1.0);
-        assert!((v - 0.5).abs() < 0.001, "fast_pow2f(-1.0) = {}", v);
-
-        let v = fast_pow2f(10.0);
-        assert!((v - 1024.0).abs() < 1.0, "fast_pow2f(10.0) = {}", v);
-    }
-
-    #[test]
-    fn test_masking_sqrt() {
-        let v = masking_sqrt(0.0);
-        assert!(v > 0.0, "masking_sqrt(0.0) = {}", v);
-
-        let v1 = masking_sqrt(1.0);
-        let v2 = masking_sqrt(10.0);
-        assert!(v2 > v1, "masking_sqrt should be monotonically increasing");
-    }
+    // Scalar math unit tests (fast_log2f, fast_pow2f, masking_sqrt, ratio_of_derivatives,
+    // compute_mask) migrated to jxl_simd::adaptive_quant::tests.
 
     #[test]
     fn test_store_min4() {
@@ -785,27 +413,6 @@ mod tests {
 
         store_min4(100.0, &mut min0, &mut min1, &mut min2, &mut min3);
         assert_eq!(min3, 7.0);
-    }
-
-    #[test]
-    fn test_compute_mask() {
-        let v = compute_mask(1.0);
-        assert!(v.is_finite(), "compute_mask(1.0) = {}", v);
-
-        let v = compute_mask(0.0);
-        assert!(v.is_finite(), "compute_mask(0.0) = {}", v);
-    }
-
-    #[test]
-    fn test_ratio_of_derivatives() {
-        let v = ratio_of_derivatives(1.0, false);
-        assert!(v > 0.0 && v.is_finite(), "ratio(1.0, false) = {}", v);
-
-        let v = ratio_of_derivatives(1.0, true);
-        assert!(v > 0.0 && v.is_finite(), "ratio(1.0, true) = {}", v);
-
-        let v = ratio_of_derivatives(0.0, false);
-        assert!(v.is_finite(), "ratio(0.0, false) = {}", v);
     }
 
     #[test]
