@@ -18,7 +18,8 @@ use crate::debug_rect;
 const K_INV_COLOR_FACTOR: f32 = 1.0 / 84.0;
 
 /// Regularization multiplier for AC coefficient fitting.
-const K_DISTANCE_MULTIPLIER_AC: f32 = 1e-3;
+/// libjxl uses 1e-9 (essentially no regularization).
+const K_DISTANCE_MULTIPLIER_AC: f32 = 1e-9;
 
 /// Convert a ytox i8 value to the ratio used for CfL subtraction.
 #[inline]
