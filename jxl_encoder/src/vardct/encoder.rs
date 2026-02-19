@@ -1301,8 +1301,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: CfL towards_zero bias (match libjxl enc_chroma_from_luma.cc:176-183)
-        const EXPECTED_HASH: u64 = 0xc9ea3d11484bc418;
+        // Updated: disable CfL Newton (causes regression without pass 2)
+        const EXPECTED_HASH: u64 = 0x8e3855cfba82de2b;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1371,8 +1371,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
-        const EXPECTED_HASH: u64 = 0x4aaac9c3d086c63b;
+        // Updated: disable CfL Newton (causes regression without pass 2)
+        const EXPECTED_HASH: u64 = 0x5f4f631b2291961f;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1407,8 +1407,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: CfL towards_zero bias (match libjxl enc_chroma_from_luma.cc:176-183)
-        const EXPECTED_HASH: u64 = 0xd559159e0638e39d;
+        // Updated: disable CfL Newton (causes regression without pass 2)
+        const EXPECTED_HASH: u64 = 0xe73eeabbb5221327;
         assert_eq!(
             hash,
             EXPECTED_HASH,
