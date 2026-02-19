@@ -25,6 +25,7 @@
 #![no_std]
 extern crate alloc;
 
+mod adaptive_quant;
 mod block_l2;
 mod dct16;
 mod dct8;
@@ -49,6 +50,7 @@ pub use archmage::X64V3Token;
 
 // --- Dispatching functions (runtime auto-select) ---
 
+pub use adaptive_quant::{compute_pre_erosion, per_block_modulations};
 pub use block_l2::compute_block_l2_errors;
 pub use dct8::{dct_8x8, idct_8x8};
 pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
@@ -66,6 +68,7 @@ pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rg
 
 // --- Scalar variants (no token needed) ---
 
+pub use adaptive_quant::{compute_pre_erosion_scalar, per_block_modulations_scalar};
 pub use block_l2::compute_block_l2_errors_scalar;
 pub use dct8::{dct_8x8_scalar, idct_8x8_scalar};
 pub use dct16::{dct_8x16_scalar, dct_16x8_scalar, dct_16x16_scalar};
@@ -83,6 +86,8 @@ pub use xyb::{forward_xyb_scalar, inverse_xyb_planar_scalar, inverse_xyb_scalar}
 
 // --- AVX2 variants (require X64V3Token) ---
 
+#[cfg(target_arch = "x86_64")]
+pub use adaptive_quant::{compute_pre_erosion_avx2, per_block_modulations_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use block_l2::compute_block_l2_errors_avx2;
 #[cfg(target_arch = "x86_64")]
@@ -114,6 +119,8 @@ pub use xyb::{forward_xyb_avx2, inverse_xyb_avx2, inverse_xyb_planar_avx2};
 
 // --- NEON variants (require NeonToken) ---
 
+#[cfg(target_arch = "aarch64")]
+pub use adaptive_quant::{compute_pre_erosion_neon, per_block_modulations_neon};
 #[cfg(target_arch = "aarch64")]
 pub use block_l2::compute_block_l2_errors_neon;
 #[cfg(target_arch = "aarch64")]
