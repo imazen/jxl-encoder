@@ -350,6 +350,7 @@ pub fn refine_cfl_map(
             }
 
             let tile_idx = ty * xsize_tiles + tx;
+
             cfl_map.ytox[tile_idx] = find_best_multiplier(
                 &coeffs_yx,
                 &coeffs_x,
