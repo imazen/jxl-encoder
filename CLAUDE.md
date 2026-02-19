@@ -163,7 +163,7 @@ d=2.0-3.0 show clear wins: smaller files AND better quality.
 
 **Calibration verified Feb 18, 2026**: All quantization constants, butteraugli loop
 parameters, kFavor2X2, error diffusion gating, and global_scale formula match libjxl exactly.
-AdjustQuantBlockAC effort-gated to match libjxl (effort <= 5 only).
+AdjustQuantBlockAC effort-gated to match libjxl (effort >= 5, i.e. speed_tier <= kHare).
 
 **Key insight**: At d=0.5, our butteraugli loop aggressively optimizes quality, producing
 smaller BA at the cost of slightly larger files. At d=2.0-3.0, file size is competitive
@@ -217,8 +217,8 @@ DCT4x8 weights use row-duplicated layout (base row y at rows 2y, 2y+1). Fixed: y
 Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants enabled.
 
 **B. Quantization Calibration** (VERIFIED Feb 18, 2026)
-- AdjustQuantBlockAC now effort-gated: runs at effort <= 5 only (matching libjxl)
-- At effort > 5: fixed thresholds Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62}
+- AdjustQuantBlockAC now effort-gated: runs at effort >= 5 (matching libjxl speed_tier <= kHare)
+- At effort < 5: fixed thresholds Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62}
 - `K_AC_QUANT` matches libjxl (0.765)
 - Content-adaptive global_scale (median-MAD) matches libjxl exactly
 - kFavor2X2 = -0.4, weight formula ((5-d)/5)² — all match libjxl exactly
@@ -226,7 +226,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - Multi-resolution butteraugli comparison enabled (default params)
 
 **C. Cost Model**
-- AdjustQuantBlockAC: IMPLEMENTED, effort-gated (effort <= 5 only, `transform.rs:626-700`)
+- AdjustQuantBlockAC: IMPLEMENTED, effort-gated (effort >= 5, `transform.rs:626-700`)
 - Dead-zone thresholds: UPDATED to full libjxl values (Y={0.56,0.62,0.62,0.62}, X/B={0.58,0.62,0.62,0.62})
 - X/B multi-block threshold: IMPLEMENTED (-0.00744 * xsize*ysize for c!=1, coverage>=4)
 - kFavor2X2: IMPLEMENTED at -0.4 (matches libjxl)
