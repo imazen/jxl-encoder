@@ -846,8 +846,7 @@ impl VarDctEncoder {
             self.profile.k_ac_quant,
         );
 
-        let mut params =
-            DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
+        let mut params = DistanceParams::compute_for_effort(self.distance, self.profile.effort);
         if self.profile.chromacity_adjustment {
             params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
         }

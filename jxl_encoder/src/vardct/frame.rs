@@ -169,12 +169,38 @@ impl DistanceParams {
         Self::compute_internal(distance, None)
     }
 
+    /// Compute distance-dependent parameters matching full libjxl's approach.
+    ///
+    /// libjxl computes global_scale from a fixed `q` parameter, NOT from the
+    /// quant field content. The quant field is adaptive, but global_scale is
+    /// derived from effort-dependent constants:
+    /// - Effort < 5 (speed_tier > kHare): q = 0.79 / distance
+    /// - Effort >= 5 (speed_tier <= kHare): q = 0.39 / distance
+    ///
+    /// The adaptive median/MAD formula is ONLY used inside the butteraugli
+    /// quantization loop (effort >= 8), where SetQuantField recomputes
+    /// global_scale after each iteration.
+    pub fn compute_for_effort(distance: f32, effort: u8) -> Self {
+        // libjxl enc_heuristics.cc:1105 (effort < 5) and :1127 (effort >= 5)
+        let q = if effort >= 5 {
+            0.39 / distance
+        } else {
+            0.79 / distance
+        };
+        Self::compute_from_q(distance, q)
+    }
+
     /// Compute distance-dependent parameters using content-adaptive global_scale.
     ///
     /// This matches full libjxl's SetQuantField behavior: global_scale is derived
     /// from the median and MAD (median absolute deviation) of the quant field.
     /// For high-variance images, MAD is large, so (median - MAD) is smaller,
     /// giving a smaller global_scale (finer quantization, better quality).
+    ///
+    /// NOTE: In libjxl, this is ONLY called inside the butteraugli quantization
+    /// loop (effort >= 8). At effort 5-7, global_scale uses the fixed formula
+    /// from `compute_for_effort()`. Use this method only for butteraugli loop
+    /// refinement.
     #[allow(dead_code)]
     pub fn compute_from_quant_field(distance: f32, quant_field: &[f32]) -> Self {
         if quant_field.is_empty() {
@@ -200,11 +226,20 @@ impl DistanceParams {
             quant_median_absd,
             quant_median - quant_median_absd
         );
-        Self::compute_internal(distance, Some((quant_median, quant_median_absd)))
+        Self::compute_from_q(distance, quant_median - quant_median_absd)
     }
 
-    /// Internal implementation shared by both compute methods.
-    fn compute_internal(distance: f32, quant_stats: Option<(f32, f32)>) -> Self {
+    /// Compute distance-dependent parameters from a given `q` value.
+    ///
+    /// The `q` parameter determines global_scale: `global_scale = 65536 * q / 5.0`.
+    /// This is the core formula from libjxl quantizer.cc:ComputeGlobalScaleAndQuant
+    /// with quant_median_absd=0 (i.e. `q = quant_median - 0 = quant_median`).
+    fn compute_from_q(distance: f32, q: f32) -> Self {
+        Self::compute_internal(distance, Some(q))
+    }
+
+    /// Internal implementation shared by all compute methods.
+    fn compute_internal(distance: f32, q_for_global_scale: Option<f32>) -> Self {
         const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
         const GLOBAL_SCALE_NUMERATOR: i32 = 4096;
         const AC_QUANT: f32 = 0.765;
@@ -212,14 +247,14 @@ impl DistanceParams {
 
         let qdc = quant_dc(distance);
 
-        // Compute global_scale from quant field content when available.
-        // libjxl's ComputeGlobalScaleAndQuant uses (median - MAD) of the quant
-        // field to adapt quantization precision to image content. For high-variance
-        // images, MAD is large so global_scale is smaller (coarser discretization
-        // but better range), which preserves the adaptive quant field's variation.
-        let scale = if let Some((quant_median, quant_median_absd)) = quant_stats {
-            // Content-adaptive: matches libjxl quantizer.cc:ComputeGlobalScaleAndQuant
-            (GLOBAL_SCALE_DENOM as f32) * (quant_median - quant_median_absd) / QUANT_FIELD_TARGET
+        // Compute global_scale from the q parameter.
+        // libjxl's ComputeGlobalScaleAndQuant: scale = kGlobalScaleDenom * q / kQuantFieldTarget
+        // where q comes from:
+        // - Fixed formula: 0.39/d (effort >= 5) or 0.79/d (effort < 5)
+        // - Adaptive: (median - MAD) of quant field (butteraugli loop only)
+        // - Fallback: kAcQuant / distance (libjxl-tiny compat)
+        let scale = if let Some(q) = q_for_global_scale {
+            (GLOBAL_SCALE_DENOM as f32) * q / QUANT_FIELD_TARGET
         } else {
             // Fixed formula fallback (libjxl-tiny style)
             (GLOBAL_SCALE_DENOM as f32) * AC_QUANT / (distance * QUANT_FIELD_TARGET)
@@ -234,23 +269,15 @@ impl DistanceParams {
 
         #[cfg(feature = "debug-tokens")]
         {
-            let mode = if quant_stats.is_some() {
-                "adaptive"
+            let mode = if q_for_global_scale.is_some() {
+                "q-based"
             } else {
-                "fixed"
+                "fallback"
             };
             eprintln!(
                 "[global_scale] d={:.2} mode={} global_scale={} inv_scale={:.4}",
                 distance, mode, global_scale, inv_scale
             );
-            if let Some((median, mad)) = quant_stats {
-                eprintln!(
-                    "[global_scale] median={:.4} mad={:.4} (median-mad)={:.4}",
-                    median,
-                    mad,
-                    median - mad
-                );
-            }
         }
 
         let quant_dc = clamp((qdc / scale + 0.5) as i32, 1, 1 << 16);
