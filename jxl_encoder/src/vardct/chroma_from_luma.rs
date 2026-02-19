@@ -398,14 +398,18 @@ mod tests {
         // When s = base*m + factor/84*m, the multiplier should recover factor
         // (with regularization pulling toward 0).
         // Use large values to make regularization negligible.
+        // The towards_zero bias (2.6) shifts the result towards 0.
         let factor = 42.0;
         let base = 0.0;
         let m: Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) * 10.0).collect();
         let s: Vec<f32> = m.iter().map(|&v| base * v + factor / 84.0 * v).collect();
         let result = find_best_multiplier(&m, &s, 64, base, 1e-3);
+        // Optimization yields ~42.0, towards_zero bias subtracts 2.6 → ~39
+        let expected = (factor - 2.6).round();
         assert!(
-            (result as f32 - factor).abs() < 2.0,
-            "Expected ~{}, got {}",
+            (result as f32 - expected).abs() < 2.0,
+            "Expected ~{} (factor {} - 2.6 bias), got {}",
+            expected,
             factor,
             result
         );

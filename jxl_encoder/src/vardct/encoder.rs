@@ -1300,8 +1300,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
-        const EXPECTED_HASH: u64 = 0x90645bea38ecf366;
+        // Updated: CfL towards_zero bias (match libjxl enc_chroma_from_luma.cc:176-183)
+        const EXPECTED_HASH: u64 = 0x1e05b97abbbb6e41;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1406,8 +1406,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
-        const EXPECTED_HASH: u64 = 0x26030415575b53c1;
+        // Updated: CfL towards_zero bias (match libjxl enc_chroma_from_luma.cc:176-183)
+        const EXPECTED_HASH: u64 = 0x63bbb41a4f7314db;
         assert_eq!(
             hash,
             EXPECTED_HASH,

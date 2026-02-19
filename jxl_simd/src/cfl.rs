@@ -9,6 +9,23 @@
 
 const K_INV_COLOR_FACTOR: f32 = 1.0 / 84.0;
 
+/// Bias towards zero and quantize to i8 (libjxl enc_chroma_from_luma.cc:176-183).
+///
+/// Small CfL factors (within ±2.6 of zero) are snapped to zero to reduce
+/// oscillations in the CfL map. Larger factors are shifted towards zero by 2.6.
+#[inline(always)]
+fn bias_and_quantize(x: f32) -> i8 {
+    const TOWARDS_ZERO: f32 = 2.6;
+    let biased = if x >= TOWARDS_ZERO {
+        x - TOWARDS_ZERO
+    } else if x <= -TOWARDS_ZERO {
+        x + TOWARDS_ZERO
+    } else {
+        0.0
+    };
+    biased.round().clamp(-128.0, 127.0) as i8
+}
+
 /// Find the best integer CfL multiplier via regularized least-squares.
 ///
 /// Computes: x = -sum_ab / (sum_aa + num * distance_mul * 0.5)
@@ -74,7 +91,7 @@ pub fn find_best_multiplier_scalar(
         sum_ab += a * b;
     }
     let x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
-    x.round().clamp(-128.0, 127.0) as i8
+    bias_and_quantize(x)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -126,7 +143,7 @@ pub fn find_best_multiplier_avx2(
     }
 
     let x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
-    x.round().clamp(-128.0, 127.0) as i8
+    bias_and_quantize(x)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -176,7 +193,7 @@ pub fn find_best_multiplier_neon(
     }
 
     let x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
-    x.round().clamp(-128.0, 127.0) as i8
+    bias_and_quantize(x)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -226,7 +243,7 @@ pub fn find_best_multiplier_wasm128(
     }
 
     let x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
-    x.round().clamp(-128.0, 127.0) as i8
+    bias_and_quantize(x)
 }
 
 #[cfg(test)]
@@ -274,9 +291,11 @@ mod tests {
         let m: alloc::vec::Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) * 10.0).collect();
         let s: alloc::vec::Vec<f32> = m.iter().map(|&v| factor / 84.0 * v).collect();
         let result = find_best_multiplier(&m, &s, 64, 0.0, 1e-3);
+        // Optimization produces ~42.0, towards_zero bias subtracts 2.6 → ~39.4 → rounds to 39
+        let expected = (factor - 2.6).round() as i8;
         assert!(
-            (result as f32 - factor).abs() < 2.0,
-            "Expected ~{factor}, got {result}"
+            (result as f32 - expected as f32).abs() < 2.0,
+            "Expected ~{expected} (factor {factor} - 2.6 bias), got {result}"
         );
     }
 }
