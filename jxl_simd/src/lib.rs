@@ -47,6 +47,8 @@ mod xyb;
 #[cfg(target_arch = "aarch64")]
 pub use archmage::NeonToken;
 pub use archmage::SimdToken;
+#[cfg(target_arch = "wasm32")]
+pub use archmage::Wasm128Token;
 #[cfg(target_arch = "x86_64")]
 pub use archmage::X64V3Token;
 
@@ -163,3 +165,12 @@ pub use quantize::quantize_dct8_neon;
 pub use transpose::transpose_8x8_neon;
 #[cfg(target_arch = "aarch64")]
 pub use xyb::{forward_xyb_neon, inverse_xyb_neon, inverse_xyb_planar_neon};
+
+// --- WASM SIMD128 variants (require Wasm128Token) ---
+
+#[cfg(target_arch = "wasm32")]
+pub use adaptive_quant::{compute_pre_erosion_wasm128, per_block_modulations_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use cfl::find_best_multiplier_wasm128 as cfl_find_best_multiplier_wasm128;
+#[cfg(target_arch = "wasm32")]
+pub use noise::denoise_channel_wasm128;

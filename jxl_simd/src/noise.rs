@@ -135,6 +135,23 @@ pub fn denoise_channel(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return denoise_channel_wasm128(
+                token,
+                dest,
+                orig,
+                y_channel,
+                width,
+                height,
+                noise_lut,
+                denoise_scale,
+            );
+        }
+    }
+
     denoise_channel_scalar(
         dest,
         orig,
@@ -300,6 +317,117 @@ pub fn denoise_channel_avx2(
 #[archmage::arcane]
 pub fn denoise_channel_neon(
     token: archmage::NeonToken,
+    dest: &mut [f32],
+    orig: &[f32],
+    y_channel: &[f32],
+    width: usize,
+    height: usize,
+    noise_lut: &[f32; NUM_NOISE_POINTS],
+    denoise_scale: f32,
+) {
+    use magetypes::simd::f32x4;
+
+    let zero_v = f32x4::splat(token, 0.0);
+    let count_inv_v = f32x4::splat(token, 1.0 / 25.0);
+    let eps_v = f32x4::splat(token, EPS);
+    let half_v = f32x4::splat(token, 0.5);
+
+    for py in 0..height {
+        if py < RADIUS || py + RADIUS >= height {
+            for px in 0..width {
+                denoise_pixel(
+                    dest,
+                    orig,
+                    y_channel,
+                    width,
+                    height,
+                    noise_lut,
+                    denoise_scale,
+                    px,
+                    py,
+                );
+            }
+            continue;
+        }
+
+        for px in 0..RADIUS {
+            denoise_pixel(
+                dest,
+                orig,
+                y_channel,
+                width,
+                height,
+                noise_lut,
+                denoise_scale,
+                px,
+                py,
+            );
+        }
+
+        // SIMD interior: 4 pixels at a time.
+        // For 4 pixels at px..px+3, window accesses [px-2..px+5].
+        // Need px >= RADIUS and px + 5 < width, i.e., px + 6 <= width.
+        let mut px = RADIUS;
+        while px + 6 <= width {
+            let idx_base = py * width + px;
+
+            let y_arr: [f32; 4] = f32x4::from_slice(token, &y_channel[idx_base..]).into();
+            let mut sigma_arr = [0.0f32; 4];
+            for j in 0..4 {
+                sigma_arr[j] = interpolate_noise_lut(noise_lut, y_arr[j].abs()) * denoise_scale;
+            }
+            let noise_var = {
+                let sigma = f32x4::from_array(token, sigma_arr);
+                sigma * sigma
+            };
+
+            let mut sum_v = zero_v;
+            let mut sum_sq_v = zero_v;
+            for dy in -(RADIUS as i32)..=(RADIUS as i32) {
+                let row_start = ((py as i32 + dy) as usize) * width;
+                for dx in -(RADIUS as i32)..=(RADIUS as i32) {
+                    let off = row_start + ((px as i32 + dx) as usize);
+                    let v = f32x4::from_slice(token, &orig[off..]);
+                    sum_v = sum_v + v;
+                    sum_sq_v = v.mul_add(v, sum_sq_v);
+                }
+            }
+
+            let mean = sum_v * count_inv_v;
+            let raw_variance = sum_sq_v * count_inv_v - mean * mean;
+            let variance = (raw_variance + raw_variance.abs()) * half_v;
+            let raw_signal = variance - noise_var;
+            let signal_var = (raw_signal + raw_signal.abs()) * half_v;
+            let wiener = signal_var / (signal_var + noise_var + eps_v);
+
+            let orig_vals = f32x4::from_slice(token, &orig[idx_base..]);
+            let result = mean + (orig_vals - mean) * wiener;
+            result.store((&mut dest[idx_base..idx_base + 4]).try_into().unwrap());
+
+            px += 4;
+        }
+
+        while px < width {
+            denoise_pixel(
+                dest,
+                orig,
+                y_channel,
+                width,
+                height,
+                noise_lut,
+                denoise_scale,
+                px,
+                py,
+            );
+            px += 1;
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+pub fn denoise_channel_wasm128(
+    token: archmage::Wasm128Token,
     dest: &mut [f32],
     orig: &[f32],
     y_channel: &[f32],

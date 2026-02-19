@@ -185,6 +185,16 @@ pub fn compute_pre_erosion(
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return compute_pre_erosion_wasm128(
+                token, xyb_y, width, height, tile_x0, tile_y0, tile_x1, tile_y1,
+            );
+        }
+    }
+
     compute_pre_erosion_scalar(xyb_y, width, height, tile_x0, tile_y0, tile_x1, tile_y1)
 }
 
@@ -234,6 +244,29 @@ pub fn per_block_modulations(
         use archmage::SimdToken;
         if let Some(token) = archmage::NeonToken::summon() {
             per_block_modulations_neon(
+                token,
+                xyb_x,
+                xyb_y,
+                xyb_b,
+                stride,
+                butteraugli_target,
+                scale,
+                rect_x0_blocks,
+                rect_y0_blocks,
+                rect_w_blocks,
+                rect_h_blocks,
+                aq_map,
+                aq_map_stride,
+            );
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            per_block_modulations_wasm128(
                 token,
                 xyb_x,
                 xyb_y,
@@ -1066,6 +1099,305 @@ pub fn per_block_modulations_neon(
                     // Last position in each half-group doesn't contribute right-diff:
                     // half=0: all 4 have right neighbor (dx=0..3, right=1..4)
                     // half=1: dx=7 has no right neighbor (duplicated → diff=0)
+                    let cur_arr: [f32; 4] = cur.into();
+                    let right = if half == 0 {
+                        f32x4::from_slice(token, &xyb_y[off + 1..])
+                    } else {
+                        // Shift left, duplicate last element (diff=0 for dx=7)
+                        f32x4::from_array(token, [cur_arr[1], cur_arr[2], cur_arr[3], cur_arr[3]])
+                    };
+                    let rd = (cur - right).abs().min(valmin_v);
+                    let rd_arr: [f32; 4] = rd.into();
+                    hf_total += rd_arr[0] + rd_arr[1] + rd_arr[2];
+                    if half == 0 {
+                        hf_total += rd_arr[3]; // dx=3 has right neighbor (dx=4)
+                    }
+                    // half=1: rd_arr[3] = 0 (duplicated element) — skip it
+                }
+            }
+            let after_hf = mask_val + hf_total * HF_K_MUL_Y + HF_K_OFFSET;
+
+            // BlueModulation with f32x4
+            let mut blue_total = 0.0_f32;
+            for dy in 0..8 {
+                let row_off = (py + dy) * stride + px;
+                for half in 0..2 {
+                    let off = row_off + half * 4;
+                    let x_vals = f32x4::from_slice(token, &xyb_x[off..]);
+                    let y_vals = f32x4::from_slice(token, &xyb_y[off..]);
+                    let b_vals = f32x4::from_slice(token, &xyb_b[off..]);
+                    let y_eff = y_vals + bm_offset_v + x_vals.abs();
+                    let excess = (b_vals - y_eff).min(bm_limit_v).max(zero_v);
+                    let arr: [f32; 4] = excess.into();
+                    blue_total += arr[0] + arr[1] + arr[2] + arr[3];
+                }
+            }
+            let mut sum = blue_total;
+            if sum >= 32.0 * BM_K_LIMIT {
+                sum = 64.0 * BM_K_LIMIT - sum;
+            }
+            if sum >= BM_K_MAX_LIMIT * BM_K_LIMIT {
+                sum = BM_K_MAX_LIMIT * BM_K_LIMIT;
+            }
+            sum *= BM_K_MUL;
+            let after_blue = mask_val + sum;
+
+            out_val = after_hf.min(after_blue);
+            aq_map[iy * aq_map_stride + ix] = fast_pow2f(out_val * 1.442_695) * mul + add;
+        }
+    }
+}
+
+// ============================================================================
+// wasm32 SIMD128 implementation
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+pub fn compute_pre_erosion_wasm128(
+    token: archmage::Wasm128Token,
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    tile_x0: usize,
+    tile_y0: usize,
+    tile_x1: usize,
+    tile_y1: usize,
+) -> (Vec<f32>, usize, usize) {
+    use magetypes::simd::f32x4;
+
+    let x0 = tile_x0.saturating_sub(4);
+    let x1 = if tile_x1 < width {
+        tile_x1 + 4
+    } else {
+        tile_x1
+    };
+    let y_start = tile_y0.saturating_sub(4);
+    let y_end = if tile_y1 < height {
+        tile_y1 + 4
+    } else {
+        tile_y1
+    };
+
+    let diff_width = x1 - x0;
+    let pre_erosion_w = diff_width / 4;
+    let pre_erosion_h = (y_end - y_start) / 4;
+
+    // Pad diff_buffer to next multiple of 4 for SIMD loads/stores
+    let diff_buffer_len = (diff_width + 3) & !3;
+    let mut diff_buffer = vec![0.0_f32; diff_buffer_len];
+    let mut pre_erosion = vec![0.0_f32; pre_erosion_w * pre_erosion_h];
+
+    let max_x = width - 1;
+    let max_y = height - 1;
+
+    let quarter = f32x4::splat(token, 0.25);
+    let gamma_off = f32x4::splat(token, MATCH_GAMMA_OFFSET);
+    let zero = f32x4::splat(token, 0.0);
+    let eps_v = f32x4::splat(token, EPSILON);
+    let k_num_mul_v = f32x4::splat(token, K_NUM_MUL);
+    let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
+    let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
+    let limit_v = f32x4::splat(token, LIMIT);
+    let masking_mul_v = f32x4::splat(token, (MASKING_K_MUL * 1e8_f32).sqrt());
+    let masking_offset_v = f32x4::splat(token, MASKING_K_LOG_OFFSET);
+    let masking_scale = f32x4::splat(token, 0.25);
+
+    for y in y_start..y_end {
+        let yc = y.min(max_y);
+        let y2 = (y + 1).min(max_y);
+        let y1 = if y > 0 { (y - 1).min(max_y) } else { 0 };
+
+        let interior_start = if x0 == 0 { 1 } else { 0 };
+
+        // Scalar edges
+        for local_x in 0..interior_start.min(diff_width) {
+            let x = x0 + local_x;
+            let xc = x.min(max_x);
+            let x2 = (x + 1).min(max_x);
+            let x1_local = if x > 0 { (x - 1).min(max_x) } else { 0 };
+            let val = pre_erosion_pixel(xyb_y, width, yc, y1, y2, xc, x1_local, x2);
+            if (y - y_start) % 4 != 0 {
+                diff_buffer[local_x] += val;
+            } else {
+                diff_buffer[local_x] = val;
+            }
+        }
+
+        let mut local_x = interior_start;
+        let simd_end = if diff_width > 4 + interior_start {
+            diff_width - 3
+        } else {
+            interior_start
+        };
+
+        while local_x < simd_end {
+            let x = x0 + local_x;
+            let xc = x.min(max_x);
+
+            let top = f32x4::from_slice(token, &xyb_y[y1 * width + xc..]);
+            let bot = f32x4::from_slice(token, &xyb_y[y2 * width + xc..]);
+            let left = f32x4::from_slice(token, &xyb_y[yc * width + xc - 1..]);
+            let right = f32x4::from_slice(token, &xyb_y[yc * width + xc + 1..]);
+            let center = f32x4::from_slice(token, &xyb_y[yc * width + xc..]);
+
+            let base = quarter * (top + bot + left + right);
+
+            let v = (center + gamma_off).max(zero);
+            let v2 = v * v;
+            let v3 = v2 * v;
+            let num = k_num_mul_v.mul_add(v2, eps_v);
+            let den = k_den_mul_v.mul_add(v3, k_v_offset_v);
+            let gammac = den / num;
+
+            let raw_diff = gammac * (center - base);
+            let diff_sq = raw_diff * raw_diff;
+            let clamped = diff_sq.min(limit_v);
+            let result = masking_scale * (clamped.mul_add(masking_mul_v, masking_offset_v)).sqrt();
+
+            if (y - y_start) % 4 != 0 {
+                let existing = f32x4::from_slice(token, &diff_buffer[local_x..]);
+                let sum = existing + result;
+                let out: &mut [f32; 4] =
+                    (&mut diff_buffer[local_x..local_x + 4]).try_into().unwrap();
+                sum.store(out);
+            } else {
+                let out: &mut [f32; 4] =
+                    (&mut diff_buffer[local_x..local_x + 4]).try_into().unwrap();
+                result.store(out);
+            }
+
+            local_x += 4;
+        }
+
+        // Scalar remainder
+        while local_x < diff_width {
+            let x = x0 + local_x;
+            let xc = x.min(max_x);
+            let x2 = (x + 1).min(max_x);
+            let x1_local = if x > 0 { (x - 1).min(max_x) } else { 0 };
+            let val = pre_erosion_pixel(xyb_y, width, yc, y1, y2, xc, x1_local, x2);
+            if (y - y_start) % 4 != 0 {
+                diff_buffer[local_x] += val;
+            } else {
+                diff_buffer[local_x] = val;
+            }
+            local_x += 1;
+        }
+
+        if (y - y_start) % 4 == 3 {
+            let row_y = (y - y_start) / 4;
+            for bx in 0..pre_erosion_w {
+                let sum = diff_buffer[bx * 4]
+                    + diff_buffer[bx * 4 + 1]
+                    + diff_buffer[bx * 4 + 2]
+                    + diff_buffer[bx * 4 + 3];
+                pre_erosion[row_y * pre_erosion_w + bx] = sum * 0.25;
+            }
+        }
+    }
+
+    (pre_erosion, pre_erosion_w, pre_erosion_h)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
+#[archmage::arcane]
+pub fn per_block_modulations_wasm128(
+    token: archmage::Wasm128Token,
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    stride: usize,
+    butteraugli_target: f32,
+    scale: f32,
+    rect_x0_blocks: usize,
+    rect_y0_blocks: usize,
+    rect_w_blocks: usize,
+    rect_h_blocks: usize,
+    aq_map: &mut [f32],
+    aq_map_stride: usize,
+) {
+    use magetypes::simd::f32x4;
+
+    let base_level = 0.48 * scale;
+    let k_dampen_ramp_start = 2.0_f32;
+    let k_dampen_ramp_end = 14.0_f32;
+    let mut dampen = 1.0_f32;
+    if butteraugli_target >= k_dampen_ramp_start {
+        dampen = 1.0
+            - ((butteraugli_target - k_dampen_ramp_start)
+                / (k_dampen_ramp_end - k_dampen_ramp_start));
+        if dampen < 0.0 {
+            dampen = 0.0;
+        }
+    }
+    let mul = scale * dampen;
+    let add = (1.0 - dampen) * base_level;
+
+    let bias_v = f32x4::splat(token, GM_K_BIAS);
+    let zero_v = f32x4::splat(token, 0.0);
+    let eps_v = f32x4::splat(token, EPSILON);
+    let k_num_v = f32x4::splat(token, K_NUM_MUL);
+    let k_den_v = f32x4::splat(token, K_DEN_MUL);
+    let k_voff_v = f32x4::splat(token, K_V_OFFSET);
+    let valmin_v = f32x4::splat(token, HF_VALMIN_Y);
+    let bm_offset_v = f32x4::splat(token, BM_K_OFFSET);
+    let bm_limit_v = f32x4::splat(token, BM_K_LIMIT);
+
+    for iy in 0..rect_h_blocks {
+        let block_iy = rect_y0_blocks + iy;
+        let py = block_iy * 8;
+        for ix in 0..rect_w_blocks {
+            let block_ix = rect_x0_blocks + ix;
+            let px = block_ix * 8;
+
+            let mut out_val = aq_map[iy * aq_map_stride + ix];
+            out_val = compute_mask_scalar(out_val);
+
+            // GammaModulation with f32x4: two 4-wide loads per row (8 pixels = 2 SIMD loads)
+            let mut ratio_total = 0.0_f32;
+            for dy in 0..8 {
+                let row_off = (py + dy) * stride + px;
+                for half in 0..2 {
+                    let off = row_off + half * 4;
+                    let y_vals = f32x4::from_slice(token, &xyb_y[off..]);
+                    let x_vals = f32x4::from_slice(token, &xyb_x[off..]);
+                    let iny = y_vals + bias_v;
+                    let r = (iny - x_vals).max(zero_v);
+                    let g = (iny + x_vals).max(zero_v);
+                    let r2 = r * r;
+                    let g2 = g * g;
+                    let r_num = k_num_v.mul_add(r2, eps_v);
+                    let r_den = k_den_v.mul_add(r2 * r, k_voff_v);
+                    let g_num = k_num_v.mul_add(g2, eps_v);
+                    let g_den = k_den_v.mul_add(g2 * g, k_voff_v);
+                    let ratios = r_num / r_den + g_num / g_den;
+                    let arr: [f32; 4] = ratios.into();
+                    ratio_total += arr[0] + arr[1] + arr[2] + arr[3];
+                }
+            }
+            let overall_ratio = ratio_total * (0.5 / 64.0);
+            out_val += GM_K_GAMMA * fast_log2f(overall_ratio);
+
+            // HfModulation with f32x4
+            let mask_val = out_val;
+            let mut hf_total = 0.0_f32;
+            for dy in 0..8 {
+                let row_off = (py + dy) * stride + px;
+                let next_row_off = if dy == 7 {
+                    row_off
+                } else {
+                    (py + dy + 1) * stride + px
+                };
+                for half in 0..2 {
+                    let off = row_off + half * 4;
+                    let cur = f32x4::from_slice(token, &xyb_y[off..]);
+                    let below = f32x4::from_slice(token, &xyb_y[next_row_off + half * 4..]);
+                    let bd = (cur - below).abs().min(valmin_v);
+                    let bd_arr: [f32; 4] = bd.into();
+                    hf_total += bd_arr[0] + bd_arr[1] + bd_arr[2] + bd_arr[3];
+
                     let cur_arr: [f32; 4] = cur.into();
                     let right = if half == 0 {
                         f32x4::from_slice(token, &xyb_y[off + 1..])
