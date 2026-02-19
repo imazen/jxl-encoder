@@ -412,24 +412,42 @@ impl VarDctEncoder {
             self.distance * 0.62
         };
 
-        // Step 1: Compute float quant field (independent of global_scale)
-        let (quant_field_float, masking) = compute_quant_field_float(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            padded_width,
-            padded_height,
-            xsize_blocks,
-            ysize_blocks,
-            distance_for_iqf,
-            self.profile.k_ac_quant,
-        );
+        // Step 1: Compute float quant field.
+        //
+        // libjxl effort gating (enc_heuristics.cc:1097-1128):
+        // - effort < 5 (speed_tier > kHare): flat quant field = 0.79/distance
+        // - effort >= 5 (speed_tier <= kHare): adaptive via InitialQuantField
+        let use_adaptive_quant = self.profile.effort >= 5;
 
-        // Step 2: Compute distance params with content-adaptive global_scale.
-        // Uses median and MAD of the quant field to adapt quantization precision
-        // to image content (matches libjxl ComputeGlobalScaleAndQuant).
-        let mut params =
-            DistanceParams::compute_from_quant_field(self.distance, &quant_field_float);
+        let (quant_field_float, masking) = if use_adaptive_quant {
+            compute_quant_field_float(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                distance_for_iqf,
+                self.profile.k_ac_quant,
+            )
+        } else {
+            // Flat quant field for low effort (matches libjxl enc_heuristics.cc:1105-1106)
+            let q = 0.79 / self.distance;
+            let flat_qf = vec![q; xsize_blocks * ysize_blocks];
+            let masking_val = 1.0 / (q + 0.001);
+            let flat_masking = vec![masking_val; xsize_blocks * ysize_blocks];
+            (flat_qf, flat_masking)
+        };
+
+        // Step 2: Compute distance params with effort-matched global_scale.
+        //
+        // libjxl computes global_scale from a fixed q parameter, NOT from the
+        // quant field content. The adaptive median/MAD formula is only used
+        // inside the butteraugli loop (effort >= 8).
+        // - effort < 5: q = 0.79/d → global_scale = 65536 * 0.79 / 5.0
+        // - effort >= 5: q = 0.39/d → global_scale = 65536 * 0.39 / 5.0
+        let mut params = DistanceParams::compute_for_effort(self.distance, self.profile.effort);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
@@ -1084,9 +1102,8 @@ impl VarDctEncoder {
         let mut quant_field = quant_field.to_vec();
         adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
 
-        // Compute distance params from precomputed quant field
-        let mut params =
-            DistanceParams::compute_from_quant_field(self.distance, &precomputed.quant_field_float);
+        // Compute distance params with effort-matched global_scale
+        let mut params = DistanceParams::compute_for_effort(self.distance, self.profile.effort);
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
@@ -1287,8 +1304,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: centralize effort gating + CfL two-pass refinement
-        const EXPECTED_HASH: u64 = 0x6492127990b31b6c;
+        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
+        const EXPECTED_HASH: u64 = 0x90645bea38ecf366;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1316,8 +1333,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: per-histogram HybridUint config optimization
-        const EXPECTED_HASH: u64 = 0xbfde6a6515511bb;
+        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
+        const EXPECTED_HASH: u64 = 0x2b2dd2aaba0b53f4;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1357,8 +1374,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        const EXPECTED_HASH: u64 = 0x0fd203da322970f5;
+        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
+        const EXPECTED_HASH: u64 = 0x5f4f631b2291961f;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1393,8 +1410,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: centralize effort gating + CfL two-pass refinement
-        const EXPECTED_HASH: u64 = 0x4b0bbaae02233220;
+        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
+        const EXPECTED_HASH: u64 = 0x26030415575b53c1;
         assert_eq!(
             hash,
             EXPECTED_HASH,

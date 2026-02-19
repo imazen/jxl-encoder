@@ -474,8 +474,11 @@ pub fn write_entropy_code_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter
 
 /// Write context map for ANS entropy code.
 ///
-/// Supports both simple format (≤8 histograms, raw bits) and non-simple format
-/// (>8 histograms, Huffman-encoded with optional MTF transform).
+/// Matches libjxl's EncodeContextMap: always compares simple (raw bits) vs
+/// non-simple (Huffman+MTF) and picks whichever is smaller. Previous code
+/// unconditionally used simple for ≤8 histograms, which wastes bits when the
+/// context map is large and repetitive (e.g. 1485 AC contexts with 8 histograms:
+/// simple = 4455 bits, Huffman+MTF ≈ 800 bits).
 fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter) -> Result<()> {
     let num_histograms = code.histograms.len();
 
@@ -486,35 +489,53 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
         return Ok(());
     }
 
-    if num_histograms <= 8 {
-        // Simple context map with multiple histograms
-        // bits_per_entry: 1 = 2 histos, 2 = 4 histos, 3 = 8 histos
-        let nbits = if num_histograms <= 2 {
-            1
-        } else if num_histograms <= 4 {
-            2
-        } else {
-            3
-        };
-        writer.write(1, 1)?; // simple_context_map = true
-        writer.write(2, nbits as u64)?;
-        for &ctx in &code.context_map {
-            writer.write(nbits, ctx as u64)?;
+    // Compute entry_bits for simple encoding: CeilLog2Nonzero(num_histograms)
+    let entry_bits = ceil_log2_nonzero_usize(num_histograms);
+
+    // Simple encoding is only possible when entry_bits < 4 (≤8 histograms).
+    // When possible, compare simple vs non-simple and pick the cheaper one.
+    // This matches libjxl enc_context_map.cc:113.
+    if entry_bits < 4 {
+        let simple_cost = 3 + entry_bits * code.context_map.len(); // 1 (is_simple) + 2 (nbits) + data
+
+        // Write non-simple to a scratch writer to measure actual cost
+        let mut scratch = BitWriter::with_capacity(code.context_map.len());
+        write_context_map_nonsimple(&code.context_map, &mut scratch)?;
+        let nonsimple_cost = scratch.bits_written();
+
+        if simple_cost <= nonsimple_cost {
+            // Simple is cheaper (or equal), use it
+            writer.write(1, 1)?; // simple_context_map = true
+            writer.write(2, entry_bits as u64)?;
+            for &ctx in &code.context_map {
+                writer.write(entry_bits, ctx as u64)?;
+            }
+            return Ok(());
         }
+        // Non-simple is cheaper — copy the scratch bits
+        let scratch_bytes = scratch.finish_with_padding();
+        let bits_to_copy = nonsimple_cost;
+        // Copy bit-by-bit from scratch to writer (scratch is byte-aligned but
+        // writer may not be). Use the raw bytes and copy the exact bit count.
+        copy_bits(&scratch_bytes, bits_to_copy, writer)?;
         return Ok(());
     }
 
-    // Non-simple context map for > 8 histograms.
-    // Format: is_simple=0, use_mtf, then Huffman-encoded context map entries.
-    //
-    // Try both direct and MTF, pick whichever has lower estimated cost.
-    let direct_tokens = &code.context_map;
-    let mtf_tokens = move_to_front_transform(&code.context_map);
+    // > 8 histograms: always use non-simple
+    write_context_map_nonsimple(&code.context_map, writer)
+}
 
-    let direct_cost = estimate_context_map_cost(direct_tokens);
+/// Write a non-simple context map (Huffman-encoded with optional MTF).
+///
+/// Format: is_simple=0, use_mtf, lz77_enabled=0, then Huffman prefix code + data.
+fn write_context_map_nonsimple(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
+    // Try both direct and MTF, pick whichever has lower estimated cost.
+    let mtf_tokens = move_to_front_transform(context_map);
+
+    let direct_cost = estimate_context_map_cost(context_map);
     let mtf_cost = estimate_context_map_cost(&mtf_tokens);
     let use_mtf = mtf_cost < direct_cost;
-    let tokens: &[u8] = if use_mtf { &mtf_tokens } else { direct_tokens };
+    let tokens: &[u8] = if use_mtf { &mtf_tokens } else { context_map };
 
     // is_simple=0, use_mtf, lz77_enabled=0 (3 bits packed)
     let header_bits = if use_mtf { 0b010u64 } else { 0b000u64 };
@@ -558,7 +579,6 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
     // Write prefix code tree
     if length > 1 {
         let pc = PrefixCode { depths, bits };
-        // Write the prefix code directly using the internal function
         write_prefix_code(&pc, writer)?;
     }
 
@@ -573,6 +593,22 @@ fn write_context_map_for_ans(code: &OwnedAnsEntropyCode, writer: &mut BitWriter)
         writer.write(total_bits, data)?;
     }
 
+    Ok(())
+}
+
+/// Copy `num_bits` from a byte slice into a BitWriter.
+fn copy_bits(src: &[u8], num_bits: usize, writer: &mut BitWriter) -> Result<()> {
+    let full_bytes = num_bits / 8;
+    let remaining_bits = num_bits % 8;
+
+    for &byte in &src[..full_bytes] {
+        writer.write(8, byte as u64)?;
+    }
+    if remaining_bits > 0 {
+        let last_byte = src[full_bytes];
+        let mask = (1u64 << remaining_bits) - 1;
+        writer.write(remaining_bits, (last_byte as u64) & mask)?;
+    }
     Ok(())
 }
 

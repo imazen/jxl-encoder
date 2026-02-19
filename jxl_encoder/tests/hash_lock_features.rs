@@ -317,8 +317,8 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
-        349,                // lossy_defaults_rgb_32x32
+        0x2f946816c73ceca8, // Updated: fix global_scale effort-matched parity
+        345,                // lossy_defaults_rgb_32x32
     );
 }
 
@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
-        3269,               // lossy_defaults_rgb_48x48_noise
+        0x2817da4bc2fdd224, // Updated: fix global_scale effort-matched parity
+        3666,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -357,8 +357,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0xba8f53c05670133c, // Updated: patch cost-benefit gating
-        656,                // lossy_defaults_rgb_13x17
+        0xdc1c1acd784f91f1, // Updated: fix global_scale effort-matched parity
+        667,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -377,8 +377,8 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x8993f978dcb88d1f, // Updated: patch cost-benefit gating
-        786,                // lossy_rgba_32x32
+        0x68268ab3709e9879, // Updated: fix global_scale effort-matched parity
+        781,                // lossy_rgba_32x32
     );
 }
 
@@ -397,8 +397,8 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0xf8e73551aabd215c, // Updated: patch cost-benefit gating
-        341,                // lossy_rgb16_32x32
+        0xf79419e591c2cd27, // Updated: fix global_scale effort-matched parity
+        343,                // lossy_rgb16_32x32
     );
 }
 
@@ -418,8 +418,8 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x099fbafbad085de5, // Updated: patch cost-benefit gating
-        293,                // lossy_no_ans_huffman
+        0x819285fe075b4261, // Updated: fix global_scale effort-matched parity
+        290,                // lossy_no_ans_huffman
     );
 }
 
@@ -439,8 +439,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x82b462945728c5a0, // Updated: patch cost-benefit gating
-        369,                // lossy_no_gaborish
+        0xbb22a6432124e676, // Updated: fix global_scale effort-matched parity
+        365,                // lossy_no_gaborish
     );
 }
 
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
-        3269,               // lossy_with_noise
+        0x2817da4bc2fdd224, // Updated: fix global_scale effort-matched parity
+        3666,               // lossy_with_noise
     );
 }
 
@@ -481,8 +481,8 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xbc4230ffa85dc40a, // Updated: patch cost-benefit gating
-        349,                // lossy_no_error_diffusion
+        0xabba0fd86c9849dc, // Updated: fix global_scale effort-matched parity
+        344,                // lossy_no_error_diffusion
     );
 }
 
@@ -502,8 +502,8 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
-        349,                // lossy_no_pixel_domain_loss
+        0x2f946816c73ceca8, // Updated: fix global_scale effort-matched parity
+        345,                // lossy_no_pixel_domain_loss
     );
 }
 
@@ -523,8 +523,8 @@ fn lossy_no_butteraugli() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xe6d27ac1851ac7f0, // Updated: patch cost-benefit gating
-        349,                // lossy_no_butteraugli
+        0x2f946816c73ceca8, // Updated: fix global_scale effort-matched parity
+        345,                // lossy_no_butteraugli
     );
 }
 
@@ -544,8 +544,8 @@ fn lossy_force_dct8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x8fffa0e078733d87, // Updated: patch cost-benefit gating
-        419,                // lossy_force_dct8
+        0x2402997c01de12e0, // Updated: fix global_scale effort-matched parity
+        413,                // lossy_force_dct8
     );
 }
 
@@ -565,8 +565,8 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xd717df8d0daa8acf, // Updated: patch cost-benefit gating
-        317,                // lossy_force_dct16x16
+        0x8b6c113f26a47269, // Updated: fix global_scale effort-matched parity
+        315,                // lossy_force_dct16x16
     );
 }
 
@@ -587,8 +587,8 @@ fn lossy_force_identity() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x77bd74b2b317c082, // Updated: fix AdjustQuantBlockAC effort gating (>= 5 not <= 5)
-        580,                // lossy_force_identity
+        0x02ef2487cf4355ed, // Updated: fix global_scale effort-matched parity
+        570,                // lossy_force_identity
     );
 }
 
@@ -609,8 +609,8 @@ fn lossy_force_dct2x2() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xec2dd26a95b3f887,
-        512, // lossy_force_dct2x2
+        0x16fa005a7adbd25c,
+        519, // lossy_force_dct2x2
     );
 }
 
@@ -631,8 +631,8 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xc9e6ba8f0dfcbe75, // Updated: patch cost-benefit gating
-        551,                // lossy_force_dct4x4
+        0xcb87cac24b0845a1, // Updated: fix global_scale effort-matched parity
+        543,                // lossy_force_dct4x4
     );
 }
 
@@ -653,8 +653,8 @@ fn lossy_force_afv0() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xd806f39e18d6a16b, // Updated: patch cost-benefit gating
-        558,                // lossy_force_afv0
+        0x7ceb49c2b41c26b5, // Updated: fix global_scale effort-matched parity
+        545,                // lossy_force_afv0
     );
 }
 
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
-        3269,               // lossy_with_lz77_greedy
+        0x2817da4bc2fdd224, // Updated: fix global_scale effort-matched parity
+        3666,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xfe49d0611ac2b756, // Updated: patch cost-benefit gating
-        3269,               // lossy_with_lz77_rle
+        0x2817da4bc2fdd224, // Updated: fix global_scale effort-matched parity
+        3666,               // lossy_with_lz77_rle
     );
 }
 
@@ -717,8 +717,8 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x1f08929e3c53d92e, // Updated: patch cost-benefit gating
-        400,                // lossy_distance_05
+        0x1d394f045d77344d, // Updated: fix global_scale effort-matched parity
+        394,                // lossy_distance_05
     );
 }
 
@@ -737,8 +737,8 @@ fn lossy_distance_3() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x3feb9ad697f0bf9d, // Updated: patch cost-benefit gating
-        270,                // lossy_distance_3
+        0xd3c4cbb65e3c8774, // Updated: fix global_scale effort-matched parity
+        273,                // lossy_distance_3
     );
 }
 
@@ -767,8 +767,8 @@ fn lossy_all_off() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xf7b7eef007f098c9, // Updated: patch cost-benefit gating
-        403,                // lossy_all_off
+        0x524aa3cec262bab0, // Updated: fix global_scale effort-matched parity
+        394,                // lossy_all_off
     );
 }
 
@@ -787,8 +787,8 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x03260f4e4006f0d0, // Updated: patch cost-benefit gating
-        335,                // lossy_bgr8
+        0xbb7f1830f423a231, // Updated: fix global_scale effort-matched parity
+        336,                // lossy_bgr8
     );
 }
 
