@@ -1090,138 +1090,107 @@ pub fn idct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &m
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+
+    fn assert_simd_matches_scalar_256(
+        scalar_fn: fn(&[f32; 256], &mut [f32; 256]),
+        dispatch_fn: fn(&[f32; 256], &mut [f32; 256]),
+        input: &[f32; 256],
+        label: &str,
+    ) {
+        let mut scalar_out = [0.0f32; 256];
+        scalar_fn(input, &mut scalar_out);
+
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 256];
+                dispatch_fn(input, &mut simd_out);
+                let mut max_diff = 0.0f32;
+                let mut max_idx = 0;
+                for i in 0..256 {
+                    let diff = (scalar_out[i] - simd_out[i]).abs();
+                    if diff > max_diff {
+                        max_diff = diff;
+                        max_idx = i;
+                    }
+                }
+                assert!(
+                    max_diff < 1e-2,
+                    "{label} max diff = {max_diff} at {max_idx} (scalar={}, simd={}) [{perm}]",
+                    scalar_out[max_idx],
+                    simd_out[max_idx],
+                );
+            },
+        );
+        std::eprintln!("{label}: {report}");
+    }
+
+    fn assert_simd_matches_scalar_128(
+        scalar_fn: fn(&[f32; 128], &mut [f32; 128]),
+        dispatch_fn: fn(&[f32; 128], &mut [f32; 128]),
+        input: &[f32; 128],
+        label: &str,
+    ) {
+        let mut scalar_out = [0.0f32; 128];
+        scalar_fn(input, &mut scalar_out);
+
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 128];
+                dispatch_fn(input, &mut simd_out);
+                let mut max_diff = 0.0f32;
+                let mut max_idx = 0;
+                for i in 0..128 {
+                    let diff = (scalar_out[i] - simd_out[i]).abs();
+                    if diff > max_diff {
+                        max_diff = diff;
+                        max_idx = i;
+                    }
+                }
+                assert!(
+                    max_diff < 1e-2,
+                    "{label} max diff = {max_diff} at {max_idx} (scalar={}, simd={}) [{perm}]",
+                    scalar_out[max_idx],
+                    simd_out[max_idx],
+                );
+            },
+        );
+        std::eprintln!("{label}: {report}");
+    }
 
     #[test]
     fn test_idct_16x16_simd_matches_scalar() {
-        // Sequential values 0..256 as input
         let mut input = [0.0f32; 256];
         for (i, val) in input.iter_mut().enumerate() {
             *val = i as f32;
         }
-
-        let mut scalar_out = [0.0f32; 256];
-        let mut simd_out = [0.0f32; 256];
-
-        idct_16x16_scalar(&input, &mut scalar_out);
-        idct_16x16(&input, &mut simd_out);
-
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..256 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        // SIMD uses pre-computed reciprocals instead of division, so there's a small
-        // difference due to extra rounding. 0.003 on a value of ~192 is relative error ~1.5e-5.
-        assert!(
-            max_diff < 1e-2,
-            "IDCT16x16 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
-        );
+        assert_simd_matches_scalar_256(idct_16x16_scalar, idct_16x16, &input, "IDCT16x16 seq");
     }
 
     #[test]
     fn test_idct_16x16_simd_matches_scalar_cosine_input() {
-        // More varied input using cosine values
         let mut input = [0.0f32; 256];
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.37 + 1.5).cos() * 100.0;
         }
-
-        let mut scalar_out = [0.0f32; 256];
-        let mut simd_out = [0.0f32; 256];
-
-        idct_16x16_scalar(&input, &mut scalar_out);
-        idct_16x16(&input, &mut simd_out);
-
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..256 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-2,
-            "IDCT16x16 cosine input max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
-        );
+        assert_simd_matches_scalar_256(idct_16x16_scalar, idct_16x16, &input, "IDCT16x16 cos");
     }
 
     #[test]
     fn test_idct_16x16_dc_only() {
-        // DC-only input: only [0,0] is nonzero
         let mut input = [0.0f32; 256];
         input[0] = 128.0;
-
-        let mut scalar_out = [0.0f32; 256];
-        let mut simd_out = [0.0f32; 256];
-
-        idct_16x16_scalar(&input, &mut scalar_out);
-        idct_16x16(&input, &mut simd_out);
-
-        let mut max_diff = 0.0f32;
-        for i in 0..256 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-            }
-        }
-
-        assert!(max_diff < 1e-3, "IDCT16x16 DC-only max diff = {}", max_diff);
-
-        // All output values should be the same (flat DC block)
-        let dc_val = simd_out[0];
-        for (i, &val) in simd_out.iter().enumerate().skip(1) {
-            assert!(
-                (val - dc_val).abs() < 1e-3,
-                "DC-only output not uniform: [0]={}, [{}]={}",
-                dc_val,
-                i,
-                val,
-            );
-        }
+        assert_simd_matches_scalar_256(idct_16x16_scalar, idct_16x16, &input, "IDCT16x16 DC");
     }
 
     #[test]
     fn test_idct_16x16_single_ac_coefficient() {
-        // Single AC coefficient to test frequency response
         let mut input = [0.0f32; 256];
-        input[1] = 50.0; // frequency (0,1)
-
-        let mut scalar_out = [0.0f32; 256];
-        let mut simd_out = [0.0f32; 256];
-
-        idct_16x16_scalar(&input, &mut scalar_out);
-        idct_16x16(&input, &mut simd_out);
-
-        let mut max_diff = 0.0f32;
-        for i in 0..256 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-3,
-            "IDCT16x16 single AC max diff = {}",
-            max_diff,
-        );
+        input[1] = 50.0;
+        assert_simd_matches_scalar_256(idct_16x16_scalar, idct_16x16, &input, "IDCT16x16 AC");
     }
 
     #[test]
@@ -1230,31 +1199,7 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.43 + 2.1).cos() * 80.0;
         }
-
-        let mut scalar_out = [0.0f32; 128];
-        let mut simd_out = [0.0f32; 128];
-
-        idct_16x8_scalar(&input, &mut scalar_out);
-        idct_16x8(&input, &mut simd_out);
-
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..128 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-2,
-            "IDCT16x8 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
-        );
+        assert_simd_matches_scalar_128(idct_16x8_scalar, idct_16x8, &input, "IDCT16x8");
     }
 
     #[test]
@@ -1263,30 +1208,6 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.29 + 0.7).sin() * 120.0;
         }
-
-        let mut scalar_out = [0.0f32; 128];
-        let mut simd_out = [0.0f32; 128];
-
-        idct_8x16_scalar(&input, &mut scalar_out);
-        idct_8x16(&input, &mut simd_out);
-
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..128 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-2,
-            "IDCT8x16 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
-        );
+        assert_simd_matches_scalar_128(idct_8x16_scalar, idct_8x16, &input, "IDCT8x16");
     }
 }

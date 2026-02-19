@@ -537,6 +537,7 @@ pub fn denoise_channel_wasm128(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     fn make_test_data(width: usize, height: usize) -> (alloc::vec::Vec<f32>, alloc::vec::Vec<f32>) {
@@ -562,8 +563,6 @@ mod tests {
         let (orig, y_channel) = make_test_data(width, height);
 
         let mut dest_scalar = orig.clone();
-        let mut dest_dispatch = orig.clone();
-
         denoise_channel_scalar(
             &mut dest_scalar,
             &orig,
@@ -573,27 +572,32 @@ mod tests {
             &noise_lut,
             denoise_scale,
         );
-        denoise_channel(
-            &mut dest_dispatch,
-            &orig,
-            &y_channel,
-            width,
-            height,
-            &noise_lut,
-            denoise_scale,
-        );
 
-        for i in 0..orig.len() {
-            let diff = (dest_scalar[i] - dest_dispatch[i]).abs();
-            assert!(
-                diff < 1e-4,
-                "Mismatch at pixel {}: scalar={} dispatch={} diff={}",
-                i,
-                dest_scalar[i],
-                dest_dispatch[i],
-                diff,
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut dest_dispatch = orig.clone();
+                denoise_channel(
+                    &mut dest_dispatch,
+                    &orig,
+                    &y_channel,
+                    width,
+                    height,
+                    &noise_lut,
+                    denoise_scale,
+                );
+                for i in 0..orig.len() {
+                    let diff = (dest_scalar[i] - dest_dispatch[i]).abs();
+                    assert!(
+                        diff < 1e-4,
+                        "Mismatch at pixel {i}: scalar={} dispatch={} diff={diff} [{perm}]",
+                        dest_scalar[i],
+                        dest_dispatch[i],
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -645,7 +649,6 @@ mod tests {
 
     #[test]
     fn test_denoise_small_image() {
-        // Image just barely large enough for one SIMD group (width=12 for AVX2)
         let width = 12;
         let height = 8;
         let noise_lut = [0.05f32; NUM_NOISE_POINTS];
@@ -653,8 +656,6 @@ mod tests {
 
         let (orig, y_channel) = make_test_data(width, height);
         let mut dest_scalar = orig.clone();
-        let mut dest_dispatch = orig.clone();
-
         denoise_channel_scalar(
             &mut dest_scalar,
             &orig,
@@ -664,28 +665,31 @@ mod tests {
             &noise_lut,
             denoise_scale,
         );
-        denoise_channel(
-            &mut dest_dispatch,
-            &orig,
-            &y_channel,
-            width,
-            height,
-            &noise_lut,
-            denoise_scale,
-        );
 
-        for i in 0..orig.len() {
-            let diff = (dest_scalar[i] - dest_dispatch[i]).abs();
-            assert!(
-                diff < 1e-4,
-                "Mismatch at pixel {} ({}x{}): scalar={} dispatch={} diff={}",
-                i,
-                width,
-                height,
-                dest_scalar[i],
-                dest_dispatch[i],
-                diff,
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut dest_dispatch = orig.clone();
+                denoise_channel(
+                    &mut dest_dispatch,
+                    &orig,
+                    &y_channel,
+                    width,
+                    height,
+                    &noise_lut,
+                    denoise_scale,
+                );
+                for i in 0..orig.len() {
+                    let diff = (dest_scalar[i] - dest_dispatch[i]).abs();
+                    assert!(
+                        diff < 1e-4,
+                        "Mismatch at pixel {i} ({width}x{height}): scalar={} dispatch={} diff={diff} [{perm}]",
+                        dest_scalar[i],
+                        dest_dispatch[i],
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

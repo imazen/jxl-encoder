@@ -1084,6 +1084,7 @@ fn neon_transpose_4x4(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     #[test]
@@ -1111,65 +1112,32 @@ mod tests {
 
     #[test]
     fn test_vectorized_butterfly_vs_scalar() {
-        // Test a single 1D DCT by putting the same 8 values
-        // in all lanes of the 8 registers, running vectorized butterfly,
-        // and comparing lane 0 of the outputs to scalar dct1d_8.
         let input = [1.0f32, 0.5, -0.3, 0.8, -0.1, 0.6, -0.4, 0.9];
-        let mut scalar_out = input;
-        dct1d_8_scalar(&mut scalar_out);
-
-        // Test SIMD via full dct_8x8:
-        // Create input where row 0 = input, all other rows = 0
-        // After column-DCT: all 8 column-DCT outputs contain row 0 value (since other rows are 0)
-        // Actually that doesn't test what I want.
-
-        // Instead, create a diagonal matrix where each row has the same values
-        // This won't isolate the butterfly. Let me think differently.
-        //
-        // The vectorized butterfly processes 8 *independent* 1D DCTs at once.
-        // Each lane represents one independent DCT.
-        // In the full dct_8x8, the first butterfly processes columns (one column per lane).
-        //
-        // To test: create a matrix where column 0 = input values, all other columns = 0.
-        // Then the column-DCT output for lane 0 = scalar DCT of input.
 
         let mut block = [0.0f32; 64];
-        // Set column 0 to our test values (row-major: block[r*8 + 0] = input[r])
         for r in 0..8 {
             block[r * 8] = input[r];
         }
-
-        let mut dct_out = [0.0f32; 64];
         let mut scalar_2d_out = [0.0f32; 64];
-
-        dct_8x8(&block, &mut dct_out);
         dct_8x8_scalar(&block, &mut scalar_2d_out);
 
-        // Compare all 64 values
-        let mut max_diff = 0.0f32;
-        for i in 0..64 {
-            let diff = (dct_out[i] - scalar_2d_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-            }
-        }
-
-        // Also print the first few values for debugging
-        for i in 0..8 {
-            let d = (dct_out[i] - scalar_2d_out[i]).abs();
-            if d > 1e-5 {
-                panic!(
-                    "Mismatch at [{}]: simd={:.6} scalar={:.6} diff={:.6}",
-                    i, dct_out[i], scalar_2d_out[i], d
-                );
-            }
-        }
-
-        assert!(
-            max_diff < 1e-5,
-            "Max diff between SIMD and scalar dct_8x8: {}",
-            max_diff
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut dct_out = [0.0f32; 64];
+                dct_8x8(&block, &mut dct_out);
+                for i in 0..64 {
+                    let diff = (dct_out[i] - scalar_2d_out[i]).abs();
+                    assert!(
+                        diff < 1e-5,
+                        "Mismatch at [{i}]: simd={:.6} scalar={:.6} diff={diff:.6} [{perm}]",
+                        dct_out[i],
+                        scalar_2d_out[i],
+                    );
+                }
+            },
         );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1178,22 +1146,25 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.37 + 1.5).cos();
         }
-
         let mut scalar_out = [0.0f32; 64];
-        let mut simd_out = [0.0f32; 64];
-
         dct_8x8_scalar(&input, &mut scalar_out);
-        dct_8x8(&input, &mut simd_out);
 
-        for i in 0..64 {
-            assert!(
-                (scalar_out[i] - simd_out[i]).abs() < 1e-5,
-                "DCT mismatch at {}: scalar={} simd={}",
-                i,
-                scalar_out[i],
-                simd_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 64];
+                dct_8x8(&input, &mut simd_out);
+                for i in 0..64 {
+                    assert!(
+                        (scalar_out[i] - simd_out[i]).abs() < 1e-5,
+                        "DCT mismatch at {i}: scalar={} simd={} [{perm}]",
+                        scalar_out[i],
+                        simd_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1202,22 +1173,25 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.37 + 1.5).cos();
         }
-
         let mut scalar_out = [0.0f32; 64];
-        let mut simd_out = [0.0f32; 64];
-
         idct_8x8_scalar(&input, &mut scalar_out);
-        idct_8x8(&input, &mut simd_out);
 
-        for i in 0..64 {
-            assert!(
-                (scalar_out[i] - simd_out[i]).abs() < 1e-5,
-                "IDCT mismatch at {}: scalar={} simd={}",
-                i,
-                scalar_out[i],
-                simd_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 64];
+                idct_8x8(&input, &mut simd_out);
+                for i in 0..64 {
+                    assert!(
+                        (scalar_out[i] - simd_out[i]).abs() < 1e-5,
+                        "IDCT mismatch at {i}: scalar={} simd={} [{perm}]",
+                        scalar_out[i],
+                        simd_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1226,20 +1200,24 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = (i as f32 * 0.1).sin();
         }
-        let mut dct_out = [0.0f32; 64];
-        let mut idct_out = [0.0f32; 64];
 
-        dct_8x8(&input, &mut dct_out);
-        idct_8x8(&dct_out, &mut idct_out);
-
-        for i in 0..64 {
-            assert!(
-                (input[i] - idct_out[i]).abs() < 1e-4,
-                "SIMD roundtrip mismatch at {}: {} vs {}",
-                i,
-                input[i],
-                idct_out[i]
-            );
-        }
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut dct_out = [0.0f32; 64];
+                let mut idct_out = [0.0f32; 64];
+                dct_8x8(&input, &mut dct_out);
+                idct_8x8(&dct_out, &mut idct_out);
+                for i in 0..64 {
+                    assert!(
+                        (input[i] - idct_out[i]).abs() < 1e-4,
+                        "SIMD roundtrip mismatch at {i}: {} vs {} [{perm}]",
+                        input[i],
+                        idct_out[i]
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 }

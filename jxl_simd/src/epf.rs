@@ -1717,6 +1717,7 @@ pub fn epf_step1_neon(
 #[cfg(test)]
 mod tests {
     extern crate alloc;
+    extern crate std;
     use super::*;
     use alloc::vec;
     use alloc::vec::Vec;
@@ -1874,47 +1875,49 @@ mod tests {
             border_mul,
         );
 
-        // SIMD (via dispatch)
-        let mut out_x = vec![0.0f32; n];
-        let mut out_y = vec![0.0f32; n];
-        let mut out_b = vec![0.0f32; n];
-        epf_step2(
-            &in_x,
-            &in_y,
-            &in_b,
-            &mut out_x,
-            &mut out_y,
-            &mut out_b,
-            &inv_sigma,
-            xsb,
-            w,
-            h,
-            sigma_scale,
-            border_mul,
-        );
+        // SIMD (via dispatch) — test all token permutations
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut out_x = vec![0.0f32; n];
+                let mut out_y = vec![0.0f32; n];
+                let mut out_b = vec![0.0f32; n];
+                epf_step2(
+                    &in_x,
+                    &in_y,
+                    &in_b,
+                    &mut out_x,
+                    &mut out_y,
+                    &mut out_b,
+                    &inv_sigma,
+                    xsb,
+                    w,
+                    h,
+                    sigma_scale,
+                    border_mul,
+                );
 
-        let mut max_err = 0.0f32;
-        for i in 0..n {
-            let ex = (out_x[i] - ref_x[i]).abs();
-            let ey = (out_y[i] - ref_y[i]).abs();
-            let eb = (out_b[i] - ref_b[i]).abs();
-            let err = ex.max(ey).max(eb);
-            if err > max_err {
-                max_err = err;
-            }
-            assert!(
-                err < 1e-4,
-                "step2 mismatch at pixel {}: SIMD=({},{},{}) scalar=({},{},{}) err={}",
-                i,
-                out_x[i],
-                out_y[i],
-                out_b[i],
-                ref_x[i],
-                ref_y[i],
-                ref_b[i],
-                err,
-            );
-        }
+                for i in 0..n {
+                    let ex = (out_x[i] - ref_x[i]).abs();
+                    let ey = (out_y[i] - ref_y[i]).abs();
+                    let eb = (out_b[i] - ref_b[i]).abs();
+                    let err = ex.max(ey).max(eb);
+                    assert!(
+                        err < 1e-4,
+                        "step2 mismatch at pixel {}: SIMD=({},{},{}) scalar=({},{},{}) err={} [{perm}]",
+                        i,
+                        out_x[i],
+                        out_y[i],
+                        out_b[i],
+                        ref_x[i],
+                        ref_y[i],
+                        ref_b[i],
+                        err,
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     /// SIMD step1 must match scalar step1 on varied input.
@@ -1967,46 +1970,48 @@ mod tests {
             border_mul,
         );
 
-        let mut out_x = vec![0.0f32; n];
-        let mut out_y = vec![0.0f32; n];
-        let mut out_b = vec![0.0f32; n];
-        epf_step1(
-            &in_x,
-            &in_y,
-            &in_b,
-            &mut out_x,
-            &mut out_y,
-            &mut out_b,
-            &inv_sigma,
-            xsb,
-            w,
-            h,
-            sigma_scale,
-            border_mul,
-        );
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut out_x = vec![0.0f32; n];
+                let mut out_y = vec![0.0f32; n];
+                let mut out_b = vec![0.0f32; n];
+                epf_step1(
+                    &in_x,
+                    &in_y,
+                    &in_b,
+                    &mut out_x,
+                    &mut out_y,
+                    &mut out_b,
+                    &inv_sigma,
+                    xsb,
+                    w,
+                    h,
+                    sigma_scale,
+                    border_mul,
+                );
 
-        let mut max_err = 0.0f32;
-        for i in 0..n {
-            let ex = (out_x[i] - ref_x[i]).abs();
-            let ey = (out_y[i] - ref_y[i]).abs();
-            let eb = (out_b[i] - ref_b[i]).abs();
-            let err = ex.max(ey).max(eb);
-            if err > max_err {
-                max_err = err;
-            }
-            assert!(
-                err < 1e-4,
-                "step1 mismatch at pixel {}: SIMD=({},{},{}) scalar=({},{},{}) err={}",
-                i,
-                out_x[i],
-                out_y[i],
-                out_b[i],
-                ref_x[i],
-                ref_y[i],
-                ref_b[i],
-                err,
-            );
-        }
+                for i in 0..n {
+                    let ex = (out_x[i] - ref_x[i]).abs();
+                    let ey = (out_y[i] - ref_y[i]).abs();
+                    let eb = (out_b[i] - ref_b[i]).abs();
+                    let err = ex.max(ey).max(eb);
+                    assert!(
+                        err < 1e-4,
+                        "step1 mismatch at pixel {}: SIMD=({},{},{}) scalar=({},{},{}) err={} [{perm}]",
+                        i,
+                        out_x[i],
+                        out_y[i],
+                        out_b[i],
+                        ref_x[i],
+                        ref_y[i],
+                        ref_b[i],
+                        err,
+                    );
+                }
+            },
+        );
+        std::eprintln!("{report}");
     }
 
     /// EPF with inv_sigma=0 should be a no-op (copy input to output).

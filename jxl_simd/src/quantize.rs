@@ -203,6 +203,7 @@ pub fn quantize_dct8_neon(
 mod tests {
     use super::*;
     extern crate alloc;
+    extern crate std;
 
     #[test]
     fn test_quantize_dct8_matches_scalar() {
@@ -220,34 +221,40 @@ mod tests {
         let mut ref_out = [0i32; 64];
         quantize_dct8_scalar(&coeffs, &weights, qac_qm, &thresholds, &mut ref_out);
 
-        let mut simd_out = [0i32; 64];
-        quantize_block_dct8(&coeffs, &weights, qac_qm, &thresholds, &mut simd_out);
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0i32; 64];
+                quantize_block_dct8(&coeffs, &weights, qac_qm, &thresholds, &mut simd_out);
 
-        // DC must be 0
-        assert_eq!(simd_out[0], 0, "DC must be 0");
-        assert_eq!(ref_out[0], 0, "DC must be 0 (ref)");
+                // DC must be 0
+                assert_eq!(simd_out[0], 0, "DC must be 0 [{perm}]");
+                assert_eq!(ref_out[0], 0, "DC must be 0 (ref) [{perm}]");
 
-        // Compare all AC coefficients — may differ by 1 at rounding boundaries
-        let mut max_diff = 0i32;
-        let mut diff_count = 0;
-        for i in 1..64 {
-            let diff = (simd_out[i] - ref_out[i]).abs();
-            if diff > 0 {
-                diff_count += 1;
-            }
-            max_diff = max_diff.max(diff);
-        }
-        assert!(
-            max_diff <= 1,
-            "Max quantization diff: {} (at most 1 due to FP rounding boundary)",
-            max_diff
+                // Compare all AC coefficients — may differ by 1 at rounding boundaries
+                let mut max_diff = 0i32;
+                let mut diff_count = 0;
+                for i in 1..64 {
+                    let diff = (simd_out[i] - ref_out[i]).abs();
+                    if diff > 0 {
+                        diff_count += 1;
+                    }
+                    max_diff = max_diff.max(diff);
+                }
+                assert!(
+                    max_diff <= 1,
+                    "Max quantization diff: {} (at most 1 due to FP rounding boundary) [{perm}]",
+                    max_diff
+                );
+                // Allow up to ~5% of coefficients to differ by 1 at rounding boundaries
+                assert!(
+                    diff_count <= 3,
+                    "Too many differing coefficients: {}/63 [{perm}]",
+                    diff_count
+                );
+            },
         );
-        // Allow up to ~5% of coefficients to differ by 1 at rounding boundaries
-        assert!(
-            diff_count <= 3,
-            "Too many differing coefficients: {}/63",
-            diff_count
-        );
+        std::eprintln!("{report}");
     }
 
     #[test]

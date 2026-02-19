@@ -1146,40 +1146,41 @@ pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     #[test]
     fn test_dct_16x16_simd_matches_scalar() {
-        // Sequential values 0..256 as input
         let mut input = [0.0f32; 256];
         for (i, val) in input.iter_mut().enumerate() {
             *val = i as f32;
         }
-
         let mut scalar_out = [0.0f32; 256];
-        let mut simd_out = [0.0f32; 256];
-
         dct_16x16_scalar(&input, &mut scalar_out);
-        dct_16x16(&input, &mut simd_out);
 
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..256 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-2,
-            "DCT16x16 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 256];
+                dct_16x16(&input, &mut simd_out);
+                let mut max_diff = 0.0f32;
+                let mut max_idx = 0;
+                for i in 0..256 {
+                    let diff = (scalar_out[i] - simd_out[i]).abs();
+                    if diff > max_diff {
+                        max_diff = diff;
+                        max_idx = i;
+                    }
+                }
+                assert!(
+                    max_diff < 1e-2,
+                    "DCT16x16 max diff = {max_diff} at {max_idx} (scalar={}, simd={}) [{perm}]",
+                    scalar_out[max_idx],
+                    simd_out[max_idx],
+                );
+            },
         );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1256,31 +1257,32 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.43 + 2.1).cos() * 80.0;
         }
-
         let mut scalar_out = [0.0f32; 128];
-        let mut simd_out = [0.0f32; 128];
-
         dct_16x8_scalar(&input, &mut scalar_out);
-        dct_16x8(&input, &mut simd_out);
 
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..128 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-2,
-            "DCT16x8 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 128];
+                dct_16x8(&input, &mut simd_out);
+                let mut max_diff = 0.0f32;
+                let mut max_idx = 0;
+                for i in 0..128 {
+                    let diff = (scalar_out[i] - simd_out[i]).abs();
+                    if diff > max_diff {
+                        max_diff = diff;
+                        max_idx = i;
+                    }
+                }
+                assert!(
+                    max_diff < 1e-2,
+                    "DCT16x8 max diff = {max_diff} at {max_idx} (scalar={}, simd={}) [{perm}]",
+                    scalar_out[max_idx],
+                    simd_out[max_idx],
+                );
+            },
         );
+        std::eprintln!("{report}");
     }
 
     #[test]
@@ -1289,30 +1291,31 @@ mod tests {
         for (i, val) in input.iter_mut().enumerate() {
             *val = ((i as f32) * 0.29 + 0.7).sin() * 120.0;
         }
-
         let mut scalar_out = [0.0f32; 128];
-        let mut simd_out = [0.0f32; 128];
-
         dct_8x16_scalar(&input, &mut scalar_out);
-        dct_8x16(&input, &mut simd_out);
 
-        let mut max_diff = 0.0f32;
-        let mut max_idx = 0;
-        for i in 0..128 {
-            let diff = (scalar_out[i] - simd_out[i]).abs();
-            if diff > max_diff {
-                max_diff = diff;
-                max_idx = i;
-            }
-        }
-
-        assert!(
-            max_diff < 1e-2,
-            "DCT8x16 SIMD vs scalar max diff = {} at index {} (scalar={}, simd={})",
-            max_diff,
-            max_idx,
-            scalar_out[max_idx],
-            simd_out[max_idx],
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let mut simd_out = [0.0f32; 128];
+                dct_8x16(&input, &mut simd_out);
+                let mut max_diff = 0.0f32;
+                let mut max_idx = 0;
+                for i in 0..128 {
+                    let diff = (scalar_out[i] - simd_out[i]).abs();
+                    if diff > max_diff {
+                        max_diff = diff;
+                        max_idx = i;
+                    }
+                }
+                assert!(
+                    max_diff < 1e-2,
+                    "DCT8x16 max diff = {max_diff} at {max_idx} (scalar={}, simd={}) [{perm}]",
+                    scalar_out[max_idx],
+                    simd_out[max_idx],
+                );
+            },
         );
+        std::eprintln!("{report}");
     }
 }
