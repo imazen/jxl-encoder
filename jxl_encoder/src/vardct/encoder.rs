@@ -1424,8 +1424,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: CfL Newton convergence fallback to LS
-        const EXPECTED_HASH: u64 = 0x5f4f631b2291961f;
+        // Updated: gaborish ordering fix + rounding fix
+        const EXPECTED_HASH: u64 = 0x97ba962dbfc3d110;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1460,8 +1460,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: CfL Newton convergence fallback to LS
-        const EXPECTED_HASH: u64 = 0x51d67b00b8be794d;
+        // Updated: gaborish ordering fix + rounding fix
+        const EXPECTED_HASH: u64 = 0xe8f3830086be2e56;
         assert_eq!(
             hash,
             EXPECTED_HASH,
