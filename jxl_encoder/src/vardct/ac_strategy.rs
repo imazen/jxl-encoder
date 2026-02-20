@@ -1105,10 +1105,17 @@ pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], ou
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X8 => {
-            let mut input = [0.0f32; 128];
-            input.copy_from_slice(&error_coeffs[..128]);
+            // Coefficients are in post-swap 8×16 layout (stride 16), but idct_16x8
+            // expects natural 16×8 layout (stride 8). Transpose first.
+            // (idct_32x16/idct_64x32 handle this internally; idct_16x8 does not.)
+            let mut transposed = [0.0f32; 128];
+            for y in 0..8 {
+                for x in 0..16 {
+                    transposed[x * 8 + y] = error_coeffs[y * 16 + x];
+                }
+            }
             let mut tmp = [0.0f32; 128];
-            idct_16x8(&input, &mut tmp);
+            idct_16x8(&transposed, &mut tmp);
             output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT8X16 => {
