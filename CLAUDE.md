@@ -141,28 +141,34 @@ Improvements made Feb 3, 2026:
 
 ### Quality Gap vs Full libjxl (Feb 20, 2026)
 
-**Measured with butteraugli_main (metadata-stripped PNGs). 6 images × 4 distances.**
+**Measured with Rust butteraugli** (metadata-immune, always applies sRGB TF consistently).
+6 images × 3 distances. Previous measurements used `butteraugli_main` with incompletely
+stripped PNGs and showed inflated quality wins (-48% at d=0.5) — those were bogus.
 
 **vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-Updated 2026-02-20 after gaborish ordering fix (1af2202): adaptive quant and mask1x1
-now computed on pre-gaborish XYB (matching libjxl enc_heuristics.cc:1117-1142).
+**Overall: Size +1.8%, Butteraugli -0.9% (roughly at parity on quality, ~2-4% larger files)**
 
 | Distance | Avg Size | Avg Butteraugli | Better Quality |
 |----------|----------|-----------------|----------------|
-| d=0.5 | +8.9% | **-48.2%** | 5/6 images |
-| d=1.0 | +4.4% | **-26.6%** | 5/6 images |
-| d=2.0 | +7.4% | **-16.3%** | 5/6 images |
-| d=5.0 | +3.7% | **-5.4%** | 3/6 images |
+| d=1.0 | +0.7% | -0.2% | 2/6 images |
+| d=2.0 | +2.4% | **-3.8%** | 5/6 images |
+| d=5.0 | +4.0% | +0.5% | 3/6 images |
+
+Per-image detail (d=1.0 / d=2.0 / d=5.0):
+- **frymire** (1118x1105): +3.2% size, **-13.3%/-9.7%/-5.2% bfly** — consistently better quality
+- **02809272**: +0.3/+2.5/+6.7% size, +3.7/-3.7/+10.3% bfly — mixed
+- **50fe4c3d**: -1.1/+1.5/+6.0% size, **-12.2/-4.0**/+4.6% bfly — better at low dist
+- **870516c6**: -0.2/+0.5/+5.0% size, +12.2/**-4.3/-2.6**% bfly — better at high dist
+- **a36713f1**: -0.9/+0.5/+5.5% size, +0.4/**-0.7/-4.0**% bfly — slightly better
+- **d1a9be98**: -0.0/+7.8/+7.9% size, +17.1/+2.8/+3.4% bfly — consistently worse
 
 **Key patterns**:
-- **Quality BETTER than cjxl e7** at all distances through d=2.0 (avg -16 to -48% butteraugli)
-- Files 4-9% larger due to finer quantization (correct masking produces higher quant values)
-- Quality advantage decreases at high distances (d=5.0: only 3/6 images better)
-- One persistent outlier: 1418519 (CID22 512x512) consistently worse (+8-13% butteraugli)
-- 100a02c2 image shows extreme improvement (-61 to -83% butteraugli) — likely had severe
-  masking error from gaborish sharpening inflating edge gradients
+- Quality roughly at parity with cjxl e7 at d=1.0, slightly better at d=2.0
+- Files 1-4% larger on average, growing to 5-8% overhead at d=5.0
+- d1a9be98 (low-detail/smooth) is a persistent outlier: always worse quality, always larger
+- frymire and 50fe4c3d (high-detail) consistently produce better quality
 
 **Root causes found and fixed**:
 - **Gaborish ordering** (1af2202): adaptive quant was computed on gaborished (sharpened) XYB,
@@ -175,14 +181,22 @@ now computed on pre-gaborish XYB (matching libjxl enc_heuristics.cc:1117-1142).
   fixed effort-matched q values. libjxl uses q=0.39/d at e>=5.
 - **AC strategy distance gates** (c64d576): DCT32 was gated at d>=2.0, DCT64 at d>=3.0 —
   preventing large transforms from being evaluated on smooth content at d=1.0.
+- **EPF sharpness integer division** (ce7f0f9): libjxl's `ComputeARHeuristics` Pass 2 context
+  refinement uses `size_t / size_t` (integer division) for `ctx_histo[val] / totals[context]`.
+  For count < total this yields 0, making `log1p(0) = 0` and `mul = 1.0` — the entropy-based
+  refinement is effectively a no-op, with only the c3 bias for sharpness=0 having real effect.
+  Our code used f32 division, producing non-trivial multipliers that were miscalibrated against
+  libjxl's c3/c5 constants (which were tuned with integer division). Fixed to match libjxl
+  exactly: `epf.rs:577-602`.
 
-**Remaining size overhead (files 4-9% larger)**:
+**Remaining size overhead (files 1-8% larger)**:
 - ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
   Note: LfFrame is for progressive display, NOT compression. Adds +4.6% overhead in cjxl, +10.8% in ours.
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
+- Size overhead increases at higher distances (d=5.0: +4-8%)
 
-**What's confirmed correct** (Feb 19, 2026):
+**What's confirmed correct** (Feb 20, 2026):
 - **estimate_entropy_full matches libjxl exactly** — verified every component:
   coefficient quantization, entropy estimation, nzeros cost, X channel penalty,
   pixel-domain loss with channel multipliers, entropy_mul application, loss scalar
@@ -196,6 +210,7 @@ now computed on pre-gaborish XYB (matching libjxl enc_heuristics.cc:1117-1142).
 - global_scale from fixed q values (0.39/d at e>=5, 0.79/d at e<5), matching libjxl exactly
 - All effort gating matches libjxl (EffortProfile centralization, Feb 19, 2026)
 - AC strategy distribution now healthy: ~37% DCT32X32 at d=1.0 (cjxl: ~28%)
+- EPF sharpness selection matches libjxl exactly (integer division parity, Feb 20, 2026)
 
 ### Remaining Gaps vs Full libjxl
 
