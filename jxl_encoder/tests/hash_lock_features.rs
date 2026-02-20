@@ -9,17 +9,22 @@
 //! so file header refactoring (Phase 2+) can be validated independently of
 //! frame-level changes.
 //!
-//! The split point is the first byte-aligned boundary after the file header
-//! (signature + SizeHeader + ImageMetadata + CustomTransformData + zero_pad).
+//! Expected hash values are stored in `hash_lock_expected.txt` (sidecar file).
+//! To regenerate after an intentional encoding change:
 //!
-//! If a hash changes, it means the bitstream changed. Update only after verifying
-//! the new output decodes correctly with djxl, jxl-rs, and jxl-oxide.
+//!   rm -f jxl_encoder/tests/hash_lock_expected.txt
+//!   UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1
+//!
+//! Then verify the new output decodes correctly with djxl, jxl-rs, and jxl-oxide.
 
 use jxl_encoder::bit_writer::BitWriter;
 use jxl_encoder::headers::color_encoding::{ColorEncoding, RenderingIntent};
 use jxl_encoder::headers::extra_channels::ExtraChannelInfo;
 use jxl_encoder::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use jxl_encoder::{LosslessConfig, LossyConfig, Lz77Method, PixelLayout};
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 // ── Feature-gated helpers ────────────────────────────────────────────────────
 
@@ -40,6 +45,54 @@ impl NoButterflyExt for LossyConfig {
     }
 }
 
+// ── Sidecar file helpers ──────────────────────────────────────────────────────
+
+const SIDECAR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/hash_lock_expected.txt");
+
+struct ExpectedHash {
+    size: usize,
+    hdr_hash: u64,
+    frm_hash: u64,
+}
+
+static EXPECTED: OnceLock<HashMap<String, ExpectedHash>> = OnceLock::new();
+
+fn load_expected() -> &'static HashMap<String, ExpectedHash> {
+    EXPECTED.get_or_init(|| {
+        let content = match std::fs::read_to_string(SIDECAR_PATH) {
+            Ok(c) => c,
+            Err(_) => return HashMap::new(),
+        };
+        let mut map = HashMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() == 4 {
+                let name = parts[0].to_string();
+                let size: usize = parts[1].parse().unwrap();
+                let hdr: u64 = u64::from_str_radix(parts[2].trim_start_matches("0x"), 16).unwrap();
+                let frm: u64 = u64::from_str_radix(parts[3].trim_start_matches("0x"), 16).unwrap();
+                map.insert(
+                    name,
+                    ExpectedHash {
+                        size,
+                        hdr_hash: hdr,
+                        frm_hash: frm,
+                    },
+                );
+            }
+        }
+        map
+    })
+}
+
+fn is_update_mode() -> bool {
+    std::env::var("UPDATE_HASHES").is_ok()
+}
+
 // ── Hashing helpers ─────────────────────────────────────────────────────────
 
 /// FNV-1a 64-bit hash — deterministic across all platforms and Rust versions.
@@ -54,9 +107,6 @@ fn hash_bytes(data: &[u8]) -> u64 {
 }
 
 /// Measure the file header byte length by encoding the header alone.
-///
-/// We build the same FileHeader the encoder would, write it, and measure.
-/// This works for both lossy and lossless because Phase 1 unified the header.
 fn measure_file_header_len(
     width: u32,
     height: u32,
@@ -104,27 +154,6 @@ fn measure_file_header_len(
     writer.finish_with_padding().len()
 }
 
-/// Split encoded JXL bytes into (file_header, frame_and_data).
-fn split_header_frame(
-    data: &[u8],
-    width: u32,
-    height: u32,
-    xyb_encoded: bool,
-    has_alpha: bool,
-    is_gray: bool,
-    bit_depth_16: bool,
-) -> (&[u8], &[u8]) {
-    let header_len =
-        measure_file_header_len(width, height, xyb_encoded, has_alpha, is_gray, bit_depth_16);
-    assert!(
-        header_len <= data.len(),
-        "header_len {} > data.len() {}",
-        header_len,
-        data.len()
-    );
-    data.split_at(header_len)
-}
-
 /// Hash both header and frame portions, returning (header_hash, frame_hash).
 fn hash_split(
     data: &[u8],
@@ -135,18 +164,22 @@ fn hash_split(
     is_gray: bool,
     bit_depth_16: bool,
 ) -> (u64, u64) {
-    let (header, frame) = split_header_frame(
-        data,
-        width,
-        height,
-        xyb_encoded,
-        has_alpha,
-        is_gray,
-        bit_depth_16,
+    let header_len =
+        measure_file_header_len(width, height, xyb_encoded, has_alpha, is_gray, bit_depth_16);
+    assert!(
+        header_len <= data.len(),
+        "header_len {} > data.len() {}",
+        header_len,
+        data.len()
     );
+    let (header, frame) = data.split_at(header_len);
     (hash_bytes(header), hash_bytes(frame))
 }
 
+/// Assert or update hash expectations.
+///
+/// In normal mode: reads expected values from sidecar, asserts match.
+/// With `UPDATE_HASHES=1`: appends computed values to sidecar, skips assertions.
 #[allow(clippy::too_many_arguments)]
 fn assert_hashes(
     name: &str,
@@ -157,9 +190,6 @@ fn assert_hashes(
     has_alpha: bool,
     is_gray: bool,
     bit_depth_16: bool,
-    expected_header: u64,
-    expected_frame: u64,
-    expected_size: usize,
 ) {
     let (hdr, frm) = hash_split(
         data,
@@ -170,25 +200,48 @@ fn assert_hashes(
         is_gray,
         bit_depth_16,
     );
+
+    if is_update_mode() {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(SIDECAR_PATH)
+            .unwrap();
+        writeln!(f, "{name} {} {hdr:#018x} {frm:#018x}", data.len()).unwrap();
+        return;
+    }
+
+    let expected = load_expected();
+    let exp = expected.get(name).unwrap_or_else(|| {
+        panic!(
+            "{name}: no expected hashes in sidecar. Run:\n  \
+             rm -f jxl_encoder/tests/hash_lock_expected.txt && \
+             UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1"
+        );
+    });
+
     assert_eq!(
         data.len(),
-        expected_size,
-        "{name}: SIZE mismatch: got {}, expected {expected_size}",
+        exp.size,
+        "{name}: SIZE mismatch: got {}, expected {}",
         data.len(),
+        exp.size,
     );
     assert_eq!(
         hdr,
-        expected_header,
-        "{name}: HEADER hash mismatch: got {hdr:#018x}, expected {expected_header:#018x} \
+        exp.hdr_hash,
+        "{name}: HEADER hash mismatch: got {hdr:#018x}, expected {:#018x} \
          (total_size={}, header_len={})",
+        exp.hdr_hash,
         data.len(),
         measure_file_header_len(width, height, xyb_encoded, has_alpha, is_gray, bit_depth_16),
     );
     assert_eq!(
         frm,
-        expected_frame,
-        "{name}: FRAME hash mismatch: got {frm:#018x}, expected {expected_frame:#018x} \
-         (total_size={})",
+        exp.frm_hash,
+        "{name}: FRAME hash mismatch: got {frm:#018x}, expected {:#018x} (total_size={})",
+        exp.frm_hash,
         data.len(),
     );
 }
@@ -316,9 +369,6 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        314,                // lossy_defaults_rgb_32x32
     );
 }
 
@@ -336,9 +386,6 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         false,
-        0xb81c2f58aebac4b3,
-        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        3605,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -356,9 +403,6 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         false,
-        0x3333c10727f60b90,
-        0xc8cb8d880fb19ee8, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        662,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -367,19 +411,7 @@ fn lossy_rgba_32x32() {
     let data = LossyConfig::new(1.0)
         .encode(&gradient_rgba_32x32(), 32, 32, PixelLayout::Rgba8)
         .unwrap();
-    assert_hashes(
-        "lossy_rgba_32x32",
-        &data,
-        32,
-        32,
-        true,
-        true,
-        false,
-        false,
-        0xe058fd017b3de453,
-        0x1809962c08814051, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        751,                // lossy_rgba_32x32
-    );
+    assert_hashes("lossy_rgba_32x32", &data, 32, 32, true, true, false, false);
 }
 
 #[test]
@@ -387,19 +419,7 @@ fn lossy_rgb16_32x32() {
     let data = LossyConfig::new(1.0)
         .encode(&gradient_rgb16_32x32(), 32, 32, PixelLayout::Rgb16)
         .unwrap();
-    assert_hashes(
-        "lossy_rgb16_32x32",
-        &data,
-        32,
-        32,
-        true,
-        false,
-        false,
-        true,
-        0xe37a0d041fe39334,
-        0xa64e35edf0214a59, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        318,                // lossy_rgb16_32x32
-    );
+    assert_hashes("lossy_rgb16_32x32", &data, 32, 32, true, false, false, true);
 }
 
 #[test]
@@ -417,9 +437,6 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x27a15f51e75cd931, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        264,                // lossy_no_ans_huffman
     );
 }
 
@@ -438,9 +455,6 @@ fn lossy_no_gaborish() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x3c4ccd8db2a57fcc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        327,                // lossy_no_gaborish
     );
 }
 
@@ -450,19 +464,7 @@ fn lossy_with_noise() {
         .with_noise(true)
         .encode(&noise_rgb_48x48(), 48, 48, PixelLayout::Rgb8)
         .unwrap();
-    assert_hashes(
-        "lossy_with_noise",
-        &data,
-        48,
-        48,
-        true,
-        false,
-        false,
-        false,
-        0xb81c2f58aebac4b3,
-        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        3605,               // lossy_with_noise
-    );
+    assert_hashes("lossy_with_noise", &data, 48, 48, true, false, false, false);
 }
 
 #[test]
@@ -480,9 +482,6 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x158690341794f656, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        316,                // lossy_no_error_diffusion
     );
 }
 
@@ -501,9 +500,6 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        314,                // lossy_no_pixel_domain_loss
     );
 }
 
@@ -522,37 +518,22 @@ fn lossy_no_butteraugli() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        314,                // lossy_no_butteraugli
     );
 }
 
 #[test]
 fn lossy_force_dct8() {
     let data = LossyConfig::new(1.0)
-        .with_force_strategy(Some(0)) // DCT8
+        .with_force_strategy(Some(0))
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
-    assert_hashes(
-        "lossy_force_dct8",
-        &data,
-        32,
-        32,
-        true,
-        false,
-        false,
-        false,
-        0x3ba5403031c1499f,
-        0x4e7311085222db5f, // Updated: CfL Newton convergence fallback to LS
-        412,                // lossy_force_dct8
-    );
+    assert_hashes("lossy_force_dct8", &data, 32, 32, true, false, false, false);
 }
 
 #[test]
 fn lossy_force_dct16x16() {
     let data = LossyConfig::new(1.0)
-        .with_force_strategy(Some(4)) // DCT16x16
+        .with_force_strategy(Some(4))
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
@@ -564,16 +545,13 @@ fn lossy_force_dct16x16() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        314,                // lossy_force_dct16x16
     );
 }
 
 #[test]
 fn lossy_force_identity() {
     let data = LossyConfig::new(1.0)
-        .with_force_strategy(Some(8)) // IDENTITY (raw strategy code)
+        .with_force_strategy(Some(8))
         .no_butteraugli()
         .encode(&checkerboard_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
@@ -586,16 +564,13 @@ fn lossy_force_identity() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x02ef2487cf4355ed, // Updated: CfL Newton convergence fallback to LS
-        570,                // lossy_force_identity
     );
 }
 
 #[test]
 fn lossy_force_dct2x2() {
     let data = LossyConfig::new(1.0)
-        .with_force_strategy(Some(9)) // DCT2x2 (raw strategy code)
+        .with_force_strategy(Some(9))
         .no_butteraugli()
         .encode(&checkerboard_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
@@ -608,16 +583,13 @@ fn lossy_force_dct2x2() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x16fa005a7adbd25c, // Updated: CfL Newton convergence fallback to LS
-        519,                // lossy_force_dct2x2
     );
 }
 
 #[test]
 fn lossy_force_dct4x4() {
     let data = LossyConfig::new(1.0)
-        .with_force_strategy(Some(7)) // DCT4x4 (raw strategy code)
+        .with_force_strategy(Some(7))
         .no_butteraugli()
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
@@ -630,32 +602,17 @@ fn lossy_force_dct4x4() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x95c976d16b9e1cb3, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        526,                // lossy_force_dct4x4
     );
 }
 
 #[test]
 fn lossy_force_afv0() {
     let data = LossyConfig::new(1.0)
-        .with_force_strategy(Some(12)) // AFV0 (raw strategy code)
+        .with_force_strategy(Some(12))
         .no_butteraugli()
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
-    assert_hashes(
-        "lossy_force_afv0",
-        &data,
-        32,
-        32,
-        true,
-        false,
-        false,
-        false,
-        0x3ba5403031c1499f,
-        0xadd208f5f46de37f, // Updated: CfL Newton convergence fallback to LS
-        537,                // lossy_force_afv0
-    );
+    assert_hashes("lossy_force_afv0", &data, 32, 32, true, false, false, false);
 }
 
 #[test]
@@ -674,9 +631,6 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         false,
-        0xb81c2f58aebac4b3,
-        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        3605,               // lossy_with_lz77_greedy
     );
 }
 
@@ -696,9 +650,6 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         false,
-        0xb81c2f58aebac4b3,
-        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        3605,               // lossy_with_lz77_rle
     );
 }
 
@@ -716,9 +667,6 @@ fn lossy_distance_05() {
         false,
         false,
         false,
-        0x3ba5403031c1499f,
-        0x9ae13e498fa23554, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        366,                // lossy_distance_05 (gab OFF → larger)
     );
 }
 
@@ -727,25 +675,11 @@ fn lossy_distance_3() {
     let data = LossyConfig::new(3.0)
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
-    assert_hashes(
-        "lossy_distance_3",
-        &data,
-        32,
-        32,
-        true,
-        false,
-        false,
-        false,
-        0x3ba5403031c1499f,
-        0x8e0f6107c74bc24f, // Updated: CfL Newton convergence fallback to LS
-        269,                // lossy_distance_3
-    );
+    assert_hashes("lossy_distance_3", &data, 32, 32, true, false, false, false);
 }
 
 #[test]
 fn lossy_all_off() {
-    // Minimal lossy: no gaborish, no noise, no error diffusion, no pixel domain,
-    // no butteraugli, no LZ77, Huffman, forced DCT8
     let data = LossyConfig::new(1.0)
         .with_ans(false)
         .with_gaborish(false)
@@ -757,19 +691,7 @@ fn lossy_all_off() {
         .with_force_strategy(Some(0))
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
-    assert_hashes(
-        "lossy_all_off",
-        &data,
-        32,
-        32,
-        true,
-        false,
-        false,
-        false,
-        0x3ba5403031c1499f,
-        0x952a3afb53eba2b4, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        392,                // lossy_all_off
-    );
+    assert_hashes("lossy_all_off", &data, 32, 32, true, false, false, false);
 }
 
 #[test]
@@ -777,19 +699,7 @@ fn lossy_bgr8() {
     let data = LossyConfig::new(1.0)
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Bgr8)
         .unwrap();
-    assert_hashes(
-        "lossy_bgr8",
-        &data,
-        32,
-        32,
-        true,
-        false,
-        false,
-        false,
-        0x3ba5403031c1499f,
-        0xb9a9172abc3fbffb, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        311,                // lossy_bgr8
-    );
+    assert_hashes("lossy_bgr8", &data, 32, 32, true, false, false, false);
 }
 
 // ── Lossless (Modular) feature tests ────────────────────────────────────────
@@ -808,9 +718,6 @@ fn lossless_defaults_rgb_32x32() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        132,                // lossless_defaults_rgb_32x32
     );
 }
 
@@ -828,9 +735,6 @@ fn lossless_defaults_rgb_48x48_noise() {
         false,
         false,
         false,
-        0x4610698f0cf81821,
-        0x16d5504f8c104725, // Updated: fixed rct_type U32 offset (BitsOffset(6,10) not 18)
-        6978,               // lossless_defaults_rgb_48x48_noise
     );
 }
 
@@ -848,9 +752,6 @@ fn lossless_defaults_rgb_13x17() {
         false,
         false,
         false,
-        0x492393a4c3f29174,
-        0xbed6cafa23cebd77, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        797,                // lossless_defaults_rgb_13x17
     );
 }
 
@@ -868,9 +769,6 @@ fn lossless_rgba_32x32() {
         true,
         false,
         false,
-        0x68b6bf8f2098c6eb,
-        0xbae35472cbaf6dd8, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        148,                // lossless_rgba_32x32
     );
 }
 
@@ -888,9 +786,6 @@ fn lossless_gray_32x32() {
         false,
         true,
         false,
-        0xd7858d308a0845e5,
-        0xb3eb8879c469235d, // Updated: squeeze disabled by default
-        451,                // lossless_gray_32x32
     );
 }
 
@@ -909,16 +804,11 @@ fn lossless_no_ans_huffman() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x72f288c2ad0c943d, // Updated: squeeze disabled by default
-        621,                // lossless_no_ans_huffman
     );
 }
 
 #[test]
 fn lossless_with_tree_learning() {
-    // Now redundant with defaults (tree learning is default-on at effort 7),
-    // but kept for backwards compatibility testing.
     let data = LosslessConfig::new()
         .with_tree_learning(true)
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
@@ -932,9 +822,6 @@ fn lossless_with_tree_learning() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        132,                // lossless_with_tree_learning
     );
 }
 
@@ -953,16 +840,11 @@ fn lossless_with_squeeze() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x48e4346586752ae2, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        324,                // lossless_with_squeeze
     );
 }
 
 #[test]
 fn lossless_with_lz77_greedy() {
-    // Note: tree learning (default-on at effort 7) takes priority over LZ77,
-    // so this produces the same output as defaults. LZ77 is silently ignored.
     let data = LosslessConfig::new()
         .with_lz77(true)
         .with_lz77_method(Lz77Method::Greedy)
@@ -977,16 +859,11 @@ fn lossless_with_lz77_greedy() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        132,                // lossless_with_lz77_greedy
     );
 }
 
 #[test]
 fn lossless_with_lz77_rle() {
-    // Note: tree learning (default-on at effort 7) takes priority over LZ77,
-    // so this produces the same output as defaults. LZ77 is silently ignored.
     let data = LosslessConfig::new()
         .with_lz77(true)
         .with_lz77_method(Lz77Method::Rle)
@@ -1001,9 +878,6 @@ fn lossless_with_lz77_rle() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x6ecc5b958aadf8d3, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        132,                // lossless_with_lz77_rle
     );
 }
 
@@ -1023,15 +897,11 @@ fn lossless_tree_learning_and_squeeze() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x48e4346586752ae2, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        324,                // lossless_tree_learning_and_squeeze
     );
 }
 
 #[test]
 fn lossless_all_off() {
-    // Minimal lossless: Huffman, no tree learning, no squeeze, no LZ77
     let data = LosslessConfig::new()
         .with_ans(false)
         .with_tree_learning(false)
@@ -1048,9 +918,6 @@ fn lossless_all_off() {
         false,
         false,
         false,
-        0x6a695d8f2209b4e5,
-        0x72f288c2ad0c943d, // Updated: RCT (YCoCg) now applied to non-squeeze paths
-        621,                // lossless_all_off
     );
 }
 
@@ -1059,17 +926,5 @@ fn lossless_bgr8() {
     let data = LosslessConfig::new()
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Bgr8)
         .unwrap();
-    assert_hashes(
-        "lossless_bgr8",
-        &data,
-        32,
-        32,
-        false,
-        false,
-        false,
-        false,
-        0x6a695d8f2209b4e5,
-        0x18c57fb704f2a20a, // Updated: enhanced clustering + total_pixel scaling for tree learning
-        132,                // lossless_bgr8
-    );
+    assert_hashes("lossless_bgr8", &data, 32, 32, false, false, false, false);
 }

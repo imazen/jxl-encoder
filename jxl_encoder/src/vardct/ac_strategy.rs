@@ -1148,6 +1148,70 @@ pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], ou
     }
 }
 
+/// Adjust the float quant field for multi-block transforms.
+///
+/// Same algorithm as `adjust_quant_field_with_distance` but operates on the
+/// float quant field (values ~0.3-1.5) instead of u8 (1-255). This matches
+/// libjxl's `AdjustQuantField` which works on `ImageF` before `SetQuantField`.
+pub fn adjust_quant_field_float_with_distance(
+    ac_strategy: &AcStrategyMap,
+    quant_field: &mut [f32],
+    butteraugli_target: f32,
+) {
+    let xsize_blocks = ac_strategy.xsize_blocks;
+
+    const K_LIMIT: f32 = 1.54138;
+    const K_MUL: f32 = 0.56391;
+    const K_MIN: f32 = 0.0;
+
+    let mut mean_max_mixer = 1.0_f32;
+    if butteraugli_target > K_LIMIT {
+        mean_max_mixer -= (butteraugli_target - K_LIMIT) * K_MUL;
+        if mean_max_mixer < K_MIN {
+            mean_max_mixer = K_MIN;
+        }
+    }
+
+    for by in 0..ac_strategy.ysize_blocks {
+        for bx in 0..ac_strategy.xsize_blocks {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            let cx = ac_strategy.covered_blocks_x(bx, by);
+            let cy = ac_strategy.covered_blocks_y(bx, by);
+            if cx == 1 && cy == 1 {
+                continue;
+            }
+
+            // Compute max and mean of covered region
+            let mut max_q = f32::NEG_INFINITY;
+            let mut sum = 0.0f64;
+            for iy in 0..cy {
+                for ix in 0..cx {
+                    let q = quant_field[(by + iy) * xsize_blocks + bx + ix];
+                    max_q = max_q.max(q);
+                    sum += q as f64;
+                }
+            }
+            let mean = (sum / (cx * cy) as f64) as f32;
+
+            // Blend max and mean (for 4+ block transforms)
+            let blended = if cx * cy >= 4 {
+                max_q * mean_max_mixer + mean * (1.0 - mean_max_mixer)
+            } else {
+                max_q
+            };
+
+            // Set all covered blocks to blended value (no integer clamping)
+            for iy in 0..cy {
+                for ix in 0..cx {
+                    quant_field[(by + iy) * xsize_blocks + bx + ix] = blended;
+                }
+            }
+        }
+    }
+}
+
 pub fn adjust_quant_field_with_distance(
     ac_strategy: &AcStrategyMap,
     quant_field: &mut [u8],

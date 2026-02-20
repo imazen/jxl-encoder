@@ -834,7 +834,7 @@ impl VarDctEncoder {
             self.distance * 0.62
         };
 
-        let (quant_field_float, masking) = super::adaptive_quant::compute_quant_field_float(
+        let (mut quant_field_float, masking) = super::adaptive_quant::compute_quant_field_float(
             &xyb_x,
             &xyb_y,
             &xyb_b,
@@ -910,11 +910,16 @@ impl VarDctEncoder {
             &mut quant_field,
             self.distance,
         );
+        super::ac_strategy::adjust_quant_field_float_with_distance(
+            &ac_strategy,
+            &mut quant_field_float,
+            self.distance,
+        );
 
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
-            let initial_quant_field = quant_field.clone();
-            self.butteraugli_refine_quant_field(
+            let initial_qf_float = quant_field_float.clone();
+            params = self.butteraugli_refine_quant_field(
                 linear_rgb,
                 width,
                 height,
@@ -927,7 +932,8 @@ impl VarDctEncoder {
                 ysize_blocks,
                 &params,
                 &mut quant_field,
-                &initial_quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
                 &cfl_map,
                 &ac_strategy,
                 None, // No patches in this code path

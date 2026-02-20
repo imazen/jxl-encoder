@@ -181,8 +181,12 @@ impl EffortProfile {
                 _ => Lz77Method::Optimal,
             },
             butteraugli_iters: match effort {
-                0..=7 => 0,
-                8 => 2,
+                // libjxl runs FindBestQuantization unconditionally for lossy
+                // encoding (enc_heuristics.cc:1247-1252). kDefaultButteraugliIters=2,
+                // kMaxButteraugliIters=4 for kTortoise (effort 9+).
+                // We gate at effort >= 5 (kHare) where adaptive quant is available.
+                0..=4 => 0,
+                5..=8 => 2,
                 _ => 4,
             },
 
@@ -385,7 +389,7 @@ mod tests {
         assert!(p.patches);
         assert!(p.lz77);
         assert_eq!(p.lz77_method, Lz77Method::Rle);
-        assert_eq!(p.butteraugli_iters, 0);
+        assert_eq!(p.butteraugli_iters, 2); // libjxl always runs 2 iters at e5+
         assert!(p.ac_strategy_enabled);
         assert!(p.try_dct32);
         assert!(p.try_dct64);
@@ -431,7 +435,7 @@ mod tests {
         assert!(p.use_adaptive_quant);
         assert!(p.adjust_quant_ac);
         assert_eq!(p.initial_q_numerator, 0.39);
-        assert_eq!(p.butteraugli_iters, 0);
+        assert_eq!(p.butteraugli_iters, 2); // libjxl always runs 2 iters at e5+
         assert_eq!(p.nb_rcts_to_try, 4);
         assert_eq!(p.wp_num_param_sets, 0); // e8+
     }
