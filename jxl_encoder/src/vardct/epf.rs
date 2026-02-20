@@ -574,20 +574,26 @@ pub(crate) fn compute_epf_sharpness(
     let c3 = c3clamp.max(c3base.powf(clamped_d));
     let c5: f32 = 0.108_769_04;
 
-    // Compute totals per context
-    let mut totals = vec![1.0f32; num_contexts]; // init to 1 to avoid div-by-zero
+    // Compute totals per context (integer, matching libjxl's size_t)
+    let mut totals = vec![1usize; num_contexts]; // init to 1 matching libjxl
     for ctx in 0..num_contexts {
         for &count in &histo[ctx][..num_candidates] {
-            totals[ctx] += count as f32;
+            totals[ctx] += count as usize;
         }
     }
 
     // Compute multipliers
+    // NOTE: libjxl uses size_t/size_t (integer division) for ctx_histo[val]/totals[context].
+    // For count < total, integer division yields 0, so log1p(0)=0 and mul=1.0.
+    // This makes the entropy-based refinement effectively a no-op for most contexts —
+    // only the c3 bias for sharpness=0 has real effect. We match this exactly.
     let mut muls = vec![vec![1.0f32; num_candidates]; num_contexts];
     for ctx in 0..num_contexts {
         for ci in 0..num_candidates {
-            let count = histo[ctx][ci] as f32;
-            let mut mul = 1.0 / (1.0 + c5 * (1.0 + count / totals[ctx]).ln() / clamped_d);
+            let count = histo[ctx][ci] as usize;
+            // Integer division to match libjxl's size_t / size_t
+            let ratio = count / totals[ctx];
+            let mut mul = 1.0 / (1.0 + c5 * (1.0 + ratio as f32).ln() / clamped_d);
             if candidates[ci] == 0 {
                 mul *= c3;
             }
