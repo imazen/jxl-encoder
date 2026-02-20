@@ -4,6 +4,208 @@
 use jxl_encoder::jpeg::encode_jbrd;
 use jxl_encoder::jpeg::{encode_jpeg_to_jxl, encode_jpeg_to_jxl_container, read_jpeg};
 
+/// Decode JXL data (bare codestream) with jxl-rs, returning (width, height, f32 RGB pixels).
+fn decode_jxl_rs(data: &[u8]) -> (usize, usize, Vec<f32>) {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = data;
+    let options = JxlDecoderOptions::default();
+    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during header");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs header decode error: {:?}", e),
+        }
+    };
+
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    let channels = 3;
+
+    let format = JxlPixelFormat {
+        color_type: JxlColorType::Rgb,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![],
+    };
+    decoder.set_pixel_format(format);
+
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input before frame");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame info error: {:?}", e),
+        }
+    };
+
+    let mut output_image =
+        Image::<f32>::new((width * channels, height)).expect("alloc output buffer");
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * channels, height),
+            })
+            .into_raw(),
+    )];
+
+    loop {
+        match decoder.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during decode");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs decode error: {:?}", e),
+        }
+    }
+
+    let mut pixels = Vec::with_capacity(width * height * channels);
+    for y in 0..height {
+        pixels.extend_from_slice(output_image.row(y));
+    }
+    (width, height, pixels)
+}
+
+/// Decode JXL grayscale data with jxl-rs, returning (width, height, f32 gray pixels).
+fn decode_jxl_rs_gray(data: &[u8]) -> (usize, usize, Vec<f32>) {
+    use jxl::api::{
+        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProcessingResult, states,
+    };
+    use jxl::image::{Image, Rect};
+
+    let mut input = data;
+    let options = JxlDecoderOptions::default();
+    let mut decoder = JxlDecoder::<states::Initialized>::new(options);
+
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during header");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs header decode error: {:?}", e),
+        }
+    };
+
+    let basic_info = decoder.basic_info().clone();
+    let (width, height) = basic_info.size;
+    let channels = 1;
+
+    let format = JxlPixelFormat {
+        color_type: JxlColorType::Grayscale,
+        color_data_format: Some(JxlDataFormat::f32()),
+        extra_channel_format: vec![],
+    };
+    decoder.set_pixel_format(format);
+
+    let mut decoder = loop {
+        match decoder.process(&mut input) {
+            Ok(ProcessingResult::Complete { result }) => break result,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input before frame");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs frame info error: {:?}", e),
+        }
+    };
+
+    let mut output_image =
+        Image::<f32>::new((width * channels, height)).expect("alloc output buffer");
+    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
+        output_image
+            .get_rect_mut(Rect {
+                origin: (0, 0),
+                size: (width * channels, height),
+            })
+            .into_raw(),
+    )];
+
+    loop {
+        match decoder.process(&mut input, &mut buffers) {
+            Ok(ProcessingResult::Complete { .. }) => break,
+            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
+                if input.is_empty() {
+                    panic!("jxl-rs: unexpected end of input during decode");
+                }
+                decoder = fallback;
+            }
+            Err(e) => panic!("jxl-rs decode error: {:?}", e),
+        }
+    }
+
+    let mut pixels = Vec::with_capacity(width * height * channels);
+    for y in 0..height {
+        pixels.extend_from_slice(output_image.row(y));
+    }
+    (width, height, pixels)
+}
+
+/// Encode JPEG → bare JXL codestream, decode with jxl-rs, verify dimensions and pixels are sane.
+fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
+    let jpeg_data = std::fs::read(jpeg_path)
+        .unwrap_or_else(|e| panic!("{label}: failed to read {jpeg_path}: {e}"));
+    let jpeg = read_jpeg(&jpeg_data).unwrap_or_else(|e| panic!("{label}: failed to parse: {e}"));
+
+    let jxl_bytes = encode_jpeg_to_jxl(&jpeg).unwrap_or_else(|e| panic!("{label}: encode: {e}"));
+
+    let is_gray = jpeg.components.len() == 1;
+    let w = jpeg.width as usize;
+    let h = jpeg.height as usize;
+
+    if is_gray {
+        let (dw, dh, pixels) = decode_jxl_rs_gray(&jxl_bytes);
+        assert_eq!(dw, w, "{label}: width mismatch");
+        assert_eq!(dh, h, "{label}: height mismatch");
+        assert_eq!(pixels.len(), w * h, "{label}: pixel count mismatch");
+        // Verify pixels are in valid range (allow small overshoot from YCbCr→RGB)
+        for (i, &p) in pixels.iter().enumerate() {
+            assert!(
+                p >= -0.5 && p <= 1.5,
+                "{label}: pixel {i} out of range: {p}"
+            );
+        }
+        eprintln!("{label}: jxl-rs decoded {dw}x{dh} grayscale OK");
+    } else {
+        let (dw, dh, pixels) = decode_jxl_rs(&jxl_bytes);
+        assert_eq!(dw, w, "{label}: width mismatch");
+        assert_eq!(dh, h, "{label}: height mismatch");
+        assert_eq!(pixels.len(), w * h * 3, "{label}: pixel count mismatch");
+        // Verify pixels are in valid range (allow overshoot from YCbCr→RGB conversion —
+        // JPEG coefficients can produce out-of-gamut values, especially with subsampling)
+        for (i, &p) in pixels.iter().enumerate() {
+            assert!(
+                p >= -0.5 && p <= 1.5,
+                "{label}: pixel {i} out of range: {p}"
+            );
+        }
+        eprintln!("{label}: jxl-rs decoded {dw}x{dh} RGB OK");
+    }
+}
+
 #[test]
 fn test_encode_small_jpeg() {
     let path = "/mnt/v/output/jpeg-reencoding/test64_444.jpg";
@@ -680,5 +882,55 @@ fn test_subsamp_gray_128x128() {
     roundtrip_jpeg_byteexact(
         "/mnt/v/output/jpeg-reencoding/test128_gray.jpg",
         "subsamp_gray_128x128",
+    );
+}
+
+// ── jxl-rs decode tests (verify bare codestream decodes correctly) ──
+
+#[test]
+fn test_jxlrs_444_64x64() {
+    verify_jxl_rs_decodes(
+        "/mnt/v/output/jpeg-reencoding/test64_444.jpg",
+        "jxlrs_444_64x64",
+    );
+}
+
+#[test]
+fn test_jxlrs_420_128x128() {
+    verify_jxl_rs_decodes(
+        "/mnt/v/output/jpeg-reencoding/test128_420.jpg",
+        "jxlrs_420_128x128",
+    );
+}
+
+#[test]
+fn test_jxlrs_422_128x128() {
+    verify_jxl_rs_decodes(
+        "/mnt/v/output/jpeg-reencoding/test128_422.jpg",
+        "jxlrs_422_128x128",
+    );
+}
+
+#[test]
+fn test_jxlrs_440_128x128() {
+    verify_jxl_rs_decodes(
+        "/mnt/v/output/jpeg-reencoding/test128_440.jpg",
+        "jxlrs_440_128x128",
+    );
+}
+
+#[test]
+fn test_jxlrs_gray_128x128() {
+    verify_jxl_rs_decodes(
+        "/mnt/v/output/jpeg-reencoding/test128_gray.jpg",
+        "jxlrs_gray_128x128",
+    );
+}
+
+#[test]
+fn test_jxlrs_420_real_icc() {
+    verify_jxl_rs_decodes(
+        "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_2.jpg",
+        "jxlrs_420_landscape2",
     );
 }
