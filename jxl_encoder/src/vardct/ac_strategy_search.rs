@@ -480,37 +480,9 @@ pub(super) fn find_best_32x32_transform(
     scratch: &mut EntropyEstScratch,
     profile: &EffortProfile,
 ) -> bool {
-    // Evaluate DCT32x32, DCT32x16, DCT16x32 at d >= 0.5.
-    // libjxl evaluates all strategies at all distances, but our cost model
-    // under-penalizes large transforms at very low distances (d < 0.5),
-    // causing butteraugli regressions. Gate at d=0.5 as a compromise.
-    if distance < 0.5 {
-        for qy in (0..4).step_by(2) {
-            for qx in (0..4).step_by(2) {
-                find_best_16x16_transform(
-                    xyb,
-                    stride,
-                    bx0,
-                    by0,
-                    cx + qx,
-                    cy + qy,
-                    distance,
-                    quant_field,
-                    xsize_blocks,
-                    masking,
-                    ytox,
-                    ytob,
-                    mask1x1,
-                    mask1x1_stride,
-                    ac_strategy,
-                    scratch,
-                    1.0,
-                    profile,
-                );
-            }
-        }
-        return false;
-    }
+    // libjxl evaluates all strategies at all distances — no distance gates.
+    // The cost model (EstimateEntropy with pixel-domain loss) naturally avoids
+    // large transforms when they're not beneficial.
     // In pixel-domain mode, entropy_mul is applied internally by estimate_entropy_with_mask
     // using libjxl's static constants (1.48 for DCT32x32, 1.49 for DCT32x16).
     // In coefficient-domain mode, use distance-dependent multipliers.
@@ -834,37 +806,9 @@ pub(super) fn find_best_64x64_transform(
     scratch: &mut EntropyEstScratch,
     profile: &EffortProfile,
 ) {
-    // Evaluate DCT64x64, DCT64x32, DCT32x64 at all distances.
-    // The cost model naturally avoids them when smaller transforms are better.
-    // libjxl evaluates all available strategies at all distances.
-    if distance < 1.0 {
-        // At very low distances (d<1.0), skip DCT64 — the quality cost is extreme
-        // and the cost model can't fully capture the loss from 64x64 averaging.
-        for qy in (0..8).step_by(4) {
-            for qx in (0..8).step_by(4) {
-                find_best_32x32_transform(
-                    xyb,
-                    stride,
-                    bx0,
-                    by0,
-                    cx + qx,
-                    cy + qy,
-                    distance,
-                    quant_field,
-                    xsize_blocks,
-                    masking,
-                    ytox,
-                    ytob,
-                    mask1x1,
-                    mask1x1_stride,
-                    ac_strategy,
-                    scratch,
-                    profile,
-                );
-            }
-        }
-        return;
-    }
+    // libjxl evaluates all strategies at all distances — no distance gates.
+    // The cost model (EstimateEntropy with pixel-domain loss) naturally avoids
+    // large transforms when they're not beneficial.
 
     // In pixel-domain mode, entropy_mul is applied internally by estimate_entropy_with_mask
     // using libjxl's static constants (2.25 for DCT64x64, 2.25 for DCT64x32).
