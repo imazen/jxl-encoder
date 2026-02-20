@@ -43,10 +43,15 @@ for img in "${IMAGES[@]}"; do
         "$CJXL_RS" "$img" "$rs_out" -d "$dist" 2>/dev/null
         "$DJXL" "$rs_out" "$rs_dec" 2>/dev/null
 
+        # Strip decoded PNG for fair butteraugli (prevents TF mismatch)
+        rs_dec_s="${rs_dec%.png}_stripped.png"
+        convert "$rs_dec" -strip "$rs_dec_s"
+
         rs_size=$(stat -c%s "$rs_out")
-        rs_bfly=$("$BFLY" --quiet "$img" "$rs_dec" 2>/dev/null || echo "ERR")
+        rs_bfly=$("$BFLY" --quiet "$img" "$rs_dec_s" 2>/dev/null || echo "ERR")
 
         echo "${short},${dist},cjxl-rs,-,${rs_size},${rs_bfly}"
+        rm -f "$rs_dec_s"
 
         # --- cjxl at each effort ---
         for effort in $EFFORTS; do
@@ -56,10 +61,15 @@ for img in "${IMAGES[@]}"; do
             "$CJXL" "$img" "$c_out" -d "$dist" -e "$effort" 2>/dev/null
             "$DJXL" "$c_out" "$c_dec" 2>/dev/null
 
+            # Strip decoded PNG for fair butteraugli (prevents TF mismatch)
+            c_dec_s="${c_dec%.png}_stripped.png"
+            convert "$c_dec" -strip "$c_dec_s"
+
             c_size=$(stat -c%s "$c_out")
-            c_bfly=$("$BFLY" --quiet "$img" "$c_dec" 2>/dev/null || echo "ERR")
+            c_bfly=$("$BFLY" --quiet "$img" "$c_dec_s" 2>/dev/null || echo "ERR")
 
             echo "${short},${dist},cjxl,${effort},${c_size},${c_bfly}"
+            rm -f "$c_dec_s"
         done
     done
 done
