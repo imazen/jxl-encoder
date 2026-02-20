@@ -1417,8 +1417,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: gaborish ordering fix + rounding fix
-        const EXPECTED_HASH: u64 = 0x97ba962dbfc3d110;
+        // Updated: LLF zeroing in entropy estimation
+        const EXPECTED_HASH: u64 = 0x178271d403f6ef01;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1453,8 +1453,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: gaborish ordering fix + rounding fix
-        const EXPECTED_HASH: u64 = 0xe8f3830086be2e56;
+        // Updated: LLF zeroing in entropy estimation
+        const EXPECTED_HASH: u64 = 0x73cb0ce8f74cad1a;
         assert_eq!(
             hash,
             EXPECTED_HASH,

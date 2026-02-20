@@ -851,6 +851,25 @@ fn estimate_entropy_full_impl(
         }
     }
 
+    // Zero the LLF (lowest-frequency) positions in the block data for all channels.
+    // libjxl zeros these positions in inv_table (quant_weights.cc:342-355) so they
+    // contribute nothing to entropy or loss estimates. The DC/LLF coefficients are
+    // overwritten by LowestFrequenciesFromDC during decoding, so their quantization
+    // cost is irrelevant for strategy selection. Without this, different strategies
+    // have wildly different DC dequant weights (e.g., DCT8 Y=560 vs AFV Y=58),
+    // creating phantom entropy differences that bias AFV selection.
+    {
+        let stride = cx * BLOCK_DIM;
+        for c in 0..3 {
+            let offset = c * size;
+            for iy in 0..cy {
+                for ix in 0..cx {
+                    block[offset + iy * stride + ix] = 0.0;
+                }
+            }
+        }
+    }
+
     // Load QF and masking: take max over covered blocks
     let mut quant = 0.0f32;
     let mut mask_val = 0.0f32;
@@ -933,8 +952,8 @@ fn estimate_entropy_full_impl(
         let offset_y = size; // Y channel always at offset 1*size
 
         // SIMD-accelerated coefficient processing (biggest encoder hotspot).
-        // Processes all coefficients including LLF — both libjxl and libjxl-tiny
-        // include LLF in entropy/nzeros estimation.
+        // LLF positions are pre-zeroed above (matching libjxl quant_weights.cc:342-355),
+        // so DC/LLF contribute nothing to entropy or loss estimates.
         //
         // In pixel-domain mode: use quant_norm16 (L16 norm for 4+ blocks, max for
         // 1-2 blocks) matching libjxl enc_ac_strategy.cc:415.
@@ -1498,15 +1517,17 @@ pub fn compute_ac_strategy(
                 cy += 2;
             }
 
-            // Favor 8×8 transforms at low distances when overriding aligned-pass choices.
-            // Matches libjxl enc_ac_strategy.cc:863-866.
-            let mul8x8 = 1.0 + profile.k_favor_2x2 / (distance + 1.4);
-
             // Non-aligned matching: try 16×16/16×8/8×16 at non-2-aligned positions.
             // This catches cases where the optimal block boundary straddles a 2-aligned
             // position. Matches libjxl enc_ac_strategy.cc:1035-1044 (effort >= 6).
             // Only accept results when a multi-block transform is selected — single-block
             // re-evaluation at non-aligned positions can override good aligned-pass choices.
+            //
+            // NOTE: favor_single_mul = 1.0 here (not mul8x8). find_best_16x16_transform
+            // already applies mul8x8 internally to single-block costs. Passing mul8x8 as
+            // favor_single_mul would double-apply it, making singles too cheap and
+            // preventing rectangle transforms from ever winning. libjxl's non-aligned
+            // pass uses the same stored entropy_estimate values (with single mul8x8).
             for cy in if profile.non_aligned_eval { 0 } else { tile_h }..tile_h.saturating_sub(1) {
                 for cx in 0..tile_w.saturating_sub(1) {
                     // Skip 2-aligned positions (already evaluated in the aligned pass)
@@ -1553,7 +1574,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
-                        mul8x8,
+                        1.0,
                         profile,
                     );
                     // Only keep results if a multi-block transform was selected.
