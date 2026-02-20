@@ -139,45 +139,41 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 18, 2026 — CLIC2025 1024x1024 images)
+### Quality Gap vs Full libjxl (Feb 19, 2026)
 
-**Measured with Rust butteraugli (native u8 decode, no TF mismatch). See `test_fair_comparison`.**
+**Measured with fast-ssim2 (Rust) and butteraugli_main. 25 images × 9 distances = 225 comparisons.**
 
-**RD regression test (6 images, d=0.25 through d=3.0):**
-- Files are 2-5% smaller at all distances vs our pre-calibration baseline
-- Quality at d=0.25-0.5: maintained or improved
-- Quality at d=1.0: 0-4% butteraugli regression on most images, some up to 19%
-- Quality at d=2.0-3.0: some butteraugli regression (10-27%) on individual images
+**vs cjxl e7 (CSV reference: `reference/cjxl_reference.csv`):**
 
-**vs cjxl e7 (25 images, 9 distances, 225 comparisons, CSV reference: `reference/cjxl_reference.csv`):**
-
-Updated 2026-02-19 (after mul8x8 fix). Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7.
+Updated 2026-02-19 (after mul8x8 + quant_norm16 + IDCT fixes). Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7.
 
 | Distance | Median Size | Avg Size | Avg Butteraugli | Avg SSIM2 |
 |----------|-------------|----------|-----------------|-----------|
-| d=0.25 | +0.2% | +0.7% | +32.7% | -0.17 |
-| d=0.5 | **-5.2%** | **-5.7%** | +15.1% | -0.54 |
-| d=1.0 | **-4.1%** | **-9.4%** | +29.0% | -1.31 |
-| d=1.5 | **-2.4%** | **-6.4%** | +25.5% | -1.70 |
-| d=2.0 | **-1.0%** | **-4.8%** | +21.8% | -2.31 |
-| d=2.5 | +0.4% | **-3.7%** | +22.2% | -2.10 |
-| d=3.0 | +3.8% | +3.0% | +22.8% | -3.20 |
-| d=4.0 | +3.9% | +4.1% | +23.2% | -3.70 |
-| d=5.0 | +5.9% | +5.3% | +14.0% | -4.00 |
+| d=0.25 | +9.5% | +2.3% | **-7.3%** | **+0.16** |
+| d=0.5 | +8.9% | +1.3% | **-5.8%** | **+0.23** |
+| d=1.0 | +0.6% | **-5.8%** | +23.3% | -1.00 |
+| d=1.5 | +1.5% | **-4.4%** | +22.2% | -1.36 |
+| d=2.0 | +2.0% | **-2.9%** | +17.9% | -2.10 |
+| d=2.5 | +3.2% | **-2.6%** | +19.6% | -1.96 |
+| d=3.0 | +4.8% | +4.1% | +21.7% | -3.02 |
+| d=4.0 | +5.3% | +5.0% | +21.7% | -3.57 |
+| d=5.0 | +7.6% | +5.8% | +14.4% | -3.94 |
 
-Grand summary: avg size -1.87% (median +0.63%), total bytes -16.13%, avg SSIM2 -2.115, avg bfly +0.444.
-Size wins: 98/225 (44%). Encode time: 5.28x slower (229.9s vs 43.6s for all 225 encodes).
+Grand summary: avg size +0.30% (median +4.83%), total bytes -12.78%, avg SSIM2 -1.840, avg bfly +0.372.
+Size wins: 59/225 (26%). Encode time: 5.51x slower (240.0s vs 43.6s for all 225 encodes).
 
 **Key patterns**:
-- **Size**: strong wins at d=0.5-2.5 (median -5.2% to +0.4%), gap widens at d>=3.0 (+3.8% to +5.9%)
-- **Quality**: butteraugli 14-33% worse on average, SSIM2 -0.2 to -4.0 points
-- **mul8x8 fix** (fa4b5b8): libjxl's 8×8-class cost discount was missing in pixel-domain mode.
-  Improved avg size from -1.2% to -9.4% at d=1.0. Butteraugli worsened because more bits go to
-  large transforms (better compression) at the expense of per-pixel fidelity.
-- **Screenshots** (gb82-sc corpus): consistently 12-45% larger. Patches help but our VarDCT cost
-  model over-compresses screenshot content vs cjxl.
-- **Butteraugli loop**: cjxl e8→e7 comparison shows loop buys 1-4% size + 7% butteraugli at d=1.0.
-  Neither encoder has butteraugli loop at e7 (libjxl gates at kKitten = effort 8).
+- **Low distance (d=0.25-0.5)**: quality BETTER than cjxl (butteraugli -5 to -7%, SSIM2 positive)
+  but files 1-9% larger. Patches dominate on screenshots (-44% to -92%).
+- **Mid distance (d=1.0-2.5)**: avg files **-2.6% to -5.8%** smaller (patches help). Butteraugli
+  17-23% worse, SSIM2 -1.0 to -2.1. Quality gap is the main concern.
+- **High distance (d=3.0+)**: files 4-6% larger, quality -3 to -4 SSIM2 points.
+- **Photos only (CLIC+CID22)**: median +0.6% at d=1.0 (mixed: some -8%, some +13%).
+- **Screenshots** (gb82-sc): patches give 12-93% savings on some, but others +15-20% larger.
+- **Butteraugli loop**: neither encoder has it at e7 (libjxl gates at kKitten = effort 8).
+- **quant_norm16 fix** (c2bc0ae): corrected L16 norm for multi-block pixel loss. Shifted RD
+  tradeoff toward quality — SSIM2 improved +0.3 at all distances, butteraugli improved at d≤0.5,
+  files slightly larger at d=0.5-1.0 vs pre-fix.
 
 **Root cause analysis for outliers** (addressed Feb 19, 2026):
 - **global_scale bug** (eb14b65): was computed from adaptive quant field median/MAD instead of
@@ -187,20 +183,27 @@ Size wins: 98/225 (44%). Encode time: 5.28x slower (229.9s vs 43.6s for all 225 
   Lowered to d>=0.5 and d>=1.0. Reduced 1418519 gap ~13.1%→~4.6%, 100a02c2 ~4.8%→~2.0%.
 - **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
   implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
-- **Cost model calibration**: our pixel-domain loss doesn't perfectly match libjxl's, causing
-  occasional over-selection of DCT32/64 on complex images (+1.4% size, +20% bfly on 1080721).
-  Full ungating (matching libjxl) requires cost model improvements.
+- **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
+  implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
 - Gap widening at high distances → distance-scaled cost model constants may need tuning
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
+- **CfL pass 2**: our CfL refinement uses DCT8-only; libjxl uses actual AC strategies + quant weights.
+  Plan exists at `~/.claude/plans/graceful-discovering-kite.md`. Partially implemented (stashed).
 
-**What's confirmed correct**:
+**What's confirmed correct** (Feb 19, 2026):
+- **estimate_entropy_full matches libjxl exactly** — verified every component:
+  coefficient quantization, entropy estimation, nzeros cost, X channel penalty,
+  pixel-domain loss with channel multipliers, entropy_mul application, loss scalar
 - Parametric quantization weights match decoder expectations (all strategies)
 - AdjustQuantBias constants match decoder (kDefaultQuantBias)
 - Quantization formula matches C++ (val = coeff * inv_dequant_matrix * qac * qm_mul)
+- mul8x8 post-hoc multiplier: 1.0 + (-0.4)/(d+1.4) for all 8x8-class, 1.0 for larger
+- quant_norm16: L16 norm for 4+ blocks, MAX for 2 blocks, direct for 1 block
 - IDCT roundtrip error < 1e-6 for all sizes
 - Weight tables are pure parametric without bias (confirmed via jxl-oxide source)
 - global_scale from fixed q values (0.39/d at e>=5, 0.79/d at e<5), matching libjxl exactly
 - All effort gating matches libjxl (EffortProfile centralization, Feb 19, 2026)
+- AC strategy distribution now healthy: ~37% DCT32X32 at d=1.0 (cjxl: ~28%)
 
 ### Remaining Gaps vs Full libjxl
 
