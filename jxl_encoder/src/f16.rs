@@ -114,6 +114,27 @@ pub fn write_f16(value: f32, writer: &mut BitWriter) -> Result<()> {
     Ok(())
 }
 
+/// Write the lf_quant (DequantMatricesEncodeDC) section.
+///
+/// When `dc_quant_custom` is Some([x, y, b]), writes all_default=0 + 3 F16 values.
+/// When None, writes all_default=1 (uses default DC quant).
+///
+/// Matches libjxl enc_quant_weights.cc:144-164:
+/// - 1 bit: all_default (0 for custom, 1 for default)
+/// - 3 × F16: dc_quant[c] * 128.0 for c=0,1,2 (X,Y,B order)
+pub fn write_lf_quant(writer: &mut BitWriter, dc_quant_custom: Option<[f32; 3]>) -> Result<()> {
+    match dc_quant_custom {
+        None => writer.write(1, 1)?, // all_default = true
+        Some(dq) => {
+            writer.write(1, 0)?; // all_default = false
+            for &q in &dq {
+                write_f16(q * 128.0, writer)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

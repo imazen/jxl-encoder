@@ -166,6 +166,11 @@ pub struct VarDctEncoder {
     /// When not Single, AC coefficients are split across multiple passes with
     /// shift-based precision reduction for early preview rendering.
     pub progressive: crate::api::ProgressiveMode,
+    /// Enable LfFrame (separate DC frame).
+    /// When true, DC coefficients are encoded as a separate modular frame
+    /// (frame_type=1, dc_level=1) before the main VarDCT frame, with
+    /// distance-scaled quantization factors matching libjxl's progressive_dc >= 1.
+    pub use_lf_frame: bool,
 }
 
 impl Default for VarDctEncoder {
@@ -198,6 +203,7 @@ impl Default for VarDctEncoder {
             splines: None,
             is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
+            use_lf_frame: false,
         }
     }
 }
@@ -233,6 +239,7 @@ impl VarDctEncoder {
             splines: None,
             is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
+            use_lf_frame: false,
         }
     }
 
@@ -485,6 +492,20 @@ impl VarDctEncoder {
                 padded_height,
             );
         }
+
+        // Compute float DC from post-gaborish XYB (for LfFrame).
+        // DC coefficient per 8x8 block = sum(block_pixels) / 8.0
+        // Must be computed AFTER gaborish (libjxl uses post-gaborish XYB for DC frame).
+        let float_dc = if self.use_lf_frame {
+            Some(super::lf_frame::compute_float_dc(
+                [&xyb_x, &xyb_y, &xyb_b],
+                padded_width,
+                xsize_blocks,
+                ysize_blocks,
+            ))
+        } else {
+            None
+        };
 
         // Compute per-tile chroma-from-luma map on GABORISHED XYB
         // Pass 1 always uses LS (use_newton=false): with distance_mul=1e-9, the
@@ -805,6 +826,7 @@ impl VarDctEncoder {
                 alpha,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
+                float_dc.as_ref(),
             )?;
             crate::debug_rect::flush("");
             return Ok(VarDctOutput {

@@ -841,6 +841,7 @@ pub struct LossyConfig {
     patches: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
+    lf_frame: bool,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters: u32,
     #[cfg(feature = "butteraugli-loop")]
@@ -871,6 +872,7 @@ impl LossyConfig {
             patches: profile.patches,
             splines: None,
             progressive: ProgressiveMode::Single,
+            lf_frame: false,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: profile.butteraugli_iters,
             #[cfg(feature = "butteraugli-loop")]
@@ -1012,6 +1014,15 @@ impl LossyConfig {
         self
     }
 
+    /// Enable LfFrame (separate DC frame).
+    ///
+    /// When true, DC coefficients are encoded as a separate modular frame
+    /// before the main VarDCT frame, matching libjxl's `progressive_dc >= 1`.
+    pub fn with_lf_frame(mut self, enable: bool) -> Self {
+        self.lf_frame = enable;
+        self
+    }
+
     /// Set butteraugli quantization loop iterations explicitly.
     ///
     /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
@@ -1083,6 +1094,11 @@ impl LossyConfig {
     /// Current progressive mode.
     pub fn progressive(&self) -> ProgressiveMode {
         self.progressive
+    }
+
+    /// Whether LfFrame (separate DC frame) is enabled.
+    pub fn lf_frame(&self) -> bool {
+        self.lf_frame
     }
 
     /// Butteraugli quantization loop iterations.
@@ -1573,6 +1589,7 @@ impl<'a> EncodeRequest<'a> {
         enc.splines = cfg.splines.clone();
         enc.is_grayscale = self.layout.is_grayscale();
         enc.progressive = cfg.progressive;
+        enc.use_lf_frame = cfg.lf_frame;
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters = cfg.butteraugli_iters;
@@ -1841,6 +1858,7 @@ fn encode_animation_lossy(
     enc.lz77_method = cfg.lz77_method;
     enc.force_strategy = cfg.force_strategy;
     enc.progressive = cfg.progressive;
+    enc.use_lf_frame = cfg.lf_frame;
     #[cfg(feature = "butteraugli-loop")]
     {
         enc.butteraugli_iters = cfg.butteraugli_iters;

@@ -725,8 +725,8 @@ mod tests {
 
     #[test]
     fn test_lf_frame_type() {
-        let mut frame = FrameHeader::lossy();
-        frame.frame_type = FrameType::LfFrame;
+        // Use the dedicated constructor which sets lf_level correctly
+        let frame = FrameHeader::lf_frame(32, 32, 1);
 
         let mut writer = BitWriter::new();
         frame.write(&mut writer).unwrap();

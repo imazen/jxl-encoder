@@ -142,6 +142,12 @@ struct Args {
     #[arg(long, conflicts_with = "progressive")]
     qprogressive: bool,
 
+    /// Enable separate DC frame (LfFrame).
+    /// Encodes DC coefficients in a separate modular frame before the VarDCT frame.
+    /// Matches libjxl's progressive_dc >= 1.
+    #[arg(long)]
+    lf_frame: bool,
+
     /// Use experimental encoder mode (encoder-specific improvements).
     /// Default is reference mode (matches libjxl algorithm choices).
     #[arg(long)]
@@ -339,6 +345,9 @@ fn main() {
                     }
                     if args.qprogressive {
                         cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
+                    }
+                    if args.lf_frame {
+                        cfg = cfg.with_lf_frame(true);
                     }
                     if args.experimental {
                         cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
@@ -599,6 +608,9 @@ fn main() {
         if args.qprogressive {
             cfg = cfg.with_progressive(ProgressiveMode::QuantizedAcFullAc);
         }
+        if args.lf_frame {
+            cfg = cfg.with_lf_frame(true);
+        }
         if args.experimental {
             cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
         }
@@ -676,6 +688,9 @@ fn main() {
             }
             if args.qprogressive {
                 tiny.progressive = ProgressiveMode::QuantizedAcFullAc;
+            }
+            if args.lf_frame {
+                tiny.use_lf_frame = true;
             }
 
             let linear_rgb = srgb_u8_to_linear_f32(&data);

@@ -936,6 +936,117 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     (tokens, total_contexts, dc_ctx_remap, ac_meta_ctx_map)
 }
 
+/// Build a context tree with AC metadata contexts only (no DC).
+///
+/// Used when `use_lf_frame` is true: DC is encoded in a separate frame,
+/// so the main VarDCT frame's LfGlobal tree only needs AC metadata contexts.
+///
+/// Returns (tree_tokens, total_contexts, ac_meta_ctx_map).
+pub fn ac_metadata_only_tree() -> (Vec<(u32, u32)>, u32, [u32; NUM_AC_META_CONTEXTS as usize]) {
+    use super::common::pack_signed;
+    use alloc::collections::VecDeque;
+
+    enum LeafType {
+        AcMeta(u32),
+    }
+
+    struct FlatNode {
+        property: i32,
+        splitval: i32,
+        predictor: u32,
+        left: usize,
+        right: usize,
+        leaf_type: Option<LeafType>,
+    }
+
+    let mut flat: Vec<FlatNode> = Vec::new();
+
+    let mk_internal =
+        |flat: &mut Vec<FlatNode>, prop: i32, split: i32, l: usize, r: usize| -> usize {
+            let idx = flat.len();
+            flat.push(FlatNode {
+                property: prop,
+                splitval: split,
+                predictor: 0,
+                left: l,
+                right: r,
+                leaf_type: None,
+            });
+            idx
+        };
+
+    let mk_leaf = |flat: &mut Vec<FlatNode>, pred: u32, lt: LeafType| -> usize {
+        let idx = flat.len();
+        flat.push(FlatNode {
+            property: -1,
+            splitval: 0,
+            predictor: pred,
+            left: 0,
+            right: 0,
+            leaf_type: Some(lt),
+        });
+        idx
+    };
+
+    // Build AC metadata subtree (same structure as in tree_tokens_with_ac_metadata_prefix)
+    let qf3 = mk_leaf(&mut flat, 1, LeafType::AcMeta(3));
+    let qf4 = mk_leaf(&mut flat, 1, LeafType::AcMeta(4));
+    let qf5 = mk_leaf(&mut flat, 1, LeafType::AcMeta(5));
+    let qf6 = mk_leaf(&mut flat, 1, LeafType::AcMeta(6));
+    let acs7 = mk_leaf(&mut flat, 0, LeafType::AcMeta(7));
+    let acs8 = mk_leaf(&mut flat, 0, LeafType::AcMeta(8));
+    let acs9 = mk_leaf(&mut flat, 0, LeafType::AcMeta(9));
+    let acs10 = mk_leaf(&mut flat, 0, LeafType::AcMeta(10));
+    let qf_l = mk_internal(&mut flat, 7, 11, qf3, qf4);
+    let qf_r = mk_internal(&mut flat, 7, 3, qf5, qf6);
+    let qf_root = mk_internal(&mut flat, 7, 5, qf_l, qf_r);
+    let acs_l = mk_internal(&mut flat, 7, 11, acs7, acs8);
+    let acs_r = mk_internal(&mut flat, 7, 3, acs9, acs10);
+    let acs_root = mk_internal(&mut flat, 7, 5, acs_l, acs_r);
+    let blockinfo = mk_internal(&mut flat, 2, 0, qf_root, acs_root);
+    let epf = mk_leaf(&mut flat, 0, LeafType::AcMeta(0));
+    let ytob = mk_leaf(&mut flat, 5, LeafType::AcMeta(1));
+    let ytox = mk_leaf(&mut flat, 5, LeafType::AcMeta(2));
+    let ch2 = mk_internal(&mut flat, 0, 2, epf, blockinfo);
+    let ch0 = mk_internal(&mut flat, 0, 0, ytob, ytox);
+    let root = mk_internal(&mut flat, 0, 1, ch2, ch0);
+
+    // BFS to generate token stream
+    let mut tokens = Vec::new();
+    let mut queue = VecDeque::new();
+    let mut leaf_ctx = 0u32;
+    let mut ac_meta_ctx_map = [0u32; NUM_AC_META_CONTEXTS as usize];
+
+    let rn = &flat[root];
+    tokens.push((1, (rn.property + 1) as u32));
+    tokens.push((0, pack_signed(rn.splitval)));
+    queue.push_back(root);
+
+    while let Some(idx) = queue.pop_front() {
+        for child_idx in [flat[idx].left, flat[idx].right] {
+            let cn = &flat[child_idx];
+            if cn.property < 0 {
+                tokens.push((1, 0));
+                tokens.push((2, cn.predictor));
+                tokens.push((3, 0));
+                tokens.push((4, 0));
+                tokens.push((5, 0));
+                if let Some(LeafType::AcMeta(orig)) = &cn.leaf_type {
+                    ac_meta_ctx_map[*orig as usize] = leaf_ctx;
+                }
+                leaf_ctx += 1;
+            } else {
+                tokens.push((1, (cn.property + 1) as u32));
+                tokens.push((0, pack_signed(cn.splitval)));
+                queue.push_back(child_idx);
+            }
+        }
+    }
+
+    let total_contexts = leaf_ctx;
+    (tokens, total_contexts, ac_meta_ctx_map)
+}
+
 /// Collect DC tokens using a learned tree for context assignment.
 ///
 /// This is the learned-tree version of `collect_dc_tokens_region()` from dc_coding.rs.
