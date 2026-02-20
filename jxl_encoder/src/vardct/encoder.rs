@@ -4,7 +4,10 @@
 
 //! Main tiny encoder implementation.
 
-use super::ac_strategy::{AcStrategyMap, adjust_quant_field_with_distance, compute_ac_strategy};
+use super::ac_strategy::{
+    AcStrategyMap, adjust_quant_field_float_with_distance, adjust_quant_field_with_distance,
+    compute_ac_strategy,
+};
 use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float, quantize_quant_field};
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
 use super::common::*;
@@ -418,7 +421,7 @@ impl VarDctEncoder {
         // libjxl effort gating (enc_heuristics.cc:1097-1128):
         // - effort < 5 (speed_tier > kHare): flat quant field = q_numerator/distance
         // - effort >= 5 (speed_tier <= kHare): adaptive via InitialQuantField
-        let (quant_field_float, masking) = if self.profile.use_adaptive_quant {
+        let (mut quant_field_float, masking) = if self.profile.use_adaptive_quant {
             compute_quant_field_float(
                 &xyb_x,
                 &xyb_y,
@@ -628,14 +631,18 @@ impl VarDctEncoder {
 
         // Adjust quant field for multi-block transforms.
         // At low distances uses max, at high distances blends toward mean for better quality.
+        // Adjust BOTH u8 and float fields (libjxl adjusts float before SetQuantField).
         adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
+        adjust_quant_field_float_with_distance(&ac_strategy, &mut quant_field_float, self.distance);
 
         // Butteraugli quantization loop: iteratively refine quant_field using
         // perceptual distance feedback. AC strategy is fixed; only quant_field changes.
+        // Works in float quant field domain with per-iteration global_scale recomputation
+        // (matching libjxl FindBestQuantization). Returns final DistanceParams.
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
-            let initial_quant_field = quant_field.clone();
-            self.butteraugli_refine_quant_field(
+            let initial_qf_float = quant_field_float.clone();
+            params = self.butteraugli_refine_quant_field(
                 linear_rgb,
                 width,
                 height,
@@ -648,7 +655,8 @@ impl VarDctEncoder {
                 ysize_blocks,
                 &params,
                 &mut quant_field,
-                &initial_quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
                 &cfl_map,
                 &ac_strategy,
                 patches_data.as_ref(),
