@@ -139,52 +139,46 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 19, 2026)
+### Quality Gap vs Full libjxl (Feb 20, 2026)
 
-**Measured with fast-ssim2 (Rust) and butteraugli_main. 25 images × 9 distances = 225 comparisons.**
+**Measured with butteraugli_main (metadata-stripped PNGs). 6 images × 4 distances.**
 
-**vs cjxl e7 (CSV reference: `reference/cjxl_reference.csv`):**
-
-Updated 2026-02-19 (after mul8x8, quant_norm16, IDCT, CfL Newton, float-domain butteraugli fixes).
-Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
+**vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-| Distance | Avg Size | Avg Butteraugli | Avg SSIM2 |
-|----------|----------|-----------------|-----------|
-| d=0.25 | +2.1% | **-4.3%** | **+0.16** |
-| d=0.5 | +1.0% | **-3.6%** | **+0.19** |
-| d=1.0 | **-6.6%** | +30.9% | -1.04 |
-| d=1.5 | **-5.4%** | +35.4% | -1.43 |
-| d=2.0 | **-3.8%** | +42.4% | -2.07 |
-| d=2.5 | **-3.9%** | +50.8% | -1.95 |
-| d=3.0 | +2.8% | +59.0% | -3.05 |
-| d=4.0 | +3.5% | +62.2% | -3.98 |
-| d=5.0 | +5.7% | +76.0% | -4.28 |
+Updated 2026-02-20 after gaborish ordering fix (1af2202): adaptive quant and mask1x1
+now computed on pre-gaborish XYB (matching libjxl enc_heuristics.cc:1117-1142).
 
-Grand summary: avg size **-0.52%** (median +4.07%), total bytes -13.46%, avg SSIM2 -1.940, avg bfly +0.388.
-Size wins: 69/225 (31%). Encode time: 5.40x slower (235.4s vs 43.6s for all 225 encodes).
+| Distance | Avg Size | Avg Butteraugli | Better Quality |
+|----------|----------|-----------------|----------------|
+| d=0.5 | +8.9% | **-48.2%** | 5/6 images |
+| d=1.0 | +4.4% | **-26.6%** | 5/6 images |
+| d=2.0 | +7.4% | **-16.3%** | 5/6 images |
+| d=5.0 | +3.7% | **-5.4%** | 3/6 images |
 
 **Key patterns**:
-- **Low distance (d=0.25-0.5)**: quality BETTER than cjxl (butteraugli -3 to -4%, SSIM2 positive)
-  but files 1-2% larger. Patches dominate on screenshots (-44% to -92%).
-- **Mid distance (d=1.0-2.5)**: avg files **-3.8% to -6.6%** smaller (patches help). Butteraugli
-  worse, SSIM2 -1.0 to -2.1. Quality gap is the main concern — needs butteraugli loop at e8.
-- **High distance (d=3.0+)**: files 3-6% larger, quality -3 to -4 SSIM2 points.
-- **Photos only (CLIC+CID22)**: median -0.1% at d=1.0.
-- **Screenshots** (gb82-sc): patches give 12-93% savings on some, but others +15-20% larger.
-- **CfL Newton fix** (fafe3bf): eps=1 + LS warm start improved Newton convergence by ~1pp.
+- **Quality BETTER than cjxl e7** at all distances through d=2.0 (avg -16 to -48% butteraugli)
+- Files 4-9% larger due to finer quantization (correct masking produces higher quant values)
+- Quality advantage decreases at high distances (d=5.0: only 3/6 images better)
+- One persistent outlier: 1418519 (CID22 512x512) consistently worse (+8-13% butteraugli)
+- 100a02c2 image shows extreme improvement (-61 to -83% butteraugli) — likely had severe
+  masking error from gaborish sharpening inflating edge gradients
 
-**Root cause analysis for outliers** (addressed Feb 19, 2026):
+**Root causes found and fixed**:
+- **Gaborish ordering** (1af2202): adaptive quant was computed on gaborished (sharpened) XYB,
+  libjxl computes it on original XYB. Sharpened gradients inflate masking → lower quant values
+  → under-quantization. This was the primary quality gap at d>=1.0.
+- **Double-rounding** (1af2202): `(qf * inv_scale + 0.5).round()` vs libjxl's truncation
+  `static_cast<int>(qf * inv_scale + 0.5)`. The double-rounding was partially compensating
+  for the gaborish ordering bug by biasing raw_quant upward.
 - **global_scale bug** (eb14b65): was computed from adaptive quant field median/MAD instead of
-  fixed effort-matched q values. libjxl uses q=0.39/d at e>=5. Reduced 1418519 gap ~19.6%→~13.1%.
-- **AC strategy distance gates** (c64d576): DCT32 was gated at d>=2.0, DCT64 at d>=3.0 — preventing
-  large transforms from being evaluated on smooth content at d=1.0. libjxl has NO distance gates.
-  Lowered to d>=0.5 and d>=1.0. Reduced 1418519 gap ~13.1%→~4.6%, 100a02c2 ~4.8%→~2.0%.
-- **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
-  implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
-- **Butteraugli loop**: only runs at e8+ (matching libjxl gating). Quality gap at d>=1.0 is
-  expected without the loop — cjxl e7 also doesn't run it. Compare at e8 for loop-vs-loop.
-- Gap widening at high distances → distance-scaled cost model constants may need tuning
+  fixed effort-matched q values. libjxl uses q=0.39/d at e>=5.
+- **AC strategy distance gates** (c64d576): DCT32 was gated at d>=2.0, DCT64 at d>=3.0 —
+  preventing large transforms from being evaluated on smooth content at d=1.0.
+
+**Remaining size overhead (files 4-9% larger)**:
+- cjxl uses LfFrame (frame_type=1) for DC/LF — structural compression advantage we don't have
+- Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 
 **What's confirmed correct** (Feb 19, 2026):
