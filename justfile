@@ -51,6 +51,11 @@ rd-compare:
     bash scripts/measure_cjxl_rs.sh
     python3 scripts/rd_report.py
 
+# Regenerate hash lock sidecar file after intentional encoding changes
+update-hashes:
+    rm -f jxl_encoder/tests/hash_lock_expected.txt
+    UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1
+
 # Quick comparison: 10 CLIC + 5 CID22 + all screenshots (~5 min)
 rd-compare-quick:
     cargo build --release -p jxl-encoder-cli

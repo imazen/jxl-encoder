@@ -181,12 +181,12 @@ Size wins: 69/225 (31%). Encode time: 5.83x slower (254.2s vs 43.6s for all 225 
   Lowered to d>=0.5 and d>=1.0. Reduced 1418519 gap ~13.1%→~4.6%, 100a02c2 ~4.8%→~2.0%.
 - **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
   implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
-- **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
-  implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
 - Gap widening at high distances → distance-scaled cost model constants may need tuning
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 - **CfL pass 2**: our CfL refinement uses DCT8-only; libjxl uses actual AC strategies + quant weights.
   Plan exists at `~/.claude/plans/graceful-discovering-kite.md`. Partially implemented (stashed).
+- **Butteraugli loop**: now float-domain with per-iteration global_scale recomputation (Feb 19, 2026).
+  RD comparison numbers above are PRE-float-domain. Need re-measurement with `just rd-compare-quick`.
 
 **What's confirmed correct** (Feb 19, 2026):
 - **estimate_entropy_full matches libjxl exactly** — verified every component:
@@ -274,12 +274,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
-**E. Effort 8+ Features**
-- **Butteraugli quantization loop** (effort 5+): IMPLEMENTED, DEFAULT-ON (2 iterations, `--no-butteraugli` to disable).
-  Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles.
-  AC strategy is fixed; only quant_field changes. 2 iterations converges for most images.
-  At d=1.0 on CLIC 1024x1024: -15% file size at -1.7 SSIM2; at equal file size +0.3 SSIM2.
-  RD improvement comes from redistributing bits from over-quality to under-quality blocks.
+**E. Effort 5+ Features**
+- **Butteraugli quantization loop** (effort 5+): IMPLEMENTED, DEFAULT-ON, FLOAT-DOMAIN.
+  Matches libjxl FindBestQuantization exactly: float quant field (~0.3-1.5 range),
+  per-iteration global_scale recomputation via SetQuantField (median/MAD), deviation
+  bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...]. 2 iters at e5-8, 4 at e9+.
+  Returns final DistanceParams for downstream encoding. `--no-butteraugli` to disable.
 - ~~**Fine-grained AC strategy search**~~ DONE (effort 9): step=1 instead of step=2 for 32x32+ blocks
 - ~~**Optimal LZ77**~~ DONE: Viterbi DP parser at effort 9+, greedy at e8, RLE at e7
 - ~~**Full histogram clustering**~~ DONE: pair-merge enabled for both VarDCT and modular tree-learned paths
@@ -375,9 +375,10 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 - [x] Per-block EPF sharpness selection (auto, Phase 4 of reconstruction plan)
 - [x] Encoder-side reconstruction pipeline (dequant → CfL → LLF → IDCT → gab → EPF)
-- [x] Butteraugli quantization loop (default-on, 2 iterations, `--no-butteraugli` to disable)
-  - Iteratively refines per-block quant field via reconstruct→butteraugli→adjust cycles
-  - 2 iterations converges for most images; +0.3 SSIM2 at equal file size vs baseline
+- [x] Butteraugli quantization loop (default-on at effort >= 5, `--no-butteraugli` to disable)
+  - Float-domain quant field with per-iteration global_scale recomputation (libjxl parity)
+  - Deviation bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...] all match libjxl
+  - 2 iterations at effort 5-8, 4 iterations at effort 9+ (matching libjxl exactly)
 - [x] Patches/dictionary (default-on, auto-detect, `--no-patches` to disable)
   - Detects repeated rectangular patterns in screenshots/UI (text glyphs, icons, buttons)
   - Detection matches libjxl FindTextLikePatches (L1 distance, 8-connected BFS/DFS,
@@ -513,44 +514,7 @@ Key patterns to watch for when working on this codebase:
 
 ## Known Bugs (ACTIVE)
 
-### ~~Tree Learning Makes Lossless Files Larger on Photos~~ (MITIGATED Feb 18, 2026)
-
-**Status**: MITIGATED — context count pruning and enhanced clustering now scale with image size.
-
-Previously tree learning produced 22-63% LARGER files on small photos (128x128, 256x256 crops)
-due to tree/histogram overhead dominating small files. Three fixes applied:
-
-1. **Context count pruning**: `with_total_pixels()` on `TreeLearningParams` caps `max_nodes`
-   to `total_pixels / 512` (min 16). Effect: 1024x1024→5859, 128x128→93, 64x64→23.
-2. **Histogram count scaling**: `total_pixel_hint` in `build_entropy_code_ans_with_options`
-   caps `max_histograms` to `total_pixels / 2048` (min 1). Effect: 1024x1024→96, 128x128→23.
-3. **Enhanced clustering for modular**: Tree-learned paths now use `ClusteringType::Best`
-   (pair-merge refinement) instead of `ClusteringType::Fast` (k-means only).
-
-Property 15 (wp_max_error) and predictors 10-13 were fixed in Feb 16, 2026.
-Tree learning is default-on at effort >= 5 and beats cjxl e7 by 0.7% on 1024x1024 photos.
-
-### ~~ANS Encoder Bug on Degenerate Monochrome Gradients~~ (RESOLVED Feb 17, 2026)
-
-**Status**: RESOLVED — root cause was wrong bit widths in palette transform `nb_colors` encoding.
-
-`write_palette_transform` in `encode_transforms.rs` used 11-bit and 14-bit fields for
-`nb_colors` u2S selectors 1 and 2, but the JXL spec requires 10-bit and 12-bit. This caused
-a 1-2 bit shift in the bitstream that corrupted subsequent ANS state reading. Only triggered
-when `nb_colors >= 256` (selector 1+), which is why only the 256x2 monochrome gradient test
-failed — all other palette tests had `nb_colors < 256` using the correct 8-bit selector 0.
-
-Fix: `write(11, ...) → write(10, ...)` and `write(14, ...) → write(12, ...)` in
-`encode_transforms.rs:117-130`. All 3 previously-ignored tests now pass.
-
-### ~~Tree Learning Broken on 16-bit Images~~ (RESOLVED Feb 18, 2026)
-
-**Status**: FULLY RESOLVED — tree learning works on all 16-bit pixel layouts.
-
-Two issues: (1) residual_tokens stored as u8 (overflowed >255), fixed by widening token storage.
-(2) `decode_with_jxl_rs` test helper didn't handle alpha extra channels (WrongBufferCount error
-for RGBA16). Fixed by allocating separate extra channel buffers and interleaving output.
-Verified: 32x32 RGB16, 8x8 RGBA16, 8x8 RGB16, 16x16 Gray16 — all pixel-exact via jxl-rs.
+(none currently)
 
 ## Investigation Notes
 
@@ -598,6 +562,9 @@ cargo fmt
 
 # RD regression test (6 images x 2 distances, ~3 min debug)
 just rd-regression
+
+# Regenerate hash lock sidecar after intentional encoding changes
+just update-hashes
 ```
 
 ## Pre-Commit Checklist
