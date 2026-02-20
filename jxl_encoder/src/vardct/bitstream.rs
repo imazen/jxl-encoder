@@ -1047,10 +1047,14 @@ impl VarDctEncoder {
 
         // Write LfFrame (separate DC frame) before other frames.
         // Must come before patches ref frame and main VarDCT frame.
+        //
+        // The encode returns decoded-back DC values (quantize→dequantize roundtrip)
+        // matching libjxl's decode-back step (enc_cache.cc:195-222). These represent
+        // the exact DC values the decoder will reconstruct from the LfFrame.
         if self.use_lf_frame
             && let Some(dc) = float_dc
         {
-            super::lf_frame::encode_lf_frame(
+            let _decoded_dc = super::lf_frame::encode_lf_frame(
                 dc,
                 self.distance,
                 xsize_blocks,
@@ -1060,6 +1064,9 @@ impl VarDctEncoder {
                 &mut writer,
             )?;
             writer.zero_pad_to_byte();
+            // TODO: Wire decoded_dc into reconstruction pipeline for butteraugli loop
+            // parity. Currently the reconstruction uses quant_dc from the main VarDCT
+            // transform path, which is numerically equivalent for lossless modular.
         }
 
         // If patches present, write the reference frame before the main frame.

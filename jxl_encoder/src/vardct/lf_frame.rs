@@ -19,7 +19,9 @@ use crate::headers::frame_header::FrameHeader;
 use crate::modular::channel::{Channel, ModularImage};
 
 /// Minimum butteraugli distance (libjxl kMinButteraugliDistance).
-const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.01;
+/// libjxl enc_params.h:201: "Below d0.05 is not useful and risks going outside
+/// Level 5 limits (in particular modular_16bit_buffers becomes an issue for DC)"
+const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
 
 /// Block dimension (must match common::BLOCK_DIM).
 const BLOCK_DIM: usize = 8;
@@ -140,6 +142,11 @@ fn round_hafz(val: f32) -> i32 {
 /// resolution, converted to integers via distance-scaled quantization factors.
 /// It is written as a complete JXL frame (frame_type=1) before the main VarDCT frame.
 ///
+/// Returns the decoded-back DC values in `[X, Y, B]` channel order — the exact
+/// float values the decoder will reconstruct from the LfFrame integers. This
+/// matches libjxl's decode-back step (enc_cache.cc:195-222) where the encoded
+/// LfFrame is immediately decoded to get exact decoder DC for the main frame.
+///
 /// # Arguments
 /// * `float_dc` - Pre-quantization float XYB DC values: [XYB channel][yb * xsize_blocks + xb]
 /// * `main_distance` - Main frame's butteraugli distance
@@ -155,7 +162,7 @@ pub(crate) fn encode_lf_frame(
     use_ans: bool,
     effort: u8,
     writer: &mut BitWriter,
-) -> Result<()> {
+) -> Result<[Vec<f32>; 3]> {
     let factors = DcQuantFactors::compute(main_distance);
 
     #[cfg(feature = "trace-bitstream")]
@@ -192,6 +199,28 @@ pub(crate) fn encode_lf_frame(
         ch_x_data.push(x_int);
         ch_by_data.push(b_int);
     }
+
+    // Decode-back: compute the exact float DC values the decoder will reconstruct.
+    //
+    // libjxl (enc_cache.cc:195-222) decodes the encoded LfFrame to get exact decoder
+    // DC values. Since modular encoding is lossless for integers, the decode-back is
+    // equivalent to: decoded_float = integer * dc_quant.
+    //
+    // Channel conversion: modular [Y, X, B-Y] integers → [X, Y, B] XYB floats
+    //   decoded_Y = y_int * dc_quant[1]
+    //   decoded_X = x_int * dc_quant[0]
+    //   decoded_B = (by_int + y_int) * dc_quant[2]
+    let decoded_dc = {
+        let mut dc_x = Vec::with_capacity(n);
+        let mut dc_y = Vec::with_capacity(n);
+        let mut dc_b = Vec::with_capacity(n);
+        for i in 0..n {
+            dc_y.push(ch_y_data[i] as f32 * factors.dc_quant[1]);
+            dc_x.push(ch_x_data[i] as f32 * factors.dc_quant[0]);
+            dc_b.push((ch_by_data[i] + ch_y_data[i]) as f32 * factors.dc_quant[2]);
+        }
+        [dc_x, dc_y, dc_b]
+    };
 
     #[cfg(feature = "trace-bitstream")]
     {
@@ -285,7 +314,7 @@ pub(crate) fn encode_lf_frame(
         )?;
     }
 
-    Ok(())
+    Ok(decoded_dc)
 }
 
 /// Multi-group LfFrame encoding.
