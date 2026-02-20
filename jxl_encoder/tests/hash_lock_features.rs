@@ -317,7 +317,7 @@ fn lossy_defaults_rgb_32x32() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
         314,                // lossy_defaults_rgb_32x32
     );
 }
@@ -337,8 +337,8 @@ fn lossy_defaults_rgb_48x48_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
-        3606,               // lossy_defaults_rgb_48x48_noise
+        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        3605,               // lossy_defaults_rgb_48x48_noise
     );
 }
 
@@ -357,8 +357,8 @@ fn lossy_defaults_rgb_13x17() {
         false,
         false,
         0x3333c10727f60b90,
-        0xaeae688c7e881310, // Updated: CfL Newton convergence fallback to LS
-        664,                // lossy_defaults_rgb_13x17
+        0xc8cb8d880fb19ee8, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        662,                // lossy_defaults_rgb_13x17
     );
 }
 
@@ -377,7 +377,7 @@ fn lossy_rgba_32x32() {
         false,
         false,
         0xe058fd017b3de453,
-        0x300043b00d9a4799, // Updated: CfL Newton convergence fallback to LS
+        0x1809962c08814051, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
         751,                // lossy_rgba_32x32
     );
 }
@@ -397,8 +397,8 @@ fn lossy_rgb16_32x32() {
         false,
         true,
         0xe37a0d041fe39334,
-        0xe1019b0aa90f497f, // Updated: CfL Newton convergence fallback to LS
-        316,                // lossy_rgb16_32x32
+        0xa64e35edf0214a59, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        318,                // lossy_rgb16_32x32
     );
 }
 
@@ -418,8 +418,8 @@ fn lossy_no_ans_huffman() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xde400a454a388477, // Updated: CfL Newton convergence fallback to LS
-        265,                // lossy_no_ans_huffman
+        0x27a15f51e75cd931, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        264,                // lossy_no_ans_huffman
     );
 }
 
@@ -439,8 +439,8 @@ fn lossy_no_gaborish() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x13a92156fe21ccb5, // Updated: CfL Newton convergence fallback to LS
-        329,                // lossy_no_gaborish
+        0x3c4ccd8db2a57fcc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        327,                // lossy_no_gaborish
     );
 }
 
@@ -460,8 +460,8 @@ fn lossy_with_noise() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
-        3606,               // lossy_with_noise
+        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        3605,               // lossy_with_noise
     );
 }
 
@@ -481,8 +481,8 @@ fn lossy_no_error_diffusion() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x9098671c5c15d838, // Updated: CfL Newton convergence fallback to LS
-        314,                // lossy_no_error_diffusion
+        0x158690341794f656, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        316,                // lossy_no_error_diffusion
     );
 }
 
@@ -502,7 +502,7 @@ fn lossy_no_pixel_domain_loss() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
         314,                // lossy_no_pixel_domain_loss
     );
 }
@@ -523,7 +523,7 @@ fn lossy_no_butteraugli() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
         314,                // lossy_no_butteraugli
     );
 }
@@ -565,7 +565,7 @@ fn lossy_force_dct16x16() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xec1b6400dfd81d5e, // Updated: CfL Newton convergence fallback to LS
+        0xe02094e538f50b78, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
         314,                // lossy_force_dct16x16
     );
 }
@@ -631,7 +631,7 @@ fn lossy_force_dct4x4() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xaa2f6f49f4ced1fb, // Updated: CfL Newton convergence fallback to LS
+        0x95c976d16b9e1cb3, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
         526,                // lossy_force_dct4x4
     );
 }
@@ -675,8 +675,8 @@ fn lossy_with_lz77_greedy() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
-        3606,               // lossy_with_lz77_greedy
+        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        3605,               // lossy_with_lz77_greedy
     );
 }
 
@@ -697,8 +697,8 @@ fn lossy_with_lz77_rle() {
         false,
         false,
         0xb81c2f58aebac4b3,
-        0xdd50f70343a765cc, // Updated: mul8x8 post-hoc multiplier in pixel-domain mode
-        3606,               // lossy_with_lz77_rle
+        0x7feacc8b6b3ce9bc, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        3605,               // lossy_with_lz77_rle
     );
 }
 
@@ -717,8 +717,8 @@ fn lossy_distance_05() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x097402cdfe7f023d, // gab OFF at d<=0.5 (libjxl enc_frame.cc:281)
-        369,                // lossy_distance_05 (gab OFF → larger)
+        0x9ae13e498fa23554, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        366,                // lossy_distance_05 (gab OFF → larger)
     );
 }
 
@@ -767,8 +767,8 @@ fn lossy_all_off() {
         false,
         false,
         0x3ba5403031c1499f,
-        0xf6952e7df2514805, // Updated: CfL Newton convergence fallback to LS
-        393,                // lossy_all_off
+        0x952a3afb53eba2b4, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        392,                // lossy_all_off
     );
 }
 
@@ -787,8 +787,8 @@ fn lossy_bgr8() {
         false,
         false,
         0x3ba5403031c1499f,
-        0x2225a004e74b3fd7, // Updated: CfL Newton convergence fallback to LS
-        310,                // lossy_bgr8
+        0xb9a9172abc3fbffb, // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        311,                // lossy_bgr8
     );
 }
 
