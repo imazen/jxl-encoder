@@ -1616,9 +1616,9 @@ pub fn compute_ac_strategy(
             }
 
             // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
-            // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 7).
-            // Only at d>=2.0 where DCT32x32 is enabled.
-            if distance >= 2.0 && profile.try_dct64 {
+            // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 6).
+            // libjxl gates by speed_tier < kHare (effort >= 6) only, no distance gate.
+            if profile.non_aligned_eval {
                 let step = profile.fine_grained_step as usize;
                 for cy in (0..tile_h.saturating_sub(3)).step_by(step) {
                     for cx in (0..tile_w.saturating_sub(3)).step_by(step) {
