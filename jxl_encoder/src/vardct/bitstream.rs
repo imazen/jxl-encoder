@@ -11,7 +11,7 @@ use super::ac_group::{
 use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::*;
-use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_region};
+use super::dc_coding::{collect_ac_metadata_tokens_region, collect_dc_tokens_wp};
 use super::encoder::{BuiltEntropyCode, VarDctEncoder};
 use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
@@ -19,7 +19,7 @@ use crate::api::ProgressiveMode;
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
-use crate::debug_rect;
+
 use crate::entropy_coding::encode::{
     build_entropy_code_ans_with_options, build_entropy_code_with_options,
 };
@@ -1141,48 +1141,28 @@ impl VarDctEncoder {
     ) -> Result<()> {
         // ── Pass 1: Collect tokens per section ──
 
-        // DC tree learning: learn optimal context tree from image content.
-        // Returns (tree, total_contexts, dc_ctx_remap, ac_meta_ctx_map, tokens)
-        let (
-            learned_dc_tree,
-            learned_dc_num_contexts,
-            dc_ctx_remap,
-            ac_meta_ctx_map,
-            learned_tree_tokens,
-        ) = if self.dc_tree_learning && num_dc_groups == 1 {
-            let mut samples = super::dc_tree_learn::DcTreeSamples::new();
-            super::dc_tree_learn::gather_dc_samples(&mut samples, quant_dc);
+        // Build kWPFixedDC tree for DC context assignment.
+        // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
+        // Matches libjxl's PredefinedTree(kWPFixedDC) at speed_tier <= kFalcon (effort >= 4).
+        let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
+        let (wp_dc_tree, wp_dc_num_contexts) =
+            super::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
 
-            if samples.num_samples > 0 {
-                let max_token = 64;
-                let (tree, dc_num_contexts) =
-                    super::dc_tree_learn::learn_dc_tree(&samples, max_token);
+        let (wrapped_tokens, total_contexts, dc_remap, ac_ctx_map) =
+            super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                &wp_dc_tree,
+                wp_dc_num_contexts,
+            );
 
-                let (wrapped_tokens, total_contexts, dc_remap, ac_ctx_map) =
-                    super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
-                        &tree,
-                        dc_num_contexts,
-                    );
+        let learned_tree_tokens = Some(wrapped_tokens);
+        let dc_ctx_remap = dc_remap;
+        let ac_meta_ctx_map = ac_ctx_map;
 
-                #[cfg(feature = "debug-tokens")]
-                eprintln!(
-                    "DC tree learning: dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
-                    dc_num_contexts, total_contexts, dc_remap, ac_ctx_map
-                );
-
-                (
-                    Some(tree),
-                    Some(total_contexts as usize),
-                    Some(dc_remap),
-                    Some(ac_ctx_map),
-                    Some(wrapped_tokens),
-                )
-            } else {
-                (None, None, None, None, None)
-            }
-        } else {
-            (None, None, None, None, None)
-        };
+        #[cfg(feature = "debug-tokens")]
+        eprintln!(
+            "WP fixed DC tree: dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
+            wp_dc_num_contexts, total_contexts, dc_ctx_remap, ac_meta_ctx_map
+        );
 
         // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
         let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
@@ -1197,14 +1177,9 @@ impl VarDctEncoder {
             let region_xsize = end_bx - start_bx;
             let region_ysize = end_by - start_by;
 
-            // Collect DC tokens using learned tree if available, else use fixed LUT
-            let dc_tokens = if let Some(ref tree) = learned_dc_tree {
-                super::dc_tree_learn::collect_dc_tokens_with_tree(
-                    quant_dc, tree, start_bx, start_by, end_bx, end_by,
-                )
-            } else {
-                collect_dc_tokens_region(quant_dc, start_bx, start_by, end_bx, end_by)
-            };
+            // Collect DC tokens using Weighted Predictor + kWPFixedDC tree
+            let dc_tokens =
+                collect_dc_tokens_wp(quant_dc, &wp_dc_tree, start_bx, start_by, end_bx, end_by);
             let md_tokens = collect_ac_metadata_tokens_region(
                 region_xsize,
                 region_ysize,
@@ -1216,77 +1191,26 @@ impl VarDctEncoder {
                 ac_strategy,
                 sharpness_map,
             );
-            // When using learned tree, remap ALL token contexts to match BFS ordering.
-            // The merged tree's BFS interleaves dummy padding leaves with AC metadata,
-            // so contexts are NOT sequential 0-10 for AC meta and 11+ for DC.
-            // dc_ctx_remap[orig] maps each DC tree context to its BFS context ID.
-            // ac_meta_ctx_map[orig] gives the actual BFS context for each AC meta context.
-            let dc_tokens = if let Some(ref remap) = dc_ctx_remap {
-                dc_tokens
-                    .into_iter()
-                    .map(|mut t| {
-                        t.context = remap[t.context as usize];
-                        t
-                    })
-                    .collect()
-            } else {
-                dc_tokens
-            };
+            // Remap DC token contexts to match BFS ordering of merged tree.
+            // dc_ctx_remap[orig] maps each WP DC tree context to its BFS context ID.
+            // ac_meta_ctx_map[orig] gives the BFS context for each AC metadata context.
+            let dc_tokens: Vec<Token> = dc_tokens
+                .into_iter()
+                .map(|mut t| {
+                    t.context = dc_ctx_remap[t.context as usize];
+                    t
+                })
+                .collect();
             dc_tokens_per_group.push(dc_tokens);
 
-            let md_tokens = if let Some(ref map) = ac_meta_ctx_map {
-                md_tokens
-                    .into_iter()
-                    .map(|mut t| {
-                        t.context = map[t.context as usize];
-                        t
-                    })
-                    .collect()
-            } else {
-                md_tokens
-            };
+            let md_tokens: Vec<Token> = md_tokens
+                .into_iter()
+                .map(|mut t| {
+                    t.context = ac_meta_ctx_map[t.context as usize];
+                    t
+                })
+                .collect();
             ac_metadata_tokens_per_group.push(md_tokens);
-        }
-
-        // Debug: show token context distribution
-        if self.dc_tree_learning {
-            let dc_ctx_max = dc_tokens_per_group
-                .iter()
-                .flat_map(|t| t.iter())
-                .map(|t| t.context)
-                .max()
-                .unwrap_or(0);
-            let ac_md_ctx_max = ac_metadata_tokens_per_group
-                .iter()
-                .flat_map(|t| t.iter())
-                .map(|t| t.context)
-                .max()
-                .unwrap_or(0);
-            let dc_count: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum();
-            let md_count: usize = ac_metadata_tokens_per_group.iter().map(|t| t.len()).sum();
-            debug_rect!(
-                "tokens/stats",
-                0,
-                0,
-                width,
-                height,
-                "DC {} (max_ctx={}) AC_metadata {} (max_ctx={})",
-                dc_count,
-                dc_ctx_max,
-                md_count,
-                ac_md_ctx_max
-            );
-            if let Some(total) = learned_dc_num_contexts {
-                debug_rect!(
-                    "tokens/stats",
-                    0,
-                    0,
-                    width,
-                    height,
-                    "Total contexts expected: {}",
-                    total
-                );
-            }
         }
 
         // Compute custom coefficient orders if enabled and image is large enough
@@ -1549,7 +1473,8 @@ impl VarDctEncoder {
             );
 
             // Apply LZ77 to DC token streams (each DC group independently)
-            let dc_num_ctx = super::dc_coding::NUM_DC_CONTEXTS;
+            // Use actual merged tree context count (WP DC + AC metadata), not old constant.
+            let dc_num_ctx = total_contexts as usize;
             let merged_dc = {
                 let mut m = Vec::new();
                 for section in &dc_tokens_per_group {
@@ -1710,13 +1635,8 @@ impl VarDctEncoder {
         // When using a learned DC tree, the number of contexts is:
         //   AC metadata contexts (0-10) + learned tree contexts (11+)
         // The decoder's MaConfig::parse reads Decoder::parse(ctx) where ctx is the number of tree leaves.
-        let base_dc_contexts = if let Some(learned_ctx) = learned_dc_num_contexts {
-            // learned_ctx already includes AC metadata contexts (11) + DC tree contexts
-            // from tree_tokens_with_ac_metadata_prefix
-            learned_ctx
-        } else {
-            super::dc_coding::NUM_DC_CONTEXTS
-        };
+        // total_contexts from kWPFixedDC tree includes AC metadata (11) + DC tree contexts
+        let base_dc_contexts = total_contexts as usize;
         let dc_num_contexts = if dc_lz77_params.is_some() {
             base_dc_contexts + 1 // +1 for LZ77 distance context
         } else {
