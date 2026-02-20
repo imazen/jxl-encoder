@@ -351,12 +351,13 @@ pub fn compute_quant_field_float(
 
 /// Convert float quant field to u8 raw_quant values.
 ///
-/// raw_quant = clamp(round(quant_field * inv_scale + 0.5), 1, 255)
+/// Matches libjxl's ClampVal: `static_cast<int32_t>(clamp(qf * inv_scale + 0.5, 1.0, 256.0))`
+/// which is standard round-to-nearest via add 0.5 then truncate.
 pub fn quantize_quant_field(quant_field_float: &[f32], inv_scale: f32) -> Vec<u8> {
     quant_field_float
         .iter()
         .map(|&qf| {
-            let val = (qf * inv_scale + 0.5).round() as i32;
+            let val = (qf * inv_scale + 0.5) as i32;
             clamp(val, 1, 255) as u8
         })
         .collect()
