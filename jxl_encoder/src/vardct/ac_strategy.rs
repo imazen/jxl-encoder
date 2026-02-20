@@ -858,13 +858,20 @@ fn estimate_entropy_full_impl(
     // cost is irrelevant for strategy selection. Without this, different strategies
     // have wildly different DC dequant weights (e.g., DCT8 Y=560 vs AFV Y=58),
     // creating phantom entropy differences that bias AFV selection.
+    //
+    // The LLF region uses the transposed layout (cx_t >= cy_t, stride = cx_t * 8),
+    // matching libjxl's swap(cx, cy) convention. Non-square DCTs always output in
+    // the layout where the longer dimension is the stride (e.g., both DCT16X8 and
+    // DCT8X16 output in 8×16 layout with stride 16). The LLF positions are in the
+    // top-left corner of this layout.
     {
-        let stride = cx * BLOCK_DIM;
+        let (cx_t, cy_t) = if cy > cx { (cy, cx) } else { (cx, cy) };
+        let llf_stride = cx_t * BLOCK_DIM;
         for c in 0..3 {
             let offset = c * size;
-            for iy in 0..cy {
-                for ix in 0..cx {
-                    block[offset + iy * stride + ix] = 0.0;
+            for iy in 0..cy_t {
+                for ix in 0..cx_t {
+                    block[offset + iy * llf_stride + ix] = 0.0;
                 }
             }
         }
