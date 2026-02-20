@@ -1439,8 +1439,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: AC strategy distance gates removed
-        const EXPECTED_HASH: u64 = 0x8f2f7b7a65c01c9c;
+        // Updated: EPF step activation fix (steps 1/2 were swapped)
+        const EXPECTED_HASH: u64 = 0xc0c211d03c3ca4eb;
         assert_eq!(
             hash,
             EXPECTED_HASH,

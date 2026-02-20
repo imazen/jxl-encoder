@@ -256,9 +256,10 @@ pub(crate) fn apply_epf(
 
     let n = width * height;
 
-    // Step 1: medium 3x3 cross with multi-point SAD (only at epf_iters >= 2)
-    // Uses SIMD-accelerated kernel from jxl_simd.
-    if epf_iters >= 2 {
+    // Step 1 / EPF1: medium 3x3 cross with multi-point SAD (epf_iters >= 1)
+    // libjxl dec_cache.cc:164: if (lf.epf_iters >= 1) AddStage(EPF1)
+    // EPF1 always runs when EPF is enabled — it's the primary smoothing step.
+    if epf_iters >= 1 {
         let mut out_x = vec![0.0f32; n];
         let mut out_y = vec![0.0f32; n];
         let mut out_b = vec![0.0f32; n];
@@ -281,9 +282,9 @@ pub(crate) fn apply_epf(
         planes[2] = out_b;
     }
 
-    // Step 2: light 3x3 cross with single-pixel SAD (always runs when epf_iters >= 1)
-    // Uses SIMD-accelerated kernel from jxl_simd.
-    {
+    // Step 2 / EPF2: light 3x3 cross with single-pixel SAD (epf_iters >= 2)
+    // libjxl dec_cache.cc:165: if (lf.epf_iters >= 2) AddStage(EPF2)
+    if epf_iters >= 2 {
         let mut out_x = vec![0.0f32; n];
         let mut out_y = vec![0.0f32; n];
         let mut out_b = vec![0.0f32; n];
@@ -335,8 +336,9 @@ fn apply_epf_with_scratch(
         *planes = result;
     }
 
-    // Step 1: medium 3x3 cross with multi-point SAD (only at epf_iters >= 2)
-    if epf_iters >= 2 {
+    // Step 1 / EPF1: medium 3x3 cross with multi-point SAD (epf_iters >= 1)
+    // libjxl dec_cache.cc:164: if (lf.epf_iters >= 1) AddStage(EPF1)
+    if epf_iters >= 1 {
         // No zeroing needed — EPF kernels write every output pixel
         jxl_simd::epf_step1(
             &planes[0],
@@ -357,8 +359,9 @@ fn apply_epf_with_scratch(
         core::mem::swap(&mut planes[2], scratch_b);
     }
 
-    // Step 2: light 3x3 cross with single-pixel SAD (always runs when epf_iters >= 1)
-    {
+    // Step 2 / EPF2: light 3x3 cross with single-pixel SAD (epf_iters >= 2)
+    // libjxl dec_cache.cc:165: if (lf.epf_iters >= 2) AddStage(EPF2)
+    if epf_iters >= 2 {
         // No zeroing needed — EPF kernels write every output pixel
         jxl_simd::epf_step2(
             &planes[0],
