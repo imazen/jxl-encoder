@@ -125,14 +125,20 @@ for corpus in $CORPORA; do
                 decoded="$DECODED_DIR/${corpus}_${short}_d${d}_e${e}.png"
                 "$DJXL" "$jxl" "$decoded" 2>/dev/null
 
+                # Strip decoded PNG to remove color metadata (prevents TF mismatch:
+                # cjxl declares gamma(0.4545), stripped source assumes sRGB — comparing
+                # two stripped PNGs ensures both are linearized with the same sRGB TF)
+                decoded_stripped="${decoded%.png}_stripped.png"
+                convert "$decoded" -strip "$decoded_stripped"
+
                 # ssimulacra2 via fast-ssim2: "Score: 86.28667631"
-                ssim2=$("$SSIM2" image "$stripped" "$decoded" 2>/dev/null | grep -oP '[\d.]+')
+                ssim2=$("$SSIM2" image "$stripped" "$decoded_stripped" 2>/dev/null | grep -oP '[\d.]+')
 
-                # butteraugli: first line is max distance
-                bfly=$("$BFLY" "$stripped" "$jxl" 2>/dev/null | head -1 | tr -d '[:space:]')
+                # butteraugli: compare stripped source vs stripped decoded (not JXL directly!)
+                bfly=$("$BFLY" "$stripped" "$decoded_stripped" 2>/dev/null | head -1 | tr -d '[:space:]')
 
-                # Clean up decoded PNG (not needed after measurement)
-                rm -f "$decoded"
+                # Clean up decoded PNGs
+                rm -f "$decoded" "$decoded_stripped"
 
                 echo "${corpus},${short},${width},${height},${d},${e},${size},${ssim2},${bfly},${wall},${user},${sys}" >> "$OUTCSV"
             done
