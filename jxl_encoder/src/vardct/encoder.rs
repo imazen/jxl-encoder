@@ -393,21 +393,9 @@ impl VarDctEncoder {
         let chromacity_x = pixel_stats.how_much_is_x_channel_pixelized();
         let chromacity_b = pixel_stats.how_much_is_b_channel_pixelized();
 
-        // Apply gaborish inverse (5x5 sharpening) before adaptive quant.
-        // The decoder will apply a 3x3 blur to compensate.
-        if self.enable_gaborish {
-            gaborish_inverse(
-                &mut xyb_x,
-                &mut xyb_y,
-                &mut xyb_b,
-                padded_width,
-                padded_height,
-            );
-        }
-
-        // Compute adaptive per-block quantization field and masking.
-        // Pass padded dimensions: XYB buffers have stride=padded_width, and all
-        // modulation/extraction functions index as [py * stride + px].
+        // Compute adaptive per-block quantization field and masking on ORIGINAL
+        // (pre-gaborish) XYB. libjxl computes InitialQuantField before GaborishInverse
+        // (enc_heuristics.cc:1117-1142, comment: "relies on pre-gaborish values").
         // When gaborish is off, scale distance by 0.62 for the quant field only
         // (not global_scale/quant_dc). This matches libjxl enc_heuristics.cc:1119.
         let distance_for_iqf = if self.enable_gaborish {
@@ -416,7 +404,7 @@ impl VarDctEncoder {
             self.distance * 0.62
         };
 
-        // Step 1: Compute float quant field.
+        // Step 1: Compute float quant field on pre-gaborish XYB.
         //
         // libjxl effort gating (enc_heuristics.cc:1097-1128):
         // - effort < 5 (speed_tier > kHare): flat quant field = q_numerator/distance
@@ -474,7 +462,31 @@ impl VarDctEncoder {
         // Step 3: Quantize float quant field to raw u8 with adaptive inv_scale
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
 
-        // Compute per-tile chroma-from-luma map
+        // Compute per-pixel mask on PRE-GABORISH image (matches libjxl:
+        // initial_quant_masking1x1 is computed in InitialQuantField before GaborishInverse)
+        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
+            Some(compute_mask1x1(&xyb_y, padded_width, padded_height))
+        } else {
+            None
+        };
+
+        // Apply gaborish inverse (5x5 sharpening) AFTER quant field and mask1x1
+        // but BEFORE CfL and AC strategy. This matches libjxl enc_heuristics.cc:
+        //   line 1124: InitialQuantField (pre-gaborish)
+        //   line 1142: GaborishInverse
+        //   line 1150-1174: CfL (post-gaborish)
+        //   line 1179: AC strategy (post-gaborish)
+        if self.enable_gaborish {
+            gaborish_inverse(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                padded_width,
+                padded_height,
+            );
+        }
+
+        // Compute per-tile chroma-from-luma map on GABORISHED XYB
         // Pass 1 always uses LS (use_newton=false): with distance_mul=1e-9, the
         // perceptual cost function collapses to LS, so Newton adds no value.
         // Newton is only useful in pass 2 where actual quant weighting matters.
@@ -494,14 +506,6 @@ impl VarDctEncoder {
                 div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS),
                 div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
             )
-        };
-
-        // Compute per-pixel mask for pixel-domain loss (full libjxl cost model)
-        // Only compute if AC strategy selection is enabled
-        let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
-            Some(compute_mask1x1(&xyb_y, padded_width, padded_height))
-        } else {
-            None
         };
 
         debug_rect!(
