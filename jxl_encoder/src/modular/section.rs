@@ -262,7 +262,7 @@ pub fn write_global_modular_section(
 /// Writes the global modular section with a learned MA tree for multi-group encoding.
 ///
 /// This writes:
-/// - dc_quant.all_default = 1
+/// - dc_quant (all_default=1, or custom if dc_quant_custom is Some)
 /// - has_tree = 1
 /// - Learned tree (write_tree)
 /// - lz77.enabled = 0
@@ -275,6 +275,27 @@ pub fn write_global_modular_section_with_tree(
     rct_type: Option<RctType>,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
+) -> Result<GlobalModularState> {
+    write_global_modular_section_with_tree_dc_quant(
+        images,
+        writer,
+        profile,
+        rct_type,
+        use_lz77,
+        lz77_method,
+        None,
+    )
+}
+
+/// Like [`write_global_modular_section_with_tree`] but with custom dc_quant for LfFrame.
+pub(crate) fn write_global_modular_section_with_tree_dc_quant(
+    images: &[ModularImage],
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    rct_type: Option<RctType>,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -374,8 +395,7 @@ pub fn write_global_modular_section_with_tree(
     );
 
     // Step 5: Write bitstream
-    // dc_quant.all_default = true
-    writer.write(1, 1)?;
+    crate::f16::write_lf_quant(writer, dc_quant_custom)?;
     // has_tree = true
     writer.write(1, 1)?;
 

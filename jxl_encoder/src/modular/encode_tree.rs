@@ -343,30 +343,48 @@ pub(super) fn write_wp_header(
 ///         use_prefix_code=1 + IntegerConfig + alphabet_size + Huffman table + tokens
 pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()> {
     use super::tree::collect_tree_tokens;
+    use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 
     let tokens = collect_tree_tokens(tree);
 
-    // Build histogram of all token values across all contexts.
-    // Tree tokens use raw symbol encoding (no HybridUint).
-    let mut max_symbol: u32 = 0;
-    for t in &tokens {
-        let val = if t.is_signed {
-            pack_signed(t.value)
-        } else {
-            t.value as u32
-        };
-        max_symbol = max_symbol.max(val);
+    // Encode tree token values through HybridUint to keep the Huffman alphabet
+    // within the 32768 symbol limit. Config {4,2,0} maps values up to ~40000
+    // into tokens 0..63, with extra bits for the remaining value.
+    //
+    // Previously used raw symbol encoding (split_exponent=15, msb=15), which
+    // worked for small splitvals but exceeded the Huffman alphabet limit when
+    // tree learning produced large splitval thresholds (e.g., LfFrame DC integers
+    // scaled by inv_dc_quant can reach ~40000 for the X channel).
+    let hybrid_config = HybridUintConfig::new(4, 2, 0);
+
+    // Encode all values through HybridUint and collect (token, extra_bits, num_extra)
+    struct EncodedTreeToken {
+        token: u32,
+        extra_bits: u32,
+        num_extra: u32,
     }
 
-    let histogram_size = (max_symbol + 1) as usize;
-    let mut histogram = vec![0u32; histogram_size];
+    let mut encoded: Vec<EncodedTreeToken> = Vec::with_capacity(tokens.len());
+    let mut max_token: u32 = 0;
     for t in &tokens {
         let val = if t.is_signed {
             pack_signed(t.value)
         } else {
             t.value as u32
         };
-        histogram[val as usize] += 1;
+        let (token, extra_bits, num_extra) = hybrid_config.encode(val);
+        max_token = max_token.max(token);
+        encoded.push(EncodedTreeToken {
+            token,
+            extra_bits,
+            num_extra,
+        });
+    }
+
+    let histogram_size = (max_token + 1) as usize;
+    let mut histogram = vec![0u32; histogram_size];
+    for e in &encoded {
+        histogram[e.token as usize] += 1;
     }
 
     // lz77.enabled = 0
@@ -379,18 +397,21 @@ pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()
     // use_prefix_code = 1
     writer.write(1, 1)?;
 
-    // IntegerConfig: raw symbols (split_exponent = log_alphabet_size = 15)
-    const LOG_ALPHABET_SIZE_PREFIX: u32 = 15;
+    // IntegerConfig with HybridUint {4,2,0}
+    // For Huffman (use_prefix_code=1), the decoder hardcodes log_alpha_size=15
+    // (HUFFMAN_MAX_BITS). We must match this when writing the config header,
+    // since the number of bits for split_exponent = ceil_log2(log_alpha_size+1).
+    const LOG_ALPHABET_SIZE: u32 = 15;
     write_integer_config(
         writer,
-        LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
+        LOG_ALPHABET_SIZE,
+        hybrid_config.split_exponent,
+        hybrid_config.msb_in_token,
+        hybrid_config.lsb_in_token,
     )?;
 
     // alphabet_size - 1
-    write_varlen_u16(writer, max_symbol as u16)?;
+    write_varlen_u16(writer, max_token as u16)?;
 
     // Huffman table
     let (depths, codes) = if histogram_size > 1 {
@@ -400,17 +421,15 @@ pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()
         (vec![0u8; histogram_size], vec![0u16; histogram_size])
     };
 
-    // Write tokens
-    for t in &tokens {
-        let val = if t.is_signed {
-            pack_signed(t.value)
-        } else {
-            t.value as u32
-        };
-        let depth = depths.get(val as usize).copied().unwrap_or(0);
-        let code = codes.get(val as usize).copied().unwrap_or(0);
+    // Write tokens + extra bits
+    for e in &encoded {
+        let depth = depths.get(e.token as usize).copied().unwrap_or(0);
+        let code = codes.get(e.token as usize).copied().unwrap_or(0);
         if depth > 0 {
             writer.write(depth as usize, code as u64)?;
+        }
+        if e.num_extra > 0 {
+            writer.write(e.num_extra as usize, e.extra_bits as u64)?;
         }
     }
 

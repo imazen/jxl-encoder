@@ -1124,6 +1124,31 @@ pub fn write_modular_stream_with_tree(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<()> {
+    write_modular_stream_with_tree_dc_quant(
+        image,
+        writer,
+        profile,
+        rct,
+        use_lz77,
+        lz77_method,
+        None,
+    )
+}
+
+/// Like [`write_modular_stream_with_tree`] but with a custom dc_quant for LfFrame support.
+///
+/// When `dc_quant_custom` is `Some([x, y, b])`, writes custom DC quantization factors
+/// instead of `all_default=true`. Used by the LfFrame encoder to embed distance-scaled
+/// DC quant values in the modular frame's LfGlobal section.
+pub(crate) fn write_modular_stream_with_tree_dc_quant(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    rct: bool,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
@@ -1221,8 +1246,7 @@ pub fn write_modular_stream_with_tree(
     );
 
     // Step 5: Write bitstream
-    // dc_quant.all_default = true
-    writer.write(1, 1)?;
+    crate::f16::write_lf_quant(writer, dc_quant_custom)?;
     // has_tree = true
     writer.write(1, 1)?;
 

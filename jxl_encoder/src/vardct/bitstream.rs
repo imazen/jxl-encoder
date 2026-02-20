@@ -1037,12 +1037,30 @@ impl VarDctEncoder {
         alpha: Option<&[u8]>,
         patches: Option<&super::patches::PatchesData>,
         splines: Option<&super::splines::SplinesData>,
+        float_dc: Option<&[Vec<f32>; 3]>,
     ) -> Result<Vec<u8>> {
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
         // Write file header
         let has_alpha = alpha.is_some();
         self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
+
+        // Write LfFrame (separate DC frame) before other frames.
+        // Must come before patches ref frame and main VarDCT frame.
+        if self.use_lf_frame
+            && let Some(dc) = float_dc
+        {
+            super::lf_frame::encode_lf_frame(
+                dc,
+                self.distance,
+                xsize_blocks,
+                ysize_blocks,
+                self.use_ans,
+                self.effort,
+                &mut writer,
+            )?;
+            writer.zero_pad_to_byte();
+        }
 
         // If patches present, write the reference frame before the main frame.
         // The reference frame is a modular FrameType::ReferenceOnly frame that
@@ -1141,76 +1159,121 @@ impl VarDctEncoder {
     ) -> Result<()> {
         // ── Pass 1: Collect tokens per section ──
 
-        // Build kWPFixedDC tree for DC context assignment.
-        // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
-        // Matches libjxl's PredefinedTree(kWPFixedDC) at speed_tier <= kFalcon (effort >= 4).
-        let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
-        let (wp_dc_tree, wp_dc_num_contexts) =
-            super::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
-
-        let (wrapped_tokens, total_contexts, dc_remap, ac_ctx_map) =
-            super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
-                &wp_dc_tree,
-                wp_dc_num_contexts,
-            );
-
-        let learned_tree_tokens = Some(wrapped_tokens);
-        let dc_ctx_remap = dc_remap;
-        let ac_meta_ctx_map = ac_ctx_map;
-
-        #[cfg(feature = "debug-tokens")]
-        eprintln!(
-            "WP fixed DC tree: dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
-            wp_dc_num_contexts, total_contexts, dc_ctx_remap, ac_meta_ctx_map
-        );
-
-        // DC section tokens: two Vecs per dc_group (DC tokens, AC metadata tokens)
+        // Build context tree and collect tokens.
+        // When use_lf_frame: DC is in separate frame, only AC metadata tree/tokens needed.
+        // Otherwise: merged WP DC + AC metadata tree with both token types.
+        let (learned_tree_tokens, total_contexts, ac_meta_ctx_map);
         let mut dc_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
         let mut ac_metadata_tokens_per_group: Vec<Vec<Token>> = Vec::with_capacity(num_dc_groups);
-        for dc_group_idx in 0..num_dc_groups {
-            let dc_gx = dc_group_idx % xsize_dc_groups;
-            let dc_gy = dc_group_idx / xsize_dc_groups;
-            let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
-            let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
-            let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-            let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-            let region_xsize = end_bx - start_bx;
-            let region_ysize = end_by - start_by;
 
-            // Collect DC tokens using Weighted Predictor + kWPFixedDC tree
-            let dc_tokens =
-                collect_dc_tokens_wp(quant_dc, &wp_dc_tree, start_bx, start_by, end_bx, end_by);
-            let md_tokens = collect_ac_metadata_tokens_region(
-                region_xsize,
-                region_ysize,
-                quant_field,
-                xsize_blocks,
-                start_bx,
-                start_by,
-                cfl_map,
-                ac_strategy,
-                sharpness_map,
+        if self.use_lf_frame {
+            // AC-metadata-only tree (no DC contexts needed)
+            let (tree_tokens, num_ctx, ctx_map) = super::dc_tree_learn::ac_metadata_only_tree();
+            learned_tree_tokens = Some(tree_tokens);
+            total_contexts = num_ctx;
+            ac_meta_ctx_map = ctx_map;
+
+            // Only collect AC metadata tokens (no DC)
+            for dc_group_idx in 0..num_dc_groups {
+                let dc_gx = dc_group_idx % xsize_dc_groups;
+                let dc_gy = dc_group_idx / xsize_dc_groups;
+                let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+                let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+                let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                let region_xsize = end_bx - start_bx;
+                let region_ysize = end_by - start_by;
+
+                dc_tokens_per_group.push(Vec::new()); // no DC tokens
+
+                let md_tokens = collect_ac_metadata_tokens_region(
+                    region_xsize,
+                    region_ysize,
+                    quant_field,
+                    xsize_blocks,
+                    start_bx,
+                    start_by,
+                    cfl_map,
+                    ac_strategy,
+                    sharpness_map,
+                );
+                let md_tokens: Vec<Token> = md_tokens
+                    .into_iter()
+                    .map(|mut t| {
+                        t.context = ac_meta_ctx_map[t.context as usize];
+                        t
+                    })
+                    .collect();
+                ac_metadata_tokens_per_group.push(md_tokens);
+            }
+        } else {
+            // Build kWPFixedDC tree for DC context assignment.
+            // Uses Weighted Predictor with balanced BSP on wp_max_error (property 15).
+            // Matches libjxl's PredefinedTree(kWPFixedDC) at speed_tier <= kFalcon (effort >= 4).
+            let total_dc_pixels = xsize_blocks * ysize_blocks * 3;
+            let (wp_dc_tree, wp_dc_num_contexts) =
+                super::dc_tree_learn::build_wp_fixed_dc_tree(total_dc_pixels, 8);
+
+            let (wrapped_tokens, num_ctx, dc_remap, ctx_map) =
+                super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
+                    &wp_dc_tree,
+                    wp_dc_num_contexts,
+                );
+
+            learned_tree_tokens = Some(wrapped_tokens);
+            total_contexts = num_ctx;
+            ac_meta_ctx_map = ctx_map;
+            let dc_ctx_remap = dc_remap;
+
+            #[cfg(feature = "debug-tokens")]
+            eprintln!(
+                "WP fixed DC tree: dc_contexts={}, total={}, dc_remap={:?}, ac_map={:?}",
+                wp_dc_num_contexts, total_contexts, dc_ctx_remap, ac_meta_ctx_map
             );
-            // Remap DC token contexts to match BFS ordering of merged tree.
-            // dc_ctx_remap[orig] maps each WP DC tree context to its BFS context ID.
-            // ac_meta_ctx_map[orig] gives the BFS context for each AC metadata context.
-            let dc_tokens: Vec<Token> = dc_tokens
-                .into_iter()
-                .map(|mut t| {
-                    t.context = dc_ctx_remap[t.context as usize];
-                    t
-                })
-                .collect();
-            dc_tokens_per_group.push(dc_tokens);
 
-            let md_tokens: Vec<Token> = md_tokens
-                .into_iter()
-                .map(|mut t| {
-                    t.context = ac_meta_ctx_map[t.context as usize];
-                    t
-                })
-                .collect();
-            ac_metadata_tokens_per_group.push(md_tokens);
+            for dc_group_idx in 0..num_dc_groups {
+                let dc_gx = dc_group_idx % xsize_dc_groups;
+                let dc_gy = dc_group_idx / xsize_dc_groups;
+                let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
+                let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
+                let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                let region_xsize = end_bx - start_bx;
+                let region_ysize = end_by - start_by;
+
+                // Collect DC tokens using Weighted Predictor + kWPFixedDC tree
+                let dc_tokens =
+                    collect_dc_tokens_wp(quant_dc, &wp_dc_tree, start_bx, start_by, end_bx, end_by);
+                let md_tokens = collect_ac_metadata_tokens_region(
+                    region_xsize,
+                    region_ysize,
+                    quant_field,
+                    xsize_blocks,
+                    start_bx,
+                    start_by,
+                    cfl_map,
+                    ac_strategy,
+                    sharpness_map,
+                );
+                // Remap DC token contexts to match BFS ordering of merged tree.
+                let dc_tokens: Vec<Token> = dc_tokens
+                    .into_iter()
+                    .map(|mut t| {
+                        t.context = dc_ctx_remap[t.context as usize];
+                        t
+                    })
+                    .collect();
+                dc_tokens_per_group.push(dc_tokens);
+
+                let md_tokens: Vec<Token> = md_tokens
+                    .into_iter()
+                    .map(|mut t| {
+                        t.context = ac_meta_ctx_map[t.context as usize];
+                        t
+                    })
+                    .collect();
+                ac_metadata_tokens_per_group.push(md_tokens);
+            }
         }
 
         // Compute custom coefficient orders if enabled and image is large enough
@@ -1743,6 +1806,9 @@ impl VarDctEncoder {
             if splines.is_some() {
                 fh.flags |= crate::headers::frame_header::SPLINES_FLAG;
             }
+            if self.use_lf_frame {
+                fh.flags |= crate::headers::frame_header::USE_LF_FRAME;
+            }
             fh.ec_upsampling = vec![1; num_extra_channels];
             fh.ec_blend_modes = vec![BlendMode::Replace; num_extra_channels];
 
@@ -2227,6 +2293,10 @@ impl VarDctEncoder {
 
     /// Writes the DC group header, DC tokens, AC metadata sub-header, then AC
     /// metadata tokens — matching the exact bitstream layout of `write_dc_group`.
+    ///
+    /// When `use_lf_frame` is true, DC tokens are empty and the DC modular
+    /// sub-bitstream (extra_dc_precision + header + tokens) is skipped entirely.
+    /// Only AC metadata (HF metadata) is written.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_dc_group_from_tokens(
         &self,
@@ -2250,12 +2320,16 @@ impl VarDctEncoder {
         let region_xsize = end_bx - start_bx;
         let region_ysize = end_by - start_by;
 
-        // DC group header
-        writer.write(2, 0)?; // extra_dc_precision = 0
-        writer.write(4, 3)?; // use global tree, default wp, no transforms
+        // When use_lf_frame (dc_tokens empty), skip the VarDCT DC modular sub-bitstream.
+        // The decoder skips decode_vardct_lf() when has_lf_frame() is true.
+        if !self.use_lf_frame {
+            // DC group header
+            writer.write(2, 0)?; // extra_dc_precision = 0
+            writer.write(4, 3)?; // use global tree, default wp, no transforms
 
-        // Write DC tokens
-        dc_code.write_tokens(dc_tokens, dc_lz77_params, writer)?;
+            // Write DC tokens
+            dc_code.write_tokens(dc_tokens, dc_lz77_params, writer)?;
+        }
 
         // AC metadata sub-header — count first blocks (distinct transforms)
         let num_blocks = region_xsize * region_ysize;
