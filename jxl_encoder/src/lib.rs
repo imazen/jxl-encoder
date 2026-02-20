@@ -19,6 +19,8 @@ pub mod debug_rect;
 pub mod effort;
 pub mod entropy_coding;
 pub mod error;
+#[allow(dead_code)] // Used by upcoming lf_frame module
+pub(crate) mod f16;
 pub mod headers;
 pub(crate) mod icc;
 pub mod image;

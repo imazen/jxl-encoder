@@ -92,6 +92,8 @@ pub const ENABLE_NOISE: u64 = 0x01;
 pub const PATCHES_FLAG: u64 = 0x02;
 /// Frame flag: enable splines.
 pub const SPLINES_FLAG: u64 = 0x10;
+/// Frame flag: use a separate LF frame for DC coefficients.
+pub const USE_LF_FRAME: u64 = 0x20;
 /// Frame flag: skip adaptive LF smoothing.
 pub const SKIP_ADAPTIVE_LF_SMOOTHING: u64 = 0x80;
 
@@ -170,6 +172,9 @@ pub struct FrameHeader {
     pub timecode: u32,
     /// Whether this is the last frame.
     pub is_last: bool,
+    /// LF level for LfFrame (frame_type=1). Written as u2S(1,2,3,4).
+    /// Only meaningful when frame_type == LfFrame. Typically 1 for DC frames.
+    pub lf_level: u32,
     /// Enable gaborish (Gabor-like blur in decoder loop filter).
     pub gaborish: bool,
     /// Number of EPF (Edge-Preserving Filter) iterations (0-3).
@@ -211,6 +216,7 @@ impl Default for FrameHeader {
             duration: 0,
             timecode: 0,
             is_last: true,
+            lf_level: 0,
             gaborish: true,
             epf_iters: 2,
         }
@@ -250,6 +256,29 @@ impl FrameHeader {
         }
     }
 
+    /// Creates a frame header for an LF (DC) frame.
+    ///
+    /// LfFrames contain DC coefficients at 1/8 resolution, encoded as modular.
+    /// Uses xyb_encoded=true, group_size_shift=1 (256), no loop filter.
+    /// The `width` and `height` are the DC frame dimensions (xsize_blocks × ysize_blocks).
+    pub fn lf_frame(width: u32, height: u32, lf_level: u32) -> Self {
+        Self {
+            frame_type: FrameType::LfFrame,
+            encoding: Encoding::Modular,
+            xyb_encoded: true,
+            flags: SKIP_ADAPTIVE_LF_SMOOTHING,
+            gaborish: false,
+            epf_iters: 0,
+            is_last: false,
+            save_before_ct: false,
+            width,
+            height,
+            lf_level,
+            group_size_shift: 1, // 256
+            ..Default::default()
+        }
+    }
+
     /// Writes the frame header to the bitstream.
     ///
     /// Follows the JXL codestream specification (ISO 18181-1) Table A.2.
@@ -285,12 +314,16 @@ impl FrameHeader {
             }
         }
 
-        // upsampling (U32: 1, 2, 4, 8)
-        writer.write_u32_coder(self.upsampling, 1, 2, 4, 8, 0)?;
+        // upsampling, ec_upsampling: not present when USE_LF_FRAME flag is set
+        // (jxl-rs frame_header.rs:288-300)
+        if self.flags & USE_LF_FRAME == 0 {
+            // upsampling (U32: 1, 2, 4, 8)
+            writer.write_u32_coder(self.upsampling, 1, 2, 4, 8, 0)?;
 
-        // ec_upsampling per extra channel
-        for &ecu in &self.ec_upsampling {
-            writer.write_u32_coder(ecu, 1, 2, 4, 8, 0)?;
+            // ec_upsampling per extra channel
+            for &ecu in &self.ec_upsampling {
+                writer.write_u32_coder(ecu, 1, 2, 4, 8, 0)?;
+            }
         }
 
         // group_size_shift: Modular only (VarDCT uses fixed 256x256 groups)
@@ -311,6 +344,12 @@ impl FrameHeader {
             if self.num_passes != 1 {
                 self.write_passes(writer)?;
             }
+        }
+
+        // lf_level: only for LfFrame, written as u2S(1, 2, 3, 4)
+        // (jxl-rs frame_header.rs:321-324, after passes, before have_crop)
+        if self.frame_type == FrameType::LfFrame {
+            writer.write_u32_coder(self.lf_level, 1, 2, 3, 4, 0)?;
         }
 
         // have_crop: present for all frame types except LfFrame
