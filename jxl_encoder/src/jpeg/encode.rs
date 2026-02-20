@@ -9,7 +9,7 @@
 //! decodes to pixel-identical output as the original JPEG.
 
 use super::data::*;
-use super::jbrd::{encode_jbrd, extract_exif, extract_xmp};
+use super::jbrd::{encode_jbrd, extract_exif, extract_icc, extract_xmp};
 use crate::BLOCK_SIZE;
 use crate::bit_writer::BitWriter;
 use crate::container::wrap_in_container_jxlp;
@@ -117,7 +117,31 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 
     // Map JPEG coefficients to JXL data structures
     // Each channel uses its native block dimensions (may differ for subsampled chroma)
-    let (quant_dc, quant_ac, nzeros, raw_nzeros) = map_jpeg_coefficients(jpeg, &jpeg_c_map)?;
+    let (mut quant_dc, mut quant_ac, mut nzeros, mut raw_nzeros) =
+        map_jpeg_coefficients(jpeg, &jpeg_c_map)?;
+
+    let is_gray = num_components == 1;
+
+    // For grayscale, zero-fill Cb and Cr channels (JXL c0 and c2).
+    // libjxl does this in enc_frame.cc — only Y (c1) keeps actual data.
+    if is_gray {
+        for c in [0, 2] {
+            for row in &mut quant_dc[c] {
+                row.fill(0);
+            }
+            for row in &mut quant_ac[c] {
+                for block in row.iter_mut() {
+                    block.fill(0);
+                }
+            }
+            for row in &mut nzeros[c] {
+                row.fill(0);
+            }
+            for row in &mut raw_nzeros[c] {
+                row.fill(0);
+            }
+        }
+    }
 
     // All blocks use DCT8
     let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
@@ -284,9 +308,21 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
 
     let mut writer = BitWriter::with_capacity(width * height * 4);
 
+    // Extract ICC profile from JPEG APP2 markers (if present)
+    let icc_profile = extract_icc(jpeg);
+
     // File header (write() includes the signature)
-    let file_header = build_jpeg_file_header(width, height);
+    let mut file_header = build_jpeg_file_header(width, height, is_gray);
+    if icc_profile.is_some() {
+        file_header.metadata.color_encoding.want_icc = true;
+    }
     file_header.write(&mut writer)?;
+
+    // Write ICC profile data after file header (PredictICC encoded)
+    if let Some(ref icc) = icc_profile {
+        crate::icc::write_icc(icc, &mut writer)?;
+    }
+
     writer.zero_pad_to_byte();
     let file_header_bytes = writer.bytes_written();
 
@@ -492,8 +528,16 @@ fn build_dc_dequant(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> Result<[f32; 3]
 }
 
 /// Build the JXL file header for JPEG reencoding.
-fn build_jpeg_file_header(width: usize, height: usize) -> FileHeader {
-    let color_encoding = ColorEncoding::srgb(); // Perceptual rendering intent → all_default
+fn build_jpeg_file_header(width: usize, height: usize, is_gray: bool) -> FileHeader {
+    let color_encoding = if is_gray {
+        // Grayscale sRGB with Relative rendering intent (matches libjxl SRGB(true))
+        ColorEncoding {
+            rendering_intent: crate::headers::color_encoding::RenderingIntent::Relative,
+            ..ColorEncoding::gray()
+        }
+    } else {
+        ColorEncoding::srgb() // RGB sRGB (all_default=true)
+    };
 
     FileHeader {
         width: width as u32,
@@ -540,7 +584,9 @@ fn compute_jpeg_upsampling(jpeg: &JpegData, jpeg_c_map: &[usize; 3]) -> [u8; 3] 
 
 /// Build the JXL frame header for JPEG reencoding.
 fn build_jpeg_frame_header(jpeg: &JpegData, jpeg_upsampling: [u8; 3]) -> FrameHeader {
-    let is_ycbcr = jpeg.component_type == JpegComponentType::YCbCr;
+    // libjxl always uses YCbCr for JPEG reencoding, including grayscale.
+    // For grayscale (1 component), kYCbCr is forced in SetColorTransformFromJpegData.
+    let is_ycbcr = jpeg.component_type == JpegComponentType::YCbCr || jpeg.components.len() == 1;
     FrameHeader {
         encoding: Encoding::VarDct,
         xyb_encoded: false,
