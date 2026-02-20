@@ -105,7 +105,8 @@ const GRAD_RANGE_MIN: i64 = 0;
 const GRAD_RANGE_MID: i64 = 512;
 const GRAD_RANGE_MAX: i64 = 1023;
 
-/// Number of DC contexts.
+/// Number of DC contexts (gradient predictor path, used by JPEG recompression).
+#[allow(dead_code)]
 pub const NUM_DC_CONTEXTS: usize = 45;
 
 /// Number of AC metadata contexts (contexts 0-10).
@@ -271,10 +272,129 @@ pub fn write_dc_tokens_region(
     Ok(())
 }
 
-/// Collect DC tokens for a specific region (without writing).
+/// Collect DC tokens using Weighted Predictor and kWPFixedDC tree.
+///
+/// This replaces `collect_dc_tokens_region()` when the kWPFixedDC tree is used.
+/// Each DC channel gets its own WeightedPredictorState (reset per channel).
+///
+/// # Arguments
+/// * `quant_dc` - Quantized DC coefficients [channel][y][x]
+/// * `wp_tree` - kWPFixedDC tree for context assignment
+/// * `start_bx` / `start_by` - Starting block coordinates (inclusive)
+/// * `end_bx` / `end_by` - Ending block coordinates (exclusive)
+pub fn collect_dc_tokens_wp(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    wp_tree: &super::dc_tree_learn::DcTree,
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+) -> Vec<Token> {
+    use crate::modular::predictor::{Neighbors, WeightedPredictorState};
+
+    let region_width = end_bx - start_bx;
+    let region_height = end_by - start_by;
+
+    if region_width == 0 || region_height == 0 {
+        return Vec::new();
+    }
+
+    let mut tokens = Vec::with_capacity(region_width * region_height * 3);
+
+    // Encode in channel order: Y (1), X (0), B (2)
+    // Each channel gets a FRESH WP state (matches libjxl per-channel processing)
+    for &c in &[1, 0, 2] {
+        let channel = &quant_dc[c];
+        let mut wp_state = WeightedPredictorState::with_defaults(region_width);
+
+        for y in start_by..end_by {
+            for x in start_bx..end_bx {
+                let actual = channel[y][x] as i32;
+
+                // Gather neighbors matching modular edge handling
+                let w = if x > start_bx {
+                    channel[y][x - 1] as i32
+                } else if y > start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    0
+                };
+
+                let n = if y > start_by {
+                    channel[y - 1][x] as i32
+                } else {
+                    w
+                };
+
+                let nw = if x > start_bx && y > start_by {
+                    channel[y - 1][x - 1] as i32
+                } else {
+                    w
+                };
+
+                let ne = if x + 1 < end_bx && y > start_by {
+                    channel[y - 1][x + 1] as i32
+                } else {
+                    n
+                };
+
+                let ww = if x > start_bx + 1 {
+                    channel[y][x - 2] as i32
+                } else {
+                    w
+                };
+
+                let nn = if y > start_by + 1 {
+                    channel[y - 2][x] as i32
+                } else {
+                    n
+                };
+
+                let nee = if x + 2 < end_bx && y > start_by {
+                    channel[y - 1][x + 2] as i32
+                } else {
+                    ne
+                };
+
+                let neighbors = Neighbors {
+                    n,
+                    w,
+                    nw,
+                    ne,
+                    nn,
+                    ww,
+                    nee,
+                };
+
+                // Use region-local coordinates for WP state
+                let local_x = x - start_bx;
+                let local_y = y - start_by;
+
+                // Get WP prediction and max_error property
+                let (prediction, wp_max_error) =
+                    wp_state.predict_and_property(local_x, local_y, region_width, &neighbors);
+
+                let residual = actual - prediction as i32;
+
+                // Get context from kWPFixedDC tree using wp_max_error
+                let ctx_id = super::dc_tree_learn::get_wp_dc_context(wp_tree, wp_max_error);
+
+                tokens.push(Token::new(ctx_id, pack_signed(residual)));
+
+                // Update WP error state with actual value
+                wp_state.update_errors(actual, local_x, local_y, region_width);
+            }
+        }
+    }
+
+    tokens
+}
+
+/// Collect DC tokens for a specific region (gradient predictor path).
 ///
 /// Same logic as `write_dc_tokens_region()` but returns a `Vec<Token>` instead
-/// of writing to a bitstream. Used by the two-pass encoding mode.
+/// of writing to a bitstream. Used by JPEG recompression encoder.
+#[allow(dead_code)]
 pub fn collect_dc_tokens_region(
     quant_dc: &[Vec<Vec<i16>>; 3],
     start_bx: usize,

@@ -1348,7 +1348,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        const EXPECTED_HASH: u64 = 0x46a62e419efaedf9;
+        const EXPECTED_HASH: u64 = 0x140d18dcf996f298;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1377,7 +1377,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
-        const EXPECTED_HASH: u64 = 0x2b2dd2aaba0b53f4;
+        const EXPECTED_HASH: u64 = 0xb04379ed6af5edca;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1418,7 +1418,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: LLF zeroing in entropy estimation
-        const EXPECTED_HASH: u64 = 0x178271d403f6ef01;
+        const EXPECTED_HASH: u64 = 0x69fec8f8f09f1d0d;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1454,7 +1454,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: LLF zeroing in entropy estimation
-        const EXPECTED_HASH: u64 = 0x73cb0ce8f74cad1a;
+        const EXPECTED_HASH: u64 = 0x97d3256dc825834c;
         assert_eq!(
             hash,
             EXPECTED_HASH,

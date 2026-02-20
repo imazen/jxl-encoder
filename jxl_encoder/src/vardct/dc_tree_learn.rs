@@ -1040,6 +1040,132 @@ pub fn collect_dc_tokens_with_tree(
     tokens
 }
 
+// ──────────────────────────────────────────────────────────────────
+// kWPFixedDC tree — fixed balanced BSP on property 15 (wp_max_error)
+// Matches libjxl's PredefinedTree(kWPFixedDC, ...) exactly.
+// ──────────────────────────────────────────────────────────────────
+
+/// kWPFixedDC cutoff values (from libjxl enc_encoding.cc).
+/// These are the split thresholds for the wp_max_error property.
+const WP_FIXED_DC_CUTOFFS: &[i32] = &[
+    -500, -392, -255, -191, -127, -95, -63, -47, -31, -23, -15, -11, -7, -4, -3, -1, 0, 1, 3, 5, 7,
+    11, 15, 23, 31, 47, 63, 95, 127, 191, 255, 392, 500,
+];
+
+/// Property index for wp_max_error in the JXL modular property list.
+/// kNumStaticProperties(2) + 13 = 15. Used for tree serialization.
+pub const WP_PROP_INDEX: i32 = 15;
+
+/// Build the kWPFixedDC tree: a balanced BSP tree on wp_max_error (property 15)
+/// with all leaves using Predictor::Weighted.
+///
+/// Matches libjxl's `MakeFixedTree(kWPProp, cutoffs, Predictor::Weighted, total_pixels, bitdepth)`.
+///
+/// # Arguments
+/// * `total_pixels` - total DC pixels (width_blocks * height_blocks * 3 channels)
+/// * `bitdepth` - bit depth of the DC values (typically 8)
+pub fn build_wp_fixed_dc_tree(total_pixels: usize, bitdepth: u32) -> (DcTree, u32) {
+    let log_px = if total_pixels > 0 {
+        (usize::BITS - total_pixels.leading_zeros()) as usize // ceil_log2
+    } else {
+        0
+    };
+    let min_gap = if log_px < 14 { 8 * (14 - log_px) } else { 0 };
+    let shift = if bitdepth > 11 {
+        (bitdepth - 11).min(4)
+    } else {
+        0
+    };
+    let mul = 1i32 << shift;
+
+    let cutoffs = WP_FIXED_DC_CUTOFFS;
+    let mut tree = DcTree::new();
+    let mut next_context = 0u32;
+
+    build_wp_bsp_recursive(
+        cutoffs,
+        0,
+        cutoffs.len(),
+        min_gap,
+        mul,
+        &mut tree,
+        &mut next_context,
+    );
+
+    (tree, next_context)
+}
+
+/// Recursively build a balanced BSP tree from sorted cutoffs.
+///
+/// Mirrors libjxl's MakeFixedTree BFS queue, but builds in DFS order
+/// (our tree_tokens_with_ac_metadata_prefix handles the BFS conversion).
+fn build_wp_bsp_recursive(
+    cutoffs: &[i32],
+    begin: usize,
+    end: usize,
+    min_gap: usize,
+    mul: i32,
+    tree: &mut DcTree,
+    next_context: &mut u32,
+) -> usize {
+    let node_idx = tree.len();
+
+    if begin + min_gap >= end {
+        // Leaf node
+        tree.push(DcTreeNode {
+            property: -1,
+            context_id: *next_context,
+            predictor: 6, // Predictor::Weighted
+            ..Default::default()
+        });
+        *next_context += 1;
+        return node_idx;
+    }
+
+    let split = (begin + end) / 2;
+    let cutoff = cutoffs[split] * mul;
+
+    // Placeholder — filled after children are built
+    tree.push(DcTreeNode::default());
+
+    // rchild = values > cutoff → covers [split+1, end)
+    let rchild = build_wp_bsp_recursive(cutoffs, split + 1, end, min_gap, mul, tree, next_context);
+    // lchild = values <= cutoff → covers [begin, split)
+    let lchild = build_wp_bsp_recursive(cutoffs, begin, split, min_gap, mul, tree, next_context);
+
+    tree[node_idx] = DcTreeNode {
+        property: WP_PROP_INDEX,
+        splitval: cutoff,
+        lchild,
+        rchild,
+        context_id: 0,
+        predictor: 0,
+    };
+
+    node_idx
+}
+
+/// Traverse the kWPFixedDC tree using wp_max_error value.
+///
+/// Specialized traversal for the WP fixed tree — only uses the wp_max_error
+/// property (property 15), which is the only property this tree splits on.
+#[inline]
+pub fn get_wp_dc_context(tree: &DcTree, wp_max_error: i32) -> u32 {
+    let mut idx = 0;
+    loop {
+        let node = &tree[idx];
+        if node.property < 0 {
+            return node.context_id;
+        }
+        // All splits are on wp_max_error (property 15)
+        if wp_max_error <= node.splitval {
+            idx = node.lchild;
+        } else {
+            idx = node.rchild;
+        }
+    }
+}
+
 /// Compress statistics for learned DC tree.
 pub struct DcTreeStats {
     /// Number of contexts used by the tree.

@@ -6631,22 +6631,22 @@ fn test_rd_regression() {
     }
 
     // To recalibrate: run `just rd-regression` and update from the output.
-    // Last updated: 2026-02-20 (after per-half independent rect comparison fix)
+    // Last updated: 2026-02-20 (after WP DC encoding with kWPFixedDC tree)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d025: Baseline {
-                size: 1141169,
+                size: 1140007,
                 butteraugli: 1.533,
                 ssim2: 87.79,
             },
             d050: Baseline {
-                size: 874363,
+                size: 873055,
                 butteraugli: 1.561,
                 ssim2: 86.44,
             },
             d100: Baseline {
-                size: 646004,
+                size: 644622,
                 butteraugli: 1.608,
                 ssim2: 83.59,
             },
@@ -6654,17 +6654,17 @@ fn test_rd_regression() {
         // 1001682 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 123811,
+                size: 123392,
                 butteraugli: 0.475,
                 ssim2: 88.15,
             },
             d050: Baseline {
-                size: 84808,
+                size: 84560,
                 butteraugli: 0.765,
                 ssim2: 86.23,
             },
             d100: Baseline {
-                size: 55056,
+                size: 55044,
                 butteraugli: 1.271,
                 ssim2: 82.11,
             },
@@ -6672,17 +6672,17 @@ fn test_rd_regression() {
         // 1028637 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 92762,
+                size: 92396,
                 butteraugli: 0.433,
                 ssim2: 60.55,
             },
             d050: Baseline {
-                size: 63755,
+                size: 63589,
                 butteraugli: 0.816,
                 ssim2: 58.99,
             },
             d100: Baseline {
-                size: 43653,
+                size: 43655,
                 butteraugli: 1.348,
                 ssim2: 56.26,
             },
@@ -6690,17 +6690,17 @@ fn test_rd_regression() {
         // 1029604 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 162450,
+                size: 162141,
                 butteraugli: 0.398,
                 ssim2: 82.41,
             },
             d050: Baseline {
-                size: 111671,
+                size: 111443,
                 butteraugli: 0.718,
                 ssim2: 81.33,
             },
             d100: Baseline {
-                size: 71130,
+                size: 70869,
                 butteraugli: 1.448,
                 ssim2: 78.36,
             },
@@ -6708,17 +6708,17 @@ fn test_rd_regression() {
         // 106399 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 118877,
+                size: 118622,
                 butteraugli: 0.639,
                 ssim2: 85.60,
             },
             d050: Baseline {
-                size: 76993,
+                size: 76745,
                 butteraugli: 0.775,
                 ssim2: 84.39,
             },
             d100: Baseline {
-                size: 49809,
+                size: 49567,
                 butteraugli: 1.480,
                 ssim2: 81.06,
             },
@@ -6726,17 +6726,17 @@ fn test_rd_regression() {
         // 1080721 (512x512)
         ImageBaselines {
             d025: Baseline {
-                size: 108792,
+                size: 108769,
                 butteraugli: 0.389,
                 ssim2: 87.67,
             },
             d050: Baseline {
-                size: 68435,
+                size: 68369,
                 butteraugli: 0.766,
                 ssim2: 86.65,
             },
             d100: Baseline {
-                size: 44028,
+                size: 44058,
                 butteraugli: 1.957,
                 ssim2: 84.34,
             },
@@ -7069,17 +7069,17 @@ fn test_rd_regression_high_distance() {
     }
 
     // To recalibrate: run the test with --nocapture and update from the output.
-    // Last updated: 2026-02-20 (after per-half rect comparison fix)
+    // Last updated: 2026-02-20 (after WP DC encoding with kWPFixedDC tree)
     let baselines = [
         // frymire (1118x1105)
         ImageBaselines {
             d200: Baseline {
-                size: 456050,
+                size: 454591,
                 butteraugli: 2.504,
                 ssim2: 76.79,
             },
             d300: Baseline {
-                size: 365438,
+                size: 363971,
                 butteraugli: 3.877,
                 ssim2: 70.58,
             },
@@ -7087,12 +7087,12 @@ fn test_rd_regression_high_distance() {
         // 1001682 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 33867,
+                size: 33904,
                 butteraugli: 2.586,
                 ssim2: 72.84,
             },
             d300: Baseline {
-                size: 22490,
+                size: 22473,
                 butteraugli: 3.755,
                 ssim2: 62.99,
             },
@@ -7100,12 +7100,12 @@ fn test_rd_regression_high_distance() {
         // 1028637 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 28919,
+                size: 28860,
                 butteraugli: 2.398,
                 ssim2: 50.63,
             },
             d300: Baseline {
-                size: 21848,
+                size: 21811,
                 butteraugli: 3.680,
                 ssim2: 45.61,
             },
@@ -7113,12 +7113,12 @@ fn test_rd_regression_high_distance() {
         // 1029604 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 43356,
+                size: 43103,
                 butteraugli: 2.604,
                 ssim2: 72.25,
             },
             d300: Baseline {
-                size: 31278,
+                size: 30983,
                 butteraugli: 3.401,
                 ssim2: 66.70,
             },
@@ -7126,12 +7126,12 @@ fn test_rd_regression_high_distance() {
         // 106399 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 31589,
+                size: 31374,
                 butteraugli: 2.175,
                 ssim2: 74.25,
             },
             d300: Baseline {
-                size: 23393,
+                size: 23115,
                 butteraugli: 2.937,
                 ssim2: 68.08,
             },
@@ -7139,12 +7139,12 @@ fn test_rd_regression_high_distance() {
         // 1080721 (512x512)
         ImageBaselines {
             d200: Baseline {
-                size: 28530,
+                size: 28461,
                 butteraugli: 2.263,
                 ssim2: 79.55,
             },
             d300: Baseline {
-                size: 21806,
+                size: 21770,
                 butteraugli: 3.250,
                 ssim2: 74.82,
             },
