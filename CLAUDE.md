@@ -177,7 +177,7 @@ now computed on pre-gaborish XYB (matching libjxl enc_heuristics.cc:1117-1142).
   preventing large transforms from being evaluated on smooth content at d=1.0.
 
 **Remaining size overhead (files 4-9% larger)**:
-- cjxl uses LfFrame (frame_type=1) for DC/LF — structural compression advantage we don't have
+- ~~cjxl uses LfFrame (frame_type=1) for DC/LF — structural compression advantage we don't have~~ DONE (Feb 20, 2026)
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 
@@ -285,6 +285,11 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - Patches/dictionary: IMPLEMENTED (auto-detect, default-on, 33.3% corpus savings, 29.6% smaller than cjxl e7)
 - EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
+- LfFrame (separate DC frame): IMPLEMENTED (Feb 20, 2026, opt-in via `--lf-frame`)
+  - Separate modular frame (frame_type=1, dc_level=1) with DC at 1/8 resolution
+  - Distance-scaled enc_factors [65536, 4096, 4096] with F16 roundtrip for decoder parity
+  - Custom dc_quant in LfGlobal, USE_LF_FRAME flag on main frame
+  - Verified pixel-exact with djxl and jxl-rs
 
 **Priority path:**
 1. ~~Fix DCT32x32~~ — DONE (enabled at d>=2.0, works correctly on smooth content)
@@ -346,6 +351,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
+- [x] LfFrame (separate DC frame, `--lf-frame`, opt-in, progressive_dc=1)
 - [x] AC coding with channel interleaving
 - [x] Multi-group encoding (>256x256 images)
 - [x] Dynamic Huffman codes (two-pass, histogram clustering, default-on)
