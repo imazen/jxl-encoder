@@ -1439,8 +1439,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: LLF zeroing in entropy estimation
-        const EXPECTED_HASH: u64 = 0x69fec8f8f09f1d0d;
+        // Updated: AC strategy distance gates removed
+        const EXPECTED_HASH: u64 = 0x8f2f7b7a65c01c9c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
