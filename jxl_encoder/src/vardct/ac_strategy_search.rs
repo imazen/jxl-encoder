@@ -599,8 +599,6 @@ pub(super) fn find_best_32x32_transform(
             cost_bases,
             scratch,
         );
-    let entropy_32x16_total = entropy_32x16_0 + entropy_32x16_1;
-
     // Evaluate DCT16x32 costs (two transforms: at (0,0) and (2,0))
     // DCT16x32 covers 2 rows × 4 cols of 8x8 blocks
     let entropy_16x32_0 = mul32x16
@@ -641,8 +639,6 @@ pub(super) fn find_best_32x32_transform(
             cost_bases,
             scratch,
         );
-    let entropy_16x32_total = entropy_16x32_0 + entropy_16x32_1;
-
     // Run four 16x16 evaluations (each covers 2×2 blocks)
     for qy in (0..4).step_by(2) {
         for qx in (0..4).step_by(2) {
@@ -693,7 +689,11 @@ pub(super) fn find_best_32x32_transform(
         (m8, m16x8, m16x16)
     };
 
-    let mut cost_sub = 0.0f32;
+    // Compute per-quadrant sub-costs matching libjxl's entropy[2][2] structure.
+    // Quadrant [qy][qx] covers blocks (qx*2..qx*2+1, qy*2..qy*2+1).
+    // libjxl stores costs in entropy_estimate[] and sums per quadrant;
+    // we re-evaluate (gives identical results since estimate_entropy is deterministic).
+    let mut quadrant_cost = [[0.0f32; 2]; 2];
     for iy in 0..4 {
         for ix in 0..4 {
             if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
@@ -731,68 +731,80 @@ pub(super) fn find_best_32x32_transform(
                 cost_bases,
                 scratch,
             );
-            cost_sub += base + mul * e;
+            let cost = base + mul * e;
+            // Accumulate into the quadrant that contains the first block of this transform.
+            // For multi-block transforms (e.g. DCT16x16 at (0,0) covering (0,0)-(1,1)),
+            // the entire cost goes into quadrant [0][0], matching libjxl's SetEntropyForTransform
+            // which stores the full cost at the first block position.
+            quadrant_cost[iy / 2][ix / 2] += cost;
         }
     }
 
-    // Find the best option among: DCT32x32, DCT32x16 pair, DCT16x32 pair, 16x16 sub-evaluations
-    let mut best_cost = cost_sub;
-    let mut best_choice = 0u8; // 0 = keep sub, 1 = DCT32x32, 2 = DCT32x16, 3 = DCT16x32
+    // Per-half sub-costs matching libjxl's entropy[2][2] sums.
+    // Vertical split (DCT32X16 left/right): left = columns 0-1, right = columns 2-3
+    let sub_left = quadrant_cost[0][0] + quadrant_cost[1][0];
+    let sub_right = quadrant_cost[0][1] + quadrant_cost[1][1];
+    // Horizontal split (DCT16X32 top/bottom): top = rows 0-1, bottom = rows 2-3
+    let sub_top = quadrant_cost[0][0] + quadrant_cost[0][1];
+    let sub_bottom = quadrant_cost[1][0] + quadrant_cost[1][1];
+    let cost_sub = sub_left + sub_right;
 
-    if entropy_32x32 < best_cost {
-        best_cost = entropy_32x32;
-        best_choice = 1;
-    }
-    if entropy_32x16_total < best_cost {
-        best_cost = entropy_32x16_total;
-        best_choice = 2;
-    }
-    if entropy_16x32_total < best_cost {
-        let _ = best_cost;
-        best_choice = 3;
-    }
+    // Per-half minimums: libjxl computes costJxN/costNxJ using the better of
+    // (rect half, sub half) for each half independently.
+    // This means a partially-beneficial rect (one half wins, other doesn't) still
+    // contributes its winning half to the total, making the square harder to beat.
+    let cost_jxn = entropy_32x16_0.min(sub_left) + entropy_32x16_1.min(sub_right);
+    let cost_nxj = entropy_16x32_0.min(sub_top) + entropy_16x32_1.min(sub_bottom);
 
-    {
-        let choices = ["sub", "32x32", "32x16", "16x32"];
-        debug_rect!(
-            "acs/32x32",
-            abs_bx * 8,
-            abs_by * 8,
-            32,
-            32,
-            "winner={} sub={:.0} 32x32={:.0} 32x16={:.0} 16x32={:.0} | mul32={:.2} mul16={:.2}",
-            choices[best_choice as usize],
-            cost_sub,
-            entropy_32x32,
-            entropy_32x16_total,
-            entropy_16x32_total,
-            mul32x32,
-            mul32x16
-        );
-    }
+    debug_rect!(
+        "acs/32x32",
+        abs_bx * 8,
+        abs_by * 8,
+        32,
+        32,
+        "sub={:.0} 32x32={:.0} costJxN={:.0}(32x16: {:.0}+{:.0}) costNxJ={:.0}(16x32: {:.0}+{:.0}) | mul32={:.2} mul16={:.2}",
+        cost_sub,
+        entropy_32x32,
+        cost_jxn,
+        entropy_32x16_0,
+        entropy_32x16_1,
+        cost_nxj,
+        entropy_16x32_0,
+        entropy_16x32_1,
+        mul32x32,
+        mul32x16
+    );
 
-    match best_choice {
-        1 => {
-            // DCT32x32 wins
-            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X32);
-            true
-        }
-        2 => {
-            // Two DCT32x16 transforms win
+    // Three-way comparison matching libjxl FindBestFirstLevelDivisionForSquare.
+    // The square must beat BOTH rect orientations (which account for partial merges).
+    if entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj {
+        // DCT32x32 wins over both rect orientations
+        ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X32);
+        true
+    } else if cost_jxn < cost_nxj {
+        // Vertical split (DCT32X16) orientation is better — try each half independently.
+        let mut any_merged = false;
+        if entropy_32x16_0 < sub_left {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X16);
+            any_merged = true;
+        }
+        if entropy_32x16_1 < sub_right {
             ac_strategy.set(abs_bx + 2, abs_by, RAW_STRATEGY_DCT32X16);
-            true
+            any_merged = true;
         }
-        3 => {
-            // Two DCT16x32 transforms win
+        any_merged
+    } else {
+        // Horizontal split (DCT16X32) orientation is better — try each half independently.
+        let mut any_merged = false;
+        if entropy_16x32_0 < sub_top {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X32);
+            any_merged = true;
+        }
+        if entropy_16x32_1 < sub_bottom {
             ac_strategy.set(abs_bx, abs_by + 2, RAW_STRATEGY_DCT16X32);
-            true
+            any_merged = true;
         }
-        _ => {
-            // Keep the 16x16 sub-evaluation results (already in ac_strategy)
-            false
-        }
+        any_merged
     }
 }
 
@@ -943,8 +955,6 @@ pub(super) fn find_best_64x64_transform(
             cost_bases,
             scratch,
         );
-    let entropy_64x32_total = entropy_64x32_0 + entropy_64x32_1;
-
     // Evaluate DCT32x64 costs (two transforms side by side)
     // DCT32x64 covers 4 rows × 8 cols of 8×8 blocks
     // Split: top half (bx, by) and bottom half (bx, by+4)
@@ -986,8 +996,6 @@ pub(super) fn find_best_64x64_transform(
             cost_bases,
             scratch,
         );
-    let entropy_32x64_total = entropy_32x64_0 + entropy_32x64_1;
-
     // Run four 32x32 evaluations (each covers 4×4 blocks)
     for qy in (0..8).step_by(4) {
         for qx in (0..8).step_by(4) {
@@ -1013,10 +1021,9 @@ pub(super) fn find_best_64x64_transform(
         }
     }
 
-    // Compute the combined cost of the four 32x32 sub-evaluations.
-    // In pixel-domain mode: 8×8-class costs get mul8x8 (libjxl stores them with mul8x8 applied),
-    // larger transforms get 1.0 (entropy_mul applied internally by EstimateEntropy).
-    let mut cost_sub = 0.0f32;
+    // Compute per-quadrant sub-costs matching libjxl's entropy[2][2] structure.
+    // Quadrant [qy][qx] covers blocks (qx*4..qx*4+3, qy*4..qy*4+3).
+    let mut quadrant_cost = [[0.0f32; 2]; 2];
     for iy in 0..8 {
         for ix in 0..8 {
             if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
@@ -1026,7 +1033,6 @@ pub(super) fn find_best_64x64_transform(
 
             let mul = if use_pixel_domain {
                 let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
-                // 8×8-class transforms: mul8x8. Larger transforms: 1.0.
                 match sub_raw {
                     RAW_STRATEGY_DCT8
                     | RAW_STRATEGY_DCT4X8
@@ -1097,63 +1103,61 @@ pub(super) fn find_best_64x64_transform(
                 cost_bases,
                 scratch,
             );
-            cost_sub += base + mul * e;
+            let cost = base + mul * e;
+            quadrant_cost[iy / 4][ix / 4] += cost;
         }
     }
 
-    // Find the best option
-    let mut best_cost = cost_sub;
-    let mut best_choice = 0u8; // 0=keep sub, 1=DCT64x64, 2=DCT64x32, 3=DCT32x64
+    // Per-half sub-costs.
+    // Vertical split (DCT64X32 left/right): left = columns 0-3, right = columns 4-7
+    let sub_left = quadrant_cost[0][0] + quadrant_cost[1][0];
+    let sub_right = quadrant_cost[0][1] + quadrant_cost[1][1];
+    // Horizontal split (DCT32X64 top/bottom): top = rows 0-3, bottom = rows 4-7
+    let sub_top = quadrant_cost[0][0] + quadrant_cost[0][1];
+    let sub_bottom = quadrant_cost[1][0] + quadrant_cost[1][1];
+    let cost_sub = sub_left + sub_right;
 
-    if entropy_64x64 < best_cost {
-        best_cost = entropy_64x64;
-        best_choice = 1;
-    }
-    if entropy_64x32_total < best_cost {
-        best_cost = entropy_64x32_total;
-        best_choice = 2;
-    }
-    if entropy_32x64_total < best_cost {
-        let _ = best_cost;
-        best_choice = 3;
-    }
+    // Per-half minimums matching libjxl FindBestFirstLevelDivisionForSquare.
+    let cost_jxn = entropy_64x32_0.min(sub_left) + entropy_64x32_1.min(sub_right);
+    let cost_nxj = entropy_32x64_0.min(sub_top) + entropy_32x64_1.min(sub_bottom);
 
-    {
-        let choices = ["sub", "64x64", "64x32", "32x64"];
-        debug_rect!(
-            "acs/64x64",
-            abs_bx * 8,
-            abs_by * 8,
-            64,
-            64,
-            "winner={} sub={:.0} 64x64={:.0} 64x32={:.0} 32x64={:.0} | mul64={:.2} mul32={:.2}",
-            choices[best_choice as usize],
-            cost_sub,
-            entropy_64x64,
-            entropy_64x32_total,
-            entropy_32x64_total,
-            mul64x64,
-            mul64x32
-        );
-    }
+    debug_rect!(
+        "acs/64x64",
+        abs_bx * 8,
+        abs_by * 8,
+        64,
+        64,
+        "sub={:.0} 64x64={:.0} costJxN={:.0}(64x32: {:.0}+{:.0}) costNxJ={:.0}(32x64: {:.0}+{:.0}) | mul64={:.2} mul32={:.2}",
+        cost_sub,
+        entropy_64x64,
+        cost_jxn,
+        entropy_64x32_0,
+        entropy_64x32_1,
+        cost_nxj,
+        entropy_32x64_0,
+        entropy_32x64_1,
+        mul64x64,
+        mul64x32
+    );
 
-    match best_choice {
-        1 => {
-            // DCT64x64 wins
-            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X64);
-        }
-        2 => {
-            // Two DCT64x32 transforms win
+    // Three-way comparison matching libjxl FindBestFirstLevelDivisionForSquare.
+    if entropy_64x64 < cost_jxn && entropy_64x64 < cost_nxj {
+        ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X64);
+    } else if cost_jxn < cost_nxj {
+        // Vertical split (DCT64X32) — try each half independently.
+        if entropy_64x32_0 < sub_left {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT64X32);
+        }
+        if entropy_64x32_1 < sub_right {
             ac_strategy.set(abs_bx + 4, abs_by, RAW_STRATEGY_DCT64X32);
         }
-        3 => {
-            // Two DCT32x64 transforms win
+    } else {
+        // Horizontal split (DCT32X64) — try each half independently.
+        if entropy_32x64_0 < sub_top {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X64);
-            ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
         }
-        _ => {
-            // Keep the 32x32 sub-evaluation results (already in ac_strategy)
+        if entropy_32x64_1 < sub_bottom {
+            ac_strategy.set(abs_bx, abs_by + 4, RAW_STRATEGY_DCT32X64);
         }
     }
 }
