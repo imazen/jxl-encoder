@@ -762,6 +762,9 @@ fn write_raw_quant_table_modular(qtables: &[i32], writer: &mut BitWriter) -> Res
 
 /// Write an empty modular global sub-bitstream (no alpha, no extra channels).
 // F16 functions delegated to shared f16 module.
+#[cfg(not(test))]
+use crate::f16::write_f16;
+#[cfg(test)]
 use crate::f16::{f32_to_f16_bits, write_f16};
 
 #[cfg(test)]
