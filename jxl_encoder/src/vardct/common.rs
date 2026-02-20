@@ -38,6 +38,14 @@ pub const GROUP_DIM_IN_TILES: usize = GROUP_DIM / TILE_DIM;
 /// Bits per byte.
 pub const BITS_PER_BYTE: usize = 8;
 
+/// Horizontal shift for each jpeg_upsampling mode.
+/// Mode 0: no subsampling, 1: 4:2:0, 2: 4:2:2, 3: 4:4:0
+pub const JPEG_UPSAMPLING_H_SHIFT: [usize; 4] = [0, 1, 1, 0];
+
+/// Vertical shift for each jpeg_upsampling mode.
+/// Mode 0: no subsampling, 1: 4:2:0, 2: 4:2:2, 3: 4:4:0
+pub const JPEG_UPSAMPLING_V_SHIFT: [usize; 4] = [0, 1, 0, 1];
+
 /// Divide and round up.
 #[inline]
 pub const fn div_ceil(a: usize, b: usize) -> usize {
