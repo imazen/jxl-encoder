@@ -630,7 +630,6 @@ fn test_subsamp_420_real_photo() {
 }
 
 #[test]
-#[ignore = "Landscape_2 has ICC profile — JBRD ICC roundtrip not yet implemented"]
 fn test_subsamp_420_real_photo_icc() {
     roundtrip_jpeg_byteexact(
         "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_2.jpg",
@@ -677,7 +676,6 @@ fn test_subsamp_440_128x128() {
 // ── Grayscale test ──
 
 #[test]
-#[ignore = "Grayscale JPEG reencoding needs separate work (3x size, JBRD reconstruct fails)"]
 fn test_subsamp_gray_128x128() {
     roundtrip_jpeg_byteexact(
         "/mnt/v/output/jpeg-reencoding/test128_gray.jpg",

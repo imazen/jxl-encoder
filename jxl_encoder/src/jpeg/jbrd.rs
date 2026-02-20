@@ -294,6 +294,42 @@ fn brotli_compress(data: &[u8]) -> Result<Vec<u8>> {
     Ok(compressed)
 }
 
+/// Extract ICC profile from JPEG APP2 markers.
+///
+/// ICC profiles in JPEG are stored across one or more APP2 markers,
+/// each with header: "ICC_PROFILE\0" + chunk_number(1) + total_chunks(1) + data.
+/// The raw app_data format is: [marker_byte, len_hi, len_lo, payload...].
+/// Returns the concatenated ICC profile bytes, or None.
+pub(crate) fn extract_icc(jpeg: &JpegData) -> Option<Vec<u8>> {
+    const ICC_TAG: &[u8] = b"ICC_PROFILE\0";
+    // Overhead per APP2 marker: marker_byte(1) + length(2) + tag(12) + chunk_num(1) + total_chunks(1) = 17
+    const OVERHEAD: usize = 17;
+
+    let mut icc_data = Vec::new();
+    for i in 0..jpeg.app_data.len() {
+        if jpeg.app_marker_type[i] != AppMarkerType::Icc {
+            continue;
+        }
+        let data = &jpeg.app_data[i];
+        if data.len() <= OVERHEAD {
+            continue;
+        }
+        // Verify ICC_PROFILE tag at offset 3 (after marker_byte + length)
+        let tag_start = 3;
+        if data.len() > tag_start + ICC_TAG.len()
+            && &data[tag_start..tag_start + ICC_TAG.len()] == ICC_TAG
+        {
+            // ICC payload starts after the 17-byte overhead
+            icc_data.extend_from_slice(&data[OVERHEAD..]);
+        }
+    }
+    if icc_data.is_empty() {
+        None
+    } else {
+        Some(icc_data)
+    }
+}
+
 /// Extract EXIF data from JPEG APP markers for the container Exif box.
 ///
 /// Returns the raw EXIF data (after the "Exif\0\0" header), or None.
