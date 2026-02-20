@@ -99,7 +99,7 @@ pub fn wrap_in_container_with_jbrd(
 /// ```text
 /// [JXL signature] [ftyp] [jxlp part 0] [jbrd] [jxlp part 1 (last)] [Exif?] [xml?]
 /// ```
-/// Each `jxlp` box has a 4-byte LE counter where bit 31 marks the last part.
+/// Each `jxlp` box has a 4-byte BE counter where bit 31 marks the last part.
 #[cfg(feature = "jpeg-reencoding")]
 pub fn wrap_in_container_jxlp(
     cs_part1: &[u8],
@@ -161,7 +161,7 @@ fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) 
     } else {
         sequence
     };
-    out.extend_from_slice(&counter.to_le_bytes());
+    out.extend_from_slice(&counter.to_be_bytes());
     out.extend_from_slice(data);
 }
 
