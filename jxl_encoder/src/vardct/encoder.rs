@@ -472,6 +472,9 @@ impl VarDctEncoder {
         let mut quant_field = quantize_quant_field(&quant_field_float, params.inv_scale);
 
         // Compute per-tile chroma-from-luma map
+        // Pass 1 always uses LS (use_newton=false): with distance_mul=1e-9, the
+        // perceptual cost function collapses to LS, so Newton adds no value.
+        // Newton is only useful in pass 2 where actual quant weighting matters.
         let mut cfl_map = if self.cfl_enabled {
             compute_cfl_map(
                 &xyb_x,
@@ -481,7 +484,7 @@ impl VarDctEncoder {
                 padded_height,
                 xsize_blocks,
                 ysize_blocks,
-                self.profile.cfl_newton,
+                false,
             )
         } else {
             CflMap::zeros(
@@ -1339,8 +1342,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: CfL Newton convergence fallback to LS
-        const EXPECTED_HASH: u64 = 0xc7209e03a59cd708;
+        // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
+        const EXPECTED_HASH: u64 = 0x46a62e419efaedf9;
         assert_eq!(
             hash,
             EXPECTED_HASH,

@@ -26,14 +26,18 @@ fn bias_and_quantize(x: f32) -> i8 {
     biased.round().clamp(-128.0, 127.0) as i8
 }
 
-/// Newton's method constants (libjxl enc_chroma_from_luma.cc:55-168).
-const NEWTON_EPS: f32 = 100.0;
+/// Newton's method constants.
+///
+/// eps=1 (not 100) gives accurate local second derivatives, enabling
+/// convergence. libjxl uses eps=100 which causes oscillation on most tiles
+/// (see CFL_NEWTON_CONVERGENCE_BUG.md in the libjxl repo).
+const NEWTON_EPS: f32 = 1.0;
 const NEWTON_CLAMP: f32 = 20.0;
 const NEWTON_COEFF: f32 = 1.0 / 3.0;
 const NEWTON_THRES: f32 = 100.0;
 const NEWTON_STABILIZER: f32 = 0.85;
 const NEWTON_CONVERGENCE: f32 = 3e-3;
-const NEWTON_MAX_ITERS: usize = 20;
+const NEWTON_MAX_ITERS: usize = 10;
 
 /// Find the best integer CfL multiplier via regularized least-squares.
 ///
@@ -307,9 +311,11 @@ pub fn find_best_multiplier_newton(
 
 /// Scalar Newton's method for CfL multiplier.
 ///
-/// Falls back to least-squares if Newton doesn't converge (e.g., at high
-/// distances where coefficient magnitudes are small relative to eps=100,
-/// causing oscillation in the numerical derivative approximation).
+/// Seeds Newton from the least-squares solution (warm start) so it begins
+/// near the optimum. With eps=1, Newton refines the LS solution toward the
+/// smoothed-L1 optimum in a few iterations.
+///
+/// Falls back to LS if Newton doesn't converge (rare with eps=1 + warm start).
 pub fn find_best_multiplier_newton_scalar(
     values_m: &[f32],
     values_s: &[f32],
@@ -321,8 +327,19 @@ pub fn find_best_multiplier_newton_scalar(
         return 0;
     }
 
+    // Compute LS solution as starting point for Newton.
+    let mut sum_aa = 0.0_f32;
+    let mut sum_ab = 0.0_f32;
+    for i in 0..num {
+        let a = K_INV_COLOR_FACTOR * values_m[i];
+        let b = base * values_m[i] - values_s[i];
+        sum_aa += a * a;
+        sum_ab += a * b;
+    }
+    let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
+
     let coeffx2 = NEWTON_COEFF * 2.0;
-    let mut x = 0.0_f32;
+    let mut x = ls_x;
     let mut converged = false;
 
     for _ in 0..NEWTON_MAX_ITERS {
@@ -386,7 +403,7 @@ pub fn find_best_multiplier_newton_scalar(
         bias_and_quantize(x)
     } else {
         // Newton didn't converge — fall back to LS
-        find_best_multiplier_scalar(values_m, values_s, num, base, distance_mul)
+        bias_and_quantize(ls_x)
     }
 }
 
@@ -414,7 +431,32 @@ pub fn find_best_multiplier_newton_avx2(
     let thres_v = f32x8::splat(token, NEWTON_THRES);
 
     let simd_end = num & !7;
-    let mut x = 0.0_f32;
+
+    // Compute LS solution as starting point for Newton (reuses SIMD loop).
+    let mut acc_aa = f32x8::splat(token, 0.0);
+    let mut acc_ab = f32x8::splat(token, 0.0);
+    let mut i = 0;
+    while i < simd_end {
+        let m = f32x8::from_slice(token, &values_m[i..]);
+        let s = f32x8::from_slice(token, &values_s[i..]);
+        let a = inv_cf * m;
+        let b = base_v * m - s;
+        acc_aa = a.mul_add(a, acc_aa);
+        acc_ab = a.mul_add(b, acc_ab);
+        i += 8;
+    }
+    let mut sum_aa: f32 = acc_aa.reduce_add();
+    let mut sum_ab: f32 = acc_ab.reduce_add();
+    while i < num {
+        let a = K_INV_COLOR_FACTOR * values_m[i];
+        let b = base * values_m[i] - values_s[i];
+        sum_aa += a * a;
+        sum_ab += a * b;
+        i += 1;
+    }
+    let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
+
+    let mut x = ls_x;
     let mut converged = false;
 
     for _ in 0..NEWTON_MAX_ITERS {
@@ -519,8 +561,8 @@ pub fn find_best_multiplier_newton_avx2(
     if converged {
         bias_and_quantize(x)
     } else {
-        // Newton didn't converge — fall back to LS
-        find_best_multiplier_avx2(token, values_m, values_s, num, base, distance_mul)
+        // Newton didn't converge — fall back to LS (already computed)
+        bias_and_quantize(ls_x)
     }
 }
 
@@ -548,7 +590,32 @@ pub fn find_best_multiplier_newton_neon(
     let thres_v = f32x4::splat(token, NEWTON_THRES);
 
     let simd_end = num & !3;
-    let mut x = 0.0_f32;
+
+    // Compute LS solution as starting point for Newton (reuses SIMD loop).
+    let mut acc_aa = f32x4::splat(token, 0.0);
+    let mut acc_ab = f32x4::splat(token, 0.0);
+    let mut i = 0;
+    while i < simd_end {
+        let m = f32x4::from_slice(token, &values_m[i..]);
+        let s = f32x4::from_slice(token, &values_s[i..]);
+        let a = inv_cf * m;
+        let b = base_v * m - s;
+        acc_aa = a.mul_add(a, acc_aa);
+        acc_ab = a.mul_add(b, acc_ab);
+        i += 4;
+    }
+    let mut sum_aa: f32 = acc_aa.reduce_add();
+    let mut sum_ab: f32 = acc_ab.reduce_add();
+    while i < num {
+        let a = K_INV_COLOR_FACTOR * values_m[i];
+        let b = base * values_m[i] - values_s[i];
+        sum_aa += a * a;
+        sum_ab += a * b;
+        i += 1;
+    }
+    let ls_x = -sum_ab / (sum_aa + num as f32 * distance_mul * 0.5);
+
+    let mut x = ls_x;
     let mut converged = false;
 
     for _ in 0..NEWTON_MAX_ITERS {
@@ -650,8 +717,8 @@ pub fn find_best_multiplier_newton_neon(
     if converged {
         bias_and_quantize(x)
     } else {
-        // Newton didn't converge — fall back to LS
-        find_best_multiplier_neon(token, values_m, values_s, num, base, distance_mul)
+        // Newton didn't converge — fall back to LS (already computed)
+        bias_and_quantize(ls_x)
     }
 }
 
