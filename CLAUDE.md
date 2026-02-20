@@ -145,33 +145,34 @@ Improvements made Feb 3, 2026:
 
 **vs cjxl e7 (CSV reference: `reference/cjxl_reference.csv`):**
 
-Updated 2026-02-19 (after mul8x8, quant_norm16, IDCT, CfL Newton fixes). Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7.
+Updated 2026-02-19 (after mul8x8, quant_norm16, IDCT, CfL Newton, float-domain butteraugli fixes).
+Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
+(libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-| Distance | Median Size | Avg Size | Avg Butteraugli | Avg SSIM2 |
-|----------|-------------|----------|-----------------|-----------|
-| d=0.25 | +9.5% | +2.1% | **-7.1%** | **+0.16** |
-| d=0.5 | +8.7% | +1.0% | **-3.9%** | **+0.19** |
-| d=1.0 | **-0.1%** | **-6.6%** | +24.5% | -1.04 |
-| d=1.5 | +0.7% | **-5.4%** | +21.1% | -1.43 |
-| d=2.0 | +1.2% | **-3.5%** | +20.2% | -2.07 |
-| d=2.5 | +1.5% | **-3.9%** | +20.4% | -1.95 |
-| d=3.0 | +3.0% | +2.8% | +20.7% | -3.05 |
-| d=4.0 | +3.6% | +3.5% | +17.5% | -3.98 |
-| d=5.0 | +7.4% | +5.7% | +17.7% | -4.28 |
+| Distance | Avg Size | Avg Butteraugli | Avg SSIM2 |
+|----------|----------|-----------------|-----------|
+| d=0.25 | +2.1% | **-4.3%** | **+0.16** |
+| d=0.5 | +1.0% | **-3.6%** | **+0.19** |
+| d=1.0 | **-6.6%** | +30.9% | -1.04 |
+| d=1.5 | **-5.4%** | +35.4% | -1.43 |
+| d=2.0 | **-3.8%** | +42.4% | -2.07 |
+| d=2.5 | **-3.9%** | +50.8% | -1.95 |
+| d=3.0 | +2.8% | +59.0% | -3.05 |
+| d=4.0 | +3.5% | +62.2% | -3.98 |
+| d=5.0 | +5.7% | +76.0% | -4.28 |
 
-Grand summary: avg size **-0.48%** (median +4.07%), total bytes -13.34%, avg SSIM2 -1.940, avg bfly +0.388.
-Size wins: 69/225 (31%). Encode time: 5.83x slower (254.2s vs 43.6s for all 225 encodes).
+Grand summary: avg size **-0.52%** (median +4.07%), total bytes -13.46%, avg SSIM2 -1.940, avg bfly +0.388.
+Size wins: 69/225 (31%). Encode time: 5.40x slower (235.4s vs 43.6s for all 225 encodes).
 
 **Key patterns**:
-- **Low distance (d=0.25-0.5)**: quality BETTER than cjxl (butteraugli -4 to -7%, SSIM2 positive)
-  but files 1-9% larger. Patches dominate on screenshots (-44% to -92%).
-- **Mid distance (d=1.0-2.5)**: avg files **-3.5% to -6.6%** smaller (patches help). Butteraugli
-  20-25% worse, SSIM2 -1.0 to -2.1. Quality gap is the main concern.
+- **Low distance (d=0.25-0.5)**: quality BETTER than cjxl (butteraugli -3 to -4%, SSIM2 positive)
+  but files 1-2% larger. Patches dominate on screenshots (-44% to -92%).
+- **Mid distance (d=1.0-2.5)**: avg files **-3.8% to -6.6%** smaller (patches help). Butteraugli
+  worse, SSIM2 -1.0 to -2.1. Quality gap is the main concern — needs butteraugli loop at e8.
 - **High distance (d=3.0+)**: files 3-6% larger, quality -3 to -4 SSIM2 points.
 - **Photos only (CLIC+CID22)**: median -0.1% at d=1.0.
 - **Screenshots** (gb82-sc): patches give 12-93% savings on some, but others +15-20% larger.
-- **CfL Newton fix** (fafe3bf): eps=1 + LS warm start improved Newton convergence by ~1pp
-  at all distances (0.5-1.5pp size reduction, total avg from +0.30% to -0.48%).
+- **CfL Newton fix** (fafe3bf): eps=1 + LS warm start improved Newton convergence by ~1pp.
 
 **Root cause analysis for outliers** (addressed Feb 19, 2026):
 - **global_scale bug** (eb14b65): was computed from adaptive quant field median/MAD instead of
@@ -181,12 +182,10 @@ Size wins: 69/225 (31%). Encode time: 5.83x slower (254.2s vs 43.6s for all 225 
   Lowered to d>=0.5 and d>=1.0. Reduced 1418519 gap ~13.1%→~4.6%, 100a02c2 ~4.8%→~2.0%.
 - **cjxl uses LfFrame**: cjxl at e7 encodes DC/LF in a separate LfFrame (frame_type=1). We don't
   implement LfFrames, encoding everything in one frame. This is a structural compression advantage.
+- **Butteraugli loop**: only runs at e8+ (matching libjxl gating). Quality gap at d>=1.0 is
+  expected without the loop — cjxl e7 also doesn't run it. Compare at e8 for loop-vs-loop.
 - Gap widening at high distances → distance-scaled cost model constants may need tuning
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
-- **CfL pass 2**: our CfL refinement uses DCT8-only; libjxl uses actual AC strategies + quant weights.
-  Plan exists at `~/.claude/plans/graceful-discovering-kite.md`. Partially implemented (stashed).
-- **Butteraugli loop**: now float-domain with per-iteration global_scale recomputation (Feb 19, 2026).
-  RD comparison numbers above are PRE-float-domain. Need re-measurement with `just rd-compare-quick`.
 
 **What's confirmed correct** (Feb 19, 2026):
 - **estimate_entropy_full matches libjxl exactly** — verified every component:
@@ -274,11 +273,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - jxl-oxide 0.12.5 has a known limitation with ANS in multi-group modular frames
   (unexpected EOF). djxl and jxl-rs decode correctly. Tests use jxl-rs as primary.
 
-**E. Effort 5+ Features**
-- **Butteraugli quantization loop** (effort 5+): IMPLEMENTED, DEFAULT-ON, FLOAT-DOMAIN.
-  Matches libjxl FindBestQuantization exactly: float quant field (~0.3-1.5 range),
+**E. Effort 8+ Features**
+- **Butteraugli quantization loop** (effort 8+): IMPLEMENTED, FLOAT-DOMAIN.
+  Gated at speed_tier <= kKitten (effort >= 8) matching libjxl (enc_adaptive_quantization.cc:1282).
+  Matches libjxl FindBestQuantization: float quant field (~0.3-1.5 range),
   per-iteration global_scale recomputation via SetQuantField (median/MAD), deviation
-  bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...]. 2 iters at e5-8, 4 at e9+.
+  bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...]. 2 iters at e8, 4 at e9+.
   Returns final DistanceParams for downstream encoding. `--no-butteraugli` to disable.
 - ~~**Fine-grained AC strategy search**~~ DONE (effort 9): step=1 instead of step=2 for 32x32+ blocks
 - ~~**Optimal LZ77**~~ DONE: Viterbi DP parser at effort 9+, greedy at e8, RLE at e7
@@ -314,8 +314,10 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
    - Brings total to 19/27 strategies — all that libjxl evaluates through effort 9
    - Auto-selection guarded at d>=3.0, hierarchical 64→32→16 evaluation
    - nzeros widened from u8 to u16 for DCT64x64's 4032 AC coefficients
-7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, default-on with 2 iters)
-   - Reconstruct→butteraugli→adjust cycles. 2 iterations converges. +0.3 SSIM2 at equal file size.
+7. ~~Butteraugli quantization loop~~ — DONE (Feb 6, 2026, effort 8+ float-domain)
+   - Gated at effort >= 8 (speed_tier <= kKitten), matching libjxl exactly.
+   - Float-domain: works on quant field values ~0.3-1.5, per-iter global_scale recompute.
+   - 2 iters at e8, 4 at e9+. At e7: disabled (no loop). `--no-butteraugli` to disable.
    - Per-block EPF sharpness also done (Phase 4, same date)
 8. ~~Increase kFavor2X2~~ — DONE (matches libjxl at -0.4)
 
@@ -375,10 +377,10 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] Content-adaptive block context map (default-on in two-pass, QF-threshold splitting)
 - [x] Per-block EPF sharpness selection (auto, Phase 4 of reconstruction plan)
 - [x] Encoder-side reconstruction pipeline (dequant → CfL → LLF → IDCT → gab → EPF)
-- [x] Butteraugli quantization loop (default-on at effort >= 5, `--no-butteraugli` to disable)
+- [x] Butteraugli quantization loop (effort 8+, `--no-butteraugli` to disable)
   - Float-domain quant field with per-iteration global_scale recomputation (libjxl parity)
   - Deviation bounds, kOriginalComparisonRound=1, kPow=[0.2,0.2,0,...] all match libjxl
-  - 2 iterations at effort 5-8, 4 iterations at effort 9+ (matching libjxl exactly)
+  - 2 iterations at effort 8, 4 at effort 9+ (gated at speed_tier <= kKitten, matching libjxl)
 - [x] Patches/dictionary (default-on, auto-detect, `--no-patches` to disable)
   - Detects repeated rectangular patterns in screenshots/UI (text glyphs, icons, buttons)
   - Detection matches libjxl FindTextLikePatches (L1 distance, 8-connected BFS/DFS,
