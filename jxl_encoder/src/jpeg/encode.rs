@@ -761,56 +761,8 @@ fn write_raw_quant_table_modular(qtables: &[i32], writer: &mut BitWriter) -> Res
 }
 
 /// Write an empty modular global sub-bitstream (no alpha, no extra channels).
-/// Encode an f32 value as IEEE 754 half-precision (16 bits).
-fn write_f16(value: f32, writer: &mut BitWriter) -> Result<()> {
-    let bits = f32_to_f16_bits(value);
-    writer.write(16, bits as u64)?;
-    Ok(())
-}
-
-/// Convert f32 to IEEE 754 binary16 (half-precision) bit representation.
-fn f32_to_f16_bits(value: f32) -> u16 {
-    let bits = value.to_bits();
-    let sign = (bits >> 31) & 1;
-    let exp = ((bits >> 23) & 0xFF) as i32;
-    let mantissa = bits & 0x7F_FFFF;
-
-    if exp == 0 && mantissa == 0 {
-        // Zero
-        return (sign << 15) as u16;
-    }
-
-    if exp == 0xFF {
-        // Inf or NaN - clamp to max finite
-        return ((sign << 15) | 0x7BFF) as u16;
-    }
-
-    // Rebias exponent: f32 bias=127, f16 bias=15
-    let new_exp = exp - 127 + 15;
-
-    if new_exp >= 31 {
-        // Overflow → max finite f16
-        return ((sign << 15) | 0x7BFF) as u16;
-    }
-
-    if new_exp <= 0 {
-        // Denormalized or underflow
-        if new_exp < -10 {
-            // Too small
-            return (sign << 15) as u16;
-        }
-        // Denormalized
-        let m = mantissa | 0x80_0000;
-        let shift = 1 - new_exp;
-        let half_mantissa = (m >> (13 + shift)) as u16;
-        return ((sign << 15) as u16) | half_mantissa;
-    }
-
-    // Normal case: round mantissa from 23 bits to 10 bits
-    let half_mantissa = (mantissa >> 13) as u16;
-    let half_exp = (new_exp as u16) << 10;
-    ((sign << 15) as u16) | half_exp | half_mantissa
-}
+// F16 functions delegated to shared f16 module.
+use crate::f16::{f32_to_f16_bits, write_f16};
 
 #[cfg(test)]
 mod tests {
