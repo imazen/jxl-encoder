@@ -81,6 +81,10 @@ identical pixel data. This produces up to **2x score inflation** that looks like
 **The comparison scripts at `/tmp/run_cmp3.sh` use `butteraugli_main` and are UNRELIABLE
 unless source PNGs are metadata-stripped first.**
 
+**The correct way to compare quality against cjxl:** `just quality-compare` — uses in-process
+Rust butteraugli on both encoders' output, decoded via jxl-oxide in linear RGB. Completely
+immune to PNG metadata issues.
+
 ## Current Status: Full libjxl Parametric Quantization Weights
 
 The VarDCT encoder (`jxl_encoder/src/vardct/`) now uses full libjxl's default parametric
@@ -588,6 +592,9 @@ just rd-regression
 
 # Regenerate hash lock sidecar after intentional encoding changes
 just update-hashes
+
+# Compare quality vs cjxl (CSV-backed, CID22 images, Rust butteraugli + ssim2)
+just quality-compare
 ```
 
 ## Pre-Commit Checklist

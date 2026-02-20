@@ -56,6 +56,10 @@ update-hashes:
     rm -f jxl_encoder/tests/hash_lock_expected.txt
     UPDATE_HASHES=1 cargo test --test hash_lock_features -- --test-threads=1
 
+# Compare quality vs cjxl (uses committed reference CSV, ~2 min)
+quality-compare:
+    cargo test -p jxl-encoder --test quality_compare --release -- --ignored --nocapture
+
 # Quick comparison: 10 CLIC + 5 CID22 + all screenshots (~5 min)
 rd-compare-quick:
     cargo build --release -p jxl-encoder-cli

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generate cjxl reference metrics CSV.
-# Encodes 108 images x 9 distances x 4 efforts, measures ssimulacra2 + butteraugli.
+# Encodes images x 9 distances x 4 efforts, measures ssimulacra2 + butteraugli.
 # Pre-converts to PNM so timing excludes PNG decode overhead.
 # Uses fast-ssim2 (Rust) for SSIMULACRA2 measurement.
 # Resumes from partial runs: skips rows already present in the CSV.
@@ -31,8 +31,10 @@ declare -A CORPUS_DIRS
 CORPUS_DIRS[clic2025]="$HOME/work/codec-corpus/clic2025-1024"
 CORPUS_DIRS[cid22]="$HOME/work/codec-corpus/CID22/CID22-512/validation"
 CORPUS_DIRS[gb82-sc]="$HOME/work/codec-corpus/gb82-sc"
+CORPUS_DIRS[cid22-train]="$HOME/work/codec-corpus/CID22/CID22-512/training"
+CORPUS_DIRS[frymire]="$HOME/work/jxl-encoder-rs/jxl_encoder/tests/images"
 
-CORPORA="clic2025 cid22 gb82-sc"
+CORPORA="clic2025 cid22 gb82-sc cid22-train frymire"
 
 # Verify tools exist
 for tool in "$CJXL" "$DJXL" "$SSIM2" "$BFLY"; do
