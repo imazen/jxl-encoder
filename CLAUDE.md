@@ -145,35 +145,33 @@ Improvements made Feb 3, 2026:
 
 **vs cjxl e7 (CSV reference: `reference/cjxl_reference.csv`):**
 
-Updated 2026-02-19 (after mul8x8 + quant_norm16 + IDCT fixes). Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7.
+Updated 2026-02-19 (after mul8x8, quant_norm16, IDCT, CfL Newton fixes). Our CSV: `reference/cjxl_rs_latest.csv`. cjxl v0.12.0 at effort 7.
 
 | Distance | Median Size | Avg Size | Avg Butteraugli | Avg SSIM2 |
 |----------|-------------|----------|-----------------|-----------|
-| d=0.25 | +9.5% | +2.3% | **-7.3%** | **+0.16** |
-| d=0.5 | +8.9% | +1.3% | **-5.8%** | **+0.23** |
-| d=1.0 | +0.6% | **-5.8%** | +23.3% | -1.00 |
-| d=1.5 | +1.5% | **-4.4%** | +22.2% | -1.36 |
-| d=2.0 | +2.0% | **-2.9%** | +17.9% | -2.10 |
-| d=2.5 | +3.2% | **-2.6%** | +19.6% | -1.96 |
-| d=3.0 | +4.8% | +4.1% | +21.7% | -3.02 |
-| d=4.0 | +5.3% | +5.0% | +21.7% | -3.57 |
-| d=5.0 | +7.6% | +5.8% | +14.4% | -3.94 |
+| d=0.25 | +9.5% | +2.1% | **-7.1%** | **+0.16** |
+| d=0.5 | +8.7% | +1.0% | **-3.9%** | **+0.19** |
+| d=1.0 | **-0.1%** | **-6.6%** | +24.5% | -1.04 |
+| d=1.5 | +0.7% | **-5.4%** | +21.1% | -1.43 |
+| d=2.0 | +1.2% | **-3.5%** | +20.2% | -2.07 |
+| d=2.5 | +1.5% | **-3.9%** | +20.4% | -1.95 |
+| d=3.0 | +3.0% | +2.8% | +20.7% | -3.05 |
+| d=4.0 | +3.6% | +3.5% | +17.5% | -3.98 |
+| d=5.0 | +7.4% | +5.7% | +17.7% | -4.28 |
 
-Grand summary: avg size +0.30% (median +4.83%), total bytes -12.78%, avg SSIM2 -1.840, avg bfly +0.372.
-Size wins: 59/225 (26%). Encode time: 5.51x slower (240.0s vs 43.6s for all 225 encodes).
+Grand summary: avg size **-0.48%** (median +4.07%), total bytes -13.34%, avg SSIM2 -1.940, avg bfly +0.388.
+Size wins: 69/225 (31%). Encode time: 5.83x slower (254.2s vs 43.6s for all 225 encodes).
 
 **Key patterns**:
-- **Low distance (d=0.25-0.5)**: quality BETTER than cjxl (butteraugli -5 to -7%, SSIM2 positive)
+- **Low distance (d=0.25-0.5)**: quality BETTER than cjxl (butteraugli -4 to -7%, SSIM2 positive)
   but files 1-9% larger. Patches dominate on screenshots (-44% to -92%).
-- **Mid distance (d=1.0-2.5)**: avg files **-2.6% to -5.8%** smaller (patches help). Butteraugli
-  17-23% worse, SSIM2 -1.0 to -2.1. Quality gap is the main concern.
-- **High distance (d=3.0+)**: files 4-6% larger, quality -3 to -4 SSIM2 points.
-- **Photos only (CLIC+CID22)**: median +0.6% at d=1.0 (mixed: some -8%, some +13%).
+- **Mid distance (d=1.0-2.5)**: avg files **-3.5% to -6.6%** smaller (patches help). Butteraugli
+  20-25% worse, SSIM2 -1.0 to -2.1. Quality gap is the main concern.
+- **High distance (d=3.0+)**: files 3-6% larger, quality -3 to -4 SSIM2 points.
+- **Photos only (CLIC+CID22)**: median -0.1% at d=1.0.
 - **Screenshots** (gb82-sc): patches give 12-93% savings on some, but others +15-20% larger.
-- **Butteraugli loop**: neither encoder has it at e7 (libjxl gates at kKitten = effort 8).
-- **quant_norm16 fix** (c2bc0ae): corrected L16 norm for multi-block pixel loss. Shifted RD
-  tradeoff toward quality — SSIM2 improved +0.3 at all distances, butteraugli improved at d≤0.5,
-  files slightly larger at d=0.5-1.0 vs pre-fix.
+- **CfL Newton fix** (fafe3bf): eps=1 + LS warm start improved Newton convergence by ~1pp
+  at all distances (0.5-1.5pp size reduction, total avg from +0.30% to -0.48%).
 
 **Root cause analysis for outliers** (addressed Feb 19, 2026):
 - **global_scale bug** (eb14b65): was computed from adaptive quant field median/MAD instead of
