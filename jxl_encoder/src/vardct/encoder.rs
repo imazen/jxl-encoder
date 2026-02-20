@@ -581,34 +581,27 @@ impl VarDctEncoder {
             }
             let total: u32 = counts.iter().sum();
             // Format top strategies
+            // Names indexed by RAW_STRATEGY_* internal codes (NOT bitstream order)
             let names = [
-                "DCT8",
-                "HORNETS",
-                "DCT2x2",
-                "DCT4x4",
-                "DCT16x16",
-                "DCT32x32",
-                "DCT8x16",
-                "DCT8x4",
-                "DCT4x8",
-                "AFV0",
-                "AFV1",
-                "AFV2",
-                "AFV3",
-                "DCT64x64",
-                "DCT64x32",
-                "DCT32x64",
-                "DCT128x128",
-                "DCT128x64",
-                "DCT64x128",
-                "DCT256x256",
-                "DCT256x128",
-                "DCT128x256",
-                "IDENTITY",
-                "DCT16x8",
-                "DCT32x16",
-                "DCT16x32",
-                "DCT8x32",
+                "DCT8",     // 0 = RAW_STRATEGY_DCT8
+                "DCT16x8",  // 1 = RAW_STRATEGY_DCT16X8
+                "DCT8x16",  // 2 = RAW_STRATEGY_DCT8X16
+                "DCT16x16", // 3 = RAW_STRATEGY_DCT16X16
+                "DCT32x32", // 4 = RAW_STRATEGY_DCT32X32
+                "DCT4x8",   // 5 = RAW_STRATEGY_DCT4X8
+                "DCT8x4",   // 6 = RAW_STRATEGY_DCT8X4
+                "DCT4x4",   // 7 = RAW_STRATEGY_DCT4X4
+                "IDENTITY", // 8 = RAW_STRATEGY_IDENTITY
+                "DCT2x2",   // 9 = RAW_STRATEGY_DCT2X2
+                "DCT32x16", // 10 = RAW_STRATEGY_DCT32X16
+                "DCT16x32", // 11 = RAW_STRATEGY_DCT16X32
+                "AFV0",     // 12 = RAW_STRATEGY_AFV0
+                "AFV1",     // 13 = RAW_STRATEGY_AFV1
+                "AFV2",     // 14 = RAW_STRATEGY_AFV2
+                "AFV3",     // 15 = RAW_STRATEGY_AFV3
+                "DCT64x64", // 16 = RAW_STRATEGY_DCT64X64
+                "DCT64x32", // 17 = RAW_STRATEGY_DCT64X32
+                "DCT32x64", // 18 = RAW_STRATEGY_DCT32X64
             ];
             let mut parts = alloc::string::String::new();
             for (i, &c) in counts.iter().enumerate() {
