@@ -394,6 +394,10 @@ pub fn collect_dc_tokens_wp(
 ///
 /// Same logic as `write_dc_tokens_region()` but returns a `Vec<Token>` instead
 /// of writing to a bitstream. Used by JPEG recompression encoder.
+///
+/// The `channel_shifts` parameter specifies per-channel (h_shift, v_shift) for
+/// chroma subsampling. For 4:4:4, pass `&[(0,0); 3]`. For 4:2:0, chroma
+/// channels have shift (1,1), causing the DC iteration to use halved bounds.
 #[allow(dead_code)]
 pub fn collect_dc_tokens_region(
     quant_dc: &[Vec<Vec<i16>>; 3],
@@ -401,6 +405,7 @@ pub fn collect_dc_tokens_region(
     start_by: usize,
     end_bx: usize,
     end_by: usize,
+    channel_shifts: &[(usize, usize); 3],
 ) -> Vec<Token> {
     let region_width = end_bx - start_bx;
     let region_height = end_by - start_by;
@@ -412,22 +417,28 @@ pub fn collect_dc_tokens_region(
     let mut tokens = Vec::with_capacity(region_width * region_height * 3);
 
     for &c in &[1, 0, 2] {
+        let (hs, vs) = channel_shifts[c];
+        let ch_start_bx = start_bx >> hs;
+        let ch_start_by = start_by >> vs;
+        let ch_end_bx = (end_bx >> hs).min(quant_dc[c].first().map_or(0, |r| r.len()));
+        let ch_end_by = (end_by >> vs).min(quant_dc[c].len());
+
         let channel = &quant_dc[c];
-        for y in start_by..end_by {
-            for x in start_bx..end_bx {
-                let left = if x > start_bx {
+        for y in ch_start_by..ch_end_by {
+            for x in ch_start_bx..ch_end_bx {
+                let left = if x > ch_start_bx {
                     channel[y][x - 1] as i32
-                } else if y > start_by {
+                } else if y > ch_start_by {
                     channel[y - 1][x] as i32
                 } else {
                     0
                 };
-                let top = if y > start_by {
+                let top = if y > ch_start_by {
                     channel[y - 1][x] as i32
                 } else {
                     left
                 };
-                let topleft = if x > start_bx && y > start_by {
+                let topleft = if x > ch_start_bx && y > ch_start_by {
                     channel[y - 1][x - 1] as i32
                 } else {
                     left

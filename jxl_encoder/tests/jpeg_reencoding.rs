@@ -490,3 +490,197 @@ fn test_jbrd_parse_oxide() {
         }
     }
 }
+
+// ── Chroma subsampling tests ──
+
+const DJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+const OUT_DIR: &str = "/mnt/v/output/jpeg-reencoding";
+
+/// Encode JPEG → JXL container, run djxl --reconstruct_jpeg, compare byte-for-byte.
+fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
+    let jpeg_data = std::fs::read(jpeg_path)
+        .unwrap_or_else(|e| panic!("{label}: failed to read {jpeg_path}: {e}"));
+    let jpeg = read_jpeg(&jpeg_data).unwrap_or_else(|e| panic!("{label}: failed to parse: {e}"));
+
+    // Log component info
+    for (i, comp) in jpeg.components.iter().enumerate() {
+        eprintln!(
+            "  Component {i}: id={}, h_samp={}, v_samp={}, {}x{} blocks",
+            comp.id,
+            comp.h_samp_factor,
+            comp.v_samp_factor,
+            comp.width_in_blocks,
+            comp.height_in_blocks,
+        );
+    }
+
+    let jxl_bytes = encode_jpeg_to_jxl_container(&jpeg)
+        .unwrap_or_else(|e| panic!("{label}: failed to encode: {e}"));
+
+    let compression = jxl_bytes.len() as f64 / jpeg_data.len() as f64 * 100.0;
+    eprintln!(
+        "{label}: {}x{} JPEG ({} bytes) -> {} bytes JXL ({compression:.1}%)",
+        jpeg.width,
+        jpeg.height,
+        jpeg_data.len(),
+        jxl_bytes.len(),
+    );
+
+    let jxl_path = format!("{OUT_DIR}/{label}.jxl");
+    std::fs::write(&jxl_path, &jxl_bytes).unwrap();
+
+    let reconstructed_path = format!("{OUT_DIR}/{label}_reconstructed.jpg");
+    let djxl = std::process::Command::new(DJXL)
+        .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
+        .output()
+        .expect("failed to run djxl");
+
+    let stderr = String::from_utf8_lossy(&djxl.stderr);
+    assert!(
+        djxl.status.success(),
+        "{label}: djxl --reconstruct_jpeg failed (exit {}): {stderr}",
+        djxl.status.code().unwrap_or(-1),
+    );
+
+    let reconstructed = std::fs::read(&reconstructed_path).unwrap();
+    if jpeg_data == reconstructed {
+        eprintln!(
+            "{label}: BYTE-EXACT RECONSTRUCTION OK ({} bytes)",
+            jpeg_data.len()
+        );
+    } else {
+        let min_len = jpeg_data.len().min(reconstructed.len());
+        for i in 0..min_len {
+            if jpeg_data[i] != reconstructed[i] {
+                eprintln!(
+                    "{label}: First diff at byte {i} (0x{i:x}): orig=0x{:02x}, recon=0x{:02x}",
+                    jpeg_data[i], reconstructed[i],
+                );
+                break;
+            }
+        }
+        panic!(
+            "{label}: JPEG reconstruction not byte-exact (orig={}, recon={})",
+            jpeg_data.len(),
+            reconstructed.len(),
+        );
+    }
+}
+
+// ── 4:4:4 tests (regression — must still work) ──
+
+#[test]
+fn test_subsamp_444_64x64() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test64_444.jpg",
+        "subsamp_444_64x64",
+    );
+}
+
+#[test]
+fn test_subsamp_444_128x128() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test128_444.jpg",
+        "subsamp_444_128x128",
+    );
+}
+
+// ── 4:2:0 tests ──
+
+#[test]
+fn test_subsamp_420_64x64() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test64_420.jpg",
+        "subsamp_420_64x64",
+    );
+}
+
+#[test]
+fn test_subsamp_420_128x128() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test128_420.jpg",
+        "subsamp_420_128x128",
+    );
+}
+
+#[test]
+fn test_subsamp_420_512x512() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test512_420.jpg",
+        "subsamp_420_512x512",
+    );
+}
+
+#[test]
+fn test_subsamp_420_odd_size() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test_odd_420.jpg",
+        "subsamp_420_odd_100x75",
+    );
+}
+
+#[test]
+fn test_subsamp_420_real_photo() {
+    // Use a stripped version of Landscape_2 (no ICC profile — ICC roundtrip is a
+    // separate JBRD issue, not related to chroma subsampling).
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test_real_420_stripped.jpg",
+        "subsamp_420_real_stripped",
+    );
+}
+
+#[test]
+#[ignore = "Landscape_2 has ICC profile — JBRD ICC roundtrip not yet implemented"]
+fn test_subsamp_420_real_photo_icc() {
+    roundtrip_jpeg_byteexact(
+        "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_2.jpg",
+        "subsamp_420_landscape2",
+    );
+}
+
+// ── 4:2:2 tests ──
+
+#[test]
+fn test_subsamp_422_64x64() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test64_422.jpg",
+        "subsamp_422_64x64",
+    );
+}
+
+#[test]
+fn test_subsamp_422_128x128() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test128_422.jpg",
+        "subsamp_422_128x128",
+    );
+}
+
+// ── 4:4:0 tests ──
+
+#[test]
+fn test_subsamp_440_64x64() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test64_440.jpg",
+        "subsamp_440_64x64",
+    );
+}
+
+#[test]
+fn test_subsamp_440_128x128() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test128_440.jpg",
+        "subsamp_440_128x128",
+    );
+}
+
+// ── Grayscale test ──
+
+#[test]
+#[ignore = "Grayscale JPEG reencoding needs separate work (3x size, JBRD reconstruct fails)"]
+fn test_subsamp_gray_128x128() {
+    roundtrip_jpeg_byteexact(
+        "/mnt/v/output/jpeg-reencoding/test128_gray.jpg",
+        "subsamp_gray_128x128",
+    );
+}
