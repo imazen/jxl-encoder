@@ -177,7 +177,8 @@ now computed on pre-gaborish XYB (matching libjxl enc_heuristics.cc:1117-1142).
   preventing large transforms from being evaluated on smooth content at d=1.0.
 
 **Remaining size overhead (files 4-9% larger)**:
-- ~~cjxl uses LfFrame (frame_type=1) for DC/LF — structural compression advantage we don't have~~ DONE (Feb 20, 2026)
+- ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
+  Note: LfFrame is for progressive display, NOT compression. Adds +4.6% overhead in cjxl, +10.8% in ours.
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 
@@ -286,9 +287,11 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - EPF per-block sharpness: IMPLEMENTED (Feb 6, 2026, Phase 4 of reconstruction plan)
 - DC coding: fixed context tree, no modular optimization
 - LfFrame (separate DC frame): IMPLEMENTED (Feb 20, 2026, opt-in via `--lf-frame`)
+  - For progressive display (low-res DC preview before full decode), NOT compression
   - Separate modular frame (frame_type=1, dc_level=1) with DC at 1/8 resolution
   - Distance-scaled enc_factors [65536, 4096, 4096] with F16 roundtrip for decoder parity
   - Custom dc_quant in LfGlobal, USE_LF_FRAME flag on main frame
+  - Overhead: +10.8% avg (cjxl: +4.6% avg) — TODO: reduce to match cjxl
   - Verified pixel-exact with djxl and jxl-rs
 
 **Priority path:**
@@ -336,6 +339,9 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
+- **LfFrame overhead**: +10.8% avg vs cjxl's +4.6% avg. ~6pp extra overhead to investigate.
+  Likely modular encoding efficiency on small DC images (32x32 at 256x256 input).
+  Low priority since LfFrame is opt-in and for progressive display, not compression.
 
 **Published**: v0.1.0 on crates.io (2026-02-14)
 
