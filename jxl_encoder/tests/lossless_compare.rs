@@ -259,10 +259,7 @@ fn process_image(src: &SourceImage, entry: &CjxlLosslessEntry) -> Option<Compare
     let rs_output = match config.encode(&pixels, w, h, layout) {
         Ok(out) => out,
         Err(e) => {
-            eprintln!(
-                "  {} e{}: encode failed: {e:?}",
-                src.name, entry.effort
-            );
+            eprintln!("  {} e{}: encode failed: {e:?}", src.name, entry.effort);
             return None;
         }
     };
@@ -316,9 +313,7 @@ fn lossless_compare() {
 
     let entries = parse_csv(effort);
     if entries.is_empty() {
-        eprintln!(
-            "No CSV entries for effort {effort}. Run `just generate-lossless-reference`."
-        );
+        eprintln!("No CSV entries for effort {effort}. Run `just generate-lossless-reference`.");
         return;
     }
 
@@ -368,10 +363,7 @@ fn lossless_compare() {
                     if let Some(result) = process_image(src, entry) {
                         let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
                         let ok = if result.pixel_exact { "OK" } else { "MISMATCH" };
-                        eprintln!(
-                            "  [{done}/{n_images}] {} ({}) {ok}",
-                            src.name, src.corpus
-                        );
+                        eprintln!("  [{done}/{n_images}] {} ({}) {ok}", src.name, src.corpus);
                         results_mu.lock().unwrap().push(result);
                     }
                 }

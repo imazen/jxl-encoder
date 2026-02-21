@@ -262,6 +262,77 @@ pub struct PaletteAnalysis {
     pub color_to_index: BTreeMap<Vec<i32>, i32>,
 }
 
+/// Analyze whether a single channel benefits from ChannelCompact (per-channel palette).
+///
+/// Matches libjxl's single-channel palette heuristic (enc_modular.cc:395-438):
+/// if less than `channel_colors_percent`% of the value range actually occurs,
+/// and the palette is less than 6.25% the pixel count (nb_pixels/16), compact it.
+///
+/// Returns `Some(PaletteAnalysis)` with `num_c=1` palette if beneficial.
+pub fn analyze_channel_compact(
+    channel: &Channel,
+    channel_colors_percent: f32,
+) -> Option<PaletteAnalysis> {
+    let width = channel.width();
+    let height = channel.height();
+    let nb_pixels = width * height;
+
+    // Find min and max values in the channel
+    let mut min_val = i32::MAX;
+    let mut max_val = i32::MIN;
+    for y in 0..height {
+        for x in 0..width {
+            let v = channel.get(x, y);
+            min_val = min_val.min(v);
+            max_val = max_val.max(v);
+        }
+    }
+
+    if min_val > max_val {
+        return None; // empty channel
+    }
+
+    let range = (max_val as i64 - min_val as i64 + 1) as usize;
+
+    // Matching libjxl: nb_colors = min(nb_pixels/16, channel_colors_percent/100 * range)
+    let nb_colors_limit =
+        (nb_pixels / 16).min((channel_colors_percent as f64 / 100.0 * range as f64) as usize);
+
+    if nb_colors_limit == 0 {
+        return None;
+    }
+
+    // Collect unique values, bail early if too many
+    let mut unique_values = alloc::collections::BTreeSet::new();
+    for y in 0..height {
+        for x in 0..width {
+            unique_values.insert(channel.get(x, y));
+            if unique_values.len() > nb_colors_limit {
+                return None;
+            }
+        }
+    }
+
+    let actual_unique = unique_values.len();
+    if actual_unique <= 1 {
+        return None; // single value, no benefit
+    }
+
+    // Build palette: sorted unique values as single-element vectors
+    let palette: Vec<Vec<i32>> = unique_values.iter().map(|&v| vec![v]).collect();
+    let mut color_to_index = BTreeMap::new();
+    for (i, color) in palette.iter().enumerate() {
+        color_to_index.insert(color.clone(), i as i32);
+    }
+
+    Some(PaletteAnalysis {
+        use_palette: true,
+        num_colors: actual_unique,
+        palette,
+        color_to_index,
+    })
+}
+
 /// Analyze an image to determine if palette transform is beneficial.
 ///
 /// For lossless: palette is beneficial if num_unique_colors <= max_colors.
@@ -1055,8 +1126,8 @@ pub fn should_use_palette(image: &ModularImage) -> Option<(usize, usize)> {
         return None;
     }
 
-    // For 8-bit images, max palette size is 256
-    let max_colors = 1usize << image.bit_depth.min(12);
+    // Matches libjxl enc_params.h:121 (palette_colors = 1 << 10)
+    let max_colors = 1024usize;
     let analysis = analyze_palette(image, 0, num_color_channels, max_colors);
 
     if analysis.use_palette {

@@ -16,13 +16,32 @@ use crate::bit_writer::BitWriter;
 use crate::debug_rect;
 use crate::entropy_coding::encode::write_tokens_ans;
 use crate::error::Result;
-use crate::modular::channel::ModularImage;
+use crate::modular::channel::{Channel, ModularImage};
 use crate::modular::rct::{RctType, forward_rct};
 
 // Re-export everything from sub-modules so existing import paths work unchanged.
 pub(crate) use super::encode_primitives::*;
 pub(crate) use super::encode_transforms::*;
 pub(crate) use super::encode_tree::*;
+
+/// Write U32-encoded num_transforms value.
+///
+/// Encoding: U32(Val(0), Val(1), BitsOffset(4,2), BitsOffset(8,18))
+fn write_num_transforms(writer: &mut BitWriter, num_transforms: u32) -> Result<()> {
+    match num_transforms {
+        0 => writer.write(2, 0)?,
+        1 => writer.write(2, 1)?,
+        2..=17 => {
+            writer.write(2, 2)?;
+            writer.write(4, (num_transforms - 2) as u64)?;
+        }
+        _ => {
+            writer.write(2, 3)?;
+            writer.write(8, (num_transforms - 18) as u64)?;
+        }
+    }
+    Ok(())
+}
 
 /// Collect residuals using gradient prediction and identify LZ77 runs.
 fn collect_residuals_with_prediction(image: &ModularImage) -> Vec<Token> {
@@ -1094,6 +1113,84 @@ pub(crate) fn select_best_rct(image: &ModularImage, nb_rcts_to_try: u8) -> (RctT
     (best_rct, work_image)
 }
 
+/// Like [`select_best_rct`] but applies RCT starting at `begin_c` instead of 0.
+///
+/// Used after ChannelCompact inserts meta channels at the front, so the color
+/// channels to decorrelate are at `begin_c..begin_c+3`.
+pub(crate) fn select_best_rct_at(
+    image: &ModularImage,
+    begin_c: usize,
+    nb_rcts_to_try: u8,
+) -> (RctType, ModularImage) {
+    use super::rct::{RctType, forward_rct};
+
+    let nb_rcts_to_try = nb_rcts_to_try as usize;
+
+    if nb_rcts_to_try == 0 || image.channels.len() < begin_c + 3 {
+        let mut transformed = image.clone();
+        forward_rct(&mut transformed.channels, begin_c, RctType::YCOCG).ok();
+        return (RctType::YCOCG, transformed);
+    }
+
+    let mut best_cost = f64::MAX;
+    let mut best_rct = RctType::YCOCG;
+    let mut best_image = None;
+
+    for (i, &rct_val) in RCT_CANDIDATES.iter().enumerate() {
+        if i >= nb_rcts_to_try {
+            break;
+        }
+        let rct_type = RctType(rct_val);
+
+        if rct_type.is_noop() {
+            let cost = estimate_cost(image);
+            crate::trace::debug_eprintln!(
+                "  RCT {:2} (begin_c={}): cost={:.0}",
+                rct_val,
+                begin_c,
+                cost
+            );
+            if cost < best_cost {
+                best_cost = cost;
+                best_rct = rct_type;
+                best_image = Some(image.clone());
+            }
+        } else {
+            let mut transformed = image.clone();
+            if forward_rct(&mut transformed.channels, begin_c, rct_type).is_ok() {
+                let cost = estimate_cost(&transformed);
+                crate::trace::debug_eprintln!(
+                    "  RCT {:2} (begin_c={}): cost={:.0}",
+                    rct_val,
+                    begin_c,
+                    cost
+                );
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_rct = rct_type;
+                    best_image = Some(transformed);
+                }
+            }
+        }
+    }
+
+    let work_image = best_image.unwrap_or_else(|| {
+        let mut t = image.clone();
+        forward_rct(&mut t.channels, begin_c, RctType::YCOCG).ok();
+        t
+    });
+
+    crate::trace::debug_eprintln!(
+        "RCT_SELECT: best={} (cost={:.0}), tried {} variants, begin_c={}",
+        best_rct.0,
+        best_cost,
+        nb_rcts_to_try.min(RCT_CANDIDATES.len()),
+        begin_c,
+    );
+
+    (best_rct, work_image)
+}
+
 /// Write a modular stream using a learned MA tree with multi-context ANS.
 ///
 /// This is the single-group version. For multi-group, see section.rs.
@@ -1177,12 +1274,12 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
 
     let is_lossy = lossy_options.is_some();
 
-    // Check if palette is beneficial (only for lossless, non-lossy images).
+    // Check if multi-channel palette is beneficial (only for lossless, non-lossy images).
     // When palette is active, it replaces RCT for the color channels — palette
     // already decorrelates them by converting to a single index channel.
     let palette_info = if palette && !is_lossy && image.channels.len() >= 2 {
         if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
-            let max_colors = 1usize << image.bit_depth.min(12);
+            let max_colors = 1024usize; // Matches libjxl enc_params.h:121
             let analysis = super::palette::analyze_palette(image, begin_c, num_c, max_colors);
             if analysis.use_palette {
                 Some((begin_c, num_c, analysis))
@@ -1196,13 +1293,37 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         None
     };
 
-    // Apply palette or RCT.
-    // Palette replaces RCT when active: the color channels become a single index
-    // channel, so there's nothing left to decorrelate with RCT.
-    // Lossy modular skips both — channels are already in XYB integer space.
-    let (work_image, rct_type, palette_result) = if let Some((begin_c, num_c, ref analysis)) =
-        palette_info
+    // ChannelCompact: per-channel value compaction for sparse channels.
+    // Applied when multi-channel palette didn't fire (too many unique RGB colors,
+    // but individual channels may be sparse — common in screenshots).
+    // Matches libjxl enc_modular.cc:395-438 with channel_colors_pre_transform_percent=95.
+    let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> =
+        if palette_info.is_none() && !is_lossy && palette && image.channels.len() >= 2 {
+            let num_color_channels = if image.has_alpha {
+                image.channels.len() - 1
+            } else {
+                image.channels.len()
+            };
+            (0..num_color_channels)
+                .filter_map(|i| {
+                    super::palette::analyze_channel_compact(&image.channels[i], 95.0)
+                        .map(|a| (i, a))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+    // Apply transforms: multi-channel palette, ChannelCompact + RCT, or RCT only.
+    // compact_info tracks ChannelCompact transforms for the bitstream:
+    // Vec of (begin_c_in_bitstream, nb_colors).
+    let (work_image, rct_type, palette_result, compact_info) = if let Some((
+        begin_c,
+        num_c,
+        ref analysis,
+    )) = palette_info
     {
+        // Multi-channel palette path: replaces RCT entirely
         let mut palettized = image.clone();
         let nb_colors = super::palette::apply_palette(&mut palettized, begin_c, num_c, analysis)?;
         crate::trace::debug_eprintln!(
@@ -1211,12 +1332,85 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
             num_c,
             begin_c,
         );
-        (palettized, None, Some((begin_c, num_c, nb_colors)))
+        (
+            palettized,
+            None,
+            Some((begin_c, num_c, nb_colors)),
+            Vec::new(),
+        )
+    } else if !compact_analyses.is_empty() {
+        // ChannelCompact path: compact individual channels, then apply RCT.
+        // Channel ordering must match decoder's MetaPalette expectations:
+        // palettes are inserted at position 0 (front), so after N compacts
+        // the layout is [pal_N-1, ..., pal_0, idx_0, ch_1, idx_2, ...].
+        let num_compacted = compact_analyses.len();
+        let mut palettes: Vec<Channel> = Vec::new();
+        let mut non_meta: Vec<Channel> = Vec::new();
+        let mut info: Vec<(usize, usize)> = Vec::new();
+        let mut nb_meta = 0usize;
+
+        for (orig_idx, ch) in image.channels.iter().enumerate() {
+            if let Some((_, analysis)) = compact_analyses.iter().find(|(idx, _)| *idx == orig_idx) {
+                // Create palette meta-channel (nb_colors wide, 1 high for num_c=1)
+                let mut pal_ch = Channel::new(analysis.num_colors, 1)?;
+                for (i, color) in analysis.palette.iter().enumerate() {
+                    pal_ch.set(i, 0, color[0]);
+                }
+                palettes.push(pal_ch);
+
+                // Create index channel (same dimensions as original)
+                let mut idx_ch = Channel::new(ch.width(), ch.height())?;
+                for y in 0..ch.height() {
+                    for x in 0..ch.width() {
+                        let val = ch.get(x, y);
+                        let index = analysis.color_to_index[&vec![val]];
+                        idx_ch.set(x, y, index);
+                    }
+                }
+                non_meta.push(idx_ch);
+
+                // Compute begin_c for the bitstream transform descriptor.
+                // Each prior compact added one meta channel, shifting begin_c.
+                let begin_c = orig_idx + nb_meta;
+                info.push((begin_c, analysis.num_colors));
+                nb_meta += 1;
+            } else {
+                // Non-compacted channel passes through unchanged
+                non_meta.push(ch.clone());
+            }
+        }
+
+        // Decoder's MetaPalette inserts each palette at position 0,
+        // so earlier palettes end up deeper. Reverse to match.
+        palettes.reverse();
+
+        let mut work = image.clone();
+        work.channels = palettes;
+        work.channels.extend(non_meta);
+
+        crate::trace::debug_eprintln!(
+            "CHANNEL_COMPACT+TREE: {} channels compacted, {} meta + {} non-meta channels, info={:?}",
+            num_compacted,
+            nb_meta,
+            work.channels.len() - nb_meta,
+            info,
+        );
+
+        // Apply RCT to the non-meta channels (starting at nb_meta)
+        let rct_begin_c = num_compacted;
+        if rct && work.channels.len() >= rct_begin_c + 3 {
+            let (selected_rct, transformed) =
+                select_best_rct_at(&work, rct_begin_c, profile.nb_rcts_to_try);
+            (transformed, Some(selected_rct), None, info)
+        } else {
+            (work, None, None, info)
+        }
     } else if !is_lossy && rct && image.channels.len() >= 3 {
+        // RCT only path (no palette, no ChannelCompact)
         let (selected_rct, transformed) = select_best_rct(image, profile.nb_rcts_to_try);
-        (transformed, Some(selected_rct), None)
+        (transformed, Some(selected_rct), None, Vec::new())
     } else {
-        (image.clone(), None, None)
+        (image.clone(), None, None, Vec::new())
     };
 
     // Apply Squeeze (Haar wavelet) for spatial decorrelation.
@@ -1389,13 +1583,22 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         let has_palette = palette_result.is_some();
         let has_rct = rct_type.is_some();
         let has_squeeze = squeeze_params.is_some();
-        let num_transforms = has_palette as u32 + has_rct as u32 + has_squeeze as u32;
-        writer.write(2, num_transforms as u64)?;
+        let num_transforms =
+            compact_info.len() as u32 + has_palette as u32 + has_rct as u32 + has_squeeze as u32;
+        write_num_transforms(writer, num_transforms)?;
+
+        // ChannelCompact transforms first (per-channel palette, num_c=1)
+        for &(begin_c, nb_colors) in &compact_info {
+            write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+        }
+        // Multi-channel palette (if any)
         if let Some((begin_c, num_c, nb_colors)) = palette_result {
             write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
         }
+        // RCT (begin_c adjusted for ChannelCompact meta channels)
         if let Some(rct_type) = rct_type {
-            write_rct_transform(writer, 0, rct_type)?;
+            let rct_begin_c = compact_info.len();
+            write_rct_transform(writer, rct_begin_c, rct_type)?;
         }
         if let Some(ref params) = squeeze_params {
             write_squeeze_transform(writer, params)?;
