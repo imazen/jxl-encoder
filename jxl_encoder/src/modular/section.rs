@@ -394,26 +394,59 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         Some(total_pixels),
     );
 
+    eprintln!(
+        "DIAG tree: {} nodes, {} contexts, {} samples, {} total_tokens, \
+         max_nodes={}, threshold={:.1}, pixel_frac={:.3}",
+        tree.len(),
+        num_contexts,
+        samples.num_samples,
+        all_tokens.len(),
+        params.max_nodes,
+        params.split_threshold,
+        pixel_fraction,
+    );
+    eprintln!(
+        "DIAG code: {} histograms (from {} contexts), rct={:?}",
+        code.histograms.len(),
+        ans_num_contexts,
+        rct_type,
+    );
+
     // Step 5: Write bitstream
+    let bits_before = writer.bits_written();
     crate::f16::write_lf_quant(writer, dc_quant_custom)?;
     // has_tree = true
     writer.write(1, 1)?;
 
     // Write the learned tree
+    let bits_before_tree = writer.bits_written();
     write_tree(writer, &tree)?;
+    let tree_bits = writer.bits_written() - bits_before_tree;
 
     // Write LZ77 header + ANS data histogram.
+    let bits_before_histo = writer.bits_written();
     if ans_num_contexts > 1 {
         write_lz77_header(lz77_params.as_ref(), writer)?;
         write_entropy_code_ans(&code, writer)?;
     } else {
         write_ans_modular_header(writer, &code)?;
     }
+    let histo_bits = writer.bits_written() - bits_before_histo;
 
     // GroupHeader (global modular group)
     writer.write(1, 1)?; // use_global_tree = true
     write_wp_header(writer, &wp_params)?;
     write_global_transforms(writer, rct_type)?;
+    let total_lf_global_bits = writer.bits_written() - bits_before;
+    eprintln!(
+        "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), total={} bits ({} B)",
+        tree_bits,
+        tree_bits / 8,
+        histo_bits,
+        histo_bits / 8,
+        total_lf_global_bits,
+        total_lf_global_bits / 8,
+    );
 
     writer.zero_pad_to_byte();
 
@@ -470,6 +503,17 @@ fn collect_group_residuals(group_image: &ModularImage) -> Vec<u32> {
 pub fn write_group_modular_section(
     group_image: &ModularImage,
     state: &GlobalModularState,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_group_modular_section_idx(group_image, state, 0, writer)
+}
+
+/// Like [`write_group_modular_section`] but with an explicit group index
+/// for tree property 1 (group_id). Required when the learned tree splits on group_id.
+pub fn write_group_modular_section_idx(
+    group_image: &ModularImage,
+    state: &GlobalModularState,
+    group_idx: u32,
     writer: &mut BitWriter,
 ) -> Result<()> {
     crate::trace::debug_eprintln!(
@@ -541,8 +585,12 @@ pub fn write_group_modular_section(
             wp_params,
         } => {
             // Collect residuals using the learned tree (multi-context)
-            let tokens =
-                super::tree_learn::collect_residuals_with_tree(group_image, tree, 0, wp_params);
+            let tokens = super::tree_learn::collect_residuals_with_tree(
+                group_image,
+                tree,
+                group_idx,
+                wp_params,
+            );
             write_tokens_ans(&tokens, code, None, writer)?;
         }
     }
