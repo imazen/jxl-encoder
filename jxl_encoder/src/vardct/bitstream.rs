@@ -1083,7 +1083,12 @@ impl VarDctEncoder {
                 ref_frame_start,
                 ref_frame_start / 8
             );
-            super::patches::encode_reference_frame(pd, self.use_ans, &mut writer)?;
+            super::patches::encode_reference_frame(
+                pd,
+                self.use_ans,
+                self.profile.patch_ref_tree_learning,
+                &mut writer,
+            )?;
             writer.zero_pad_to_byte();
             #[cfg(feature = "trace-bitstream")]
             {

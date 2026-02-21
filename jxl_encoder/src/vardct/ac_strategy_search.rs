@@ -139,6 +139,7 @@ pub(super) fn find_best_16x16_transform(
                         mask1x1_stride,
                         $adjust,
                         cost_bases,
+                        &profile.entropy_mul_table,
                         scratch,
                     )
                 };
@@ -228,6 +229,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     let entropy_16x8_right = mul16x8
@@ -247,6 +249,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
 
@@ -268,6 +271,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     let entropy_8x16_bottom = mul16x8
@@ -287,6 +291,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
 
@@ -308,6 +313,7 @@ pub(super) fn find_best_16x16_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
 
@@ -528,6 +534,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
 
@@ -550,6 +557,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     let entropy_32x16_1 = mul32x16
@@ -569,6 +577,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     // Evaluate DCT16x32 costs (two transforms: at (0,0) and (2,0))
@@ -590,6 +599,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     let entropy_16x32_1 = mul32x16
@@ -609,6 +619,7 @@ pub(super) fn find_best_32x32_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     // Run four 16x16 evaluations (each covers 2×2 blocks)
@@ -701,6 +712,7 @@ pub(super) fn find_best_32x32_transform(
                 mask1x1_stride,
                 0.0,
                 cost_bases,
+                &profile.entropy_mul_table,
                 scratch,
             );
             let cost = base + mul * e;
@@ -855,6 +867,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
 
@@ -878,6 +891,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     let entropy_64x32_1 = mul64x32
@@ -897,6 +911,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     // Evaluate DCT32x64 costs (two transforms side by side)
@@ -919,6 +934,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     let entropy_32x64_1 = mul64x32
@@ -938,6 +954,7 @@ pub(super) fn find_best_64x64_transform(
             mask1x1_stride,
             0.0,
             cost_bases,
+            &profile.entropy_mul_table,
             scratch,
         );
     // Run four 32x32 evaluations (each covers 4×4 blocks)
@@ -1045,6 +1062,7 @@ pub(super) fn find_best_64x64_transform(
                 mask1x1_stride,
                 0.0,
                 cost_bases,
+                &profile.entropy_mul_table,
                 scratch,
             );
             let cost = base + mul * e;

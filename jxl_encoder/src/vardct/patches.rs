@@ -1565,7 +1565,9 @@ pub(crate) fn subtract_patches_modular(
 /// the estimated VarDCT savings from patch subtraction, skip patches entirely.
 pub(crate) fn trial_encode_ref_frame_bytes(patches: &PatchesData, use_ans: bool) -> usize {
     let mut writer = BitWriter::new();
-    if encode_reference_frame(patches, use_ans, &mut writer).is_ok() {
+    // Trial encode always uses default (no tree learning) — tree learning is slower
+    // and the cost estimate only needs to be approximate for the gating decision.
+    if encode_reference_frame(patches, use_ans, false, &mut writer).is_ok() {
         writer.zero_pad_to_byte();
         writer.bytes_written()
     } else {
@@ -1585,6 +1587,7 @@ pub(crate) fn encode_reference_frame_rgb(
     patches: &PatchesData,
     bit_depth: u32,
     use_ans: bool,
+    use_tree_learning: bool,
     writer: &mut BitWriter,
 ) -> Result<()> {
     use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
@@ -1632,11 +1635,13 @@ pub(crate) fn encode_reference_frame_rgb(
     // Use FrameEncoder for body — handles single/multi-group automatically.
     // libjxl uses simple Gradient predictor with RCT for reference frames
     // (enc_patch_dictionary.cc: "Use gradient predictor and not Predictor::Best").
-    // Tree learning overhead exceeds benefit on small ref frames (<256×256).
+    // Tree learning can help on large ref frames (>= 128×128) with many unique patterns.
+    // Gated by EffortProfile.patch_ref_tree_learning (experimental mode, effort >= 7).
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
+    let enable_tree = use_tree_learning && ref_w >= 128 && ref_h >= 128;
     let options = FrameEncoderOptions {
         use_ans,
-        use_tree_learning: false,
+        use_tree_learning: enable_tree,
         use_squeeze: false,
         is_last: false,
         ..Default::default() // skip_rct=false → RCT applied to RGB channels
@@ -1662,6 +1667,7 @@ pub(crate) fn encode_reference_frame_rgb(
 pub(crate) fn encode_reference_frame(
     patches: &PatchesData,
     use_ans: bool,
+    use_tree_learning: bool,
     writer: &mut BitWriter,
 ) -> Result<()> {
     use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
@@ -1753,11 +1759,12 @@ pub(crate) fn encode_reference_frame(
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
     // libjxl uses simple Gradient predictor with RCT for reference frames
     // (enc_patch_dictionary.cc line 821: "Use gradient predictor and not Predictor::Best").
-    // Tree learning overhead exceeds benefit on small ref frames (<256×256).
+    // Tree learning can help on large ref frames (>= 128×128) with many unique patterns.
     // RCT decorrelates the Y/X/B-Y channels further for entropy coding.
+    let enable_tree = use_tree_learning && ref_w >= 128 && ref_h >= 128;
     let options = FrameEncoderOptions {
         use_ans,
-        use_tree_learning: false,
+        use_tree_learning: enable_tree,
         use_squeeze: false,
         skip_rct: false, // Enable RCT — matches libjxl behavior
         is_last: false,
