@@ -65,3 +65,11 @@ rd-compare-quick:
     cargo build --release -p jxl-encoder-cli
     bash scripts/measure_cjxl_rs.sh --quick
     python3 scripts/rd_report.py
+
+# Compare lossless compression vs cjxl (CSV-backed, ~1 min)
+lossless-compare:
+    cargo test -p jxl-encoder --test lossless_compare --release -- --ignored --nocapture
+
+# Generate cjxl lossless reference CSV (~10 min)
+generate-lossless-reference:
+    bash scripts/generate_cjxl_lossless_reference.sh

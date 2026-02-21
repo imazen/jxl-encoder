@@ -67,6 +67,7 @@ butteraugli = "0.7"
 imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
+sha2 = "0.10"
 
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
