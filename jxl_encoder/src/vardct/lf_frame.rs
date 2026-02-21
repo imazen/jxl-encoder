@@ -103,8 +103,10 @@ impl DcQuantFactors {
     /// dc_quant[c] = 1/enc_factors[c]
     /// ```
     /// Then F16-roundtripped through `dc_quant[c] * 128.0` for exact decoder parity.
-    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn compute(main_distance: f32) -> Self {
+        // Minimum butteraugli distance matching libjxl enc_params.h:201
+        const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
         let dc_distance = (main_distance * 0.02).max(K_MIN_BUTTERAUGLI_DISTANCE * 0.02);
 
         let mut enc_factors = [65536.0f32, 4096.0, 4096.0]; // [X, Y, B]
@@ -124,6 +126,15 @@ impl DcQuantFactors {
     /// the Squeeze + quantize + multiplier pipeline instead.
     pub fn full_precision() -> Self {
         Self::from_enc_factors([65536.0, 4096.0, 4096.0])
+    }
+
+    /// JXL default DC quantization factors.
+    ///
+    /// These match the decoder's default values when all_default=true:
+    /// - X: 4096, Y: 512, B: 256
+    #[allow(dead_code)]
+    pub fn jxl_default() -> Self {
+        Self::from_enc_factors([4096.0, 512.0, 256.0])
     }
 
     fn from_enc_factors(enc_factors: [f32; 3]) -> Self {
@@ -179,10 +190,10 @@ pub(crate) fn encode_lf_frame(
     use_ans: bool,
     effort: u8,
     writer: &mut BitWriter,
-) -> Result<[Vec<f32>; 3]> {
-    // Use full-precision enc_factors: lossy compression happens via
-    // Squeeze + modular quantization (tree leaf multipliers), not via
-    // coarser enc_factors. This matches libjxl's responsive=1 path.
+) -> Result<([Vec<f32>; 3], [f32; 3])> {
+    // Full-precision enc_factors: lossy compression happens via Squeeze + modular
+    // quantization (tree leaf multipliers), not via coarser enc_factors. This
+    // matches libjxl's responsive=1 path where dc_quant is [1/65536, 1/4096, 1/4096].
     let factors = DcQuantFactors::full_precision();
 
     #[cfg(feature = "trace-bitstream")]
@@ -200,8 +211,12 @@ pub(crate) fn encode_lf_frame(
     // XYB input: [0=X, 1=Y, 2=B]
     //
     // Rounding matches libjxl enc_modular.cc:796-814:
-    // - Y and X: round-half-away-from-zero
-    // - B: always +0.5 (then subtract Y_int)
+    // All channels use round-half-away-from-zero (std::lround in C++).
+    //
+    // Channel 2 stores B-Y: the B integer minus the Y integer.
+    // The decoder's ConvertModularXYBToF32Stage does:
+    //   output_b = (ch2 + ch0) * scale_b = (B_quant - Y_quant + Y_quant) * scale_b = B_quant * scale_b
+    // So the Y terms cancel and B is recovered correctly.
     let mut ch_y_data = Vec::with_capacity(n);
     let mut ch_x_data = Vec::with_capacity(n);
     let mut ch_by_data = Vec::with_capacity(n);
@@ -213,8 +228,9 @@ pub(crate) fn encode_lf_frame(
     {
         let y_int = round_hafz(dc_y * factors.inv_dc_quant[1]); // Y
         let x_int = round_hafz(dc_x * factors.inv_dc_quant[0]); // X
-        // B channel: always +0.5 (not sign-dependent), then subtract Y_int
-        let b_int = (dc_b * factors.inv_dc_quant[2] + 0.5) as i32 - y_int;
+        let b_quant = round_hafz(dc_b * factors.inv_dc_quant[2]); // B (quantized)
+        let b_int = b_quant - y_int; // B-Y for modular channel 2
+
         ch_y_data.push(y_int);
         ch_x_data.push(x_int);
         ch_by_data.push(b_int);
@@ -253,19 +269,6 @@ pub(crate) fn encode_lf_frame(
         eprintln!("LFRAME: Y int range [{y_min}, {y_max}]");
         eprintln!("LFRAME: X int range [{x_min}, {x_max}]");
         eprintln!("LFRAME: B-Y int range [{by_min}, {by_max}]");
-        // Check reconstruction: float_dc ≈ int * dc_quant
-        if !ch_y_data.is_empty() {
-            let y0_recon = ch_y_data[0] as f32 * factors.dc_quant[1];
-            let x0_recon = ch_x_data[0] as f32 * factors.dc_quant[0];
-            eprintln!(
-                "LFRAME: first pixel: float_dc=[{:.6}, {:.6}, {:.6}]",
-                float_dc[0][0], float_dc[1][0], float_dc[2][0]
-            );
-            eprintln!(
-                "LFRAME: reconstructed: x={:.6}, y={:.6}",
-                x0_recon, y0_recon
-            );
-        }
     }
 
     // Build LfFrame header
@@ -280,6 +283,16 @@ pub(crate) fn encode_lf_frame(
     ch_y.component = 0; // Y
     ch_x.component = 1; // X
     ch_by.component = 2; // B-Y
+    // DC at dc_level=1 represents 1/8 resolution (3 halvings per dimension).
+    // Setting hshift=vshift=3 tells the quantizer to use shift=5 (hshift+vshift-1)
+    // instead of shift=0, producing much gentler quantizers that don't destroy
+    // chrominance. Without this, X and B-Y channels get quantized to zero.
+    ch_y.hshift = 3;
+    ch_y.vshift = 3;
+    ch_x.hshift = 3;
+    ch_x.vshift = 3;
+    ch_by.hshift = 3;
+    ch_by.vshift = 3;
     let mod_channels = vec![ch_y, ch_x, ch_by];
     let image = ModularImage {
         channels: mod_channels,
@@ -352,7 +365,7 @@ pub(crate) fn encode_lf_frame(
         )?;
     }
 
-    Ok(decoded_dc)
+    Ok((decoded_dc, factors.dc_quant))
 }
 
 /// Multi-group LfFrame encoding.

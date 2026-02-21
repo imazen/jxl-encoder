@@ -496,7 +496,7 @@ impl VarDctEncoder {
         // Compute float DC from post-gaborish XYB (for LfFrame).
         // DC coefficient per 8x8 block = sum(block_pixels) / 8.0
         // Must be computed AFTER gaborish (libjxl uses post-gaborish XYB for DC frame).
-        let mut float_dc = if self.use_lf_frame {
+        let float_dc = if self.use_lf_frame {
             Some(super::lf_frame::compute_float_dc(
                 [&xyb_x, &xyb_y, &xyb_b],
                 padded_width,
@@ -529,31 +529,20 @@ impl VarDctEncoder {
             )
         };
 
-        // Apply CfL decorrelation to float DC for LfFrame.
+        // DO NOT apply CfL decorrelation to float_dc for LfFrame.
         //
-        // libjxl's ComputeCoefficients (enc_group.cc:491-511) extracts X/B DC
-        // AFTER CfL unapply. The Y DC comes from the original forward DCT, but
-        // X and B DC are computed from CfL-decorrelated coefficients:
-        //   X_dc = original_X_dc - ytox_ratio(cfl_tile) * Y_dc
-        //   B_dc = original_B_dc - ytob_ratio(cfl_tile) * Y_dc
+        // float_dc is only used for LfFrame encoding. The LfFrame decoder
+        // (ConvertModularXYBToF32Stage) does NOT undo CfL — it only reverses
+        // the B-Y modular convention. So float_dc must contain RAW XYB DC
+        // values, not CfL-decorrelated ones.
         //
-        // This decorrelation reduces the dynamic range of X/B DC values and
-        // improves compression of the DC frame.
-        if let Some(ref mut dc) = float_dc {
-            use super::chroma_from_luma::{ytob_ratio, ytox_ratio};
-            let xsize_tiles = cfl_map.xsize_tiles;
-            for by in 0..ysize_blocks {
-                for bx in 0..xsize_blocks {
-                    let tx = bx / TILE_DIM_IN_BLOCKS;
-                    let ty = by / TILE_DIM_IN_BLOCKS;
-                    let tile_idx = ty * xsize_tiles + tx;
-                    let dc_idx = by * xsize_blocks + bx;
-                    let y_dc = dc[1][dc_idx]; // Y channel DC
-                    dc[0][dc_idx] -= ytox_ratio(cfl_map.ytox[tile_idx]) * y_dc;
-                    dc[2][dc_idx] -= ytob_ratio(cfl_map.ytob[tile_idx]) * y_dc;
-                }
-            }
-        }
+        // The non-LfFrame DC path (quant_dc from transform pipeline) handles
+        // CfL internally via ComputeCoefficients, and the decoder's dequant_lf
+        // undoes it. These two paths are independent.
+        //
+        // Previous bug: CfL was applied here, making B go from ~0.6 to ~-0.09
+        // (for typical images). The decoder then produced negative linear blue
+        // that clipped to 0, causing the blue=0 output bug.
 
         debug_rect!(
             "enc/config",
@@ -915,6 +904,7 @@ impl VarDctEncoder {
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
                 None, // No splines in streaming mode
+                None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
             )?;
 
@@ -1026,6 +1016,7 @@ impl VarDctEncoder {
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
                 None, // No splines in streaming mode
+                None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
