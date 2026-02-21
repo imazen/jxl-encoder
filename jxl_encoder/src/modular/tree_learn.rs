@@ -138,10 +138,9 @@ pub struct TreeLearningParams {
     /// Base split threshold: scaled by `pixel_fraction * 0.9 + 0.1` to get effective threshold.
     /// A split must save at least `effective_threshold` bits to be accepted.
     pub split_threshold: f64,
-    /// Maximum tree nodes. Capped at the decoder's per-frame limit:
-    /// `min(1<<22, 1024 + width * height * channels / 16)`.
-    /// libjxl has no encoder-side cap — tree growth stops when the cost
-    /// threshold prevents further beneficial splits.
+    /// Maximum tree nodes. Absolute cap is `kMaxTreeSize = 1<<22` (ma_common.h).
+    /// Per-frame decoder limit is `min(1<<20, 1024 + total_channel_pixels)`
+    /// (encoding.cc:606-616). Encoder must not exceed these or output is un-decodable.
     pub max_nodes: usize,
     /// Fraction of pixels actually sampled (num_samples / total_pixels).
     /// Used to scale the split threshold: effective = threshold * (fraction * 0.9 + 0.1).
@@ -185,8 +184,8 @@ impl TreeLearningParams {
             properties: &order[..num_props],
             max_property_values: profile.tree_max_buckets as usize,
             split_threshold: profile.tree_threshold_base as f64,
-            // No artificial cap — matching libjxl which has no encoder-side limit.
-            // with_total_pixels() sets the decoder's per-frame limit as backstop.
+            // kMaxTreeSize from libjxl ma_common.h:24 — absolute decoder cap.
+            // with_total_pixels() further tightens this to the per-frame limit.
             max_nodes: 1 << 22,
             pixel_fraction: 1.0,
         }
@@ -233,12 +232,13 @@ impl TreeLearningParams {
     }
 
     /// Cap max_nodes to the decoder's per-frame tree size limit.
-    /// Formula from libjxl dec_modular.cc:226-229:
-    ///   `min(1<<22, 1024 + width * height * channels / 16)`
-    /// `total_pixels` should be `width * height * num_channels` (total sample count).
+    /// Formula from libjxl encoding.cc:606-616 (decoder side):
+    ///   `min(1<<20, 1024 + sum_of_channel_pixels)`
+    /// Then capped at `kMaxTreeSize = 1<<22` in dec_ma.cc:141.
+    /// `total_pixels` should be `sum(channel.w * channel.h)` for all encoded channels.
     #[must_use]
     pub fn with_total_pixels(mut self, total_pixels: usize) -> Self {
-        let decoder_limit = (1024 + total_pixels / 16).min(1 << 22);
+        let decoder_limit = (1024 + total_pixels).min(1 << 20);
         self.max_nodes = self.max_nodes.min(decoder_limit);
         self
     }

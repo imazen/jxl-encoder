@@ -337,7 +337,9 @@ fn encode_lf_frame_multi_group(
     writer: &mut BitWriter,
 ) -> Result<()> {
     use crate::modular::encode::write_group_modular_section_idx;
-    use crate::modular::section::{GlobalTransforms, GroupTransforms, write_global_modular_section_with_tree_dc_quant};
+    use crate::modular::section::{
+        GlobalTransforms, GroupTransforms, write_global_modular_section_with_tree_dc_quant,
+    };
 
     let num_groups_x = xsize_blocks.div_ceil(crate::GROUP_DIM);
     let num_groups_y = ysize_blocks.div_ceil(crate::GROUP_DIM);

@@ -405,10 +405,8 @@ impl FrameEncoder {
         let transformed;
         let rct_type;
         let source_image = if has_rct {
-            let (selected_rct, rct_image) = super::encode::select_best_rct(
-                image,
-                self.options.profile.nb_rcts_to_try,
-            );
+            let (selected_rct, rct_image) =
+                super::encode::select_best_rct(image, self.options.profile.nb_rcts_to_try);
             rct_type = Some(selected_rct);
             transformed = rct_image;
             &transformed
