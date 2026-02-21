@@ -24,58 +24,6 @@ use crate::modular::channel::{Channel, ModularImage};
 #[cfg(test)]
 const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
 
-/// Block dimension (must match common::BLOCK_DIM).
-const BLOCK_DIM: usize = 8;
-
-/// Compute float DC values from padded XYB image.
-///
-/// For each 8x8 block, computes the DC coefficient as `sum(block_pixels) / 64.0`,
-/// matching the forward DCT8x8 DC coefficient (the [0][0] output of forward DCT).
-///
-/// Our forward DCT8x8 applies 1/8 normalization per dimension (row and column),
-/// so the 2D DC = sum(all 64 pixels) * (1/8) * (1/8) = sum / 64.
-///
-/// libjxl's DC frame (enc_cache.cc:106) uses the raw forward DCT DC output
-/// before quantization, which equals sum/64 in our DCT convention.
-///
-/// # Arguments
-/// * `xyb` - [X, Y, B] channel data, padded to block boundaries (row stride = padded_width)
-/// * `padded_width` - Row stride in pixels (= xsize_blocks * 8)
-/// * `xsize_blocks` - Number of 8x8 blocks horizontally
-/// * `ysize_blocks` - Number of 8x8 blocks vertically
-///
-/// # Returns
-/// `[X, Y, B]` arrays, each of length `ysize_blocks * xsize_blocks`, flat row-major.
-pub(crate) fn compute_float_dc(
-    xyb: [&[f32]; 3],
-    padded_width: usize,
-    xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> [Vec<f32>; 3] {
-    let n = xsize_blocks * ysize_blocks;
-    let mut dc: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; n]);
-
-    for c in 0..3 {
-        let ch = xyb[c];
-        for by in 0..ysize_blocks {
-            for bx in 0..xsize_blocks {
-                let mut sum = 0.0f32;
-                let base_y = by * BLOCK_DIM;
-                let base_x = bx * BLOCK_DIM;
-                for dy in 0..BLOCK_DIM {
-                    let row_offset = (base_y + dy) * padded_width + base_x;
-                    for dx in 0..BLOCK_DIM {
-                        sum += ch[row_offset + dx];
-                    }
-                }
-                dc[c][by * xsize_blocks + bx] = sum / 64.0;
-            }
-        }
-    }
-
-    dc
-}
-
 /// Custom DC quantization factors computed from distance.
 ///
 /// These are the values written to the LfFrame's LfGlobal section as

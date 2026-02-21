@@ -1066,8 +1066,6 @@ impl VarDctEncoder {
                 &mut writer,
             )?;
             writer.zero_pad_to_byte();
-            // Pass the LfFrame's dc_quant to the main frame's LfGlobal so the
-            // decoder knows the correct dequantization factors for lf_image.
             Some(dc_quant)
         } else {
             None
