@@ -118,18 +118,22 @@ impl HuffmanNode {
 ///   }
 /// }
 /// ```
-fn set_depth(node: &HuffmanNode, pool: &[HuffmanNode], depth: &mut [u8], level: u8) {
-    if node.index_left >= 0 {
-        let next_level = level + 1;
-        set_depth(&pool[node.index_left as usize], pool, depth, next_level);
-        set_depth(
-            &pool[node.index_right_or_value as usize],
-            pool,
-            depth,
-            next_level,
-        );
-    } else {
-        depth[node.index_right_or_value as usize] = level;
+fn set_depth(pool: &[HuffmanNode], root_idx: usize, depth: &mut [u8]) {
+    // Iterative DFS to avoid stack overflow on deep/degenerate Huffman trees.
+    // A degenerate tree with N leaves can have depth N-1, which overflows the
+    // call stack for N > ~10K symbols (common with patch position histograms).
+    let mut stack: Vec<(usize, u8)> = Vec::with_capacity(64);
+    stack.push((root_idx, 0));
+
+    while let Some((idx, level)) = stack.pop() {
+        let node = &pool[idx];
+        if node.index_left >= 0 {
+            let next_level = level + 1;
+            stack.push((node.index_left as usize, next_level));
+            stack.push((node.index_right_or_value as usize, next_level));
+        } else {
+            depth[node.index_right_or_value as usize] = level;
+        }
     }
 }
 
@@ -237,7 +241,7 @@ pub fn create_huffman_tree(histogram: &[u32], tree_limit: u8) -> Vec<u8> {
 
         // Extract depths from tree
         depth.fill(0);
-        set_depth(&tree[2 * n - 1], &tree, &mut depth, 0);
+        set_depth(&tree, 2 * n - 1, &mut depth);
 
         // Check if tree fits in limit
         if depth.iter().copied().max().unwrap_or(0) <= tree_limit {

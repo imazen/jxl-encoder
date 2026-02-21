@@ -389,13 +389,15 @@ pub fn write_modular_stream_with_palette(
 ) -> Result<()> {
     use super::palette::{analyze_palette, apply_palette};
 
-    let max_colors = 1usize << image.bit_depth.min(12);
+    let max_colors = super::palette::MAX_PALETTE_COLORS;
     let analysis = analyze_palette(image, begin_c, num_c, max_colors);
 
     if !analysis.use_palette {
-        // Fallback: use RCT if RGB, otherwise simple
+        // Fallback: use RCT if RGB, otherwise simple.
+        // IMPORTANT: call write_modular_stream_with_rct_only (not _with_rct) to avoid
+        // re-entering should_use_palette → write_modular_stream_with_palette → infinite recursion.
         if image.channels.len() >= 3 {
-            return write_modular_stream_with_rct(image, writer, use_ans);
+            return write_modular_stream_with_rct_only(image, writer, use_ans);
         } else {
             return write_simple_modular_stream(image, writer, use_ans);
         }
@@ -713,6 +715,17 @@ pub fn write_modular_stream_with_rct(
         return write_modular_stream_with_palette(image, writer, use_ans, begin_c, num_c);
     }
 
+    write_modular_stream_with_rct_only(image, writer, use_ans)
+}
+
+/// Write modular stream with RCT (YCoCg), without checking palette.
+/// Used as a fallback from `write_modular_stream_with_palette` to avoid
+/// infinite recursion through `should_use_palette`.
+fn write_modular_stream_with_rct_only(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+) -> Result<()> {
     // Only apply RCT to RGB images (3+ channels)
     if image.channels.len() < 3 {
         return write_simple_modular_stream(image, writer, use_ans);
@@ -1279,7 +1292,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     // already decorrelates them by converting to a single index channel.
     let palette_info = if palette && !is_lossy && image.channels.len() >= 2 {
         if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
-            let max_colors = 1024usize; // Matches libjxl enc_params.h:121
+            let max_colors = super::palette::MAX_PALETTE_COLORS;
             let analysis = super::palette::analyze_palette(image, begin_c, num_c, max_colors);
             if analysis.use_palette {
                 Some((begin_c, num_c, analysis))
@@ -1306,7 +1319,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
             };
             (0..num_color_channels)
                 .filter_map(|i| {
-                    super::palette::analyze_channel_compact(&image.channels[i], 95.0)
+                    super::palette::analyze_channel_compact(&image.channels[i], super::palette::CHANNEL_COLORS_PERCENT)
                         .map(|a| (i, a))
                 })
                 .collect()
