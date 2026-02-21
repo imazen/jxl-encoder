@@ -83,36 +83,78 @@ fn epf_weight(sad: f32, inv_sigma: f32) -> f32 {
     (sad * inv_sigma + 1.0).max(0.0)
 }
 
-/// Get pixel value with clamped bounds
-#[inline(always)]
-fn get_pixel(plane: &[f32], x: isize, y: isize, width: usize, height: usize) -> f32 {
-    let cx = x.clamp(0, width as isize - 1) as usize;
-    let cy = y.clamp(0, height as isize - 1) as usize;
-    plane[cy * width + cx]
+/// Pad a plane into a pre-allocated output buffer with edge replication.
+///
+/// Like `jxl_simd::pad_plane` but writes into an existing buffer to avoid allocation.
+/// `out` must have length >= `(width + 2*pad) * (height + 2*pad)`.
+fn pad_plane_into(plane: &[f32], width: usize, height: usize, pad: usize, out: &mut [f32]) {
+    let stride = width + 2 * pad;
+    // Copy interior rows
+    for y in 0..height {
+        let src_off = y * width;
+        let dst_off = (y + pad) * stride + pad;
+        out[dst_off..dst_off + width].copy_from_slice(&plane[src_off..src_off + width]);
+    }
+    // Replicate left/right edges for interior rows
+    for y in 0..height {
+        let row_off = (y + pad) * stride;
+        let left_val = out[row_off + pad];
+        for p in 0..pad {
+            out[row_off + p] = left_val;
+        }
+        let right_val = out[row_off + pad + width - 1];
+        for p in 0..pad {
+            out[row_off + pad + width + p] = right_val;
+        }
+    }
+    // Replicate top rows (full padded rows including left/right)
+    for p in 0..pad {
+        let src_off = pad * stride;
+        let dst_off = p * stride;
+        out.copy_within(src_off..src_off + stride, dst_off);
+    }
+    // Replicate bottom rows
+    for p in 0..pad {
+        let src_off = (pad + height - 1) * stride;
+        let dst_off = (pad + height + p) * stride;
+        out.copy_within(src_off..src_off + stride, dst_off);
+    }
 }
 
-/// Compute the SAD (sum of absolute differences) for a 3x3 plus pattern.
+/// Compute the SAD (sum of absolute differences) for a 3x3 plus pattern on padded planes.
 ///
 /// Compares the 5-pixel plus pattern centered at (cx, cy) with the same pattern
 /// at (nx, ny), using channel importance weights.
-fn sad_3x3_plus(
+/// All coordinates are in padded-buffer space (already offset by pad).
+fn sad_3x3_plus_padded(
     planes: &[Vec<f32>; 3],
-    cx: isize,
-    cy: isize,
-    nx: isize,
-    ny: isize,
-    width: usize,
-    height: usize,
+    cx: usize,
+    cy: usize,
+    nx: usize,
+    ny: usize,
+    stride: usize,
 ) -> f32 {
     // Plus pattern offsets: center, up, left, right, down
-    const PLUS: [(isize, isize); 5] = [(0, 0), (-1, 0), (0, -1), (1, 0), (0, 1)];
+    // In padded space, these are safe direct index arithmetic
+    let c_offsets = [
+        cy * stride + cx,
+        (cy - 1) * stride + cx,
+        cy * stride + (cx - 1),
+        cy * stride + (cx + 1),
+        (cy + 1) * stride + cx,
+    ];
+    let n_offsets = [
+        ny * stride + nx,
+        (ny - 1) * stride + nx,
+        ny * stride + (nx - 1),
+        ny * stride + (nx + 1),
+        (ny + 1) * stride + nx,
+    ];
 
     let mut sad = 0.0f32;
-    for &(dy, dx) in &PLUS {
+    for i in 0..5 {
         for c in 0..3 {
-            let cv = get_pixel(&planes[c], cx + dx, cy + dy, width, height);
-            let nv = get_pixel(&planes[c], nx + dx, ny + dy, width, height);
-            sad += (cv - nv).abs() * EPF_CHANNEL_SCALE[c];
+            sad += (planes[c][c_offsets[i]] - planes[c][n_offsets[i]]).abs() * EPF_CHANNEL_SCALE[c];
         }
     }
     sad
@@ -138,16 +180,21 @@ fn border_mul(px: usize, py: usize) -> f32 {
 ///
 /// This is the heaviest filter step, using 12 neighbor positions with
 /// multi-point SAD comparison.
+///
+/// Input planes must be pre-padded with `pad_plane(plane, width, height, 3)`.
+/// Output planes are unpadded (width * height).
 fn epf_step0(
-    planes: &[Vec<f32>; 3],
+    padded_planes: &[Vec<f32>; 3],
     inv_sigma: &[f32],
     xsize_blocks: usize,
     width: usize,
     height: usize,
+    in_stride: usize,
+    pad: usize,
 ) -> [Vec<f32>; 3] {
     let base_sm = EPF_PASS0_SIGMA_SCALE * 1.65;
 
-    // 12 neighbor offsets for the 5x5 plus pattern
+    // 12 neighbor offsets for the 5x5 plus pattern (dy, dx)
     const NEIGHBORS: [(isize, isize); 12] = [
         (-2, 0),
         (-1, -1),
@@ -177,9 +224,10 @@ fn epf_step0(
             let is = inv_sigma[sigma_idx];
 
             if is == 0.0 {
-                // No filtering
+                // No filtering — copy from padded to unpadded output
+                let padded_idx = (py + pad) * in_stride + (px + pad);
                 for c in 0..3 {
-                    output[c][py * width + px] = planes[c][py * width + px];
+                    output[c][py * width + px] = padded_planes[c][padded_idx];
                 }
                 continue;
             }
@@ -187,23 +235,26 @@ fn epf_step0(
             let sm = base_sm * border_mul(px, py);
             let eff_inv_sigma = is * sm;
 
-            let cx = px as isize;
-            let cy = py as isize;
+            // Coordinates in padded-buffer space
+            let cx = px + pad;
+            let cy = py + pad;
 
+            let center_idx = cy * in_stride + cx;
             let mut total_weight = 1.0f32;
             let mut sums = [0.0f32; 3];
             for c in 0..3 {
-                sums[c] = planes[c][py * width + px];
+                sums[c] = padded_planes[c][center_idx];
             }
 
             for &(dy, dx) in &NEIGHBORS {
-                let nx = cx + dx;
-                let ny = cy + dy;
-                let sad = sad_3x3_plus(planes, cx, cy, nx, ny, width, height);
+                let nx = (cx as isize + dx) as usize;
+                let ny = (cy as isize + dy) as usize;
+                let sad = sad_3x3_plus_padded(padded_planes, cx, cy, nx, ny, in_stride);
                 let w = epf_weight(sad, eff_inv_sigma);
                 total_weight += w;
+                let n_idx = ny * in_stride + nx;
                 for c in 0..3 {
-                    sums[c] += w * get_pixel(&planes[c], nx, ny, width, height);
+                    sums[c] += w * padded_planes[c][n_idx];
                 }
             }
 
@@ -249,24 +300,43 @@ pub(crate) fn apply_epf(
     );
 
     // Step 0: heavy 5x5 plus (only at epf_iters >= 3)
+    // Max reach ±3 pixels (±2 neighbor + ±1 SAD extension)
     if epf_iters >= 3 {
-        let result = epf_step0(planes, &inv_sigma, xsize_blocks, width, height);
+        let pad = 3;
+        let in_stride = width + 2 * pad;
+        let padded: [Vec<f32>; 3] =
+            core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
+        let result = epf_step0(
+            &padded,
+            &inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            in_stride,
+            pad,
+        );
         *planes = result;
     }
 
     let n = width * height;
 
     // Step 1 / EPF1: medium 3x3 cross with multi-point SAD (epf_iters >= 1)
+    // Max reach ±2 pixels (±1 neighbor + ±1 SAD extension)
     // libjxl dec_cache.cc:164: if (lf.epf_iters >= 1) AddStage(EPF1)
     // EPF1 always runs when EPF is enabled — it's the primary smoothing step.
     if epf_iters >= 1 {
+        let pad = 2;
+        let in_stride = width + 2 * pad;
+        let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
+        let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
+        let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
         let mut out_x = vec![0.0f32; n];
         let mut out_y = vec![0.0f32; n];
         let mut out_b = vec![0.0f32; n];
         jxl_simd::epf_step1(
-            &planes[0],
-            &planes[1],
-            &planes[2],
+            &padded_x,
+            &padded_y,
+            &padded_b,
             &mut out_x,
             &mut out_y,
             &mut out_b,
@@ -274,6 +344,8 @@ pub(crate) fn apply_epf(
             xsize_blocks,
             width,
             height,
+            in_stride,
+            pad,
             1.65, // sigma_scale for step 1
             EPF_BORDER_SAD_MUL,
         );
@@ -283,15 +355,21 @@ pub(crate) fn apply_epf(
     }
 
     // Step 2 / EPF2: light 3x3 cross with single-pixel SAD (epf_iters >= 2)
+    // Max reach ±1 pixel (±1 neighbor, no SAD extension)
     // libjxl dec_cache.cc:165: if (lf.epf_iters >= 2) AddStage(EPF2)
     if epf_iters >= 2 {
+        let pad = 1;
+        let in_stride = width + 2 * pad;
+        let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
+        let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
+        let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
         let mut out_x = vec![0.0f32; n];
         let mut out_y = vec![0.0f32; n];
         let mut out_b = vec![0.0f32; n];
         jxl_simd::epf_step2(
-            &planes[0],
-            &planes[1],
-            &planes[2],
+            &padded_x,
+            &padded_y,
+            &padded_b,
             &mut out_x,
             &mut out_y,
             &mut out_b,
@@ -299,6 +377,8 @@ pub(crate) fn apply_epf(
             xsize_blocks,
             width,
             height,
+            in_stride,
+            pad,
             EPF_PASS2_SIGMA_SCALE * 1.65, // sigma_scale for step 2
             EPF_BORDER_SAD_MUL,
         );
@@ -313,6 +393,7 @@ pub(crate) fn apply_epf(
 /// This avoids repeated allocation when called multiple times with different
 /// sharpness maps (e.g., EPF sharpness search). The caller provides:
 /// - `scratch_x/y/b`: 3 pre-allocated output buffers (length >= width*height each)
+/// - `padded_scratch`: pre-allocated buffer for padding (reused across steps)
 /// - `inv_sigma`: pre-computed from `compute_inv_sigma_map`
 #[allow(clippy::too_many_arguments)]
 fn apply_epf_with_scratch(
@@ -325,25 +406,50 @@ fn apply_epf_with_scratch(
     scratch_x: &mut Vec<f32>,
     scratch_y: &mut Vec<f32>,
     scratch_b: &mut Vec<f32>,
+    padded_scratch: &mut [Vec<f32>; 3],
 ) {
     if epf_iters == 0 {
         return;
     }
 
     // Step 0: heavy 5x5 plus (only at epf_iters >= 3)
+    // Max reach ±3 pixels
     if epf_iters >= 3 {
-        let result = epf_step0(planes, inv_sigma, xsize_blocks, width, height);
+        let pad = 3;
+        let in_stride = width + 2 * pad;
+        let padded: [Vec<f32>; 3] =
+            core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
+        let result = epf_step0(
+            &padded,
+            inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            in_stride,
+            pad,
+        );
         *planes = result;
     }
 
     // Step 1 / EPF1: medium 3x3 cross with multi-point SAD (epf_iters >= 1)
+    // Max reach ±2 pixels
     // libjxl dec_cache.cc:164: if (lf.epf_iters >= 1) AddStage(EPF1)
     if epf_iters >= 1 {
+        let pad = 2;
+        let in_stride = width + 2 * pad;
+        let padded_len = in_stride * (height + 2 * pad);
+        // Reuse padded_scratch buffers — resize if needed
+        for ps in &mut *padded_scratch {
+            ps.resize(padded_len, 0.0);
+        }
+        pad_plane_into(&planes[0], width, height, pad, &mut padded_scratch[0]);
+        pad_plane_into(&planes[1], width, height, pad, &mut padded_scratch[1]);
+        pad_plane_into(&planes[2], width, height, pad, &mut padded_scratch[2]);
         // No zeroing needed — EPF kernels write every output pixel
         jxl_simd::epf_step1(
-            &planes[0],
-            &planes[1],
-            &planes[2],
+            &padded_scratch[0],
+            &padded_scratch[1],
+            &padded_scratch[2],
             scratch_x,
             scratch_y,
             scratch_b,
@@ -351,6 +457,8 @@ fn apply_epf_with_scratch(
             xsize_blocks,
             width,
             height,
+            in_stride,
+            pad,
             1.65,
             EPF_BORDER_SAD_MUL,
         );
@@ -360,13 +468,23 @@ fn apply_epf_with_scratch(
     }
 
     // Step 2 / EPF2: light 3x3 cross with single-pixel SAD (epf_iters >= 2)
+    // Max reach ±1 pixel
     // libjxl dec_cache.cc:165: if (lf.epf_iters >= 2) AddStage(EPF2)
     if epf_iters >= 2 {
+        let pad = 1;
+        let in_stride = width + 2 * pad;
+        let padded_len = in_stride * (height + 2 * pad);
+        for ps in &mut *padded_scratch {
+            ps.resize(padded_len, 0.0);
+        }
+        pad_plane_into(&planes[0], width, height, pad, &mut padded_scratch[0]);
+        pad_plane_into(&planes[1], width, height, pad, &mut padded_scratch[1]);
+        pad_plane_into(&planes[2], width, height, pad, &mut padded_scratch[2]);
         // No zeroing needed — EPF kernels write every output pixel
         jxl_simd::epf_step2(
-            &planes[0],
-            &planes[1],
-            &planes[2],
+            &padded_scratch[0],
+            &padded_scratch[1],
+            &padded_scratch[2],
             scratch_x,
             scratch_y,
             scratch_b,
@@ -374,6 +492,8 @@ fn apply_epf_with_scratch(
             xsize_blocks,
             width,
             height,
+            in_stride,
+            pad,
             EPF_PASS2_SIGMA_SCALE * 1.65,
             EPF_BORDER_SAD_MUL,
         );
@@ -451,6 +571,19 @@ pub(crate) fn compute_epf_sharpness(
     let mut scratch_y = vec![0.0f32; n];
     let mut scratch_b = vec![0.0f32; n];
 
+    // Pre-allocate padded scratch buffers for padding (reused across steps and candidates)
+    // Size for the largest padding needed (pad=3 for step 0)
+    let max_pad = if params.epf_iters >= 3 {
+        3
+    } else if params.epf_iters >= 1 {
+        2
+    } else {
+        1
+    };
+    let max_padded_stride = padded_width + 2 * max_pad;
+    let max_padded_len = max_padded_stride * (padded_height + 2 * max_pad);
+    let mut padded_scratch: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; max_padded_len]);
+
     // Pre-allocate uniform sharpness map (reused across candidates)
     let mut uniform_sharpness = vec![0u8; nblocks];
 
@@ -481,6 +614,7 @@ pub(crate) fn compute_epf_sharpness(
             &mut scratch_x,
             &mut scratch_y,
             &mut scratch_b,
+            &mut padded_scratch,
         );
 
         // Compute per-block masked L2 error vs original
