@@ -350,54 +350,40 @@ pub(super) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) ->
     (info_loss_mul, cost_delta, zeros_mul)
 }
 
-/// Raw (unnormalized) entropy multipliers per transform type (from libjxl FindBest8x8Transform).
-/// These are NORMALIZED by dividing by DCT8's value (0.8) before use.
-/// See libjxl enc_ac_strategy.cc:584: `float entropy_mul = tx.entropy_mul / kTransforms8x8[0].entropy_mul;`
-const RAW_ENTROPY_MUL_DCT8: f32 = 0.8;
-const RAW_ENTROPY_MUL_DCT4X4: f32 = 1.08;
-const RAW_ENTROPY_MUL_DCT4X8: f32 = 0.859_316_37;
-const RAW_ENTROPY_MUL_IDENTITY: f32 = 1.0428;
-const RAW_ENTROPY_MUL_DCT2X2: f32 = 0.95;
-const RAW_ENTROPY_MUL_AFV: f32 = 0.817_794_9;
-const RAW_ENTROPY_MUL_DCT16X8: f32 = 1.21;
-const RAW_ENTROPY_MUL_DCT16X16: f32 = 1.34;
-const RAW_ENTROPY_MUL_DCT16X32: f32 = 1.49;
-const RAW_ENTROPY_MUL_DCT32X32: f32 = 1.48;
-const RAW_ENTROPY_MUL_DCT64X32: f32 = 2.25;
-const RAW_ENTROPY_MUL_DCT64X64: f32 = 2.25;
+use crate::effort::EntropyMulTable;
 
-/// Get the entropy multiplier for a raw strategy (full libjxl mode).
+/// Get the entropy multiplier for a raw strategy from the given table.
 ///
 /// CRITICAL: libjxl only normalizes 8x8 transforms in FindBest8x8Transform.
 /// Larger transforms use RAW values in TryMergeAcs.
 ///
-/// 8x8 transforms (normalized by DCT8's 0.8):
-/// - DCT8: 0.8 / 0.8 = 1.0
-/// - DCT4X8: 0.859 / 0.8 = 1.074
-/// - DCT4X4: 1.08 / 0.8 = 1.35
+/// 8x8 transforms (normalized by table.dct8):
+/// - DCT8: always 1.0 (self-normalized)
+/// - DCT4X8: table.dct4x8 / table.dct8
+/// - DCT4X4: table.dct4x4 / table.dct8
 ///
 /// Larger transforms (RAW values, NOT normalized):
-/// - DCT16X8: 1.21
-/// - DCT16X16: 1.34
-/// - DCT32X32: 1.48
-pub(super) fn entropy_mul_for_strategy(raw_strategy: u8) -> f32 {
+/// - DCT16X8: table.dct16x8
+/// - DCT16X16: table.dct16x16
+/// - DCT32X32: table.dct32x32
+pub(super) fn entropy_mul_for_strategy(raw_strategy: u8, table: &EntropyMulTable) -> f32 {
     match raw_strategy {
-        // 8x8 transforms: normalize by DCT8's 0.8 (so DCT8 = 1.0)
+        // 8x8 transforms: normalize by table.dct8 (so DCT8 = 1.0)
         RAW_STRATEGY_DCT8 => 1.0,
-        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => RAW_ENTROPY_MUL_DCT4X8 / RAW_ENTROPY_MUL_DCT8,
-        RAW_STRATEGY_DCT4X4 => RAW_ENTROPY_MUL_DCT4X4 / RAW_ENTROPY_MUL_DCT8,
-        RAW_STRATEGY_IDENTITY => RAW_ENTROPY_MUL_IDENTITY / RAW_ENTROPY_MUL_DCT8,
-        RAW_STRATEGY_DCT2X2 => RAW_ENTROPY_MUL_DCT2X2 / RAW_ENTROPY_MUL_DCT8,
+        RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 => table.dct4x8 / table.dct8,
+        RAW_STRATEGY_DCT4X4 => table.dct4x4 / table.dct8,
+        RAW_STRATEGY_IDENTITY => table.identity / table.dct8,
+        RAW_STRATEGY_DCT2X2 => table.dct2x2 / table.dct8,
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-            RAW_ENTROPY_MUL_AFV / RAW_ENTROPY_MUL_DCT8
+            table.afv / table.dct8
         }
         // Larger transforms: use RAW values (libjxl TryMergeAcs uses raw entropy_mul)
-        RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => RAW_ENTROPY_MUL_DCT16X8,
-        RAW_STRATEGY_DCT16X16 => RAW_ENTROPY_MUL_DCT16X16,
-        RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => RAW_ENTROPY_MUL_DCT16X32,
-        RAW_STRATEGY_DCT32X32 => RAW_ENTROPY_MUL_DCT32X32,
-        RAW_STRATEGY_DCT64X32 | RAW_STRATEGY_DCT32X64 => RAW_ENTROPY_MUL_DCT64X32,
-        RAW_STRATEGY_DCT64X64 => RAW_ENTROPY_MUL_DCT64X64,
+        RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => table.dct16x8,
+        RAW_STRATEGY_DCT16X16 => table.dct16x16,
+        RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => table.dct16x32,
+        RAW_STRATEGY_DCT32X32 => table.dct32x32,
+        RAW_STRATEGY_DCT64X32 | RAW_STRATEGY_DCT32X64 => table.dct64x32,
+        RAW_STRATEGY_DCT64X64 => table.dct64x64,
         _ => 1.0,
     }
 }
@@ -422,6 +408,7 @@ pub(super) fn estimate_entropy(
     ytob: i8,
 ) -> f32 {
     let mut scratch = EntropyEstScratch::new();
+    let table = EntropyMulTable::reference();
     estimate_entropy_with_mask(
         raw_strategy,
         xyb,
@@ -438,6 +425,7 @@ pub(super) fn estimate_entropy(
         0,
         0.0,
         DEFAULT_COST_BASES,
+        &table,
         &mut scratch,
     )
 }
@@ -470,12 +458,13 @@ pub(super) fn estimate_entropy_with_mask(
     mask1x1_stride: usize,
     entropy_mul_adjust: f32,
     pixel_domain_cost_bases: (f32, f32, f32),
+    entropy_mul_table: &EntropyMulTable,
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     // In pixel-domain mode, use fixed entropy_mul values per transform
     // In coefficient-domain mode, entropy_mul is applied outside by the caller (mul8x8 etc.)
     let entropy_mul = if mask1x1.is_some() {
-        (entropy_mul_for_strategy(raw_strategy) + entropy_mul_adjust).max(0.01)
+        (entropy_mul_for_strategy(raw_strategy, entropy_mul_table) + entropy_mul_adjust).max(0.01)
     } else {
         // Coefficient-domain: entropy_mul is 1.0, caller handles multiplier.
         // Still apply adjustment for kFavor2X2/kAvoidEntropy since the
@@ -1902,7 +1891,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            entropy_mul_for_strategy(RAW_STRATEGY_DCT8), // Normalized entropy_mul for DCT8 = 1.0
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()), // Normalized entropy_mul for DCT8 = 1.0
             cost_bases,
             &mut scratch,
         );
@@ -1973,7 +1962,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            entropy_mul_for_strategy(RAW_STRATEGY_DCT8),
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()),
             cost_bases,
             &mut scratch,
         );
@@ -1995,7 +1984,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
             cost_bases,
             &mut scratch,
         );
@@ -2017,7 +2006,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8),
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
             cost_bases,
             &mut scratch,
         );
@@ -2039,7 +2028,7 @@ mod tests {
             0,
             Some(&mask1x1),
             mask1x1_stride,
-            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16),
+            entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16, &EntropyMulTable::reference()),
             cost_bases,
             &mut scratch,
         );

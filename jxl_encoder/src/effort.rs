@@ -11,6 +11,104 @@
 use crate::api::EncoderMode;
 use crate::entropy_coding::lz77::Lz77Method;
 
+/// Per-strategy raw entropy multipliers for the AC strategy cost model.
+///
+/// These control the relative preference for each transform type in AC strategy
+/// selection. Higher values penalize a strategy (making it less likely to be chosen);
+/// lower values favor it. The 8x8-class values are normalized by DCT8's value before
+/// use, so DCT8 always evaluates at 1.0. Larger transforms use raw values directly.
+///
+/// Default values match libjxl `enc_ac_strategy.cc:584` (`kTransforms8x8[i].entropy_mul`).
+/// Experimental values from libjxl PR #4506 (Jon Sneyers, VarDCT cost tuning).
+#[derive(Clone, Debug)]
+pub struct EntropyMulTable {
+    /// DCT8 base value. All 8x8-class transforms are normalized by this.
+    /// Reference: 0.8 (libjxl `enc_ac_strategy.cc:357`, `kTransforms8x8[0].entropy_mul`).
+    pub dct8: f32,
+
+    /// DCT4x4 (four 4x4 sub-blocks per 8x8 block).
+    /// Reference: 1.08. Experimental: 0.88 (PR #4506, ~19% reduction).
+    /// Lowering favors DCT4x4 for textured/detailed regions (screenshots, text).
+    pub dct4x4: f32,
+
+    /// DCT4x8 / DCT8x4 (half-block transforms for edges/detail).
+    /// Reference: 0.859316 (libjxl `enc_ac_strategy.cc`).
+    pub dct4x8: f32,
+
+    /// Identity (pixel copy, no transform).
+    /// Reference: 1.0428. Experimental: 0.88 (PR #4506, ~16% reduction).
+    /// Lowering favors identity blocks for flat/noisy regions.
+    pub identity: f32,
+
+    /// DCT2x2 (2x2 Hadamard-like transform).
+    /// Reference: 0.95 (libjxl `enc_ac_strategy.cc`).
+    pub dct2x2: f32,
+
+    /// AFV (Adaptive Frequency Variable, corner DCT).
+    /// Reference: 0.818. Experimental: 0.75 (PR #4506, ~8% reduction).
+    /// Lowering favors AFV for edge blocks with mixed content.
+    pub afv: f32,
+
+    /// DCT16x8 / DCT8x16 (larger transforms use raw values, not normalized by DCT8).
+    /// Reference: 1.21 (libjxl `enc_ac_strategy.cc`).
+    pub dct16x8: f32,
+
+    /// DCT16x16.
+    /// Reference: 1.34 (libjxl `enc_ac_strategy.cc`).
+    pub dct16x16: f32,
+
+    /// DCT16x32 / DCT32x16.
+    /// Reference: 1.49 (libjxl `enc_ac_strategy.cc`).
+    pub dct16x32: f32,
+
+    /// DCT32x32.
+    /// Reference: 1.48 (libjxl `enc_ac_strategy.cc`).
+    pub dct32x32: f32,
+
+    /// DCT64x32 / DCT32x64.
+    /// Reference: 2.25 (libjxl `enc_ac_strategy.cc`).
+    pub dct64x32: f32,
+
+    /// DCT64x64.
+    /// Reference: 2.25 (libjxl `enc_ac_strategy.cc`).
+    pub dct64x64: f32,
+}
+
+impl EntropyMulTable {
+    /// Default values matching libjxl `enc_ac_strategy.cc:584`.
+    pub fn reference() -> Self {
+        Self {
+            dct8: 0.8,
+            dct4x4: 1.08,
+            dct4x8: 0.859_316_37,
+            identity: 1.0428,
+            dct2x2: 0.95,
+            afv: 0.817_794_9,
+            dct16x8: 1.21,
+            dct16x16: 1.34,
+            dct16x32: 1.49,
+            dct32x32: 1.48,
+            dct64x32: 2.25,
+            dct64x64: 2.25,
+        }
+    }
+
+    /// Experimental values from libjxl PR #4506 (Jon Sneyers, VarDCT cost tuning).
+    ///
+    /// Changes vs reference:
+    /// - dct4x4: 1.08 → 0.88 (~19% reduction) — favor detail-preserving 4x4 sub-blocks
+    /// - identity: 1.0428 → 0.88 (~16% reduction) — favor pixel-copy for flat regions
+    /// - afv: 0.818 → 0.75 (~8% reduction) — favor corner DCT for edge blocks
+    pub fn experimental() -> Self {
+        Self {
+            dct4x4: 0.88,
+            identity: 0.88,
+            afv: 0.75,
+            ..Self::reference()
+        }
+    }
+}
+
 /// All effort-derived encoder decisions, centralized.
 ///
 /// Replaces scattered `if effort >= N` checks throughout the codebase.
@@ -117,6 +215,19 @@ pub struct EffortProfile {
     pub k4x8: (f32, f32, f32),
     /// DCT4x4 coefficient-domain multiplier.
     pub k4x4: (f32, f32, f32),
+
+    // ─── Entropy multiplier table ──────────────────────────────────────────
+    /// Per-strategy entropy multipliers for AC strategy cost model.
+    /// Controls relative preference for each transform type.
+    pub entropy_mul_table: EntropyMulTable,
+
+    // ─── Patch encoding ────────────────────────────────────────────────────
+    /// Use tree learning for patch reference frame encoding.
+    /// When true AND ref frame is large enough (>= 128×128), enables adaptive
+    /// prediction in the modular encoder for patch ref frames.
+    /// Reference: false (libjxl uses simple Gradient predictor).
+    /// Experimental: true at effort >= 7 (PR #4533 style improvement).
+    pub patch_ref_tree_learning: bool,
 
     // ─── RCT selection ───────────────────────────────────────────────────
     /// Number of RCT variants to try (0 = no selection, use YCoCg).
@@ -228,6 +339,12 @@ impl EffortProfile {
             k4x8: (-0.50 * 0.75, 0.88, 1.3),
             k4x4: (-0.45 * 0.75, 0.85, 1.2),
 
+            // ── Entropy multiplier table ──
+            entropy_mul_table: EntropyMulTable::reference(),
+
+            // ── Patch encoding ──
+            patch_ref_tree_learning: false,
+
             // ── RCT selection ──
             nb_rcts_to_try: match effort {
                 0..=4 => 0,
@@ -315,6 +432,12 @@ impl EffortProfile {
             k4x8: (-0.50 * 0.75, 0.88, 1.3),
             k4x4: (-0.45 * 0.75, 0.85, 1.2),
 
+            // ── Entropy multiplier table (N/A for lossless, but struct requires it) ──
+            entropy_mul_table: EntropyMulTable::reference(),
+
+            // ── Patch encoding ──
+            patch_ref_tree_learning: false,
+
             // ── RCT selection ──
             nb_rcts_to_try: match effort {
                 0..=4 => 0,
@@ -342,9 +465,40 @@ impl EffortProfile {
         }
     }
 
-    // Experimental starts identical to Reference — diverge per-field as improvements are found.
+    /// Experimental lossy profile with tuning from libjxl PRs and our own improvements.
+    ///
+    /// Divergences from reference (documented per-field):
+    /// - `k_info_loss_mul_base`: 1.2 → 1.3 (PR #4506, +8% pixel-domain loss weight)
+    /// - `entropy_mul_table`: PR #4506 values (favor DCT4x4, Identity, AFV)
+    /// - `enhanced_clustering_vardct`: enabled at effort >= 7 (was e9+)
+    /// - `patch_ref_tree_learning`: true at effort >= 7 (tree learning for patch ref frames)
     fn lossy_experimental(effort: u8) -> Self {
-        Self::lossy_reference(effort)
+        let mut p = Self::lossy_reference(effort);
+
+        // PR #4506 (Jon Sneyers): +8% weight on pixel-domain loss improves visual quality
+        // on detailed content. The info_loss_mul scales the IDCT-domain error term in
+        // EstimateEntropy, making the cost model more sensitive to visible artifacts.
+        // Reference: 1.2 (libjxl enc_ac_strategy.cc). Experimental: 1.3.
+        p.k_info_loss_mul_base = 1.3;
+
+        // PR #4506 entropy multiplier rebalancing: favor small/detail-preserving transforms.
+        p.entropy_mul_table = EntropyMulTable::experimental();
+
+        // Pair-merge histogram clustering helps VarDCT at effort 7+ (not just e9+).
+        // The ANS header cost savings from merging similar distributions outweigh the
+        // slight data cost increase from sharing code tables across contexts.
+        if effort >= 7 {
+            p.enhanced_clustering_vardct = true;
+        }
+
+        // Tree learning for patch reference frames: adapts prediction to packed glyphs
+        // instead of using fixed Gradient predictor. Significant on large ref frames
+        // (screenshots with many unique patterns). Gated at effort >= 7.
+        if effort >= 7 {
+            p.patch_ref_tree_learning = true;
+        }
+
+        p
     }
 
     fn lossless_experimental(effort: u8) -> Self {
@@ -524,7 +678,8 @@ mod tests {
     }
 
     #[test]
-    fn test_experimental_matches_reference() {
+    fn test_experimental_diverges_from_reference() {
+        // Experimental should share effort/feature-flag structure with reference
         for effort in 1..=10 {
             let r = EffortProfile::lossy(effort, EncoderMode::Reference);
             let e = EffortProfile::lossy(effort, EncoderMode::Experimental);
@@ -533,6 +688,96 @@ mod tests {
             assert_eq!(r.k_favor_2x2, e.k_favor_2x2);
             assert_eq!(r.butteraugli_iters, e.butteraugli_iters);
             assert_eq!(r.nb_rcts_to_try, e.nb_rcts_to_try);
+        }
+
+        // Verify specific divergences at effort 7
+        let r = EffortProfile::lossy(7, EncoderMode::Reference);
+        let e = EffortProfile::lossy(7, EncoderMode::Experimental);
+
+        // k_info_loss_mul_base: 1.2 → 1.3 (PR #4506)
+        assert_eq!(r.k_info_loss_mul_base, 1.2);
+        assert_eq!(e.k_info_loss_mul_base, 1.3);
+
+        // entropy_mul_table: PR #4506 rebalancing
+        assert_eq!(r.entropy_mul_table.dct4x4, 1.08);
+        assert_eq!(e.entropy_mul_table.dct4x4, 0.88);
+        assert_eq!(r.entropy_mul_table.identity, 1.0428);
+        assert_eq!(e.entropy_mul_table.identity, 0.88);
+        assert_eq!(r.entropy_mul_table.afv, 0.817_794_9);
+        assert_eq!(e.entropy_mul_table.afv, 0.75);
+        // Unchanged values should match
+        assert_eq!(r.entropy_mul_table.dct8, e.entropy_mul_table.dct8);
+        assert_eq!(r.entropy_mul_table.dct16x8, e.entropy_mul_table.dct16x8);
+        assert_eq!(r.entropy_mul_table.dct32x32, e.entropy_mul_table.dct32x32);
+
+        // enhanced_clustering_vardct: e9+ → e7+ in experimental
+        assert!(!r.enhanced_clustering_vardct); // reference e7: off
+        assert!(e.enhanced_clustering_vardct); // experimental e7: on
+
+        // patch_ref_tree_learning: false → true at e7+
+        assert!(!r.patch_ref_tree_learning);
+        assert!(e.patch_ref_tree_learning);
+
+        // At effort 5, experimental should NOT enable the e7+ features
+        let e5 = EffortProfile::lossy(5, EncoderMode::Experimental);
+        assert!(!e5.enhanced_clustering_vardct);
+        assert!(!e5.patch_ref_tree_learning);
+        // But should still have the entropy_mul and info_loss_mul changes
+        assert_eq!(e5.k_info_loss_mul_base, 1.3);
+        assert_eq!(e5.entropy_mul_table.dct4x4, 0.88);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_reference_values() {
+        // Verify all reference values match libjxl enc_ac_strategy.cc:584
+        let t = EntropyMulTable::reference();
+        assert_eq!(t.dct8, 0.8);
+        assert_eq!(t.dct4x4, 1.08);
+        assert_eq!(t.dct4x8, 0.859_316_37);
+        assert_eq!(t.identity, 1.0428);
+        assert_eq!(t.dct2x2, 0.95);
+        assert_eq!(t.afv, 0.817_794_9);
+        assert_eq!(t.dct16x8, 1.21);
+        assert_eq!(t.dct16x16, 1.34);
+        assert_eq!(t.dct16x32, 1.49);
+        assert_eq!(t.dct32x32, 1.48);
+        assert_eq!(t.dct64x32, 2.25);
+        assert_eq!(t.dct64x64, 2.25);
+    }
+
+    #[test]
+    fn test_entropy_mul_table_experimental_values() {
+        // Verify PR #4506 changes and that unchanged values are preserved
+        let t = EntropyMulTable::experimental();
+        let r = EntropyMulTable::reference();
+
+        // Changed values (PR #4506)
+        assert_eq!(t.dct4x4, 0.88); // was 1.08
+        assert_eq!(t.identity, 0.88); // was 1.0428
+        assert_eq!(t.afv, 0.75); // was 0.818
+
+        // Unchanged values
+        assert_eq!(t.dct8, r.dct8);
+        assert_eq!(t.dct4x8, r.dct4x8);
+        assert_eq!(t.dct2x2, r.dct2x2);
+        assert_eq!(t.dct16x8, r.dct16x8);
+        assert_eq!(t.dct16x16, r.dct16x16);
+        assert_eq!(t.dct16x32, r.dct16x32);
+        assert_eq!(t.dct32x32, r.dct32x32);
+        assert_eq!(t.dct64x32, r.dct64x32);
+        assert_eq!(t.dct64x64, r.dct64x64);
+    }
+
+    #[test]
+    fn test_lossless_experimental_matches_reference() {
+        // Lossless experimental is currently identical to reference
+        for effort in 1..=10 {
+            let r = EffortProfile::lossless(effort, EncoderMode::Reference);
+            let e = EffortProfile::lossless(effort, EncoderMode::Experimental);
+            assert_eq!(r.effort, e.effort);
+            assert_eq!(r.use_ans, e.use_ans);
+            assert_eq!(r.tree_learning, e.tree_learning);
+            assert_eq!(r.lz77, e.lz77);
         }
     }
 

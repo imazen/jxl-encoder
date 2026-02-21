@@ -1441,10 +1441,12 @@ impl<'a> EncodeRequest<'a> {
 
         // Write reference frame and subtract patches from image if detected
         if let Some(ref pd) = patches_data {
+            let lossless_profile = crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode);
             crate::vardct::patches::encode_reference_frame_rgb(
                 pd,
                 image.bit_depth,
                 cfg.use_ans,
+                lossless_profile.patch_ref_tree_learning,
                 &mut writer,
             )
             .map_err(EncodeError::from)?;
