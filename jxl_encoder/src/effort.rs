@@ -375,14 +375,14 @@ impl EffortProfile {
     }
 
     fn tree_max_buckets_for(effort: u8) -> u16 {
-        // Doubled from previous values to match libjxl PR #4236
+        // Matches libjxl enc_modular.cc:556-590 max_property_values by speed_tier.
         match effort {
-            0..=4 => 32,
-            5 => 48,
-            6 => 64,
-            7 => 96,
-            8 => 192,
-            _ => 512,
+            0..=4 => 32, // <=Cheetah
+            5 => 48,     // Hare
+            6 => 64,     // Wombat
+            7 => 96,     // Squirrel
+            8 => 128,    // Kitten
+            _ => 256,    // Tortoise
         }
     }
 }
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(p.nb_rcts_to_try, 19);
         assert_eq!(p.wp_num_param_sets, 5); // e9+
         assert_eq!(p.tree_num_properties, 15);
-        assert_eq!(p.tree_max_buckets, 512);
+        assert_eq!(p.tree_max_buckets, 256);
     }
 
     #[test]

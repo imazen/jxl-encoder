@@ -4272,9 +4272,11 @@ fn test_squeeze_multigroup_gray_300x300() {
         }
     }
 
+    // Effort 7: exercises squeeze + tree learning + LZ77 without the
+    // pathological tree growth that effort 9 causes on synthetic gradients.
     let bytes = LosslessConfig::new()
         .with_squeeze(true)
-        .with_effort(9)
+        .with_effort(7)
         .encode(&data, 300, 300, PixelLayout::Gray8)
         .unwrap();
 
@@ -4320,9 +4322,11 @@ fn test_squeeze_multigroup_rgb_300x300() {
         }
     }
 
+    // Effort 7: exercises squeeze + tree learning + LZ77 without the
+    // pathological tree growth that effort 9 causes on synthetic gradients.
     let bytes = LosslessConfig::new()
         .with_squeeze(true)
-        .with_effort(9)
+        .with_effort(7)
         .encode(&data, 300, 300, PixelLayout::Rgb8)
         .unwrap();
 
@@ -4369,9 +4373,12 @@ fn test_squeeze_multigroup_rgb_512x512() {
         }
     }
 
+    // Effort 7: exercises squeeze + tree learning + LZ77 without the
+    // pathological tree growth that effort 9 causes on synthetic gradients
+    // (174K unique samples × 256 buckets × 15 properties).
     let bytes = LosslessConfig::new()
         .with_squeeze(true)
-        .with_effort(9)
+        .with_effort(7)
         .encode(&data, 512, 512, PixelLayout::Rgb8)
         .unwrap();
 

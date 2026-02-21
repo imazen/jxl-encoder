@@ -84,7 +84,10 @@ pub struct TreeLearningParams {
     /// Base split threshold: scaled by `pixel_fraction * 0.9 + 0.1` to get effective threshold.
     /// A split must save at least `effective_threshold` bits to be accepted.
     pub split_threshold: f64,
-    /// Maximum tree nodes (libjxl uses 1<<22, effectively unlimited).
+    /// Maximum tree nodes. Capped at the decoder's per-frame limit:
+    /// `min(1<<22, 1024 + width * height * channels / 16)`.
+    /// libjxl has no encoder-side cap — tree growth stops when the cost
+    /// threshold prevents further beneficial splits.
     pub max_nodes: usize,
     /// Fraction of pixels actually sampled (num_samples / total_pixels).
     /// Used to scale the split threshold: effective = threshold * (fraction * 0.9 + 0.1).
@@ -106,7 +109,9 @@ impl TreeLearningParams {
             properties: &order[..num_props],
             max_property_values: profile.tree_max_buckets as usize,
             split_threshold: profile.tree_threshold_base as f64,
-            max_nodes: 8192,
+            // No artificial cap — matching libjxl which has no encoder-side limit.
+            // with_total_pixels() sets the decoder's per-frame limit as backstop.
+            max_nodes: 1 << 22,
             pixel_fraction: 1.0,
         }
     }
@@ -119,11 +124,11 @@ impl TreeLearningParams {
         let order = PROP_ORDER_NO_SQUEEZE;
         let speed_tier = 10u8.saturating_sub(effort);
         let (num_props, max_property_values) = match effort {
-            0..=4 => (3, 16),
-            5 => (4, 24),
-            6 => (5, 32),
-            7 => (7, 48),
-            8 => (10, 96),
+            0..=4 => (3, 32),
+            5 => (4, 48),
+            6 => (5, 64),
+            7 => (7, 96),
+            8 => (10, 128),
             _ => (order.len(), 256),
         };
         let threshold_base = 75.0 + 14.0 * speed_tier as f64;
@@ -133,7 +138,7 @@ impl TreeLearningParams {
             properties: &order[..num_props],
             max_property_values,
             split_threshold: threshold_base,
-            max_nodes: 8192,
+            max_nodes: 1 << 22,
             pixel_fraction: 1.0,
         }
     }
@@ -146,13 +151,14 @@ impl TreeLearningParams {
         self
     }
 
-    /// Scale max_nodes with total pixel count to prevent tree overhead from
-    /// dominating on small images. For 1024x1024 RGB (~3M pixels) this caps
-    /// at 5859 (below default 8192). For 128x128 RGB (~48K pixels) this caps
-    /// at 93, preventing hundreds of sparse contexts.
+    /// Cap max_nodes to the decoder's per-frame tree size limit.
+    /// Formula from libjxl dec_modular.cc:226-229:
+    ///   `min(1<<22, 1024 + width * height * channels / 16)`
+    /// `total_pixels` should be `width * height * num_channels` (total sample count).
     #[must_use]
     pub fn with_total_pixels(mut self, total_pixels: usize) -> Self {
-        self.max_nodes = self.max_nodes.min((total_pixels / 512).max(16));
+        let decoder_limit = (1024 + total_pixels / 16).min(1 << 22);
+        self.max_nodes = self.max_nodes.min(decoder_limit);
         self
     }
 }
