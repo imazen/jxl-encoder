@@ -4,11 +4,13 @@
 
 //! Frame encoder - assembles complete JXL frames.
 
-use super::channel::ModularImage;
+use super::channel::{Channel, ModularImage};
 use super::encode::{
-    build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section_idx, write_improved_modular_stream, write_modular_stream_with_tree,
+    build_histogram_from_residuals, collect_all_residuals, select_best_rct_at,
+    write_global_modular_section, write_group_modular_section_idx, write_improved_modular_stream,
+    write_modular_stream_with_tree,
 };
+use super::palette::{CHANNEL_COLORS_PERCENT, analyze_channel_compact};
 use super::section::write_global_modular_section_with_tree;
 use crate::GROUP_DIM;
 use crate::bit_writer::BitWriter;
@@ -389,44 +391,141 @@ impl FrameEncoder {
             num_lf_groups
         );
 
-        // Step 0: Apply global RCT to full image, then extract groups.
+        // Step 0: ChannelCompact + RCT + split into meta-image / per-group index images.
         //
-        // Global RCT is better than per-group RCT because it avoids tree learning
-        // heterogeneity (per-group RCT was tested and regressed 1-8%).
+        // ChannelCompact (per-channel palette) dramatically reduces bit depth for
+        // screenshots with sparse per-channel values (e.g., R uses 30/256 values).
+        // Applied BEFORE RCT because RCT spreads values, negating compaction benefit.
         //
-        // NOTE: ChannelCompact is only applied in the single-group path (encode.rs).
-        // For multi-group images, applying it globally creates meta-channel dimension
-        // issues during group extraction, and applying it per-group after RCT is
-        // ineffective (RCT spreads values, negating compaction benefit). Per-group
-        // ChannelCompact before RCT would require per-group RCT which regresses.
-        // TODO: implement proper global-section meta-channel support for multi-group
-        // ChannelCompact (libjxl handles this via channel-to-stream assignment).
+        // The key insight: palette meta-channels (small, e.g. 30×1) stay in the global
+        // section, while index channels (image-sized) get extract_region per-group.
+        // This avoids the root cause of previous failures: extract_region corrupting
+        // tiny meta-channels by forcing them to group dimensions.
+
+        // Step 0a: ChannelCompact on raw image (before RCT)
+        // Only try ChannelCompact when tree learning + ANS are enabled (the global
+        // meta-channel path requires the AnsWithTree codepath in section.rs).
         let has_rct = !self.options.skip_rct && image.channels.len() >= 3;
-        let transformed;
-        let rct_type;
-        let source_image = if has_rct {
-            let (selected_rct, rct_image) =
-                super::encode::select_best_rct(image, self.options.profile.nb_rcts_to_try);
-            rct_type = Some(selected_rct);
-            transformed = rct_image;
-            &transformed
+        let num_color_channels = if has_rct {
+            3
         } else {
-            rct_type = None;
-            image
+            image.channels.len().min(3)
+        };
+        let try_compact = self.options.use_tree_learning && self.options.use_ans;
+
+        let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if try_compact {
+            (0..num_color_channels)
+                .filter_map(|ch_idx| {
+                    analyze_channel_compact(&image.channels[ch_idx], CHANNEL_COLORS_PERCENT)
+                        .map(|a| (ch_idx, a))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let (meta_image, source_image_owned, compact_info, rct_type);
+        if !compact_analyses.is_empty() {
+            // Build palette meta-channels + index channels.
+            // Layout: [pal_N-1, ..., pal_0, idx_0, ch_1, idx_2, ...extra]
+            // (palettes reversed for decoder MetaPalette insertion order)
+            let mut palettes: Vec<Channel> = Vec::new();
+            let mut non_meta: Vec<Channel> = Vec::new();
+            let mut info: Vec<(usize, usize)> = Vec::new();
+            let mut nb_meta = 0usize;
+
+            for (orig_idx, ch) in image.channels.iter().enumerate() {
+                if let Some((_, analysis)) =
+                    compact_analyses.iter().find(|(idx, _)| *idx == orig_idx)
+                {
+                    // Create palette meta-channel (nb_colors wide, 1 high)
+                    let mut pal_ch = Channel::new(analysis.num_colors, 1)?;
+                    for (i, color) in analysis.palette.iter().enumerate() {
+                        pal_ch.set(i, 0, color[0]);
+                    }
+                    palettes.push(pal_ch);
+
+                    // Create index channel (same dimensions as original)
+                    let mut idx_ch = Channel::new(ch.width(), ch.height())?;
+                    for y in 0..ch.height() {
+                        for x in 0..ch.width() {
+                            let val = ch.get(x, y);
+                            let index = analysis.color_to_index[&vec![val]];
+                            idx_ch.set(x, y, index);
+                        }
+                    }
+                    non_meta.push(idx_ch);
+
+                    // begin_c for the transform descriptor
+                    let begin_c = orig_idx + nb_meta;
+                    info.push((begin_c, analysis.num_colors));
+                    nb_meta += 1;
+                } else {
+                    non_meta.push(ch.clone());
+                }
+            }
+
+            // Decoder's MetaPalette inserts each palette at position 0,
+            // so earlier palettes end up deeper. Reverse to match.
+            palettes.reverse();
+
+            crate::trace::debug_eprintln!(
+                "MULTI_GROUP_COMPACT: {} channels compacted, {} meta + {} non-meta, info={:?}",
+                compact_analyses.len(),
+                nb_meta,
+                non_meta.len(),
+                info,
+            );
+
+            // Split: meta-channels stay whole in global section
+            let mut meta_img = image.clone();
+            meta_img.channels = palettes;
+
+            // Non-meta channels: index + non-compacted + extra (full-size, to be split)
+            let mut work = image.clone();
+            work.channels = non_meta;
+
+            // Step 0b: RCT on index channels (starting at position 0 in non-meta)
+            if has_rct && work.channels.len() >= 3 {
+                let (selected_rct, transformed) =
+                    select_best_rct_at(&work, 0, self.options.profile.nb_rcts_to_try);
+                rct_type = Some(selected_rct);
+                work = transformed;
+            } else {
+                rct_type = None;
+            }
+
+            meta_image = Some(meta_img);
+            source_image_owned = work;
+            compact_info = info;
+        } else {
+            // No ChannelCompact — standard RCT-only path
+            if has_rct {
+                let (selected_rct, rct_image) =
+                    super::encode::select_best_rct(image, self.options.profile.nb_rcts_to_try);
+                rct_type = Some(selected_rct);
+                source_image_owned = rct_image;
+            } else {
+                rct_type = None;
+                source_image_owned = image.clone();
+            }
+            meta_image = None;
+            compact_info = Vec::new();
         };
 
         let global_transforms = super::section::GlobalTransforms {
-            compact_info: Vec::new(),
+            compact_info,
             rct_type,
         };
 
-        // Step 1: Extract each group image from globally-transformed image.
+        // Step 1: Extract each group image from the index/non-meta channels only.
+        // Meta-channels (palettes) are NOT split — they go whole in the global section.
         let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
         let group_transforms: Vec<super::section::GroupTransforms> =
             vec![super::section::GroupTransforms::none(); num_groups];
         for group_idx in 0..num_groups {
             let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
-            let group_image = source_image.extract_region(x_start, y_start, x_end, y_end)?;
+            let group_image = source_image_owned.extract_region(x_start, y_start, x_end, y_end)?;
             group_images.push(group_image);
         }
 
@@ -451,6 +550,7 @@ impl FrameEncoder {
                 global_transforms,
                 self.options.enable_lz77,
                 self.options.lz77_method,
+                meta_image.as_ref(),
             )?
         } else {
             // Standard path: collect residuals with gradient predictor
