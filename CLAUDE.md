@@ -358,13 +358,14 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
-- **LfFrame overhead**: +8.5% avg vs cjxl's +3.4% avg (down from +10.8% after effort fix).
-  Remaining 2.5x gap is NOT modular encoder quality (we beat cjxl by 4.7% on generic
-  16-bit 128×128 data). Root cause: DC frame uses rct=false (XYB channels can't use RCT),
-  so channels remain somewhat correlated. libjxl's modular encoder at kKitten with
-  color_transform=kXYB may use XYB-specific inter-channel prediction. Fix would require
-  XYB-aware decorrelation in the DC frame modular path. Low priority since LfFrame is
-  opt-in and for progressive display, not compression.
+- **LfFrame overhead**: +8.5% avg vs cjxl's +3.4% avg. Root cause identified (Feb 20):
+  libjxl uses `responsive=1` for DC frames — full-precision enc_factors [65536, 4096, 4096]
+  + Squeeze (Haar wavelet) + **lossy modular quantization** (multiplier field in tree leaves)
+  + Zero predictor. Our approach: distance-scaled enc_factors + no Squeeze + tree-learned
+  prediction + **lossless** modular encoding. The actual LfFrame data is 28% larger (51KB vs
+  40KB), not 2.5x. Tested: adding Squeeze alone to pre-quantized data makes it worse (+3KB).
+  Fix requires implementing lossy modular quantization (tree leaf multiplier field). Low
+  priority since LfFrame is opt-in for progressive display, not compression.
 
 **Published**: v0.1.0 on crates.io (2026-02-14)
 

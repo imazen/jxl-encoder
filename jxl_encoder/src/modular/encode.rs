@@ -1132,6 +1132,7 @@ pub fn write_modular_stream_with_tree(
         use_lz77,
         lz77_method,
         None,
+        false,
     )
 }
 
@@ -1140,6 +1141,7 @@ pub fn write_modular_stream_with_tree(
 /// When `dc_quant_custom` is `Some([x, y, b])`, writes custom DC quantization factors
 /// instead of `all_default=true`. Used by the LfFrame encoder to embed distance-scaled
 /// DC quant values in the modular frame's LfGlobal section.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_modular_stream_with_tree_dc_quant(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -1148,6 +1150,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
+    use_squeeze: bool,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
@@ -1167,6 +1170,25 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     } else {
         (image.clone(), None)
     };
+
+    // Optionally apply Squeeze (Haar wavelet) for spatial decorrelation.
+    // libjxl uses Squeeze for DC frames (responsive=1 path), which produces
+    // much smaller residuals than flat prediction on smooth DC data.
+    let squeeze_params = if use_squeeze {
+        use super::squeeze::default_squeeze_params;
+        let params = default_squeeze_params(&work_image);
+        if !params.is_empty() {
+            Some(params)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let mut work_image = work_image;
+    if let Some(ref params) = squeeze_params {
+        super::squeeze::apply_squeeze(&mut work_image, params)?;
+    }
 
     // Step 0: Find best WP parameters (effort-dependent search)
     let wp_params = if profile.wp_num_param_sets > 0 {
@@ -1261,16 +1283,21 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         use super::section::write_ans_modular_header;
         write_ans_modular_header(writer, &code)?;
     }
-
     // GroupHeader
     writer.write(1, 1)?; // use_global_tree = true
     write_wp_header(writer, &wp_params)?;
 
-    if let Some(rct_type) = rct_type {
-        writer.write(2, 1)?; // num_transforms = 1
-        write_rct_transform(writer, 0, rct_type)?;
-    } else {
-        writer.write(2, 0)?; // num_transforms = 0
+    {
+        let has_rct = rct_type.is_some();
+        let has_squeeze = squeeze_params.is_some();
+        let num_transforms = has_rct as u32 + has_squeeze as u32;
+        writer.write(2, num_transforms as u64)?;
+        if let Some(rct_type) = rct_type {
+            write_rct_transform(writer, 0, rct_type)?;
+        }
+        if let Some(ref params) = squeeze_params {
+            write_squeeze_transform(writer, params)?;
+        }
     }
 
     // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)

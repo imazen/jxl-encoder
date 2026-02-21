@@ -115,7 +115,14 @@ impl Predictor {
             Predictor::Average4 => {
                 // AverageAll: (6*N - 2*NN + 7*W + WW + NEE + 3*NE + 8) / 16
                 // where NEE = toprightright = pixel at (x+2, y-1)
-                (6 * n.n - 2 * n.nn + 7 * n.w + n.ww + n.nee + 3 * n.ne + 8) / 16
+                // Use i64 intermediates to prevent overflow (libjxl PR #4574)
+                ((6i64 * n.n as i64 - 2 * n.nn as i64
+                    + 7 * n.w as i64
+                    + n.ww as i64
+                    + n.nee as i64
+                    + 3 * n.ne as i64
+                    + 8)
+                    / 16) as i32
             }
         }
     }

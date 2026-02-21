@@ -298,6 +298,7 @@ pub(crate) fn encode_lf_frame(
             profile.lz77,
             profile.lz77_method,
             Some(factors.dc_quant),
+            false, // no Squeeze for pre-quantized DC data
         )?;
 
         let section_data = section_writer.finish();

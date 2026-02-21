@@ -23,6 +23,22 @@ use crate::entropy_coding::encode::{
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Safe float-to-i32 with rounding, clamped to prevent overflow (libjxl PR #4596).
+/// In Rust, `f32 as i32` on out-of-range values is saturating since Rust 1.45,
+/// but this makes the intent explicit and avoids any platform surprises.
+#[inline]
+fn safe_round_to_i32(val: f32) -> i32 {
+    val.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
+}
+
+/// Safe float-to-i32 with truncation (towards zero), clamped to prevent overflow.
+#[inline]
+fn safe_trunc_to_i32(val: f32) -> i32 {
+    val.clamp(i32::MIN as f32, i32::MAX as f32) as i32
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 /// Reference frame slot for patches (libjxl uses slot 3).
@@ -259,9 +275,9 @@ impl PatchesData {
         const DC_QUANT_B: f32 = 1.0 / 256.0;
         let n = self.ref_width * self.ref_height;
         for i in 0..n {
-            let x_int = (self.ref_image[0][i] * 4096.0).round() as i32;
-            let y_int = (self.ref_image[1][i] * 512.0).round() as i32;
-            let b_int = (self.ref_image[2][i] * 256.0).round() as i32;
+            let x_int = safe_round_to_i32(self.ref_image[0][i] * 4096.0);
+            let y_int = safe_round_to_i32(self.ref_image[1][i] * 512.0);
+            let b_int = safe_round_to_i32(self.ref_image[2][i] * 256.0);
             // Roundtrip: int → float using decoder's DC quant factors
             self.ref_image[0][i] = x_int as f32 * DC_QUANT_X;
             self.ref_image[1][i] = y_int as f32 * DC_QUANT_Y;
@@ -702,7 +718,7 @@ pub(crate) fn find_text_like_patches(
                     for c in 0..3 {
                         let val = xyb[c][src_i] - ref_color[c];
                         fpixels[c][dst_i] = val;
-                        let q = (val / cs.channel_dequant[c]) as i32;
+                        let q = safe_trunc_to_i32(val / cs.channel_dequant[c]);
                         qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
                         max_value = max_value.max(q.abs());
                     }
@@ -1487,7 +1503,7 @@ fn quantize_ref_image_rgb(patches: &mut PatchesData, bit_depth: u32) {
     let n = patches.ref_width * patches.ref_height;
     for c in 0..3 {
         for i in 0..n {
-            let int_val = (patches.ref_image[c][i] * max_val).round() as i32;
+            let int_val = safe_round_to_i32(patches.ref_image[c][i] * max_val);
             patches.ref_image[c][i] = int_val as f32 / max_val;
         }
     }
@@ -1521,7 +1537,7 @@ pub(crate) fn subtract_patches_modular(
                 let img_x = pos_x + dx;
                 let img_y = pos_y + dy;
                 for c in 0..num_channels {
-                    let ref_int = (patches.ref_image[c][ref_i] * max_val).round() as i32;
+                    let ref_int = safe_round_to_i32(patches.ref_image[c][ref_i] * max_val);
                     let current = image.channels[c].get(img_x, img_y);
                     image.channels[c].set(img_x, img_y, current - ref_int);
                 }
@@ -1588,7 +1604,7 @@ pub(crate) fn encode_reference_frame_rgb(
     for c in 0..3 {
         let mut data = Vec::with_capacity(n);
         for i in 0..n {
-            data.push((patches.ref_image[c][i] * max_val).round() as i32);
+            data.push(safe_round_to_i32(patches.ref_image[c][i] * max_val));
         }
         channels.push(Channel::from_vec(data, ref_w, ref_h)?);
     }
@@ -1689,19 +1705,19 @@ pub(crate) fn encode_reference_frame(
     // Channel 0: Y (from ref_image[1], which is the Y plane in XYB)
     let mut ch_y = Vec::with_capacity(n);
     for i in 0..n {
-        ch_y.push((patches.ref_image[1][i] * INV_DC_QUANT_Y).round() as i32);
+        ch_y.push(safe_round_to_i32(patches.ref_image[1][i] * INV_DC_QUANT_Y));
     }
 
     // Channel 1: X (from ref_image[0], which is the X plane in XYB)
     let mut ch_x = Vec::with_capacity(n);
     for i in 0..n {
-        ch_x.push((patches.ref_image[0][i] * INV_DC_QUANT_X).round() as i32);
+        ch_x.push(safe_round_to_i32(patches.ref_image[0][i] * INV_DC_QUANT_X));
     }
 
     // Channel 2: B-Y (B scaled by INV_DC_QUANT_B, minus Y_int from channel 0)
     let mut ch_by = Vec::with_capacity(n);
     for i in 0..n {
-        let b_int = (patches.ref_image[2][i] * INV_DC_QUANT_B).round() as i32;
+        let b_int = safe_round_to_i32(patches.ref_image[2][i] * INV_DC_QUANT_B);
         ch_by.push(b_int - ch_y[i]);
     }
 
@@ -1923,9 +1939,9 @@ mod tests {
         let mut nonzero_by = 0u32;
 
         for i in 0..ref_n {
-            let y_int = (patches_data.ref_image[1][i] * INV_DC_QUANT_Y).round() as i32;
-            let x_int = (patches_data.ref_image[0][i] * INV_DC_QUANT_X).round() as i32;
-            let b_int = (patches_data.ref_image[2][i] * INV_DC_QUANT_B).round() as i32;
+            let y_int = safe_round_to_i32(patches_data.ref_image[1][i] * INV_DC_QUANT_Y);
+            let x_int = safe_round_to_i32(patches_data.ref_image[0][i] * INV_DC_QUANT_X);
+            let b_int = safe_round_to_i32(patches_data.ref_image[2][i] * INV_DC_QUANT_B);
             let by_int = b_int - y_int;
 
             ch_y_min = ch_y_min.min(y_int);

@@ -249,8 +249,9 @@ impl EffortProfile {
             tree_num_properties: Self::tree_num_properties_for(effort),
             tree_max_buckets: Self::tree_max_buckets_for(effort),
             tree_threshold_base: 75.0 + 14.0 * speed_tier as f32,
-            tree_max_samples_fixed: if effort <= 6 { 65_000 } else { 0 },
-            tree_sample_fraction: if effort >= 7 { 0.5 } else { 0.0 },
+            tree_max_samples_fixed: if effort <= 4 { 65_000 } else { 0 },
+            // Effort-scaled nb_repeats matching libjxl PR #4236
+            tree_sample_fraction: Self::tree_sample_fraction_for(effort),
         }
     }
 
@@ -335,8 +336,9 @@ impl EffortProfile {
             tree_num_properties: Self::tree_num_properties_for(effort),
             tree_max_buckets: Self::tree_max_buckets_for(effort),
             tree_threshold_base: 75.0 + 14.0 * speed_tier as f32,
-            tree_max_samples_fixed: if effort <= 6 { 65_000 } else { 0 },
-            tree_sample_fraction: if effort >= 7 { 0.5 } else { 0.0 },
+            tree_max_samples_fixed: if effort <= 4 { 65_000 } else { 0 },
+            // Effort-scaled nb_repeats matching libjxl PR #4236
+            tree_sample_fraction: Self::tree_sample_fraction_for(effort),
         }
     }
 
@@ -360,14 +362,27 @@ impl EffortProfile {
         }
     }
 
-    fn tree_max_buckets_for(effort: u8) -> u16 {
+    /// Effort-scaled pixel sampling fraction for tree learning (libjxl PR #4236).
+    fn tree_sample_fraction_for(effort: u8) -> f32 {
         match effort {
-            0..=4 => 16,
-            5 => 24,
-            6 => 32,
-            7 => 48,
-            8 => 96,
-            _ => 256,
+            0..=4 => 0.15,
+            5 => 0.25,
+            6 => 0.35,
+            7 => 0.5,
+            8 => 0.55,
+            _ => 0.65,
+        }
+    }
+
+    fn tree_max_buckets_for(effort: u8) -> u16 {
+        // Doubled from previous values to match libjxl PR #4236
+        match effort {
+            0..=4 => 32,
+            5 => 48,
+            6 => 64,
+            7 => 96,
+            8 => 192,
+            _ => 512,
         }
     }
 }
@@ -409,7 +424,7 @@ mod tests {
         assert_eq!(p.nb_rcts_to_try, 7);
         assert_eq!(p.wp_num_param_sets, 0); // e8+
         assert_eq!(p.tree_num_properties, 7);
-        assert_eq!(p.tree_max_buckets, 48);
+        assert_eq!(p.tree_max_buckets, 96);
     }
 
     #[test]
@@ -450,7 +465,7 @@ mod tests {
         assert_eq!(p.nb_rcts_to_try, 19);
         assert_eq!(p.wp_num_param_sets, 5); // e9+
         assert_eq!(p.tree_num_properties, 15);
-        assert_eq!(p.tree_max_buckets, 256);
+        assert_eq!(p.tree_max_buckets, 512);
     }
 
     #[test]
