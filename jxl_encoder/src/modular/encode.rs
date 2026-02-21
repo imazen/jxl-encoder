@@ -321,7 +321,7 @@ pub fn write_simple_modular_stream(
     writer.write(1, 1)?; // has_tree = true
 
     if USE_ZERO_PREDICTOR {
-        write_tree_histogram_for_zero(writer)?;
+        write_zero_tree_complete(writer)?;
     } else {
         let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
@@ -603,7 +603,9 @@ pub fn write_modular_stream_with_squeeze(
         has_rct,
     );
 
-    // Collect residuals with gradient prediction on all transformed channels
+    // Collect residuals with Zero prediction on all transformed channels.
+    // libjxl forces Predictor::Zero for squeeze residuals (enc_modular.cc:629-633).
+    // Squeeze already decorrelates via Haar wavelet; adding prediction doesn't help.
     let mut residuals = Vec::new();
     let mut max_residual: u32 = 0;
 
@@ -614,18 +616,7 @@ pub fn write_modular_stream_with_squeeze(
         for y in 0..height {
             for x in 0..width {
                 let pixel = channel.get(x, y);
-
-                let left = if x > 0 { channel.get(x - 1, y) } else { 0 };
-                let top = if y > 0 { channel.get(x, y - 1) } else { left };
-                let topleft = if x > 0 && y > 0 {
-                    channel.get(x - 1, y - 1)
-                } else {
-                    left
-                };
-                let prediction = predict_gradient(left, top, topleft);
-
-                let residual = pixel - prediction;
-                let packed = pack_signed(residual);
+                let packed = pack_signed(pixel);
 
                 residuals.push(packed);
                 max_residual = max_residual.max(packed);
@@ -637,8 +628,8 @@ pub fn write_modular_stream_with_squeeze(
     writer.write(1, 1)?; // dc_quant.all_default = true
     writer.write(1, 1)?; // has_tree = true
 
-    let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
-    write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
+    // Use Zero predictor tree for squeeze residuals (matching libjxl enc_modular.cc:629-633)
+    write_zero_tree_complete(writer)?;
 
     if use_ans {
         let (tokens, code) = build_ans_modular_code(&residuals);
@@ -1386,6 +1377,8 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     );
 
     // Step 2b: Find best WP parameters (effort-dependent search)
+    // For squeeze, WP is only used as a property (property 15) for tree splitting,
+    // not as a predictor (libjxl forces Predictor::Zero for squeeze residuals).
     let wp_params = if profile.wp_num_param_sets > 0 {
         super::predictor::find_best_wp_params(&transformed.channels, profile.wp_num_param_sets)
     } else {
@@ -1393,22 +1386,25 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     };
 
     // Step 3: Gather samples from squeezed image (with subsampling for large images)
+    // Use squeeze-specific samples: only Zero predictor candidate (matching libjxl
+    // enc_modular.cc:629-633: "zero predictor for Squeeze residues").
     let total_pixels: usize = transformed
         .channels
         .iter()
         .map(|ch| ch.width() * ch.height())
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
-    let mut samples = TreeSamples::new();
+    let mut samples = TreeSamples::new_for_squeeze();
     gather_samples_strided(&mut samples, &transformed, 0, 0, stride, &wp_params);
 
     // Step 4: Learn tree with effort-dependent parameters
+    // Use squeeze-specific property order (libjxl enc_modular.cc:538-541).
     let pixel_fraction = if total_pixels > 0 {
         samples.num_samples as f64 / total_pixels as f64
     } else {
         1.0
     };
-    let tree_params = TreeLearningParams::from_profile(profile)
+    let tree_params = TreeLearningParams::from_profile_squeeze(profile)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &tree_params);

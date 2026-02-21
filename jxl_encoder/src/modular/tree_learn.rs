@@ -70,6 +70,34 @@ const PROP_ORDER_NO_SQUEEZE: &[usize] = &[
     8,  // W - prev_gradient
 ];
 
+/// Squeeze-specific property order, matching libjxl's enc_modular.cc:538-541.
+/// Squeeze residuals (Haar wavelet coefficients) benefit from spatial correlation
+/// properties (|N|, |W|, N, W) earlier than gradient-difference properties.
+/// GroupId (1) is removed (same as non-squeeze path for few groups).
+const PROP_ORDER_SQUEEZE: &[usize] = &[
+    0,  // Channel
+    4,  // |N|
+    5,  // |W|
+    6,  // N
+    7,  // W
+    8,  // W - prev_gradient
+    15, // WpMaxError
+    9,  // W + N - NW (gradient)
+    10, // W - NW
+    11, // NW - N
+    12, // N - NE
+    13, // N - NN
+    14, // W - WW
+    2,  // Y
+    3,  // X
+];
+
+/// Squeeze candidate predictors: just Zero.
+/// libjxl forces Predictor::Zero for squeeze residuals (enc_modular.cc:629-633):
+/// "zero predictor for Squeeze residues and lossy palette indices"
+/// Squeeze already decorrelates via Haar wavelet; adding prediction doesn't help.
+const CANDIDATE_PREDICTORS_SQUEEZE: &[Predictor] = &[Predictor::Zero];
+
 /// Parameters for tree learning, effort-dependent.
 ///
 /// Matches libjxl's enc_modular.cc speed tier configuration:
@@ -102,7 +130,23 @@ impl TreeLearningParams {
     /// Reads `tree_num_properties`, `tree_max_buckets`, and `tree_threshold_base`
     /// from the profile instead of computing them from effort inline.
     pub fn from_profile(profile: &crate::effort::EffortProfile) -> Self {
-        let order = PROP_ORDER_NO_SQUEEZE;
+        Self::from_profile_impl(profile, false)
+    }
+
+    /// Create tree learning parameters for squeeze mode.
+    ///
+    /// Uses squeeze-specific property order (matching libjxl enc_modular.cc:538-541)
+    /// which prioritizes spatial correlation properties over gradient-difference ones.
+    pub fn from_profile_squeeze(profile: &crate::effort::EffortProfile) -> Self {
+        Self::from_profile_impl(profile, true)
+    }
+
+    fn from_profile_impl(profile: &crate::effort::EffortProfile, is_squeeze: bool) -> Self {
+        let order = if is_squeeze {
+            PROP_ORDER_SQUEEZE
+        } else {
+            PROP_ORDER_NO_SQUEEZE
+        };
         let num_props = (profile.tree_num_properties as usize).min(order.len());
 
         Self {
@@ -167,6 +211,9 @@ impl TreeLearningParams {
 pub struct TreeSamples {
     /// Number of samples collected.
     pub num_samples: usize,
+    /// Candidate predictor list. Full 14 predictors for normal mode,
+    /// just `[Zero]` for squeeze mode (matching libjxl enc_modular.cc:629-633).
+    candidate_predictors: &'static [Predictor],
     /// Residual token per predictor: residual_tokens[predictor_idx][sample_idx].
     /// Tokens fit in u8 (max ~55 for HybridUint {4,2,0} on 8-bit data).
     residual_tokens: Vec<Vec<u8>>,
@@ -189,11 +236,23 @@ impl Default for TreeSamples {
 }
 
 impl TreeSamples {
-    /// Creates an empty TreeSamples structure.
+    /// Creates an empty TreeSamples structure with full 14-predictor candidate list.
     pub fn new() -> Self {
-        let num_predictors = CANDIDATE_PREDICTORS.len();
+        Self::with_predictors(CANDIDATE_PREDICTORS)
+    }
+
+    /// Creates an empty TreeSamples for squeeze mode (Zero predictor only).
+    /// Matches libjxl enc_modular.cc:629-633.
+    pub fn new_for_squeeze() -> Self {
+        Self::with_predictors(CANDIDATE_PREDICTORS_SQUEEZE)
+    }
+
+    /// Creates an empty TreeSamples with a custom predictor list.
+    fn with_predictors(predictors: &'static [Predictor]) -> Self {
+        let num_predictors = predictors.len();
         Self {
             num_samples: 0,
+            candidate_predictors: predictors,
             residual_tokens: vec![Vec::new(); num_predictors],
             extra_bits: vec![Vec::new(); num_predictors],
             props: vec![Vec::new(); NUM_PROPERTIES],
@@ -203,7 +262,7 @@ impl TreeSamples {
 
     /// Returns the number of candidate predictors.
     pub fn num_predictors(&self) -> usize {
-        CANDIDATE_PREDICTORS.len()
+        self.candidate_predictors.len()
     }
 
     /// Pre-quantize all property values into bucket indices.
@@ -484,7 +543,7 @@ fn gather_channel_samples(
                 prev_gradient = props[9]; // gradient = W + N - NW
 
                 // Compute residual for each candidate predictor
-                for (pred_idx, &predictor) in CANDIDATE_PREDICTORS.iter().enumerate() {
+                for (pred_idx, &predictor) in samples.candidate_predictors.iter().enumerate() {
                     let prediction = if predictor == Predictor::Weighted {
                         wp_pred as i32
                     } else {
@@ -817,20 +876,20 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
 
     while let Some(candidate) = stack.pop() {
         if tree.len() + 2 > max_nodes {
-            finalize_leaf(&mut tree, &candidate);
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
         }
 
         let count = candidate.end - candidate.start;
         if count < 2 {
-            finalize_leaf(&mut tree, &candidate);
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
         }
 
         // Early termination gate: if base_bits is already below threshold,
         // no split can save enough bits. Matches libjxl enc_ma.cc:304.
         if candidate.base_bits <= threshold {
-            finalize_leaf(&mut tree, &candidate);
+            finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             continue;
         }
 
@@ -911,7 +970,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                 });
             }
             _ => {
-                finalize_leaf(&mut tree, &candidate);
+                finalize_leaf(&mut tree, &candidate, samples.candidate_predictors);
             }
         }
     }
@@ -964,10 +1023,10 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
 }
 
 /// Make a tree node into a leaf with the given predictor.
-fn finalize_leaf(tree: &mut Tree, candidate: &SplitCandidate) {
+fn finalize_leaf(tree: &mut Tree, candidate: &SplitCandidate, predictors: &[Predictor]) {
     tree[candidate.node_idx] = PropertyDecisionNode {
         property: -1,
-        predictor: CANDIDATE_PREDICTORS[candidate.best_predictor],
+        predictor: predictors[candidate.best_predictor],
         predictor_offset: 0,
         multiplier: 1,
         context_id: 0, // Will be reassigned by assign_sequential_contexts
@@ -1076,7 +1135,8 @@ fn find_best_split(
     // Predictor change penalty matching libjxl's enc_ma.cc:303
     let change_pred_penalty = 800.0 / (100.0 + threshold);
 
-    let weighted_idx = CANDIDATE_PREDICTORS
+    let weighted_idx = samples
+        .candidate_predictors
         .iter()
         .position(|&p| p == Predictor::Weighted)
         .unwrap_or(usize::MAX);
@@ -1085,15 +1145,17 @@ fn find_best_split(
     // of predictors. The most important are Gradient(5), Weighted(6), and the
     // parent's predictor. This reduces inner loop iterations for deep nodes.
     // Use weighted_total (original sample count) for thresholds.
-    let num_pred = if weighted_total >= 2048 {
-        total_num_pred // All 14
+    // Cap at total_num_pred (may be 1 in squeeze mode with Zero-only predictor).
+    let num_pred = (if weighted_total >= 2048 {
+        total_num_pred // All predictors
     } else if weighted_total >= 512 {
-        10 // First 10: Zero..Weighted + TopRight, TopLeft, LeftLeft
+        10
     } else if weighted_total >= 64 {
-        7 // First 7: Zero, Left, Top, Average0, Select, Gradient, Weighted
+        7
     } else {
-        4 // First 4: Zero, Left, Top, Average0
-    };
+        4
+    })
+    .min(total_num_pred);
 
     // Use global histogram_size instead of per-node effective_histo scan.
     // The scan was O(N * num_pred) per node — costly at the root with 131K samples.
