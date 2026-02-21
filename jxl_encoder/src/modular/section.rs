@@ -313,7 +313,6 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use crate::entropy_coding::encode::write_entropy_code_ans;
     use crate::entropy_coding::lz77::write_lz77_header;
 
-
     // Step 0: Find best WP parameters (effort-dependent search)
     let all_channels: Vec<&super::channel::Channel> = meta_image
         .into_iter()
@@ -346,11 +345,16 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     // channel indices, matching the decoder which builds per-group images with
     // only the non-meta channels. The tree distinguishes meta from per-group
     // via group_id property, not channel_idx offset.)
+    //
+    // When meta-channels exist in the global section (group_id=0), per-group
+    // channels use group_id = 1 + group_idx to avoid collision. This lets the
+    // tree split on group_id > 0 to separate meta from per-group data.
+    let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
     for (group_idx, group_image) in images.iter().enumerate() {
         gather_samples_strided(
             &mut samples,
             group_image,
-            group_idx as u32,
+            group_idx as u32 + per_group_id_offset,
             0,
             stride,
             &wp_params,
@@ -392,10 +396,14 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     } else {
         0
     };
-    // Collect per-group residuals (channel_offset=0: matches gather above)
+    // Collect per-group residuals (channel_offset=0, group_id offset matches gather above)
     for (group_idx, group_image) in images.iter().enumerate() {
-        let group_tokens =
-            collect_residuals_with_tree(group_image, &tree, group_idx as u32, &wp_params);
+        let group_tokens = collect_residuals_with_tree(
+            group_image,
+            &tree,
+            group_idx as u32 + per_group_id_offset,
+            &wp_params,
+        );
         all_tokens.extend(group_tokens);
     }
 
