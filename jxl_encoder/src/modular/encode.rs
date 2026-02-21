@@ -1401,6 +1401,172 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     Ok(())
 }
 
+/// Write a pre-squeezed, pre-quantized modular stream with tree leaf multipliers.
+///
+/// This function is used by the LfFrame encoder when lossy modular quantization
+/// is active. The caller has already:
+/// 1. Applied Squeeze transform to the image
+/// 2. Pre-quantized each channel (pixels are multiples of their channel's q)
+/// 3. Built the multiplier_info for forced tree splits
+///
+/// This function handles:
+/// - Writing dc_quant (custom values for LfFrame)
+/// - Writing the Squeeze transform descriptor
+/// - Tree learning with forced splits at channel boundaries
+/// - Residual collection with division by multiplier
+/// - ANS entropy coding and bitstream assembly
+///
+/// Zero predictor is forced for all leaves with multiplier > 1, guaranteeing
+/// the residual divisibility invariant (residual % multiplier == 0).
+#[allow(clippy::too_many_arguments, dead_code)]
+pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    squeeze_params: &[super::squeeze::SqueezeParams],
+    multiplier_info: &[super::quantize::ModularMultiplierInfo],
+    _quants: &[i32],
+) -> Result<()> {
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
+        compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
+        gather_samples_strided,
+    };
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+
+    // WP parameters: default (Zero predictor is forced for lossy leaves,
+    // but WP params are still needed for the gather phase).
+    let wp_params = super::predictor::WeightedPredictorParams::default();
+
+    // Step 1: Gather samples (with subsampling for large images)
+    let total_pixels: usize = image
+        .channels
+        .iter()
+        .map(|ch| ch.width() * ch.height())
+        .sum();
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
+    let mut samples = TreeSamples::new();
+    gather_samples_strided(&mut samples, image, 0, 0, stride, &wp_params);
+
+    // Step 2: Learn tree with forced splits for multiplier info
+    let pixel_fraction = if total_pixels > 0 {
+        samples.num_samples as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let params = TreeLearningParams::from_profile(profile)
+        .with_pixel_fraction(pixel_fraction)
+        .with_total_pixels(total_pixels);
+
+    let tree = if !multiplier_info.is_empty() {
+        let num_channels = image.channels.len() as u32;
+        let initial_range = [[0, num_channels], [0, 1]];
+        compute_best_tree_with_multipliers(&mut samples, &params, multiplier_info, initial_range)
+    } else {
+        compute_best_tree(&mut samples, &params)
+    };
+    let num_contexts = count_contexts(&tree) as usize;
+
+    crate::trace::debug_eprintln!(
+        "PRESQUEEZED_TREE: {} nodes, {} contexts, {} samples, {} mul_info entries",
+        tree.len(),
+        num_contexts,
+        samples.num_samples,
+        multiplier_info.len(),
+    );
+
+    // Step 3: Collect residuals with learned tree
+    let tokens = collect_residuals_with_tree(image, &tree, 0, &wp_params);
+
+    // Step 3b: Optionally apply LZ77 to the token stream
+    let dist_multiplier = image.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+    let (tokens, lz77_params) = if use_lz77 {
+        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+            None => (tokens, None),
+        }
+    } else {
+        (tokens, None)
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+
+    // Step 4: Build multi-context ANS code
+    let code = build_entropy_code_ans_with_options(
+        &tokens,
+        ans_num_contexts,
+        true,
+        lz77_params.as_ref(),
+        Some(total_pixels),
+    );
+
+    // Step 5: Write bitstream
+    // dc_quant header
+    crate::f16::write_lf_quant(writer, dc_quant_custom)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Write the learned tree
+    write_tree(writer, &tree)?;
+
+    // Write LZ77 header + ANS data histogram
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        use super::section::write_ans_modular_header;
+        write_ans_modular_header(writer, &code)?;
+    }
+
+    // GroupHeader
+    writer.write(1, 1)?; // use_global_tree = true
+    write_wp_header(writer, &wp_params)?;
+
+    // Squeeze transform descriptor (1 transform)
+    let has_squeeze = !squeeze_params.is_empty();
+    if has_squeeze {
+        writer.write(2, 1)?; // num_transforms = 1
+        write_squeeze_transform(writer, squeeze_params)?;
+    } else {
+        writer.write(2, 0)?; // num_transforms = 0
+    }
+
+    // Debug: verify ANS encoding correctness
+    #[cfg(debug_assertions)]
+    if lz77_params.is_none() {
+        let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
+        if roundtrip_result.is_err() {
+            crate::debug_rect!(
+                "ans/verify",
+                0,
+                0,
+                image.width(),
+                image.height(),
+                "ROUNDTRIP FAILED for presqueezed data (ctx={} histo={} tokens={}): {:?}",
+                num_contexts,
+                code.histograms.len(),
+                tokens.len(),
+                roundtrip_result
+            );
+        }
+    }
+
+    // Write ANS tokens
+    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
 /// Write a single-group modular stream using squeeze + tree learning.
 ///
 /// Combines the Haar wavelet (squeeze) transform with learned MA tree
