@@ -335,7 +335,7 @@ fn encode_lf_frame_multi_group(
     _use_ans: bool,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    use crate::modular::encode::write_group_modular_section;
+    use crate::modular::encode::write_group_modular_section_idx;
     use crate::modular::section::write_global_modular_section_with_tree_dc_quant;
 
     let num_groups_x = xsize_blocks.div_ceil(crate::GROUP_DIM);
@@ -384,10 +384,15 @@ fn encode_lf_frame_multi_group(
 
     // Step 5: Write PassGroup data
     let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
-    for group_image in &group_images {
+    for (group_idx, group_image) in group_images.iter().enumerate() {
         for _pass in 0..num_passes {
             let mut group_writer = BitWriter::new();
-            write_group_modular_section(group_image, &global_state, &mut group_writer)?;
+            write_group_modular_section_idx(
+                group_image,
+                &global_state,
+                group_idx as u32,
+                &mut group_writer,
+            )?;
             pass_group_data.push(group_writer.finish());
         }
     }

@@ -1761,7 +1761,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
 
 pub use super::section::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section,
+    write_group_modular_section, write_group_modular_section_idx,
 };
 
 #[cfg(test)]

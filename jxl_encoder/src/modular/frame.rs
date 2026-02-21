@@ -7,7 +7,8 @@
 use super::channel::ModularImage;
 use super::encode::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section, write_improved_modular_stream, write_modular_stream_with_tree,
+    write_group_modular_section_idx,
+    write_improved_modular_stream, write_modular_stream_with_tree,
 };
 use super::section::write_global_modular_section_with_tree;
 use crate::GROUP_DIM;
@@ -508,7 +509,12 @@ impl FrameEncoder {
                 );
 
                 let mut group_writer = BitWriter::new();
-                write_group_modular_section(group_image, &global_state, &mut group_writer)?;
+                write_group_modular_section_idx(
+                    group_image,
+                    &global_state,
+                    group_idx as u32,
+                    &mut group_writer,
+                )?;
                 pass_group_data.push(group_writer.finish());
 
                 crate::trace::debug_eprintln!(
