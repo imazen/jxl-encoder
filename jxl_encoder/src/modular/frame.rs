@@ -414,10 +414,38 @@ impl FrameEncoder {
         let try_compact = self.options.use_tree_learning && self.options.use_ans;
 
         let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> = if try_compact {
+            // For multi-group, compact overhead is higher (meta-channels in global section,
+            // tree quality dilution across many groups). Require density <= 50%
+            // (i.e. range >= 2x unique), which means >= 1 bit/pixel entropy savings.
+            // Below this threshold, savings are eaten by per-group overhead.
             (0..num_color_channels)
                 .filter_map(|ch_idx| {
-                    analyze_channel_compact(&image.channels[ch_idx], CHANNEL_COLORS_PERCENT)
-                        .map(|a| (ch_idx, a))
+                    let analysis =
+                        analyze_channel_compact(&image.channels[ch_idx], CHANNEL_COLORS_PERCENT)?;
+                    // Reject if unique values use >50% of the range (< 1 bit/pixel savings)
+                    let ch = &image.channels[ch_idx];
+                    let mut min_v = i32::MAX;
+                    let mut max_v = i32::MIN;
+                    for y in 0..ch.height() {
+                        for x in 0..ch.width() {
+                            let v = ch.get(x, y);
+                            min_v = min_v.min(v);
+                            max_v = max_v.max(v);
+                        }
+                    }
+                    let range = (max_v as i64 - min_v as i64 + 1).max(1) as f64;
+                    let density = analysis.num_colors as f64 / range;
+                    crate::trace::debug_eprintln!(
+                        "COMPACT_FILTER: ch={} unique={} range={:.0} density={:.3}",
+                        ch_idx,
+                        analysis.num_colors,
+                        range,
+                        density
+                    );
+                    if density > 0.5 {
+                        return None;
+                    }
+                    Some((ch_idx, analysis))
                 })
                 .collect()
         } else {
@@ -603,6 +631,11 @@ impl FrameEncoder {
 
         // Step 5: Write each PassGroup's data (GroupHeader + pixel data)
         // Use the pre-extracted group_images to ensure residual consistency
+        //
+        // When ChannelCompact meta-channels exist in the global section (group_id=0),
+        // per-group channels use group_id = 1 + group_idx to avoid collision.
+        // This must match the offset used during tree learning in section.rs.
+        let per_group_id_offset: u32 = if meta_image.is_some() { 1 } else { 0 };
         let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
         for (group_idx, group_image) in group_images.iter().enumerate() {
             for _pass in 0..num_passes {
@@ -623,7 +656,7 @@ impl FrameEncoder {
                 write_group_modular_section_idx(
                     group_image,
                     &global_state,
-                    group_idx as u32,
+                    group_idx as u32 + per_group_id_offset,
                     &group_transforms[group_idx],
                     &mut group_writer,
                 )?;
