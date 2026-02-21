@@ -376,6 +376,7 @@ fn encode_lf_frame_multi_group(
         false,
         profile.lz77_method,
         Some(factors.dc_quant),
+        None, // no ChannelCompact meta-channels for LfFrame
     )?;
     let lf_global_data = lf_global_writer.finish();
 
