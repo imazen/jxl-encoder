@@ -9,8 +9,8 @@
 
 use super::channel::ModularImage;
 use super::encode::{
-    write_gradient_tree_tokens, write_hybrid_data_histogram, write_rct_transform,
-    write_tree_histogram_for_gradient,
+    write_gradient_tree_tokens, write_hybrid_data_histogram, write_palette_transform,
+    write_rct_transform, write_tree_histogram_for_gradient,
 };
 use super::predictor::pack_signed;
 use super::rct::RctType;
@@ -197,7 +197,7 @@ pub fn write_global_modular_section(
     max_token: u32,
     writer: &mut BitWriter,
     use_ans: bool,
-    rct_type: Option<RctType>,
+    transforms: GlobalTransforms,
 ) -> Result<GlobalModularState> {
     crate::trace::debug_eprintln!(
         "GLOBAL_MODULAR [bit {}]: Starting global section (ans={})",
@@ -225,7 +225,7 @@ pub fn write_global_modular_section(
         // Write GlobalModular's ModularHeader
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_params.default_wp = true
-        write_global_transforms(writer, rct_type)?;
+        write_global_transforms_full(writer, &transforms)?;
 
         // Byte-align at end of global section
         writer.zero_pad_to_byte();
@@ -242,7 +242,7 @@ pub fn write_global_modular_section(
         // Write GlobalModular's ModularHeader
         writer.write(1, 1)?; // use_global_tree = true
         writer.write(1, 1)?; // wp_params.default_wp = true
-        write_global_transforms(writer, rct_type)?;
+        write_global_transforms_full(writer, &transforms)?;
 
         // Byte-align at end of global section
         writer.zero_pad_to_byte();
@@ -272,7 +272,7 @@ pub fn write_global_modular_section_with_tree(
     images: &[ModularImage],
     writer: &mut BitWriter,
     profile: &crate::effort::EffortProfile,
-    rct_type: Option<RctType>,
+    transforms: GlobalTransforms,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
 ) -> Result<GlobalModularState> {
@@ -280,7 +280,7 @@ pub fn write_global_modular_section_with_tree(
         images,
         writer,
         profile,
-        rct_type,
+        transforms,
         use_lz77,
         lz77_method,
         None,
@@ -292,7 +292,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     images: &[ModularImage],
     writer: &mut BitWriter,
     profile: &crate::effort::EffortProfile,
-    rct_type: Option<RctType>,
+    transforms: GlobalTransforms,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
@@ -406,10 +406,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         pixel_fraction,
     );
     eprintln!(
-        "DIAG code: {} histograms (from {} contexts), rct={:?}",
+        "DIAG code: {} histograms (from {} contexts), rct={:?}, compact={}",
         code.histograms.len(),
         ans_num_contexts,
-        rct_type,
+        transforms.rct_type,
+        transforms.compact_info.len(),
     );
 
     // Step 5: Write bitstream
@@ -436,7 +437,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     // GroupHeader (global modular group)
     writer.write(1, 1)?; // use_global_tree = true
     write_wp_header(writer, &wp_params)?;
-    write_global_transforms(writer, rct_type)?;
+    write_global_transforms_full(writer, &transforms)?;
     let total_lf_global_bits = writer.bits_written() - bits_before;
     eprintln!(
         "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), total={} bits ({} B)",
@@ -457,13 +458,43 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     })
 }
 
-/// Write num_transforms + optional RCT transform for the global GroupHeader.
-fn write_global_transforms(writer: &mut BitWriter, rct_type: Option<RctType>) -> Result<()> {
-    if let Some(rct) = rct_type {
-        writer.write(2, 1)?; // nb_transforms = 1
-        write_rct_transform(writer, 0, rct)?;
-    } else {
-        writer.write(2, 0)?; // nb_transforms = 0
+/// Info about global transforms to write in the LfGlobal GroupHeader.
+pub struct GlobalTransforms {
+    /// Per-channel ChannelCompact transforms: (begin_c, nb_colors).
+    pub compact_info: Vec<(usize, usize)>,
+    /// Optional RCT type (begin_c is adjusted for ChannelCompact meta channels).
+    pub rct_type: Option<RctType>,
+}
+
+impl GlobalTransforms {
+    pub fn rct_only(rct_type: Option<RctType>) -> Self {
+        Self {
+            compact_info: Vec::new(),
+            rct_type,
+        }
+    }
+}
+
+/// Write num_transforms + transform descriptors for the global GroupHeader.
+///
+/// When `compact_info` is present, writes ChannelCompact (kPalette with num_c=1)
+/// transforms first, then RCT with begin_c shifted by the number of compact meta channels.
+fn write_global_transforms_full(
+    writer: &mut BitWriter,
+    transforms: &GlobalTransforms,
+) -> Result<()> {
+    let num_transforms =
+        transforms.compact_info.len() as u32 + transforms.rct_type.is_some() as u32;
+    super::encode::write_num_transforms(writer, num_transforms)?;
+
+    // ChannelCompact transforms first (per-channel palette, num_c=1)
+    for &(begin_c, nb_colors) in &transforms.compact_info {
+        write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+    }
+    // RCT (begin_c adjusted for ChannelCompact meta channels)
+    if let Some(rct) = transforms.rct_type {
+        let rct_begin_c = transforms.compact_info.len();
+        write_rct_transform(writer, rct_begin_c, rct)?;
     }
     Ok(())
 }
@@ -505,22 +536,47 @@ pub fn write_group_modular_section(
     state: &GlobalModularState,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    write_group_modular_section_idx(group_image, state, 0, writer)
+    write_group_modular_section_idx(group_image, state, 0, &GroupTransforms::none(), writer)
 }
 
 /// Like [`write_group_modular_section`] but with an explicit group index
 /// for tree property 1 (group_id). Required when the learned tree splits on group_id.
+///
+/// `rct_type`: Optional per-group RCT transform to write in this group's GroupHeader.
+/// When `Some`, the group data is assumed to be already RCT-transformed and the
+/// decoder will apply inverse RCT when decoding this group.
+/// Per-group transform info for ChannelCompact + RCT.
+#[derive(Clone)]
+pub struct GroupTransforms {
+    /// Per-channel ChannelCompact transforms: (begin_c, nb_colors).
+    pub compact_info: Vec<(usize, usize)>,
+    /// Optional RCT type (begin_c is adjusted for ChannelCompact meta channels).
+    pub rct_type: Option<RctType>,
+}
+
+impl GroupTransforms {
+    pub fn none() -> Self {
+        Self {
+            compact_info: Vec::new(),
+            rct_type: None,
+        }
+    }
+}
+
 pub fn write_group_modular_section_idx(
     group_image: &ModularImage,
     state: &GlobalModularState,
     group_idx: u32,
+    transforms: &GroupTransforms,
     writer: &mut BitWriter,
 ) -> Result<()> {
     crate::trace::debug_eprintln!(
-        "GROUP_MODULAR [bit {}]: Starting group section ({}x{})",
+        "GROUP_MODULAR [bit {}]: Starting group section ({}x{}, compact={}, rct={:?})",
         writer.bits_written(),
         group_image.width(),
-        group_image.height()
+        group_image.height(),
+        transforms.compact_info.len(),
+        transforms.rct_type,
     );
 
     // GroupHeader
@@ -534,7 +590,17 @@ pub fn write_group_modular_section_idx(
             writer.write(1, 1)?; // wp_params.default_wp = true
         }
     }
-    writer.write(2, 0)?; // num_transforms = 0
+    // Per-group transforms: ChannelCompact(s) + optional RCT
+    let num_transforms =
+        transforms.compact_info.len() as u32 + transforms.rct_type.is_some() as u32;
+    super::encode::write_num_transforms(writer, num_transforms)?;
+    for &(begin_c, nb_colors) in &transforms.compact_info {
+        write_palette_transform(writer, begin_c, 1, nb_colors, 0, 0)?;
+    }
+    if let Some(rct) = transforms.rct_type {
+        let rct_begin_c = transforms.compact_info.len();
+        write_rct_transform(writer, rct_begin_c, rct)?;
+    }
 
     match state {
         GlobalModularState::Huffman {

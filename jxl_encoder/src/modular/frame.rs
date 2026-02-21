@@ -389,13 +389,26 @@ impl FrameEncoder {
             num_lf_groups
         );
 
-        // Step 0: Apply best RCT to full image for RGB before extracting groups
-        let has_rct = image.channels.len() >= 3 && !self.options.skip_rct;
+        // Step 0: Apply global RCT to full image, then extract groups.
+        //
+        // Global RCT is better than per-group RCT because it avoids tree learning
+        // heterogeneity (per-group RCT was tested and regressed 1-8%).
+        //
+        // NOTE: ChannelCompact is only applied in the single-group path (encode.rs).
+        // For multi-group images, applying it globally creates meta-channel dimension
+        // issues during group extraction, and applying it per-group after RCT is
+        // ineffective (RCT spreads values, negating compaction benefit). Per-group
+        // ChannelCompact before RCT would require per-group RCT which regresses.
+        // TODO: implement proper global-section meta-channel support for multi-group
+        // ChannelCompact (libjxl handles this via channel-to-stream assignment).
+        let has_rct = !self.options.skip_rct && image.channels.len() >= 3;
         let transformed;
         let rct_type;
         let source_image = if has_rct {
-            let (selected_rct, rct_image) =
-                super::encode::select_best_rct(image, self.options.profile.nb_rcts_to_try);
+            let (selected_rct, rct_image) = super::encode::select_best_rct(
+                image,
+                self.options.profile.nb_rcts_to_try,
+            );
             rct_type = Some(selected_rct);
             transformed = rct_image;
             &transformed
@@ -404,8 +417,15 @@ impl FrameEncoder {
             image
         };
 
-        // Step 1: Extract each group image (from RCT-transformed image if applicable)
+        let global_transforms = super::section::GlobalTransforms {
+            compact_info: Vec::new(),
+            rct_type,
+        };
+
+        // Step 1: Extract each group image from globally-transformed image.
         let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
+        let group_transforms: Vec<super::section::GroupTransforms> =
+            vec![super::section::GroupTransforms::none(); num_groups];
         for group_idx in 0..num_groups {
             let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
             let group_image = source_image.extract_region(x_start, y_start, x_end, y_end)?;
@@ -430,7 +450,7 @@ impl FrameEncoder {
                 &group_images,
                 &mut lf_global_writer,
                 &self.options.profile, // effort-dependent tree params
-                rct_type,
+                global_transforms,
                 self.options.enable_lz77,
                 self.options.lz77_method,
             )?
@@ -460,7 +480,7 @@ impl FrameEncoder {
                 max_token,
                 &mut lf_global_writer,
                 self.options.use_ans,
-                rct_type,
+                global_transforms,
             )?
         };
         let lf_global_data = lf_global_writer.finish();
@@ -506,6 +526,7 @@ impl FrameEncoder {
                     group_image,
                     &global_state,
                     group_idx as u32,
+                    &group_transforms[group_idx],
                     &mut group_writer,
                 )?;
                 pass_group_data.push(group_writer.finish());
