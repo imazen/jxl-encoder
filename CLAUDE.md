@@ -1282,7 +1282,7 @@ transform (Haar wavelet), lossless patches (default-on).
   - 13: was (N+NE)/2, fixed to (6N-2NN+7W+WW+NEE+3NE+8)/16 (AverageAll)
   - Added `nee` (x+2,y-1) neighbor to Neighbors struct for AverageAll
   - Root cause of all tree-learned decode failures on 8colors/xy_256 test images
-- Palette disabled in tree-learning path (meta-channel encoding mismatch causes failures)
+- Palette+tree integration: palette auto-detected in tree-learning path when beneficial
 
 **GAPS (ranked by compression impact)**:
 

@@ -1676,8 +1676,8 @@ fn find_best_split(
 
                 // Recompute costs using estimate_bits with probability floor,
                 // matching libjxl's EstimateBits at each threshold position.
-                let l_bits = estimate_bits(&left_counts[..effective_histo], left_total)
-                    + left_extra as f64;
+                let l_bits =
+                    estimate_bits(&left_counts[..effective_histo], left_total) + left_extra as f64;
                 let r_bits = estimate_bits(&right_counts[..effective_histo], right_total)
                     + right_extra as f64;
 

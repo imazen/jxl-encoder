@@ -19,8 +19,14 @@ fn diagnose_frymire_lossless() {
     let configs: Vec<(&str, LosslessConfig)> = vec![
         ("default e7", LosslessConfig::new().with_effort(7)),
         ("default e9", LosslessConfig::new().with_effort(9)),
-        ("e7 no-lz77", LosslessConfig::new().with_effort(7).with_lz77(false)),
-        ("e7 squeeze", LosslessConfig::new().with_effort(7).with_squeeze(true)),
+        (
+            "e7 no-lz77",
+            LosslessConfig::new().with_effort(7).with_lz77(false),
+        ),
+        (
+            "e7 squeeze",
+            LosslessConfig::new().with_effort(7).with_squeeze(true),
+        ),
         (
             "e7 no-tree",
             LosslessConfig::new()
@@ -31,22 +37,15 @@ fn diagnose_frymire_lossless() {
         ("e1 (baseline)", LosslessConfig::new().with_effort(1)),
         (
             "e7 no-patches",
-            LosslessConfig::new()
-                .with_effort(7)
-                .with_patches(false),
+            LosslessConfig::new().with_effort(7).with_patches(false),
         ),
         (
             "e7 no-ans",
-            LosslessConfig::new()
-                .with_effort(7)
-                .with_ans(false),
+            LosslessConfig::new().with_effort(7).with_ans(false),
         ),
     ];
 
-    eprintln!(
-        "\n{:<20} {:>10} {:>8}",
-        "Config", "Size", "vs cjxl"
-    );
+    eprintln!("\n{:<20} {:>10} {:>8}", "Config", "Size", "vs cjxl");
     eprintln!("{}", "-".repeat(42));
     let cjxl_size = 273227.0f64; // cjxl e7
 
@@ -112,8 +111,7 @@ fn diagnose_single_group_comparison() {
                     let src_idx =
                         ((y0 + y) as usize * img.width() as usize + (x0 + x) as usize) * 3;
                     let dst_idx = (y as usize * w as usize + x as usize) * 3;
-                    crop[dst_idx..dst_idx + 3]
-                        .copy_from_slice(&rgb.as_raw()[src_idx..src_idx + 3]);
+                    crop[dst_idx..dst_idx + 3].copy_from_slice(&rgb.as_raw()[src_idx..src_idx + 3]);
                 }
             }
             pixels = crop;
@@ -131,10 +129,7 @@ fn diagnose_single_group_comparison() {
         match cfg.encode(&pixels, w, h, PixelLayout::Rgb8) {
             Ok(data) => {
                 let dims = format!("{}x{}", w, h);
-                eprintln!(
-                    "{:<20} {:>8} {:>10}",
-                    name, dims, data.len(),
-                );
+                eprintln!("{:<20} {:>8} {:>10}", name, dims, data.len(),);
             }
             Err(e) => eprintln!("{:<20} ERROR: {}", name, e),
         }

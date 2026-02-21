@@ -1113,7 +1113,7 @@ pub(crate) fn select_best_rct(image: &ModularImage, nb_rcts_to_try: u8) -> (RctT
 /// - Tree (write_tree)
 /// - lz77.enabled = 0 for data
 /// - Multi-context ANS histogram (write_entropy_code_ans)
-/// - GroupHeader (use_global_tree=1, wp_header.all_default=1, num_transforms=0 or 1)
+/// - GroupHeader (use_global_tree=1, wp_header, num_transforms=0..2)
 /// - ANS-encoded residuals (write_tokens_ans)
 /// - byte padding
 pub fn write_modular_stream_with_tree(
@@ -1133,6 +1133,7 @@ pub fn write_modular_stream_with_tree(
         lz77_method,
         None,
         None, // no lossy modular options
+        true, // enable palette detection
     )
 }
 
@@ -1171,6 +1172,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
     lossy_options: Option<LossyModularOptions>,
+    palette: bool,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
@@ -1184,15 +1186,46 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
 
     let is_lossy = lossy_options.is_some();
 
-    // Select best RCT variant by trying multiple candidates (effort-dependent).
-    // Tree learning uses RCT only (not palette) because palette+tree has a
-    // meta-channel encoding mismatch that causes decoder failures.
-    // Lossy modular skips RCT — channels are already in XYB integer space.
-    let (work_image, rct_type) = if !is_lossy && rct && image.channels.len() >= 3 {
-        let (selected_rct, transformed) = select_best_rct(image, profile.nb_rcts_to_try);
-        (transformed, Some(selected_rct))
+    // Check if palette is beneficial (only for lossless, non-lossy images).
+    // When palette is active, it replaces RCT for the color channels — palette
+    // already decorrelates them by converting to a single index channel.
+    let palette_info = if palette && !is_lossy && image.channels.len() >= 2 {
+        if let Some((begin_c, num_c)) = super::palette::should_use_palette(image) {
+            let max_colors = 1usize << image.bit_depth.min(12);
+            let analysis = super::palette::analyze_palette(image, begin_c, num_c, max_colors);
+            if analysis.use_palette {
+                Some((begin_c, num_c, analysis))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     } else {
-        (image.clone(), None)
+        None
+    };
+
+    // Apply palette or RCT.
+    // Palette replaces RCT when active: the color channels become a single index
+    // channel, so there's nothing left to decorrelate with RCT.
+    // Lossy modular skips both — channels are already in XYB integer space.
+    let (work_image, rct_type, palette_result) = if let Some((begin_c, num_c, ref analysis)) =
+        palette_info
+    {
+        let mut palettized = image.clone();
+        let nb_colors = super::palette::apply_palette(&mut palettized, begin_c, num_c, analysis)?;
+        crate::trace::debug_eprintln!(
+            "PALETTE+TREE: {} unique colors, {} channels palettized, begin_c={}",
+            nb_colors,
+            num_c,
+            begin_c,
+        );
+        (palettized, None, Some((begin_c, num_c, nb_colors)))
+    } else if !is_lossy && rct && image.channels.len() >= 3 {
+        let (selected_rct, transformed) = select_best_rct(image, profile.nb_rcts_to_try);
+        (transformed, Some(selected_rct), None)
+    } else {
+        (image.clone(), None, None)
     };
 
     // Apply Squeeze (Haar wavelet) for spatial decorrelation.
@@ -1362,10 +1395,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     write_wp_header(writer, &wp_params)?;
 
     {
+        let has_palette = palette_result.is_some();
         let has_rct = rct_type.is_some();
         let has_squeeze = squeeze_params.is_some();
-        let num_transforms = has_rct as u32 + has_squeeze as u32;
+        let num_transforms = has_palette as u32 + has_rct as u32 + has_squeeze as u32;
         writer.write(2, num_transforms as u64)?;
+        if let Some((begin_c, num_c, nb_colors)) = palette_result {
+            write_palette_transform(writer, begin_c, num_c, nb_colors, 0, 0)?;
+        }
         if let Some(rct_type) = rct_type {
             write_rct_transform(writer, 0, rct_type)?;
         }
