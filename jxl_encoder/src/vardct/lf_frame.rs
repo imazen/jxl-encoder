@@ -266,10 +266,20 @@ pub(crate) fn encode_lf_frame(
     };
 
     // Determine encoding parameters.
-    // libjxl uses one effort level slower than main: max(kTortoise, speed_tier - 1)
-    let lf_effort = effort.max(2) - 1; // One level slower, minimum 1
-    let profile =
+    // libjxl (enc_cache.cc:134-136) uses one speed_tier SLOWER (= more effort) for DC:
+    //   speed_tier' = max(kTortoise, speed_tier - 1)
+    // Lower speed_tier = more effort in libjxl. Our effort scale is reversed (higher = more).
+    // So DC gets effort + 1, capped at 10.
+    let lf_effort = (effort + 1).min(10);
+    let mut profile =
         crate::effort::EffortProfile::lossless(lf_effort, crate::api::EncoderMode::Reference);
+    // libjxl (enc_cache.cc:121) disables patches for DC frames.
+    // Patch detection is wasteful on tiny DC images (32x32 to 128x128).
+    profile.patches = false;
+    // Disable LZ77 for DC frames — the DC image is small (typically 32-128px)
+    // and smooth, making backward references ineffective. LZ77 header overhead
+    // outweighs any savings on such small data.
+    profile.lz77 = false;
 
     let num_groups_x = xsize_blocks.div_ceil(crate::GROUP_DIM);
     let num_groups_y = ysize_blocks.div_ceil(crate::GROUP_DIM);
