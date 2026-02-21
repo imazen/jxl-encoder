@@ -195,7 +195,7 @@ Per-image detail (d=1.0 / d=2.0 / d=5.0):
 
 **Remaining size overhead (files 1-8% larger)**:
 - ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
-  Note: LfFrame is for progressive display, NOT compression. Adds +4.6% overhead in cjxl, +10.8% in ours.
+  Note: LfFrame is for progressive display, NOT compression. Adds +3.4% overhead in cjxl, +8.5% in ours.
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 - Size overhead increases at higher distances (d=5.0: +4-8%)
@@ -310,7 +310,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
   - Separate modular frame (frame_type=1, dc_level=1) with DC at 1/8 resolution
   - Distance-scaled enc_factors [65536, 4096, 4096] with F16 roundtrip for decoder parity
   - Custom dc_quant in LfGlobal, USE_LF_FRAME flag on main frame
-  - Overhead: +10.8% avg (cjxl: +4.6% avg) — TODO: reduce to match cjxl
+  - Overhead: +8.5% avg (cjxl: +3.4% avg) — remaining gap is modular efficiency on DC data
   - Verified pixel-exact with djxl and jxl-rs
 
 **Priority path:**
@@ -358,8 +358,10 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
-- **LfFrame overhead**: +10.8% avg vs cjxl's +4.6% avg. ~6pp extra overhead to investigate.
-  Likely modular encoding efficiency on small DC images (32x32 at 256x256 input).
+- **LfFrame overhead**: +8.5% avg vs cjxl's +3.4% avg (down from +10.8% after effort fix).
+  Remaining 2.5x gap is modular encoding efficiency on DC integer data (large dynamic
+  range: Y up to 2649, B-Y up to -4201). Our regular lossless encoder matches cjxl on
+  128×128 RGB (12233 vs 12134 bytes), so the gap is specific to DC data characteristics.
   Low priority since LfFrame is opt-in and for progressive display, not compression.
 
 **Published**: v0.1.0 on crates.io (2026-02-14)
