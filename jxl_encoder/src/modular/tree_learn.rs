@@ -718,6 +718,8 @@ struct SplitCandidate {
     best_predictor: usize,
     /// Entropy in bits if kept as leaf with best predictor.
     base_bits: f64,
+    /// Multiplier for this leaf (set by lossy modular quantization).
+    multiplier: Option<u32>,
 }
 
 /// Learn an optimal MA tree from gathered samples.
@@ -803,6 +805,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         end: n,
         best_predictor: root_predictor,
         base_bits: root_bits,
+        multiplier: None,
     });
 
     // Pre-allocate workspace with maximum possible sizes
@@ -894,6 +897,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     end: candidate.end,
                     best_predictor: split.right_predictor,
                     base_bits: right_bits,
+                    multiplier: None,
                 });
 
                 stack.push(SplitCandidate {
@@ -902,6 +906,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
                     end: abs_mid,
                     best_predictor: split.left_predictor,
                     base_bits: left_bits,
+                    multiplier: None,
                 });
             }
             _ => {
@@ -963,10 +968,413 @@ fn finalize_leaf(tree: &mut Tree, candidate: &SplitCandidate) {
         property: -1,
         predictor: CANDIDATE_PREDICTORS[candidate.best_predictor],
         predictor_offset: 0,
-        multiplier: 1,
+        multiplier: candidate.multiplier.unwrap_or(1) as i32,
         context_id: 0, // Will be reassigned by assign_sequential_contexts
         ..Default::default()
     };
+}
+
+/// Learn an optimal MA tree with forced splits for lossy modular quantization.
+///
+/// Like [`compute_best_tree`] but additionally:
+/// 1. Tracks `static_prop_range` (channel, group_id ranges) per node
+/// 2. Before normal split evaluation, checks each `multiplier_info` entry:
+///    - `Inside` → set the leaf's multiplier and finalize immediately
+///    - `Partial` → force a split on the boundary axis/value
+///    - `None` → skip this entry
+/// 3. Only falls back to normal entropy-based splitting if no forced split applies
+///
+/// This produces a tree where each leaf's multiplier matches the channel's quantizer,
+/// which is required for the `residual / multiplier` division to be exact.
+pub fn compute_best_tree_with_multipliers(
+    samples: &mut TreeSamples,
+    params: &TreeLearningParams,
+    multiplier_info: &[super::quantize::ModularMultiplierInfo],
+    initial_range: [[u32; 2]; 2],
+) -> Tree {
+    use super::quantize::{IntersectionType, box_intersects};
+
+    let required_cost = params.pixel_fraction * 0.9 + 0.1;
+    let threshold = params.split_threshold * required_cost;
+    let n = samples.num_samples;
+    if n == 0 {
+        return vec![PropertyDecisionNode {
+            property: -1,
+            predictor: Predictor::Zero,
+            context_id: 0,
+            multiplier: 1,
+            ..Default::default()
+        }];
+    }
+
+    let nlog2n_table = build_nlog2n_table();
+    let mut pq = samples.pre_quantize(params);
+    dedup_samples(samples, &mut pq, params);
+    let n = samples.num_samples;
+
+    let max_nodes = params.max_nodes;
+    let mut indices: Vec<usize> = (0..n).collect();
+
+    let max_token = samples
+        .residual_tokens
+        .iter()
+        .flat_map(|v| v.iter())
+        .copied()
+        .max()
+        .unwrap_or(0) as usize;
+    let histogram_size = max_token + 1;
+
+    let mut tree: Tree = Vec::new();
+    let mut entropy_counts = vec![0u32; histogram_size];
+
+    let root_predictor =
+        find_best_predictor(samples, &indices[..n], histogram_size, &mut entropy_counts);
+    let root_bits = compute_predictor_entropy(
+        samples,
+        &indices[..n],
+        root_predictor,
+        histogram_size,
+        &mut entropy_counts,
+    );
+
+    struct SplitCandidateWithRange {
+        node_idx: usize,
+        start: usize,
+        end: usize,
+        best_predictor: usize,
+        base_bits: f64,
+        static_prop_range: [[u32; 2]; 2],
+    }
+
+    let mut stack: Vec<SplitCandidateWithRange> = Vec::new();
+
+    tree.push(PropertyDecisionNode::default());
+    stack.push(SplitCandidateWithRange {
+        node_idx: 0,
+        start: 0,
+        end: n,
+        best_predictor: root_predictor,
+        base_bits: root_bits,
+        static_prop_range: initial_range,
+    });
+
+    let max_buckets = params.max_property_values + 1;
+    let mut workspace = SplitWorkspace::new(n, histogram_size, max_buckets);
+
+    while let Some(candidate) = stack.pop() {
+        if candidate.end <= candidate.start {
+            continue;
+        }
+
+        // Check multiplier_info for forced splits or direct multiplier assignment
+        let mut forced_split: Option<(usize, u32)> = None; // (axis, val)
+        let mut assigned_multiplier: Option<u32> = None;
+
+        for mmi in multiplier_info {
+            let (t, axis, val) = box_intersects(&candidate.static_prop_range, &mmi.range);
+            match t {
+                IntersectionType::None => continue,
+                IntersectionType::Inside => {
+                    assigned_multiplier = Some(mmi.multiplier);
+                    break;
+                }
+                IntersectionType::Partial => {
+                    forced_split = Some((axis, val));
+                    break;
+                }
+            }
+        }
+
+        // If multiplier fully determined, finalize as leaf.
+        // Force Zero predictor when multiplier > 1 to guarantee the
+        // divisibility invariant: prediction=0 means residual=pixel,
+        // and pixels are pre-quantized to multiples of q.
+        if let Some(mult) = assigned_multiplier {
+            let predictor = if mult > 1 {
+                Predictor::Zero
+            } else {
+                CANDIDATE_PREDICTORS[candidate.best_predictor]
+            };
+            tree[candidate.node_idx] = PropertyDecisionNode {
+                property: -1,
+                predictor,
+                predictor_offset: 0,
+                multiplier: mult as i32,
+                context_id: 0,
+                ..Default::default()
+            };
+            continue;
+        }
+
+        // If forced split needed, do it without entropy evaluation
+        if let Some((axis, splitval)) = forced_split {
+            if tree.len() + 2 > max_nodes {
+                // Can't split further, finalize
+                tree[candidate.node_idx] = PropertyDecisionNode {
+                    property: -1,
+                    predictor: CANDIDATE_PREDICTORS[candidate.best_predictor],
+                    predictor_offset: 0,
+                    multiplier: 1,
+                    context_id: 0,
+                    ..Default::default()
+                };
+                continue;
+            }
+
+            // Partition samples on the static property (0=channel, 1=group_id)
+            let mid = partition_indices(
+                &mut indices[candidate.start..candidate.end],
+                samples,
+                axis,
+                splitval as i32,
+            );
+            let abs_mid = candidate.start + mid;
+
+            let lchild_idx = tree.len();
+            let rchild_idx = tree.len() + 1;
+            tree.push(PropertyDecisionNode::default());
+            tree.push(PropertyDecisionNode::default());
+
+            tree[candidate.node_idx] = PropertyDecisionNode {
+                property: axis as i32,
+                splitval: splitval as i32,
+                lchild: lchild_idx,
+                rchild: rchild_idx,
+                ..Default::default()
+            };
+
+            // Narrow ranges for children
+            // lchild = property <= splitval: range[axis][1] = splitval + 1
+            let mut lchild_range = candidate.static_prop_range;
+            lchild_range[axis][1] = splitval + 1;
+
+            // rchild = property > splitval: range[axis][0] = splitval + 1
+            let mut rchild_range = candidate.static_prop_range;
+            rchild_range[axis][0] = splitval + 1;
+
+            // Compute predictors for children
+            let left_predictor = if abs_mid > candidate.start {
+                find_best_predictor(
+                    samples,
+                    &indices[candidate.start..abs_mid],
+                    histogram_size,
+                    &mut entropy_counts,
+                )
+            } else {
+                candidate.best_predictor
+            };
+            let right_predictor = if abs_mid < candidate.end {
+                find_best_predictor(
+                    samples,
+                    &indices[abs_mid..candidate.end],
+                    histogram_size,
+                    &mut entropy_counts,
+                )
+            } else {
+                candidate.best_predictor
+            };
+
+            let left_bits = if abs_mid > candidate.start {
+                compute_predictor_entropy(
+                    samples,
+                    &indices[candidate.start..abs_mid],
+                    left_predictor,
+                    histogram_size,
+                    &mut entropy_counts,
+                )
+            } else {
+                0.0
+            };
+            let right_bits = if abs_mid < candidate.end {
+                compute_predictor_entropy(
+                    samples,
+                    &indices[abs_mid..candidate.end],
+                    right_predictor,
+                    histogram_size,
+                    &mut entropy_counts,
+                )
+            } else {
+                0.0
+            };
+
+            // Push right first (LIFO), so left is processed first
+            stack.push(SplitCandidateWithRange {
+                node_idx: rchild_idx,
+                start: abs_mid,
+                end: candidate.end,
+                best_predictor: right_predictor,
+                base_bits: right_bits,
+                static_prop_range: rchild_range,
+            });
+            stack.push(SplitCandidateWithRange {
+                node_idx: lchild_idx,
+                start: candidate.start,
+                end: abs_mid,
+                best_predictor: left_predictor,
+                base_bits: left_bits,
+                static_prop_range: lchild_range,
+            });
+            continue;
+        }
+
+        // No forced split — proceed with normal entropy-based splitting
+        if tree.len() + 2 > max_nodes {
+            tree[candidate.node_idx] = PropertyDecisionNode {
+                property: -1,
+                predictor: CANDIDATE_PREDICTORS[candidate.best_predictor],
+                predictor_offset: 0,
+                multiplier: 1,
+                context_id: 0,
+                ..Default::default()
+            };
+            continue;
+        }
+
+        let count = candidate.end - candidate.start;
+        if count < 2 || candidate.base_bits <= threshold {
+            tree[candidate.node_idx] = PropertyDecisionNode {
+                property: -1,
+                predictor: CANDIDATE_PREDICTORS[candidate.best_predictor],
+                predictor_offset: 0,
+                multiplier: 1,
+                context_id: 0,
+                ..Default::default()
+            };
+            continue;
+        }
+
+        let best_split = find_best_split(
+            samples,
+            &indices[candidate.start..candidate.end],
+            histogram_size,
+            candidate.base_bits,
+            params,
+            candidate.best_predictor,
+            threshold,
+            &nlog2n_table,
+            &pq,
+            &mut workspace,
+        );
+
+        match best_split {
+            Some(split) if candidate.base_bits - split.total_bits > threshold => {
+                let mid = partition_indices(
+                    &mut indices[candidate.start..candidate.end],
+                    samples,
+                    split.property,
+                    split.splitval,
+                );
+                let abs_mid = candidate.start + mid;
+
+                let lchild_idx = tree.len();
+                let rchild_idx = tree.len() + 1;
+                tree.push(PropertyDecisionNode::default());
+                tree.push(PropertyDecisionNode::default());
+
+                tree[candidate.node_idx] = PropertyDecisionNode {
+                    property: split.property as i32,
+                    splitval: split.splitval,
+                    lchild: lchild_idx,
+                    rchild: rchild_idx,
+                    ..Default::default()
+                };
+
+                // Narrow static_prop_range if split is on a static property
+                let mut lchild_range = candidate.static_prop_range;
+                let mut rchild_range = candidate.static_prop_range;
+                if split.property < 2 {
+                    // Static property (channel or group_id)
+                    lchild_range[split.property][1] =
+                        (split.splitval + 1).min(lchild_range[split.property][1] as i32) as u32;
+                    rchild_range[split.property][0] =
+                        (split.splitval + 1).max(rchild_range[split.property][0] as i32) as u32;
+                }
+
+                let left_bits = compute_predictor_entropy(
+                    samples,
+                    &indices[candidate.start..abs_mid],
+                    split.left_predictor,
+                    histogram_size,
+                    &mut entropy_counts,
+                );
+                let right_bits = compute_predictor_entropy(
+                    samples,
+                    &indices[abs_mid..candidate.end],
+                    split.right_predictor,
+                    histogram_size,
+                    &mut entropy_counts,
+                );
+
+                stack.push(SplitCandidateWithRange {
+                    node_idx: rchild_idx,
+                    start: abs_mid,
+                    end: candidate.end,
+                    best_predictor: split.right_predictor,
+                    base_bits: right_bits,
+                    static_prop_range: rchild_range,
+                });
+                stack.push(SplitCandidateWithRange {
+                    node_idx: lchild_idx,
+                    start: candidate.start,
+                    end: abs_mid,
+                    best_predictor: split.left_predictor,
+                    base_bits: left_bits,
+                    static_prop_range: lchild_range,
+                });
+            }
+            _ => {
+                tree[candidate.node_idx] = PropertyDecisionNode {
+                    property: -1,
+                    predictor: CANDIDATE_PREDICTORS[candidate.best_predictor],
+                    predictor_offset: 0,
+                    multiplier: 1,
+                    context_id: 0,
+                    ..Default::default()
+                };
+            }
+        }
+    }
+
+    // Assign sequential context IDs to leaves
+    assign_sequential_contexts(&mut tree);
+
+    // Validate tree structure
+    loop {
+        match validate_tree_djxl(&tree) {
+            Ok(()) => break,
+            Err(msg) => {
+                #[cfg(feature = "debug-rect")]
+                eprintln!("tree/validate: fixing invalid node: {}", msg);
+                let node_idx = msg
+                    .strip_prefix("Node ")
+                    .and_then(|s| s.split_whitespace().next())
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .expect("validate_tree_djxl error format changed");
+                tree[node_idx] = PropertyDecisionNode {
+                    property: -1,
+                    splitval: 0,
+                    predictor: Predictor::Gradient,
+                    predictor_offset: 0,
+                    multiplier: 1,
+                    lchild: 0,
+                    rchild: 0,
+                    context_id: 0,
+                };
+                assign_sequential_contexts(&mut tree);
+            }
+        }
+    }
+
+    let _num_leaves = tree.iter().filter(|n| n.property == -1).count();
+    crate::trace::debug_eprintln!(
+        "compute_best_tree_with_multipliers: {} samples, {} nodes, {} leaves, {} mul_info entries",
+        n,
+        tree.len(),
+        _num_leaves,
+        multiplier_info.len(),
+    );
+
+    tree
 }
 
 /// Padded histogram size for count_increase: next power of 2 above typical
@@ -1486,7 +1894,28 @@ pub fn collect_residuals_with_tree_offset(
                     leaf.predictor.predict_from_neighbors(&n)
                 };
                 let residual = pixel - prediction;
-                let packed = pack_signed(residual);
+
+                // Divide by multiplier for lossy modular quantization.
+                // When multiplier > 1, pixels have been pre-quantized to multiples of q
+                // and the tree forces splits so each leaf's multiplier matches the
+                // channel's quantizer. The decoder reconstructs:
+                //   pixel = unpack_signed(token) * multiplier + prediction
+                let multiplier = leaf.multiplier;
+                let divided = if multiplier == 1 {
+                    residual
+                } else {
+                    debug_assert!(
+                        residual % multiplier == 0,
+                        "residual {} not divisible by multiplier {} at ({},{}) ch={}",
+                        residual,
+                        multiplier,
+                        x,
+                        y,
+                        ch_idx,
+                    );
+                    residual / multiplier
+                };
+                let packed = pack_signed(divided);
 
                 // Update WP error tracking
                 wp_state.update_errors(pixel, x, y, width);

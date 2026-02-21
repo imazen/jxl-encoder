@@ -76,8 +76,10 @@ fn fwd_h_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
     // Both avg and res get incremented hshift, same vshift (matching libjxl MetaSqueeze)
     avg.hshift = channel.hshift + 1;
     avg.vshift = channel.vshift;
+    avg.component = channel.component;
     res.hshift = channel.hshift + 1;
     res.vshift = channel.vshift;
+    res.component = channel.component;
 
     for y in 0..h {
         for x in 0..res_w {
@@ -129,8 +131,10 @@ fn fwd_v_squeeze(channel: &Channel) -> Result<(Channel, Channel)> {
     // Both avg and res get incremented vshift, same hshift (matching libjxl MetaSqueeze)
     avg.hshift = channel.hshift;
     avg.vshift = channel.vshift + 1;
+    avg.component = channel.component;
     res.hshift = channel.hshift;
     res.vshift = channel.vshift + 1;
+    res.component = channel.component;
 
     for y in 0..res_h {
         for x in 0..w {
