@@ -618,34 +618,9 @@ fn gather_channel_samples(
 
 /// Size of the precomputed n*log2(n) lookup table.
 /// 8192 entries × 8 bytes = 64KB, fits in L1+L2 cache.
-/// Covers most per-symbol counts in tree learning (overflow uses scalar formula).
-const NLOG2N_TABLE_SIZE: usize = 8192;
-
-/// Build the nlog2n lookup table. Called once at the start of tree learning.
-fn build_nlog2n_table() -> Vec<f64> {
-    let mut table = vec![0.0f64; NLOG2N_TABLE_SIZE];
-    for (n, entry) in table.iter_mut().enumerate().skip(1) {
-        let nf = n as f64;
-        *entry = nf * nf.log2();
-    }
-    table
-}
-
-/// Compute n * log2(n), using a lookup table for small values.
-#[inline(always)]
-fn nlog2n(table: &[f64], n: u32) -> f64 {
-    let idx = n as usize;
-    if idx < table.len() {
-        // SAFETY: bounds checked by the if condition above
-        table[idx]
-    } else {
-        let nf = n as f64;
-        nf * nf.log2()
-    }
-}
-
-/// Uses log2 with a probability floor of 1/4096, matching libjxl's ANS coding.
-/// Used for parent node cost estimation (consistent with old code's cost model).
+/// Uses log2 with a probability floor of 1/4096, matching libjxl's EstimateBits
+/// (enc_ma.cc:54-71). Used for BOTH parent node and sweep child cost estimation,
+/// ensuring the split criterion compares costs from the same formula.
 #[inline]
 pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
     if total == 0 {
@@ -852,9 +827,6 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         }];
     }
 
-    // Build nlog2n lookup table once (65536 entries = 512KB, fits L2)
-    let nlog2n_table = build_nlog2n_table();
-
     // Pre-quantize all properties globally (replaces per-node binary_search)
     let mut pq = samples.pre_quantize(params);
 
@@ -942,7 +914,6 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
             params,
             candidate.best_predictor,
             threshold,
-            &nlog2n_table,
             &pq,
             &mut workspace,
         );
@@ -1109,7 +1080,6 @@ pub fn compute_best_tree_with_multipliers(
         }];
     }
 
-    let nlog2n_table = build_nlog2n_table();
     let mut pq = samples.pre_quantize(params);
     dedup_samples(samples, &mut pq, params);
     let n = samples.num_samples;
@@ -1353,7 +1323,6 @@ pub fn compute_best_tree_with_multipliers(
             params,
             candidate.best_predictor,
             threshold,
-            &nlog2n_table,
             &pq,
             &mut workspace,
         );
@@ -1496,6 +1465,10 @@ struct SplitWorkspace {
     left_counts: Vec<u32>,
     best_l_cost: Vec<f64>,
     best_r_cost: Vec<f64>,
+    /// Per-side penalized cost (raw cost + predictor change penalty).
+    /// Used for predictor selection; the final split decision uses raw costs only.
+    best_l_penalized: Vec<f64>,
+    best_r_penalized: Vec<f64>,
     best_l_pred: Vec<usize>,
     best_r_pred: Vec<usize>,
     sorted_by_bucket: Vec<usize>,
@@ -1519,6 +1492,8 @@ impl SplitWorkspace {
             left_counts: vec![0u32; histogram_size],
             best_l_cost: vec![f64::MAX; max_buckets],
             best_r_cost: vec![f64::MAX; max_buckets],
+            best_l_penalized: vec![f64::MAX; max_buckets],
+            best_r_penalized: vec![f64::MAX; max_buckets],
             best_l_pred: vec![0usize; max_buckets],
             best_r_pred: vec![0usize; max_buckets],
             sorted_by_bucket: vec![0usize; max_count],
@@ -1558,7 +1533,6 @@ fn find_best_split(
     params: &TreeLearningParams,
     parent_predictor: usize,
     threshold: f64,
-    nlog2n_table: &[f64],
     pq: &PreQuantizedProps,
     ws: &mut SplitWorkspace,
 ) -> Option<BestSplit> {
@@ -1584,6 +1558,10 @@ fn find_best_split(
         .candidate_predictors
         .iter()
         .position(|&p| p == Predictor::Weighted)
+        .unwrap_or(usize::MAX);
+    let zero_idx = CANDIDATE_PREDICTORS
+        .iter()
+        .position(|&p| p == Predictor::Zero)
         .unwrap_or(usize::MAX);
 
     // Count-based predictor pruning: for small nodes, only evaluate a subset
@@ -1622,6 +1600,8 @@ fn find_best_split(
     let left_counts = ws.left_counts.as_mut_slice();
     let best_l_cost = ws.best_l_cost.as_mut_slice();
     let best_r_cost = ws.best_r_cost.as_mut_slice();
+    let best_l_penalized = ws.best_l_penalized.as_mut_slice();
+    let best_r_penalized = ws.best_r_penalized.as_mut_slice();
     let best_l_pred = ws.best_l_pred.as_mut_slice();
     let best_r_pred = ws.best_r_pred.as_mut_slice();
     let sorted_by_bucket = ws.sorted_by_bucket.as_mut_slice();
@@ -1696,12 +1676,30 @@ fn find_best_split(
         // Initialize per-threshold best costs
         best_l_cost[..local_num_thresholds].fill(f64::MAX);
         best_r_cost[..local_num_thresholds].fill(f64::MAX);
+        best_l_penalized[..local_num_thresholds].fill(f64::MAX);
+        best_r_penalized[..local_num_thresholds].fill(f64::MAX);
         best_l_pred[..local_num_thresholds].fill(0);
         best_r_pred[..local_num_thresholds].fill(0);
 
         for pred in 0..num_pred {
             let tokens = &samples.residual_tokens[pred];
             let ebits = &samples.extra_bits[pred];
+
+            // Predictor change penalty: applied when choosing best predictor per side,
+            // but NOT included in the final split decision (matching libjxl enc_ma.cc:375-390).
+            // This biases predictor selection toward keeping the parent's predictor
+            // while allowing the split itself to be judged on pure entropy cost.
+            let mut penalty: f64 = 0.0;
+            if pred != parent_predictor && parent_predictor != weighted_idx {
+                penalty = change_pred_penalty;
+            }
+            // Tiebreakers matching libjxl: disfavor Weighted (slower decode),
+            // favor Zero (faster if only predictor in group+channel combination).
+            if pred == weighted_idx {
+                penalty += 1e-8;
+            } else if pred == zero_idx {
+                penalty -= 1e-8;
+            }
 
             // Clear only effective_histo entries per bucket (HISTO_PADDED stride
             // leaves gaps that are never read). Same total bytes as original code.
@@ -1744,44 +1742,26 @@ fn find_best_split(
                 right_extra += eb;
             }
 
-            // Compute initial nlog2n sum for right side
-            let mut right_nlogn_sum: f64 = 0.0;
-            for &c in &right_counts[..effective_histo] {
-                right_nlogn_sum += nlog2n(nlog2n_table, c);
-            }
-
             left_counts[..effective_histo].fill(0);
             let mut left_extra: u64 = 0;
             let mut left_total: u32 = 0;
-            let mut left_nlogn_sum: f64 = 0.0;
 
-            // Sweep through local buckets, moving each from right to left
+            // Sweep through local buckets, moving each from right to left.
+            // Cost computed via estimate_bits (with 1/4096 probability floor),
+            // matching libjxl's EstimateBits used for both parent and child costs.
             for local_k in 0..local_num_thresholds {
                 let bc = bucket_counts[local_k];
                 if bc == 0 {
                     continue;
                 }
 
-                // Move bucket from right to left using zip iterators
+                // Move bucket from right to left
                 let ci_base = local_k * HISTO_PADDED;
                 let ci_row = &count_increase[ci_base..ci_base + effective_histo];
-                for ((ci, left), right) in ci_row
-                    .iter()
-                    .zip(left_counts[..effective_histo].iter_mut())
-                    .zip(right_counts[..effective_histo].iter_mut())
-                {
-                    let delta = *ci;
-                    if delta > 0 {
-                        let old_l = *left;
-                        let new_l = old_l + delta;
-                        left_nlogn_sum += nlog2n(nlog2n_table, new_l) - nlog2n(nlog2n_table, old_l);
-                        *left = new_l;
-
-                        let old_r = *right;
-                        let new_r = old_r - delta;
-                        right_nlogn_sum +=
-                            nlog2n(nlog2n_table, new_r) - nlog2n(nlog2n_table, old_r);
-                        *right = new_r;
+                for (i, &ci) in ci_row.iter().enumerate() {
+                    if ci > 0 {
+                        left_counts[i] += ci;
+                        right_counts[i] -= ci;
                     }
                 }
                 left_extra += extra_bits_increase[local_k];
@@ -1793,15 +1773,22 @@ fn find_best_split(
                     continue;
                 }
 
-                let l_bits = nlog2n(nlog2n_table, left_total) - left_nlogn_sum + left_extra as f64;
-                let r_bits =
-                    nlog2n(nlog2n_table, right_total) - right_nlogn_sum + right_extra as f64;
+                // Recompute costs using estimate_bits with probability floor,
+                // matching libjxl's EstimateBits at each threshold position.
+                let l_bits =
+                    estimate_bits(&left_counts[..effective_histo], left_total) + left_extra as f64;
+                let r_bits = estimate_bits(&right_counts[..effective_histo], right_total)
+                    + right_extra as f64;
 
-                if l_bits < best_l_cost[local_k] {
+                // Predictor selection uses penalized cost (matching libjxl).
+                // Raw cost stored separately for the final split decision.
+                if l_bits + penalty < best_l_penalized[local_k] {
+                    best_l_penalized[local_k] = l_bits + penalty;
                     best_l_cost[local_k] = l_bits;
                     best_l_pred[local_k] = pred;
                 }
-                if r_bits < best_r_cost[local_k] {
+                if r_bits + penalty < best_r_penalized[local_k] {
+                    best_r_penalized[local_k] = r_bits + penalty;
                     best_r_cost[local_k] = r_bits;
                     best_r_pred[local_k] = pred;
                 }
@@ -1809,20 +1796,14 @@ fn find_best_split(
         }
 
         // Find best threshold across all predictors for this property.
-        // With dedup, all unique samples are evaluated (no striding), so no scaling needed.
+        // Split decision uses RAW costs (no penalty), matching libjxl enc_ma.cc:424.
+        // The penalty only influenced which predictor was chosen for each side above.
         for local_k in 0..local_num_thresholds {
             if best_l_cost[local_k] == f64::MAX || best_r_cost[local_k] == f64::MAX {
                 continue;
             }
 
-            let mut total = best_l_cost[local_k] + best_r_cost[local_k];
-
-            if best_l_pred[local_k] != parent_predictor && parent_predictor != weighted_idx {
-                total += change_pred_penalty;
-            }
-            if best_r_pred[local_k] != parent_predictor && parent_predictor != weighted_idx {
-                total += change_pred_penalty;
-            }
+            let total = best_l_cost[local_k] + best_r_cost[local_k];
 
             if total < best_bits {
                 best_bits = total;
@@ -1866,11 +1847,9 @@ fn find_best_predictor(
 }
 
 /// Compute total cost for a given predictor's residuals over the indexed samples.
-/// Returns Shannon entropy of tokens + total extra bits, weighted by sample counts.
-/// Uses estimate_bits (probability-floor formula) for consistency with the split
-/// threshold comparison — the sweep in find_best_split uses nlog2n, but the
-/// parent's base_bits must use the same formula as the old code to avoid
-/// inflated base_bits that accept too many splits (10x tree size regression).
+/// Returns estimated bits (probability-floor formula) + total extra bits, weighted
+/// by sample counts. Uses the same estimate_bits formula as the sweep child costs,
+/// ensuring consistent cost comparison for split decisions.
 ///
 /// `counts_buf` is a reusable histogram buffer (len >= histogram_size), cleared on entry.
 fn compute_predictor_entropy(
