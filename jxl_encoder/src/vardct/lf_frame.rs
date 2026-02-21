@@ -21,59 +21,8 @@ use crate::modular::channel::{Channel, ModularImage};
 /// Minimum butteraugli distance (libjxl kMinButteraugliDistance).
 /// libjxl enc_params.h:201: "Below d0.05 is not useful and risks going outside
 /// Level 5 limits (in particular modular_16bit_buffers becomes an issue for DC)"
+#[cfg(test)]
 const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
-
-/// Block dimension (must match common::BLOCK_DIM).
-const BLOCK_DIM: usize = 8;
-
-/// Compute float DC values from padded XYB image.
-///
-/// For each 8x8 block, computes the DC coefficient as `sum(block_pixels) / 64.0`,
-/// matching the forward DCT8x8 DC coefficient (the [0][0] output of forward DCT).
-///
-/// Our forward DCT8x8 applies 1/8 normalization per dimension (row and column),
-/// so the 2D DC = sum(all 64 pixels) * (1/8) * (1/8) = sum / 64.
-///
-/// libjxl's DC frame (enc_cache.cc:106) uses the raw forward DCT DC output
-/// before quantization, which equals sum/64 in our DCT convention.
-///
-/// # Arguments
-/// * `xyb` - [X, Y, B] channel data, padded to block boundaries (row stride = padded_width)
-/// * `padded_width` - Row stride in pixels (= xsize_blocks * 8)
-/// * `xsize_blocks` - Number of 8x8 blocks horizontally
-/// * `ysize_blocks` - Number of 8x8 blocks vertically
-///
-/// # Returns
-/// `[X, Y, B]` arrays, each of length `ysize_blocks * xsize_blocks`, flat row-major.
-pub(crate) fn compute_float_dc(
-    xyb: [&[f32]; 3],
-    padded_width: usize,
-    xsize_blocks: usize,
-    ysize_blocks: usize,
-) -> [Vec<f32>; 3] {
-    let n = xsize_blocks * ysize_blocks;
-    let mut dc: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; n]);
-
-    for c in 0..3 {
-        let ch = xyb[c];
-        for by in 0..ysize_blocks {
-            for bx in 0..xsize_blocks {
-                let mut sum = 0.0f32;
-                let base_y = by * BLOCK_DIM;
-                let base_x = bx * BLOCK_DIM;
-                for dy in 0..BLOCK_DIM {
-                    let row_offset = (base_y + dy) * padded_width + base_x;
-                    for dx in 0..BLOCK_DIM {
-                        sum += ch[row_offset + dx];
-                    }
-                }
-                dc[c][by * xsize_blocks + bx] = sum / 64.0;
-            }
-        }
-    }
-
-    dc
-}
 
 /// Custom DC quantization factors computed from distance.
 ///
@@ -102,7 +51,10 @@ impl DcQuantFactors {
     /// dc_quant[c] = 1/enc_factors[c]
     /// ```
     /// Then F16-roundtripped through `dc_quant[c] * 128.0` for exact decoder parity.
+    #[allow(dead_code)]
     pub fn compute(main_distance: f32) -> Self {
+        // Minimum butteraugli distance matching libjxl enc_params.h:201
+        const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
         let dc_distance = (main_distance * 0.02).max(K_MIN_BUTTERAUGLI_DISTANCE * 0.02);
 
         let mut enc_factors = [65536.0f32, 4096.0, 4096.0]; // [X, Y, B]
@@ -110,6 +62,30 @@ impl DcQuantFactors {
         enc_factors[1] /= 1.0 + 14.0 * dc_distance;
         enc_factors[2] /= 1.0 + 14.0 * dc_distance;
 
+        Self::from_enc_factors(enc_factors)
+    }
+
+    /// Full-precision DC quantization factors for lossy modular encoding.
+    ///
+    /// When lossy modular quantization is active (tree leaf multipliers handle
+    /// the lossy compression), the enc_factors should be at maximum precision
+    /// `[65536, 4096, 4096]` with no distance scaling. This preserves maximum
+    /// precision in the integer representation; lossy compression happens via
+    /// the Squeeze + quantize + multiplier pipeline instead.
+    pub fn full_precision() -> Self {
+        Self::from_enc_factors([65536.0, 4096.0, 4096.0])
+    }
+
+    /// JXL default DC quantization factors.
+    ///
+    /// These match the decoder's default values when all_default=true:
+    /// - X: 4096, Y: 512, B: 256
+    #[allow(dead_code)]
+    pub fn jxl_default() -> Self {
+        Self::from_enc_factors([4096.0, 512.0, 256.0])
+    }
+
+    fn from_enc_factors(enc_factors: [f32; 3]) -> Self {
         // F16 roundtrip to get exact decoder-matching factors.
         // The bitstream stores dc_quant[c] * 128.0 as F16.
         // The decoder reads F16, divides by 128 → gets dc_quant.
@@ -162,8 +138,11 @@ pub(crate) fn encode_lf_frame(
     use_ans: bool,
     effort: u8,
     writer: &mut BitWriter,
-) -> Result<[Vec<f32>; 3]> {
-    let factors = DcQuantFactors::compute(main_distance);
+) -> Result<([Vec<f32>; 3], [f32; 3])> {
+    // Full-precision enc_factors: lossy compression happens via Squeeze + modular
+    // quantization (tree leaf multipliers), not via coarser enc_factors. This
+    // matches libjxl's responsive=1 path where dc_quant is [1/65536, 1/4096, 1/4096].
+    let factors = DcQuantFactors::full_precision();
 
     #[cfg(feature = "trace-bitstream")]
     {
@@ -180,8 +159,12 @@ pub(crate) fn encode_lf_frame(
     // XYB input: [0=X, 1=Y, 2=B]
     //
     // Rounding matches libjxl enc_modular.cc:796-814:
-    // - Y and X: round-half-away-from-zero
-    // - B: always +0.5 (then subtract Y_int)
+    // All channels use round-half-away-from-zero (std::lround in C++).
+    //
+    // Channel 2 stores B-Y: the B integer minus the Y integer.
+    // The decoder's ConvertModularXYBToF32Stage does:
+    //   output_b = (ch2 + ch0) * scale_b = (B_quant - Y_quant + Y_quant) * scale_b = B_quant * scale_b
+    // So the Y terms cancel and B is recovered correctly.
     let mut ch_y_data = Vec::with_capacity(n);
     let mut ch_x_data = Vec::with_capacity(n);
     let mut ch_by_data = Vec::with_capacity(n);
@@ -193,8 +176,9 @@ pub(crate) fn encode_lf_frame(
     {
         let y_int = round_hafz(dc_y * factors.inv_dc_quant[1]); // Y
         let x_int = round_hafz(dc_x * factors.inv_dc_quant[0]); // X
-        // B channel: always +0.5 (not sign-dependent), then subtract Y_int
-        let b_int = (dc_b * factors.inv_dc_quant[2] + 0.5) as i32 - y_int;
+        let b_quant = round_hafz(dc_b * factors.inv_dc_quant[2]); // B (quantized)
+        let b_int = b_quant - y_int; // B-Y for modular channel 2
+
         ch_y_data.push(y_int);
         ch_x_data.push(x_int);
         ch_by_data.push(b_int);
@@ -233,19 +217,6 @@ pub(crate) fn encode_lf_frame(
         eprintln!("LFRAME: Y int range [{y_min}, {y_max}]");
         eprintln!("LFRAME: X int range [{x_min}, {x_max}]");
         eprintln!("LFRAME: B-Y int range [{by_min}, {by_max}]");
-        // Check reconstruction: float_dc ≈ int * dc_quant
-        if !ch_y_data.is_empty() {
-            let y0_recon = ch_y_data[0] as f32 * factors.dc_quant[1];
-            let x0_recon = ch_x_data[0] as f32 * factors.dc_quant[0];
-            eprintln!(
-                "LFRAME: first pixel: float_dc=[{:.6}, {:.6}, {:.6}]",
-                float_dc[0][0], float_dc[1][0], float_dc[2][0]
-            );
-            eprintln!(
-                "LFRAME: reconstructed: x={:.6}, y={:.6}",
-                x0_recon, y0_recon
-            );
-        }
     }
 
     // Build LfFrame header
@@ -253,11 +224,24 @@ pub(crate) fn encode_lf_frame(
     fh.write(writer)?;
 
     // Build modular image with 3 channels [Y, X, B-Y]
-    let mod_channels = vec![
-        Channel::from_vec(ch_y_data, xsize_blocks, ysize_blocks)?,
-        Channel::from_vec(ch_x_data, xsize_blocks, ysize_blocks)?,
-        Channel::from_vec(ch_by_data, xsize_blocks, ysize_blocks)?,
-    ];
+    // Set component indices for lossy modular quantization table lookup.
+    let mut ch_y = Channel::from_vec(ch_y_data, xsize_blocks, ysize_blocks)?;
+    let mut ch_x = Channel::from_vec(ch_x_data, xsize_blocks, ysize_blocks)?;
+    let mut ch_by = Channel::from_vec(ch_by_data, xsize_blocks, ysize_blocks)?;
+    ch_y.component = 0; // Y
+    ch_x.component = 1; // X
+    ch_by.component = 2; // B-Y
+    // DC at dc_level=1 represents 1/8 resolution (3 halvings per dimension).
+    // Setting hshift=vshift=3 tells the quantizer to use shift=5 (hshift+vshift-1)
+    // instead of shift=0, producing much gentler quantizers that don't destroy
+    // chrominance. Without this, X and B-Y channels get quantized to zero.
+    ch_y.hshift = 3;
+    ch_y.vshift = 3;
+    ch_x.hshift = 3;
+    ch_x.vshift = 3;
+    ch_by.hshift = 3;
+    ch_by.vshift = 3;
+    let mod_channels = vec![ch_y, ch_x, ch_by];
     let image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
@@ -287,8 +271,12 @@ pub(crate) fn encode_lf_frame(
 
     if num_groups == 1 {
         // Single group: use write_modular_stream_with_tree_dc_quant for
-        // combined dc_quant + tree learning + modular encoding.
+        // combined dc_quant + tree learning + lossy modular encoding.
         let mut section_writer = BitWriter::new();
+
+        let lossy_opts = crate::modular::encode::LossyModularOptions {
+            distance: main_distance,
+        };
 
         crate::modular::encode::write_modular_stream_with_tree_dc_quant(
             &image,
@@ -298,7 +286,7 @@ pub(crate) fn encode_lf_frame(
             profile.lz77,
             profile.lz77_method,
             Some(factors.dc_quant),
-            false, // no Squeeze for pre-quantized DC data
+            Some(lossy_opts),
         )?;
 
         let section_data = section_writer.finish();
@@ -325,7 +313,7 @@ pub(crate) fn encode_lf_frame(
         )?;
     }
 
-    Ok(decoded_dc)
+    Ok((decoded_dc, factors.dc_quant))
 }
 
 /// Multi-group LfFrame encoding.

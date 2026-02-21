@@ -27,6 +27,10 @@ pub struct Channel {
     pub hshift: u32,
     /// Vertical subsampling shift (0 = no subsampling).
     pub vshift: u32,
+    /// Original color component index (-1 = unset).
+    /// Used to look up per-component quantization tables in lossy modular encoding.
+    /// Set by LfFrame: Y=0, X=1, B-Y=2. Propagated through Squeeze transforms.
+    pub component: i32,
 }
 
 impl Channel {
@@ -50,6 +54,7 @@ impl Channel {
             height,
             hshift: 0,
             vshift: 0,
+            component: -1,
         })
     }
 
@@ -67,6 +72,7 @@ impl Channel {
             height,
             hshift: 0,
             vshift: 0,
+            component: -1,
         })
     }
 
@@ -177,6 +183,7 @@ impl Channel {
         let mut ch = Channel::from_vec(data, xsize, ysize).ok()?;
         ch.hshift = self.hshift;
         ch.vshift = self.vshift;
+        ch.component = self.component;
         Some(ch)
     }
 
@@ -223,6 +230,7 @@ impl Channel {
         let mut ch = Channel::from_vec(data, xsize, ysize).ok()?;
         ch.hshift = self.hshift;
         ch.vshift = self.vshift;
+        ch.component = self.component;
         Some(ch)
     }
 

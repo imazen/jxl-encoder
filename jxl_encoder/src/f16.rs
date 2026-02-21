@@ -124,7 +124,9 @@ pub fn write_f16(value: f32, writer: &mut BitWriter) -> Result<()> {
 /// - 3 × F16: dc_quant[c] * 128.0 for c=0,1,2 (X,Y,B order)
 pub fn write_lf_quant(writer: &mut BitWriter, dc_quant_custom: Option<[f32; 3]>) -> Result<()> {
     match dc_quant_custom {
-        None => writer.write(1, 1)?, // all_default = true
+        None => {
+            writer.write(1, 1)?; // all_default = true
+        }
         Some(dq) => {
             writer.write(1, 0)?; // all_default = false
             for &q in &dq {

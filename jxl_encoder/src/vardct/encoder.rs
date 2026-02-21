@@ -493,19 +493,12 @@ impl VarDctEncoder {
             );
         }
 
-        // Compute float DC from post-gaborish XYB (for LfFrame).
-        // DC coefficient per 8x8 block = sum(block_pixels) / 8.0
-        // Must be computed AFTER gaborish (libjxl uses post-gaborish XYB for DC frame).
-        let mut float_dc = if self.use_lf_frame {
-            Some(super::lf_frame::compute_float_dc(
-                [&xyb_x, &xyb_y, &xyb_b],
-                padded_width,
-                xsize_blocks,
-                ysize_blocks,
-            ))
-        } else {
-            None
-        };
+        // Float DC for LfFrame is now extracted from the transform pipeline
+        // (TransformOutput.float_dc) using dc_from_dct_NxN, which produces correct
+        // DC values for multi-block transforms (DCT16+). The old compute_float_dc
+        // used simple 8x8 pixel averages which diverge from dc_from_dct_NxN for
+        // blocks with spatial structure, causing catastrophic LfFrame quality for
+        // DCT16+ (up to 31% error on gradient content, butteraugli 13-20 vs ~2.5).
 
         // Compute per-tile chroma-from-luma map on GABORISHED XYB
         // Pass 1 always uses LS (use_newton=false): with distance_mul=1e-9, the
@@ -528,32 +521,6 @@ impl VarDctEncoder {
                 div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS),
             )
         };
-
-        // Apply CfL decorrelation to float DC for LfFrame.
-        //
-        // libjxl's ComputeCoefficients (enc_group.cc:491-511) extracts X/B DC
-        // AFTER CfL unapply. The Y DC comes from the original forward DCT, but
-        // X and B DC are computed from CfL-decorrelated coefficients:
-        //   X_dc = original_X_dc - ytox_ratio(cfl_tile) * Y_dc
-        //   B_dc = original_B_dc - ytob_ratio(cfl_tile) * Y_dc
-        //
-        // This decorrelation reduces the dynamic range of X/B DC values and
-        // improves compression of the DC frame.
-        if let Some(ref mut dc) = float_dc {
-            use super::chroma_from_luma::{ytob_ratio, ytox_ratio};
-            let xsize_tiles = cfl_map.xsize_tiles;
-            for by in 0..ysize_blocks {
-                for bx in 0..xsize_blocks {
-                    let tx = bx / TILE_DIM_IN_BLOCKS;
-                    let ty = by / TILE_DIM_IN_BLOCKS;
-                    let tile_idx = ty * xsize_tiles + tx;
-                    let dc_idx = by * xsize_blocks + bx;
-                    let y_dc = dc[1][dc_idx]; // Y channel DC
-                    dc[0][dc_idx] -= ytox_ratio(cfl_map.ytox[tile_idx]) * y_dc;
-                    dc[2][dc_idx] -= ytob_ratio(cfl_map.ytob[tile_idx]) * y_dc;
-                }
-            }
-        }
 
         debug_rect!(
             "enc/config",
@@ -852,7 +819,11 @@ impl VarDctEncoder {
                 alpha,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
-                float_dc.as_ref(),
+                if self.use_lf_frame {
+                    Some(&transform_out.float_dc)
+                } else {
+                    None
+                },
             )?;
             crate::debug_rect::flush("");
             return Ok(VarDctOutput {
@@ -915,6 +886,7 @@ impl VarDctEncoder {
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
                 None, // No splines in streaming mode
+                None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
             )?;
 
@@ -1026,6 +998,7 @@ impl VarDctEncoder {
                 None, // No learned tree in single-pass mode
                 None, // No patches in streaming mode
                 None, // No splines in streaming mode
+                None, // No custom dc_quant in single-pass mode
                 &mut dc_global,
             )?;
             dc_global.zero_pad_to_byte();
