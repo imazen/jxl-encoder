@@ -16,9 +16,9 @@ use crate::entropy_coding::huffman_tree::{
 };
 use crate::error::Result;
 
-/// Write a tree histogram for a single-leaf tree with Zero predictor.
-/// This should produce the same output as minimal.rs for tree histogram.
-pub(super) fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<()> {
+/// Write a complete single-leaf Zero predictor tree (histogram + tokens).
+/// All tokens are 0, so alphabet size = 1 and no Huffman coding is needed.
+pub(super) fn write_zero_tree_complete(writer: &mut BitWriter) -> Result<()> {
     crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: Starting tree histogram (Zero)",
         writer.bits_written()
@@ -66,13 +66,20 @@ pub(crate) fn write_tree_histogram_for_gradient(
     // NOTE: This is for LfGlobal trees which use allow_lz77=true in the decoder
     // Tree tokens are raw symbols (0-5), not hybrid uints.
     // Use split_exponent = log_alphabet_size for raw symbol encoding.
-    write_tree_histogram_for_gradient_impl(writer, true)
+    write_tree_histogram_for_predictor_impl(writer, true, 5)
+}
+
+/// Write a tree histogram for a single-leaf tree with Zero predictor.
+/// Returns (depths, codes) for use in encoding tree tokens.
+pub(crate) fn write_tree_histogram_for_zero(writer: &mut BitWriter) -> Result<(Vec<u8>, Vec<u16>)> {
+    write_tree_histogram_for_predictor_impl(writer, true, 0)
 }
 
 /// Write tree histogram and return (depths, codes) for encoding tree tokens.
-fn write_tree_histogram_for_gradient_impl(
+fn write_tree_histogram_for_predictor_impl(
     writer: &mut BitWriter,
     write_lz77: bool,
+    predictor_id: u32,
 ) -> Result<(Vec<u8>, Vec<u16>)> {
     crate::trace::debug_eprintln!(
         "  TREE_HIST [bit {}]: Starting tree histogram (lz77={})",
@@ -121,9 +128,12 @@ fn write_tree_histogram_for_gradient_impl(
     //   - mul_log = 0
     //   - mul_bits = 0
     // Histogram: symbol 0 appears 4 times, symbol 5 appears 1 time
-    const TREE_PREDICTOR: u32 = 5; // Must match write_gradient_tree_tokens (0=Zero, 5=Gradient)
-    let max_symbol = if TREE_PREDICTOR == 0 { 0u16 } else { 5u16 };
-    let tree_histogram: &[u32] = if TREE_PREDICTOR == 0 {
+    let max_symbol = if predictor_id == 0 {
+        0u16
+    } else {
+        predictor_id as u16
+    };
+    let tree_histogram: &[u32] = if predictor_id == 0 {
         // For Zero predictor: tokens [0, 0, 0, 0, 0]
         // symbol 0 appears 5 times
         &[5u32]
@@ -184,12 +194,32 @@ fn write_tree_histogram_for_gradient_impl(
     Ok((depths, codes))
 }
 
+/// Write tree tokens for a single leaf with Zero predictor.
+/// Uses the provided (depths, codes) from write_tree_histogram_for_zero.
+pub(crate) fn write_zero_tree_tokens(
+    writer: &mut BitWriter,
+    depths: &[u8],
+    codes: &[u16],
+) -> Result<()> {
+    write_single_leaf_tree_tokens(writer, depths, codes, 0)
+}
+
 /// Write tree tokens for a single leaf with Gradient predictor.
 /// Uses the provided (depths, codes) from write_tree_histogram_for_gradient.
 pub(crate) fn write_gradient_tree_tokens(
     writer: &mut BitWriter,
     depths: &[u8],
     codes: &[u16],
+) -> Result<()> {
+    write_single_leaf_tree_tokens(writer, depths, codes, 5)
+}
+
+/// Write tree tokens for a single leaf with the given predictor ID.
+fn write_single_leaf_tree_tokens(
+    writer: &mut BitWriter,
+    depths: &[u8],
+    codes: &[u16],
+    predictor_id: u32,
 ) -> Result<()> {
     crate::trace::debug_eprintln!(
         "  TREE_TOKENS [bit {}]: Starting tree tokens",
@@ -203,14 +233,13 @@ pub(crate) fn write_gradient_tree_tokens(
     // - mul_log = 0 (context 3)
     // - mul_bits = 0 (context 4) → multiplier = (0+1) << 0 = 1
 
-    // The predictor to use (0=Zero, 5=Gradient) - must match write_tree_histogram_for_gradient
-    const TREE_PREDICTOR: u32 = 5;
+    let tree_predictor = predictor_id;
 
     crate::trace::debug_eprintln!("  TREE_TOKENS: depths = {:?}", depths);
     crate::trace::debug_eprintln!("  TREE_TOKENS: codes = {:?}", codes);
 
     // Encode: property=0, predictor, offset=0, mul_log=0, mul_bits=0
-    let tokens = [0u32, TREE_PREDICTOR, 0, 0, 0];
+    let tokens = [0u32, tree_predictor, 0, 0, 0];
     let _token_names = ["property", "predictor", "offset", "mul_log", "mul_bits"];
 
     #[allow(clippy::unused_enumerate_index)]
