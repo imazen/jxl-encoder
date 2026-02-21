@@ -337,7 +337,7 @@ fn encode_lf_frame_multi_group(
     writer: &mut BitWriter,
 ) -> Result<()> {
     use crate::modular::encode::write_group_modular_section_idx;
-    use crate::modular::section::write_global_modular_section_with_tree_dc_quant;
+    use crate::modular::section::{GlobalTransforms, GroupTransforms, write_global_modular_section_with_tree_dc_quant};
 
     let num_groups_x = xsize_blocks.div_ceil(crate::GROUP_DIM);
     let num_groups_y = ysize_blocks.div_ceil(crate::GROUP_DIM);
@@ -370,7 +370,7 @@ fn encode_lf_frame_multi_group(
         &group_images,
         &mut lf_global_writer,
         profile,
-        None, // no RCT (XYB integer channels)
+        GlobalTransforms::rct_only(None), // no RCT (XYB integer channels)
         false,
         profile.lz77_method,
         Some(factors.dc_quant),
@@ -392,6 +392,7 @@ fn encode_lf_frame_multi_group(
                 group_image,
                 &global_state,
                 group_idx as u32,
+                &GroupTransforms::none(),
                 &mut group_writer,
             )?;
             pass_group_data.push(group_writer.finish());

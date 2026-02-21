@@ -27,7 +27,7 @@ pub(crate) use super::encode_tree::*;
 /// Write U32-encoded num_transforms value.
 ///
 /// Encoding: U32(Val(0), Val(1), BitsOffset(4,2), BitsOffset(8,18))
-fn write_num_transforms(writer: &mut BitWriter, num_transforms: u32) -> Result<()> {
+pub(crate) fn write_num_transforms(writer: &mut BitWriter, num_transforms: u32) -> Result<()> {
     match num_transforms {
         0 => writer.write(2, 0)?,
         1 => writer.write(2, 1)?,
