@@ -7,8 +7,7 @@
 use super::channel::ModularImage;
 use super::encode::{
     build_histogram_from_residuals, collect_all_residuals, write_global_modular_section,
-    write_group_modular_section_idx,
-    write_improved_modular_stream, write_modular_stream_with_tree,
+    write_group_modular_section_idx, write_improved_modular_stream, write_modular_stream_with_tree,
 };
 use super::section::write_global_modular_section_with_tree;
 use crate::GROUP_DIM;
@@ -199,10 +198,8 @@ impl FrameEncoder {
                     &mut section_writer,
                     self.options.use_ans,
                 )?;
-            } else if self.options.use_tree_learning
-                && self.options.use_ans
-                && super::palette::should_use_palette(image).is_none()
-            {
+            } else if self.options.use_tree_learning && self.options.use_ans {
+                // Tree learning: handles palette internally when beneficial
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,
@@ -304,12 +301,8 @@ impl FrameEncoder {
                     &mut section_writer,
                     self.options.use_ans,
                 )?;
-            } else if self.options.use_tree_learning
-                && self.options.use_ans
-                && super::palette::should_use_palette(image).is_none()
-            {
-                // Tree learning without squeeze: skip for images that benefit from palette
-                // (palette + tree learning has a meta-channel encoding mismatch)
+            } else if self.options.use_tree_learning && self.options.use_ans {
+                // Tree learning: handles palette internally when beneficial
                 write_modular_stream_with_tree(
                     image,
                     &mut section_writer,

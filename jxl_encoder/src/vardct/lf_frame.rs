@@ -287,6 +287,7 @@ pub(crate) fn encode_lf_frame(
             profile.lz77_method,
             Some(factors.dc_quant),
             Some(lossy_opts),
+            false, // no palette for lossy LfFrame
         )?;
 
         let section_data = section_writer.finish();
