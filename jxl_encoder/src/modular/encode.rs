@@ -1319,8 +1319,11 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
             };
             (0..num_color_channels)
                 .filter_map(|i| {
-                    super::palette::analyze_channel_compact(&image.channels[i], super::palette::CHANNEL_COLORS_PERCENT)
-                        .map(|a| (i, a))
+                    super::palette::analyze_channel_compact(
+                        &image.channels[i],
+                        super::palette::CHANNEL_COLORS_PERCENT,
+                    )
+                    .map(|a| (i, a))
                 })
                 .collect()
         } else {

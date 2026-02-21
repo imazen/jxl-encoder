@@ -708,7 +708,8 @@ pub(crate) fn find_text_like_patches(
                 vec![0.0f32; patch_n],
                 vec![0.0f32; patch_n],
             ];
-            let mut max_value = 0i32;
+            let mut is_small = true;
+            let mut too_big = false;
             for dy in 0..cc_h {
                 for dx in 0..cc_w {
                     let ix = min_x + dx;
@@ -719,14 +720,26 @@ pub(crate) fn find_text_like_patches(
                         let val = xyb[c][src_i] - ref_color[c];
                         fpixels[c][dst_i] = val;
                         let q = safe_trunc_to_i32(val / cs.channel_dequant[c]);
+                        // Reject patch if any value overflows i8 range (libjxl b6e9d19)
+                        if !(-128..=127).contains(&q) {
+                            too_big = true;
+                        }
                         qpixels[c][dst_i] = q.clamp(-128, 127) as i8;
-                        max_value = max_value.max(q.abs());
+                        // Use boolean check instead of abs() to avoid i32::MIN panic
+                        // (libjxl 2f10c05)
+                        is_small &= q < MIN_PEAK && q > -MIN_PEAK;
                     }
                 }
             }
 
-            // kMinPeak check: reject patches where max quantized magnitude < 2
-            if max_value < MIN_PEAK {
+            // Reject patches where quantized values overflow i8 (libjxl b6e9d19)
+            if too_big {
+                stat_reject_low_peak += 1;
+                continue;
+            }
+
+            // kMinPeak check: reject patches where all quantized magnitudes < MIN_PEAK
+            if is_small {
                 stat_reject_low_peak += 1;
                 debug_rect!(
                     "patches/cc_reject",
@@ -734,7 +747,7 @@ pub(crate) fn find_text_like_patches(
                     min_y,
                     cc_w,
                     cc_h,
-                    "CC rejected: peak {max_value} < {MIN_PEAK}"
+                    "CC rejected: all values < {MIN_PEAK}"
                 );
                 continue;
             }
@@ -747,7 +760,7 @@ pub(crate) fn find_text_like_patches(
                 min_y,
                 cc_w,
                 cc_h,
-                "CC accepted: {cc_w}x{cc_h} peak={max_value}"
+                "CC accepted: {cc_w}x{cc_h}"
             );
 
             let patch = QuantizedPatch {

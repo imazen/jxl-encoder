@@ -347,16 +347,20 @@ impl VarDctEncoder {
         }
 
         // (F) Activity-based quant reduction
+        // Matches libjxl ae5cb19: float-domain min + early exit to avoid
+        // i32 overflow on HDR inputs where hf_nonzeros can exceed i32::MAX.
         {
             let div = (xsize * ysize) as i32;
-            let mut activity = (hf_nonzeros[0] as i32 + div / 2) / div;
+            let min_hf_nonzeros = hf_nonzeros[0]
+                .min(hf_nonzeros[1])
+                .min(hf_nonzeros[2])
+                .min(hf_nonzeros[3]);
+            let activity = if min_hf_nonzeros < 15.0 * div as f32 {
+                ((min_hf_nonzeros as i32) + div / 2) / div
+            } else {
+                15
+            };
             let orig_qp_limit = (*quant / 2).max(4);
-            for hf_nz in &hf_nonzeros[1..4] {
-                activity = activity.min((*hf_nz as i32 + div / 2) / div);
-            }
-            if activity >= 15 {
-                activity = 15;
-            }
             let mut qp = *quant - activity;
             if c == 1 {
                 for t in thresholds[1..4].iter_mut() {
