@@ -359,6 +359,9 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
+- **Tuning Parameters**: MAX_PALETTE_COLORS (1024) and CHANNEL_COLORS_PERCENT (95.0) are currently
+  hardcoded constants in `palette.rs`. These should eventually move to `EffortProfile` or a dedicated
+  `ModularTuning` struct (not a spec limit — encoder-only from libjxl's `enc_params.h:121, 118`).
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
 - ~~**LfFrame overhead**~~: RESOLVED (Feb 20, 2026). Two bugs fixed:
   1. **Lossy modular quantization** (tree leaf multiplier): implemented Squeeze + quantize +
