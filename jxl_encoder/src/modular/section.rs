@@ -275,6 +275,7 @@ pub fn write_global_modular_section_with_tree(
     transforms: GlobalTransforms,
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    meta_image: Option<&ModularImage>,
 ) -> Result<GlobalModularState> {
     write_global_modular_section_with_tree_dc_quant(
         images,
@@ -284,10 +285,12 @@ pub fn write_global_modular_section_with_tree(
         use_lz77,
         lz77_method,
         None,
+        meta_image,
     )
 }
 
 /// Like [`write_global_modular_section_with_tree`] but with custom dc_quant for LfFrame.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     images: &[ModularImage],
     writer: &mut BitWriter,
@@ -296,6 +299,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
+    meta_image: Option<&ModularImage>,
 ) -> Result<GlobalModularState> {
     use super::encode::write_tree;
     use super::encode::write_wp_header;
@@ -310,8 +314,11 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use crate::entropy_coding::lz77::write_lz77_header;
 
     // Step 0: Find best WP parameters (effort-dependent search)
-    let all_channels: Vec<&super::channel::Channel> =
-        images.iter().flat_map(|img| img.channels.iter()).collect();
+    let all_channels: Vec<&super::channel::Channel> = meta_image
+        .into_iter()
+        .chain(images.iter())
+        .flat_map(|img| img.channels.iter())
+        .collect();
     let wp_params = if profile.wp_num_param_sets > 0 {
         // Collect channel references for cost estimation
         let channels_for_wp: Vec<super::channel::Channel> =
@@ -322,18 +329,32 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     };
 
     // Step 1: Gather samples from all groups (with subsampling for large images)
-    let total_pixels: usize = images
-        .iter()
+    let total_pixels: usize = meta_image
+        .into_iter()
+        .chain(images.iter())
         .flat_map(|img| img.channels.iter())
         .map(|ch| ch.width() * ch.height())
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
     let mut samples = TreeSamples::new();
+    // Gather meta-channel samples first (channel_offset=0, group_id=0)
+    if let Some(meta) = meta_image {
+        gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
+    }
+    // Gather per-group samples (channel_offset=0: per-group images use 0-based
+    // channel indices, matching the decoder which builds per-group images with
+    // only the non-meta channels. The tree distinguishes meta from per-group
+    // via group_id property, not channel_idx offset.)
+    //
+    // When meta-channels exist in the global section (group_id=0), per-group
+    // channels use group_id = 1 + group_idx to avoid collision. This lets the
+    // tree split on group_id > 0 to separate meta from per-group data.
+    let per_group_id_offset = if meta_image.is_some() { 1u32 } else { 0u32 };
     for (group_idx, group_image) in images.iter().enumerate() {
         gather_samples_strided(
             &mut samples,
             group_image,
-            group_idx as u32,
+            group_idx as u32 + per_group_id_offset,
             0,
             stride,
             &wp_params,
@@ -366,9 +387,23 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
 
     // Step 3: Collect residuals from all groups with tree
     let mut all_tokens = Vec::new();
+    // Collect meta-channel residuals first (channel_offset=0, group_id=0)
+    let nb_meta_tokens = if let Some(meta) = meta_image {
+        let meta_tokens = collect_residuals_with_tree(meta, &tree, 0, &wp_params);
+        let n = meta_tokens.len();
+        all_tokens.extend(meta_tokens);
+        n
+    } else {
+        0
+    };
+    // Collect per-group residuals (channel_offset=0, group_id offset matches gather above)
     for (group_idx, group_image) in images.iter().enumerate() {
-        let group_tokens =
-            collect_residuals_with_tree(group_image, &tree, group_idx as u32, &wp_params);
+        let group_tokens = collect_residuals_with_tree(
+            group_image,
+            &tree,
+            group_idx as u32 + per_group_id_offset,
+            &wp_params,
+        );
         all_tokens.extend(group_tokens);
     }
 
@@ -438,13 +473,23 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     writer.write(1, 1)?; // use_global_tree = true
     write_wp_header(writer, &wp_params)?;
     write_global_transforms_full(writer, &transforms)?;
+
+    // Write meta-channel tokens (palette data) in the global section, after GroupHeader.
+    // These are part of the global modular image — they stay whole (not split across groups).
+    if nb_meta_tokens > 0 {
+        let meta_token_slice = &all_tokens[..nb_meta_tokens];
+        write_tokens_ans(meta_token_slice, &code, None, writer)?;
+    }
+
     let total_lf_global_bits = writer.bits_written() - bits_before;
     eprintln!(
-        "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), total={} bits ({} B)",
+        "DIAG LfGlobal: tree={} bits ({} B), histo={} bits ({} B), \
+         meta_tokens={}, total={} bits ({} B)",
         tree_bits,
         tree_bits / 8,
         histo_bits,
         histo_bits / 8,
+        nb_meta_tokens,
         total_lf_global_bits,
         total_lf_global_bits / 8,
     );
@@ -650,7 +695,9 @@ pub fn write_group_modular_section_idx(
             tree,
             wp_params,
         } => {
-            // Collect residuals using the learned tree (multi-context)
+            // Collect residuals using the learned tree (multi-context).
+            // Per-group images use 0-based channel indices (matching the decoder,
+            // which builds per-group images with only non-meta channels).
             let tokens = super::tree_learn::collect_residuals_with_tree(
                 group_image,
                 tree,
