@@ -358,7 +358,10 @@ impl EffortProfile {
             6 => 5,
             7 => 7,
             8 => 10,
-            _ => 15, // All properties
+            // 16 = all properties including group_id.
+            // Non-squeeze array has 15 elements, so .min(15) caps correctly.
+            // Squeeze array has 16 elements (group_id always included).
+            _ => 16,
         }
     }
 
@@ -464,7 +467,7 @@ mod tests {
         assert!(p.enhanced_clustering_vardct); // e9+
         assert_eq!(p.nb_rcts_to_try, 19);
         assert_eq!(p.wp_num_param_sets, 5); // e9+
-        assert_eq!(p.tree_num_properties, 15);
+        assert_eq!(p.tree_num_properties, 16);
         assert_eq!(p.tree_max_buckets, 256);
     }
 

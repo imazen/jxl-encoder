@@ -1431,10 +1431,29 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         .unwrap_or(0) as i32;
     let (tokens, lz77_params) = if use_lz77 {
         match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
-            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
-            None => (tokens, None),
+            Some((lz77_tokens, params)) => {
+                crate::trace::debug_eprintln!(
+                    "SQUEEZE LZ77: {} → {} tokens ({:.1}x), method={:?}, dm={}",
+                    tokens.len(),
+                    lz77_tokens.len(),
+                    tokens.len() as f64 / lz77_tokens.len() as f64,
+                    lz77_method,
+                    dist_multiplier,
+                );
+                (lz77_tokens, Some(params))
+            }
+            None => {
+                crate::trace::debug_eprintln!(
+                    "SQUEEZE LZ77: not cost-effective, method={:?}, dm={}, {} tokens",
+                    lz77_method,
+                    dist_multiplier,
+                    tokens.len(),
+                );
+                (tokens, None)
+            }
         }
     } else {
+        crate::trace::debug_eprintln!("SQUEEZE LZ77: disabled");
         (tokens, None)
     };
     let ans_num_contexts = if lz77_params.is_some() {
@@ -1453,6 +1472,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     );
 
     // Step 7: Write bitstream
+    let _bit0 = writer.bits_written();
     // dc_quant.all_default = true
     writer.write(1, 1)?;
     // has_tree = true
@@ -1460,6 +1480,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
 
     // Write the learned tree
     write_tree(writer, &tree)?;
+    let _bit_after_tree = writer.bits_written();
 
     // Write LZ77 header + ANS data histogram
     if ans_num_contexts > 1 {
@@ -1469,6 +1490,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         use super::section::write_ans_modular_header;
         write_ans_modular_header(writer, &code)?;
     }
+    let _bit_after_histo = writer.bits_written();
 
     // GroupHeader with transforms: RCT (if RGB) + Squeeze
     writer.write(1, 1)?; // use_global_tree = true
@@ -1484,6 +1506,17 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         writer.write(2, 1)?; // num_transforms = 1
         write_squeeze_transform(writer, &params)?;
     }
+    let _bit_after_header = writer.bits_written();
+    crate::trace::debug_eprintln!(
+        "SQUEEZE OVERHEAD: tree={} bits ({:.0}B), histograms={} bits ({:.0}B), header={} bits ({:.0}B), total_overhead={:.0}B",
+        _bit_after_tree - _bit0,
+        (_bit_after_tree - _bit0) as f64 / 8.0,
+        _bit_after_histo - _bit_after_tree,
+        (_bit_after_histo - _bit_after_tree) as f64 / 8.0,
+        _bit_after_header - _bit_after_histo,
+        (_bit_after_header - _bit_after_histo) as f64 / 8.0,
+        (_bit_after_header - _bit0) as f64 / 8.0,
+    );
 
     // Debug: verify ANS encoding correctness (skip when LZ77 active — verify doesn't handle LZ77 tokens)
     #[cfg(debug_assertions)]
@@ -1506,7 +1539,22 @@ pub fn write_modular_stream_with_squeeze_and_tree(
     }
 
     // Write ANS tokens
+    let _bit_before_data = writer.bits_written();
     write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+    let _bit_after_data = writer.bits_written();
+    crate::trace::debug_eprintln!(
+        "SQUEEZE DATA: {} bits ({:.0}B), {} tokens, {} histograms",
+        _bit_after_data - _bit_before_data,
+        (_bit_after_data - _bit_before_data) as f64 / 8.0,
+        tokens.len(),
+        code.histograms.len(),
+    );
+    crate::trace::debug_eprintln!(
+        "SQUEEZE TOTAL: {:.0}B (overhead {:.0}B + data {:.0}B)",
+        (_bit_after_data - _bit0) as f64 / 8.0,
+        (_bit_after_header - _bit0) as f64 / 8.0,
+        (_bit_after_data - _bit_before_data) as f64 / 8.0,
+    );
 
     writer.zero_pad_to_byte();
     Ok(())

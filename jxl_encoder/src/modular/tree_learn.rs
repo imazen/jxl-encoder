@@ -49,10 +49,32 @@ const CANDIDATE_PREDICTORS: &[Predictor] = &[
     Predictor::Average4,
 ];
 
-/// Non-squeeze lossless property order, matching libjxl's enc_modular.cc.
-/// Properties are ordered by likelihood of being useful for non-squeeze residuals.
-/// GroupId (1) is removed when num_groups < 30 (which is always true for us currently).
+/// Full non-squeeze property order, matching libjxl's enc_modular.cc:544.
+/// 16 elements with group_id at index 1. Used at effort 9+ (speed_tier <= kTortoise)
+/// where libjxl does NOT erase group_id.
 const PROP_ORDER_NO_SQUEEZE: &[usize] = &[
+    0,  // Channel
+    1,  // GroupId
+    15, // WpMaxError
+    9,  // W + N - NW (gradient)
+    10, // W - NW
+    11, // NW - N
+    12, // N - NE
+    13, // N - NN
+    14, // W - WW
+    2,  // Y
+    3,  // X
+    4,  // |N|
+    5,  // |W|
+    6,  // N
+    7,  // W
+    8,  // W - prev_gradient
+];
+
+/// Non-squeeze property order after group_id erasure, matching libjxl's
+/// enc_modular.cc:546-549. 15 elements. Used at effort < 9 for lossless
+/// modular with fewer than 30 streams (our typical single-group case).
+const PROP_ORDER_NO_SQUEEZE_NO_GID: &[usize] = &[
     0,  // Channel
     15, // WpMaxError
     9,  // W + N - NW (gradient)
@@ -73,9 +95,13 @@ const PROP_ORDER_NO_SQUEEZE: &[usize] = &[
 /// Squeeze-specific property order, matching libjxl's enc_modular.cc:538-541.
 /// Squeeze residuals (Haar wavelet coefficients) benefit from spatial correlation
 /// properties (|N|, |W|, N, W) earlier than gradient-difference properties.
-/// GroupId (1) is removed (same as non-squeeze path for few groups).
+///
+/// 16 elements. Property 1 (group_id) is always included for squeeze mode in
+/// libjxl — the group_id erasure only applies to non-squeeze lossless paths.
+/// At effort 7 (kSquirrel), first 7 properties = {0, 1, 4, 5, 6, 7, 8}.
 const PROP_ORDER_SQUEEZE: &[usize] = &[
     0,  // Channel
+    1,  // GroupId
     4,  // |N|
     5,  // |W|
     6,  // N
@@ -143,9 +169,15 @@ impl TreeLearningParams {
 
     fn from_profile_impl(profile: &crate::effort::EffortProfile, is_squeeze: bool) -> Self {
         let order = if is_squeeze {
+            // Squeeze always includes group_id (libjxl enc_modular.cc:538-541).
             PROP_ORDER_SQUEEZE
-        } else {
+        } else if profile.effort >= 9 {
+            // At effort 9+ (speed_tier <= kTortoise), libjxl keeps group_id.
             PROP_ORDER_NO_SQUEEZE
+        } else {
+            // At effort < 9 for lossless with <30 streams, libjxl erases group_id
+            // (enc_modular.cc:546-549). This is our typical single-group case.
+            PROP_ORDER_NO_SQUEEZE_NO_GID
         };
         let num_props = (profile.tree_num_properties as usize).min(order.len());
 
@@ -165,7 +197,12 @@ impl TreeLearningParams {
     /// Production code should use [`from_profile`](Self::from_profile) instead.
     #[cfg(test)]
     pub fn for_effort(effort: u8) -> Self {
-        let order = PROP_ORDER_NO_SQUEEZE;
+        // Match libjxl: e9+ keeps group_id, e<9 erases it for lossless with <30 streams.
+        let order = if effort >= 9 {
+            PROP_ORDER_NO_SQUEEZE
+        } else {
+            PROP_ORDER_NO_SQUEEZE_NO_GID
+        };
         let speed_tier = 10u8.saturating_sub(effort);
         let (num_props, max_property_values) = match effort {
             0..=4 => (3, 32),
