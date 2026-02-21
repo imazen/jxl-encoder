@@ -15,6 +15,7 @@ mod encode_tree;
 pub(crate) mod frame;
 pub(crate) mod palette;
 pub(crate) mod predictor;
+pub(crate) mod quantize;
 pub(crate) mod rct;
 pub(crate) mod section;
 pub(crate) mod squeeze;

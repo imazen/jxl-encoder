@@ -21,6 +21,7 @@ use crate::modular::channel::{Channel, ModularImage};
 /// Minimum butteraugli distance (libjxl kMinButteraugliDistance).
 /// libjxl enc_params.h:201: "Below d0.05 is not useful and risks going outside
 /// Level 5 limits (in particular modular_16bit_buffers becomes an issue for DC)"
+#[cfg(test)]
 const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
 
 /// Block dimension (must match common::BLOCK_DIM).
@@ -102,6 +103,7 @@ impl DcQuantFactors {
     /// dc_quant[c] = 1/enc_factors[c]
     /// ```
     /// Then F16-roundtripped through `dc_quant[c] * 128.0` for exact decoder parity.
+    #[cfg(test)]
     pub fn compute(main_distance: f32) -> Self {
         let dc_distance = (main_distance * 0.02).max(K_MIN_BUTTERAUGLI_DISTANCE * 0.02);
 
@@ -110,6 +112,21 @@ impl DcQuantFactors {
         enc_factors[1] /= 1.0 + 14.0 * dc_distance;
         enc_factors[2] /= 1.0 + 14.0 * dc_distance;
 
+        Self::from_enc_factors(enc_factors)
+    }
+
+    /// Full-precision DC quantization factors for lossy modular encoding.
+    ///
+    /// When lossy modular quantization is active (tree leaf multipliers handle
+    /// the lossy compression), the enc_factors should be at maximum precision
+    /// `[65536, 4096, 4096]` with no distance scaling. This preserves maximum
+    /// precision in the integer representation; lossy compression happens via
+    /// the Squeeze + quantize + multiplier pipeline instead.
+    pub fn full_precision() -> Self {
+        Self::from_enc_factors([65536.0, 4096.0, 4096.0])
+    }
+
+    fn from_enc_factors(enc_factors: [f32; 3]) -> Self {
         // F16 roundtrip to get exact decoder-matching factors.
         // The bitstream stores dc_quant[c] * 128.0 as F16.
         // The decoder reads F16, divides by 128 → gets dc_quant.
@@ -163,7 +180,10 @@ pub(crate) fn encode_lf_frame(
     effort: u8,
     writer: &mut BitWriter,
 ) -> Result<[Vec<f32>; 3]> {
-    let factors = DcQuantFactors::compute(main_distance);
+    // Use full-precision enc_factors: lossy compression happens via
+    // Squeeze + modular quantization (tree leaf multipliers), not via
+    // coarser enc_factors. This matches libjxl's responsive=1 path.
+    let factors = DcQuantFactors::full_precision();
 
     #[cfg(feature = "trace-bitstream")]
     {
@@ -253,11 +273,14 @@ pub(crate) fn encode_lf_frame(
     fh.write(writer)?;
 
     // Build modular image with 3 channels [Y, X, B-Y]
-    let mod_channels = vec![
-        Channel::from_vec(ch_y_data, xsize_blocks, ysize_blocks)?,
-        Channel::from_vec(ch_x_data, xsize_blocks, ysize_blocks)?,
-        Channel::from_vec(ch_by_data, xsize_blocks, ysize_blocks)?,
-    ];
+    // Set component indices for lossy modular quantization table lookup.
+    let mut ch_y = Channel::from_vec(ch_y_data, xsize_blocks, ysize_blocks)?;
+    let mut ch_x = Channel::from_vec(ch_x_data, xsize_blocks, ysize_blocks)?;
+    let mut ch_by = Channel::from_vec(ch_by_data, xsize_blocks, ysize_blocks)?;
+    ch_y.component = 0; // Y
+    ch_x.component = 1; // X
+    ch_by.component = 2; // B-Y
+    let mod_channels = vec![ch_y, ch_x, ch_by];
     let image = ModularImage {
         channels: mod_channels,
         bit_depth: 16, // Fixed-point representation
@@ -287,8 +310,12 @@ pub(crate) fn encode_lf_frame(
 
     if num_groups == 1 {
         // Single group: use write_modular_stream_with_tree_dc_quant for
-        // combined dc_quant + tree learning + modular encoding.
+        // combined dc_quant + tree learning + lossy modular encoding.
         let mut section_writer = BitWriter::new();
+
+        let lossy_opts = crate::modular::encode::LossyModularOptions {
+            distance: main_distance,
+        };
 
         crate::modular::encode::write_modular_stream_with_tree_dc_quant(
             &image,
@@ -298,7 +325,7 @@ pub(crate) fn encode_lf_frame(
             profile.lz77,
             profile.lz77_method,
             Some(factors.dc_quant),
-            false, // no Squeeze for pre-quantized DC data
+            Some(lossy_opts),
         )?;
 
         let section_data = section_writer.finish();
