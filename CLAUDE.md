@@ -359,10 +359,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
 - **LfFrame overhead**: +8.5% avg vs cjxl's +3.4% avg (down from +10.8% after effort fix).
-  Remaining 2.5x gap is modular encoding efficiency on DC integer data (large dynamic
-  range: Y up to 2649, B-Y up to -4201). Our regular lossless encoder matches cjxl on
-  128×128 RGB (12233 vs 12134 bytes), so the gap is specific to DC data characteristics.
-  Low priority since LfFrame is opt-in and for progressive display, not compression.
+  Remaining 2.5x gap is NOT modular encoder quality (we beat cjxl by 4.7% on generic
+  16-bit 128×128 data). Root cause: DC frame uses rct=false (XYB channels can't use RCT),
+  so channels remain somewhat correlated. libjxl's modular encoder at kKitten with
+  color_transform=kXYB may use XYB-specific inter-channel prediction. Fix would require
+  XYB-aware decorrelation in the DC frame modular path. Low priority since LfFrame is
+  opt-in and for progressive display, not compression.
 
 **Published**: v0.1.0 on crates.io (2026-02-14)
 
