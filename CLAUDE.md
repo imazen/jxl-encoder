@@ -195,7 +195,7 @@ Per-image detail (d=1.0 / d=2.0 / d=5.0):
 
 **Remaining size overhead (files 1-8% larger)**:
 - ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
-  Note: LfFrame is for progressive display, NOT compression. Adds +3.4% overhead in cjxl, +8.5% in ours.
+  LfFrame is for progressive display, NOT compression. Overhead: +1.2% to +3.8% file size.
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
 - Size overhead increases at higher distances (d=5.0: +4-8%)
@@ -308,10 +308,12 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - LfFrame (separate DC frame): IMPLEMENTED (Feb 20, 2026, opt-in via `--lf-frame`)
   - For progressive display (low-res DC preview before full decode), NOT compression
   - Separate modular frame (frame_type=1, dc_level=1) with DC at 1/8 resolution
-  - Distance-scaled enc_factors [65536, 4096, 4096] with F16 roundtrip for decoder parity
+  - Full-precision enc_factors [65536, 4096, 4096] with F16 roundtrip for decoder parity
   - Custom dc_quant in LfGlobal, USE_LF_FRAME flag on main frame
-  - Overhead: +8.5% avg (cjxl: +3.4% avg) — remaining gap is modular efficiency on DC data
-  - Verified pixel-exact with djxl and jxl-rs
+  - Lossy modular quantization (tree leaf multiplier) for DC data compression
+  - Float DC from transform pipeline (dc_from_dct_NxN) — NOT simple pixel averages
+  - Overhead: +1.2% to +3.8% avg (butteraugli within 2% of no-LfFrame)
+  - Verified with djxl and jxl-rs/jxl-oxide
 
 **Priority path:**
 1. ~~Fix DCT32x32~~ — DONE (enabled at d>=2.0, works correctly on smooth content)
@@ -358,14 +360,13 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 **Minor TODOs**:
 - `encoder.rs`: verify_histogram_serialization needs fix for all histogram method types
 - ~~**Lossy+alpha**~~: DONE (Feb 7, 2026). VarDCT RGB + modular alpha extra channel.
-- **LfFrame overhead**: +8.5% avg vs cjxl's +3.4% avg. Root cause identified (Feb 20):
-  libjxl uses `responsive=1` for DC frames — full-precision enc_factors [65536, 4096, 4096]
-  + Squeeze (Haar wavelet) + **lossy modular quantization** (multiplier field in tree leaves)
-  + Zero predictor. Our approach: distance-scaled enc_factors + no Squeeze + tree-learned
-  prediction + **lossless** modular encoding. The actual LfFrame data is 28% larger (51KB vs
-  40KB), not 2.5x. Tested: adding Squeeze alone to pre-quantized data makes it worse (+3KB).
-  Fix requires implementing lossy modular quantization (tree leaf multiplier field). Low
-  priority since LfFrame is opt-in for progressive display, not compression.
+- ~~**LfFrame overhead**~~: RESOLVED (Feb 20, 2026). Two bugs fixed:
+  1. **Lossy modular quantization** (tree leaf multiplier): implemented Squeeze + quantize +
+     forced tree splits + residual division, matching libjxl's `responsive=1` path.
+  2. **Float DC from dc_from_dct_NxN**: compute_float_dc used simple pixel averages (sum/64),
+     which diverge from dc_from_dct_NxN for DCT16+ (up to 31% error). Now extracts correct
+     DC values from the transform pipeline. Before: butteraugli +113% to +699%. After: within 2%.
+  LfFrame overhead: +1.2% to +3.8% file size (butteraugli -2% to +1%).
 
 **Published**: v0.1.0 on crates.io (2026-02-14)
 
