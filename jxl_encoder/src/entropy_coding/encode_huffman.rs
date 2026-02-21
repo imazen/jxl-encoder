@@ -370,13 +370,19 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
         index_right_or_value: i16,
     }
 
-    fn set_depth(p: &HuffmanNode, pool: &[HuffmanNode], depth: &mut [u8], level: u8) {
-        if p.index_left >= 0 {
-            let level = level + 1;
-            set_depth(&pool[p.index_left as usize], pool, depth, level);
-            set_depth(&pool[p.index_right_or_value as usize], pool, depth, level);
-        } else {
-            depth[p.index_right_or_value as usize] = level;
+    fn set_depth(pool: &[HuffmanNode], root_idx: usize, depth: &mut [u8]) {
+        // Iterative DFS to avoid stack overflow on deep/degenerate Huffman trees.
+        let mut stack: Vec<(usize, u8)> = Vec::with_capacity(64);
+        stack.push((root_idx, 0));
+        while let Some((idx, level)) = stack.pop() {
+            let node = &pool[idx];
+            if node.index_left >= 0 {
+                let next_level = level + 1;
+                stack.push((node.index_left as usize, next_level));
+                stack.push((node.index_right_or_value as usize, next_level));
+            } else {
+                depth[node.index_right_or_value as usize] = level;
+            }
         }
     }
 
@@ -456,7 +462,7 @@ pub fn create_huffman_tree(data: &[u32], length: usize, tree_limit: u8, depth: &
             *d = 0;
         }
 
-        set_depth(&tree[2 * n - 1], &tree, depth, 0);
+        set_depth(&tree, 2 * n - 1, depth);
 
         // Check if depths are within limit
         let max_depth = depth.iter().take(length).copied().max().unwrap_or(0);

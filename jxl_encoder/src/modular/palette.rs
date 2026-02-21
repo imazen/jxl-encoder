@@ -13,6 +13,17 @@ use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
+/// Maximum number of palette colors to consider for multi-channel palette.
+/// Matches libjxl `enc_params.h:121` (`palette_colors = 1 << 10`).
+/// This is an encoder-only tuning parameter, not a spec limit.
+pub const MAX_PALETTE_COLORS: usize = 1024;
+
+/// Percentage threshold for per-channel compaction (ChannelCompact).
+/// A channel is compacted when its unique value count is below this
+/// percentage of its value range. Matches libjxl
+/// `enc_params.h:118` (`channel_colors_pre_transform_percent = 95.0`).
+pub const CHANNEL_COLORS_PERCENT: f32 = 95.0;
+
 // ── Delta palette constants (72 entries, from libjxl palette.h) ──────────────
 
 /// 72 built-in delta palette entries. Each is [R, G, B].
@@ -1127,7 +1138,7 @@ pub fn should_use_palette(image: &ModularImage) -> Option<(usize, usize)> {
     }
 
     // Matches libjxl enc_params.h:121 (palette_colors = 1 << 10)
-    let max_colors = 1024usize;
+    let max_colors = MAX_PALETTE_COLORS;
     let analysis = analyze_palette(image, 0, num_color_channels, max_colors);
 
     if analysis.use_palette {
