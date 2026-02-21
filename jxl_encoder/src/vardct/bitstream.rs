@@ -254,6 +254,7 @@ impl VarDctEncoder {
         learned_tree_tokens: Option<&[(u32, u32)]>,
         patches: Option<&super::patches::PatchesData>,
         splines: Option<&super::splines::SplinesData>,
+        dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         #[cfg(feature = "debug-tokens")]
@@ -289,7 +290,7 @@ impl VarDctEncoder {
             write_noise_params(noise, writer)?;
         }
 
-        writer.write(1, 1)?; // default dequant dc
+        crate::f16::write_lf_quant(writer, dc_quant_custom)?;
 
         #[cfg(feature = "debug-tokens")]
         let after_dequant_dc = writer.bits_written();
@@ -1004,6 +1005,7 @@ impl VarDctEncoder {
             Some(frame_options),
             None, // No patches in animation frames
             None, // No splines in animation frames
+            None, // No LfFrame in animation frames
             writer,
         )?;
 
@@ -1051,10 +1053,10 @@ impl VarDctEncoder {
         // The encode returns decoded-back DC values (quantize→dequantize roundtrip)
         // matching libjxl's decode-back step (enc_cache.cc:195-222). These represent
         // the exact DC values the decoder will reconstruct from the LfFrame.
-        if self.use_lf_frame
+        let lf_dc_quant: Option<[f32; 3]> = if self.use_lf_frame
             && let Some(dc) = float_dc
         {
-            let _decoded_dc = super::lf_frame::encode_lf_frame(
+            let (_decoded_dc, dc_quant) = super::lf_frame::encode_lf_frame(
                 dc,
                 self.distance,
                 xsize_blocks,
@@ -1064,10 +1066,10 @@ impl VarDctEncoder {
                 &mut writer,
             )?;
             writer.zero_pad_to_byte();
-            // TODO: Wire decoded_dc into reconstruction pipeline for butteraugli loop
-            // parity. Currently the reconstruction uses quant_dc from the main VarDCT
-            // transform path, which is numerically equivalent for lossless modular.
-        }
+            Some(dc_quant)
+        } else {
+            None
+        };
 
         // If patches present, write the reference frame before the main frame.
         // The reference frame is a modular FrameType::ReferenceOnly frame that
@@ -1124,6 +1126,7 @@ impl VarDctEncoder {
             None,
             patches,
             splines,
+            lf_dc_quant,
             &mut writer,
         )?;
 
@@ -1162,6 +1165,7 @@ impl VarDctEncoder {
         frame_options: Option<&FrameOptions>,
         patches: Option<&super::patches::PatchesData>,
         splines: Option<&super::splines::SplinesData>,
+        dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
     ) -> Result<()> {
         // ── Pass 1: Collect tokens per section ──
@@ -1867,6 +1871,7 @@ impl VarDctEncoder {
                 learned_tree_tokens.as_deref(),
                 patches,
                 splines,
+                dc_quant_custom,
                 &mut dc_global,
             )?;
 
@@ -1932,6 +1937,7 @@ impl VarDctEncoder {
                 learned_tree_tokens.as_deref(),
                 patches,
                 splines,
+                dc_quant_custom,
                 &mut dc_global,
             )?;
             // Multi-group alpha: write empty modular global sub-bitstream.

@@ -1123,15 +1123,35 @@ pub fn write_modular_stream_with_tree(
         use_lz77,
         lz77_method,
         None,
-        false,
+        None, // no lossy modular options
     )
 }
 
-/// Like [`write_modular_stream_with_tree`] but with a custom dc_quant for LfFrame support.
+/// Options for lossy modular encoding (Squeeze + quantization + tree leaf multipliers).
+///
+/// When enabled, the encoder:
+/// 1. Always applies Squeeze transform
+/// 2. Computes per-channel quantizers from distance and XYB qtables
+/// 3. Pre-quantizes channel pixels to nearest multiples of q
+/// 4. Forces tree splits at channel boundaries so each leaf gets its multiplier
+/// 5. Divides residuals by multiplier (decoder reconstructs via multiplication)
+/// 6. Forces Zero predictor (guarantees residual divisibility invariant)
+#[derive(Debug, Clone, Copy)]
+pub struct LossyModularOptions {
+    /// Butteraugli distance for quantizer computation.
+    pub distance: f32,
+}
+
+/// Like [`write_modular_stream_with_tree`] but with a custom dc_quant for LfFrame support
+/// and optional lossy modular quantization.
 ///
 /// When `dc_quant_custom` is `Some([x, y, b])`, writes custom DC quantization factors
 /// instead of `all_default=true`. Used by the LfFrame encoder to embed distance-scaled
 /// DC quant values in the modular frame's LfGlobal section.
+///
+/// When `lossy_options` is `Some(...)`, enables the full lossy modular pipeline:
+/// Squeeze + pre-quantization + forced tree splits with multipliers + Zero predictor.
+/// This replaces the `use_squeeze: bool` parameter for the responsive path.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_modular_stream_with_tree_dc_quant(
     image: &ModularImage,
@@ -1141,31 +1161,35 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     use_lz77: bool,
     lz77_method: crate::entropy_coding::lz77::Lz77Method,
     dc_quant_custom: Option<[f32; 3]>,
-    use_squeeze: bool,
+    lossy_options: Option<LossyModularOptions>,
 ) -> Result<()> {
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, gather_samples_strided,
+        compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
+        gather_samples_strided,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
     use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
 
+    let is_lossy = lossy_options.is_some();
+
     // Select best RCT variant by trying multiple candidates (effort-dependent).
     // Tree learning uses RCT only (not palette) because palette+tree has a
     // meta-channel encoding mismatch that causes decoder failures.
-    let (work_image, rct_type) = if rct && image.channels.len() >= 3 {
+    // Lossy modular skips RCT — channels are already in XYB integer space.
+    let (work_image, rct_type) = if !is_lossy && rct && image.channels.len() >= 3 {
         let (selected_rct, transformed) = select_best_rct(image, profile.nb_rcts_to_try);
         (transformed, Some(selected_rct))
     } else {
         (image.clone(), None)
     };
 
-    // Optionally apply Squeeze (Haar wavelet) for spatial decorrelation.
-    // libjxl uses Squeeze for DC frames (responsive=1 path), which produces
-    // much smaller residuals than flat prediction on smooth DC data.
-    let squeeze_params = if use_squeeze {
+    // Apply Squeeze (Haar wavelet) for spatial decorrelation.
+    // For lossy modular, Squeeze is always applied (matching libjxl responsive=1).
+    // For lossless, it's never applied here (separate squeeze+tree path exists).
+    let squeeze_params = if is_lossy {
         use super::squeeze::default_squeeze_params;
         let params = default_squeeze_params(&work_image);
         if !params.is_empty() {
@@ -1181,8 +1205,49 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         super::squeeze::apply_squeeze(&mut work_image, params)?;
     }
 
-    // Step 0: Find best WP parameters (effort-dependent search)
-    let wp_params = if profile.wp_num_param_sets > 0 {
+    // Lossy modular: compute per-channel quantizers, pre-quantize, build multiplier info.
+    let multiplier_info = if let Some(lossy) = lossy_options {
+        use super::quantize::{
+            build_multiplier_info, compute_channel_quantizer_xyb, quantize_channel,
+        };
+
+        let mut quants = Vec::new();
+        for ch in work_image.channels.iter_mut() {
+            let component = ch.component;
+            if !(0..3).contains(&component) {
+                // Non-XYB channel (shouldn't happen for LfFrame, but be safe)
+                quants.push(1);
+                continue;
+            }
+            let q = compute_channel_quantizer_xyb(
+                component as usize,
+                ch.hshift,
+                ch.vshift,
+                lossy.distance,
+            );
+            quantize_channel(ch, q);
+            quants.push(q);
+        }
+
+        let info = build_multiplier_info(&quants, 0);
+
+        crate::trace::debug_eprintln!(
+            "LOSSY_MODULAR: distance={:.2}, {} channels, quants={:?}, {} mul_info entries",
+            lossy.distance,
+            work_image.channels.len(),
+            quants,
+            info.len(),
+        );
+
+        Some(info)
+    } else {
+        None
+    };
+
+    // Step 0: WP parameters.
+    // For lossy modular with Zero predictor, WP is unused but we still need
+    // valid params for the gather phase (which computes WP for all predictors).
+    let wp_params = if !is_lossy && profile.wp_num_param_sets > 0 {
         super::predictor::find_best_wp_params(&work_image.channels, profile.wp_num_param_sets)
     } else {
         super::predictor::WeightedPredictorParams::default()
@@ -1207,12 +1272,20 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     let params = TreeLearningParams::from_profile(profile)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
-    let tree = compute_best_tree(&mut samples, &params);
+
+    let tree = if let Some(ref mul_info) = multiplier_info {
+        // Lossy: use forced-split tree learning with multiplier info
+        let num_channels = work_image.channels.len() as u32;
+        let initial_range = [[0, num_channels], [0, 1]];
+        compute_best_tree_with_multipliers(&mut samples, &params, mul_info, initial_range)
+    } else {
+        compute_best_tree(&mut samples, &params)
+    };
     let num_contexts = count_contexts(&tree) as usize;
 
     crate::trace::debug_eprintln!(
         "TREE_LEARN: effort={}, {} props, {} max_buckets, threshold={:.0}*{:.3}={:.1}, \
-         {} nodes, {} leaves/contexts, {} samples",
+         {} nodes, {} leaves/contexts, {} samples, lossy={}",
         profile.effort,
         params.properties.len(),
         params.max_property_values,
@@ -1221,7 +1294,8 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         params.split_threshold * (params.pixel_fraction * 0.9 + 0.1),
         tree.len(),
         num_contexts,
-        samples.num_samples
+        samples.num_samples,
+        is_lossy,
     );
 
     // Step 3: Collect residuals with learned tree
@@ -1303,6 +1377,172 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
                 image.width(),
                 image.height(),
                 "ROUNDTRIP FAILED for tree learning data (ctx={} histo={} tokens={}): {:?}",
+                num_contexts,
+                code.histograms.len(),
+                tokens.len(),
+                roundtrip_result
+            );
+        }
+    }
+
+    // Write ANS tokens
+    write_tokens_ans(&tokens, &code, lz77_params.as_ref(), writer)?;
+
+    writer.zero_pad_to_byte();
+    Ok(())
+}
+
+/// Write a pre-squeezed, pre-quantized modular stream with tree leaf multipliers.
+///
+/// This function is used by the LfFrame encoder when lossy modular quantization
+/// is active. The caller has already:
+/// 1. Applied Squeeze transform to the image
+/// 2. Pre-quantized each channel (pixels are multiples of their channel's q)
+/// 3. Built the multiplier_info for forced tree splits
+///
+/// This function handles:
+/// - Writing dc_quant (custom values for LfFrame)
+/// - Writing the Squeeze transform descriptor
+/// - Tree learning with forced splits at channel boundaries
+/// - Residual collection with division by multiplier
+/// - ANS entropy coding and bitstream assembly
+///
+/// Zero predictor is forced for all leaves with multiplier > 1, guaranteeing
+/// the residual divisibility invariant (residual % multiplier == 0).
+#[allow(clippy::too_many_arguments, dead_code)]
+pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    profile: &crate::effort::EffortProfile,
+    use_lz77: bool,
+    lz77_method: crate::entropy_coding::lz77::Lz77Method,
+    dc_quant_custom: Option<[f32; 3]>,
+    squeeze_params: &[super::squeeze::SqueezeParams],
+    multiplier_info: &[super::quantize::ModularMultiplierInfo],
+    _quants: &[i32],
+) -> Result<()> {
+    use super::tree::count_contexts;
+    use super::tree_learn::{
+        TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
+        compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
+        gather_samples_strided,
+    };
+    use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
+    use crate::entropy_coding::encode::write_entropy_code_ans;
+    use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header};
+
+    // WP parameters: default (Zero predictor is forced for lossy leaves,
+    // but WP params are still needed for the gather phase).
+    let wp_params = super::predictor::WeightedPredictorParams::default();
+
+    // Step 1: Gather samples (with subsampling for large images)
+    let total_pixels: usize = image
+        .channels
+        .iter()
+        .map(|ch| ch.width() * ch.height())
+        .sum();
+    let stride = compute_gather_stride_from_profile(total_pixels, profile);
+    let mut samples = TreeSamples::new();
+    gather_samples_strided(&mut samples, image, 0, 0, stride, &wp_params);
+
+    // Step 2: Learn tree with forced splits for multiplier info
+    let pixel_fraction = if total_pixels > 0 {
+        samples.num_samples as f64 / total_pixels as f64
+    } else {
+        1.0
+    };
+    let params = TreeLearningParams::from_profile(profile)
+        .with_pixel_fraction(pixel_fraction)
+        .with_total_pixels(total_pixels);
+
+    let tree = if !multiplier_info.is_empty() {
+        let num_channels = image.channels.len() as u32;
+        let initial_range = [[0, num_channels], [0, 1]];
+        compute_best_tree_with_multipliers(&mut samples, &params, multiplier_info, initial_range)
+    } else {
+        compute_best_tree(&mut samples, &params)
+    };
+    let num_contexts = count_contexts(&tree) as usize;
+
+    crate::trace::debug_eprintln!(
+        "PRESQUEEZED_TREE: {} nodes, {} contexts, {} samples, {} mul_info entries",
+        tree.len(),
+        num_contexts,
+        samples.num_samples,
+        multiplier_info.len(),
+    );
+
+    // Step 3: Collect residuals with learned tree
+    let tokens = collect_residuals_with_tree(image, &tree, 0, &wp_params);
+
+    // Step 3b: Optionally apply LZ77 to the token stream
+    let dist_multiplier = image.channels.iter().map(|c| c.width()).max().unwrap_or(0) as i32;
+    let (tokens, lz77_params) = if use_lz77 {
+        match apply_lz77(&tokens, num_contexts, false, lz77_method, dist_multiplier) {
+            Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+            None => (tokens, None),
+        }
+    } else {
+        (tokens, None)
+    };
+    let ans_num_contexts = if lz77_params.is_some() {
+        num_contexts + 1
+    } else {
+        num_contexts
+    };
+
+    // Step 4: Build multi-context ANS code
+    let code = build_entropy_code_ans_with_options(
+        &tokens,
+        ans_num_contexts,
+        true,
+        lz77_params.as_ref(),
+        Some(total_pixels),
+    );
+
+    // Step 5: Write bitstream
+    // dc_quant header
+    crate::f16::write_lf_quant(writer, dc_quant_custom)?;
+    // has_tree = true
+    writer.write(1, 1)?;
+
+    // Write the learned tree
+    write_tree(writer, &tree)?;
+
+    // Write LZ77 header + ANS data histogram
+    if ans_num_contexts > 1 {
+        write_lz77_header(lz77_params.as_ref(), writer)?;
+        write_entropy_code_ans(&code, writer)?;
+    } else {
+        use super::section::write_ans_modular_header;
+        write_ans_modular_header(writer, &code)?;
+    }
+
+    // GroupHeader
+    writer.write(1, 1)?; // use_global_tree = true
+    write_wp_header(writer, &wp_params)?;
+
+    // Squeeze transform descriptor (1 transform)
+    let has_squeeze = !squeeze_params.is_empty();
+    if has_squeeze {
+        writer.write(2, 1)?; // num_transforms = 1
+        write_squeeze_transform(writer, squeeze_params)?;
+    } else {
+        writer.write(2, 0)?; // num_transforms = 0
+    }
+
+    // Debug: verify ANS encoding correctness
+    #[cfg(debug_assertions)]
+    if lz77_params.is_none() {
+        let roundtrip_result = crate::entropy_coding::encode::verify_ans_roundtrip(&tokens, &code);
+        if roundtrip_result.is_err() {
+            crate::debug_rect!(
+                "ans/verify",
+                0,
+                0,
+                image.width(),
+                image.height(),
+                "ROUNDTRIP FAILED for presqueezed data (ctx={} histo={} tokens={}): {:?}",
                 num_contexts,
                 code.histograms.len(),
                 tokens.len(),
