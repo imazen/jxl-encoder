@@ -37,10 +37,17 @@ pub(crate) struct TransformOutput {
     pub quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     pub nzeros: [Vec<Vec<u8>>; 3],
     pub raw_nzeros: [Vec<Vec<u16>>; 3],
+    /// Raw (pre-CfL, pre-quantization) float DC values from dc_from_dct_NxN.
+    /// These are the correct per-8×8-block DC values that account for multi-block
+    /// transform structure (e.g., for DCT16, these come from the 16×16 DCT's LLF
+    /// via inverse reinterpreting DCT, NOT from simple 8×8 sub-block pixel averages).
+    /// Layout: `[channel][by * xsize_blocks + bx]` in XYB channel order.
+    pub float_dc: [Vec<f32>; 3],
 }
 
 impl TransformOutput {
     pub fn new(xsize_blocks: usize, ysize_blocks: usize) -> Self {
+        let n = xsize_blocks * ysize_blocks;
         Self {
             quant_dc: core::array::from_fn(|_| vec![vec![0i16; xsize_blocks]; ysize_blocks]),
             quant_ac: core::array::from_fn(|_| {
@@ -48,6 +55,7 @@ impl TransformOutput {
             }),
             nzeros: core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]),
             raw_nzeros: core::array::from_fn(|_| vec![vec![0u16; xsize_blocks]; ysize_blocks]),
+            float_dc: core::array::from_fn(|_| vec![0.0f32; n]),
         }
     }
 
@@ -68,6 +76,7 @@ impl TransformOutput {
             for row in &mut self.raw_nzeros[c] {
                 row.fill(0);
             }
+            self.float_dc[c].fill(0.0);
         }
     }
 }
@@ -316,6 +325,7 @@ impl VarDctEncoder {
         let quant_ac = &mut out.quant_ac;
         let nzeros = &mut out.nzeros;
         let raw_nzeros = &mut out.raw_nzeros;
+        let float_dc = &mut out.float_dc;
 
         let channels = [xyb_x, xyb_y, xyb_b];
 
@@ -412,6 +422,7 @@ impl VarDctEncoder {
                                 params.scale_dc,
                                 (dct_coeffs[1][0] * inv_factor).round() as i16
                             );
+                            float_dc[1][by * xsize_blocks + bx] = dct_coeffs[1][0];
                             quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT16X8 => {
@@ -420,6 +431,7 @@ impl VarDctEncoder {
                                 .expect("128 coefficients for DCT16x8");
                             let dcs = dc_from_dct_16x8(&coeffs_arr);
                             for iy in 0..2 {
+                                float_dc[1][(by + iy) * xsize_blocks + bx] = dcs[iy];
                                 quant_dc[1][by + iy][bx] = (dcs[iy] * inv_factor).round() as i16;
                             }
                         }
@@ -429,6 +441,7 @@ impl VarDctEncoder {
                                 .expect("128 coefficients for DCT8x16");
                             let dcs = dc_from_dct_8x16(&coeffs_arr);
                             for ix in 0..2 {
+                                float_dc[1][by * xsize_blocks + bx + ix] = dcs[ix];
                                 quant_dc[1][by][bx + ix] = (dcs[ix] * inv_factor).round() as i16;
                             }
                         }
@@ -454,6 +467,8 @@ impl VarDctEncoder {
                             );
                             for iy in 0..2 {
                                 for ix in 0..2 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 2 + ix];
                                     let qdc = (dcs[iy * 2 + ix] * inv_factor).round() as i16;
                                     #[cfg(feature = "debug-dc")]
                                     eprintln!(
@@ -490,6 +505,8 @@ impl VarDctEncoder {
                             // dcs = 16 DC values in row-major 4x4
                             for iy in 0..4 {
                                 for ix in 0..4 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 4 + ix];
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
                                     #[cfg(feature = "debug-dc")]
                                     eprintln!(
@@ -511,6 +528,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x16(&coeffs_arr);
                             for iy in 0..4 {
                                 for ix in 0..2 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 2 + ix];
                                     let qdc = (dcs[iy * 2 + ix] * inv_factor).round() as i16;
                                     quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
@@ -524,6 +543,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x32(&coeffs_arr);
                             for iy in 0..2 {
                                 for ix in 0..4 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 4 + ix];
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
                                     quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
@@ -537,6 +558,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x64(&coeffs_arr);
                             for iy in 0..8 {
                                 for ix in 0..8 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 8 + ix];
                                     let qdc = (dcs[iy * 8 + ix] * inv_factor).round() as i16;
                                     quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
@@ -550,6 +573,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x32(&coeffs_arr);
                             for iy in 0..8 {
                                 for ix in 0..4 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 4 + ix];
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
                                     quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
@@ -563,6 +588,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x64(&coeffs_arr);
                             for iy in 0..4 {
                                 for ix in 0..8 {
+                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 8 + ix];
                                     let qdc = (dcs[iy * 8 + ix] * inv_factor).round() as i16;
                                     quant_dc[1][by + iy][bx + ix] = qdc;
                                 }
@@ -574,6 +601,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT4X8");
                             let dc = dc_from_dct_4x8_full(&coeffs_arr);
+                            float_dc[1][by * xsize_blocks + bx] = dc;
                             quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT8X4 => {
@@ -582,6 +610,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT8X4");
                             let dc = dc_from_dct_8x4_full(&coeffs_arr);
+                            float_dc[1][by * xsize_blocks + bx] = dc;
                             quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT4X4 => {
@@ -590,6 +619,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT4X4");
                             let dc = dc_from_dct_4x4_full(&coeffs_arr);
+                            float_dc[1][by * xsize_blocks + bx] = dc;
                             quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
@@ -599,10 +629,12 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for AFV");
                             let dc = dc_from_afv(&coeffs_arr);
+                            float_dc[1][by * xsize_blocks + bx] = dc;
                             quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
                             // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
+                            float_dc[1][by * xsize_blocks + bx] = dct_coeffs[1][0];
                             quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
                         }
                         _ => unreachable!(),
@@ -828,6 +860,7 @@ impl VarDctEncoder {
                     match raw_strategy {
                         0 => {
                             let dc = dct_coeffs[c][0];
+                            float_dc[c][by * xsize_blocks + bx] = dc;
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -838,6 +871,7 @@ impl VarDctEncoder {
                                 .expect("128 coefficients for DCT16x8");
                             let dcs = dc_from_dct_16x8(&coeffs_arr);
                             for iy in 0..2 {
+                                float_dc[c][(by + iy) * xsize_blocks + bx] = dcs[iy];
                                 let y_dc = quant_dc[1][by + iy][bx] as f32;
                                 quant_dc[c][by + iy][bx] =
                                     (dcs[iy] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -849,6 +883,7 @@ impl VarDctEncoder {
                                 .expect("128 coefficients for DCT8x16");
                             let dcs = dc_from_dct_8x16(&coeffs_arr);
                             for ix in 0..2 {
+                                float_dc[c][by * xsize_blocks + bx + ix] = dcs[ix];
                                 let y_dc = quant_dc[1][by][bx + ix] as f32;
                                 quant_dc[c][by][bx + ix] =
                                     (dcs[ix] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -861,6 +896,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x16(&coeffs_arr);
                             for iy in 0..2 {
                                 for ix in 0..2 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 2 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -875,6 +912,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x32(&coeffs_arr);
                             for iy in 0..4 {
                                 for ix in 0..4 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 4 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -890,6 +929,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x16(&coeffs_arr);
                             for iy in 0..4 {
                                 for ix in 0..2 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 2 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -905,6 +946,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x32(&coeffs_arr);
                             for iy in 0..2 {
                                 for ix in 0..4 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 4 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -919,6 +962,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x64(&coeffs_arr);
                             for iy in 0..8 {
                                 for ix in 0..8 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 8 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -933,6 +978,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x32(&coeffs_arr);
                             for iy in 0..8 {
                                 for ix in 0..4 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 4 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -947,6 +994,8 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x64(&coeffs_arr);
                             for iy in 0..4 {
                                 for ix in 0..8 {
+                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                        dcs[iy * 8 + ix];
                                     let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
                                     quant_dc[c][by + iy][bx + ix] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
@@ -959,6 +1008,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT4X8");
                             let dc = dc_from_dct_4x8_full(&coeffs_arr);
+                            float_dc[c][by * xsize_blocks + bx] = dc;
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -968,6 +1018,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT8X4");
                             let dc = dc_from_dct_8x4_full(&coeffs_arr);
+                            float_dc[c][by * xsize_blocks + bx] = dc;
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -977,6 +1028,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for DCT4X4");
                             let dc = dc_from_dct_4x4_full(&coeffs_arr);
+                            float_dc[c][by * xsize_blocks + bx] = dc;
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -988,6 +1040,7 @@ impl VarDctEncoder {
                                 .try_into()
                                 .expect("64 coefficients for AFV");
                             let dc = dc_from_afv(&coeffs_arr);
+                            float_dc[c][by * xsize_blocks + bx] = dc;
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
@@ -995,6 +1048,7 @@ impl VarDctEncoder {
                         RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
                             // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
                             let dc = dct_coeffs[c][0];
+                            float_dc[c][by * xsize_blocks + bx] = dc;
                             let y_dc = quant_dc[1][by][bx] as f32;
                             quant_dc[c][by][bx] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
