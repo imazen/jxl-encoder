@@ -146,28 +146,28 @@ Improvements made Feb 3, 2026:
 ### Quality Gap vs Full libjxl (Feb 21, 2026)
 
 **Measured with Rust butteraugli** (metadata-immune, always applies sRGB TF consistently).
-41 CID22 images × 9 distances (368 data points). Uses `just quality-compare` with
+41 CID22 images × 9 distances (369 data points). Uses `just quality-compare` with
 in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
 
 **vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-**Overall: Size +0.6%, Butteraugli +0.5% (essentially at parity)**
+**Overall: Size +0.7%, Butteraugli +0.3% (essentially at parity)**
 
 | Distance | Avg Size | Avg Butteraugli |
 |----------|----------|-----------------|
-| d=0.25 | -0.5% | **-15.6%** (better) |
-| d=0.5 | -2.3% | **-10.0%** (better) |
-| d=1.0 | +1.2% | +2.1% |
-| d=1.5 | +2.1% | +1.0% |
-| d=2.0 | +3.0% | +1.4% |
-| d=2.5 | +3.5% | +1.3% |
-| d=3.0 | +3.0% | +0.6% |
-| d=4.0 | +3.1% | +2.3% |
+| d=0.25 | -0.4% | **-16.2%** (better) |
+| d=0.5 | -2.2% | **-10.5%** (better) |
+| d=1.0 | +1.2% | +1.2% |
+| d=1.5 | +2.0% | +0.7% |
+| d=2.0 | +3.0% | +0.6% |
+| d=2.5 | +3.5% | +1.0% |
+| d=3.0 | +3.1% | +0.7% |
+| d=4.0 | +3.5% | +2.2% |
 | d=5.0 | +2.9% | +1.3% |
 
 **Key patterns**:
-- Quality roughly at parity with cjxl e7 at d=1.0, slightly better at d=2.0
+- Quality at parity with cjxl e7 at d=1.0-3.0 (butteraugli within 1.2%)
 - Files 1-4% larger on average, growing to 5-8% overhead at d=5.0
 - d1a9be98 (low-detail/smooth) is a persistent outlier: always worse quality, always larger
 - frymire and 50fe4c3d (high-detail) consistently produce better quality
@@ -190,6 +190,12 @@ in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
   Our code used f32 division, producing non-trivial multipliers that were miscalibrated against
   libjxl's c3/c5 constants (which were tuned with integer division). Fixed to match libjxl
   exactly: `epf.rs:577-602`.
+- **Merge sub-cost entropy_mul adjustments** (88aad38): `find_best_32x32_transform` and
+  `find_best_64x64_transform` re-evaluated 8x8-class sub-costs with `entropy_mul_adjust=0.0`,
+  missing the kFavor2X2 discount for DCT2x2/IDENTITY blocks (~13% cost inflation at d=2.0).
+  In libjxl these adjustments are baked into `entropy_estimate[]` from FindBest8x8Transform.
+  Fix: pass appropriate per-strategy adjustments during re-evaluation.
+  Impact: 1025469 d=2.0 butteraugli +13.6% → +3.6%, 1080721 d=1.0 butteraugli -28% better.
 
 **Remaining size overhead (files 1-8% larger)**:
 - ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
