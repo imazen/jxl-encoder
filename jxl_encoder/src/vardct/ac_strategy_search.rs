@@ -179,14 +179,20 @@ pub(super) fn find_best_16x16_transform(
                     *best_strat = RAW_STRATEGY_DCT4X4;
                 }
 
-                // AFV0-3: corner strategies, one per block position in the 2x2 group
-                let afv_strategy = RAW_STRATEGY_AFV0 + (dy * 2 + dx) as u8;
-                let e_afv = eval!(afv_strategy, avoid_transforms_adjust);
+                // AFV0-3: evaluate ALL 4 corner variants for every block.
+                // Each AFV variant applies the corner DCT to a different quadrant
+                // of the 8x8 block, so the optimal variant depends on pixel content,
+                // not the block's position in the 2x2 group. libjxl evaluates all 4
+                // per block in FindBest8x8Transform (enc_ac_strategy.cc:557-574).
                 let base_cost_afv = if use_pixel_domain { 0.0 } else { 3.0 * mul8x8 };
-                let cost_afv = base_cost_afv + mul8x8 * e_afv;
-                if cost_afv < *entropy_val {
-                    *entropy_val = cost_afv;
-                    *best_strat = afv_strategy;
+                for afv_idx in 0..4u8 {
+                    let afv_strategy = RAW_STRATEGY_AFV0 + afv_idx;
+                    let e_afv = eval!(afv_strategy, avoid_transforms_adjust);
+                    let cost_afv = base_cost_afv + mul8x8 * e_afv;
+                    if cost_afv < *entropy_val {
+                        *entropy_val = cost_afv;
+                        *best_strat = afv_strategy;
+                    }
                 }
             }
 
