@@ -77,11 +77,7 @@ pub fn wrap_in_container_with_jbrd(
 
     // Exif box (with 4-byte Tiff header offset prefix, always 0)
     if let Some(exif_data) = exif {
-        let box_size = (8 + 4 + exif_data.len()) as u32;
-        out.extend_from_slice(&box_size.to_be_bytes());
-        out.extend_from_slice(b"Exif");
-        out.extend_from_slice(&[0u8; 4]); // Tiff header offset (always 0)
-        out.extend_from_slice(exif_data);
+        write_exif_box(&mut out, exif_data);
     }
 
     // xml box (raw XMP data)
@@ -134,11 +130,7 @@ pub fn wrap_in_container_jxlp(
 
     // Exif box
     if let Some(exif_data) = exif {
-        let box_size = (8 + 4 + exif_data.len()) as u32;
-        out.extend_from_slice(&box_size.to_be_bytes());
-        out.extend_from_slice(b"Exif");
-        out.extend_from_slice(&[0u8; 4]);
-        out.extend_from_slice(exif_data);
+        write_exif_box(&mut out, exif_data);
     }
 
     // xml box
@@ -153,9 +145,16 @@ pub fn wrap_in_container_jxlp(
 /// Counter format: bits 0-30 = sequence number, bit 31 = last part flag.
 #[allow(dead_code)]
 fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) {
-    let box_size = (8 + 4 + data.len()) as u32;
-    out.extend_from_slice(&box_size.to_be_bytes());
-    out.extend_from_slice(b"jxlp");
+    let total_size = 8u64 + 4 + data.len() as u64;
+    if total_size <= u32::MAX as u64 {
+        out.extend_from_slice(&(total_size as u32).to_be_bytes());
+        out.extend_from_slice(b"jxlp");
+    } else {
+        let extended_size = 16u64 + 4 + data.len() as u64;
+        out.extend_from_slice(&1u32.to_be_bytes());
+        out.extend_from_slice(b"jxlp");
+        out.extend_from_slice(&extended_size.to_be_bytes());
+    }
     let counter = if is_last {
         sequence | 0x8000_0000
     } else {
@@ -165,11 +164,40 @@ fn write_jxlp_box(out: &mut Vec<u8>, sequence: u32, is_last: bool, data: &[u8]) 
     out.extend_from_slice(data);
 }
 
+/// Write an Exif box: box header + 4-byte Tiff offset (always 0) + EXIF data.
+fn write_exif_box(out: &mut Vec<u8>, exif_data: &[u8]) {
+    // Exif box payload = 4-byte Tiff offset + EXIF data
+    let payload_size = 4u64 + exif_data.len() as u64;
+    let total_size = 8u64 + payload_size;
+    if total_size <= u32::MAX as u64 {
+        out.extend_from_slice(&(total_size as u32).to_be_bytes());
+        out.extend_from_slice(b"Exif");
+    } else {
+        let extended_size = 16u64 + payload_size;
+        out.extend_from_slice(&1u32.to_be_bytes());
+        out.extend_from_slice(b"Exif");
+        out.extend_from_slice(&extended_size.to_be_bytes());
+    }
+    out.extend_from_slice(&[0u8; 4]); // Tiff header offset (always 0)
+    out.extend_from_slice(exif_data);
+}
+
 /// Write an ISOBMFF box: 4-byte big-endian size + 4-byte type + payload.
+///
+/// For payloads > ~4GB, uses extended 64-bit box header (size field = 1,
+/// followed by 8-byte extended size). Matches libjxl's box format.
 fn write_box(out: &mut Vec<u8>, box_type: &[u8; 4], payload: &[u8]) {
-    let box_size = (8 + payload.len()) as u32;
-    out.extend_from_slice(&box_size.to_be_bytes());
-    out.extend_from_slice(box_type);
+    let total_size = 8u64 + payload.len() as u64;
+    if total_size <= u32::MAX as u64 {
+        out.extend_from_slice(&(total_size as u32).to_be_bytes());
+        out.extend_from_slice(box_type);
+    } else {
+        // Extended box header: size=1 signals 64-bit extended size follows
+        let extended_size = 16u64 + payload.len() as u64;
+        out.extend_from_slice(&1u32.to_be_bytes()); // size=1 means extended
+        out.extend_from_slice(box_type);
+        out.extend_from_slice(&extended_size.to_be_bytes());
+    }
     out.extend_from_slice(payload);
 }
 
