@@ -153,7 +153,7 @@ pub fn entropy_coeffs_scalar(
         }
 
         let q = rval.abs();
-        entropy_sum += q.sqrt() * k_cost_delta;
+        entropy_sum = q.sqrt().mul_add(k_cost_delta, entropy_sum);
         if q != 0.0 {
             nzeros_sum += 1.0;
         }
@@ -161,7 +161,7 @@ pub fn entropy_coeffs_scalar(
         if !pixel_domain {
             let diff_abs = diff.abs();
             info_loss_sum += diff_abs;
-            info_loss2_sum += diff_abs * diff_abs;
+            info_loss2_sum = diff_abs.mul_add(diff_abs, info_loss2_sum);
             if q >= 1.5 {
                 entropy_sum += k_cost2;
             }
