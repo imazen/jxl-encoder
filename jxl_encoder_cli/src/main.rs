@@ -79,6 +79,12 @@ struct Args {
     #[arg(long)]
     force_strategy: Option<u8>,
 
+    /// Maximum AC strategy transform size (8, 16, 32, or 64).
+    /// 8 = only 8x8-class transforms, 16 = up to 16x16, 32 = up to 32x32,
+    /// 64 = no restriction (default).
+    #[arg(long, value_name = "SIZE")]
+    max_strategy_size: Option<u8>,
+
     /// Enable error diffusion in AC quantization (propagates 1/4 quantization error
     /// to the next coefficient in zigzag order). Off by default — libjxl's QuantizeBlockAC
     /// accepts an error_diffusion parameter but never references it in the function body,
@@ -363,6 +369,9 @@ fn main() {
                     if let Some(s) = args.force_strategy {
                         cfg = cfg.with_force_strategy(Some(s));
                     }
+                    if let Some(s) = args.max_strategy_size {
+                        cfg = cfg.with_max_strategy_size(Some(s));
+                    }
 
                     #[cfg(feature = "butteraugli-loop")]
                     {
@@ -625,6 +634,9 @@ fn main() {
         if let Some(s) = args.force_strategy {
             cfg = cfg.with_force_strategy(Some(s));
         }
+        if let Some(s) = args.max_strategy_size {
+            cfg = cfg.with_max_strategy_size(Some(s));
+        }
 
         #[cfg(feature = "butteraugli-loop")]
         {
@@ -682,6 +694,17 @@ fn main() {
             }
             if let Some(s) = args.force_strategy {
                 tiny.force_strategy = Some(s);
+            }
+            if let Some(max_size) = args.max_strategy_size {
+                if max_size < 16 {
+                    tiny.profile.try_dct16 = false;
+                }
+                if max_size < 32 {
+                    tiny.profile.try_dct32 = false;
+                }
+                if max_size < 64 {
+                    tiny.profile.try_dct64 = false;
+                }
             }
             if args.progressive {
                 tiny.progressive = ProgressiveMode::DcVlfLfAc;

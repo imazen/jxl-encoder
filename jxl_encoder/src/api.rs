@@ -838,6 +838,7 @@ pub struct LossyConfig {
     lz77: bool,
     lz77_method: Lz77Method,
     force_strategy: Option<u8>,
+    max_strategy_size: Option<u8>,
     patches: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
@@ -869,6 +870,7 @@ impl LossyConfig {
             lz77: profile.lz77,
             lz77_method: profile.lz77_method,
             force_strategy: None,
+            max_strategy_size: None,
             patches: profile.patches,
             splines: None,
             progressive: ProgressiveMode::Single,
@@ -905,6 +907,7 @@ impl LossyConfig {
         new.noise = self.noise;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
+        new.max_strategy_size = self.max_strategy_size;
         new.splines = self.splines;
         new.progressive = self.progressive;
         // Preserve explicit butteraugli override
@@ -991,6 +994,21 @@ impl LossyConfig {
     /// Force a specific AC strategy for all blocks. `None` for auto-selection.
     pub fn with_force_strategy(mut self, strategy: Option<u8>) -> Self {
         self.force_strategy = strategy;
+        self
+    }
+
+    /// Limit the maximum AC strategy transform size.
+    ///
+    /// Controls the largest DCT transform the encoder will consider:
+    /// - `8`: Only 8×8-class transforms (DCT8, DCT4x4, DCT4x8, AFV, IDENTITY, DCT2x2)
+    /// - `16`: Up to 16×16 (adds DCT16x16, DCT16x8, DCT8x16)
+    /// - `32`: Up to 32×32 (adds DCT32x32, DCT32x16, DCT16x32)
+    /// - `64`: No restriction (adds DCT64x64, DCT64x32, DCT32x64) — the default
+    ///
+    /// `None` means no restriction (same as `64`). Values are clamped to the
+    /// nearest valid size.
+    pub fn with_max_strategy_size(mut self, size: Option<u8>) -> Self {
+        self.max_strategy_size = size;
         self
     }
 
@@ -1096,6 +1114,11 @@ impl LossyConfig {
     /// Forced AC strategy, if any.
     pub fn force_strategy(&self) -> Option<u8> {
         self.force_strategy
+    }
+
+    /// Maximum AC strategy transform size, if set.
+    pub fn max_strategy_size(&self) -> Option<u8> {
+        self.max_strategy_size
     }
 
     /// Current progressive mode.
@@ -1576,7 +1599,21 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
-        let profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+        let mut profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+
+        // Apply max_strategy_size to profile flags
+        if let Some(max_size) = cfg.max_strategy_size {
+            if max_size < 16 {
+                profile.try_dct16 = false;
+            }
+            if max_size < 32 {
+                profile.try_dct32 = false;
+            }
+            if max_size < 64 {
+                profile.try_dct64 = false;
+            }
+        }
+
         let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
         enc.effort = cfg.effort;
         enc.profile = profile;
@@ -1849,7 +1886,21 @@ fn encode_animation_lossy(
     let num_frames = frames.len();
 
     // Set up VarDCT encoder
-    let profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+    let mut profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+
+    // Apply max_strategy_size to profile flags
+    if let Some(max_size) = cfg.max_strategy_size {
+        if max_size < 16 {
+            profile.try_dct16 = false;
+        }
+        if max_size < 32 {
+            profile.try_dct32 = false;
+        }
+        if max_size < 64 {
+            profile.try_dct64 = false;
+        }
+    }
+
     let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
     enc.effort = cfg.effort;
     enc.profile = profile;
