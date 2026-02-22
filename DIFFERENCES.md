@@ -1,8 +1,9 @@
 # Implementation Differences: jxl-encoder-rs vs libjxl
 
-Last updated: 2026-02-22
+Last updated: 2026-02-22 (source-verified against libjxl C++ code)
 
 Systematic audit against `/home/lilith/work/jxl-efforts/libjxl/docs/src/` (55 doc files).
+Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
@@ -97,18 +98,12 @@ for codestream level > 5 support.
 **Fix**: Return `Err(Error::InvalidValue)` instead of clamping. Callers should validate
 before encoding. Affects: custom DC quant, custom gaborish weights, custom EPF sigma.
 
-### DIFF-2: F16 underflow boundary off-by-one
+### ~~DIFF-2~~: ~~F16 underflow boundary off-by-one~~ FALSE ALARM
 
-**File**: `jxl_encoder/src/f16.rs:42`
-**Impact**: Values at f32 exponent -25 (biased_exp32=102, ~3e-8) are subnormal in our
-code but zero in libjxl
-
-**Our code**: `if new_exp < -10` → zeros at biased_exp32 < 102 (exponent < -25)
-**libjxl**: `if exp < -24` → zeros at biased_exp32 < 103 (exponent < -24)
-
-**Fix**: Change `if new_exp < -10` to `if new_exp < -9` (or equivalently,
-`if new_exp <= -10`). This makes biased_exp32=102 (exponent -25) map to zero,
-matching libjxl.
+**Verified against source**: Both implementations produce identical output for all inputs.
+Our subnormal path for biased_exp32=102 computes `half_mantissa = (m >> (13+shift)) = 0`
+(zero), same result as libjxl's early-out `if (exp < -24) return 0`. Different code paths,
+same output. No fix needed.
 
 ### DIFF-3: F16 Inf/NaN not rejected on encode
 
@@ -147,33 +142,14 @@ Only matters when we add wide-gamut/HDR input support.
 **Fix**: Multiply each linear RGB component by `intensity_target / 255.0` before the
 matrix multiply. The `intensity_target` comes from `ImageMetadata` (default 255 for SDR).
 
-### DIFF-6: Modular tree properties differ from libjxl
+### ~~DIFF-6~~: ~~Modular tree properties differ from libjxl~~ FALSE ALARM (dead code)
 
-**File**: `jxl_encoder/src/modular/tree.rs:54-87`
-**Impact**: Learned trees make different split decisions. Compression may be slightly
-better or worse on different content. Not a correctness bug (both are valid property
-sets for the decoder).
+**Verified against source**: The `Property` enum in `tree.rs:54-87` is **dead code**.
+The production tree learning in `tree_learn.rs:416-454` uses `compute_spec_properties()`
+which matches libjxl's `context_predict.h:534-554` exactly: |N|, |W|, N signed, W signed,
+W-prev_gradient, W+N-NW, W-NW, NW-N, N-NE, N-NN, W-WW.
 
-**Our properties 4-14**:
-| Index | Our property | libjxl property |
-|-------|-------------|-----------------|
-| 4 | `\|N - NW\|` | `\|N\|` (abs north) |
-| 5 | `\|N - W\|` | `\|W\|` (abs west) |
-| 6 | `FloorLog2(W)` | `N` (signed north) |
-| 7 | `FloorLog2(N)` | `W` (signed west) |
-| 8 | `FloorLog2(NW)` | `W - prev_row_gradient` |
-| 9 | `\|N - NN\|` | `W + N - NW` (gradient) |
-| 10 | `\|W - WW\|` | `W - NW` |
-| 11 | `\|NW - NWW\|` | `NW - N` |
-| 12 | `\|NE - N\|` | `N - NE` |
-| 13 | `\|NW - W\|` | `N - NN` |
-| 14 | `\|W\| + \|N\| + \|NW\|` | `W - WW` |
-
-Properties 0-3 (Channel, GroupId, Y, X) and 15 (WpMaxError) match.
-
-**Fix**: Consider switching to libjxl's property set for tree learning parity, or
-keep ours if benchmarks show it's equivalent/better. Would require updating
-`PropertyValues::compute()` and the `Property` enum.
+**Cleanup**: The stale `Property` enum in `tree.rs` should be deleted to avoid confusion.
 
 ### DIFF-7: Missing reference channel properties (16+) in tree learning
 
@@ -189,26 +165,24 @@ multi-channel correlation.
 handles these (property indices >= 16 reference channels `(prop - 16) / 4`). Would
 improve RGB compression where channels are correlated.
 
-### DIFF-8: Custom coefficient orders for DCT64+ may be unnecessary
+### DIFF-8: Custom coefficient orders for DCT64+ are unnecessary overhead
 
 **File**: `jxl_encoder/src/vardct/coeff_order.rs`
-**Impact**: We encode and signal custom coefficient orders for buckets 7-8 (DCT64x64,
-DCT64x32/DCT32x64). libjxl's docs say "orders with bucket > 6 never customized."
+**Verified**: libjxl's `ComputeUsedOrders` (`enc_coeff_order.cc:53-58`) has
+`if (ord > 6) continue;` — it explicitly skips customization for buckets 7+.
+**Impact**: We encode and signal custom coefficient orders for buckets 7-12 (DCT64x64,
+DCT64x32/DCT32x64, etc.). This adds permutation encoding overhead for orders with
+4096 and 2048 elements that libjxl never customizes.
 
-**Fix**: Verify whether libjxl actually sends custom orders for these buckets. If not,
-gate our custom order encoding to buckets 0-6 only. This would save a few bytes per
-frame (the permutation encoding overhead for 4096-element and 2048-element orders).
+**Fix**: Gate custom order encoding to buckets 0-6 only, matching libjxl. Use natural
+(default) order for buckets 7+. Saves a few bytes per frame.
 
-### DIFF-9: CfL pass 1 missing full weighting
+### ~~DIFF-9~~: ~~CfL pass 1 missing full weighting~~ FALSE ALARM
 
-**File**: `jxl_encoder/src/vardct/chroma_from_luma.rs`
-**Impact**: CfL pass 1 uses simpler weighting (just inverse quant matrix) vs libjxl's
-full weighting (`quantizer_scale * 128 * raw_quant * inv_dequant_matrix`). Pass 2
-with full weighting compensates, so impact is minor — pass 1 is just the initial
-estimate that pass 2 refines.
-
-**Fix**: Multiply AC coefficient weights by `128.0 * raw_quant_value` in pass 1.
-The `128` is `kStrangeMultiplier` from `chroma_from_luma.h`.
+**Verified against source**: libjxl's `enc_chroma_from_luma.cc:326-331` shows pass 1
+uses `q = use_dct8 ? 1 : quantizer->Scale() * 128 * qq`. When `use_dct8=true` (pass 1),
+`q=1` — no multiplier applied. Our pass 1 also uses `q=1`. Our pass 2 correctly uses
+`quant_scale * 128.0 * qq`. Both passes match libjxl exactly.
 
 ---
 
@@ -220,21 +194,21 @@ The `128` is `kStrangeMultiplier` from `chroma_from_luma.h`.
 **Impact**: Slightly suboptimal ANS frequency normalization. Estimated <0.1% file size.
 
 **Our code**: Rounds raw counts to normalized precision, absorbs remainder into omit_pos.
-**libjxl**: Additionally runs a greedy optimization loop that iteratively adjusts
-normalized counts to maximize entropy (minimize cross-entropy loss from rounding).
+**libjxl**: Uses a sophisticated `AllowedCounts` table-driven greedy optimization
+(`enc_ans.cc:416-559`) that is more complex than simple +-1 adjustments.
 
-**Fix**: After initial rounding, iterate over symbols and try +-1 adjustments to each
-normalized count, keeping changes that reduce the total cross-entropy cost:
-```
-loop {
-    best_improvement = 0
-    for each symbol with freq > 1:
-        try freq[sym] -= 1, freq[other] += 1
-        if cross_entropy improves: record best
-    if no improvement: break
-    apply best
-}
-```
+**Fix**: Port libjxl's `RebalanceHistogram` from `enc_ans.cc:416-559`. Key components:
+1. **AllowedCounts table** (`enc_ans.cc:318-400`): Pre-computes for each `(count, shift)`
+   pair the set of valid normalized counts, along with log2 deltas for each transition.
+   This constrains the search space to ensure each symbol's count maps to a valid ANS
+   table entry (power-of-2 or specific bit patterns depending on ANS_LOG_TAB_SIZE).
+2. **Greedy loop**: For each symbol, evaluates the cost delta of moving its normalized
+   count up or down within the AllowedCounts set. Picks the best (count, direction) pair
+   that reduces total cost, compensating another symbol. Repeats until no improvement.
+3. **Fixed-point log2 cost**: Uses the same 4097-entry lookup table as `ANSPopulationCost`
+   (see OPT-2) for precise cost evaluation during the greedy search.
+4. **Precision constraint**: All normalized counts must be valid for the ANS table size
+   (sum to `1 << ANS_LOG_TAB_SIZE = 4096`).
 
 ### OPT-2: ANS population cost is approximate in clustering
 
@@ -251,18 +225,25 @@ rounding loss from normalization.
 `ANS_TAB_SIZE=4096` and computes `cost = total * ANS_LOG_TAB_SIZE - sum(count * log2(norm_count))`.
 Use this in `histogram_distance()` when `ClusteringType::Best`.
 
-### OPT-3: Missing kBest 27-config HybridUint search
+### OPT-3: Missing kBest 28-config HybridUint search
 
 **File**: `jxl_encoder/src/entropy_coding/hybrid_uint.rs`
 **Impact**: Per-histogram HybridUint config selection tries only 4 configs (kFast)
-instead of 27 (kBest). Estimated <0.1% file size.
+instead of 28 (kBest). Estimated <0.1% file size.
 
 **Our code**: Tries `[(4,2,0), (4,1,2), (0,0,0), (2,0,1)]`
-**libjxl kBest**: Tries all combinations of split_exponent 0-12, msb 0-2, lsb 0-5
-where `split >= msb + lsb`. The 27 configs are the valid subset.
+**libjxl kBest** (`enc_ans.cc:747-783`): 28 curated `(split, msb, lsb)` configs, NOT
+all valid triples. The list includes configs with split_exponents 0-12 and specific
+msb/lsb combinations chosen for good coverage:
+```
+(0,0,0), (1,0,0), (2,0,0), (2,0,1), (3,0,0), (3,1,0), (3,0,1), (3,1,1),
+(4,0,0), (4,2,0), (4,1,0), (4,0,1), (4,2,1), (4,1,1), (5,0,0), (5,2,0),
+(5,1,0), (5,0,1), (5,2,1), (6,0,0), (6,2,0), (6,1,0), (7,0,0), (7,2,0),
+(8,0,0), (8,2,0), (10,0,0), (12,0,0)
+```
 
-**Fix**: Add a `optimize_uint_configs_best()` function that enumerates all valid
-`(split, msb, lsb)` triples. Use for `ClusteringType::Best` or effort >= 9.
+**Fix**: Add a `optimize_uint_configs_best()` function with the exact 28 configs.
+Use for `ClusteringType::Best` or effort >= 9.
 
 ### OPT-4: Missing flat distribution cost baseline in ANS strategy selection
 
@@ -291,17 +272,23 @@ logcount individually.
 logcount value. Emit `[logcount, RLE_MARKER, run_length - 5]` instead of repeating
 the logcount. The RLE marker is symbol index 13 in the logcount prefix code.
 
-### OPT-6: LZ77 distance cost table 3 entries short
+### OPT-6: LZ77 distance cost table 11 entries short
 
 **File**: `jxl_encoder/src/entropy_coding/lz77.rs:72`
 **Impact**: Distance cost lookup clamps to entry 127 for distances that would index
-128-130. Minimal practical impact since these represent very large distances.
+128-138. The missing 11 entries represent **special distance codes** with costs in the
+2.4-9.7 range, dramatically lower than our clamped value of 17.2. This significantly
+undervalues special distance codes in LZ77 cost estimation, potentially causing the
+optimizer to reject beneficial matches that use special distances.
 
 **Our code**: `DIST_COST_TABLE: [f32; 128]`
-**libjxl**: 131-entry table
+**libjxl** (`enc_lz77.cc:399-447`): 139-entry table. Entries 128-138 are the costs
+for special distance codes (codes that encode distances as multiples of the image width,
+useful for vertical matches in image data).
 
-**Fix**: Add 3 more entries to match libjxl's table. The missing values can be
-extrapolated from the pattern or copied from libjxl source.
+**Fix**: Extend `DIST_COST_TABLE` to 139 entries. Copy the 11 missing values from
+libjxl's `kDistCost` table (`enc_lz77.cc:399-447`). These entries have dramatically
+lower costs than our current clamp value.
 
 ### OPT-7: No LZ77 for ICC profile encoding
 
