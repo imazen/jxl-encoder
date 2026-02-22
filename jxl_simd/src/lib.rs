@@ -78,7 +78,7 @@ pub use idct64::{idct_32x64, idct_64x32, idct_64x64};
 pub use mask1x1::compute_mask1x1;
 pub use noise::denoise_channel;
 pub use pixel_loss::pixel_domain_loss;
-pub use quantize::quantize_block_dct8;
+pub use quantize::{quantize_block_dct8, quantize_block_large};
 pub use transpose::transpose_8x8;
 pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rgb_planar};
 
@@ -103,7 +103,7 @@ pub use idct64::{idct_32x64_scalar, idct_64x32_scalar, idct_64x64_scalar};
 pub use mask1x1::compute_mask1x1_scalar;
 pub use noise::denoise_channel_scalar;
 pub use pixel_loss::pixel_domain_loss_scalar;
-pub use quantize::quantize_dct8_scalar;
+pub use quantize::{quantize_dct8_scalar, quantize_large_scalar};
 // transpose has no separate scalar — the dispatching fn IS the scalar fallback
 pub use xyb::{forward_xyb_scalar, inverse_xyb_planar_scalar, inverse_xyb_scalar};
 
@@ -146,7 +146,7 @@ pub use noise::denoise_channel_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use pixel_loss::pixel_domain_loss_avx2;
 #[cfg(target_arch = "x86_64")]
-pub use quantize::quantize_dct8_avx2;
+pub use quantize::{quantize_dct8_avx2, quantize_large_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use transpose::transpose_8x8_avx2;
 #[cfg(target_arch = "x86_64")]
@@ -183,7 +183,7 @@ pub use noise::denoise_channel_neon;
 #[cfg(target_arch = "aarch64")]
 pub use pixel_loss::pixel_domain_loss_neon;
 #[cfg(target_arch = "aarch64")]
-pub use quantize::quantize_dct8_neon;
+pub use quantize::{quantize_dct8_neon, quantize_large_neon};
 #[cfg(target_arch = "aarch64")]
 pub use transpose::transpose_8x8_neon;
 #[cfg(target_arch = "aarch64")]

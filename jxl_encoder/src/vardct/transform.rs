@@ -355,6 +355,8 @@ impl VarDctEncoder {
             Vec::new()
         };
 
+        // Scratch buffer for large-block SIMD quantization flat output (reused per block)
+        let mut quant_flat_scratch = vec![0i32; MAX_BLOCK_SIZE];
         // Scratch buffers for multi-block nzeros counting (reused per block)
         let mut nz_full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
         // Max flat_nz size: for DCT64x64, covered = 8×8, flat_len = 7*xsize_blocks+8
@@ -772,6 +774,7 @@ impl VarDctEncoder {
                         } else {
                             None
                         },
+                        &mut quant_flat_scratch,
                     );
                 }
 
@@ -1092,6 +1095,7 @@ impl VarDctEncoder {
                         } else {
                             None
                         },
+                        &mut quant_flat_scratch,
                     );
                 }
 
