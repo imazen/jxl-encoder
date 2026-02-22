@@ -50,21 +50,11 @@ same output. No fix needed.
 **Status**: FIXED. Merged with DIFF-1 fix. `f32_to_f16_bits()` returns error for
 `exp == 0xFF` (Inf/NaN), matching libjxl `F16Coder::CanEncode`.
 
-### DIFF-4: XYB missing `ZeroIfNegative` clamp for wide-gamut
+### ~~DIFF-4~~: XYB missing `ZeroIfNegative` clamp — FIXED (f534bb4)
 
-**File**: `jxl_encoder/src/color/xyb.rs:112`
-**Impact**: None for sRGB. Would produce wrong XYB for wide-gamut (P3, Rec2020) inputs
-where matrix multiply can produce negative values before bias addition.
-
-**Our code**: `(mixed0 + OPSIN_ABSORBANCE_BIAS[0]).cbrt()` — no clamp before cbrt
-**libjxl**: `ZeroIfNegative(mixed0)` before adding bias
-
-For in-gamut sRGB, bias (0.00379) ensures positivity. For wide-gamut inputs with
-large negative mixed values, `cbrt(negative)` returns a negative result vs libjxl's
-`cbrt(0 + bias)`.
-
-**Fix**: Add `let mixed0 = mixed0.max(0.0)` (and mixed1, mixed2) before bias addition.
-Only matters when we add wide-gamut/HDR input support.
+**Status**: FIXED. Added `.max(0.0)` clamp to mixed values before bias addition,
+matching libjxl `enc_xyb.cc:91-95`. No-op for sRGB, prevents `cbrt(negative)` for
+wide-gamut inputs.
 
 ### DIFF-5: XYB missing `intensity_target` scaling for HDR
 
