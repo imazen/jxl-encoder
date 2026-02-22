@@ -395,22 +395,7 @@ fn idct1d_32_core(mem: &mut [f32]) {
 
 /// Compute 32x32 inverse DCT (exactly reverses dct_32x32).
 pub fn idct_32x32(input: &[f32; 1024], output: &mut [f32; 1024]) {
-    let mut tmp = [0.0f32; 1024];
-
-    for row in 0..32 {
-        let s = row * 32;
-        tmp[s..s + 32].copy_from_slice(&input[s..s + 32]);
-        idct1d_32(&mut tmp[s..s + 32]);
-    }
-
-    let mut transposed = [0.0f32; 1024];
-    transpose::<32, 32>(&tmp, &mut transposed);
-
-    for row in 0..32 {
-        let s = row * 32;
-        output[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
-        idct1d_32(&mut output[s..s + 32]);
-    }
+    jxl_simd::idct_32x32(input, output);
 }
 
 /// Compute 32x16 inverse DCT (exactly reverses dct_32x16).
@@ -423,29 +408,7 @@ pub fn idct_32x32(input: &[f32; 1024], output: &mut [f32; 1024]) {
 ///
 /// Output: 16x32 (stride 32).
 pub fn idct_32x16(input: &[f32; 512], output: &mut [f32; 512]) {
-    let mut tmp = [0.0f32; 512];
-
-    // 32pt IDCT on each of 16 rows (stride 32)
-    for row in 0..16 {
-        let s = row * 32;
-        tmp[s..s + 32].copy_from_slice(&input[s..s + 32]);
-        idct1d_32(&mut tmp[s..s + 32]);
-    }
-
-    // Transpose 16x32 -> 32x16
-    let mut transposed = [0.0f32; 512];
-    for row in 0..16 {
-        for col in 0..32 {
-            transposed[col * 16 + row] = tmp[row * 32 + col];
-        }
-    }
-
-    // 16pt IDCT on each of 32 rows (stride 16)
-    for row in 0..32 {
-        let s = row * 16;
-        output[s..s + 16].copy_from_slice(&transposed[s..s + 16]);
-        idct1d_16(&mut output[s..s + 16]);
-    }
+    jxl_simd::idct_32x16(input, output);
 }
 
 /// Compute 16x32 inverse DCT (exactly reverses dct_16x32).
@@ -456,36 +419,7 @@ pub fn idct_32x16(input: &[f32; 512], output: &mut [f32; 512]) {
 ///   3. 16pt DCT on rows, *= 1/16
 ///   4. Transpose 32x16 -> 16x32
 pub fn idct_16x32(input: &[f32; 512], output: &mut [f32; 512]) {
-    // Undo final transpose: 16x32 -> 32x16
-    let mut transposed = [0.0f32; 512];
-    for row in 0..16 {
-        for col in 0..32 {
-            transposed[col * 16 + row] = input[row * 32 + col];
-        }
-    }
-
-    // 16pt IDCT on each of 32 rows (stride 16)
-    let mut tmp = [0.0f32; 512];
-    for row in 0..32 {
-        let s = row * 16;
-        tmp[s..s + 16].copy_from_slice(&transposed[s..s + 16]);
-        idct1d_16(&mut tmp[s..s + 16]);
-    }
-
-    // Transpose 32x16 -> 16x32
-    let mut transposed2 = [0.0f32; 512];
-    for row in 0..32 {
-        for col in 0..16 {
-            transposed2[col * 32 + row] = tmp[row * 16 + col];
-        }
-    }
-
-    // 32pt IDCT on each of 16 rows (stride 32)
-    for row in 0..16 {
-        let s = row * 32;
-        output[s..s + 32].copy_from_slice(&transposed2[s..s + 32]);
-        idct1d_32(&mut output[s..s + 32]);
-    }
+    jxl_simd::idct_16x32(input, output);
 }
 
 /// Fast 1D IDCT for N=64 (exactly reverses dct1d_64).
