@@ -693,8 +693,33 @@ impl ANSEncodingHistogram {
             });
         }
 
-        // General case: try different shift values
-        let mut best = Self::new();
+        // General case: start with flat distribution as baseline
+        // libjxl always computes flat cost first (enc_ans.cc:97-102) and picks
+        // the cheaper of flat vs shift-based encoding.
+        let flat_data_cost = {
+            let log2_alpha = (alphabet_size as f32).log2();
+            histo.total_count as f32 * log2_alpha
+        };
+        let flat_header_cost = 2.0 + 8.0; // method=0 marker + alphabet size
+        let mut best = Self {
+            counts: {
+                let alpha = alphabet_size as u32;
+                let per = ANS_TAB_SIZE / alpha;
+                let remainder = (ANS_TAB_SIZE % alpha) as usize;
+                let mut c = vec![per as i32; alphabet_size];
+                // Distribute remainder to first symbols
+                for c in c.iter_mut().take(remainder) {
+                    *c += 1;
+                }
+                c
+            },
+            alphabet_size,
+            cost: flat_header_cost + flat_data_cost,
+            method: 0, // Flat
+            omit_pos: 0,
+            num_symbols,
+            symbols,
+        };
 
         let shifts: Vec<u32> = match strategy {
             ANSHistogramStrategy::Fast => vec![0, 6, 12],
