@@ -636,21 +636,11 @@ impl FrameEncoder {
         // per-group channels use group_id = 1 + group_idx to avoid collision.
         // This must match the offset used during tree learning in section.rs.
         let per_group_id_offset: u32 = if meta_image.is_some() { 1 } else { 0 };
-        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups * num_passes);
-        for (group_idx, group_image) in group_images.iter().enumerate() {
-            for _pass in 0..num_passes {
-                let (_x_start, _y_start, _x_end, _y_end) = self.group_bounds(group_idx);
-
-                crate::trace::debug_eprintln!(
-                    "MULTI_GROUP: Group {} bounds ({}, {}) - ({}, {}), size {}x{}",
-                    group_idx,
-                    _x_start,
-                    _y_start,
-                    _x_end,
-                    _y_end,
-                    group_image.width(),
-                    group_image.height()
-                );
+        // PassGroup sections — parallelizable (each group writes to its own BitWriter)
+        let pass_group_data: Vec<Vec<u8>> =
+            crate::parallel::parallel_map_result(num_groups * num_passes, |flat_idx| {
+                let group_idx = flat_idx / num_passes;
+                let group_image = &group_images[group_idx];
 
                 let mut group_writer = BitWriter::new();
                 write_group_modular_section_idx(
@@ -660,15 +650,14 @@ impl FrameEncoder {
                     &group_transforms[group_idx],
                     &mut group_writer,
                 )?;
-                pass_group_data.push(group_writer.finish());
 
                 crate::trace::debug_eprintln!(
                     "MULTI_GROUP: PassGroup {} section = {} bytes",
                     group_idx,
-                    pass_group_data.last().unwrap().len()
+                    group_writer.bits_written() / 8,
                 );
-            }
-        }
+                Ok(group_writer.finish())
+            })?;
 
         // Step 6: Collect all section sizes in correct order and write TOC
         // JXL spec order: LfGlobal, LfGroup[0..num_lf_groups], HfGlobal, PassGroup[0..num_groups*num_passes]
@@ -936,33 +925,33 @@ impl FrameEncoder {
         // Step 7: LfGroup sections are empty for modular
         let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
 
-        // Step 8: Write each PassGroup's data
-        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
-        #[allow(clippy::unused_enumerate_index)]
-        for (_g, group_image) in group_images.iter().enumerate() {
-            let mut group_writer = BitWriter::new();
+        // Step 8: Write each PassGroup's data — parallelizable
+        let pass_group_data: Vec<Vec<u8>> =
+            crate::parallel::parallel_map_result(num_groups, |g| {
+                let group_image = &group_images[g];
+                let mut group_writer = BitWriter::new();
 
-            // GroupHeader
-            group_writer.write(1, 1)?; // use_global_tree = true
-            group_writer.write(1, 1)?; // wp_params.default_wp = true
-            group_writer.write(2, 0)?; // nb_transforms = 0
+                // GroupHeader
+                group_writer.write(1, 1)?; // use_global_tree = true
+                group_writer.write(1, 1)?; // wp_params.default_wp = true
+                group_writer.write(2, 0)?; // nb_transforms = 0
 
-            // Collect and encode spatial channel residuals for this group
-            let mut section_residuals: Vec<u32> = Vec::new();
-            for channel in &group_image.channels {
-                section_residuals.extend(collect_channel_residuals(channel));
-            }
-            encode_residuals(&section_residuals, &mut group_writer, &entropy_state)?;
+                // Collect and encode spatial channel residuals for this group
+                let mut section_residuals: Vec<u32> = Vec::new();
+                for channel in &group_image.channels {
+                    section_residuals.extend(collect_channel_residuals(channel));
+                }
+                encode_residuals(&section_residuals, &mut group_writer, &entropy_state)?;
 
-            group_writer.zero_pad_to_byte();
-            let data = group_writer.finish();
-            crate::trace::debug_eprintln!(
-                "LOSSY_PALETTE_MULTI: PassGroup[{}] = {} bytes",
-                _g,
-                data.len(),
-            );
-            pass_group_data.push(data);
-        }
+                group_writer.zero_pad_to_byte();
+                let data = group_writer.finish();
+                crate::trace::debug_eprintln!(
+                    "LOSSY_PALETTE_MULTI: PassGroup[{}] = {} bytes",
+                    g,
+                    data.len(),
+                );
+                Ok(data)
+            })?;
 
         // Step 9: Assemble TOC and sections
         // Section order: LfGlobal, LfGroup[0..n], HfGlobal, PassGroup[0..m]
@@ -1328,39 +1317,39 @@ impl FrameEncoder {
         let hf_global_data: Vec<u8> = Vec::new();
 
         // Step 8: Write PassGroup sections
-        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
-        for (_g, g_channels) in pass_group_channel_data.iter().enumerate().take(num_groups) {
-            let mut pg_writer = BitWriter::new();
+        // Step 8: Write PassGroup sections — parallelizable
+        let pass_group_data: Vec<Vec<u8>> =
+            crate::parallel::parallel_map_result(num_groups, |g| {
+                let g_channels = &pass_group_channel_data[g];
+                let mut pg_writer = BitWriter::new();
 
-            if g_channels.is_empty() {
-                // Empty PassGroup (no channels assigned)
-                pass_group_data.push(pg_writer.finish());
-                continue;
-            }
+                if g_channels.is_empty() {
+                    // Empty PassGroup (no channels assigned)
+                    return Ok(pg_writer.finish());
+                }
 
-            // GroupHeader
-            pg_writer.write(1, 1)?; // use_global_tree = true
-            pg_writer.write(1, 1)?; // wp_params.default_wp = true
-            pg_writer.write(2, 0)?; // nb_transforms = 0
+                // GroupHeader
+                pg_writer.write(1, 1)?; // use_global_tree = true
+                pg_writer.write(1, 1)?; // wp_params.default_wp = true
+                pg_writer.write(2, 0)?; // nb_transforms = 0
 
-            // Concatenate all channel residuals for this section, then encode once.
-            // ANS requires a single encoder per section (one ANS state per section).
-            let mut section_residuals: Vec<u32> = Vec::new();
-            for channel_residuals in g_channels {
-                section_residuals.extend(channel_residuals);
-            }
-            encode_residuals(&section_residuals, &mut pg_writer, &entropy_state)?;
+                // Concatenate all channel residuals for this section, then encode once.
+                let mut section_residuals: Vec<u32> = Vec::new();
+                for channel_residuals in g_channels {
+                    section_residuals.extend(channel_residuals);
+                }
+                encode_residuals(&section_residuals, &mut pg_writer, &entropy_state)?;
 
-            pg_writer.zero_pad_to_byte();
-            let data = pg_writer.finish();
-            crate::trace::debug_eprintln!(
-                "SQUEEZE_MULTI: PassGroup[{}] = {} bytes ({} channels)",
-                _g,
-                data.len(),
-                g_channels.len(),
-            );
-            pass_group_data.push(data);
-        }
+                pg_writer.zero_pad_to_byte();
+                let data = pg_writer.finish();
+                crate::trace::debug_eprintln!(
+                    "SQUEEZE_MULTI: PassGroup[{}] = {} bytes ({} channels)",
+                    g,
+                    data.len(),
+                    g_channels.len(),
+                );
+                Ok(data)
+            })?;
 
         // Step 9: Assemble TOC and sections
         // Section order: LfGlobal, LfGroup[0..n], HfGlobal, PassGroup[0..m]
@@ -1868,32 +1857,32 @@ impl FrameEncoder {
         // Step 9: HfGlobal is empty for modular
         let hf_global_data: Vec<u8> = Vec::new();
 
-        // Step 10: Write PassGroup sections
-        let mut pass_group_data: Vec<Vec<u8>> = Vec::with_capacity(num_groups);
-        for pg_tokens in &pass_group_tokens {
-            let mut pg_writer = BitWriter::new();
+        // Step 10: Write PassGroup sections — parallelizable
+        let pass_group_data: Vec<Vec<u8>> =
+            crate::parallel::parallel_map_result(num_groups, |g| {
+                let pg_tokens = &pass_group_tokens[g];
+                let mut pg_writer = BitWriter::new();
 
-            if pg_tokens.is_empty() {
-                pass_group_data.push(pg_writer.finish());
-                continue;
-            }
+                if pg_tokens.is_empty() {
+                    return Ok(pg_writer.finish());
+                }
 
-            // GroupHeader
-            pg_writer.write(1, 1)?; // use_global_tree = true
-            super::encode::write_wp_header(&mut pg_writer, &wp_params)?;
-            pg_writer.write(2, 0)?; // nb_transforms = 0
+                // GroupHeader
+                pg_writer.write(1, 1)?; // use_global_tree = true
+                super::encode::write_wp_header(&mut pg_writer, &wp_params)?;
+                pg_writer.write(2, 0)?; // nb_transforms = 0
 
-            write_tokens_ans(pg_tokens, &code, lz77_params.as_ref(), &mut pg_writer)?;
+                write_tokens_ans(pg_tokens, &code, lz77_params.as_ref(), &mut pg_writer)?;
 
-            pg_writer.zero_pad_to_byte();
-            let data = pg_writer.finish();
-            crate::trace::debug_eprintln!(
-                "SQUEEZE_TREE_MULTI: PassGroup = {} bytes ({} tokens)",
-                data.len(),
-                pg_tokens.len(),
-            );
-            pass_group_data.push(data);
-        }
+                pg_writer.zero_pad_to_byte();
+                let data = pg_writer.finish();
+                crate::trace::debug_eprintln!(
+                    "SQUEEZE_TREE_MULTI: PassGroup = {} bytes ({} tokens)",
+                    data.len(),
+                    pg_tokens.len(),
+                );
+                Ok(data)
+            })?;
 
         // Step 11: Assemble TOC and sections
         let mut section_sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
