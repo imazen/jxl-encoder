@@ -1,11 +1,13 @@
 # Implementation Differences: jxl-encoder-rs vs libjxl
 
-Last updated: 2026-02-22 (source-verified against libjxl C++ code)
+Last updated: 2026-02-22 (source-verified against libjxl C++ code, fixes applied)
 
 Systematic audit against `/home/lilith/work/jxl-efforts/libjxl/docs/src/` (55 doc files).
 Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
+
+**Score: 8 fixed, 3 false alarms, 8 remaining (1 DIFF + 7 OPTs)**
 
 ---
 
