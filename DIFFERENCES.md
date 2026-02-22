@@ -33,17 +33,10 @@ Was latent — no current images this large.
 
 ## BEHAVIORAL DIFFERENCES (valid output, but not matching libjxl exactly)
 
-### DIFF-1: F16 overflow handling — clamp vs reject
+### ~~DIFF-1~~: F16 overflow handling — clamp vs reject — FIXED (cf75fe8)
 
-**File**: `jxl_encoder/src/f16.rs:27-37`
-**Impact**: Values too large for f16 silently clamp to 65504.0 instead of erroring
-
-**Our code**: `if exp == 0xFF → clamp to 0x7BFF`, `if new_exp >= 31 → clamp to 0x7BFF`
-**libjxl**: `F16Coder::CanEncode` returns false for Inf/NaN and values with exp > 15.
-`F16Coder::Write` returns `JXL_FAILURE` (error status).
-
-**Fix**: Return `Err(Error::InvalidValue)` instead of clamping. Callers should validate
-before encoding. Affects: custom DC quant, custom gaborish weights, custom EPF sigma.
+**Status**: FIXED. `f32_to_f16_bits()` now returns `Result<u16>`, rejecting Inf, NaN,
+and overflow (|value| > 65504). Matches libjxl `F16Coder::CanEncode` behavior.
 
 ### ~~DIFF-2~~: ~~F16 underflow boundary off-by-one~~ FALSE ALARM
 
@@ -52,15 +45,10 @@ Our subnormal path for biased_exp32=102 computes `half_mantissa = (m >> (13+shif
 (zero), same result as libjxl's early-out `if (exp < -24) return 0`. Different code paths,
 same output. No fix needed.
 
-### DIFF-3: F16 Inf/NaN not rejected on encode
+### ~~DIFF-3~~: F16 Inf/NaN not rejected on encode — FIXED (cf75fe8)
 
-**File**: `jxl_encoder/src/f16.rs:27-29`
-**Impact**: Inf → 65504.0, NaN → some value with exponent 0x1F
-
-**Our code**: Clamps Inf to max finite. NaN would encode with mantissa bits intact.
-**libjxl**: `F16Coder::CanEncode` rejects both. Spec says NaN/Inf are invalid in headers.
-
-**Fix**: Return error for `exp == 0xFF` instead of clamping. (Merge with DIFF-1 fix.)
+**Status**: FIXED. Merged with DIFF-1 fix. `f32_to_f16_bits()` returns error for
+`exp == 0xFF` (Inf/NaN), matching libjxl `F16Coder::CanEncode`.
 
 ### DIFF-4: XYB missing `ZeroIfNegative` clamp for wide-gamut
 
