@@ -52,35 +52,7 @@ pub fn dct1d_32(mem: &mut [f32]) {
 /// Like `dct_8x8()` and `dct_16x16()`, there is NO final transpose for square blocks.
 /// C++ `ComputeScaledDCT<32,32>` takes the ROWS >= COLS branch (no final transpose).
 pub fn dct_32x32(input: &[f32; 1024], output: &mut [f32; 1024]) {
-    let mut tmp = [0.0f32; 1024];
-
-    // Transform rows (32 columns each)
-    for row in 0..32 {
-        let row_start = row * 32;
-        tmp[row_start..row_start + 32].copy_from_slice(&input[row_start..row_start + 32]);
-        dct1d_32(&mut tmp[row_start..row_start + 32]);
-        // Scale by 1/N
-        for i in 0..32 {
-            tmp[row_start + i] *= 1.0 / 32.0;
-        }
-    }
-
-    // Transpose 32x32
-    let mut transposed = [0.0f32; 1024];
-    transpose::<32, 32>(&tmp, &mut transposed);
-
-    // Transform columns (now rows after transpose)
-    for row in 0..32 {
-        let row_start = row * 32;
-        dct1d_32(&mut transposed[row_start..row_start + 32]);
-        // Scale by 1/N
-        for i in 0..32 {
-            transposed[row_start + i] *= 1.0 / 32.0;
-        }
-    }
-
-    // DO NOT transpose back! Same as DCT8x8/DCT16x16 - square blocks stay transposed.
-    output.copy_from_slice(&transposed);
+    jxl_simd::dct_32x32(input, output);
 }
 
 /// Extract DC values from 32x32 DCT coefficients.
@@ -142,39 +114,7 @@ pub fn dc_from_dct_32x32(coeffs: &[f32; 1024]) -> [f32; 16] {
 ///
 /// C++ `ComputeScaledDCT<32,16>` takes the ROWS >= COLS branch (no final transpose).
 pub fn dct_32x16(input: &[f32; 512], output: &mut [f32; 512]) {
-    let mut tmp = [0.0f32; 512];
-
-    // Transform rows (16 columns each)
-    for row in 0..32 {
-        let row_start = row * 16;
-        tmp[row_start..row_start + 16].copy_from_slice(&input[row_start..row_start + 16]);
-        dct1d_16(&mut tmp[row_start..row_start + 16]);
-        for i in 0..16 {
-            tmp[row_start + i] *= 1.0 / 16.0;
-        }
-    }
-
-    // Transpose 32x16 -> 16x32
-    let mut transposed = [0.0f32; 512];
-    for row in 0..32 {
-        for col in 0..16 {
-            transposed[col * 32 + row] = tmp[row * 16 + col];
-        }
-    }
-
-    // Transform columns (now 32 elements each in rows after transpose)
-    for row in 0..16 {
-        let row_start = row * 32;
-        dct1d_32(&mut transposed[row_start..row_start + 32]);
-        for i in 0..32 {
-            transposed[row_start + i] *= 1.0 / 32.0;
-        }
-    }
-
-    // No final transpose — C++ ComputeScaledDCT<32,16> (ROWS >= COLS branch)
-    // does not include a final transpose, matching DCT8x8 behavior.
-    // Output is in 16x32 layout: output[fx * 32 + fy] for frequency (fy, fx).
-    output.copy_from_slice(&transposed);
+    jxl_simd::dct_32x16(input, output);
 }
 
 /// Compute scaled 16x32 DCT (16 rows, 32 columns).
@@ -184,41 +124,7 @@ pub fn dct_32x16(input: &[f32; 512], output: &mut [f32; 512]) {
 ///
 /// C++ `ComputeScaledDCT<16,32>` takes the ROWS < COLS branch (includes final transpose).
 pub fn dct_16x32(input: &[f32; 512], output: &mut [f32; 512]) {
-    let mut tmp = [0.0f32; 512];
-
-    // Transform rows (32 columns each)
-    for row in 0..16 {
-        let row_start = row * 32;
-        tmp[row_start..row_start + 32].copy_from_slice(&input[row_start..row_start + 32]);
-        dct1d_32(&mut tmp[row_start..row_start + 32]);
-        for i in 0..32 {
-            tmp[row_start + i] *= 1.0 / 32.0;
-        }
-    }
-
-    // Transpose 16x32 -> 32x16
-    let mut transposed = [0.0f32; 512];
-    for row in 0..16 {
-        for col in 0..32 {
-            transposed[col * 16 + row] = tmp[row * 32 + col];
-        }
-    }
-
-    // Transform columns (now 16 elements each)
-    for row in 0..32 {
-        let row_start = row * 16;
-        dct1d_16(&mut transposed[row_start..row_start + 16]);
-        for i in 0..16 {
-            transposed[row_start + i] *= 1.0 / 16.0;
-        }
-    }
-
-    // Transpose 32x16 -> 16x32 (ROWS < COLS branch includes final transpose)
-    for row in 0..32 {
-        for col in 0..16 {
-            output[col * 32 + row] = transposed[row * 16 + col];
-        }
-    }
+    jxl_simd::dct_16x32(input, output);
 }
 
 /// Extract DC values from 32x16 DCT coefficients.
