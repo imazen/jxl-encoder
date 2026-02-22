@@ -143,34 +143,36 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 21, 2026)
+### Quality Gap vs Full libjxl (Feb 22, 2026)
 
-**Measured with Rust butteraugli** (metadata-immune, always applies sRGB TF consistently).
+**Measured with Rust butteraugli + SSIMULACRA2** (metadata-immune, correct sRGB TF).
 41 CID22 images × 9 distances (369 data points). Uses `just quality-compare` with
 in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
 
 **vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-**Overall: Size +0.7%, Butteraugli +0.3% (essentially at parity)**
+**Overall: Size +0.7%, Butteraugli +0.3%, SSIM2 -0.9%**
 
-| Distance | Avg Size | Avg Butteraugli |
-|----------|----------|-----------------|
-| d=0.25 | -0.4% | **-16.2%** (better) |
-| d=0.5 | -2.2% | **-10.5%** (better) |
-| d=1.0 | +1.2% | +1.2% |
-| d=1.5 | +2.0% | +0.7% |
-| d=2.0 | +3.0% | +0.6% |
-| d=2.5 | +3.5% | +1.0% |
-| d=3.0 | +3.1% | +0.7% |
-| d=4.0 | +3.5% | +2.2% |
-| d=5.0 | +2.9% | +1.3% |
+| Distance | Avg Size | Avg Butteraugli | Our SS2 | cjxl SS2 |
+|----------|----------|-----------------|---------|----------|
+| d=0.25 | -0.4% | **-16.2%** (better) | 94.02 | 93.81 |
+| d=0.5 | -2.2% | **-10.5%** (better) | 91.47 | 91.52 |
+| d=1.0 | +1.2% | +1.2% | 86.97 | 87.32 |
+| d=1.5 | +2.0% | +0.7% | 82.87 | 83.35 |
+| d=2.0 | +3.0% | +0.6% | 79.08 | 79.77 |
+| d=2.5 | +3.5% | +1.0% | 75.51 | 76.31 |
+| d=3.0 | +3.1% | +0.7% | 72.25 | 73.34 |
+| d=4.0 | +3.5% | +2.2% | 66.42 | 67.74 |
+| d=5.0 | +2.9% | +1.3% | 60.80 | 62.66 |
 
 **Key patterns**:
-- Quality at parity with cjxl e7 at d=1.0-3.0 (butteraugli within 1.2%)
-- Files 1-4% larger on average, growing to 5-8% overhead at d=5.0
-- d1a9be98 (low-detail/smooth) is a persistent outlier: always worse quality, always larger
-- frymire and 50fe4c3d (high-detail) consistently produce better quality
+- Quality at parity with cjxl e7 at d=1.0-3.0 (butteraugli within 1.2%, SSIM2 within 1.5%)
+- Files 1-4% larger on average
+- SSIM2 gap grows with distance (d=4.0: -1.9%, d=5.0: -3.0%)
+- d=4.0 has worst butteraugli gap (+2.2%) due to per-block coefficient differences
+  at the EPF 2→3 iteration boundary (same strategies, different CfL/coefficient rounding)
+- Previous "10% SSIM2 gap" was a measurement bug: gamma 2.2 instead of sRGB TF (9e8e966)
 
 **Root causes found and fixed**:
 - **Gaborish ordering** (1af2202): adaptive quant was computed on gaborished (sharpened) XYB,
