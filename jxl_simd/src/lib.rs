@@ -68,7 +68,7 @@ pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
 pub use dct32::{dct_16x32, dct_32x16, dct_32x32};
 pub use dct64::{dct_32x64, dct_64x32, dct_64x64};
 pub use dequant::dequant_block_dct8;
-pub use entropy::{EntropyCoeffResult, entropy_estimate_coeffs};
+pub use entropy::{EntropyCoeffResult, entropy_estimate_coeffs, shannon_entropy_bits};
 pub use epf::{epf_step1, epf_step2, pad_plane};
 pub use gab::gab_smooth_channel;
 pub use gaborish5x5::gaborish_5x5_channel;
@@ -93,7 +93,7 @@ pub use dct16::{dct_8x16_scalar, dct_16x8_scalar, dct_16x16_scalar};
 pub use dct32::{dct_16x32_scalar, dct_32x16_scalar, dct_32x32_scalar};
 pub use dct64::{dct_32x64_scalar, dct_64x32_scalar, dct_64x64_scalar};
 pub use dequant::dequant_dct8_scalar;
-pub use entropy::entropy_coeffs_scalar;
+pub use entropy::{entropy_coeffs_scalar, shannon_entropy_scalar};
 pub use epf::{epf_step1_scalar, epf_step2_scalar};
 pub use gab::gab_smooth_scalar;
 pub use gaborish5x5::gaborish_5x5_scalar;
@@ -126,7 +126,7 @@ pub use dct64::{dct_32x64_avx2, dct_64x32_avx2, dct_64x64_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use dequant::dequant_dct8_avx2;
 #[cfg(target_arch = "x86_64")]
-pub use entropy::entropy_coeffs_avx2;
+pub use entropy::{entropy_coeffs_avx2, shannon_entropy_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use epf::{epf_step1_avx2, epf_step2_avx2};
 #[cfg(target_arch = "x86_64")]
@@ -167,7 +167,7 @@ pub use dct16::{dct_8x16_neon, dct_16x8_neon, dct_16x16_neon};
 #[cfg(target_arch = "aarch64")]
 pub use dequant::dequant_dct8_neon;
 #[cfg(target_arch = "aarch64")]
-pub use entropy::entropy_coeffs_neon;
+pub use entropy::{entropy_coeffs_neon, shannon_entropy_neon};
 #[cfg(target_arch = "aarch64")]
 pub use epf::{epf_step1_neon, epf_step2_neon};
 #[cfg(target_arch = "aarch64")]
