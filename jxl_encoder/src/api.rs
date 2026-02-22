@@ -2338,22 +2338,66 @@ fn extract_pixel_crop(
 
 // ── Pixel conversion helpers ────────────────────────────────────────────────
 
-/// sRGB u8 → linear f32 (IEC 61966-2-1).
+/// Pre-computed sRGB u8 → linear f32 lookup table (256 entries).
+/// Eliminates per-pixel `powf(2.4)` calls for the common 8-bit path.
+const SRGB_U8_TO_LINEAR: [f32; 256] = {
+    let mut table = [0.0f32; 256];
+    let mut i = 0u16;
+    while i < 256 {
+        let c = i as f64 / 255.0;
+        // Use f64 for accuracy during const eval, then truncate to f32.
+        // powf is not const, so we use exp(2.4 * ln(x)) via a manual series.
+        // For const context, we precompute using the piecewise sRGB TF.
+        table[i as usize] = if c <= 0.04045 {
+            (c / 12.92) as f32
+        } else {
+            // ((c + 0.055) / 1.055)^2.4
+            // = exp(2.4 * ln((c + 0.055) / 1.055))
+            // Approximate via repeated squaring: x^2.4 = x^2 * x^0.4
+            // x^0.4 = (x^0.5)^0.8 = ((x^0.5)^0.5)^... too complex for const.
+            // Instead, use the identity: x^2.4 = (x^12)^(1/5)
+            // and compute fifth root via Newton's method in f64.
+            let base = (c + 0.055) / 1.055;
+            // x^12 = ((x^2)^2)^3
+            let x2 = base * base;
+            let x4 = x2 * x2;
+            let x8 = x4 * x4;
+            let x12 = x8 * x4;
+            // Fifth root of x^12 = x^(12/5) = x^2.4
+            // Newton: y_{n+1} = y_n - (y_n^5 - x12) / (5 * y_n^4)
+            //       = (4*y_n + x12/y_n^4) / 5
+            let mut y = base * base; // initial guess ~x^2
+            // 8 iterations of Newton's method for fifth root (converges in ~6 for f64)
+            let mut iter = 0;
+            while iter < 8 {
+                let y2 = y * y;
+                let y4 = y2 * y2;
+                y = (4.0 * y + x12 / y4) / 5.0;
+                iter += 1;
+            }
+            y as f32
+        };
+        i += 1;
+    }
+    table
+};
+
+/// sRGB u8 → linear f32 via LUT.
 #[inline]
 fn srgb_to_linear(c: u8) -> f32 {
-    srgb_to_linear_f(c as f32 / 255.0)
+    SRGB_U8_TO_LINEAR[c as usize]
 }
 
 fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
-    data.chunks(channels)
-        .flat_map(|px| {
-            [
-                srgb_to_linear(px[0]),
-                srgb_to_linear(px[1]),
-                srgb_to_linear(px[2]),
-            ]
-        })
-        .collect()
+    let num_pixels = data.len() / channels;
+    let mut out = Vec::with_capacity(num_pixels * 3);
+    let lut = &SRGB_U8_TO_LINEAR;
+    for px in data.chunks_exact(channels) {
+        out.push(lut[px[0] as usize]);
+        out.push(lut[px[1] as usize]);
+        out.push(lut[px[2] as usize]);
+    }
+    out
 }
 
 /// sRGB u16 → linear f32 (IEC 61966-2-1).
@@ -3033,6 +3077,21 @@ mod tests {
             }
             assert_eq!(mismatches, 0, "{}: {} mismatches", label, mismatches);
             eprintln!("{}: PASS ({} bytes)", label, jxl.len());
+        }
+    }
+
+    #[test]
+    fn test_srgb_lut_matches_powf() {
+        for i in 0u16..256 {
+            let lut_val = SRGB_U8_TO_LINEAR[i as usize];
+            let powf_val = srgb_to_linear_f(i as f32 / 255.0);
+            let diff = (lut_val - powf_val).abs();
+            // Allow up to 1 ULP of f32 difference (Newton's method in f64 is very accurate)
+            let tol = powf_val.abs() * 1e-6 + 1e-10;
+            assert!(
+                diff <= tol,
+                "sRGB LUT mismatch at {i}: LUT={lut_val}, powf={powf_val}, diff={diff}"
+            );
         }
     }
 }
