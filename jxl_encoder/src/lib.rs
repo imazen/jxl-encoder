@@ -27,6 +27,7 @@ pub mod image;
 #[cfg(feature = "jpeg-reencoding")]
 pub mod jpeg;
 pub mod modular;
+pub(crate) mod parallel;
 pub mod trace;
 pub mod vardct;
 

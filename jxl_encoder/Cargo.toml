@@ -22,6 +22,7 @@ bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.1.1", path = "../jxl_simd", default-features = false }
 archmage = { version = "0.8.4", default-features = false, features = ["macros", "safe_unaligned_simd"] }
+rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.6.1", default-features = false, features = ["std", "decoder"], optional = true }
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features
@@ -49,6 +50,7 @@ rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
+parallel = ["std", "dep:rayon"]
 default = ["std", "safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
