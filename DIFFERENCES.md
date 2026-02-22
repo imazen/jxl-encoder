@@ -7,7 +7,7 @@ Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
-**Score: 10 fixed, 3 false alarms, 6 remaining (1 DIFF + 5 OPTs)**
+**Score: 11 fixed, 3 false alarms, 5 remaining (1 DIFF + 4 OPTs)**
 
 ---
 
@@ -147,18 +147,11 @@ Use this in `histogram_distance()` when `ClusteringType::Best`.
 from libjxl `enc_ans.cc:747-783`. Activated when enhanced_clustering is enabled.
 Per-histogram Shannon entropy + extra bits + signaling cost evaluation.
 
-### OPT-4: Missing flat distribution cost baseline in ANS strategy selection
+### ~~OPT-4~~: Missing flat distribution cost baseline in ANS strategy selection — FIXED (dc321e4)
 
-**File**: `jxl_encoder/src/entropy_coding/ans.rs`
-**Impact**: May miss cases where flat distribution (all symbols equiprobable) is cheaper
-than the computed distribution. Rare in practice.
-
-**libjxl**: Always computes `flat_cost = total_count * ANS_LOG_TAB_SIZE` as a baseline
-and picks the cheaper of flat vs computed. Our code only uses flat when detected by
-`is_flat()` in the standalone distribution path.
-
-**Fix**: In `ANSEncodingHistogram::from_histogram()`, compute flat cost and compare
-with best computed cost. If flat is cheaper, use method=0 (flat encoding).
+**Status**: FIXED. `from_histogram()` now initializes with flat distribution cost
+(header + `total_count * log2(alphabet_size)`) before trying shift-based encodings.
+Matches libjxl's flat-first approach (`enc_ans.cc:97-102`).
 
 ### OPT-5: No RLE in ANS logcount encoding
 
