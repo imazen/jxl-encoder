@@ -9,7 +9,8 @@
 use super::ac_strategy::AcStrategyMap;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
-    OwnedAnsEntropyCode, OwnedEntropyCode, write_entropy_code_ans, write_tokens, write_tokens_ans,
+    OwnedAnsEntropyCode, OwnedEntropyCode, write_entropy_code, write_entropy_code_ans,
+    write_tokens, write_tokens_ans,
 };
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
@@ -37,12 +38,8 @@ impl<'a> BuiltEntropyCode<'a> {
     /// Write the entropy code header (context map + codes/distributions).
     pub fn write_header(&self, writer: &mut BitWriter) -> Result<()> {
         match self {
-            BuiltEntropyCode::StaticHuffman(code) => {
-                crate::entropy_coding::encode::write_entropy_code(code, writer)
-            }
-            BuiltEntropyCode::Huffman(code) => {
-                crate::entropy_coding::encode::write_entropy_code(&code.as_entropy_code(), writer)
-            }
+            BuiltEntropyCode::StaticHuffman(code) => write_entropy_code(code, writer),
+            BuiltEntropyCode::Huffman(code) => code.write_header(writer),
             BuiltEntropyCode::Ans(code) => write_entropy_code_ans(code, writer),
         }
     }
@@ -56,9 +53,7 @@ impl<'a> BuiltEntropyCode<'a> {
     ) -> Result<()> {
         match self {
             BuiltEntropyCode::StaticHuffman(code) => write_tokens(tokens, code, lz77, writer),
-            BuiltEntropyCode::Huffman(code) => {
-                write_tokens(tokens, &code.as_entropy_code(), lz77, writer)
-            }
+            BuiltEntropyCode::Huffman(code) => code.write_tokens_owned(tokens, lz77, writer),
             BuiltEntropyCode::Ans(code) => write_tokens_ans(tokens, code, lz77, writer),
         }
     }

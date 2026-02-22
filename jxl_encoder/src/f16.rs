@@ -40,9 +40,9 @@ pub fn f32_to_f16_bits(value: f32) -> Result<u16> {
 
     if new_exp >= 31 {
         // Overflow — reject (matches libjxl F16Coder::CanEncode: exp > 15)
-        return Err(crate::error::Error::InvalidInput(
-            format!("F16 overflow: {value} exceeds max representable (65504)"),
-        ));
+        return Err(crate::error::Error::InvalidInput(format!(
+            "F16 overflow: {value} exceeds max representable (65504)"
+        )));
     }
 
     if new_exp <= 0 {
