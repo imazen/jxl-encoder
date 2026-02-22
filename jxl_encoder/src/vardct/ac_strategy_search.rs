@@ -217,6 +217,20 @@ pub(super) fn find_best_16x16_transform(
         }
     }
 
+    // If max strategy size is 8 (try_dct16 = false), skip multi-block evaluation
+    // and just assign the best 8x8-class strategy per block.
+    if !profile.try_dct16 {
+        for dy in 0..2 {
+            for dx in 0..2 {
+                let strat = best_single_strategy[dy][dx];
+                if strat != RAW_STRATEGY_DCT8 {
+                    ac_strategy.set(abs_bx + dx, abs_by + dy, strat);
+                }
+            }
+        }
+        return;
+    }
+
     // Evaluate two DCT16X8 options (left column, right column)
     let entropy_16x8_left = mul16x8
         * estimate_entropy_with_mask(

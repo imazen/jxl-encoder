@@ -145,6 +145,8 @@ pub struct EffortProfile {
     // ─── AC strategy search ──────────────────────────────────────────────
     /// Enable adaptive AC strategy selection (multi-block transforms).
     pub ac_strategy_enabled: bool,
+    /// Try DCT16x16/DCT16x8/DCT8x16 transforms (multi-block 16x16 merges).
+    pub try_dct16: bool,
     /// Try DCT32x32/DCT32x16/DCT16x32 transforms.
     pub try_dct32: bool,
     /// Try DCT64x64/DCT64x32/DCT32x64 transforms.
@@ -303,6 +305,7 @@ impl EffortProfile {
 
             // ── AC strategy search ──
             ac_strategy_enabled: effort >= 5,
+            try_dct16: effort >= 5,
             try_dct32: effort >= 5,
             try_dct64: effort >= 7,
             try_dct4x8_afv: effort >= 6,
@@ -397,6 +400,7 @@ impl EffortProfile {
 
             // ── AC strategy (N/A for lossless) ──
             ac_strategy_enabled: false,
+            try_dct16: false,
             try_dct32: false,
             try_dct64: false,
             try_dct4x8_afv: false,
