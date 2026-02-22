@@ -26,6 +26,8 @@ debug-rect = ["jxl_encoder/debug-rect"]
 rate-control = ["jxl_encoder/rate-control"]
 # Enable butteraugli quantization loop for per-block quality refinement
 butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
+# Enable parallel group encoding with rayon
+parallel = ["jxl_encoder/parallel"]
 
 [dependencies]
 jxl_encoder = { package = "jxl-encoder", path = "../jxl_encoder", version = "0.1.0", default-features = false }

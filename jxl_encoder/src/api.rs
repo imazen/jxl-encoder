@@ -532,6 +532,7 @@ pub struct LosslessConfig {
     lz77_method: Lz77Method,
     patches: bool,
     lossy_palette: bool,
+    threads: usize,
 }
 
 impl Default for LosslessConfig {
@@ -553,6 +554,7 @@ impl LosslessConfig {
             lz77_method: profile.lz77_method,
             patches: profile.patches,
             lossy_palette: false,
+            threads: 0,
         }
     }
 
@@ -645,6 +647,15 @@ impl LosslessConfig {
         self
     }
 
+    /// Set thread count for parallel encoding (0 = auto, 1 = sequential).
+    ///
+    /// Requires the `parallel` feature. When `parallel` is not enabled,
+    /// this value is ignored and encoding is always sequential.
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
+    }
+
     // ── Getters ───────────────────────────────────────────────────────
 
     /// Current effort level.
@@ -685,6 +696,11 @@ impl LosslessConfig {
     /// Whether lossy delta palette is enabled.
     pub fn lossy_palette(&self) -> bool {
         self.lossy_palette
+    }
+
+    /// Thread count (0 = auto, 1 = sequential).
+    pub fn threads(&self) -> usize {
+        self.threads
     }
 
     // ── Request / fluent encode ─────────────────────────────────────
@@ -848,6 +864,7 @@ pub struct LossyConfig {
     butteraugli_iters: u32,
     #[cfg(feature = "butteraugli-loop")]
     butteraugli_iters_explicit: bool,
+    threads: usize,
 }
 
 impl LossyConfig {
@@ -880,6 +897,7 @@ impl LossyConfig {
             butteraugli_iters: profile.butteraugli_iters,
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters_explicit: false,
+            threads: 0,
         }
     }
 
@@ -1060,6 +1078,15 @@ impl LossyConfig {
         self
     }
 
+    /// Set thread count for parallel encoding (0 = auto, 1 = sequential).
+    ///
+    /// Requires the `parallel` feature. When `parallel` is not enabled,
+    /// this value is ignored and encoding is always sequential.
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
+    }
+
     // ── Getters ───────────────────────────────────────────────────────
 
     /// Current butteraugli distance.
@@ -1136,6 +1163,11 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub fn butteraugli_iters(&self) -> u32 {
         self.butteraugli_iters
+    }
+
+    /// Thread count (0 = auto, 1 = sequential).
+    pub fn threads(&self) -> usize {
+        self.threads
     }
 
     // ── Request / fluent encode ─────────────────────────────────────
@@ -1309,10 +1341,15 @@ impl<'a> EncodeRequest<'a> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
 
-        let (codestream, mut stats) = match self.config {
+        let threads = match self.config {
+            ConfigRef::Lossless(cfg) => cfg.threads,
+            ConfigRef::Lossy(cfg) => cfg.threads,
+        };
+
+        let (codestream, mut stats) = run_with_threads(threads, || match self.config {
             ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels),
             ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels),
-        }?;
+        })?;
 
         stats.codestream_size = codestream.len();
 
@@ -1750,6 +1787,33 @@ impl<'a> EncodeRequest<'a> {
         };
         Ok((output.data, stats))
     }
+}
+
+// ── Thread pool helper ──────────────────────────────────────────────────────
+
+/// Run a closure inside a scoped rayon thread pool when the `parallel` feature
+/// is enabled and `threads != 1`. Otherwise, just call the closure directly.
+#[cfg(feature = "parallel")]
+fn run_with_threads<T>(threads: usize, f: impl FnOnce() -> T + Send) -> T
+where
+    T: Send,
+{
+    if threads == 1 {
+        return f();
+    }
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if threads > 0 {
+        builder = builder.num_threads(threads);
+    }
+    match builder.build() {
+        Ok(pool) => pool.install(f),
+        Err(_) => f(), // fall back to global pool / sequential
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+fn run_with_threads<T>(_threads: usize, f: impl FnOnce() -> T) -> T {
+    f()
 }
 
 // ── Animation encode implementations ────────────────────────────────────────

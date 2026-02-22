@@ -5,7 +5,7 @@ debug = true
 debug = true
 
 [profile.test]
-opt-level = 2
+opt-level = 3
 
 [profile.dev]
 opt-level = 2
