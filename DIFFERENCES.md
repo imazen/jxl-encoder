@@ -7,7 +7,7 @@ Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
-**Score: 11 fixed, 3 false alarms, 5 remaining (1 DIFF + 4 OPTs)**
+**Score: 12 fixed, 3 false alarms, 4 remaining (1 DIFF + 3 OPTs)**
 
 ---
 
@@ -153,19 +153,12 @@ Per-histogram Shannon entropy + extra bits + signaling cost evaluation.
 (header + `total_count * log2(alphabet_size)`) before trying shift-based encodings.
 Matches libjxl's flat-first approach (`enc_ans.cc:97-102`).
 
-### OPT-5: No RLE in ANS logcount encoding
+### ~~OPT-5~~: No RLE in ANS logcount encoding — FIXED (7c25011)
 
-**File**: `jxl_encoder/src/entropy_coding/ans.rs` (histogram serialization)
-**Impact**: Slightly larger histogram headers when there are long runs of zero-frequency
-symbols. Estimated <0.05% file size.
-
-**libjxl**: When 5+ consecutive symbols have the same logcount, emits RLE marker
-(symbol 13 in the logcount Huffman code) + run length. Our code writes every
-logcount individually.
-
-**Fix**: During logcount serialization, detect runs of length >= 5 with the same
-logcount value. Emit `[logcount, RLE_MARKER, run_length - 5]` instead of repeating
-the logcount. The RLE marker is symbol index 13 in the logcount prefix code.
+**Status**: FIXED. Added RLE compression for runs of 4+ consecutive symbols with
+identical normalized counts. Emits RLE marker (symbol 13) + VarLenUint8(run-4).
+Skips precision bits for RLE-covered positions (matching decoder). Runs check
+actual counts and break at omit_pos boundaries.
 
 ### ~~OPT-6~~: LZ77 distance cost table 11 entries short — FIXED (a42664b)
 
