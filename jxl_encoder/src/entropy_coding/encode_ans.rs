@@ -113,9 +113,9 @@ pub fn build_entropy_code_ans_with_options(
         ClusteringType::Fast
     };
 
-    // Allow up to 96 clusters — non-simple context map format supports arbitrary counts.
-    // Tested: 64→96 helps marginally, >96 has diminishing returns due to context map overhead.
-    let mut max_histograms = num_contexts.min(96);
+    // Allow up to 128 clusters — matches libjxl kClustersLimit (enc_context_map.h:24).
+    // Non-simple context map format supports arbitrary counts.
+    let mut max_histograms = num_contexts.min(128);
     // Scale down for small images: each histogram needs ~36 bytes ANS header overhead,
     // so for a 128x128 RGB image (~48K values), 96 histograms = ~3.4KB overhead (21% of file).
     // Cap to total_pixels/2048 so overhead stays proportional to content.
