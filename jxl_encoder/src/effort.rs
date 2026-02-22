@@ -172,6 +172,11 @@ pub struct EffortProfile {
     /// Use Newton's method (perceptual cost model) for CfL fitting (effort >= 7 in libjxl).
     /// When false, uses fast least-squares fitting (quadratic cost, single-pass).
     pub cfl_newton: bool,
+    /// Newton finite-difference epsilon for CfL fitting.
+    /// Controls second-derivative accuracy. Default 1.0 (libjxl uses 100.0, which oscillates).
+    pub cfl_newton_eps: f32,
+    /// Maximum Newton iterations for CfL fitting. Default 10 (libjxl uses 20).
+    pub cfl_newton_max_iters: usize,
 
     // ─── Quantization ────────────────────────────────────────────────────
     /// Use adaptive (content-dependent) quant field via InitialQuantField.
@@ -318,6 +323,8 @@ impl EffortProfile {
             epf_dynamic_sharpness: effort >= 6,
             cfl_two_pass: effort >= 7,
             cfl_newton: effort >= 7,
+            cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
+            cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
 
             // ── Quantization ──
             use_adaptive_quant: effort >= 5,
@@ -413,6 +420,8 @@ impl EffortProfile {
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
             cfl_newton: false,
+            cfl_newton_eps: jxl_simd::NEWTON_EPS_DEFAULT,
+            cfl_newton_max_iters: jxl_simd::NEWTON_MAX_ITERS_DEFAULT,
 
             // ── Quantization (N/A for lossless) ──
             use_adaptive_quant: false,

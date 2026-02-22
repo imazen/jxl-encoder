@@ -31,13 +31,16 @@ fn bias_and_quantize(x: f32) -> i8 {
 /// eps=1 (not 100) gives accurate local second derivatives, enabling
 /// convergence. libjxl uses eps=100 which causes oscillation on most tiles
 /// (see CFL_NEWTON_CONVERGENCE_BUG.md in the libjxl repo).
-const NEWTON_EPS: f32 = 1.0;
+///
+/// `NEWTON_EPS` and `NEWTON_MAX_ITERS` are defaults; callers can override
+/// via function parameters to tune CfL fitting precision vs. convergence.
+pub const NEWTON_EPS_DEFAULT: f32 = 1.0;
+pub const NEWTON_MAX_ITERS_DEFAULT: usize = 10;
 const NEWTON_CLAMP: f32 = 20.0;
 const NEWTON_COEFF: f32 = 1.0 / 3.0;
 const NEWTON_THRES: f32 = 100.0;
 const NEWTON_STABILIZER: f32 = 0.85;
 const NEWTON_CONVERGENCE: f32 = 3e-3;
-const NEWTON_MAX_ITERS: usize = 10;
 
 /// Find the best integer CfL multiplier via regularized least-squares.
 ///
@@ -275,6 +278,8 @@ pub fn find_best_multiplier_newton(
     num: usize,
     base: f32,
     distance_mul: f32,
+    eps: f32,
+    max_iters: usize,
 ) -> i8 {
     #[cfg(target_arch = "x86_64")]
     {
@@ -287,6 +292,8 @@ pub fn find_best_multiplier_newton(
                 num,
                 base,
                 distance_mul,
+                eps,
+                max_iters,
             );
         }
     }
@@ -302,11 +309,13 @@ pub fn find_best_multiplier_newton(
                 num,
                 base,
                 distance_mul,
+                eps,
+                max_iters,
             );
         }
     }
 
-    find_best_multiplier_newton_scalar(values_m, values_s, num, base, distance_mul)
+    find_best_multiplier_newton_scalar(values_m, values_s, num, base, distance_mul, eps, max_iters)
 }
 
 /// Scalar Newton's method for CfL multiplier.
@@ -322,6 +331,8 @@ pub fn find_best_multiplier_newton_scalar(
     num: usize,
     base: f32,
     distance_mul: f32,
+    eps: f32,
+    max_iters: usize,
 ) -> i8 {
     if num == 0 {
         return 0;
@@ -342,18 +353,18 @@ pub fn find_best_multiplier_newton_scalar(
     let mut x = ls_x;
     let mut converged = false;
 
-    for _ in 0..NEWTON_MAX_ITERS {
+    for _ in 0..max_iters {
         let mut fd = 2.0 * distance_mul * num as f32 * x;
-        let mut fd_pe = 2.0 * distance_mul * num as f32 * (x + NEWTON_EPS);
-        let mut fd_me = 2.0 * distance_mul * num as f32 * (x - NEWTON_EPS);
+        let mut fd_pe = 2.0 * distance_mul * num as f32 * (x + eps);
+        let mut fd_me = 2.0 * distance_mul * num as f32 * (x - eps);
 
         for i in 0..num {
             let a = K_INV_COLOR_FACTOR * values_m[i];
             let b = base * values_m[i] - values_s[i];
 
             let v = a * x + b;
-            let vpe = a * (x + NEWTON_EPS) + b;
-            let vme = a * (x - NEWTON_EPS) + b;
+            let vpe = a * (x + eps) + b;
+            let vme = a * (x - eps) + b;
 
             let av = v.abs();
             let avpe = vpe.abs();
@@ -389,7 +400,7 @@ pub fn find_best_multiplier_newton_scalar(
         }
 
         // Second derivative via central difference
-        let ddf = (fd_pe - fd_me) / (2.0 * NEWTON_EPS);
+        let ddf = (fd_pe - fd_me) / (2.0 * eps);
         let step = fd / (ddf + NEWTON_STABILIZER);
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
@@ -408,6 +419,7 @@ pub fn find_best_multiplier_newton_scalar(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
 pub fn find_best_multiplier_newton_avx2(
     token: archmage::X64V3Token,
@@ -416,6 +428,8 @@ pub fn find_best_multiplier_newton_avx2(
     num: usize,
     base: f32,
     distance_mul: f32,
+    eps: f32,
+    max_iters: usize,
 ) -> i8 {
     use magetypes::simd::f32x8;
 
@@ -459,10 +473,10 @@ pub fn find_best_multiplier_newton_avx2(
     let mut x = ls_x;
     let mut converged = false;
 
-    for _ in 0..NEWTON_MAX_ITERS {
+    for _ in 0..max_iters {
         let x_v = f32x8::splat(token, x);
-        let xpe_v = f32x8::splat(token, x + NEWTON_EPS);
-        let xme_v = f32x8::splat(token, x - NEWTON_EPS);
+        let xpe_v = f32x8::splat(token, x + eps);
+        let xme_v = f32x8::splat(token, x - eps);
 
         let mut acc_fd = f32x8::splat(token, 0.0);
         let mut acc_fdpe = f32x8::splat(token, 0.0);
@@ -508,18 +522,16 @@ pub fn find_best_multiplier_newton_avx2(
         }
 
         let mut fd: f32 = 2.0 * distance_mul * num as f32 * x + acc_fd.reduce_add();
-        let mut fd_pe: f32 =
-            2.0 * distance_mul * num as f32 * (x + NEWTON_EPS) + acc_fdpe.reduce_add();
-        let mut fd_me: f32 =
-            2.0 * distance_mul * num as f32 * (x - NEWTON_EPS) + acc_fdme.reduce_add();
+        let mut fd_pe: f32 = 2.0 * distance_mul * num as f32 * (x + eps) + acc_fdpe.reduce_add();
+        let mut fd_me: f32 = 2.0 * distance_mul * num as f32 * (x - eps) + acc_fdme.reduce_add();
 
         // Scalar tail
         while i < num {
             let a = K_INV_COLOR_FACTOR * values_m[i];
             let b = base * values_m[i] - values_s[i];
             let v = a * x + b;
-            let vpe = a * (x + NEWTON_EPS) + b;
-            let vme = a * (x - NEWTON_EPS) + b;
+            let vpe = a * (x + eps) + b;
+            let vme = a * (x - eps) + b;
             let av = v.abs();
             let avpe = vpe.abs();
             let avme = vme.abs();
@@ -548,7 +560,7 @@ pub fn find_best_multiplier_newton_avx2(
             i += 1;
         }
 
-        let ddf = (fd_pe - fd_me) / (2.0 * NEWTON_EPS);
+        let ddf = (fd_pe - fd_me) / (2.0 * eps);
         let step = fd / (ddf + NEWTON_STABILIZER);
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
@@ -567,6 +579,7 @@ pub fn find_best_multiplier_newton_avx2(
 }
 
 #[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
 pub fn find_best_multiplier_newton_neon(
     token: archmage::NeonToken,
@@ -575,6 +588,8 @@ pub fn find_best_multiplier_newton_neon(
     num: usize,
     base: f32,
     distance_mul: f32,
+    eps: f32,
+    max_iters: usize,
 ) -> i8 {
     use magetypes::simd::f32x4;
 
@@ -618,10 +633,10 @@ pub fn find_best_multiplier_newton_neon(
     let mut x = ls_x;
     let mut converged = false;
 
-    for _ in 0..NEWTON_MAX_ITERS {
+    for _ in 0..max_iters {
         let x_v = f32x4::splat(token, x);
-        let xpe_v = f32x4::splat(token, x + NEWTON_EPS);
-        let xme_v = f32x4::splat(token, x - NEWTON_EPS);
+        let xpe_v = f32x4::splat(token, x + eps);
+        let xme_v = f32x4::splat(token, x - eps);
 
         let mut acc_fd = f32x4::splat(token, 0.0);
         let mut acc_fdpe = f32x4::splat(token, 0.0);
@@ -665,17 +680,15 @@ pub fn find_best_multiplier_newton_neon(
         }
 
         let mut fd: f32 = 2.0 * distance_mul * num as f32 * x + acc_fd.reduce_add();
-        let mut fd_pe: f32 =
-            2.0 * distance_mul * num as f32 * (x + NEWTON_EPS) + acc_fdpe.reduce_add();
-        let mut fd_me: f32 =
-            2.0 * distance_mul * num as f32 * (x - NEWTON_EPS) + acc_fdme.reduce_add();
+        let mut fd_pe: f32 = 2.0 * distance_mul * num as f32 * (x + eps) + acc_fdpe.reduce_add();
+        let mut fd_me: f32 = 2.0 * distance_mul * num as f32 * (x - eps) + acc_fdme.reduce_add();
 
         while i < num {
             let a = K_INV_COLOR_FACTOR * values_m[i];
             let b = base * values_m[i] - values_s[i];
             let v = a * x + b;
-            let vpe = a * (x + NEWTON_EPS) + b;
-            let vme = a * (x - NEWTON_EPS) + b;
+            let vpe = a * (x + eps) + b;
+            let vme = a * (x - eps) + b;
             let av = v.abs();
             let avpe = vpe.abs();
             let avme = vme.abs();
@@ -704,7 +717,7 @@ pub fn find_best_multiplier_newton_neon(
             i += 1;
         }
 
-        let ddf = (fd_pe - fd_me) / (2.0 * NEWTON_EPS);
+        let ddf = (fd_pe - fd_me) / (2.0 * eps);
         let step = fd / (ddf + NEWTON_STABILIZER);
         x -= step.clamp(-NEWTON_CLAMP, NEWTON_CLAMP);
 
@@ -777,7 +790,18 @@ mod tests {
 
     #[test]
     fn test_newton_empty() {
-        assert_eq!(find_best_multiplier_newton(&[], &[], 0, 0.0, 1e-9), 0);
+        assert_eq!(
+            find_best_multiplier_newton(
+                &[],
+                &[],
+                0,
+                0.0,
+                1e-9,
+                NEWTON_EPS_DEFAULT,
+                NEWTON_MAX_ITERS_DEFAULT,
+            ),
+            0,
+        );
     }
 
     #[test]
@@ -787,19 +811,26 @@ mod tests {
         let values_s: alloc::vec::Vec<f32> =
             (0..num).map(|i| (i as f32 - 128.0) * 0.05 + 0.3).collect();
 
-        let ref0 = find_best_multiplier_newton_scalar(&values_m, &values_s, num, 0.0, 1e-9);
-        let ref1 = find_best_multiplier_newton_scalar(&values_m, &values_s, num, 1.0, 1e-9);
+        let eps = NEWTON_EPS_DEFAULT;
+        let iters = NEWTON_MAX_ITERS_DEFAULT;
+
+        let ref0 =
+            find_best_multiplier_newton_scalar(&values_m, &values_s, num, 0.0, 1e-9, eps, iters);
+        let ref1 =
+            find_best_multiplier_newton_scalar(&values_m, &values_s, num, 1.0, 1e-9, eps, iters);
 
         let report = archmage::testing::for_each_token_permutation(
             archmage::testing::CompileTimePolicy::Warn,
             |perm| {
-                let test0 = find_best_multiplier_newton(&values_m, &values_s, num, 0.0, 1e-9);
+                let test0 =
+                    find_best_multiplier_newton(&values_m, &values_s, num, 0.0, 1e-9, eps, iters);
                 assert_eq!(
                     ref0, test0,
                     "newton base=0.0: scalar={ref0} dispatch={test0} [{perm}]"
                 );
 
-                let test1 = find_best_multiplier_newton(&values_m, &values_s, num, 1.0, 1e-9);
+                let test1 =
+                    find_best_multiplier_newton(&values_m, &values_s, num, 1.0, 1e-9, eps, iters);
                 assert_eq!(
                     ref1, test1,
                     "newton base=1.0: scalar={ref1} dispatch={test1} [{perm}]"
@@ -817,7 +848,9 @@ mod tests {
         let s: alloc::vec::Vec<f32> = m.iter().map(|&v| factor / 84.0 * v).collect();
 
         let ls_result = find_best_multiplier(&m, &s, 64, 0.0, 1e-9);
-        let newton_result = find_best_multiplier_newton(&m, &s, 64, 0.0, 1e-9);
+        let eps = NEWTON_EPS_DEFAULT;
+        let iters = NEWTON_MAX_ITERS_DEFAULT;
+        let newton_result = find_best_multiplier_newton(&m, &s, 64, 0.0, 1e-9, eps, iters);
 
         // Both should be in the right ballpark (Newton uses perceptual cost, not MSE)
         let expected = (factor - 2.6).round() as i8;

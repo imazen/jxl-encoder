@@ -58,6 +58,7 @@ pub use adaptive_quant::{compute_pre_erosion, per_block_modulations};
 pub use block_l2::compute_block_l2_errors;
 pub use cfl::find_best_multiplier as cfl_find_best_multiplier;
 pub use cfl::find_best_multiplier_newton as cfl_find_best_multiplier_newton;
+pub use cfl::{NEWTON_EPS_DEFAULT, NEWTON_MAX_ITERS_DEFAULT};
 pub use dct8::{dct_8x8, idct_8x8};
 pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
 pub use dequant::dequant_block_dct8;

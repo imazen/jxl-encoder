@@ -84,6 +84,7 @@ impl CflMap {
 ///   Minimizes `1/3 * sum((|ax+b|+1)^2 - 1) + distance_mul * x^2 * num`
 ///   via Newton's method with perceptual cost. More robust to outliers.
 ///   Matches libjxl enc_chroma_from_luma.cc at speed_tier <= kSquirrel.
+#[allow(clippy::too_many_arguments)]
 fn find_best_multiplier(
     values_m: &[f32],
     values_s: &[f32],
@@ -91,9 +92,19 @@ fn find_best_multiplier(
     base: f32,
     distance_mul: f32,
     use_newton: bool,
+    newton_eps: f32,
+    newton_max_iters: usize,
 ) -> i8 {
     if use_newton {
-        jxl_simd::cfl_find_best_multiplier_newton(values_m, values_s, num, base, distance_mul)
+        jxl_simd::cfl_find_best_multiplier_newton(
+            values_m,
+            values_s,
+            num,
+            base,
+            distance_mul,
+            newton_eps,
+            newton_max_iters,
+        )
     } else {
         jxl_simd::cfl_find_best_multiplier(values_m, values_s, num, base, distance_mul)
     }
@@ -119,6 +130,8 @@ pub fn compute_cfl_map(
     xsize_blocks: usize,
     ysize_blocks: usize,
     use_newton: bool,
+    newton_eps: f32,
+    newton_max_iters: usize,
 ) -> CflMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
@@ -201,6 +214,8 @@ pub fn compute_cfl_map(
                 0.0,
                 K_DISTANCE_MULTIPLIER_AC,
                 use_newton,
+                newton_eps,
+                newton_max_iters,
             );
             ytob[tile_idx] = find_best_multiplier(
                 &coeffs_yb,
@@ -209,6 +224,8 @@ pub fn compute_cfl_map(
                 1.0,
                 K_DISTANCE_MULTIPLIER_AC,
                 use_newton,
+                newton_eps,
+                newton_max_iters,
             );
             // Compute Y energy for this tile (how much luma AC content)
             let y_energy: f32 = coeffs_yx[..num_ac].iter().map(|v| v * v).sum();
@@ -261,6 +278,8 @@ pub fn refine_cfl_map(
     quant_field: &[u8],
     quant_scale: f32,
     use_newton: bool,
+    newton_eps: f32,
+    newton_max_iters: usize,
 ) {
     let xsize_tiles = cfl_map.xsize_tiles;
     let ysize_tiles = cfl_map.ysize_tiles;
@@ -358,6 +377,8 @@ pub fn refine_cfl_map(
                 0.0,
                 K_DISTANCE_MULTIPLIER_AC,
                 use_newton,
+                newton_eps,
+                newton_max_iters,
             );
             cfl_map.ytob[tile_idx] = find_best_multiplier(
                 &coeffs_yb,
@@ -366,6 +387,8 @@ pub fn refine_cfl_map(
                 1.0,
                 K_DISTANCE_MULTIPLIER_AC,
                 use_newton,
+                newton_eps,
+                newton_max_iters,
             );
         }
     }
@@ -391,7 +414,10 @@ mod tests {
 
     #[test]
     fn test_find_best_multiplier_zero_input() {
-        assert_eq!(find_best_multiplier(&[], &[], 0, 0.0, 1e-3, false), 0);
+        assert_eq!(
+            find_best_multiplier(&[], &[], 0, 0.0, 1e-3, false, 1.0, 10),
+            0
+        );
     }
 
     #[test]
@@ -399,7 +425,7 @@ mod tests {
         // When values_m and values_s are uncorrelated, the multiplier should be near 0
         let m = [1.0, 0.0, -1.0, 0.0];
         let s = [0.0, 1.0, 0.0, -1.0];
-        let result = find_best_multiplier(&m, &s, 4, 0.0, 1e-3, false);
+        let result = find_best_multiplier(&m, &s, 4, 0.0, 1e-3, false, 1.0, 10);
         assert_eq!(result, 0);
     }
 
@@ -413,7 +439,7 @@ mod tests {
         let base = 0.0;
         let m: Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) * 10.0).collect();
         let s: Vec<f32> = m.iter().map(|&v| base * v + factor / 84.0 * v).collect();
-        let result = find_best_multiplier(&m, &s, 64, base, 1e-3, false);
+        let result = find_best_multiplier(&m, &s, 64, base, 1e-3, false, 1.0, 10);
         // Optimization yields ~42.0, towards_zero bias subtracts 2.6 → ~39
         let expected = (factor - 2.6).round();
         assert!(
@@ -456,6 +482,8 @@ mod tests {
             xsize_blocks,
             ysize_blocks,
             false, // use_newton
+            1.0,
+            10,
         );
 
         // Uniform image: all AC coefficients are 0 except DC,
