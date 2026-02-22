@@ -356,7 +356,7 @@ fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8
 #[archmage::arcane]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
+pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
     use magetypes::simd::f32x8;
 
     let sqrt2 = f32x8::splat(token, SQRT2);
@@ -962,7 +962,10 @@ fn dct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
 /// NEON batched 16-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
-fn dct1d_16_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 16]) {
+pub(crate) fn dct1d_16_batch_neon(
+    token: archmage::NeonToken,
+    v: &mut [magetypes::simd::f32x4; 16],
+) {
     use magetypes::simd::f32x4;
 
     let sqrt2 = f32x4::splat(token, SQRT2);
@@ -1288,7 +1291,10 @@ fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
 /// WASM128 batched 16-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
-fn dct1d_16_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 16]) {
+pub(crate) fn dct1d_16_batch_wasm128(
+    token: archmage::Wasm128Token,
+    v: &mut [magetypes::simd::f32x4; 16],
+) {
     use magetypes::simd::f32x4;
 
     let sqrt2 = f32x4::splat(token, SQRT2);
