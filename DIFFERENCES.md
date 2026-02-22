@@ -7,7 +7,7 @@ Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
-**Score: 8 fixed, 3 false alarms, 8 remaining (1 DIFF + 7 OPTs)**
+**Score: 10 fixed, 3 false alarms, 6 remaining (1 DIFF + 5 OPTs)**
 
 ---
 
@@ -141,25 +141,11 @@ rounding loss from normalization.
 `ANS_TAB_SIZE=4096` and computes `cost = total * ANS_LOG_TAB_SIZE - sum(count * log2(norm_count))`.
 Use this in `histogram_distance()` when `ClusteringType::Best`.
 
-### OPT-3: Missing kBest 28-config HybridUint search
+### ~~OPT-3~~: Missing kBest 28-config HybridUint search — FIXED (6900b43)
 
-**File**: `jxl_encoder/src/entropy_coding/hybrid_uint.rs`
-**Impact**: Per-histogram HybridUint config selection tries only 4 configs (kFast)
-instead of 28 (kBest). Estimated <0.1% file size.
-
-**Our code**: Tries `[(4,2,0), (4,1,2), (0,0,0), (2,0,1)]`
-**libjxl kBest** (`enc_ans.cc:747-783`): 28 curated `(split, msb, lsb)` configs, NOT
-all valid triples. The list includes configs with split_exponents 0-12 and specific
-msb/lsb combinations chosen for good coverage:
-```
-(0,0,0), (1,0,0), (2,0,0), (2,0,1), (3,0,0), (3,1,0), (3,0,1), (3,1,1),
-(4,0,0), (4,2,0), (4,1,0), (4,0,1), (4,2,1), (4,1,1), (5,0,0), (5,2,0),
-(5,1,0), (5,0,1), (5,2,1), (6,0,0), (6,2,0), (6,1,0), (7,0,0), (7,2,0),
-(8,0,0), (8,2,0), (10,0,0), (12,0,0)
-```
-
-**Fix**: Add a `optimize_uint_configs_best()` function with the exact 28 configs.
-Use for `ClusteringType::Best` or effort >= 9.
+**Status**: FIXED. Added `optimize_uint_configs_best()` with exact 28 curated configs
+from libjxl `enc_ans.cc:747-783`. Activated when enhanced_clustering is enabled.
+Per-histogram Shannon entropy + extra bits + signaling cost evaluation.
 
 ### OPT-4: Missing flat distribution cost baseline in ANS strategy selection
 
@@ -209,17 +195,10 @@ are 0.5-4KB, so impact is modest (estimated 5-15% larger ICC encoding).
 header should use the same parameters as other streams (min_symbol=224 for ANS,
 512 for Huffman).
 
-### OPT-8: Max histogram clusters capped at 96 vs 128
+### ~~OPT-8~~: Max histogram clusters capped at 96 vs 128 — FIXED (d03697f)
 
-**File**: `jxl_encoder/src/entropy_coding/cluster.rs:19`
-**Impact**: At most 96 histogram clusters for ANS. libjxl allows up to 128 in
-Fast/Best modes. More clusters can sometimes capture distinct distribution patterns.
-Estimated <0.1% impact on typical images.
-
-**Our code**: `CLUSTERS_LIMIT = 256` but caller caps at 96
-**libjxl**: kFast/kBest allow 128
-
-**Fix**: Increase the caller-side cap from 96 to 128 for the Best clustering mode.
+**Status**: FIXED. Changed caller-side cap from 96 to 128, matching libjxl
+`kClustersLimit = 128` (`enc_context_map.h:24`).
 
 ---
 
