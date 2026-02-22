@@ -206,6 +206,11 @@ struct Args {
     #[arg(long, value_name = "N")]
     loops: Option<u32>,
 
+    /// Number of threads for parallel encoding (0 = auto, 1 = sequential).
+    /// Requires the parallel feature.
+    #[arg(long, value_name = "N", default_value = "0")]
+    threads: usize,
+
     /// Be quiet (minimal output)
     #[arg(long)]
     quiet: bool,
@@ -321,7 +326,8 @@ fn main() {
                 let encoded = if distance > 0.0 && lossy_supported {
                     let mut cfg = LossyConfig::new(distance)
                         .with_effort(args.effort)
-                        .with_lz77_method(lz77_method);
+                        .with_lz77_method(lz77_method)
+                        .with_threads(args.threads);
                     if args.no_ans {
                         cfg = cfg.with_ans(false);
                     }
@@ -388,7 +394,9 @@ fn main() {
                     cfg.encode_animation(apng.width, apng.height, layout, &animation, &anim_frames)
                 } else {
                     {
-                        let mut lcfg = LosslessConfig::new().with_effort(args.effort);
+                        let mut lcfg = LosslessConfig::new()
+                            .with_effort(args.effort)
+                            .with_threads(args.threads);
                         if args.no_ans {
                             lcfg = lcfg.with_ans(false);
                         }
@@ -590,7 +598,8 @@ fn main() {
         // Lossy VarDCT path — effort sets defaults, flags override
         let mut cfg = LossyConfig::new(distance)
             .with_effort(args.effort)
-            .with_lz77_method(lz77_method);
+            .with_lz77_method(lz77_method)
+            .with_threads(args.threads);
         if args.no_ans {
             cfg = cfg.with_ans(false);
         }
@@ -767,7 +776,9 @@ fn main() {
         }
     } else {
         // Lossless modular path (or lossy RGBA/gray which falls through to modular)
-        let mut cfg = LosslessConfig::new().with_effort(args.effort);
+        let mut cfg = LosslessConfig::new()
+            .with_effort(args.effort)
+            .with_threads(args.threads);
         if args.no_ans {
             cfg = cfg.with_ans(false);
         }
