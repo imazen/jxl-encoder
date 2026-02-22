@@ -186,23 +186,11 @@ logcount individually.
 logcount value. Emit `[logcount, RLE_MARKER, run_length - 5]` instead of repeating
 the logcount. The RLE marker is symbol index 13 in the logcount prefix code.
 
-### OPT-6: LZ77 distance cost table 11 entries short
+### ~~OPT-6~~: LZ77 distance cost table 11 entries short — FIXED (a42664b)
 
-**File**: `jxl_encoder/src/entropy_coding/lz77.rs:72`
-**Impact**: Distance cost lookup clamps to entry 127 for distances that would index
-128-138. The missing 11 entries represent **special distance codes** with costs in the
-2.4-9.7 range, dramatically lower than our clamped value of 17.2. This significantly
-undervalues special distance codes in LZ77 cost estimation, potentially causing the
-optimizer to reject beneficial matches that use special distances.
-
-**Our code**: `DIST_COST_TABLE: [f32; 128]`
-**libjxl** (`enc_lz77.cc:399-447`): 139-entry table. Entries 128-138 are the costs
-for special distance codes (codes that encode distances as multiples of the image width,
-useful for vertical matches in image data).
-
-**Fix**: Extend `DIST_COST_TABLE` to 139 entries. Copy the 11 missing values from
-libjxl's `kDistCost` table (`enc_lz77.cc:399-447`). These entries have dramatically
-lower costs than our current clamp value.
+**Status**: FIXED. Extended `DIST_COST_TABLE` from 128 to 139 entries, adding 11
+special distance code costs (2.4-9.7 range) from libjxl `enc_lz77.cc:442-446`.
+Previously clamped to entry 127 (17.2), dramatically undervaluing vertical matches.
 
 ### OPT-7: No LZ77 for ICC profile encoding
 
