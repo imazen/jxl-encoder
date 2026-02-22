@@ -143,30 +143,28 @@ Improvements made Feb 3, 2026:
    larger transforms use raw values. Our code was normalizing all transforms,
    giving DCT16x16 a 25% higher penalty (1.675 vs 1.34), causing 90% DCT8 selection.
 
-### Quality Gap vs Full libjxl (Feb 20, 2026)
+### Quality Gap vs Full libjxl (Feb 21, 2026)
 
 **Measured with Rust butteraugli** (metadata-immune, always applies sRGB TF consistently).
-6 images × 3 distances. Previous measurements used `butteraugli_main` with incompletely
-stripped PNGs and showed inflated quality wins (-48% at d=0.5) — those were bogus.
+41 CID22 images × 9 distances (368 data points). Uses `just quality-compare` with
+in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
 
 **vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-**Overall: Size +1.8%, Butteraugli -0.9% (roughly at parity on quality, ~2-4% larger files)**
+**Overall: Size +0.6%, Butteraugli +0.5% (essentially at parity)**
 
-| Distance | Avg Size | Avg Butteraugli | Better Quality |
-|----------|----------|-----------------|----------------|
-| d=1.0 | +0.7% | -0.2% | 2/6 images |
-| d=2.0 | +2.4% | **-3.8%** | 5/6 images |
-| d=5.0 | +4.0% | +0.5% | 3/6 images |
-
-Per-image detail (d=1.0 / d=2.0 / d=5.0):
-- **frymire** (1118x1105): +3.2% size, **-13.3%/-9.7%/-5.2% bfly** — consistently better quality
-- **02809272**: +0.3/+2.5/+6.7% size, +3.7/-3.7/+10.3% bfly — mixed
-- **50fe4c3d**: -1.1/+1.5/+6.0% size, **-12.2/-4.0**/+4.6% bfly — better at low dist
-- **870516c6**: -0.2/+0.5/+5.0% size, +12.2/**-4.3/-2.6**% bfly — better at high dist
-- **a36713f1**: -0.9/+0.5/+5.5% size, +0.4/**-0.7/-4.0**% bfly — slightly better
-- **d1a9be98**: -0.0/+7.8/+7.9% size, +17.1/+2.8/+3.4% bfly — consistently worse
+| Distance | Avg Size | Avg Butteraugli |
+|----------|----------|-----------------|
+| d=0.25 | -0.5% | **-15.6%** (better) |
+| d=0.5 | -2.3% | **-10.0%** (better) |
+| d=1.0 | +1.2% | +2.1% |
+| d=1.5 | +2.1% | +1.0% |
+| d=2.0 | +3.0% | +1.4% |
+| d=2.5 | +3.5% | +1.3% |
+| d=3.0 | +3.0% | +0.6% |
+| d=4.0 | +3.1% | +2.3% |
+| d=5.0 | +2.9% | +1.3% |
 
 **Key patterns**:
 - Quality roughly at parity with cjxl e7 at d=1.0, slightly better at d=2.0
@@ -382,7 +380,8 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 - [x] DCT64x64: enabled at d>=3.0, verified with jxl-oxide and djxl
 - [x] DCT64x32/DCT32x64: enabled at d>=3.0 (fixed Feb 14 — same coefficient order fix, bfly 4.6)
 - [x] AFV0-3: ENABLED — fixed DCT4x8 sub-weight row indexing in generate_afv_weights (y*8 → y*16)
-- [x] Error diffusion in AC quantization (opt-in, `encoder.error_diffusion = true`)
+- [x] Error diffusion in AC quantization (opt-in via `--error-diffusion`, OFF by default —
+  libjxl accepts the param but never uses it in QuantizeBlockAC)
 - [x] QuantizeBlockAC thresholding, Y roundtrip, x_qm_mul
 - [x] DC coding with gradient predictor and fixed context tree
 - [x] LfFrame (separate DC frame, `--lf-frame`, opt-in, progressive_dc=1)
@@ -501,10 +500,11 @@ Features ranked by compression impact. The tiny encoder is the base for all work
   Verified with djxl and jxl-oxide.
 - [x] **Noise synthesis** — Working! Use `--noise` flag. Estimates noise from XYB
   image, encodes 8-point LUT (80 bits). Verified with djxl and jxl-oxide.
-- [x] **Error diffusion in AC quantization** — Working! Opt-in via `encoder.error_diffusion = true`.
-  Processes coefficients in zigzag order, propagates 1/4 error to next coefficient.
-  Helps preserve smooth gradients at high compression (d > 2.0). Note: libjxl has the
-  parameter but never implemented the actual diffusion - this is a novel implementation.
+- [x] **Error diffusion in AC quantization** — Implemented but OFF by default (`--error-diffusion`
+  to enable). Propagates 1/4 quantization error in zigzag order. libjxl's QuantizeBlockAC
+  accepts the parameter but never references it — ED is a no-op in the reference encoder.
+  Our implementation hurts quality on bright features in dark regions when combined with
+  gaborish (up to +33% butteraugli regression). Keep as opt-in for experimentation.
 - [x] **AFV (Adaptive Frequency Variable)** — Corner DCT for mixed blocks. All 4 variants
   (AFV0-3) verified with jxl-oxide and djxl. Integrated with strategy search (position-dependent kind).
 
