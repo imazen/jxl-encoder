@@ -295,6 +295,12 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
     let mut used_orders = 0u32;
 
     for bucket in 0..NUM_ORDER_BUCKETS {
+        // libjxl's ComputeUsedOrders (enc_coeff_order.cc:53-58) skips buckets > 6.
+        // Buckets 7+ (DCT64x64, DCT64x32/DCT32x64) are never customized.
+        if bucket > 6 {
+            continue;
+        }
+
         if zero_counts[bucket][0].is_empty() {
             continue;
         }
