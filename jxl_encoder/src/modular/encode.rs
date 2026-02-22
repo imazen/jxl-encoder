@@ -1279,7 +1279,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
         compute_best_tree_with_multipliers, compute_gather_stride_from_profile,
-        gather_samples_strided,
+        gather_samples_strided, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -1503,7 +1503,12 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         .map(|ch| ch.width() * ch.height())
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
-    let mut samples = TreeSamples::new();
+    let num_refs = if is_lossy {
+        0
+    } else {
+        max_ref_channels(&work_image)
+    };
+    let mut samples = TreeSamples::new_with_ref_channels(num_refs);
     gather_samples_strided(&mut samples, &work_image, 0, 0, stride, &wp_params);
 
     // Step 2: Learn tree with effort-dependent parameters
@@ -1513,6 +1518,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         1.0
     };
     let params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
 
