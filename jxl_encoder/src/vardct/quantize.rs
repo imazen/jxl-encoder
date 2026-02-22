@@ -10,8 +10,9 @@
 
 use super::ac_strategy::{
     RAW_STRATEGY_DCT2X2, RAW_STRATEGY_DCT4X4, RAW_STRATEGY_DCT4X8, RAW_STRATEGY_DCT8X4,
-    RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT32X32,
-    RAW_STRATEGY_DCT32X64, RAW_STRATEGY_DCT64X32, RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
+    RAW_STRATEGY_DCT8X16, RAW_STRATEGY_DCT16X8, RAW_STRATEGY_DCT16X16, RAW_STRATEGY_DCT16X32,
+    RAW_STRATEGY_DCT32X16, RAW_STRATEGY_DCT32X32, RAW_STRATEGY_DCT32X64, RAW_STRATEGY_DCT64X32,
+    RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
 };
 use super::afv::{RAW_STRATEGY_AFV0, RAW_STRATEGY_AFV1, RAW_STRATEGY_AFV2, RAW_STRATEGY_AFV3};
 use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE};
@@ -110,7 +111,7 @@ impl VarDctEncoder {
         if val.abs() < thr {
             0
         } else {
-            val.round() as i32
+            val.round_ties_even() as i32
         }
     }
 
@@ -197,7 +198,7 @@ impl VarDctEncoder {
                 let v = if val.abs() < thresholds[hfix] {
                     0.0
                 } else {
-                    val.round()
+                    val.round_ties_even()
                 };
                 let error = (val - v).abs();
                 sum_of_error += error;
@@ -319,13 +320,16 @@ impl VarDctEncoder {
                     | RAW_STRATEGY_DCT64X64
                     | RAW_STRATEGY_DCT64X32
                     | RAW_STRATEGY_DCT32X64
+                    | RAW_STRATEGY_DCT32X16
+                    | RAW_STRATEGY_DCT16X32
             );
             if is_large {
                 // Map strategy to table index
                 let ix = match raw_strategy {
                     RAW_STRATEGY_DCT16X16 => 0,
+                    RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => 1,
                     RAW_STRATEGY_DCT32X32 => 2,
-                    // DCT16X8 and DCT8X16 use default index 3
+                    // DCT16X8, DCT8X16, DCT64x* use default index 3
                     _ => 3,
                 };
 

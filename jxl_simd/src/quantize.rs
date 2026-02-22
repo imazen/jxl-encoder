@@ -78,7 +78,7 @@ pub fn quantize_dct8_scalar(
         output[idx] = if val.abs() < thresholds[thr_idx] {
             0
         } else {
-            val.round() as i32
+            val.round_ties_even() as i32
         };
     }
 }
