@@ -389,13 +389,13 @@ impl BitWriter {
 
     /// Writes a U64 value using the JXL variable-length encoding.
     ///
-    /// The encoding depends on the selector:
+    /// Matches libjxl's `U64Coder::Write` (enc_fields.cc:129-166).
+    ///
+    /// Selector encoding:
     /// - 0: value is 0
     /// - 1: 4 bits follow, value is 1 + read_bits (1-16)
     /// - 2: 8 bits follow, value is 17 + read_bits (17-272)
-    /// - 3: 12 bits follow, then:
-    ///   - If high bit is 0: value is 273 + low 12 bits (273-4368)
-    ///   - If high bit is 1: 32 more bits follow, value is combined
+    /// - 3: 12-bit initial group + varint continuation (8-bit groups with stop bit)
     pub fn write_u64_coder(&mut self, value: u64) -> Result<()> {
         if value == 0 {
             self.write(2, 0)?;
@@ -405,16 +405,26 @@ impl BitWriter {
         } else if value <= 272 {
             self.write(2, 2)?;
             self.write(8, value - 17)?;
-        } else if value <= 4368 {
-            self.write(2, 3)?;
-            self.write(12, value - 273)?;
         } else {
-            // Large value: selector 3 with shift indicator
+            // Selector 3: varint starting with 12-bit group, then 8-bit groups
             self.write(2, 3)?;
-            let low = (value - 273) & 0xFFF;
-            let high = (value - 273) >> 12;
-            self.write(12, low | 0x1000)?; // Set high bit to indicate more data
-            self.write(32, high)?;
+            let mut remaining = value;
+            self.write(12, remaining & 0xFFF)?;
+            remaining >>= 12;
+            let mut shift = 12;
+            while remaining > 0 && shift < 60 {
+                self.write(1, 1)?; // continuation bit
+                self.write(8, remaining & 0xFF)?;
+                remaining >>= 8;
+                shift += 8;
+            }
+            if remaining > 0 {
+                // Final 4-bit group (shift == 60, implicitly closed)
+                self.write(1, 1)?;
+                self.write(4, remaining & 0xF)?;
+            } else {
+                self.write(1, 0)?; // stop bit
+            }
         }
         Ok(())
     }
@@ -581,5 +591,121 @@ mod tests {
         // Actually: selector 11, then value 7 = 00000111
         // Combined: 11 + 00000111 = 0b0000011111 -> bytes [0x1F, 0x00]
         assert_eq!(writer.as_bytes(), &[0x1F, 0x00]);
+    }
+
+    /// Helper: encode a U64 value and return (total_bits, first_two_bits_selector).
+    fn u64_encode(value: u64) -> (usize, Vec<u8>) {
+        let mut writer = BitWriter::new();
+        writer.write_u64_coder(value).unwrap();
+        let bits = writer.bits_written();
+        writer.zero_pad_to_byte();
+        (bits, writer.finish())
+    }
+
+    /// Helper: decode U64 from a bit buffer (for roundtrip testing).
+    /// Matches libjxl's U64Coder::Read (fields.cc:104-127).
+    fn u64_decode(data: &[u8]) -> u64 {
+        let mut pos = 0usize; // bit position
+        let read_bits = |data: &[u8], pos: &mut usize, n: usize| -> u64 {
+            let mut val = 0u64;
+            for i in 0..n {
+                let byte_idx = (*pos + i) / 8;
+                let bit_idx = (*pos + i) % 8;
+                if byte_idx < data.len() && (data[byte_idx] >> bit_idx) & 1 == 1 {
+                    val |= 1u64 << i;
+                }
+            }
+            *pos += n;
+            val
+        };
+
+        let selector = read_bits(data, &mut pos, 2);
+        match selector {
+            0 => 0,
+            1 => 1 + read_bits(data, &mut pos, 4),
+            2 => 17 + read_bits(data, &mut pos, 8),
+            3 => {
+                let mut value = read_bits(data, &mut pos, 12);
+                let mut shift = 12u32;
+                while shift < 60 {
+                    if read_bits(data, &mut pos, 1) == 0 {
+                        break; // stop bit
+                    }
+                    value |= read_bits(data, &mut pos, 8) << shift;
+                    shift += 8;
+                }
+                if shift == 60 {
+                    if read_bits(data, &mut pos, 1) == 1 {
+                        value |= read_bits(data, &mut pos, 4) << shift;
+                    }
+                }
+                value
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_u64_coder_small_values() {
+        // Selector 0: value 0
+        let (bits, _) = u64_encode(0);
+        assert_eq!(bits, 2);
+        assert_eq!(u64_decode(&u64_encode(0).1), 0);
+
+        // Selector 1: values 1-16
+        assert_eq!(u64_decode(&u64_encode(1).1), 1);
+        assert_eq!(u64_decode(&u64_encode(15).1), 15);
+        assert_eq!(u64_decode(&u64_encode(16).1), 16);
+        let (bits, _) = u64_encode(1);
+        assert_eq!(bits, 6); // 2 selector + 4 data
+
+        // Selector 2: values 17-272
+        assert_eq!(u64_decode(&u64_encode(17).1), 17);
+        assert_eq!(u64_decode(&u64_encode(271).1), 271);
+        assert_eq!(u64_decode(&u64_encode(272).1), 272);
+        let (bits, _) = u64_encode(17);
+        assert_eq!(bits, 10); // 2 selector + 8 data
+    }
+
+    #[test]
+    fn test_u64_coder_selector3_varint() {
+        // Selector 3: value 273 (minimum) — 12 bits + stop bit
+        let (bits, _) = u64_encode(273);
+        assert_eq!(bits, 15); // 2 + 12 + 1 (stop)
+        assert_eq!(u64_decode(&u64_encode(273).1), 273);
+
+        // Value 4096 — needs one 8-bit continuation
+        assert_eq!(u64_decode(&u64_encode(4096).1), 4096);
+        let (bits, _) = u64_encode(4096);
+        assert_eq!(bits, 24); // 2 + 12 + 1 (cont) + 8 + 1 (stop)
+
+        // Value 1<<16
+        assert_eq!(u64_decode(&u64_encode(1 << 16).1), 1 << 16);
+
+        // Value 1<<28
+        assert_eq!(u64_decode(&u64_encode(1 << 28).1), 1 << 28);
+
+        // Value (1<<32)-1
+        assert_eq!(u64_decode(&u64_encode((1u64 << 32) - 1).1), (1u64 << 32) - 1);
+
+        // Value 1<<32
+        assert_eq!(u64_decode(&u64_encode(1u64 << 32).1), 1u64 << 32);
+
+        // Value 1<<63
+        assert_eq!(u64_decode(&u64_encode(1u64 << 63).1), 1u64 << 63);
+    }
+
+    #[test]
+    fn test_u64_coder_roundtrip_exhaustive() {
+        // Test values from libjxl's TestU64Coder (fields_test.cc)
+        let test_values: &[u64] = &[
+            0, 1, 15, 16, 17, 271, 272, 273, 4096, 1 << 16, 1 << 28,
+            (1u64 << 32) - 1, 1u64 << 32, 1u64 << 63,
+        ];
+        for &v in test_values {
+            let encoded = u64_encode(v).1;
+            let decoded = u64_decode(&encoded);
+            assert_eq!(decoded, v, "U64 roundtrip failed for value {v}: encoded {encoded:?}, decoded {decoded}");
+        }
     }
 }
