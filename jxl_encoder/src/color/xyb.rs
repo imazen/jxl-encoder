@@ -97,15 +97,21 @@ pub fn srgb_to_linear(pixels: &mut [f32]) {
 /// 3. Combine: X = 0.5*(L-M), Y = 0.5*(L+M), B = S
 pub fn linear_rgb_to_xyb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     // Apply opsin absorbance matrix
-    let mixed0 = OPSIN_ABSORBANCE_MATRIX[0][0] * r
+    // ZeroIfNegative clamp before bias (matches libjxl enc_xyb.cc:91-95).
+    // For in-gamut sRGB this is a no-op (bias ensures positivity), but
+    // wide-gamut inputs (P3, Rec2020) can produce negative mixed values.
+    let mixed0 = (OPSIN_ABSORBANCE_MATRIX[0][0] * r
         + OPSIN_ABSORBANCE_MATRIX[0][1] * g
-        + OPSIN_ABSORBANCE_MATRIX[0][2] * b;
-    let mixed1 = OPSIN_ABSORBANCE_MATRIX[1][0] * r
+        + OPSIN_ABSORBANCE_MATRIX[0][2] * b)
+        .max(0.0);
+    let mixed1 = (OPSIN_ABSORBANCE_MATRIX[1][0] * r
         + OPSIN_ABSORBANCE_MATRIX[1][1] * g
-        + OPSIN_ABSORBANCE_MATRIX[1][2] * b;
-    let mixed2 = OPSIN_ABSORBANCE_MATRIX[2][0] * r
+        + OPSIN_ABSORBANCE_MATRIX[1][2] * b)
+        .max(0.0);
+    let mixed2 = (OPSIN_ABSORBANCE_MATRIX[2][0] * r
         + OPSIN_ABSORBANCE_MATRIX[2][1] * g
-        + OPSIN_ABSORBANCE_MATRIX[2][2] * b;
+        + OPSIN_ABSORBANCE_MATRIX[2][2] * b)
+        .max(0.0);
 
     // Add bias, apply cube root, then subtract cbrt(bias)
     // This matches libjxl's CubeRootAndAdd pattern: cbrt(x + bias) - cbrt(bias)
