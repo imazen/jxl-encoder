@@ -282,7 +282,7 @@ impl EffortProfile {
             custom_orders: effort >= 4,
             gaborish: effort >= 5,
             pixel_domain_loss: effort >= 5,
-            error_diffusion: effort >= 7,
+            error_diffusion: false, // libjxl accepts param but never uses it
             patches: effort >= 7,
             tree_learning: effort >= 7,
             lz77: effort >= 7,
@@ -557,7 +557,7 @@ mod tests {
         assert!(p.custom_orders);
         assert!(p.gaborish);
         assert!(p.pixel_domain_loss);
-        assert!(p.error_diffusion);
+        assert!(!p.error_diffusion);
         assert!(p.patches);
         assert!(p.lz77);
         assert_eq!(p.lz77_method, Lz77Method::Rle);

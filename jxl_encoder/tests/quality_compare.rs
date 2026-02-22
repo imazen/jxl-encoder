@@ -6,6 +6,9 @@
 ///
 /// Run with: `just quality-compare`
 /// Override effort: `CJXL_EFFORT=5 just quality-compare`
+/// Filter to one image: `QC_FILTER=1025469 just quality-compare`
+/// Filter to one distance: `QC_DIST=2.0 just quality-compare`
+/// Both: `QC_FILTER=1025469 QC_DIST=2.0 just quality-compare`
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use image::GenericImageView;
 use imgref::Img;
@@ -138,6 +141,7 @@ struct CompareResult {
     cjxl_size: usize,
     cjxl_bfly: f64,
     cjxl_ssim2: f64,
+    strategy_counts: [u32; 19],
 }
 
 fn process_image(src: &SourceImage, csv_entries: &[CjxlEntry]) -> Vec<CompareResult> {
@@ -190,6 +194,7 @@ fn process_image(src: &SourceImage, csv_entries: &[CjxlEntry]) -> Vec<CompareRes
             }
         };
         let rs_size = rs_output.data.len();
+        let strategy_counts = rs_output.strategy_counts;
 
         // Decode our JXL with jxl-oxide in linear RGB
         let (_, _, rs_decoded) = match decode_jxl_linear(&rs_output.data) {
@@ -242,6 +247,7 @@ fn process_image(src: &SourceImage, csv_entries: &[CjxlEntry]) -> Vec<CompareRes
             cjxl_size: entry.size_bytes,
             cjxl_bfly: entry.butteraugli,
             cjxl_ssim2: entry.ssimulacra2,
+            strategy_counts,
         });
     }
 
@@ -281,13 +287,34 @@ fn quality_compare() {
     let sources = find_source_images(project_root);
     eprintln!("Found {} source images", sources.len());
 
+    // Optional filters: QC_FILTER (image name substring), QC_DIST (distance)
+    let filter_name = std::env::var("QC_FILTER").ok();
+    let filter_dist: Option<f32> = std::env::var("QC_DIST")
+        .ok()
+        .and_then(|s| s.parse().ok());
+
+    if let Some(ref f) = filter_name {
+        eprintln!("Filtering images to: {f}");
+    }
+    if let Some(d) = filter_dist {
+        eprintln!("Filtering distances to: {d}");
+    }
+
     // Match sources to CSV entries
     let matched: Vec<(&SourceImage, Vec<CjxlEntry>)> = sources
         .iter()
+        .filter(|src| {
+            filter_name
+                .as_ref()
+                .is_none_or(|f| src.name.contains(f.as_str()))
+        })
         .filter_map(|src| {
             let matching: Vec<CjxlEntry> = entries
                 .iter()
                 .filter(|e| e.corpus == src.corpus && e.image == src.name)
+                .filter(|e| {
+                    filter_dist.is_none_or(|d| (e.distance - d).abs() < 0.01)
+                })
                 .cloned()
                 .collect();
             if matching.is_empty() {
@@ -381,6 +408,29 @@ fn quality_compare() {
             r.rs_ssim2,
             r.cjxl_ssim2
         );
+    }
+
+    // Print strategy histogram when filtering (detailed single-image mode)
+    if filter_name.is_some() || filter_dist.is_some() {
+        const NAMES: [&str; 19] = [
+            "DCT8", "DCT16x8", "DCT8x16", "DCT16x16", "DCT32x32", "DCT4x8", "DCT8x4",
+            "DCT4x4", "IDENTITY", "DCT2X2", "DCT32x16", "DCT16x32", "AFV0", "AFV1",
+            "AFV2", "AFV3", "DCT64x64", "DCT64x32", "DCT32x64",
+        ];
+        for r in &sorted {
+            let total: u32 = r.strategy_counts.iter().sum();
+            eprintln!(
+                "\n  Strategy histogram for {} d={} ({total} transforms):",
+                r.image,
+                fmt_dist(r.distance)
+            );
+            for (i, &count) in r.strategy_counts.iter().enumerate() {
+                if count > 0 {
+                    let pct = 100.0 * count as f64 / total as f64;
+                    eprintln!("    {:10}: {:6} ({:5.1}%)", NAMES[i], count, pct);
+                }
+            }
+        }
     }
 
     // Per-distance averages

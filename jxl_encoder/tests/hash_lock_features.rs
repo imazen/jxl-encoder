@@ -468,13 +468,15 @@ fn lossy_with_noise() {
 }
 
 #[test]
-fn lossy_no_error_diffusion() {
+fn lossy_with_error_diffusion() {
+    // Error diffusion is off by default (libjxl accepts param but never uses it).
+    // This test verifies the opt-in ED path produces different (not necessarily better) output.
     let data = LossyConfig::new(1.0)
-        .with_error_diffusion(false)
+        .with_error_diffusion(true)
         .encode(&gradient_rgb_32x32(), 32, 32, PixelLayout::Rgb8)
         .unwrap();
     assert_hashes(
-        "lossy_no_error_diffusion",
+        "lossy_with_error_diffusion",
         &data,
         32,
         32,
