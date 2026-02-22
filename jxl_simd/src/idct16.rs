@@ -345,17 +345,14 @@ fn idct1d_8_core_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f3
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 #[inline(always)]
-fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
+pub(crate) fn idct1d_16_core_batch(
+    token: archmage::X64V3Token,
+    v: &mut [magetypes::simd::f32x8; 16],
+) {
     use magetypes::simd::f32x8;
 
-    let scale16 = f32x8::splat(token, 16.0);
     let half = f32x8::splat(token, 0.5);
     let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
-
-    // Scale by 16 to compensate for 1/16 in forward transform
-    for vi in v.iter_mut() {
-        *vi *= scale16;
-    }
 
     // De-interleave: even -> first_half[0..8], odd -> second_half[0..8]
     let mut first_half = [v[0], v[2], v[4], v[6], v[8], v[10], v[12], v[14]];
@@ -406,6 +403,22 @@ fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8;
     v[9] = (first_half[6] - second_half[6]) * half;
     v[7] = (first_half[7] + second_half[7]) * half;
     v[8] = (first_half[7] - second_half[7]) * half;
+}
+
+/// AVX2 batched 16-point IDCT with *= 16 scaling.
+///
+/// `v` holds [v0..v15] representing positions 0-15 across 8 lanes.
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[inline(always)]
+pub(crate) fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
+    use magetypes::simd::f32x8;
+
+    let scale16 = f32x8::splat(token, 16.0);
+    for vi in v.iter_mut() {
+        *vi *= scale16;
+    }
+    idct1d_16_core_batch(token, v);
 }
 
 /// AVX2 16x16 IDCT: process 8 rows at a time via batched 16-point IDCT.
@@ -899,20 +912,17 @@ fn idct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32
     idct1d_8_core_batch_neon(token, v);
 }
 
-/// NEON batched 16-point IDCT with *= 16 scaling.
+/// NEON batched 16-point IDCT core (no scaling).
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
-fn idct1d_16_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 16]) {
+pub(crate) fn idct1d_16_core_batch_neon(
+    token: archmage::NeonToken,
+    v: &mut [magetypes::simd::f32x4; 16],
+) {
     use magetypes::simd::f32x4;
 
-    let scale16 = f32x4::splat(token, 16.0);
     let half = f32x4::splat(token, 0.5);
     let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
-
-    // Scale by 16
-    for vi in v.iter_mut() {
-        *vi *= scale16;
-    }
 
     // De-interleave: even -> first_half[0..8], odd -> second_half[0..8]
     let mut first_half = [v[0], v[2], v[4], v[6], v[8], v[10], v[12], v[14]];
@@ -960,6 +970,22 @@ fn idct1d_16_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f3
     v[9] = (first_half[6] - second_half[6]) * half;
     v[7] = (first_half[7] + second_half[7]) * half;
     v[8] = (first_half[7] - second_half[7]) * half;
+}
+
+/// NEON batched 16-point IDCT with *= 16 scaling.
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+pub(crate) fn idct1d_16_batch_neon(
+    token: archmage::NeonToken,
+    v: &mut [magetypes::simd::f32x4; 16],
+) {
+    use magetypes::simd::f32x4;
+
+    let scale16 = f32x4::splat(token, 16.0);
+    for vi in v.iter_mut() {
+        *vi *= scale16;
+    }
+    idct1d_16_core_batch_neon(token, v);
 }
 
 /// Process a batch of 4 rows through gather → 8-point IDCT → scatter.
@@ -1251,20 +1277,17 @@ fn idct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::sim
     idct1d_8_core_batch_wasm128(token, v);
 }
 
-/// WASM128 batched 16-point IDCT with *= 16 scaling.
+/// WASM128 batched 16-point IDCT core (no scaling).
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
-fn idct1d_16_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 16]) {
+pub(crate) fn idct1d_16_core_batch_wasm128(
+    token: archmage::Wasm128Token,
+    v: &mut [magetypes::simd::f32x4; 16],
+) {
     use magetypes::simd::f32x4;
 
-    let scale16 = f32x4::splat(token, 16.0);
     let half = f32x4::splat(token, 0.5);
     let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
-
-    // Scale by 16
-    for vi in v.iter_mut() {
-        *vi *= scale16;
-    }
 
     // De-interleave: even -> first_half[0..8], odd -> second_half[0..8]
     let mut first_half = [v[0], v[2], v[4], v[6], v[8], v[10], v[12], v[14]];
@@ -1312,6 +1335,22 @@ fn idct1d_16_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::si
     v[9] = (first_half[6] - second_half[6]) * half;
     v[7] = (first_half[7] + second_half[7]) * half;
     v[8] = (first_half[7] - second_half[7]) * half;
+}
+
+/// WASM128 batched 16-point IDCT with *= 16 scaling.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+pub(crate) fn idct1d_16_batch_wasm128(
+    token: archmage::Wasm128Token,
+    v: &mut [magetypes::simd::f32x4; 16],
+) {
+    use magetypes::simd::f32x4;
+
+    let scale16 = f32x4::splat(token, 16.0);
+    for vi in v.iter_mut() {
+        *vi *= scale16;
+    }
+    idct1d_16_core_batch_wasm128(token, v);
 }
 
 /// Process a batch of 4 rows through gather -> 8-point IDCT -> scatter.
