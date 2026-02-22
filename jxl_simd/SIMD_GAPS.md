@@ -10,7 +10,7 @@
 | ~~**P3**~~ | ~~Quantize AC (DCT16+)~~ | ✅ DONE — Generic `quantize_block_large` in `quantize.rs`, all sizes (128–4096 coefficients), wired into encoder | 2-4× on large block quant |
 | ~~**P4**~~ | ~~DCT/IDCT 64×64, 64×32, 32×64~~ | ✅ DONE — AVX2 in `dct64.rs`/`idct64.rs`, wired into encoder | 3-5× on DCT64 blocks |
 | **P5** | Large block transpose (32×32, 64×64) | Supporting operation for large DCTs. Scalar element-by-element copy. | 2-3× (part of DCT chain) |
-| **P6** | ANS token cost (Shannon) | `log2()` per histogram bin during strategy evaluation. Moderate frequency. | 2-4× on entropy estimation |
+| ~~**P6**~~ | ~~ANS token cost (Shannon)~~ | ✅ DONE — `shannon_entropy_bits` in `entropy.rs`, SIMD fast_log2f, wired into encoder histogram clustering | 2-4× on entropy estimation |
 | **P7** | FastPow2f / FastPowf general | Used by adaptive quant modulations, but currently embedded. General SIMD fast math library would benefit multiple callers. | Enables other optimizations |
 | **P8** | AFV 4×4 basis matrix | 256 scalar FMAs. Low frequency (corner blocks only). | 4× but rare |
 | **P9** | Noise SAD estimation | Nested 4-level loop, but runs once per encode. | Negligible overall |
@@ -48,7 +48,7 @@
 | 27 | Pixel-domain loss | encoder | `jxl_simd/src/pixel_loss.rs` | ✅ | — |
 | 28 | Block L2 error | encoder | `jxl_simd/src/block_l2.rs` | ✅ | — |
 | 29 | CfL LS + Newton | encoder | `jxl_simd/src/cfl.rs` | ✅ | — |
-| 30 | ANS token cost | `enc_ans_simd.cc` | `entropy_coding/histogram.rs` | ❌ | P6 |
+| 30 | ANS token cost | `enc_ans_simd.cc` | `jxl_simd/src/entropy.rs` | ✅ | ~~P6~~ |
 | 31 | Modular cost est. | `enc_modular_simd.cc` | `modular/tree.rs` | ❌ | LOW |
 | 32 | FastLog2f | `fast_math-inl.h` | `mask1x1.rs` embedded | ⚠️ | P7 |
 | 33 | FastPow2f/FastPowf | `fast_math-inl.h` | None | ❌ | P7 |

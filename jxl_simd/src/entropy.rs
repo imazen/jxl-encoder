@@ -497,6 +497,346 @@ pub fn entropy_coeffs_wasm128(
     }
 }
 
+// ============================================================================
+// Shannon entropy computation (P6: histogram entropy for clustering)
+// ============================================================================
+
+// fast_log2f polynomial coefficients (shared with mask1x1, adaptive_quant).
+// Used by arch-gated Shannon entropy functions and scalar fallback.
+const LOG2_P0: f32 = -1.850_383_3e-6;
+const LOG2_P1: f32 = 1.428_716;
+const LOG2_P2: f32 = 0.742_458_7;
+const LOG2_Q0: f32 = 0.990_328_14;
+const LOG2_Q1: f32 = 1.009_671_9;
+const LOG2_Q2: f32 = 0.174_093_43;
+
+/// Fast log2 approximation. Max relative error ~3e-7. Input must be > 0.
+#[inline(always)]
+#[allow(dead_code)]
+fn fast_log2f(x: f32) -> f32 {
+    let x_bits = x.to_bits() as i32;
+    let exp_bits = x_bits.wrapping_sub(0x3f2a_aaab_u32 as i32);
+    let exp_shifted = exp_bits >> 23;
+    let mantissa = f32::from_bits((x_bits.wrapping_sub(exp_shifted << 23)) as u32);
+    let exp_val = exp_shifted as f32;
+    let frac = mantissa - 1.0;
+    let num = LOG2_P0 + frac * (LOG2_P1 + frac * LOG2_P2);
+    let den = LOG2_Q0 + frac * (LOG2_Q1 + frac * LOG2_Q2);
+    num / den + exp_val
+}
+
+/// Compute Shannon entropy of a histogram: -sum(count * log2(count / total)).
+///
+/// Returns total entropy in bits. Excludes zero counts and the case where
+/// a single count equals total (entropy contribution = 0).
+///
+/// Uses fast_log2f approximation (~3e-7 relative error per log2 call).
+#[inline]
+pub fn shannon_entropy_bits(counts: &[i32], total_count: usize) -> f32 {
+    if total_count == 0 {
+        return 0.0;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return shannon_entropy_avx2(token, counts, total_count);
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return shannon_entropy_neon(token, counts, total_count);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            return shannon_entropy_wasm128(token, counts, total_count);
+        }
+    }
+
+    shannon_entropy_scalar(counts, total_count)
+}
+
+/// Scalar Shannon entropy using fast_log2f.
+#[inline]
+pub fn shannon_entropy_scalar(counts: &[i32], total_count: usize) -> f32 {
+    let inv_total = 1.0 / total_count as f32;
+    let total_f = total_count as f32;
+    let mut entropy = 0.0f32;
+
+    for &count in counts {
+        if count > 0 {
+            let c = count as f32;
+            if c != total_f {
+                entropy -= c * fast_log2f(c * inv_total);
+            }
+        }
+    }
+
+    entropy
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[archmage::arcane]
+pub fn shannon_entropy_avx2(
+    token: archmage::X64V3Token,
+    counts: &[i32],
+    total_count: usize,
+) -> f32 {
+    use magetypes::simd::{f32x8, i32x8};
+
+    let inv_total_v = f32x8::splat(token, 1.0 / total_count as f32);
+    let total_f_v = f32x8::splat(token, total_count as f32);
+    let zero_f = f32x8::zero(token);
+    let mut acc = f32x8::zero(token);
+
+    // fast_log2f constants
+    let offset = i32x8::splat(token, 0x3f2a_aaab_u32 as i32);
+    let one = f32x8::splat(token, 1.0);
+    let p0 = f32x8::splat(token, LOG2_P0);
+    let p1 = f32x8::splat(token, LOG2_P1);
+    let p2 = f32x8::splat(token, LOG2_P2);
+    let q0 = f32x8::splat(token, LOG2_Q0);
+    let q1 = f32x8::splat(token, LOG2_Q1);
+    let q2 = f32x8::splat(token, LOG2_Q2);
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn fast_log2f_x8(
+        x: f32x8,
+        offset: i32x8,
+        p0: f32x8,
+        p1: f32x8,
+        p2: f32x8,
+        q0: f32x8,
+        q1: f32x8,
+        q2: f32x8,
+        one: f32x8,
+    ) -> f32x8 {
+        let x_bits: i32x8 = x.bitcast_i32x8();
+        let exp_bits = x_bits - offset;
+        let exp_shifted = exp_bits.shr_arithmetic::<23>();
+        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+        let mantissa = mantissa_bits.bitcast_f32x8();
+        let exp_val = exp_shifted.to_f32x8();
+        let frac = mantissa - one;
+        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+        num / den + exp_val
+    }
+
+    let chunks = counts.len() / 8;
+    for chunk in 0..chunks {
+        let base = chunk * 8;
+        let c_i = i32x8::from_slice(token, &counts[base..]);
+        let c_f = c_i.to_f32x8();
+
+        // Compare in f32 space (blend needs f32 masks)
+        let nonzero_mask = c_f.simd_gt(zero_f);
+        let not_total_mask = c_f.simd_ne(total_f_v);
+        // Combine masks: multiply 1.0/0.0 selects
+        let nz_float = f32x8::blend(nonzero_mask, one, zero_f);
+        let nt_float = f32x8::blend(not_total_mask, one, zero_f);
+        let valid_mask = nz_float * nt_float; // 1.0 where valid, 0.0 where not
+
+        // For log2, we need count > 0 to avoid log2(0). Use max(count, 1) for safe input.
+        let safe_c = f32x8::blend(nonzero_mask, c_f, one);
+        let prob = safe_c * inv_total_v;
+        let log2_prob = fast_log2f_x8(prob, offset, p0, p1, p2, q0, q1, q2, one);
+
+        // contribution = -count * log2(count/total), masked to 0 where invalid
+        let contribution = c_f * log2_prob * valid_mask;
+        acc -= contribution;
+    }
+
+    // Handle remainder (scalar)
+    let mut scalar_sum = 0.0f32;
+    let inv_total = 1.0 / total_count as f32;
+    let total_f = total_count as f32;
+    for &count in &counts[chunks * 8..] {
+        if count > 0 {
+            let c = count as f32;
+            if c != total_f {
+                scalar_sum -= c * fast_log2f(c * inv_total);
+            }
+        }
+    }
+
+    acc.reduce_add() + scalar_sum
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+pub fn shannon_entropy_neon(token: archmage::NeonToken, counts: &[i32], total_count: usize) -> f32 {
+    use magetypes::simd::{f32x4, i32x4};
+
+    let inv_total_v = f32x4::splat(token, 1.0 / total_count as f32);
+    let total_f_v = f32x4::splat(token, total_count as f32);
+    let zero_f = f32x4::zero(token);
+    let mut acc = f32x4::zero(token);
+
+    let offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
+    let one = f32x4::splat(token, 1.0);
+    let p0 = f32x4::splat(token, LOG2_P0);
+    let p1 = f32x4::splat(token, LOG2_P1);
+    let p2 = f32x4::splat(token, LOG2_P2);
+    let q0 = f32x4::splat(token, LOG2_Q0);
+    let q1 = f32x4::splat(token, LOG2_Q1);
+    let q2 = f32x4::splat(token, LOG2_Q2);
+
+    #[inline(always)]
+    fn fast_log2f_x4(
+        x: f32x4,
+        offset: i32x4,
+        p0: f32x4,
+        p1: f32x4,
+        p2: f32x4,
+        q0: f32x4,
+        q1: f32x4,
+        q2: f32x4,
+        one: f32x4,
+    ) -> f32x4 {
+        let x_bits: i32x4 = x.bitcast_i32x4();
+        let exp_bits = x_bits - offset;
+        let exp_shifted = exp_bits.shr_arithmetic::<23>();
+        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+        let mantissa = mantissa_bits.bitcast_f32x4();
+        let exp_val = exp_shifted.to_f32x4();
+        let frac = mantissa - one;
+        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+        num / den + exp_val
+    }
+
+    let chunks = counts.len() / 4;
+    for chunk in 0..chunks {
+        let base = chunk * 4;
+        let c_i = i32x4::from_slice(token, &counts[base..]);
+        let c_f = c_i.to_f32x4();
+
+        // Compare in f32 space (blend needs f32 masks)
+        let nonzero_mask = c_f.simd_gt(zero_f);
+        let not_total_mask = c_f.simd_ne(total_f_v);
+        let nz_float = f32x4::blend(nonzero_mask, one, zero_f);
+        let nt_float = f32x4::blend(not_total_mask, one, zero_f);
+        let valid_mask = nz_float * nt_float;
+
+        let safe_c = f32x4::blend(nonzero_mask, c_f, one);
+        let prob = safe_c * inv_total_v;
+        let log2_prob = fast_log2f_x4(prob, offset, p0, p1, p2, q0, q1, q2, one);
+
+        let contribution = c_f * log2_prob * valid_mask;
+        acc -= contribution;
+    }
+
+    let mut scalar_sum = 0.0f32;
+    let inv_total = 1.0 / total_count as f32;
+    let total_f = total_count as f32;
+    for &count in &counts[chunks * 4..] {
+        if count > 0 {
+            let c = count as f32;
+            if c != total_f {
+                scalar_sum -= c * fast_log2f(c * inv_total);
+            }
+        }
+    }
+
+    acc.reduce_add() + scalar_sum
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+pub fn shannon_entropy_wasm128(
+    token: archmage::Wasm128Token,
+    counts: &[i32],
+    total_count: usize,
+) -> f32 {
+    use magetypes::simd::{f32x4, i32x4};
+
+    let inv_total_v = f32x4::splat(token, 1.0 / total_count as f32);
+    let total_f_v = f32x4::splat(token, total_count as f32);
+    let zero_f = f32x4::zero(token);
+    let mut acc = f32x4::zero(token);
+
+    let offset = i32x4::splat(token, 0x3f2a_aaab_u32 as i32);
+    let one = f32x4::splat(token, 1.0);
+    let p0 = f32x4::splat(token, LOG2_P0);
+    let p1 = f32x4::splat(token, LOG2_P1);
+    let p2 = f32x4::splat(token, LOG2_P2);
+    let q0 = f32x4::splat(token, LOG2_Q0);
+    let q1 = f32x4::splat(token, LOG2_Q1);
+    let q2 = f32x4::splat(token, LOG2_Q2);
+
+    #[inline(always)]
+    fn fast_log2f_x4(
+        x: f32x4,
+        offset: i32x4,
+        p0: f32x4,
+        p1: f32x4,
+        p2: f32x4,
+        q0: f32x4,
+        q1: f32x4,
+        q2: f32x4,
+        one: f32x4,
+    ) -> f32x4 {
+        let x_bits: i32x4 = x.bitcast_i32x4();
+        let exp_bits = x_bits - offset;
+        let exp_shifted = exp_bits.shr_arithmetic::<23>();
+        let mantissa_bits = x_bits - exp_shifted.shl::<23>();
+        let mantissa = mantissa_bits.bitcast_f32x4();
+        let exp_val = exp_shifted.to_f32x4();
+        let frac = mantissa - one;
+        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
+        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+        num / den + exp_val
+    }
+
+    let chunks = counts.len() / 4;
+    for chunk in 0..chunks {
+        let base = chunk * 4;
+        let c_i = i32x4::from_slice(token, &counts[base..]);
+        let c_f = c_i.to_f32x4();
+
+        // Compare in f32 space (blend needs f32 masks)
+        let nonzero_mask = c_f.simd_gt(zero_f);
+        let not_total_mask = c_f.simd_ne(total_f_v);
+        let nz_float = f32x4::blend(nonzero_mask, one, zero_f);
+        let nt_float = f32x4::blend(not_total_mask, one, zero_f);
+        let valid_mask = nz_float * nt_float;
+
+        let safe_c = f32x4::blend(nonzero_mask, c_f, one);
+        let prob = safe_c * inv_total_v;
+        let log2_prob = fast_log2f_x4(prob, offset, p0, p1, p2, q0, q1, q2, one);
+
+        let contribution = c_f * log2_prob * valid_mask;
+        acc -= contribution;
+    }
+
+    let mut scalar_sum = 0.0f32;
+    let inv_total = 1.0 / total_count as f32;
+    let total_f = total_count as f32;
+    for &count in &counts[chunks * 4..] {
+        if count > 0 {
+            let c = count as f32;
+            if c != total_f {
+                scalar_sum -= c * fast_log2f(c * inv_total);
+            }
+        }
+    }
+
+    acc.reduce_add() + scalar_sum
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,5 +1098,121 @@ mod tests {
             },
         );
         std::eprintln!("{report}");
+    }
+
+    // =====================================================================
+    // Shannon entropy tests
+    // =====================================================================
+
+    /// Reference Shannon entropy using f32::log2 (not fast_log2f).
+    fn reference_shannon_entropy(counts: &[i32], total_count: usize) -> f32 {
+        if total_count == 0 {
+            return 0.0;
+        }
+        let inv_total = 1.0 / total_count as f32;
+        let total_f = total_count as f32;
+        let mut entropy = 0.0f32;
+        for &count in counts {
+            if count > 0 {
+                let c = count as f32;
+                if c != total_f {
+                    entropy -= c * (c * inv_total).log2();
+                }
+            }
+        }
+        entropy
+    }
+
+    #[test]
+    fn test_shannon_entropy_uniform() {
+        // Uniform distribution: entropy = n * log2(n) bits total
+        let counts = [100i32, 100, 100, 100, 0, 0, 0, 0];
+        let total = 400;
+        let ref_ent = reference_shannon_entropy(&counts, total);
+        let simd_ent = shannon_entropy_bits(&counts, total);
+        let scalar_ent = shannon_entropy_scalar(&counts, total);
+
+        // Expected: 400 * log2(4) = 800
+        assert!((ref_ent - 800.0).abs() < 0.1, "ref = {ref_ent}");
+        assert!(
+            (simd_ent - ref_ent).abs() < 0.5,
+            "simd={simd_ent} ref={ref_ent}"
+        );
+        assert!(
+            (scalar_ent - ref_ent).abs() < 0.5,
+            "scalar={scalar_ent} ref={ref_ent}"
+        );
+    }
+
+    #[test]
+    fn test_shannon_entropy_single_symbol() {
+        // All counts in one symbol: entropy = 0
+        let counts = [1000i32, 0, 0, 0, 0, 0, 0, 0];
+        let total = 1000;
+        let ent = shannon_entropy_bits(&counts, total);
+        assert!(ent.abs() < 0.01, "entropy should be 0, got {ent}");
+    }
+
+    #[test]
+    fn test_shannon_entropy_realistic_histogram() {
+        // Realistic distribution like AC coefficient magnitudes
+        let mut counts = alloc::vec![0i32; 64];
+        counts[0] = 5000; // lots of zeros (but treated as symbol 0)
+        counts[1] = 2000;
+        counts[2] = 1000;
+        counts[3] = 500;
+        counts[4] = 200;
+        counts[5] = 100;
+        counts[6] = 50;
+        counts[7] = 20;
+        let total: usize = counts.iter().map(|&c| c as usize).sum();
+
+        let ref_ent = reference_shannon_entropy(&counts, total);
+
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let simd_ent = shannon_entropy_bits(&counts, total);
+                let rel_err = (simd_ent - ref_ent).abs() / ref_ent.abs().max(1.0);
+                assert!(
+                    rel_err < 0.001,
+                    "Shannon entropy: simd={simd_ent}, ref={ref_ent}, rel_err={rel_err:.4} [{perm}]"
+                );
+            },
+        );
+        std::eprintln!("{report}");
+    }
+
+    #[test]
+    fn test_shannon_entropy_large_alphabet() {
+        // Large alphabet (256 symbols) with Zipf-like distribution
+        let mut counts = alloc::vec![0i32; 256];
+        let mut total = 0usize;
+        for i in 0..256 {
+            counts[i] = 10000 / (i as i32 + 1);
+            total += counts[i] as usize;
+        }
+
+        let ref_ent = reference_shannon_entropy(&counts, total);
+
+        let report = archmage::testing::for_each_token_permutation(
+            archmage::testing::CompileTimePolicy::Warn,
+            |perm| {
+                let simd_ent = shannon_entropy_bits(&counts, total);
+                let rel_err = (simd_ent - ref_ent).abs() / ref_ent.abs().max(1.0);
+                assert!(
+                    rel_err < 0.001,
+                    "Large alphabet: simd={simd_ent}, ref={ref_ent}, rel_err={rel_err:.4} [{perm}]"
+                );
+            },
+        );
+        std::eprintln!("{report}");
+    }
+
+    #[test]
+    fn test_shannon_entropy_empty() {
+        let counts = [0i32; 8];
+        let ent = shannon_entropy_bits(&counts, 0);
+        assert_eq!(ent, 0.0);
     }
 }

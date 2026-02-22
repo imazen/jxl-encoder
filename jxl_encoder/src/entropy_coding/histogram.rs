@@ -172,21 +172,7 @@ impl Histogram {
             return 0.0;
         }
 
-        let inv_total = 1.0 / self.total_count as f32;
-        let total = self.total_count as f32;
-        let mut entropy = 0.0f32;
-
-        for &count in &self.counts {
-            if count > 0 {
-                let count_f = count as f32;
-                // When count == total, this symbol has probability 1, so entropy contribution is 0
-                if count_f != total {
-                    // Entropy contribution: -count * log2(count * inv_total)
-                    entropy -= count_f * (count_f * inv_total).log2();
-                }
-            }
-        }
-
+        let entropy = jxl_simd::shannon_entropy_bits(&self.counts, self.total_count);
         self.entropy.set(entropy);
         entropy
     }
@@ -245,21 +231,19 @@ pub fn histogram_distance(a: &Histogram, b: &Histogram) -> f32 {
         return 0.0;
     }
 
-    let combined_total = (a.total_count + b.total_count) as f32;
-    let inv_total = 1.0 / combined_total;
-    let mut combined_entropy = 0.0f32;
-
+    let combined_total = a.total_count + b.total_count;
     let max_len = a.counts.len().max(b.counts.len());
 
-    for i in 0..max_len {
-        let a_count = a.counts.get(i).copied().unwrap_or(0);
-        let b_count = b.counts.get(i).copied().unwrap_or(0);
-        let combined = (a_count + b_count) as f32;
-
-        if combined > 0.0 && combined != combined_total {
-            combined_entropy -= combined * (combined * inv_total).log2();
-        }
+    // Build combined counts (HISTOGRAM_ROUNDING-aligned for SIMD)
+    let aligned_len = div_ceil(max_len, HISTOGRAM_ROUNDING) * HISTOGRAM_ROUNDING;
+    let mut combined_counts = vec![0i32; aligned_len];
+    for (i, slot) in combined_counts.iter_mut().enumerate().take(max_len) {
+        let ac = a.counts.get(i).copied().unwrap_or(0);
+        let bc = b.counts.get(i).copied().unwrap_or(0);
+        *slot = ac + bc;
     }
+
+    let combined_entropy = jxl_simd::shannon_entropy_bits(&combined_counts, combined_total);
 
     // Distance = combined_entropy - a.entropy - b.entropy
     combined_entropy - a.cached_entropy() - b.cached_entropy()
