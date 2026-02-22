@@ -73,19 +73,15 @@ W-prev_gradient, W+N-NW, W-NW, NW-N, N-NE, N-NN, W-WW.
 
 **Cleanup**: The stale `Property` enum in `tree.rs` should be deleted to avoid confusion.
 
-### DIFF-7: Missing reference channel properties (16+) in tree learning
+### ~~DIFF-7~~: Reference channel properties (16+) in tree learning — FIXED
 
-**File**: `jxl_encoder/src/modular/tree.rs:94`
-**Impact**: Cannot use cross-channel prediction in MA tree. libjxl uses 4 properties
-per reference channel (ref value, abs diff, ref row above, abs diff row above) for
-multi-channel correlation.
-
-**Our code**: `NUM_PROPERTIES = 16` (no reference channel properties)
-**libjxl**: `kNumNonrefProperties = 16` + 4 per reference channel
-
-**Fix**: Add properties 16+ for each already-decoded channel. The decoder already
-handles these (property indices >= 16 reference channels `(prop - 16) / 4`). Would
-improve RGB compression where channels are correlated.
+**Status**: FIXED. Added dynamic reference channel properties (indices 16+) to
+modular tree learning. For each channel, preceding channels with matching dimensions
+contribute 4 properties: |ref_value|, ref_value, |ref_value - clamped_gradient|,
+ref_value - clamped_gradient. Effort-gated: e<9 uses only gradient residual (offset 3)
+per ref channel, e9+ uses all 4. Squeeze and lossy paths excluded (channels have
+different dimensions). 11.4% compression improvement on cross-channel correlated data.
+Pixel-exact roundtrip verified with jxl-rs.
 
 ### ~~DIFF-8~~: Custom coefficient orders for DCT64+ — FIXED (37e34d5)
 

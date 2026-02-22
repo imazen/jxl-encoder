@@ -132,7 +132,10 @@ const CANDIDATE_PREDICTORS_SQUEEZE: &[Predictor] = &[Predictor::Zero];
 /// - Tortoise (e9/e10): all properties, max 256 property values, threshold 75
 pub struct TreeLearningParams {
     /// Properties to consider for splits, in priority order.
-    pub properties: &'static [usize],
+    /// Includes base properties (0..16) and optionally reference channel
+    /// properties (16+). Changed from `&'static [usize]` to `Vec<usize>` to
+    /// support dynamic ref channel property indices.
+    pub properties: Vec<usize>,
     /// Maximum number of quantized threshold buckets per property.
     pub max_property_values: usize,
     /// Base split threshold: scaled by `pixel_fraction * 0.9 + 0.1` to get effective threshold.
@@ -181,7 +184,7 @@ impl TreeLearningParams {
         let num_props = (profile.tree_num_properties as usize).min(order.len());
 
         Self {
-            properties: &order[..num_props],
+            properties: order[..num_props].to_vec(),
             max_property_values: profile.tree_max_buckets as usize,
             split_threshold: profile.tree_threshold_base as f64,
             // kMaxTreeSize from libjxl ma_common.h:24 — absolute decoder cap.
@@ -215,7 +218,7 @@ impl TreeLearningParams {
         let num_props = num_props.min(order.len());
 
         Self {
-            properties: &order[..num_props],
+            properties: order[..num_props].to_vec(),
             max_property_values,
             split_threshold: threshold_base,
             max_nodes: 1 << 22,
@@ -242,6 +245,34 @@ impl TreeLearningParams {
         self.max_nodes = self.max_nodes.min(decoder_limit);
         self
     }
+
+    /// Append reference channel property indices to the property list.
+    ///
+    /// Matches libjxl enc_modular.cc:593-605:
+    /// - At effort < 9 (speed > Tortoise): only the gradient residual property
+    ///   per ref channel (`kNumNonrefProperties + i*4 + 3`)
+    /// - At effort 9+ (Tortoise): all 4 properties per ref channel
+    ///
+    /// `num_ref_channels` is the maximum number of reference channels across
+    /// all channels in the image (typically `num_color_channels - 1` for RGB).
+    #[must_use]
+    pub fn with_ref_properties(mut self, num_ref_channels: usize, effort: u8) -> Self {
+        if num_ref_channels == 0 {
+            return self;
+        }
+        if effort >= 9 {
+            // Tortoise: all 4 properties per ref channel
+            for i in 0..num_ref_channels * 4 {
+                self.properties.push(NUM_PROPERTIES + i);
+            }
+        } else {
+            // Non-Tortoise: only gradient residual (property offset 3) per ref channel
+            for i in 0..num_ref_channels {
+                self.properties.push(NUM_PROPERTIES + i * 4 + 3);
+            }
+        }
+        self
+    }
 }
 
 /// Collected samples for tree learning.
@@ -260,10 +291,14 @@ pub struct TreeSamples {
     extra_bits: Vec<Vec<u8>>,
     /// Spec-matching property values: props[property_idx][sample_idx].
     /// These are the actual (unquantized) property values.
+    /// Length is `NUM_PROPERTIES + 4 * num_ref_channels` (base 16 + 4 per ref channel).
     props: Vec<Vec<i32>>,
     /// Sample counts after deduplication: sample_counts[sample_idx].
     /// Before dedup, all 1s. After dedup, each unique sample's count of merged originals.
     sample_counts: Vec<u32>,
+    /// Maximum number of reference channels across all channels in the image.
+    /// 0 for squeeze mode or single-channel images.
+    num_ref_channels: usize,
 }
 
 impl Default for TreeSamples {
@@ -273,28 +308,46 @@ impl Default for TreeSamples {
 }
 
 impl TreeSamples {
-    /// Creates an empty TreeSamples structure with full 14-predictor candidate list.
+    /// Creates an empty TreeSamples structure with full 14-predictor candidate list
+    /// and no reference channel properties.
     pub fn new() -> Self {
-        Self::with_predictors(CANDIDATE_PREDICTORS)
+        Self::with_predictors_and_refs(CANDIDATE_PREDICTORS, 0)
+    }
+
+    /// Creates an empty TreeSamples with reference channel properties.
+    ///
+    /// `num_ref_channels` is the maximum number of reference channels across all
+    /// channels in the image. For RGB with no extra channels, this is 2
+    /// (channel 1 can reference channel 0, channel 2 can reference 0 and 1).
+    pub fn new_with_ref_channels(num_ref_channels: usize) -> Self {
+        Self::with_predictors_and_refs(CANDIDATE_PREDICTORS, num_ref_channels)
     }
 
     /// Creates an empty TreeSamples for squeeze mode (Zero predictor only).
     /// Matches libjxl enc_modular.cc:629-633.
+    /// No reference channels: squeeze creates channels with different dimensions.
     pub fn new_for_squeeze() -> Self {
-        Self::with_predictors(CANDIDATE_PREDICTORS_SQUEEZE)
+        Self::with_predictors_and_refs(CANDIDATE_PREDICTORS_SQUEEZE, 0)
     }
 
-    /// Creates an empty TreeSamples with a custom predictor list.
-    fn with_predictors(predictors: &'static [Predictor]) -> Self {
+    /// Creates an empty TreeSamples with a custom predictor list and ref channel count.
+    fn with_predictors_and_refs(predictors: &'static [Predictor], num_ref_channels: usize) -> Self {
         let num_predictors = predictors.len();
+        let total_props = NUM_PROPERTIES + 4 * num_ref_channels;
         Self {
             num_samples: 0,
             candidate_predictors: predictors,
             residual_tokens: vec![Vec::new(); num_predictors],
             extra_bits: vec![Vec::new(); num_predictors],
-            props: vec![Vec::new(); NUM_PROPERTIES],
+            props: vec![Vec::new(); total_props],
             sample_counts: Vec::new(),
+            num_ref_channels,
         }
+    }
+
+    /// Returns the total number of properties (base 16 + 4 per ref channel).
+    pub fn total_num_properties(&self) -> usize {
+        NUM_PROPERTIES + 4 * self.num_ref_channels
     }
 
     /// Returns the number of candidate predictors.
@@ -308,10 +361,11 @@ impl TreeSamples {
     fn pre_quantize(&self, params: &TreeLearningParams) -> PreQuantizedProps {
         let max_buckets = params.max_property_values;
         let n = self.num_samples;
-        let mut threshold_sets = vec![Vec::new(); NUM_PROPERTIES];
-        let mut bucket_indices = vec![Vec::new(); NUM_PROPERTIES];
+        let total_props = self.total_num_properties();
+        let mut threshold_sets = vec![Vec::new(); total_props];
+        let mut bucket_indices = vec![Vec::new(); total_props];
 
-        for &prop_idx in params.properties {
+        for &prop_idx in &params.properties {
             let props = &self.props[prop_idx];
 
             // Find min/max across ALL samples
@@ -413,6 +467,49 @@ impl TreeSamples {
     }
 }
 
+/// Find reference channels for a given channel in a modular image.
+///
+/// A reference channel is any preceding channel (j < i) with matching
+/// `(width, height, hshift, vshift)`. Matches libjxl's `PrecomputeReferences`
+/// in `context_predict.h:411-443`.
+///
+/// Returns indices of matching channels in the image's channel list.
+fn find_ref_channels(image: &ModularImage, channel_idx: usize) -> Vec<usize> {
+    if channel_idx == 0 {
+        return Vec::new();
+    }
+    let ch = &image.channels[channel_idx];
+    let w = ch.width();
+    let h = ch.height();
+    let hs = ch.hshift;
+    let vs = ch.vshift;
+
+    let mut refs = Vec::new();
+    for j in (0..channel_idx).rev() {
+        let ref_ch = &image.channels[j];
+        if ref_ch.width() == w && ref_ch.height() == h && ref_ch.hshift == hs && ref_ch.vshift == vs
+        {
+            refs.push(j);
+        }
+    }
+    // refs[0] = closest preceding channel (j = channel_idx-1), matching decoder's
+    // PrecomputeReferences which iterates backward from channel_idx-1 to 0.
+    refs
+}
+
+/// Compute the maximum number of reference channels across all channels.
+///
+/// This determines how many extra property slots (4 per ref channel) are needed
+/// in the TreeSamples structure.
+pub fn max_ref_channels(image: &ModularImage) -> usize {
+    let mut max_refs = 0;
+    for i in 0..image.channels.len() {
+        let refs = find_ref_channels(image, i);
+        max_refs = max_refs.max(refs.len());
+    }
+    max_refs
+}
+
 /// Compute the 16 spec-matching properties for a pixel.
 ///
 /// These match jxl-rs decoder's `compute_properties()` exactly:
@@ -482,6 +579,13 @@ pub fn gather_samples_strided(
     wp_params: &WeightedPredictorParams,
 ) {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
+        // Find reference channels for this channel (preceding channels with matching dims)
+        let ref_channel_indices = if samples.num_ref_channels > 0 {
+            find_ref_channels(image, ch_idx)
+        } else {
+            Vec::new()
+        };
+
         gather_channel_samples(
             samples,
             channel,
@@ -489,6 +593,8 @@ pub fn gather_samples_strided(
             group_id,
             stride,
             wp_params,
+            image,
+            &ref_channel_indices,
         );
     }
 }
@@ -527,6 +633,10 @@ pub fn compute_gather_stride_from_profile(
 ///
 /// When `stride > 1`, only every `stride`-th pixel in scan order is sampled.
 /// WP state is still updated for every pixel to maintain correct error tracking.
+///
+/// `ref_channel_indices` contains indices into `image.channels` of preceding channels
+/// with matching dimensions. For each ref channel, 4 properties are computed per pixel.
+#[allow(clippy::too_many_arguments)]
 fn gather_channel_samples(
     samples: &mut TreeSamples,
     channel: &Channel,
@@ -534,6 +644,8 @@ fn gather_channel_samples(
     group_id: u32,
     stride: usize,
     wp_params: &WeightedPredictorParams,
+    image: &ModularImage,
+    ref_channel_indices: &[usize],
 ) {
     let width = channel.width();
     let height = channel.height();
@@ -550,6 +662,8 @@ fn gather_channel_samples(
 
     // Counter for subsampling: only gather when counter == 0
     let mut subsample_counter: usize = 0;
+
+    let max_refs = samples.num_ref_channels;
 
     for y in 0..height {
         prev_gradient = 0;
@@ -593,7 +707,7 @@ fn gather_channel_samples(
                     samples.extra_bits[pred_idx].push(num_extra as u8);
                 }
 
-                // Store property values
+                // Store base property values (0..16)
                 for (prop_list, &val) in samples
                     .props
                     .iter_mut()
@@ -602,6 +716,49 @@ fn gather_channel_samples(
                 {
                     prop_list.push(val);
                 }
+
+                // Store reference channel properties (16+)
+                // For each ref channel: |ref|, ref, |ref - gradient(ref)|, ref - gradient(ref)
+                // Matches libjxl context_predict.h:411-443 PrecomputeReferences
+                if max_refs > 0 {
+                    for (r, &ref_ch_idx) in ref_channel_indices.iter().enumerate() {
+                        let ref_ch = &image.channels[ref_ch_idx];
+                        let v = ref_ch.get(x, y);
+
+                        // Compute clamped gradient prediction for reference channel
+                        let ref_left = if x > 0 { ref_ch.get(x - 1, y) } else { 0 };
+                        let ref_top = if y > 0 {
+                            ref_ch.get(x, y - 1)
+                        } else {
+                            ref_left
+                        };
+                        let ref_topleft = if x > 0 && y > 0 {
+                            ref_ch.get(x - 1, y - 1)
+                        } else {
+                            ref_left
+                        };
+                        let ref_predicted = crate::vardct::dc_coding::clamped_gradient(
+                            ref_top,
+                            ref_left,
+                            ref_topleft,
+                        );
+
+                        let base = NUM_PROPERTIES + r * 4;
+                        samples.props[base].push(v.wrapping_abs()); // |ref|
+                        samples.props[base + 1].push(v); // ref
+                        samples.props[base + 2].push(v.wrapping_sub(ref_predicted).wrapping_abs()); // |ref - gradient|
+                        samples.props[base + 3].push(v.wrapping_sub(ref_predicted)); // ref - gradient
+                    }
+                    // Zero-pad for channels with fewer ref channels than the max
+                    for r in ref_channel_indices.len()..max_refs {
+                        let base = NUM_PROPERTIES + r * 4;
+                        samples.props[base].push(0);
+                        samples.props[base + 1].push(0);
+                        samples.props[base + 2].push(0);
+                        samples.props[base + 3].push(0);
+                    }
+                }
+
                 samples.num_samples += 1;
 
                 subsample_counter = stride - 1;
@@ -678,7 +835,7 @@ fn dedup_samples(
     }
 
     let num_pred = samples.num_predictors();
-    let properties = params.properties;
+    let properties = &params.properties;
 
     // Sort sample indices by composite key: property buckets first (for spatial locality
     // in the tree builder), then tokens + ebits per predictor.
@@ -715,7 +872,7 @@ fn dedup_samples(
 
     for &curr in &order[1..] {
         let prev = *unique_indices.last().unwrap();
-        if is_same_sample(prev, curr, samples, pq, properties, num_pred) {
+        if is_same_sample(prev, curr, samples, pq, properties.as_slice(), num_pred) {
             *counts.last_mut().unwrap() += 1;
         } else {
             unique_indices.push(curr);
@@ -736,7 +893,8 @@ fn dedup_samples(
         samples.residual_tokens[pred] = new_tokens;
         samples.extra_bits[pred] = new_ebits;
     }
-    for prop_idx in 0..NUM_PROPERTIES {
+    let total_props = samples.total_num_properties();
+    for prop_idx in 0..total_props {
         let old_props = &samples.props[prop_idx];
         if old_props.is_empty() {
             continue;
@@ -744,7 +902,10 @@ fn dedup_samples(
         let new_props: Vec<i32> = unique_indices.iter().map(|&i| old_props[i]).collect();
         samples.props[prop_idx] = new_props;
     }
-    for prop_idx in 0..NUM_PROPERTIES {
+    for prop_idx in 0..total_props {
+        if prop_idx >= pq.bucket_indices.len() {
+            break;
+        }
         let old_bi = &pq.bucket_indices[prop_idx];
         if old_bi.is_empty() {
             continue;
@@ -1936,7 +2097,25 @@ pub fn collect_residuals_with_tree_offset(
 ) -> Vec<crate::entropy_coding::token::Token> {
     use crate::entropy_coding::token::Token as AnsToken;
 
+    // Check if the tree uses any reference channel properties (indices >= 16).
+    // If so, we need to compute extended properties per pixel.
+    let max_tree_prop = tree
+        .iter()
+        .filter(|n| n.property >= 0)
+        .map(|n| n.property as usize)
+        .max()
+        .unwrap_or(0);
+    let needs_ref_props = max_tree_prop >= NUM_PROPERTIES;
+
     let mut tokens = Vec::new();
+
+    // Pre-allocated extended property buffer (reused per pixel)
+    let num_extended_props = if needs_ref_props {
+        max_tree_prop + 1
+    } else {
+        NUM_PROPERTIES
+    };
+    let mut extended_props = vec![0i32; num_extended_props];
 
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         let width = channel.width();
@@ -1944,6 +2123,13 @@ pub fn collect_residuals_with_tree_offset(
         if width == 0 || height == 0 {
             continue;
         }
+
+        // Find reference channels for this channel
+        let ref_channel_indices = if needs_ref_props {
+            find_ref_channels(image, ch_idx)
+        } else {
+            Vec::new()
+        };
 
         let mut wp_state = WeightedPredictorState::new(wp_params, width);
         let mut prev_gradient: i32;
@@ -1957,7 +2143,7 @@ pub fn collect_residuals_with_tree_offset(
                 // Compute WP prediction and property
                 let (wp_pred, wp_max_error) = wp_state.predict_and_property(x, y, width, &n);
 
-                let props = compute_spec_properties(
+                let base_props = compute_spec_properties(
                     ch_idx as u32 + channel_offset,
                     group_id,
                     x,
@@ -1966,10 +2152,58 @@ pub fn collect_residuals_with_tree_offset(
                     prev_gradient,
                     wp_max_error,
                 );
-                prev_gradient = props[9];
+                prev_gradient = base_props[9];
 
-                // Traverse tree to find leaf
-                let leaf = traverse_with_spec_props(tree, &props);
+                let leaf = if needs_ref_props {
+                    // Copy base properties into extended buffer
+                    extended_props[..NUM_PROPERTIES].copy_from_slice(&base_props);
+
+                    // Compute reference channel properties
+                    for (r, &ref_ch_idx) in ref_channel_indices.iter().enumerate() {
+                        let ref_ch = &image.channels[ref_ch_idx];
+                        let v = ref_ch.get(x, y);
+                        let ref_left = if x > 0 { ref_ch.get(x - 1, y) } else { 0 };
+                        let ref_top = if y > 0 {
+                            ref_ch.get(x, y - 1)
+                        } else {
+                            ref_left
+                        };
+                        let ref_topleft = if x > 0 && y > 0 {
+                            ref_ch.get(x - 1, y - 1)
+                        } else {
+                            ref_left
+                        };
+                        let ref_predicted = crate::vardct::dc_coding::clamped_gradient(
+                            ref_top,
+                            ref_left,
+                            ref_topleft,
+                        );
+
+                        let base = NUM_PROPERTIES + r * 4;
+                        if base + 3 < num_extended_props {
+                            extended_props[base] = v.wrapping_abs();
+                            extended_props[base + 1] = v;
+                            extended_props[base + 2] = v.wrapping_sub(ref_predicted).wrapping_abs();
+                            extended_props[base + 3] = v.wrapping_sub(ref_predicted);
+                        }
+                    }
+                    // Zero-fill for channels with fewer ref channels
+                    let num_ref_slots = (num_extended_props - NUM_PROPERTIES) / 4;
+                    for r in ref_channel_indices.len()..num_ref_slots {
+                        let base = NUM_PROPERTIES + r * 4;
+                        if base + 3 < num_extended_props {
+                            extended_props[base] = 0;
+                            extended_props[base + 1] = 0;
+                            extended_props[base + 2] = 0;
+                            extended_props[base + 3] = 0;
+                        }
+                    }
+
+                    traverse_with_props(tree, &extended_props)
+                } else {
+                    // Fast path: no ref properties needed
+                    traverse_with_spec_props(tree, &base_props)
+                };
 
                 // Predict using leaf's predictor
                 let prediction = if leaf.predictor == Predictor::Weighted {
@@ -2014,13 +2248,33 @@ pub fn collect_residuals_with_tree_offset(
     tokens
 }
 
-/// Traverse a tree using spec-matching property values.
+/// Traverse a tree using spec-matching property values (base 16 properties only).
 ///
 /// Our tree convention: lchild = property <= splitval, rchild = property > splitval.
 fn traverse_with_spec_props<'a>(
     tree: &'a Tree,
     props: &[i32; NUM_PROPERTIES],
 ) -> &'a PropertyDecisionNode {
+    let mut idx = 0;
+    loop {
+        let node = &tree[idx];
+        if node.property < 0 {
+            return node;
+        }
+        let pval = props[node.property as usize];
+        if pval <= node.splitval {
+            idx = node.lchild;
+        } else {
+            idx = node.rchild;
+        }
+    }
+}
+
+/// Traverse a tree using a dynamic-length property slice.
+///
+/// Used when reference channel properties (indices >= 16) are present in the tree.
+/// Falls back to the same traversal logic but with a slice instead of a fixed array.
+fn traverse_with_props<'a>(tree: &'a Tree, props: &[i32]) -> &'a PropertyDecisionNode {
     let mut idx = 0;
     loop {
         let node = &tree[idx];

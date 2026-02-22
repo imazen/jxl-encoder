@@ -307,7 +307,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
     use super::tree::count_contexts;
     use super::tree_learn::{
         TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-        compute_gather_stride_from_profile, gather_samples_strided,
+        compute_gather_stride_from_profile, gather_samples_strided, max_ref_channels,
     };
     use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
     use crate::entropy_coding::encode::write_entropy_code_ans;
@@ -336,7 +336,18 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         .map(|ch| ch.width() * ch.height())
         .sum();
     let stride = compute_gather_stride_from_profile(total_pixels, profile);
-    let mut samples = TreeSamples::new();
+    // Compute max ref channels across all images for cross-channel prediction
+    let num_refs = {
+        let mut mr = 0;
+        if let Some(meta) = meta_image {
+            mr = mr.max(max_ref_channels(meta));
+        }
+        for img in images.iter() {
+            mr = mr.max(max_ref_channels(img));
+        }
+        mr
+    };
+    let mut samples = TreeSamples::new_with_ref_channels(num_refs);
     // Gather meta-channel samples first (channel_offset=0, group_id=0)
     if let Some(meta) = meta_image {
         gather_samples_strided(&mut samples, meta, 0, 0, stride, &wp_params);
@@ -368,6 +379,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         1.0
     };
     let params = TreeLearningParams::from_profile(profile)
+        .with_ref_properties(num_refs, profile.effort)
         .with_pixel_fraction(pixel_fraction)
         .with_total_pixels(total_pixels);
     let tree = compute_best_tree(&mut samples, &params);

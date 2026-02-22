@@ -901,6 +901,63 @@ fn pathological_palette_ans_mono_256x2() {
     eprintln!("Decoded OK: {}x{}", dw, dh);
 }
 
+/// Test: Reference channel properties (DIFF-7) with cross-channel correlation.
+/// Inspired by libjxl's RoundtripExtraProperties test:
+/// Creates 128x128 3-channel image where channels 0 and 2 have identical random data,
+/// channel 1 is zero. With ref channel properties, the tree learner should discover
+/// that channel 2 can be predicted from channel 0, improving compression.
+#[test]
+fn pathological_ref_channel_properties() {
+    let w = 128usize;
+    let h = 128usize;
+    // Channel 0: pseudo-random, channel 1: zero, channel 2: same as channel 0
+    let ch0_data = lcg_bytes(12345, w * h);
+    let mut data = vec![0u8; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            let px = y * w + x;
+            data[px * 3] = ch0_data[px]; // R = random
+            data[px * 3 + 1] = 0; // G = zero
+            data[px * 3 + 2] = ch0_data[px]; // B = same as R
+        }
+    }
+
+    // Encode with tree learning (effort 7 = default, uses ref channel properties)
+    let encoded_tree = LosslessConfig::new()
+        .with_tree_learning(true)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!("Ref channel: tree learning = {} bytes", encoded_tree.len());
+
+    // Verify roundtrip (pixel-exact)
+    let (dw, dh, pixels) = decode_jxl_rs(&encoded_tree);
+    assert_eq!(dw, w);
+    assert_eq!(dh, h);
+    for y in 0..h {
+        for x in 0..w {
+            let px = y * w + x;
+            let r = (pixels[px * 3] * 255.0 + 0.5) as u8;
+            let g = (pixels[px * 3 + 1] * 255.0 + 0.5) as u8;
+            let b = (pixels[px * 3 + 2] * 255.0 + 0.5) as u8;
+            assert_eq!(r, data[px * 3], "R mismatch at ({x},{y})");
+            assert_eq!(g, data[px * 3 + 1], "G mismatch at ({x},{y})");
+            assert_eq!(b, data[px * 3 + 2], "B mismatch at ({x},{y})");
+        }
+    }
+    eprintln!("Ref channel properties: pixel-exact roundtrip OK");
+
+    // Encode without tree learning for comparison (effort 4 = no tree learning)
+    let encoded_no_tree = LosslessConfig::new()
+        .with_effort(4)
+        .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+        .unwrap();
+    eprintln!(
+        "Ref channel: no tree learning = {} bytes (tree learning saves {:.1}%)",
+        encoded_no_tree.len(),
+        (1.0 - encoded_tree.len() as f64 / encoded_no_tree.len() as f64) * 100.0,
+    );
+}
+
 /// Test: Gray8 256x256 gradient with ANS (method=1, no palette)
 /// This produces the same degenerate 2-symbol distribution but goes through
 /// write_improved_modular_stream instead of write_modular_stream_with_palette.

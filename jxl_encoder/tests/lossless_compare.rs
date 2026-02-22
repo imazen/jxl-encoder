@@ -444,11 +444,226 @@ fn lossless_compare() {
     }
     eprintln!();
 
-    // Fail if any pixel mismatches
+    // Fail if any pixel mismatches vs cjxl reference hashes
     if !mismatches.is_empty() {
         panic!(
-            "{} pixel mismatches detected (lossless output not pixel-exact)",
+            "{} pixel mismatches detected (lossless output not pixel-exact vs cjxl hashes)",
             mismatches.len()
         );
     }
 }
+
+struct RoundtripResult {
+    name: String,
+    corpus: String,
+    width: u32,
+    height: u32,
+    encoded_size: usize,
+    wrong_pixels: usize,
+    max_diff: u8,
+    error: Option<String>,
+}
+
+/// Lossless source-roundtrip verification: encode → decode → compare against original.
+///
+/// This verifies OUR lossless encoder produces pixel-exact output on all corpus images.
+/// Unlike lossless_compare (which checks against cjxl's hashes), this checks that
+/// our encode→decode roundtrip preserves every pixel exactly.
+///
+/// Run with: `cargo test -p jxl-encoder --test lossless_compare -- lossless_roundtrip_all --ignored --nocapture`
+#[test]
+#[ignore]
+fn lossless_roundtrip_all() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let project_root = std::path::Path::new(manifest_dir).parent().unwrap();
+    let sources = find_source_images(project_root);
+    eprintln!("Found {} source images for roundtrip verification", sources.len());
+
+    if sources.is_empty() {
+        panic!("No source images found. Ensure codec-corpus is available.");
+    }
+
+    let effort: u8 = std::env::var("CJXL_EFFORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(7);
+
+    let results_mu: Mutex<Vec<RoundtripResult>> = Mutex::new(Vec::new());
+    let next_idx = AtomicUsize::new(0);
+    let done_count = AtomicUsize::new(0);
+    let n_images = sources.len();
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    std::thread::scope(|s| {
+        for _ in 0..n_threads {
+            s.spawn(|| {
+                loop {
+                    let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                    if idx >= sources.len() {
+                        break;
+                    }
+                    let src = &sources[idx];
+                    let result = roundtrip_one_image(src, effort);
+                    let done = done_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    let status = if let Some(ref err) = result.error {
+                        format!("ERROR: {err}")
+                    } else if result.wrong_pixels > 0 {
+                        format!("FAIL: {} wrong, max_diff={}", result.wrong_pixels, result.max_diff)
+                    } else {
+                        "ok".to_string()
+                    };
+                    eprintln!(
+                        "  [{done}/{n_images}] {} ({}): {}x{} → {} bytes  {status}",
+                        src.name, src.corpus, result.width, result.height, result.encoded_size,
+                    );
+                    results_mu.lock().unwrap().push(result);
+                }
+            });
+        }
+    });
+
+    let mut results = results_mu.into_inner().unwrap();
+    results.sort_by(|a, b| a.corpus.cmp(&b.corpus).then(a.name.cmp(&b.name)));
+
+    // Summary
+    let errors: Vec<&RoundtripResult> = results.iter().filter(|r| r.error.is_some()).collect();
+    let failures: Vec<&RoundtripResult> = results
+        .iter()
+        .filter(|r| r.error.is_none() && r.wrong_pixels > 0)
+        .collect();
+    let passed = results.len() - errors.len() - failures.len();
+
+    eprintln!("\n=== Lossless Roundtrip: {passed} passed, {} failed, {} errors ===\n",
+        failures.len(), errors.len());
+
+    for r in &errors {
+        eprintln!("  ERROR {} ({}): {}", r.name, r.corpus, r.error.as_deref().unwrap_or("?"));
+    }
+    for r in &failures {
+        eprintln!(
+            "  FAIL  {} ({}): {} wrong pixels, max_diff={}",
+            r.name, r.corpus, r.wrong_pixels, r.max_diff
+        );
+    }
+
+    if !errors.is_empty() || !failures.is_empty() {
+        panic!(
+            "{} errors + {} pixel-inexact images out of {} total",
+            errors.len(),
+            failures.len(),
+            results.len()
+        );
+    }
+
+    eprintln!("\nAll {} images are pixel-exact lossless roundtrip.", results.len());
+}
+
+fn roundtrip_one_image(src: &SourceImage, effort: u8) -> RoundtripResult {
+    // Macro for early-return errors
+    macro_rules! err_result {
+        ($name:expr, $corpus:expr, $msg:expr) => {
+            return RoundtripResult {
+                name: $name.to_string(),
+                corpus: $corpus.to_string(),
+                width: 0,
+                height: 0,
+                encoded_size: 0,
+                wrong_pixels: 0,
+                max_diff: 0,
+                error: Some($msg.to_string()),
+            }
+        };
+    }
+
+    let img = match image::open(&src.path) {
+        Ok(img) => img,
+        Err(e) => err_result!(src.name, src.corpus, format!("open: {e}")),
+    };
+    let (w, h) = img.dimensions();
+
+    // Get source pixels as RGB8 (or RGBA8 for alpha images)
+    let has_alpha = img.color().has_alpha();
+    let (source_pixels, layout) = if has_alpha {
+        let rgba = img.to_rgba8();
+        (rgba.into_raw(), jxl_encoder::PixelLayout::Rgba8)
+    } else {
+        let rgb = img.to_rgb8();
+        (rgb.into_raw(), jxl_encoder::PixelLayout::Rgb8)
+    };
+
+    // Encode
+    let config = jxl_encoder::LosslessConfig::new().with_effort(effort);
+    let encoded = match config.encode(&source_pixels, w, h, layout) {
+        Ok(out) => out,
+        Err(e) => err_result!(src.name, src.corpus, format!("encode: {e:?}")),
+    };
+
+    // Decode with jxl-rs
+    // Decode with jxl-rs — use the working decode_jxl_pixels for RGB,
+    // for RGBA we compare only RGB channels (alpha is encoded separately and
+    // verified in dedicated RGBA tests)
+    let decoded = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        decode_jxl_pixels(&encoded)
+    })) {
+        Ok(Some(d)) => d,
+        Ok(None) => err_result!(src.name, src.corpus, "jxl-rs decode returned None"),
+        Err(e) => {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                format!("jxl-rs decode panicked: {s}")
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                format!("jxl-rs decode panicked: {s}")
+            } else {
+                "jxl-rs decode panicked".to_string()
+            };
+            err_result!(src.name, src.corpus, msg)
+        }
+    };
+
+    // Compare pixel-by-pixel (RGB channels only — decoded is always RGB from decode_jxl_pixels)
+    let npx = (w as usize) * (h as usize);
+    let expected_rgb_len = npx * 3;
+    if decoded.len() != expected_rgb_len {
+        err_result!(
+            src.name,
+            src.corpus,
+            format!(
+                "size mismatch: decoded {} vs expected {}",
+                decoded.len(),
+                expected_rgb_len
+            )
+        );
+    }
+
+    let src_channels = if has_alpha { 4 } else { 3 };
+    let mut wrong_pixels = 0usize;
+    let mut max_diff = 0u8;
+    for i in 0..npx {
+        let mut pixel_wrong = false;
+        for c in 0..3 {
+            let src_val = source_pixels[i * src_channels + c];
+            let dec_val = decoded[i * 3 + c];
+            if src_val != dec_val {
+                pixel_wrong = true;
+                let diff = src_val.abs_diff(dec_val);
+                max_diff = max_diff.max(diff);
+            }
+        }
+        if pixel_wrong {
+            wrong_pixels += 1;
+        }
+    }
+
+    RoundtripResult {
+        name: src.name.clone(),
+        corpus: src.corpus.clone(),
+        width: w,
+        height: h,
+        encoded_size: encoded.len(),
+        wrong_pixels,
+        max_diff,
+        error: None,
+    }
+}
+
