@@ -479,14 +479,15 @@ fn main() {
     } // end if !is_pnm
 
     // Read image (PNG or PNM single frame)
-    let (width, height, color_type, bit_depth, data) = if is_pnm {
-        match read_pnm(&args.input) {
+    let (width, height, color_type, bit_depth, data, source_gamma) = if is_pnm {
+        let (w, h, ct, bd, d) = match read_pnm(&args.input) {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("Error reading PNM input: {}", e);
                 std::process::exit(1);
             }
-        }
+        };
+        (w, h, ct, bd, d, None) // PNM has no gamma metadata
     } else {
         match read_png(&args.input) {
             Ok(result) => result,
@@ -507,6 +508,9 @@ fn main() {
             color_type,
             if is_16bit { 16 } else { 8 }
         );
+        if let Some(gamma) = source_gamma {
+            println!("Gamma:    {:.6} (display gamma {:.1})", gamma, 1.0 / gamma);
+        }
     }
 
     // Determine pixel layout
@@ -740,6 +744,9 @@ fn main() {
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
             }
+            if let Some(gamma) = source_gamma {
+                req = req.with_source_gamma(gamma);
+            }
             req.encode(&data)
         }
 
@@ -752,6 +759,9 @@ fn main() {
             let mut req = cfg.encode_request(width, height, layout);
             if let Some(ref meta) = metadata {
                 req = req.with_metadata(meta);
+            }
+            if let Some(gamma) = source_gamma {
+                req = req.with_source_gamma(gamma);
             }
             req.encode(&data)
         }
@@ -793,6 +803,9 @@ fn main() {
         let mut req = cfg.encode_request(width, height, layout);
         if let Some(ref meta) = metadata {
             req = req.with_metadata(meta);
+        }
+        if let Some(gamma) = source_gamma {
+            req = req.with_source_gamma(gamma);
         }
         req.encode(&data)
     };
@@ -874,12 +887,32 @@ fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
 #[allow(clippy::type_complexity)]
 fn read_png(
     path: &PathBuf,
-) -> Result<(u32, u32, png::ColorType, png::BitDepth, Vec<u8>), Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        u32,
+        u32,
+        png::ColorType,
+        png::BitDepth,
+        Vec<u8>,
+        Option<f32>,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let file = BufReader::new(File::open(path)?);
     let mut decoder = png::Decoder::new(file);
     // Expand palette/indexed PNGs to RGB/RGBA, expand low-bit-depth grayscale to 8-bit
     decoder.set_transformations(png::Transformations::EXPAND);
     let mut reader = decoder.read_info()?;
+
+    // Extract gamma from PNG metadata:
+    // - If sRGB chunk is present, use sRGB TF (default, gamma=None)
+    // - If only gAMA chunk is present (no sRGB), preserve the gamma value
+    let png_info = reader.info();
+    let source_gamma = if png_info.srgb.is_some() {
+        None // sRGB chunk present → use sRGB TF (default)
+    } else {
+        png_info.gama_chunk.map(|g| g.into_value())
+    };
 
     let mut buf = vec![
         0;
@@ -904,6 +937,7 @@ fn read_png(
         info.color_type,
         info.bit_depth,
         buf,
+        source_gamma,
     ))
 }
 

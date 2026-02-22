@@ -706,6 +706,7 @@ impl LosslessConfig {
             metadata: None,
             limits: None,
             stop: None,
+            source_gamma: None,
         }
     }
 
@@ -1156,6 +1157,7 @@ impl LossyConfig {
             metadata: None,
             limits: None,
             stop: None,
+            source_gamma: None,
         }
     }
 
@@ -1230,6 +1232,7 @@ pub struct EncodeRequest<'a> {
     metadata: Option<&'a ImageMetadata<'a>>,
     limits: Option<&'a Limits>,
     stop: Option<&'a dyn Stop>,
+    source_gamma: Option<f32>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1251,6 +1254,18 @@ impl<'a> EncodeRequest<'a> {
     /// [`EncodeError::Cancelled`] if stopped.
     pub fn with_stop(mut self, stop: &'a dyn Stop) -> Self {
         self.stop = Some(stop);
+        self
+    }
+
+    /// Specify that source pixels use a custom gamma transfer function.
+    ///
+    /// When set, the encoder linearizes u8/u16 pixels with `pixel ^ (1/gamma)`
+    /// instead of the sRGB transfer function, and writes `have_gamma=true` in
+    /// the JXL header. This matches cjxl's behavior for PNGs with gAMA chunks.
+    ///
+    /// Example: `0.45455` for standard gamma 2.2 encoding (gAMA=45455).
+    pub fn with_source_gamma(mut self, gamma: f32) -> Self {
+        self.source_gamma = Some(gamma);
         self
     }
 
@@ -1508,7 +1523,17 @@ impl<'a> EncodeRequest<'a> {
                 skip_rct: false,
             },
         );
-        let color_encoding = ColorEncoding::srgb();
+        let color_encoding = if let Some(gamma) = self.source_gamma {
+            if image.is_grayscale {
+                ColorEncoding::gray_with_gamma(gamma)
+            } else {
+                ColorEncoding::with_gamma(gamma)
+            }
+        } else if image.is_grayscale {
+            ColorEncoding::gray()
+        } else {
+            ColorEncoding::srgb()
+        };
         frame_encoder
             .encode_modular_with_patches(
                 &image,
@@ -1538,39 +1563,93 @@ impl<'a> EncodeRequest<'a> {
 
         // Build linear f32 RGB and extract alpha from input layout.
         // Grayscale layouts are expanded to RGB (R=G=B) for VarDCT encoding.
+        // When source_gamma is set, use gamma linearization instead of sRGB TF.
+        let gamma = self.source_gamma;
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
-            PixelLayout::Rgb8 => (srgb_u8_to_linear_f32(pixels, 3), None, false),
-            PixelLayout::Bgr8 => (
-                srgb_u8_to_linear_f32(&bgr_to_rgb(pixels, 3), 3),
-                None,
-                false,
-            ),
+            PixelLayout::Rgb8 => {
+                let linear = if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(pixels, 3, g)
+                } else {
+                    srgb_u8_to_linear_f32(pixels, 3)
+                };
+                (linear, None, false)
+            }
+            PixelLayout::Bgr8 => {
+                let rgb = bgr_to_rgb(pixels, 3);
+                let linear = if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(&rgb, 3, g)
+                } else {
+                    srgb_u8_to_linear_f32(&rgb, 3)
+                };
+                (linear, None, false)
+            }
             PixelLayout::Rgba8 => {
-                let rgb = srgb_u8_to_linear_f32(pixels, 4);
+                let rgb = if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(pixels, 4, g)
+                } else {
+                    srgb_u8_to_linear_f32(pixels, 4)
+                };
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
             }
             PixelLayout::Bgra8 => {
                 let swapped = bgr_to_rgb(pixels, 4);
-                let rgb = srgb_u8_to_linear_f32(&swapped, 4);
+                let rgb = if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(&swapped, 4, g)
+                } else {
+                    srgb_u8_to_linear_f32(&swapped, 4)
+                };
                 let alpha = extract_alpha(pixels, 4, 3);
                 (rgb, Some(alpha), false)
             }
-            PixelLayout::Gray8 => (gray_u8_to_linear_f32_rgb(pixels, 1), None, false),
+            PixelLayout::Gray8 => {
+                let rgb = if let Some(g) = gamma {
+                    gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g)
+                } else {
+                    gray_u8_to_linear_f32_rgb(pixels, 1)
+                };
+                (rgb, None, false)
+            }
             PixelLayout::GrayAlpha8 => {
-                let rgb = gray_u8_to_linear_f32_rgb(pixels, 2);
+                let rgb = if let Some(g) = gamma {
+                    gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g)
+                } else {
+                    gray_u8_to_linear_f32_rgb(pixels, 2)
+                };
                 let alpha = extract_alpha(pixels, 2, 1);
                 (rgb, Some(alpha), false)
             }
-            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(pixels, 3), None, true),
+            PixelLayout::Rgb16 => {
+                let linear = if let Some(g) = gamma {
+                    gamma_u16_to_linear_f32(pixels, 3, g)
+                } else {
+                    srgb_u16_to_linear_f32(pixels, 3)
+                };
+                (linear, None, true)
+            }
             PixelLayout::Rgba16 => {
-                let rgb = srgb_u16_to_linear_f32(pixels, 4);
+                let rgb = if let Some(g) = gamma {
+                    gamma_u16_to_linear_f32(pixels, 4, g)
+                } else {
+                    srgb_u16_to_linear_f32(pixels, 4)
+                };
                 let alpha = extract_alpha_u16(pixels, 4, 3);
                 (rgb, Some(alpha), true)
             }
-            PixelLayout::Gray16 => (gray_u16_to_linear_f32_rgb(pixels, 1), None, true),
+            PixelLayout::Gray16 => {
+                let rgb = if let Some(g) = gamma {
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g)
+                } else {
+                    gray_u16_to_linear_f32_rgb(pixels, 1)
+                };
+                (rgb, None, true)
+            }
             PixelLayout::GrayAlpha16 => {
-                let rgb = gray_u16_to_linear_f32_rgb(pixels, 2);
+                let rgb = if let Some(g) = gamma {
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g)
+                } else {
+                    gray_u16_to_linear_f32_rgb(pixels, 2)
+                };
                 let alpha = extract_alpha_u16(pixels, 2, 1);
                 (rgb, Some(alpha), true)
             }
@@ -1642,6 +1721,7 @@ impl<'a> EncodeRequest<'a> {
         }
 
         enc.bit_depth_16 = bit_depth_16;
+        enc.source_gamma = self.source_gamma;
 
         // ICC profile from metadata
         if let Some(meta) = self.metadata
@@ -2235,6 +2315,60 @@ fn srgb_to_linear_f(c: f32) -> f32 {
     } else {
         ((c + 0.055) / 1.055).powf(2.4)
     }
+}
+
+/// Gamma u8 → linear f32 RGB. `linear = (encoded/255)^(1/gamma)`
+fn gamma_u8_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> {
+    let inv_gamma = 1.0 / gamma;
+    data.chunks(channels)
+        .flat_map(|px| {
+            [
+                (px[0] as f32 / 255.0).powf(inv_gamma),
+                (px[1] as f32 / 255.0).powf(inv_gamma),
+                (px[2] as f32 / 255.0).powf(inv_gamma),
+            ]
+        })
+        .collect()
+}
+
+/// Gamma u16 → linear f32 RGB. `linear = (encoded/65535)^(1/gamma)`
+fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> {
+    let inv_gamma = 1.0 / gamma;
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(channels)
+        .flat_map(|px| {
+            [
+                (px[0] as f32 / 65535.0).powf(inv_gamma),
+                (px[1] as f32 / 65535.0).powf(inv_gamma),
+                (px[2] as f32 / 65535.0).powf(inv_gamma),
+            ]
+        })
+        .collect()
+}
+
+/// Gamma u8 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/255)^(1/gamma)`
+fn gamma_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> Vec<f32> {
+    let inv_gamma = 1.0 / gamma;
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = (px[0] as f32 / 255.0).powf(inv_gamma);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Gamma u16 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/65535)^(1/gamma)`
+fn gamma_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> Vec<f32> {
+    let inv_gamma = 1.0 / gamma;
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            let v = (px[0] as f32 / 65535.0).powf(inv_gamma);
+            [v, v, v]
+        })
+        .collect()
 }
 
 /// Extract alpha channel from interleaved 16-bit pixel data as u8 (quantized).

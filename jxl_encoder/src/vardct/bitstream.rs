@@ -156,7 +156,13 @@ impl VarDctEncoder {
         };
 
         let mut color_encoding = if self.is_grayscale {
-            ColorEncoding::gray()
+            if let Some(gamma) = self.source_gamma {
+                ColorEncoding::gray_with_gamma(gamma)
+            } else {
+                ColorEncoding::gray()
+            }
+        } else if let Some(gamma) = self.source_gamma {
+            ColorEncoding::with_gamma(gamma)
         } else {
             ColorEncoding::srgb()
         };
