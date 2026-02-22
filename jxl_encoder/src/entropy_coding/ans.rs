@@ -44,6 +44,28 @@ const LOGCOUNT_PREFIX_CODE: [(u8, u8); 14] = [
     (7, 0b1000001), // 13: RLE marker
 ];
 
+/// Estimate data cost of encoding `histo` using ANS with normalized `counts`.
+/// Matches libjxl's `EstimateDataBits` (enc_ans.cc:362-370).
+/// `cost = total * ANS_LOG_TAB_SIZE - sum(actual_count * log2(norm_count))`
+fn estimate_data_bits_normalized(
+    histo_counts: &[i32],
+    norm_counts: &[i32],
+    total_count: usize,
+    alphabet_size: usize,
+) -> f64 {
+    let mut sum = 0.0f64;
+    for (actual, norm) in histo_counts
+        .iter()
+        .zip(norm_counts.iter())
+        .take(alphabet_size)
+    {
+        if *actual > 0 && *norm > 0 {
+            sum += *actual as f64 * (*norm as f64).log2();
+        }
+    }
+    total_count as f64 * ANS_LOG_TAB_SIZE as f64 - sum
+}
+
 /// Precision for reciprocal multiplication (avoids division).
 const RECIPROCAL_PRECISION: u32 = 44;
 
@@ -901,13 +923,15 @@ impl ANSEncodingHistogram {
     }
 
     /// Estimate encoding cost (header + data bits).
+    /// Uses precise ANS cost model matching libjxl's `Cost()` (enc_ans.cc:376-380).
     fn estimate_cost(&self, histo: &super::histogram::Histogram) -> f32 {
-        // Header cost estimate
         let header_cost = self.estimate_header_cost();
-
-        // Data cost: entropy of original data with normalized probabilities
-        let data_cost = self.estimate_data_cost(histo);
-
+        let data_cost = estimate_data_bits_normalized(
+            &histo.counts,
+            &self.counts,
+            histo.total_count,
+            self.alphabet_size,
+        ) as f32;
         header_cost + data_cost
     }
 
@@ -930,21 +954,6 @@ impl ANSEncodingHistogram {
             let freq_bits = self.alphabet_size as f32 * 5.0; // Rough estimate
             method_bits + alphabet_bits + freq_bits
         }
-    }
-
-    /// Estimate data encoding cost using normalized frequencies.
-    fn estimate_data_cost(&self, histo: &super::histogram::Histogram) -> f32 {
-        let mut cost = 0.0f32;
-
-        for (i, &count) in histo.counts.iter().enumerate() {
-            if count > 0 {
-                let normalized = self.counts.get(i).copied().unwrap_or(1).max(1);
-                let prob = normalized as f32 / ANS_TAB_SIZE as f32;
-                cost -= count as f32 * prob.log2();
-            }
-        }
-
-        cost
     }
 
     /// Write this histogram to a BitWriter.
