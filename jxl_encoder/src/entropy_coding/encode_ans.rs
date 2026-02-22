@@ -136,10 +136,15 @@ pub fn build_entropy_code_ans_with_options(
         num_contexts
     );
 
-    // Optimize per-histogram HybridUint configs (matches libjxl kFast method).
-    // Try 4 configs per histogram and pick the cheapest.
+    // Optimize per-histogram HybridUint configs.
+    // Best mode: 28 curated configs (matching libjxl kBest, enc_ans.cc:747-783).
+    // Fast mode: 4 configs (matching libjxl kFast).
     let num_histograms = result.histograms.len();
-    let uint_configs = optimize_uint_configs_fast(tokens, &context_map, num_histograms, lz77);
+    let uint_configs = if enhanced_clustering {
+        optimize_uint_configs_best(tokens, &context_map, num_histograms, lz77)
+    } else {
+        optimize_uint_configs_fast(tokens, &context_map, num_histograms, lz77)
+    };
 
     // Build ANS histograms and distributions with the optimized configs.
     // We need to rebuild histograms because different configs produce different token distributions.
@@ -376,6 +381,114 @@ fn optimize_uint_configs_fast(
             }
 
             // Total cost = entropy (in bits) + extra bits + signaling cost
+            let signaling_cost = if cfg.split_exponent == 0 {
+                0.0
+            } else {
+                ceil_log2_nonzero_usize(cfg.split_exponent as usize + 1) as f64
+                    + ceil_log2_nonzero_usize((cfg.split_exponent - cfg.msb_in_token) as usize + 1)
+                        as f64
+            };
+            let cost = entropy_cost + extra_bits_total as f64 + signaling_cost;
+
+            if cost < best_cost {
+                best_cost = cost;
+                best_configs[h] = cfg;
+            }
+        }
+    }
+
+    best_configs
+}
+
+/// Optimize HybridUint config per histogram cluster (matches libjxl kBest method).
+///
+/// Tries 28 curated configs per histogram (from libjxl enc_ans.cc:747-783).
+/// More thorough than kFast (4 configs) but 7x more work.
+fn optimize_uint_configs_best(
+    tokens: &[Token],
+    context_map: &[u8],
+    num_histograms: usize,
+    lz77: Option<&Lz77Params>,
+) -> Vec<HybridUintConfig> {
+    use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
+
+    // The 28 curated configs from libjxl kBest (enc_ans.cc:747-783)
+    #[rustfmt::skip]
+    let candidates = [
+        HybridUintConfig::new(0,0,0),  HybridUintConfig::new(1,0,0),
+        HybridUintConfig::new(2,0,0),  HybridUintConfig::new(2,0,1),
+        HybridUintConfig::new(3,0,0),  HybridUintConfig::new(3,1,0),
+        HybridUintConfig::new(3,0,1),  HybridUintConfig::new(3,1,1),
+        HybridUintConfig::new(4,0,0),  HybridUintConfig::new(4,2,0),
+        HybridUintConfig::new(4,1,0),  HybridUintConfig::new(4,0,1),
+        HybridUintConfig::new(4,2,1),  HybridUintConfig::new(4,1,1),
+        HybridUintConfig::new(5,0,0),  HybridUintConfig::new(5,2,0),
+        HybridUintConfig::new(5,1,0),  HybridUintConfig::new(5,0,1),
+        HybridUintConfig::new(5,2,1),  HybridUintConfig::new(6,0,0),
+        HybridUintConfig::new(6,2,0),  HybridUintConfig::new(6,1,0),
+        HybridUintConfig::new(7,0,0),  HybridUintConfig::new(7,2,0),
+        HybridUintConfig::new(8,0,0),  HybridUintConfig::new(8,2,0),
+        HybridUintConfig::new(10,0,0), HybridUintConfig::new(12,0,0),
+    ];
+
+    // Collect raw values per histogram
+    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    for token in tokens {
+        if token.is_lz77_length {
+            continue;
+        }
+        let ctx = token.context as usize;
+        if ctx < context_map.len() {
+            let histo_idx = context_map[ctx] as usize;
+            if histo_idx < num_histograms {
+                values_per_histo[histo_idx].push(token.value);
+            }
+        }
+    }
+
+    let max_alpha = ANS_MAX_ALPHABET_SIZE;
+
+    let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
+
+    for h in 0..num_histograms {
+        let values = &values_per_histo[h];
+        if values.is_empty() {
+            continue;
+        }
+
+        let max_value = values.iter().copied().max().unwrap_or(0);
+        let mut best_cost = f64::MAX;
+
+        for &cfg in &candidates {
+            let (max_tok, _, _) = cfg.encode(max_value);
+            let max_tok_with_lsb = max_tok | ((1u32 << cfg.lsb_in_token) - 1);
+            if max_tok_with_lsb as usize >= max_alpha {
+                continue;
+            }
+            if let Some(lz77_params) = lz77
+                && max_tok_with_lsb >= lz77_params.min_symbol
+            {
+                continue;
+            }
+
+            let capacity = max_tok_with_lsb as usize + 1;
+            let mut counts = vec![0u32; capacity];
+            let mut extra_bits_total: u64 = 0;
+            for &val in values {
+                let (tok, _, nbits) = cfg.encode(val);
+                counts[tok as usize] += 1;
+                extra_bits_total += nbits as u64;
+            }
+
+            let total = values.len() as f64;
+            let mut entropy_cost = 0.0f64;
+            for &count in &counts {
+                if count > 0 {
+                    let p = count as f64 / total;
+                    entropy_cost -= count as f64 * p.log2();
+                }
+            }
+
             let signaling_cost = if cfg.split_exponent == 0 {
                 0.0
             } else {
