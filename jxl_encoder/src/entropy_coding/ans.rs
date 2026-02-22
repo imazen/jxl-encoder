@@ -44,6 +44,53 @@ const LOGCOUNT_PREFIX_CODE: [(u8, u8); 14] = [
     (7, 0b1000001), // 13: RLE marker
 ];
 
+/// Build sorted table of all representable count values for a given shift.
+/// Matches libjxl's AllowedCounts precomputation (enc_ans.cc:581-615).
+/// Returns counts in DECREASING order (index 0 = highest count).
+fn build_allowed_counts(shift: u32) -> Vec<i32> {
+    let mut counts = Vec::with_capacity(256);
+    // Count = 1 is always representable (logcount=1, no precision bits)
+    counts.push(1i32);
+    for bits in 1..ANS_LOG_TAB_SIZE {
+        let precision = get_population_count_precision(bits, shift);
+        let drop_bits = bits.saturating_sub(precision);
+        let num_mantissa = 1u32 << precision;
+        for mantissa in 0..num_mantissa {
+            let count = (1i32 << bits) | ((mantissa as i32) << drop_bits);
+            if count > 0 && count < ANS_TAB_SIZE as i32 {
+                counts.push(count);
+            }
+        }
+    }
+    counts.sort_unstable();
+    counts.dedup();
+    counts.reverse(); // Decreasing order: index 0 = highest
+    counts
+}
+
+/// Find the index of the highest allowed count <= target in a decreasing-order table.
+/// Snaps DOWN to prevent rest from going negative (matches libjxl's mask-off behavior).
+/// If target < smallest allowed (1), returns the last index (count=1).
+fn find_allowed_leq(allowed: &[i32], target: i32) -> usize {
+    // Binary search in decreasing order: find first index where allowed[i] <= target
+    let mut lo = 0usize;
+    let mut hi = allowed.len();
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if allowed[mid] > target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    // lo is the first index where allowed[lo] <= target
+    if lo >= allowed.len() {
+        allowed.len() - 1 // target < 1, snap to minimum (1)
+    } else {
+        lo
+    }
+}
+
 /// Estimate data cost of encoding `histo` using ANS with normalized `counts`.
 /// Matches libjxl's `EstimateDataBits` (enc_ans.cc:362-370).
 /// `cost = total * ANS_LOG_TAB_SIZE - sum(actual_count * log2(norm_count))`
@@ -786,113 +833,222 @@ impl ANSEncodingHistogram {
         Ok(best)
     }
 
-    /// Rebalance histogram to sum to ANS_TAB_SIZE with given shift.
+    /// Rebalance histogram using allowed counts table and greedy optimization.
+    /// Matches libjxl's `RebalanceHistogram` (enc_ans.cc:416-559).
     ///
-    /// Returns true on success, false on failure.
-    ///
-    /// The decoder determines omit_pos as the first symbol with highest logcount,
-    /// then computes its frequency as 4096 - sum(others). We must match this.
+    /// 1. Build table of all representable counts for this shift
+    /// 2. Normalize each bin to nearest representable count
+    /// 3. Greedy loop: adjust bins within allowed counts to minimize entropy
+    /// 4. Set balancing bin (remainder_pos) as remainder
     fn rebalance_histogram(&mut self, histo: &super::histogram::Histogram, shift: u32) -> bool {
         let total_count = histo.total_count;
         if total_count == 0 {
             return false;
         }
 
+        // Build sorted table of representable count values (decreasing order).
+        let allowed = build_allowed_counts(shift);
+
         let norm = ANS_TAB_SIZE as f64 / total_count as f64;
 
-        // First pass: normalize all counts (without precision constraints yet)
-        for (i, &count) in histo.counts.iter().enumerate().take(self.alphabet_size) {
-            if count == 0 {
-                self.counts[i] = 0;
+        // Find remainder_pos: symbol with highest original frequency (balancing bin).
+        // Matches libjxl's remainder_pos selection.
+        let mut remainder_pos = 0;
+        let mut max_freq = 0i32;
+
+        // Bins eligible for greedy adjustment: (orig_freq, index_in_allowed, symbol_index)
+        let mut bins: Vec<(i32, usize, usize)> = Vec::with_capacity(self.alphabet_size);
+        let mut rest = ANS_TAB_SIZE as i32;
+
+        for (n, &freq) in histo.counts.iter().enumerate().take(self.alphabet_size) {
+            if freq > max_freq {
+                remainder_pos = n;
+                max_freq = freq;
+            }
+
+            if freq == 0 {
+                self.counts[n] = 0;
                 continue;
             }
 
-            let target = count as f64 * norm;
-            let mut normalized = target.round() as i32;
-            normalized = normalized.max(1);
-            normalized = normalized.min((ANS_TAB_SIZE - 1) as i32);
-            self.counts[i] = normalized;
+            let target = freq as f64 * norm;
+            // Round and clamp to [1, ANS_TAB_SIZE-1], then snap DOWN to allowed
+            let rounded = target.round().max(1.0).min((ANS_TAB_SIZE - 1) as f64) as i32;
+            let ai = find_allowed_leq(&allowed, rounded);
+            let count = allowed[ai];
+
+            self.counts[n] = count;
+            rest -= count;
+
+            // Only bins with target > 1.0 are adjustable (matches libjxl)
+            if target > 1.0 {
+                bins.push((freq, ai, n));
+            }
         }
 
-        // Find the first symbol with maximum logcount - this will be omit_pos
-        let mut max_logcount = 0u32;
-        let mut omit_pos = 0;
-        for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
-            if count > 0 {
-                let logcount = floor_log2(count as u32) + 1;
-                if logcount > max_logcount {
-                    max_logcount = logcount;
-                    omit_pos = i;
+        // Remove the balancing bin from the adjustable set
+        if let Some(pos) = bins.iter().position(|b| b.2 == remainder_pos) {
+            bins.remove(pos);
+        }
+
+        // rest now represents what the balancing bin should be.
+        // Add back remainder_pos's initial count since it's no longer adjustable.
+        rest += self.counts[remainder_pos];
+
+        // Greedy entropy optimization (libjxl enc_ans.cc:495-537).
+        // Each iteration: find the best bin to increment or decrement by one
+        // allowed-count step, with the balancing bin absorbing the difference.
+        if !bins.is_empty() {
+            let max_freq_f = max_freq as f64;
+            // Fixed-point-ish log2 scaled by a large constant for precision.
+            // Matches libjxl's lg2 table concept but using f64 directly.
+            let lg2 = |v: i32| -> f64 { if v <= 0 { 0.0 } else { (v as f64).log2() } };
+
+            loop {
+                // Find the best increment step (grow a bin, shrink balancing)
+                let mut best_inc_net = 0.0f64; // must be > 0 to be taken
+                let mut best_inc_bi = None;
+
+                // Find the best decrement step (shrink a bin, grow balancing)
+                let mut best_dec_net = 0.0f64; // must be > 0 to be taken
+                let mut best_dec_bi = None;
+
+                for (bi, &(freq, ai, _bin)) in bins.iter().enumerate() {
+                    let count = allowed[ai];
+                    let freq_f = freq as f64;
+                    let lg2_count = lg2(count);
+
+                    // Try increment: move to allowed[ai - 1] (higher count)
+                    if ai > 0 {
+                        let new_count = allowed[ai - 1];
+                        let step = new_count - count;
+                        let new_rest = rest - step;
+                        if new_rest > 0 || rest >= ANS_TAB_SIZE as i32 {
+                            let gain = freq_f * (lg2(new_count) - lg2_count);
+                            let cost = if rest >= ANS_TAB_SIZE as i32 {
+                                0.0 // tractor: pull rest down, no cost
+                            } else if rest > 0 && new_rest > 0 {
+                                max_freq_f * (lg2(rest) - lg2(new_rest))
+                            } else {
+                                f64::MAX
+                            };
+                            let net = gain - cost;
+                            // Normalize by step size for fair comparison across step sizes
+                            let step_log = floor_log2(step as u32);
+                            let norm_net = if step_log > 0 {
+                                net / (1u32 << step_log) as f64
+                            } else {
+                                net
+                            };
+                            if norm_net > best_inc_net {
+                                best_inc_net = norm_net;
+                                best_inc_bi = Some(bi);
+                            }
+                        }
+                    }
+
+                    // Try decrement: move to allowed[ai + 1] (lower count)
+                    if ai + 1 < allowed.len() && allowed[ai + 1] > 0 {
+                        let new_count = allowed[ai + 1];
+                        let step = count - new_count;
+                        let new_rest = rest + step;
+                        if new_rest < ANS_TAB_SIZE as i32 || rest <= 1 {
+                            let loss = freq_f * (lg2_count - lg2(new_count));
+                            let gain = if rest <= 1 {
+                                f64::MAX // tractor: pull rest up, infinite gain
+                            } else if rest > 0 && new_rest < ANS_TAB_SIZE as i32 {
+                                max_freq_f * (lg2(new_rest) - lg2(rest))
+                            } else {
+                                0.0
+                            };
+                            let net = gain - loss;
+                            let step_log = floor_log2(step as u32);
+                            let norm_net = if step_log > 0 {
+                                net / (1u32 << step_log) as f64
+                            } else {
+                                net
+                            };
+                            if norm_net > best_dec_net {
+                                best_dec_net = norm_net;
+                                best_dec_bi = Some(bi);
+                            }
+                        }
+                    }
+                }
+
+                // Prefer increment over decrement (matches libjxl)
+                if best_inc_net > 0.0 {
+                    if let Some(bi) = best_inc_bi {
+                        let step = allowed[bins[bi].1 - 1] - allowed[bins[bi].1];
+                        bins[bi].1 -= 1; // move to higher count
+                        rest -= step;
+                    }
+                } else if best_dec_net > 0.0 {
+                    if let Some(bi) = best_dec_bi {
+                        let step = allowed[bins[bi].1] - allowed[bins[bi].1 + 1];
+                        bins[bi].1 += 1; // move to lower count
+                        rest += step;
+                    }
+                } else {
+                    break; // No improvement possible
+                }
+            }
+
+            // Write final counts from allowed table
+            for &(_freq, ai, bin) in &bins {
+                self.counts[bin] = allowed[ai];
+            }
+
+            // Handle omit_pos bit-width constraint (libjxl enc_ans.cc:545-551):
+            // If an earlier bin has count >= 2048 (logcount >= 12), swap with
+            // remainder_pos so the balancing bin can grow without bit-width issues.
+            for n in 0..remainder_pos {
+                if self.counts[n] >= 2048 {
+                    self.counts[remainder_pos] = self.counts[n];
+                    remainder_pos = n;
+                    break;
                 }
             }
         }
-        self.omit_pos = omit_pos;
 
-        // Second pass: apply precision constraints to all symbols EXCEPT omit_pos
-        let mut running_total = 0i32;
-        for i in 0..self.alphabet_size {
-            if i == omit_pos || self.counts[i] == 0 {
-                if i != omit_pos {
-                    running_total += self.counts[i];
-                }
-                continue;
-            }
+        // Set balancing bin
+        self.counts[remainder_pos] = rest;
+        self.omit_pos = remainder_pos;
 
-            let mut normalized = self.counts[i];
-
-            // Apply precision constraints for non-omit symbols
-            if shift < ANS_LOG_TAB_SIZE && normalized > 1 {
-                let logcount = floor_log2(normalized as u32);
-                let precision = get_population_count_precision(logcount, shift);
-                let drop_bits = logcount.saturating_sub(precision);
-                let mask = (1i32 << drop_bits) - 1;
-                normalized &= !mask;
-                if normalized == 0 {
-                    normalized = 1i32 << drop_bits;
-                }
-            }
-
-            self.counts[i] = normalized;
-            running_total += normalized;
-        }
-
-        // omit_pos frequency is the remainder (this is how decoder computes it)
-        let remainder = ANS_TAB_SIZE as i32 - running_total;
-        if remainder <= 0 || remainder > ANS_TAB_SIZE as i32 {
+        if rest <= 0 {
             return false;
         }
-        self.counts[omit_pos] = remainder;
 
-        // Ensure omit_pos is the FIRST symbol with the highest logcount.
+        // Ensure remainder_pos is the FIRST symbol with the highest logcount.
         // The decoder re-derives omit_pos by scanning symbols in order and picking
-        // the first one with the maximum logcount. We must ensure that after
-        // rebalancing, no EARLIER symbol has the same or higher logcount.
-        //
-        // If a non-omit symbol has too-high logcount, reduce it and give the
-        // freed count to omit_pos. This handles the case where two symbols have
-        // nearly-equal very high counts (e.g. 2048 and 2046 in a 2-color image).
+        // the first one with the maximum logcount. If another symbol has equal or
+        // higher logcount, the decoder picks the wrong one and decoding fails.
         for _ in 0..10 {
-            let omit_logcount = floor_log2(self.counts[omit_pos] as u32) + 1;
+            let omit_logcount = floor_log2(self.counts[remainder_pos] as u32) + 1;
             let mut adjusted = false;
             for i in 0..self.alphabet_size {
-                if i == omit_pos || self.counts[i] <= 0 {
+                if i == remainder_pos || self.counts[i] <= 0 {
                     continue;
                 }
                 let logcount = floor_log2(self.counts[i] as u32) + 1;
                 let needs_fix =
-                    logcount > omit_logcount || (logcount == omit_logcount && i < omit_pos);
+                    logcount > omit_logcount || (logcount == omit_logcount && i < remainder_pos);
                 if needs_fix {
-                    // Reduce this symbol to the highest value with a lower logcount
-                    let target_logcount = if i < omit_pos {
-                        omit_logcount - 1
+                    // Reduce this symbol to a representable value with lower logcount.
+                    // Find the highest allowed count with logcount < omit_logcount
+                    // (or <= omit_logcount for symbols after remainder_pos).
+                    let target_logcount = if i < remainder_pos {
+                        omit_logcount.saturating_sub(1)
                     } else {
                         omit_logcount
                     };
-                    let max_allowed = (1i32 << target_logcount) - 1;
-                    let reduction = self.counts[i] - max_allowed.max(1);
+                    let max_value = (1i32 << target_logcount) - 1;
+                    let new_ai = find_allowed_leq(&allowed, max_value);
+                    let new_count = allowed[new_ai].max(1);
+                    let reduction = self.counts[i] - new_count;
                     if reduction > 0 {
-                        self.counts[i] -= reduction;
-                        self.counts[omit_pos] += reduction;
+                        self.counts[i] = new_count;
+                        self.counts[remainder_pos] += reduction;
                         adjusted = true;
                     }
                 }
@@ -903,16 +1059,13 @@ impl ANSEncodingHistogram {
         }
 
         // Final verification
-        let omit_logcount = floor_log2(self.counts[omit_pos] as u32) + 1;
+        let omit_logcount = floor_log2(self.counts[remainder_pos] as u32) + 1;
         for (i, &count) in self.counts.iter().enumerate().take(self.alphabet_size) {
-            if i == omit_pos || count <= 0 {
+            if i == remainder_pos || count <= 0 {
                 continue;
             }
             let logcount = floor_log2(count as u32) + 1;
-            if logcount > omit_logcount {
-                return false;
-            }
-            if logcount == omit_logcount && i < omit_pos {
+            if logcount > omit_logcount || (logcount == omit_logcount && i < remainder_pos) {
                 return false;
             }
         }
