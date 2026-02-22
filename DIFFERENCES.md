@@ -19,26 +19,15 @@ matching libjxl `enc_fields.cc:129-166`. Added roundtrip tests for all values fr
 libjxl's `TestU64Coder` (0, 1, 15, 16, 17, 271, 272, 273, 4096, 1<<16, 1<<28,
 (1<<32)-1, 1<<32, 1<<63). Was latent — all current callers pass values 0-179.
 
-### BUG-2: Container box size overflow for >4GB payloads
+### ~~BUG-2~~: Container box size overflow for >4GB payloads — FIXED (25a813e)
 
-**File**: `jxl_encoder/src/container.rs:170` and `:156`
-**Severity**: Latent (no current images this large)
-**Impact**: Silent data corruption for files with payloads > 4,294,967,287 bytes
+**File**: `jxl_encoder/src/container.rs`
+**Status**: FIXED. All three box-writing functions (`write_box`, `write_jxlp_box`,
+`write_exif_box`) now use extended 64-bit box headers (size=1 + 8-byte extended size)
+when total_size > u32::MAX. Also extracted Exif box into `write_exif_box()` helper.
+Was latent — no current images this large.
 
-**What's wrong**: `write_box()` casts `(8 + payload.len()) as u32` — silently truncates.
-`write_jxlp_box()` casts `(8 + 4 + data.len()) as u32` — same issue.
-
-**Fix**: Check if `box_size > u32::MAX`. If so, write extended box header:
-```
-[0x00, 0x00, 0x00, 0x01]  // box_size = 1 signals 64-bit extended size
-[box_type; 4]
-[extended_size as u64; 8]  // 8-byte big-endian total size
-[payload]
-```
-The extended size includes the 16-byte header itself, so `extended_size = 16 + payload.len()`.
-
-Also add the `jxll` box type (4 bytes: `0x00 0x00 0x00 0x0D, "jxll", level_byte`)
-for codestream level > 5 support.
+**Not yet done**: `jxll` level box for codestream level > 5 (separate feature).
 
 ---
 
