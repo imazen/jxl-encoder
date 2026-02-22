@@ -1,5 +1,12 @@
 # Feedback Log
 
+## 2026-02-22: Full audit against libjxl docs
+
+User asked to compare every Rust file against libjxl docs in
+`/home/lilith/work/jxl-efforts/libjxl/docs/src/` (55 doc files). Updated DIFFERENCES.md
+with comprehensive findings: 2 bugs, 9 behavioral differences, 8 optimization gaps,
+and full verified-matches inventory.
+
 ## 2026-02-15: Squeeze multi-group research
 
 User asked for detailed research on how libjxl handles squeeze transforms in multi-group
