@@ -198,7 +198,7 @@ fn tokenize_dc_group_wp(
     cfl_map: &CflMap,
     ac_strategy: &AcStrategyMap,
     sharpness_map: Option<&[u8]>,
-    wp_dc_tree: &[super::dc_tree_learn::DcTreeNode],
+    wp_dc_tree: &super::dc_tree_learn::DcTree,
     dc_ctx_remap: &[u32],
     ac_meta_ctx_map: &[u32],
 ) -> (Vec<Token>, Vec<Token>) {
@@ -261,7 +261,7 @@ fn tokenize_ac_group(
     quant_field: &[u8],
     ac_strategy: &AcStrategyMap,
     block_ctx_map: &BlockCtxMap,
-    custom_order_map: Option<&[Vec<u32>]>,
+    custom_order_map: Option<&[Vec<Vec<u32>>]>,
     used_orders: u32,
     pass_config: &ProgressivePassConfig,
 ) -> Vec<Vec<Token>> {
@@ -289,11 +289,7 @@ fn tokenize_ac_group(
     // These cover only this group's block region, indexed by absolute coords.
     let mut pass_nzeros_grids: Vec<[Vec<Vec<u8>>; 3]> = if pass_config.is_progressive() {
         (0..num_passes)
-            .map(|_| {
-                core::array::from_fn(|_| {
-                    vec![vec![0u8; xsize_blocks]; ysize_blocks]
-                })
-            })
+            .map(|_| core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]))
             .collect()
     } else {
         Vec::new()
@@ -313,7 +309,7 @@ fn tokenize_ac_group(
 
             for &c in &[1usize, 0, 2] {
                 // Get custom order for this (bucket, channel) if available
-                let custom_ord = custom_order_map.as_ref().and_then(|orders| {
+                let custom_ord = custom_order_map.and_then(|orders| {
                     super::coeff_order::get_custom_order(orders, used_orders, strategy_code, c)
                 });
 
@@ -389,8 +385,7 @@ fn tokenize_ac_group(
                         let pass_nz: u16 = pass_coeffs[covered_blocks..]
                             .iter()
                             .filter(|&&v| v != 0)
-                            .count()
-                            as u16;
+                            .count() as u16;
 
                         // Compute shifted nzeros for prediction context
                         let log2_cb = covered_blocks.ilog2() as usize;
@@ -497,18 +492,22 @@ fn encode_ac_group_section(
     let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
     ac_built_code.write_tokens(ac_tokens, ac_lz77_params, &mut ac_group_writer)?;
     // Multi-group alpha: write modular HF sub-bitstream only in LAST pass
-    if is_last_pass {
-        if let Some(alpha_data) = alpha {
-            let group_x = group_idx % xsize_groups;
-            let group_y = group_idx / xsize_groups;
-            let x0 = group_x * GROUP_DIM;
-            let y0 = group_y * GROUP_DIM;
-            let gw = GROUP_DIM.min(width - x0);
-            let gh = GROUP_DIM.min(height - y0);
-            VarDctEncoder::write_modular_alpha_group(
-                alpha_data, width, x0, y0, gw, gh, &mut ac_group_writer,
-            )?;
-        }
+    if is_last_pass && let Some(alpha_data) = alpha {
+        let group_x = group_idx % xsize_groups;
+        let group_y = group_idx / xsize_groups;
+        let x0 = group_x * GROUP_DIM;
+        let y0 = group_y * GROUP_DIM;
+        let gw = GROUP_DIM.min(width - x0);
+        let gh = GROUP_DIM.min(height - y0);
+        VarDctEncoder::write_modular_alpha_group(
+            alpha_data,
+            width,
+            x0,
+            y0,
+            gw,
+            gh,
+            &mut ac_group_writer,
+        )?;
     }
     ac_group_writer.zero_pad_to_byte();
     Ok(ac_group_writer.finish())
@@ -1573,38 +1572,24 @@ impl VarDctEncoder {
             total_contexts = num_ctx;
             ac_meta_ctx_map = ctx_map;
 
-            // Only collect AC metadata tokens (no DC)
-            for dc_group_idx in 0..num_dc_groups {
-                let dc_gx = dc_group_idx % xsize_dc_groups;
-                let dc_gy = dc_group_idx / xsize_dc_groups;
-                let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
-                let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
-                let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-                let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-                let region_xsize = end_bx - start_bx;
-                let region_ysize = end_by - start_by;
-
-                dc_tokens_per_group.push(Vec::new()); // no DC tokens
-
-                let md_tokens = collect_ac_metadata_tokens_region(
-                    region_xsize,
-                    region_ysize,
-                    quant_field,
-                    xsize_blocks,
-                    start_bx,
-                    start_by,
-                    cfl_map,
-                    ac_strategy,
-                    sharpness_map,
-                );
-                let md_tokens: Vec<Token> = md_tokens
-                    .into_iter()
-                    .map(|mut t| {
-                        t.context = ac_meta_ctx_map[t.context as usize];
-                        t
-                    })
-                    .collect();
-                ac_metadata_tokens_per_group.push(md_tokens);
+            // Only collect AC metadata tokens (no DC) — parallelizable
+            let dc_results: Vec<(Vec<Token>, Vec<Token>)> =
+                crate::parallel::parallel_map(num_dc_groups, |dc_group_idx| {
+                    tokenize_dc_group_lf_frame(
+                        dc_group_idx,
+                        xsize_blocks,
+                        ysize_blocks,
+                        xsize_dc_groups,
+                        quant_field,
+                        cfl_map,
+                        ac_strategy,
+                        sharpness_map,
+                        &ac_meta_ctx_map,
+                    )
+                });
+            for (dc_tok, md_tok) in dc_results {
+                dc_tokens_per_group.push(dc_tok);
+                ac_metadata_tokens_per_group.push(md_tok);
             }
         } else {
             // Build kWPFixedDC tree for DC context assignment.
@@ -1631,48 +1616,27 @@ impl VarDctEncoder {
                 wp_dc_num_contexts, total_contexts, dc_ctx_remap, ac_meta_ctx_map
             );
 
-            for dc_group_idx in 0..num_dc_groups {
-                let dc_gx = dc_group_idx % xsize_dc_groups;
-                let dc_gy = dc_group_idx / xsize_dc_groups;
-                let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
-                let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
-                let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-                let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-                let region_xsize = end_bx - start_bx;
-                let region_ysize = end_by - start_by;
-
-                // Collect DC tokens using Weighted Predictor + kWPFixedDC tree
-                let dc_tokens =
-                    collect_dc_tokens_wp(quant_dc, &wp_dc_tree, start_bx, start_by, end_bx, end_by);
-                let md_tokens = collect_ac_metadata_tokens_region(
-                    region_xsize,
-                    region_ysize,
-                    quant_field,
-                    xsize_blocks,
-                    start_bx,
-                    start_by,
-                    cfl_map,
-                    ac_strategy,
-                    sharpness_map,
-                );
-                // Remap DC token contexts to match BFS ordering of merged tree.
-                let dc_tokens: Vec<Token> = dc_tokens
-                    .into_iter()
-                    .map(|mut t| {
-                        t.context = dc_ctx_remap[t.context as usize];
-                        t
-                    })
-                    .collect();
-                dc_tokens_per_group.push(dc_tokens);
-
-                let md_tokens: Vec<Token> = md_tokens
-                    .into_iter()
-                    .map(|mut t| {
-                        t.context = ac_meta_ctx_map[t.context as usize];
-                        t
-                    })
-                    .collect();
-                ac_metadata_tokens_per_group.push(md_tokens);
+            // Collect DC + AC metadata tokens per group — parallelizable
+            let dc_results: Vec<(Vec<Token>, Vec<Token>)> =
+                crate::parallel::parallel_map(num_dc_groups, |dc_group_idx| {
+                    tokenize_dc_group_wp(
+                        dc_group_idx,
+                        xsize_blocks,
+                        ysize_blocks,
+                        xsize_dc_groups,
+                        quant_dc,
+                        quant_field,
+                        cfl_map,
+                        ac_strategy,
+                        sharpness_map,
+                        &wp_dc_tree,
+                        &dc_ctx_remap,
+                        &ac_meta_ctx_map,
+                    )
+                });
+            for (dc_tok, md_tok) in dc_results {
+                dc_tokens_per_group.push(dc_tok);
+                ac_metadata_tokens_per_group.push(md_tok);
             }
         }
 
@@ -1716,196 +1680,32 @@ impl VarDctEncoder {
         // Override num_sections for progressive: each pass has its own HfGroup sections
         let num_sections = 2 + num_dc_groups + num_groups * num_passes;
 
-        // AC section tokens: per-pass per-group
+        // AC section tokens: per-pass per-group — parallelizable
         // ac_section_tokens_per_pass[pass][group] = Vec<Token>
-        const MAX_BLOCK_SIZE: usize = 4096;
-        let mut full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
-        let mut pass_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
+        let ac_results: Vec<Vec<Vec<Token>>> =
+            crate::parallel::parallel_map(num_groups, |group_idx| {
+                tokenize_ac_group(
+                    group_idx,
+                    xsize_blocks,
+                    ysize_blocks,
+                    xsize_groups,
+                    quant_ac,
+                    nzeros,
+                    raw_nzeros,
+                    quant_field,
+                    ac_strategy,
+                    &block_ctx_map,
+                    custom_order_map.as_deref(),
+                    used_orders,
+                    &pass_config,
+                )
+            });
 
+        // Transpose: ac_results[group][pass] → ac_section_tokens_per_pass[pass][group]
         let mut ac_section_tokens_per_pass: Vec<Vec<Vec<Token>>> =
             vec![Vec::with_capacity(num_groups); num_passes];
-
-        // For progressive encoding, we need per-pass nzeros grids for prediction.
-        // pass_nzeros_grids[pass][channel][row][col] = shifted nzeros for that pass.
-        let mut pass_nzeros_grids: Vec<[Vec<Vec<u8>>; 3]> = if pass_config.is_progressive() {
-            (0..num_passes)
-                .map(|_| core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        for group_idx in 0..num_groups {
-            let group_x = group_idx % xsize_groups;
-            let group_y = group_idx / xsize_groups;
-            let start_bx = group_x * GROUP_DIM_IN_BLOCKS;
-            let start_by = group_y * GROUP_DIM_IN_BLOCKS;
-            let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
-            let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
-
-            let region_blocks = (end_bx - start_bx) * (end_by - start_by);
-
-            // Initialize per-pass token vecs for this group
-            let mut pass_tokens: Vec<Vec<Token>> = (0..num_passes)
-                .map(|_| Vec::with_capacity(region_blocks * 64 * 3 / num_passes))
-                .collect();
-
-            for by in start_by..end_by {
-                for bx in start_bx..end_bx {
-                    if !ac_strategy.is_first(bx, by) {
-                        continue;
-                    }
-                    let covered_x = ac_strategy.covered_blocks_x(bx, by);
-                    let covered_y = ac_strategy.covered_blocks_y(bx, by);
-                    let covered_blocks = covered_x * covered_y;
-                    let size = covered_blocks * DCT_BLOCK_SIZE;
-                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
-                    let strategy_code = ac_strategy.strategy_code(bx, by);
-
-                    for &c in &[1usize, 0, 2] {
-                        // Get custom order for this (bucket, channel) if available
-                        let custom_ord = custom_order_map.as_ref().and_then(|orders| {
-                            super::coeff_order::get_custom_order(
-                                orders,
-                                used_orders,
-                                strategy_code,
-                                c,
-                            )
-                        });
-
-                        let qf_val = quant_field[by * xsize_blocks + bx] as u32;
-                        let block_ctx = block_ctx_map.block_context(c, strategy_code, qf_val);
-
-                        // Assemble the full coefficient block
-                        let full_block: &[i32] = if covered_blocks == 1 {
-                            &quant_ac[c][by][bx]
-                        } else {
-                            let (cx, _cy) = if covered_y > covered_x {
-                                (covered_y, covered_x)
-                            } else {
-                                (covered_x, covered_y)
-                            };
-                            let transpose_slots = covered_y > covered_x;
-                            let stride = cx * BLOCK_DIM;
-                            let fb = &mut full_block_scratch[..size];
-                            #[allow(clippy::needless_range_loop)]
-                            for idx in 0..size {
-                                let y = idx / stride;
-                                let x = idx % stride;
-                                let coef_slot_y = y / BLOCK_DIM;
-                                let coef_slot_x = x / BLOCK_DIM;
-                                let pos_y = y % BLOCK_DIM;
-                                let pos_x = x % BLOCK_DIM;
-                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                                let (phys_row_off, phys_col_off) = if transpose_slots {
-                                    (coef_slot_x, coef_slot_y)
-                                } else {
-                                    (coef_slot_y, coef_slot_x)
-                                };
-                                fb[idx] =
-                                    quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
-                            }
-                            &full_block_scratch[..size]
-                        };
-
-                        if !pass_config.is_progressive() {
-                            // Single-pass: use original nzeros and collect directly
-                            let nz = raw_nzeros[c][by][bx];
-                            let local_bx = bx - start_bx;
-                            let row_top = if by > start_by {
-                                Some(nzeros[c][by - 1].as_slice())
-                            } else {
-                                None
-                            };
-                            let predicted_nz = if local_bx == 0 {
-                                match row_top {
-                                    Some(top) => top[bx] as i32,
-                                    None => 32,
-                                }
-                            } else {
-                                predict_from_top_and_left(row_top, &nzeros[c][by], bx, 32)
-                            };
-
-                            collect_ac_coefficients_into(
-                                &mut pass_tokens[0],
-                                full_block,
-                                raw_strategy,
-                                nz,
-                                predicted_nz,
-                                block_ctx,
-                                block_ctx_map.num_ctxs,
-                                custom_ord,
-                            );
-                        } else {
-                            // Multi-pass: split coefficients and tokenize per-pass
-                            let pass_blocks =
-                                split_coefficients_into_passes(full_block, &pass_config);
-
-                            for (pass, pass_coeffs) in pass_blocks.iter().enumerate() {
-                                // Count non-zeros for this pass's coefficients
-                                // (skip covered_blocks positions = LLF coefficients)
-                                let pass_nz: u16 = pass_coeffs[covered_blocks..]
-                                    .iter()
-                                    .filter(|&&v| v != 0)
-                                    .count()
-                                    as u16;
-
-                                // Compute shifted nzeros for prediction context
-                                // Must use ceiling division to match decoder's shrc():
-                                // (nzeros + covered_blocks - 1) >> log2(covered_blocks)
-                                let log2_cb = covered_blocks.ilog2() as usize;
-                                let shifted_nz = (pass_nz as usize + covered_blocks - 1) >> log2_cb;
-                                let shifted_nz_u8 = shifted_nz.min(255) as u8;
-
-                                // Store per-pass nzeros for neighbor prediction
-                                for dy in 0..covered_y {
-                                    for dx in 0..covered_x {
-                                        pass_nzeros_grids[pass][c][by + dy][bx + dx] =
-                                            shifted_nz_u8;
-                                    }
-                                }
-
-                                // Predict nzeros from neighbors in this pass's grid
-                                let local_bx = bx - start_bx;
-                                let row_top = if by > start_by {
-                                    Some(pass_nzeros_grids[pass][c][by - 1].as_slice())
-                                } else {
-                                    None
-                                };
-                                let predicted_nz = if local_bx == 0 {
-                                    match row_top {
-                                        Some(top) => top[bx] as i32,
-                                        None => 32,
-                                    }
-                                } else {
-                                    predict_from_top_and_left(
-                                        row_top,
-                                        &pass_nzeros_grids[pass][c][by],
-                                        bx,
-                                        32,
-                                    )
-                                };
-
-                                // Tokenize this pass's coefficients
-                                let pb = &mut pass_block_scratch[..size];
-                                pb.copy_from_slice(pass_coeffs);
-                                collect_ac_coefficients_into(
-                                    &mut pass_tokens[pass],
-                                    pb,
-                                    raw_strategy,
-                                    pass_nz,
-                                    predicted_nz,
-                                    block_ctx,
-                                    block_ctx_map.num_ctxs,
-                                    custom_ord,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            for (pass, tokens) in pass_tokens.into_iter().enumerate() {
+        for group_tokens in ac_results {
+            for (pass, tokens) in group_tokens.into_iter().enumerate() {
                 ac_section_tokens_per_pass[pass].push(tokens);
             }
         }
@@ -2338,25 +2138,23 @@ impl VarDctEncoder {
             dc_global.zero_pad_to_byte();
             sections.push(dc_global.finish());
 
-            // DC groups
-            let blocks_per_dc_group = (256 / 8) * (256 / 8);
-            for dc_group_idx in 0..num_dc_groups {
-                let mut dc_group = BitWriter::with_capacity(blocks_per_dc_group * 10);
-                self.write_dc_group_from_tokens(
-                    dc_group_idx,
-                    xsize_blocks,
-                    ysize_blocks,
-                    xsize_dc_groups,
-                    &dc_tokens_per_group[dc_group_idx],
-                    &ac_metadata_tokens_per_group[dc_group_idx],
-                    ac_strategy,
-                    &dc_built_code,
-                    dc_lz77_params.as_ref(),
-                    &mut dc_group,
-                )?;
-                dc_group.zero_pad_to_byte();
-                sections.push(dc_group.finish());
-            }
+            // DC groups — parallelizable
+            let dc_group_sections: Vec<Vec<u8>> =
+                crate::parallel::parallel_map_result(num_dc_groups, |dc_group_idx| {
+                    encode_dc_group_section(
+                        self,
+                        dc_group_idx,
+                        xsize_blocks,
+                        ysize_blocks,
+                        xsize_dc_groups,
+                        &dc_tokens_per_group[dc_group_idx],
+                        &ac_metadata_tokens_per_group[dc_group_idx],
+                        ac_strategy,
+                        &dc_built_code,
+                        dc_lz77_params.as_ref(),
+                    )
+                })?;
+            sections.extend(dc_group_sections);
 
             // AC Global (HfGlobal)
             let mut ac_global = BitWriter::with_capacity(4096);
@@ -2371,40 +2169,25 @@ impl VarDctEncoder {
             ac_global.zero_pad_to_byte();
             sections.push(ac_global.finish());
 
-            // AC groups: Section order is pass-major, group-minor
+            // AC groups: Section order is pass-major, group-minor — parallelizable
             // Section index = 2 + num_dc_groups + pass * num_groups + group
-            let blocks_per_ac_group = (256 / 8) * (256 / 8);
             for pass in 0..num_passes {
-                for (group_idx, ac_tokens) in ac_section_tokens_per_pass[pass].iter().enumerate() {
-                    let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
-                    ac_built_codes[pass].write_tokens(
-                        ac_tokens,
-                        ac_lz77_params_per_pass[pass].as_ref(),
-                        &mut ac_group_writer,
-                    )?;
-                    // Multi-group alpha: write modular HF sub-bitstream only in LAST pass
-                    if pass == num_passes - 1
-                        && let Some(alpha_data) = &alpha
-                    {
-                        let group_x = group_idx % xsize_groups;
-                        let group_y = group_idx / xsize_groups;
-                        let x0 = group_x * GROUP_DIM;
-                        let y0 = group_y * GROUP_DIM;
-                        let gw = GROUP_DIM.min(width - x0);
-                        let gh = GROUP_DIM.min(height - y0);
-                        Self::write_modular_alpha_group(
-                            alpha_data,
+                let is_last_pass = pass == num_passes - 1;
+                let ac_group_sections: Vec<Vec<u8>> =
+                    crate::parallel::parallel_map_result(num_groups, |group_idx| {
+                        encode_ac_group_section(
+                            &ac_section_tokens_per_pass[pass][group_idx],
+                            &ac_built_codes[pass],
+                            ac_lz77_params_per_pass[pass].as_ref(),
+                            alpha,
+                            is_last_pass,
+                            group_idx,
+                            xsize_groups,
                             width,
-                            x0,
-                            y0,
-                            gw,
-                            gh,
-                            &mut ac_group_writer,
-                        )?;
-                    }
-                    ac_group_writer.zero_pad_to_byte();
-                    sections.push(ac_group_writer.finish());
-                }
+                            height,
+                        )
+                    })?;
+                sections.extend(ac_group_sections);
             }
 
             let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
