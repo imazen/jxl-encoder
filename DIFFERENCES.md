@@ -7,7 +7,7 @@ Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
-**Score: 14 fixed, 3 false alarms, 2 remaining (1 DIFF + 1 OPT)**
+**Score: 15 fixed, 3 false alarms, 1 remaining (1 DIFF)**
 
 ---
 
@@ -104,27 +104,17 @@ uses `q = use_dct8 ? 1 : quantizer->Scale() * 128 * qq`. When `use_dct8=true` (p
 
 ## ENTROPY CODING OPTIMIZATIONS (valid output, suboptimal compression)
 
-### OPT-1: Missing greedy entropy optimization in RebalanceHistogram
+### ~~OPT-1~~: Missing greedy entropy optimization in RebalanceHistogram — FIXED (795a077)
 
-**File**: `jxl_encoder/src/entropy_coding/ans.rs:749-877`
-**Impact**: Slightly suboptimal ANS frequency normalization. Estimated <0.1% file size.
-
-**Our code**: Rounds raw counts to normalized precision, absorbs remainder into omit_pos.
-**libjxl**: Uses a sophisticated `AllowedCounts` table-driven greedy optimization
-(`enc_ans.cc:416-559`) that is more complex than simple +-1 adjustments.
-
-**Fix**: Port libjxl's `RebalanceHistogram` from `enc_ans.cc:416-559`. Key components:
-1. **AllowedCounts table** (`enc_ans.cc:318-400`): Pre-computes for each `(count, shift)`
-   pair the set of valid normalized counts, along with log2 deltas for each transition.
-   This constrains the search space to ensure each symbol's count maps to a valid ANS
-   table entry (power-of-2 or specific bit patterns depending on ANS_LOG_TAB_SIZE).
-2. **Greedy loop**: For each symbol, evaluates the cost delta of moving its normalized
-   count up or down within the AllowedCounts set. Picks the best (count, direction) pair
-   that reduces total cost, compensating another symbol. Repeats until no improvement.
-3. **Fixed-point log2 cost**: Uses the same 4097-entry lookup table as `ANSPopulationCost`
-   (see OPT-2) for precise cost evaluation during the greedy search.
-4. **Precision constraint**: All normalized counts must be valid for the ANS table size
-   (sum to `1 << ANS_LOG_TAB_SIZE = 4096`).
+**File**: `jxl_encoder/src/entropy_coding/ans.rs`
+**Status**: FIXED. Ported libjxl's `RebalanceHistogram` greedy optimization
+(enc_ans.cc:416-559). Key components:
+- `build_allowed_counts(shift)`: builds sorted table of all representable count values
+- `find_allowed_leq()`: snaps counts DOWN to nearest allowed value (prevents rest < 0)
+- Greedy loop navigates allowed counts by index, computing entropy deltas with f64 log2.
+  Each iteration picks the best bin to increment or decrement, with the balancing bin
+  (highest-frequency symbol) absorbing changes. Tractor logic handles out-of-range rest.
+- Omit enforcement loop ensures decoder's omit_pos detection matches encoder.
 
 ### ~~OPT-2~~: ANS population cost is approximate in clustering — FIXED (71943ac)
 
