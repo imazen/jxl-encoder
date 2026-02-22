@@ -32,6 +32,25 @@ use std::io::Cursor;
 
 const BLOCK_DIM: usize = 8;
 
+/// Convert sRGB normalized [0,1] value to linear light using the sRGB transfer function.
+fn srgb_to_linear_val(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Convert linear light value to sRGB normalized [0,1] using the sRGB transfer function.
+fn linear_to_srgb_val(linear: f32) -> f32 {
+    let c = linear.clamp(0.0, 1.0);
+    if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 /// Compute LLF positions using the OLD (buggy) formula: idx < covered_blocks.
 /// This is what the encoder used before the fix.
 fn old_llf_positions(covered_blocks: usize, size: usize) -> BTreeSet<usize> {
@@ -322,10 +341,10 @@ fn load_png_crop(path: &str, crop_w: usize, crop_h: usize) -> (usize, usize, Vec
         for x in x0..x0 + w {
             let p = rgb.get_pixel(x as u32, y as u32);
             srgb.extend_from_slice(&[p[0], p[1], p[2]]);
-            // sRGB → linear (gamma 2.2 approximation, matches the CLIC test pattern)
-            linear.push((p[0] as f32 / 255.0).powf(2.2));
-            linear.push((p[1] as f32 / 255.0).powf(2.2));
-            linear.push((p[2] as f32 / 255.0).powf(2.2));
+            // sRGB → linear using proper sRGB transfer function
+            linear.push(srgb_to_linear_val(p[0] as f32 / 255.0));
+            linear.push(srgb_to_linear_val(p[1] as f32 / 255.0));
+            linear.push(srgb_to_linear_val(p[2] as f32 / 255.0));
         }
     }
 
@@ -500,11 +519,11 @@ fn ssim2_srgb(original: &[u8], decoded: &[u8], width: usize, height: usize) -> f
     compute_ssimulacra2(src.as_ref(), dst.as_ref()).unwrap_or(0.0)
 }
 
-/// Convert linear f32 to sRGB u8 (applies gamma 1/2.2).
+/// Convert linear f32 to sRGB u8 using the proper sRGB transfer function.
 fn linear_to_srgb_u8(linear: &[f32]) -> Vec<u8> {
     linear
         .iter()
-        .map(|&v| (v.max(0.0).powf(1.0 / 2.2) * 255.0).min(255.0).round() as u8)
+        .map(|&v| (linear_to_srgb_val(v) * 255.0).round() as u8)
         .collect()
 }
 
@@ -573,9 +592,9 @@ fn generate_smooth_gradient(w: usize, h: usize) -> (usize, usize, Vec<f32>, Vec<
             linear[idx + 2] = 0.15 + 0.7 * (t + vt) / 2.0;
 
             // Convert to sRGB for comparison
-            srgb[idx] = (linear[idx].powf(1.0 / 2.2) * 255.0).round() as u8;
-            srgb[idx + 1] = (linear[idx + 1].powf(1.0 / 2.2) * 255.0).round() as u8;
-            srgb[idx + 2] = (linear[idx + 2].powf(1.0 / 2.2) * 255.0).round() as u8;
+            srgb[idx] = (linear_to_srgb_val(linear[idx]) * 255.0).round() as u8;
+            srgb[idx + 1] = (linear_to_srgb_val(linear[idx + 1]) * 255.0).round() as u8;
+            srgb[idx + 2] = (linear_to_srgb_val(linear[idx + 2]) * 255.0).round() as u8;
         }
     }
 
@@ -1045,7 +1064,7 @@ fn diag_dct16x16_solid_16x16() {
     let h = 16;
     let val = 0.2f32; // ~50% gray in sRGB
     let linear = vec![val; w * h * 3];
-    let srgb_val = (val.powf(1.0 / 2.2) * 255.0).round() as u8;
+    let srgb_val = (linear_to_srgb_val(val) * 255.0).round() as u8;
 
     // Encode with DCT16x16 (ac_strategy_enabled = true forces it)
     let mut encoder = jxl_encoder::vardct::VarDctEncoder::new(1.0);
@@ -1075,9 +1094,9 @@ fn diag_dct16x16_solid_16x16() {
             r,
             g,
             b,
-            (r.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0),
-            (g.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0),
-            (b.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0),
+            (linear_to_srgb_val(r) * 255.0),
+            (linear_to_srgb_val(g) * 255.0),
+            (linear_to_srgb_val(b) * 255.0),
         );
     }
 
@@ -2616,7 +2635,7 @@ fn diag_dct16x16_decode_compare() {
 
     // Convert decoded linear f32 to sRGB u8 for comparison
     fn linear_to_srgb_u8(v: f32) -> u8 {
-        (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
+        (linear_to_srgb_val(v) * 255.0).round() as u8
     }
 
     eprintln!("16x16 frymire crop - jxl-oxide decoder:");
@@ -2713,7 +2732,7 @@ fn diag_dct16x16_32x32_compare() {
 
     // Convert decoded linear f32 to sRGB u8 for comparison
     fn linear_to_srgb_u8(v: f32) -> u8 {
-        (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
+        (linear_to_srgb_val(v) * 255.0).round() as u8
     }
 
     eprintln!("32x32 frymire crop - jxl-oxide decoder:");
@@ -4853,7 +4872,7 @@ fn layer3_single_group_dct4x8_decode_jxl_rs() {
     // jxl-rs outputs sRGB, so linear 0.5 → sRGB ~0.73
     let center_idx = (h / 2 * w + w / 2) * 3;
     let center_val = pixels[center_idx];
-    let expected_srgb = 0.5f32.powf(1.0 / 2.2); // ~0.73
+    let expected_srgb = linear_to_srgb_val(0.5); // ~0.735
     eprintln!(
         "Center pixel value: {:.4} (expected sRGB ~{:.2})",
         center_val, expected_srgb
@@ -4903,7 +4922,7 @@ fn layer3_single_group_dct8x4_decode_jxl_rs() {
     // jxl-rs outputs sRGB, so linear 0.5 → sRGB ~0.73
     let center_idx = (h / 2 * w + w / 2) * 3;
     let center_val = pixels[center_idx];
-    let expected_srgb = 0.5f32.powf(1.0 / 2.2); // ~0.73
+    let expected_srgb = linear_to_srgb_val(0.5); // ~0.735
     eprintln!(
         "Center pixel value: {:.4} (expected sRGB ~{:.2})",
         center_val, expected_srgb
@@ -4971,7 +4990,7 @@ fn test_dct4x8_decoder_colorspace_comparison() {
 
     // Expected: linear ~0.5, sRGB ~0.73
     let expected_linear: f32 = 0.5;
-    let expected_srgb = expected_linear.powf(1.0 / 2.2); // ~0.73
+    let expected_srgb = linear_to_srgb_val(expected_linear); // ~0.735
 
     // jxl-oxide should output linear
     assert!(
