@@ -88,14 +88,30 @@ pub fn srgb_to_linear(pixels: &mut [f32]) {
 
 /// Convert linear RGB to XYB color space.
 ///
-/// Input: Linear RGB values (0-1 range)
+/// Input: Linear RGB values (0-1 range for SDR), intensity_target (nits, default 255)
 /// Output: XYB values
 ///
 /// The XYB transform:
-/// 1. Apply opsin absorbance matrix to get mixed0, mixed1, mixed2
-/// 2. Add bias and apply cube root: L = cbrt(mixed0 + bias), etc.
-/// 3. Combine: X = 0.5*(L-M), Y = 0.5*(L+M), B = S
+/// 1. Scale by intensity_target/255.0 (matches libjxl ComputePremulAbsorb)
+/// 2. Apply opsin absorbance matrix to get mixed0, mixed1, mixed2
+/// 3. ZeroIfNegative clamp, add bias, apply cube root
+/// 4. Combine: X = 0.5*(L-M), Y = 0.5*(L+M), B = S
+///
+/// For SDR (intensity_target=255), the scaling factor is 1.0 (no-op).
 pub fn linear_rgb_to_xyb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    linear_rgb_to_xyb_scaled(r, g, b, 255.0)
+}
+
+/// Convert linear RGB to XYB with explicit intensity_target scaling.
+///
+/// Matches libjxl's `ComputePremulAbsorb` (enc_xyb.cc:214-228): each linear RGB
+/// component is multiplied by `intensity_target / 255.0` before the matrix multiply.
+pub fn linear_rgb_to_xyb_scaled(r: f32, g: f32, b: f32, intensity_target: f32) -> (f32, f32, f32) {
+    let scale = intensity_target / 255.0;
+    let r = r * scale;
+    let g = g * scale;
+    let b = b * scale;
+
     // Apply opsin absorbance matrix
     // ZeroIfNegative clamp before bias (matches libjxl enc_xyb.cc:91-95).
     // For in-gamut sRGB this is a no-op (bias ensures positivity), but
