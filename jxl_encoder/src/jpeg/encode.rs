@@ -774,14 +774,14 @@ mod tests {
     #[test]
     fn test_f16_conversion() {
         // 1.0 = 0x3C00 in f16
-        assert_eq!(f32_to_f16_bits(1.0), 0x3C00);
+        assert_eq!(f32_to_f16_bits(1.0).unwrap(), 0x3C00);
         // 0.0 = 0x0000
-        assert_eq!(f32_to_f16_bits(0.0), 0x0000);
+        assert_eq!(f32_to_f16_bits(0.0).unwrap(), 0x0000);
         // -1.0 = 0xBC00
-        assert_eq!(f32_to_f16_bits(-1.0), 0xBC00);
+        assert_eq!(f32_to_f16_bits(-1.0).unwrap(), 0xBC00);
         // 1/2040 ≈ 0.0004902
         let qtable_den = 1.0f32 / 2040.0;
-        let bits = f32_to_f16_bits(qtable_den);
+        let bits = f32_to_f16_bits(qtable_den).unwrap();
         // Should be a small positive denormalized or small normal value
         assert!(
             bits > 0 && bits < 0x4000,
