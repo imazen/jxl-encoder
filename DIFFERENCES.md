@@ -11,55 +11,13 @@ then missing features, then verified matches.
 
 ## BUGS (will produce invalid bitstreams under certain conditions)
 
-### BUG-1: `write_u64_coder` broken for values >= 273
+### ~~BUG-1~~: `write_u64_coder` broken for values >= 273 — FIXED (dd2a29a)
 
-**File**: `jxl_encoder/src/bit_writer.rs:399-420`
-**Severity**: Latent (currently dormant — all U64 fields we write are 0 or small)
-**Impact**: Any code path that writes a U64 value >= 273 will produce an invalid bitstream
-
-**What's wrong**: Our selector 3 encoding does not implement the varint continuation
-scheme. We write a fixed 12+32 bit format instead of the spec's variable-length
-continuation with stop bits.
-
-**Our code** (wrong):
-```rust
-// For 273..=4368: writes 12 bits directly (MISSING stop bit)
-self.write(2, 3)?;
-self.write(12, value - 273)?;
-// For > 4368: writes 12 bits + flag + 32 raw bits (WRONG format entirely)
-self.write(2, 3)?;
-self.write(12, low | 0x1000)?; // Set high bit to indicate more data
-self.write(32, high)?;
-```
-
-**libjxl** (correct, from `enc_fields.cc:129-166`):
-```cpp
-// Selector 3: varint starting with 12-bit group, then 8-bit groups
-writer->Write(2, 3);
-writer->Write(12, value & 4095);
-value >>= 12;
-int shift = 12;
-while (value > 0 && shift < 60) {
-    writer->Write(1, 1);  // continuation bit
-    writer->Write(8, value & 255);
-    value >>= 8;
-    shift += 8;
-}
-if (value > 0) {
-    writer->Write(1, 1);     // continuation bit
-    writer->Write(4, value & 15);  // final 4-bit group (implicitly closed)
-} else {
-    writer->Write(1, 0);  // stop bit
-}
-```
-
-**Fix**: Replace our selector-3 branch with the varint loop. Max encoded bits =
-2 + 12 + 6*(8+1) + (4+1) = 73 bits. The loop emits continuation bit (1) + 8 data
-bits per group, with a final stop bit (0) when value is exhausted or a 4-bit final
-group at shift=60.
-
-**Test**: `TestU64Coder` in libjxl's `fields_test.cc` tests values
-{0, 1, 15, 16, 17, 271, 272, 273, 4096, 1<<16, 1<<28, (1<<32)-1, 1<<32, 1<<63}.
+**File**: `jxl_encoder/src/bit_writer.rs:399-430`
+**Status**: FIXED. Replaced incorrect fixed-width encoding with correct varint loop
+matching libjxl `enc_fields.cc:129-166`. Added roundtrip tests for all values from
+libjxl's `TestU64Coder` (0, 1, 15, 16, 17, 271, 272, 273, 4096, 1<<16, 1<<28,
+(1<<32)-1, 1<<32, 1<<63). Was latent — all current callers pass values 0-179.
 
 ### BUG-2: Container box size overflow for >4GB payloads
 
