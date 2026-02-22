@@ -73,3 +73,78 @@ lossless-compare:
 # Generate cjxl lossless reference CSV (~10 min)
 generate-lossless-reference:
     bash scripts/generate_cjxl_lossless_reference.sh
+
+# Six-panel visual comparison at a given distance
+# Layout:  Source info     | Ours d=X metrics        | cjxl d=X metrics (deltas vs ours)
+#          Ours-cjxl 20x   | Ours Error 10x          | cjxl Error 10x
+# Usage: just compare-visual <source.png> <ours.jxl> <cjxl.jxl> <distance> [output_dir]
+# Ours/cjxl args can be .jxl (decoded via djxl) or .png (used directly)
+compare-visual source ours cjxl distance outdir="/mnt/v/output/jxl-encoder-rs/compare":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{outdir}}"
+    DJXL="$HOME/work/jxl-efforts/libjxl/build/tools/djxl"
+    BFLY="$HOME/work/jxl-efforts/libjxl/build/tools/butteraugli_main"
+    SS2="$HOME/work/jxl-efforts/libjxl/build/tools/ssimulacra2"
+    # Source info
+    src_size=$(wc -c < "{{source}}")
+    src_kb=$(python3 -c "print(f'{${src_size}/1024:.1f}KB')")
+    src_info=$(identify -format '%wx%h %[channels]' "{{source}}" 2>/dev/null || echo "?x?")
+    # Decode JXL to PNG if needed, get file sizes
+    if [[ "{{ours}}" == *.jxl ]]; then
+      ours_png="{{outdir}}/ours_decoded.png"
+      "$DJXL" "{{ours}}" "$ours_png" 2>/dev/null
+      ours_size=$(wc -c < "{{ours}}")
+    else
+      ours_png="{{ours}}"
+      ours_size=$(wc -c < "{{ours}}")
+    fi
+    if [[ "{{cjxl}}" == *.jxl ]]; then
+      cjxl_png="{{outdir}}/cjxl_decoded.png"
+      "$DJXL" "{{cjxl}}" "$cjxl_png" 2>/dev/null
+      cjxl_size=$(wc -c < "{{cjxl}}")
+    else
+      cjxl_png="{{cjxl}}"
+      cjxl_size=$(wc -c < "{{cjxl}}")
+    fi
+    ours_kb=$(python3 -c "print(f'{${ours_size}/1024:.1f}KB')")
+    cjxl_kb=$(python3 -c "print(f'{${cjxl_size}/1024:.1f}KB')")
+    # Strip source PNG metadata to avoid gAMA/sRGB TF mismatch in butteraugli_main
+    stripped="{{outdir}}/source_stripped.png"
+    convert "{{source}}" -strip "$stripped"
+    # Compute butteraugli + ssim2
+    ours_bfly=$("$BFLY" "$stripped" "$ours_png" 2>/dev/null | head -1) || ours_bfly="?"
+    cjxl_bfly=$("$BFLY" "$stripped" "$cjxl_png" 2>/dev/null | head -1) || cjxl_bfly="?"
+    ours_ss2=$("$SS2" "$stripped" "$ours_png" 2>/dev/null | head -1) || ours_ss2="?"
+    cjxl_ss2=$("$SS2" "$stripped" "$cjxl_png" 2>/dev/null | head -1) || cjxl_ss2="?"
+    rm -f "$stripped"
+    # Format labels: ours is baseline, cjxl shows deltas relative to ours
+    eval "$(python3 -c "
+    ob, cb = float('${ours_bfly}'), float('${cjxl_bfly}')
+    os2, cs2 = float('${ours_ss2}'), float('${cjxl_ss2}')
+    osz, csz = ${ours_size}, ${cjxl_size}
+    def dp(a,b): return f'{(a-b)/b*100:+.1f}%' if b else '?'
+    # Shell-safe: no spaces that could break read
+    print(f'ours_metrics=\"{ob:.2f}  ss2={os2:.1f}\"')
+    print(f'cjxl_metrics=\"{cb:.2f} ({dp(cb,ob)})  ss2={cs2:.1f} ({dp(cs2,os2)})\"')
+    print(f'size_delta=\"{dp(csz,osz)}\"')
+    " 2>/dev/null)"
+    src_label="Source  ${src_info}  ${src_kb}"
+    ours_label="Ours d={{distance}}  ${ours_kb}  bfly=${ours_metrics}"
+    cjxl_label="cjxl d={{distance}}  ${cjxl_kb} (${size_delta})  bfly=${cjxl_metrics}"
+    # Generate diff images
+    convert "{{source}}" "$ours_png" -compose difference -composite -evaluate multiply 10 "{{outdir}}/ours_err_10x.png"
+    convert "{{source}}" "$cjxl_png" -compose difference -composite -evaluate multiply 10 "{{outdir}}/cjxl_err_10x.png"
+    convert "$ours_png" "$cjxl_png" -compose difference -composite -evaluate multiply 20 "{{outdir}}/delta_20x.png"
+    montage \
+      -label "$src_label" "{{source}}" \
+      -label "$ours_label" "$ours_png" \
+      -label "$cjxl_label" "$cjxl_png" \
+      -label "Ours-cjxl 20x" "{{outdir}}/delta_20x.png" \
+      -label "Ours Error 10x" "{{outdir}}/ours_err_10x.png" \
+      -label "cjxl Error 10x" "{{outdir}}/cjxl_err_10x.png" \
+      -tile 3x2 -geometry +2+2 \
+      -font DejaVu-Sans -pointsize 14 \
+      "{{outdir}}/six_compare.png"
+    feh "{{outdir}}/six_compare.png" &
+    echo "Saved to {{outdir}}/six_compare.png"

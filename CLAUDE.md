@@ -152,26 +152,31 @@ in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
 **vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-**Overall: Size +0.7%, Butteraugli +0.3%, SSIM2 -0.9%**
+**Overall: Size +0.8%, Butteraugli -0.4% (better), SSIM2 -0.8%**
 
-| Distance | Avg Size | Avg Butteraugli | Our SS2 | cjxl SS2 |
-|----------|----------|-----------------|---------|----------|
-| d=0.25 | -0.4% | **-16.2%** (better) | 94.02 | 93.81 |
-| d=0.5 | -2.2% | **-10.5%** (better) | 91.47 | 91.52 |
-| d=1.0 | +1.2% | +1.2% | 86.97 | 87.32 |
-| d=1.5 | +2.0% | +0.7% | 82.87 | 83.35 |
-| d=2.0 | +3.0% | +0.6% | 79.08 | 79.77 |
-| d=2.5 | +3.5% | +1.0% | 75.51 | 76.31 |
-| d=3.0 | +3.1% | +0.7% | 72.25 | 73.34 |
-| d=4.0 | +3.5% | +2.2% | 66.42 | 67.74 |
-| d=5.0 | +2.9% | +1.3% | 60.80 | 62.66 |
+| Distance | Avg Size | Avg Butteraugli | Our SS2 | cjxl SS2 | Δ Bfly | Δ SS2 |
+|----------|----------|-----------------|---------|----------|--------|-------|
+| d=0.25 | -0.3% | **-16.3%** (better) | 94.01 | 93.81 | -0.1pp | -0.01 |
+| d=0.5 | -2.2% | **-10.6%** (better) | 91.48 | 91.52 | -0.1pp | +0.01 |
+| d=1.0 | +1.3% | +0.4% | 86.99 | 87.32 | **-0.8pp** | +0.02 |
+| d=1.5 | +2.1% | +0.6% | 82.90 | 83.35 | -0.1pp | +0.03 |
+| d=2.0 | +3.1% | +0.2% | 79.15 | 79.77 | **-0.4pp** | +0.07 |
+| d=2.5 | +3.7% | **-0.1%** (better) | 75.62 | 76.31 | **-1.1pp** | +0.11 |
+| d=3.0 | +3.3% | **-0.2%** (better) | 72.37 | 73.34 | **-0.9pp** | +0.12 |
+| d=4.0 | +3.8% | +1.2% | 66.56 | 67.74 | **-1.0pp** | +0.14 |
+| d=5.0 | +3.2% | +0.6% | 60.99 | 62.66 | **-0.7pp** | +0.19 |
+
+Δ columns show change from previous measurement (9ef2819: ties-to-even rounding fix).
+Δ Bfly = percentage-point change in butteraugli gap vs cjxl (negative = improved).
+Δ SS2 = absolute SSIM2 score change (positive = improved).
 
 **Key patterns**:
-- Quality at parity with cjxl e7 at d=1.0-3.0 (butteraugli within 1.2%, SSIM2 within 1.5%)
+- Butteraugli at parity or better than cjxl e7 at d=0.25-3.0
+- d=2.5 and d=3.0 now **beat cjxl** on butteraugli (-0.1%, -0.2%)
+- d=4.0 gap halved: +2.2% → +1.2% (ties-to-even rounding fix, 9ef2819)
+- d=5.0 gap halved: +1.3% → +0.6%
 - Files 1-4% larger on average
-- SSIM2 gap grows with distance (d=4.0: -1.9%, d=5.0: -3.0%)
-- d=4.0 has worst butteraugli gap (+2.2%) due to per-block coefficient differences
-  at the EPF 2→3 iteration boundary (same strategies, different CfL/coefficient rounding)
+- SSIM2 gap grows with distance (d=4.0: -1.8%, d=5.0: -2.7%)
 - Previous "10% SSIM2 gap" was a measurement bug: gamma 2.2 instead of sRGB TF (9e8e966)
 
 **Root causes found and fixed**:
@@ -198,6 +203,13 @@ in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
   In libjxl these adjustments are baked into `entropy_estimate[]` from FindBest8x8Transform.
   Fix: pass appropriate per-strategy adjustments during re-evaluation.
   Impact: 1025469 d=2.0 butteraugli +13.6% → +3.6%, 1080721 d=1.0 butteraugli -28% better.
+- **Rounding mode mismatch** (9ef2819): Rust's `f32::round()` rounds ties away from zero
+  (0.5 → 1.0), libjxl uses `rintf()`/Highway `Round()` which round ties to even (0.5 → 0.0).
+  This biased toward more non-zero coefficients, making AdjustQuantBlockAC heuristics fire
+  less frequently → less error concentration. Fixed: `round()` → `round_ties_even()` in 3
+  scalar paths. Also added DCT32X16/DCT16X32 to section E (large transform error correction)
+  with ix=1 table index. Impact: butteraugli gap halved at d=4.0 (+2.2% → +1.2%), d=2.5
+  and d=3.0 now beat cjxl.
 
 **Remaining size overhead (files 1-8% larger)**:
 - ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
@@ -612,6 +624,9 @@ just update-hashes
 
 # Compare quality vs cjxl (CSV-backed, CID22 images, Rust butteraugli + ssim2)
 just quality-compare
+
+# 6-panel visual comparison (ours/cjxl side by side, errors below, delta bottom-left)
+just compare-visual source.png ours_decoded.png cjxl_decoded.png 4.0 [output_dir]
 ```
 
 ## Pre-Commit Checklist
