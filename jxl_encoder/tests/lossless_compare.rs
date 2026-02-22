@@ -477,7 +477,10 @@ fn lossless_roundtrip_all() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let project_root = std::path::Path::new(manifest_dir).parent().unwrap();
     let sources = find_source_images(project_root);
-    eprintln!("Found {} source images for roundtrip verification", sources.len());
+    eprintln!(
+        "Found {} source images for roundtrip verification",
+        sources.len()
+    );
 
     if sources.is_empty() {
         panic!("No source images found. Ensure codec-corpus is available.");
@@ -510,7 +513,10 @@ fn lossless_roundtrip_all() {
                     let status = if let Some(ref err) = result.error {
                         format!("ERROR: {err}")
                     } else if result.wrong_pixels > 0 {
-                        format!("FAIL: {} wrong, max_diff={}", result.wrong_pixels, result.max_diff)
+                        format!(
+                            "FAIL: {} wrong, max_diff={}",
+                            result.wrong_pixels, result.max_diff
+                        )
                     } else {
                         "ok".to_string()
                     };
@@ -535,11 +541,19 @@ fn lossless_roundtrip_all() {
         .collect();
     let passed = results.len() - errors.len() - failures.len();
 
-    eprintln!("\n=== Lossless Roundtrip: {passed} passed, {} failed, {} errors ===\n",
-        failures.len(), errors.len());
+    eprintln!(
+        "\n=== Lossless Roundtrip: {passed} passed, {} failed, {} errors ===\n",
+        failures.len(),
+        errors.len()
+    );
 
     for r in &errors {
-        eprintln!("  ERROR {} ({}): {}", r.name, r.corpus, r.error.as_deref().unwrap_or("?"));
+        eprintln!(
+            "  ERROR {} ({}): {}",
+            r.name,
+            r.corpus,
+            r.error.as_deref().unwrap_or("?")
+        );
     }
     for r in &failures {
         eprintln!(
@@ -557,7 +571,10 @@ fn lossless_roundtrip_all() {
         );
     }
 
-    eprintln!("\nAll {} images are pixel-exact lossless roundtrip.", results.len());
+    eprintln!(
+        "\nAll {} images are pixel-exact lossless roundtrip.",
+        results.len()
+    );
 }
 
 fn roundtrip_one_image(src: &SourceImage, effort: u8) -> RoundtripResult {
@@ -666,4 +683,3 @@ fn roundtrip_one_image(src: &SourceImage, effort: u8) -> RoundtripResult {
         error: None,
     }
 }
-
