@@ -199,6 +199,8 @@ impl EncoderPrecomputed {
                 xsize_blocks,
                 ysize_blocks,
                 profile.cfl_newton,
+                profile.cfl_newton_eps,
+                profile.cfl_newton_max_iters,
             )
         } else {
             CflMap::zeros(

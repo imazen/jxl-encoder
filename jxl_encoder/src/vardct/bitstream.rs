@@ -865,6 +865,8 @@ impl VarDctEncoder {
                 xsize_blocks,
                 ysize_blocks,
                 self.profile.cfl_newton,
+                self.profile.cfl_newton_eps,
+                self.profile.cfl_newton_max_iters,
             )
         } else {
             CflMap::zeros(
