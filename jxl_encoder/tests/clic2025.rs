@@ -3,6 +3,26 @@
 use image::GenericImageView;
 use std::io::Cursor;
 
+/// Convert sRGB u8 (normalized to 0..1) to linear light using correct sRGB EOTF.
+fn srgb_to_linear_val(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Convert linear light value to sRGB u8 using the correct sRGB transfer function.
+fn linear_to_srgb_u8(linear: f32) -> u8 {
+    let c = linear.clamp(0.0, 1.0);
+    let srgb = if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (srgb * 255.0).round() as u8
+}
+
 /// Test encoding and decoding a single CLIC 2025 image, returning SSIM2 score.
 fn test_clic_image_with_ssim2(path: &str) -> Option<f64> {
     let img = match image::open(path) {
@@ -25,9 +45,9 @@ fn test_clic_image_with_ssim2(path: &str) -> Option<f64> {
         .pixels()
         .flat_map(|p| {
             // sRGB to linear conversion
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -74,9 +94,9 @@ fn test_clic_image_with_ssim2(path: &str) -> Option<f64> {
         .chunks(3)
         .map(|rgb| {
             // Linear to sRGB
-            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let r = linear_to_srgb_u8(rgb[0]);
+            let g = linear_to_srgb_u8(rgb[1]);
+            let b = linear_to_srgb_u8(rgb[2]);
             [r, g, b]
         })
         .collect();
@@ -239,9 +259,9 @@ fn test_clic2025_small_crop() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -276,9 +296,9 @@ fn test_clic2025_small_crop() {
     let decoded_srgb: Vec<[u8; 3]> = decoded_linear
         .chunks(3)
         .map(|rgb| {
-            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let r = linear_to_srgb_u8(rgb[0]);
+            let g = linear_to_srgb_u8(rgb[1]);
+            let b = linear_to_srgb_u8(rgb[2]);
             [r, g, b]
         })
         .collect();
@@ -344,9 +364,9 @@ fn test_save_multigroup_comparison() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -441,9 +461,9 @@ fn test_save_multigroup_comparison() {
     let decoded_srgb: Vec<u8> = decoded_linear
         .chunks(3)
         .flat_map(|rgb| {
-            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let r = linear_to_srgb_u8(rgb[0]);
+            let g = linear_to_srgb_u8(rgb[1]);
+            let b = linear_to_srgb_u8(rgb[2]);
             [r, g, b]
         })
         .collect();
@@ -504,9 +524,9 @@ fn test_exact_multiples() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -532,9 +552,9 @@ fn test_exact_multiples() {
         let decoded_srgb: Vec<[u8; 3]> = decoded_linear
             .chunks(3)
             .map(|rgb| {
-                let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                let r = linear_to_srgb_u8(rgb[0]);
+                let g = linear_to_srgb_u8(rgb[1]);
+                let b = linear_to_srgb_u8(rgb[2]);
                 [r, g, b]
             })
             .collect();
@@ -592,9 +612,9 @@ fn test_multigroup_sizes() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -634,9 +654,9 @@ fn test_multigroup_sizes() {
         let decoded_srgb: Vec<[u8; 3]> = decoded_linear
             .chunks(3)
             .map(|rgb| {
-                let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                let r = linear_to_srgb_u8(rgb[0]);
+                let g = linear_to_srgb_u8(rgb[1]);
+                let b = linear_to_srgb_u8(rgb[2]);
                 [r, g, b]
             })
             .collect();
@@ -692,9 +712,9 @@ fn test_djxl_vs_jxl_oxide() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -756,9 +776,9 @@ fn test_djxl_vs_jxl_oxide() {
                 let djxl_linear: Vec<f32> = djxl_rgb
                     .pixels()
                     .flat_map(|p| {
-                        let r = (p[0] as f32 / 255.0).powf(2.2);
-                        let g = (p[1] as f32 / 255.0).powf(2.2);
-                        let b = (p[2] as f32 / 255.0).powf(2.2);
+                        let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                        let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                        let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                         [r, g, b]
                     })
                     .collect();
@@ -793,9 +813,9 @@ fn test_djxl_vs_jxl_oxide() {
                 let oxide_srgb: Vec<[u8; 3]> = oxide_decoded
                     .chunks(3)
                     .map(|rgb| {
-                        let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                        let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                        let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                        let r = linear_to_srgb_u8(rgb[0]);
+                        let g = linear_to_srgb_u8(rgb[1]);
+                        let b = linear_to_srgb_u8(rgb[2]);
                         [r, g, b]
                     })
                     .collect();
@@ -849,9 +869,9 @@ fn test_section_sizes() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -907,9 +927,9 @@ fn test_compare_working_vs_broken() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -986,9 +1006,9 @@ fn test_nzeros_by_group() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -1075,9 +1095,9 @@ fn test_per_group_corruption() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -1181,9 +1201,9 @@ fn test_real_photo_value_stats() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -2039,9 +2059,9 @@ fn test_analyze_clic_photo() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -2820,9 +2840,9 @@ fn test_cfl_quality_1024() {
             let linear_rgb: Vec<f32> = rgb
                 .pixels()
                 .flat_map(|p| {
-                    let r = (p[0] as f32 / 255.0).powf(2.2);
-                    let g = (p[1] as f32 / 255.0).powf(2.2);
-                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                    let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                    let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                     [r, g, b]
                 })
                 .collect();
@@ -2884,9 +2904,9 @@ fn encode_and_measure_ssim2_cfl(
     let decoded_srgb: Vec<[u8; 3]> = decoded_linear
         .chunks(3)
         .map(|rgb| {
-            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let r = linear_to_srgb_u8(rgb[0]);
+            let g = linear_to_srgb_u8(rgb[1]);
+            let b = linear_to_srgb_u8(rgb[2]);
             [r, g, b]
         })
         .collect();
@@ -2928,9 +2948,9 @@ fn test_cfl_quality_sweep() {
             let linear_rgb: Vec<f32> = rgb
                 .pixels()
                 .flat_map(|p| {
-                    let r = (p[0] as f32 / 255.0).powf(2.2);
-                    let g = (p[1] as f32 / 255.0).powf(2.2);
-                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                    let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                    let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                     [r, g, b]
                 })
                 .collect();
@@ -2986,9 +3006,9 @@ fn test_cfl_ab_comparison() {
             let linear_rgb: Vec<f32> = rgb
                 .pixels()
                 .flat_map(|p| {
-                    let r = (p[0] as f32 / 255.0).powf(2.2);
-                    let g = (p[1] as f32 / 255.0).powf(2.2);
-                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                    let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                    let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                     [r, g, b]
                 })
                 .collect();
@@ -3058,9 +3078,9 @@ fn encode_and_measure_ssim2_strategy(
     let decoded_srgb: Vec<[u8; 3]> = decoded_linear
         .chunks(3)
         .map(|rgb| {
-            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let r = linear_to_srgb_u8(rgb[0]);
+            let g = linear_to_srgb_u8(rgb[1]);
+            let b = linear_to_srgb_u8(rgb[2]);
             [r, g, b]
         })
         .collect();
@@ -3106,9 +3126,9 @@ fn test_strategy_ab_comparison() {
             let linear_rgb: Vec<f32> = rgb
                 .pixels()
                 .flat_map(|p| {
-                    let r = (p[0] as f32 / 255.0).powf(2.2);
-                    let g = (p[1] as f32 / 255.0).powf(2.2);
-                    let b = (p[2] as f32 / 255.0).powf(2.2);
+                    let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                    let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                    let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                     [r, g, b]
                 })
                 .collect();
@@ -3233,9 +3253,9 @@ fn test_cpp_vs_rust_quality() {
             .pixels()
             .flat_map(|p| {
                 [
-                    (p[0] as f32 / 255.0).powf(2.2),
-                    (p[1] as f32 / 255.0).powf(2.2),
-                    (p[2] as f32 / 255.0).powf(2.2),
+                    srgb_to_linear_val(p[0] as f32 / 255.0),
+                    srgb_to_linear_val(p[1] as f32 / 255.0),
+                    srgb_to_linear_val(p[2] as f32 / 255.0),
                 ]
             })
             .collect();
@@ -3492,9 +3512,9 @@ fn test_multigroup_quality() {
             .pixels()
             .flat_map(|p| {
                 [
-                    (p[0] as f32 / 255.0).powf(2.2),
-                    (p[1] as f32 / 255.0).powf(2.2),
-                    (p[2] as f32 / 255.0).powf(2.2),
+                    srgb_to_linear_val(p[0] as f32 / 255.0),
+                    srgb_to_linear_val(p[1] as f32 / 255.0),
+                    srgb_to_linear_val(p[2] as f32 / 255.0),
                 ]
             })
             .collect();
@@ -3773,9 +3793,9 @@ fn test_enhanced_clustering_compression() {
             .pixels()
             .flat_map(|p| {
                 // sRGB to linear conversion
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -3948,9 +3968,9 @@ fn test_comprehensive_rd_sweep() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -5333,9 +5353,9 @@ fn test_static_vs_optimize_codes() {
             .pixels()
             .flat_map(|p| {
                 [
-                    (p[0] as f32 / 255.0).powf(2.2),
-                    (p[1] as f32 / 255.0).powf(2.2),
-                    (p[2] as f32 / 255.0).powf(2.2),
+                    srgb_to_linear_val(p[0] as f32 / 255.0),
+                    srgb_to_linear_val(p[1] as f32 / 255.0),
+                    srgb_to_linear_val(p[2] as f32 / 255.0),
                 ]
             })
             .collect();
@@ -5920,9 +5940,9 @@ fn test_ans_clic2025() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -6030,9 +6050,9 @@ fn decode_and_ssim2(
     let decoded_srgb: Vec<[u8; 3]> = decoded
         .chunks(3)
         .map(|rgb| {
-            let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-            let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            let r = linear_to_srgb_u8(rgb[0]);
+            let g = linear_to_srgb_u8(rgb[1]);
+            let b = linear_to_srgb_u8(rgb[2]);
             [r, g, b]
         })
         .collect();
@@ -6128,9 +6148,9 @@ fn test_ans_failing_image() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -6198,9 +6218,9 @@ fn test_ans_vs_huffman_debug() {
     let linear_rgb: Vec<f32> = rgb
         .pixels()
         .flat_map(|p| {
-            let r = (p[0] as f32 / 255.0).powf(2.2);
-            let g = (p[1] as f32 / 255.0).powf(2.2);
-            let b = (p[2] as f32 / 255.0).powf(2.2);
+            let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+            let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+            let b = srgb_to_linear_val(p[2] as f32 / 255.0);
             [r, g, b]
         })
         .collect();
@@ -6289,9 +6309,9 @@ fn test_ans_crop_binary_search() {
         for y in 0..h {
             for x in 0..w {
                 let p = rgb.get_pixel(x as u32, y as u32);
-                linear_rgb.push((p[0] as f32 / 255.0).powf(2.2));
-                linear_rgb.push((p[1] as f32 / 255.0).powf(2.2));
-                linear_rgb.push((p[2] as f32 / 255.0).powf(2.2));
+                linear_rgb.push(srgb_to_linear_val(p[0] as f32 / 255.0));
+                linear_rgb.push(srgb_to_linear_val(p[1] as f32 / 255.0));
+                linear_rgb.push(srgb_to_linear_val(p[2] as f32 / 255.0));
             }
         }
 
@@ -6377,9 +6397,9 @@ fn test_custom_orders() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -6504,9 +6524,9 @@ fn test_custom_orders_compression() {
         let linear_rgb: Vec<f32> = rgb
             .pixels()
             .flat_map(|p| {
-                let r = (p[0] as f32 / 255.0).powf(2.2);
-                let g = (p[1] as f32 / 255.0).powf(2.2);
-                let b = (p[2] as f32 / 255.0).powf(2.2);
+                let r = srgb_to_linear_val(p[0] as f32 / 255.0);
+                let g = srgb_to_linear_val(p[1] as f32 / 255.0);
+                let b = srgb_to_linear_val(p[2] as f32 / 255.0);
                 [r, g, b]
             })
             .collect();
@@ -6859,9 +6879,9 @@ fn test_rd_regression() {
             let decoded_srgb: Vec<[u8; 3]> = decoded
                 .chunks(3)
                 .map(|rgb| {
-                    let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                    let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                    let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                    let r = linear_to_srgb_u8(rgb[0]);
+                    let g = linear_to_srgb_u8(rgb[1]);
+                    let b = linear_to_srgb_u8(rgb[2]);
                     [r, g, b]
                 })
                 .collect();
@@ -7264,9 +7284,9 @@ fn test_rd_regression_high_distance() {
             let decoded_srgb: Vec<[u8; 3]> = decoded
                 .chunks(3)
                 .map(|rgb| {
-                    let r = (rgb[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                    let g = (rgb[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                    let b = (rgb[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                    let r = linear_to_srgb_u8(rgb[0]);
+                    let g = linear_to_srgb_u8(rgb[1]);
+                    let b = linear_to_srgb_u8(rgb[2]);
                     [r, g, b]
                 })
                 .collect();

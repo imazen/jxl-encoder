@@ -8,6 +8,17 @@ use rgb::RGB;
 use std::io::Cursor;
 use std::path::PathBuf;
 
+/// Convert linear light value to sRGB u8 using the correct sRGB transfer function.
+fn linear_to_srgb_u8(linear: f32) -> u8 {
+    let c = linear.clamp(0.0, 1.0);
+    let srgb = if c <= 0.003_130_8 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (srgb * 255.0).round() as u8
+}
+
 fn decode_jxl_linear(bytes: &[u8]) -> Option<(usize, usize, Vec<f32>)> {
     let reader = Cursor::new(bytes);
     let mut jxl_image = jxl_oxide::JxlImage::builder().read(reader).ok()?;
@@ -45,9 +56,9 @@ fn compute_metrics(
         .chunks(3)
         .map(|c| {
             [
-                (c[0].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8,
-                (c[1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8,
-                (c[2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8,
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
             ]
         })
         .collect();

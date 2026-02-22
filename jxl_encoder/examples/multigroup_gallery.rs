@@ -47,12 +47,12 @@ fn encode_and_compare(img_path: &str, label: &str, out_dir: &str) {
     let fb = render.image_all_channels();
     let decoded = fb.buf();
 
-    // Convert to sRGB u8
+    // jxl_oxide returns sRGB nonlinear floats (no request_color_encoding call)
     let mut output_img = image::RgbImage::new(width, height);
     for (i, pixel) in output_img.pixels_mut().enumerate() {
-        let r = (decoded[i * 3].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-        let g = (decoded[i * 3 + 1].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-        let b = (decoded[i * 3 + 2].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+        let r = (decoded[i * 3].clamp(0.0, 1.0) * 255.0).round() as u8;
+        let g = (decoded[i * 3 + 1].clamp(0.0, 1.0) * 255.0).round() as u8;
+        let b = (decoded[i * 3 + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
         *pixel = image::Rgb([r, g, b]);
     }
 
