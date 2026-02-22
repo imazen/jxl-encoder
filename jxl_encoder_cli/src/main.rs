@@ -79,10 +79,14 @@ struct Args {
     #[arg(long)]
     force_strategy: Option<u8>,
 
-    /// Disable error diffusion in AC quantization.
-    /// Error diffusion is on by default (matching libjxl effort 7).
+    /// Enable error diffusion in AC quantization (propagates 1/4 quantization error
+    /// to the next coefficient in zigzag order). Off by default — libjxl's QuantizeBlockAC
+    /// accepts an error_diffusion parameter but never references it in the function body,
+    /// so the feature is effectively a no-op in the reference encoder. Our implementation
+    /// does implement it, but it hurts quality on images with bright features in dark
+    /// regions, especially when combined with gaborish (up to +33% butteraugli regression).
     #[arg(long)]
-    no_error_diffusion: bool,
+    error_diffusion: bool,
 
     /// Disable pixel-domain loss in AC strategy selection.
     /// Pixel-domain loss (full libjxl cost model) is on by default.
@@ -324,8 +328,8 @@ fn main() {
                     if args.denoise {
                         cfg = cfg.with_denoise(true);
                     }
-                    if args.no_error_diffusion {
-                        cfg = cfg.with_error_diffusion(false);
+                    if args.error_diffusion {
+                        cfg = cfg.with_error_diffusion(true);
                     }
                     if args.no_pixel_domain_loss {
                         cfg = cfg.with_pixel_domain_loss(false);
@@ -586,8 +590,8 @@ fn main() {
         if args.denoise {
             cfg = cfg.with_denoise(true);
         }
-        if args.no_error_diffusion {
-            cfg = cfg.with_error_diffusion(false);
+        if args.error_diffusion {
+            cfg = cfg.with_error_diffusion(true);
         }
         if args.no_pixel_domain_loss {
             cfg = cfg.with_pixel_domain_loss(false);
@@ -659,10 +663,10 @@ fn main() {
             } else {
                 args.effort >= 3
             };
-            tiny.error_diffusion = if args.no_error_diffusion {
-                false
+            tiny.error_diffusion = if args.error_diffusion {
+                true
             } else {
-                args.effort >= 3
+                false
             };
             tiny.pixel_domain_loss = if args.no_pixel_domain_loss {
                 false

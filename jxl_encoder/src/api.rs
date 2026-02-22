@@ -957,7 +957,14 @@ impl LossyConfig {
         self
     }
 
-    /// Enable/disable error diffusion in AC quantization (default: true).
+    /// Enable/disable error diffusion in AC quantization (default: false).
+    ///
+    /// Error diffusion propagates 1/4 of the quantization error to the next
+    /// coefficient in zigzag order. Note: libjxl's `QuantizeBlockAC` accepts
+    /// this parameter but never references it — the feature is effectively a
+    /// no-op in the reference encoder. Our implementation actually performs
+    /// the diffusion, which can hurt quality on certain content (bright features
+    /// in dark regions), especially when combined with gaborish.
     pub fn with_error_diffusion(mut self, enable: bool) -> Self {
         self.error_diffusion = enable;
         self

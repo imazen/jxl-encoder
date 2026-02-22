@@ -189,7 +189,7 @@ impl Default for VarDctEncoder {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
-            error_diffusion: true, // libjxl enables at speed_tier <= kSquirrel (effort 7)
+            error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2 at all distances
             enable_lz77: false,      // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
@@ -225,7 +225,7 @@ impl VarDctEncoder {
             enable_noise: false,
             enable_denoise: false,
             enable_gaborish: true,
-            error_diffusion: true, // libjxl enables at speed_tier <= kSquirrel (effort 7)
+            error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
             enable_lz77: false,    // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
@@ -1368,8 +1368,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: CfL LS-seeded Newton (eps=1) + skip Newton in pass 1
-        const EXPECTED_HASH: u64 = 0x140d18dcf996f298;
+        // Updated: error_diffusion default changed from true to false
+        const EXPECTED_HASH: u64 = 0x8db7937f6f7848c9;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1438,8 +1438,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: EPF step activation fix (steps 1/2 were swapped)
-        const EXPECTED_HASH: u64 = 0xc0c211d03c3ca4eb;
+        // Updated: error_diffusion default changed from true to false
+        const EXPECTED_HASH: u64 = 0xcfaf1ff73f851ed9;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1474,8 +1474,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: LLF zeroing in entropy estimation
-        const EXPECTED_HASH: u64 = 0x97d3256dc825834c;
+        // Updated: error_diffusion default changed from true to false
+        const EXPECTED_HASH: u64 = 0xe5dfb223d5f6263d;
         assert_eq!(
             hash,
             EXPECTED_HASH,
