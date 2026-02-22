@@ -85,17 +85,11 @@ multi-channel correlation.
 handles these (property indices >= 16 reference channels `(prop - 16) / 4`). Would
 improve RGB compression where channels are correlated.
 
-### DIFF-8: Custom coefficient orders for DCT64+ are unnecessary overhead
+### ~~DIFF-8~~: Custom coefficient orders for DCT64+ — FIXED (37e34d5)
 
-**File**: `jxl_encoder/src/vardct/coeff_order.rs`
-**Verified**: libjxl's `ComputeUsedOrders` (`enc_coeff_order.cc:53-58`) has
-`if (ord > 6) continue;` — it explicitly skips customization for buckets 7+.
-**Impact**: We encode and signal custom coefficient orders for buckets 7-12 (DCT64x64,
-DCT64x32/DCT32x64, etc.). This adds permutation encoding overhead for orders with
-4096 and 2048 elements that libjxl never customizes.
-
-**Fix**: Gate custom order encoding to buckets 0-6 only, matching libjxl. Use natural
-(default) order for buckets 7+. Saves a few bytes per frame.
+**Status**: FIXED. Added `if bucket > 6 { continue; }` in `compute_custom_orders()`,
+matching libjxl's `ComputeUsedOrders` (`enc_coeff_order.cc:53-58`). Buckets 7+
+(DCT64x64, DCT64x32/DCT32x64) now use natural (default) order.
 
 ### ~~DIFF-9~~: ~~CfL pass 1 missing full weighting~~ FALSE ALARM
 
