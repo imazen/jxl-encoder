@@ -9,7 +9,7 @@
 | ~~**P2**~~ | ~~sRGB→linear conversion~~ | ✅ DONE — 256-entry const LUT for u8 (eliminates 24M powf calls) | 4-8× on input conversion |
 | ~~**P3**~~ | ~~Quantize AC (DCT16+)~~ | ✅ DONE — Generic `quantize_block_large` in `quantize.rs`, all sizes (128–4096 coefficients), wired into encoder | 2-4× on large block quant |
 | ~~**P4**~~ | ~~DCT/IDCT 64×64, 64×32, 32×64~~ | ✅ DONE — AVX2 in `dct64.rs`/`idct64.rs`, wired into encoder | 3-5× on DCT64 blocks |
-| **P5** | Large block transpose (32×32, 64×64) | Supporting operation for large DCTs. Scalar element-by-element copy. | 2-3× (part of DCT chain) |
+| ~~**P5**~~ | ~~Large block transpose (32×32, 64×64)~~ | N/A — absorbed by DCT SIMD modules' internal transpositions. Only standalone use is DCT16X8 in reconstruct.rs (128 elements, single strategy). | Negligible standalone |
 | ~~**P6**~~ | ~~ANS token cost (Shannon)~~ | ✅ DONE — `shannon_entropy_bits` in `entropy.rs`, SIMD fast_log2f, wired into encoder histogram clustering | 2-4× on entropy estimation |
 | **P7** | FastPow2f / FastPowf general | Used by adaptive quant modulations, but currently embedded. General SIMD fast math library would benefit multiple callers. | Enables other optimizations |
 | **P8** | AFV 4×4 basis matrix | 256 scalar FMAs. Low frequency (corner blocks only). | 4× but rare |
@@ -31,7 +31,7 @@
 | 10 | IDCT 32×16, 16×32 | `dct-inl.h` | `jxl_simd/src/idct32.rs` | ✅ | ~~P1~~ |
 | 11 | IDCT 64×64, 64×32, 32×64 | `dct-inl.h` | `jxl_simd/src/idct64.rs` | ✅ | ~~P4~~ |
 | 12 | 8×8 transpose | `transpose-inl.h` | `jxl_simd/src/transpose.rs` | ✅ | — |
-| 13 | NxM transpose (N>8) | `transpose-inl.h` | `vardct/dct/forward_large.rs` | ❌ | P5 |
+| 13 | NxM transpose (N>8) | `transpose-inl.h` | DCT modules internal | ⚠️ | ~~P5~~ |
 | 14 | RGB→XYB | `enc_xyb.cc` | `jxl_simd/src/xyb.rs` | ✅ | — |
 | 15 | XYB→RGB | `dec_xyb-inl.h` | `jxl_simd/src/xyb.rs` | ✅ | — |
 | 16 | sRGB→linear | `cms/transfer_functions-inl.h` | `api.rs` (const LUT) | ✅ | ~~P2~~ |
