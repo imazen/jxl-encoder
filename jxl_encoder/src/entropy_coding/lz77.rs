@@ -69,7 +69,7 @@ const LEN_COST_TABLE: [f32; 17] = [
 /// Indexed by token value from HybridUintConfig(7, 0, 0).
 #[rustfmt::skip]
 #[allow(clippy::excessive_precision)]
-const DIST_COST_TABLE: [f32; 128] = [
+const DIST_COST_TABLE: [f32; 139] = [
     6.368282626312716,  5.680793277090298,  8.347404197105247,
     7.641619201599141,  6.914328374119438,  7.959808291537444,
     8.70023120759855,   8.71378518934703,   9.379132523982769,
@@ -113,6 +113,14 @@ const DIST_COST_TABLE: [f32; 128] = [
     16.970641701570223, 16.853602280380002, 17.26240782594733,
     16.644655390108507, 17.14310889757499,  16.910935455445955,
     17.505678976959697, 17.213498225466388,
+    // Entries 128-138: special distance code costs (from libjxl enc_lz77.cc:442-446).
+    // These have dramatically lower costs (2.4-9.7) vs the preceding entries (~17),
+    // because special distance codes encode distances as multiples of image width
+    // (useful for vertical matches in image data).
+    2.4162310293553024, 3.494587244462329,  3.5258600986408344,
+    3.4959806589517095, 3.098390886949687,  3.343454654302911,
+    3.588847442290287,  4.14614790111827,   5.152948641990529,
+    7.433696808092598,  9.716311684833672,
 ];
 
 /// Empirical cost for LZ77 length encoding.
