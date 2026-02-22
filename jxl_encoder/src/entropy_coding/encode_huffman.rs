@@ -767,6 +767,154 @@ pub fn write_entropy_code(code: &EntropyCode, writer: &mut BitWriter) -> Result<
     Ok(())
 }
 
+/// Write a single prefix code from depth/bits slices (arbitrary alphabet size).
+fn write_prefix_code_from_slices(
+    depths: &[u8],
+    _bits: &[u16],
+    writer: &mut BitWriter,
+) -> Result<()> {
+    let mut count = 0usize;
+    let mut s4 = [0usize; 4];
+    let mut length = 0usize;
+
+    for (i, &d) in depths.iter().enumerate() {
+        if d > 0 {
+            if count < 4 {
+                s4[count] = i;
+            }
+            count += 1;
+            length = i + 1;
+        }
+    }
+
+    let mut max_bits_counter = length.saturating_sub(1);
+    let mut max_bits = 0usize;
+    while max_bits_counter > 0 {
+        max_bits_counter >>= 1;
+        max_bits += 1;
+    }
+
+    if count <= 1 {
+        writer.write(4, 1)?;
+        writer.write(max_bits, s4[0] as u64)?;
+        return Ok(());
+    }
+
+    if count <= 4 {
+        store_simple_huffman_tree(depths, &mut s4, count, max_bits, writer)?;
+    } else {
+        store_huffman_tree(depths, length, writer)?;
+    }
+
+    Ok(())
+}
+
+/// Write context map from a raw slice (for OwnedEntropyCode).
+fn write_dyn_context_map(context_map: &[u8], writer: &mut BitWriter) -> Result<()> {
+    if context_map.is_empty() {
+        return Ok(());
+    }
+
+    let max_val = *context_map.iter().max().unwrap_or(&0);
+    if max_val == 0 {
+        writer.write(3, 1)?;
+        return Ok(());
+    }
+
+    writer.write(3, 0)?;
+
+    let mut tokens: Vec<Token> = Vec::with_capacity(context_map.len());
+    for &v in context_map {
+        tokens.push(Token::new(0, v as u32));
+    }
+
+    let mut histogram = [0u32; ALPHABET_SIZE];
+    for t in &tokens {
+        let encoded = UintCoder::encode(t.value);
+        histogram[encoded.token as usize] += 1;
+    }
+
+    let mut ctxmap_depths = [0u8; ALPHABET_SIZE];
+    let mut length = ALPHABET_SIZE;
+    while length > 0 && histogram[length - 1] == 0 {
+        length -= 1;
+    }
+    create_huffman_tree(&histogram, length.max(1), 15, &mut ctxmap_depths);
+
+    let mut ctxmap_bits = [0u16; ALPHABET_SIZE];
+    convert_bit_depths_to_symbols(&ctxmap_depths, &mut ctxmap_bits);
+
+    let ctxmap_code = PrefixCode {
+        depths: ctxmap_depths,
+        bits: ctxmap_bits,
+    };
+
+    write_prefix_codes(&[ctxmap_code], writer)?;
+
+    for t in &tokens {
+        let encoded = UintCoder::encode(t.value);
+        let tok = encoded.token as usize;
+        let depth = ctxmap_code.depths[tok] as usize;
+        let bits = ctxmap_code.bits[tok] as u64;
+        let data = bits | ((encoded.bits as u64) << depth);
+        let total_bits = depth + encoded.nbits as usize;
+        writer.write(total_bits, data)?;
+    }
+
+    Ok(())
+}
+
+/// Write all dynamically-sized prefix codes.
+fn write_dyn_prefix_codes(prefix_codes: &[DynPrefixCode], writer: &mut BitWriter) -> Result<()> {
+    writer.write(1, 1)?; // use_prefix_code = true (Huffman)
+
+    // Write HybridUint config for each code
+    for _ in prefix_codes {
+        writer.write(4, 4)?; // split_exponent = 4
+        writer.write(3, 2)?; // msb_in_token = 2
+        writer.write(2, 0)?; // lsb_in_token = 0
+    }
+
+    // Write alphabet sizes
+    for pc in prefix_codes {
+        let mut num_symbol = 1usize;
+        for (i, &d) in pc.depths.iter().enumerate() {
+            if d > 0 {
+                num_symbol = i + 1;
+            }
+        }
+        write_var_len_uint16(num_symbol - 1, writer)?;
+    }
+
+    // Write each prefix code
+    for pc in prefix_codes {
+        let mut num_symbol = 1usize;
+        for (i, &d) in pc.depths.iter().enumerate() {
+            if d > 0 {
+                num_symbol = i + 1;
+            }
+        }
+        if num_symbol > 1 {
+            write_prefix_code_from_slices(&pc.depths, &pc.bits, writer)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// A Huffman prefix code with dynamically-sized alphabet.
+///
+/// Unlike `PrefixCode` which has a fixed `ALPHABET_SIZE=64` alphabet,
+/// this supports arbitrary alphabet sizes needed for LZ77 with Huffman
+/// (where min_symbol=512, giving symbols up to ~544).
+#[derive(Clone)]
+pub struct DynPrefixCode {
+    /// Bit depth (length) for each symbol in the alphabet.
+    pub depths: Vec<u8>,
+    /// Bit pattern for each symbol in the alphabet.
+    pub bits: Vec<u16>,
+}
+
 /// An owned entropy code (context map + prefix codes on the heap).
 ///
 /// Unlike `EntropyCode` which borrows from static data, this holds owned
@@ -774,14 +922,64 @@ pub fn write_entropy_code(code: &EntropyCode, writer: &mut BitWriter) -> Result<
 pub struct OwnedEntropyCode {
     /// Context map: maps context ID -> prefix code index.
     pub context_map: Vec<u8>,
-    /// Prefix codes (Huffman codes).
-    pub prefix_codes: Vec<PrefixCode>,
+    /// Prefix codes (dynamically-sized Huffman codes).
+    pub prefix_codes: Vec<DynPrefixCode>,
+    /// Cached fixed-size prefix codes for as_entropy_code() (None if alphabet > 64).
+    static_codes: Option<Vec<PrefixCode>>,
 }
 
 impl OwnedEntropyCode {
-    /// Borrow as an `EntropyCode` for use with `write_token` etc.
+    /// Borrow as a fixed-size `EntropyCode` for use with `write_token` etc.
+    ///
+    /// Panics if any prefix code has alphabet size > `ALPHABET_SIZE` (64).
+    /// Use `write_header()` and `write_tokens()` directly for larger alphabets.
     pub fn as_entropy_code(&self) -> EntropyCode<'_> {
-        EntropyCode::new(&self.context_map, &self.prefix_codes)
+        self.static_codes
+            .as_ref()
+            .map(|codes| EntropyCode::new(&self.context_map, codes))
+            .expect("as_entropy_code() called on code with alphabet > 64; use write_header()/write_tokens() instead")
+    }
+
+    /// Write the entropy code header (context map + prefix codes) to the bitstream.
+    pub fn write_header(&self, writer: &mut BitWriter) -> Result<()> {
+        if let Some(ref codes) = self.static_codes {
+            // Use proven fixed-size path when alphabet fits in ALPHABET_SIZE
+            let code = EntropyCode::new(&self.context_map, codes);
+            write_entropy_code(&code, writer)
+        } else {
+            // Dynamic path for large alphabets (e.g. Huffman+LZ77 with min_symbol=512)
+            write_dyn_context_map(&self.context_map, writer)?;
+            write_dyn_prefix_codes(&self.prefix_codes, writer)?;
+            Ok(())
+        }
+    }
+
+    /// Write tokens using this entropy code.
+    pub fn write_tokens_owned(
+        &self,
+        tokens: &[Token],
+        lz77: Option<&Lz77Params>,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        if let Some(ref codes) = self.static_codes {
+            // Use proven fixed-size path when alphabet fits in ALPHABET_SIZE
+            let code = EntropyCode::new(&self.context_map, codes);
+            write_tokens(tokens, &code, lz77, writer)
+        } else {
+            // Dynamic path for large alphabets
+            for token in tokens {
+                let (encoded, sym) = encode_token_value(token, lz77);
+                let prefix_idx = self.context_map[token.context as usize] as usize;
+                let pc = &self.prefix_codes[prefix_idx];
+                let tok = sym as usize;
+                let depth = pc.depths[tok] as usize;
+                let bits = pc.bits[tok] as u64;
+                let data = bits | ((encoded.bits as u64) << depth);
+                let total_bits = depth + encoded.nbits as usize;
+                writer.write(total_bits, data)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -809,35 +1007,62 @@ pub fn build_entropy_code_with_options(
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {
-    use crate::vardct::cluster::{Histogram as TinyHistogram, cluster_histograms};
+    // Compute the required alphabet size. Without LZ77, tokens fit in ALPHABET_SIZE (64).
+    // With LZ77, length tokens have symbol = lz77.min_symbol + Lz77UintCoder token (up to ~31).
+    let alphabet_size = if let Some(lz77_params) = lz77 {
+        // min_symbol + max possible Lz77UintCoder token (1 + floor_log2(u32::MAX) = 32)
+        (lz77_params.min_symbol as usize + 32).max(ALPHABET_SIZE)
+    } else {
+        ALPHABET_SIZE
+    };
 
-    // Build per-context histograms using VarDCT's histogram type
-    let mut histograms: Vec<TinyHistogram> =
-        (0..num_contexts).map(|_| TinyHistogram::new()).collect();
+    // Build per-context histograms (Vec-based for arbitrary alphabet size)
+    let mut histograms: Vec<Vec<u32>> = (0..num_contexts)
+        .map(|_| vec![0u32; alphabet_size])
+        .collect();
+    let mut total_counts: Vec<u32> = vec![0; num_contexts];
     for token in tokens {
         let ctx = token.context as usize;
         let (_encoded, sym) = encode_token_value(token, lz77);
-        histograms[ctx].add(sym as usize);
+        histograms[ctx][sym as usize] += 1;
+        total_counts[ctx] += 1;
     }
 
-    let (context_map, clustered_histograms) = if enhanced_clustering {
-        // Use the enhanced clustering from entropy_coding::cluster
+    // Cluster histograms
+    // For large alphabets (LZ77 with Huffman), always use enhanced clustering to
+    // merge histograms properly. The fast TinyHistogram path only supports ALPHABET_SIZE=64.
+    let use_enhanced = enhanced_clustering || alphabet_size > ALPHABET_SIZE;
+    let (context_map, clustered_counts, clustered_totals) = if !use_enhanced {
+        // Fast path: use the fixed-size TinyHistogram clustering for small alphabets
+        use crate::vardct::cluster::{Histogram as TinyHistogram, cluster_histograms};
+
+        let mut tiny_histograms: Vec<TinyHistogram> =
+            (0..num_contexts).map(|_| TinyHistogram::new()).collect();
+        for (ctx, (histo, &total)) in histograms.iter().zip(total_counts.iter()).enumerate() {
+            for (sym, &count) in histo.iter().enumerate() {
+                tiny_histograms[ctx].counts[sym] = count;
+            }
+            tiny_histograms[ctx].total_count = total;
+        }
+
+        let context_map = cluster_histograms(&mut tiny_histograms);
+        let counts: Vec<Vec<u32>> = tiny_histograms.iter().map(|h| h.counts.to_vec()).collect();
+        let totals: Vec<u32> = tiny_histograms.iter().map(|h| h.total_count).collect();
+        (context_map, counts, totals)
+    } else {
         use crate::entropy_coding::cluster::{
             ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
         };
         use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
-        // Convert tiny histograms to enhanced histogram type
         let enhanced_histos: Vec<EnhancedHistogram> = histograms
             .iter()
             .map(|h| {
-                let counts: Vec<i32> = h.counts.iter().map(|&c| c as i32).collect();
+                let counts: Vec<i32> = h.iter().map(|&c| c as i32).collect();
                 EnhancedHistogram::from_counts(&counts)
             })
             .collect();
 
-        // Run enhanced clustering with pair merge refinement
-        // Use Huffman cost model since tiny encoder uses Huffman codes
         let result = enhanced_cluster(
             ClusteringType::Best,
             EntropyType::Huffman,
@@ -846,51 +1071,57 @@ pub fn build_entropy_code_with_options(
         )
         .expect("Enhanced clustering failed");
 
-        // Convert back to tiny histogram type for Huffman tree building
-        let out_histos: Vec<TinyHistogram> = result
+        let counts: Vec<Vec<u32>> = result
             .histograms
             .iter()
-            .map(|h| {
-                let mut th = TinyHistogram::new();
-                for (i, &count) in h.counts.iter().enumerate() {
-                    if i < ALPHABET_SIZE {
-                        th.counts[i] = count as u32;
-                        th.total_count += count as u32;
-                    }
-                }
-                th
-            })
+            .map(|h| h.counts.iter().map(|&c| c as u32).collect())
             .collect();
-
-        // Convert symbols to context map
+        let totals: Vec<u32> = counts.iter().map(|c| c.iter().sum()).collect();
         let ctx_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
-        (ctx_map, out_histos)
-    } else {
-        // Use the simple fast clustering
-        let context_map = cluster_histograms(&mut histograms);
-        (context_map, histograms)
+        (ctx_map, counts, totals)
     };
 
-    // Build a PrefixCode from each clustered histogram
-    let prefix_codes: Vec<PrefixCode> = clustered_histograms
+    // Build a DynPrefixCode from each clustered histogram
+    let prefix_codes: Vec<DynPrefixCode> = clustered_counts
         .iter()
-        .map(|h| {
-            let mut depths = [0u8; ALPHABET_SIZE];
-            let mut bits = [0u16; ALPHABET_SIZE];
-            if h.total_count > 0 {
-                create_huffman_tree(&h.counts, ALPHABET_SIZE, 15, &mut depths);
+        .zip(clustered_totals.iter())
+        .map(|(counts, &total)| {
+            let alpha = counts.len();
+            let mut depths = vec![0u8; alpha];
+            let mut bits = vec![0u16; alpha];
+            if total > 0 {
+                create_huffman_tree(counts, alpha, 15, &mut depths);
             } else {
-                // Empty histogram: single-symbol code for symbol 0
                 depths[0] = 1;
             }
             convert_bit_depths_to_symbols(&depths, &mut bits);
-            PrefixCode { depths, bits }
+            DynPrefixCode { depths, bits }
         })
         .collect();
+
+    // Build cached static codes if alphabet fits in ALPHABET_SIZE
+    let static_codes = if alphabet_size <= ALPHABET_SIZE {
+        Some(
+            prefix_codes
+                .iter()
+                .map(|dpc| {
+                    let mut depths = [0u8; ALPHABET_SIZE];
+                    let mut bits = [0u16; ALPHABET_SIZE];
+                    let len = dpc.depths.len().min(ALPHABET_SIZE);
+                    depths[..len].copy_from_slice(&dpc.depths[..len]);
+                    bits[..len].copy_from_slice(&dpc.bits[..len]);
+                    PrefixCode { depths, bits }
+                })
+                .collect(),
+        )
+    } else {
+        None
+    };
 
     OwnedEntropyCode {
         context_map,
         prefix_codes,
+        static_codes,
     }
 }
 

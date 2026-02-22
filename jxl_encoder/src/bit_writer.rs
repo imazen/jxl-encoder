@@ -686,7 +686,10 @@ mod tests {
         assert_eq!(u64_decode(&u64_encode(1 << 28).1), 1 << 28);
 
         // Value (1<<32)-1
-        assert_eq!(u64_decode(&u64_encode((1u64 << 32) - 1).1), (1u64 << 32) - 1);
+        assert_eq!(
+            u64_decode(&u64_encode((1u64 << 32) - 1).1),
+            (1u64 << 32) - 1
+        );
 
         // Value 1<<32
         assert_eq!(u64_decode(&u64_encode(1u64 << 32).1), 1u64 << 32);
@@ -699,13 +702,28 @@ mod tests {
     fn test_u64_coder_roundtrip_exhaustive() {
         // Test values from libjxl's TestU64Coder (fields_test.cc)
         let test_values: &[u64] = &[
-            0, 1, 15, 16, 17, 271, 272, 273, 4096, 1 << 16, 1 << 28,
-            (1u64 << 32) - 1, 1u64 << 32, 1u64 << 63,
+            0,
+            1,
+            15,
+            16,
+            17,
+            271,
+            272,
+            273,
+            4096,
+            1 << 16,
+            1 << 28,
+            (1u64 << 32) - 1,
+            1u64 << 32,
+            1u64 << 63,
         ];
         for &v in test_values {
             let encoded = u64_encode(v).1;
             let decoded = u64_decode(&encoded);
-            assert_eq!(decoded, v, "U64 roundtrip failed for value {v}: encoded {encoded:?}, decoded {decoded}");
+            assert_eq!(
+                decoded, v,
+                "U64 roundtrip failed for value {v}: encoded {encoded:?}, decoded {decoded}"
+            );
         }
     }
 }

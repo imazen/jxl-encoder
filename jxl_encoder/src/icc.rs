@@ -9,10 +9,8 @@
 //! then entropy-coded using Huffman with 41 contexts.
 
 use crate::bit_writer::BitWriter;
-use crate::entropy_coding::encode::{
-    build_entropy_code_with_options, write_entropy_code, write_tokens,
-};
-use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header, Lz77Method};
+use crate::entropy_coding::encode::build_entropy_code_with_options;
+use crate::entropy_coding::lz77::{Lz77Method, apply_lz77, write_lz77_header};
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
@@ -782,16 +780,15 @@ pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
         NUM_ICC_CONTEXTS
     };
     let code = build_entropy_code_with_options(&tokens, num_contexts, false, lz77_params.as_ref());
-    let code_ref = code.as_entropy_code();
 
     // Write LZ77 header (enabled or disabled)
     write_lz77_header(lz77_params.as_ref(), writer)?;
 
     // Write entropy code header (context map + prefix codes)
-    write_entropy_code(&code_ref, writer)?;
+    code.write_header(writer)?;
 
     // Write tokens (with LZ77 if enabled)
-    write_tokens(&tokens, &code_ref, lz77_params.as_ref(), writer)?;
+    code.write_tokens_owned(&tokens, lz77_params.as_ref(), writer)?;
 
     Ok(())
 }
