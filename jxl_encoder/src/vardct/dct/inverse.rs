@@ -467,22 +467,9 @@ pub fn idct_64x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 4096);
     debug_assert!(output.len() >= 4096);
 
-    let mut tmp = [0.0f32; 4096];
-
-    for row in 0..64 {
-        let s = row * 64;
-        tmp[s..s + 64].copy_from_slice(&input[s..s + 64]);
-        idct1d_64(&mut tmp[s..s + 64]);
-    }
-
-    let mut transposed = [0.0f32; 4096];
-    transpose::<64, 64>(&tmp, &mut transposed);
-
-    for row in 0..64 {
-        let s = row * 64;
-        output[s..s + 64].copy_from_slice(&transposed[s..s + 64]);
-        idct1d_64(&mut output[s..s + 64]);
-    }
+    let input_arr: &[f32; 4096] = input[..4096].try_into().unwrap();
+    let output_arr: &mut [f32; 4096] = (&mut output[..4096]).try_into().unwrap();
+    jxl_simd::idct_64x64(input_arr, output_arr);
 }
 
 /// Compute 64x32 inverse DCT (exactly reverses dct_64x32).
@@ -493,29 +480,9 @@ pub fn idct_64x32(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let mut tmp = [0.0f32; 2048];
-
-    // 64pt IDCT on each of 32 rows (stride 64)
-    for row in 0..32 {
-        let s = row * 64;
-        tmp[s..s + 64].copy_from_slice(&input[s..s + 64]);
-        idct1d_64(&mut tmp[s..s + 64]);
-    }
-
-    // Transpose 32x64 -> 64x32
-    let mut transposed = [0.0f32; 2048];
-    for row in 0..32 {
-        for col in 0..64 {
-            transposed[col * 32 + row] = tmp[row * 64 + col];
-        }
-    }
-
-    // 32pt IDCT on each of 64 rows (stride 32)
-    for row in 0..64 {
-        let s = row * 32;
-        output[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
-        idct1d_32(&mut output[s..s + 32]);
-    }
+    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
+    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
+    jxl_simd::idct_64x32(input_arr, output_arr);
 }
 
 /// Compute 32x64 inverse DCT (exactly reverses dct_32x64).
@@ -525,36 +492,9 @@ pub fn idct_32x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    // Undo final transpose: 32x64 -> 64x32
-    let mut transposed = [0.0f32; 2048];
-    for row in 0..32 {
-        for col in 0..64 {
-            transposed[col * 32 + row] = input[row * 64 + col];
-        }
-    }
-
-    // 32pt IDCT on each of 64 rows (stride 32)
-    let mut tmp = [0.0f32; 2048];
-    for row in 0..64 {
-        let s = row * 32;
-        tmp[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
-        idct1d_32(&mut tmp[s..s + 32]);
-    }
-
-    // Transpose 64x32 -> 32x64
-    let mut transposed2 = [0.0f32; 2048];
-    for row in 0..64 {
-        for col in 0..32 {
-            transposed2[col * 64 + row] = tmp[row * 32 + col];
-        }
-    }
-
-    // 64pt IDCT on each of 32 rows (stride 64)
-    for row in 0..32 {
-        let s = row * 64;
-        output[s..s + 64].copy_from_slice(&transposed2[s..s + 64]);
-        idct1d_64(&mut output[s..s + 64]);
-    }
+    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
+    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
+    jxl_simd::idct_32x64(input_arr, output_arr);
 }
 
 /// Generic N-point 1D IDCT reference implementation.

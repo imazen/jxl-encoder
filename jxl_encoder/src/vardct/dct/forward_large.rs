@@ -276,35 +276,9 @@ pub fn dct_64x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 4096);
     debug_assert!(output.len() >= 4096);
 
-    let mut tmp = [0.0f32; 4096];
-
-    // Transform rows (64 columns each)
-    for row in 0..64 {
-        let row_start = row * 64;
-        tmp[row_start..row_start + 64].copy_from_slice(&input[row_start..row_start + 64]);
-        dct1d_64(&mut tmp[row_start..row_start + 64]);
-        // Scale by 1/N
-        for i in 0..64 {
-            tmp[row_start + i] *= 1.0 / 64.0;
-        }
-    }
-
-    // Transpose 64x64
-    let mut transposed = [0.0f32; 4096];
-    transpose::<64, 64>(&tmp, &mut transposed);
-
-    // Transform columns (now rows after transpose)
-    for row in 0..64 {
-        let row_start = row * 64;
-        dct1d_64(&mut transposed[row_start..row_start + 64]);
-        // Scale by 1/N
-        for i in 0..64 {
-            transposed[row_start + i] *= 1.0 / 64.0;
-        }
-    }
-
-    // DO NOT transpose back — square blocks stay transposed.
-    output[..4096].copy_from_slice(&transposed);
+    let input_arr: &[f32; 4096] = input[..4096].try_into().unwrap();
+    let output_arr: &mut [f32; 4096] = (&mut output[..4096]).try_into().unwrap();
+    jxl_simd::dct_64x64(input_arr, output_arr);
 }
 
 /// Compute scaled 64x32 DCT (64 rows, 32 columns).
@@ -317,37 +291,9 @@ pub fn dct_64x32(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let mut tmp = [0.0f32; 2048];
-
-    // Transform rows (32 columns each)
-    for row in 0..64 {
-        let row_start = row * 32;
-        tmp[row_start..row_start + 32].copy_from_slice(&input[row_start..row_start + 32]);
-        dct1d_32(&mut tmp[row_start..row_start + 32]);
-        for i in 0..32 {
-            tmp[row_start + i] *= 1.0 / 32.0;
-        }
-    }
-
-    // Transpose 64x32 -> 32x64
-    let mut transposed = [0.0f32; 2048];
-    for row in 0..64 {
-        for col in 0..32 {
-            transposed[col * 64 + row] = tmp[row * 32 + col];
-        }
-    }
-
-    // Transform columns (now 64 elements each in rows after transpose)
-    for row in 0..32 {
-        let row_start = row * 64;
-        dct1d_64(&mut transposed[row_start..row_start + 64]);
-        for i in 0..64 {
-            transposed[row_start + i] *= 1.0 / 64.0;
-        }
-    }
-
-    // No final transpose — ROWS >= COLS branch
-    output[..2048].copy_from_slice(&transposed);
+    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
+    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
+    jxl_simd::dct_64x32(input_arr, output_arr);
 }
 
 /// Compute scaled 32x64 DCT (32 rows, 64 columns).
@@ -360,41 +306,9 @@ pub fn dct_32x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let mut tmp = [0.0f32; 2048];
-
-    // Transform rows (64 columns each)
-    for row in 0..32 {
-        let row_start = row * 64;
-        tmp[row_start..row_start + 64].copy_from_slice(&input[row_start..row_start + 64]);
-        dct1d_64(&mut tmp[row_start..row_start + 64]);
-        for i in 0..64 {
-            tmp[row_start + i] *= 1.0 / 64.0;
-        }
-    }
-
-    // Transpose 32x64 -> 64x32
-    let mut transposed = [0.0f32; 2048];
-    for row in 0..32 {
-        for col in 0..64 {
-            transposed[col * 32 + row] = tmp[row * 64 + col];
-        }
-    }
-
-    // Transform columns (now 32 elements each)
-    for row in 0..64 {
-        let row_start = row * 32;
-        dct1d_32(&mut transposed[row_start..row_start + 32]);
-        for i in 0..32 {
-            transposed[row_start + i] *= 1.0 / 32.0;
-        }
-    }
-
-    // Transpose back 64x32 -> 32x64 (ROWS < COLS branch includes final transpose)
-    for row in 0..64 {
-        for col in 0..32 {
-            output[col * 64 + row] = transposed[row * 32 + col];
-        }
-    }
+    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
+    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
+    jxl_simd::dct_32x64(input_arr, output_arr);
 }
 
 /// Extract DC values from 64x64 DCT coefficients.

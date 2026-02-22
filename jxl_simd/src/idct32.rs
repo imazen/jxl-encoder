@@ -362,24 +362,22 @@ fn scatter_col(
     }
 }
 
-/// AVX2 batched 32-point inverse DCT with *= 32 scaling.
+/// AVX2 batched 32-point core inverse DCT WITHOUT scaling.
 ///
 /// `v[0..32]` holds positions 0-31 across 8 independent 1D transforms.
 /// Recursively calls `idct1d_16_core_batch` from `idct16.rs` for the two halves.
+/// Does NOT apply the *= 32 scaling factor — use `idct1d_32_batch` for the scaled version.
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 #[inline(always)]
-pub(crate) fn idct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 32]) {
+pub(crate) fn idct1d_32_core_batch(
+    token: archmage::X64V3Token,
+    v: &mut [magetypes::simd::f32x8; 32],
+) {
     use magetypes::simd::f32x8;
 
-    let scale32 = f32x8::splat(token, 32.0);
     let half = f32x8::splat(token, 0.5);
     let inv_sqrt2 = f32x8::splat(token, 1.0 / SQRT2);
-
-    // Scale by 32
-    for vi in v.iter_mut() {
-        *vi *= scale32;
-    }
 
     // De-interleave: even → first_half, odd → second_half
     let mut first = [f32x8::zero(token); 16];
@@ -411,6 +409,26 @@ pub(crate) fn idct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::s
         v[i] = (first[i] + second[i]) * half;
         v[31 - i] = (first[i] - second[i]) * half;
     }
+}
+
+/// AVX2 batched 32-point inverse DCT with *= 32 scaling.
+///
+/// `v[0..32]` holds positions 0-31 across 8 independent 1D transforms.
+/// Applies *= 32 scaling then delegates to `idct1d_32_core_batch`.
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[inline(always)]
+pub(crate) fn idct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 32]) {
+    use magetypes::simd::f32x8;
+
+    let scale32 = f32x8::splat(token, 32.0);
+
+    // Scale by 32
+    for vi in v.iter_mut() {
+        *vi *= scale32;
+    }
+
+    idct1d_32_core_batch(token, v);
 }
 
 /// AVX2 32×32 inverse DCT.

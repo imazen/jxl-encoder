@@ -8,7 +8,7 @@
 | ~~**P1**~~ | ~~DCT/IDCT 32×16, 16×32~~ | ✅ DONE — same modules, all 6 functions | 3-5× on DCT32x16 blocks |
 | ~~**P2**~~ | ~~sRGB→linear conversion~~ | ✅ DONE — 256-entry const LUT for u8 (eliminates 24M powf calls) | 4-8× on input conversion |
 | **P3** | Quantize AC (DCT16+) | Only DCT8 quantize is SIMD. DCT16/32/64 blocks quantize via scalar loops over 256-4096 coefficients. | 2-4× on large block quant |
-| **P4** | DCT/IDCT 64×64, 64×32, 32×64 | Used at d≥1.0. Less frequent than DCT32 but still scalar 4096-element transforms. | 3-5× on DCT64 blocks |
+| ~~**P4**~~ | ~~DCT/IDCT 64×64, 64×32, 32×64~~ | ✅ DONE — AVX2 in `dct64.rs`/`idct64.rs`, wired into encoder | 3-5× on DCT64 blocks |
 | **P5** | Large block transpose (32×32, 64×64) | Supporting operation for large DCTs. Scalar element-by-element copy. | 2-3× (part of DCT chain) |
 | **P6** | ANS token cost (Shannon) | `log2()` per histogram bin during strategy evaluation. Moderate frequency. | 2-4× on entropy estimation |
 | **P7** | FastPow2f / FastPowf general | Used by adaptive quant modulations, but currently embedded. General SIMD fast math library would benefit multiple callers. | Enables other optimizations |
@@ -25,11 +25,11 @@
 | 4 | IDCT 16×8, 8×16, 16×16 | `dct-inl.h` | `jxl_simd/src/idct16.rs` | ✅ | — |
 | 5 | DCT 32×32 | `dct-inl.h` | `jxl_simd/src/dct32.rs` | ✅ | ~~P0~~ |
 | 6 | DCT 32×16, 16×32 | `dct-inl.h` | `jxl_simd/src/dct32.rs` | ✅ | ~~P1~~ |
-| 7 | DCT 64×64 | `dct-inl.h` | `vardct/dct/forward_large.rs` | ❌ | P4 |
-| 8 | DCT 64×32, 32×64 | `dct-inl.h` | `vardct/dct/forward_large.rs` | ❌ | P4 |
+| 7 | DCT 64×64 | `dct-inl.h` | `jxl_simd/src/dct64.rs` | ✅ | ~~P4~~ |
+| 8 | DCT 64×32, 32×64 | `dct-inl.h` | `jxl_simd/src/dct64.rs` | ✅ | ~~P4~~ |
 | 9 | IDCT 32×32 | `dct-inl.h` | `jxl_simd/src/idct32.rs` | ✅ | ~~P0~~ |
 | 10 | IDCT 32×16, 16×32 | `dct-inl.h` | `jxl_simd/src/idct32.rs` | ✅ | ~~P1~~ |
-| 11 | IDCT 64×64, 64×32, 32×64 | `dct-inl.h` | `vardct/dct/inverse_large.rs` | ❌ | P4 |
+| 11 | IDCT 64×64, 64×32, 32×64 | `dct-inl.h` | `jxl_simd/src/idct64.rs` | ✅ | ~~P4~~ |
 | 12 | 8×8 transpose | `transpose-inl.h` | `jxl_simd/src/transpose.rs` | ✅ | — |
 | 13 | NxM transpose (N>8) | `transpose-inl.h` | `vardct/dct/forward_large.rs` | ❌ | P5 |
 | 14 | RGB→XYB | `enc_xyb.cc` | `jxl_simd/src/xyb.rs` | ✅ | — |
