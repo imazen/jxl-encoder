@@ -30,6 +30,7 @@ mod block_l2;
 mod cfl;
 mod dct16;
 mod dct32;
+mod dct64;
 mod dct8;
 mod dequant;
 mod entropy;
@@ -38,6 +39,7 @@ mod gab;
 mod gaborish5x5;
 mod idct16;
 mod idct32;
+mod idct64;
 mod mask1x1;
 mod noise;
 mod pixel_loss;
@@ -64,6 +66,7 @@ pub use cfl::{NEWTON_EPS_DEFAULT, NEWTON_MAX_ITERS_DEFAULT};
 pub use dct8::{dct_8x8, idct_8x8};
 pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
 pub use dct32::{dct_16x32, dct_32x16, dct_32x32};
+pub use dct64::{dct_32x64, dct_64x32, dct_64x64};
 pub use dequant::dequant_block_dct8;
 pub use entropy::{EntropyCoeffResult, entropy_estimate_coeffs};
 pub use epf::{epf_step1, epf_step2, pad_plane};
@@ -71,6 +74,7 @@ pub use gab::gab_smooth_channel;
 pub use gaborish5x5::gaborish_5x5_channel;
 pub use idct16::{idct_8x16, idct_16x8, idct_16x16};
 pub use idct32::{idct_16x32, idct_32x16, idct_32x32};
+pub use idct64::{idct_32x64, idct_64x32, idct_64x64};
 pub use mask1x1::compute_mask1x1;
 pub use noise::denoise_channel;
 pub use pixel_loss::pixel_domain_loss;
@@ -87,6 +91,7 @@ pub use cfl::find_best_multiplier_scalar as cfl_find_best_multiplier_scalar;
 pub use dct8::{dct_8x8_scalar, idct_8x8_scalar};
 pub use dct16::{dct_8x16_scalar, dct_16x8_scalar, dct_16x16_scalar};
 pub use dct32::{dct_16x32_scalar, dct_32x16_scalar, dct_32x32_scalar};
+pub use dct64::{dct_32x64_scalar, dct_64x32_scalar, dct_64x64_scalar};
 pub use dequant::dequant_dct8_scalar;
 pub use entropy::entropy_coeffs_scalar;
 pub use epf::{epf_step1_scalar, epf_step2_scalar};
@@ -94,6 +99,7 @@ pub use gab::gab_smooth_scalar;
 pub use gaborish5x5::gaborish_5x5_scalar;
 pub use idct16::{idct_8x16_scalar, idct_16x8_scalar, idct_16x16_scalar};
 pub use idct32::{idct_16x32_scalar, idct_32x16_scalar, idct_32x32_scalar};
+pub use idct64::{idct_32x64_scalar, idct_64x32_scalar, idct_64x64_scalar};
 pub use mask1x1::compute_mask1x1_scalar;
 pub use noise::denoise_channel_scalar;
 pub use pixel_loss::pixel_domain_loss_scalar;
@@ -116,6 +122,8 @@ pub use dct16::{dct_8x16_avx2, dct_16x8_avx2, dct_16x16_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use dct32::{dct_16x32_avx2, dct_32x16_avx2, dct_32x32_avx2};
 #[cfg(target_arch = "x86_64")]
+pub use dct64::{dct_32x64_avx2, dct_64x32_avx2, dct_64x64_avx2};
+#[cfg(target_arch = "x86_64")]
 pub use dequant::dequant_dct8_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use entropy::entropy_coeffs_avx2;
@@ -129,6 +137,8 @@ pub use gaborish5x5::gaborish_5x5_avx2;
 pub use idct16::{idct_8x16_avx2, idct_16x8_avx2, idct_16x16_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use idct32::{idct_16x32_avx2, idct_32x16_avx2, idct_32x32_avx2};
+#[cfg(target_arch = "x86_64")]
+pub use idct64::{idct_32x64_avx2, idct_64x32_avx2, idct_64x64_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use mask1x1::compute_mask1x1_avx2;
 #[cfg(target_arch = "x86_64")]
