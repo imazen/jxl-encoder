@@ -682,6 +682,30 @@ pub(super) fn find_best_32x32_transform(
     // Quadrant [qy][qx] covers blocks (qx*2..qx*2+1, qy*2..qy*2+1).
     // libjxl stores costs in entropy_estimate[] and sums per quadrant;
     // we re-evaluate (gives identical results since estimate_entropy is deterministic).
+    //
+    // CRITICAL: Re-evaluation must apply the same entropy_mul adjustments
+    // (kFavor2X2, kAvoidEntropyOfTransforms) that were used during the 8x8
+    // selection phase. In libjxl these adjustments are baked into the stored
+    // entropy_estimate[] values. Without them, DCT2x2/IDENTITY sub-costs are
+    // inflated, making merge candidates relatively cheaper and causing
+    // over-merging on borderline blocks (e.g. 1025469 d=2.0 hotspot).
+    let favor_weight = if distance < 5.0 {
+        ((5.0 - distance) / 5.0_f32).powi(2)
+    } else {
+        0.0
+    };
+    let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
+    let avoid_transforms_adjust = if distance > 4.0 {
+        let mul = if distance < 12.0 {
+            (12.0 - 4.0) / (distance - 4.0)
+        } else {
+            1.0
+        };
+        profile.k_avoid_transforms_base * mul
+    } else {
+        0.0
+    };
+
     let mut quadrant_cost = [[0.0f32; 2]; 2];
     for iy in 0..4 {
         for ix in 0..4 {
@@ -702,6 +726,18 @@ pub(super) fn find_best_32x32_transform(
                 0.0
             };
 
+            // Apply the same entropy_mul adjustments as FindBest8x8Transform.
+            // DCT2x2/IDENTITY: kFavor2X2 discount. Other non-DCT8: kAvoidEntropy penalty.
+            // Larger transforms (16x8, 16x16): no adjustment.
+            let adjust = match sub_raw {
+                RAW_STRATEGY_DCT2X2 | RAW_STRATEGY_IDENTITY => favor_2x2_adjust,
+                RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
+                | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+                    avoid_transforms_adjust
+                }
+                _ => 0.0,
+            };
+
             let e = estimate_entropy_with_mask(
                 sub_raw,
                 xyb,
@@ -716,7 +752,7 @@ pub(super) fn find_best_32x32_transform(
                 ytob,
                 mask1x1,
                 mask1x1_stride,
-                0.0,
+                adjust,
                 cost_bases,
                 &profile.entropy_mul_table,
                 scratch,
@@ -990,6 +1026,25 @@ pub(super) fn find_best_64x64_transform(
 
     // Compute per-quadrant sub-costs matching libjxl's entropy[2][2] structure.
     // Quadrant [qy][qx] covers blocks (qx*4..qx*4+3, qy*4..qy*4+3).
+    //
+    // Same entropy_mul adjustment fix as find_best_32x32_transform — see comment there.
+    let favor_weight = if distance < 5.0 {
+        ((5.0 - distance) / 5.0_f32).powi(2)
+    } else {
+        0.0
+    };
+    let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
+    let avoid_transforms_adjust = if distance > 4.0 {
+        let mul = if distance < 12.0 {
+            (12.0 - 4.0) / (distance - 4.0)
+        } else {
+            1.0
+        };
+        profile.k_avoid_transforms_base * mul
+    } else {
+        0.0
+    };
+
     let mut quadrant_cost = [[0.0f32; 2]; 2];
     for iy in 0..8 {
         for ix in 0..8 {
@@ -1052,6 +1107,16 @@ pub(super) fn find_best_64x64_transform(
                 0.0
             };
 
+            // Apply the same entropy_mul adjustments as FindBest8x8Transform.
+            let adjust = match sub_raw {
+                RAW_STRATEGY_DCT2X2 | RAW_STRATEGY_IDENTITY => favor_2x2_adjust,
+                RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
+                | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+                    avoid_transforms_adjust
+                }
+                _ => 0.0,
+            };
+
             let e = estimate_entropy_with_mask(
                 sub_raw,
                 xyb,
@@ -1066,7 +1131,7 @@ pub(super) fn find_best_64x64_transform(
                 ytob,
                 mask1x1,
                 mask1x1_stride,
-                0.0,
+                adjust,
                 cost_bases,
                 &profile.entropy_mul_table,
                 scratch,
