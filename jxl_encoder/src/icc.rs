@@ -12,6 +12,7 @@ use crate::bit_writer::BitWriter;
 use crate::entropy_coding::encode::{
     build_entropy_code_with_options, write_entropy_code, write_tokens,
 };
+use crate::entropy_coding::lz77::{apply_lz77, write_lz77_header, Lz77Method};
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
@@ -755,19 +756,42 @@ pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
         tokens.push(Token::new(ctx, enc[i] as u32));
     }
 
+    // Apply LZ77 to ICC tokens (libjxl enc_icc_codec.cc:455-482).
+    // Optimal for small profiles (<16KB), greedy for larger.
+    // ICC always uses Huffman (force_huffman=true).
+    let lz77_method = if enc.len() < 16384 {
+        Lz77Method::Optimal
+    } else {
+        Lz77Method::Greedy
+    };
+    let (tokens, lz77_params) = match apply_lz77(
+        &tokens,
+        NUM_ICC_CONTEXTS,
+        true, // force_huffman
+        lz77_method,
+        0, // no special distance codes for ICC
+    ) {
+        Some((lz77_tokens, params)) => (lz77_tokens, Some(params)),
+        None => (tokens, None),
+    };
+
     // Build Huffman entropy code (libjxl uses force_huffman=true for ICC)
-    let code = build_entropy_code_with_options(&tokens, NUM_ICC_CONTEXTS, false, None);
+    let num_contexts = if lz77_params.is_some() {
+        NUM_ICC_CONTEXTS + 1 // +1 for LZ77 distance context
+    } else {
+        NUM_ICC_CONTEXTS
+    };
+    let code = build_entropy_code_with_options(&tokens, num_contexts, false, lz77_params.as_ref());
     let code_ref = code.as_entropy_code();
 
-    // Write LZ77 header: disabled (1 bit = 0)
-    // The decoder reads LZ77 header before the entropy code, so this must come first.
-    writer.write(1, 0)?;
+    // Write LZ77 header (enabled or disabled)
+    write_lz77_header(lz77_params.as_ref(), writer)?;
 
     // Write entropy code header (context map + prefix codes)
     write_entropy_code(&code_ref, writer)?;
 
-    // Write tokens (no LZ77)
-    write_tokens(&tokens, &code_ref, None, writer)?;
+    // Write tokens (with LZ77 if enabled)
+    write_tokens(&tokens, &code_ref, lz77_params.as_ref(), writer)?;
 
     Ok(())
 }
