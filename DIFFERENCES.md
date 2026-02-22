@@ -56,16 +56,11 @@ same output. No fix needed.
 matching libjxl `enc_xyb.cc:91-95`. No-op for sRGB, prevents `cbrt(negative)` for
 wide-gamut inputs.
 
-### DIFF-5: XYB missing `intensity_target` scaling for HDR
+### ~~DIFF-5~~: XYB missing `intensity_target` scaling — FIXED (399b697)
 
-**File**: `jxl_encoder/src/color/xyb.rs:100-108`
-**Impact**: None for SDR (intensity_target=255, factor=1.0). Wrong for HDR.
-
-**Our code**: `mixed[c] = sum(matrix[c][i] * rgb[i]) + bias`
-**libjxl**: `mixed[c] = sum(matrix[c][i] * rgb[i] * intensity_target/255.0) + bias`
-
-**Fix**: Multiply each linear RGB component by `intensity_target / 255.0` before the
-matrix multiply. The `intensity_target` comes from `ImageMetadata` (default 255 for SDR).
+**Status**: FIXED. Added `linear_rgb_to_xyb_scaled()` with explicit intensity_target
+parameter. Existing `linear_rgb_to_xyb()` uses default 255.0 (no-op for SDR).
+Matches libjxl `ComputePremulAbsorb` (enc_xyb.cc:214-228).
 
 ### ~~DIFF-6~~: ~~Modular tree properties differ from libjxl~~ FALSE ALARM (dead code)
 
