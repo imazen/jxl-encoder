@@ -7,7 +7,7 @@ Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
-**Score: 13 fixed, 3 false alarms, 3 remaining (1 DIFF + 2 OPTs)**
+**Score: 14 fixed, 3 false alarms, 2 remaining (1 DIFF + 1 OPT)**
 
 ---
 
@@ -126,20 +126,14 @@ uses `q = use_dct8 ? 1 : quantizer->Scale() * 128 * qq`. When `use_dct8=true` (p
 4. **Precision constraint**: All normalized counts must be valid for the ANS table size
    (sum to `1 << ANS_LOG_TAB_SIZE = 4096`).
 
-### OPT-2: ANS population cost is approximate in clustering
+### ~~OPT-2~~: ANS population cost is approximate in clustering — FIXED (71943ac)
 
-**File**: `jxl_encoder/src/entropy_coding/ans.rs:912-924`
-**Impact**: Histogram merge decisions in Best clustering mode use imprecise cost model.
-Estimated 0.1-0.3% file size impact.
-
-**Our code**: `cost = -sum(count * log2(count/total))` (Shannon cross-entropy)
-**libjxl**: `ANSPopulationCost()` normalizes histogram to ANS table and computes the
-real coding cost using fixed-point log2 with normalized counts. Includes the actual
-rounding loss from normalization.
-
-**Fix**: Implement `ans_population_cost()` that normalizes the histogram to
-`ANS_TAB_SIZE=4096` and computes `cost = total * ANS_LOG_TAB_SIZE - sum(count * log2(norm_count))`.
-Use this in `histogram_distance()` when `ClusteringType::Best`.
+**File**: `jxl_encoder/src/entropy_coding/ans.rs`
+**Status**: FIXED. Replaced Shannon cross-entropy approximation with precise ANS
+cost function matching libjxl's `EstimateDataBits` (enc_ans.cc:362-370).
+New `estimate_data_bits_normalized()` computes `cost = total * ANS_LOG_TAB_SIZE -
+sum(actual_count * log2(norm_count))` using actual symbol counts against normalized
+ANS table counts. Uses f64 for precision. Affects shift selection in `from_histogram`.
 
 ### ~~OPT-3~~: Missing kBest 28-config HybridUint search — FIXED (6900b43)
 
