@@ -22,7 +22,6 @@ pub const ANS_MAX_ALPHABET_SIZE: usize = 256;
 pub const ANS_SIGNATURE: u32 = 0x13;
 
 /// RLE marker symbol in logcount prefix code.
-#[allow(dead_code)]
 const RLE_MARKER_SYM: u8 = 13;
 
 /// Prefix code table for encoding log-frequency values (0-13).
@@ -1023,27 +1022,84 @@ impl ANSEncodingHistogram {
         }
         write_var_len_uint8(writer, (self.alphabet_size - 3) as u8)?;
 
-        // Encode log-frequency values for each symbol using the fixed prefix code.
-        // The decoder determines omit_pos as the first symbol with highest logcount.
+        // Pre-compute logcounts for all symbols
+        let logcounts: Vec<u32> = (0..self.alphabet_size)
+            .map(|i| {
+                let count = self.counts[i];
+                if count <= 0 {
+                    0
+                } else {
+                    floor_log2(count as u32) + 1
+                }
+            })
+            .collect();
+
+        // Pre-compute RLE: for each position i, same[i] = number of consecutive
+        // symbols starting at i+1 that have the same actual count as i.
+        // The decoder fills RLE positions with prev_dist (the actual count), so
+        // all symbols in a run must have identical normalized counts (not just logcounts).
+        // Constraints (libjxl enc_ans.cc:257-273):
+        // - RLE range must not include omit_pos
+        // - RLE marker must not appear at omit_pos+1
+        let mut same = vec![0usize; self.alphabet_size];
+        #[allow(clippy::needless_range_loop)]
         for i in 0..self.alphabet_size {
-            let count = self.counts[i];
+            if i == self.omit_pos {
+                continue;
+            }
+            let mut run = 0;
+            let mut j = i + 1;
+            while j < self.alphabet_size && self.counts[j] == self.counts[i] {
+                if j == self.omit_pos {
+                    break; // Can't include omit_pos in RLE range
+                }
+                run += 1;
+                j += 1;
+            }
+            same[i] = run;
+        }
 
-            // Compute logcount (0 means freq=0, 1-12 means log2(freq)+1)
-            let logcount = if count <= 0 {
-                0
-            } else {
-                floor_log2(count as u32) + 1
-            };
-
+        // Encode log-frequency values with RLE (libjxl enc_ans.cc:300-309).
+        // The decoder determines omit_pos as the first symbol with highest logcount.
+        const MIN_REPS: usize = 4; // Minimum repeat count (decoder reads value+4)
+        let mut i = 0;
+        while i < self.alphabet_size {
             // Write the logcount using fixed prefix code
-            let (nbits, code) = LOGCOUNT_PREFIX_CODE[logcount as usize];
+            let (nbits, code) = LOGCOUNT_PREFIX_CODE[logcounts[i] as usize];
             writer.write(nbits as usize, code as u64)?;
+
+            // If 4+ following symbols have the same logcount, use RLE.
+            // But don't place RLE marker at omit_pos+1 (decoder rejects this).
+            if same[i] >= MIN_REPS && i + 1 != self.omit_pos + 1 {
+                let (rle_nbits, rle_code) = LOGCOUNT_PREFIX_CODE[RLE_MARKER_SYM as usize];
+                writer.write(rle_nbits as usize, rle_code as u64)?;
+                write_var_len_uint8(writer, (same[i] - MIN_REPS) as u8)?;
+                i += same[i]; // Skip the repeated symbols
+            }
+            i += 1;
+        }
+
+        // Build set of RLE-covered positions. The decoder skips precision bits
+        // for these symbols (the `continue` in the RLE range handler).
+        let mut rle_covered = vec![false; self.alphabet_size];
+        {
+            let mut i = 0;
+            while i < self.alphabet_size {
+                if same[i] >= MIN_REPS && i + 1 != self.omit_pos + 1 {
+                    // Positions i+1 through i+same[i] are RLE-covered
+                    for item in rle_covered.iter_mut().take(i + same[i] + 1).skip(i + 1) {
+                        *item = true;
+                    }
+                    i += same[i];
+                }
+                i += 1;
+            }
         }
 
         // Now write precision bits for each non-zero, non-omit symbol with logcount > 1.
-        // The decoder skips precision bits for omit_pos (highest logcount symbol).
+        // Skip RLE-covered positions (decoder skips precision bits for those).
         for i in 0..self.alphabet_size {
-            if i == self.omit_pos {
+            if i == self.omit_pos || rle_covered[i] {
                 continue;
             }
 
@@ -1052,7 +1108,7 @@ impl ANSEncodingHistogram {
                 continue;
             }
 
-            let logcount = floor_log2(count as u32) + 1;
+            let logcount = logcounts[i];
             if logcount <= 1 {
                 // logcount=1 means freq=1, no precision bits needed
                 continue;
