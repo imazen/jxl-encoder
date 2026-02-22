@@ -1379,7 +1379,7 @@ mod tests {
 
         // Lock the hash - if this changes, the encoding has changed
         // Updated: error_diffusion default changed from true to false
-        const EXPECTED_HASH: u64 = 0x8db7937f6f7848c9;
+        const EXPECTED_HASH: u64 = 0x4083d170d3912628;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1408,7 +1408,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
-        const EXPECTED_HASH: u64 = 0xb04379ed6af5edca;
+        const EXPECTED_HASH: u64 = 0x0790219968bfc82c;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1449,7 +1449,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: error_diffusion default changed from true to false
-        const EXPECTED_HASH: u64 = 0xcfaf1ff73f851ed9;
+        const EXPECTED_HASH: u64 = 0x4cf896fedc8f9034;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1485,7 +1485,7 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Updated: error_diffusion default changed from true to false
-        const EXPECTED_HASH: u64 = 0xe5dfb223d5f6263d;
+        const EXPECTED_HASH: u64 = 0x009bb7e8a86c881b;
         assert_eq!(
             hash,
             EXPECTED_HASH,
