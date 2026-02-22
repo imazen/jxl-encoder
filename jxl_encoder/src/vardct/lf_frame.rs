@@ -90,10 +90,11 @@ impl DcQuantFactors {
         // The bitstream stores dc_quant[c] * 128.0 as F16.
         // The decoder reads F16, divides by 128 → gets dc_quant.
         // inv_dc_quant = 1.0 / dc_quant = the effective enc_factor.
+        // unwrap: enc_factors are known-good values (small positive, representable as f16)
         let dc_quant: [f32; 3] = [
-            f16_roundtrip(128.0 / enc_factors[0]) / 128.0,
-            f16_roundtrip(128.0 / enc_factors[1]) / 128.0,
-            f16_roundtrip(128.0 / enc_factors[2]) / 128.0,
+            f16_roundtrip(128.0 / enc_factors[0]).unwrap() / 128.0,
+            f16_roundtrip(128.0 / enc_factors[1]).unwrap() / 128.0,
+            f16_roundtrip(128.0 / enc_factors[2]).unwrap() / 128.0,
         ];
         let inv_dc_quant: [f32; 3] = dc_quant.map(|q| 1.0 / q);
 
@@ -491,7 +492,7 @@ mod tests {
         let f = DcQuantFactors::compute(1.0);
         // dc_quant values should survive F16 roundtrip
         for c in 0..3 {
-            let rt = f16_roundtrip(f.dc_quant[c] * 128.0) / 128.0;
+            let rt = f16_roundtrip(f.dc_quant[c] * 128.0).unwrap() / 128.0;
             assert_eq!(rt, f.dc_quant[c], "channel {c}");
         }
     }

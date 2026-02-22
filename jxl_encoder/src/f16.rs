@@ -12,8 +12,12 @@ use crate::error::Result;
 
 /// Convert f32 to IEEE 754 binary16 (half-precision) bit representation.
 ///
-/// Rounds by truncation (matching libjxl's F16Coder::Write behavior).
-pub fn f32_to_f16_bits(value: f32) -> u16 {
+/// Returns error for Inf, NaN, or values too large for f16 (|value| > 65504).
+/// Matches libjxl's `F16Coder::CanEncode` + `F16Coder::Write` behavior
+/// (enc_fields.cc:168-207, fields.cc:576-582).
+///
+/// Rounds by truncation for representable values.
+pub fn f32_to_f16_bits(value: f32) -> Result<u16> {
     let bits = value.to_bits();
     let sign = (bits >> 31) & 1;
     let exp = ((bits >> 23) & 0xFF) as i32;
@@ -21,39 +25,43 @@ pub fn f32_to_f16_bits(value: f32) -> u16 {
 
     if exp == 0 && mantissa == 0 {
         // Zero
-        return (sign << 15) as u16;
+        return Ok((sign << 15) as u16);
     }
 
     if exp == 0xFF {
-        // Inf or NaN - clamp to max finite
-        return ((sign << 15) | 0x7BFF) as u16;
+        // Inf or NaN — reject (matches libjxl F16Coder::CanEncode)
+        return Err(crate::error::Error::InvalidInput(
+            "F16 cannot encode Inf or NaN".into(),
+        ));
     }
 
     // Rebias exponent: f32 bias=127, f16 bias=15
     let new_exp = exp - 127 + 15;
 
     if new_exp >= 31 {
-        // Overflow → max finite f16
-        return ((sign << 15) | 0x7BFF) as u16;
+        // Overflow — reject (matches libjxl F16Coder::CanEncode: exp > 15)
+        return Err(crate::error::Error::InvalidInput(
+            format!("F16 overflow: {value} exceeds max representable (65504)"),
+        ));
     }
 
     if new_exp <= 0 {
         // Denormalized or underflow
         if new_exp < -10 {
             // Too small
-            return (sign << 15) as u16;
+            return Ok((sign << 15) as u16);
         }
         // Denormalized
         let m = mantissa | 0x80_0000;
         let shift = 1 - new_exp;
         let half_mantissa = (m >> (13 + shift)) as u16;
-        return ((sign << 15) as u16) | half_mantissa;
+        return Ok(((sign << 15) as u16) | half_mantissa);
     }
 
     // Normal case: round mantissa from 23 bits to 10 bits
     let half_mantissa = (mantissa >> 13) as u16;
     let half_exp = (new_exp as u16) << 10;
-    ((sign << 15) as u16) | half_exp | half_mantissa
+    Ok(((sign << 15) as u16) | half_exp | half_mantissa)
 }
 
 /// Convert IEEE 754 binary16 bits back to f32.
@@ -103,13 +111,17 @@ pub fn f16_bits_to_f32(bits: u16) -> f32 {
 ///
 /// This is essential for encoder-decoder parity: the encoder must use the same
 /// values that the decoder will reconstruct from the F16 bitstream fields.
-pub fn f16_roundtrip(value: f32) -> f32 {
-    f16_bits_to_f32(f32_to_f16_bits(value))
+///
+/// Returns error for Inf, NaN, or values too large for f16.
+pub fn f16_roundtrip(value: f32) -> Result<f32> {
+    Ok(f16_bits_to_f32(f32_to_f16_bits(value)?))
 }
 
 /// Write an f32 value as IEEE 754 half-precision (16 bits) to the bitstream.
+///
+/// Returns error for Inf, NaN, or values too large for f16.
 pub fn write_f16(value: f32, writer: &mut BitWriter) -> Result<()> {
-    let bits = f32_to_f16_bits(value);
+    let bits = f32_to_f16_bits(value)?;
     writer.write(16, bits as u64)?;
     Ok(())
 }
@@ -145,15 +157,15 @@ mod tests {
     fn test_f16_roundtrip_exact_values() {
         // Exact representable values should roundtrip perfectly
         for &v in &[0.0f32, 1.0, -1.0, 0.5, -0.5, 2.0, 0.25, 65504.0] {
-            assert_eq!(f16_roundtrip(v), v, "f16_roundtrip({v}) failed");
+            assert_eq!(f16_roundtrip(v).unwrap(), v, "f16_roundtrip({v}) failed");
         }
     }
 
     #[test]
     fn test_f16_roundtrip_zero() {
-        assert_eq!(f16_roundtrip(0.0), 0.0);
+        assert_eq!(f16_roundtrip(0.0).unwrap(), 0.0);
         // Negative zero
-        let neg_zero = f16_roundtrip(-0.0);
+        let neg_zero = f16_roundtrip(-0.0).unwrap();
         assert!(neg_zero.is_sign_negative() && neg_zero == 0.0);
     }
 
@@ -161,10 +173,10 @@ mod tests {
     fn test_f16_roundtrip_truncation() {
         // Values that aren't exactly representable should lose precision
         let v = 1.0 / 3.0; // ~0.333...
-        let rt = f16_roundtrip(v);
+        let rt = f16_roundtrip(v).unwrap();
         assert!((rt - v).abs() < 0.001);
         // But the roundtripped value should itself roundtrip exactly
-        assert_eq!(f16_roundtrip(rt), rt);
+        assert_eq!(f16_roundtrip(rt).unwrap(), rt);
     }
 
     #[test]
@@ -175,7 +187,7 @@ mod tests {
         for &ef in &enc_factors {
             let dc_quant = 1.0 / ef;
             let f16_val = dc_quant * 128.0;
-            let rt = f16_roundtrip(f16_val);
+            let rt = f16_roundtrip(f16_val).unwrap();
             // The roundtripped value divided by 128 gives the decoder's dc_quant
             let decoder_dc_quant = rt / 128.0;
             let decoder_inv = 1.0 / decoder_dc_quant;
@@ -188,20 +200,28 @@ mod tests {
     }
 
     #[test]
-    fn test_f16_overflow_clamps() {
-        // Values too large for f16 should clamp to max finite
-        let big = f16_roundtrip(100000.0);
-        assert_eq!(big, 65504.0);
+    fn test_f16_overflow_rejects() {
+        // Values too large for f16 should return error (matching libjxl)
+        assert!(f16_roundtrip(100000.0).is_err());
+        assert!(f32_to_f16_bits(100000.0).is_err());
+    }
+
+    #[test]
+    fn test_f16_inf_nan_rejects() {
+        // Inf and NaN should return error (matching libjxl F16Coder::CanEncode)
+        assert!(f32_to_f16_bits(f32::INFINITY).is_err());
+        assert!(f32_to_f16_bits(f32::NEG_INFINITY).is_err());
+        assert!(f32_to_f16_bits(f32::NAN).is_err());
     }
 
     #[test]
     fn test_f16_small_values() {
         // f16 min normal is ~6.10e-5, min subnormal is ~5.96e-8
         // 0.0001 is representable as a normal f16
-        let small = f16_roundtrip(0.0001);
+        let small = f16_roundtrip(0.0001).unwrap();
         assert!(small > 0.0 && small < 0.001, "got {small}");
         // The roundtripped value itself should roundtrip exactly
-        assert_eq!(f16_roundtrip(small), small);
+        assert_eq!(f16_roundtrip(small).unwrap(), small);
     }
 
     #[test]
