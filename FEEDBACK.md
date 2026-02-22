@@ -1,11 +1,23 @@
 # Feedback Log
 
-## 2026-02-22: Full audit against libjxl docs
+## 2026-02-22: Full audit against libjxl docs + source verification + fixes
 
 User asked to compare every Rust file against libjxl docs in
 `/home/lilith/work/jxl-efforts/libjxl/docs/src/` (55 doc files). Updated DIFFERENCES.md
 with comprehensive findings: 2 bugs, 9 behavioral differences, 8 optimization gaps,
 and full verified-matches inventory.
+
+Then verified each item against actual libjxl C++ source code. Found 3 false alarms
+(DIFF-2, DIFF-6, DIFF-9) and corrected descriptions for OPT-1, OPT-3, OPT-6.
+
+Then fixed 8 items:
+- BUG-1: U64 varint encoding (3 distinct errors for values >= 273)
+- BUG-2: Container box size overflow for >4GB payloads
+- DIFF-1+DIFF-3: F16 Inf/NaN/overflow now returns error instead of clamping
+- DIFF-4: XYB ZeroIfNegative clamp for wide-gamut
+- DIFF-5: XYB intensity_target scaling for HDR
+- DIFF-8: Skip custom coefficient orders for buckets > 6
+- OPT-6: LZ77 distance cost table extended from 128 to 139 entries
 
 ## 2026-02-15: Squeeze multi-group research
 
