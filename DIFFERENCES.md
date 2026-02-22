@@ -7,7 +7,7 @@ Each item verified against actual libjxl source code (not just docs).
 Organized by severity: bugs first, then behavioral differences, then optimizations,
 then missing features, then verified matches.
 
-**Score: 12 fixed, 3 false alarms, 4 remaining (1 DIFF + 3 OPTs)**
+**Score: 13 fixed, 3 false alarms, 3 remaining (1 DIFF + 2 OPTs)**
 
 ---
 
@@ -166,20 +166,11 @@ actual counts and break at omit_pos boundaries.
 special distance code costs (2.4-9.7 range) from libjxl `enc_lz77.cc:442-446`.
 Previously clamped to entry 127 (17.2), dramatically undervaluing vertical matches.
 
-### OPT-7: No LZ77 for ICC profile encoding
+### ~~OPT-7~~: No LZ77 for ICC profile encoding — FIXED (e51a035)
 
-**File**: `jxl_encoder/src/icc.rs:764`
-**Impact**: ICC profiles are Huffman-only without LZ77. For large ICC profiles (>16KB),
-libjxl uses optimal LZ77; for smaller profiles, greedy LZ77. Typical ICC profiles
-are 0.5-4KB, so impact is modest (estimated 5-15% larger ICC encoding).
-
-**Our code**: `writer.write(1, 0)` — LZ77 disabled
-**libjxl**: `use_lz77 = true` with optimal method for size < 16KB, greedy otherwise
-
-**Fix**: Enable LZ77 for ICC streams. Use the existing `apply_lz77_optimal()` or
-`apply_lz77_backref()` on the ICC token stream before entropy coding. The LZ77
-header should use the same parameters as other streams (min_symbol=224 for ANS,
-512 for Huffman).
+**Status**: FIXED. ICC profiles now use LZ77 backward references before Huffman
+entropy coding. Optimal LZ77 for small profiles (<16KB), greedy for larger.
+Matches libjxl `enc_icc_codec.cc:455-482`.
 
 ### ~~OPT-8~~: Max histogram clusters capped at 96 vs 128 — FIXED (d03697f)
 
