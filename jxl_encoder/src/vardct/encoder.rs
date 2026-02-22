@@ -227,7 +227,7 @@ impl VarDctEncoder {
             enable_gaborish: true,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
             pixel_domain_loss: true, // Full libjxl pixel-domain loss: +0.2-1.9 SSIM2
-            enable_lz77: false,    // LZ77 has known interactions with DCT2x2/IDENTITY strategies
+            enable_lz77: false,     // LZ77 has known interactions with DCT2x2/IDENTITY strategies
             lz77_method: crate::entropy_coding::lz77::Lz77Method::Greedy, // Best compression
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]

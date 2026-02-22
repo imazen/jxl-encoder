@@ -289,9 +289,7 @@ fn quality_compare() {
 
     // Optional filters: QC_FILTER (image name substring), QC_DIST (distance)
     let filter_name = std::env::var("QC_FILTER").ok();
-    let filter_dist: Option<f32> = std::env::var("QC_DIST")
-        .ok()
-        .and_then(|s| s.parse().ok());
+    let filter_dist: Option<f32> = std::env::var("QC_DIST").ok().and_then(|s| s.parse().ok());
 
     if let Some(ref f) = filter_name {
         eprintln!("Filtering images to: {f}");
@@ -312,9 +310,7 @@ fn quality_compare() {
             let matching: Vec<CjxlEntry> = entries
                 .iter()
                 .filter(|e| e.corpus == src.corpus && e.image == src.name)
-                .filter(|e| {
-                    filter_dist.is_none_or(|d| (e.distance - d).abs() < 0.01)
-                })
+                .filter(|e| filter_dist.is_none_or(|d| (e.distance - d).abs() < 0.01))
                 .cloned()
                 .collect();
             if matching.is_empty() {
@@ -413,9 +409,9 @@ fn quality_compare() {
     // Print strategy histogram when filtering (detailed single-image mode)
     if filter_name.is_some() || filter_dist.is_some() {
         const NAMES: [&str; 19] = [
-            "DCT8", "DCT16x8", "DCT8x16", "DCT16x16", "DCT32x32", "DCT4x8", "DCT8x4",
-            "DCT4x4", "IDENTITY", "DCT2X2", "DCT32x16", "DCT16x32", "AFV0", "AFV1",
-            "AFV2", "AFV3", "DCT64x64", "DCT64x32", "DCT32x64",
+            "DCT8", "DCT16x8", "DCT8x16", "DCT16x16", "DCT32x32", "DCT4x8", "DCT8x4", "DCT4x4",
+            "IDENTITY", "DCT2X2", "DCT32x16", "DCT16x32", "AFV0", "AFV1", "AFV2", "AFV3",
+            "DCT64x64", "DCT64x32", "DCT32x64",
         ];
         for r in &sorted {
             let total: u32 = r.strategy_counts.iter().sum();
