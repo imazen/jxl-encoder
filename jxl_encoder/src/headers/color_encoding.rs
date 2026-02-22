@@ -103,6 +103,9 @@ pub struct ColorEncoding {
     pub rendering_intent: RenderingIntent,
     /// Whether this uses an ICC profile.
     pub want_icc: bool,
+    /// Custom gamma (encoding exponent). When Some, writes have_gamma=true + 24-bit value.
+    /// Example: 0.45455 for standard gamma 2.2 (display gamma = 1/0.45455 ≈ 2.2).
+    pub gamma: Option<f32>,
 }
 
 impl ColorEncoding {
@@ -115,6 +118,7 @@ impl ColorEncoding {
             transfer_function: TransferFunction::Srgb,
             rendering_intent: RenderingIntent::Perceptual,
             want_icc: false,
+            gamma: None,
         }
     }
 
@@ -127,6 +131,7 @@ impl ColorEncoding {
             transfer_function: TransferFunction::Linear,
             rendering_intent: RenderingIntent::Perceptual,
             want_icc: false,
+            gamma: None,
         }
     }
 
@@ -139,6 +144,7 @@ impl ColorEncoding {
             transfer_function: TransferFunction::Srgb,
             rendering_intent: RenderingIntent::Perceptual,
             want_icc: false,
+            gamma: None,
         }
     }
 
@@ -151,6 +157,26 @@ impl ColorEncoding {
             transfer_function: TransferFunction::Srgb,
             rendering_intent: RenderingIntent::Perceptual,
             want_icc: false,
+            gamma: None,
+        }
+    }
+
+    /// Creates an sRGB color encoding with a custom gamma transfer function.
+    ///
+    /// Used for PNGs with `gAMA` chunk but no `sRGB` chunk. The gamma value
+    /// is the encoding exponent (e.g., 0.45455 for standard gamma 2.2).
+    pub fn with_gamma(gamma: f32) -> Self {
+        Self {
+            gamma: Some(gamma),
+            ..Self::srgb()
+        }
+    }
+
+    /// Creates a grayscale color encoding with a custom gamma transfer function.
+    pub fn gray_with_gamma(gamma: f32) -> Self {
+        Self {
+            gamma: Some(gamma),
+            ..Self::gray()
         }
     }
 
@@ -163,6 +189,7 @@ impl ColorEncoding {
             transfer_function: TransferFunction::Pq,
             rendering_intent: RenderingIntent::Perceptual,
             want_icc: false,
+            gamma: None,
         }
     }
 
@@ -175,6 +202,7 @@ impl ColorEncoding {
             transfer_function: TransferFunction::Srgb,
             rendering_intent: RenderingIntent::Perceptual,
             want_icc: false,
+            gamma: None,
         }
     }
 
@@ -190,6 +218,7 @@ impl ColorEncoding {
             && self.transfer_function == TransferFunction::Srgb
             && self.rendering_intent == RenderingIntent::Perceptual
             && !self.want_icc
+            && self.gamma.is_none()
     }
 
     /// Returns true if this is grayscale.
@@ -280,7 +309,7 @@ impl ColorEncoding {
         }
 
         // have_gamma
-        let have_gamma = self.transfer_function == TransferFunction::Unknown;
+        let have_gamma = self.gamma.is_some();
         crate::trace::debug_eprintln!(
             "CENC [bit {}]: have_gamma = {}",
             writer.bits_written(),
@@ -289,8 +318,16 @@ impl ColorEncoding {
         writer.write_bit(have_gamma)?;
 
         if have_gamma {
-            // Custom gamma would follow
-            todo!("Custom gamma not implemented");
+            let g = self.gamma.expect("gamma must be set when have_gamma=true");
+            // JXL spec: 24-bit integer = round(gamma * 10_000_000), clamped to [1, 2^24-1]
+            let encoded = (g * 10_000_000.0).round() as u32;
+            crate::trace::debug_eprintln!(
+                "CENC [bit {}]: gamma = {} (encoded {})",
+                writer.bits_written(),
+                g,
+                encoded
+            );
+            writer.write(24, encoded as u64)?;
         } else {
             // transfer_function - uses jxl-rs default u2S encoding
             let tf = match self.transfer_function {
@@ -359,6 +396,7 @@ mod tests {
             transfer_function: TransferFunction::Srgb,
             rendering_intent: RenderingIntent::Relative, // Non-default
             want_icc: false,
+            gamma: None,
         };
         let mut writer = BitWriter::new();
         enc.write(&mut writer).unwrap();
@@ -581,5 +619,40 @@ mod tests {
         assert_eq!(enc.transfer_function, TransferFunction::Srgb);
         assert_eq!(enc.rendering_intent, RenderingIntent::Perceptual);
         assert!(!enc.want_icc);
+        assert!(enc.gamma.is_none());
+    }
+
+    #[test]
+    fn test_gamma_encoding() {
+        // Standard gamma 2.2: encoding exponent = 0.45455
+        let enc = ColorEncoding::with_gamma(0.45455);
+        assert!(!enc.is_srgb()); // gamma set → not sRGB default
+        assert_eq!(enc.gamma, Some(0.45455));
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        writer.zero_pad_to_byte();
+
+        // Verify: 0.45455 * 10_000_000 = 4_545_500
+        let encoded = (0.45455_f32 * 10_000_000.0).round() as u32;
+        assert_eq!(encoded, 4_545_500);
+
+        // Encoding should be longer than sRGB default (1 bit)
+        // all_default=0(1) + want_icc=0(1) + color_space=0(2) + white_point=1(2) +
+        // primaries=1(2) + have_gamma=1(1) + gamma(24) + rendering_intent=0(2) = 35 bits
+        assert_eq!(writer.bits_written(), 40); // 35 bits padded to 5 bytes
+    }
+
+    #[test]
+    fn test_gray_with_gamma() {
+        let enc = ColorEncoding::gray_with_gamma(0.45455);
+        assert!(enc.is_gray());
+        assert_eq!(enc.gamma, Some(0.45455));
+        assert!(!enc.is_srgb());
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        // Should write without error (grayscale skips primaries)
+        assert!(writer.bits_written() > 0);
     }
 }

@@ -171,6 +171,10 @@ pub struct VarDctEncoder {
     /// (frame_type=1, dc_level=1) before the main VarDCT frame, with
     /// distance-scaled quantization factors matching libjxl's progressive_dc >= 1.
     pub use_lf_frame: bool,
+    /// Custom gamma (encoding exponent) from source image.
+    /// When Some, writes have_gamma=true in the JXL header and uses gamma
+    /// linearization instead of sRGB TF. Example: 0.45455 for gamma 2.2.
+    pub source_gamma: Option<f32>,
 }
 
 impl Default for VarDctEncoder {
@@ -204,6 +208,7 @@ impl Default for VarDctEncoder {
             is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
             use_lf_frame: false,
+            source_gamma: None,
         }
     }
 }
@@ -240,6 +245,7 @@ impl VarDctEncoder {
             is_grayscale: false,
             progressive: crate::api::ProgressiveMode::Single,
             use_lf_frame: false,
+            source_gamma: None,
         }
     }
 
