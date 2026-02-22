@@ -405,6 +405,7 @@ impl VarDctEncoder {
         error_diffusion: bool,
         zigzag_order: Option<&[u32]>,
         error_scratch: Option<&mut Vec<f32>>,
+        quant_flat_scratch: &mut [i32],
     ) {
         // C++ QuantizeBlockAC uses post-swap (cx, cy) for the coefficient grid:
         // stride = cx * 8 (block_width), height = cy * 8 (block_height).
@@ -430,14 +431,63 @@ impl VarDctEncoder {
                 return;
             }
 
-            // Standard quantization without error diffusion
+            // Large-block SIMD fast path: DCT16+ (grid_width >= 16, always multiple of 8)
+            if grid_width >= 16 {
+                let qac_qm = qac * qm_multiplier;
+                let flat = &mut quant_flat_scratch[..size];
+                jxl_simd::quantize_block_large(
+                    &dct_coeffs[..size],
+                    &weights[..size],
+                    qac_qm,
+                    thresholds,
+                    grid_width,
+                    grid_height,
+                    cx,
+                    cy,
+                    flat,
+                );
+
+                // Scatter from flat layout to 8x8 block slots.
+                // Each aligned chunk of 8 in a row maps to consecutive positions
+                // in a single 8x8 block, so we can copy 8 i32s at a time.
+                for y in 0..grid_height {
+                    let slot_y = y / BLOCK_DIM;
+                    let pos_y = y % BLOCK_DIM;
+                    let pos_base = pos_y * BLOCK_DIM;
+
+                    for chunk in 0..(grid_width / BLOCK_DIM) {
+                        let x_base = chunk * BLOCK_DIM;
+                        let src_off = y * grid_width + x_base;
+                        let slot_x = chunk;
+
+                        let (phys_row_off, phys_col_off) = if transpose_slots {
+                            (slot_x, slot_y)
+                        } else {
+                            (slot_y, slot_x)
+                        };
+
+                        quant_ac[by + phys_row_off][bx + phys_col_off]
+                            [pos_base..pos_base + BLOCK_DIM]
+                            .copy_from_slice(&flat[src_off..src_off + BLOCK_DIM]);
+                    }
+                }
+
+                #[cfg(feature = "debug-tokens")]
+                if _raw_strategy == 4 && bx == 0 && by == 0 {
+                    let debug_nonzero_count = flat.iter().filter(|&&v| v != 0).count();
+                    eprintln!(
+                        "[DCT32x32 quantize debug] Y at (0,0): {} nonzero AC coeffs stored (qac={:.4})",
+                        debug_nonzero_count, qac
+                    );
+                }
+
+                return;
+            }
+
+            // Standard scalar quantization for remaining small multi-block transforms
             #[cfg(feature = "debug-tokens")]
             let mut debug_nonzero_count = 0usize;
             for idx in 0..size {
-                // LLF positions are at (y, x) where y < cy and x < cx in the grid.
-                // For DCT8 this is just index 0.
-                // For DCT16x16 (cx=cy=2, stride=16) this is {0, 1, 16, 17}.
-                // For DCT16x8 (cx=2, cy=1, stride=16) this is {0, 1}.
                 let y = idx / grid_width;
                 let x = idx % grid_width;
                 let qval = if y < cy && x < cx {
@@ -461,17 +511,12 @@ impl VarDctEncoder {
                     debug_nonzero_count += 1;
                 }
 
-                // Store in flat layout: map to 8x8 block slots for storage.
                 let coef_slot_y = y / BLOCK_DIM;
                 let coef_slot_x = x / BLOCK_DIM;
                 let pos_y = y % BLOCK_DIM;
                 let pos_x = x % BLOCK_DIM;
                 let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
 
-                // Map coefficient slot to physical block offset.
-                // For DCT16x8: coefficient layout is 16x8 (2 cols x 1 row of slots)
-                //              physical coverage is 1x2 (1 col x 2 rows of blocks)
-                // So coef_slot_x maps to physical row offset, coef_slot_y to col offset.
                 let (phys_row_off, phys_col_off) = if transpose_slots {
                     (coef_slot_x, coef_slot_y)
                 } else {

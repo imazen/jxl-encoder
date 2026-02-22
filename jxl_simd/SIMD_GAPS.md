@@ -7,7 +7,7 @@
 | ~~**P0**~~ | ~~DCT/IDCT 32×32~~ | ✅ DONE — AVX2 in `dct32.rs`/`idct32.rs`, wired into encoder | 3-5× on DCT32 blocks |
 | ~~**P1**~~ | ~~DCT/IDCT 32×16, 16×32~~ | ✅ DONE — same modules, all 6 functions | 3-5× on DCT32x16 blocks |
 | ~~**P2**~~ | ~~sRGB→linear conversion~~ | ✅ DONE — 256-entry const LUT for u8 (eliminates 24M powf calls) | 4-8× on input conversion |
-| **P3** | Quantize AC (DCT16+) | Only DCT8 quantize is SIMD. DCT16/32/64 blocks quantize via scalar loops over 256-4096 coefficients. | 2-4× on large block quant |
+| ~~**P3**~~ | ~~Quantize AC (DCT16+)~~ | ✅ DONE — Generic `quantize_block_large` in `quantize.rs`, all sizes (128–4096 coefficients), wired into encoder | 2-4× on large block quant |
 | ~~**P4**~~ | ~~DCT/IDCT 64×64, 64×32, 32×64~~ | ✅ DONE — AVX2 in `dct64.rs`/`idct64.rs`, wired into encoder | 3-5× on DCT64 blocks |
 | **P5** | Large block transpose (32×32, 64×64) | Supporting operation for large DCTs. Scalar element-by-element copy. | 2-3× (part of DCT chain) |
 | **P6** | ANS token cost (Shannon) | `log2()` per histogram bin during strategy evaluation. Moderate frequency. | 2-4× on entropy estimation |
@@ -37,7 +37,7 @@
 | 16 | sRGB→linear | `cms/transfer_functions-inl.h` | `api.rs` (const LUT) | ✅ | ~~P2~~ |
 | 17 | AdjustQuantBias | `quantizer-inl.h` | `jxl_simd/src/dequant.rs` | ✅ | — |
 | 18 | Quantize AC (DCT8) | encoder | `jxl_simd/src/quantize.rs` | ✅ | — |
-| 19 | Quantize AC (DCT16+) | encoder | `vardct/quantize.rs` | ❌ | **P3** |
+| 19 | Quantize AC (DCT16+) | encoder | `jxl_simd/src/quantize.rs` | ✅ | ~~P3~~ |
 | 20 | Gaborish 5×5 | `convolve-inl.h` | `jxl_simd/src/gaborish5x5.rs` | ✅ | — |
 | 21 | Gaborish 3×3 | `convolve-inl.h` | `jxl_simd/src/gab.rs` | ✅ | — |
 | 22 | EPF step1/step2 | EPF code | `jxl_simd/src/epf.rs` | ✅ | — |
