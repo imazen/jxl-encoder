@@ -284,8 +284,8 @@ impl EffortProfile {
             effort,
 
             // ── Feature flags ──
-            use_ans: effort >= 4,
-            optimize_codes: effort >= 4,
+            use_ans: effort >= 3,
+            optimize_codes: effort >= 3,
             custom_orders: effort >= 4,
             gaborish: effort >= 5,
             pixel_domain_loss: effort >= 5,
@@ -389,7 +389,7 @@ impl EffortProfile {
             effort,
 
             // ── Feature flags ──
-            use_ans: effort >= 4,
+            use_ans: effort >= 3,
             optimize_codes: effort >= 2,
             custom_orders: effort >= 3,
             gaborish: false,          // N/A for lossless
@@ -651,8 +651,8 @@ mod tests {
     #[test]
     fn test_lossy_reference_e3() {
         let p = EffortProfile::lossy(3, EncoderMode::Reference);
-        assert!(!p.use_ans);
-        assert!(!p.optimize_codes);
+        assert!(p.use_ans);
+        assert!(p.optimize_codes);
         assert!(!p.gaborish);
         assert!(!p.ac_strategy_enabled);
         assert!(!p.use_adaptive_quant);
