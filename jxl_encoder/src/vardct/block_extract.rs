@@ -13,6 +13,7 @@ use super::common::BLOCK_DIM;
 ///
 /// The buffer must be padded to at least (by*8+8) rows and (bx*8+8) columns
 /// with edge-replicated values, so no bounds checking is needed.
+#[inline(always)]
 pub(super) fn extract_block_8x8(
     plane: &[f32],
     stride: usize,

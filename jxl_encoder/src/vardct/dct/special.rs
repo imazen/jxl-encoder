@@ -19,6 +19,7 @@
 ///
 /// Input: `pixels` is 8x8 in stride-8 layout.
 /// Output: `coefficients` in stride-8 layout.
+#[inline(always)]
 pub fn identity_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
     // Process 2x2 grid of 4x4 sub-blocks
     for y in 0..2usize {
@@ -139,6 +140,7 @@ fn dct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
 ///
 /// Input: `pixels` is 8x8 in stride-8 layout.
 /// Output: `coefficients` in stride-8 layout.
+#[inline(always)]
 pub fn dct2x2_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
     // Pass 1: read from pixels, write directly to coefficients
     dct2_top_block_first::<8>(pixels, coefficients);
@@ -159,6 +161,7 @@ pub fn dct2x2_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
 /// 3. Reconstruct: pixel = coefficient + ref_pixel; corner from coefficients[(y+2)*8+x+2]
 ///
 /// Input/Output: stride-8 layout.
+#[inline(always)]
 pub fn inverse_identity_transform(coefficients: &[f32; 64], pixels: &mut [f32; 64]) {
     // Inverse Hadamard on DC positions (no x0.25 scaling — this is the inverse)
     let block00 = coefficients[0];
@@ -252,6 +255,7 @@ fn idct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
 /// Inverse of `dct2x2_transform`. Three passes of inverse hierarchical 2x2 DCT.
 ///
 /// Input/Output: stride-8 layout.
+#[inline(always)]
 pub fn inverse_dct2x2_transform(coefficients: &[f32; 64], pixels: &mut [f32; 64]) {
     // Copy input to output, then do inplace passes on output
     *pixels = *coefficients;
