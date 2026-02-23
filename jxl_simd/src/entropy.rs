@@ -27,10 +27,13 @@ pub struct EntropyCoeffResult {
 /// Vectorized entropy coefficient processing.
 ///
 /// For each coefficient i in 0..n:
-///   val = (block_c[i] - block_y[i] * cmap_factor) / weights[i] * quant
+///   val = (block_c[i] - block_y[i] * cmap_factor) * inv_weights[i] * quant
 ///   rval = round(val)
 ///   entropy_sum += sqrt(|rval|) * k_cost_delta
 ///   nzeros += (rval != 0)
+///
+/// `inv_weights` contains precomputed reciprocals (1/quant_weight) to replace
+/// per-coefficient SIMD division with multiplication.
 ///
 /// In pixel-domain mode: writes `error_coeffs[i] = weights[i] * (val - rval)`
 /// In coefficient-domain mode: accumulates info_loss stats and k_cost2 penalty.
@@ -40,6 +43,7 @@ pub fn entropy_estimate_coeffs(
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
+    inv_weights: &[f32],
     n: usize,
     cmap_factor: f32,
     quant: f32,
@@ -57,6 +61,7 @@ pub fn entropy_estimate_coeffs(
                 block_c,
                 block_y,
                 weights,
+                inv_weights,
                 n,
                 cmap_factor,
                 quant,
@@ -77,6 +82,7 @@ pub fn entropy_estimate_coeffs(
                 block_c,
                 block_y,
                 weights,
+                inv_weights,
                 n,
                 cmap_factor,
                 quant,
@@ -97,6 +103,7 @@ pub fn entropy_estimate_coeffs(
                 block_c,
                 block_y,
                 weights,
+                inv_weights,
                 n,
                 cmap_factor,
                 quant,
@@ -112,6 +119,7 @@ pub fn entropy_estimate_coeffs(
         block_c,
         block_y,
         weights,
+        inv_weights,
         n,
         cmap_factor,
         quant,
@@ -128,6 +136,7 @@ pub fn entropy_coeffs_scalar(
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
+    inv_weights: &[f32],
     n: usize,
     cmap_factor: f32,
     quant: f32,
@@ -144,7 +153,7 @@ pub fn entropy_coeffs_scalar(
     for i in 0..n {
         let val_in = block_c[i];
         let val_y = block_y[i] * cmap_factor;
-        let val = (val_in - val_y) * (1.0 / weights[i]) * quant;
+        let val = (val_in - val_y) * inv_weights[i] * quant;
         let rval = val.round();
         let diff = val - rval;
 
@@ -185,6 +194,7 @@ pub fn entropy_coeffs_avx2(
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
+    inv_weights: &[f32],
     n: usize,
     cmap_factor: f32,
     quant: f32,
@@ -216,10 +226,11 @@ pub fn entropy_coeffs_avx2(
         let bc = crate::load_f32x8(token, block_c, base);
         let by_v = crate::load_f32x8(token, block_y, base);
         let w = crate::load_f32x8(token, weights, base);
+        let iw = crate::load_f32x8(token, inv_weights, base);
 
-        // val = (block_c - block_y * cmap_factor) / weights * quant
+        // val = (block_c - block_y * cmap_factor) * inv_weights * quant
         let adjusted = bc - by_v * cmap_v;
-        let val = adjusted / w * quant_v;
+        let val = adjusted * iw * quant_v;
 
         let rval = val.round();
         let diff = val - rval;
@@ -256,6 +267,7 @@ pub fn entropy_coeffs_avx2(
         &block_c[start..n],
         &block_y[start..n],
         &weights[start..n],
+        &inv_weights[start..n],
         n - start,
         cmap_factor,
         quant,
@@ -291,6 +303,7 @@ pub fn entropy_coeffs_neon(
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
+    inv_weights: &[f32],
     n: usize,
     cmap_factor: f32,
     quant: f32,
@@ -320,16 +333,18 @@ pub fn entropy_coeffs_neon(
     let block_c_s = &block_c[..simd_n];
     let block_y_s = &block_y[..simd_n];
     let weights_s = &weights[..simd_n];
+    let inv_weights_s = &inv_weights[..simd_n];
     for chunk in 0..chunks {
         let base = chunk * 4;
 
         let bc = f32x4::from_slice(token, &block_c_s[base..]);
         let by_v = f32x4::from_slice(token, &block_y_s[base..]);
         let w = f32x4::from_slice(token, &weights_s[base..]);
+        let iw = f32x4::from_slice(token, &inv_weights_s[base..]);
 
-        // val = (block_c - block_y * cmap_factor) / weights * quant
+        // val = (block_c - block_y * cmap_factor) * inv_weights * quant
         let adjusted = bc - by_v * cmap_v;
-        let val = adjusted / w * quant_v;
+        let val = adjusted * iw * quant_v;
 
         let rval = val.round();
         let diff = val - rval;
@@ -362,6 +377,7 @@ pub fn entropy_coeffs_neon(
         &block_c[start..n],
         &block_y[start..n],
         &weights[start..n],
+        &inv_weights[start..n],
         n - start,
         cmap_factor,
         quant,
@@ -397,6 +413,7 @@ pub fn entropy_coeffs_wasm128(
     block_c: &[f32],
     block_y: &[f32],
     weights: &[f32],
+    inv_weights: &[f32],
     n: usize,
     cmap_factor: f32,
     quant: f32,
@@ -426,16 +443,18 @@ pub fn entropy_coeffs_wasm128(
     let block_c_s = &block_c[..simd_n];
     let block_y_s = &block_y[..simd_n];
     let weights_s = &weights[..simd_n];
+    let inv_weights_s = &inv_weights[..simd_n];
     for chunk in 0..chunks {
         let base = chunk * 4;
 
         let bc = f32x4::from_slice(token, &block_c_s[base..]);
         let by_v = f32x4::from_slice(token, &block_y_s[base..]);
         let w = f32x4::from_slice(token, &weights_s[base..]);
+        let iw = f32x4::from_slice(token, &inv_weights_s[base..]);
 
-        // val = (block_c - block_y * cmap_factor) / weights * quant
+        // val = (block_c - block_y * cmap_factor) * inv_weights * quant
         let adjusted = bc - by_v * cmap_v;
-        let val = adjusted / w * quant_v;
+        let val = adjusted * iw * quant_v;
 
         let rval = val.round();
         let diff = val - rval;
@@ -468,6 +487,7 @@ pub fn entropy_coeffs_wasm128(
         &block_c[start..n],
         &block_y[start..n],
         &weights[start..n],
+        &inv_weights[start..n],
         n - start,
         cmap_factor,
         quant,
@@ -883,6 +903,7 @@ mod tests {
         let block_c: Vec<f32> = (0..n).map(|i| (i as f32 * 0.7 - 20.0) * 0.1).collect();
         let block_y: Vec<f32> = (0..n).map(|i| (i as f32 * 0.5 - 15.0) * 0.1).collect();
         let weights: Vec<f32> = (0..n).map(|i| 0.01 + (i as f32) * 0.005).collect();
+        let inv_weights: Vec<f32> = weights.iter().map(|&w| 1.0 / w).collect();
 
         let cmap_factor = 0.15f32;
         let quant = 3.5f32;
@@ -895,6 +916,7 @@ mod tests {
             &block_c,
             &block_y,
             &weights,
+            &inv_weights,
             n,
             cmap_factor,
             quant,
@@ -912,6 +934,7 @@ mod tests {
                     &block_c,
                     &block_y,
                     &weights,
+                    &inv_weights,
                     n,
                     cmap_factor,
                     quant,
@@ -950,6 +973,7 @@ mod tests {
         let block_c: Vec<f32> = (0..n).map(|i| (i as f32 * 1.3 - 40.0) * 0.05).collect();
         let block_y: Vec<f32> = (0..n).map(|i| (i as f32 * 0.9 - 30.0) * 0.05).collect();
         let weights: Vec<f32> = (0..n).map(|i| 0.02 + (i as f32) * 0.003).collect();
+        let inv_weights: Vec<f32> = weights.iter().map(|&w| 1.0 / w).collect();
 
         let cmap_factor = 0.0f32;
         let quant = 5.0f32;
@@ -961,6 +985,7 @@ mod tests {
             &block_c,
             &block_y,
             &weights,
+            &inv_weights,
             n,
             cmap_factor,
             quant,
@@ -978,6 +1003,7 @@ mod tests {
                     &block_c,
                     &block_y,
                     &weights,
+                    &inv_weights,
                     n,
                     cmap_factor,
                     quant,
@@ -1011,12 +1037,14 @@ mod tests {
         let block_c: Vec<f32> = (0..n).map(|i| (i as f32) * 0.1 - 3.0).collect();
         let block_y: Vec<f32> = (0..n).map(|i| (i as f32) * 0.08 - 2.5).collect();
         let weights: Vec<f32> = (0..n).map(|i| 0.01 + (i as f32) * 0.002).collect();
+        let inv_weights: Vec<f32> = weights.iter().map(|&w| 1.0 / w).collect();
 
         let mut error_ref = vec![0.0f32; n];
         let ref_result = entropy_coeffs_scalar(
             &block_c,
             &block_y,
             &weights,
+            &inv_weights,
             n,
             0.2,
             4.0,
@@ -1034,6 +1062,7 @@ mod tests {
                     &block_c,
                     &block_y,
                     &weights,
+                    &inv_weights,
                     n,
                     0.2,
                     4.0,
@@ -1071,12 +1100,14 @@ mod tests {
         let block_c: Vec<f32> = (0..n).map(|i| ((i as f32) * 0.01).sin() * 5.0).collect();
         let block_y: Vec<f32> = (0..n).map(|i| ((i as f32) * 0.013).cos() * 4.0).collect();
         let weights: Vec<f32> = (0..n).map(|i| 0.005 + (i as f32) * 0.001).collect();
+        let inv_weights: Vec<f32> = weights.iter().map(|&w| 1.0 / w).collect();
 
         let mut error_ref = vec![0.0f32; n];
         let ref_result = entropy_coeffs_scalar(
             &block_c,
             &block_y,
             &weights,
+            &inv_weights,
             n,
             0.1,
             2.0,
@@ -1094,6 +1125,7 @@ mod tests {
                     &block_c,
                     &block_y,
                     &weights,
+                    &inv_weights,
                     n,
                     0.1,
                     2.0,

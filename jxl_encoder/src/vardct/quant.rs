@@ -938,6 +938,84 @@ pub fn inv_quant_weight(strategy: usize, channel: usize, coeff_idx: usize) -> f3
     1.0 / weights[coeff_idx]
 }
 
+// =============================================================================
+// Precomputed dequant weight tables (reciprocals of quant_weights)
+// =============================================================================
+
+/// Generate reciprocals (1/w) for every element of a quant_weights table.
+fn generate_dequant_weights(strategy: usize) -> Vec<f32> {
+    // Get the full table for all 3 channels
+    let sizes: [usize; NUM_VALID_STRATEGIES] = [
+        64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,
+    ];
+    let per_ch = sizes[strategy];
+    let mut out = Vec::with_capacity(3 * per_ch);
+    for c in 0..3 {
+        let w = quant_weights(strategy, c);
+        for &v in w {
+            out.push(1.0 / v);
+        }
+    }
+    out
+}
+
+static DEQUANT_WEIGHTS_DCT8: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT16X8: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT16X16: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT32X32: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT4X8: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT8X4: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT4X4: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_IDENTITY: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT2X2: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT16X32: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_AFV: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT64X64: OnceBox<Vec<f32>> = OnceBox::new();
+static DEQUANT_WEIGHTS_DCT32X64: OnceBox<Vec<f32>> = OnceBox::new();
+
+/// Get the precomputed dequantization weight table (1/quant_weight) for a given
+/// strategy and channel.
+///
+/// These are the reciprocals of [`quant_weights`], lazily computed and cached.
+/// Using these avoids per-coefficient SIMD division in the entropy estimation kernel.
+///
+/// # Arguments
+/// * `strategy` - AC strategy (0=DCT8, ..., 18=DCT32X64)
+/// * `channel` - Channel index (0=X, 1=Y, 2=B)
+///
+/// # Returns
+/// Slice of dequantization weights (1/quant_weight) for the strategy/channel.
+#[inline]
+pub fn dequant_weights(strategy: usize, channel: usize) -> &'static [f32] {
+    debug_assert!(strategy < NUM_VALID_STRATEGIES);
+    debug_assert!(channel < 3);
+
+    let sizes: [usize; NUM_VALID_STRATEGIES] = [
+        64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,
+    ];
+    let per_ch = sizes[strategy];
+    let offset = channel * per_ch;
+
+    let table: &[f32] = match strategy {
+        0 => DEQUANT_WEIGHTS_DCT8.get_or_init(|| Box::new(generate_dequant_weights(0))),
+        1 | 2 => DEQUANT_WEIGHTS_DCT16X8.get_or_init(|| Box::new(generate_dequant_weights(1))),
+        3 => DEQUANT_WEIGHTS_DCT16X16.get_or_init(|| Box::new(generate_dequant_weights(3))),
+        4 => DEQUANT_WEIGHTS_DCT32X32.get_or_init(|| Box::new(generate_dequant_weights(4))),
+        5 => DEQUANT_WEIGHTS_DCT4X8.get_or_init(|| Box::new(generate_dequant_weights(5))),
+        6 => DEQUANT_WEIGHTS_DCT8X4.get_or_init(|| Box::new(generate_dequant_weights(6))),
+        7 => DEQUANT_WEIGHTS_DCT4X4.get_or_init(|| Box::new(generate_dequant_weights(7))),
+        8 => DEQUANT_WEIGHTS_IDENTITY.get_or_init(|| Box::new(generate_dequant_weights(8))),
+        9 => DEQUANT_WEIGHTS_DCT2X2.get_or_init(|| Box::new(generate_dequant_weights(9))),
+        10 | 11 => DEQUANT_WEIGHTS_DCT16X32.get_or_init(|| Box::new(generate_dequant_weights(10))),
+        12..=15 => DEQUANT_WEIGHTS_AFV.get_or_init(|| Box::new(generate_dequant_weights(12))),
+        16 => DEQUANT_WEIGHTS_DCT64X64.get_or_init(|| Box::new(generate_dequant_weights(16))),
+        17 | 18 => DEQUANT_WEIGHTS_DCT32X64.get_or_init(|| Box::new(generate_dequant_weights(17))),
+        _ => unreachable!("Invalid strategy: {}", strategy),
+    };
+
+    &table[offset..offset + per_ch]
+}
+
 /// Quantize a single coefficient.
 ///
 /// # Arguments
