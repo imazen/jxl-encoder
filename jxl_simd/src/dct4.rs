@@ -891,12 +891,73 @@ pub fn dct_4x8_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output:
 }
 
 /// AVX2 inverse DCT4x8 full transform.
+///
+/// Reverses the forward DCT4x8: DC uncombine → de-interleave rows →
+/// transpose → 8-pt inverse row DCT → transpose → 4-pt inverse column DCT.
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
-pub fn idct_4x8_full_avx2(_token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
-    // For the inverse, fall back to scalar since the layout manipulation
-    // is complex and the forward path is the hot one.
-    idct_4x8_full_scalar(input, output);
+pub fn idct_4x8_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    use crate::dct8::{transpose_8x8_regs, vectorized_idct1d_8};
+    use magetypes::simd::f32x8;
+
+    // DC uncombine (reverse of forward's DC combine)
+    let mut coeffs = *input;
+    let combined_dc = coeffs[0];
+    let combined_ac = coeffs[8];
+    coeffs[0] = combined_dc + combined_ac;
+    coeffs[8] = combined_dc - combined_ac;
+
+    let scale4 = f32x8::splat(token, 4.0);
+
+    // Load de-interleaved: forward stored [top_cf0, bot_cf0, top_cf1, bot_cf1, ...]
+    // Top sub-block column-freq bands from even rows, bottom from odd rows
+    let ct0 = f32x8::from_slice(token, &coeffs[0..]); // row 0: top col-freq 0
+    let cb0 = f32x8::from_slice(token, &coeffs[8..]); // row 1: bot col-freq 0
+    let ct1 = f32x8::from_slice(token, &coeffs[16..]); // row 2: top col-freq 1
+    let cb1 = f32x8::from_slice(token, &coeffs[24..]); // row 3: bot col-freq 1
+    let ct2 = f32x8::from_slice(token, &coeffs[32..]); // row 4: top col-freq 2
+    let cb2 = f32x8::from_slice(token, &coeffs[40..]); // row 5: bot col-freq 2
+    let ct3 = f32x8::from_slice(token, &coeffs[48..]); // row 6: top col-freq 3
+    let cb3 = f32x8::from_slice(token, &coeffs[56..]); // row 7: bot col-freq 3
+
+    // Transpose: each register becomes one row-freq position across all 8 col-freq bands
+    let (p0, p1, p2, p3, p4, p5, p6, p7) =
+        transpose_8x8_regs(token, ct0, ct1, ct2, ct3, cb0, cb1, cb2, cb3);
+
+    // Inverse 8-pt row DCTs (vectorized_idct1d_8 has no internal halvings,
+    // so no pre-scaling needed — it directly inverts the 1/8-scaled forward)
+    let (r0, r1, r2, r3, r4, r5, r6, r7) =
+        vectorized_idct1d_8(token, p0, p1, p2, p3, p4, p5, p6, p7);
+
+    // Transpose back: each register = one col-freq band's spatial columns
+    let (ct0, ct1, ct2, ct3, cb0, cb1, cb2, cb3) =
+        transpose_8x8_regs(token, r0, r1, r2, r3, r4, r5, r6, r7);
+
+    // Scale by 4 (undo forward's 1/4) and inverse 4-pt column DCTs
+    let (t0, t1, t2, t3) = vectorized_idct1d_4(
+        token,
+        ct0 * scale4,
+        ct1 * scale4,
+        ct2 * scale4,
+        ct3 * scale4,
+    );
+    let (b0, b1, b2, b3) = vectorized_idct1d_4(
+        token,
+        cb0 * scale4,
+        cb1 * scale4,
+        cb2 * scale4,
+        cb3 * scale4,
+    );
+
+    // Store: top sub-block in rows 0-3, bottom in rows 4-7
+    t0.store((&mut output[0..8]).try_into().unwrap());
+    t1.store((&mut output[8..16]).try_into().unwrap());
+    t2.store((&mut output[16..24]).try_into().unwrap());
+    t3.store((&mut output[24..32]).try_into().unwrap());
+    b0.store((&mut output[32..40]).try_into().unwrap());
+    b1.store((&mut output[40..48]).try_into().unwrap());
+    b2.store((&mut output[48..56]).try_into().unwrap());
+    b3.store((&mut output[56..64]).try_into().unwrap());
 }
 
 /// AVX2 DCT8x4 full transform.
@@ -980,11 +1041,70 @@ pub fn dct_8x4_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output:
 }
 
 /// AVX2 inverse DCT8x4 full transform.
+///
+/// Reverses the forward DCT8x4: DC uncombine → de-interleave rows →
+/// 4-pt inverse row DCT → transpose → 8-pt inverse column DCT → store.
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
-pub fn idct_8x4_full_avx2(_token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
-    // Fall back to scalar for inverse (forward is the hot path)
-    idct_8x4_full_scalar(input, output);
+pub fn idct_8x4_full_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mut [f32; 64]) {
+    use crate::dct8::{transpose_8x8_regs, vectorized_idct1d_8};
+    use magetypes::simd::f32x8;
+
+    // DC uncombine (reverse of forward's DC combine)
+    let mut coeffs = *input;
+    let combined_dc = coeffs[0];
+    let combined_ac = coeffs[8];
+    coeffs[0] = combined_dc + combined_ac;
+    coeffs[8] = combined_dc - combined_ac;
+
+    let scale4 = f32x8::splat(token, 4.0);
+
+    // Load de-interleaved: forward stored [sub0_rf0, sub1_rf0, sub0_rf1, sub1_rf1, ...]
+    // Sub0 row-freq bands from even rows, sub1 from odd rows
+    let s0_0 = f32x8::from_slice(token, &coeffs[0..]); // row 0: sub0 rfreq 0
+    let s1_0 = f32x8::from_slice(token, &coeffs[8..]); // row 1: sub1 rfreq 0
+    let s0_1 = f32x8::from_slice(token, &coeffs[16..]); // row 2: sub0 rfreq 1
+    let s1_1 = f32x8::from_slice(token, &coeffs[24..]); // row 3: sub1 rfreq 1
+    let s0_2 = f32x8::from_slice(token, &coeffs[32..]); // row 4: sub0 rfreq 2
+    let s1_2 = f32x8::from_slice(token, &coeffs[40..]); // row 5: sub1 rfreq 2
+    let s0_3 = f32x8::from_slice(token, &coeffs[48..]); // row 6: sub0 rfreq 3
+    let s1_3 = f32x8::from_slice(token, &coeffs[56..]); // row 7: sub1 rfreq 3
+
+    // Inverse 4-pt row DCTs with 4x pre-scaling (vectorized_idct1d_4 has internal halvings)
+    let (s0_0, s0_1, s0_2, s0_3) = vectorized_idct1d_4(
+        token,
+        s0_0 * scale4,
+        s0_1 * scale4,
+        s0_2 * scale4,
+        s0_3 * scale4,
+    );
+    let (s1_0, s1_1, s1_2, s1_3) = vectorized_idct1d_4(
+        token,
+        s1_0 * scale4,
+        s1_1 * scale4,
+        s1_2 * scale4,
+        s1_3 * scale4,
+    );
+
+    // Transpose: packs sub0 and sub1 spatial columns into positional layout
+    let (p0, p1, p2, p3, p4, p5, p6, p7) =
+        transpose_8x8_regs(token, s0_0, s0_1, s0_2, s0_3, s1_0, s1_1, s1_2, s1_3);
+
+    // Inverse 8-pt column DCTs (vectorized_idct1d_8 has no internal halvings,
+    // so no pre-scaling needed). After IDCT, each register r_k holds spatial
+    // row k across all 8 columns — no second transpose needed.
+    let (r0, r1, r2, r3, r4, r5, r6, r7) =
+        vectorized_idct1d_8(token, p0, p1, p2, p3, p4, p5, p6, p7);
+
+    // Store 8 rows. Each row has [sub0_cols(0-3) | sub1_cols(0-3)]
+    r0.store((&mut output[0..8]).try_into().unwrap());
+    r1.store((&mut output[8..16]).try_into().unwrap());
+    r2.store((&mut output[16..24]).try_into().unwrap());
+    r3.store((&mut output[24..32]).try_into().unwrap());
+    r4.store((&mut output[32..40]).try_into().unwrap());
+    r5.store((&mut output[40..48]).try_into().unwrap());
+    r6.store((&mut output[48..56]).try_into().unwrap());
+    r7.store((&mut output[56..64]).try_into().unwrap());
 }
 
 // =============================================================================
