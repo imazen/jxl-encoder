@@ -91,14 +91,47 @@ Replace .get(i).copied().unwrap_or(0) with zip + copy_from_slice for explicit ra
 Eliminates Option wrapping and per-element bounds checks on every iteration.
 Ir 14.989B → 14.394B (-595M, -4.0%). Wall-clock 1.18s → 1.10s (-6.8%). Bit-exact.
 
-### Cumulative results (this session)
+### Reduce ANS entropy code building overhead (9f30688)
+
+Merged redundant passes over tokens in `build_entropy_code_ans_with_options`:
+1. Two initial histogram passes → one
+2. Three token collection passes → one
+3. Histogram expansion loop → `from_counts()`
+4. Validation loop gated behind `#[cfg(debug_assertions)]`
+5. Buffer reuse in `optimize_uint_configs` functions
+
+Ir 14.394B → 14.343B (safe) / 14.040B → 13.821B (unsafe-perf). -219M/-220M. Bit-exact.
+
+### Eliminate bounds checks in EPF SIMD loads (8cadb18)
+
+Added `load_f32x8()` helper that uses `_mm256_loadu_ps` directly on padded buffer
+pointers (unsafe-performance), bypassing both `slice_from` bounds check and
+`f32x8::from_slice`'s internal `[..8]` bounds check. EPF buffers are edge-replicated
+with padding that guarantees all neighbor accesses are in-bounds.
+
+Ir 13.821B → 13.517B (unsafe-perf). EPF: 450M → 126M (3.6x reduction). -304M (-2.2%). Bit-exact.
+
+### Cumulative results (this + previous session)
 
 | Metric       | Baseline | Current  | Δ       | vs cjxl |
 |-------------|----------|----------|---------|---------|
-| Instructions | 15.859B  | 14.394B  | -9.2%   | 2.68x   |
-| Data reads   | 4.068B   | 3.635B   | -10.6%  | 1.56x   |
-| Data writes  | 2.183B   | 2.067B   | -5.3%   | 2.64x   |
-| Wall-clock   | 1.18s    | 1.10s    | -6.8%   | 4.6x    |
+| Instructions | 15.859B  | 13.517B  | -14.8%  | 2.51x   |
+| Data reads   | 4.068B   | 3.470B   | -14.7%  | 1.49x   |
+| Data writes  | 2.183B   | 1.691B   | -22.5%  | 2.16x   |
+
+### Remaining cost breakdown (frymire d=1.0 e7, unsafe-perf, 13.517B total)
+
+| Component | Ir (M) | % | Notes |
+|-----------|--------|---|-------|
+| estimate_entropy_full | 4,034 | 30% | Forward DCT 913M, IDCT 528M, loop 475M, fmaf 287M |
+| patches detection | 638 | 4.7% | Expected (cjxl also runs this) |
+| DCT32/64 gather_col | 618 | 4.6% | Column transposition for large DCTs |
+| entropy_coeffs (SIMD+scalar) | 550 | 4.1% | Entropy estimation kernel |
+| special transforms | 343 | 2.5% | DCT2x2 233M, IDENTITY 110M (scalar) |
+| memset/memcpy | 318 | 2.4% | Buffer initialization/copies |
+| extract_block_8x8 | 217 | 1.6% | Strided loads for non-DCT8 strategies |
+| reconstruct_xyb | 156 | 1.2% | Reconstruction pipeline |
+| EPF | 126 | 0.9% | Down from 450M (3.6x improvement) |
 
 ## 2026-02-23: Optimize e5/e6/e7 encode speed + write amplification analysis
 
