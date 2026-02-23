@@ -790,7 +790,7 @@ pub fn estimate_bits(counts: &[u32], total: u32) -> f64 {
     for &c in counts {
         if c > 0 {
             let p = (c as f64 / total_f).max(min_prob);
-            bits -= c as f64 * p.log2();
+            bits -= c as f64 * jxl_simd::fast_log2f(p as f32) as f64;
         }
     }
     bits
