@@ -292,16 +292,29 @@ pub fn histogram_distance_reuse(
     }
 
     let combined_total = a.total_count + b.total_count;
-    let max_len = a.counts.len().max(b.counts.len());
+    let a_len = a.counts.len();
+    let b_len = b.counts.len();
+    let max_len = a_len.max(b_len);
 
     // Build combined counts (HISTOGRAM_ROUNDING-aligned for SIMD)
     let aligned_len = div_ceil(max_len, HISTOGRAM_ROUNDING) * HISTOGRAM_ROUNDING;
     scratch.ensure_zeroed(aligned_len);
     let combined_counts = &mut scratch.combined_counts[..aligned_len];
-    for (i, slot) in combined_counts.iter_mut().enumerate().take(max_len) {
-        let ac = a.counts.get(i).copied().unwrap_or(0);
-        let bc = b.counts.get(i).copied().unwrap_or(0);
+
+    // Add overlapping region using zip (no per-element bounds checks)
+    let min_len = a_len.min(b_len);
+    for ((slot, &ac), &bc) in combined_counts[..min_len]
+        .iter_mut()
+        .zip(&a.counts[..min_len])
+        .zip(&b.counts[..min_len])
+    {
         *slot = ac + bc;
+    }
+    // Copy non-overlapping tail from whichever histogram is longer
+    if a_len > min_len {
+        combined_counts[min_len..a_len].copy_from_slice(&a.counts[min_len..a_len]);
+    } else if b_len > min_len {
+        combined_counts[min_len..b_len].copy_from_slice(&b.counts[min_len..b_len]);
     }
 
     let combined_entropy = jxl_simd::shannon_entropy_bits(combined_counts, combined_total);
