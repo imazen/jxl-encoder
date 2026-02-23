@@ -140,15 +140,12 @@ fn dct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
 /// Input: `pixels` is 8x8 in stride-8 layout.
 /// Output: `coefficients` in stride-8 layout.
 pub fn dct2x2_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
-    // Pass 1: read from pixels, write to buf
-    let mut buf = [0.0f32; 64];
-    dct2_top_block_first::<8>(pixels, &mut buf);
+    // Pass 1: read from pixels, write directly to coefficients
+    dct2_top_block_first::<8>(pixels, coefficients);
 
-    // Passes 2 and 3: in-place on buf (matching C++ pattern)
-    dct2_top_block_inplace::<4>(&mut buf);
-    dct2_top_block_inplace::<2>(&mut buf);
-
-    *coefficients = buf;
+    // Passes 2 and 3: in-place on coefficients
+    dct2_top_block_inplace::<4>(coefficients);
+    dct2_top_block_inplace::<2>(coefficients);
 }
 
 // =============================================================================
@@ -256,11 +253,9 @@ fn idct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
 ///
 /// Input/Output: stride-8 layout.
 pub fn inverse_dct2x2_transform(coefficients: &[f32; 64], pixels: &mut [f32; 64]) {
-    let mut coeffs = *coefficients;
-
-    idct2_top_block_inplace::<2>(&mut coeffs);
-    idct2_top_block_inplace::<4>(&mut coeffs);
-    idct2_top_block_inplace::<8>(&mut coeffs);
-
-    *pixels = coeffs;
+    // Copy input to output, then do inplace passes on output
+    *pixels = *coefficients;
+    idct2_top_block_inplace::<2>(pixels);
+    idct2_top_block_inplace::<4>(pixels);
+    idct2_top_block_inplace::<8>(pixels);
 }
