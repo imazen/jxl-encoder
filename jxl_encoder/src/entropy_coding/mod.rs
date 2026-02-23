@@ -31,8 +31,8 @@ pub use context_map::{
     encode_context_map, inverse_move_to_front_transform, move_to_front_transform,
 };
 pub use histogram::{
-    HISTOGRAM_ROUNDING, Histogram, MIN_DISTANCE_FOR_DISTINCT, histogram_distance,
-    histogram_kl_divergence,
+    DistanceScratch, HISTOGRAM_ROUNDING, Histogram, MIN_DISTANCE_FOR_DISTINCT, histogram_distance,
+    histogram_distance_reuse, histogram_kl_divergence,
 };
 pub use huffman_tree::{
     HuffmanTable, build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,

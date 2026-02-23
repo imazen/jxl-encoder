@@ -215,6 +215,56 @@ impl Histogram {
     pub fn is_empty(&self) -> bool {
         self.total_count == 0
     }
+
+    /// Copy contents from another histogram, reusing this histogram's allocation.
+    ///
+    /// Unlike `clone()`, this avoids allocating a new `Vec` when `self` already
+    /// has sufficient capacity.
+    pub fn copy_from(&mut self, source: &Histogram) {
+        let src_len = source.counts.len();
+        if self.counts.len() < src_len {
+            self.counts.resize(src_len, 0);
+        }
+        self.counts[..src_len].copy_from_slice(&source.counts[..src_len]);
+        if self.counts.len() > src_len {
+            self.counts[src_len..].fill(0);
+        }
+        self.total_count = source.total_count;
+        self.entropy.set(source.cached_entropy());
+    }
+}
+
+/// Scratch buffer for `histogram_distance` to avoid per-call heap allocation.
+///
+/// Reuse across multiple calls in hot clustering loops.
+pub struct DistanceScratch {
+    combined_counts: Vec<i32>,
+}
+
+impl Default for DistanceScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DistanceScratch {
+    /// Create a new scratch buffer.
+    pub fn new() -> Self {
+        Self {
+            combined_counts: Vec::new(),
+        }
+    }
+
+    /// Ensure the scratch buffer has at least `len` elements, zeroed.
+    #[inline]
+    fn ensure_zeroed(&mut self, len: usize) {
+        if self.combined_counts.len() < len {
+            self.combined_counts.resize(len, 0);
+        } else {
+            // Zero the portion we'll use
+            self.combined_counts[..len].fill(0);
+        }
+    }
 }
 
 /// Distance between two histograms (for clustering).
@@ -227,6 +277,16 @@ impl Histogram {
 /// IMPORTANT: Both histograms must have their entropy pre-computed
 /// (call `shannon_entropy()` first).
 pub fn histogram_distance(a: &Histogram, b: &Histogram) -> f32 {
+    let mut scratch = DistanceScratch::new();
+    histogram_distance_reuse(a, b, &mut scratch)
+}
+
+/// Like [`histogram_distance`] but reuses a scratch buffer to avoid allocation.
+pub fn histogram_distance_reuse(
+    a: &Histogram,
+    b: &Histogram,
+    scratch: &mut DistanceScratch,
+) -> f32 {
     if a.total_count == 0 || b.total_count == 0 {
         return 0.0;
     }
@@ -236,14 +296,15 @@ pub fn histogram_distance(a: &Histogram, b: &Histogram) -> f32 {
 
     // Build combined counts (HISTOGRAM_ROUNDING-aligned for SIMD)
     let aligned_len = div_ceil(max_len, HISTOGRAM_ROUNDING) * HISTOGRAM_ROUNDING;
-    let mut combined_counts = vec![0i32; aligned_len];
+    scratch.ensure_zeroed(aligned_len);
+    let combined_counts = &mut scratch.combined_counts[..aligned_len];
     for (i, slot) in combined_counts.iter_mut().enumerate().take(max_len) {
         let ac = a.counts.get(i).copied().unwrap_or(0);
         let bc = b.counts.get(i).copied().unwrap_or(0);
         *slot = ac + bc;
     }
 
-    let combined_entropy = jxl_simd::shannon_entropy_bits(&combined_counts, combined_total);
+    let combined_entropy = jxl_simd::shannon_entropy_bits(combined_counts, combined_total);
 
     // Distance = combined_entropy - a.entropy - b.entropy
     combined_entropy - a.cached_entropy() - b.cached_entropy()

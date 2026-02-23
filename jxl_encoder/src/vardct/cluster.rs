@@ -60,16 +60,18 @@ impl Histogram {
     }
 }
 
-/// Calculate distance between two histograms.
+/// Calculate distance between two histograms using a reusable scratch buffer.
 /// Distance is the increase in bit cost when merging them.
-fn histogram_distance(a: &Histogram, b: &Histogram) -> f32 {
+fn histogram_distance_reuse(a: &Histogram, b: &Histogram, scratch: &mut Histogram) -> f32 {
     if a.total_count == 0 || b.total_count == 0 {
         return 0.0;
     }
-    let mut combined = a.clone();
-    combined.add_histogram(b);
-    combined.compute_bit_cost();
-    combined.bit_cost - a.bit_cost - b.bit_cost
+    // Reuse scratch allocation instead of cloning per call
+    scratch.counts = a.counts;
+    scratch.total_count = a.total_count;
+    scratch.add_histogram(b);
+    scratch.compute_bit_cost();
+    scratch.bit_cost - a.bit_cost - b.bit_cost
 }
 
 /// Maximum number of clusters.
@@ -86,6 +88,7 @@ fn fast_cluster_histograms(
     let mut out = Vec::with_capacity(max_histograms);
     let mut symbols = vec![max_histograms as u32; input.len()];
     let mut dists = vec![f32::MAX; input.len()];
+    let mut dist_scratch = Histogram::new();
 
     // Compute bit costs for all histograms
     let mut input_with_costs: Vec<Histogram> = input.to_vec();
@@ -116,7 +119,11 @@ fn fast_cluster_histograms(
             if dists[i] == 0.0 {
                 continue;
             }
-            let dist = histogram_distance(&input_with_costs[i], out.last().unwrap());
+            let dist = histogram_distance_reuse(
+                &input_with_costs[i],
+                out.last().unwrap(),
+                &mut dist_scratch,
+            );
             dists[i] = dists[i].min(dist);
             if dists[i] > dists[largest_idx] {
                 largest_idx = i;
@@ -134,9 +141,10 @@ fn fast_cluster_histograms(
             continue;
         }
         let mut best = 0;
-        let mut best_dist = histogram_distance(&input_with_costs[i], &out[best]);
+        let mut best_dist =
+            histogram_distance_reuse(&input_with_costs[i], &out[best], &mut dist_scratch);
         for (j, out_hist) in out.iter().enumerate().skip(1) {
-            let dist = histogram_distance(&input_with_costs[i], out_hist);
+            let dist = histogram_distance_reuse(&input_with_costs[i], out_hist, &mut dist_scratch);
             if dist < best_dist {
                 best = j;
                 best_dist = dist;
