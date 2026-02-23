@@ -382,7 +382,7 @@ pub fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mu
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-fn vectorized_dct1d_8(
+pub(crate) fn vectorized_dct1d_8(
     token: archmage::X64V3Token,
     r0: magetypes::simd::f32x8,
     r1: magetypes::simd::f32x8,
@@ -614,7 +614,7 @@ fn vectorized_idct1d_8(
 #[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-fn transpose_8x8_regs(
+pub(crate) fn transpose_8x8_regs(
     token: archmage::X64V3Token,
     r0: magetypes::simd::f32x8,
     r1: magetypes::simd::f32x8,
