@@ -9,7 +9,9 @@
 use alloc::collections::BinaryHeap;
 use core::cmp::Ordering;
 
-use super::histogram::{Histogram, histogram_distance, histogram_kl_divergence};
+use super::histogram::{
+    DistanceScratch, Histogram, histogram_distance_reuse, histogram_kl_divergence,
+};
 use crate::error::{Error, Result};
 
 /// Minimum distance threshold for creating distinct clusters.
@@ -85,6 +87,7 @@ pub fn fast_cluster_histograms_with_prev(
     let prev_count = prev_histograms.len();
     let mut out: Vec<Histogram> = prev_histograms.to_vec();
     out.reserve(max_histograms);
+    let mut dist_scratch = DistanceScratch::new();
 
     // Initialize symbols to "unassigned" marker
     let unassigned = max_histograms as u32;
@@ -148,7 +151,7 @@ pub fn fast_cluster_histograms_with_prev(
                 continue;
             }
             // Update distance using histogram distance to new cluster
-            let dist = histogram_distance(h, out.last().unwrap());
+            let dist = histogram_distance_reuse(h, out.last().unwrap(), &mut dist_scratch);
             dists[i] = dists[i].min(dist);
             if dists[i] > dists[new_largest_idx] {
                 new_largest_idx = i;
@@ -178,7 +181,7 @@ pub fn fast_cluster_histograms_with_prev(
                 histogram_kl_divergence(&input[i], out_hist)
             } else {
                 // Use symmetric distance for new histograms
-                histogram_distance(&input[i], out_hist)
+                histogram_distance_reuse(&input[i], out_hist, &mut dist_scratch)
             };
 
             if dist < best_dist {
@@ -479,10 +482,13 @@ pub fn refine_clusters_by_merging(
     // Create priority queue of pairs to merge
     let mut pairs_to_merge: BinaryHeap<HistogramPair> = BinaryHeap::new();
 
+    // Reusable scratch histogram to avoid per-pair clone allocation
+    let mut merged = Histogram::new();
+
     for i in 0..histograms.len() as u32 {
         for j in (i + 1)..histograms.len() as u32 {
-            // Compute cost of merging
-            let mut merged = histograms[i as usize].clone();
+            // Compute cost of merging (reuse scratch allocation)
+            merged.copy_from(&histograms[i as usize]);
             merged.add_histogram(&histograms[j as usize]);
             merged.shannon_entropy();
 
@@ -515,9 +521,9 @@ pub fn refine_clusters_by_merging(
             continue;
         }
 
-        // Merge second into first (clone to avoid borrow conflict)
-        let second_histo = histograms[second].clone();
-        histograms[first].add_histogram(&second_histo);
+        // Merge second into first (copy into scratch to avoid borrow conflict)
+        merged.copy_from(&histograms[second]);
+        histograms[first].add_histogram(&merged);
         histograms[first].shannon_entropy();
 
         // Update renumbering
@@ -538,7 +544,7 @@ pub fn refine_clusters_by_merging(
                 continue;
             }
 
-            let mut merged = histograms[first].clone();
+            merged.copy_from(&histograms[first]);
             merged.add_histogram(&histograms[j as usize]);
             merged.shannon_entropy();
 

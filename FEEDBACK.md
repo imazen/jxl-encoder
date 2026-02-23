@@ -66,6 +66,19 @@ Phase 2 (fused DCT8 kernel): -28.9% D1 write cache misses.
 MaybeUninit feature flag: memset 584M → 447M (-23.5%), total Dw 2.505B → 2.183B (-12.9%).
 Output is bit-exact (all 36 hash lock tests pass).
 
+### Histogram scratch buffer reuse
+
+Eliminated per-call heap allocation in histogram_distance (entropy_coding/cluster.rs) and
+histogram_distance (vardct/cluster.rs). Added DistanceScratch for combined_counts buffer reuse,
+Histogram::copy_from() for merge scratch reuse in refine_clusters_by_merging.
+
+Before → After (cachegrind frymire d=1.0 e7):
+- Instructions: 15.859B → 15.143B (-716M, -4.5%)
+- Data writes:  2.183B → 2.099B (-84M, -3.9%)
+- Data reads:   4.068B → 3.849B (-219M, -5.4%)
+- Wall-clock:   ~1.18s → ~1.17s (within noise — allocator overhead was Ir-heavy, not wall-clock)
+Output is bit-exact (all 36 hash lock tests pass).
+
 ## 2026-02-23: Optimize e5/e6/e7 encode speed + write amplification analysis
 
 User provided plan to fix two bottlenecks:
