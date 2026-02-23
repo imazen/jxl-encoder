@@ -11,6 +11,26 @@ use super::ac_strategy::*;
 use crate::debug_rect;
 use crate::effort::EffortProfile;
 
+/// Store the cost of a transform covering `cx × cy` blocks at offset `(ox, oy)`
+/// within the 64-element entropy_estimate cache.
+/// Matches libjxl's `SetEntropyForTransform`: total cost at top-left, 0 elsewhere.
+#[inline]
+fn set_entropy_for_transform(
+    entropy_estimate: &mut [f32; 64],
+    ox: usize,
+    oy: usize,
+    cx: usize,
+    cy: usize,
+    entropy: f32,
+) {
+    for iy in 0..cy {
+        for ix in 0..cx {
+            entropy_estimate[(oy + iy) * 8 + (ox + ix)] = 0.0;
+        }
+    }
+    entropy_estimate[oy * 8 + ox] = entropy;
+}
+
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub(super) fn find_best_16x16_transform(
     xyb: [&[f32]; 3],
@@ -34,6 +54,10 @@ pub(super) fn find_best_16x16_transform(
     // Pass 1.0 for normal (aligned) evaluation. Pass < 1.0 for non-aligned
     // pass to raise the bar for multi-block transforms.
     favor_single_mul: f32,
+    // When Some((ox, oy)), store winning costs into scratch.entropy_estimate
+    // at offset (ox, oy) within the 8×8 grid (for parent 32×32/64×64 to read).
+    // Pass None for standalone/non-aligned calls.
+    cache_offset: Option<(usize, usize)>,
     profile: &EffortProfile,
 ) {
     // In pixel-domain mode (mask1x1.is_some()), entropy_mul is applied internally
@@ -228,6 +252,13 @@ pub(super) fn find_best_16x16_transform(
                 }
             }
         }
+        if let Some((ox, oy)) = cache_offset {
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    scratch.entropy_estimate[(oy + dy) * 8 + (ox + dx)] = entropy[dy][dx];
+                }
+            }
+        }
         return;
     }
 
@@ -417,6 +448,13 @@ pub(super) fn find_best_16x16_transform(
                 }
             }
         }
+        if let Some((ox, oy)) = cache_offset {
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    scratch.entropy_estimate[(oy + dy) * 8 + (ox + dx)] = entropy[dy][dx];
+                }
+            }
+        }
         return;
     }
 
@@ -472,6 +510,71 @@ pub(super) fn find_best_16x16_transform(
             }
         }
     }
+
+    // Store winning costs in entropy_estimate cache for parent 32×32/64×64 to read.
+    if let Some((ox, oy)) = cache_offset {
+        if cost16x16 <= best_rect {
+            set_entropy_for_transform(&mut scratch.entropy_estimate, ox, oy, 2, 2, entropy_16x16);
+        } else if cost16x8 < cost8x16 {
+            // Left column
+            if entropy_16x8_left < entropy[0][0] + entropy[1][0] {
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox,
+                    oy,
+                    1,
+                    2,
+                    entropy_16x8_left,
+                );
+            } else {
+                scratch.entropy_estimate[oy * 8 + ox] = entropy[0][0];
+                scratch.entropy_estimate[(oy + 1) * 8 + ox] = entropy[1][0];
+            }
+            // Right column
+            if entropy_16x8_right < entropy[0][1] + entropy[1][1] {
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox + 1,
+                    oy,
+                    1,
+                    2,
+                    entropy_16x8_right,
+                );
+            } else {
+                scratch.entropy_estimate[oy * 8 + (ox + 1)] = entropy[0][1];
+                scratch.entropy_estimate[(oy + 1) * 8 + (ox + 1)] = entropy[1][1];
+            }
+        } else {
+            // Top row
+            if entropy_8x16_top < entropy[0][0] + entropy[0][1] {
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox,
+                    oy,
+                    2,
+                    1,
+                    entropy_8x16_top,
+                );
+            } else {
+                scratch.entropy_estimate[oy * 8 + ox] = entropy[0][0];
+                scratch.entropy_estimate[oy * 8 + (ox + 1)] = entropy[0][1];
+            }
+            // Bottom row
+            if entropy_8x16_bottom < entropy[1][0] + entropy[1][1] {
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox,
+                    oy + 1,
+                    2,
+                    1,
+                    entropy_8x16_bottom,
+                );
+            } else {
+                scratch.entropy_estimate[(oy + 1) * 8 + ox] = entropy[1][0];
+                scratch.entropy_estimate[(oy + 1) * 8 + (ox + 1)] = entropy[1][1];
+            }
+        }
+    }
 }
 
 // ─── 32×32 transform selection ──────────────────────────────────────────────
@@ -504,6 +607,9 @@ pub(super) fn find_best_32x32_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
     scratch: &mut EntropyEstScratch,
+    // When Some((ox, oy)), use entropy_estimate cache instead of re-evaluating sub-costs,
+    // and store winning costs back. Pass None for standalone/non-aligned calls.
+    cache_offset: Option<(usize, usize)>,
     profile: &EffortProfile,
 ) -> bool {
     // libjxl evaluates all strategies at all distances — no distance gates.
@@ -642,9 +748,12 @@ pub(super) fn find_best_32x32_transform(
             &profile.entropy_mul_table,
             scratch,
         );
-    // Run four 16x16 evaluations (each covers 2×2 blocks)
+    // Run four 16x16 evaluations (each covers 2×2 blocks).
+    // When caching, pass sub-offsets so find_best_16x16_transform stores costs
+    // in scratch.entropy_estimate for us to read back (avoiding re-evaluation).
     for qy in (0..4).step_by(2) {
         for qx in (0..4).step_by(2) {
+            let sub_cache = cache_offset.map(|(ox, oy)| (ox + qx, oy + qy));
             find_best_16x16_transform(
                 xyb,
                 stride,
@@ -663,120 +772,123 @@ pub(super) fn find_best_32x32_transform(
                 ac_strategy,
                 scratch,
                 1.0, // aligned pass: no single-block favoritism
+                sub_cache,
                 profile,
             );
         }
     }
 
-    // Compute the combined cost of the four 16x16 sub-evaluations.
-    // We need to re-estimate using whatever strategies were selected.
-    // In pixel-domain mode: 8×8-class costs get mul8x8 (libjxl applies it post-hoc),
-    // larger transforms get 1.0 (entropy_mul applied internally).
-    // In coefficient-domain mode: distance-dependent multipliers per size class.
-    let (sub_mul8x8, sub_mul16x8, sub_mul16x16) = if use_pixel_domain {
-        let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
-        (mul8x8, 1.0_f32, 1.0_f32)
-    } else {
-        let k8x8mul1: f32 = -0.55 * 0.75;
-        let k8x8mul2: f32 = 1.073_575_8 * 0.75;
-        let k8x8base: f32 = 1.4;
-        let m8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
-        let k8x16mul1: f32 = -0.55;
-        let k8x16mul2: f32 = 0.901_958_8;
-        let k8x16base: f32 = 1.6;
-        let m16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
-        let k16x16mul1: f32 = -0.65;
-        let k16x16mul2: f32 = 0.88;
-        let k16x16base: f32 = 1.8;
-        let m16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
-        (m8, m16x8, m16x16)
-    };
-
-    // Compute per-quadrant sub-costs matching libjxl's entropy[2][2] structure.
-    // Quadrant [qy][qx] covers blocks (qx*2..qx*2+1, qy*2..qy*2+1).
-    // libjxl stores costs in entropy_estimate[] and sums per quadrant;
-    // we re-evaluate (gives identical results since estimate_entropy is deterministic).
-    //
-    // CRITICAL: Re-evaluation must apply the same entropy_mul adjustments
-    // (kFavor2X2, kAvoidEntropyOfTransforms) that were used during the 8x8
-    // selection phase. In libjxl these adjustments are baked into the stored
-    // entropy_estimate[] values. Without them, DCT2x2/IDENTITY sub-costs are
-    // inflated, making merge candidates relatively cheaper and causing
-    // over-merging on borderline blocks (e.g. 1025469 d=2.0 hotspot).
-    let favor_weight = if distance < 5.0 {
-        ((5.0 - distance) / 5.0_f32).powi(2)
-    } else {
-        0.0
-    };
-    let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
-    let avoid_transforms_adjust = if distance > 4.0 {
-        let mul = if distance < 12.0 {
-            (12.0 - 4.0) / (distance - 4.0)
-        } else {
-            1.0
-        };
-        profile.k_avoid_transforms_base * mul
-    } else {
-        0.0
-    };
-
+    // Compute per-quadrant sub-costs.
+    // When cache_offset is active, read directly from entropy_estimate (populated
+    // by find_best_16x16_transform above). Otherwise re-evaluate — needed for
+    // non-aligned passes and coefficient-domain mode where cached costs may differ.
     let mut quadrant_cost = [[0.0f32; 2]; 2];
-    for iy in 0..4 {
-        for ix in 0..4 {
-            if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
-                continue;
+    if let Some((ox, oy)) = cache_offset {
+        // Read cached costs: each position holds either a single-block cost or 0
+        // (with multi-block cost at the top-left of the covered region).
+        for iy in 0..4 {
+            for ix in 0..4 {
+                quadrant_cost[iy / 2][ix / 2] +=
+                    scratch.entropy_estimate[(oy + iy) * 8 + (ox + ix)];
             }
-            let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
+        }
+    } else {
+        // Re-evaluate sub-costs from ac_strategy map (original path).
+        // In pixel-domain mode: 8×8-class costs get mul8x8 (libjxl applies it post-hoc),
+        // larger transforms get 1.0 (entropy_mul applied internally).
+        // In coefficient-domain mode: distance-dependent multipliers per size class.
+        let (sub_mul8x8, sub_mul16x8, sub_mul16x16) = if use_pixel_domain {
+            let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
+            (mul8x8, 1.0_f32, 1.0_f32)
+        } else {
+            let k8x8mul1: f32 = -0.55 * 0.75;
+            let k8x8mul2: f32 = 1.073_575_8 * 0.75;
+            let k8x8base: f32 = 1.4;
+            let m8 = k8x8mul2 + k8x8mul1 / (distance + k8x8base);
+            let k8x16mul1: f32 = -0.55;
+            let k8x16mul2: f32 = 0.901_958_8;
+            let k8x16base: f32 = 1.6;
+            let m16x8 = k8x16mul2 + k8x16mul1 / (distance + k8x16base);
+            let k16x16mul1: f32 = -0.65;
+            let k16x16mul2: f32 = 0.88;
+            let k16x16base: f32 = 1.8;
+            let m16x16 = k16x16mul2 + k16x16mul1 / (distance + k16x16base);
+            (m8, m16x8, m16x16)
+        };
 
-            let mul = match sub_raw {
-                RAW_STRATEGY_DCT8 => sub_mul8x8,
-                RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => sub_mul16x8,
-                RAW_STRATEGY_DCT16X16 => sub_mul16x16,
-                _ => sub_mul8x8,
-            };
-            let base = if !use_pixel_domain && sub_raw == RAW_STRATEGY_DCT8 {
-                3.0 * sub_mul8x8
+        // CRITICAL: Re-evaluation must apply the same entropy_mul adjustments
+        // (kFavor2X2, kAvoidEntropyOfTransforms) that were used during the 8x8
+        // selection phase. In libjxl these adjustments are baked into the stored
+        // entropy_estimate[] values. Without them, DCT2x2/IDENTITY sub-costs are
+        // inflated, making merge candidates relatively cheaper and causing
+        // over-merging on borderline blocks (e.g. 1025469 d=2.0 hotspot).
+        let favor_weight = if distance < 5.0 {
+            ((5.0 - distance) / 5.0_f32).powi(2)
+        } else {
+            0.0
+        };
+        let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
+        let avoid_transforms_adjust = if distance > 4.0 {
+            let mul = if distance < 12.0 {
+                (12.0 - 4.0) / (distance - 4.0)
             } else {
-                0.0
+                1.0
             };
+            profile.k_avoid_transforms_base * mul
+        } else {
+            0.0
+        };
 
-            // Apply the same entropy_mul adjustments as FindBest8x8Transform.
-            // DCT2x2/IDENTITY: kFavor2X2 discount. Other non-DCT8: kAvoidEntropy penalty.
-            // Larger transforms (16x8, 16x16): no adjustment.
-            let adjust = match sub_raw {
-                RAW_STRATEGY_DCT2X2 | RAW_STRATEGY_IDENTITY => favor_2x2_adjust,
-                RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
-                | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-                    avoid_transforms_adjust
+        for iy in 0..4 {
+            for ix in 0..4 {
+                if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
+                    continue;
                 }
-                _ => 0.0,
-            };
+                let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
 
-            let e = estimate_entropy_with_mask(
-                sub_raw,
-                xyb,
-                stride,
-                abs_bx + ix,
-                abs_by + iy,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-                adjust,
-                cost_bases,
-                &profile.entropy_mul_table,
-                scratch,
-            );
-            let cost = base + mul * e;
-            // Accumulate into the quadrant that contains the first block of this transform.
-            // For multi-block transforms (e.g. DCT16x16 at (0,0) covering (0,0)-(1,1)),
-            // the entire cost goes into quadrant [0][0], matching libjxl's SetEntropyForTransform
-            // which stores the full cost at the first block position.
-            quadrant_cost[iy / 2][ix / 2] += cost;
+                let mul = match sub_raw {
+                    RAW_STRATEGY_DCT8 => sub_mul8x8,
+                    RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => sub_mul16x8,
+                    RAW_STRATEGY_DCT16X16 => sub_mul16x16,
+                    _ => sub_mul8x8,
+                };
+                let base = if !use_pixel_domain && sub_raw == RAW_STRATEGY_DCT8 {
+                    3.0 * sub_mul8x8
+                } else {
+                    0.0
+                };
+
+                // Apply the same entropy_mul adjustments as FindBest8x8Transform.
+                let adjust = match sub_raw {
+                    RAW_STRATEGY_DCT2X2 | RAW_STRATEGY_IDENTITY => favor_2x2_adjust,
+                    RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
+                    | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
+                    | RAW_STRATEGY_AFV3 => avoid_transforms_adjust,
+                    _ => 0.0,
+                };
+
+                let e = estimate_entropy_with_mask(
+                    sub_raw,
+                    xyb,
+                    stride,
+                    abs_bx + ix,
+                    abs_by + iy,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    adjust,
+                    cost_bases,
+                    &profile.entropy_mul_table,
+                    scratch,
+                );
+                let cost = base + mul * e;
+                quadrant_cost[iy / 2][ix / 2] += cost;
+            }
         }
     }
 
@@ -820,16 +932,40 @@ pub(super) fn find_best_32x32_transform(
     if entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj {
         // DCT32x32 wins over both rect orientations
         ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X32);
+        if let Some((ox, oy)) = cache_offset {
+            set_entropy_for_transform(&mut scratch.entropy_estimate, ox, oy, 4, 4, entropy_32x32);
+        }
         true
     } else if cost_jxn < cost_nxj {
         // Vertical split (DCT32X16) orientation is better — try each half independently.
         let mut any_merged = false;
         if entropy_32x16_0 < sub_left {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X16);
+            if let Some((ox, oy)) = cache_offset {
+                // DCT32X16 covers 2 cols × 4 rows
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox,
+                    oy,
+                    2,
+                    4,
+                    entropy_32x16_0,
+                );
+            }
             any_merged = true;
         }
         if entropy_32x16_1 < sub_right {
             ac_strategy.set(abs_bx + 2, abs_by, RAW_STRATEGY_DCT32X16);
+            if let Some((ox, oy)) = cache_offset {
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox + 2,
+                    oy,
+                    2,
+                    4,
+                    entropy_32x16_1,
+                );
+            }
             any_merged = true;
         }
         any_merged
@@ -838,10 +974,31 @@ pub(super) fn find_best_32x32_transform(
         let mut any_merged = false;
         if entropy_16x32_0 < sub_top {
             ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X32);
+            if let Some((ox, oy)) = cache_offset {
+                // DCT16X32 covers 4 cols × 2 rows
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox,
+                    oy,
+                    4,
+                    2,
+                    entropy_16x32_0,
+                );
+            }
             any_merged = true;
         }
         if entropy_16x32_1 < sub_bottom {
             ac_strategy.set(abs_bx, abs_by + 2, RAW_STRATEGY_DCT16X32);
+            if let Some((ox, oy)) = cache_offset {
+                set_entropy_for_transform(
+                    &mut scratch.entropy_estimate,
+                    ox,
+                    oy + 2,
+                    4,
+                    2,
+                    entropy_16x32_1,
+                );
+            }
             any_merged = true;
         }
         any_merged
@@ -904,6 +1061,11 @@ pub(super) fn find_best_64x64_transform(
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
+
+    // Zero the entropy_estimate cache for this 64×64 region.
+    // Will be populated by find_best_16x16_transform via find_best_32x32_transform
+    // when use_pixel_domain is true.
+    scratch.entropy_estimate = [0.0; 64];
 
     // Evaluate DCT64x64 cost
     let entropy_64x64 = mul64x64
@@ -1013,9 +1175,13 @@ pub(super) fn find_best_64x64_transform(
             &profile.entropy_mul_table,
             scratch,
         );
-    // Run four 32x32 evaluations (each covers 4×4 blocks)
+    // Run four 32x32 evaluations (each covers 4×4 blocks).
+    // In pixel-domain mode, pass cache offsets so sub-costs are stored in
+    // entropy_estimate and we can sum them below without re-evaluation.
+    let use_cache = use_pixel_domain;
     for qy in (0..8).step_by(4) {
         for qx in (0..8).step_by(4) {
+            let sub_cache = if use_cache { Some((qx, qy)) } else { None };
             find_best_32x32_transform(
                 xyb,
                 stride,
@@ -1033,56 +1199,49 @@ pub(super) fn find_best_64x64_transform(
                 mask1x1_stride,
                 ac_strategy,
                 scratch,
+                sub_cache,
                 profile,
             );
         }
     }
 
-    // Compute per-quadrant sub-costs matching libjxl's entropy[2][2] structure.
-    // Quadrant [qy][qx] covers blocks (qx*4..qx*4+3, qy*4..qy*4+3).
-    //
-    // Same entropy_mul adjustment fix as find_best_32x32_transform — see comment there.
-    let favor_weight = if distance < 5.0 {
-        ((5.0 - distance) / 5.0_f32).powi(2)
-    } else {
-        0.0
-    };
-    let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
-    let avoid_transforms_adjust = if distance > 4.0 {
-        let mul = if distance < 12.0 {
-            (12.0 - 4.0) / (distance - 4.0)
-        } else {
-            1.0
-        };
-        profile.k_avoid_transforms_base * mul
-    } else {
-        0.0
-    };
-
+    // Compute per-quadrant sub-costs.
+    // When the cache was populated (pixel-domain mode), read directly from
+    // entropy_estimate. Otherwise re-evaluate from the ac_strategy map.
     let mut quadrant_cost = [[0.0f32; 2]; 2];
-    for iy in 0..8 {
-        for ix in 0..8 {
-            if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
-                continue;
+    if use_cache {
+        // Read cached costs: sum all 64 positions, accumulating into quadrants.
+        for iy in 0..8 {
+            for ix in 0..8 {
+                quadrant_cost[iy / 4][ix / 4] += scratch.entropy_estimate[iy * 8 + ix];
             }
-            let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
-
-            let mul = if use_pixel_domain {
-                let mul8x8 = 1.0 + (-0.4) / (distance + 1.4);
-                match sub_raw {
-                    RAW_STRATEGY_DCT8
-                    | RAW_STRATEGY_DCT4X8
-                    | RAW_STRATEGY_DCT8X4
-                    | RAW_STRATEGY_DCT4X4
-                    | RAW_STRATEGY_IDENTITY
-                    | RAW_STRATEGY_DCT2X2
-                    | RAW_STRATEGY_AFV0
-                    | RAW_STRATEGY_AFV1
-                    | RAW_STRATEGY_AFV2
-                    | RAW_STRATEGY_AFV3 => mul8x8,
-                    _ => 1.0_f32,
-                }
+        }
+    } else {
+        // Re-evaluate sub-costs from ac_strategy map (coefficient-domain fallback).
+        let favor_weight = if distance < 5.0 {
+            ((5.0 - distance) / 5.0_f32).powi(2)
+        } else {
+            0.0
+        };
+        let favor_2x2_adjust = profile.k_favor_2x2 * favor_weight;
+        let avoid_transforms_adjust = if distance > 4.0 {
+            let mul = if distance < 12.0 {
+                (12.0 - 4.0) / (distance - 4.0)
             } else {
+                1.0
+            };
+            profile.k_avoid_transforms_base * mul
+        } else {
+            0.0
+        };
+
+        for iy in 0..8 {
+            for ix in 0..8 {
+                if !ac_strategy.is_first(abs_bx + ix, abs_by + iy) {
+                    continue;
+                }
+                let sub_raw = ac_strategy.raw_strategy(abs_bx + ix, abs_by + iy);
+
                 let k8x8mul1: f32 = -0.55 * 0.75;
                 let k8x8mul2: f32 = 1.073_575_8 * 0.75;
                 let k8x8base: f32 = 1.4;
@@ -1103,55 +1262,50 @@ pub(super) fn find_best_64x64_transform(
                 let k32x16mul2: f32 = 1.1;
                 let k32x16base: f32 = 2.0;
                 let mul32x16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
-                match sub_raw {
+                let mul = match sub_raw {
                     RAW_STRATEGY_DCT8 => mul8x8,
                     RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => mul16x8,
                     RAW_STRATEGY_DCT16X16 => mul16x16,
                     RAW_STRATEGY_DCT32X32 => mul32x32,
                     RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => mul32x16,
                     _ => mul8x8,
-                }
-            };
-            let base = if !use_pixel_domain && sub_raw == RAW_STRATEGY_DCT8 {
-                let k8x8mul1: f32 = -0.55 * 0.75;
-                let k8x8mul2: f32 = 1.073_575_8 * 0.75;
-                let k8x8base: f32 = 1.4;
-                3.0 * (k8x8mul2 + k8x8mul1 / (distance + k8x8base))
-            } else {
-                0.0
-            };
+                };
+                let base = if sub_raw == RAW_STRATEGY_DCT8 {
+                    3.0 * mul8x8
+                } else {
+                    0.0
+                };
 
-            // Apply the same entropy_mul adjustments as FindBest8x8Transform.
-            let adjust = match sub_raw {
-                RAW_STRATEGY_DCT2X2 | RAW_STRATEGY_IDENTITY => favor_2x2_adjust,
-                RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
-                | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-                    avoid_transforms_adjust
-                }
-                _ => 0.0,
-            };
+                let adjust = match sub_raw {
+                    RAW_STRATEGY_DCT2X2 | RAW_STRATEGY_IDENTITY => favor_2x2_adjust,
+                    RAW_STRATEGY_DCT4X8 | RAW_STRATEGY_DCT8X4 | RAW_STRATEGY_DCT4X4
+                    | RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
+                    | RAW_STRATEGY_AFV3 => avoid_transforms_adjust,
+                    _ => 0.0,
+                };
 
-            let e = estimate_entropy_with_mask(
-                sub_raw,
-                xyb,
-                stride,
-                abs_bx + ix,
-                abs_by + iy,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-                adjust,
-                cost_bases,
-                &profile.entropy_mul_table,
-                scratch,
-            );
-            let cost = base + mul * e;
-            quadrant_cost[iy / 4][ix / 4] += cost;
+                let e = estimate_entropy_with_mask(
+                    sub_raw,
+                    xyb,
+                    stride,
+                    abs_bx + ix,
+                    abs_by + iy,
+                    distance,
+                    quant_field,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    adjust,
+                    cost_bases,
+                    &profile.entropy_mul_table,
+                    scratch,
+                );
+                let cost = base + mul * e;
+                quadrant_cost[iy / 4][ix / 4] += cost;
+            }
         }
     }
 
