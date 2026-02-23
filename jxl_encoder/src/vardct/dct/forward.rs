@@ -15,73 +15,74 @@ pub fn dct1d_2(mem: &mut [f32]) {
     mem[1] = in1 - in2;
 }
 
+/// Value-returning 1D DCT for N=4. Returns [out0, out1, out2, out3].
+#[inline(always)]
+fn dct1d_4_val(a: f32, b: f32, c: f32, d: f32) -> [f32; 4] {
+    // AddReverse/SubReverse
+    let t0 = a + d;
+    let t1 = b + c;
+    let t2 = a - d;
+    let t3 = b - c;
+    // DCT on first half (2-point)
+    let u0 = t0 + t1;
+    let u1 = t0 - t1;
+    // Wc multiply + DCT on second half (2-point)
+    let v0 = t2 * WC_MULTIPLIERS_4[0];
+    let v1 = t3 * WC_MULTIPLIERS_4[1];
+    let w0 = v0 + v1;
+    let w1 = v0 - v1;
+    // B transform
+    let b0 = SQRT2 * w0 + w1;
+    // InverseEvenOdd
+    [u0, b0, u1, w1]
+}
+
 /// In-place 1D DCT for N=4
 #[inline(always)]
 pub fn dct1d_4(mem: &mut [f32]) {
-    // AddReverse: tmp[i] = mem[i] + mem[N-1-i] for first half
-    // SubReverse: tmp[N/2+i] = mem[i] - mem[N-1-i] for second half
-    let mut tmp = [0.0f32; 4];
-    tmp[0] = mem[0] + mem[3];
-    tmp[1] = mem[1] + mem[2];
-    tmp[2] = mem[0] - mem[3];
-    tmp[3] = mem[1] - mem[2];
+    let r = dct1d_4_val(mem[0], mem[1], mem[2], mem[3]);
+    mem[0] = r[0];
+    mem[1] = r[1];
+    mem[2] = r[2];
+    mem[3] = r[3];
+}
 
-    // DCT on first half
-    dct1d_2(&mut tmp[0..2]);
-
-    // Multiply second half by WcMultipliers
-    tmp[2] *= WC_MULTIPLIERS_4[0];
-    tmp[3] *= WC_MULTIPLIERS_4[1];
-
-    // DCT on second half
-    dct1d_2(&mut tmp[2..4]);
-
-    // B transform on second half
-    // B: tmp[0] = sqrt2 * tmp[0] + tmp[1], then tmp[i] = tmp[i] + tmp[i+1] for rest
-    tmp[2] = SQRT2 * tmp[2] + tmp[3];
-    // (no more elements for N/2=2)
-
-    // InverseEvenOdd: interleave even and odd
-    mem[0] = tmp[0];
-    mem[2] = tmp[1];
-    mem[1] = tmp[2];
-    mem[3] = tmp[3];
+/// Value-returning 1D DCT for N=8. Returns [out0..out7].
+#[inline(always)]
+fn dct1d_8_val(m: [f32; 8]) -> [f32; 8] {
+    // AddReverse/SubReverse
+    let t0 = m[0] + m[7];
+    let t1 = m[1] + m[6];
+    let t2 = m[2] + m[5];
+    let t3 = m[3] + m[4];
+    let t4 = m[0] - m[7];
+    let t5 = m[1] - m[6];
+    let t6 = m[2] - m[5];
+    let t7 = m[3] - m[4];
+    // DCT-4 on first half
+    let r0 = dct1d_4_val(t0, t1, t2, t3);
+    // Wc multiply on second half
+    let w4 = t4 * WC_MULTIPLIERS_8[0];
+    let w5 = t5 * WC_MULTIPLIERS_8[1];
+    let w6 = t6 * WC_MULTIPLIERS_8[2];
+    let w7 = t7 * WC_MULTIPLIERS_8[3];
+    // DCT-4 on second half
+    let r1 = dct1d_4_val(w4, w5, w6, w7);
+    // B transform: sqrt2*r1[0]+r1[1], r1[1]+r1[2], r1[2]+r1[3], r1[3]
+    let b0 = SQRT2 * r1[0] + r1[1];
+    let b1 = r1[1] + r1[2];
+    let b2 = r1[2] + r1[3];
+    let b3 = r1[3];
+    // InverseEvenOdd
+    [r0[0], b0, r0[1], b1, r0[2], b2, r0[3], b3]
 }
 
 /// In-place 1D DCT for N=8
 pub fn dct1d_8(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 8];
-
-    // AddReverse for first half
-    for i in 0..4 {
-        tmp[i] = mem[i] + mem[7 - i];
-    }
-    // SubReverse for second half
-    for i in 0..4 {
-        tmp[4 + i] = mem[i] - mem[7 - i];
-    }
-
-    // DCT on first half
-    dct1d_4(&mut tmp[0..4]);
-
-    // Multiply second half by WcMultipliers
-    for i in 0..4 {
-        tmp[4 + i] *= WC_MULTIPLIERS_8[i];
-    }
-
-    // DCT on second half
-    dct1d_4(&mut tmp[4..8]);
-
-    // B transform on second half
-    tmp[4] = SQRT2 * tmp[4] + tmp[5];
-    tmp[5] += tmp[6];
-    tmp[6] += tmp[7];
-
-    // InverseEvenOdd: interleave
-    for i in 0..4 {
-        mem[2 * i] = tmp[i];
-        mem[2 * i + 1] = tmp[4 + i];
-    }
+    let r = dct1d_8_val([
+        mem[0], mem[1], mem[2], mem[3], mem[4], mem[5], mem[6], mem[7],
+    ]);
+    mem[..8].copy_from_slice(&r);
 }
 
 /// In-place 1D DCT for N=16
@@ -145,39 +146,35 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 /// the transform includes a final transpose.
 #[inline(always)]
 pub fn dct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
-    let mut tmp = [0.0f32; 32];
-
-    // Transform rows (8 columns each) with 8-point DCT
+    // Pass 1: row DCTs (8-point) + transpose + scale into temp
+    // Row DCTs produce 4 rows × 8 cols; we store transposed: 8 rows × 4 cols
+    let mut temp = [0.0f32; 32];
     for row in 0..4 {
-        let row_start = row * 8;
-        tmp[row_start..row_start + 8].copy_from_slice(&input[row_start..row_start + 8]);
-        dct1d_8(&mut tmp[row_start..row_start + 8]);
-        for i in 0..8 {
-            tmp[row_start + i] *= 1.0 / 8.0;
-        }
-    }
-
-    // Transpose 4x8 -> 8x4
-    let mut transposed = [0.0f32; 32];
-    for row in 0..4 {
+        let s = row * 8;
+        let r = dct1d_8_val([
+            input[s],
+            input[s + 1],
+            input[s + 2],
+            input[s + 3],
+            input[s + 4],
+            input[s + 5],
+            input[s + 6],
+            input[s + 7],
+        ]);
+        // Store transposed (col-major) with 1/8 scale
         for col in 0..8 {
-            transposed[col * 4 + row] = tmp[row * 8 + col];
+            temp[col * 4 + row] = r[col] * (1.0 / 8.0);
         }
     }
 
-    // Transform columns (now 4 elements each) with 4-point DCT
+    // Pass 2: column DCTs (4-point) + final transpose + scale
+    // After pass 1, temp is 8×4. DCT each row of 4, then store transposed → 4×8 output.
     for row in 0..8 {
-        let row_start = row * 4;
-        dct1d_4(&mut transposed[row_start..row_start + 4]);
-        for i in 0..4 {
-            transposed[row_start + i] *= 1.0 / 4.0;
-        }
-    }
-
-    // Final transpose 8x4 -> 4x8 (ROWS < COLS branch in libjxl)
-    for row in 0..8 {
+        let s = row * 4;
+        let r = dct1d_4_val(temp[s], temp[s + 1], temp[s + 2], temp[s + 3]);
+        // Final transpose (ROWS < COLS): store as col-major in output
         for col in 0..4 {
-            output[col * 8 + row] = transposed[row * 4 + col];
+            output[col * 8 + row] = r[col] * (1.0 / 4.0);
         }
     }
 }
@@ -192,37 +189,35 @@ pub fn dct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
 /// there is NO final transpose.
 #[inline(always)]
 pub fn dct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
-    let mut tmp = [0.0f32; 32];
-
-    // Transform rows (4 columns each) with 4-point DCT
+    // Pass 1: row DCTs (4-point) + transpose + scale into temp
+    // Row DCTs produce 8 rows × 4 cols; we store transposed: 4 rows × 8 cols
+    let mut temp = [0.0f32; 32];
     for row in 0..8 {
-        let row_start = row * 4;
-        tmp[row_start..row_start + 4].copy_from_slice(&input[row_start..row_start + 4]);
-        dct1d_4(&mut tmp[row_start..row_start + 4]);
-        for i in 0..4 {
-            tmp[row_start + i] *= 1.0 / 4.0;
-        }
-    }
-
-    // Transpose 8x4 -> 4x8
-    let mut transposed = [0.0f32; 32];
-    for row in 0..8 {
+        let s = row * 4;
+        let r = dct1d_4_val(input[s], input[s + 1], input[s + 2], input[s + 3]);
+        // Store transposed with 1/4 scale
         for col in 0..4 {
-            transposed[col * 8 + row] = tmp[row * 4 + col];
+            temp[col * 8 + row] = r[col] * (1.0 / 4.0);
         }
     }
 
-    // Transform columns (now 8 elements each) with 8-point DCT
+    // Pass 2: column DCTs (8-point) + scale → output (no final transpose for ROWS >= COLS)
     for row in 0..4 {
-        let row_start = row * 8;
-        dct1d_8(&mut transposed[row_start..row_start + 8]);
-        for i in 0..8 {
-            transposed[row_start + i] *= 1.0 / 8.0;
+        let s = row * 8;
+        let r = dct1d_8_val([
+            temp[s],
+            temp[s + 1],
+            temp[s + 2],
+            temp[s + 3],
+            temp[s + 4],
+            temp[s + 5],
+            temp[s + 6],
+            temp[s + 7],
+        ]);
+        for col in 0..8 {
+            output[row * 8 + col] = r[col] * (1.0 / 8.0);
         }
     }
-
-    // NO final transpose for ROWS >= COLS (matches dct_8x8 behavior)
-    output.copy_from_slice(&transposed);
 }
 
 /// Compute full DCT4X8 transform for 8x8 pixel block.
@@ -230,30 +225,40 @@ pub fn dct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
 /// This covers an 8x8 pixel region using TWO vertically-stacked 4x8 sub-blocks.
 /// The DC values of the two sub-blocks are combined with a 2-point transform.
 ///
-/// Input: 8x8 = 64 floats in row-major order (stride 8)
-/// Output: 64 DCT coefficients in interleaved layout
+/// Fused: extracts pixels directly from input, transforms in registers,
+/// and interleaves directly to output — no intermediate sub-block buffers.
 ///
 /// Matches libjxl's Type::DCT4X8 case in enc_transforms-inl.h
 #[inline(always)]
 pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    // Process two 4x8 sub-blocks (top and bottom halves)
     for y in 0..2 {
-        // Extract 4x8 sub-block
-        let mut block = [0.0f32; 32];
+        // Pass 1: 8-point row DCTs on 4 rows, store transposed (8×4)
+        let mut temp = [0.0f32; 32];
         for iy in 0..4 {
-            for ix in 0..8 {
-                block[iy * 8 + ix] = input[(y * 4 + iy) * 8 + ix];
+            let base = (y * 4 + iy) * 8;
+            let r = dct1d_8_val([
+                input[base],
+                input[base + 1],
+                input[base + 2],
+                input[base + 3],
+                input[base + 4],
+                input[base + 5],
+                input[base + 6],
+                input[base + 7],
+            ]);
+            for col in 0..8 {
+                temp[col * 4 + iy] = r[col] * (1.0 / 8.0);
             }
         }
 
-        // Apply base 4x8 DCT
-        let mut coeffs = [0.0f32; 32];
-        dct_4x8(&block, &mut coeffs);
-
-        // Interleave into output: coefficients[(y + iy * 2) * 8 + ix]
-        for iy in 0..4 {
-            for ix in 0..8 {
-                output[(y + iy * 2) * 8 + ix] = coeffs[iy * 8 + ix];
+        // Pass 2: 4-point column DCTs, final transpose, interleave directly to output
+        for col in 0..8 {
+            let s = col * 4;
+            let r = dct1d_4_val(temp[s], temp[s + 1], temp[s + 2], temp[s + 3]);
+            // Final transpose (ROWS < COLS) + interleave: coeff at (iy, ix) → output[(y + iy*2)*8 + ix]
+            // After final transpose: row i of output sub-block = r[i], stored at column `col`
+            for iy in 0..4 {
+                output[(y + iy * 2) * 8 + col] = r[iy] * (1.0 / 4.0);
             }
         }
     }
@@ -270,31 +275,45 @@ pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
 /// This covers an 8x8 pixel region using TWO horizontally-adjacent 8x4 sub-blocks.
 /// The DC values of the two sub-blocks are combined with a 2-point transform.
 ///
-/// Input: 8x8 = 64 floats in row-major order (stride 8)
-/// Output: 64 DCT coefficients in interleaved layout
+/// Fused: extracts pixels directly from input, transforms in registers,
+/// and interleaves directly to output — no intermediate sub-block buffers.
 ///
 /// Matches libjxl's Type::DCT8X4 case in enc_transforms-inl.h
 #[inline(always)]
 pub fn dct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    // Process two 8x4 sub-blocks (left and right halves)
     for x in 0..2 {
-        // Extract 8x4 sub-block
-        let mut block = [0.0f32; 32];
+        // Pass 1: 4-point row DCTs on 8 rows, store transposed (4×8)
+        let mut temp = [0.0f32; 32];
         for iy in 0..8 {
-            for ix in 0..4 {
-                block[iy * 4 + ix] = input[iy * 8 + (x * 4 + ix)];
+            let base = iy * 8 + x * 4;
+            let r = dct1d_4_val(
+                input[base],
+                input[base + 1],
+                input[base + 2],
+                input[base + 3],
+            );
+            for col in 0..4 {
+                temp[col * 8 + iy] = r[col] * (1.0 / 4.0);
             }
         }
 
-        // Apply base 8x4 DCT
-        let mut coeffs = [0.0f32; 32];
-        dct_8x4(&block, &mut coeffs);
-
-        // Interleave into output: coefficients[(x + iy * 2) * 8 + ix]
-        // Note: the 8x4 output is in 4x8 layout (stride 8) after the transform
-        for iy in 0..4 {
+        // Pass 2: 8-point column DCTs, interleave directly to output
+        // (no final transpose for ROWS >= COLS — output in transposed layout)
+        for col in 0..4 {
+            let s = col * 8;
+            let r = dct1d_8_val([
+                temp[s],
+                temp[s + 1],
+                temp[s + 2],
+                temp[s + 3],
+                temp[s + 4],
+                temp[s + 5],
+                temp[s + 6],
+                temp[s + 7],
+            ]);
+            // Interleave: coeff at (iy, ix) → output[(x + iy*2)*8 + ix]
             for ix in 0..8 {
-                output[(x + iy * 2) * 8 + ix] = coeffs[iy * 8 + ix];
+                output[(x + col * 2) * 8 + ix] = r[ix] * (1.0 / 8.0);
             }
         }
     }
@@ -326,44 +345,30 @@ pub fn dc_from_dct_8x4_full(coeffs: &[f32; 64]) -> f32 {
 /// Compute base 4x4 DCT.
 ///
 /// Input: 4x4 = 16 floats in row-major order (stride 4)
-/// Output: 16 DCT coefficients
+/// Output: 16 DCT coefficients in transposed layout (no final transpose for square)
 ///
-/// Based on libjxl's ComputeScaledDCT<4, 4>. Since ROWS == COLS (square),
-/// there is NO final transpose.
+/// Based on libjxl's ComputeScaledDCT<4, 4>.
 #[inline(always)]
 pub fn dct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
-    let mut tmp = [0.0f32; 16];
-
-    // Transform rows with 4-point DCT
+    // Pass 1: row DCTs + transpose + scale into temp
+    let mut temp = [0.0f32; 16];
     for row in 0..4 {
-        let row_start = row * 4;
-        tmp[row_start..row_start + 4].copy_from_slice(&input[row_start..row_start + 4]);
-        dct1d_4(&mut tmp[row_start..row_start + 4]);
-        for i in 0..4 {
-            tmp[row_start + i] *= 1.0 / 4.0;
-        }
-    }
-
-    // Transpose 4x4
-    let mut transposed = [0.0f32; 16];
-    for row in 0..4 {
+        let s = row * 4;
+        let r = dct1d_4_val(input[s], input[s + 1], input[s + 2], input[s + 3]);
+        // Store transposed with 1/4 scale
         for col in 0..4 {
-            transposed[col * 4 + row] = tmp[row * 4 + col];
+            temp[col * 4 + row] = r[col] * (1.0 / 4.0);
         }
     }
 
-    // Transform columns (now rows after transpose) with 4-point DCT
+    // Pass 2: column DCTs + scale → output (no final transpose for square)
     for row in 0..4 {
-        let row_start = row * 4;
-        dct1d_4(&mut transposed[row_start..row_start + 4]);
-        for i in 0..4 {
-            transposed[row_start + i] *= 1.0 / 4.0;
+        let s = row * 4;
+        let r = dct1d_4_val(temp[s], temp[s + 1], temp[s + 2], temp[s + 3]);
+        for col in 0..4 {
+            output[row * 4 + col] = r[col] * (1.0 / 4.0);
         }
     }
-
-    // No final transpose for square blocks (ROWS >= COLS in libjxl)
-    // Output is in transposed layout
-    output.copy_from_slice(&transposed);
 }
 
 /// Compute full DCT4X4 transform for 8x8 pixel block.
@@ -371,44 +376,47 @@ pub fn dct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
 /// This covers an 8x8 pixel region using FOUR 4x4 sub-blocks arranged in a 2x2 grid.
 /// The DC values of the four sub-blocks are combined with a 2x2 DCT.
 ///
-/// Input: 8x8 = 64 floats in row-major order (stride 8)
-/// Output: 64 DCT coefficients in interleaved layout
+/// Fused: extracts pixels directly from input, transforms in registers,
+/// and interleaves directly to output — no intermediate sub-block buffers.
 ///
 /// Matches libjxl's Type::DCT4X4 case in enc_transforms-inl.h
 #[inline(always)]
 pub fn dct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    // Process four 4x4 sub-blocks in 2x2 grid
     for y in 0..2 {
         for x in 0..2 {
-            // Extract 4x4 sub-block
-            let mut block = [0.0f32; 16];
+            // Pass 1: 4-point row DCTs on 4 rows, store transposed (4×4)
+            let mut temp = [0.0f32; 16];
             for iy in 0..4 {
-                for ix in 0..4 {
-                    block[iy * 4 + ix] = input[(y * 4 + iy) * 8 + (x * 4 + ix)];
+                let base = (y * 4 + iy) * 8 + x * 4;
+                let r = dct1d_4_val(
+                    input[base],
+                    input[base + 1],
+                    input[base + 2],
+                    input[base + 3],
+                );
+                for col in 0..4 {
+                    temp[col * 4 + iy] = r[col] * (1.0 / 4.0);
                 }
             }
 
-            // Apply base 4x4 DCT
-            let mut coeffs = [0.0f32; 16];
-            dct_4x4(&block, &mut coeffs);
-
-            // Interleave into output: coefficients[(y + iy * 2) * 8 + x + ix * 2]
-            for iy in 0..4 {
+            // Pass 2: 4-point column DCTs, interleave directly to output
+            // (no final transpose for square — output in transposed layout)
+            for col in 0..4 {
+                let s = col * 4;
+                let r = dct1d_4_val(temp[s], temp[s + 1], temp[s + 2], temp[s + 3]);
+                // Interleave: coeff at (iy, ix) → output[(y + iy*2)*8 + x + ix*2]
                 for ix in 0..4 {
-                    output[(y + iy * 2) * 8 + x + ix * 2] = coeffs[iy * 4 + ix];
+                    output[(y + col * 2) * 8 + x + ix * 2] = r[ix] * (1.0 / 4.0);
                 }
             }
         }
     }
 
     // Combine DC values of the four sub-blocks with 2x2 DCT
-    // Sub-block DCs are at positions: (0,0)->0, (0,1)->1, (1,0)->8, (1,1)->9
     let block00 = output[0];
     let block01 = output[1];
     let block10 = output[8];
     let block11 = output[9];
-
-    // 2x2 DCT: same as libjxl's DC combining
     output[0] = (block00 + block01 + block10 + block11) * 0.25;
     output[1] = (block00 + block01 - block10 - block11) * 0.25;
     output[8] = (block00 - block01 + block10 - block11) * 0.25;
