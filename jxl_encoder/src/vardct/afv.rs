@@ -98,14 +98,20 @@ const AFV4X4_BASIS_TRANSPOSE: [[f32; 16]; 16] = [
 ///
 /// Let B be the basis matrix. AFV4X4_BASIS_TRANSPOSE = B^T.
 /// Forward: coeffs = B * pixels = sum_i(B[j][i] * pixels[i]) = sum_i(B^T[i][j] * pixels[i])
+///
+/// Loop structure: outer on input pixel (i), inner on output coefficient (j).
+/// This gives stride-1 access to AFV4X4_BASIS_TRANSPOSE[i][j] (j varies, i fixed),
+/// enabling auto-vectorization of the inner multiply-accumulate loop.
+/// The original j-outer/i-inner loop had stride-16 access (gather pattern).
 #[inline(always)]
 fn afv_dct_4x4(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
-    for j in 0..16 {
-        let mut sum = 0.0f32;
-        for i in 0..16 {
-            sum += pixels[i] * AFV4X4_BASIS_TRANSPOSE[i][j];
+    *coeffs = [0.0; 16];
+    for i in 0..16 {
+        let p = pixels[i];
+        let row = &AFV4X4_BASIS_TRANSPOSE[i];
+        for j in 0..16 {
+            coeffs[j] += p * row[j];
         }
-        coeffs[j] = sum;
     }
 }
 
