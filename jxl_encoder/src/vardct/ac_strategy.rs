@@ -790,7 +790,7 @@ fn estimate_entropy_full_impl(
         let n = DCT_BLOCK_SIZE as f64;
         let loss_scalar = (total_pixel_loss / n).sqrt().sqrt().sqrt() * n / quant_for_coeffs as f64;
         entropy *= entropy_mul;
-        entropy = k_info_loss_mul.mul_add(loss_scalar as f32, entropy);
+        entropy += k_info_loss_mul * loss_scalar as f32;
         return entropy;
     }
 
@@ -1037,7 +1037,7 @@ fn estimate_entropy_full_impl(
         // cost_of_1 term only in coefficient-domain mode (libjxl-tiny style)
         // Full libjxl pixel-domain mode doesn't have this per-nzero term
         if !use_pixel_domain {
-            entropy_sum = nzeros_sum.mul_add(cost_of_1, entropy_sum);
+            entropy_sum += nzeros_sum * cost_of_1;
         }
         entropy += entropy_sum;
 
@@ -1101,13 +1101,12 @@ fn estimate_entropy_full_impl(
         let loss_scalar = (total_pixel_loss / n).sqrt().sqrt().sqrt() * n / quant_norm16 as f64;
         // Apply entropy_mul to entropy, then add loss
         entropy *= entropy_mul;
-        entropy = k_info_loss_mul.mul_add(loss_scalar as f32, entropy);
+        entropy += k_info_loss_mul * loss_scalar as f32;
     } else {
         // Coefficient-domain loss (libjxl-tiny style)
         // In this mode, entropy_mul is 1.0 and caller applies multipliers externally
         let infoloss2 = (num_blocks as f32 * info_loss2_sum).sqrt();
-        let info_loss_score =
-            k_info_loss_mul.mul_add(info_loss_sum, K_INFO_LOSS_MULTIPLIER2 * infoloss2);
+        let info_loss_score = k_info_loss_mul * info_loss_sum + K_INFO_LOSS_MULTIPLIER2 * infoloss2;
         entropy += mask_val * info_loss_score;
     }
 
