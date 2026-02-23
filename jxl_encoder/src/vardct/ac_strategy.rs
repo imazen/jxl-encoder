@@ -39,6 +39,11 @@ pub(super) struct EntropyEstScratch {
     pub error_coeffs: Vec<f32>,
     /// Pixel-domain error output from IDCT (max 4096).
     pub pixel_error: Vec<f32>,
+    /// Per-block entropy estimates for the current 64×64 region.
+    /// Indexed as `[iy * 8 + ix]` where (ix, iy) are block coords within the region.
+    /// Populated by `find_best_16x16_transform`, consumed by 32×32/64×64 levels
+    /// to avoid redundant re-evaluation of sub-block costs.
+    pub entropy_estimate: [f32; 64],
 }
 
 impl EntropyEstScratch {
@@ -48,6 +53,7 @@ impl EntropyEstScratch {
             block: vec![0.0f32; 3 * MAX],
             error_coeffs: vec![0.0f32; MAX],
             pixel_error: vec![0.0f32; MAX],
+            entropy_estimate: [0.0; 64],
         }
     }
 }
@@ -1450,6 +1456,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        None,
                         profile,
                     );
                     cx += 4;
@@ -1473,6 +1480,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        None,
                         profile,
                     );
                     cx += 2;
@@ -1500,6 +1508,7 @@ pub fn compute_ac_strategy(
                         mask1x1_stride,
                         &mut ac_strategy,
                         &mut scratch,
+                        None,
                         profile,
                     );
                     cx += 4;
@@ -1523,6 +1532,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        None,
                         profile,
                     );
                     cx += 2;
@@ -1551,6 +1561,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        None,
                         profile,
                     );
                     cx += 2;
@@ -1616,6 +1627,7 @@ pub fn compute_ac_strategy(
                         &mut ac_strategy,
                         &mut scratch,
                         1.0,
+                        None,
                         profile,
                     );
                     // Only keep results if a multi-block transform was selected.
@@ -1688,6 +1700,7 @@ pub fn compute_ac_strategy(
                             mask1x1_stride,
                             &mut ac_strategy,
                             &mut scratch,
+                            None,
                             profile,
                         );
                         // Only keep results if a multi-block transform was selected
