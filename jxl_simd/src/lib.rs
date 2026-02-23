@@ -57,6 +57,7 @@ pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
 #[allow(unsafe_code)]
 pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
     debug_assert!(offset <= s.len());
+    // SAFETY: Caller guarantees offset <= s.len(); debug_assert checks in debug builds.
     unsafe { s.get_unchecked(offset..) }
 }
 
@@ -88,6 +89,7 @@ pub(crate) fn load_f32x8(
         "load_f32x8: offset={offset}, len={}",
         s.len()
     );
+    // SAFETY: Caller guarantees offset + 8 <= s.len(); debug_assert checks in debug builds.
     unsafe {
         let ptr = s.as_ptr().add(offset);
         f32x8::from_m256(token, core::arch::x86_64::_mm256_loadu_ps(ptr))
@@ -122,6 +124,7 @@ pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x
         "store_f32x8: offset={offset}, len={}",
         s.len()
     );
+    // SAFETY: Caller guarantees offset + 8 <= s.len(); debug_assert checks in debug builds.
     unsafe {
         let ptr = s.as_mut_ptr().add(offset);
         core::arch::x86_64::_mm256_storeu_ps(ptr, v.raw());
@@ -134,6 +137,95 @@ pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x
 pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x8) {
     let out: &mut [f32; 8] = (&mut s[offset..offset + 8]).try_into().unwrap();
     v.store(out);
+}
+
+/// Load column `j` from 8 consecutive rows starting at `base_row` with given stride.
+///
+/// Unsafe-performance path: uses unchecked indexing (validated by debug_assert).
+/// Safe path: uses bounds-checked indexing.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn gather_col_strided(
+    token: archmage::X64V3Token,
+    data: &[f32],
+    base_row: usize,
+    j: usize,
+    stride: usize,
+) -> magetypes::simd::f32x8 {
+    #[cfg(feature = "unsafe-performance")]
+    {
+        debug_assert!(
+            (base_row + 7) * stride + j < data.len(),
+            "gather_col_strided OOB: base_row={base_row}, j={j}, stride={stride}, len={}",
+            data.len()
+        );
+        // SAFETY: Caller guarantees (base_row + 7) * stride + j < data.len().
+        // All lower indices are within bounds since base_row + r <= base_row + 7.
+        unsafe {
+            let arr = [
+                *data.get_unchecked(base_row * stride + j),
+                *data.get_unchecked((base_row + 1) * stride + j),
+                *data.get_unchecked((base_row + 2) * stride + j),
+                *data.get_unchecked((base_row + 3) * stride + j),
+                *data.get_unchecked((base_row + 4) * stride + j),
+                *data.get_unchecked((base_row + 5) * stride + j),
+                *data.get_unchecked((base_row + 6) * stride + j),
+                *data.get_unchecked((base_row + 7) * stride + j),
+            ];
+            magetypes::simd::f32x8::from_array(token, arr)
+        }
+    }
+    #[cfg(not(feature = "unsafe-performance"))]
+    magetypes::simd::f32x8::from_array(
+        token,
+        [
+            data[base_row * stride + j],
+            data[(base_row + 1) * stride + j],
+            data[(base_row + 2) * stride + j],
+            data[(base_row + 3) * stride + j],
+            data[(base_row + 4) * stride + j],
+            data[(base_row + 5) * stride + j],
+            data[(base_row + 6) * stride + j],
+            data[(base_row + 7) * stride + j],
+        ],
+    )
+}
+
+/// Store f32x8 lanes back to column `j` of 8 consecutive rows with given stride.
+///
+/// Unsafe-performance path: uses unchecked indexing (validated by debug_assert).
+/// Safe path: uses bounds-checked indexing.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn scatter_col_strided(
+    v: magetypes::simd::f32x8,
+    data: &mut [f32],
+    base_row: usize,
+    j: usize,
+    stride: usize,
+) {
+    let mut lane = [0.0f32; 8];
+    v.store(&mut lane);
+    #[cfg(feature = "unsafe-performance")]
+    {
+        debug_assert!(
+            (base_row + 7) * stride + j < data.len(),
+            "scatter_col_strided OOB: base_row={base_row}, j={j}, stride={stride}, len={}",
+            data.len()
+        );
+        // SAFETY: Caller guarantees (base_row + 7) * stride + j < data.len().
+        unsafe {
+            for (r, &val) in lane.iter().enumerate() {
+                *data.get_unchecked_mut((base_row + r) * stride + j) = val;
+            }
+        }
+    }
+    #[cfg(not(feature = "unsafe-performance"))]
+    for (r, &val) in lane.iter().enumerate() {
+        data[(base_row + r) * stride + j] = val;
+    }
 }
 
 mod adaptive_quant;
