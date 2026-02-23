@@ -114,9 +114,12 @@ struct Args {
 
     /// LZ77 method to use when LZ77 is active.
     /// - rle: Only matches consecutive identical tokens (fast, limited on photos)
-    /// - greedy: Hash chain backward references (default, slower but better compression)
-    #[arg(long, value_name = "METHOD", default_value = "greedy")]
-    lz77_method: String,
+    /// - greedy: Hash chain backward references (slower but better compression)
+    /// - optimal: Viterbi DP minimum-cost parse (slowest, best compression)
+    ///
+    /// Default: auto-selected by effort level (e0-7=rle, e8=greedy, e9+=optimal)
+    #[arg(long, value_name = "METHOD")]
+    lz77_method: Option<String>,
 
     /// Enable content-adaptive MA tree learning (on by default at effort 8+).
     /// ANS-only (implies ANS). For lossless encoding.
@@ -245,15 +248,18 @@ fn main() {
         println!();
     }
 
-    let lz77_method = match args.lz77_method.to_lowercase().as_str() {
-        "rle" => Lz77Method::Rle,
-        "greedy" => Lz77Method::Greedy,
-        "optimal" => Lz77Method::Optimal,
-        other => {
-            eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
-            Lz77Method::Greedy
-        }
-    };
+    let lz77_method = args
+        .lz77_method
+        .as_deref()
+        .map(|m| match m.to_lowercase().as_str() {
+            "rle" => Lz77Method::Rle,
+            "greedy" => Lz77Method::Greedy,
+            "optimal" => Lz77Method::Optimal,
+            other => {
+                eprintln!("Unknown LZ77 method: {}. Using 'greedy'.", other);
+                Lz77Method::Greedy
+            }
+        });
 
     // Determine input format from extension
     let ext = args
@@ -326,8 +332,10 @@ fn main() {
                 let encoded = if distance > 0.0 && lossy_supported {
                     let mut cfg = LossyConfig::new(distance)
                         .with_effort(args.effort)
-                        .with_lz77_method(lz77_method)
                         .with_threads(args.threads);
+                    if let Some(method) = lz77_method {
+                        cfg = cfg.with_lz77_method(method);
+                    }
                     if args.no_ans {
                         cfg = cfg.with_ans(false);
                     }
@@ -598,8 +606,10 @@ fn main() {
         // Lossy VarDCT path — effort sets defaults, flags override
         let mut cfg = LossyConfig::new(distance)
             .with_effort(args.effort)
-            .with_lz77_method(lz77_method)
             .with_threads(args.threads);
+        if let Some(method) = lz77_method {
+            cfg = cfg.with_lz77_method(method);
+        }
         if args.no_ans {
             cfg = cfg.with_ans(false);
         }
@@ -701,7 +711,9 @@ fn main() {
             } else {
                 args.effort >= 9
             };
-            tiny.lz77_method = lz77_method;
+            if let Some(method) = lz77_method {
+                tiny.lz77_method = method;
+            }
             if args.dct8_only {
                 tiny.force_strategy = Some(0);
             }

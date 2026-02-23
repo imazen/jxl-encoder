@@ -16,6 +16,7 @@ pub fn dct1d_2(mem: &mut [f32]) {
 }
 
 /// In-place 1D DCT for N=4
+#[inline]
 pub fn dct1d_4(mem: &mut [f32]) {
     // AddReverse: tmp[i] = mem[i] + mem[N-1-i] for first half
     // SubReverse: tmp[N/2+i] = mem[i] - mem[N-1-i] for second half
@@ -142,6 +143,7 @@ pub fn dct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// Based on libjxl's ComputeScaledDCT<4, 8>. Since ROWS < COLS,
 /// the transform includes a final transpose.
+#[inline]
 pub fn dct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
     let mut tmp = [0.0f32; 32];
 
@@ -188,6 +190,7 @@ pub fn dct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
 ///
 /// Based on libjxl's ComputeScaledDCT<8, 4>. Since ROWS >= COLS,
 /// there is NO final transpose.
+#[inline]
 pub fn dct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
     let mut tmp = [0.0f32; 32];
 
@@ -231,6 +234,7 @@ pub fn dct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
 /// Output: 64 DCT coefficients in interleaved layout
 ///
 /// Matches libjxl's Type::DCT4X8 case in enc_transforms-inl.h
+#[inline]
 pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
     // Process two 4x8 sub-blocks (top and bottom halves)
     for y in 0..2 {
@@ -270,6 +274,7 @@ pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
 /// Output: 64 DCT coefficients in interleaved layout
 ///
 /// Matches libjxl's Type::DCT8X4 case in enc_transforms-inl.h
+#[inline]
 pub fn dct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
     // Process two 8x4 sub-blocks (left and right halves)
     for x in 0..2 {
@@ -325,6 +330,7 @@ pub fn dc_from_dct_8x4_full(coeffs: &[f32; 64]) -> f32 {
 ///
 /// Based on libjxl's ComputeScaledDCT<4, 4>. Since ROWS == COLS (square),
 /// there is NO final transpose.
+#[inline]
 pub fn dct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
     let mut tmp = [0.0f32; 16];
 
@@ -369,6 +375,7 @@ pub fn dct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
 /// Output: 64 DCT coefficients in interleaved layout
 ///
 /// Matches libjxl's Type::DCT4X4 case in enc_transforms-inl.h
+#[inline]
 pub fn dct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
     // Process four 4x4 sub-blocks in 2x2 grid
     for y in 0..2 {
