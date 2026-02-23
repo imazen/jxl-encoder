@@ -114,7 +114,7 @@ fn afv_dct_4x4(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
 ///
 /// Inverse: pixels = B^T * coeffs = sum_j(B^T[i][j] * coeffs[j])
 #[inline(always)]
-fn afv_idct_4x4(coeffs: &[f32], pixels: &mut [f32]) {
+fn afv_idct_4x4(coeffs: &[f32; 16], pixels: &mut [f32; 16]) {
     for i in 0..16 {
         let mut sum = 0.0f32;
         for j in 0..16 {
