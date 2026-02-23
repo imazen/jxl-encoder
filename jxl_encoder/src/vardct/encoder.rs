@@ -1455,8 +1455,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fast_log2f in entropy coding slightly changes code costs
-        const EXPECTED_HASH: u64 = 0x19f196b1c4f3a607;
+        // Updated: fast_log2f replaces glibc log2 in ANS frequency optimization
+        const EXPECTED_HASH: u64 = 0x777dbc66ef3d69a3;
         assert_eq!(
             hash,
             EXPECTED_HASH,

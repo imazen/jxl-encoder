@@ -765,7 +765,7 @@ impl ANSEncodingHistogram {
         // libjxl always computes flat cost first (enc_ans.cc:97-102) and picks
         // the cheaper of flat vs shift-based encoding.
         let flat_data_cost = {
-            let log2_alpha = (alphabet_size as f32).log2();
+            let log2_alpha = jxl_simd::fast_log2f(alphabet_size as f32);
             histo.total_count as f32 * log2_alpha
         };
         let flat_header_cost = 2.0 + 8.0; // method=0 marker + alphabet size
@@ -902,7 +902,13 @@ impl ANSEncodingHistogram {
             let max_freq_f = max_freq as f64;
             // Fixed-point-ish log2 scaled by a large constant for precision.
             // Matches libjxl's lg2 table concept but using f64 directly.
-            let lg2 = |v: i32| -> f64 { if v <= 0 { 0.0 } else { (v as f64).log2() } };
+            let lg2 = |v: i32| -> f64 {
+                if v <= 0 {
+                    0.0
+                } else {
+                    jxl_simd::fast_log2f(v as f32) as f64
+                }
+            };
 
             loop {
                 // Find the best increment step (grow a bin, shrink balancing)

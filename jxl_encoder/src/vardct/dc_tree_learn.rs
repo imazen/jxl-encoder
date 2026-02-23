@@ -307,7 +307,7 @@ fn estimate_bits(counts: &[u32], total: u32) -> f64 {
     for &count in counts {
         if count > 0 {
             let p = count as f64 / total_f;
-            bits -= (count as f64) * p.log2();
+            bits -= (count as f64) * jxl_simd::fast_log2f(p as f32) as f64;
         }
     }
     bits

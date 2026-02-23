@@ -282,7 +282,7 @@ impl SymbolCostEstimator {
                 let cnt = counts[ctx][sym];
                 let cost = if cnt != 0 && cnt != total {
                     let p = cnt as f32 * inv_total;
-                    let c = -p.log2();
+                    let c = -jxl_simd::fast_log2f(p);
                     if force_huffman { c.ceil() } else { c }
                 } else if cnt == 0 {
                     ANS_LOG_TAB_SIZE // Highest possible cost

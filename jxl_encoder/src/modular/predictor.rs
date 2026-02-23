@@ -728,7 +728,7 @@ pub fn estimate_wp_cost(channels: &[super::Channel], params: &WeightedPredictorP
     for &count in &histogram {
         if count > 0 {
             let p = count as f64 / total_f;
-            entropy -= p * p.log2();
+            entropy -= p * jxl_simd::fast_log2f(p as f32) as f64;
         }
     }
 

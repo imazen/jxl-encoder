@@ -1037,7 +1037,7 @@ fn estimate_cost(image: &ModularImage) -> f64 {
                 for &count in hist.iter() {
                     if count > 0 {
                         let p = count as f64 / total_f;
-                        total_bits -= count as f64 * p.log2();
+                        total_bits -= count as f64 * jxl_simd::fast_log2f(p as f32) as f64;
                     }
                 }
             }
