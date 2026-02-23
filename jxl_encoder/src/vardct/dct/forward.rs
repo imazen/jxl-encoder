@@ -38,7 +38,7 @@ pub fn dct1d_4(mem: &mut [f32]) {
 
     // B transform on second half
     // B: tmp[0] = sqrt2 * tmp[0] + tmp[1], then tmp[i] = tmp[i] + tmp[i+1] for rest
-    tmp[2] = SQRT2.mul_add(tmp[2], tmp[3]);
+    tmp[2] = SQRT2 * tmp[2] + tmp[3];
     // (no more elements for N/2=2)
 
     // InverseEvenOdd: interleave even and odd
@@ -73,7 +73,7 @@ pub fn dct1d_8(mem: &mut [f32]) {
     dct1d_4(&mut tmp[4..8]);
 
     // B transform on second half
-    tmp[4] = SQRT2.mul_add(tmp[4], tmp[5]);
+    tmp[4] = SQRT2 * tmp[4] + tmp[5];
     tmp[5] += tmp[6];
     tmp[6] += tmp[7];
 
@@ -109,7 +109,7 @@ pub fn dct1d_16(mem: &mut [f32]) {
     dct1d_8(&mut tmp[8..16]);
 
     // B transform on second half
-    tmp[8] = SQRT2.mul_add(tmp[8], tmp[9]);
+    tmp[8] = SQRT2 * tmp[8] + tmp[9];
     for i in 1..7 {
         tmp[8 + i] += tmp[8 + i + 1];
     }

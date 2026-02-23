@@ -103,7 +103,7 @@ fn afv_dct_4x4(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
     for j in 0..16 {
         let mut sum = 0.0f32;
         for i in 0..16 {
-            sum = pixels[i].mul_add(AFV4X4_BASIS_TRANSPOSE[i][j], sum);
+            sum += pixels[i] * AFV4X4_BASIS_TRANSPOSE[i][j];
         }
         coeffs[j] = sum;
     }
@@ -118,7 +118,7 @@ fn afv_idct_4x4(coeffs: &[f32], pixels: &mut [f32]) {
     for i in 0..16 {
         let mut sum = 0.0f32;
         for j in 0..16 {
-            sum = coeffs[j].mul_add(AFV4X4_BASIS_TRANSPOSE[i][j], sum);
+            sum += coeffs[j] * AFV4X4_BASIS_TRANSPOSE[i][j];
         }
         pixels[i] = sum;
     }
