@@ -2422,19 +2422,22 @@ fn srgb_to_linear_f(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
-        ((c + 0.055) / 1.055).powf(2.4)
+        jxl_simd::fast_powf((c + 0.055) / 1.055, 2.4)
     }
 }
 
 /// Gamma u8 → linear f32 RGB. `linear = (encoded/255)^(1/gamma)`
 fn gamma_u8_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> {
+    // Build 256-entry LUT for u8 values (avoids per-pixel powf)
     let inv_gamma = 1.0 / gamma;
+    let lut: [f32; 256] =
+        core::array::from_fn(|i| jxl_simd::fast_powf(i as f32 / 255.0, inv_gamma));
     data.chunks(channels)
         .flat_map(|px| {
             [
-                (px[0] as f32 / 255.0).powf(inv_gamma),
-                (px[1] as f32 / 255.0).powf(inv_gamma),
-                (px[2] as f32 / 255.0).powf(inv_gamma),
+                lut[px[0] as usize],
+                lut[px[1] as usize],
+                lut[px[2] as usize],
             ]
         })
         .collect()
@@ -2448,9 +2451,9 @@ fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32>
         .chunks(channels)
         .flat_map(|px| {
             [
-                (px[0] as f32 / 65535.0).powf(inv_gamma),
-                (px[1] as f32 / 65535.0).powf(inv_gamma),
-                (px[2] as f32 / 65535.0).powf(inv_gamma),
+                jxl_simd::fast_powf(px[0] as f32 / 65535.0, inv_gamma),
+                jxl_simd::fast_powf(px[1] as f32 / 65535.0, inv_gamma),
+                jxl_simd::fast_powf(px[2] as f32 / 65535.0, inv_gamma),
             ]
         })
         .collect()
@@ -2459,9 +2462,11 @@ fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32>
 /// Gamma u8 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/255)^(1/gamma)`
 fn gamma_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
+    let lut: [f32; 256] =
+        core::array::from_fn(|i| jxl_simd::fast_powf(i as f32 / 255.0, inv_gamma));
     data.chunks(stride)
         .flat_map(|px| {
-            let v = (px[0] as f32 / 255.0).powf(inv_gamma);
+            let v = lut[px[0] as usize];
             [v, v, v]
         })
         .collect()
@@ -2474,7 +2479,7 @@ fn gamma_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> V
     pixels
         .chunks(stride)
         .flat_map(|px| {
-            let v = (px[0] as f32 / 65535.0).powf(inv_gamma);
+            let v = jxl_simd::fast_powf(px[0] as f32 / 65535.0, inv_gamma);
             [v, v, v]
         })
         .collect()
@@ -3085,13 +3090,13 @@ mod tests {
     fn test_srgb_lut_matches_powf() {
         for i in 0u16..256 {
             let lut_val = SRGB_U8_TO_LINEAR[i as usize];
-            let powf_val = srgb_to_linear_f(i as f32 / 255.0);
-            let diff = (lut_val - powf_val).abs();
-            // Allow up to 1 ULP of f32 difference (Newton's method in f64 is very accurate)
-            let tol = powf_val.abs() * 1e-6 + 1e-10;
+            let fast_val = srgb_to_linear_f(i as f32 / 255.0);
+            let diff = (lut_val - fast_val).abs();
+            // LUT uses f64 exact powf, srgb_to_linear_f uses fast_powf (~3e-5 relative error)
+            let tol = fast_val.abs() * 5e-5 + 1e-7;
             assert!(
                 diff <= tol,
-                "sRGB LUT mismatch at {i}: LUT={lut_val}, powf={powf_val}, diff={diff}"
+                "sRGB LUT mismatch at {i}: LUT={lut_val}, fast={fast_val}, diff={diff}"
             );
         }
     }

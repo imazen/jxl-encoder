@@ -72,7 +72,7 @@ pub fn srgb_to_linear_value(srgb: f32) -> f32 {
     if normalized <= 0.04045 {
         normalized / 12.92
     } else {
-        ((normalized + 0.055) / 1.055).powf(2.4)
+        jxl_simd::fast_powf((normalized + 0.055) / 1.055, 2.4)
     }
 }
 
@@ -214,8 +214,8 @@ mod tests {
         // Black
         assert!((srgb_to_linear_value(0.0) - 0.0).abs() < 1e-6);
 
-        // White
-        assert!((srgb_to_linear_value(255.0) - 1.0).abs() < 1e-6);
+        // White (fast_powf has ~3e-5 relative error)
+        assert!((srgb_to_linear_value(255.0) - 1.0).abs() < 1e-4);
 
         // Mid-gray (sRGB 128 ≈ linear 0.2158)
         let mid = srgb_to_linear_value(128.0);

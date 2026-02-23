@@ -527,6 +527,42 @@ pub fn fast_log2f(x: f32) -> f32 {
     num / den + exp_val
 }
 
+/// Fast base-2 exponentiation. Max relative error ~3e-7.
+///
+/// Matches libjxl's `FastPow2f` from `fast_math-inl.h` (line 72).
+/// Uses integer bit manipulation for the integer exponent part and a (3,3)
+/// rational polynomial for the fractional part.
+#[inline(always)]
+#[allow(clippy::excessive_precision)]
+pub fn fast_pow2f(x: f32) -> f32 {
+    let floorx = x.floor();
+    // Integer part → IEEE 754 exponent via bit shift
+    let exp = f32::from_bits(((floorx as i32 + 127) << 23) as u32);
+    let frac = x - floorx;
+    // (3,3) rational polynomial for 2^frac, frac in [0, 1)
+    // Coefficients from libjxl fast_math-inl.h — must match exactly.
+    // Numerator: Horner form
+    let mut num = frac + 1.01749063e+01;
+    num = num * frac + 4.88687798e+01;
+    num = num * frac + 9.85506591e+01;
+    num *= exp;
+    // Denominator: Horner form
+    let mut den = frac * 2.10242958e-01 + (-2.22328856e-02);
+    den = den * frac + (-1.94414990e+01);
+    den = den * frac + 9.85506633e+01;
+    num / den
+}
+
+/// Fast power function: `base^exponent`. Max relative error ~3e-5.
+///
+/// Matches libjxl's `FastPowf` from `fast_math-inl.h` (line 90).
+/// Computes `2^(log2(base) * exponent)` using [`fast_log2f`] and [`fast_pow2f`].
+/// Input `base` must be > 0.
+#[inline(always)]
+pub fn fast_powf(base: f32, exponent: f32) -> f32 {
+    fast_pow2f(fast_log2f(base) * exponent)
+}
+
 /// Compute Shannon entropy of a histogram: -sum(count * log2(count / total)).
 ///
 /// Returns total entropy in bits. Excludes zero counts and the case where
@@ -1216,5 +1252,50 @@ mod tests {
         let counts = [0i32; 8];
         let ent = shannon_entropy_bits(&counts, 0);
         assert_eq!(ent, 0.0);
+    }
+
+    #[test]
+    fn test_fast_pow2f_accuracy() {
+        // Test exact powers of 2
+        assert!((fast_pow2f(0.0) - 1.0).abs() < 1e-5);
+        assert!((fast_pow2f(1.0) - 2.0).abs() < 1e-4);
+        assert!((fast_pow2f(3.0) - 8.0).abs() < 1e-3);
+        assert!((fast_pow2f(-1.0) - 0.5).abs() < 1e-5);
+
+        // Test fractional exponents
+        let val = fast_pow2f(0.5);
+        let expected = core::f32::consts::SQRT_2;
+        assert!(
+            (val - expected).abs() / expected < 5e-7,
+            "2^0.5: got {val}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn test_fast_powf_accuracy() {
+        // Test basic powers
+        let val = fast_powf(2.0, 3.0);
+        assert!(
+            (val - 8.0).abs() / 8.0 < 5e-5,
+            "2^3: got {val}, expected 8.0"
+        );
+
+        // Test sRGB TF: (0.5)^2.4
+        let base = 0.5f32;
+        let exact = base.powf(2.4);
+        let fast = fast_powf(base, 2.4);
+        assert!(
+            (fast - exact).abs() / exact < 5e-5,
+            "0.5^2.4: got {fast}, expected {exact}"
+        );
+
+        // Test ratio^K_POW (the compute_scaled_constants case)
+        let ratio = 1.5f32;
+        let exact = ratio.powf(0.337);
+        let fast = fast_powf(ratio, 0.337);
+        assert!(
+            (fast - exact).abs() / exact < 5e-5,
+            "1.5^0.337: got {fast}, expected {exact}"
+        );
     }
 }

@@ -344,9 +344,9 @@ const K_POW_COST_DELTA: f32 = 0.367_029_4;
 pub(super) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) -> (f32, f32, f32) {
     let (info_loss_base, zeros_base, cost_delta_base) = bases;
     let ratio = (distance + K_BIAS) / (1.0 + K_BIAS);
-    let info_loss_mul = info_loss_base * ratio.powf(K_POW_INFO_LOSS);
-    let zeros_mul = zeros_base * ratio.powf(K_POW_ZEROS_MUL);
-    let cost_delta = cost_delta_base * ratio.powf(K_POW_COST_DELTA);
+    let info_loss_mul = info_loss_base * jxl_simd::fast_powf(ratio, K_POW_INFO_LOSS);
+    let zeros_mul = zeros_base * jxl_simd::fast_powf(ratio, K_POW_ZEROS_MUL);
+    let cost_delta = cost_delta_base * jxl_simd::fast_powf(ratio, K_POW_COST_DELTA);
     (info_loss_mul, cost_delta, zeros_mul)
 }
 

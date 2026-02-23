@@ -68,7 +68,7 @@ pub fn compute_channel_quantizer_xyb(
     debug_assert!(component < 3);
 
     // Base quantizer: 0.25 * distance^1.2 (enc_modular.cc:988-989)
-    let base_quantizer = 0.25 * distance.powf(1.2);
+    let base_quantizer = 0.25 * jxl_simd::fast_powf(distance, 1.2);
 
     // Shift index: hshift + vshift, with the -1 adjustment from libjxl
     // (enc_modular.cc:1006: `shift = ch.hshift + ch.vshift; if shift > 0: shift--`)
@@ -271,9 +271,9 @@ mod tests {
         // Y: 0.25 * 4.0 * 163.84 * 1.5 = 245.76 → 245
         let q_y = compute_channel_quantizer_xyb(0, 0, 0, 1.0);
         assert_eq!(q_y, 245);
-        // X: 0.25 * 4.0 * 1024.0 = 1024
+        // X: 0.25 * 4.0 * 1024.0 = 1024 (allow ±1 from fast_powf approximation)
         let q_x = compute_channel_quantizer_xyb(1, 0, 0, 1.0);
-        assert_eq!(q_x, 1024);
+        assert!((q_x as i32 - 1024).unsigned_abs() <= 1, "q_x={q_x}, expected ~1024");
     }
 
     #[test]

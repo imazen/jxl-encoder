@@ -708,7 +708,7 @@ pub(crate) fn compute_epf_sharpness(
     let clamped_d = params.distance.clamp(0.5, 10.0);
     let c3base: f32 = 0.980_172;
     let c3clamp: f32 = 0.859_703_4;
-    let c3 = c3clamp.max(c3base.powf(clamped_d));
+    let c3 = c3clamp.max(jxl_simd::fast_powf(c3base, clamped_d));
     let c5: f32 = 0.108_769_04;
 
     // Compute totals per context (integer, matching libjxl's size_t)

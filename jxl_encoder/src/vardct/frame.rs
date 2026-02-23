@@ -156,7 +156,7 @@ fn quant_dc(distance: f32) -> f32 {
     const DC_QUANT: f32 = 1.095_924;
     const DC_MUL: f32 = 0.3;
 
-    let effective_dist = DC_MUL * (distance / DC_MUL).powf(DC_QUANT_POW);
+    let effective_dist = DC_MUL * jxl_simd::fast_powf(distance / DC_MUL, DC_QUANT_POW);
     let effective_dist = clamp(effective_dist, 0.5 * distance, distance);
     (DC_QUANT / effective_dist).min(50.0)
 }

@@ -163,8 +163,8 @@ fn reconstruct_xyb_impl(
     let padded_height = ysize_blocks * BLOCK_DIM;
     let num_pixels = padded_width * padded_height;
 
-    let x_qm_mul = 1.25f32.powf(params.x_qm_scale as f32 - 2.0);
-    let b_qm_mul = 1.25f32.powf(params.b_qm_scale as f32 - 2.0);
+    let x_qm_mul = jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0);
+    let b_qm_mul = jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0);
 
     // Step 1: Dequantize all coefficients into floating-point DCT domain.
     // For each first-block of each transform, reconstruct the full coefficient block.
