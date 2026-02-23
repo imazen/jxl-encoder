@@ -133,6 +133,51 @@ Ir 13.821B → 13.517B (unsafe-perf). EPF: 450M → 126M (3.6x reduction). -304M
 | reconstruct_xyb | 156 | 1.2% | Reconstruction pipeline |
 | EPF | 126 | 0.9% | Down from 450M (3.6x improvement) |
 
+### Replace scalar f32::mul_add with a*b+c (3f4706c)
+
+On x86_64 without `-C target-feature=+fma`, `f32::mul_add` calls libm `fmaf` for
+software exact-rounding FMA emulation (~661 instructions per call). Replaced all
+scalar mul_add calls in forward.rs (3 sites in dct1d butterflies), afv.rs (2 sites
+in 16×16 matrix multiply), and ac_strategy.rs (4 sites in entropy accumulation).
+The only remaining FMA references are legitimate AVX2 intrinsics in XYB (22M) and
+CfL (14M). Ir 13,517M → 13,567M (within cachegrind variance, fmaf overhead was
+already addressed by prior #[inline(always)] work).
+
+### Eliminate intermediate copies in apply_idct_for_strategy (cbb5996)
+
+Every IDCT arm was: copy error_coeffs → temp input, IDCT temp → temp output,
+copy temp output → output buffer. Replaced with zero-copy `try_into().unwrap()`
+slice-to-array conversions for all 16 strategy arms. Eliminates 2 full array copies
+per IDCT evaluation.
+
+Ir 13,567M → 13,344M (-223M, -1.6%). Dw 1,872M → 1,739M (-133M, -7.1%). Bit-exact.
+
+### Updated cumulative results (cbb5996)
+
+| Metric       | Baseline | Current  | Δ       | vs cjxl |
+|-------------|----------|----------|---------|---------|
+| Instructions | 15.859B  | 13.344B  | -15.9%  | 2.48x   |
+| Data reads   | 4.068B   | 3.191B   | -21.6%  | 1.37x   |
+| Data writes  | 2.183B   | 1.739B   | -20.3%  | 2.22x   |
+| Wall-clock   | ~1.18s   | 0.993s   | -15.8%  | 2.18x   |
+
+### Updated cost breakdown (frymire d=1.0 e7, unsafe-perf, 13.344B total)
+
+| Component | Ir (M) | % | Notes |
+|-----------|--------|---|-------|
+| forward.rs scalar DCTs | 1,043 | 7.8% | DCT4x8_full, DCT8x4_full, DCT4x4_full |
+| idct1d_8_core SIMD | 733 | 5.5% | AVX2 inner kernel — already optimized |
+| gather_col total | 928 | 6.8% | Column transposition for DCT32/64 |
+| afv.rs scalar | 580 | 4.4% | 16×16 matrix multiply (256 MAC ops) |
+| inverse.rs scalar IDCTs | 536 | 4.0% | idct_4x4, idct_4x8, idct_8x4 |
+| ac_strategy.rs loop | 483 | 3.6% | Strategy evaluation control flow |
+| patches detection | 274 | 2.1% | Expected (cjxl also runs this) |
+| memset | 223 | 1.7% | Buffer initialization |
+
+Dominant remaining target: scalar small-DCT transforms (forward+inverse DCT4x4/4x8/8x4
++ AFV) account for ~2,159M combined (16.2%). These lack SIMD implementations in jxl_simd.
+The strategy search evaluates 10 strategies per 8x8 block at e7 with no early exit.
+
 ## 2026-02-23: Optimize e5/e6/e7 encode speed + write amplification analysis
 
 User provided plan to fix two bottlenecks:
