@@ -278,7 +278,7 @@ pub fn histogram_kl_divergence(actual: &Histogram, coding: &Histogram) -> f32 {
             }
             let coding_prob = coding_count as f32 * coding_inv;
             // Cost: -count * log2(coding_prob)
-            cost -= count as f32 * coding_prob.log2();
+            cost -= count as f32 * jxl_simd::fast_log2f(coding_prob);
         }
     }
 

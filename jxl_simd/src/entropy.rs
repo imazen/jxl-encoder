@@ -511,9 +511,11 @@ const LOG2_Q1: f32 = 1.009_671_9;
 const LOG2_Q2: f32 = 0.174_093_43;
 
 /// Fast log2 approximation. Max relative error ~3e-7. Input must be > 0.
+///
+/// Uses integer bit manipulation on f32 with a Padé approximant for the
+/// fractional part. Matches libjxl's `FastLog2f` from `fast_math-inl.h`.
 #[inline(always)]
-#[allow(dead_code)]
-fn fast_log2f(x: f32) -> f32 {
+pub fn fast_log2f(x: f32) -> f32 {
     let x_bits = x.to_bits() as i32;
     let exp_bits = x_bits.wrapping_sub(0x3f2a_aaab_u32 as i32);
     let exp_shifted = exp_bits >> 23;

@@ -146,16 +146,23 @@ impl EncoderPrecomputed {
             None
         };
 
-        // Compute pixel chromacity stats BEFORE gaborish (matching libjxl's pipeline order)
-        let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            padded_width,
-            padded_height,
-        );
-        let chromacity_x_pixelized = pixel_stats.how_much_is_x_channel_pixelized();
-        let chromacity_b_pixelized = pixel_stats.how_much_is_b_channel_pixelized();
+        // Compute pixel chromacity stats BEFORE gaborish (matching libjxl's pipeline order).
+        // Gated at effort >= 7 to skip the full-image gradient scan at low effort.
+        let (chromacity_x_pixelized, chromacity_b_pixelized) = if profile.chromacity_adjustment {
+            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+            );
+            (
+                pixel_stats.how_much_is_x_channel_pixelized(),
+                pixel_stats.how_much_is_b_channel_pixelized(),
+            )
+        } else {
+            (0, 0)
+        };
 
         // Apply gaborish inverse (5x5 sharpening) before adaptive quant
         if enable_gaborish {
