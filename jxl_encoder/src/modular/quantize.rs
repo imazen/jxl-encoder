@@ -273,7 +273,10 @@ mod tests {
         assert_eq!(q_y, 245);
         // X: 0.25 * 4.0 * 1024.0 = 1024 (allow ±1 from fast_powf approximation)
         let q_x = compute_channel_quantizer_xyb(1, 0, 0, 1.0);
-        assert!((q_x as i32 - 1024).unsigned_abs() <= 1, "q_x={q_x}, expected ~1024");
+        assert!(
+            (q_x as i32 - 1024).unsigned_abs() <= 1,
+            "q_x={q_x}, expected ~1024"
+        );
     }
 
     #[test]

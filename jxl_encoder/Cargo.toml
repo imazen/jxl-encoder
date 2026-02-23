@@ -51,6 +51,12 @@ rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 parallel = ["std", "dep:rayon"]
+# Use MaybeUninit for hot-path temporary buffers instead of zero-initialization.
+# Eliminates ~584M memset writes (24.7% of total data writes) at the cost of
+# requiring `unsafe` in a few carefully audited locations. The crate-level lint
+# is downgraded from `forbid(unsafe_code)` to `deny(unsafe_code)` so that
+# individual functions can `#[allow(unsafe_code)]`.
+unsafe-performance = []
 default = ["std", "safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]
