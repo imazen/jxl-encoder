@@ -74,7 +74,7 @@ pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 
 #[inline]
 pub fn dct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // Forward DCT on each row
     for row in 0..16 {
@@ -88,7 +88,7 @@ pub fn dct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
     }
 
     // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -436,7 +436,7 @@ pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &
     use magetypes::simd::f32x8;
 
     let scale = f32x8::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // --- Pass 1: Forward DCT on rows ---
     // Process rows 0-7 (first batch of 8)
@@ -470,7 +470,7 @@ pub fn dct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &
     }
 
     // --- 16x16 scalar transpose ---
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -552,7 +552,7 @@ pub fn dct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
 
 #[inline]
 pub fn dct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Transform rows (8 columns each) with 8-point DCT
     for row in 0..16 {
@@ -565,7 +565,7 @@ pub fn dct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
     }
 
     // Transpose 16x8 -> 8x16
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..16 {
         for col in 0..8 {
             transposed[col * 16 + row] = tmp[row * 8 + col];
@@ -630,7 +630,7 @@ pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
 
     let scale8 = f32x8::splat(token, 1.0 / 8.0);
     let scale16 = f32x8::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // --- Pass 1: 8-point forward DCT on each of 16 rows (stride 8) ---
     // Process 8 rows at a time. Each row has 8 elements.
@@ -665,7 +665,7 @@ pub fn dct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     }
 
     // --- Transpose 16x8 -> 8x16 (scalar) ---
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..16 {
         for col in 0..8 {
             transposed[col * 16 + row] = tmp[row * 8 + col];
@@ -734,7 +734,7 @@ pub fn dct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 
 #[inline]
 pub fn dct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Transform rows (16 columns each) with 16-point DCT
     for row in 0..8 {
@@ -747,7 +747,7 @@ pub fn dct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
     }
 
     // Transpose 8x16 -> 16x8
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..8 {
         for col in 0..16 {
             transposed[col * 8 + row] = tmp[row * 16 + col];
@@ -780,7 +780,7 @@ pub fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
 
     let scale8 = f32x8::splat(token, 1.0 / 8.0);
     let scale16 = f32x8::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // --- Pass 1: 16-point forward DCT on each of 8 rows (stride 16) ---
     // All 8 rows fit in one batch. Gather column j from 8 rows.
@@ -799,7 +799,7 @@ pub fn dct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &m
     }
 
     // --- Transpose 8x16 -> 16x8 (scalar) ---
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..8 {
         for col in 0..16 {
             transposed[col * 8 + row] = tmp[row * 16 + col];
@@ -1085,7 +1085,7 @@ fn neon_dct16_batch(
 pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x4;
     let scale = f32x4::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: Forward DCT on rows (4 batches of 4 rows)
     for batch in 0..4 {
@@ -1093,7 +1093,7 @@ pub fn dct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &m
     }
 
     // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -1115,7 +1115,7 @@ pub fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     use magetypes::simd::f32x4;
     let scale8 = f32x4::splat(token, 1.0 / 8.0);
     let scale16 = f32x4::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
     for batch in 0..4 {
@@ -1123,7 +1123,7 @@ pub fn dct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     }
 
     // Transpose 16x8 -> 8x16
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..16 {
         for col in 0..8 {
             transposed[col * 16 + row] = tmp[row * 8 + col];
@@ -1145,7 +1145,7 @@ pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     use magetypes::simd::f32x4;
     let scale8 = f32x4::splat(token, 1.0 / 8.0);
     let scale16 = f32x4::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
     for batch in 0..2 {
@@ -1153,7 +1153,7 @@ pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     }
 
     // Transpose 8x16 -> 16x8
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..8 {
         for col in 0..16 {
             transposed[col * 8 + row] = tmp[row * 16 + col];
@@ -1161,7 +1161,7 @@ pub fn dct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mu
     }
 
     // Pass 2: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
-    let mut pass2_out = [0.0f32; 128];
+    let mut pass2_out = crate::scratch_buf::<128>();
     for batch in 0..4 {
         neon_dct8_batch(token, &transposed, &mut pass2_out, batch * 4, 8, scale8);
     }
@@ -1418,7 +1418,7 @@ pub fn dct_16x16_wasm128(
 ) {
     use magetypes::simd::f32x4;
     let scale = f32x4::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: Forward DCT on rows (4 batches of 4 rows)
     for batch in 0..4 {
@@ -1426,7 +1426,7 @@ pub fn dct_16x16_wasm128(
     }
 
     // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -1452,7 +1452,7 @@ pub fn dct_16x8_wasm128(
     use magetypes::simd::f32x4;
     let scale8 = f32x4::splat(token, 1.0 / 8.0);
     let scale16 = f32x4::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
     for batch in 0..4 {
@@ -1460,7 +1460,7 @@ pub fn dct_16x8_wasm128(
     }
 
     // Transpose 16x8 -> 8x16
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..16 {
         for col in 0..8 {
             transposed[col * 16 + row] = tmp[row * 8 + col];
@@ -1486,7 +1486,7 @@ pub fn dct_8x16_wasm128(
     use magetypes::simd::f32x4;
     let scale8 = f32x4::splat(token, 1.0 / 8.0);
     let scale16 = f32x4::splat(token, 1.0 / 16.0);
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point DCT on 8 rows (stride 16), 2 batches of 4 rows
     for batch in 0..2 {
@@ -1494,7 +1494,7 @@ pub fn dct_8x16_wasm128(
     }
 
     // Transpose 8x16 -> 16x8
-    let mut transposed = [0.0f32; 128];
+    let mut transposed = crate::scratch_buf::<128>();
     for row in 0..8 {
         for col in 0..16 {
             transposed[col * 8 + row] = tmp[row * 16 + col];
@@ -1502,7 +1502,7 @@ pub fn dct_8x16_wasm128(
     }
 
     // Pass 2: 8-point DCT on 16 rows (stride 8), 4 batches of 4 rows
-    let mut pass2_out = [0.0f32; 128];
+    let mut pass2_out = crate::scratch_buf::<128>();
     for batch in 0..4 {
         wasm128_dct8_batch(token, &transposed, &mut pass2_out, batch * 4, 8, scale8);
     }

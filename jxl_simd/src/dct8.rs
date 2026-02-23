@@ -94,7 +94,7 @@ pub fn idct_8x8(input: &[f32; 64], output: &mut [f32; 64]) {
 
 #[inline]
 pub fn dct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut tmp = [0.0f32; 64];
+    let mut tmp = crate::scratch_buf::<64>();
 
     // Row DCTs
     for row in 0..8 {
@@ -107,7 +107,7 @@ pub fn dct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
     }
 
     // Transpose
-    let mut transposed = [0.0f32; 64];
+    let mut transposed = crate::scratch_buf::<64>();
     for r in 0..8 {
         for c in 0..8 {
             transposed[c * 8 + r] = tmp[r * 8 + c];
@@ -128,7 +128,7 @@ pub fn dct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
 
 #[inline]
 pub fn idct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut tmp = [0.0f32; 64];
+    let mut tmp = crate::scratch_buf::<64>();
     tmp.copy_from_slice(input);
 
     // Inverse column DCTs
@@ -138,7 +138,7 @@ pub fn idct_8x8_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
     }
 
     // Transpose
-    let mut transposed = [0.0f32; 64];
+    let mut transposed = crate::scratch_buf::<64>();
     for r in 0..8 {
         for c in 0..8 {
             transposed[c * 8 + r] = tmp[r * 8 + c];
