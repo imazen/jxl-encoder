@@ -98,7 +98,7 @@ const AFV4X4_BASIS_TRANSPOSE: [[f32; 16]; 16] = [
 ///
 /// Let B be the basis matrix. AFV4X4_BASIS_TRANSPOSE = B^T.
 /// Forward: coeffs = B * pixels = sum_i(B[j][i] * pixels[i]) = sum_i(B^T[i][j] * pixels[i])
-#[inline]
+#[inline(always)]
 fn afv_dct_4x4(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
     for j in 0..16 {
         let mut sum = 0.0f32;
@@ -113,7 +113,7 @@ fn afv_dct_4x4(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
 /// Input: 16 coefficients, Output: 16 pixels
 ///
 /// Inverse: pixels = B^T * coeffs = sum_j(B^T[i][j] * coeffs[j])
-#[inline]
+#[inline(always)]
 fn afv_idct_4x4(coeffs: &[f32], pixels: &mut [f32]) {
     for i in 0..16 {
         let mut sum = 0.0f32;
@@ -125,13 +125,13 @@ fn afv_idct_4x4(coeffs: &[f32], pixels: &mut [f32]) {
 }
 
 /// Forward scaled 4x4 DCT wrapper.
-#[inline]
+#[inline(always)]
 fn dct_4x4_simple(pixels: &[f32; 16], coeffs: &mut [f32; 16]) {
     super::dct::dct_4x4(pixels, coeffs);
 }
 
 /// Forward scaled 4x8 DCT wrapper.
-#[inline]
+#[inline(always)]
 fn dct_4x8_simple(pixels: &[f32; 32], coeffs: &mut [f32; 32]) {
     super::dct::dct_4x8(pixels, coeffs);
 }
@@ -184,7 +184,7 @@ pub fn afv_kind_from_strategy(raw_strategy: u8) -> Option<usize> {
 /// - (even, even) positions: AFV 4x4 coefficients
 /// - (odd, even) positions: DCT 4x4 coefficients
 /// - (any, odd) positions: DCT 4x8 coefficients
-#[inline]
+#[inline(always)]
 pub fn afv_transform_from_pixels(pixels: &[f32], afv_kind: usize, coefficients: &mut [f32; 64]) {
     let afv_x = afv_kind & 1;
     let afv_y = afv_kind / 2;
@@ -272,7 +272,7 @@ pub fn dc_from_afv(coefficients: &[f32; 64]) -> f32 {
 /// * `pixels` - 8x8 output pixels (row-major, stride 8)
 ///
 /// Reference: jxl-rs jxl_transforms/src/transform.rs afv_transform_to_pixels
-#[inline]
+#[inline(always)]
 pub fn inverse_afv_transform(coefficients: &[f32; 64], afv_kind: usize, pixels: &mut [f32; 64]) {
     let afv_x = afv_kind & 1;
     let afv_y = afv_kind / 2;

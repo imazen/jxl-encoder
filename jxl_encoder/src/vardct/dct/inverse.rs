@@ -29,7 +29,7 @@ pub fn idct1d_2(mem: &mut [f32]) {
 }
 
 /// Fast 1D IDCT for N=4 (exactly reverses dct1d_4).
-#[inline]
+#[inline(always)]
 pub fn idct1d_4(mem: &mut [f32]) {
     // Reverse step 7 (interleave): tmp = [mem[0], mem[2], mem[1], mem[3]]
     let mut tmp = [mem[0], mem[2], mem[1], mem[3]];
@@ -199,7 +199,7 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 
 /// Compute 4x4 inverse DCT (exactly reverses dct_4x4).
 /// Input layout: 4 rows x 4 cols, stride 4.
-#[inline]
+#[inline(always)]
 pub fn idct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
     let mut tmp = [0.0f32; 16];
 
@@ -245,7 +245,7 @@ pub fn idct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
 ///   2. *= 4, then 4-point IDCT on rows
 ///   3. Transpose 8x4 -> 4x8
 ///   4. 8-point IDCT on rows (includes internal *= 8)
-#[inline]
+#[inline(always)]
 pub fn idct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
     // Step 1: Transpose 4x8 -> 8x4
     let mut transposed = [0.0f32; 32];
@@ -290,7 +290,7 @@ pub fn idct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
 ///   3. 8pt DCT on rows (4 rows of 8), *= 1/8
 ///
 /// No final transpose. Output is 4x8 (stride 8).
-#[inline]
+#[inline(always)]
 pub fn idct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
     let mut tmp = [0.0f32; 32];
 
@@ -611,7 +611,7 @@ fn idct1d_4_ref(input: &[f32; 4], output: &mut [f32; 4]) {
 ///
 /// Input: 64 DCT coefficients in interleaved layout
 /// Output: 8x8 = 64 floats in row-major pixel order (stride 8)
-#[inline]
+#[inline(always)]
 pub fn idct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut coeffs = *input;
 
@@ -654,7 +654,7 @@ pub fn idct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// Input: 64 DCT coefficients in interleaved layout
 /// Output: 8x8 = 64 floats in row-major pixel order (stride 8)
-#[inline]
+#[inline(always)]
 pub fn idct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut coeffs = *input;
 
@@ -697,7 +697,7 @@ pub fn idct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
 ///
 /// Input: 64 DCT coefficients in interleaved layout
 /// Output: 8x8 = 64 floats in row-major pixel order (stride 8)
-#[inline]
+#[inline(always)]
 pub fn idct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
     let mut coeffs = *input;
 

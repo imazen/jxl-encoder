@@ -1,5 +1,12 @@
 # Feedback Log
 
+## 2026-02-23: Optimize e5/e6/e7 encode speed
+
+User provided plan to fix two bottlenecks:
+1. CLI --lz77-method default_value="greedy" overriding effort profile's RLE at e7
+2. AFV/DCT4x transform functions not #[inline], preventing FMA in #[arcane] contexts
+Fix 3 (zenflate LZ77 matchfinder) deferred — requires zenflate API changes first.
+
 ## 2026-02-22: Full audit against libjxl docs + source verification + fixes
 
 User asked to compare every Rust file against libjxl docs in

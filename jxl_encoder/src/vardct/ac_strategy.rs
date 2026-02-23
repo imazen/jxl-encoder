@@ -1059,6 +1059,7 @@ fn estimate_entropy_full_impl(
 
 /// Apply inverse DCT to error coefficients based on strategy.
 /// Writes pixel-domain error in row-major layout into `output`.
+#[inline(always)]
 pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], output: &mut [f32]) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
