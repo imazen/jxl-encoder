@@ -1,6 +1,6 @@
 # Feedback Log
 
-## 2026-02-23: Optimize e5/e6/e7 encode speed
+## 2026-02-23: Optimize e5/e6/e7 encode speed + write amplification analysis
 
 User provided plan to fix two bottlenecks:
 1. CLI --lz77-method default_value="greedy" overriding effort profile's RLE at e7
@@ -16,6 +16,50 @@ Fix 3 (zenflate LZ77 matchfinder) investigated and found not beneficial:
   activation threshold. Better matchfinders won't help — bottleneck is per-context cost
   model efficiency, not match quality.
 - Also found+fixed: --lz77-method wasn't wired to lossless path (d0209a1)
+
+### fast_powf (bb13eea)
+Ported FastPow2f + FastPowf from libjxl fast_math-inl.h. Replaced all f32 powf calls
+(10 files). Gamma u8 paths now use 256-entry LUT instead of per-pixel powf. Max relative
+error ~3e-5 (same as libjxl). Minimal e7 impact (powf was <2% of total instructions) but
+eliminates all libm powf dependency for f32 paths.
+
+### Write amplification analysis (3x vs cjxl)
+Cachegrind at e7: 2.52B data writes (cjxl: 0.83B, ratio 3.0x)
+
+Top write sources:
+| Function | Dw (M) | % | Root Cause |
+|----------|--------|---|-----------|
+| memset_avx2 | 659 | 26% | Vec zeroing (calloc) — structural, forbid(unsafe) prevents MaybeUninit |
+| estimate_entropy forward DCT | 141 | 6% | DCT output into scratch buffers — unavoidable computation |
+| ptr::copy (estimate_entropy) | 132 | 5% | Scatter/store DCT results — structural |
+| memcpy_avx | 95 | 4% | Buffer copies — structural |
+| estimate_entropy (ac_strategy) | 94 | 4% | Entropy model state — unavoidable |
+| uint_macros (estimate_entropy) | 61 | 2% | Integer ops in cost model |
+| SIMD gather/scatter (DCT32) | 54 | 2% | Column-to-lane transposition |
+| histogram_distance | 50 | 2% | Histogram comparison |
+
+Conclusion: the 3x write amplification is structural, not a fixable bug:
+1. **Vec zeroing (26%)**: Rust's `vec![0.0; n]` uses calloc. With `forbid(unsafe_code)`,
+   can't use uninitialized memory. Most buffers are fully overwritten before reading.
+2. **DCT intermediate writes (15%)**: Forward+inverse DCTs write results to f32 slices.
+   cjxl with Highway SIMD keeps more values in registers across operations.
+3. **Scatter/gather (7%)**: Column-oriented DCT32/64 operations require explicit memory
+   transpose. cjxl's Highway in-register shuffles avoid these writes.
+
+Pre-allocating and reusing buffers across calls would reduce (1) by ~100-200M writes
+but requires significant refactoring to thread scratch buffers through the call chain.
+The ROI is low: memset-of-zeros is handled by OS zero-page optimization, so the actual
+wall-clock cost is much less than the instruction count suggests.
+
+### estimate_entropy SIMD status
+Already 60-70% SIMD'd via delegated kernel calls (entropy_estimate_coeffs, pixel_domain_loss).
+Remaining scalar operations are small loops and decision logic not suitable for vectorization.
+
+### powf analysis
+Only 322M instructions (<2%) at e7. For u8 sRGB input, the main path already uses a
+256-entry LUT (SRGB_U8_TO_LINEAR). The powf calls come from cold paths:
+compute_scaled_constants (3 calls), x_qm_mul (2 calls), DC quant (1 call), etc.
+fast_powf committed for consistency with libjxl and to eliminate libm dependency.
 
 ## 2026-02-22: Full audit against libjxl docs + source verification + fixes
 
