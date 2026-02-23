@@ -145,7 +145,7 @@ pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x
 /// Safe path: uses bounds-checked indexing.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[allow(unsafe_code)]
+#[cfg_attr(feature = "unsafe-performance", allow(unsafe_code))]
 pub(crate) fn gather_col_strided(
     token: archmage::X64V3Token,
     data: &[f32],
@@ -198,7 +198,7 @@ pub(crate) fn gather_col_strided(
 /// Safe path: uses bounds-checked indexing.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[allow(unsafe_code)]
+#[cfg_attr(feature = "unsafe-performance", allow(unsafe_code))]
 pub(crate) fn scatter_col_strided(
     v: magetypes::simd::f32x8,
     data: &mut [f32],
