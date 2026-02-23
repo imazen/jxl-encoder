@@ -98,6 +98,31 @@ pub const fn floor_log2_nonzero(n: u32) -> u32 {
     31 - n.leading_zeros()
 }
 
+/// Return an uninitialized `[f32; N]` buffer.
+///
+/// With the `unsafe-performance` feature, this skips the memset zero-fill and
+/// returns memory with indeterminate contents via [`core::mem::MaybeUninit`].
+/// **Every caller MUST write all `N` positions before reading any of them.**
+///
+/// Without the feature (default), this returns `[0.0f32; N]`.
+#[cfg(feature = "unsafe-performance")]
+#[allow(unsafe_code, clippy::uninit_assumed_init)]
+#[inline(always)]
+pub fn uninit_buf<const N: usize>() -> [f32; N] {
+    // SAFETY: All call sites write every element via extract_block_* / DCT /
+    // IDCT before any read.  f32 has no trap representations on IEEE 754
+    // hardware, and LLVM treats the bytes as "undef" which is exactly what we
+    // want — the dead-store memset is eliminated.
+    unsafe { core::mem::MaybeUninit::<[f32; N]>::uninit().assume_init() }
+}
+
+/// Return a zero-initialized `[f32; N]` buffer (safe default path).
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline(always)]
+pub fn uninit_buf<const N: usize>() -> [f32; N] {
+    [0.0f32; N]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
