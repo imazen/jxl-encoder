@@ -1,5 +1,71 @@
 # Feedback Log
 
+## 2026-02-23: Performance profiling — isolating remaining gaps vs cjxl e7
+
+### Cachegrind/callgrind comparison: frymire d=1.0 e7
+
+```
+                    cjxl            cjxl-rs         Ratio
+Instructions:       5.378B          15.859B         2.95x
+Data reads:         2.334B          4.068B          1.74x
+Data writes:        0.783B          2.183B          2.79x
+Wall clock:         0.24s           1.18s           4.9x
+Output size:        624KB           644KB           +3.2%
+```
+
+### Phase breakdown (callgrind inclusive costs)
+
+**Strategy evaluation**: 9.82B (61.9%) vs ~3.0B (56%) = **3.3x**
+- Called 786K times (cjxl: 795K) — same work volume
+- Forward DCT: 1.7B vs 1.4B = 1.2x (at parity)
+- Inverse DCT: 0.7B vs 0.8B = 0.9x (at parity)
+- Per-call overhead: 12,370 Ir/eval vs cjxl's 3,774 Ir/eval (3.3x)
+- Top overhead sources inside estimate_entropy_full_avx2 (self-cost):
+  - ac_strategy.rs loop logic: 475M
+  - f32 arithmetic: 302M
+  - Integer ops (uint_macros): 270M
+  - AVX intrinsics dispatch: 260M
+  - NonNull pointer ops: 129M
+  - mod.rs (slice internals): 113M
+  - Range iteration: 88M
+  - Option unwrap: 78M
+- Root cause: cjxl uses Highway SIMD in one monolithic inlined function.
+  Our code has abstraction layers (slice bounds checks, Option, range
+  iterators) that add ~8,600 extra instructions per strategy evaluation.
+
+**Bitstream encoding**: 3.43B (21.6%) vs ~0.7B (13%) = **4.9x**
+- Entropy encoding (ANS): 741M vs 425M = 1.7x
+- Histogram ops: 282M vs 140M = 2.0x
+- Allocator in hot path: 166M vs 32M = 5.2x (heap allocs per histogram_distance call)
+- LZ77: 139M (we do LZ77 at e7, cjxl doesn't — trades speed for compression)
+
+**Patches detection**: 325M (2.0%) vs 549M (10%) = **0.6x** (we're faster)
+
+**Other**: 2.3B (14.5%) vs 1.1B (20%) = **2.1x**
+- memset (heap zeroing): 447M vs 52M = 8.6x
+- EPF: 187M vs 81M = 2.3x
+- XYB color: 107M vs 44M = 2.4x
+
+### Top optimization targets (ranked by estimated Ir savings)
+
+1. **Fused kernels for DCT16x16+**: Extend the DCT8 fused approach to larger transforms.
+   Each eliminates intermediate buffer writes + bounds checks. Est: -1-2B Ir.
+2. **Reduce allocation in histogram_distance**: Pre-allocate scratch buffers instead of
+   heap alloc per call. Est: -0.5B Ir.
+3. **Vec buffer pooling**: Reuse Vec buffers in encode hot loops to avoid repeated
+   alloc+memset. Est: -0.4B Ir.
+4. **unsafe get_unchecked behind feature flag**: The hottest loops (channel iteration,
+   coefficient access) have redundant bounds checks. Est: -0.3B Ir.
+5. **Skip LZ77 at e7 for VarDCT**: cjxl doesn't use LZ77 at e7. Our LZ77 on VarDCT
+   produces zero file size savings (thresholds reject every stream). Est: -0.14B Ir.
+
+### Fused DCT8 kernel + MaybeUninit results
+
+Phase 1 (eliminate copy_from_slice): -5.7% data writes, -1.9% instructions.
+Phase 2 (fused DCT8 kernel): -28.9% D1 write cache misses.
+MaybeUninit feature flag: memset 584M → 447M (-23.5%), total Dw 2.505B → 2.183B (-12.9%).
+Output is bit-exact (all 36 hash lock tests pass).
+
 ## 2026-02-23: Optimize e5/e6/e7 encode speed + write amplification analysis
 
 User provided plan to fix two bottlenecks:
