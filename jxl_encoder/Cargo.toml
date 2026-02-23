@@ -56,7 +56,7 @@ parallel = ["std", "dep:rayon"]
 # requiring `unsafe` in a few carefully audited locations. The crate-level lint
 # is downgraded from `forbid(unsafe_code)` to `deny(unsafe_code)` so that
 # individual functions can `#[allow(unsafe_code)]`.
-unsafe-performance = []
+unsafe-performance = ["jxl_simd/unsafe-performance"]
 default = ["std", "safe-mode", "butteraugli-loop"]
 
 [dev-dependencies]

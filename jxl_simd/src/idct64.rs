@@ -160,7 +160,7 @@ fn idct1d_4_scalar(mem: &mut [f32]) {
 
 /// Core 8-point IDCT without the N scaling factor.
 fn idct1d_8_core_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 8];
+    let mut tmp = crate::scratch_buf::<8>();
     for i in 0..4 {
         tmp[i] = mem[2 * i];
         tmp[4 + i] = mem[2 * i + 1];
@@ -191,7 +191,7 @@ fn idct1d_8_core_scalar(mem: &mut [f32]) {
 
 /// Core 16-point IDCT without the N scaling factor.
 fn idct1d_16_core_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 16];
+    let mut tmp = crate::scratch_buf::<16>();
     for i in 0..8 {
         tmp[i] = mem[2 * i];
         tmp[8 + i] = mem[2 * i + 1];
@@ -223,7 +223,7 @@ fn idct1d_16_core_scalar(mem: &mut [f32]) {
 
 /// Core 32-point IDCT without the N scaling factor.
 fn idct1d_32_core_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 32];
+    let mut tmp = crate::scratch_buf::<32>();
     for i in 0..16 {
         tmp[i] = mem[2 * i];
         tmp[16 + i] = mem[2 * i + 1];
@@ -263,7 +263,7 @@ fn idct1d_32_scalar(mem: &mut [f32]) {
 
 /// Core 64-point IDCT without the N scaling factor.
 fn idct1d_64_core_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 64];
+    let mut tmp = crate::scratch_buf::<64>();
     for i in 0..32 {
         tmp[i] = mem[2 * i];
         tmp[32 + i] = mem[2 * i + 1];
@@ -304,7 +304,7 @@ fn idct1d_64_scalar(mem: &mut [f32]) {
 /// Scalar 64×64 inverse DCT.
 #[inline]
 pub fn idct_64x64_scalar(input: &[f32; 4096], output: &mut [f32; 4096]) {
-    let mut tmp = [0.0f32; 4096];
+    let mut tmp = crate::scratch_buf::<4096>();
 
     // IDCT on each row
     for row in 0..64 {
@@ -314,7 +314,7 @@ pub fn idct_64x64_scalar(input: &[f32; 4096], output: &mut [f32; 4096]) {
     }
 
     // Transpose 64×64
-    let mut transposed = [0.0f32; 4096];
+    let mut transposed = crate::scratch_buf::<4096>();
     for r in 0..64 {
         for c in 0..64 {
             transposed[c * 64 + r] = tmp[r * 64 + c];
@@ -335,7 +335,7 @@ pub fn idct_64x64_scalar(input: &[f32; 4096], output: &mut [f32; 4096]) {
 /// Output in 64×32 layout (stride 32, spatial domain).
 #[inline]
 pub fn idct_64x32_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
 
     // IDCT-64 on each of 32 rows (stride 64)
     for row in 0..32 {
@@ -345,7 +345,7 @@ pub fn idct_64x32_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
     }
 
     // Transpose 32×64 → 64×32
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..32 {
         for c in 0..64 {
             transposed[c * 32 + r] = tmp[r * 64 + c];
@@ -367,7 +367,7 @@ pub fn idct_64x32_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
 #[inline]
 pub fn idct_32x64_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
     // Un-transpose: 32×64 → 64×32
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..32 {
         for c in 0..64 {
             transposed[c * 32 + r] = input[r * 64 + c];
@@ -375,7 +375,7 @@ pub fn idct_32x64_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
     }
 
     // IDCT-32 on each of 64 rows (stride 32)
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
     for row in 0..64 {
         let s = row * 32;
         tmp[s..s + 32].copy_from_slice(&transposed[s..s + 32]);
@@ -383,7 +383,7 @@ pub fn idct_32x64_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
     }
 
     // Transpose 64×32 → 32×64
-    let mut transposed2 = [0.0f32; 2048];
+    let mut transposed2 = crate::scratch_buf::<2048>();
     for r in 0..64 {
         for c in 0..32 {
             transposed2[c * 64 + r] = tmp[r * 32 + c];
@@ -521,7 +521,7 @@ pub(crate) fn idct1d_64_core_batch(
 pub fn idct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: &mut [f32; 4096]) {
     use magetypes::simd::f32x8;
 
-    let mut tmp = [0.0f32; 4096];
+    let mut tmp = crate::scratch_buf::<4096>();
 
     // Pass 1: IDCT-64 on rows, 8 batches of 8 rows
     for batch in 0..8 {
@@ -537,7 +537,7 @@ pub fn idct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output:
     }
 
     // Transpose 64×64
-    let mut transposed = [0.0f32; 4096];
+    let mut transposed = crate::scratch_buf::<4096>();
     for r in 0..64 {
         for c in 0..64 {
             transposed[c * 64 + r] = tmp[r * 64 + c];
@@ -566,7 +566,7 @@ pub fn idct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output:
 pub fn idct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: &mut [f32; 2048]) {
     use magetypes::simd::f32x8;
 
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: IDCT-64 on 32 rows (stride 64), 4 batches of 8
     for batch in 0..4 {
@@ -582,7 +582,7 @@ pub fn idct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
     }
 
     // Transpose 32×64 → 64×32
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..32 {
         for c in 0..64 {
             transposed[c * 32 + r] = tmp[r * 64 + c];
@@ -612,7 +612,7 @@ pub fn idct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
     use magetypes::simd::f32x8;
 
     // Un-transpose: 32×64 → 64×32
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..32 {
         for c in 0..64 {
             transposed[c * 32 + r] = input[r * 64 + c];
@@ -620,7 +620,7 @@ pub fn idct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
     }
 
     // Pass 1: IDCT-32 on 64 rows (stride 32), 8 batches of 8
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
     for batch in 0..8 {
         let base = batch * 8;
         let mut v = [f32x8::zero(token); 32];
@@ -634,7 +634,7 @@ pub fn idct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
     }
 
     // Transpose 64×32 → 32×64
-    let mut transposed2 = [0.0f32; 2048];
+    let mut transposed2 = crate::scratch_buf::<2048>();
     for r in 0..64 {
         for c in 0..32 {
             transposed2[c * 64 + r] = tmp[r * 32 + c];

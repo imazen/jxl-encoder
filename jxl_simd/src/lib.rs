@@ -21,9 +21,32 @@
 //! variant directly from an `#[arcane]` function so LLVM can inline across the
 //! target-feature boundary.
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "unsafe-performance"), forbid(unsafe_code))]
+#![cfg_attr(feature = "unsafe-performance", deny(unsafe_code))]
 #![no_std]
 extern crate alloc;
+
+/// Return an uninitialized `[f32; N]` scratch buffer (unsafe-performance path).
+///
+/// # Safety
+/// Caller must write every element before reading it. All call sites are DCT/IDCT
+/// scratch arrays that are immediately filled by copy_from_slice, transpose, or
+/// gather_col before any read occurs.
+#[cfg(feature = "unsafe-performance")]
+#[allow(unsafe_code, clippy::uninit_assumed_init)]
+#[inline(always)]
+pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
+    // SAFETY: All call sites write every element via copy_from_slice, transpose,
+    // or gather_col before any read. f32 has no trap representations on IEEE 754.
+    unsafe { core::mem::MaybeUninit::<[f32; N]>::uninit().assume_init() }
+}
+
+/// Return a zero-initialized `[f32; N]` scratch buffer (safe default path).
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline(always)]
+pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
+    [0.0f32; N]
+}
 
 mod adaptive_quant;
 mod block_l2;
