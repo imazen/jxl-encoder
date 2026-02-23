@@ -28,36 +28,75 @@ pub fn idct1d_2(mem: &mut [f32]) {
     mem[1] = (x - y) * 0.5;
 }
 
+/// Value-returning 1D IDCT for N=4. Returns [out0, out1, out2, out3].
+/// Parameters: (even0, even1, odd0, odd1) — caller de-interleaves before calling.
+/// Uses reciprocal multiplications instead of divisions.
+#[inline(always)]
+fn idct1d_4_val(a: f32, b: f32, c: f32, d: f32) -> [f32; 4] {
+    // a=even[0], b=even[1], c=odd[0], d=odd[1]
+    // Reverse B transform on odd half
+    let odd0 = (c - d) * INV_SQRT2;
+    // Reverse idct1d_2 on odd half
+    let o0_pre = (odd0 + d) * 0.5;
+    let o1_pre = (odd0 - d) * 0.5;
+    // Reverse WcMultipliers (multiply by reciprocal instead of divide)
+    let o0 = o0_pre * INV_WC_MULTIPLIERS_4[0];
+    let o1 = o1_pre * INV_WC_MULTIPLIERS_4[1];
+    // Reverse idct1d_2 on even half
+    let e0 = (a + b) * 0.5;
+    let e1 = (a - b) * 0.5;
+    // Combine even/odd
+    [
+        (e0 + o0) * 0.5,
+        (e1 + o1) * 0.5,
+        (e1 - o1) * 0.5,
+        (e0 - o0) * 0.5,
+    ]
+}
+
 /// Fast 1D IDCT for N=4 (exactly reverses dct1d_4).
 #[inline(always)]
 pub fn idct1d_4(mem: &mut [f32]) {
-    // Reverse step 7 (interleave): tmp = [mem[0], mem[2], mem[1], mem[3]]
-    let mut tmp = [mem[0], mem[2], mem[1], mem[3]];
+    let r = idct1d_4_val(mem[0], mem[2], mem[1], mem[3]);
+    mem[..4].copy_from_slice(&r);
+}
 
-    // Reverse step 6 (B transform): original was tmp[2] = sqrt2*tmp[2] + tmp[3]
-    tmp[2] = (tmp[2] - tmp[3]) / SQRT2;
+/// Value-returning core 1D IDCT for N=8 without the N scaling factor.
+/// Uses reciprocal multiplications instead of divisions.
+#[inline(always)]
+fn idct1d_8_core_val(m: [f32; 8]) -> [f32; 8] {
+    // De-interleave: even = [m[0], m[2], m[4], m[6]], odd = [m[1], m[3], m[5], m[7]]
+    let (e0, e1, e2, e3) = (m[0], m[2], m[4], m[6]);
+    let (mut o0, mut o1, mut o2, o3) = (m[1], m[3], m[5], m[7]);
 
-    // Reverse step 5: idct on second half
-    idct1d_2(&mut tmp[2..4]);
+    // Reverse B transform
+    o2 -= o3;
+    o1 -= o2;
+    o0 = (o0 - o1) * INV_SQRT2;
 
-    // Reverse step 4: divide by WcMultipliers
-    tmp[2] /= WC_MULTIPLIERS_4[0];
-    tmp[3] /= WC_MULTIPLIERS_4[1];
+    // Reverse idct1d_4 on odd half, then multiply by reciprocal WcMultipliers
+    let odd = idct1d_4_val(o0, o2, o1, o3);
+    let o = [
+        odd[0] * INV_WC_MULTIPLIERS_8[0],
+        odd[1] * INV_WC_MULTIPLIERS_8[1],
+        odd[2] * INV_WC_MULTIPLIERS_8[2],
+        odd[3] * INV_WC_MULTIPLIERS_8[3],
+    ];
 
-    // Reverse step 3: idct on first half
-    idct1d_2(&mut tmp[0..2]);
+    // Reverse idct1d_4 on even half
+    let e = idct1d_4_val(e0, e2, e1, e3);
 
-    // Reverse steps 1-2: combine even/odd
-    // Forward: e0 = a+d, e1 = b+c, o0 = a-d, o1 = b-c
-    // Inverse: a = (e0+o0)/2, d = (e0-o0)/2, b = (e1+o1)/2, c = (e1-o1)/2
-    let e0 = tmp[0];
-    let e1 = tmp[1];
-    let o0 = tmp[2];
-    let o1 = tmp[3];
-    mem[0] = (e0 + o0) * 0.5;
-    mem[3] = (e0 - o0) * 0.5;
-    mem[1] = (e1 + o1) * 0.5;
-    mem[2] = (e1 - o1) * 0.5;
+    // Combine even/odd
+    [
+        (e[0] + o[0]) * 0.5,
+        (e[1] + o[1]) * 0.5,
+        (e[2] + o[2]) * 0.5,
+        (e[3] + o[3]) * 0.5,
+        (e[3] - o[3]) * 0.5,
+        (e[2] - o[2]) * 0.5,
+        (e[1] - o[1]) * 0.5,
+        (e[0] - o[0]) * 0.5,
+    ]
 }
 
 /// Core 1D IDCT for N=8 without the N scaling factor.
@@ -66,90 +105,64 @@ pub fn idct1d_4(mem: &mut [f32]) {
 /// for the 1/N scaling applied by the 2D wrapper (dct_8x8). Used internally
 /// by idct1d_16 which applies its own scaling.
 fn idct1d_8_core(mem: &mut [f32]) {
-    // Reverse step 7 (interleave)
-    let mut tmp = [0.0f32; 8];
-    for i in 0..4 {
-        tmp[i] = mem[2 * i];
-        tmp[4 + i] = mem[2 * i + 1];
-    }
-
-    // Reverse step 6 (B transform)
-    tmp[6] -= tmp[7];
-    tmp[5] -= tmp[6];
-    tmp[4] = (tmp[4] - tmp[5]) / SQRT2;
-
-    // Reverse step 5: idct on second half
-    idct1d_4(&mut tmp[4..8]);
-
-    // Reverse step 4: divide by WcMultipliers
-    for i in 0..4 {
-        tmp[4 + i] /= WC_MULTIPLIERS_8[i];
-    }
-
-    // Reverse step 3: idct on first half
-    idct1d_4(&mut tmp[0..4]);
-
-    // Reverse steps 1-2: combine even/odd
-    for i in 0..4 {
-        mem[i] = (tmp[i] + tmp[4 + i]) * 0.5;
-        mem[7 - i] = (tmp[i] - tmp[4 + i]) * 0.5;
-    }
+    let mut m = [0.0f32; 8];
+    m.copy_from_slice(&mem[..8]);
+    let r = idct1d_8_core_val(m);
+    mem[..8].copy_from_slice(&r);
 }
 
 /// Fast 1D IDCT for N=8 (exactly reverses dct1d_8).
 ///
 /// Includes the *= 8 scaling to compensate for the 1/8 applied by dct_8x8.
 pub fn idct1d_8(mem: &mut [f32]) {
-    // Scale by N to compensate for 1/N in forward transform
-    for x in mem.iter_mut().take(8) {
-        *x *= 8.0;
-    }
-    idct1d_8_core(mem);
+    let m = [
+        mem[0] * 8.0,
+        mem[1] * 8.0,
+        mem[2] * 8.0,
+        mem[3] * 8.0,
+        mem[4] * 8.0,
+        mem[5] * 8.0,
+        mem[6] * 8.0,
+        mem[7] * 8.0,
+    ];
+    let r = idct1d_8_core_val(m);
+    mem[..8].copy_from_slice(&r);
 }
 
 /// Fast 1D IDCT for N=16 (exactly reverses dct1d_16).
 ///
 /// Includes *= 16 scaling to compensate for the 1/16 applied by dct_16x16.
-/// Uses idct1d_8_core (without 8x scaling) for the recursive sub-transforms
+/// Uses idct1d_8_core_val (without 8x scaling) for the recursive sub-transforms
 /// since the scaling is handled at this level.
 pub fn idct1d_16(mem: &mut [f32]) {
-    // Scale by N to compensate for 1/N in forward transform
-    for x in mem.iter_mut().take(16) {
-        *x *= 16.0;
-    }
-
-    // Reverse step 7 (interleave): deinterleave
-    let mut tmp = [0.0f32; 16];
+    // De-interleave with scaling: even = scaled[0,2,4,...], odd = scaled[1,3,5,...]
+    let mut even = [0.0f32; 8];
+    let mut odd = [0.0f32; 8];
     for i in 0..8 {
-        tmp[i] = mem[2 * i];
-        tmp[8 + i] = mem[2 * i + 1];
+        even[i] = mem[2 * i] * 16.0;
+        odd[i] = mem[2 * i + 1] * 16.0;
     }
 
-    // Reverse step 6 (B transform):
-    // Forward: tmp[8] = sqrt2*tmp[8] + tmp[9]; tmp[8+i] += tmp[8+i+1] for i in 1..7
-    // Reverse: tmp[8+i] -= tmp[8+i+1] for i in (1..7).rev(); tmp[8] = (tmp[8] - tmp[9]) / sqrt2
+    // Reverse B transform
     for i in (1..7).rev() {
-        tmp[8 + i] -= tmp[8 + i + 1];
+        odd[i] -= odd[i + 1];
     }
-    tmp[8] = (tmp[8] - tmp[9]) / SQRT2;
+    odd[0] = (odd[0] - odd[1]) * INV_SQRT2;
 
-    // Reverse step 5: idct on second half (use core without 8x scaling)
-    idct1d_8_core(&mut tmp[8..16]);
-
-    // Reverse step 4: divide by WcMultipliers
+    // Reverse idct on odd half, then multiply by reciprocal WcMultipliers
+    let odd_r = idct1d_8_core_val(odd);
+    let mut odd_scaled = [0.0f32; 8];
     for i in 0..8 {
-        tmp[8 + i] /= WC_MULTIPLIERS_16[i];
+        odd_scaled[i] = odd_r[i] * INV_WC_MULTIPLIERS_16[i];
     }
 
-    // Reverse step 3: idct on first half (use core without 8x scaling)
-    idct1d_8_core(&mut tmp[0..8]);
+    // Reverse idct on even half
+    let even_r = idct1d_8_core_val(even);
 
-    // Reverse steps 1-2: combine AddReverse/SubReverse
-    // Forward: even[i] = mem[i] + mem[15-i], odd[i] = mem[i] - mem[15-i]
-    // Inverse: mem[i] = (even[i] + odd[i])/2, mem[15-i] = (even[i] - odd[i])/2
+    // Combine
     for i in 0..8 {
-        mem[i] = (tmp[i] + tmp[8 + i]) * 0.5;
-        mem[15 - i] = (tmp[i] - tmp[8 + i]) * 0.5;
+        mem[i] = (even_r[i] + odd_scaled[i]) * 0.5;
+        mem[15 - i] = (even_r[i] - odd_scaled[i]) * 0.5;
     }
 }
 
@@ -201,157 +214,143 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 /// Input layout: 4 rows x 4 cols, stride 4.
 #[inline(always)]
 pub fn idct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
-    let mut tmp = [0.0f32; 16];
-
-    // Apply 4-point IDCT to each row
-    // Scale by 4 to compensate for the 1/4 scaling in forward transform
+    // Pass 1: 4-point IDCT on each row (scaled by 4), store transposed
+    let mut temp = [0.0f32; 16];
     for row in 0..4 {
-        let row_start = row * 4;
-        for i in 0..4 {
-            tmp[row_start + i] = input[row_start + i] * 4.0;
-        }
-        idct1d_4(&mut tmp[row_start..row_start + 4]);
-    }
-
-    // Transpose
-    for row in 0..4 {
+        let s = row * 4;
+        let r = idct1d_4_val(
+            input[s] * 4.0,
+            input[s + 2] * 4.0,
+            input[s + 1] * 4.0,
+            input[s + 3] * 4.0,
+        );
+        // Store transposed: row → column
         for col in 0..4 {
-            output[col * 4 + row] = tmp[row * 4 + col];
+            temp[col * 4 + row] = r[col];
         }
     }
 
-    // Apply 4-point IDCT to each row of transposed (now columns)
-    // Scale by 4 to compensate for the 1/4 scaling in forward transform
+    // Pass 2: 4-point IDCT on each row of transposed (scaled by 4), write to output
     for row in 0..4 {
-        let row_start = row * 4;
-        for i in 0..4 {
-            output[row_start + i] *= 4.0;
-        }
-        idct1d_4(&mut output[row_start..row_start + 4]);
+        let s = row * 4;
+        let r = idct1d_4_val(
+            temp[s] * 4.0,
+            temp[s + 2] * 4.0,
+            temp[s + 1] * 4.0,
+            temp[s + 3] * 4.0,
+        );
+        output[s..s + 4].copy_from_slice(&r);
     }
 }
 
 /// Compute 4x8 inverse DCT (exactly reverses dct_4x8).
-/// Input layout: 4 rows x 8 cols, stride 8.
-///
-/// dct_4x8 does:
-///   1. 8-point DCT on rows, then *= 1/8
-///   2. Transpose 4x8 -> 8x4
-///   3. 4-point DCT on rows of transposed, then *= 1/4
-///   4. Transpose 8x4 -> 4x8
-///
-/// So idct_4x8 must reverse these steps:
-///   1. Transpose 4x8 -> 8x4
-///   2. *= 4, then 4-point IDCT on rows
-///   3. Transpose 8x4 -> 4x8
-///   4. 8-point IDCT on rows (includes internal *= 8)
+/// Fused: transpose → 4pt IDCT → transpose → 8pt IDCT, using value-returning butterflies.
 #[inline(always)]
 pub fn idct_4x8(input: &[f32; 32], output: &mut [f32; 32]) {
-    // Step 1: Transpose 4x8 -> 8x4
-    let mut transposed = [0.0f32; 32];
+    // Pass 1: Transpose 4x8 → 8x4, then 4pt IDCT (scaled by 4) on each of 8 rows,
+    // store transposed back to 4x8 layout.
+    let mut temp = [0.0f32; 32];
+    for col in 0..8 {
+        // Gather column from 4x8 input (becomes row in transposed)
+        let a = input[col] * 4.0;
+        let b = input[8 + col] * 4.0;
+        let c = input[16 + col] * 4.0;
+        let d = input[24 + col] * 4.0;
+        // idct1d_4_val expects de-interleaved: [even0, even1, odd0, odd1] = [a, c, b, d]
+        let r = idct1d_4_val(a, c, b, d);
+        // Store transposed: row col → col*8 + row index in 4x8 layout
+        for row in 0..4 {
+            temp[row * 8 + col] = r[row];
+        }
+    }
+
+    // Pass 2: 8pt IDCT (scaled by 8) on each of 4 rows
     for row in 0..4 {
-        for col in 0..8 {
-            transposed[col * 4 + row] = input[row * 8 + col];
-        }
-    }
-
-    // Step 2: *= 4, then 4-point IDCT on each row
-    for row in 0..8 {
-        let row_start = row * 4;
-        for i in 0..4 {
-            transposed[row_start + i] *= 4.0;
-        }
-        idct1d_4(&mut transposed[row_start..row_start + 4]);
-    }
-
-    // Step 3: Transpose 8x4 -> 4x8
-    let mut tmp = [0.0f32; 32];
-    for row in 0..8 {
-        for col in 0..4 {
-            tmp[col * 8 + row] = transposed[row * 4 + col];
-        }
-    }
-
-    // Step 4: 8-point IDCT on each row (includes internal *= 8)
-    for row in 0..4 {
-        let row_start = row * 8;
-        output[row_start..row_start + 8].copy_from_slice(&tmp[row_start..row_start + 8]);
-        idct1d_8(&mut output[row_start..row_start + 8]);
+        let s = row * 8;
+        let m = [
+            temp[s] * 8.0,
+            temp[s + 1] * 8.0,
+            temp[s + 2] * 8.0,
+            temp[s + 3] * 8.0,
+            temp[s + 4] * 8.0,
+            temp[s + 5] * 8.0,
+            temp[s + 6] * 8.0,
+            temp[s + 7] * 8.0,
+        ];
+        let r = idct1d_8_core_val(m);
+        output[s..s + 8].copy_from_slice(&r);
     }
 }
 
 /// Compute 8x4 inverse DCT (exactly reverses dct_8x4).
-/// Input layout: 4 rows x 8 cols, stride 8 (output of dct_8x4 which has no final transpose).
-///
-/// dct_8x4 (ROWS=8 >= COLS=4, no final transpose):
-///
-///   1. 4pt DCT on rows (8 rows of 4), *= 1/4
-///   2. Transpose 8x4 -> 4x8
-///   3. 8pt DCT on rows (4 rows of 8), *= 1/8
-///
-/// No final transpose. Output is 4x8 (stride 8).
+/// Fused: 8pt IDCT → transpose → 4pt IDCT, using value-returning butterflies.
 #[inline(always)]
 pub fn idct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
-    let mut tmp = [0.0f32; 32];
-
-    // Step 1: 8pt IDCT on each of 4 rows (stride 8)
+    // Pass 1: 8pt IDCT (scaled by 8) on each of 4 rows, store transposed to 8x4 layout
+    let mut temp = [0.0f32; 32];
     for row in 0..4 {
         let s = row * 8;
-        tmp[s..s + 8].copy_from_slice(&input[s..s + 8]);
-        idct1d_8(&mut tmp[s..s + 8]);
-    }
-
-    // Step 2: Transpose 4x8 -> 8x4
-    let mut transposed = [0.0f32; 32];
-    for row in 0..4 {
+        let m = [
+            input[s] * 8.0,
+            input[s + 1] * 8.0,
+            input[s + 2] * 8.0,
+            input[s + 3] * 8.0,
+            input[s + 4] * 8.0,
+            input[s + 5] * 8.0,
+            input[s + 6] * 8.0,
+            input[s + 7] * 8.0,
+        ];
+        let r = idct1d_8_core_val(m);
+        // Store transposed: 4x8 row → 8x4 column
         for col in 0..8 {
-            transposed[col * 4 + row] = tmp[row * 8 + col];
+            temp[col * 4 + row] = r[col];
         }
     }
 
-    // Step 3: *= 4, then 4pt IDCT on each of 8 rows (stride 4)
+    // Pass 2: 4pt IDCT (scaled by 4) on each of 8 rows
     for row in 0..8 {
         let s = row * 4;
-        for i in 0..4 {
-            transposed[s + i] *= 4.0;
-        }
-        idct1d_4(&mut transposed[s..s + 4]);
+        let r = idct1d_4_val(
+            temp[s] * 4.0,
+            temp[s + 2] * 4.0,
+            temp[s + 1] * 4.0,
+            temp[s + 3] * 4.0,
+        );
+        output[s..s + 4].copy_from_slice(&r);
     }
-
-    output.copy_from_slice(&transposed);
 }
 
 /// Core 1D IDCT for N=16 without the N scaling factor.
 /// Used internally by idct1d_32 which applies its own scaling.
 fn idct1d_16_core(mem: &mut [f32]) {
-    // Reverse step 7 (interleave): deinterleave
-    let mut tmp = [0.0f32; 16];
+    // De-interleave
+    let mut even = [0.0f32; 8];
+    let mut odd = [0.0f32; 8];
     for i in 0..8 {
-        tmp[i] = mem[2 * i];
-        tmp[8 + i] = mem[2 * i + 1];
+        even[i] = mem[2 * i];
+        odd[i] = mem[2 * i + 1];
     }
 
-    // Reverse step 6 (B transform)
+    // Reverse B transform
     for i in (1..7).rev() {
-        tmp[8 + i] -= tmp[8 + i + 1];
+        odd[i] -= odd[i + 1];
     }
-    tmp[8] = (tmp[8] - tmp[9]) / SQRT2;
+    odd[0] = (odd[0] - odd[1]) * INV_SQRT2;
 
-    // Reverse step 5: idct on second half
-    idct1d_8_core(&mut tmp[8..16]);
-
-    // Reverse step 4: divide by WcMultipliers
+    // Reverse idct on odd half, then multiply by reciprocal WcMultipliers
+    let odd_r = idct1d_8_core_val(odd);
+    let mut odd_scaled = [0.0f32; 8];
     for i in 0..8 {
-        tmp[8 + i] /= WC_MULTIPLIERS_16[i];
+        odd_scaled[i] = odd_r[i] * INV_WC_MULTIPLIERS_16[i];
     }
 
-    // Reverse step 3: idct on first half
-    idct1d_8_core(&mut tmp[0..8]);
+    // Reverse idct on even half
+    let even_r = idct1d_8_core_val(even);
 
-    // Reverse steps 1-2: combine
+    // Combine
     for i in 0..8 {
-        mem[i] = (tmp[i] + tmp[8 + i]) * 0.5;
-        mem[15 - i] = (tmp[i] - tmp[8 + i]) * 0.5;
+        mem[i] = (even_r[i] + odd_scaled[i]) * 0.5;
+        mem[15 - i] = (even_r[i] - odd_scaled[i]) * 0.5;
     }
 }
 
@@ -367,33 +366,32 @@ fn idct1d_32(mem: &mut [f32]) {
 
 /// Core 1D IDCT for N=32 without the N scaling factor.
 fn idct1d_32_core(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 32];
+    let mut even = [0.0f32; 16];
+    let mut odd = [0.0f32; 16];
     for i in 0..16 {
-        tmp[i] = mem[2 * i];
-        tmp[16 + i] = mem[2 * i + 1];
+        even[i] = mem[2 * i];
+        odd[i] = mem[2 * i + 1];
     }
 
     // Reverse B transform
     for i in (1..15).rev() {
-        tmp[16 + i] -= tmp[16 + i + 1];
+        odd[i] -= odd[i + 1];
     }
-    tmp[16] = (tmp[16] - tmp[17]) / SQRT2;
+    odd[0] = (odd[0] - odd[1]) * INV_SQRT2;
 
-    // IDCT on second half
-    idct1d_16_core(&mut tmp[16..32]);
-
-    // Divide by WcMultipliers
+    // IDCT on odd half, then multiply by reciprocal WcMultipliers
+    idct1d_16_core(&mut odd);
     for i in 0..16 {
-        tmp[16 + i] /= WC_MULTIPLIERS_32[i];
+        odd[i] *= INV_WC_MULTIPLIERS_32[i];
     }
 
-    // IDCT on first half
-    idct1d_16_core(&mut tmp[0..16]);
+    // IDCT on even half
+    idct1d_16_core(&mut even);
 
     // Combine
     for i in 0..16 {
-        mem[i] = (tmp[i] + tmp[16 + i]) * 0.5;
-        mem[31 - i] = (tmp[i] - tmp[16 + i]) * 0.5;
+        mem[i] = (even[i] + odd[i]) * 0.5;
+        mem[31 - i] = (even[i] - odd[i]) * 0.5;
     }
 }
 
@@ -446,14 +444,14 @@ fn idct1d_64_core(mem: &mut [f32]) {
     for i in (1..31).rev() {
         tmp[32 + i] -= tmp[32 + i + 1];
     }
-    tmp[32] = (tmp[32] - tmp[33]) / SQRT2;
+    tmp[32] = (tmp[32] - tmp[33]) * INV_SQRT2;
 
     // IDCT on second half
     idct1d_32_core(&mut tmp[32..64]);
 
-    // Divide by WcMultipliers
+    // Multiply by reciprocal WcMultipliers
     for i in 0..32 {
-        tmp[32 + i] /= WC_MULTIPLIERS_64[i];
+        tmp[32 + i] *= INV_WC_MULTIPLIERS_64[i];
     }
 
     // IDCT on first half
