@@ -371,12 +371,12 @@ fn optimize_uint_configs_fast(
             }
 
             // Compute Shannon entropy cost of the token histogram
-            let total = values.len() as f64;
+            let inv_total = 1.0f32 / values.len() as f32;
             let mut entropy_cost = 0.0f64;
             for &count in &counts {
                 if count > 0 {
-                    let p = count as f64 / total;
-                    entropy_cost -= count as f64 * p.log2();
+                    let c = count as f32;
+                    entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
                 }
             }
 
@@ -480,12 +480,12 @@ fn optimize_uint_configs_best(
                 extra_bits_total += nbits as u64;
             }
 
-            let total = values.len() as f64;
+            let inv_total = 1.0f32 / values.len() as f32;
             let mut entropy_cost = 0.0f64;
             for &count in &counts {
                 if count > 0 {
-                    let p = count as f64 / total;
-                    entropy_cost -= count as f64 * p.log2();
+                    let c = count as f32;
+                    entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
                 }
             }
 
@@ -734,15 +734,16 @@ fn estimate_context_map_cost(tokens: &[u8]) -> f64 {
     for &t in tokens {
         counts[t as usize] += 1;
     }
-    let total = tokens.len() as f64;
-    let mut cost = 0.0;
+    let inv_total = 1.0f32 / tokens.len() as f32;
+    let mut cost = 0.0f32;
     for &c in &counts {
         if c > 0 {
-            let p = c as f64 / total;
-            cost -= p * p.log2();
+            let cf = c as f32;
+            let p = cf * inv_total;
+            cost -= p * jxl_simd::fast_log2f(p);
         }
     }
-    cost * total
+    (cost * tokens.len() as f32) as f64
 }
 
 /// Write HybridUint config with specific split/msb/lsb values.

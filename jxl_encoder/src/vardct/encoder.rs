@@ -396,15 +396,22 @@ impl VarDctEncoder {
 
         // Compute pixel chromacity stats BEFORE gaborish (matching libjxl pipeline).
         // Gaborish sharpening inflates gradients, producing overly aggressive adjustment.
-        let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            padded_width,
-            padded_height,
-        );
-        let chromacity_x = pixel_stats.how_much_is_x_channel_pixelized();
-        let chromacity_b = pixel_stats.how_much_is_b_channel_pixelized();
+        // Gated at effort >= 7 to skip the full-image gradient scan at low effort.
+        let (chromacity_x, chromacity_b) = if self.profile.chromacity_adjustment {
+            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+            );
+            (
+                pixel_stats.how_much_is_x_channel_pixelized(),
+                pixel_stats.how_much_is_b_channel_pixelized(),
+            )
+        } else {
+            (0, 0)
+        };
 
         // Compute adaptive per-block quantization field and masking on ORIGINAL
         // (pre-gaborish) XYB. libjxl computes InitialQuantField before GaborishInverse
@@ -1448,8 +1455,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: error_diffusion default changed from true to false
-        const EXPECTED_HASH: u64 = 0x4cf896fedc8f9034;
+        // Updated: fast_log2f in entropy coding slightly changes code costs
+        const EXPECTED_HASH: u64 = 0x19f196b1c4f3a607;
         assert_eq!(
             hash,
             EXPECTED_HASH,

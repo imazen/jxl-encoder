@@ -107,7 +107,7 @@ fn estimate_data_bits_normalized(
         .take(alphabet_size)
     {
         if *actual > 0 && *norm > 0 {
-            sum += *actual as f64 * (*norm as f64).log2();
+            sum += *actual as f64 * jxl_simd::fast_log2f(*norm as f32) as f64;
         }
     }
     total_count as f64 * ANS_LOG_TAB_SIZE as f64 - sum

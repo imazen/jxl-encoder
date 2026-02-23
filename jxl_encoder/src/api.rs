@@ -2390,12 +2390,13 @@ fn srgb_to_linear(c: u8) -> f32 {
 
 fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     let num_pixels = data.len() / channels;
-    let mut out = Vec::with_capacity(num_pixels * 3);
+    let mut out = vec![0.0f32; num_pixels * 3];
     let lut = &SRGB_U8_TO_LINEAR;
-    for px in data.chunks_exact(channels) {
-        out.push(lut[px[0] as usize]);
-        out.push(lut[px[1] as usize]);
-        out.push(lut[px[2] as usize]);
+    for (i, px) in data.chunks_exact(channels).enumerate() {
+        let base = i * 3;
+        out[base] = lut[px[0] as usize];
+        out[base + 1] = lut[px[1] as usize];
+        out[base + 2] = lut[px[2] as usize];
     }
     out
 }

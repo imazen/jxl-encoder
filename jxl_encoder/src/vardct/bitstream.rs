@@ -1190,15 +1190,21 @@ impl VarDctEncoder {
             None
         };
 
-        let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            padded_width,
-            padded_height,
-        );
-        let chromacity_x = pixel_stats.how_much_is_x_channel_pixelized();
-        let chromacity_b = pixel_stats.how_much_is_b_channel_pixelized();
+        let (chromacity_x, chromacity_b) = if self.profile.chromacity_adjustment {
+            let pixel_stats = super::frame::PixelStatsForChromacityAdjustment::calc(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+            );
+            (
+                pixel_stats.how_much_is_x_channel_pixelized(),
+                pixel_stats.how_much_is_b_channel_pixelized(),
+            )
+        } else {
+            (0, 0)
+        };
 
         if self.enable_gaborish {
             super::gaborish::gaborish_inverse(
