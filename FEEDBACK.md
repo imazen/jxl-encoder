@@ -111,27 +111,83 @@ with padding that guarantees all neighbor accesses are in-bounds.
 
 Ir 13.821B → 13.517B (unsafe-perf). EPF: 450M → 126M (3.6x reduction). -304M (-2.2%). Bit-exact.
 
+### Value-returning IDCT butterflies with reciprocal multiplication (f24860b)
+
+Rewrote all scalar IDCT butterflies (idct1d_4_val, idct1d_8_core_val, idct1d_16,
+idct1d_32_core, idct1d_64_core) to return values instead of writing to memory, and
+use reciprocal multiplication (`x * INV_WC_MUL` instead of `x / WC_MUL`).
+Added INV_WC_MULTIPLIERS_64 (32 reciprocals for 64-point IDCT).
+
+Ir 13,351M → 12,665M (-5.1%, -687M). inverse.rs: 1,268M → 645M (-49%).
+memset: 223M → 144M (-35%, fewer temp arrays). Cachegrind Dw: 1,739M → 1,584M (-8.9%).
+Hashes changed (reciprocal multiplication gives slightly different FP rounding).
+RD regression improved: files 0.1-0.4% smaller, SSIM2 +3 to +31 better.
+
+### Force-inline special transforms + extract_block_8x8 (9eb67df)
+
+Added #[inline(always)] to identity_transform, inverse_identity_transform,
+dct2x2_transform, inverse_dct2x2_transform, and extract_block_8x8.
+These were appearing as separate function entries in callgrind instead of
+inlining into the #[arcane] AVX2 context.
+
+Ir 12,665M → 12,519M (-1.2%, -146M call overhead). Bit-exact output.
+
 ### Cumulative results (this + previous session)
 
 | Metric       | Baseline | Current  | Δ       | vs cjxl |
 |-------------|----------|----------|---------|---------|
-| Instructions | 15.859B  | 13.517B  | -14.8%  | 2.51x   |
-| Data reads   | 4.068B   | 3.470B   | -14.7%  | 1.49x   |
-| Data writes  | 2.183B   | 1.691B   | -22.5%  | 2.16x   |
+| Instructions | 15.859B  | 12.521B  | -21.1%  | 2.33x   |
+| Data writes  | 2.183B   | 1.584B   | -27.4%  | 2.02x   |
+| Wall-clock   | ~1.18s   | 0.866s   | -26.6%  | 2.19x   |
 
-### Remaining cost breakdown (frymire d=1.0 e7, unsafe-perf, 13.517B total)
+### Head-to-head vs cjxl e7 (frymire d=1.0, unsafe-perf, 12.521B vs 5.378B)
 
+**Strategy evaluation**: Our 4,600M vs cjxl 970M = **4.7x**
+| Component | Us (M) | cjxl (M) | Ratio | Notes |
+|-----------|--------|----------|-------|-------|
+| Forward scalar DCTs | 970 | ~300 | 3.2x | DCT4x4/4x8/8x4 scalar vs SIMD |
+| Inverse scalar IDCTs | 645 | ~200 | 3.2x | idct4x4/4x8/8x4 scalar vs SIMD |
+| AFV matrix multiply | 573 | ~50 | 11.5x | 16×16 matmul, scalar vs SIMD |
+| Special transforms | 257 | ~40 | 6.4x | IDENTITY/DCT2x2 scalar |
+| Loop/control flow | 462 | 560 | 0.8x | We're actually tighter here |
+| Bounds checks (uint_macros) | 349 | 0 | ∞ | Structural Rust overhead |
+| Ptr/NonNull/Option/Iterator | 396 | 0 | ∞ | Structural Rust abstraction |
+| SIMD entropy+pixel_loss | 637 | ~300 | 2.1x | AVX2 kernels at parity |
+| Block extraction | 119 | ~80 | 1.5x | Strided loads |
+
+**Where we're faster than cjxl**:
+| Component | Us (M) | cjxl (M) | Notes |
+|-----------|--------|----------|-------|
+| Patches detection | 274 | 479 | 0.57x, our Rust code is faster |
+| Histogram distance | 86 | 280 | 0.31x, our reuse optimization |
+| CfL estimation | 110 | 236 | 0.47x |
+| EPF | 110 | 81 | 1.4x (close to parity after opt) |
+
+**Remaining cost breakdown** (12,521M total):
 | Component | Ir (M) | % | Notes |
 |-----------|--------|---|-------|
-| estimate_entropy_full | 4,034 | 30% | Forward DCT 913M, IDCT 528M, loop 475M, fmaf 287M |
-| patches detection | 638 | 4.7% | Expected (cjxl also runs this) |
-| DCT32/64 gather_col | 618 | 4.6% | Column transposition for large DCTs |
-| entropy_coeffs (SIMD+scalar) | 550 | 4.1% | Entropy estimation kernel |
-| special transforms | 343 | 2.5% | DCT2x2 233M, IDENTITY 110M (scalar) |
-| memset/memcpy | 318 | 2.4% | Buffer initialization/copies |
-| extract_block_8x8 | 217 | 1.6% | Strided loads for non-DCT8 strategies |
+| estimate_entropy_full | 4,600 | 36.7% | 4.7x vs cjxl's 970M |
+| gather_col (DCT32/64) | 928 | 7.4% | Column transposition (inherent) |
+| entropy_coeffs SIMD+scalar | 660 | 5.3% | Shannon entropy + quantization |
+| patches detection | 274 | 2.2% | Expected (cjxl also 479M) |
 | reconstruct_xyb | 156 | 1.2% | Reconstruction pipeline |
-| EPF | 126 | 0.9% | Down from 450M (3.6x improvement) |
+| memset | 144 | 1.1% | Vec zeroing (cjxl: 55M) |
+| CfL newton | 110 | 0.9% | CfL estimation |
+| EPF | 110 | 0.9% | Edge-preserving filter |
+| encode pipeline | 500 | 4.0% | ANS/Huffman/tokenize/quantize |
+| LZ77 (wasted) | 73 | 0.6% | Runs at e7, always rejected |
+| other | 4,966 | 39.7% | Distributed across many functions |
+
+**Root cause of remaining 2.33x gap**:
+1. **Scalar small DCTs** (forward+inverse+AFV): 2,188M excess. cjxl uses full AVX2
+   for ALL transform sizes via Highway. Our DCT4x4/4x8/8x4/AFV are pure scalar.
+   SIMD-ifying would save ~1,500M (12.0% of total).
+2. **Rust abstraction overhead**: 745M (bounds checks, iterators, Option, ptr ops).
+   Inherent to safe Rust. Would require unsafe code or compiler improvements.
+3. **Gather/scatter for large DCTs**: 928M vs cjxl ~400M. Our column transposition
+   uses explicit memory operations; cjxl uses in-register shuffles. Partially
+   inherent to our architecture.
+4. **Everything else**: roughly at parity or we're faster.
 
 ### Replace scalar f32::mul_add with a*b+c (3f4706c)
 
