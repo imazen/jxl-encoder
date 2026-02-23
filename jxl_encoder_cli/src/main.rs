@@ -815,6 +815,9 @@ fn main() {
         if args.no_lz77 {
             cfg = cfg.with_lz77(false);
         }
+        if let Some(method) = lz77_method {
+            cfg = cfg.with_lz77_method(method);
+        }
         if args.lossy_palette {
             cfg = cfg.with_lossy_palette(true);
         }

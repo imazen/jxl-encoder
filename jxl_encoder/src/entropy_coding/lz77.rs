@@ -763,11 +763,12 @@ pub fn apply_lz77_backref(
     let threshold = total_symbols as f32 * 0.2 + 16.0;
     #[cfg(feature = "debug-tokens")]
     eprintln!(
-        "[LZ77-backref] bit_decrease={:.1}, threshold={:.1}, tokens: {} -> {}",
+        "[LZ77-backref] bit_decrease={:.1}, threshold={:.1}, tokens: {} -> {}, matches={}",
         bit_decrease,
         threshold,
         total_symbols,
-        out.len()
+        out.len(),
+        out.iter().filter(|t| t.is_lz77_length).count()
     );
     if bit_decrease > threshold {
         lz77.enabled = true;
@@ -875,11 +876,12 @@ pub fn apply_lz77_rle(
     let threshold = total_symbols as f32 * 0.2 + 16.0;
     #[cfg(feature = "debug-tokens")]
     eprintln!(
-        "[LZ77] bit_decrease={:.1}, threshold={:.1}, tokens: {} -> {}",
+        "[LZ77-RLE] bit_decrease={:.1}, threshold={:.1}, tokens: {} -> {}, runs_found={}",
         bit_decrease,
         threshold,
         total_symbols,
-        out.len()
+        out.len(),
+        out.iter().filter(|t| t.is_lz77_length).count()
     );
     if bit_decrease > threshold {
         lz77.enabled = true;
