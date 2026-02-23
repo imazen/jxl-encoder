@@ -17,6 +17,64 @@
 /// Channel importance weights for SAD computation (from libjxl epf.h).
 const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 
+/// Slice from offset without bounds check (unsafe-performance path).
+///
+/// # Safety
+/// Caller must ensure `offset <= s.len()`. All EPF call sites operate on
+/// padded buffers where padding guarantees valid access for ±pad pixels
+/// around every in-bounds position.
+#[cfg(feature = "unsafe-performance")]
+#[inline(always)]
+#[allow(unsafe_code)]
+fn slice_from(s: &[f32], offset: usize) -> &[f32] {
+    debug_assert!(offset <= s.len());
+    // SAFETY: EPF buffers are padded with edge replication; all offsets
+    // computed in sad_3x3_plus_simd / epf_step1 / epf_step2 are within
+    // the padded region. Verified by debug_assert above.
+    unsafe { s.get_unchecked(offset..) }
+}
+
+/// Slice from offset with bounds check (safe default path).
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline(always)]
+fn slice_from(s: &[f32], offset: usize) -> &[f32] {
+    &s[offset..]
+}
+
+/// Load 8 floats from a padded buffer at offset — no bounds checks (unsafe-performance path).
+///
+/// Bypasses both the slice-from bounds check AND `f32x8::from_slice`'s internal `[..8]`
+/// bounds check by using `_mm256_loadu_ps` directly.
+///
+/// # Safety
+/// Caller must ensure `offset + 8 <= s.len()`. All EPF call sites operate on
+/// padded buffers where this is guaranteed.
+#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
+#[inline(always)]
+#[allow(unsafe_code)]
+fn load_f32x8(token: archmage::X64V3Token, s: &[f32], offset: usize) -> magetypes::simd::f32x8 {
+    use magetypes::simd::f32x8;
+    debug_assert!(
+        offset + 8 <= s.len(),
+        "load_f32x8: offset={offset}, len={}",
+        s.len()
+    );
+    // SAFETY: EPF buffers are padded with edge replication; offset + 8 is within
+    // the padded region. Using _mm256_loadu_ps for unaligned 256-bit load.
+    unsafe {
+        let ptr = s.as_ptr().add(offset);
+        f32x8::from_m256(token, core::arch::x86_64::_mm256_loadu_ps(ptr))
+    }
+}
+
+/// Load 8 floats from a padded buffer at offset — with bounds checks (safe default path).
+#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
+#[inline(always)]
+fn load_f32x8(token: archmage::X64V3Token, s: &[f32], offset: usize) -> magetypes::simd::f32x8 {
+    use magetypes::simd::f32x8;
+    f32x8::from_slice(token, &s[offset..])
+}
+
 /// Pad a single channel plane with edge replication.
 ///
 /// Returns a new buffer of `(width + 2*pad) x (height + 2*pad)` with
@@ -345,18 +403,18 @@ pub fn epf_step2_avx2(
             let is = inv_sigma[sigma_idx];
 
             if is == 0.0 {
-                orow_x[x..x + 8].copy_from_slice(&in_x[r0 + x..r0 + x + 8]);
-                orow_y[x..x + 8].copy_from_slice(&in_y[r0 + x..r0 + x + 8]);
-                orow_b[x..x + 8].copy_from_slice(&in_b[r0 + x..r0 + x + 8]);
+                orow_x[x..x + 8].copy_from_slice(&slice_from(in_x, r0 + x)[..8]);
+                orow_y[x..x + 8].copy_from_slice(&slice_from(in_y, r0 + x)[..8]);
+                orow_b[x..x + 8].copy_from_slice(&slice_from(in_b, r0 + x)[..8]);
                 continue;
             }
 
             let is_v = f32x8::splat(token, is);
             let eff_is = is_v * sm_vec;
 
-            let cx = f32x8::from_slice(token, &in_x[r0 + x..]);
-            let cy = f32x8::from_slice(token, &in_y[r0 + x..]);
-            let cb = f32x8::from_slice(token, &in_b[r0 + x..]);
+            let cx = load_f32x8(token, in_x, r0 + x);
+            let cy = load_f32x8(token, in_y, r0 + x);
+            let cb = load_f32x8(token, in_b, r0 + x);
 
             let mut sum_x = cx;
             let mut sum_y = cy;
@@ -364,9 +422,9 @@ pub fn epf_step2_avx2(
             let mut total_w = one;
 
             // Top neighbor
-            let nx = f32x8::from_slice(token, &in_x[rt + x..]);
-            let ny = f32x8::from_slice(token, &in_y[rt + x..]);
-            let nb = f32x8::from_slice(token, &in_b[rt + x..]);
+            let nx = load_f32x8(token, in_x, rt + x);
+            let ny = load_f32x8(token, in_y, rt + x);
+            let nb = load_f32x8(token, in_b, rt + x);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -376,9 +434,9 @@ pub fn epf_step2_avx2(
             sum_b = w.mul_add(nb, sum_b);
 
             // Bottom neighbor
-            let nx = f32x8::from_slice(token, &in_x[rb + x..]);
-            let ny = f32x8::from_slice(token, &in_y[rb + x..]);
-            let nb = f32x8::from_slice(token, &in_b[rb + x..]);
+            let nx = load_f32x8(token, in_x, rb + x);
+            let ny = load_f32x8(token, in_y, rb + x);
+            let nb = load_f32x8(token, in_b, rb + x);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -387,10 +445,10 @@ pub fn epf_step2_avx2(
             sum_y = w.mul_add(ny, sum_y);
             sum_b = w.mul_add(nb, sum_b);
 
-            // Left neighbor — safe: padding guarantees x + pad - 1 >= 0
-            let nx = f32x8::from_slice(token, &in_x[r0 + x - 1..]);
-            let ny = f32x8::from_slice(token, &in_y[r0 + x - 1..]);
-            let nb = f32x8::from_slice(token, &in_b[r0 + x - 1..]);
+            // Left neighbor — padding guarantees x + pad - 1 >= 0
+            let nx = load_f32x8(token, in_x, r0 + x - 1);
+            let ny = load_f32x8(token, in_y, r0 + x - 1);
+            let nb = load_f32x8(token, in_b, r0 + x - 1);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -399,10 +457,10 @@ pub fn epf_step2_avx2(
             sum_y = w.mul_add(ny, sum_y);
             sum_b = w.mul_add(nb, sum_b);
 
-            // Right neighbor — safe: padding guarantees x + pad + 8 < in_stride
-            let nx = f32x8::from_slice(token, &in_x[r0 + x + 1..]);
-            let ny = f32x8::from_slice(token, &in_y[r0 + x + 1..]);
-            let nb = f32x8::from_slice(token, &in_b[r0 + x + 1..]);
+            // Right neighbor — padding guarantees x + pad + 8 < in_stride
+            let nx = load_f32x8(token, in_x, r0 + x + 1);
+            let ny = load_f32x8(token, in_y, r0 + x + 1);
+            let nb = load_f32x8(token, in_b, r0 + x + 1);
             let sad =
                 (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
             let w = (sad * eff_is + one).max(zero_v);
@@ -681,8 +739,6 @@ fn sad_3x3_plus_simd(
     ch_w_y: magetypes::simd::f32x8,
     ch_w_b: magetypes::simd::f32x8,
 ) -> magetypes::simd::f32x8 {
-    use magetypes::simd::f32x8;
-
     // Compute absolute indices: row offsets already include pad, so adding x or x+ndx
     // directly produces valid padded-buffer positions. Use wrapping arithmetic to avoid
     // overflow when ndx is negative and x is small (the sum c_r0 + x + ndx is always valid
@@ -695,25 +751,26 @@ fn sad_3x3_plus_simd(
     let nx_p1 = (n_r0 as isize + x as isize + ndx + 1) as usize;
 
     // Plus pattern: (0,0), (-1,0), (0,-1), (1,0), (0,1)
+    // All offsets are within padded buffer bounds — use load_f32x8 to skip bounds checks.
     // Position (0,0): center row, x vs neighbor row, nx
     let mut sad = {
-        let c0x = f32x8::from_slice(token, &in_x[cx0..]);
-        let c0y = f32x8::from_slice(token, &in_y[cx0..]);
-        let c0b = f32x8::from_slice(token, &in_b[cx0..]);
-        let n0x = f32x8::from_slice(token, &in_x[nx0..]);
-        let n0y = f32x8::from_slice(token, &in_y[nx0..]);
-        let n0b = f32x8::from_slice(token, &in_b[nx0..]);
+        let c0x = load_f32x8(token, in_x, cx0);
+        let c0y = load_f32x8(token, in_y, cx0);
+        let c0b = load_f32x8(token, in_b, cx0);
+        let n0x = load_f32x8(token, in_x, nx0);
+        let n0y = load_f32x8(token, in_y, nx0);
+        let n0b = load_f32x8(token, in_b, nx0);
         (c0x - n0x).abs() * ch_w_x + (c0y - n0y).abs() * ch_w_y + (c0b - n0b).abs() * ch_w_b
     };
 
     // Position (-1,0): same rows, x-1 vs nx-1
     {
-        let c1x = f32x8::from_slice(token, &in_x[cx_m1..]);
-        let c1y = f32x8::from_slice(token, &in_y[cx_m1..]);
-        let c1b = f32x8::from_slice(token, &in_b[cx_m1..]);
-        let n1x = f32x8::from_slice(token, &in_x[nx_m1..]);
-        let n1y = f32x8::from_slice(token, &in_y[nx_m1..]);
-        let n1b = f32x8::from_slice(token, &in_b[nx_m1..]);
+        let c1x = load_f32x8(token, in_x, cx_m1);
+        let c1y = load_f32x8(token, in_y, cx_m1);
+        let c1b = load_f32x8(token, in_b, cx_m1);
+        let n1x = load_f32x8(token, in_x, nx_m1);
+        let n1y = load_f32x8(token, in_y, nx_m1);
+        let n1b = load_f32x8(token, in_b, nx_m1);
         sad = sad
             + (c1x - n1x).abs() * ch_w_x
             + (c1y - n1y).abs() * ch_w_y
@@ -722,12 +779,13 @@ fn sad_3x3_plus_simd(
 
     // Position (0,-1): row y-1, x vs row ndy-1, nx
     {
-        let c2x = f32x8::from_slice(token, &in_x[c_rm1 + x..]);
-        let c2y = f32x8::from_slice(token, &in_y[c_rm1 + x..]);
-        let c2b = f32x8::from_slice(token, &in_b[c_rm1 + x..]);
-        let n2x = f32x8::from_slice(token, &in_x[(n_rm1 as isize + x as isize + ndx) as usize..]);
-        let n2y = f32x8::from_slice(token, &in_y[(n_rm1 as isize + x as isize + ndx) as usize..]);
-        let n2b = f32x8::from_slice(token, &in_b[(n_rm1 as isize + x as isize + ndx) as usize..]);
+        let c2x = load_f32x8(token, in_x, c_rm1 + x);
+        let c2y = load_f32x8(token, in_y, c_rm1 + x);
+        let c2b = load_f32x8(token, in_b, c_rm1 + x);
+        let nrm1x = (n_rm1 as isize + x as isize + ndx) as usize;
+        let n2x = load_f32x8(token, in_x, nrm1x);
+        let n2y = load_f32x8(token, in_y, nrm1x);
+        let n2b = load_f32x8(token, in_b, nrm1x);
         sad = sad
             + (c2x - n2x).abs() * ch_w_x
             + (c2y - n2y).abs() * ch_w_y
@@ -736,12 +794,12 @@ fn sad_3x3_plus_simd(
 
     // Position (1,0): same rows, x+1 vs nx+1
     {
-        let c3x = f32x8::from_slice(token, &in_x[cx_p1..]);
-        let c3y = f32x8::from_slice(token, &in_y[cx_p1..]);
-        let c3b = f32x8::from_slice(token, &in_b[cx_p1..]);
-        let n3x = f32x8::from_slice(token, &in_x[nx_p1..]);
-        let n3y = f32x8::from_slice(token, &in_y[nx_p1..]);
-        let n3b = f32x8::from_slice(token, &in_b[nx_p1..]);
+        let c3x = load_f32x8(token, in_x, cx_p1);
+        let c3y = load_f32x8(token, in_y, cx_p1);
+        let c3b = load_f32x8(token, in_b, cx_p1);
+        let n3x = load_f32x8(token, in_x, nx_p1);
+        let n3y = load_f32x8(token, in_y, nx_p1);
+        let n3b = load_f32x8(token, in_b, nx_p1);
         sad = sad
             + (c3x - n3x).abs() * ch_w_x
             + (c3y - n3y).abs() * ch_w_y
@@ -750,12 +808,13 @@ fn sad_3x3_plus_simd(
 
     // Position (0,1): row y+1, x vs row ndy+1, nx
     {
-        let c4x = f32x8::from_slice(token, &in_x[c_rp1 + x..]);
-        let c4y = f32x8::from_slice(token, &in_y[c_rp1 + x..]);
-        let c4b = f32x8::from_slice(token, &in_b[c_rp1 + x..]);
-        let n4x = f32x8::from_slice(token, &in_x[(n_rp1 as isize + x as isize + ndx) as usize..]);
-        let n4y = f32x8::from_slice(token, &in_y[(n_rp1 as isize + x as isize + ndx) as usize..]);
-        let n4b = f32x8::from_slice(token, &in_b[(n_rp1 as isize + x as isize + ndx) as usize..]);
+        let c4x = load_f32x8(token, in_x, c_rp1 + x);
+        let c4y = load_f32x8(token, in_y, c_rp1 + x);
+        let c4b = load_f32x8(token, in_b, c_rp1 + x);
+        let nrp1x = (n_rp1 as isize + x as isize + ndx) as usize;
+        let n4x = load_f32x8(token, in_x, nrp1x);
+        let n4y = load_f32x8(token, in_y, nrp1x);
+        let n4b = load_f32x8(token, in_b, nrp1x);
         sad = sad
             + (c4x - n4x).abs() * ch_w_x
             + (c4y - n4y).abs() * ch_w_y
@@ -845,18 +904,18 @@ pub fn epf_step1_avx2(
             let is = inv_sigma[sigma_idx];
 
             if is == 0.0 {
-                orow_x[x..x + 8].copy_from_slice(&in_x[r_0 + x..r_0 + x + 8]);
-                orow_y[x..x + 8].copy_from_slice(&in_y[r_0 + x..r_0 + x + 8]);
-                orow_b[x..x + 8].copy_from_slice(&in_b[r_0 + x..r_0 + x + 8]);
+                orow_x[x..x + 8].copy_from_slice(&slice_from(in_x, r_0 + x)[..8]);
+                orow_y[x..x + 8].copy_from_slice(&slice_from(in_y, r_0 + x)[..8]);
+                orow_b[x..x + 8].copy_from_slice(&slice_from(in_b, r_0 + x)[..8]);
                 continue;
             }
 
             let is_v = f32x8::splat(token, is);
             let eff_is = is_v * sm_vec;
 
-            let cx = f32x8::from_slice(token, &in_x[r_0 + x..]);
-            let cy = f32x8::from_slice(token, &in_y[r_0 + x..]);
-            let cb = f32x8::from_slice(token, &in_b[r_0 + x..]);
+            let cx = load_f32x8(token, in_x, r_0 + x);
+            let cy = load_f32x8(token, in_y, r_0 + x);
+            let cb = load_f32x8(token, in_b, r_0 + x);
 
             let mut sum_x = cx;
             let mut sum_y = cy;
@@ -871,9 +930,9 @@ pub fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_m1 + x..]);
-                let ny = f32x8::from_slice(token, &in_y[r_m1 + x..]);
-                let nb = f32x8::from_slice(token, &in_b[r_m1 + x..]);
+                let nx = load_f32x8(token, in_x, r_m1 + x);
+                let ny = load_f32x8(token, in_y, r_m1 + x);
+                let nb = load_f32x8(token, in_b, r_m1 + x);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
@@ -887,9 +946,9 @@ pub fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_p1 + x..]);
-                let ny = f32x8::from_slice(token, &in_y[r_p1 + x..]);
-                let nb = f32x8::from_slice(token, &in_b[r_p1 + x..]);
+                let nx = load_f32x8(token, in_x, r_p1 + x);
+                let ny = load_f32x8(token, in_y, r_p1 + x);
+                let nb = load_f32x8(token, in_b, r_p1 + x);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
@@ -903,9 +962,9 @@ pub fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_0 + x - 1..]);
-                let ny = f32x8::from_slice(token, &in_y[r_0 + x - 1..]);
-                let nb = f32x8::from_slice(token, &in_b[r_0 + x - 1..]);
+                let nx = load_f32x8(token, in_x, r_0 + x - 1);
+                let ny = load_f32x8(token, in_y, r_0 + x - 1);
+                let nb = load_f32x8(token, in_b, r_0 + x - 1);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
@@ -919,9 +978,9 @@ pub fn epf_step1_avx2(
                 );
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                let nx = f32x8::from_slice(token, &in_x[r_0 + x + 1..]);
-                let ny = f32x8::from_slice(token, &in_y[r_0 + x + 1..]);
-                let nb = f32x8::from_slice(token, &in_b[r_0 + x + 1..]);
+                let nx = load_f32x8(token, in_x, r_0 + x + 1);
+                let ny = load_f32x8(token, in_y, r_0 + x + 1);
+                let nb = load_f32x8(token, in_b, r_0 + x + 1);
                 sum_x = w.mul_add(nx, sum_x);
                 sum_y = w.mul_add(ny, sum_y);
                 sum_b = w.mul_add(nb, sum_b);
