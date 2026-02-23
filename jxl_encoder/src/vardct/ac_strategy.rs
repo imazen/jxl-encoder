@@ -44,6 +44,12 @@ pub(super) struct EntropyEstScratch {
     /// Populated by `find_best_16x16_transform`, consumed by 32×32/64×64 levels
     /// to avoid redundant re-evaluation of sub-block costs.
     pub entropy_estimate: [f32; 64],
+    /// Cached 8×8 pixel data for 3 channels. Avoids redundant extraction when
+    /// multiple single-block strategies evaluate the same block position.
+    pub pixels_8x8: [[f32; 64]; 3],
+    /// Block position (bx, by) for which `pixels_8x8` is valid.
+    /// Set to `(usize::MAX, usize::MAX)` to invalidate.
+    pub pixels_8x8_pos: (usize, usize),
 }
 
 impl EntropyEstScratch {
@@ -54,6 +60,8 @@ impl EntropyEstScratch {
             error_coeffs: vec![0.0f32; MAX],
             pixel_error: vec![0.0f32; MAX],
             entropy_estimate: [0.0; 64],
+            pixels_8x8: [[0.0; 64]; 3],
+            pixels_8x8_pos: (usize::MAX, usize::MAX),
         }
     }
 }
@@ -802,15 +810,52 @@ fn estimate_entropy_full_impl(
 
     // Use pre-allocated scratch buffers (no fill needed — transforms overwrite all positions)
     let block = &mut scratch.block[..3 * size];
+
+    // For single-block strategies, cache extracted 8×8 pixels across strategy calls.
+    // The same block position is evaluated with 10+ strategies in find_best_16x16_transform;
+    // extracting once and reusing saves ~90% of extract_block_8x8 overhead.
+    let is_single_block = num_blocks == 1;
+    if is_single_block && scratch.pixels_8x8_pos != (bx, by) {
+        for (c, xyb_c) in xyb.iter().enumerate() {
+            extract_block_8x8(xyb_c, stride, bx, by, &mut scratch.pixels_8x8[c]);
+        }
+        scratch.pixels_8x8_pos = (bx, by);
+    }
+
     for (c, xyb_c) in xyb.iter().enumerate() {
         let offset = c * size;
         match raw_strategy {
+            // Single-block strategies: use cached pixels_8x8
             RAW_STRATEGY_DCT8 => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                dct_8x8(&input, out);
+                dct_8x8(&scratch.pixels_8x8[c], out);
             }
+            RAW_STRATEGY_DCT4X8 => {
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_4x8_full(&scratch.pixels_8x8[c], out);
+            }
+            RAW_STRATEGY_DCT8X4 => {
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_8x4_full(&scratch.pixels_8x8[c], out);
+            }
+            RAW_STRATEGY_DCT4X4 => {
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_4x4_full(&scratch.pixels_8x8[c], out);
+            }
+            RAW_STRATEGY_IDENTITY => {
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                identity_transform(&scratch.pixels_8x8[c], out);
+            }
+            RAW_STRATEGY_DCT2X2 => {
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct2x2_transform(&scratch.pixels_8x8[c], out);
+            }
+            RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
+                let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                afv_transform_from_pixels(&scratch.pixels_8x8[c], afv_kind, out);
+            }
+            // Multi-block strategies: extract fresh pixels (different block sizes)
             RAW_STRATEGY_DCT16X8 => {
                 let mut input = uninit_buf::<128>();
                 extract_block_8x16(xyb_c, stride, bx, by, &mut input);
@@ -861,43 +906,6 @@ fn estimate_entropy_full_impl(
                 let mut input = uninit_buf::<2048>();
                 extract_block_32x64(xyb_c, stride, bx, by, &mut input);
                 dct_32x64(&input, &mut block[offset..offset + 2048]);
-            }
-            RAW_STRATEGY_DCT4X8 => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                dct_4x8_full(&input, out);
-            }
-            RAW_STRATEGY_DCT8X4 => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                dct_8x4_full(&input, out);
-            }
-            RAW_STRATEGY_DCT4X4 => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                dct_4x4_full(&input, out);
-            }
-            RAW_STRATEGY_IDENTITY => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                identity_transform(&input, out);
-            }
-            RAW_STRATEGY_DCT2X2 => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                dct2x2_transform(&input, out);
-            }
-            RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-                let mut input = uninit_buf::<64>();
-                extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
-                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
-                afv_transform_from_pixels(&input, afv_kind, out);
             }
             _ => unreachable!(),
         }
