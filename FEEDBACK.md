@@ -5,7 +5,17 @@
 User provided plan to fix two bottlenecks:
 1. CLI --lz77-method default_value="greedy" overriding effort profile's RLE at e7
 2. AFV/DCT4x transform functions not #[inline], preventing FMA in #[arcane] contexts
-Fix 3 (zenflate LZ77 matchfinder) deferred — requires zenflate API changes first.
+
+Fix 1 committed (1caa323). Fix 2: initial #[inline] was ignored by LLVM (too large).
+Upgraded to #[inline(always)] (a4309d1): callgrind e7 22.2B→16.7B (-25%), fmaf 3.5B→20M.
+Wall-clock: e6 -43%, e7 -37%.
+
+Fix 3 (zenflate LZ77 matchfinder) investigated and found not beneficial:
+- LZ77 on VarDCT: zero file size impact (apply_lz77 threshold rejects every stream)
+- LZ77 on modular: tree-learned ANS captures nearly all redundancy, LZ77 saves 1-4% of
+  activation threshold. Better matchfinders won't help — bottleneck is per-context cost
+  model efficiency, not match quality.
+- Also found+fixed: --lz77-method wasn't wired to lossless path (d0209a1)
 
 ## 2026-02-22: Full audit against libjxl docs + source verification + fixes
 
