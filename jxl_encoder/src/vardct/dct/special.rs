@@ -74,6 +74,7 @@ pub fn identity_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
 /// Reads from `block` with stride 8, writes to `out`.
 /// Processes S/2 x S/2 pairs of 2x2 values, applies Hadamard transform (x0.25),
 /// and stores results in four quadrants. Only the SxS region of `out` is written.
+#[inline(always)]
 fn dct2_top_block_first<const S: usize>(block: &[f32; 64], out: &mut [f32; 64]) {
     let num_2x2 = S / 2;
     let mut temp = [0.0f32; 64];
@@ -107,6 +108,7 @@ fn dct2_top_block_first<const S: usize>(block: &[f32; 64], out: &mut [f32; 64]) 
 ///
 /// Reads interleaved 2x2 values from `data`, writes quadrant layout back to `data`.
 /// Only the SxS region is modified; positions outside SxS are preserved.
+#[inline(always)]
 fn dct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
     let num_2x2 = S / 2;
     let mut temp = [0.0f32; 64];
@@ -220,6 +222,7 @@ pub fn inverse_identity_transform(coefficients: &[f32; 64], pixels: &mut [f32; 6
 ///
 /// Operates in-place on stride-8 layout within the SxS region.
 /// Positions outside SxS are preserved (critical for multi-pass composition).
+#[inline(always)]
 fn idct2_top_block_inplace<const S: usize>(data: &mut [f32; 64]) {
     let num_2x2 = S / 2;
     let mut temp = [0.0f32; 64];
