@@ -17,63 +17,7 @@
 /// Channel importance weights for SAD computation (from libjxl epf.h).
 const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 
-/// Slice from offset without bounds check (unsafe-performance path).
-///
-/// # Safety
-/// Caller must ensure `offset <= s.len()`. All EPF call sites operate on
-/// padded buffers where padding guarantees valid access for ±pad pixels
-/// around every in-bounds position.
-#[cfg(feature = "unsafe-performance")]
-#[inline(always)]
-#[allow(unsafe_code)]
-fn slice_from(s: &[f32], offset: usize) -> &[f32] {
-    debug_assert!(offset <= s.len());
-    // SAFETY: EPF buffers are padded with edge replication; all offsets
-    // computed in sad_3x3_plus_simd / epf_step1 / epf_step2 are within
-    // the padded region. Verified by debug_assert above.
-    unsafe { s.get_unchecked(offset..) }
-}
-
-/// Slice from offset with bounds check (safe default path).
-#[cfg(not(feature = "unsafe-performance"))]
-#[inline(always)]
-fn slice_from(s: &[f32], offset: usize) -> &[f32] {
-    &s[offset..]
-}
-
-/// Load 8 floats from a padded buffer at offset — no bounds checks (unsafe-performance path).
-///
-/// Bypasses both the slice-from bounds check AND `f32x8::from_slice`'s internal `[..8]`
-/// bounds check by using `_mm256_loadu_ps` directly.
-///
-/// # Safety
-/// Caller must ensure `offset + 8 <= s.len()`. All EPF call sites operate on
-/// padded buffers where this is guaranteed.
-#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
-#[inline(always)]
-#[allow(unsafe_code)]
-fn load_f32x8(token: archmage::X64V3Token, s: &[f32], offset: usize) -> magetypes::simd::f32x8 {
-    use magetypes::simd::f32x8;
-    debug_assert!(
-        offset + 8 <= s.len(),
-        "load_f32x8: offset={offset}, len={}",
-        s.len()
-    );
-    // SAFETY: EPF buffers are padded with edge replication; offset + 8 is within
-    // the padded region. Using _mm256_loadu_ps for unaligned 256-bit load.
-    unsafe {
-        let ptr = s.as_ptr().add(offset);
-        f32x8::from_m256(token, core::arch::x86_64::_mm256_loadu_ps(ptr))
-    }
-}
-
-/// Load 8 floats from a padded buffer at offset — with bounds checks (safe default path).
-#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
-#[inline(always)]
-fn load_f32x8(token: archmage::X64V3Token, s: &[f32], offset: usize) -> magetypes::simd::f32x8 {
-    use magetypes::simd::f32x8;
-    f32x8::from_slice(token, &s[offset..])
-}
+use crate::{load_f32x8, slice_from};
 
 /// Pad a single channel plane with edge replication.
 ///

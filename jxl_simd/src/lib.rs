@@ -48,6 +48,94 @@ pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
     [0.0f32; N]
 }
 
+/// Slice from offset without bounds check (unsafe-performance path).
+///
+/// # Safety
+/// Caller must ensure `offset <= s.len()`.
+#[cfg(feature = "unsafe-performance")]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
+    debug_assert!(offset <= s.len());
+    unsafe { s.get_unchecked(offset..) }
+}
+
+/// Slice from offset with bounds check (safe default path).
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline(always)]
+pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
+    &s[offset..]
+}
+
+/// Load 8 floats at offset — no bounds checks (unsafe-performance path).
+///
+/// Bypasses both slice-from bounds check AND `f32x8::from_slice`'s internal
+/// `[..8]` bounds check by using `_mm256_loadu_ps` directly.
+///
+/// # Safety
+/// Caller must ensure `offset + 8 <= s.len()`.
+#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn load_f32x8(
+    token: archmage::X64V3Token,
+    s: &[f32],
+    offset: usize,
+) -> magetypes::simd::f32x8 {
+    use magetypes::simd::f32x8;
+    debug_assert!(
+        offset + 8 <= s.len(),
+        "load_f32x8: offset={offset}, len={}",
+        s.len()
+    );
+    unsafe {
+        let ptr = s.as_ptr().add(offset);
+        f32x8::from_m256(token, core::arch::x86_64::_mm256_loadu_ps(ptr))
+    }
+}
+
+/// Load 8 floats at offset — with bounds checks (safe default path).
+#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
+#[inline(always)]
+pub(crate) fn load_f32x8(
+    token: archmage::X64V3Token,
+    s: &[f32],
+    offset: usize,
+) -> magetypes::simd::f32x8 {
+    use magetypes::simd::f32x8;
+    f32x8::from_slice(token, &s[offset..])
+}
+
+/// Store 8 floats at offset — no bounds checks (unsafe-performance path).
+///
+/// Bypasses slice bounds check and `try_into().unwrap()` by using
+/// `_mm256_storeu_ps` directly.
+///
+/// # Safety
+/// Caller must ensure `offset + 8 <= s.len()`.
+#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
+#[inline(always)]
+#[allow(unsafe_code)]
+pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x8) {
+    debug_assert!(
+        offset + 8 <= s.len(),
+        "store_f32x8: offset={offset}, len={}",
+        s.len()
+    );
+    unsafe {
+        let ptr = s.as_mut_ptr().add(offset);
+        core::arch::x86_64::_mm256_storeu_ps(ptr, v.raw());
+    }
+}
+
+/// Store 8 floats at offset — with bounds checks (safe default path).
+#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
+#[inline(always)]
+pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x8) {
+    let out: &mut [f32; 8] = (&mut s[offset..offset + 8]).try_into().unwrap();
+    v.store(out);
+}
+
 mod adaptive_quant;
 mod block_l2;
 mod cfl;

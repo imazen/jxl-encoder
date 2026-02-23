@@ -95,7 +95,7 @@ pub fn fused_dct8_entropy_fallback(
     dct_output: Option<&mut [f32; 64]>,
 ) -> EntropyCoeffResult {
     // Extract 8x8 from strided plane
-    let mut input = [0.0f32; 64];
+    let mut input = crate::scratch_buf::<64>();
     let x0 = bx * 8;
     for dy in 0..8 {
         let src = (by * 8 + dy) * plane_stride + x0;
@@ -103,7 +103,7 @@ pub fn fused_dct8_entropy_fallback(
     }
 
     // Forward DCT (dispatches to NEON/WASM/scalar internally)
-    let mut dct = [0.0f32; 64];
+    let mut dct = crate::scratch_buf::<64>();
     crate::dct_8x8(&input, &mut dct);
 
     // Zero DC coefficient
@@ -156,14 +156,14 @@ pub fn fused_dct8_entropy_avx2(
     // Load 8 rows from strided plane (eliminates extract_block_8x8 copy)
     let x0 = bx * 8;
     let base = by * 8 * plane_stride + x0;
-    let r0 = f32x8::from_slice(token, &plane[base..]);
-    let r1 = f32x8::from_slice(token, &plane[base + plane_stride..]);
-    let r2 = f32x8::from_slice(token, &plane[base + 2 * plane_stride..]);
-    let r3 = f32x8::from_slice(token, &plane[base + 3 * plane_stride..]);
-    let r4 = f32x8::from_slice(token, &plane[base + 4 * plane_stride..]);
-    let r5 = f32x8::from_slice(token, &plane[base + 5 * plane_stride..]);
-    let r6 = f32x8::from_slice(token, &plane[base + 6 * plane_stride..]);
-    let r7 = f32x8::from_slice(token, &plane[base + 7 * plane_stride..]);
+    let r0 = crate::load_f32x8(token, plane, base);
+    let r1 = crate::load_f32x8(token, plane, base + plane_stride);
+    let r2 = crate::load_f32x8(token, plane, base + 2 * plane_stride);
+    let r3 = crate::load_f32x8(token, plane, base + 3 * plane_stride);
+    let r4 = crate::load_f32x8(token, plane, base + 4 * plane_stride);
+    let r5 = crate::load_f32x8(token, plane, base + 5 * plane_stride);
+    let r6 = crate::load_f32x8(token, plane, base + 6 * plane_stride);
+    let r7 = crate::load_f32x8(token, plane, base + 7 * plane_stride);
 
     // Column DCT
     let (r0, r1, r2, r3, r4, r5, r6, r7) =
@@ -204,14 +204,14 @@ pub fn fused_dct8_entropy_avx2(
 
     // Store DCT output if requested (Y channel for CfL reference)
     if let Some(out) = dct_output {
-        r0.store((&mut out[0..8]).try_into().unwrap());
-        r1.store((&mut out[8..16]).try_into().unwrap());
-        r2.store((&mut out[16..24]).try_into().unwrap());
-        r3.store((&mut out[24..32]).try_into().unwrap());
-        r4.store((&mut out[32..40]).try_into().unwrap());
-        r5.store((&mut out[40..48]).try_into().unwrap());
-        r6.store((&mut out[48..56]).try_into().unwrap());
-        r7.store((&mut out[56..64]).try_into().unwrap());
+        crate::store_f32x8(out, 0, r0);
+        crate::store_f32x8(out, 8, r1);
+        crate::store_f32x8(out, 16, r2);
+        crate::store_f32x8(out, 24, r3);
+        crate::store_f32x8(out, 32, r4);
+        crate::store_f32x8(out, 40, r5);
+        crate::store_f32x8(out, 48, r6);
+        crate::store_f32x8(out, 56, r7);
     }
 
     // Row-by-row entropy estimation from DCT registers.
@@ -229,8 +229,8 @@ pub fn fused_dct8_entropy_avx2(
     macro_rules! process_row {
         ($dct_row:expr, $row_idx:expr) => {{
             let base = $row_idx * 8;
-            let w = f32x8::from_slice(token, &weights[base..]);
-            let y = f32x8::from_slice(token, &y_dct[base..]);
+            let w = crate::load_f32x8(token, weights, base);
+            let y = crate::load_f32x8(token, y_dct, base);
 
             // val = (dct_c - y * cmap_factor) / weight * quant
             let adjusted = $dct_row - y * cmap_v;
@@ -241,8 +241,7 @@ pub fn fused_dct8_entropy_avx2(
 
             // Write error coefficients: weight * (val - round(val))
             let err = w * diff;
-            let out: &mut [f32; 8] = (&mut error_coeffs[base..base + 8]).try_into().unwrap();
-            err.store(out);
+            crate::store_f32x8(error_coeffs, base, err);
 
             // Entropy: sqrt(|round(val)|) * cost_delta
             let q = rval.abs();

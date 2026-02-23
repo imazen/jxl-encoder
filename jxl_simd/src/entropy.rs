@@ -210,18 +210,12 @@ pub fn entropy_coeffs_avx2(
     let mut cost2_acc = f32x8::zero(token);
 
     let chunks = n / 8;
-    // Pre-slice to exact SIMD length so the compiler can prove
-    // all from_slice loads are in bounds (base + 8 <= chunks * 8).
-    let simd_n = chunks * 8;
-    let block_c_s = &block_c[..simd_n];
-    let block_y_s = &block_y[..simd_n];
-    let weights_s = &weights[..simd_n];
     for chunk in 0..chunks {
         let base = chunk * 8;
 
-        let bc = f32x8::from_slice(token, &block_c_s[base..]);
-        let by_v = f32x8::from_slice(token, &block_y_s[base..]);
-        let w = f32x8::from_slice(token, &weights_s[base..]);
+        let bc = crate::load_f32x8(token, block_c, base);
+        let by_v = crate::load_f32x8(token, block_y, base);
+        let w = crate::load_f32x8(token, weights, base);
 
         // val = (block_c - block_y * cmap_factor) / weights * quant
         let adjusted = bc - by_v * cmap_v;
@@ -233,8 +227,7 @@ pub fn entropy_coeffs_avx2(
         // Write error coefficients for pixel-domain loss
         if pixel_domain {
             let err = w * diff;
-            let out: &mut [f32; 8] = (&mut error_coeffs[base..base + 8]).try_into().unwrap();
-            err.store(out);
+            crate::store_f32x8(error_coeffs, base, err);
         }
 
         // Entropy accumulation: entropy += sqrt(|rval|) * cost_delta

@@ -88,7 +88,7 @@ pub fn idct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 
 #[inline]
 pub fn idct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // IDCT on each row
     for row in 0..16 {
@@ -98,7 +98,7 @@ pub fn idct_16x16_scalar(input: &[f32; 256], output: &mut [f32; 256]) {
     }
 
     // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -429,7 +429,7 @@ pub(crate) fn idct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::s
 pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: &mut [f32; 256]) {
     use magetypes::simd::f32x8;
 
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // --- Pass 1: IDCT on rows ---
     // Process rows 0-7 (first batch of 8)
@@ -457,7 +457,7 @@ pub fn idct_16x16_avx2(token: archmage::X64V3Token, input: &[f32; 256], output: 
     }
 
     // --- 16x16 scalar transpose ---
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -533,7 +533,7 @@ pub fn idct_16x8(input: &[f32; 128], output: &mut [f32; 128]) {
 
 #[inline]
 pub fn idct_16x8_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Apply 8-point IDCT (with x8 scaling) to each of 16 rows (stride 8)
     for row in 0..16 {
@@ -622,7 +622,7 @@ fn idct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 
 pub fn idct_16x8_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // --- Pass 1: 8-point IDCT (with x8 scaling) on each of 16 rows (stride 8) ---
     // Process 8 rows at a time. Gather column j from 8 rows -> f32x8.
@@ -706,7 +706,7 @@ pub fn idct_8x16(input: &[f32; 128], output: &mut [f32; 128]) {
 
 #[inline]
 pub fn idct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Apply 16-point IDCT (with x16 scaling) to each of 8 rows (stride 16)
     for row in 0..8 {
@@ -735,7 +735,7 @@ pub fn idct_8x16_scalar(input: &[f32; 128], output: &mut [f32; 128]) {
 pub fn idct_8x16_avx2(token: archmage::X64V3Token, input: &[f32; 128], output: &mut [f32; 128]) {
     use magetypes::simd::f32x8;
 
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // --- Pass 1: 16-point IDCT (with x16 scaling) on each of 8 rows (stride 16) ---
     // All 8 rows fit in one batch. Gather column j from 8 rows at stride 16.
@@ -1036,7 +1036,7 @@ fn neon_idct16_batch(
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
 pub fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &mut [f32; 256]) {
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: IDCT on rows (4 batches of 4 rows)
     for batch in 0..4 {
@@ -1044,7 +1044,7 @@ pub fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &
     }
 
     // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -1063,7 +1063,7 @@ pub fn idct_16x16_neon(token: archmage::NeonToken, input: &[f32; 256], output: &
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
 pub fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 8-point IDCT on 16 rows (stride 8), 4 batches of 4 rows
     for batch in 0..4 {
@@ -1106,7 +1106,7 @@ pub fn idct_16x8_neon(token: archmage::NeonToken, input: &[f32; 128], output: &m
 #[archmage::arcane]
 #[allow(clippy::needless_range_loop)]
 pub fn idct_8x16_neon(token: archmage::NeonToken, input: &[f32; 128], output: &mut [f32; 128]) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point IDCT on 8 rows (stride 16), 2 batches of 4 rows
     for batch in 0..2 {
@@ -1405,7 +1405,7 @@ pub fn idct_16x16_wasm128(
     input: &[f32; 256],
     output: &mut [f32; 256],
 ) {
-    let mut tmp = [0.0f32; 256];
+    let mut tmp = crate::scratch_buf::<256>();
 
     // Pass 1: IDCT on rows (4 batches of 4 rows)
     for batch in 0..4 {
@@ -1413,7 +1413,7 @@ pub fn idct_16x16_wasm128(
     }
 
     // Transpose 16x16
-    let mut transposed = [0.0f32; 256];
+    let mut transposed = crate::scratch_buf::<256>();
     for r in 0..16 {
         for c in 0..16 {
             transposed[c * 16 + r] = tmp[r * 16 + c];
@@ -1436,7 +1436,7 @@ pub fn idct_16x8_wasm128(
     input: &[f32; 128],
     output: &mut [f32; 128],
 ) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 8-point IDCT on 16 rows (stride 8), 4 batches of 4 rows
     for batch in 0..4 {
@@ -1483,7 +1483,7 @@ pub fn idct_8x16_wasm128(
     input: &[f32; 128],
     output: &mut [f32; 128],
 ) {
-    let mut tmp = [0.0f32; 128];
+    let mut tmp = crate::scratch_buf::<128>();
 
     // Pass 1: 16-point IDCT on 8 rows (stride 16), 2 batches of 4 rows
     for batch in 0..2 {
