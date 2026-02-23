@@ -20,6 +20,9 @@ use crate::entropy::EntropyCoeffResult;
 /// Loads 8x8 pixel block from strided plane, performs forward DCT, zeros DC,
 /// and computes entropy estimation with CfL decorrelation — all in one pass.
 ///
+/// `inv_weights` contains precomputed reciprocals (1/quant_weight) to replace
+/// per-coefficient SIMD division with multiplication.
+///
 /// For Y channel (`cmap_factor == 0.0`): stores DCT output to `dct_output`.
 /// For X/B channels: reads Y DCT from `y_dct` for CfL decorrelation.
 ///
@@ -33,6 +36,7 @@ pub fn fused_dct8_entropy(
     by: usize,
     y_dct: &[f32; 64],
     weights: &[f32; 64],
+    inv_weights: &[f32; 64],
     cmap_factor: f32,
     quant: f32,
     k_cost_delta: f32,
@@ -51,6 +55,7 @@ pub fn fused_dct8_entropy(
                 by,
                 y_dct,
                 weights,
+                inv_weights,
                 cmap_factor,
                 quant,
                 k_cost_delta,
@@ -67,6 +72,7 @@ pub fn fused_dct8_entropy(
         by,
         y_dct,
         weights,
+        inv_weights,
         cmap_factor,
         quant,
         k_cost_delta,
@@ -88,6 +94,7 @@ pub fn fused_dct8_entropy_fallback(
     by: usize,
     y_dct: &[f32; 64],
     weights: &[f32; 64],
+    inv_weights: &[f32; 64],
     cmap_factor: f32,
     quant: f32,
     k_cost_delta: f32,
@@ -119,6 +126,7 @@ pub fn fused_dct8_entropy_fallback(
         &dct,
         y_dct,
         weights,
+        inv_weights,
         64,
         cmap_factor,
         quant,
@@ -145,6 +153,7 @@ pub fn fused_dct8_entropy_avx2(
     by: usize,
     y_dct: &[f32; 64],
     weights: &[f32; 64],
+    inv_weights: &[f32; 64],
     cmap_factor: f32,
     quant: f32,
     k_cost_delta: f32,
@@ -230,11 +239,12 @@ pub fn fused_dct8_entropy_avx2(
         ($dct_row:expr, $row_idx:expr) => {{
             let base = $row_idx * 8;
             let w = crate::load_f32x8(token, weights, base);
+            let iw = crate::load_f32x8(token, inv_weights, base);
             let y = crate::load_f32x8(token, y_dct, base);
 
-            // val = (dct_c - y * cmap_factor) / weight * quant
+            // val = (dct_c - y * cmap_factor) * inv_weight * quant
             let adjusted = $dct_row - y * cmap_v;
-            let val = adjusted / w * quant_v;
+            let val = adjusted * iw * quant_v;
 
             let rval = val.round();
             let diff = val - rval;
@@ -294,6 +304,10 @@ mod tests {
             weights[i] = 0.5 + (i as f32 * 0.1).sin().abs() * 2.0;
         }
         weights[0] = 1.0; // DC weight (will be effectively zeroed)
+        let mut inv_weights = [0.0f32; 64];
+        for i in 0..64 {
+            inv_weights[i] = 1.0 / weights[i];
+        }
 
         let cmap_factor = 0.0f32;
         let quant = 3.0f32;
@@ -309,6 +323,7 @@ mod tests {
             0,
             &y_dct,
             &weights,
+            &inv_weights,
             cmap_factor,
             quant,
             k_cost_delta,
@@ -330,6 +345,7 @@ mod tests {
             &sep_dct,
             &y_dct,
             &weights,
+            &inv_weights,
             64,
             cmap_factor,
             quant,
@@ -406,6 +422,10 @@ mod tests {
         for i in 0..64 {
             weights[i] = 0.3 + (i as f32 * 0.2).cos().abs() * 3.0;
         }
+        let mut inv_weights = [0.0f32; 64];
+        for i in 0..64 {
+            inv_weights[i] = 1.0 / weights[i];
+        }
 
         let cmap_factor = 0.35f32;
         let quant = 2.5f32;
@@ -420,6 +440,7 @@ mod tests {
             0,
             &y_dct,
             &weights,
+            &inv_weights,
             cmap_factor,
             quant,
             k_cost_delta,
@@ -441,6 +462,7 @@ mod tests {
             &sep_dct,
             &y_dct,
             &weights,
+            &inv_weights,
             64,
             cmap_factor,
             quant,

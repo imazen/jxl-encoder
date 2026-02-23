@@ -27,7 +27,7 @@ use super::dct::{
     idct_32x16, idct_32x32, idct_32x64, idct_64x32, idct_64x64, identity_transform,
     inverse_dct2x2_transform, inverse_identity_transform,
 };
-use super::quant::quant_weights;
+use super::quant::{dequant_weights, quant_weights};
 use crate::effort::EffortProfile;
 
 /// Pre-allocated scratch buffers for entropy estimation.
@@ -756,6 +756,9 @@ fn estimate_entropy_full_impl(
                 let weights: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, c)
                     .try_into()
                     .unwrap();
+                let inv_wts: &[f32; 64] = dequant_weights(RAW_STRATEGY_DCT8 as usize, c)
+                    .try_into()
+                    .unwrap();
 
                 let coeff_result = jxl_simd::fused_dct8_entropy(
                     xyb[c],
@@ -764,6 +767,7 @@ fn estimate_entropy_full_impl(
                     by,
                     y_dct_ref,
                     weights,
+                    inv_wts,
                     cmap_factors[c],
                     quant_for_coeffs,
                     k_cost_delta,
@@ -1014,6 +1018,7 @@ fn estimate_entropy_full_impl(
 
     for (c, &cmap_factor) in cmap_factors.iter().enumerate() {
         let weights = quant_weights(raw_strategy as usize, c);
+        let inv_wts = dequant_weights(raw_strategy as usize, c);
 
         let offset_c = c * size;
         let offset_y = size; // Y channel always at offset 1*size
@@ -1034,6 +1039,7 @@ fn estimate_entropy_full_impl(
             &block[offset_c..offset_c + size],
             &block[offset_y..offset_y + size],
             weights,
+            inv_wts,
             size,
             cmap_factor,
             quant_for_coeffs,
