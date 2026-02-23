@@ -330,8 +330,8 @@ impl VarDctEncoder {
         let channels = [xyb_x, xyb_y, xyb_b];
 
         // Hoist constant computations out of the block loop
-        let x_qm_mul = 1.25f32.powf(params.x_qm_scale as f32 - 2.0);
-        let b_qm_mul = 1.25f32.powf(params.b_qm_scale as f32 - 2.0);
+        let x_qm_mul = jxl_simd::fast_powf(1.25, params.x_qm_scale as f32 - 2.0);
+        let b_qm_mul = jxl_simd::fast_powf(1.25, params.b_qm_scale as f32 - 2.0);
 
         // Pre-allocate scratch buffers for DCT coefficients (max DCT64x64 = 4096)
         const MAX_BLOCK_SIZE: usize = 4096;
