@@ -32,6 +32,7 @@ pub(super) fn extract_block_8x8(
 /// Layout: 16 rows × 8 cols, row-major.
 ///
 /// The buffer must be padded to at least (by*8+16) rows and (bx*8+8) columns.
+#[inline(always)]
 pub(super) fn extract_block_8x16(
     plane: &[f32],
     stride: usize,
@@ -50,6 +51,7 @@ pub(super) fn extract_block_8x16(
 /// Layout: 8 rows × 16 cols, row-major.
 ///
 /// The buffer must be padded to at least (by*8+8) rows and (bx*8+16) columns.
+#[inline(always)]
 pub(super) fn extract_block_16x8(
     plane: &[f32],
     stride: usize,
@@ -68,6 +70,7 @@ pub(super) fn extract_block_16x8(
 /// Layout: 16 rows × 16 cols, row-major.
 ///
 /// The buffer must be padded to at least (by*8+16) rows and (bx*8+16) columns.
+#[inline(always)]
 pub(super) fn extract_block_16x16(
     plane: &[f32],
     stride: usize,
@@ -86,6 +89,7 @@ pub(super) fn extract_block_16x16(
 /// Layout: 32 rows × 32 cols, row-major.
 ///
 /// The buffer must be padded to at least (by*8+32) rows and (bx*8+32) columns.
+#[inline(always)]
 pub(super) fn extract_block_32x32(
     plane: &[f32],
     stride: usize,
@@ -104,6 +108,7 @@ pub(super) fn extract_block_32x32(
 /// Layout: 32 rows × 16 cols, row-major.
 ///
 /// The buffer must be padded to at least (by*8+32) rows and (bx*8+16) columns.
+#[inline(always)]
 pub(super) fn extract_block_32x16(
     plane: &[f32],
     stride: usize,
@@ -122,6 +127,7 @@ pub(super) fn extract_block_32x16(
 /// Layout: 16 rows × 32 cols, row-major.
 ///
 /// The buffer must be padded to at least (by*8+16) rows and (bx*8+32) columns.
+#[inline(always)]
 pub(super) fn extract_block_16x32(
     plane: &[f32],
     stride: usize,
@@ -138,6 +144,7 @@ pub(super) fn extract_block_16x32(
 
 /// Extract a 64×64 pixel block (8 wide × 8 tall) for DCT64x64.
 /// Layout: 64 rows × 64 cols, row-major.
+#[inline(always)]
 pub(super) fn extract_block_64x64(
     plane: &[f32],
     stride: usize,
@@ -154,6 +161,7 @@ pub(super) fn extract_block_64x64(
 
 /// Extract a 64×32 pixel block (4 wide × 8 tall) for DCT64x32.
 /// Layout: 64 rows × 32 cols, row-major.
+#[inline(always)]
 pub(super) fn extract_block_64x32(
     plane: &[f32],
     stride: usize,
@@ -170,6 +178,7 @@ pub(super) fn extract_block_64x32(
 
 /// Extract a 32×64 pixel block (8 wide × 4 tall) for DCT32x64.
 /// Layout: 32 rows × 64 cols, row-major.
+#[inline(always)]
 pub(super) fn extract_block_32x64(
     plane: &[f32],
     stride: usize,
