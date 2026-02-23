@@ -79,6 +79,27 @@ Before → After (cachegrind frymire d=1.0 e7):
 - Wall-clock:   ~1.18s → ~1.17s (within noise — allocator overhead was Ir-heavy, not wall-clock)
 Output is bit-exact (all 36 hash lock tests pass).
 
+### Replace glibc log2 with fast_log2f
+
+Seven call sites used f64::log2()/f32::log2() → glibc double-precision log2 (2.57M calls, 177M Ir).
+Replaced with jxl_simd::fast_log2f (~3e-7 relative error). Hottest caller: ANS frequency optimization.
+Ir 15.143B → 14.989B (-154M, -1.0%). Output changes slightly (different ANS greedy decisions).
+
+### Eliminate per-element bounds checks in histogram_distance_reuse
+
+Replace .get(i).copied().unwrap_or(0) with zip + copy_from_slice for explicit range splits.
+Eliminates Option wrapping and per-element bounds checks on every iteration.
+Ir 14.989B → 14.394B (-595M, -4.0%). Wall-clock 1.18s → 1.10s (-6.8%). Bit-exact.
+
+### Cumulative results (this session)
+
+| Metric       | Baseline | Current  | Δ       | vs cjxl |
+|-------------|----------|----------|---------|---------|
+| Instructions | 15.859B  | 14.394B  | -9.2%   | 2.68x   |
+| Data reads   | 4.068B   | 3.635B   | -10.6%  | 1.56x   |
+| Data writes  | 2.183B   | 2.067B   | -5.3%   | 2.64x   |
+| Wall-clock   | 1.18s    | 1.10s    | -6.8%   | 4.6x    |
+
 ## 2026-02-23: Optimize e5/e6/e7 encode speed + write amplification analysis
 
 User provided plan to fix two bottlenecks:
