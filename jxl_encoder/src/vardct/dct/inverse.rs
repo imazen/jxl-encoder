@@ -601,141 +601,33 @@ fn idct1d_4_ref(input: &[f32; 4], output: &mut [f32; 4]) {
 
 /// Compute full inverse DCT4X8 transform for 8x8 coefficient block.
 ///
-/// This exactly reverses `dct_4x8_full`:
-/// 1. Reverse DC combining (2-point inverse)
-/// 2. De-interleave from `coeffs[(y + iy * 2) * 8 + ix]` layout
-/// 3. Apply base `idct_4x8` to each sub-block
-/// 4. Reassemble into 8x8 pixel block
+/// This exactly reverses `dct_4x8_full`.
 ///
 /// Input: 64 DCT coefficients in interleaved layout
 /// Output: 8x8 = 64 floats in row-major pixel order (stride 8)
 #[inline(always)]
 pub fn idct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut coeffs = *input;
-
-    // Step 1: Reverse DC combining
-    let combined_dc = coeffs[0];
-    let combined_ac = coeffs[8];
-    coeffs[0] = combined_dc + combined_ac; // block0_dc
-    coeffs[8] = combined_dc - combined_ac; // block1_dc
-
-    // Process two 4x8 sub-blocks (top and bottom halves)
-    for y in 0..2 {
-        // Step 2: De-interleave from coeffs[(y + iy * 2) * 8 + ix]
-        let mut block = [0.0f32; 32];
-        for iy in 0..4 {
-            for ix in 0..8 {
-                block[iy * 8 + ix] = coeffs[(y + iy * 2) * 8 + ix];
-            }
-        }
-
-        // Step 3: Apply base idct_4x8
-        let mut pixels = [0.0f32; 32];
-        idct_4x8(&block, &mut pixels);
-
-        // Step 4: Reassemble into 8x8 output
-        for iy in 0..4 {
-            for ix in 0..8 {
-                output[(y * 4 + iy) * 8 + ix] = pixels[iy * 8 + ix];
-            }
-        }
-    }
+    jxl_simd::idct_4x8_full(input, output);
 }
 
 /// Compute full inverse DCT8X4 transform for 8x8 coefficient block.
 ///
-/// This exactly reverses `dct_8x4_full`:
-/// 1. Reverse DC combining (2-point inverse)
-/// 2. De-interleave from `coeffs[(x + iy * 2) * 8 + ix]` layout
-/// 3. Apply base `idct_8x4` to each sub-block
-/// 4. Reassemble into 8x8 pixel block
+/// This exactly reverses `dct_8x4_full`.
 ///
 /// Input: 64 DCT coefficients in interleaved layout
 /// Output: 8x8 = 64 floats in row-major pixel order (stride 8)
 #[inline(always)]
 pub fn idct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut coeffs = *input;
-
-    // Step 1: Reverse DC combining
-    let combined_dc = coeffs[0];
-    let combined_ac = coeffs[8];
-    coeffs[0] = combined_dc + combined_ac; // block0_dc
-    coeffs[8] = combined_dc - combined_ac; // block1_dc
-
-    // Process two 8x4 sub-blocks (left and right halves)
-    for x in 0..2 {
-        // Step 2: De-interleave from coeffs[(x + iy * 2) * 8 + ix]
-        let mut block = [0.0f32; 32];
-        for iy in 0..4 {
-            for ix in 0..8 {
-                block[iy * 8 + ix] = coeffs[(x + iy * 2) * 8 + ix];
-            }
-        }
-
-        // Step 3: Apply base idct_8x4
-        let mut pixels = [0.0f32; 32];
-        idct_8x4(&block, &mut pixels);
-
-        // Step 4: Reassemble into 8x8 output
-        for iy in 0..8 {
-            for ix in 0..4 {
-                output[iy * 8 + (x * 4 + ix)] = pixels[iy * 4 + ix];
-            }
-        }
-    }
+    jxl_simd::idct_8x4_full(input, output);
 }
 
 /// Compute full inverse DCT4X4 transform for 8x8 coefficient block.
 ///
-/// This exactly reverses `dct_4x4_full`:
-/// 1. Reverse DC combining (2x2 inverse transform)
-/// 2. De-interleave from `coeffs[(y + iy * 2) * 8 + (x + ix * 2)]` layout
-/// 3. Apply base `idct_4x4` to each of 4 sub-blocks
-/// 4. Reassemble into 8x8 pixel block
+/// This exactly reverses `dct_4x4_full`.
 ///
 /// Input: 64 DCT coefficients in interleaved layout
 /// Output: 8x8 = 64 floats in row-major pixel order (stride 8)
 #[inline(always)]
 pub fn idct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    let mut coeffs = *input;
-
-    // Step 1: Reverse DC combining (2x2 inverse DCT)
-    // Forward did:
-    //   coeffs[0]  = (dc00 + dc01 + dc10 + dc11) * 0.25
-    //   coeffs[1]  = (dc00 + dc01 - dc10 - dc11) * 0.25
-    //   coeffs[8]  = (dc00 - dc01 + dc10 - dc11) * 0.25
-    //   coeffs[9]  = (dc00 - dc01 - dc10 + dc11) * 0.25
-    // Inverse: multiply by 4 and invert the butterfly
-    let a = coeffs[0];
-    let b = coeffs[1];
-    let c = coeffs[8];
-    let d = coeffs[9];
-    coeffs[0] = a + b + c + d; // dc00
-    coeffs[1] = a + b - c - d; // dc01 (becomes dc10 in block y=1,x=0)
-    coeffs[8] = a - b + c - d; // dc10 (becomes dc01 in block y=0,x=1)
-    coeffs[9] = a - b - c + d; // dc11
-
-    // Process four 4x4 sub-blocks in 2x2 grid
-    for y in 0..2 {
-        for x in 0..2 {
-            // Step 2: De-interleave from coeffs[(y + iy * 2) * 8 + (x + ix * 2)]
-            let mut block = [0.0f32; 16];
-            for iy in 0..4 {
-                for ix in 0..4 {
-                    block[iy * 4 + ix] = coeffs[(y + iy * 2) * 8 + (x + ix * 2)];
-                }
-            }
-
-            // Step 3: Apply base idct_4x4
-            let mut pixels = [0.0f32; 16];
-            idct_4x4(&block, &mut pixels);
-
-            // Step 4: Reassemble into 8x8 output
-            for iy in 0..4 {
-                for ix in 0..4 {
-                    output[(y * 4 + iy) * 8 + (x * 4 + ix)] = pixels[iy * 4 + ix];
-                }
-            }
-        }
-    }
+    jxl_simd::idct_4x4_full(input, output);
 }

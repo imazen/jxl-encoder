@@ -141,6 +141,7 @@ mod block_l2;
 mod cfl;
 mod dct16;
 mod dct32;
+mod dct4;
 mod dct64;
 mod dct8;
 mod dequant;
@@ -175,6 +176,9 @@ pub use block_l2::compute_block_l2_errors;
 pub use cfl::find_best_multiplier as cfl_find_best_multiplier;
 pub use cfl::find_best_multiplier_newton as cfl_find_best_multiplier_newton;
 pub use cfl::{NEWTON_EPS_DEFAULT, NEWTON_MAX_ITERS_DEFAULT};
+pub use dct4::{
+    dct_4x4_full, dct_4x8_full, dct_8x4_full, idct_4x4_full, idct_4x8_full, idct_8x4_full,
+};
 pub use dct8::{dct_8x8, idct_8x8};
 pub use dct16::{dct_8x16, dct_16x8, dct_16x16};
 pub use dct32::{dct_16x32, dct_32x16, dct_32x32};
@@ -204,6 +208,10 @@ pub use adaptive_quant::{compute_pre_erosion_scalar, per_block_modulations_scala
 pub use block_l2::compute_block_l2_errors_scalar;
 pub use cfl::find_best_multiplier_newton_scalar as cfl_find_best_multiplier_newton_scalar;
 pub use cfl::find_best_multiplier_scalar as cfl_find_best_multiplier_scalar;
+pub use dct4::{
+    dct_4x4_full_scalar, dct_4x8_full_scalar, dct_8x4_full_scalar, idct_4x4_full_scalar,
+    idct_4x8_full_scalar, idct_8x4_full_scalar,
+};
 pub use dct8::{dct_8x8_scalar, idct_8x8_scalar};
 pub use dct16::{dct_8x16_scalar, dct_16x8_scalar, dct_16x16_scalar};
 pub use dct32::{dct_16x32_scalar, dct_32x16_scalar, dct_32x32_scalar};
@@ -233,6 +241,10 @@ pub use block_l2::compute_block_l2_errors_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use cfl::find_best_multiplier_avx2 as cfl_find_best_multiplier_avx2;
 #[cfg(target_arch = "x86_64")]
+pub use dct4::{
+    dct_4x4_full_avx2, dct_4x8_full_avx2, dct_8x4_full_avx2, idct_4x4_full_avx2,
+    idct_4x8_full_avx2, idct_8x4_full_avx2,
+};
 pub use dct8::{dct_8x8_avx2, idct_8x8_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use dct16::{dct_8x16_avx2, dct_16x8_avx2, dct_16x16_avx2};
