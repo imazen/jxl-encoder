@@ -16,6 +16,7 @@ categories = ["multimedia::images", "algorithms"]
 [features]
 default = ["std"]
 std = ["archmage/std", "magetypes/std"]
+unsafe-performance = []
 
 [dependencies]
 archmage = { version = "0.8.6", default-features = false, features = ["macros", "safe_unaligned_simd"] }

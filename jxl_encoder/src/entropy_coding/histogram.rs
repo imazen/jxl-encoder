@@ -255,14 +255,12 @@ impl DistanceScratch {
         }
     }
 
-    /// Ensure the scratch buffer has at least `len` elements, zeroed.
+    /// Ensure the scratch buffer has at least `len` elements.
+    /// Does NOT zero — caller is responsible for writing all used positions.
     #[inline]
-    fn ensure_zeroed(&mut self, len: usize) {
+    fn ensure_capacity(&mut self, len: usize) {
         if self.combined_counts.len() < len {
             self.combined_counts.resize(len, 0);
-        } else {
-            // Zero the portion we'll use
-            self.combined_counts[..len].fill(0);
         }
     }
 }
@@ -298,7 +296,7 @@ pub fn histogram_distance_reuse(
 
     // Build combined counts (HISTOGRAM_ROUNDING-aligned for SIMD)
     let aligned_len = div_ceil(max_len, HISTOGRAM_ROUNDING) * HISTOGRAM_ROUNDING;
-    scratch.ensure_zeroed(aligned_len);
+    scratch.ensure_capacity(aligned_len);
     let combined_counts = &mut scratch.combined_counts[..aligned_len];
 
     // Add overlapping region using zip (no per-element bounds checks)
@@ -315,6 +313,10 @@ pub fn histogram_distance_reuse(
         combined_counts[min_len..a_len].copy_from_slice(&a.counts[min_len..a_len]);
     } else if b_len > min_len {
         combined_counts[min_len..b_len].copy_from_slice(&b.counts[min_len..b_len]);
+    }
+    // Zero only the SIMD padding tail (positions max_len..aligned_len)
+    if max_len < aligned_len {
+        combined_counts[max_len..aligned_len].fill(0);
     }
 
     let combined_entropy = jxl_simd::shannon_entropy_bits(combined_counts, combined_total);

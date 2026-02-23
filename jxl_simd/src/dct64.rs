@@ -103,7 +103,7 @@ fn dct1d_2_scalar(mem: &mut [f32]) {
 }
 
 fn dct1d_4_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 4];
+    let mut tmp = crate::scratch_buf::<4>();
     tmp[0] = mem[0] + mem[3];
     tmp[1] = mem[1] + mem[2];
     tmp[2] = mem[0] - mem[3];
@@ -125,7 +125,7 @@ fn dct1d_4_scalar(mem: &mut [f32]) {
 }
 
 fn dct1d_8_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 8];
+    let mut tmp = crate::scratch_buf::<8>();
     for i in 0..4 {
         tmp[i] = mem[i] + mem[7 - i];
         tmp[4 + i] = mem[i] - mem[7 - i];
@@ -151,7 +151,7 @@ fn dct1d_8_scalar(mem: &mut [f32]) {
 }
 
 fn dct1d_16_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 16];
+    let mut tmp = crate::scratch_buf::<16>();
     for i in 0..8 {
         tmp[i] = mem[i] + mem[15 - i];
         tmp[8 + i] = mem[i] - mem[15 - i];
@@ -177,7 +177,7 @@ fn dct1d_16_scalar(mem: &mut [f32]) {
 }
 
 fn dct1d_32_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 32];
+    let mut tmp = crate::scratch_buf::<32>();
     for i in 0..16 {
         tmp[i] = mem[i] + mem[31 - i];
         tmp[16 + i] = mem[i] - mem[31 - i];
@@ -203,7 +203,7 @@ fn dct1d_32_scalar(mem: &mut [f32]) {
 }
 
 fn dct1d_64_scalar(mem: &mut [f32]) {
-    let mut tmp = [0.0f32; 64];
+    let mut tmp = crate::scratch_buf::<64>();
     for i in 0..32 {
         tmp[i] = mem[i] + mem[63 - i];
         tmp[32 + i] = mem[i] - mem[63 - i];
@@ -233,7 +233,7 @@ fn dct1d_64_scalar(mem: &mut [f32]) {
 /// No final transpose for square blocks (ROWS ≥ COLS branch).
 #[inline]
 pub fn dct_64x64_scalar(input: &[f32; 4096], output: &mut [f32; 4096]) {
-    let mut tmp = [0.0f32; 4096];
+    let mut tmp = crate::scratch_buf::<4096>();
 
     for row in 0..64 {
         let s = row * 64;
@@ -244,7 +244,7 @@ pub fn dct_64x64_scalar(input: &[f32; 4096], output: &mut [f32; 4096]) {
         }
     }
 
-    let mut transposed = [0.0f32; 4096];
+    let mut transposed = crate::scratch_buf::<4096>();
     for r in 0..64 {
         for c in 0..64 {
             transposed[c * 64 + r] = tmp[r * 64 + c];
@@ -267,7 +267,7 @@ pub fn dct_64x64_scalar(input: &[f32; 4096], output: &mut [f32; 4096]) {
 /// Output in 32×64 layout (stride 64). No final transpose (ROWS ≥ COLS).
 #[inline]
 pub fn dct_64x32_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
 
     for row in 0..64 {
         let s = row * 32;
@@ -278,7 +278,7 @@ pub fn dct_64x32_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
         }
     }
 
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..64 {
         for c in 0..32 {
             transposed[c * 64 + r] = tmp[r * 32 + c];
@@ -301,7 +301,7 @@ pub fn dct_64x32_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
 /// Output in 32×64 layout (stride 64). Final transpose (ROWS < COLS).
 #[inline]
 pub fn dct_32x64_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
 
     for row in 0..32 {
         let s = row * 64;
@@ -312,7 +312,7 @@ pub fn dct_32x64_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
         }
     }
 
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..32 {
         for c in 0..64 {
             transposed[c * 32 + r] = tmp[r * 64 + c];
@@ -435,7 +435,7 @@ pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: 
     use magetypes::simd::f32x8;
 
     let inv64 = f32x8::splat(token, 1.0 / 64.0);
-    let mut tmp = [0.0f32; 4096];
+    let mut tmp = crate::scratch_buf::<4096>();
 
     // Pass 1: DCT-64 on rows, 8 batches of 8 rows
     for batch in 0..8 {
@@ -454,7 +454,7 @@ pub fn dct_64x64_avx2(token: archmage::X64V3Token, input: &[f32; 4096], output: 
     }
 
     // Transpose 64×64
-    let mut transposed = [0.0f32; 4096];
+    let mut transposed = crate::scratch_buf::<4096>();
     for r in 0..64 {
         for c in 0..64 {
             transposed[c * 64 + r] = tmp[r * 64 + c];
@@ -488,7 +488,7 @@ pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
 
     let inv32 = f32x8::splat(token, 1.0 / 32.0);
     let inv64 = f32x8::splat(token, 1.0 / 64.0);
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: DCT-32 on 64 rows (stride 32), 8 batches of 8
     for batch in 0..8 {
@@ -507,7 +507,7 @@ pub fn dct_64x32_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
     }
 
     // Transpose 64×32 → 32×64
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..64 {
         for c in 0..32 {
             transposed[c * 64 + r] = tmp[r * 32 + c];
@@ -541,7 +541,7 @@ pub fn dct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
 
     let inv32 = f32x8::splat(token, 1.0 / 32.0);
     let inv64 = f32x8::splat(token, 1.0 / 64.0);
-    let mut tmp = [0.0f32; 2048];
+    let mut tmp = crate::scratch_buf::<2048>();
 
     // Pass 1: DCT-64 on 32 rows (stride 64), 4 batches of 8
     for batch in 0..4 {
@@ -560,7 +560,7 @@ pub fn dct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output: 
     }
 
     // Transpose 32×64 → 64×32
-    let mut transposed = [0.0f32; 2048];
+    let mut transposed = crate::scratch_buf::<2048>();
     for r in 0..32 {
         for c in 0..64 {
             transposed[c * 32 + r] = tmp[r * 64 + c];
