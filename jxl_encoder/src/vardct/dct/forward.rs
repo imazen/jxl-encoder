@@ -225,49 +225,10 @@ pub fn dct_8x4(input: &[f32; 32], output: &mut [f32; 32]) {
 /// This covers an 8x8 pixel region using TWO vertically-stacked 4x8 sub-blocks.
 /// The DC values of the two sub-blocks are combined with a 2-point transform.
 ///
-/// Fused: extracts pixels directly from input, transforms in registers,
-/// and interleaves directly to output — no intermediate sub-block buffers.
-///
 /// Matches libjxl's Type::DCT4X8 case in enc_transforms-inl.h
 #[inline(always)]
 pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    for y in 0..2 {
-        // Pass 1: 8-point row DCTs on 4 rows, store transposed (8×4)
-        let mut temp = [0.0f32; 32];
-        for iy in 0..4 {
-            let base = (y * 4 + iy) * 8;
-            let r = dct1d_8_val([
-                input[base],
-                input[base + 1],
-                input[base + 2],
-                input[base + 3],
-                input[base + 4],
-                input[base + 5],
-                input[base + 6],
-                input[base + 7],
-            ]);
-            for col in 0..8 {
-                temp[col * 4 + iy] = r[col] * (1.0 / 8.0);
-            }
-        }
-
-        // Pass 2: 4-point column DCTs, final transpose, interleave directly to output
-        for col in 0..8 {
-            let s = col * 4;
-            let r = dct1d_4_val(temp[s], temp[s + 1], temp[s + 2], temp[s + 3]);
-            // Final transpose (ROWS < COLS) + interleave: coeff at (iy, ix) → output[(y + iy*2)*8 + ix]
-            // After final transpose: row i of output sub-block = r[i], stored at column `col`
-            for iy in 0..4 {
-                output[(y + iy * 2) * 8 + col] = r[iy] * (1.0 / 4.0);
-            }
-        }
-    }
-
-    // Combine DC values of the two sub-blocks with 2-point transform
-    let block0_dc = output[0];
-    let block1_dc = output[8];
-    output[0] = (block0_dc + block1_dc) * 0.5;
-    output[8] = (block0_dc - block1_dc) * 0.5;
+    jxl_simd::dct_4x8_full(input, output);
 }
 
 /// Compute full DCT8X4 transform for 8x8 pixel block.
@@ -275,54 +236,10 @@ pub fn dct_4x8_full(input: &[f32; 64], output: &mut [f32; 64]) {
 /// This covers an 8x8 pixel region using TWO horizontally-adjacent 8x4 sub-blocks.
 /// The DC values of the two sub-blocks are combined with a 2-point transform.
 ///
-/// Fused: extracts pixels directly from input, transforms in registers,
-/// and interleaves directly to output — no intermediate sub-block buffers.
-///
 /// Matches libjxl's Type::DCT8X4 case in enc_transforms-inl.h
 #[inline(always)]
 pub fn dct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    for x in 0..2 {
-        // Pass 1: 4-point row DCTs on 8 rows, store transposed (4×8)
-        let mut temp = [0.0f32; 32];
-        for iy in 0..8 {
-            let base = iy * 8 + x * 4;
-            let r = dct1d_4_val(
-                input[base],
-                input[base + 1],
-                input[base + 2],
-                input[base + 3],
-            );
-            for col in 0..4 {
-                temp[col * 8 + iy] = r[col] * (1.0 / 4.0);
-            }
-        }
-
-        // Pass 2: 8-point column DCTs, interleave directly to output
-        // (no final transpose for ROWS >= COLS — output in transposed layout)
-        for col in 0..4 {
-            let s = col * 8;
-            let r = dct1d_8_val([
-                temp[s],
-                temp[s + 1],
-                temp[s + 2],
-                temp[s + 3],
-                temp[s + 4],
-                temp[s + 5],
-                temp[s + 6],
-                temp[s + 7],
-            ]);
-            // Interleave: coeff at (iy, ix) → output[(x + iy*2)*8 + ix]
-            for ix in 0..8 {
-                output[(x + col * 2) * 8 + ix] = r[ix] * (1.0 / 8.0);
-            }
-        }
-    }
-
-    // Combine DC values of the two sub-blocks with 2-point transform
-    let block0_dc = output[0];
-    let block1_dc = output[8];
-    output[0] = (block0_dc + block1_dc) * 0.5;
-    output[8] = (block0_dc - block1_dc) * 0.5;
+    jxl_simd::dct_8x4_full(input, output);
 }
 
 /// Extract DC value from DCT4X8 full transform coefficients.
@@ -376,51 +293,10 @@ pub fn dct_4x4(input: &[f32; 16], output: &mut [f32; 16]) {
 /// This covers an 8x8 pixel region using FOUR 4x4 sub-blocks arranged in a 2x2 grid.
 /// The DC values of the four sub-blocks are combined with a 2x2 DCT.
 ///
-/// Fused: extracts pixels directly from input, transforms in registers,
-/// and interleaves directly to output — no intermediate sub-block buffers.
-///
 /// Matches libjxl's Type::DCT4X4 case in enc_transforms-inl.h
 #[inline(always)]
 pub fn dct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
-    for y in 0..2 {
-        for x in 0..2 {
-            // Pass 1: 4-point row DCTs on 4 rows, store transposed (4×4)
-            let mut temp = [0.0f32; 16];
-            for iy in 0..4 {
-                let base = (y * 4 + iy) * 8 + x * 4;
-                let r = dct1d_4_val(
-                    input[base],
-                    input[base + 1],
-                    input[base + 2],
-                    input[base + 3],
-                );
-                for col in 0..4 {
-                    temp[col * 4 + iy] = r[col] * (1.0 / 4.0);
-                }
-            }
-
-            // Pass 2: 4-point column DCTs, interleave directly to output
-            // (no final transpose for square — output in transposed layout)
-            for col in 0..4 {
-                let s = col * 4;
-                let r = dct1d_4_val(temp[s], temp[s + 1], temp[s + 2], temp[s + 3]);
-                // Interleave: coeff at (iy, ix) → output[(y + iy*2)*8 + x + ix*2]
-                for ix in 0..4 {
-                    output[(y + col * 2) * 8 + x + ix * 2] = r[ix] * (1.0 / 4.0);
-                }
-            }
-        }
-    }
-
-    // Combine DC values of the four sub-blocks with 2x2 DCT
-    let block00 = output[0];
-    let block01 = output[1];
-    let block10 = output[8];
-    let block11 = output[9];
-    output[0] = (block00 + block01 + block10 + block11) * 0.25;
-    output[1] = (block00 + block01 - block10 - block11) * 0.25;
-    output[8] = (block00 - block01 + block10 - block11) * 0.25;
-    output[9] = (block00 - block01 - block10 + block11) * 0.25;
+    jxl_simd::dct_4x4_full(input, output);
 }
 
 /// Extract DC value from DCT4X4 full transform coefficients.
