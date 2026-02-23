@@ -18,8 +18,8 @@ default = ["std"]
 std = ["archmage/std", "magetypes/std"]
 
 [dependencies]
-archmage = { version = "0.8.4", default-features = false, features = ["macros", "safe_unaligned_simd"] }
-magetypes = { version = "0.8.4", default-features = false }
+archmage = { version = "0.8.6", default-features = false, features = ["macros", "safe_unaligned_simd"] }
+magetypes = { version = "0.8.6", default-features = false }
 
 [lints]
 workspace = true
