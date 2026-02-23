@@ -79,29 +79,15 @@ pub fn build_entropy_code_ans_with_options(
     };
     use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
-    // Build per-context histograms.
-    // First pass: find max symbol per context to pre-allocate (avoids Vec growth).
-    let mut max_sym_per_ctx = vec![0usize; num_contexts];
-    for token in tokens {
-        let ctx = token.context as usize;
-        if ctx < num_contexts {
-            let (_encoded, sym) = encode_token_value(token, lz77);
-            let sym = sym as usize;
-            if sym >= max_sym_per_ctx[ctx] {
-                max_sym_per_ctx[ctx] = sym + 1;
-            }
-        }
-    }
-
-    let mut histograms: Vec<EnhancedHistogram> = max_sym_per_ctx
-        .iter()
-        .map(|&max_sym| EnhancedHistogram::with_capacity(max_sym))
+    // Build per-context histograms (single pass using add() which handles growth).
+    let mut histograms: Vec<EnhancedHistogram> = (0..num_contexts)
+        .map(|_| EnhancedHistogram::new())
         .collect();
 
     for token in tokens {
         let ctx = token.context as usize;
-        let (_encoded, sym) = encode_token_value(token, lz77);
-        if ctx < histograms.len() {
+        if ctx < num_contexts {
+            let (_encoded, sym) = encode_token_value(token, lz77);
             histograms[ctx].add(sym as usize);
         }
     }
@@ -136,53 +122,42 @@ pub fn build_entropy_code_ans_with_options(
         num_contexts
     );
 
+    // Collect raw values per histogram (single pass over tokens).
+    // These are reused for both uint config optimization and final histogram building.
+    let num_histograms = result.histograms.len();
+    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    let mut lz77_tokens_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    for token in tokens {
+        let ctx = token.context as usize;
+        if ctx < context_map.len() {
+            let histo_idx = context_map[ctx] as usize;
+            if histo_idx < num_histograms {
+                if token.is_lz77_length {
+                    if let Some(lz77_params) = lz77 {
+                        let encoded = Lz77UintCoder::encode(token.value);
+                        let sym = encoded.token + lz77_params.min_symbol;
+                        lz77_tokens_per_histo[histo_idx].push(sym);
+                    }
+                } else {
+                    values_per_histo[histo_idx].push(token.value);
+                }
+            }
+        }
+    }
+
     // Optimize per-histogram HybridUint configs.
     // Best mode: 28 curated configs (matching libjxl kBest, enc_ans.cc:747-783).
     // Fast mode: 4 configs (matching libjxl kFast).
-    let num_histograms = result.histograms.len();
     let uint_configs = if enhanced_clustering {
-        optimize_uint_configs_best(tokens, &context_map, num_histograms, lz77)
+        optimize_uint_configs_best(&values_per_histo, lz77)
     } else {
-        optimize_uint_configs_fast(tokens, &context_map, num_histograms, lz77)
+        optimize_uint_configs_fast(&values_per_histo, lz77)
     };
 
     // Build ANS histograms and distributions with the optimized configs.
     // We need to rebuild histograms because different configs produce different token distributions.
     let mut ans_histograms = Vec::with_capacity(num_histograms);
     let mut ans_distributions = Vec::with_capacity(num_histograms);
-
-    // Collect raw values per histogram to rebuild with optimal configs
-    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
-    for token in tokens {
-        if token.is_lz77_length {
-            continue; // LZ77 length tokens always use Lz77UintCoder, not affected by config
-        }
-        let ctx = token.context as usize;
-        if ctx < context_map.len() {
-            let histo_idx = context_map[ctx] as usize;
-            if histo_idx < num_histograms {
-                values_per_histo[histo_idx].push(token.value);
-            }
-        }
-    }
-
-    // Also collect LZ77 length tokens per histogram (they use Lz77UintCoder, config doesn't change)
-    let mut lz77_tokens_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
-    if let Some(lz77_params) = lz77 {
-        for token in tokens {
-            if token.is_lz77_length {
-                let ctx = token.context as usize;
-                if ctx < context_map.len() {
-                    let histo_idx = context_map[ctx] as usize;
-                    if histo_idx < num_histograms {
-                        let encoded = Lz77UintCoder::encode(token.value);
-                        let sym = encoded.token + lz77_params.min_symbol;
-                        lz77_tokens_per_histo[histo_idx].push(sym);
-                    }
-                }
-            }
-        }
-    }
 
     // Phase 1: Build normalized histograms to determine alphabet sizes.
     for h in 0..num_histograms {
@@ -213,13 +188,9 @@ pub fn build_entropy_code_ans_with_options(
             counts[sym as usize] += 1;
         }
 
-        // Build EnhancedHistogram from counts for ANS normalization
-        let mut histo = EnhancedHistogram::with_capacity(max_sym);
-        for (sym, &count) in counts.iter().enumerate() {
-            for _ in 0..count {
-                histo.add(sym);
-            }
-        }
+        // Build EnhancedHistogram directly from counts (avoid per-symbol add loop)
+        let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
+        let histo = EnhancedHistogram::from_counts(&i32_counts);
 
         let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
             .expect("ANS histogram normalization failed");
@@ -269,7 +240,8 @@ pub fn build_entropy_code_ans_with_options(
     };
 
     // Validate: every token in the stream must have a valid, non-zero frequency
-    // in the distribution it maps to.
+    // in the distribution it maps to. Only in debug builds — this is O(n) over all tokens.
+    #[cfg(debug_assertions)]
     for (i, token) in tokens.iter().enumerate() {
         let ctx = token.context as usize;
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
@@ -304,9 +276,7 @@ pub fn build_entropy_code_ans_with_options(
 /// For each histogram, tries 4 configs and picks the one with lowest estimated cost
 /// (Shannon entropy of re-encoded tokens + extra bits + signaling cost).
 fn optimize_uint_configs_fast(
-    tokens: &[Token],
-    context_map: &[u8],
-    num_histograms: usize,
+    values_per_histo: &[Vec<u32>],
     lz77: Option<&Lz77Params>,
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
@@ -319,24 +289,11 @@ fn optimize_uint_configs_fast(
         HybridUintConfig::new(2, 0, 1), // ctxmap-style
     ];
 
-    // Collect raw values per histogram
-    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
-    for token in tokens {
-        if token.is_lz77_length {
-            continue; // LZ77 tokens always use Lz77UintCoder
-        }
-        let ctx = token.context as usize;
-        if ctx < context_map.len() {
-            let histo_idx = context_map[ctx] as usize;
-            if histo_idx < num_histograms {
-                values_per_histo[histo_idx].push(token.value);
-            }
-        }
-    }
-
+    let num_histograms = values_per_histo.len();
     let max_alpha = ANS_MAX_ALPHABET_SIZE;
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
+    let mut counts_buf: Vec<u32> = Vec::new(); // reused across candidates
 
     for h in 0..num_histograms {
         let values = &values_per_histo[h];
@@ -360,20 +317,21 @@ fn optimize_uint_configs_fast(
                 continue;
             }
 
-            // Re-encode all values with this config
+            // Re-encode all values with this config (reuse counts buffer)
             let capacity = max_tok_with_lsb as usize + 1;
-            let mut counts = vec![0u32; capacity];
+            counts_buf.clear();
+            counts_buf.resize(capacity, 0);
             let mut extra_bits_total: u64 = 0;
             for &val in values {
                 let (tok, _, nbits) = cfg.encode(val);
-                counts[tok as usize] += 1;
+                counts_buf[tok as usize] += 1;
                 extra_bits_total += nbits as u64;
             }
 
             // Compute Shannon entropy cost of the token histogram
             let inv_total = 1.0f32 / values.len() as f32;
             let mut entropy_cost = 0.0f64;
-            for &count in &counts {
+            for &count in &counts_buf[..capacity] {
                 if count > 0 {
                     let c = count as f32;
                     entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
@@ -405,9 +363,7 @@ fn optimize_uint_configs_fast(
 /// Tries 28 curated configs per histogram (from libjxl enc_ans.cc:747-783).
 /// More thorough than kFast (4 configs) but 7x more work.
 fn optimize_uint_configs_best(
-    tokens: &[Token],
-    context_map: &[u8],
-    num_histograms: usize,
+    values_per_histo: &[Vec<u32>],
     lz77: Option<&Lz77Params>,
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
@@ -431,24 +387,11 @@ fn optimize_uint_configs_best(
         HybridUintConfig::new(10,0,0), HybridUintConfig::new(12,0,0),
     ];
 
-    // Collect raw values per histogram
-    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
-    for token in tokens {
-        if token.is_lz77_length {
-            continue;
-        }
-        let ctx = token.context as usize;
-        if ctx < context_map.len() {
-            let histo_idx = context_map[ctx] as usize;
-            if histo_idx < num_histograms {
-                values_per_histo[histo_idx].push(token.value);
-            }
-        }
-    }
-
+    let num_histograms = values_per_histo.len();
     let max_alpha = ANS_MAX_ALPHABET_SIZE;
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
+    let mut counts_buf: Vec<u32> = Vec::new(); // reused across candidates
 
     for h in 0..num_histograms {
         let values = &values_per_histo[h];
@@ -472,17 +415,18 @@ fn optimize_uint_configs_best(
             }
 
             let capacity = max_tok_with_lsb as usize + 1;
-            let mut counts = vec![0u32; capacity];
+            counts_buf.clear();
+            counts_buf.resize(capacity, 0);
             let mut extra_bits_total: u64 = 0;
             for &val in values {
                 let (tok, _, nbits) = cfg.encode(val);
-                counts[tok as usize] += 1;
+                counts_buf[tok as usize] += 1;
                 extra_bits_total += nbits as u64;
             }
 
             let inv_total = 1.0f32 / values.len() as f32;
             let mut entropy_cost = 0.0f64;
-            for &count in &counts {
+            for &count in &counts_buf[..capacity] {
                 if count > 0 {
                     let c = count as f32;
                     entropy_cost -= c as f64 * jxl_simd::fast_log2f(c * inv_total) as f64;
@@ -815,16 +759,11 @@ pub fn write_tokens_ans(
     #[allow(clippy::unused_enumerate_index)]
     for (_i, token) in tokens.iter().rev().enumerate() {
         let ctx = token.context as usize;
-        let dist_idx_for_cfg = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
-        let config = code
-            .uint_configs
-            .get(dist_idx_for_cfg)
-            .copied()
-            .unwrap_or_default();
+        let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+        let config = code.uint_configs.get(dist_idx).copied().unwrap_or_default();
         let (encoded, sym) = encode_token_value_with_config(token, lz77, &config);
 
         // Get the distribution for this context
-        let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let dist = code.distributions.get(dist_idx).unwrap_or_else(|| {
             panic!(
                 "ANS: missing distribution at index {} for context {}",
