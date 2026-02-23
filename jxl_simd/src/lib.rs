@@ -35,6 +35,7 @@ mod dct8;
 mod dequant;
 mod entropy;
 mod epf;
+mod fused_dct8;
 mod gab;
 mod gaborish5x5;
 mod idct16;
@@ -73,6 +74,7 @@ pub use entropy::{
     shannon_entropy_bits,
 };
 pub use epf::{epf_step1, epf_step2, pad_plane};
+pub use fused_dct8::fused_dct8_entropy;
 pub use gab::gab_smooth_channel;
 pub use gaborish5x5::gaborish_5x5_channel;
 pub use idct16::{idct_8x16, idct_16x8, idct_16x16};
@@ -98,6 +100,7 @@ pub use dct64::{dct_32x64_scalar, dct_64x32_scalar, dct_64x64_scalar};
 pub use dequant::dequant_dct8_scalar;
 pub use entropy::{entropy_coeffs_scalar, shannon_entropy_scalar};
 pub use epf::{epf_step1_scalar, epf_step2_scalar};
+pub use fused_dct8::fused_dct8_entropy_fallback;
 pub use gab::gab_smooth_scalar;
 pub use gaborish5x5::gaborish_5x5_scalar;
 pub use idct16::{idct_8x16_scalar, idct_16x8_scalar, idct_16x16_scalar};
@@ -132,6 +135,8 @@ pub use dequant::dequant_dct8_avx2;
 pub use entropy::{entropy_coeffs_avx2, shannon_entropy_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use epf::{epf_step1_avx2, epf_step2_avx2};
+#[cfg(target_arch = "x86_64")]
+pub use fused_dct8::fused_dct8_entropy_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use gab::gab_smooth_avx2;
 #[cfg(target_arch = "x86_64")]

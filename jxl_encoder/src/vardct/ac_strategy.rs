@@ -19,7 +19,7 @@ use super::ac_strategy_search::{
 use super::afv::afv_transform_from_pixels;
 use super::block_extract::*;
 use super::chroma_from_luma::{CflMap, ytob_ratio, ytox_ratio};
-use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero};
+use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, TILE_DIM_IN_BLOCKS, ceil_log2_nonzero, uninit_buf};
 use super::dct::{
     dct_4x4_full, dct_4x8_full, dct_8x4_full, dct_8x8, dct_8x16, dct_16x8, dct_16x16, dct_16x32,
     dct_32x16, dct_32x32, dct_32x64, dct_64x32, dct_64x64, dct2x2_transform, idct_4x4_full,
@@ -718,123 +718,180 @@ fn estimate_entropy_full_impl(
     const K_INFO_LOSS_MULTIPLIER2: f32 = 50.468_4;
     const K_COST2: f32 = 4.462_815;
 
+    // Fused DCT8 + entropy path: eliminates intermediate scratch.block writes.
+    // DCT output stays in SIMD registers (AVX2) or a local array (scalar), with
+    // only error_coeffs written out (needed for IDCT pixel-domain loss).
+    if raw_strategy == RAW_STRATEGY_DCT8 && use_pixel_domain {
+        let quant_for_coeffs = quant_field[by * xsize_blocks + bx];
+        let cmap_factors = [ytox_ratio(ytox), 0.0f32, ytob_ratio(ytob)];
+
+        let mut y_dct = [0.0f32; 64];
+        let mut entropy = 0.0f32;
+        let mut total_pixel_loss = 0.0f64;
+
+        let error_coeffs: &mut [f32; 64] = (&mut scratch.error_coeffs[..64]).try_into().unwrap();
+        let pixel_error_buf = &mut scratch.pixel_error[..64];
+        let mask = mask1x1.unwrap();
+        let pixel_x = bx * BLOCK_DIM;
+        let pixel_y = by * BLOCK_DIM;
+        let mask_row_base = pixel_y * mask1x1_stride + pixel_x;
+
+        // Process per-channel entropy + pixel-domain loss via inline closure
+        let mut process_channel =
+            |c: usize, y_dct_ref: &[f32; 64], dct_out: Option<&mut [f32; 64]>| {
+                let weights: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, c)
+                    .try_into()
+                    .unwrap();
+
+                let coeff_result = jxl_simd::fused_dct8_entropy(
+                    xyb[c],
+                    stride,
+                    bx,
+                    by,
+                    y_dct_ref,
+                    weights,
+                    cmap_factors[c],
+                    quant_for_coeffs,
+                    k_cost_delta,
+                    error_coeffs,
+                    dct_out,
+                );
+
+                entropy += coeff_result.entropy_sum;
+                let num_nzeros = coeff_result.nzeros_sum as usize;
+                let nbits = ceil_log2_nonzero(num_nzeros + 1) as usize + 1;
+                entropy += k_zeros_mul * (ceil_log2_nonzero(nbits + 17) + nbits as u32) as f32;
+
+                apply_idct_for_strategy(RAW_STRATEGY_DCT8, error_coeffs, pixel_error_buf);
+                let mask_offset = MASK_CHANNEL_OFFSET[c];
+                let mut channel_loss = jxl_simd::pixel_domain_loss(
+                    pixel_error_buf,
+                    mask,
+                    mask_row_base,
+                    mask1x1_stride,
+                    mask_offset,
+                    BLOCK_DIM,
+                    BLOCK_DIM,
+                );
+                channel_loss *= CHANNEL_MUL[c];
+                total_pixel_loss += channel_loss;
+            };
+
+        // Y channel first (stores DCT for CfL reference).
+        // y_dct is all zeros here, and cmap_factor=0.0, so the CfL term is a no-op.
+        let dummy_y = [0.0f32; 64];
+        process_channel(1, &dummy_y, Some(&mut y_dct));
+
+        // X and B channels use the stored Y DCT for CfL decorrelation.
+        process_channel(0, &y_dct, None);
+        process_channel(2, &y_dct, None);
+
+        // Final cost: entropy * entropy_mul + loss
+        let n = DCT_BLOCK_SIZE as f64;
+        let loss_scalar = (total_pixel_loss / n).sqrt().sqrt().sqrt() * n / quant_for_coeffs as f64;
+        entropy *= entropy_mul;
+        entropy = k_info_loss_mul.mul_add(loss_scalar as f32, entropy);
+        return entropy;
+    }
+
     // Use pre-allocated scratch buffers (no fill needed — transforms overwrite all positions)
     let block = &mut scratch.block[..3 * size];
     for (c, xyb_c) in xyb.iter().enumerate() {
         let offset = c * size;
         match raw_strategy {
             RAW_STRATEGY_DCT8 => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 64];
-                dct_8x8(&input, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_8x8(&input, out);
             }
             RAW_STRATEGY_DCT16X8 => {
-                let mut input = [0.0f32; 128];
+                let mut input = uninit_buf::<128>();
                 extract_block_8x16(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 128];
-                dct_16x8(&input, &mut output);
-                block[offset..offset + 128].copy_from_slice(&output);
+                let out: &mut [f32; 128] = (&mut block[offset..offset + 128]).try_into().unwrap();
+                dct_16x8(&input, out);
             }
             RAW_STRATEGY_DCT8X16 => {
-                let mut input = [0.0f32; 128];
+                let mut input = uninit_buf::<128>();
                 extract_block_16x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 128];
-                dct_8x16(&input, &mut output);
-                block[offset..offset + 128].copy_from_slice(&output);
+                let out: &mut [f32; 128] = (&mut block[offset..offset + 128]).try_into().unwrap();
+                dct_8x16(&input, out);
             }
             RAW_STRATEGY_DCT16X16 => {
-                let mut input = [0.0f32; 256];
+                let mut input = uninit_buf::<256>();
                 extract_block_16x16(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 256];
-                dct_16x16(&input, &mut output);
-                block[offset..offset + 256].copy_from_slice(&output);
+                let out: &mut [f32; 256] = (&mut block[offset..offset + 256]).try_into().unwrap();
+                dct_16x16(&input, out);
             }
             RAW_STRATEGY_DCT32X32 => {
-                let mut input = [0.0f32; 1024];
+                let mut input = uninit_buf::<1024>();
                 extract_block_32x32(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 1024];
-                dct_32x32(&input, &mut output);
-                block[offset..offset + 1024].copy_from_slice(&output);
+                let out: &mut [f32; 1024] = (&mut block[offset..offset + 1024]).try_into().unwrap();
+                dct_32x32(&input, out);
             }
             RAW_STRATEGY_DCT32X16 => {
-                let mut input = [0.0f32; 512];
+                let mut input = uninit_buf::<512>();
                 extract_block_32x16(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 512];
-                dct_32x16(&input, &mut output);
-                block[offset..offset + 512].copy_from_slice(&output);
+                let out: &mut [f32; 512] = (&mut block[offset..offset + 512]).try_into().unwrap();
+                dct_32x16(&input, out);
             }
             RAW_STRATEGY_DCT16X32 => {
-                let mut input = [0.0f32; 512];
+                let mut input = uninit_buf::<512>();
                 extract_block_16x32(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 512];
-                dct_16x32(&input, &mut output);
-                block[offset..offset + 512].copy_from_slice(&output);
+                let out: &mut [f32; 512] = (&mut block[offset..offset + 512]).try_into().unwrap();
+                dct_16x32(&input, out);
             }
             RAW_STRATEGY_DCT64X64 => {
-                let mut input = [0.0f32; 4096];
+                let mut input = uninit_buf::<4096>();
                 extract_block_64x64(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 4096];
-                dct_64x64(&input, &mut output);
-                block[offset..offset + 4096].copy_from_slice(&output);
+                dct_64x64(&input, &mut block[offset..offset + 4096]);
             }
             RAW_STRATEGY_DCT64X32 => {
-                let mut input = [0.0f32; 2048];
+                let mut input = uninit_buf::<2048>();
                 extract_block_64x32(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 2048];
-                dct_64x32(&input, &mut output);
-                block[offset..offset + 2048].copy_from_slice(&output);
+                dct_64x32(&input, &mut block[offset..offset + 2048]);
             }
             RAW_STRATEGY_DCT32X64 => {
-                let mut input = [0.0f32; 2048];
+                let mut input = uninit_buf::<2048>();
                 extract_block_32x64(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 2048];
-                dct_32x64(&input, &mut output);
-                block[offset..offset + 2048].copy_from_slice(&output);
+                dct_32x64(&input, &mut block[offset..offset + 2048]);
             }
             RAW_STRATEGY_DCT4X8 => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 64];
-                dct_4x8_full(&input, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_4x8_full(&input, out);
             }
             RAW_STRATEGY_DCT8X4 => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 64];
-                dct_8x4_full(&input, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_8x4_full(&input, out);
             }
             RAW_STRATEGY_DCT4X4 => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 64];
-                dct_4x4_full(&input, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct_4x4_full(&input, out);
             }
             RAW_STRATEGY_IDENTITY => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 64];
-                identity_transform(&input, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                identity_transform(&input, out);
             }
             RAW_STRATEGY_DCT2X2 => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
-                let mut output = [0.0f32; 64];
-                dct2x2_transform(&input, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                dct2x2_transform(&input, out);
             }
             RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(xyb_c, stride, bx, by, &mut input);
                 let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
-                let mut output = [0.0f32; 64];
-                afv_transform_from_pixels(&input, afv_kind, &mut output);
-                block[offset..offset + 64].copy_from_slice(&output);
+                let out: &mut [f32; 64] = (&mut block[offset..offset + 64]).try_into().unwrap();
+                afv_transform_from_pixels(&input, afv_kind, out);
             }
             _ => unreachable!(),
         }
@@ -1063,35 +1120,35 @@ fn estimate_entropy_full_impl(
 pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], output: &mut [f32]) {
     match raw_strategy {
         RAW_STRATEGY_DCT8 => {
-            let mut input = [0.0f32; 64];
+            let mut input = uninit_buf::<64>();
             input.copy_from_slice(&error_coeffs[..64]);
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             idct_8x8(&input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT4X8 => {
             let input: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             idct_4x8_full(input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT8X4 => {
             let input: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             idct_8x4_full(input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT4X4 => {
             let input: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             idct_4x4_full(input, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
             let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
-            let mut input = [0.0f32; 64];
+            let mut input = uninit_buf::<64>();
             input.copy_from_slice(&error_coeffs[..64]);
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             super::afv::inverse_afv_transform(&input, afv_kind, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
@@ -1099,48 +1156,48 @@ pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], ou
             // Coefficients are in post-swap 8×16 layout (stride 16), but idct_16x8
             // expects natural 16×8 layout (stride 8). Transpose first.
             // (idct_32x16/idct_64x32 handle this internally; idct_16x8 does not.)
-            let mut transposed = [0.0f32; 128];
+            let mut transposed = uninit_buf::<128>();
             for y in 0..8 {
                 for x in 0..16 {
                     transposed[x * 8 + y] = error_coeffs[y * 16 + x];
                 }
             }
-            let mut tmp = [0.0f32; 128];
+            let mut tmp = uninit_buf::<128>();
             idct_16x8(&transposed, &mut tmp);
             output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT8X16 => {
-            let mut input = [0.0f32; 128];
+            let mut input = uninit_buf::<128>();
             input.copy_from_slice(&error_coeffs[..128]);
-            let mut tmp = [0.0f32; 128];
+            let mut tmp = uninit_buf::<128>();
             idct_8x16(&input, &mut tmp);
             output[..128].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X16 => {
-            let mut input = [0.0f32; 256];
+            let mut input = uninit_buf::<256>();
             input.copy_from_slice(&error_coeffs[..256]);
-            let mut tmp = [0.0f32; 256];
+            let mut tmp = uninit_buf::<256>();
             idct_16x16(&input, &mut tmp);
             output[..256].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X32 => {
-            let mut input = [0.0f32; 1024];
+            let mut input = uninit_buf::<1024>();
             input.copy_from_slice(&error_coeffs[..1024]);
-            let mut tmp = [0.0f32; 1024];
+            let mut tmp = uninit_buf::<1024>();
             idct_32x32(&input, &mut tmp);
             output[..1024].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT32X16 => {
-            let mut input = [0.0f32; 512];
+            let mut input = uninit_buf::<512>();
             input.copy_from_slice(&error_coeffs[..512]);
-            let mut tmp = [0.0f32; 512];
+            let mut tmp = uninit_buf::<512>();
             idct_32x16(&input, &mut tmp);
             output[..512].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT16X32 => {
-            let mut input = [0.0f32; 512];
+            let mut input = uninit_buf::<512>();
             input.copy_from_slice(&error_coeffs[..512]);
-            let mut tmp = [0.0f32; 512];
+            let mut tmp = uninit_buf::<512>();
             idct_16x32(&input, &mut tmp);
             output[..512].copy_from_slice(&tmp);
         }
@@ -1154,13 +1211,13 @@ pub(super) fn apply_idct_for_strategy(raw_strategy: u8, error_coeffs: &[f32], ou
             idct_32x64(&error_coeffs[..2048], &mut output[..2048]);
         }
         RAW_STRATEGY_IDENTITY => {
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             let coeffs: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
             inverse_identity_transform(coeffs, &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT2X2 => {
-            let mut tmp = [0.0f32; 64];
+            let mut tmp = uninit_buf::<64>();
             let coeffs: &[f32; 64] = error_coeffs[..64].try_into().unwrap();
             inverse_dct2x2_transform(coeffs, &mut tmp);
             output[..64].copy_from_slice(&tmp);
