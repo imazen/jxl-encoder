@@ -404,7 +404,6 @@ pub fn idct_32x64_scalar(input: &[f32; 2048], output: &mut [f32; 2048]) {
 
 /// Load column `j` from 8 consecutive rows starting at `base_row` with given stride.
 #[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
 #[inline(always)]
 fn gather_col(
     token: archmage::X64V3Token,
@@ -413,19 +412,7 @@ fn gather_col(
     j: usize,
     stride: usize,
 ) -> magetypes::simd::f32x8 {
-    magetypes::simd::f32x8::from_array(
-        token,
-        [
-            data[base_row * stride + j],
-            data[(base_row + 1) * stride + j],
-            data[(base_row + 2) * stride + j],
-            data[(base_row + 3) * stride + j],
-            data[(base_row + 4) * stride + j],
-            data[(base_row + 5) * stride + j],
-            data[(base_row + 6) * stride + j],
-            data[(base_row + 7) * stride + j],
-        ],
-    )
+    crate::gather_col_strided(token, data, base_row, j, stride)
 }
 
 /// Store f32x8 lanes back to column `j` of 8 consecutive rows with given stride.
@@ -438,11 +425,7 @@ fn scatter_col(
     j: usize,
     stride: usize,
 ) {
-    let mut lane = [0.0f32; 8];
-    v.store(&mut lane);
-    for r in 0..8 {
-        data[(base_row + r) * stride + j] = lane[r];
-    }
+    crate::scatter_col_strided(v, data, base_row, j, stride)
 }
 
 /// AVX2 batched 64-point inverse DCT with *= 64 scaling.
