@@ -320,7 +320,7 @@ fn tokenize_ac_group(
                 let full_block: &[i32] = if covered_blocks == 1 {
                     &quant_ac[c][by][bx]
                 } else {
-                    let (cx, _cy) = if covered_y > covered_x {
+                    let (cx, cy) = if covered_y > covered_x {
                         (covered_y, covered_x)
                     } else {
                         (covered_x, covered_y)
@@ -328,21 +328,24 @@ fn tokenize_ac_group(
                     let transpose_slots = covered_y > covered_x;
                     let stride = cx * BLOCK_DIM;
                     let fb = &mut full_block_scratch[..size];
-                    #[allow(clippy::needless_range_loop)]
-                    for idx in 0..size {
-                        let y = idx / stride;
-                        let x = idx % stride;
-                        let coef_slot_y = y / BLOCK_DIM;
-                        let coef_slot_x = x / BLOCK_DIM;
-                        let pos_y = y % BLOCK_DIM;
-                        let pos_x = x % BLOCK_DIM;
-                        let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                        let (phys_row_off, phys_col_off) = if transpose_slots {
-                            (coef_slot_x, coef_slot_y)
-                        } else {
-                            (coef_slot_y, coef_slot_x)
-                        };
-                        fb[idx] = quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                    // Nested loops eliminate per-element integer divisions
+                    // (y/stride, x%stride, y/BLOCK_DIM, x/BLOCK_DIM, y%BLOCK_DIM, x%BLOCK_DIM)
+                    for coef_slot_y in 0..cy {
+                        for pos_y in 0..BLOCK_DIM {
+                            let y = coef_slot_y * BLOCK_DIM + pos_y;
+                            for coef_slot_x in 0..cx {
+                                let (phys_row_off, phys_col_off) = if transpose_slots {
+                                    (coef_slot_x, coef_slot_y)
+                                } else {
+                                    (coef_slot_y, coef_slot_x)
+                                };
+                                let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
+                                for pos_x in 0..BLOCK_DIM {
+                                    let x = coef_slot_x * BLOCK_DIM + pos_x;
+                                    fb[y * stride + x] = row[pos_y * BLOCK_DIM + pos_x];
+                                }
+                            }
+                        }
                     }
                     &full_block_scratch[..size]
                 };
@@ -1041,7 +1044,7 @@ impl VarDctEncoder {
                         //
                         // NOTE: For rectangular transforms, cx >= cy after swap, so stride = cx * 8.
                         // covered_x may differ from cx for DCT16x8/DCT8x16.
-                        let (cx, _cy) = if covered_y > covered_x {
+                        let (cx, cy) = if covered_y > covered_x {
                             (covered_y, covered_x)
                         } else {
                             (covered_x, covered_y)
@@ -1049,22 +1052,23 @@ impl VarDctEncoder {
                         let transpose_slots = covered_y > covered_x;
                         let stride = cx * BLOCK_DIM;
                         let full_block = &mut full_block_scratch[..size];
-                        #[allow(clippy::needless_range_loop)]
-                        for idx in 0..size {
-                            let y = idx / stride;
-                            let x = idx % stride;
-                            let coef_slot_y = y / BLOCK_DIM;
-                            let coef_slot_x = x / BLOCK_DIM;
-                            let pos_y = y % BLOCK_DIM;
-                            let pos_x = x % BLOCK_DIM;
-                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                            let (phys_row_off, phys_col_off) = if transpose_slots {
-                                (coef_slot_x, coef_slot_y)
-                            } else {
-                                (coef_slot_y, coef_slot_x)
-                            };
-                            full_block[idx] =
-                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                        // Nested loops eliminate per-element integer divisions
+                        for coef_slot_y in 0..cy {
+                            for pos_y in 0..BLOCK_DIM {
+                                let y = coef_slot_y * BLOCK_DIM + pos_y;
+                                for coef_slot_x in 0..cx {
+                                    let (phys_row_off, phys_col_off) = if transpose_slots {
+                                        (coef_slot_x, coef_slot_y)
+                                    } else {
+                                        (coef_slot_y, coef_slot_x)
+                                    };
+                                    let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
+                                    for pos_x in 0..BLOCK_DIM {
+                                        let x = coef_slot_x * BLOCK_DIM + pos_x;
+                                        full_block[y * stride + x] = row[pos_y * BLOCK_DIM + pos_x];
+                                    }
+                                }
+                            }
                         }
 
                         #[cfg(feature = "debug-tokens")]

@@ -724,46 +724,45 @@ impl VarDctEncoder {
                 {
                     let weights = super::quant::quant_weights(raw_strategy as usize, 1);
                     let inv_qac = 1.0 / qac;
-                    // Use post-swap dimensions for grid (matches C++ and quantize_ac_block)
-                    for idx in 0..size {
-                        // LLF positions: (y, x) where y < cy and x < cx in the grid
-                        let is_llf = (idx / block_width) < cy && (idx % block_width) < cx;
-                        let q = if is_llf {
-                            // LLF: not stored in quant_ac, compute inline
-                            // C++ QuantizeBlockAC quantizes all positions including LLF
-                            let y = idx / block_width;
-                            let x = idx % block_width;
-                            Self::quantize_coeff_ac(
-                                dct_coeffs[1][idx],
-                                1.0 / weights[idx],
-                                qac,
-                                1.0,
-                                &thresholds_y,
-                                y,
-                                x,
-                                block_height,
-                                block_width,
-                            )
-                        } else {
-                            // Use flat layout: idx indexes into a grid of block_width x block_height
-                            let y = idx / block_width;
-                            let x = idx % block_width;
-                            let coef_slot_y = y / BLOCK_DIM;
-                            let coef_slot_x = x / BLOCK_DIM;
-                            let pos_y = y % BLOCK_DIM;
-                            let pos_x = x % BLOCK_DIM;
-                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                            // Same transpose_slots logic as quantize_ac_block
-                            let transpose_slots = covered_y > covered_x;
-                            let (phys_row_off, phys_col_off) = if transpose_slots {
-                                (coef_slot_x, coef_slot_y)
-                            } else {
-                                (coef_slot_y, coef_slot_x)
-                            };
-                            quant_ac[1][by + phys_row_off][bx + phys_col_off][pos_in_8x8]
-                        };
-                        let adj = adjust_quant_bias(q, 1);
-                        dct_coeffs[1][idx] = adj * weights[idx] * inv_qac;
+                    let transpose_slots = covered_y > covered_x;
+                    // Use post-swap dimensions for grid (matches C++ and quantize_ac_block).
+                    // Nested loops eliminate per-element integer divisions.
+                    for coef_slot_y in 0..cy {
+                        for pos_y in 0..BLOCK_DIM {
+                            let y = coef_slot_y * BLOCK_DIM + pos_y;
+                            for coef_slot_x in 0..cx {
+                                let is_llf_row = y < cy;
+                                for pos_x in 0..BLOCK_DIM {
+                                    let x = coef_slot_x * BLOCK_DIM + pos_x;
+                                    let idx = y * block_width + x;
+                                    let is_llf = is_llf_row && x < cx;
+                                    let q = if is_llf {
+                                        Self::quantize_coeff_ac(
+                                            dct_coeffs[1][idx],
+                                            1.0 / weights[idx],
+                                            qac,
+                                            1.0,
+                                            &thresholds_y,
+                                            y,
+                                            x,
+                                            block_height,
+                                            block_width,
+                                        )
+                                    } else {
+                                        let (phys_row_off, phys_col_off) = if transpose_slots {
+                                            (coef_slot_x, coef_slot_y)
+                                        } else {
+                                            (coef_slot_y, coef_slot_x)
+                                        };
+                                        let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                                        quant_ac[1][by + phys_row_off][bx + phys_col_off]
+                                            [pos_in_8x8]
+                                    };
+                                    let adj = adjust_quant_bias(q, 1);
+                                    dct_coeffs[1][idx] = adj * weights[idx] * inv_qac;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1008,22 +1007,23 @@ impl VarDctEncoder {
                         // The 8x8 block storage uses quant_ac[slot_by][slot_bx][pos_in_8x8].
                         let stride = cx * BLOCK_DIM;
                         let full_block = &mut nz_full_block_scratch[..size];
-                        #[allow(clippy::needless_range_loop)]
-                        for idx in 0..size {
-                            let y = idx / stride;
-                            let x = idx % stride;
-                            let coef_slot_y = y / BLOCK_DIM;
-                            let coef_slot_x = x / BLOCK_DIM;
-                            let pos_y = y % BLOCK_DIM;
-                            let pos_x = x % BLOCK_DIM;
-                            let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                            let (phys_row_off, phys_col_off) = if transpose_slots {
-                                (coef_slot_x, coef_slot_y)
-                            } else {
-                                (coef_slot_y, coef_slot_x)
-                            };
-                            full_block[idx] =
-                                quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
+                        // Nested loops eliminate per-element integer divisions
+                        for coef_slot_y in 0..cy {
+                            for pos_y in 0..BLOCK_DIM {
+                                let y = coef_slot_y * BLOCK_DIM + pos_y;
+                                for coef_slot_x in 0..cx {
+                                    let (phys_row_off, phys_col_off) = if transpose_slots {
+                                        (coef_slot_x, coef_slot_y)
+                                    } else {
+                                        (coef_slot_y, coef_slot_x)
+                                    };
+                                    let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
+                                    for pos_x in 0..BLOCK_DIM {
+                                        let x = coef_slot_x * BLOCK_DIM + pos_x;
+                                        full_block[y * stride + x] = row[pos_y * BLOCK_DIM + pos_x];
+                                    }
+                                }
+                            }
                         }
                         let flat_len = (covered_y - 1) * xsize_blocks + covered_x;
                         let flat_nz = &mut nz_flat_scratch[..flat_len];

@@ -314,37 +314,34 @@ fn reconstruct_xyb_impl(
                 let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
                 let weights = quant_weights(raw_strategy as usize, c);
 
-                for idx in 0..size {
-                    let y = idx / block_width;
-                    let x = idx % block_width;
-
-                    // LLF positions match the encoder's definition:
-                    // top-left cy×cx region of the coefficient grid
-                    let is_llf_pos = y < cy && x < cx;
-
-                    if is_llf_pos {
-                        // LLF positions are restored from DC, skip AC dequant
-                        continue;
-                    }
-
-                    let coef_slot_y = y / BLOCK_DIM;
-                    let coef_slot_x = x / BLOCK_DIM;
-                    let pos_y = y % BLOCK_DIM;
-                    let pos_x = x % BLOCK_DIM;
-                    let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-
-                    let (phys_row_off, phys_col_off) = if transpose_slots {
-                        (coef_slot_x, coef_slot_y)
-                    } else {
-                        (coef_slot_y, coef_slot_x)
-                    };
-                    let q_int = quant_ac[c][by + phys_row_off][bx + phys_col_off][pos_in_8x8];
-
-                    if q_int != 0 {
-                        let weight = weights[idx];
-                        // Dequant: coef = adjust_quant_bias(q) / (inv_weight * qac * qm_mul)
-                        let biased = adjust_quant_bias(q_int, c);
-                        dequant_scratch[c][idx] = biased * weight / (qac * qm_mul);
+                // Nested loops eliminate per-element integer divisions
+                for coef_slot_y in 0..cy {
+                    for pos_y in 0..BLOCK_DIM {
+                        let y = coef_slot_y * BLOCK_DIM + pos_y;
+                        for coef_slot_x in 0..cx {
+                            // Skip LLF positions (restored from DC below)
+                            let is_llf_row = y < cy;
+                            let (phys_row_off, phys_col_off) = if transpose_slots {
+                                (coef_slot_x, coef_slot_y)
+                            } else {
+                                (coef_slot_y, coef_slot_x)
+                            };
+                            let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
+                            for pos_x in 0..BLOCK_DIM {
+                                let x = coef_slot_x * BLOCK_DIM + pos_x;
+                                let idx = y * block_width + x;
+                                if is_llf_row && x < cx {
+                                    continue;
+                                }
+                                let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
+                                let q_int = row[pos_in_8x8];
+                                if q_int != 0 {
+                                    let weight = weights[idx];
+                                    let biased = adjust_quant_bias(q_int, c);
+                                    dequant_scratch[c][idx] = biased * weight / (qac * qm_mul);
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -366,15 +363,12 @@ fn reconstruct_xyb_impl(
 
             // Step 2: Restore CfL (AC positions only, not LLF)
             // The decoder applies: X[k] += x_factor * Y[k], B[k] += b_factor * Y[k]
-            #[allow(clippy::needless_range_loop)]
-            for idx in 0..size {
-                let y = idx / block_width;
-                let x = idx % block_width;
-
-                // LLF positions match the encoder's definition
-                let is_llf_pos = y < cy && x < cx;
-
-                if !is_llf_pos {
+            for y in 0..block_height {
+                for x in 0..block_width {
+                    if y < cy && x < cx {
+                        continue;
+                    }
+                    let idx = y * block_width + x;
                     let y_val = dequant_scratch[1][idx];
                     dequant_scratch[0][idx] += x_factor * y_val;
                     dequant_scratch[2][idx] += b_factor * y_val;
