@@ -26,8 +26,6 @@ use crate::error::{Error, Result};
 
 /// Log2 of alphabet size for ANS. With split=4, max token is 4+31=35, so we need 6 bits.
 pub const ANS_LOG_ALPHA_SIZE: usize = 6;
-/// Alphabet size for ANS (2^6 = 64, matches ALPHABET_SIZE).
-pub const ANS_ALPHA_SIZE: usize = 1 << ANS_LOG_ALPHA_SIZE;
 
 /// An owned ANS entropy code (context map + ANS distributions on the heap).
 #[derive(Debug)]

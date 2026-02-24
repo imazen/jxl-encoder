@@ -32,12 +32,6 @@ pub const TILE_DIM: usize = 64;
 /// Tile dimension in blocks.
 pub const TILE_DIM_IN_BLOCKS: usize = TILE_DIM / BLOCK_DIM;
 
-/// Group dimension in tiles.
-pub const GROUP_DIM_IN_TILES: usize = GROUP_DIM / TILE_DIM;
-
-/// Bits per byte.
-pub const BITS_PER_BYTE: usize = 8;
-
 /// Horizontal shift for each jpeg_upsampling mode.
 /// Mode 0: no subsampling, 1: 4:2:0, 2: 4:2:2, 3: 4:4:0
 pub const JPEG_UPSAMPLING_H_SHIFT: [usize; 4] = [0, 1, 1, 0];
@@ -55,12 +49,6 @@ pub const fn div_ceil(a: usize, b: usize) -> usize {
     {
         (a + b - 1) / b
     }
-}
-
-/// Round up to a multiple.
-#[inline]
-pub const fn round_up_to(what: usize, align: usize) -> usize {
-    div_ceil(what, align) * align
 }
 
 /// Clamp a value to a range.
