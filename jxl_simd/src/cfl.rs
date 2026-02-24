@@ -134,8 +134,8 @@ pub fn find_best_multiplier_avx2(
     let simd_end = num & !7;
     let mut i = 0;
     while i < simd_end {
-        let m = f32x8::from_slice(token, &values_m[i..]);
-        let s = f32x8::from_slice(token, &values_s[i..]);
+        let m = crate::load_f32x8(token, values_m, i);
+        let s = crate::load_f32x8(token, values_s, i);
         let a = inv_cf * m;
         let b = base_v * m - s;
         acc_aa = a.mul_add(a, acc_aa);
@@ -451,8 +451,8 @@ pub fn find_best_multiplier_newton_avx2(
     let mut acc_ab = f32x8::splat(token, 0.0);
     let mut i = 0;
     while i < simd_end {
-        let m = f32x8::from_slice(token, &values_m[i..]);
-        let s = f32x8::from_slice(token, &values_s[i..]);
+        let m = crate::load_f32x8(token, values_m, i);
+        let s = crate::load_f32x8(token, values_s, i);
         let a = inv_cf * m;
         let b = base_v * m - s;
         acc_aa = a.mul_add(a, acc_aa);

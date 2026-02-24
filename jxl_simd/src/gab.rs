@@ -168,15 +168,15 @@ pub fn gab_smooth_avx2(
             // Load 8 pixels and all their neighbors via unaligned loads
             // SAFETY: arcane macro ensures target_feature is set.
             // Bounds: x >= 1 and x+8 < width, so x-1..x+9 is in bounds.
-            let center = f32x8::from_slice(token, &input[row_c + x..]);
-            let top = f32x8::from_slice(token, &input[row_t + x..]);
-            let bottom = f32x8::from_slice(token, &input[row_b + x..]);
-            let left = f32x8::from_slice(token, &input[row_c + x - 1..]);
-            let right = f32x8::from_slice(token, &input[row_c + x + 1..]);
-            let tl = f32x8::from_slice(token, &input[row_t + x - 1..]);
-            let tr = f32x8::from_slice(token, &input[row_t + x + 1..]);
-            let bl = f32x8::from_slice(token, &input[row_b + x - 1..]);
-            let br = f32x8::from_slice(token, &input[row_b + x + 1..]);
+            let center = crate::load_f32x8(token, input, row_c + x);
+            let top = crate::load_f32x8(token, input, row_t + x);
+            let bottom = crate::load_f32x8(token, input, row_b + x);
+            let left = crate::load_f32x8(token, input, row_c + x - 1);
+            let right = crate::load_f32x8(token, input, row_c + x + 1);
+            let tl = crate::load_f32x8(token, input, row_t + x - 1);
+            let tr = crate::load_f32x8(token, input, row_t + x + 1);
+            let bl = crate::load_f32x8(token, input, row_b + x - 1);
+            let br = crate::load_f32x8(token, input, row_b + x + 1);
 
             // cardinals = top + bottom + left + right
             let cardinals = top + bottom + left + right;
@@ -184,13 +184,10 @@ pub fn gab_smooth_avx2(
             let diagonals = tl + tr + bl + br;
 
             // result = w_center * center + w1 * cardinals + w2 * diagonals
-            // Using FMA: result = wc_v * center + w1_v * cardinals + w2_v * diagonals
             let result = wc_v.mul_add(center, w1_v.mul_add(cardinals, w2_v * diagonals));
 
             // Store 8 results
-            let out_arr: &mut [f32; 8] =
-                (&mut output[row_c + x..row_c + x + 8]).try_into().unwrap();
-            result.store(out_arr);
+            crate::store_f32x8(output, row_c + x, result);
 
             x += 8;
         }
