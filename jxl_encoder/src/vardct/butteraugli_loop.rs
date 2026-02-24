@@ -72,18 +72,35 @@ impl VarDctEncoder {
         let padded_pixels = padded_width * padded_height;
 
         // Precompute butteraugli reference from original image ONCE.
+        // Deinterleave to planar to avoid interleave round-trip inside the crate.
+        let n = width * height;
+        let mut ref_r = vec![0.0f32; n];
+        let mut ref_g = vec![0.0f32; n];
+        let mut ref_b = vec![0.0f32; n];
+        for i in 0..n {
+            ref_r[i] = linear_rgb[i * 3];
+            ref_g[i] = linear_rgb[i * 3 + 1];
+            ref_b[i] = linear_rgb[i * 3 + 2];
+        }
         let butteraugli_params = butteraugli::ButteraugliParams::new()
             .with_intensity_target(80.0)
             .with_compute_diffmap(true);
-        let reference = match butteraugli::ButteraugliReference::new_linear(
-            linear_rgb,
+        let reference = match butteraugli::ButteraugliReference::new_linear_planar(
+            &ref_r,
+            &ref_g,
+            &ref_b,
             width,
             height,
+            width,
             butteraugli_params,
         ) {
             Ok(r) => r,
             Err(_) => return initial_params.clone(),
         };
+        // Free the planar buffers — reference data is already precomputed inside.
+        drop(ref_r);
+        drop(ref_g);
+        drop(ref_b);
 
         // Compute deviation bounds from the FLOAT initial field (libjxl lines 968-976).
         // These prevent the quant field from diverging too far from the initial field.
