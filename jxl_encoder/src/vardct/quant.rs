@@ -16,8 +16,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use once_cell::race::OnceBox;
 
-use super::common::DCT_BLOCK_SIZE;
-
 /// Number of valid AC strategies.
 /// 0 = DCT8 (8x8), 1 = DCT16X8, 2 = DCT8X16, 3 = DCT16X16, 4 = DCT32X32,
 /// 5 = DCT4X8, 6 = DCT8X4, 7 = DCT4X4, 8 = IDENTITY, 9 = DCT2X2,
@@ -843,88 +841,40 @@ fn quant_weights_afv() -> &'static [f32] {
     QUANT_WEIGHTS_AFV.get_or_init(|| Box::new(generate_afv_weights()))
 }
 
+/// Per-channel weight count for each strategy.
+const WEIGHT_SIZES: [usize; NUM_VALID_STRATEGIES] = [
+    64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,
+];
+
+/// Get the full quant weight table for a strategy (all 3 channels concatenated).
+#[inline]
+fn quant_weights_full(strategy: usize) -> &'static [f32] {
+    match strategy {
+        0 => quant_weights_dct8(),
+        1 | 2 => quant_weights_dct16x8(),
+        3 => quant_weights_dct16x16(),
+        4 => quant_weights_dct32x32(),
+        5 => quant_weights_dct4x8(),
+        6 => quant_weights_dct8x4(),
+        7 => quant_weights_dct4x4(),
+        8 => quant_weights_identity(),
+        9 => quant_weights_dct2x2(),
+        10 | 11 => quant_weights_dct16x32(),
+        12..=15 => quant_weights_afv(),
+        16 => quant_weights_dct64x64(),
+        17 | 18 => quant_weights_dct32x64(),
+        _ => unreachable!("Invalid strategy: {}", strategy),
+    }
+}
+
 /// Get the quantization weight table for a given strategy and channel.
-///
-/// # Arguments
-/// * `strategy` - AC strategy (0=DCT8, 1=DCT16X8, 2=DCT8X16, 3=DCT16X16, 4=DCT32X32,
-///   5=DCT4X8, 6=DCT8X4, 7=DCT4X4, 8=IDENTITY, 9=DCT2X2)
-/// * `channel` - Channel index (0=X, 1=Y, 2=B)
-///
-/// # Returns
-/// Slice of quantization weights for the strategy/channel combination.
 #[inline]
 pub fn quant_weights(strategy: usize, channel: usize) -> &'static [f32] {
     debug_assert!(strategy < NUM_VALID_STRATEGIES);
     debug_assert!(channel < 3);
-
-    match strategy {
-        0 => {
-            // DCT8: 64 coefficients per channel
-            let offset = channel * 64;
-            &quant_weights_dct8()[offset..offset + 64]
-        }
-        1 | 2 => {
-            // DCT16X8 / DCT8X16: 128 coefficients per channel (share same weights)
-            let offset = channel * 128;
-            &quant_weights_dct16x8()[offset..offset + 128]
-        }
-        3 => {
-            // DCT16X16: 256 coefficients per channel
-            let offset = channel * 256;
-            &quant_weights_dct16x16()[offset..offset + 256]
-        }
-        4 => {
-            // DCT32X32: 1024 coefficients per channel
-            let offset = channel * 1024;
-            &quant_weights_dct32x32()[offset..offset + 1024]
-        }
-        5 => {
-            // DCT4X8: 64 coefficients per channel
-            let offset = channel * DCT_BLOCK_SIZE;
-            &quant_weights_dct4x8()[offset..offset + DCT_BLOCK_SIZE]
-        }
-        6 => {
-            // DCT8X4: 64 coefficients per channel
-            let offset = channel * DCT_BLOCK_SIZE;
-            &quant_weights_dct8x4()[offset..offset + DCT_BLOCK_SIZE]
-        }
-        7 => {
-            // DCT4X4: 64 coefficients per channel
-            let offset = channel * DCT_BLOCK_SIZE;
-            &quant_weights_dct4x4()[offset..offset + DCT_BLOCK_SIZE]
-        }
-        8 => {
-            // IDENTITY: 64 coefficients per channel
-            let offset = channel * 64;
-            &quant_weights_identity()[offset..offset + 64]
-        }
-        9 => {
-            // DCT2X2: 64 coefficients per channel
-            let offset = channel * 64;
-            &quant_weights_dct2x2()[offset..offset + 64]
-        }
-        10 | 11 => {
-            // DCT32X16 / DCT16X32: 512 coefficients per channel (share same weights)
-            let offset = channel * 512;
-            &quant_weights_dct16x32()[offset..offset + 512]
-        }
-        12..=15 => {
-            // AFV0-AFV3: 64 coefficients per channel (all share same weights)
-            let offset = channel * 64;
-            &quant_weights_afv()[offset..offset + 64]
-        }
-        16 => {
-            // DCT64X64: 4096 coefficients per channel
-            let offset = channel * 4096;
-            &quant_weights_dct64x64()[offset..offset + 4096]
-        }
-        17 | 18 => {
-            // DCT64X32 / DCT32X64: 2048 coefficients per channel (share same weights)
-            let offset = channel * 2048;
-            &quant_weights_dct32x64()[offset..offset + 2048]
-        }
-        _ => unreachable!("Invalid strategy: {}", strategy),
-    }
+    let per_ch = WEIGHT_SIZES[strategy];
+    let offset = channel * per_ch;
+    &quant_weights_full(strategy)[offset..offset + per_ch]
 }
 
 /// Get the inverse quantization weight (1/weight) for a coefficient.
@@ -944,11 +894,7 @@ pub fn inv_quant_weight(strategy: usize, channel: usize, coeff_idx: usize) -> f3
 
 /// Generate reciprocals (1/w) for every element of a quant_weights table.
 fn generate_dequant_weights(strategy: usize) -> Vec<f32> {
-    // Get the full table for all 3 channels
-    let sizes: [usize; NUM_VALID_STRATEGIES] = [
-        64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,
-    ];
-    let per_ch = sizes[strategy];
+    let per_ch = WEIGHT_SIZES[strategy];
     let mut out = Vec::with_capacity(3 * per_ch);
     for c in 0..3 {
         let w = quant_weights(strategy, c);
@@ -973,30 +919,10 @@ static DEQUANT_WEIGHTS_AFV: OnceBox<Vec<f32>> = OnceBox::new();
 static DEQUANT_WEIGHTS_DCT64X64: OnceBox<Vec<f32>> = OnceBox::new();
 static DEQUANT_WEIGHTS_DCT32X64: OnceBox<Vec<f32>> = OnceBox::new();
 
-/// Get the precomputed dequantization weight table (1/quant_weight) for a given
-/// strategy and channel.
-///
-/// These are the reciprocals of [`quant_weights`], lazily computed and cached.
-/// Using these avoids per-coefficient SIMD division in the entropy estimation kernel.
-///
-/// # Arguments
-/// * `strategy` - AC strategy (0=DCT8, ..., 18=DCT32X64)
-/// * `channel` - Channel index (0=X, 1=Y, 2=B)
-///
-/// # Returns
-/// Slice of dequantization weights (1/quant_weight) for the strategy/channel.
+/// Get the full dequant weight table for a strategy (all 3 channels concatenated).
 #[inline]
-pub fn dequant_weights(strategy: usize, channel: usize) -> &'static [f32] {
-    debug_assert!(strategy < NUM_VALID_STRATEGIES);
-    debug_assert!(channel < 3);
-
-    let sizes: [usize; NUM_VALID_STRATEGIES] = [
-        64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,
-    ];
-    let per_ch = sizes[strategy];
-    let offset = channel * per_ch;
-
-    let table: &[f32] = match strategy {
+fn dequant_weights_full(strategy: usize) -> &'static [f32] {
+    match strategy {
         0 => DEQUANT_WEIGHTS_DCT8.get_or_init(|| Box::new(generate_dequant_weights(0))),
         1 | 2 => DEQUANT_WEIGHTS_DCT16X8.get_or_init(|| Box::new(generate_dequant_weights(1))),
         3 => DEQUANT_WEIGHTS_DCT16X16.get_or_init(|| Box::new(generate_dequant_weights(3))),
@@ -1011,9 +937,18 @@ pub fn dequant_weights(strategy: usize, channel: usize) -> &'static [f32] {
         16 => DEQUANT_WEIGHTS_DCT64X64.get_or_init(|| Box::new(generate_dequant_weights(16))),
         17 | 18 => DEQUANT_WEIGHTS_DCT32X64.get_or_init(|| Box::new(generate_dequant_weights(17))),
         _ => unreachable!("Invalid strategy: {}", strategy),
-    };
+    }
+}
 
-    &table[offset..offset + per_ch]
+/// Get the precomputed dequantization weight table (1/quant_weight) for a given
+/// strategy and channel.
+#[inline]
+pub fn dequant_weights(strategy: usize, channel: usize) -> &'static [f32] {
+    debug_assert!(strategy < NUM_VALID_STRATEGIES);
+    debug_assert!(channel < 3);
+    let per_ch = WEIGHT_SIZES[strategy];
+    let offset = channel * per_ch;
+    &dequant_weights_full(strategy)[offset..offset + per_ch]
 }
 
 /// Quantize a single coefficient.
