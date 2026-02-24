@@ -159,41 +159,45 @@ pub fn build_entropy_code_ans_with_options(
     let mut ans_histograms = Vec::with_capacity(num_histograms);
     let mut ans_distributions = Vec::with_capacity(num_histograms);
 
+    // Precompute allowed counts tables once — reused across all histograms.
+    let allowed_cache = super::ans::AllowedCountsCache::new();
+
     // Phase 1: Build normalized histograms to determine alphabet sizes.
+    // Single pass over values: compute max_sym and counts simultaneously.
     for h in 0..num_histograms {
         let config = &uint_configs[h];
-        // Build histogram from values re-encoded with the optimal config
-        let mut max_sym = 0usize;
+        // Single pass: compute max_sym and build counts in one go.
+        // Start with a small counts vec and grow as needed.
+        let mut counts: Vec<u32> = Vec::new();
         for &val in &values_per_histo[h] {
             let (tok, _, _) = config.encode(val);
-            let sym = tok as usize + 1;
-            if sym > max_sym {
-                max_sym = sym;
+            let sym = tok as usize;
+            if sym >= counts.len() {
+                counts.resize(sym + 1, 0);
             }
+            counts[sym] += 1;
         }
         for &sym in &lz77_tokens_per_histo[h] {
-            let s = sym as usize + 1;
-            if s > max_sym {
-                max_sym = s;
+            let s = sym as usize;
+            if s >= counts.len() {
+                counts.resize(s + 1, 0);
             }
+            counts[s] += 1;
         }
-        max_sym = max_sym.max(1);
-
-        let mut counts = vec![0u32; max_sym];
-        for &val in &values_per_histo[h] {
-            let (tok, _, _) = config.encode(val);
-            counts[tok as usize] += 1;
-        }
-        for &sym in &lz77_tokens_per_histo[h] {
-            counts[sym as usize] += 1;
+        if counts.is_empty() {
+            counts.push(0);
         }
 
         // Build EnhancedHistogram directly from counts (avoid per-symbol add loop)
         let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
         let histo = EnhancedHistogram::from_counts(&i32_counts);
 
-        let ans_histo = ANSEncodingHistogram::from_histogram(&histo, ANSHistogramStrategy::Precise)
-            .expect("ANS histogram normalization failed");
+        let ans_histo = ANSEncodingHistogram::from_histogram_cached(
+            &histo,
+            ANSHistogramStrategy::Precise,
+            &allowed_cache,
+        )
+        .expect("ANS histogram normalization failed");
         ans_histograms.push(ans_histo);
     }
 
