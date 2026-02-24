@@ -143,11 +143,17 @@ pub fn build_entropy_code_ans_from_token_groups(
         num_contexts
     );
 
-    // Collect raw values per histogram (single pass over tokens).
-    // These are reused for both uint config optimization and final histogram building.
+    // Collect value frequency maps per histogram (value → count).
+    // Uses BTreeMap instead of storing every raw value, reducing memory from O(tokens)
+    // to O(distinct_values). For 4K images with ~90M tokens, this shrinks from ~360 MB
+    // to a few MB (typically <1000 distinct values per histogram).
     let num_histograms = result.histograms.len();
-    let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
-    let mut lz77_tokens_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
+    let mut value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
+        .map(|_| alloc::collections::BTreeMap::new())
+        .collect();
+    let mut lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
+        .map(|_| alloc::collections::BTreeMap::new())
+        .collect();
     for group in groups {
         for token in *group {
             let ctx = token.context() as usize;
@@ -158,10 +164,10 @@ pub fn build_entropy_code_ans_from_token_groups(
                         if let Some(lz77_params) = lz77 {
                             let encoded = Lz77UintCoder::encode(token.value);
                             let sym = encoded.token + lz77_params.min_symbol;
-                            lz77_tokens_per_histo[histo_idx].push(sym);
+                            *lz77_freqs[histo_idx].entry(sym).or_insert(0) += 1;
                         }
                     } else {
-                        values_per_histo[histo_idx].push(token.value);
+                        *value_freqs[histo_idx].entry(token.value).or_insert(0) += 1;
                     }
                 }
             }
@@ -172,9 +178,9 @@ pub fn build_entropy_code_ans_from_token_groups(
     // Best mode: 28 curated configs (matching libjxl kBest, enc_ans.cc:747-783).
     // Fast mode: 4 configs (matching libjxl kFast).
     let uint_configs = if enhanced_clustering {
-        optimize_uint_configs_best(&values_per_histo, lz77)
+        optimize_uint_configs_best_from_freqs(&value_freqs, lz77)
     } else {
-        optimize_uint_configs_fast(&values_per_histo, lz77)
+        optimize_uint_configs_fast_from_freqs(&value_freqs, lz77)
     };
 
     // Build ANS histograms and distributions with the optimized configs.
@@ -186,26 +192,24 @@ pub fn build_entropy_code_ans_from_token_groups(
     let allowed_cache = super::ans::AllowedCountsCache::new();
 
     // Phase 1: Build normalized histograms to determine alphabet sizes.
-    // Single pass over values: compute max_sym and counts simultaneously.
+    // Iterate over (value, count) frequency pairs instead of individual values.
     for h in 0..num_histograms {
         let config = &uint_configs[h];
-        // Single pass: compute max_sym and build counts in one go.
-        // Start with a small counts vec and grow as needed.
         let mut counts: Vec<u32> = Vec::new();
-        for &val in &values_per_histo[h] {
+        for (&val, &freq) in &value_freqs[h] {
             let (tok, _, _) = config.encode(val);
             let sym = tok as usize;
             if sym >= counts.len() {
                 counts.resize(sym + 1, 0);
             }
-            counts[sym] += 1;
+            counts[sym] += freq;
         }
-        for &sym in &lz77_tokens_per_histo[h] {
+        for (&sym, &freq) in &lz77_freqs[h] {
             let s = sym as usize;
             if s >= counts.len() {
                 counts.resize(s + 1, 0);
             }
-            counts[s] += 1;
+            counts[s] += freq;
         }
         if counts.is_empty() {
             counts.push(0);
@@ -304,37 +308,40 @@ pub fn build_entropy_code_ans_from_token_groups(
 ///
 /// For each histogram, tries 4 configs and picks the one with lowest estimated cost
 /// (Shannon entropy of re-encoded tokens + extra bits + signaling cost).
-fn optimize_uint_configs_fast(
-    values_per_histo: &[Vec<u32>],
+/// Optimize HybridUint config per histogram from value frequency maps (kFast method).
+///
+/// Tries 4 configs per histogram (libjxl effort 7). Iterates (value, count) pairs
+/// from frequency maps instead of individual values, avoiding O(tokens) storage.
+fn optimize_uint_configs_fast_from_freqs(
+    freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
     lz77: Option<&Lz77Params>,
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
 
-    // The 4 configs libjxl tries at effort 7 (kFast)
     let candidates = [
-        HybridUintConfig::new(4, 2, 0), // default
-        HybridUintConfig::new(4, 1, 2), // parity
-        HybridUintConfig::new(0, 0, 0), // varlenuint (smallest alphabet)
-        HybridUintConfig::new(2, 0, 1), // ctxmap-style
+        HybridUintConfig::new(4, 2, 0),
+        HybridUintConfig::new(4, 1, 2),
+        HybridUintConfig::new(0, 0, 0),
+        HybridUintConfig::new(2, 0, 1),
     ];
 
-    let num_histograms = values_per_histo.len();
+    let num_histograms = freqs_per_histo.len();
     let max_alpha = ANS_MAX_ALPHABET_SIZE;
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
-    let mut counts_buf: Vec<u32> = Vec::new(); // reused across candidates
+    let mut counts_buf: Vec<u32> = Vec::new();
 
     for h in 0..num_histograms {
-        let values = &values_per_histo[h];
-        if values.is_empty() {
+        let freqs = &freqs_per_histo[h];
+        if freqs.is_empty() {
             continue;
         }
 
-        let max_value = values.iter().copied().max().unwrap_or(0);
+        let max_value = freqs.keys().copied().max().unwrap_or(0);
+        let total: u32 = freqs.values().sum();
         let mut best_cost = f64::MAX;
 
         for &cfg in &candidates {
-            // Check that the max token fits in the alphabet
             let (max_tok, _, _) = cfg.encode(max_value);
             let max_tok_with_lsb = max_tok | ((1u32 << cfg.lsb_in_token) - 1);
             if max_tok_with_lsb as usize >= max_alpha {
@@ -346,19 +353,17 @@ fn optimize_uint_configs_fast(
                 continue;
             }
 
-            // Re-encode all values with this config (reuse counts buffer)
             let capacity = max_tok_with_lsb as usize + 1;
             counts_buf.clear();
             counts_buf.resize(capacity, 0);
             let mut extra_bits_total: u64 = 0;
-            for &val in values {
+            for (&val, &freq) in freqs {
                 let (tok, _, nbits) = cfg.encode(val);
-                counts_buf[tok as usize] += 1;
-                extra_bits_total += nbits as u64;
+                counts_buf[tok as usize] += freq;
+                extra_bits_total += nbits as u64 * freq as u64;
             }
 
-            // Compute Shannon entropy cost of the token histogram
-            let inv_total = 1.0f32 / values.len() as f32;
+            let inv_total = 1.0f32 / total as f32;
             let mut entropy_cost = 0.0f64;
             for &count in &counts_buf[..capacity] {
                 if count > 0 {
@@ -367,7 +372,6 @@ fn optimize_uint_configs_fast(
                 }
             }
 
-            // Total cost = entropy (in bits) + extra bits + signaling cost
             let signaling_cost = if cfg.split_exponent == 0 {
                 0.0
             } else {
@@ -387,17 +391,17 @@ fn optimize_uint_configs_fast(
     best_configs
 }
 
-/// Optimize HybridUint config per histogram cluster (matches libjxl kBest method).
+/// Optimize HybridUint config per histogram from value frequency maps (kBest method).
 ///
 /// Tries 28 curated configs per histogram (from libjxl enc_ans.cc:747-783).
-/// More thorough than kFast (4 configs) but 7x more work.
-fn optimize_uint_configs_best(
-    values_per_histo: &[Vec<u32>],
+/// More thorough than kFast (4 configs) but 7x more work. Iterates (value, count)
+/// pairs from frequency maps instead of individual values, avoiding O(tokens) storage.
+fn optimize_uint_configs_best_from_freqs(
+    freqs_per_histo: &[alloc::collections::BTreeMap<u32, u32>],
     lz77: Option<&Lz77Params>,
 ) -> Vec<HybridUintConfig> {
     use crate::entropy_coding::ans::ANS_MAX_ALPHABET_SIZE;
 
-    // The 28 curated configs from libjxl kBest (enc_ans.cc:747-783)
     #[rustfmt::skip]
     let candidates = [
         HybridUintConfig::new(0,0,0),  HybridUintConfig::new(1,0,0),
@@ -416,19 +420,20 @@ fn optimize_uint_configs_best(
         HybridUintConfig::new(10,0,0), HybridUintConfig::new(12,0,0),
     ];
 
-    let num_histograms = values_per_histo.len();
+    let num_histograms = freqs_per_histo.len();
     let max_alpha = ANS_MAX_ALPHABET_SIZE;
 
     let mut best_configs = vec![HybridUintConfig::new(4, 2, 0); num_histograms];
-    let mut counts_buf: Vec<u32> = Vec::new(); // reused across candidates
+    let mut counts_buf: Vec<u32> = Vec::new();
 
     for h in 0..num_histograms {
-        let values = &values_per_histo[h];
-        if values.is_empty() {
+        let freqs = &freqs_per_histo[h];
+        if freqs.is_empty() {
             continue;
         }
 
-        let max_value = values.iter().copied().max().unwrap_or(0);
+        let max_value = freqs.keys().copied().max().unwrap_or(0);
+        let total: u32 = freqs.values().sum();
         let mut best_cost = f64::MAX;
 
         for &cfg in &candidates {
@@ -447,13 +452,13 @@ fn optimize_uint_configs_best(
             counts_buf.clear();
             counts_buf.resize(capacity, 0);
             let mut extra_bits_total: u64 = 0;
-            for &val in values {
+            for (&val, &freq) in freqs {
                 let (tok, _, nbits) = cfg.encode(val);
-                counts_buf[tok as usize] += 1;
-                extra_bits_total += nbits as u64;
+                counts_buf[tok as usize] += freq;
+                extra_bits_total += nbits as u64 * freq as u64;
             }
 
-            let inv_total = 1.0f32 / values.len() as f32;
+            let inv_total = 1.0f32 / total as f32;
             let mut entropy_cost = 0.0f64;
             for &count in &counts_buf[..capacity] {
                 if count > 0 {
