@@ -655,6 +655,9 @@ impl VarDctEncoder {
             );
         }
 
+        // Free masking — no longer needed after AC strategy selection.
+        drop(masking);
+
         // Adjust quant field for multi-block transforms.
         // At low distances uses max, at high distances blends toward mean for better quality.
         // Adjust BOTH u8 and float fields (libjxl adjusts float before SetQuantField).
@@ -689,6 +692,9 @@ impl VarDctEncoder {
                 splines_data.as_ref(),
             );
         }
+
+        // Free float quant field — no longer needed after butteraugli refinement.
+        drop(quant_field_float);
 
         // Log quant field statistics after all adjustments
         {
@@ -786,27 +792,43 @@ impl VarDctEncoder {
 
         // Compute per-block EPF sharpness map when EPF is active
         // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl
-        let sharpness_map =
-            if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask = mask1x1.unwrap_or_else(|| {
-                    super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
-                });
-                Some(super::epf::compute_epf_sharpness(
-                    [&xyb_x, &xyb_y, &xyb_b],
-                    quant_dc,
-                    quant_ac,
-                    &quant_field,
-                    &mask,
-                    &params,
-                    &cfl_map,
-                    &ac_strategy,
-                    self.enable_gaborish,
-                    xsize_blocks,
-                    ysize_blocks,
-                ))
-            } else {
-                None
+        let sharpness_map = if params.epf_iters > 0
+            && self.distance >= 0.5
+            && self.profile.epf_dynamic_sharpness
+        {
+            let mask_fallback;
+            let mask: &[f32] = match &mask1x1 {
+                Some(m) => m,
+                None => {
+                    mask_fallback =
+                        super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height);
+                    &mask_fallback
+                }
             };
+            Some(super::epf::compute_epf_sharpness(
+                [&xyb_x, &xyb_y, &xyb_b],
+                quant_dc,
+                quant_ac,
+                &quant_field,
+                mask,
+                &params,
+                &cfl_map,
+                &ac_strategy,
+                self.enable_gaborish,
+                xsize_blocks,
+                ysize_blocks,
+            ))
+        } else {
+            None
+        };
+
+        // Free XYB planes — no longer needed after EPF sharpness computation.
+        // At 4K (6720×4480), this frees ~339 MB (3 channels × padded_pixels × f32).
+        drop(xyb_x);
+        drop(xyb_y);
+        drop(xyb_b);
+        // Free mask1x1 — up to ~115 MB at 4K (padded_pixels × f32).
+        drop(mask1x1);
 
         // Two-pass mode: collect tokens, build optimal codes, write bitstream
         if self.optimize_codes {
