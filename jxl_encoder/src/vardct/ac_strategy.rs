@@ -30,7 +30,7 @@ use super::dct::{
     idct_32x16, idct_32x32, idct_32x64, idct_64x32, idct_64x64, identity_transform,
     inverse_dct2x2_transform, inverse_identity_transform,
 };
-use super::quant::{dequant_weights, quant_weights};
+use super::quant::{dequant_weights, dequant_weights_full, quant_weights, quant_weights_full};
 use crate::effort::EffortProfile;
 
 /// Pre-allocated scratch buffers for entropy estimation.
@@ -1010,9 +1010,25 @@ fn estimate_entropy_full_impl(
     let pixel_x = bx * BLOCK_DIM;
     let pixel_y = by * BLOCK_DIM;
 
+    // Pre-compute weight slices for all 3 channels (avoids per-channel match dispatch).
+    // quant_weights/dequant_weights go through a 19-arm match that the compiler doesn't
+    // inline; hoisting saves 4 match dispatches per call × 248K calls.
+    let strat_idx = raw_strategy as usize;
+    let full_quant_weights = quant_weights_full(strat_idx);
+    let full_dequant_weights = dequant_weights_full(strat_idx);
+    let per_ch_size = super::quant::WEIGHT_SIZES[strat_idx];
+
+    // Extract mask once to avoid per-channel Option pattern-match
+    let mask_row_base = if use_pixel_domain {
+        pixel_y * mask1x1_stride + pixel_x
+    } else {
+        0
+    };
+
     for (c, &cmap_factor) in cmap_factors.iter().enumerate() {
-        let weights = quant_weights(raw_strategy as usize, c);
-        let inv_wts = dequant_weights(raw_strategy as usize, c);
+        let wt_offset = c * per_ch_size;
+        let weights = &full_quant_weights[wt_offset..wt_offset + per_ch_size];
+        let inv_wts = &full_dequant_weights[wt_offset..wt_offset + per_ch_size];
 
         let offset_c = c * size;
         let offset_y = size; // Y channel always at offset 1*size
@@ -1066,7 +1082,10 @@ fn estimate_entropy_full_impl(
         }
 
         // Pixel-domain loss calculation
-        if let Some(mask) = mask1x1 {
+        if use_pixel_domain {
+            // mask1x1 is guaranteed Some when use_pixel_domain is true
+            let mask = mask1x1.unwrap();
+
             // Apply IDCT to error coefficients to get pixel-domain error
             let pixel_error_buf = &mut scratch.pixel_error[..size];
             apply_idct_for_strategy(raw_strategy, error_coeffs, pixel_error_buf);
@@ -1076,9 +1095,8 @@ fn estimate_entropy_full_impl(
             // mask1x1 is padded to block-aligned dimensions (xsize_blocks*8 × ysize_blocks*8),
             // and mask1x1_stride = padded_width, so all block pixel accesses are in-bounds.
             let mask_offset = MASK_CHANNEL_OFFSET[c];
-            let block_width = cx * BLOCK_DIM;
-            let block_height = cy * BLOCK_DIM;
-            let mask_row_base = pixel_y * mask1x1_stride + pixel_x;
+            let block_width_px = cx * BLOCK_DIM;
+            let block_height_px = cy * BLOCK_DIM;
 
             let mut channel_loss = jxl_simd::pixel_domain_loss(
                 pixel_error,
@@ -1086,8 +1104,8 @@ fn estimate_entropy_full_impl(
                 mask_row_base,
                 mask1x1_stride,
                 mask_offset,
-                block_width,
-                block_height,
+                block_width_px,
+                block_height_px,
             );
 
             // Apply channel multiplier
