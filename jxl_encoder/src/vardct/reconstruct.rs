@@ -707,7 +707,7 @@ fn restore_llf_from_dc(
             //
             // Inverse: 8x8 forward DCT then divide by scale
             let mut output = [0.0f32; 64];
-            dct_8x8(dc_grid[..64].try_into().unwrap(), &mut output);
+            dct_8x8(&dc_grid, &mut output);
 
             for iy in 0..8 {
                 for ix in 0..8 {
@@ -990,14 +990,12 @@ fn idct_for_strategy(raw_strategy: u8, coeffs: &[f32], output: &mut [f32]) {
         }
         RAW_STRATEGY_IDENTITY => {
             let mut tmp = [0.0f32; 64];
-            let c: &[f32; 64] = coeffs[..64].try_into().unwrap();
-            inverse_identity_transform(c, &mut tmp);
+            inverse_identity_transform(as_array_ref(coeffs, 0), &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         RAW_STRATEGY_DCT2X2 => {
             let mut tmp = [0.0f32; 64];
-            let c: &[f32; 64] = coeffs[..64].try_into().unwrap();
-            inverse_dct2x2_transform(c, &mut tmp);
+            inverse_dct2x2_transform(as_array_ref(coeffs, 0), &mut tmp);
             output[..64].copy_from_slice(&tmp);
         }
         _ => {

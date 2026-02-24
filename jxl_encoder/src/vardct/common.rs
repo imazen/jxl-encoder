@@ -123,6 +123,48 @@ pub fn uninit_buf<const N: usize>() -> [f32; N] {
     [0.0f32; N]
 }
 
+/// Convert `&slice[offset..offset+N]` to `&[f32; N]` without bounds checking.
+///
+/// With `unsafe-performance`, skips the slice range check and `try_into` length check.
+/// **Caller MUST ensure `offset + N <= slice.len()`.**
+///
+/// Without the feature, falls back to `slice[offset..offset+N].try_into().unwrap()`.
+#[cfg(feature = "unsafe-performance")]
+#[allow(unsafe_code)]
+#[inline(always)]
+pub fn as_array_ref<const N: usize>(slice: &[f32], offset: usize) -> &[f32; N] {
+    debug_assert!(offset + N <= slice.len());
+    // SAFETY: caller guarantees offset + N <= slice.len()
+    unsafe { &*(slice.as_ptr().add(offset) as *const [f32; N]) }
+}
+
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline(always)]
+pub fn as_array_ref<const N: usize>(slice: &[f32], offset: usize) -> &[f32; N] {
+    slice[offset..offset + N].try_into().unwrap()
+}
+
+/// Convert `&mut slice[offset..offset+N]` to `&mut [f32; N]` without bounds checking.
+///
+/// With `unsafe-performance`, skips the slice range check and `try_into` length check.
+/// **Caller MUST ensure `offset + N <= slice.len()`.**
+///
+/// Without the feature, falls back to `(&mut slice[offset..offset+N]).try_into().unwrap()`.
+#[cfg(feature = "unsafe-performance")]
+#[allow(unsafe_code)]
+#[inline(always)]
+pub fn as_array_mut<const N: usize>(slice: &mut [f32], offset: usize) -> &mut [f32; N] {
+    debug_assert!(offset + N <= slice.len());
+    // SAFETY: caller guarantees offset + N <= slice.len()
+    unsafe { &mut *(slice.as_mut_ptr().add(offset) as *mut [f32; N]) }
+}
+
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline(always)]
+pub fn as_array_mut<const N: usize>(slice: &mut [f32], offset: usize) -> &mut [f32; N] {
+    (&mut slice[offset..offset + N]).try_into().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

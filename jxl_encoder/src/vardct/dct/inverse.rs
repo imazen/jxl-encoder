@@ -5,6 +5,7 @@
 //! Inverse DCT transforms for all sizes.
 
 use super::constants::*;
+use crate::vardct::common::{as_array_mut, as_array_ref};
 
 // ============================================================================
 // Inverse DCT (IDCT) implementations for pixel-domain loss calculation
@@ -469,9 +470,7 @@ pub fn idct_64x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 4096);
     debug_assert!(output.len() >= 4096);
 
-    let input_arr: &[f32; 4096] = input[..4096].try_into().unwrap();
-    let output_arr: &mut [f32; 4096] = (&mut output[..4096]).try_into().unwrap();
-    jxl_simd::idct_64x64(input_arr, output_arr);
+    jxl_simd::idct_64x64(as_array_ref(input, 0), as_array_mut(output, 0));
 }
 
 /// Compute 64x32 inverse DCT (exactly reverses dct_64x32).
@@ -482,9 +481,7 @@ pub fn idct_64x32(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
-    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
-    jxl_simd::idct_64x32(input_arr, output_arr);
+    jxl_simd::idct_64x32(as_array_ref(input, 0), as_array_mut(output, 0));
 }
 
 /// Compute 32x64 inverse DCT (exactly reverses dct_32x64).
@@ -494,9 +491,7 @@ pub fn idct_32x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
-    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
-    jxl_simd::idct_32x64(input_arr, output_arr);
+    jxl_simd::idct_32x64(as_array_ref(input, 0), as_array_mut(output, 0));
 }
 
 /// Generic N-point 1D IDCT reference implementation.
