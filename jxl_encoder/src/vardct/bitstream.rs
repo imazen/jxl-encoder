@@ -1690,51 +1690,12 @@ impl VarDctEncoder {
         // Override num_sections for progressive: each pass has its own HfGroup sections
         let num_sections = 2 + num_dc_groups + num_groups * num_passes;
 
-        // AC section tokens: per-pass per-group — parallelizable
-        // ac_section_tokens_per_pass[pass][group] = Vec<Token>
-        let ac_results: Vec<Vec<Vec<Token>>> =
-            crate::parallel::parallel_map(num_groups, |group_idx| {
-                tokenize_ac_group(
-                    group_idx,
-                    xsize_blocks,
-                    ysize_blocks,
-                    xsize_groups,
-                    quant_ac,
-                    nzeros,
-                    raw_nzeros,
-                    quant_field,
-                    ac_strategy,
-                    &block_ctx_map,
-                    custom_order_map.as_deref(),
-                    used_orders,
-                    &pass_config,
-                )
-            });
-
-        // Transpose: ac_results[group][pass] → ac_section_tokens_per_pass[pass][group]
-        let mut ac_section_tokens_per_pass: Vec<Vec<Vec<Token>>> =
-            vec![Vec::with_capacity(num_groups); num_passes];
-        for group_tokens in ac_results {
-            for (pass, tokens) in group_tokens.into_iter().enumerate() {
-                ac_section_tokens_per_pass[pass].push(tokens);
-            }
-        }
-
-        // ── Apply LZ77 if enabled (ANS only, before building codes) ──
+        // ── Apply LZ77 to DC if enabled (ANS only) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
         let mut dc_lz77_params: Option<crate::entropy_coding::lz77::Lz77Params> = None;
-        let mut ac_lz77_params_per_pass: Vec<Option<crate::entropy_coding::lz77::Lz77Params>> =
-            vec![None; num_passes];
 
         // Distance multiplier for special distance codes.
-        // The decoder derives dist_multiplier = max(channel_widths) for each
-        // modular subimage. The encoder must use the same multiplier so that
-        // LZ77 distance symbols are interpreted correctly.
-        //
-        // DC subimage channels: 3 DC planes, each width = xsize_blocks
-        // AC metadata subimage channels: EPF (w/64), CfL (w/64), BlockInfo (nb_blocks), QF (w/8)
-        // AC VarDCT coefficients: not modular, decoder passes dist_multiplier=0
         let _dc_distance_multiplier = xsize_blocks as i32;
         let ac_distance_multiplier = 0i32;
 
@@ -1745,8 +1706,6 @@ impl VarDctEncoder {
                 self.lz77_method, num_dc_groups, num_groups
             );
 
-            // Apply LZ77 to DC token streams (each DC group independently)
-            // Use actual merged tree context count (WP DC + AC metadata), not old constant.
             let dc_num_ctx = total_contexts as usize;
             let merged_dc = {
                 let mut m = Vec::new();
@@ -1778,16 +1737,10 @@ impl VarDctEncoder {
                     merged_dc.len(),
                     lz77_tokens.len()
                 );
-                // Re-split LZ77 tokens back into per-group
-                // For now, store merged LZ77 tokens and use single-group split
                 dc_lz77_params = Some(params);
-                // Replace per-group tokens with LZ77 versions
-                // (apply per-group independently for correct splitting)
                 let mut new_dc_per_group = Vec::with_capacity(num_dc_groups);
                 let mut new_md_per_group = Vec::with_capacity(num_dc_groups);
                 for i in 0..num_dc_groups {
-                    // Compute per-group DC channel width for distance multiplier.
-                    // DC subimage channels have width = group's block width.
                     let dc_gx = i % xsize_dc_groups;
                     let start_bx = dc_gx * DC_GROUP_DIM_IN_BLOCKS;
                     let end_bx = (start_bx + DC_GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
@@ -1805,8 +1758,6 @@ impl VarDctEncoder {
                         new_dc_per_group.push(dc_tokens_per_group[i].clone());
                     }
 
-                    // AC metadata subimage has channels with different widths.
-                    // Compute max(channel_widths) to match decoder's dist_multiplier.
                     let dc_gy = i / xsize_dc_groups;
                     let start_by = dc_gy * DC_GROUP_DIM_IN_BLOCKS;
                     let end_by = (start_by + DC_GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
@@ -1819,7 +1770,6 @@ impl VarDctEncoder {
                             }
                         }
                     }
-                    // Metadata channels: EPF (w/8), CfL (w/8), BlockInfo (nb_blocks x 2), QF (bw x bh)
                     let epf_w = (region_xblocks * BLOCK_DIM).div_ceil(64) as u32;
                     let qf_w = region_xblocks as u32;
                     let md_dist_mult = epf_w.max(num_ac_blocks).max(qf_w) as i32;
@@ -1838,85 +1788,21 @@ impl VarDctEncoder {
                 }
                 dc_tokens_per_group = new_dc_per_group;
                 ac_metadata_tokens_per_group = new_md_per_group;
-                let _ = lz77_tokens; // merged version not needed, per-group applied
+                let _ = lz77_tokens;
             } else {
                 #[cfg(feature = "debug-tokens")]
                 eprintln!("[LZ77] DC LZ77 not beneficial (threshold not met)");
             }
-
-            // Apply LZ77 to AC token streams per-pass (each pass independently)
-            let ac_num_ctx = block_ctx_map.num_ac_contexts();
-            for pass in 0..num_passes {
-                let merged_ac = {
-                    let mut m = Vec::new();
-                    for section in &ac_section_tokens_per_pass[pass] {
-                        m.extend_from_slice(section);
-                    }
-                    m
-                };
-                #[cfg(feature = "debug-tokens")]
-                eprintln!(
-                    "[LZ77] AC pass {} merged tokens: {}, num_contexts: {}",
-                    pass,
-                    merged_ac.len(),
-                    ac_num_ctx
-                );
-
-                if let Some((_lz77_tokens, params)) = crate::entropy_coding::lz77::apply_lz77(
-                    &merged_ac,
-                    ac_num_ctx,
-                    false,
-                    self.lz77_method,
-                    ac_distance_multiplier,
-                ) {
-                    #[cfg(feature = "debug-tokens")]
-                    eprintln!(
-                        "[LZ77] AC pass {} LZ77 ACTIVATED: {} -> {} tokens",
-                        pass,
-                        merged_ac.len(),
-                        _lz77_tokens.len()
-                    );
-                    ac_lz77_params_per_pass[pass] = Some(params);
-                    let mut new_sections = Vec::with_capacity(num_groups);
-                    for tokens in &ac_section_tokens_per_pass[pass] {
-                        if let Some((lz77_ac, _)) = crate::entropy_coding::lz77::apply_lz77(
-                            tokens,
-                            ac_num_ctx,
-                            false,
-                            self.lz77_method,
-                            ac_distance_multiplier,
-                        ) {
-                            new_sections.push(lz77_ac);
-                        } else {
-                            new_sections.push(tokens.clone());
-                        }
-                    }
-                    ac_section_tokens_per_pass[pass] = new_sections;
-                } else {
-                    #[cfg(feature = "debug-tokens")]
-                    eprintln!(
-                        "[LZ77] AC pass {} LZ77 not beneficial (threshold not met)",
-                        pass
-                    );
-                }
-            }
         }
 
-        // ── Build optimal codes ──
+        // ── Build DC optimal codes ──
 
-        // Merge all DC section tokens (DC + AC metadata) for frequency counting
-        // When using a learned DC tree, the number of contexts is:
-        //   AC metadata contexts (0-10) + learned tree contexts (11+)
-        // The decoder's MaConfig::parse reads Decoder::parse(ctx) where ctx is the number of tree leaves.
-        // total_contexts from kWPFixedDC tree includes AC metadata (11) + DC tree contexts
         let base_dc_contexts = total_contexts as usize;
         let dc_num_contexts = if dc_lz77_params.is_some() {
-            base_dc_contexts + 1 // +1 for LZ77 distance context
+            base_dc_contexts + 1
         } else {
             base_dc_contexts
         };
-        // Build entropy codes by iterating per-group tokens without merging.
-        // This avoids allocating a merged Vec (which can be hundreds of MB).
         let dc_groups: Vec<&[Token]> = dc_tokens_per_group
             .iter()
             .chain(ac_metadata_tokens_per_group.iter())
@@ -1939,37 +1825,178 @@ impl VarDctEncoder {
             ))
         };
 
-        // Build per-pass AC entropy codes by iterating per-group tokens without merging.
+        // ── AC entropy codes: accumulate + build (ANS) or tokenize + store (Huffman) ──
+        //
+        // For ANS (default): Use two-phase approach to avoid O(total_tokens) memory.
+        // Phase 1: tokenize each group → apply LZ77 → accumulate histograms → drop tokens.
+        // Phase 2 (later, during write): re-tokenize → re-apply LZ77 → write with built codes.
+        // This saves ~720 MB on 4K images.
+        //
+        // For Huffman: Store per-group tokens (legacy approach, only with --no-ans).
+
         let base_ac_num_contexts = block_ctx_map.num_ac_contexts();
-        let mut ac_built_codes: Vec<BuiltEntropyCode> = Vec::with_capacity(num_passes);
-        for pass in 0..num_passes {
-            let ac_num_contexts = if ac_lz77_params_per_pass[pass].is_some() {
-                base_ac_num_contexts + 1 // +1 for LZ77 distance context
-            } else {
-                base_ac_num_contexts
-            };
-            let ac_groups: Vec<&[Token]> = ac_section_tokens_per_pass[pass]
-                .iter()
-                .map(|v| v.as_slice())
+        let lz77_method = self.lz77_method;
+
+        // ac_section_tokens_per_pass is only populated for Huffman path.
+        // For ANS path, it remains empty and the write phase re-tokenizes.
+        let ac_section_tokens_per_pass: Vec<Vec<Vec<Token>>>;
+        let ac_lz77_params_per_pass: Vec<Option<crate::entropy_coding::lz77::Lz77Params>>;
+        let ac_built_codes: Vec<BuiltEntropyCode>;
+
+        if self.use_ans {
+            // ANS path: accumulate statistics without storing tokens.
+            use crate::entropy_coding::encode::AccumulatedAnsData;
+
+            // Accumulator context count: +1 for potential LZ77 distance context.
+            let acc_num_ctx = base_ac_num_contexts + if use_lz77 { 1 } else { 0 };
+
+            // Per-thread state: per-pass accumulators + per-pass LZ77-used flags.
+            let acc_state = crate::parallel::parallel_fold(
+                num_groups,
+                || {
+                    (
+                        (0..num_passes)
+                            .map(|_| AccumulatedAnsData::new(acc_num_ctx))
+                            .collect::<Vec<_>>(),
+                        vec![false; num_passes],
+                    )
+                },
+                |group_idx, (accumulators, any_lz77)| {
+                    let pass_tokens = tokenize_ac_group(
+                        group_idx,
+                        xsize_blocks,
+                        ysize_blocks,
+                        xsize_groups,
+                        quant_ac,
+                        nzeros,
+                        raw_nzeros,
+                        quant_field,
+                        ac_strategy,
+                        &block_ctx_map,
+                        custom_order_map.as_deref(),
+                        used_orders,
+                        &pass_config,
+                    );
+                    for (pass, tokens) in pass_tokens.iter().enumerate() {
+                        if use_lz77 {
+                            let lz77_params = crate::entropy_coding::lz77::Lz77Params::new(
+                                base_ac_num_contexts,
+                                false,
+                            );
+                            if let Some((lz77_tokens, _)) = crate::entropy_coding::lz77::apply_lz77(
+                                tokens,
+                                base_ac_num_contexts,
+                                false,
+                                lz77_method,
+                                ac_distance_multiplier,
+                            ) {
+                                accumulators[pass].add_tokens(&lz77_tokens, Some(&lz77_params));
+                                any_lz77[pass] = true;
+                            } else {
+                                accumulators[pass].add_tokens(tokens, None);
+                            }
+                        } else {
+                            accumulators[pass].add_tokens(tokens, None);
+                        }
+                    }
+                },
+                |(mut a_acc, mut a_lz77): (Vec<AccumulatedAnsData>, Vec<bool>),
+                 (b_acc, b_lz77): (Vec<AccumulatedAnsData>, Vec<bool>)| {
+                    for (pass, b) in b_acc.into_iter().enumerate() {
+                        a_acc[pass].merge(&b);
+                        a_lz77[pass] |= b_lz77[pass];
+                    }
+                    (a_acc, a_lz77)
+                },
+            );
+
+            let (pass_accumulators, any_lz77_per_pass) = acc_state;
+
+            // Determine LZ77 params per pass based on whether any group used it.
+            ac_lz77_params_per_pass = (0..num_passes)
+                .map(|pass| {
+                    if any_lz77_per_pass[pass] {
+                        let mut p = crate::entropy_coding::lz77::Lz77Params::new(
+                            base_ac_num_contexts,
+                            false,
+                        );
+                        p.enabled = true;
+                        Some(p)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
 
-            let ac_built_code = if self.use_ans {
-                BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
-                    &ac_groups,
-                    ac_num_contexts,
-                    self.profile.enhanced_clustering_vardct,
-                    ac_lz77_params_per_pass[pass].as_ref(),
-                    None,
-                ))
-            } else {
-                BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
-                    &ac_groups,
-                    ac_num_contexts,
-                    self.profile.enhanced_clustering_vardct,
-                    ac_lz77_params_per_pass[pass].as_ref(),
-                ))
-            };
-            ac_built_codes.push(ac_built_code);
+            // Build per-pass AC entropy codes from accumulated data.
+            ac_built_codes = (0..num_passes)
+                .map(|pass| {
+                    let nc = if ac_lz77_params_per_pass[pass].is_some() {
+                        base_ac_num_contexts + 1
+                    } else {
+                        base_ac_num_contexts
+                    };
+                    BuiltEntropyCode::Ans(
+                        crate::entropy_coding::encode::build_entropy_code_from_accumulated_ans(
+                            &pass_accumulators[pass],
+                            nc,
+                            self.profile.enhanced_clustering_vardct,
+                            ac_lz77_params_per_pass[pass].as_ref(),
+                            None,
+                        ),
+                    )
+                })
+                .collect();
+
+            // No stored tokens for ANS path.
+            ac_section_tokens_per_pass = Vec::new();
+        } else {
+            // Huffman path: tokenize and store per-group tokens.
+            let ac_results: Vec<Vec<Vec<Token>>> =
+                crate::parallel::parallel_map(num_groups, |group_idx| {
+                    tokenize_ac_group(
+                        group_idx,
+                        xsize_blocks,
+                        ysize_blocks,
+                        xsize_groups,
+                        quant_ac,
+                        nzeros,
+                        raw_nzeros,
+                        quant_field,
+                        ac_strategy,
+                        &block_ctx_map,
+                        custom_order_map.as_deref(),
+                        used_orders,
+                        &pass_config,
+                    )
+                });
+
+            let mut stored_tokens: Vec<Vec<Vec<Token>>> =
+                vec![Vec::with_capacity(num_groups); num_passes];
+            for group_tokens in ac_results {
+                for (pass, tokens) in group_tokens.into_iter().enumerate() {
+                    stored_tokens[pass].push(tokens);
+                }
+            }
+
+            // No LZ77 for Huffman path.
+            ac_lz77_params_per_pass = vec![None; num_passes];
+
+            // Build Huffman codes from stored tokens.
+            ac_built_codes = (0..num_passes)
+                .map(|pass| {
+                    let ac_groups: Vec<&[Token]> =
+                        stored_tokens[pass].iter().map(|v| v.as_slice()).collect();
+                    BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
+                        &ac_groups,
+                        base_ac_num_contexts,
+                        self.profile.enhanced_clustering_vardct,
+                        None,
+                    ))
+                })
+                .collect();
+
+            ac_section_tokens_per_pass = stored_tokens;
         }
 
         // ── Tokenize coefficient orders (if custom) ──
@@ -2095,11 +2122,51 @@ impl VarDctEncoder {
             )?;
 
             let mut ac_group_writer = BitWriter::with_capacity(num_blocks * 100);
-            ac_built_codes[0].write_tokens(
-                &ac_section_tokens_per_pass[0][0],
-                ac_lz77_params_per_pass[0].as_ref(),
-                &mut ac_group_writer,
-            )?;
+            if ac_section_tokens_per_pass.is_empty() {
+                // ANS path: re-tokenize the single group for writing.
+                let pass_tokens = tokenize_ac_group(
+                    0,
+                    xsize_blocks,
+                    ysize_blocks,
+                    xsize_groups,
+                    quant_ac,
+                    nzeros,
+                    raw_nzeros,
+                    quant_field,
+                    ac_strategy,
+                    &block_ctx_map,
+                    custom_order_map.as_deref(),
+                    used_orders,
+                    &pass_config,
+                );
+                let tokens = &pass_tokens[0];
+                if ac_lz77_params_per_pass[0].is_some() {
+                    if let Some((lz77_tokens, _)) = crate::entropy_coding::lz77::apply_lz77(
+                        tokens,
+                        base_ac_num_contexts,
+                        false,
+                        lz77_method,
+                        ac_distance_multiplier,
+                    ) {
+                        ac_built_codes[0].write_tokens(
+                            &lz77_tokens,
+                            ac_lz77_params_per_pass[0].as_ref(),
+                            &mut ac_group_writer,
+                        )?;
+                    } else {
+                        ac_built_codes[0].write_tokens(tokens, None, &mut ac_group_writer)?;
+                    }
+                } else {
+                    ac_built_codes[0].write_tokens(tokens, None, &mut ac_group_writer)?;
+                }
+            } else {
+                // Huffman path: use stored tokens.
+                ac_built_codes[0].write_tokens(
+                    &ac_section_tokens_per_pass[0][0],
+                    ac_lz77_params_per_pass[0].as_ref(),
+                    &mut ac_group_writer,
+                )?;
+            }
 
             let mut combined = dc_global;
             combined.append_unaligned(&dc_group)?;
@@ -2173,7 +2240,59 @@ impl VarDctEncoder {
             // Section index = 2 + num_dc_groups + pass * num_groups + group
             for pass in 0..num_passes {
                 let is_last_pass = pass == num_passes - 1;
-                let ac_group_sections: Vec<Vec<u8>> =
+                let ac_group_sections: Vec<Vec<u8>> = if ac_section_tokens_per_pass.is_empty() {
+                    // ANS path: re-tokenize each group for writing.
+                    let lz77_for_pass = ac_lz77_params_per_pass[pass].as_ref();
+                    crate::parallel::parallel_map_result(num_groups, |group_idx| {
+                        let pass_tokens = tokenize_ac_group(
+                            group_idx,
+                            xsize_blocks,
+                            ysize_blocks,
+                            xsize_groups,
+                            quant_ac,
+                            nzeros,
+                            raw_nzeros,
+                            quant_field,
+                            ac_strategy,
+                            &block_ctx_map,
+                            custom_order_map.as_deref(),
+                            used_orders,
+                            &pass_config,
+                        );
+                        let tokens = &pass_tokens[pass];
+                        let write_tokens = if lz77_for_pass.is_some() {
+                            if let Some((lz77_tokens, _)) = crate::entropy_coding::lz77::apply_lz77(
+                                tokens,
+                                base_ac_num_contexts,
+                                false,
+                                lz77_method,
+                                ac_distance_multiplier,
+                            ) {
+                                Some(lz77_tokens)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        let (toks, lz77_p) = match &write_tokens {
+                            Some(lz77_toks) => (lz77_toks.as_slice(), lz77_for_pass),
+                            None => (tokens.as_slice(), None),
+                        };
+                        encode_ac_group_section(
+                            toks,
+                            &ac_built_codes[pass],
+                            lz77_p,
+                            alpha,
+                            is_last_pass,
+                            group_idx,
+                            xsize_groups,
+                            width,
+                            height,
+                        )
+                    })?
+                } else {
+                    // Huffman path: use stored tokens.
                     crate::parallel::parallel_map_result(num_groups, |group_idx| {
                         encode_ac_group_section(
                             &ac_section_tokens_per_pass[pass][group_idx],
@@ -2186,7 +2305,8 @@ impl VarDctEncoder {
                             width,
                             height,
                         )
-                    })?;
+                    })?
+                };
                 sections.extend(ac_group_sections);
             }
 
