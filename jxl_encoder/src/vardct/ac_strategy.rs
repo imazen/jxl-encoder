@@ -15,7 +15,7 @@
 
 use super::ac_strategy_search::{
     find_best_16x16_transform, find_best_32x32_transform, find_best_64x64_transform,
-    try_merge_16x16,
+    try_merge_16x16, try_merge_32x32,
 };
 use super::afv::afv_transform_from_pixels;
 use super::block_extract::*;
@@ -1715,55 +1715,76 @@ pub fn compute_ac_strategy(
                         if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 4) {
                             continue;
                         }
-                        // Save current strategies for the 4×4 region
-                        let mut saved = [0u8; 16];
-                        for dy in 0..4usize {
-                            for dx in 0..4usize {
-                                saved[dy * 4 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
-                            }
-                        }
-                        // Reset all blocks in the 4×4 region to DCT8
-                        for dy in 0..4usize {
-                            for dx in 0..4usize {
-                                ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
-                            }
-                        }
-                        find_best_32x32_transform(
-                            xyb,
-                            stride,
-                            tile_bx,
-                            tile_by,
-                            cx,
-                            cy,
-                            distance,
-                            quant_field_float,
-                            xsize_blocks,
-                            masking,
-                            ytox,
-                            ytob,
-                            mask1x1,
-                            mask1x1_stride,
-                            &mut ac_strategy,
-                            &mut scratch,
-                            None,
-                            profile,
-                        );
-                        // Only keep results if a multi-block transform was selected
-                        let has_multi = (0..4usize).any(|dy| {
-                            (0..4usize).any(|dx| {
-                                let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
-                                COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
-                            })
-                        });
-                        if !has_multi {
-                            // Restore original strategies
+                        if is_full_tile {
+                            // Fast path: read cached costs, evaluate only 5 large candidates.
+                            try_merge_32x32(
+                                xyb,
+                                stride,
+                                tile_bx,
+                                tile_by,
+                                cx,
+                                cy,
+                                distance,
+                                quant_field_float,
+                                xsize_blocks,
+                                masking,
+                                ytox,
+                                ytob,
+                                mask1x1,
+                                mask1x1_stride,
+                                &mut ac_strategy,
+                                &mut scratch,
+                                profile,
+                            );
+                        } else {
+                            // Edge tile: save/reset/evaluate/check/restore pattern.
+                            let mut saved = [0u8; 16];
                             for dy in 0..4usize {
                                 for dx in 0..4usize {
-                                    ac_strategy.set_raw_byte(
-                                        abs_bx + dx,
-                                        abs_by + dy,
-                                        saved[dy * 4 + dx],
-                                    );
+                                    saved[dy * 4 + dx] =
+                                        ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                                }
+                            }
+                            for dy in 0..4usize {
+                                for dx in 0..4usize {
+                                    ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+                                }
+                            }
+                            find_best_32x32_transform(
+                                xyb,
+                                stride,
+                                tile_bx,
+                                tile_by,
+                                cx,
+                                cy,
+                                distance,
+                                quant_field_float,
+                                xsize_blocks,
+                                masking,
+                                ytox,
+                                ytob,
+                                mask1x1,
+                                mask1x1_stride,
+                                &mut ac_strategy,
+                                &mut scratch,
+                                None,
+                                profile,
+                            );
+                            let has_multi = (0..4usize).any(|dy| {
+                                (0..4usize).any(|dx| {
+                                    let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                                    COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
+                                })
+                            });
+                            if !has_multi {
+                                for dy in 0..4usize {
+                                    for dx in 0..4usize {
+                                        ac_strategy.set_raw_byte(
+                                            abs_bx + dx,
+                                            abs_by + dy,
+                                            saved[dy * 4 + dx],
+                                        );
+                                    }
                                 }
                             }
                         }
