@@ -12,7 +12,6 @@ use super::common::*;
 use super::dct::dct_8x8;
 use super::encoder::VarDctEncoder;
 use super::quant;
-use crate::debug_rect;
 
 /// Inverse of the color factor used in CfL ratio conversion.
 /// `ytox_ratio(x) = x * K_INV_COLOR_FACTOR`
@@ -138,9 +137,6 @@ pub fn compute_cfl_map(
     let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
     let num_tiles = xsize_tiles * ysize_tiles;
 
-    let mut ytox = vec![0i8; num_tiles];
-    let mut ytob = vec![0i8; num_tiles];
-
     // Pre-compute inverse quant weights once (avoid per-block division).
     let qw_x = quant::quant_weights(0, 0); // DCT8, X channel
     let qw_b = quant::quant_weights(0, 2); // DCT8, B channel
@@ -151,98 +147,92 @@ pub fn compute_cfl_map(
         inv_qm_b[i] = 1.0 / qw_b[i];
     }
 
-    // Max coefficients per tile: 8*8 blocks * 64 coefficients = 4096
-    let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
-    let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
-    let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
-    let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
-    let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
+    // Process tiles in parallel. Each tile is independent (reads shared XYB,
+    // writes only to its own ytox/ytob slot).
+    let tile_results = crate::parallel::parallel_map(num_tiles, |tile_idx| {
+        let tx = tile_idx % xsize_tiles;
+        let ty = tile_idx / xsize_tiles;
+        let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
+        let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
+        let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+        let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
 
-    for ty in 0..ysize_tiles {
-        for tx in 0..xsize_tiles {
-            let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
-            let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
-            let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
-            let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+        // Thread-local scratch buffers
+        let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
+        let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
+        let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
+        let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
+        let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
 
-            let mut num_ac = 0usize;
+        let mut num_ac = 0usize;
 
-            for by in tile_by0..tile_by1 {
-                for bx in tile_bx0..tile_bx1 {
-                    // Extract and DCT each channel for this block
-                    let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
+        for by in tile_by0..tile_by1 {
+            for bx in tile_bx0..tile_bx1 {
+                let mut block_y = [0.0f32; DCT_BLOCK_SIZE];
+                let mut block_x = [0.0f32; DCT_BLOCK_SIZE];
+                let mut block_b = [0.0f32; DCT_BLOCK_SIZE];
 
-                    let x0 = bx * BLOCK_DIM;
-                    for dy in 0..BLOCK_DIM {
-                        let src = (by * BLOCK_DIM + dy) * stride + x0;
-                        let dst = dy * BLOCK_DIM;
-                        block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
-                        block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
-                        block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
-                    }
-
-                    let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut dct_x = [0.0f32; DCT_BLOCK_SIZE];
-                    let mut dct_b = [0.0f32; DCT_BLOCK_SIZE];
-                    dct_8x8(&block_y, &mut dct_y);
-                    dct_8x8(&block_x, &mut dct_x);
-                    dct_8x8(&block_b, &mut dct_b);
-
-                    // Zero out DC so it doesn't affect the AC-only fitting.
-                    dct_y[0] = 0.0;
-                    dct_x[0] = 0.0;
-                    dct_b[0] = 0.0;
-
-                    // Multiply by precomputed inverse quant weights and accumulate.
-                    for i in 0..DCT_BLOCK_SIZE {
-                        coeffs_yx[num_ac + i] = dct_y[i] * inv_qm_x[i];
-                        coeffs_x[num_ac + i] = dct_x[i] * inv_qm_x[i];
-                        coeffs_yb[num_ac + i] = dct_y[i] * inv_qm_b[i];
-                        coeffs_b[num_ac + i] = dct_b[i] * inv_qm_b[i];
-                    }
-                    num_ac += DCT_BLOCK_SIZE;
+                let x0 = bx * BLOCK_DIM;
+                for dy in 0..BLOCK_DIM {
+                    let src = (by * BLOCK_DIM + dy) * stride + x0;
+                    let dst = dy * BLOCK_DIM;
+                    block_y[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_y[src..src + BLOCK_DIM]);
+                    block_x[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_x[src..src + BLOCK_DIM]);
+                    block_b[dst..dst + BLOCK_DIM].copy_from_slice(&xyb_b[src..src + BLOCK_DIM]);
                 }
-            }
 
-            let tile_idx = ty * xsize_tiles + tx;
-            ytox[tile_idx] = find_best_multiplier(
-                &coeffs_yx,
-                &coeffs_x,
-                num_ac,
-                0.0,
-                K_DISTANCE_MULTIPLIER_AC,
-                use_newton,
-                newton_eps,
-                newton_max_iters,
-            );
-            ytob[tile_idx] = find_best_multiplier(
-                &coeffs_yb,
-                &coeffs_b,
-                num_ac,
-                1.0,
-                K_DISTANCE_MULTIPLIER_AC,
-                use_newton,
-                newton_eps,
-                newton_max_iters,
-            );
-            // Compute Y energy for this tile (how much luma AC content)
-            let y_energy: f32 = coeffs_yx[..num_ac].iter().map(|v| v * v).sum();
-            let num_blocks = (tile_bx1 - tile_bx0) * (tile_by1 - tile_by0);
-            debug_rect!(
-                "cfl/tile",
-                tile_bx0 * 8,
-                tile_by0 * 8,
-                (tile_bx1 - tile_bx0) * 8,
-                (tile_by1 - tile_by0) * 8,
-                "ytox={} ytob={} | blocks={} y_energy={:.0}",
-                ytox[tile_idx],
-                ytob[tile_idx],
-                num_blocks,
-                y_energy
-            );
+                let mut dct_y = [0.0f32; DCT_BLOCK_SIZE];
+                let mut dct_x = [0.0f32; DCT_BLOCK_SIZE];
+                let mut dct_b = [0.0f32; DCT_BLOCK_SIZE];
+                dct_8x8(&block_y, &mut dct_y);
+                dct_8x8(&block_x, &mut dct_x);
+                dct_8x8(&block_b, &mut dct_b);
+
+                // Zero out DC so it doesn't affect the AC-only fitting.
+                dct_y[0] = 0.0;
+                dct_x[0] = 0.0;
+                dct_b[0] = 0.0;
+
+                for i in 0..DCT_BLOCK_SIZE {
+                    coeffs_yx[num_ac + i] = dct_y[i] * inv_qm_x[i];
+                    coeffs_x[num_ac + i] = dct_x[i] * inv_qm_x[i];
+                    coeffs_yb[num_ac + i] = dct_y[i] * inv_qm_b[i];
+                    coeffs_b[num_ac + i] = dct_b[i] * inv_qm_b[i];
+                }
+                num_ac += DCT_BLOCK_SIZE;
+            }
         }
+
+        let tx_val = find_best_multiplier(
+            &coeffs_yx,
+            &coeffs_x,
+            num_ac,
+            0.0,
+            K_DISTANCE_MULTIPLIER_AC,
+            use_newton,
+            newton_eps,
+            newton_max_iters,
+        );
+        let tb_val = find_best_multiplier(
+            &coeffs_yb,
+            &coeffs_b,
+            num_ac,
+            1.0,
+            K_DISTANCE_MULTIPLIER_AC,
+            use_newton,
+            newton_eps,
+            newton_max_iters,
+        );
+
+        (tx_val, tb_val)
+    });
+
+    // Unpack results into ytox/ytob arrays
+    let mut ytox = vec![0i8; num_tiles];
+    let mut ytob = vec![0i8; num_tiles];
+    for (tile_idx, &(tx_val, tb_val)) in tile_results.iter().enumerate() {
+        ytox[tile_idx] = tx_val;
+        ytob[tile_idx] = tb_val;
     }
 
     CflMap {
@@ -283,114 +273,111 @@ pub fn refine_cfl_map(
 ) {
     let xsize_tiles = cfl_map.xsize_tiles;
     let ysize_tiles = cfl_map.ysize_tiles;
+    let num_tiles = xsize_tiles * ysize_tiles;
 
-    // Max coefficients per tile: 8×8 blocks × 64 coefficients = 4096
-    let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
-    let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
-    let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
-    let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
-    let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
+    // Process tiles in parallel. Each tile is independent.
+    let tile_results = crate::parallel::parallel_map(num_tiles, |tile_idx| {
+        let tx = tile_idx % xsize_tiles;
+        let ty = tile_idx / xsize_tiles;
+        let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
+        let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
+        let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+        let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
 
-    // DCT output buffers (max size for DCT64x64 = 4096 coefficients)
-    const MAX_COEFF_AREA: usize = 4096;
-    let mut dct_y = vec![0.0f32; MAX_COEFF_AREA];
-    let mut dct_x = vec![0.0f32; MAX_COEFF_AREA];
-    let mut dct_b = vec![0.0f32; MAX_COEFF_AREA];
+        // Thread-local scratch buffers
+        let max_coeffs_per_tile = TILE_DIM_IN_BLOCKS * TILE_DIM_IN_BLOCKS * DCT_BLOCK_SIZE;
+        let mut coeffs_yx = vec![0.0f32; max_coeffs_per_tile];
+        let mut coeffs_x = vec![0.0f32; max_coeffs_per_tile];
+        let mut coeffs_yb = vec![0.0f32; max_coeffs_per_tile];
+        let mut coeffs_b = vec![0.0f32; max_coeffs_per_tile];
 
-    for ty in 0..ysize_tiles {
-        for tx in 0..xsize_tiles {
-            let tile_bx0 = tx * TILE_DIM_IN_BLOCKS;
-            let tile_by0 = ty * TILE_DIM_IN_BLOCKS;
-            let tile_bx1 = (tile_bx0 + TILE_DIM_IN_BLOCKS).min(xsize_blocks);
-            let tile_by1 = (tile_by0 + TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+        const MAX_COEFF_AREA: usize = 4096;
+        let mut dct_y = vec![0.0f32; MAX_COEFF_AREA];
+        let mut dct_x = vec![0.0f32; MAX_COEFF_AREA];
+        let mut dct_b = vec![0.0f32; MAX_COEFF_AREA];
 
-            let mut num_ac = 0usize;
+        let mut num_ac = 0usize;
 
-            for by in tile_by0..tile_by1 {
-                for bx in tile_bx0..tile_bx1 {
-                    // Only process first blocks of multi-block transforms
-                    if !ac_strategy.is_first(bx, by) {
-                        continue;
-                    }
-
-                    let raw_strategy = ac_strategy.raw_strategy(bx, by);
-                    let covered_x = COVERED_X[raw_strategy as usize];
-                    let covered_y = COVERED_Y[raw_strategy as usize];
-
-                    // Skip blocks whose strategy is wider/taller than the tile
-                    // (matches libjxl: acs.covered_blocks_x() + x0 > x1)
-                    if covered_x + tile_bx0 > tile_bx1 || covered_y + tile_by0 > tile_by1 {
-                        continue;
-                    }
-
-                    // Apply forward DCT for each channel using actual strategy
-                    VarDctEncoder::apply_dct(xyb_y, stride, bx, by, raw_strategy, &mut dct_y);
-                    VarDctEncoder::apply_dct(xyb_x, stride, bx, by, raw_strategy, &mut dct_x);
-                    VarDctEncoder::apply_dct(xyb_b, stride, bx, by, raw_strategy, &mut dct_b);
-
-                    // CoefficientLayout: ensure cx >= cy (matches libjxl)
-                    let (cx, cy) = if covered_x >= covered_y {
-                        (covered_x, covered_y)
-                    } else {
-                        (covered_y, covered_x)
-                    };
-
-                    // Zero LLF positions: block[cx * 8 * iy + ix] for iy in 0..cy, ix in 0..cx
-                    for iy in 0..cy {
-                        for ix in 0..cx {
-                            let pos = cx * BLOCK_DIM * iy + ix;
-                            dct_y[pos] = 0.0;
-                            dct_x[pos] = 0.0;
-                            dct_b[pos] = 0.0;
-                        }
-                    }
-
-                    // Per-block quantization factor (libjxl: quantizer->Scale() * 128 * qq)
-                    let qq = quant_field[by * xsize_blocks + bx] as f32;
-                    let q = quant_scale * 128.0 * qq;
-
-                    // Get strategy-specific quant weights (1/InvMatrix in libjxl terms)
-                    let qw_x = quant::quant_weights(raw_strategy as usize, 0);
-                    let qw_b = quant::quant_weights(raw_strategy as usize, 2);
-
-                    // Accumulate weighted coefficients: coeff * q * InvMatrix
-                    // where InvMatrix[i] = 1.0 / quant_weights[i]
-                    let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
-                    for i in 0..num_coeffs {
-                        let qqm_x = q / qw_x[i];
-                        let qqm_b = q / qw_b[i];
-                        coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
-                        coeffs_x[num_ac + i] = dct_x[i] * qqm_x;
-                        coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;
-                        coeffs_b[num_ac + i] = dct_b[i] * qqm_b;
-                    }
-                    num_ac += num_coeffs;
+        for by in tile_by0..tile_by1 {
+            for bx in tile_bx0..tile_bx1 {
+                if !ac_strategy.is_first(bx, by) {
+                    continue;
                 }
+
+                let raw_strategy = ac_strategy.raw_strategy(bx, by);
+                let covered_x = COVERED_X[raw_strategy as usize];
+                let covered_y = COVERED_Y[raw_strategy as usize];
+
+                if covered_x + tile_bx0 > tile_bx1 || covered_y + tile_by0 > tile_by1 {
+                    continue;
+                }
+
+                VarDctEncoder::apply_dct(xyb_y, stride, bx, by, raw_strategy, &mut dct_y);
+                VarDctEncoder::apply_dct(xyb_x, stride, bx, by, raw_strategy, &mut dct_x);
+                VarDctEncoder::apply_dct(xyb_b, stride, bx, by, raw_strategy, &mut dct_b);
+
+                let (cx, cy) = if covered_x >= covered_y {
+                    (covered_x, covered_y)
+                } else {
+                    (covered_y, covered_x)
+                };
+
+                for iy in 0..cy {
+                    for ix in 0..cx {
+                        let pos = cx * BLOCK_DIM * iy + ix;
+                        dct_y[pos] = 0.0;
+                        dct_x[pos] = 0.0;
+                        dct_b[pos] = 0.0;
+                    }
+                }
+
+                let qq = quant_field[by * xsize_blocks + bx] as f32;
+                let q = quant_scale * 128.0 * qq;
+
+                let qw_x = quant::quant_weights(raw_strategy as usize, 0);
+                let qw_b = quant::quant_weights(raw_strategy as usize, 2);
+
+                let num_coeffs = cx * cy * DCT_BLOCK_SIZE;
+                for i in 0..num_coeffs {
+                    let qqm_x = q / qw_x[i];
+                    let qqm_b = q / qw_b[i];
+                    coeffs_yx[num_ac + i] = dct_y[i] * qqm_x;
+                    coeffs_x[num_ac + i] = dct_x[i] * qqm_x;
+                    coeffs_yb[num_ac + i] = dct_y[i] * qqm_b;
+                    coeffs_b[num_ac + i] = dct_b[i] * qqm_b;
+                }
+                num_ac += num_coeffs;
             }
-
-            let tile_idx = ty * xsize_tiles + tx;
-
-            cfl_map.ytox[tile_idx] = find_best_multiplier(
-                &coeffs_yx,
-                &coeffs_x,
-                num_ac,
-                0.0,
-                K_DISTANCE_MULTIPLIER_AC,
-                use_newton,
-                newton_eps,
-                newton_max_iters,
-            );
-            cfl_map.ytob[tile_idx] = find_best_multiplier(
-                &coeffs_yb,
-                &coeffs_b,
-                num_ac,
-                1.0,
-                K_DISTANCE_MULTIPLIER_AC,
-                use_newton,
-                newton_eps,
-                newton_max_iters,
-            );
         }
+
+        let tx_val = find_best_multiplier(
+            &coeffs_yx,
+            &coeffs_x,
+            num_ac,
+            0.0,
+            K_DISTANCE_MULTIPLIER_AC,
+            use_newton,
+            newton_eps,
+            newton_max_iters,
+        );
+        let tb_val = find_best_multiplier(
+            &coeffs_yb,
+            &coeffs_b,
+            num_ac,
+            1.0,
+            K_DISTANCE_MULTIPLIER_AC,
+            use_newton,
+            newton_eps,
+            newton_max_iters,
+        );
+
+        (tx_val, tb_val)
+    });
+
+    // Write results back to cfl_map
+    for (tile_idx, &(tx_val, tb_val)) in tile_results.iter().enumerate() {
+        cfl_map.ytox[tile_idx] = tx_val;
+        cfl_map.ytob[tile_idx] = tb_val;
     }
 }
 
