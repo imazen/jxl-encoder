@@ -577,6 +577,7 @@ pub fn build_and_write_coeff_orders(
             tokens,
             NUM_PERMUTATION_CONTEXTS,
             false, // no enhanced clustering for permutation
+            true,  // optimize uint configs
             None,  // no LZ77 for permutation data
             None,  // no pixel hint for permutation data
         );

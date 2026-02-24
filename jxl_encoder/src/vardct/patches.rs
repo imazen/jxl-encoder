@@ -1383,8 +1383,14 @@ pub(crate) fn encode_patches_section(
 
     // Build and write entropy code for patch tokens
     if use_ans {
-        let code =
-            build_entropy_code_ans_with_options(&tokens, NUM_PATCH_CONTEXTS, false, None, None);
+        let code = build_entropy_code_ans_with_options(
+            &tokens,
+            NUM_PATCH_CONTEXTS,
+            false,
+            true,
+            None,
+            None,
+        );
         crate::entropy_coding::encode::write_entropy_code_ans(&code, writer)?;
         crate::entropy_coding::encode::write_tokens_ans(&tokens, &code, None, writer)?;
     } else {

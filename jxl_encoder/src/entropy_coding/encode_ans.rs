@@ -133,6 +133,7 @@ impl AccumulatedAnsData {
 pub fn build_entropy_code_from_accumulated_ans(
     data: AccumulatedAnsData,
     enhanced_clustering: bool,
+    optimize_uint_configs: bool,
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
@@ -187,7 +188,12 @@ pub fn build_entropy_code_from_accumulated_ans(
     }
 
     // Optimize per-histogram HybridUint configs from merged value frequencies.
-    let uint_configs = if enhanced_clustering {
+    // libjxl uses uint_method=kNone (no optimization) for VarDCT AC/DC at effort < 9.
+    // The fast optimization can pick non-default configs whose signaling overhead
+    // exceeds their coding benefit on VarDCT streams.
+    let uint_configs = if !optimize_uint_configs {
+        vec![HybridUintConfig::new(4, 2, 0); num_histograms]
+    } else if enhanced_clustering {
         optimize_uint_configs_best_from_freqs(&merged_value_freqs, lz77)
     } else {
         optimize_uint_configs_fast_from_freqs(&merged_value_freqs, lz77)
@@ -276,7 +282,7 @@ pub fn build_entropy_code_from_accumulated_ans(
 /// 3. Normalizes each cluster histogram to sum to 4096.
 /// 4. Builds ANS distributions for encoding.
 pub fn build_entropy_code_ans(tokens: &[Token], num_contexts: usize) -> OwnedAnsEntropyCode {
-    build_entropy_code_ans_with_options(tokens, num_contexts, false, None, None)
+    build_entropy_code_ans_with_options(tokens, num_contexts, false, true, None, None)
 }
 
 /// Build an ANS entropy code with optional enhanced clustering.
@@ -288,6 +294,7 @@ pub fn build_entropy_code_ans_with_options(
     tokens: &[Token],
     num_contexts: usize,
     enhanced_clustering: bool,
+    optimize_uint_configs: bool,
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
@@ -295,6 +302,7 @@ pub fn build_entropy_code_ans_with_options(
         &[tokens],
         num_contexts,
         enhanced_clustering,
+        optimize_uint_configs,
         lz77,
         total_pixel_hint,
     )
@@ -313,6 +321,7 @@ pub fn build_entropy_code_ans_from_token_groups(
     groups: &[&[Token]],
     num_contexts: usize,
     enhanced_clustering: bool,
+    optimize_uint_configs: bool,
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
@@ -326,6 +335,7 @@ pub fn build_entropy_code_ans_from_token_groups(
     let code = build_entropy_code_from_accumulated_ans(
         accumulated,
         enhanced_clustering,
+        optimize_uint_configs,
         lz77,
         total_pixel_hint,
     );

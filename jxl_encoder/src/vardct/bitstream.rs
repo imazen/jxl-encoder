@@ -1927,6 +1927,7 @@ impl VarDctEncoder {
                 &dc_groups,
                 dc_num_contexts,
                 self.profile.enhanced_clustering_vardct,
+                self.profile.optimize_uint_configs_vardct,
                 dc_lz77_params.as_ref(),
                 None,
             ))
@@ -1958,6 +1959,7 @@ impl VarDctEncoder {
                     &ac_groups,
                     ac_num_contexts,
                     self.profile.enhanced_clustering_vardct,
+                    self.profile.optimize_uint_configs_vardct,
                     ac_lz77_params_per_pass[pass].as_ref(),
                     None,
                 ))

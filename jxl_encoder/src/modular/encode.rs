@@ -1577,6 +1577,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         &tokens,
         ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
+        true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
     );
@@ -1758,6 +1759,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
         &tokens,
         ans_num_contexts,
         true,
+        true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
     );
@@ -1969,6 +1971,7 @@ pub fn write_modular_stream_with_squeeze_and_tree(
         &tokens,
         ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
+        true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
     );

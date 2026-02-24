@@ -437,6 +437,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant(
         &all_tokens,
         ans_num_contexts,
         true, // enhanced clustering (pair-merge refinement)
+        true, // optimize uint configs
         lz77_params.as_ref(),
         Some(total_pixels),
     );

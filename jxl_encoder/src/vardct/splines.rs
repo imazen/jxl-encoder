@@ -786,7 +786,8 @@ pub(crate) fn encode_splines_section(data: &SplinesData, writer: &mut BitWriter)
     writer.write(1, 0)?; // lz77_enabled = false
 
     // Build and write ANS entropy code, then tokens.
-    let code = build_entropy_code_ans_with_options(&tokens, NUM_SPLINE_CONTEXTS, false, None, None);
+    let code =
+        build_entropy_code_ans_with_options(&tokens, NUM_SPLINE_CONTEXTS, false, true, None, None);
     write_entropy_code_ans(&code, writer)?;
     write_tokens_ans(&tokens, &code, None, writer)?;
 

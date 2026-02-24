@@ -165,6 +165,11 @@ pub struct EffortProfile {
     /// Use pair-merge clustering for VarDCT entropy codes (effort >= 9 in libjxl).
     /// When false, uses fast k-means-only clustering.
     pub enhanced_clustering_vardct: bool,
+    /// Optimize per-histogram HybridUint configs for VarDCT entropy codes.
+    /// libjxl uses uint_method=kNone (no optimization, default {4,2,0}) at effort < 9.
+    /// The fast optimization picks non-default configs whose signaling overhead
+    /// exceeds their coding benefit on VarDCT token distributions.
+    pub optimize_uint_configs_vardct: bool,
     /// Compute per-block dynamic EPF sharpness (effort >= 6 in libjxl).
     pub epf_dynamic_sharpness: bool,
     /// Recompute CfL map after initial quantization for better estimates (effort >= 7 in libjxl).
@@ -324,6 +329,7 @@ impl EffortProfile {
             // ── VarDCT pipeline ──
             chromacity_adjustment: effort >= 7,
             enhanced_clustering_vardct: effort >= 9,
+            optimize_uint_configs_vardct: effort >= 9,
             epf_dynamic_sharpness: effort >= 6,
             cfl_two_pass: effort >= 7,
             cfl_newton: effort >= 7,
@@ -421,6 +427,7 @@ impl EffortProfile {
             // ── VarDCT pipeline (N/A for lossless) ──
             chromacity_adjustment: false,
             enhanced_clustering_vardct: false,
+            optimize_uint_configs_vardct: false, // N/A for lossless
             epf_dynamic_sharpness: false,
             cfl_two_pass: false,
             cfl_newton: false,
@@ -586,6 +593,7 @@ mod tests {
         assert_eq!(p.fine_grained_step, 2);
         assert!(p.chromacity_adjustment); // e7+
         assert!(!p.enhanced_clustering_vardct); // e9+
+        assert!(!p.optimize_uint_configs_vardct); // e9+ (libjxl kNone at e<9)
         assert!(p.epf_dynamic_sharpness); // e6+
         assert!(p.cfl_two_pass); // e7+
         assert!(p.cfl_newton); // e7+ with pass 2
@@ -617,6 +625,7 @@ mod tests {
         assert!(!p.non_aligned_eval); // e6+
         assert!(!p.chromacity_adjustment); // e7+
         assert!(!p.enhanced_clustering_vardct); // e9+
+        assert!(!p.optimize_uint_configs_vardct); // e9+
         assert!(!p.epf_dynamic_sharpness); // e6+
         assert!(!p.cfl_two_pass); // e7+
         assert!(!p.cfl_newton); // e7+
@@ -636,6 +645,7 @@ mod tests {
         assert_eq!(p.butteraugli_iters, 4);
         assert_eq!(p.fine_grained_step, 1);
         assert!(p.enhanced_clustering_vardct); // e9+
+        assert!(p.optimize_uint_configs_vardct); // e9+
         assert_eq!(p.nb_rcts_to_try, 19);
         assert_eq!(p.wp_num_param_sets, 5); // e9+
         assert_eq!(p.tree_num_properties, 16);
@@ -650,6 +660,7 @@ mod tests {
         assert_eq!(p.butteraugli_iters, 2);
         assert_eq!(p.fine_grained_step, 2);
         assert!(!p.enhanced_clustering_vardct); // e9+
+        assert!(!p.optimize_uint_configs_vardct); // e9+
         assert_eq!(p.wp_num_param_sets, 2); // e8
     }
 
