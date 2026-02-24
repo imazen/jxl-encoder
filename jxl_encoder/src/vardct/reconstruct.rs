@@ -314,13 +314,17 @@ fn reconstruct_xyb_impl(
                 let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
                 let weights = quant_weights(raw_strategy as usize, c);
 
-                // Nested loops eliminate per-element integer divisions
+                // Nested loops eliminate per-element integer divisions.
+                // Pre-slice weights and dequant rows to eliminate inner bounds checks.
+                let inv_qac_qm = 1.0 / (qac * qm_mul);
                 for coef_slot_y in 0..cy {
                     for pos_y in 0..BLOCK_DIM {
                         let y = coef_slot_y * BLOCK_DIM + pos_y;
+                        let is_llf_row = y < cy;
+                        let row_off = y * block_width;
+                        let w_row = &weights[row_off..row_off + block_width];
+                        let dq_row = &mut dequant_scratch[c][row_off..row_off + block_width];
                         for coef_slot_x in 0..cx {
-                            // Skip LLF positions (restored from DC below)
-                            let is_llf_row = y < cy;
                             let (phys_row_off, phys_col_off) = if transpose_slots {
                                 (coef_slot_x, coef_slot_y)
                             } else {
@@ -329,16 +333,14 @@ fn reconstruct_xyb_impl(
                             let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
                             for pos_x in 0..BLOCK_DIM {
                                 let x = coef_slot_x * BLOCK_DIM + pos_x;
-                                let idx = y * block_width + x;
                                 if is_llf_row && x < cx {
                                     continue;
                                 }
                                 let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
                                 let q_int = row[pos_in_8x8];
                                 if q_int != 0 {
-                                    let weight = weights[idx];
                                     let biased = adjust_quant_bias(q_int, c);
-                                    dequant_scratch[c][idx] = biased * weight / (qac * qm_mul);
+                                    dq_row[x] = biased * w_row[x] * inv_qac_qm;
                                 }
                             }
                         }
@@ -363,15 +365,20 @@ fn reconstruct_xyb_impl(
 
             // Step 2: Restore CfL (AC positions only, not LLF)
             // The decoder applies: X[k] += x_factor * Y[k], B[k] += b_factor * Y[k]
-            for y in 0..block_height {
-                for x in 0..block_width {
-                    if y < cy && x < cx {
-                        continue;
+            // split_at_mut to get disjoint &mut references, then pre-slice rows.
+            {
+                let (dq_x, rest) = dequant_scratch.split_at_mut(1);
+                let (dq_y, dq_b) = rest.split_at_mut(1);
+                for y in 0..block_height {
+                    let x_start = if y < cy { cx } else { 0 };
+                    let row_off = y * block_width;
+                    let yr = &dq_y[0][row_off..row_off + block_width];
+                    let xr = &mut dq_x[0][row_off..row_off + block_width];
+                    let br = &mut dq_b[0][row_off..row_off + block_width];
+                    for x in x_start..block_width {
+                        xr[x] += x_factor * yr[x];
+                        br[x] += b_factor * yr[x];
                     }
-                    let idx = y * block_width + x;
-                    let y_val = dequant_scratch[1][idx];
-                    dequant_scratch[0][idx] += x_factor * y_val;
-                    dequant_scratch[2][idx] += b_factor * y_val;
                 }
             }
 
@@ -390,9 +397,10 @@ fn reconstruct_xyb_impl(
                 let idct_input = if needs_transpose {
                     // Transpose from post-swap to natural layout using scratch
                     for y in 0..block_height {
+                        let src_row =
+                            &dequant_scratch[c][y * block_width..y * block_width + block_width];
                         for x in 0..block_width {
-                            transpose_scratch[x * block_height + y] =
-                                dequant_scratch[c][y * block_width + x];
+                            transpose_scratch[x * block_height + y] = src_row[x];
                         }
                     }
                     &transpose_scratch[..size]
@@ -408,18 +416,10 @@ fn reconstruct_xyb_impl(
                 let pix_h = covered_y * BLOCK_DIM;
 
                 for py in 0..pix_h {
-                    let out_y = pixel_y + py;
-                    if out_y >= padded_height {
-                        break;
-                    }
-                    let out_row = out_y * padded_width;
-                    let in_row = py * pix_w;
-                    for px in 0..pix_w {
-                        let out_x = pixel_x + px;
-                        if out_x < padded_width {
-                            planes[c][out_row + out_x] = idct_scratch[in_row + px];
-                        }
-                    }
+                    let out_start = (pixel_y + py) * padded_width + pixel_x;
+                    let in_start = py * pix_w;
+                    planes[c][out_start..out_start + pix_w]
+                        .copy_from_slice(&idct_scratch[in_start..in_start + pix_w]);
                 }
             }
         }
