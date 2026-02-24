@@ -842,13 +842,13 @@ fn quant_weights_afv() -> &'static [f32] {
 }
 
 /// Per-channel weight count for each strategy.
-const WEIGHT_SIZES: [usize; NUM_VALID_STRATEGIES] = [
+pub(super) const WEIGHT_SIZES: [usize; NUM_VALID_STRATEGIES] = [
     64, 128, 128, 256, 1024, 64, 64, 64, 64, 64, 512, 512, 64, 64, 64, 64, 4096, 2048, 2048,
 ];
 
 /// Get the full quant weight table for a strategy (all 3 channels concatenated).
 #[inline]
-fn quant_weights_full(strategy: usize) -> &'static [f32] {
+pub(super) fn quant_weights_full(strategy: usize) -> &'static [f32] {
     match strategy {
         0 => quant_weights_dct8(),
         1 | 2 => quant_weights_dct16x8(),
@@ -921,7 +921,7 @@ static DEQUANT_WEIGHTS_DCT32X64: OnceBox<Vec<f32>> = OnceBox::new();
 
 /// Get the full dequant weight table for a strategy (all 3 channels concatenated).
 #[inline]
-fn dequant_weights_full(strategy: usize) -> &'static [f32] {
+pub(super) fn dequant_weights_full(strategy: usize) -> &'static [f32] {
     match strategy {
         0 => DEQUANT_WEIGHTS_DCT8.get_or_init(|| Box::new(generate_dequant_weights(0))),
         1 | 2 => DEQUANT_WEIGHTS_DCT16X8.get_or_init(|| Box::new(generate_dequant_weights(1))),
