@@ -832,6 +832,240 @@ pub(super) fn try_merge_16x16(
     true
 }
 
+/// Lightweight merge check for non-aligned 32×32 positions.
+///
+/// Like `try_merge_16x16` but for 4×4 block regions. Reads cached sub-costs
+/// from `scratch.entropy_estimate` and only evaluates 5 large candidates
+/// (DCT32×32, 2×DCT32×16, 2×DCT16×32). Replaces the full
+/// `find_best_32x32_transform` which internally runs 4×find_best_16x16 +
+/// re-evaluates all sub-block costs (~60+ estimate_entropy calls → 5 calls).
+///
+/// Returns true if a multi-block transform was accepted.
+///
+/// PRECONDITIONS:
+/// - `scratch.entropy_estimate` must be populated by the aligned pass
+/// - `ac_strategy.can_evaluate_region(abs_bx, abs_by, 4)` must be true
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_merge_32x32(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    let use_pixel_domain = mask1x1.is_some();
+    let cost_bases = (
+        profile.k_info_loss_mul_base,
+        profile.k_zeros_mul_base,
+        profile.k_cost_delta_base,
+    );
+
+    let (mul32x32, mul32x16) = if use_pixel_domain {
+        (1.0_f32, 1.0_f32)
+    } else {
+        let k32x32mul1: f32 = -0.75;
+        let k32x32mul2: f32 = 1.2;
+        let k32x32base: f32 = 2.0;
+        let m32 = k32x32mul2 + k32x32mul1 / (distance + k32x32base);
+
+        let k32x16mul1: f32 = -0.70;
+        let k32x16mul2: f32 = 1.1;
+        let k32x16base: f32 = 2.0;
+        let m16 = k32x16mul2 + k32x16mul1 / (distance + k32x16base);
+        (m32, m16)
+    };
+
+    let abs_bx = bx0 + cx;
+    let abs_by = by0 + cy;
+
+    // Read cached sub-costs from the aligned + non-aligned 16×16 passes.
+    // Sum into per-quadrant costs (2×2 array of quadrants, each covering 2×2 blocks).
+    let mut quadrant_cost = [[0.0f32; 2]; 2];
+    for iy in 0..4 {
+        for ix in 0..4 {
+            quadrant_cost[iy / 2][ix / 2] += scratch.entropy_estimate[(cy + iy) * 8 + (cx + ix)];
+        }
+    }
+    let sub_left = quadrant_cost[0][0] + quadrant_cost[1][0];
+    let sub_right = quadrant_cost[0][1] + quadrant_cost[1][1];
+    let sub_top = quadrant_cost[0][0] + quadrant_cost[0][1];
+    let sub_bottom = quadrant_cost[1][0] + quadrant_cost[1][1];
+    let cost_sub = sub_left + sub_right;
+
+    // Evaluate 5 large transform candidates.
+    let entropy_32x32 = mul32x32
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT32X32,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+    let entropy_32x16_0 = mul32x16
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT32X16,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+    let entropy_32x16_1 = mul32x16
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT32X16,
+            xyb,
+            stride,
+            abs_bx + 2,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+    let entropy_16x32_0 = mul32x16
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT16X32,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+    let entropy_16x32_1 = mul32x16
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT16X32,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by + 2,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+
+    // Three-way comparison matching libjxl FindBestFirstLevelDivisionForSquare.
+    let cost_jxn = entropy_32x16_0.min(sub_left) + entropy_32x16_1.min(sub_right);
+    let cost_nxj = entropy_16x32_0.min(sub_top) + entropy_16x32_1.min(sub_bottom);
+
+    // Check if any large transform beats the sub-costs.
+    let best_large = entropy_32x32.min(cost_jxn).min(cost_nxj);
+    if best_large >= cost_sub {
+        return false;
+    }
+
+    // A merge won — reset 4×4 region to DCT8 first to avoid orphaned non-first blocks.
+    for dy in 0..4usize {
+        for dx in 0..4usize {
+            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+        }
+    }
+
+    if entropy_32x32 < cost_jxn && entropy_32x32 < cost_nxj {
+        // DCT32x32 wins
+        ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X32);
+        set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 4, 4, entropy_32x32);
+    } else if cost_jxn < cost_nxj {
+        // Vertical split (DCT32X16) — try each half independently
+        if entropy_32x16_0 < sub_left {
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT32X16);
+            set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 2, 4, entropy_32x16_0);
+        }
+        if entropy_32x16_1 < sub_right {
+            ac_strategy.set(abs_bx + 2, abs_by, RAW_STRATEGY_DCT32X16);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx + 2,
+                cy,
+                2,
+                4,
+                entropy_32x16_1,
+            );
+        }
+    } else {
+        // Horizontal split (DCT16X32) — try each half independently
+        if entropy_16x32_0 < sub_top {
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X32);
+            set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 4, 2, entropy_16x32_0);
+        }
+        if entropy_16x32_1 < sub_bottom {
+            ac_strategy.set(abs_bx, abs_by + 2, RAW_STRATEGY_DCT16X32);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx,
+                cy + 2,
+                4,
+                2,
+                entropy_16x32_1,
+            );
+        }
+    }
+
+    true
+}
+
 // ─── 32×32 transform selection ──────────────────────────────────────────────
 
 /// Find the best transform for a 32×32 block region (4×4 group of 8×8 blocks).
