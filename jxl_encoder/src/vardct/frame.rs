@@ -55,54 +55,10 @@ pub(crate) struct PixelStatsForChromacityAdjustment {
 }
 
 impl PixelStatsForChromacityAdjustment {
-    /// Compute max horizontal/vertical gradient of a single plane.
-    pub(crate) fn calc_plane(plane: &[f32], width: usize, height: usize) -> f32 {
-        let mut xmax: f32 = 0.0;
-        let mut ymax: f32 = 0.0;
-        for ty in 1..height {
-            for tx in 1..width {
-                let cur = plane[ty * width + tx];
-                let prev_row = plane[(ty - 1) * width + tx];
-                let prev = plane[ty * width + (tx - 1)];
-                xmax = xmax.max((cur - prev).abs());
-                ymax = ymax.max((cur - prev_row).abs());
-            }
-        }
-        xmax.max(ymax)
-    }
-
-    /// Compute B-Y gradient and exposed blue metric.
-    pub(crate) fn calc_exposed_blue(
-        plane_y: &[f32],
-        plane_b: &[f32],
-        width: usize,
-        height: usize,
-    ) -> (f32, f32) {
-        let mut eb: f32 = 0.0;
-        let mut xmax: f32 = 0.0;
-        let mut ymax: f32 = 0.0;
-        for ty in 1..height {
-            for tx in 1..width {
-                let cur_y = plane_y[ty * width + tx];
-                let cur_b = plane_b[ty * width + tx];
-                let exposed_b = cur_b - cur_y * 1.2;
-                let diff_b = cur_b - cur_y;
-                let prev_row_b = plane_b[(ty - 1) * width + tx];
-                let prev_b = plane_b[ty * width + (tx - 1)];
-                let diff_prev_row = prev_row_b - plane_y[(ty - 1) * width + tx];
-                let diff_prev = prev_b - plane_y[ty * width + (tx - 1)];
-                xmax = xmax.max((diff_b - diff_prev).abs());
-                ymax = ymax.max((diff_b - diff_prev_row).abs());
-                if exposed_b >= 0.0 {
-                    let eb_val = exposed_b * ((cur_b - prev_b).abs() + (cur_b - prev_row_b).abs());
-                    eb = eb.max(eb_val);
-                }
-            }
-        }
-        (xmax.max(ymax), eb)
-    }
-
     /// Compute all pixel stats from XYB image.
+    ///
+    /// Merged single-pass with early exit: once all thresholds are saturated,
+    /// the result is fully determined and we skip remaining rows.
     pub(crate) fn calc(
         xyb_x: &[f32],
         xyb_y: &[f32],
@@ -110,8 +66,56 @@ impl PixelStatsForChromacityAdjustment {
         width: usize,
         height: usize,
     ) -> Self {
-        let dx = Self::calc_plane(xyb_x, width, height);
-        let (db, exposed_blue) = Self::calc_exposed_blue(xyb_y, xyb_b, width, height);
+        // Thresholds from how_much_is_x_channel_pixelized / how_much_is_b_channel_pixelized
+        const DX_MAX_THRESH: f32 = 0.026;
+        const DB_MAX_THRESH: f32 = 0.38;
+        const EB_THRESH: f32 = 0.13;
+
+        let mut dx: f32 = 0.0;
+        let mut db: f32 = 0.0;
+        let mut exposed_blue: f32 = 0.0;
+
+        for ty in 1..height {
+            // Pre-slice rows to eliminate per-element bounds checks
+            let x_row = &xyb_x[ty * width..(ty + 1) * width];
+            let y_row = &xyb_y[ty * width..(ty + 1) * width];
+            let b_row = &xyb_b[ty * width..(ty + 1) * width];
+            let x_prev_row = &xyb_x[(ty - 1) * width..ty * width];
+            let y_prev_row = &xyb_y[(ty - 1) * width..ty * width];
+            let b_prev_row = &xyb_b[(ty - 1) * width..ty * width];
+
+            for tx in 1..width {
+                // X channel gradient (for dx)
+                let cur_x = x_row[tx];
+                dx = dx
+                    .max((cur_x - x_row[tx - 1]).abs())
+                    .max((cur_x - x_prev_row[tx]).abs());
+
+                // B-Y gradient (for db)
+                let cur_y = y_row[tx];
+                let cur_b = b_row[tx];
+                let diff_b = cur_b - cur_y;
+                let diff_prev = b_row[tx - 1] - y_row[tx - 1];
+                let diff_prev_row = b_prev_row[tx] - y_prev_row[tx];
+                db = db
+                    .max((diff_b - diff_prev).abs())
+                    .max((diff_b - diff_prev_row).abs());
+
+                // Exposed blue metric
+                let exposed_b = cur_b - cur_y * 1.2;
+                if exposed_b >= 0.0 {
+                    let eb_val = exposed_b
+                        * ((cur_b - b_row[tx - 1]).abs() + (cur_b - b_prev_row[tx]).abs());
+                    exposed_blue = exposed_blue.max(eb_val);
+                }
+            }
+
+            // Early exit: once all thresholds are saturated, result is fully determined
+            if dx >= DX_MAX_THRESH && db > DB_MAX_THRESH && exposed_blue >= EB_THRESH {
+                break;
+            }
+        }
+
         Self {
             dx,
             db,

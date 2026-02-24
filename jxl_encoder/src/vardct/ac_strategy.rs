@@ -1025,14 +1025,31 @@ fn estimate_entropy_full_impl(
         0
     };
 
+    // Pre-split block into per-channel slices so the compiler can prove all
+    // accesses within each slice are in-bounds, eliminating per-channel range checks.
+    let (block_ch0, block_rest) = block.split_at(size);
+    let (block_ch1, block_ch2) = block_rest.split_at(size);
+    let block_channels = [block_ch0, block_ch1, block_ch2];
+
+    // Pre-split weight tables into per-channel slices (3 × per_ch_size).
+    let weight_channels = [
+        &full_quant_weights[..per_ch_size],
+        &full_quant_weights[per_ch_size..2 * per_ch_size],
+        &full_quant_weights[2 * per_ch_size..3 * per_ch_size],
+    ];
+    let inv_weight_channels = [
+        &full_dequant_weights[..per_ch_size],
+        &full_dequant_weights[per_ch_size..2 * per_ch_size],
+        &full_dequant_weights[2 * per_ch_size..3 * per_ch_size],
+    ];
+
+    let quant_for_coeffs = if use_pixel_domain {
+        quant_norm16
+    } else {
+        quant
+    };
+
     for (c, &cmap_factor) in cmap_factors.iter().enumerate() {
-        let wt_offset = c * per_ch_size;
-        let weights = &full_quant_weights[wt_offset..wt_offset + per_ch_size];
-        let inv_wts = &full_dequant_weights[wt_offset..wt_offset + per_ch_size];
-
-        let offset_c = c * size;
-        let offset_y = size; // Y channel always at offset 1*size
-
         // SIMD-accelerated coefficient processing (biggest encoder hotspot).
         // LLF positions are pre-zeroed above (matching libjxl quant_weights.cc:342-355),
         // so DC/LLF contribute nothing to entropy or loss estimates.
@@ -1040,16 +1057,11 @@ fn estimate_entropy_full_impl(
         // In pixel-domain mode: use quant_norm16 (L16 norm for 4+ blocks, max for
         // 1-2 blocks) matching libjxl enc_ac_strategy.cc:415.
         // In coefficient-domain mode: use max(quant_field) (libjxl-tiny style).
-        let quant_for_coeffs = if use_pixel_domain {
-            quant_norm16
-        } else {
-            quant
-        };
         let coeff_result = jxl_simd::entropy_estimate_coeffs(
-            &block[offset_c..offset_c + size],
-            &block[offset_y..offset_y + size],
-            weights,
-            inv_wts,
+            block_channels[c],
+            block_channels[1], // Y channel always channel 1
+            weight_channels[c],
+            inv_weight_channels[c],
             size,
             cmap_factor,
             quant_for_coeffs,
