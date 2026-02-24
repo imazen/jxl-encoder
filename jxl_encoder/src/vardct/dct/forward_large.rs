@@ -7,6 +7,7 @@
 use super::constants::*;
 use super::forward::dct1d_16;
 use super::inverse::{idct1d_4, idct1d_8};
+use crate::vardct::common::{as_array_mut, as_array_ref};
 
 pub fn dct1d_32(mem: &mut [f32]) {
     let mut tmp = [0.0f32; 32];
@@ -276,9 +277,7 @@ pub fn dct_64x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 4096);
     debug_assert!(output.len() >= 4096);
 
-    let input_arr: &[f32; 4096] = input[..4096].try_into().unwrap();
-    let output_arr: &mut [f32; 4096] = (&mut output[..4096]).try_into().unwrap();
-    jxl_simd::dct_64x64(input_arr, output_arr);
+    jxl_simd::dct_64x64(as_array_ref(input, 0), as_array_mut(output, 0));
 }
 
 /// Compute scaled 64x32 DCT (64 rows, 32 columns).
@@ -291,9 +290,7 @@ pub fn dct_64x32(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
-    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
-    jxl_simd::dct_64x32(input_arr, output_arr);
+    jxl_simd::dct_64x32(as_array_ref(input, 0), as_array_mut(output, 0));
 }
 
 /// Compute scaled 32x64 DCT (32 rows, 64 columns).
@@ -306,9 +303,7 @@ pub fn dct_32x64(input: &[f32], output: &mut [f32]) {
     debug_assert!(input.len() >= 2048);
     debug_assert!(output.len() >= 2048);
 
-    let input_arr: &[f32; 2048] = input[..2048].try_into().unwrap();
-    let output_arr: &mut [f32; 2048] = (&mut output[..2048]).try_into().unwrap();
-    jxl_simd::dct_32x64(input_arr, output_arr);
+    jxl_simd::dct_32x64(as_array_ref(input, 0), as_array_mut(output, 0));
 }
 
 /// Extract DC values from 64x64 DCT coefficients.

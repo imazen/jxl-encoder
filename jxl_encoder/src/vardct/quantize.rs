@@ -15,7 +15,7 @@ use super::ac_strategy::{
     RAW_STRATEGY_DCT64X64, RAW_STRATEGY_IDENTITY,
 };
 use super::afv::{RAW_STRATEGY_AFV0, RAW_STRATEGY_AFV1, RAW_STRATEGY_AFV2, RAW_STRATEGY_AFV3};
-use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE};
+use super::common::{BLOCK_DIM, DCT_BLOCK_SIZE, as_array_ref};
 use super::encoder::VarDctEncoder;
 
 /// Apply AdjustQuantBias to a quantized value for dequantization.
@@ -424,8 +424,8 @@ impl VarDctEncoder {
         if !error_diffusion {
             // DCT8 fast path: use SIMD-accelerated kernel for single-block transforms
             if covered_x == 1 && covered_y == 1 && size == DCT_BLOCK_SIZE {
-                let coeffs: &[f32; 64] = dct_coeffs[..64].try_into().unwrap();
-                let w: &[f32; 64] = weights[..64].try_into().unwrap();
+                let coeffs: &[f32; 64] = as_array_ref(dct_coeffs, 0);
+                let w: &[f32; 64] = as_array_ref(weights, 0);
                 let qac_qm = qac * qm_multiplier;
                 jxl_simd::quantize_block_dct8(coeffs, w, qac_qm, thresholds, &mut quant_ac[by][bx]);
                 return;
