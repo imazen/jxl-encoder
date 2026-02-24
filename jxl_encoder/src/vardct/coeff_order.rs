@@ -244,26 +244,32 @@ pub fn count_zero_coefficients(
             }
 
             for c in 0..3 {
+                // Pre-slice count array to eliminate per-element triple-indexing
+                let cnt = &mut counts[bucket][c];
                 if covered_blocks == 1 {
                     // DCT8: coefficients are in quant_ac[c][by][bx]
                     let block = &quant_ac[c][by][bx];
+                    let cnt_slice = &mut cnt[..DCT_BLOCK_SIZE];
                     for k in 0..DCT_BLOCK_SIZE {
                         if block[k] == 0 {
-                            counts[bucket][c][k] += 1;
+                            cnt_slice[k] += 1;
                         }
                     }
                 } else {
-                    // Multi-block: iterate by sub-block to avoid per-coeff div/mod
+                    // Multi-block: iterate by sub-block with nested loops
                     let covered_x_local = super::ac_strategy::COVERED_X[raw_strategy as usize];
-                    for block_slot in 0..covered_blocks {
-                        let slot_by = by + block_slot / covered_x_local;
-                        let slot_bx = bx + block_slot % covered_x_local;
-                        let block = &quant_ac[c][slot_by][slot_bx];
-                        let base_idx = block_slot * DCT_BLOCK_SIZE;
-                        for k in 0..DCT_BLOCK_SIZE {
-                            if block[k] == 0 {
-                                counts[bucket][c][base_idx + k] += 1;
+                    let covered_y_local = super::ac_strategy::COVERED_Y[raw_strategy as usize];
+                    let mut base_idx = 0;
+                    for slot_dy in 0..covered_y_local {
+                        for slot_dx in 0..covered_x_local {
+                            let block = &quant_ac[c][by + slot_dy][bx + slot_dx];
+                            let cnt_slice = &mut cnt[base_idx..base_idx + DCT_BLOCK_SIZE];
+                            for k in 0..DCT_BLOCK_SIZE {
+                                if block[k] == 0 {
+                                    cnt_slice[k] += 1;
+                                }
                             }
+                            base_idx += DCT_BLOCK_SIZE;
                         }
                     }
                 }
