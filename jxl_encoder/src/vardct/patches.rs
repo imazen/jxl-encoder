@@ -473,8 +473,9 @@ pub(crate) fn find_text_like_patches(
     // Source propagates unchanged through BFS — Manhattan distance is from source.
     let mut is_background = vec![false; n];
     let mut background = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
-    // Queue entries: (cur_x, cur_y, src_x, src_y)
-    let mut queue: Vec<(usize, usize, usize, usize)> =
+    // Queue entries: (cur_x, cur_y, src_x, src_y) as u32 to match libjxl's
+    // std::pair<XY, XY> (16 bytes vs 32 bytes with usize — halves cache pressure).
+    let mut queue: Vec<(u32, u32, u32, u32)> =
         Vec::with_capacity(2 * num_seeds as usize * PATCH_SIDE * PATCH_SIDE);
 
     // Seed from screenshot-like block pixels
@@ -489,7 +490,7 @@ pub(crate) fn find_text_like_patches(
                         let i = y * stride + x;
                         if !is_background[i] {
                             is_background[i] = true;
-                            queue.push((x, y, x, y)); // source = self for seeds
+                            queue.push((x as u32, y as u32, x as u32, y as u32));
                         }
                     }
                 }
@@ -498,14 +499,18 @@ pub(crate) fn find_text_like_patches(
     }
 
     // BFS flood-fill (8-connected, matches libjxl kSearchRadius=1)
+    let width_i32 = width as i32;
+    let height_i32 = height as i32;
     let mut queue_front = 0;
     while queue_front < queue.len() {
         let (cx, cy, sx, sy) = queue[queue_front];
         queue_front += 1;
+        let (cxu, cyu) = (cx as usize, cy as usize);
+        let (sxu, syu) = (sx as usize, sy as usize);
 
         // Store source color in background at current position
-        let ci = cy * stride + cx;
-        let si = sy * stride + sx;
+        let ci = cyu * stride + cxu;
+        let si = syu * stride + sxu;
         for c in 0..3 {
             background[c][ci] = xyb[c][si];
         }
@@ -515,7 +520,7 @@ pub(crate) fn find_text_like_patches(
             for dy in -1i32..=1 {
                 let nx = cx as i32 + dx;
                 let ny = cy as i32 + dy;
-                if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
                     continue;
                 }
                 let (nxu, nyu) = (nx as usize, ny as usize);
@@ -524,15 +529,15 @@ pub(crate) fn find_text_like_patches(
                     continue;
                 }
                 // Manhattan distance from source (not current!) to candidate
-                let manhattan = (nxu as isize - sx as isize).unsigned_abs()
-                    + (nyu as isize - sy as isize).unsigned_abs();
-                if manhattan > DISTANCE_LIMIT {
+                let manhattan = (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
+                if manhattan > DISTANCE_LIMIT as u32 {
                     continue;
                 }
                 // Similarity: compare source pixel to candidate pixel (L1 weighted)
-                if weighted_distance(&xyb_ref, stride, sx, sy, nxu, nyu, &cs) <= SIMILAR_THRESHOLD {
+                if weighted_distance(&xyb_ref, stride, sxu, syu, nxu, nyu, &cs) <= SIMILAR_THRESHOLD
+                {
                     is_background[ni] = true;
-                    queue.push((nxu, nyu, sx, sy)); // propagate source
+                    queue.push((nx as u32, ny as u32, sx, sy));
                 }
             }
         }
@@ -572,8 +577,9 @@ pub(crate) fn find_text_like_patches(
                 continue;
             }
 
-            // DFS — always completes full CC (no early bounding box exit)
-            let mut stack = vec![(start_x, start_y)];
+            // DFS — always completes full CC (no early bounding box exit).
+            // Use u32 stack entries (8 bytes) matching libjxl's pair<uint32_t, uint32_t>.
+            let mut stack: Vec<(u32, u32)> = vec![(start_x as u32, start_y as u32)];
             let mut min_x = start_x;
             let mut max_x = start_x;
             let mut min_y = start_y;
@@ -582,7 +588,8 @@ pub(crate) fn find_text_like_patches(
             let mut all_similar = true;
             let mut reference: (usize, usize) = (0, 0);
 
-            while let Some((px, py)) = stack.pop() {
+            while let Some((px32, py32)) = stack.pop() {
+                let (px, py) = (px32 as usize, py32 as usize);
                 let pi = py * stride + px;
                 if visited[pi] {
                     continue;
@@ -599,16 +606,16 @@ pub(crate) fn find_text_like_patches(
                         if ddx == 0 && ddy == 0 {
                             continue;
                         }
-                        let nx = px as i32 + ddx;
-                        let ny = py as i32 + ddy;
-                        if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                        let nx = px32 as i32 + ddx;
+                        let ny = py32 as i32 + ddy;
+                        if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
                             continue;
                         }
                         let (nxu, nyu) = (nx as usize, ny as usize);
                         let ni = nyu * stride + nxu;
                         if !is_background[ni] {
                             // Foreground neighbor — push to stack
-                            stack.push((nxu, nyu));
+                            stack.push((nx as u32, ny as u32));
                         } else {
                             // Background neighbor — track border consistency
                             if !found_border {
@@ -678,12 +685,13 @@ pub(crate) fn find_text_like_patches(
             let hs_max_y = (max_y + HAS_SIMILAR_RADIUS + 1).min(height);
             let hs_min_x = min_x.saturating_sub(HAS_SIMILAR_RADIUS);
             let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
-            for iy in hs_min_y..hs_max_y {
+            'outer: for iy in hs_min_y..hs_max_y {
                 for ix in hs_min_x..hs_max_x {
                     if weighted_distance_to_color(&xyb_ref, stride, ix, iy, &ref_color, &cs)
                         <= HAS_SIMILAR_THRESHOLD
                     {
                         has_similar = true;
+                        break 'outer;
                     }
                 }
             }
