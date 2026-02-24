@@ -289,6 +289,20 @@ impl PatchesData {
 
 // ── Detection ──────────────────────────────────────────────────────────────────
 
+/// 8-connected neighbor offsets (excludes self). Used in BFS and DFS loops
+/// to avoid the overhead of nested `for dx in -1..=1 { for dy in -1..=1 {`
+/// range iterators (measured at ~90M Ir overhead on 1206×2622 screenshots).
+const NEIGHBORS_8: [(i32, i32); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
+
 /// Compute weighted L1 distance between two pixels.
 /// Matches libjxl: `sum(|v1[c] - v2[c]| * kChannelWeights[c])`
 #[inline]
@@ -519,30 +533,28 @@ pub(crate) fn find_text_like_patches(
         }
 
         // 8-connected expansion
-        for dx in -1i32..=1 {
-            for dy in -1i32..=1 {
-                let nx = cx as i32 + dx;
-                let ny = cy as i32 + dy;
-                if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
-                    continue;
-                }
-                let (nxu, nyu) = (nx as usize, ny as usize);
-                let ni = nyu * stride + nxu;
-                if is_background[ni] {
-                    continue;
-                }
-                // Manhattan distance from source (not current!) to candidate
-                let manhattan = (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
-                if manhattan > DISTANCE_LIMIT as u32 {
-                    continue;
-                }
-                // Similarity: compare source pixel to candidate pixel (L1 weighted)
-                if weighted_distance_to_color(&xyb_ref, stride, nxu, nyu, &src_color, &cs)
-                    <= SIMILAR_THRESHOLD
-                {
-                    is_background[ni] = true;
-                    queue.push((nx as u32, ny as u32, sx, sy));
-                }
+        for &(dx, dy) in &NEIGHBORS_8 {
+            let nx = cx as i32 + dx;
+            let ny = cy as i32 + dy;
+            if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
+                continue;
+            }
+            let (nxu, nyu) = (nx as usize, ny as usize);
+            let ni = nyu * stride + nxu;
+            if is_background[ni] {
+                continue;
+            }
+            // Manhattan distance from source (not current!) to candidate
+            let manhattan = (nx - sx as i32).unsigned_abs() + (ny - sy as i32).unsigned_abs();
+            if manhattan > DISTANCE_LIMIT as u32 {
+                continue;
+            }
+            // Similarity: compare source pixel to candidate pixel (L1 weighted)
+            if weighted_distance_to_color(&xyb_ref, stride, nxu, nyu, &src_color, &cs)
+                <= SIMILAR_THRESHOLD
+            {
+                is_background[ni] = true;
+                queue.push((nx as u32, ny as u32, sx, sy));
             }
         }
     }
@@ -605,40 +617,33 @@ pub(crate) fn find_text_like_patches(
                 max_y = max_y.max(py);
 
                 // 8-connected neighbors (kSearchRadius=1, skip self)
-                for ddx in -1i32..=1 {
-                    for ddy in -1i32..=1 {
-                        if ddx == 0 && ddy == 0 {
-                            continue;
+                for &(ddx, ddy) in &NEIGHBORS_8 {
+                    let nx = px32 as i32 + ddx;
+                    let ny = py32 as i32 + ddy;
+                    if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
+                        continue;
+                    }
+                    let (nxu, nyu) = (nx as usize, ny as usize);
+                    let ni = nyu * stride + nxu;
+                    if !is_background[ni] {
+                        // Foreground neighbor — push to stack (skip if already visited
+                        // to avoid redundant pop/check cycles from duplicate pushes)
+                        if !visited[ni] {
+                            stack.push((nx as u32, ny as u32));
                         }
-                        let nx = px32 as i32 + ddx;
-                        let ny = py32 as i32 + ddy;
-                        if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
-                            continue;
-                        }
-                        let (nxu, nyu) = (nx as usize, ny as usize);
-                        let ni = nyu * stride + nxu;
-                        if !is_background[ni] {
-                            // Foreground neighbor — push to stack (skip if already visited
-                            // to avoid redundant pop/check cycles from duplicate pushes)
-                            if !visited[ni] {
-                                stack.push((nx as u32, ny as u32));
-                            }
+                    } else {
+                        // Background neighbor — track border consistency
+                        if !found_border {
+                            reference = (nxu, nyu);
+                            found_border = true;
                         } else {
-                            // Background neighbor — track border consistency
-                            if !found_border {
-                                reference = (nxu, nyu);
-                                found_border = true;
-                            } else {
-                                // is_similar_b: compare background colors at reference
-                                // and this neighbor (VERY_SIMILAR_THRESHOLD)
-                                let ri = reference.1 * stride + reference.0;
-                                let bg_ref =
-                                    [background[0][ri], background[1][ri], background[2][ri]];
-                                let bg_next =
-                                    [background[0][ni], background[1][ni], background[2][ni]];
-                                if color_distance(&bg_ref, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
-                                    all_similar = false;
-                                }
+                            // is_similar_b: compare background colors at reference
+                            // and this neighbor (VERY_SIMILAR_THRESHOLD)
+                            let ri = reference.1 * stride + reference.0;
+                            let bg_ref = [background[0][ri], background[1][ri], background[2][ri]];
+                            let bg_next = [background[0][ni], background[1][ni], background[2][ni]];
+                            if color_distance(&bg_ref, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
+                                all_similar = false;
                             }
                         }
                     }
