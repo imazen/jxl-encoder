@@ -292,10 +292,14 @@ impl EffortProfile {
             error_diffusion: false, // libjxl accepts param but never uses it
             patches: effort >= 7,
             tree_learning: effort >= 7,
-            lz77: effort >= 7,
+            // libjxl does NOT use LZ77 for VarDCT DC or AC at effort < 9.
+            // DC: ForModular() → lz77_method = kNone (modular_mode=false).
+            // AC: HistogramParams(kSquirrel, num_ctx) → lz77_method = kNone
+            //     (enc_frame.cc overrides since tier > kTortoise).
+            // Only kTortoise (effort 9+) enables LZ77 for VarDCT streams.
+            lz77: effort >= 9,
             lz77_method: match effort {
-                0..=7 => Lz77Method::Rle,
-                8 => Lz77Method::Greedy,
+                0..=8 => Lz77Method::Rle,
                 _ => Lz77Method::Optimal,
             },
             butteraugli_iters: match effort {
@@ -572,8 +576,7 @@ mod tests {
         assert!(p.pixel_domain_loss);
         assert!(!p.error_diffusion);
         assert!(p.patches);
-        assert!(p.lz77);
-        assert_eq!(p.lz77_method, Lz77Method::Rle);
+        assert!(!p.lz77); // libjxl only enables LZ77 for VarDCT at e9+ (kTortoise)
         assert_eq!(p.butteraugli_iters, 0); // libjxl gates at speed_tier <= kKitten (e8+)
         assert!(p.ac_strategy_enabled);
         assert!(p.try_dct32);
@@ -606,7 +609,7 @@ mod tests {
         assert!(p.pixel_domain_loss);
         assert!(!p.error_diffusion); // e7+
         assert!(!p.patches); // e7+
-        assert!(!p.lz77); // e7+
+        assert!(!p.lz77); // e9+ for VarDCT
         assert!(p.ac_strategy_enabled);
         assert!(p.try_dct32);
         assert!(!p.try_dct64); // e7+
@@ -628,6 +631,7 @@ mod tests {
     #[test]
     fn test_lossy_reference_e9() {
         let p = EffortProfile::lossy(9, EncoderMode::Reference);
+        assert!(p.lz77); // VarDCT LZ77 enabled at e9+ (kTortoise)
         assert_eq!(p.lz77_method, Lz77Method::Optimal);
         assert_eq!(p.butteraugli_iters, 4);
         assert_eq!(p.fine_grained_step, 1);
@@ -641,7 +645,8 @@ mod tests {
     #[test]
     fn test_lossy_reference_e8() {
         let p = EffortProfile::lossy(8, EncoderMode::Reference);
-        assert_eq!(p.lz77_method, Lz77Method::Greedy);
+        assert!(!p.lz77); // libjxl only enables LZ77 for VarDCT at e9+
+        assert_eq!(p.lz77_method, Lz77Method::Rle);
         assert_eq!(p.butteraugli_iters, 2);
         assert_eq!(p.fine_grained_step, 2);
         assert!(!p.enhanced_clustering_vardct); // e9+
