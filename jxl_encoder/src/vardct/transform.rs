@@ -58,27 +58,6 @@ impl TransformOutput {
             float_dc: core::array::from_fn(|_| vec![0.0f32; n]),
         }
     }
-
-    /// Zero-fill all buffers for reuse without deallocating.
-    pub fn clear(&mut self) {
-        for c in 0..3 {
-            for row in &mut self.quant_dc[c] {
-                row.fill(0);
-            }
-            for row in &mut self.quant_ac[c] {
-                for block in row.iter_mut() {
-                    *block = [0i32; DCT_BLOCK_SIZE];
-                }
-            }
-            for row in &mut self.nzeros[c] {
-                row.fill(0);
-            }
-            for row in &mut self.raw_nzeros[c] {
-                row.fill(0);
-            }
-            self.float_dc[c].fill(0.0);
-        }
-    }
 }
 
 impl VarDctEncoder {
@@ -304,7 +283,11 @@ impl VarDctEncoder {
         out
     }
 
-    /// Fill pre-allocated `TransformOutput` buffers. Clears them first.
+    /// Fill pre-allocated `TransformOutput` buffers.
+    ///
+    /// All positions are written by the block loop (every first-block position
+    /// gets its quant_dc, quant_ac, nzeros, raw_nzeros, and float_dc filled).
+    /// No pre-clearing is needed since `is_first()` blocks cover the entire grid.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn transform_and_quantize_into(
         &self,
@@ -320,7 +303,6 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         out: &mut TransformOutput,
     ) {
-        out.clear();
         let quant_dc = &mut out.quant_dc;
         let quant_ac = &mut out.quant_ac;
         let nzeros = &mut out.nzeros;
