@@ -26,7 +26,7 @@ use crate::{load_f32x8, slice_from};
 /// so that kernels never need bounds checks.
 pub fn pad_plane(plane: &[f32], width: usize, height: usize, pad: usize) -> alloc::vec::Vec<f32> {
     let stride = width + 2 * pad;
-    let mut out = alloc::vec![0.0f32; stride * (height + 2 * pad)];
+    let mut out = crate::vec_f32_dirty(stride * (height + 2 * pad));
 
     // Step 1: Copy each image row into the interior of the padded buffer.
     for y in 0..height {
