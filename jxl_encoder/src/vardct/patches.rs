@@ -359,6 +359,7 @@ fn color_distance(c1: &[f32; 3], c2: &[f32; 3], cs: &PatchColorspaceInfo) -> f32
 }
 
 /// Check if a 4x4 block starting at (bx*4, by*4) is flat (all pixels same color).
+#[inline]
 fn is_flat_block(xyb: &[&[f32]; 3], stride: usize, bx: usize, by: usize) -> bool {
     let x0 = bx * PATCH_SIDE;
     let y0 = by * PATCH_SIDE;
@@ -508,11 +509,13 @@ pub(crate) fn find_text_like_patches(
         let (cxu, cyu) = (cx as usize, cy as usize);
         let (sxu, syu) = (sx as usize, sy as usize);
 
-        // Store source color in background at current position
+        // Cache source color once per queue entry (avoids re-reading xyb[c][si]
+        // for every neighbor — up to 9 bounds-checked reads per entry).
         let ci = cyu * stride + cxu;
         let si = syu * stride + sxu;
+        let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
         for c in 0..3 {
-            background[c][ci] = xyb[c][si];
+            background[c][ci] = src_color[c];
         }
 
         // 8-connected expansion
@@ -534,7 +537,8 @@ pub(crate) fn find_text_like_patches(
                     continue;
                 }
                 // Similarity: compare source pixel to candidate pixel (L1 weighted)
-                if weighted_distance(&xyb_ref, stride, sxu, syu, nxu, nyu, &cs) <= SIMILAR_THRESHOLD
+                if weighted_distance_to_color(&xyb_ref, stride, nxu, nyu, &src_color, &cs)
+                    <= SIMILAR_THRESHOLD
                 {
                     is_background[ni] = true;
                     queue.push((nx as u32, ny as u32, sx, sy));
@@ -614,8 +618,11 @@ pub(crate) fn find_text_like_patches(
                         let (nxu, nyu) = (nx as usize, ny as usize);
                         let ni = nyu * stride + nxu;
                         if !is_background[ni] {
-                            // Foreground neighbor — push to stack
-                            stack.push((nx as u32, ny as u32));
+                            // Foreground neighbor — push to stack (skip if already visited
+                            // to avoid redundant pop/check cycles from duplicate pushes)
+                            if !visited[ni] {
+                                stack.push((nx as u32, ny as u32));
+                            }
                         } else {
                             // Background neighbor — track border consistency
                             if !found_border {
