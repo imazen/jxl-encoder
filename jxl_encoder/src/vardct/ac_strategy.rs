@@ -470,6 +470,7 @@ pub(super) fn estimate_entropy(
 /// `entropy_mul_adjust`: additive adjustment to entropy_mul. In libjxl,
 /// kFavor2X2AtHighQuality and kAvoidEntropyOfTransforms modify entropy_mul
 /// before passing to EstimateEntropy. Pass 0.0 for no adjustment.
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn estimate_entropy_with_mask(
     raw_strategy: u8,
@@ -531,9 +532,12 @@ pub(super) fn estimate_entropy_with_mask(
 /// mode, this is a fixed value per transform type. In libjxl-tiny mode, this
 /// is 1.0 and the caller applies multipliers externally.
 ///
-/// Dispatches to an `#[arcane]` variant on x86_64/aarch64 so the entire function
-/// body (including scalar arithmetic) runs under `#[target_feature]` and LLVM can
-/// inline the jxl_simd calls + auto-vectorize surrounding code.
+/// This function does NOT dispatch to SIMD — it relies on the CALLER being in
+/// a `#[target_feature]` context (e.g., via `#[arcane]` on the search functions).
+/// SIMD dispatch is hoisted to the search function level to avoid 50K+ redundant
+/// `summon()` calls per image (one per estimate_entropy invocation → ~2K per
+/// search function invocation).
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn estimate_entropy_full(
     raw_strategy: u8,
@@ -553,56 +557,6 @@ pub(super) fn estimate_entropy_full(
     pixel_domain_cost_bases: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        use jxl_simd::SimdToken;
-        if let Some(token) = jxl_simd::X64V3Token::summon() {
-            return estimate_entropy_full_avx2(
-                token,
-                raw_strategy,
-                xyb,
-                stride,
-                bx,
-                by,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-                entropy_mul,
-                pixel_domain_cost_bases,
-                scratch,
-            );
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        use jxl_simd::SimdToken;
-        if let Some(token) = jxl_simd::NeonToken::summon() {
-            return estimate_entropy_full_neon(
-                token,
-                raw_strategy,
-                xyb,
-                stride,
-                bx,
-                by,
-                distance,
-                quant_field,
-                xsize_blocks,
-                masking,
-                ytox,
-                ytob,
-                mask1x1,
-                mask1x1_stride,
-                entropy_mul,
-                pixel_domain_cost_bases,
-                scratch,
-            );
-        }
-    }
     estimate_entropy_full_impl(
         raw_strategy,
         xyb,
@@ -623,89 +577,11 @@ pub(super) fn estimate_entropy_full(
     )
 }
 
-#[cfg(target_arch = "x86_64")]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-fn estimate_entropy_full_avx2(
-    _token: jxl_simd::X64V3Token,
-    raw_strategy: u8,
-    xyb: [&[f32]; 3],
-    stride: usize,
-    bx: usize,
-    by: usize,
-    distance: f32,
-    quant_field: &[f32],
-    xsize_blocks: usize,
-    masking: &[f32],
-    ytox: i8,
-    ytob: i8,
-    mask1x1: Option<&[f32]>,
-    mask1x1_stride: usize,
-    entropy_mul: f32,
-    pixel_domain_cost_bases: (f32, f32, f32),
-    scratch: &mut EntropyEstScratch,
-) -> f32 {
-    estimate_entropy_full_impl(
-        raw_strategy,
-        xyb,
-        stride,
-        bx,
-        by,
-        distance,
-        quant_field,
-        xsize_blocks,
-        masking,
-        ytox,
-        ytob,
-        mask1x1,
-        mask1x1_stride,
-        entropy_mul,
-        pixel_domain_cost_bases,
-        scratch,
-    )
-}
-
-#[cfg(target_arch = "aarch64")]
-#[archmage::arcane]
-#[allow(clippy::too_many_arguments)]
-fn estimate_entropy_full_neon(
-    _token: jxl_simd::NeonToken,
-    raw_strategy: u8,
-    xyb: [&[f32]; 3],
-    stride: usize,
-    bx: usize,
-    by: usize,
-    distance: f32,
-    quant_field: &[f32],
-    xsize_blocks: usize,
-    masking: &[f32],
-    ytox: i8,
-    ytob: i8,
-    mask1x1: Option<&[f32]>,
-    mask1x1_stride: usize,
-    entropy_mul: f32,
-    pixel_domain_cost_bases: (f32, f32, f32),
-    scratch: &mut EntropyEstScratch,
-) -> f32 {
-    estimate_entropy_full_impl(
-        raw_strategy,
-        xyb,
-        stride,
-        bx,
-        by,
-        distance,
-        quant_field,
-        xsize_blocks,
-        masking,
-        ytox,
-        ytob,
-        mask1x1,
-        mask1x1_stride,
-        entropy_mul,
-        pixel_domain_cost_bases,
-        scratch,
-    )
-}
+// NOTE: estimate_entropy_full_avx2 and estimate_entropy_full_neon were removed.
+// SIMD dispatch is now hoisted to the strategy search function level (ac_strategy_search.rs).
+// The search functions are #[arcane], and estimate_entropy_with_mask + estimate_entropy_full
+// are #[inline(always)] — when called from an arcane context, the entire chain is inlined
+// and LLVM can optimize the jxl_simd dispatch + intrinsics under target_feature.
 
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]

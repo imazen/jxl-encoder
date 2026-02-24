@@ -31,6 +31,10 @@ fn set_entropy_for_transform(
     entropy_estimate[oy * 8 + ox] = entropy;
 }
 
+/// Dispatch wrapper: selects SIMD or scalar path for the entire search function.
+/// When SIMD is available, the #[arcane] wrapper runs under #[target_feature], enabling
+/// LLVM to inline estimate_entropy_with_mask → estimate_entropy_full_impl and optimize
+/// the entire search (10-30 estimate_entropy calls) under a single target_feature scope.
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub(super) fn find_best_16x16_transform(
     xyb: [&[f32]; 3],
@@ -49,14 +53,207 @@ pub(super) fn find_best_16x16_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
     scratch: &mut EntropyEstScratch,
-    // Multiplier applied to single-block entropy to favor existing choices.
-    // Matches libjxl's mul8x8 = 1.0 + (-0.4) / (distance + 1.4).
-    // Pass 1.0 for normal (aligned) evaluation. Pass < 1.0 for non-aligned
-    // pass to raise the bar for multi-block transforms.
     favor_single_mul: f32,
-    // When Some((ox, oy)), store winning costs into scratch.entropy_estimate
-    // at offset (ox, oy) within the 8×8 grid (for parent 32×32/64×64 to read).
-    // Pass None for standalone/non-aligned calls.
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::X64V3Token::summon() {
+            find_best_16x16_transform_avx2(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                favor_single_mul,
+                cache_offset,
+                profile,
+            );
+            return;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::NeonToken::summon() {
+            find_best_16x16_transform_neon(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                favor_single_mul,
+                cache_offset,
+                profile,
+            );
+            return;
+        }
+    }
+    find_best_16x16_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        favor_single_mul,
+        cache_offset,
+        profile,
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_16x16_transform_avx2(
+    _token: jxl_simd::X64V3Token,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    favor_single_mul: f32,
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) {
+    find_best_16x16_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        favor_single_mul,
+        cache_offset,
+        profile,
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_16x16_transform_neon(
+    _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    favor_single_mul: f32,
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) {
+    find_best_16x16_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        favor_single_mul,
+        cache_offset,
+        profile,
+    );
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_16x16_transform_impl(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    favor_single_mul: f32,
     cache_offset: Option<(usize, usize)>,
     profile: &EffortProfile,
 ) {
@@ -613,6 +810,188 @@ pub(super) fn try_merge_16x16(
     scratch: &mut EntropyEstScratch,
     profile: &EffortProfile,
 ) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::X64V3Token::summon() {
+            return try_merge_16x16_avx2(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::NeonToken::summon() {
+            return try_merge_16x16_neon(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+        }
+    }
+    try_merge_16x16_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_16x16_avx2(
+    _token: jxl_simd::X64V3Token,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    try_merge_16x16_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_16x16_neon(
+    _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    try_merge_16x16_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_16x16_impl(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
     let use_pixel_domain = mask1x1.is_some();
     let cost_bases = (
         profile.k_info_loss_mul_base,
@@ -865,6 +1244,188 @@ pub(super) fn try_merge_32x32(
     scratch: &mut EntropyEstScratch,
     profile: &EffortProfile,
 ) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::X64V3Token::summon() {
+            return try_merge_32x32_avx2(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::NeonToken::summon() {
+            return try_merge_32x32_neon(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+        }
+    }
+    try_merge_32x32_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_32x32_avx2(
+    _token: jxl_simd::X64V3Token,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    try_merge_32x32_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_32x32_neon(
+    _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    try_merge_32x32_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_32x32_impl(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
     let use_pixel_domain = mask1x1.is_some();
     let cost_bases = (
         profile.k_info_loss_mul_base,
@@ -1096,8 +1657,208 @@ pub(super) fn find_best_32x32_transform(
     mask1x1_stride: usize,
     ac_strategy: &mut AcStrategyMap,
     scratch: &mut EntropyEstScratch,
-    // When Some((ox, oy)), use entropy_estimate cache instead of re-evaluating sub-costs,
-    // and store winning costs back. Pass None for standalone/non-aligned calls.
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::X64V3Token::summon() {
+            return find_best_32x32_transform_avx2(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                cache_offset,
+                profile,
+            );
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::NeonToken::summon() {
+            return find_best_32x32_transform_neon(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                cache_offset,
+                profile,
+            );
+        }
+    }
+    find_best_32x32_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        cache_offset,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    unreachable_code
+)]
+fn find_best_32x32_transform_avx2(
+    _token: jxl_simd::X64V3Token,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) -> bool {
+    find_best_32x32_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        cache_offset,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    unreachable_code
+)]
+fn find_best_32x32_transform_neon(
+    _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) -> bool {
+    find_best_32x32_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        cache_offset,
+        profile,
+    )
+}
+
+#[inline(always)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    unreachable_code
+)]
+fn find_best_32x32_transform_impl(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
     cache_offset: Option<(usize, usize)>,
     profile: &EffortProfile,
 ) -> bool {
@@ -1502,6 +2263,190 @@ pub(super) fn find_best_32x32_transform(
 /// Only evaluated at d >= 3.0 (conservative — DCT64 averages 64x64 blocks).
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub(super) fn find_best_64x64_transform(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::X64V3Token::summon() {
+            find_best_64x64_transform_avx2(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+            return;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::NeonToken::summon() {
+            find_best_64x64_transform_neon(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+            return;
+        }
+    }
+    find_best_64x64_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_64x64_transform_avx2(
+    _token: jxl_simd::X64V3Token,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) {
+    find_best_64x64_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    );
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_64x64_transform_neon(
+    _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) {
+    find_best_64x64_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    );
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_64x64_transform_impl(
     xyb: [&[f32]; 3],
     stride: usize,
     bx0: usize,
