@@ -107,9 +107,6 @@ impl PatchColorspaceInfo {
 /// Number of entropy contexts for patches encoding.
 const NUM_PATCH_CONTEXTS: usize = 10;
 
-/// Flatness threshold: all pixels in a 4x4 block must be this similar.
-const FLATNESS_THRESHOLD: f32 = 1e-4;
-
 /// Minimum neighbor ratio for screenshot-like blocks (8 of 9).
 const SCREENSHOT_FLAT_NEIGHBOR_RATIO: usize = 8;
 
@@ -343,6 +340,25 @@ fn weighted_distance_to_color(
     dist
 }
 
+/// Like `weighted_distance_to_color` but takes a pre-computed flat index,
+/// eliminating the `y * stride + x` multiplication.
+#[inline]
+fn weighted_distance_to_color_idx(
+    planes: &[&[f32]; 3],
+    idx: usize,
+    color: &[f32; 3],
+    cs: &PatchColorspaceInfo,
+) -> f32 {
+    let mut dist = 0.0f32;
+    for c in 0..3 {
+        dist += (planes[c][idx] - color[c]).abs() * cs.channel_weights[c];
+    }
+    dist
+}
+
+/// Flatness threshold: all pixels in a 4x4 block must be this similar.
+const FLATNESS_THRESHOLD: f32 = 1e-4;
+
 /// Check if a pixel matches a given color within 1e-4 per channel.
 /// Matches libjxl `is_same_color`.
 #[inline]
@@ -514,8 +530,18 @@ pub(crate) fn find_text_like_patches(
     }
 
     // BFS flood-fill (8-connected, matches libjxl kSearchRadius=1)
-    let width_i32 = width as i32;
-    let height_i32 = height as i32;
+    // Pre-compute stride-based neighbor offsets to replace per-neighbor multiply.
+    let stride_i = stride as isize;
+    let neighbor_offsets: [isize; 8] = [
+        -stride_i - 1,
+        -stride_i,
+        -stride_i + 1,
+        -1,
+        1,
+        stride_i - 1,
+        stride_i,
+        stride_i + 1,
+    ];
     let mut queue_front = 0;
     while queue_front < queue.len() {
         let (cx, cy, sx, sy) = queue[queue_front];
@@ -533,14 +559,16 @@ pub(crate) fn find_text_like_patches(
         }
 
         // 8-connected expansion
-        for &(dx, dy) in &NEIGHBORS_8 {
+        for k in 0..8 {
+            let (dx, dy) = NEIGHBORS_8[k];
             let nx = cx as i32 + dx;
             let ny = cy as i32 + dy;
-            if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
+            // Unsigned boundary check: negative values wrap to huge usize, exceeding width/height.
+            if (nx as usize) >= width || (ny as usize) >= height {
                 continue;
             }
-            let (nxu, nyu) = (nx as usize, ny as usize);
-            let ni = nyu * stride + nxu;
+            // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
+            let ni = (ci as isize + neighbor_offsets[k]) as usize;
             if is_background[ni] {
                 continue;
             }
@@ -550,9 +578,7 @@ pub(crate) fn find_text_like_patches(
                 continue;
             }
             // Similarity: compare source pixel to candidate pixel (L1 weighted)
-            if weighted_distance_to_color(&xyb_ref, stride, nxu, nyu, &src_color, &cs)
-                <= SIMILAR_THRESHOLD
-            {
+            if weighted_distance_to_color_idx(&xyb_ref, ni, &src_color, &cs) <= SIMILAR_THRESHOLD {
                 is_background[ni] = true;
                 queue.push((nx as u32, ny as u32, sx, sy));
             }
@@ -602,7 +628,8 @@ pub(crate) fn find_text_like_patches(
             let mut max_y = start_y;
             let mut found_border = false;
             let mut all_similar = true;
-            let mut reference: (usize, usize) = (0, 0);
+            // Cache reference background color to avoid re-reading 3 arrays per border check.
+            let mut ref_bg: [f32; 3] = [0.0; 3];
 
             while let Some((px32, py32)) = stack.pop() {
                 let (px, py) = (px32 as usize, py32 as usize);
@@ -616,33 +643,40 @@ pub(crate) fn find_text_like_patches(
                 min_y = min_y.min(py);
                 max_y = max_y.max(py);
 
+                // Once rejected (inconsistent border or oversized), skip border checks
+                // but still complete DFS to mark all CC pixels as visited.
+                let rejected = !all_similar
+                    || max_x - min_x >= MAX_PATCH_SIZE
+                    || max_y - min_y >= MAX_PATCH_SIZE;
+
                 // 8-connected neighbors (kSearchRadius=1, skip self)
-                for &(ddx, ddy) in &NEIGHBORS_8 {
+                for k in 0..8 {
+                    let (ddx, ddy) = NEIGHBORS_8[k];
                     let nx = px32 as i32 + ddx;
                     let ny = py32 as i32 + ddy;
-                    if nx < 0 || ny < 0 || nx >= width_i32 || ny >= height_i32 {
+                    // Unsigned boundary check: negative wraps to huge usize.
+                    if (nx as usize) >= width || (ny as usize) >= height {
                         continue;
                     }
-                    let (nxu, nyu) = (nx as usize, ny as usize);
-                    let ni = nyu * stride + nxu;
+                    // Flat index via pre-computed stride offset.
+                    let ni = (pi as isize + neighbor_offsets[k]) as usize;
                     if !is_background[ni] {
                         // Foreground neighbor — push to stack (skip if already visited
                         // to avoid redundant pop/check cycles from duplicate pushes)
                         if !visited[ni] {
                             stack.push((nx as u32, ny as u32));
                         }
-                    } else {
+                    } else if !rejected {
                         // Background neighbor — track border consistency
+                        // (only when CC hasn't been rejected yet)
                         if !found_border {
-                            reference = (nxu, nyu);
+                            ref_bg = [background[0][ni], background[1][ni], background[2][ni]];
                             found_border = true;
                         } else {
-                            // is_similar_b: compare background colors at reference
-                            // and this neighbor (VERY_SIMILAR_THRESHOLD)
-                            let ri = reference.1 * stride + reference.0;
-                            let bg_ref = [background[0][ri], background[1][ri], background[2][ri]];
+                            // is_similar_b: compare cached reference bg color
+                            // to this neighbor's bg color (VERY_SIMILAR_THRESHOLD)
                             let bg_next = [background[0][ni], background[1][ni], background[2][ni]];
-                            if color_distance(&bg_ref, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
+                            if color_distance(&ref_bg, &bg_next, &cs) > VERY_SIMILAR_THRESHOLD {
                                 all_similar = false;
                             }
                         }
@@ -686,20 +720,21 @@ pub(crate) fn find_text_like_patches(
             let cc_w = max_x - min_x + 1;
             let cc_h = max_y - min_y + 1;
 
-            // Get border/reference color from background image
-            let ri = reference.1 * stride + reference.0;
-            let ref_color = [background[0][ri], background[1][ri], background[2][ri]];
+            // Use cached border/reference color from DFS (ref_bg)
+            let ref_color = ref_bg;
 
             // has_similar check: expanded bounding box (±kHasSimilarRadius) must
             // contain at least one pixel similar to ref color (in opsin image).
+            // Uses row-based flat-index iteration to avoid per-pixel y*stride multiply.
             let mut has_similar = false;
             let hs_min_y = min_y.saturating_sub(HAS_SIMILAR_RADIUS);
             let hs_max_y = (max_y + HAS_SIMILAR_RADIUS + 1).min(height);
             let hs_min_x = min_x.saturating_sub(HAS_SIMILAR_RADIUS);
             let hs_max_x = (max_x + HAS_SIMILAR_RADIUS + 1).min(width);
             'outer: for iy in hs_min_y..hs_max_y {
+                let row_start = iy * stride;
                 for ix in hs_min_x..hs_max_x {
-                    if weighted_distance_to_color(&xyb_ref, stride, ix, iy, &ref_color, &cs)
+                    if weighted_distance_to_color_idx(&xyb_ref, row_start + ix, &ref_color, &cs)
                         <= HAS_SIMILAR_THRESHOLD
                     {
                         has_similar = true;
@@ -824,7 +859,12 @@ pub(crate) fn find_text_like_patches(
         .collect();
 
     let mut result: Vec<PatchInfo> = Vec::new();
-    for (_key, group) in patch_groups {
+    // Collect into a Vec and sort by key for deterministic output.
+    // HashMap iteration order is non-deterministic — without sorting,
+    // patch order varies between runs, changing entropy coding.
+    let mut groups: Vec<_> = patch_groups.into_iter().collect();
+    groups.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+    for (_key, group) in groups {
         if group.len() < MIN_PATCH_OCCURRENCES {
             continue;
         }
