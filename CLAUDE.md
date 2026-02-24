@@ -1364,7 +1364,7 @@ than Haar wavelet decomposition on raw pixels. Available via `.with_squeeze(true
 - cjxl-rs total: 7,930KB (avg 991KB/image)
 - vs cjxl e7: **-0.7%** (7 of 8 images equal or smaller)
 - Per-image range: -5.7% to +1.2% vs cjxl e7
-- Encode time: ~14s per 1024x1024 image (release build, single-threaded, after 86x tree learning speedup)
+- Encode time: ~14s per 1024x1024 image (release build, lossless tree learning, after 86x speedup)
 
 **Optimization history** (gap reduction on 8 CLIC 1024x1024 photos):
 1. Tree learning sample cap (65K): +28.5% → +7.7%
