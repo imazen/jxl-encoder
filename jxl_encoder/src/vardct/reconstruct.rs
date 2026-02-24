@@ -222,19 +222,16 @@ fn reconstruct_xyb_impl(
             if raw_strategy == RAW_STRATEGY_DCT8 {
                 let qac = params.scale * quant_field[by * xsize_blocks + bx] as f32;
                 let qac_qm = [qac * x_qm_mul, qac, qac * b_qm_mul];
-                let weights_x: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, 0)[..64]
-                    .try_into()
-                    .unwrap();
-                let weights_y: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, 1)[..64]
-                    .try_into()
-                    .unwrap();
-                let weights_b: &[f32; 64] = quant_weights(RAW_STRATEGY_DCT8 as usize, 2)[..64]
-                    .try_into()
-                    .unwrap();
+                let weights_x: &[f32; 64] =
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 0), 0);
+                let weights_y: &[f32; 64] =
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 1), 0);
+                let weights_b: &[f32; 64] =
+                    as_array_ref(quant_weights(RAW_STRATEGY_DCT8 as usize, 2), 0);
 
-                let mut dq_x = [0.0f32; 64];
-                let mut dq_y = [0.0f32; 64];
-                let mut dq_b = [0.0f32; 64];
+                let mut dq_x = uninit_buf::<64>();
+                let mut dq_y = uninit_buf::<64>();
+                let mut dq_b = uninit_buf::<64>();
 
                 jxl_simd::dequant_block_dct8(
                     &quant_ac[0][by][bx],

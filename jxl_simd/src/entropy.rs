@@ -24,6 +24,15 @@ pub struct EntropyCoeffResult {
     pub info_loss2_sum: f32,
 }
 
+impl EntropyCoeffResult {
+    pub const ZERO: Self = Self {
+        entropy_sum: 0.0,
+        nzeros_sum: 0.0,
+        info_loss_sum: 0.0,
+        info_loss2_sum: 0.0,
+    };
+}
+
 /// Vectorized entropy coefficient processing.
 ///
 /// For each coefficient i in 0..n:
@@ -261,21 +270,25 @@ pub fn entropy_coeffs_avx2(
         }
     }
 
-    // Handle remainder with scalar fallback
+    // Handle remainder with scalar fallback (skip when n is multiple of 8)
     let start = chunks * 8;
-    let remainder = entropy_coeffs_scalar(
-        &block_c[start..n],
-        &block_y[start..n],
-        &weights[start..n],
-        &inv_weights[start..n],
-        n - start,
-        cmap_factor,
-        quant,
-        k_cost_delta,
-        k_cost2,
-        pixel_domain,
-        &mut error_coeffs[start..n],
-    );
+    let remainder = if start < n {
+        entropy_coeffs_scalar(
+            &block_c[start..n],
+            &block_y[start..n],
+            &weights[start..n],
+            &inv_weights[start..n],
+            n - start,
+            cmap_factor,
+            quant,
+            k_cost_delta,
+            k_cost2,
+            pixel_domain,
+            &mut error_coeffs[start..n],
+        )
+    } else {
+        EntropyCoeffResult::ZERO
+    };
 
     let mut entropy_sum = entropy_acc.reduce_add() + remainder.entropy_sum;
     if !pixel_domain {
