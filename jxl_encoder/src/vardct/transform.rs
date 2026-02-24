@@ -686,19 +686,22 @@ impl VarDctEncoder {
                     let transpose_slots = covered_y > covered_x;
                     // Use post-swap dimensions for grid (matches C++ and quantize_ac_block).
                     // Nested loops eliminate per-element integer divisions.
+                    // Pre-slice weights and dct_coeffs rows to eliminate inner bounds checks.
                     for coef_slot_y in 0..cy {
                         for pos_y in 0..BLOCK_DIM {
                             let y = coef_slot_y * BLOCK_DIM + pos_y;
+                            let is_llf_row = y < cy;
+                            let row_off = y * block_width;
+                            let w_row = &weights[row_off..row_off + block_width];
+                            let coeff_row = &mut dct_coeffs[1][row_off..row_off + block_width];
                             for coef_slot_x in 0..cx {
-                                let is_llf_row = y < cy;
                                 for pos_x in 0..BLOCK_DIM {
                                     let x = coef_slot_x * BLOCK_DIM + pos_x;
-                                    let idx = y * block_width + x;
                                     let is_llf = is_llf_row && x < cx;
                                     let q = if is_llf {
                                         Self::quantize_coeff_ac(
-                                            dct_coeffs[1][idx],
-                                            1.0 / weights[idx],
+                                            coeff_row[x],
+                                            1.0 / w_row[x],
                                             qac,
                                             1.0,
                                             &thresholds_y,
@@ -718,7 +721,7 @@ impl VarDctEncoder {
                                             [pos_in_8x8]
                                     };
                                     let adj = adjust_quant_bias(q, 1);
-                                    dct_coeffs[1][idx] = adj * weights[idx] * inv_qac;
+                                    coeff_row[x] = adj * w_row[x] * inv_qac;
                                 }
                             }
                         }
@@ -733,12 +736,21 @@ impl VarDctEncoder {
                 // values. So coefficient-level CfL on LLF is discarded by the
                 // decoder. We skip LLF here; DC CfL uses dc_cfl_factor instead.
                 #[allow(clippy::needless_range_loop)]
-                // k used for LLF check and indexing two arrays
-                for k in 0..size {
-                    let is_llf = (k / block_width) < cy && (k % block_width) < cx;
-                    if !is_llf {
-                        dct_coeffs[0][k] -= x_factor * dct_coeffs[1][k];
-                        dct_coeffs[2][k] -= b_factor * dct_coeffs[1][k];
+                // Nested loops eliminate per-element div/mod; split_at_mut for disjoint refs;
+                // pre-slice rows to eliminate inner bounds checks.
+                {
+                    let (dc_x, rest) = dct_coeffs.split_at_mut(1);
+                    let (dc_y, dc_b) = rest.split_at_mut(1);
+                    for y in 0..block_height {
+                        let x_start = if y < cy { cx } else { 0 };
+                        let row_off = y * block_width;
+                        let yr = &dc_y[0][row_off..row_off + block_width];
+                        let xr = &mut dc_x[0][row_off..row_off + block_width];
+                        let br = &mut dc_b[0][row_off..row_off + block_width];
+                        for x in x_start..block_width {
+                            xr[x] -= x_factor * yr[x];
+                            br[x] -= b_factor * yr[x];
+                        }
                     }
                 }
 
@@ -966,10 +978,12 @@ impl VarDctEncoder {
                         // The 8x8 block storage uses quant_ac[slot_by][slot_bx][pos_in_8x8].
                         let stride = cx * BLOCK_DIM;
                         let full_block = &mut nz_full_block_scratch[..size];
-                        // Nested loops eliminate per-element integer divisions
+                        // Nested loops eliminate per-element integer divisions.
+                        // Pre-slice full_block rows to eliminate inner bounds checks.
                         for coef_slot_y in 0..cy {
                             for pos_y in 0..BLOCK_DIM {
                                 let y = coef_slot_y * BLOCK_DIM + pos_y;
+                                let fb_row = &mut full_block[y * stride..y * stride + stride];
                                 for coef_slot_x in 0..cx {
                                     let (phys_row_off, phys_col_off) = if transpose_slots {
                                         (coef_slot_x, coef_slot_y)
@@ -979,7 +993,7 @@ impl VarDctEncoder {
                                     let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
                                     for pos_x in 0..BLOCK_DIM {
                                         let x = coef_slot_x * BLOCK_DIM + pos_x;
-                                        full_block[y * stride + x] = row[pos_y * BLOCK_DIM + pos_x];
+                                        fb_row[x] = row[pos_y * BLOCK_DIM + pos_x];
                                     }
                                 }
                             }
