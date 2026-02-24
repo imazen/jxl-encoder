@@ -251,14 +251,14 @@ impl SymbolCostEstimator {
         let mut total_counts = vec![0u32; num_contexts];
 
         for token in tokens {
-            let (tok, _nbits) = if token.is_lz77_length {
+            let (tok, _nbits) = if token.is_lz77_length() {
                 let e = Lz77UintCoder::encode(token.value);
                 (e.token + lz77.min_symbol, e.nbits)
             } else {
                 let e = UintCoder::encode(token.value);
                 (e.token, e.nbits)
             };
-            let ctx = token.context as usize;
+            let ctx = token.context() as usize;
             if ctx < num_contexts {
                 let sym = tok as usize;
                 if sym >= counts[ctx].len() {
@@ -663,7 +663,7 @@ pub fn apply_lz77_backref(
     let mut sym_cost = vec![0.0f32; tokens.len() + 1];
     for (i, token) in tokens.iter().enumerate() {
         let e = UintCoder::encode(token.value);
-        let cost = sce.symbol_cost(token.context as usize, e.token as usize) + e.nbits as f32;
+        let cost = sce.symbol_cost(token.context() as usize, e.token as usize) + e.nbits as f32;
         sym_cost[i + 1] = sym_cost[i] + cost;
     }
 
@@ -727,13 +727,13 @@ pub fn apply_lz77_backref(
             // Use empirical cost tables for LZ77 encoding
             let lz77_cost = len_cost(lz77_len as u32)
                 + dist_cost(dist_symbol as u32)
-                + sce.add_symbol_cost(out.last().unwrap().context as usize);
+                + sce.add_symbol_cost(out.last().unwrap().context() as usize);
 
             if lz77_cost <= literal_cost {
                 // Emit LZ77 match
                 let last_token = out.last_mut().unwrap();
                 last_token.value = lz77_len as u32;
-                last_token.is_lz77_length = true;
+                last_token.set_lz77_length(true);
 
                 out.push(Token::new(lz77.distance_context, dist_symbol as u32));
 
@@ -768,7 +768,7 @@ pub fn apply_lz77_backref(
         threshold,
         total_symbols,
         out.len(),
-        out.iter().filter(|t| t.is_lz77_length).count()
+        out.iter().filter(|t| t.is_lz77_length()).count()
     );
     if bit_decrease > threshold {
         lz77.enabled = true;
@@ -814,7 +814,7 @@ pub fn apply_lz77_rle(
     let mut sym_cost = vec![0.0f32; tokens.len() + 1];
     for (i, token) in tokens.iter().enumerate() {
         let e = UintCoder::encode(token.value);
-        let cost = sce.symbol_cost(token.context as usize, e.token as usize) + e.nbits as f32;
+        let cost = sce.symbol_cost(token.context() as usize, e.token as usize) + e.nbits as f32;
         sym_cost[i + 1] = sym_cost[i] + cost;
     }
 
@@ -863,7 +863,7 @@ pub fn apply_lz77_rle(
 
         // Emit LZ77 length token
         let lz77_len = (num_to_copy - lz77.min_length as usize) as u32;
-        out.push(Token::lz77_length(tokens[i].context, lz77_len));
+        out.push(Token::lz77_length(tokens[i].context(), lz77_len));
 
         // Emit distance token encoding distance=1 (repeat previous value)
         out.push(Token::new(lz77.distance_context, rle_distance_symbol));
@@ -881,7 +881,7 @@ pub fn apply_lz77_rle(
         threshold,
         total_symbols,
         out.len(),
-        out.iter().filter(|t| t.is_lz77_length).count()
+        out.iter().filter(|t| t.is_lz77_length()).count()
     );
     if bit_decrease > threshold {
         lz77.enabled = true;
@@ -985,7 +985,7 @@ pub fn apply_lz77_optimal(
     let mut sym_cost = vec![0.0f32; tokens.len() + 1];
     for (i, token) in tokens.iter().enumerate() {
         let e = UintCoder::encode(token.value);
-        let cost = sce.symbol_cost(token.context as usize, e.token as usize) + e.nbits as f32;
+        let cost = sce.symbol_cost(token.context() as usize, e.token as usize) + e.nbits as f32;
         sym_cost[i + 1] = sym_cost[i] + cost;
     }
 
@@ -1038,7 +1038,7 @@ pub fn apply_lz77_optimal(
         if prefix_costs[i + 1].total_cost > lit_cost {
             prefix_costs[i + 1].dist_symbol = 0;
             prefix_costs[i + 1].len = 1;
-            prefix_costs[i + 1].ctx = tokens[i].context;
+            prefix_costs[i + 1].ctx = tokens[i].context();
             prefix_costs[i + 1].total_cost = lit_cost;
         }
 
@@ -1080,13 +1080,13 @@ pub fn apply_lz77_optimal(
                 break;
             }
             let lz77_cost =
-                sce.len_cost(tokens[i].context as usize, (j - min_length) as u32, &lz77)
+                sce.len_cost(tokens[i].context() as usize, (j - min_length) as u32, &lz77)
                     + sce.dist_cost_sce(dsym, &lz77);
             let cost = prefix_costs[i].total_cost + lz77_cost;
             if prefix_costs[target].total_cost > cost {
                 prefix_costs[target].len = j as u32;
                 prefix_costs[target].dist_symbol = dsym + 1; // +1 to distinguish from literal
-                prefix_costs[target].ctx = tokens[i].context;
+                prefix_costs[target].ctx = tokens[i].context();
                 prefix_costs[target].total_cost = cost;
             }
         }
@@ -1124,7 +1124,7 @@ pub fn apply_lz77_optimal(
             tokens[pos - 1].value
         };
         let mut tok = Token::new(info.ctx, val);
-        tok.is_lz77_length = is_lz77;
+        tok.set_lz77_length(is_lz77);
         out.push(tok);
 
         pos -= info.len as usize;
@@ -1203,7 +1203,7 @@ mod tests {
             // Should be much shorter than the original
             assert!(lz77_tokens.len() < tokens.len());
             // Should contain at least one LZ77 length token
-            assert!(lz77_tokens.iter().any(|t| t.is_lz77_length));
+            assert!(lz77_tokens.iter().any(|t| t.is_lz77_length()));
         }
         // If None, that's OK — the threshold might not be met for this particular cost estimate
     }
@@ -1230,7 +1230,7 @@ mod tests {
             assert!(lz77_tokens.len() < tokens.len());
             // The first token should be preserved literally
             assert_eq!(lz77_tokens[0].value, 0);
-            assert!(!lz77_tokens[0].is_lz77_length);
+            assert!(!lz77_tokens[0].is_lz77_length());
         }
     }
 
@@ -1275,7 +1275,7 @@ mod tests {
                 tokens.len()
             );
             // Should have LZ77 length tokens
-            assert!(lz77_tokens.iter().any(|t| t.is_lz77_length));
+            assert!(lz77_tokens.iter().any(|t| t.is_lz77_length()));
         }
     }
 

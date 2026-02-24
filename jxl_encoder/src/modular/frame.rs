@@ -1732,13 +1732,13 @@ impl FrameEncoder {
             }
 
             // Check if any section has LZ77 references
-            let has_lz77 = global_tokens.iter().any(|t| t.is_lz77_length)
+            let has_lz77 = global_tokens.iter().any(|t| t.is_lz77_length())
                 || lf_group_tokens
                     .iter()
-                    .any(|ts| ts.iter().any(|t| t.is_lz77_length))
+                    .any(|ts| ts.iter().any(|t| t.is_lz77_length()))
                 || pass_group_tokens
                     .iter()
-                    .any(|ts| ts.iter().any(|t| t.is_lz77_length));
+                    .any(|ts| ts.iter().any(|t| t.is_lz77_length()));
 
             if has_lz77 {
                 let mut params = crate::entropy_coding::lz77::Lz77Params::new(num_contexts, false);

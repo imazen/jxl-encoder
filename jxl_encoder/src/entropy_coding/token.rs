@@ -10,15 +10,20 @@
 
 use crate::vardct::common::floor_log2_nonzero;
 
-/// A token to be entropy coded.
-/// Consists of a context and a value.
+/// Bit flag for LZ77 length tokens, packed into bit 31 of context_and_flags.
+const LZ77_FLAG: u32 = 1 << 31;
+/// Mask to extract the context from context_and_flags (all bits except bit 31).
+const CONTEXT_MASK: u32 = !LZ77_FLAG;
+
+/// A token to be entropy coded (8 bytes).
+///
+/// Consists of a context and a value. The LZ77 length flag is packed into bit 31
+/// of the context field, keeping the struct at 8 bytes instead of 12.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Token {
-    pub context: u32,
+    /// Bits 0-30: context index. Bit 31: is_lz77_length flag.
+    context_and_flags: u32,
     pub value: u32,
-    /// When true, this token encodes an LZ77 length value using the LZ77 HybridUintConfig
-    /// and the encoded symbol is offset by min_symbol in the histogram.
-    pub is_lz77_length: bool,
 }
 
 impl Token {
@@ -26,9 +31,8 @@ impl Token {
     #[inline]
     pub const fn new(context: u32, value: u32) -> Self {
         Self {
-            context,
+            context_and_flags: context,
             value,
-            is_lz77_length: false,
         }
     }
 
@@ -36,9 +40,36 @@ impl Token {
     #[inline]
     pub const fn lz77_length(context: u32, value: u32) -> Self {
         Self {
-            context,
+            context_and_flags: context | LZ77_FLAG,
             value,
-            is_lz77_length: true,
+        }
+    }
+
+    /// Get the context index (bits 0-30).
+    #[inline]
+    pub const fn context(&self) -> u32 {
+        self.context_and_flags & CONTEXT_MASK
+    }
+
+    /// Returns true if this token encodes an LZ77 length value.
+    #[inline]
+    pub const fn is_lz77_length(&self) -> bool {
+        (self.context_and_flags & LZ77_FLAG) != 0
+    }
+
+    /// Set the context index, preserving the LZ77 flag.
+    #[inline]
+    pub fn set_context(&mut self, context: u32) {
+        self.context_and_flags = (self.context_and_flags & LZ77_FLAG) | (context & CONTEXT_MASK);
+    }
+
+    /// Set or clear the LZ77 length flag, preserving the context.
+    #[inline]
+    pub fn set_lz77_length(&mut self, is_lz77: bool) {
+        if is_lz77 {
+            self.context_and_flags |= LZ77_FLAG;
+        } else {
+            self.context_and_flags &= CONTEXT_MASK;
         }
     }
 }
@@ -209,6 +240,41 @@ mod tests {
         let m = (top_bits << e.nbits) + e.bits;
         let reconstructed = (1u32 << n) + m;
         assert_eq!(reconstructed, 65535);
+    }
+
+    #[test]
+    fn test_token_size() {
+        assert_eq!(core::mem::size_of::<Token>(), 8);
+    }
+
+    #[test]
+    fn test_token_packed_fields() {
+        let t = Token::new(42, 100);
+        assert_eq!(t.context(), 42);
+        assert_eq!(t.value, 100);
+        assert!(!t.is_lz77_length());
+
+        let t = Token::lz77_length(42, 100);
+        assert_eq!(t.context(), 42);
+        assert_eq!(t.value, 100);
+        assert!(t.is_lz77_length());
+
+        let mut t = Token::new(10, 200);
+        t.set_context(99);
+        assert_eq!(t.context(), 99);
+        assert!(!t.is_lz77_length());
+
+        t.set_lz77_length(true);
+        assert!(t.is_lz77_length());
+        assert_eq!(t.context(), 99);
+
+        t.set_context(77);
+        assert_eq!(t.context(), 77);
+        assert!(t.is_lz77_length());
+
+        t.set_lz77_length(false);
+        assert!(!t.is_lz77_length());
+        assert_eq!(t.context(), 77);
     }
 
     #[test]

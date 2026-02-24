@@ -362,7 +362,7 @@ fn build_context_tree_entropy_code(tokens: &[Token]) -> (Vec<u8>, Vec<PrefixCode
 
     for token in tokens {
         let encoded = UintCoder::encode(token.value);
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         histograms[ctx].add(encoded.token as usize);
     }
 

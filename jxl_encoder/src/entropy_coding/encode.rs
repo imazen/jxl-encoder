@@ -28,7 +28,7 @@ pub use super::encode_huffman::*;
 /// the min_symbol offset for LZ77 length tokens.
 #[inline]
 pub(super) fn encode_token_value(token: &Token, lz77: Option<&Lz77Params>) -> (EncodedUint, u32) {
-    if token.is_lz77_length {
+    if token.is_lz77_length() {
         let lz77 = lz77.expect("LZ77 length token without LZ77 params");
         let encoded = Lz77UintCoder::encode(token.value);
         let sym = encoded.token + lz77.min_symbol;
@@ -46,7 +46,7 @@ pub(super) fn encode_token_value_with_config(
     lz77: Option<&Lz77Params>,
     config: &HybridUintConfig,
 ) -> (EncodedUint, u32) {
-    if token.is_lz77_length {
+    if token.is_lz77_length() {
         let lz77 = lz77.expect("LZ77 length token without LZ77 params");
         let encoded = Lz77UintCoder::encode(token.value);
         let sym = encoded.token + lz77.min_symbol;
@@ -137,7 +137,7 @@ pub fn write_token(
     let (encoded, sym) = encode_token_value(token, lz77);
 
     // Look up the prefix code index from the context map
-    let prefix_idx = code.context_map[token.context as usize] as usize;
+    let prefix_idx = code.context_map[token.context() as usize] as usize;
     let pc = &code.prefix_codes[prefix_idx];
 
     // Get the Huffman code for this token

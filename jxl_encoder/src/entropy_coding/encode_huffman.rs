@@ -969,7 +969,7 @@ impl OwnedEntropyCode {
             // Dynamic path for large alphabets
             for token in tokens {
                 let (encoded, sym) = encode_token_value(token, lz77);
-                let prefix_idx = self.context_map[token.context as usize] as usize;
+                let prefix_idx = self.context_map[token.context() as usize] as usize;
                 let pc = &self.prefix_codes[prefix_idx];
                 let tok = sym as usize;
                 let depth = pc.depths[tok] as usize;
@@ -1022,7 +1022,7 @@ pub fn build_entropy_code_with_options(
         .collect();
     let mut total_counts: Vec<u32> = vec![0; num_contexts];
     for token in tokens {
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         let (_encoded, sym) = encode_token_value(token, lz77);
         histograms[ctx][sym as usize] += 1;
         total_counts[ctx] += 1;
