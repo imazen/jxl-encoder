@@ -20,7 +20,7 @@ fn test_common_pack_signed() {
 #[test]
 fn test_token_creation() {
     let t = token::Token::new(5, 100);
-    assert_eq!(t.context, 5);
+    assert_eq!(t.context(), 5);
     assert_eq!(t.value, 100);
 }
 

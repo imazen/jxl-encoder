@@ -178,7 +178,7 @@ fn tokenize_dc_group_lf_frame(
     let md_tokens: Vec<Token> = md_tokens
         .into_iter()
         .map(|mut t| {
-            t.context = ac_meta_ctx_map[t.context as usize];
+            t.set_context(ac_meta_ctx_map[t.context() as usize]);
             t
         })
         .collect();
@@ -228,7 +228,7 @@ fn tokenize_dc_group_wp(
     let dc_tokens: Vec<Token> = dc_tokens
         .into_iter()
         .map(|mut t| {
-            t.context = dc_ctx_remap[t.context as usize];
+            t.set_context(dc_ctx_remap[t.context() as usize]);
             t
         })
         .collect();
@@ -236,7 +236,7 @@ fn tokenize_dc_group_wp(
     let md_tokens: Vec<Token> = md_tokens
         .into_iter()
         .map(|mut t| {
-            t.context = ac_meta_ctx_map[t.context as usize];
+            t.set_context(ac_meta_ctx_map[t.context() as usize]);
             t
         })
         .collect();

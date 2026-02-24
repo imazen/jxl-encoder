@@ -2411,7 +2411,7 @@ mod tests {
         assert_eq!(tokens.len(), 16);
         // All tokens should have context 0
         for t in &tokens {
-            assert_eq!(t.context, 0);
+            assert_eq!(t.context(), 0);
         }
     }
 

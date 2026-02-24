@@ -83,7 +83,7 @@ pub fn build_entropy_code_ans_with_options(
         .collect();
 
     for token in tokens {
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         if ctx < num_contexts {
             let (_encoded, sym) = encode_token_value(token, lz77);
             histograms[ctx].add(sym as usize);
@@ -126,11 +126,11 @@ pub fn build_entropy_code_ans_with_options(
     let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
     let mut lz77_tokens_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
     for token in tokens {
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         if ctx < context_map.len() {
             let histo_idx = context_map[ctx] as usize;
             if histo_idx < num_histograms {
-                if token.is_lz77_length {
+                if token.is_lz77_length() {
                     if let Some(lz77_params) = lz77 {
                         let encoded = Lz77UintCoder::encode(token.value);
                         let sym = encoded.token + lz77_params.min_symbol;
@@ -245,7 +245,7 @@ pub fn build_entropy_code_ans_with_options(
     // in the distribution it maps to. Only in debug builds — this is O(n) over all tokens.
     #[cfg(debug_assertions)]
     for (i, token) in tokens.iter().enumerate() {
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let config = &code.uint_configs[dist_idx];
         let (_encoded, sym) = encode_token_value_with_config(token, lz77, config);
@@ -760,7 +760,7 @@ pub fn write_tokens_ans(
     // Process tokens in reverse order
     #[allow(clippy::unused_enumerate_index)]
     for (_i, token) in tokens.iter().rev().enumerate() {
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let config = code.uint_configs.get(dist_idx).copied().unwrap_or_default();
         let (encoded, sym) = encode_token_value_with_config(token, lz77, &config);
@@ -1030,7 +1030,7 @@ pub fn verify_ans_roundtrip(tokens: &[Token], code: &OwnedAnsEntropyCode) -> Res
     let mut mismatches = 0;
     #[allow(clippy::unused_enumerate_index)] // _i used in #[cfg(feature = "debug-rect")] output
     for (_i, token) in tokens.iter().enumerate() {
-        let ctx = token.context as usize;
+        let ctx = token.context() as usize;
         let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
         let decoder_hist = &decoder_histograms[dist_idx];
 
