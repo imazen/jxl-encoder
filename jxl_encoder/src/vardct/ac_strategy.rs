@@ -15,6 +15,7 @@
 
 use super::ac_strategy_search::{
     find_best_16x16_transform, find_best_32x32_transform, find_best_64x64_transform,
+    try_merge_16x16,
 };
 use super::afv::afv_transform_from_pixels;
 use super::block_extract::*;
@@ -195,6 +196,17 @@ impl AcStrategyMap {
     pub fn set(&mut self, bx: usize, by: usize, raw_strategy: u8) {
         let cx = COVERED_X[raw_strategy as usize];
         let cy = COVERED_Y[raw_strategy as usize];
+        // Debug: check group boundary crossing
+        debug_assert!(
+            {
+                let gx = bx % 32;
+                let gy = by % 32;
+                gx + cx <= 32 && gy + cy <= 32
+            },
+            "varblock crosses pass group border: bx={bx}, by={by}, raw_strategy={raw_strategy}, cx={cx}, cy={cy}, gx={}, gy={}",
+            bx % 32,
+            by % 32
+        );
         for iy in 0..cy {
             for ix in 0..cx {
                 let is_first = (iy | ix) == 0;
@@ -1589,14 +1601,14 @@ pub fn compute_ac_strategy(
             // Non-aligned matching: try 16×16/16×8/8×16 at non-2-aligned positions.
             // This catches cases where the optimal block boundary straddles a 2-aligned
             // position. Matches libjxl enc_ac_strategy.cc:1035-1044 (effort >= 6).
-            // Only accept results when a multi-block transform is selected — single-block
-            // re-evaluation at non-aligned positions can override good aligned-pass choices.
             //
-            // NOTE: favor_single_mul = 1.0 here (not mul8x8). find_best_16x16_transform
-            // already applies mul8x8 internally to single-block costs. Passing mul8x8 as
-            // favor_single_mul would double-apply it, making singles too cheap and
-            // preventing rectangle transforms from ever winning. libjxl's non-aligned
-            // pass uses the same stored entropy_estimate values (with single mul8x8).
+            // For full tiles, use try_merge_16x16 which reads cached single-block costs
+            // from scratch.entropy_estimate (populated by find_best_64x64_transform).
+            // This evaluates only 5 merge candidates per position instead of ~45 strategy
+            // evaluations, matching libjxl's TryMergeAcs approach.
+            //
+            // For edge tiles, fall back to the full find_best_16x16_transform.
+            let is_full_tile = tile_w == TILE_DIM_IN_BLOCKS && tile_h == TILE_DIM_IN_BLOCKS;
             for cy in if profile.non_aligned_eval { 0 } else { tile_h }..tile_h.saturating_sub(1) {
                 for cx in 0..tile_w.saturating_sub(1) {
                     // Skip 2-aligned positions (already evaluated in the aligned pass)
@@ -1610,61 +1622,77 @@ pub fn compute_ac_strategy(
                     if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 2) {
                         continue;
                     }
-                    // Save current strategies for the 2×2 region
-                    let mut saved = [0u8; 4];
-                    for dy in 0..2usize {
-                        for dx in 0..2usize {
-                            saved[dy * 2 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
-                        }
-                    }
-                    // Reset all blocks in the region to DCT8 before re-evaluation.
-                    // This is necessary because find_best_16x16_transform skips
-                    // set() for DCT8 (treating it as default), but blocks may have
-                    // non-DCT8 strategies from the aligned pass.
-                    for dy in 0..2usize {
-                        for dx in 0..2usize {
-                            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
-                        }
-                    }
-                    find_best_16x16_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        1.0,
-                        None,
-                        profile,
-                    );
-                    // Only keep results if a multi-block transform was selected.
-                    // If only single-block strategies were chosen, the aligned pass
-                    // already found optimal single-block choices for these positions.
-                    let has_multi = (0..2usize).any(|dy| {
-                        (0..2usize).any(|dx| {
-                            let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
-                            COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
-                        })
-                    });
-                    if !has_multi {
-                        // Restore original aligned-pass strategies
+
+                    if is_full_tile {
+                        // Fast path: read cached costs, evaluate only merge candidates
+                        try_merge_16x16(
+                            xyb,
+                            stride,
+                            tile_bx,
+                            tile_by,
+                            cx,
+                            cy,
+                            distance,
+                            quant_field_float,
+                            xsize_blocks,
+                            masking,
+                            ytox,
+                            ytob,
+                            mask1x1,
+                            mask1x1_stride,
+                            &mut ac_strategy,
+                            &mut scratch,
+                            profile,
+                        );
+                    } else {
+                        // Edge tile: full re-evaluation (no cached entropy available)
+                        let mut saved = [0u8; 4];
                         for dy in 0..2usize {
                             for dx in 0..2usize {
-                                ac_strategy.set_raw_byte(
-                                    abs_bx + dx,
-                                    abs_by + dy,
-                                    saved[dy * 2 + dx],
-                                );
+                                saved[dy * 2 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                            }
+                        }
+                        for dy in 0..2usize {
+                            for dx in 0..2usize {
+                                ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+                            }
+                        }
+                        find_best_16x16_transform(
+                            xyb,
+                            stride,
+                            tile_bx,
+                            tile_by,
+                            cx,
+                            cy,
+                            distance,
+                            quant_field_float,
+                            xsize_blocks,
+                            masking,
+                            ytox,
+                            ytob,
+                            mask1x1,
+                            mask1x1_stride,
+                            &mut ac_strategy,
+                            &mut scratch,
+                            1.0,
+                            None,
+                            profile,
+                        );
+                        let has_multi = (0..2usize).any(|dy| {
+                            (0..2usize).any(|dx| {
+                                let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                                COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
+                            })
+                        });
+                        if !has_multi {
+                            for dy in 0..2usize {
+                                for dx in 0..2usize {
+                                    ac_strategy.set_raw_byte(
+                                        abs_bx + dx,
+                                        abs_by + dy,
+                                        saved[dy * 2 + dx],
+                                    );
+                                }
                             }
                         }
                     }
@@ -1792,6 +1820,20 @@ pub fn compute_ac_strategy(
                             }
                         }
                     }
+                    // Verify group boundary
+                    let gx = bx % 32;
+                    let gy = by % 32;
+                    assert!(
+                        gx + cx <= 32 && gy + cy <= 32,
+                        "Transform at ({bx},{by}) raw={raw} cx={cx} cy={cy} crosses group border: gx={gx} gy={gy}"
+                    );
+                    // Verify fits in LfGroup
+                    assert!(
+                        bx + cx <= xsize_blocks && by + cy <= ysize_blocks,
+                        "Transform at ({bx},{by}) raw={raw} cx={cx} cy={cy} exceeds image: {}x{} blocks",
+                        xsize_blocks,
+                        ysize_blocks
+                    );
                 }
             }
         }
