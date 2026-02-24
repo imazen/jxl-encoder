@@ -1007,6 +1007,19 @@ pub fn build_entropy_code_with_options(
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {
+    build_entropy_code_from_token_groups(&[tokens], num_contexts, enhanced_clustering, lz77)
+}
+
+/// Build an optimal Huffman entropy code from multiple token groups without merging.
+///
+/// Like `build_entropy_code_with_options`, but accepts separate token slices
+/// (e.g., per-group tokens) to avoid allocating a merged copy.
+pub fn build_entropy_code_from_token_groups(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+    lz77: Option<&Lz77Params>,
+) -> OwnedEntropyCode {
     // Compute the required alphabet size. Without LZ77, tokens fit in ALPHABET_SIZE (64).
     // With LZ77, length tokens have symbol = lz77.min_symbol + Lz77UintCoder token (up to ~31).
     let alphabet_size = if let Some(lz77_params) = lz77 {
@@ -1021,11 +1034,13 @@ pub fn build_entropy_code_with_options(
         .map(|_| vec![0u32; alphabet_size])
         .collect();
     let mut total_counts: Vec<u32> = vec![0; num_contexts];
-    for token in tokens {
-        let ctx = token.context() as usize;
-        let (_encoded, sym) = encode_token_value(token, lz77);
-        histograms[ctx][sym as usize] += 1;
-        total_counts[ctx] += 1;
+    for group in groups {
+        for token in *group {
+            let ctx = token.context() as usize;
+            let (_encoded, sym) = encode_token_value(token, lz77);
+            histograms[ctx][sym as usize] += 1;
+            total_counts[ctx] += 1;
+        }
     }
 
     // Cluster histograms
