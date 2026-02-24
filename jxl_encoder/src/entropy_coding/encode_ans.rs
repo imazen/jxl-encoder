@@ -50,6 +50,225 @@ impl OwnedAnsEntropyCode {
     }
 }
 
+/// Accumulated histogram data from a token stream (or multiple token streams).
+///
+/// This struct captures all the statistical information needed to build an ANS
+/// entropy code, without retaining the tokens themselves. This enables a two-phase
+/// encode approach: accumulate statistics (Phase 1) → build codes → re-tokenize
+/// and write (Phase 2), avoiding O(total_tokens) memory for large images.
+pub struct AccumulatedAnsData {
+    /// Per-context symbol frequency counts.
+    pub histograms: Vec<super::histogram::Histogram>,
+    /// Per-context raw value frequencies (value → count).
+    /// Used for HybridUint config optimization after histogram clustering.
+    pub value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>>,
+    /// Per-context LZ77 symbol frequencies (symbol → count).
+    pub lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>>,
+    /// Number of contexts.
+    pub num_contexts: usize,
+}
+
+impl AccumulatedAnsData {
+    /// Create a new empty accumulator for the given number of contexts.
+    pub fn new(num_contexts: usize) -> Self {
+        Self {
+            histograms: (0..num_contexts)
+                .map(|_| super::histogram::Histogram::new())
+                .collect(),
+            value_freqs: (0..num_contexts)
+                .map(|_| alloc::collections::BTreeMap::new())
+                .collect(),
+            lz77_freqs: (0..num_contexts)
+                .map(|_| alloc::collections::BTreeMap::new())
+                .collect(),
+            num_contexts,
+        }
+    }
+
+    /// Accumulate a token into the histograms and value frequency maps.
+    #[inline]
+    pub fn add_token(&mut self, token: &Token, lz77: Option<&Lz77Params>) {
+        let ctx = token.context() as usize;
+        if ctx < self.num_contexts {
+            let (_encoded, sym) = encode_token_value(token, lz77);
+            self.histograms[ctx].add(sym as usize);
+            if token.is_lz77_length() {
+                if let Some(lz77_params) = lz77 {
+                    let encoded = Lz77UintCoder::encode(token.value);
+                    let lz77_sym = encoded.token + lz77_params.min_symbol;
+                    *self.lz77_freqs[ctx].entry(lz77_sym).or_insert(0) += 1;
+                }
+            } else {
+                *self.value_freqs[ctx].entry(token.value).or_insert(0) += 1;
+            }
+        }
+    }
+
+    /// Accumulate all tokens from a slice.
+    pub fn add_tokens(&mut self, tokens: &[Token], lz77: Option<&Lz77Params>) {
+        for token in tokens {
+            self.add_token(token, lz77);
+        }
+    }
+
+    /// Merge another accumulator into this one (for combining per-thread results).
+    pub fn merge(&mut self, other: &Self) {
+        debug_assert_eq!(self.num_contexts, other.num_contexts);
+        for ctx in 0..self.num_contexts {
+            self.histograms[ctx].add_histogram(&other.histograms[ctx]);
+            for (&val, &count) in &other.value_freqs[ctx] {
+                *self.value_freqs[ctx].entry(val).or_insert(0) += count;
+            }
+            for (&sym, &count) in &other.lz77_freqs[ctx] {
+                *self.lz77_freqs[ctx].entry(sym).or_insert(0) += count;
+            }
+        }
+    }
+}
+
+/// Build an ANS entropy code from accumulated histogram data.
+///
+/// This is Phase B of the two-phase approach: takes pre-accumulated statistics
+/// and builds the entropy code (clustering, HybridUint optimization, ANS distributions).
+pub fn build_entropy_code_from_accumulated_ans(
+    data: AccumulatedAnsData,
+    enhanced_clustering: bool,
+    lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
+) -> OwnedAnsEntropyCode {
+    use crate::entropy_coding::cluster::{
+        ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
+    };
+    use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
+
+    let num_contexts = data.num_contexts;
+
+    // Cluster histograms
+    let cluster_type = if enhanced_clustering {
+        ClusteringType::Best
+    } else {
+        ClusteringType::Fast
+    };
+
+    let mut max_histograms = num_contexts.min(128);
+    if let Some(tp) = total_pixel_hint {
+        max_histograms = max_histograms.min((tp / 2048).max(1));
+    }
+    let result = enhanced_cluster(
+        cluster_type,
+        EntropyType::Ans,
+        &data.histograms,
+        max_histograms,
+    )
+    .expect("ANS clustering failed");
+
+    let context_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
+    debug_assert_eq!(context_map.len(), num_contexts);
+
+    // Merge per-context value frequencies into per-merged-histogram frequencies
+    // using the context map from clustering.
+    let num_histograms = result.histograms.len();
+    let mut merged_value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
+        .map(|_| alloc::collections::BTreeMap::new())
+        .collect();
+    let mut merged_lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
+        .map(|_| alloc::collections::BTreeMap::new())
+        .collect();
+    for (ctx, &cm) in context_map.iter().enumerate() {
+        let histo_idx = cm as usize;
+        if histo_idx < num_histograms {
+            for (&val, &count) in &data.value_freqs[ctx] {
+                *merged_value_freqs[histo_idx].entry(val).or_insert(0) += count;
+            }
+            for (&sym, &count) in &data.lz77_freqs[ctx] {
+                *merged_lz77_freqs[histo_idx].entry(sym).or_insert(0) += count;
+            }
+        }
+    }
+
+    // Optimize per-histogram HybridUint configs from merged value frequencies.
+    let uint_configs = if enhanced_clustering {
+        optimize_uint_configs_best_from_freqs(&merged_value_freqs, lz77)
+    } else {
+        optimize_uint_configs_fast_from_freqs(&merged_value_freqs, lz77)
+    };
+
+    // Build ANS histograms and distributions with the optimized configs.
+    let mut ans_histograms = Vec::with_capacity(num_histograms);
+    let mut ans_distributions = Vec::with_capacity(num_histograms);
+    let allowed_cache = super::ans::AllowedCountsCache::new();
+
+    for h in 0..num_histograms {
+        let config = &uint_configs[h];
+        let mut counts: Vec<u32> = Vec::new();
+        for (&val, &freq) in &merged_value_freqs[h] {
+            let (tok, _, _) = config.encode(val);
+            let sym = tok as usize;
+            if sym >= counts.len() {
+                counts.resize(sym + 1, 0);
+            }
+            counts[sym] += freq;
+        }
+        for (&sym, &freq) in &merged_lz77_freqs[h] {
+            let s = sym as usize;
+            if s >= counts.len() {
+                counts.resize(s + 1, 0);
+            }
+            counts[s] += freq;
+        }
+        if counts.is_empty() {
+            counts.push(0);
+        }
+
+        let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
+        let histo = EnhancedHistogram::from_counts(&i32_counts);
+
+        let ans_histo = ANSEncodingHistogram::from_histogram_cached(
+            &histo,
+            ANSHistogramStrategy::Precise,
+            &allowed_cache,
+        )
+        .expect("ANS histogram normalization failed");
+        ans_histograms.push(ans_histo);
+    }
+
+    // Compute global log_alpha_size
+    let max_alphabet_size = ans_histograms
+        .iter()
+        .map(|h| h.counts.len())
+        .max()
+        .unwrap_or(1);
+    let log_alpha_size = if lz77.is_some_and(|p| p.enabled) {
+        8
+    } else if max_alphabet_size <= (1 << ANS_LOG_ALPHA_SIZE) {
+        ANS_LOG_ALPHA_SIZE
+    } else {
+        let min_bits = if max_alphabet_size <= 1 {
+            5
+        } else {
+            (max_alphabet_size - 1).ilog2() as usize + 1
+        };
+        min_bits.clamp(5, 8)
+    };
+
+    for ans_histo in &ans_histograms {
+        let ans_dist = AnsDistribution::from_normalized_counts_with_log_alpha(
+            &ans_histo.counts,
+            log_alpha_size,
+        )
+        .expect("ANS distribution building failed");
+        ans_distributions.push(ans_dist);
+    }
+
+    OwnedAnsEntropyCode {
+        context_map,
+        histograms: ans_histograms,
+        distributions: ans_distributions,
+        log_alpha_size,
+        uint_configs,
+    }
+}
+
 /// Build an ANS entropy code from collected tokens.
 ///
 /// 1. Creates per-context histograms from all tokens.
@@ -86,6 +305,10 @@ pub fn build_entropy_code_ans_with_options(
 /// Like `build_entropy_code_ans_with_options`, but accepts separate token slices
 /// (e.g., per-group tokens) and iterates them without creating a merged copy.
 /// This avoids allocating a merged Vec that can be hundreds of MB for large images.
+///
+/// Internally uses the two-phase accumulate + build approach: collects per-context
+/// histograms and value frequencies in a single pass, then builds codes from the
+/// accumulated data.
 pub fn build_entropy_code_ans_from_token_groups(
     groups: &[&[Token]],
     num_contexts: usize,
@@ -93,182 +316,19 @@ pub fn build_entropy_code_ans_from_token_groups(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
-    use crate::entropy_coding::cluster::{
-        ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
-    };
-    use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
-
-    // Build per-context histograms (single pass using add() which handles growth).
-    let mut histograms: Vec<EnhancedHistogram> = (0..num_contexts)
-        .map(|_| EnhancedHistogram::new())
-        .collect();
-
+    // Phase A: Accumulate per-context histograms and value frequencies.
+    let mut accumulated = AccumulatedAnsData::new(num_contexts);
     for group in groups {
-        for token in *group {
-            let ctx = token.context() as usize;
-            if ctx < num_contexts {
-                let (_encoded, sym) = encode_token_value(token, lz77);
-                histograms[ctx].add(sym as usize);
-            }
-        }
+        accumulated.add_tokens(group, lz77);
     }
 
-    // Cluster histograms
-    let cluster_type = if enhanced_clustering {
-        ClusteringType::Best
-    } else {
-        ClusteringType::Fast
-    };
-
-    // Allow up to 128 clusters — matches libjxl kClustersLimit (enc_context_map.h:24).
-    // Non-simple context map format supports arbitrary counts.
-    let mut max_histograms = num_contexts.min(128);
-    // Scale down for small images: each histogram needs ~36 bytes ANS header overhead,
-    // so for a 128x128 RGB image (~48K values), 96 histograms = ~3.4KB overhead (21% of file).
-    // Cap to total_pixels/2048 so overhead stays proportional to content.
-    if let Some(tp) = total_pixel_hint {
-        max_histograms = max_histograms.min((tp / 2048).max(1));
-    }
-    let result = enhanced_cluster(cluster_type, EntropyType::Ans, &histograms, max_histograms)
-        .expect("ANS clustering failed");
-
-    let context_map: Vec<u8> = result.symbols.iter().map(|&s| s as u8).collect();
-
-    // Verify context map size matches input
-    debug_assert_eq!(
-        context_map.len(),
-        num_contexts,
-        "ANS context map size {} doesn't match num_contexts {}",
-        context_map.len(),
-        num_contexts
+    // Phase B: Build entropy code from accumulated data.
+    let code = build_entropy_code_from_accumulated_ans(
+        accumulated,
+        enhanced_clustering,
+        lz77,
+        total_pixel_hint,
     );
-
-    // Collect value frequency maps per histogram (value → count).
-    // Uses BTreeMap instead of storing every raw value, reducing memory from O(tokens)
-    // to O(distinct_values). For 4K images with ~90M tokens, this shrinks from ~360 MB
-    // to a few MB (typically <1000 distinct values per histogram).
-    let num_histograms = result.histograms.len();
-    let mut value_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
-        .map(|_| alloc::collections::BTreeMap::new())
-        .collect();
-    let mut lz77_freqs: Vec<alloc::collections::BTreeMap<u32, u32>> = (0..num_histograms)
-        .map(|_| alloc::collections::BTreeMap::new())
-        .collect();
-    for group in groups {
-        for token in *group {
-            let ctx = token.context() as usize;
-            if ctx < context_map.len() {
-                let histo_idx = context_map[ctx] as usize;
-                if histo_idx < num_histograms {
-                    if token.is_lz77_length() {
-                        if let Some(lz77_params) = lz77 {
-                            let encoded = Lz77UintCoder::encode(token.value);
-                            let sym = encoded.token + lz77_params.min_symbol;
-                            *lz77_freqs[histo_idx].entry(sym).or_insert(0) += 1;
-                        }
-                    } else {
-                        *value_freqs[histo_idx].entry(token.value).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    // Optimize per-histogram HybridUint configs.
-    // Best mode: 28 curated configs (matching libjxl kBest, enc_ans.cc:747-783).
-    // Fast mode: 4 configs (matching libjxl kFast).
-    let uint_configs = if enhanced_clustering {
-        optimize_uint_configs_best_from_freqs(&value_freqs, lz77)
-    } else {
-        optimize_uint_configs_fast_from_freqs(&value_freqs, lz77)
-    };
-
-    // Build ANS histograms and distributions with the optimized configs.
-    // We need to rebuild histograms because different configs produce different token distributions.
-    let mut ans_histograms = Vec::with_capacity(num_histograms);
-    let mut ans_distributions = Vec::with_capacity(num_histograms);
-
-    // Precompute allowed counts tables once — reused across all histograms.
-    let allowed_cache = super::ans::AllowedCountsCache::new();
-
-    // Phase 1: Build normalized histograms to determine alphabet sizes.
-    // Iterate over (value, count) frequency pairs instead of individual values.
-    for h in 0..num_histograms {
-        let config = &uint_configs[h];
-        let mut counts: Vec<u32> = Vec::new();
-        for (&val, &freq) in &value_freqs[h] {
-            let (tok, _, _) = config.encode(val);
-            let sym = tok as usize;
-            if sym >= counts.len() {
-                counts.resize(sym + 1, 0);
-            }
-            counts[sym] += freq;
-        }
-        for (&sym, &freq) in &lz77_freqs[h] {
-            let s = sym as usize;
-            if s >= counts.len() {
-                counts.resize(s + 1, 0);
-            }
-            counts[s] += freq;
-        }
-        if counts.is_empty() {
-            counts.push(0);
-        }
-
-        // Build EnhancedHistogram directly from counts (avoid per-symbol add loop)
-        let i32_counts: Vec<i32> = counts.iter().map(|&c| c as i32).collect();
-        let histo = EnhancedHistogram::from_counts(&i32_counts);
-
-        let ans_histo = ANSEncodingHistogram::from_histogram_cached(
-            &histo,
-            ANSHistogramStrategy::Precise,
-            &allowed_cache,
-        )
-        .expect("ANS histogram normalization failed");
-        ans_histograms.push(ans_histo);
-    }
-
-    // Phase 2: Compute global log_alpha_size from the max alphabet across all histograms.
-    // This value is written to the bitstream header and used by the decoder for ALL
-    // distributions. Every distribution's alias table must be built with this same value.
-    // Must be at least 5, at most 8 (JXL spec: stored as 2-bit value + 5).
-    let max_alphabet_size = ans_histograms
-        .iter()
-        .map(|h| h.counts.len())
-        .max()
-        .unwrap_or(1);
-    let log_alpha_size = if lz77.is_some_and(|p| p.enabled) {
-        // LZ77 needs at least 8 to accommodate length symbols
-        8
-    } else if max_alphabet_size <= (1 << ANS_LOG_ALPHA_SIZE) {
-        ANS_LOG_ALPHA_SIZE
-    } else {
-        // Need larger alphabet: compute minimum log_alpha_size
-        let min_bits = if max_alphabet_size <= 1 {
-            5
-        } else {
-            (max_alphabet_size - 1).ilog2() as usize + 1
-        };
-        min_bits.clamp(5, 8)
-    };
-
-    // Phase 3: Build distributions with the global log_alpha_size.
-    for ans_histo in &ans_histograms {
-        let ans_dist = AnsDistribution::from_normalized_counts_with_log_alpha(
-            &ans_histo.counts,
-            log_alpha_size,
-        )
-        .expect("ANS distribution building failed");
-        ans_distributions.push(ans_dist);
-    }
-
-    let code = OwnedAnsEntropyCode {
-        context_map,
-        histograms: ans_histograms,
-        distributions: ans_distributions,
-        log_alpha_size,
-        uint_configs,
-    };
 
     // Validate: every token in the stream must have a valid, non-zero frequency
     // in the distribution it maps to. Only in debug builds — this is O(n) over all tokens.
