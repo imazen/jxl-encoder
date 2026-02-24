@@ -304,6 +304,24 @@ impl AcStrategyMap {
         self.data.iter().filter(|&&v| (v & 1) != 0).count()
     }
 
+    /// Copy a rectangular region from `src` into `self`.
+    /// Copies blocks from `(start_bx, start_by)` to `(end_bx, end_by)` exclusive.
+    fn copy_region_from(
+        &mut self,
+        src: &AcStrategyMap,
+        start_bx: usize,
+        start_by: usize,
+        end_bx: usize,
+        end_by: usize,
+    ) {
+        debug_assert_eq!(self.xsize_blocks, src.xsize_blocks);
+        for by in start_by..end_by {
+            let row_start = by * self.xsize_blocks;
+            self.data[row_start + start_bx..row_start + end_bx]
+                .copy_from_slice(&src.data[row_start + start_bx..row_start + end_bx]);
+        }
+    }
+
     /// Return strategy histogram indexed by raw strategy code (0..19).
     /// Counts first blocks only (number of times each transform was selected).
     pub fn strategy_histogram(&self) -> [u32; 19] {
@@ -1263,22 +1281,374 @@ pub fn adjust_quant_field(ac_strategy: &AcStrategyMap, quant_field: &mut [u8]) {
 
 // ─── Top-level API ──────────────────────────────────────────────────────────
 
+/// Process a single tile's AC strategy selection.
+///
+/// This is the per-tile body of `compute_ac_strategy`, extracted to enable parallel
+/// execution. Each tile writes to its own `AcStrategyMap`; the caller merges results.
+#[allow(clippy::too_many_arguments)]
+fn process_tile(
+    xyb: &[&[f32]; 3],
+    stride: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    tile_bx: usize,
+    tile_by: usize,
+    tile_w: usize,
+    tile_h: usize,
+    distance: f32,
+    quant_field_float: &[f32],
+    masking: &[f32],
+    cfl_map: &CflMap,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    profile: &EffortProfile,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+) {
+    let _ = (xsize_blocks, ysize_blocks); // available for bounds checks
+
+    // Get CfL params for this tile
+    let tx = tile_bx / TILE_DIM_IN_BLOCKS;
+    let ty = tile_by / TILE_DIM_IN_BLOCKS;
+    let ytox = cfl_map.ytox_at(tx, ty);
+    let ytob = cfl_map.ytob_at(tx, ty);
+
+    let try_64 = profile.try_dct64;
+    let try_32 = profile.try_dct32;
+
+    let mut cy = 0;
+    // Process 8-row bands: try DCT64x64/DCT64x32/DCT32x64 at effort 7+
+    while try_64 && cy + 7 < tile_h {
+        let mut cx = 0;
+        while cx + 7 < tile_w {
+            find_best_64x64_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+            cx += 8;
+        }
+        // Remaining cols in this 8-row band: 4-block groups, then 2-block groups
+        while try_32 && cx + 3 < tile_w {
+            find_best_32x32_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                None,
+                profile,
+            );
+            cx += 4;
+        }
+        while cx + 1 < tile_w {
+            find_best_16x16_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                1.0,
+                None,
+                profile,
+            );
+            cx += 2;
+        }
+        cy += 8;
+    }
+    // Remaining rows: 4-row bands for 32×32 at effort 5+, then 2-row bands for 16×16
+    while try_32 && cy + 3 < tile_h {
+        let mut cx = 0;
+        while cx + 3 < tile_w {
+            find_best_32x32_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                None,
+                profile,
+            );
+            cx += 4;
+        }
+        while cx + 1 < tile_w {
+            find_best_16x16_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                1.0,
+                None,
+                profile,
+            );
+            cx += 2;
+        }
+        cy += 4;
+    }
+    // Handle remaining rows that don't fit a 32×32 block
+    while cy + 1 < tile_h {
+        let mut cx = 0;
+        while cx + 1 < tile_w {
+            find_best_16x16_transform(
+                *xyb,
+                stride,
+                tile_bx,
+                tile_by,
+                cx,
+                cy,
+                distance,
+                quant_field_float,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                1.0,
+                None,
+                profile,
+            );
+            cx += 2;
+        }
+        cy += 2;
+    }
+
+    // Non-aligned matching: try 16×16/16×8/8×16 at non-2-aligned positions.
+    let is_full_tile = tile_w == TILE_DIM_IN_BLOCKS && tile_h == TILE_DIM_IN_BLOCKS;
+    for cy in if profile.non_aligned_eval { 0 } else { tile_h }..tile_h.saturating_sub(1) {
+        for cx in 0..tile_w.saturating_sub(1) {
+            if (cy | cx) % 2 == 0 {
+                continue;
+            }
+            let abs_bx = tile_bx + cx;
+            let abs_by = tile_by + cy;
+            if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 2) {
+                continue;
+            }
+
+            if is_full_tile {
+                try_merge_16x16(
+                    *xyb,
+                    stride,
+                    tile_bx,
+                    tile_by,
+                    cx,
+                    cy,
+                    distance,
+                    quant_field_float,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    ac_strategy,
+                    scratch,
+                    profile,
+                );
+            } else {
+                let mut saved = [0u8; 4];
+                for dy in 0..2usize {
+                    for dx in 0..2usize {
+                        saved[dy * 2 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                    }
+                }
+                for dy in 0..2usize {
+                    for dx in 0..2usize {
+                        ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+                    }
+                }
+                find_best_16x16_transform(
+                    *xyb,
+                    stride,
+                    tile_bx,
+                    tile_by,
+                    cx,
+                    cy,
+                    distance,
+                    quant_field_float,
+                    xsize_blocks,
+                    masking,
+                    ytox,
+                    ytob,
+                    mask1x1,
+                    mask1x1_stride,
+                    ac_strategy,
+                    scratch,
+                    1.0,
+                    None,
+                    profile,
+                );
+                let has_multi = (0..2usize).any(|dy| {
+                    (0..2usize).any(|dx| {
+                        let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                        COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
+                    })
+                });
+                if !has_multi {
+                    for dy in 0..2usize {
+                        for dx in 0..2usize {
+                            ac_strategy.set_raw_byte(abs_bx + dx, abs_by + dy, saved[dy * 2 + dx]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
+    if profile.non_aligned_eval {
+        let step = profile.fine_grained_step as usize;
+        for cy in (0..tile_h.saturating_sub(3)).step_by(step) {
+            for cx in (0..tile_w.saturating_sub(3)).step_by(step) {
+                if (cy | cx) % 4 == 0 {
+                    continue;
+                }
+                let abs_bx = tile_bx + cx;
+                let abs_by = tile_by + cy;
+                if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 4) {
+                    continue;
+                }
+                if is_full_tile {
+                    try_merge_32x32(
+                        *xyb,
+                        stride,
+                        tile_bx,
+                        tile_by,
+                        cx,
+                        cy,
+                        distance,
+                        quant_field_float,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        ac_strategy,
+                        scratch,
+                        profile,
+                    );
+                } else {
+                    let mut saved = [0u8; 16];
+                    for dy in 0..4usize {
+                        for dx in 0..4usize {
+                            saved[dy * 4 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
+                        }
+                    }
+                    for dy in 0..4usize {
+                        for dx in 0..4usize {
+                            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+                        }
+                    }
+                    find_best_32x32_transform(
+                        *xyb,
+                        stride,
+                        tile_bx,
+                        tile_by,
+                        cx,
+                        cy,
+                        distance,
+                        quant_field_float,
+                        xsize_blocks,
+                        masking,
+                        ytox,
+                        ytob,
+                        mask1x1,
+                        mask1x1_stride,
+                        ac_strategy,
+                        scratch,
+                        None,
+                        profile,
+                    );
+                    let has_multi = (0..4usize).any(|dy| {
+                        (0..4usize).any(|dx| {
+                            let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
+                            COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
+                        })
+                    });
+                    if !has_multi {
+                        for dy in 0..4usize {
+                            for dx in 0..4usize {
+                                ac_strategy.set_raw_byte(
+                                    abs_bx + dx,
+                                    abs_by + dy,
+                                    saved[dy * 4 + dx],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Compute the AC strategy map for the entire image.
 ///
-/// Iterates over 2×2 block groups within each tile, calling
-/// `find_best_16x16_transform()` for each.
-///
-/// # Arguments
-/// * `xyb_x`, `xyb_y`, `xyb_b` - XYB channel planes (padded to block boundaries)
-/// * `stride` - Row stride (padded width) of the XYB buffers
-/// * `buf_height` - Padded height of the XYB buffers
-/// * `xsize_blocks`, `ysize_blocks` - Image dimensions in 8×8 blocks
-/// * `distance` - Butteraugli target distance
-/// * `quant_field_float` - Per-block float aq_map values
-/// * `masking` - Per-block masking field from adaptive quantization
-/// * `cfl_map` - Chroma-from-luma parameters
-/// * `mask1x1` - Optional per-pixel masking field for pixel-domain loss
-/// * `mask1x1_stride` - Stride of the mask1x1 array (typically padded_width)
+/// Processes tiles in parallel, each with independent scratch buffers and a
+/// thread-local `AcStrategyMap`. Tile results are merged into the final map.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_ac_strategy(
     xyb_x: &[f32],
@@ -1297,384 +1667,64 @@ pub fn compute_ac_strategy(
     profile: &EffortProfile,
 ) -> AcStrategyMap {
     let _ = buf_height; // Used for documentation; buffer is padded to ysize_blocks * 8
-    let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
 
-    // C++ passes the float aq_map values directly to EstimateEntropy.
-    // These are the adaptive quant values BEFORE conversion to u8 raw_quant.
-    // Using u8 cast to f32 would give ~6x larger values (raw_quant = aq_map * inv_scale).
-
-    let xyb = [xyb_x, xyb_y, xyb_b];
-    let mut scratch = EntropyEstScratch::new();
-
-    // Process each tile (8×8 blocks = 64×64 pixels)
+    // Collect tile coordinates
+    let mut tiles = Vec::new();
     for tile_by in (0..ysize_blocks).step_by(TILE_DIM_IN_BLOCKS) {
         for tile_bx in (0..xsize_blocks).step_by(TILE_DIM_IN_BLOCKS) {
-            let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
-            let tile_h = TILE_DIM_IN_BLOCKS.min(ysize_blocks - tile_by);
-
-            // Get CfL params for this tile
-            let tx = tile_bx / TILE_DIM_IN_BLOCKS;
-            let ty = tile_by / TILE_DIM_IN_BLOCKS;
-            let ytox = cfl_map.ytox_at(tx, ty);
-            let ytob = cfl_map.ytob_at(tx, ty);
-
-            // Process hierarchically: 8×8 block groups (64×64) at e7+,
-            // then 4×4 (32×32) at e5+, then always 2×2 (16×16).
-            let try_64 = profile.try_dct64;
-            let try_32 = profile.try_dct32;
-
-            let mut cy = 0;
-            // Process 8-row bands: try DCT64x64/DCT64x32/DCT32x64 at effort 7+
-            while try_64 && cy + 7 < tile_h {
-                let mut cx = 0;
-                while cx + 7 < tile_w {
-                    find_best_64x64_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        profile,
-                    );
-                    cx += 8;
-                }
-                // Remaining cols in this 8-row band: 4-block groups, then 2-block groups
-                while try_32 && cx + 3 < tile_w {
-                    find_best_32x32_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        None,
-                        profile,
-                    );
-                    cx += 4;
-                }
-                while cx + 1 < tile_w {
-                    find_best_16x16_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        1.0,
-                        None,
-                        profile,
-                    );
-                    cx += 2;
-                }
-                cy += 8;
-            }
-            // Remaining rows: 4-row bands for 32×32 at effort 5+, then 2-row bands for 16×16
-            while try_32 && cy + 3 < tile_h {
-                let mut cx = 0;
-                while cx + 3 < tile_w {
-                    find_best_32x32_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        None,
-                        profile,
-                    );
-                    cx += 4;
-                }
-                while cx + 1 < tile_w {
-                    find_best_16x16_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        1.0,
-                        None,
-                        profile,
-                    );
-                    cx += 2;
-                }
-                cy += 4;
-            }
-            // Handle remaining rows that don't fit a 32×32 block
-            while cy + 1 < tile_h {
-                let mut cx = 0;
-                while cx + 1 < tile_w {
-                    find_best_16x16_transform(
-                        xyb,
-                        stride,
-                        tile_bx,
-                        tile_by,
-                        cx,
-                        cy,
-                        distance,
-                        quant_field_float,
-                        xsize_blocks,
-                        masking,
-                        ytox,
-                        ytob,
-                        mask1x1,
-                        mask1x1_stride,
-                        &mut ac_strategy,
-                        &mut scratch,
-                        1.0,
-                        None,
-                        profile,
-                    );
-                    cx += 2;
-                }
-                cy += 2;
-            }
-
-            // Non-aligned matching: try 16×16/16×8/8×16 at non-2-aligned positions.
-            // This catches cases where the optimal block boundary straddles a 2-aligned
-            // position. Matches libjxl enc_ac_strategy.cc:1035-1044 (effort >= 6).
-            //
-            // For full tiles, use try_merge_16x16 which reads cached single-block costs
-            // from scratch.entropy_estimate (populated by find_best_64x64_transform).
-            // This evaluates only 5 merge candidates per position instead of ~45 strategy
-            // evaluations, matching libjxl's TryMergeAcs approach.
-            //
-            // For edge tiles, fall back to the full find_best_16x16_transform.
-            let is_full_tile = tile_w == TILE_DIM_IN_BLOCKS && tile_h == TILE_DIM_IN_BLOCKS;
-            for cy in if profile.non_aligned_eval { 0 } else { tile_h }..tile_h.saturating_sub(1) {
-                for cx in 0..tile_w.saturating_sub(1) {
-                    // Skip 2-aligned positions (already evaluated in the aligned pass)
-                    if (cy | cx) % 2 == 0 {
-                        continue;
-                    }
-                    let abs_bx = tile_bx + cx;
-                    let abs_by = tile_by + cy;
-                    // Check that the proposed 2×2 region doesn't cross any existing
-                    // multi-block transform boundaries
-                    if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 2) {
-                        continue;
-                    }
-
-                    if is_full_tile {
-                        // Fast path: read cached costs, evaluate only merge candidates
-                        try_merge_16x16(
-                            xyb,
-                            stride,
-                            tile_bx,
-                            tile_by,
-                            cx,
-                            cy,
-                            distance,
-                            quant_field_float,
-                            xsize_blocks,
-                            masking,
-                            ytox,
-                            ytob,
-                            mask1x1,
-                            mask1x1_stride,
-                            &mut ac_strategy,
-                            &mut scratch,
-                            profile,
-                        );
-                    } else {
-                        // Edge tile: full re-evaluation (no cached entropy available)
-                        let mut saved = [0u8; 4];
-                        for dy in 0..2usize {
-                            for dx in 0..2usize {
-                                saved[dy * 2 + dx] = ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
-                            }
-                        }
-                        for dy in 0..2usize {
-                            for dx in 0..2usize {
-                                ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
-                            }
-                        }
-                        find_best_16x16_transform(
-                            xyb,
-                            stride,
-                            tile_bx,
-                            tile_by,
-                            cx,
-                            cy,
-                            distance,
-                            quant_field_float,
-                            xsize_blocks,
-                            masking,
-                            ytox,
-                            ytob,
-                            mask1x1,
-                            mask1x1_stride,
-                            &mut ac_strategy,
-                            &mut scratch,
-                            1.0,
-                            None,
-                            profile,
-                        );
-                        let has_multi = (0..2usize).any(|dy| {
-                            (0..2usize).any(|dx| {
-                                let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
-                                COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
-                            })
-                        });
-                        if !has_multi {
-                            for dy in 0..2usize {
-                                for dx in 0..2usize {
-                                    ac_strategy.set_raw_byte(
-                                        abs_bx + dx,
-                                        abs_by + dy,
-                                        saved[dy * 2 + dx],
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Non-aligned matching for 32×32/32×16/16×32 at non-4-aligned positions.
-            // Matches libjxl enc_ac_strategy.cc:1045-1057 (effort >= 6).
-            // libjxl gates by speed_tier < kHare (effort >= 6) only, no distance gate.
-            if profile.non_aligned_eval {
-                let step = profile.fine_grained_step as usize;
-                for cy in (0..tile_h.saturating_sub(3)).step_by(step) {
-                    for cx in (0..tile_w.saturating_sub(3)).step_by(step) {
-                        // Skip 4-aligned positions (already evaluated in aligned pass)
-                        if (cy | cx) % 4 == 0 {
-                            continue;
-                        }
-                        let abs_bx = tile_bx + cx;
-                        let abs_by = tile_by + cy;
-                        if !ac_strategy.can_evaluate_region(abs_bx, abs_by, 4) {
-                            continue;
-                        }
-                        if is_full_tile {
-                            // Fast path: read cached costs, evaluate only 5 large candidates.
-                            try_merge_32x32(
-                                xyb,
-                                stride,
-                                tile_bx,
-                                tile_by,
-                                cx,
-                                cy,
-                                distance,
-                                quant_field_float,
-                                xsize_blocks,
-                                masking,
-                                ytox,
-                                ytob,
-                                mask1x1,
-                                mask1x1_stride,
-                                &mut ac_strategy,
-                                &mut scratch,
-                                profile,
-                            );
-                        } else {
-                            // Edge tile: save/reset/evaluate/check/restore pattern.
-                            let mut saved = [0u8; 16];
-                            for dy in 0..4usize {
-                                for dx in 0..4usize {
-                                    saved[dy * 4 + dx] =
-                                        ac_strategy.raw_byte(abs_bx + dx, abs_by + dy);
-                                }
-                            }
-                            for dy in 0..4usize {
-                                for dx in 0..4usize {
-                                    ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
-                                }
-                            }
-                            find_best_32x32_transform(
-                                xyb,
-                                stride,
-                                tile_bx,
-                                tile_by,
-                                cx,
-                                cy,
-                                distance,
-                                quant_field_float,
-                                xsize_blocks,
-                                masking,
-                                ytox,
-                                ytob,
-                                mask1x1,
-                                mask1x1_stride,
-                                &mut ac_strategy,
-                                &mut scratch,
-                                None,
-                                profile,
-                            );
-                            let has_multi = (0..4usize).any(|dy| {
-                                (0..4usize).any(|dx| {
-                                    let raw = ac_strategy.raw_strategy(abs_bx + dx, abs_by + dy);
-                                    COVERED_X[raw as usize] > 1 || COVERED_Y[raw as usize] > 1
-                                })
-                            });
-                            if !has_multi {
-                                for dy in 0..4usize {
-                                    for dx in 0..4usize {
-                                        ac_strategy.set_raw_byte(
-                                            abs_bx + dx,
-                                            abs_by + dy,
-                                            saved[dy * 4 + dx],
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            tiles.push((tile_bx, tile_by));
         }
+    }
+
+    let xyb = [xyb_x, xyb_y, xyb_b];
+
+    // Process tiles in parallel. Each tile gets its own AcStrategyMap and scratch
+    // buffer. Tiles are spatially disjoint, so results can be merged by copying
+    // each tile's region into the final map.
+    let tile_results = crate::parallel::parallel_map(tiles.len(), |tile_idx| {
+        let (tile_bx, tile_by) = tiles[tile_idx];
+        let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
+        let tile_h = TILE_DIM_IN_BLOCKS.min(ysize_blocks - tile_by);
+
+        let mut local_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+        let mut scratch = EntropyEstScratch::new();
+
+        process_tile(
+            &xyb,
+            stride,
+            xsize_blocks,
+            ysize_blocks,
+            tile_bx,
+            tile_by,
+            tile_w,
+            tile_h,
+            distance,
+            quant_field_float,
+            masking,
+            cfl_map,
+            mask1x1,
+            mask1x1_stride,
+            profile,
+            &mut local_strategy,
+            &mut scratch,
+        );
+
+        local_strategy
+    });
+
+    // Merge tile results into a single map
+    let mut ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
+    for (tile_idx, tile_map) in tile_results.into_iter().enumerate() {
+        let (tile_bx, tile_by) = tiles[tile_idx];
+        let tile_w = TILE_DIM_IN_BLOCKS.min(xsize_blocks - tile_bx);
+        let tile_h = TILE_DIM_IN_BLOCKS.min(ysize_blocks - tile_by);
+        ac_strategy.copy_region_from(
+            &tile_map,
+            tile_bx,
+            tile_by,
+            tile_bx + tile_w,
+            tile_by + tile_h,
+        );
     }
 
     // Validate strategy map consistency in debug builds
