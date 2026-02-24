@@ -68,12 +68,6 @@ pub(super) const CODE_LENGTH_CODES: usize = 18;
 /// Maximum number of symbols in the Huffman alphabet.
 pub const ALPHABET_SIZE: usize = 64;
 
-/// Maximum number of contexts.
-pub const MAX_CONTEXTS: usize = 128;
-
-/// Maximum bits per token (upper bound for allotment).
-pub const MAX_BITS_PER_TOKEN: usize = 24;
-
 /// A Huffman prefix code.
 ///
 /// Contains the bit depths (lengths) and bit patterns for each symbol.
