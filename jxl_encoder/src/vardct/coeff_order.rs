@@ -378,11 +378,105 @@ pub fn compute_custom_orders(zero_counts: &[Vec<Vec<i64>>]) -> (Vec<Vec<Vec<u32>
         }
 
         if bucket_has_custom {
-            used_orders |= 1 << bucket;
+            // Cost-benefit check: estimate whether the Lehmer code encoding
+            // overhead is justified by AC savings from reordering.
+            //
+            // At high distances, zero counts become uniform (most coefficients
+            // are zero regardless of position), so reordering provides minimal
+            // benefit while the Lehmer code still costs bits to encode.
+            //
+            // We estimate:
+            // - Cost: bits to encode the Lehmer code for all 3 channels
+            // - Savings: expected increase in trailing zeros per block × num_blocks
+            //   (each extra trailing zero saves ~1 bit in nzeros coding)
+            let (cx_n, cy_n) = if cx >= cy { (cx, cy) } else { (cy, cx) };
+            let llf = cx_n * cy_n;
+            let natural_lut = natural_coeff_order_lut(cx, cy);
+
+            let mut total_lehmer_cost = 0.0f64;
+            let mut total_savings_bits = 0.0f64;
+
+            for c in 0..3 {
+                let order = &orders[bucket][c];
+                let counts = &zero_counts[bucket][c];
+                if order.is_empty() || counts.len() < size {
+                    continue;
+                }
+
+                // Compute Lehmer code and estimate its encoding cost
+                let order_zigzag: Vec<u32> =
+                    order.iter().map(|&pos| natural_lut[pos as usize]).collect();
+                let lehmer = compute_lehmer_code(&order_zigzag);
+
+                let end = lehmer[llf..size]
+                    .iter()
+                    .rposition(|&v| v != 0)
+                    .map_or(llf, |p| llf + p + 1);
+
+                // End marker token: ~log2(size) bits
+                total_lehmer_cost += (size as f64).log2();
+                // Per-entry cost: ~0.5 bits for zero, ~1.5 + log2(1+v) for non-zero
+                for &val in &lehmer[llf..end] {
+                    if val == 0 {
+                        total_lehmer_cost += 0.5;
+                    } else {
+                        total_lehmer_cost += 1.5 + (val as f64 + 1.0).log2();
+                    }
+                }
+
+                // Estimate savings from reordering.
+                // The savings come from increased trailing zeros in each block.
+                // Compute expected trailing zeros under both orders using
+                // per-position zero rates (zero_count / max_count).
+                let max_count = counts.iter().copied().max().unwrap_or(0);
+                if max_count <= 0 {
+                    continue;
+                }
+
+                let zero_rates: Vec<f64> = counts
+                    .iter()
+                    .map(|&c| {
+                        if c < 0 {
+                            0.0
+                        } else {
+                            c as f64 / max_count as f64
+                        }
+                    })
+                    .collect();
+
+                let nzeros_custom = expected_trailing_zeros(order, &zero_rates, llf, size);
+                let nzeros_natural = expected_trailing_zeros(&natural, &zero_rates, llf, size);
+
+                // Each additional trailing zero saves ~1 bit per block
+                total_savings_bits += (nzeros_custom - nzeros_natural) * max_count as f64;
+            }
+
+            if total_savings_bits > total_lehmer_cost {
+                used_orders |= 1 << bucket;
+            }
         }
     }
 
     (orders, used_orders)
+}
+
+/// Compute expected number of trailing zeros for a scan order.
+///
+/// For each position from the end of the scan, accumulates the probability
+/// that all positions from there to the end are zero. The sum of these
+/// probabilities is the expected number of trailing zeros.
+fn expected_trailing_zeros(order: &[u32], zero_rates: &[f64], llf: usize, size: usize) -> f64 {
+    let mut expected = 0.0;
+    let mut prob_all_zero = 1.0;
+    for i in (llf..size).rev() {
+        let pos = order[i] as usize;
+        prob_all_zero *= zero_rates[pos];
+        expected += prob_all_zero;
+        if prob_all_zero < 1e-10 {
+            break; // negligible contribution from here on
+        }
+    }
+    expected
 }
 
 /// Convert order bucket index to (cx, cy) for natural order generation.
