@@ -72,6 +72,27 @@ pub fn build_entropy_code_ans_with_options(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
 ) -> OwnedAnsEntropyCode {
+    build_entropy_code_ans_from_token_groups(
+        &[tokens],
+        num_contexts,
+        enhanced_clustering,
+        lz77,
+        total_pixel_hint,
+    )
+}
+
+/// Build an ANS entropy code from multiple token groups without merging.
+///
+/// Like `build_entropy_code_ans_with_options`, but accepts separate token slices
+/// (e.g., per-group tokens) and iterates them without creating a merged copy.
+/// This avoids allocating a merged Vec that can be hundreds of MB for large images.
+pub fn build_entropy_code_ans_from_token_groups(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    enhanced_clustering: bool,
+    lz77: Option<&Lz77Params>,
+    total_pixel_hint: Option<usize>,
+) -> OwnedAnsEntropyCode {
     use crate::entropy_coding::cluster::{
         ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
     };
@@ -82,11 +103,13 @@ pub fn build_entropy_code_ans_with_options(
         .map(|_| EnhancedHistogram::new())
         .collect();
 
-    for token in tokens {
-        let ctx = token.context() as usize;
-        if ctx < num_contexts {
-            let (_encoded, sym) = encode_token_value(token, lz77);
-            histograms[ctx].add(sym as usize);
+    for group in groups {
+        for token in *group {
+            let ctx = token.context() as usize;
+            if ctx < num_contexts {
+                let (_encoded, sym) = encode_token_value(token, lz77);
+                histograms[ctx].add(sym as usize);
+            }
         }
     }
 
@@ -125,19 +148,21 @@ pub fn build_entropy_code_ans_with_options(
     let num_histograms = result.histograms.len();
     let mut values_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
     let mut lz77_tokens_per_histo: Vec<Vec<u32>> = vec![Vec::new(); num_histograms];
-    for token in tokens {
-        let ctx = token.context() as usize;
-        if ctx < context_map.len() {
-            let histo_idx = context_map[ctx] as usize;
-            if histo_idx < num_histograms {
-                if token.is_lz77_length() {
-                    if let Some(lz77_params) = lz77 {
-                        let encoded = Lz77UintCoder::encode(token.value);
-                        let sym = encoded.token + lz77_params.min_symbol;
-                        lz77_tokens_per_histo[histo_idx].push(sym);
+    for group in groups {
+        for token in *group {
+            let ctx = token.context() as usize;
+            if ctx < context_map.len() {
+                let histo_idx = context_map[ctx] as usize;
+                if histo_idx < num_histograms {
+                    if token.is_lz77_length() {
+                        if let Some(lz77_params) = lz77 {
+                            let encoded = Lz77UintCoder::encode(token.value);
+                            let sym = encoded.token + lz77_params.min_symbol;
+                            lz77_tokens_per_histo[histo_idx].push(sym);
+                        }
+                    } else {
+                        values_per_histo[histo_idx].push(token.value);
                     }
-                } else {
-                    values_per_histo[histo_idx].push(token.value);
                 }
             }
         }
@@ -244,29 +269,31 @@ pub fn build_entropy_code_ans_with_options(
     // Validate: every token in the stream must have a valid, non-zero frequency
     // in the distribution it maps to. Only in debug builds — this is O(n) over all tokens.
     #[cfg(debug_assertions)]
-    for (i, token) in tokens.iter().enumerate() {
-        let ctx = token.context() as usize;
-        let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
-        let config = &code.uint_configs[dist_idx];
-        let (_encoded, sym) = encode_token_value_with_config(token, lz77, config);
-        let dist = &code.distributions[dist_idx];
-        let tok = sym as usize;
-        if tok >= dist.symbols.len() {
-            panic!(
-                "ANS validation: token[{}] ctx={} val={} tok={} exceeds distribution alphabet_size={} (dist_idx={})",
-                i,
-                ctx,
-                token.value,
-                tok,
-                dist.symbols.len(),
-                dist_idx
-            );
-        }
-        if dist.symbols[tok].freq == 0 {
-            panic!(
-                "ANS validation: token[{}] ctx={} val={} tok={} has zero frequency in distribution (dist_idx={})",
-                i, ctx, token.value, tok, dist_idx
-            );
+    for group in groups {
+        for (i, token) in group.iter().enumerate() {
+            let ctx = token.context() as usize;
+            let dist_idx = code.context_map.get(ctx).copied().unwrap_or(0) as usize;
+            let config = &code.uint_configs[dist_idx];
+            let (_encoded, sym) = encode_token_value_with_config(token, lz77, config);
+            let dist = &code.distributions[dist_idx];
+            let tok = sym as usize;
+            if tok >= dist.symbols.len() {
+                panic!(
+                    "ANS validation: token[{}] ctx={} val={} tok={} exceeds distribution alphabet_size={} (dist_idx={})",
+                    i,
+                    ctx,
+                    token.value,
+                    tok,
+                    dist.symbols.len(),
+                    dist_idx
+                );
+            }
+            if dist.symbols[tok].freq == 0 {
+                panic!(
+                    "ANS validation: token[{}] ctx={} val={} tok={} has zero frequency in distribution (dist_idx={})",
+                    i, ctx, token.value, tok, dist_idx
+                );
+            }
         }
     }
 

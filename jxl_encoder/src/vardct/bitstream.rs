@@ -21,7 +21,7 @@ use crate::bit_writer::BitWriter;
 use crate::debug_log;
 
 use crate::entropy_coding::encode::{
-    build_entropy_code_ans_with_options, build_entropy_code_with_options,
+    build_entropy_code_ans_from_token_groups, build_entropy_code_from_token_groups,
 };
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
@@ -1915,37 +1915,31 @@ impl VarDctEncoder {
         } else {
             base_dc_contexts
         };
-        let total_dc_tokens: usize = dc_tokens_per_group.iter().map(|t| t.len()).sum::<usize>()
-            + ac_metadata_tokens_per_group
-                .iter()
-                .map(|t| t.len())
-                .sum::<usize>();
-        let mut all_dc_tokens = Vec::with_capacity(total_dc_tokens);
-        for section in &dc_tokens_per_group {
-            all_dc_tokens.extend_from_slice(section);
-        }
-        for section in &ac_metadata_tokens_per_group {
-            all_dc_tokens.extend_from_slice(section);
-        }
-        // Build entropy codes (Huffman or ANS based on config)
+        // Build entropy codes by iterating per-group tokens without merging.
+        // This avoids allocating a merged Vec (which can be hundreds of MB).
+        let dc_groups: Vec<&[Token]> = dc_tokens_per_group
+            .iter()
+            .chain(ac_metadata_tokens_per_group.iter())
+            .map(|v| v.as_slice())
+            .collect();
         let dc_built_code = if self.use_ans {
-            BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
-                &all_dc_tokens,
+            BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
+                &dc_groups,
                 dc_num_contexts,
                 self.profile.enhanced_clustering_vardct,
                 dc_lz77_params.as_ref(),
                 None,
             ))
         } else {
-            BuiltEntropyCode::Huffman(build_entropy_code_with_options(
-                &all_dc_tokens,
+            BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
+                &dc_groups,
                 dc_num_contexts,
                 self.profile.enhanced_clustering_vardct,
                 dc_lz77_params.as_ref(),
             ))
         };
 
-        // Build per-pass AC entropy codes
+        // Build per-pass AC entropy codes by iterating per-group tokens without merging.
         let base_ac_num_contexts = block_ctx_map.num_ac_contexts();
         let mut ac_built_codes: Vec<BuiltEntropyCode> = Vec::with_capacity(num_passes);
         for pass in 0..num_passes {
@@ -1954,26 +1948,22 @@ impl VarDctEncoder {
             } else {
                 base_ac_num_contexts
             };
-            let total_ac_tokens: usize = ac_section_tokens_per_pass[pass]
+            let ac_groups: Vec<&[Token]> = ac_section_tokens_per_pass[pass]
                 .iter()
-                .map(|t| t.len())
-                .sum();
-            let mut all_ac_tokens = Vec::with_capacity(total_ac_tokens);
-            for section in &ac_section_tokens_per_pass[pass] {
-                all_ac_tokens.extend_from_slice(section);
-            }
+                .map(|v| v.as_slice())
+                .collect();
 
             let ac_built_code = if self.use_ans {
-                BuiltEntropyCode::Ans(build_entropy_code_ans_with_options(
-                    &all_ac_tokens,
+                BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
+                    &ac_groups,
                     ac_num_contexts,
                     self.profile.enhanced_clustering_vardct,
                     ac_lz77_params_per_pass[pass].as_ref(),
                     None,
                 ))
             } else {
-                BuiltEntropyCode::Huffman(build_entropy_code_with_options(
-                    &all_ac_tokens,
+                BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
+                    &ac_groups,
                     ac_num_contexts,
                     self.profile.enhanced_clustering_vardct,
                     ac_lz77_params_per_pass[pass].as_ref(),
