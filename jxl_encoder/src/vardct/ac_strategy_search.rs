@@ -320,11 +320,19 @@ fn find_best_16x16_transform_impl(
 
     let abs_bx = bx0 + cx;
     let abs_by = by0 + cy;
-    let cost_bases = (
-        profile.k_info_loss_mul_base,
-        profile.k_zeros_mul_base,
-        profile.k_cost_delta_base,
-    );
+    // Pre-compute scaled constants once (was recomputed per estimate_entropy call)
+    let scaled_constants = if use_pixel_domain {
+        compute_scaled_constants(
+            distance,
+            (
+                profile.k_info_loss_mul_base,
+                profile.k_zeros_mul_base,
+                profile.k_cost_delta_base,
+            ),
+        )
+    } else {
+        COEFF_DOMAIN_CONSTANTS
+    };
 
     // Evaluate four 8×8 blocks with DCT8, DCT4X8, DCT8X4, DCT4X4, IDENTITY, DCT2X2
     // Track entropy and best strategy for each block
@@ -359,7 +367,7 @@ fn find_best_16x16_transform_impl(
                         mask1x1,
                         mask1x1_stride,
                         $adjust,
-                        cost_bases,
+                        scaled_constants,
                         &profile.entropy_mul_table,
                         scratch,
                     )
@@ -476,7 +484,7 @@ fn find_best_16x16_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -496,7 +504,7 @@ fn find_best_16x16_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -518,7 +526,7 @@ fn find_best_16x16_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -538,7 +546,7 @@ fn find_best_16x16_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -560,7 +568,7 @@ fn find_best_16x16_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -993,11 +1001,19 @@ fn try_merge_16x16_impl(
     profile: &EffortProfile,
 ) -> bool {
     let use_pixel_domain = mask1x1.is_some();
-    let cost_bases = (
-        profile.k_info_loss_mul_base,
-        profile.k_zeros_mul_base,
-        profile.k_cost_delta_base,
-    );
+    // Pre-compute scaled constants once (was recomputed per estimate_entropy call)
+    let scaled_constants = if use_pixel_domain {
+        compute_scaled_constants(
+            distance,
+            (
+                profile.k_info_loss_mul_base,
+                profile.k_zeros_mul_base,
+                profile.k_cost_delta_base,
+            ),
+        )
+    } else {
+        COEFF_DOMAIN_CONSTANTS
+    };
 
     let (mul16x8, mul16x16) = if use_pixel_domain {
         (1.0_f32, 1.0_f32)
@@ -1040,7 +1056,7 @@ fn try_merge_16x16_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1061,7 +1077,7 @@ fn try_merge_16x16_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1081,7 +1097,7 @@ fn try_merge_16x16_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1102,7 +1118,7 @@ fn try_merge_16x16_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1122,7 +1138,7 @@ fn try_merge_16x16_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1427,11 +1443,19 @@ fn try_merge_32x32_impl(
     profile: &EffortProfile,
 ) -> bool {
     let use_pixel_domain = mask1x1.is_some();
-    let cost_bases = (
-        profile.k_info_loss_mul_base,
-        profile.k_zeros_mul_base,
-        profile.k_cost_delta_base,
-    );
+    // Pre-compute scaled constants once (was recomputed per estimate_entropy call)
+    let scaled_constants = if use_pixel_domain {
+        compute_scaled_constants(
+            distance,
+            (
+                profile.k_info_loss_mul_base,
+                profile.k_zeros_mul_base,
+                profile.k_cost_delta_base,
+            ),
+        )
+    } else {
+        COEFF_DOMAIN_CONSTANTS
+    };
 
     let (mul32x32, mul32x16) = if use_pixel_domain {
         (1.0_f32, 1.0_f32)
@@ -1482,7 +1506,7 @@ fn try_merge_32x32_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1502,7 +1526,7 @@ fn try_merge_32x32_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1522,7 +1546,7 @@ fn try_merge_32x32_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1542,7 +1566,7 @@ fn try_merge_32x32_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1562,7 +1586,7 @@ fn try_merge_32x32_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1869,11 +1893,19 @@ fn find_best_32x32_transform_impl(
     // using libjxl's static constants (1.48 for DCT32x32, 1.49 for DCT32x16).
     // In coefficient-domain mode, use distance-dependent multipliers.
     let use_pixel_domain = mask1x1.is_some();
-    let cost_bases = (
-        profile.k_info_loss_mul_base,
-        profile.k_zeros_mul_base,
-        profile.k_cost_delta_base,
-    );
+    // Pre-compute scaled constants once (was recomputed per estimate_entropy call)
+    let scaled_constants = if use_pixel_domain {
+        compute_scaled_constants(
+            distance,
+            (
+                profile.k_info_loss_mul_base,
+                profile.k_zeros_mul_base,
+                profile.k_cost_delta_base,
+            ),
+        )
+    } else {
+        COEFF_DOMAIN_CONSTANTS
+    };
     let (mul32x32, mul32x16) = if use_pixel_domain {
         (1.0_f32, 1.0_f32)
     } else {
@@ -1909,7 +1941,7 @@ fn find_best_32x32_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1932,7 +1964,7 @@ fn find_best_32x32_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1952,7 +1984,7 @@ fn find_best_32x32_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1974,7 +2006,7 @@ fn find_best_32x32_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -1994,7 +2026,7 @@ fn find_best_32x32_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -2132,7 +2164,7 @@ fn find_best_32x32_transform_impl(
                     mask1x1,
                     mask1x1_stride,
                     adjust,
-                    cost_bases,
+                    scaled_constants,
                     &profile.entropy_mul_table,
                     scratch,
                 );
@@ -2473,11 +2505,19 @@ fn find_best_64x64_transform_impl(
     // using libjxl's static constants (2.25 for DCT64x64, 2.25 for DCT64x32).
     // In coefficient-domain mode, use distance-dependent multipliers.
     let use_pixel_domain = mask1x1.is_some();
-    let cost_bases = (
-        profile.k_info_loss_mul_base,
-        profile.k_zeros_mul_base,
-        profile.k_cost_delta_base,
-    );
+    // Pre-compute scaled constants once (was recomputed per estimate_entropy call)
+    let scaled_constants = if use_pixel_domain {
+        compute_scaled_constants(
+            distance,
+            (
+                profile.k_info_loss_mul_base,
+                profile.k_zeros_mul_base,
+                profile.k_cost_delta_base,
+            ),
+        )
+    } else {
+        COEFF_DOMAIN_CONSTANTS
+    };
     let (mul64x64, mul64x32) = if use_pixel_domain {
         (1.0_f32, 1.0_f32)
     } else {
@@ -2518,7 +2558,7 @@ fn find_best_64x64_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -2542,7 +2582,7 @@ fn find_best_64x64_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -2562,7 +2602,7 @@ fn find_best_64x64_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -2585,7 +2625,7 @@ fn find_best_64x64_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -2605,7 +2645,7 @@ fn find_best_64x64_transform_impl(
             mask1x1,
             mask1x1_stride,
             0.0,
-            cost_bases,
+            scaled_constants,
             &profile.entropy_mul_table,
             scratch,
         );
@@ -2733,7 +2773,7 @@ fn find_best_64x64_transform_impl(
                     mask1x1,
                     mask1x1_stride,
                     adjust,
-                    cost_bases,
+                    scaled_constants,
                     &profile.entropy_mul_table,
                     scratch,
                 );
