@@ -152,30 +152,31 @@ in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
 **vs cjxl e7:** cjxl v0.12.0 at effort 7. **No butteraugli loop at e7**
 (libjxl gates at speed_tier <= kKitten = effort >= 8).
 
-**Overall: Size +0.1%, Butteraugli +0.0% (at parity), SSIM2 -0.7**
+**Overall: Size -0.0% (at parity), Butteraugli +0.0% (at parity), SSIM2 -0.7**
 
-| Distance | Avg Size | Avg Butteraugli | Our SS2 | cjxl SS2 | Δ Size | Δ Bfly |
-|----------|----------|-----------------|---------|----------|--------|--------|
-| d=0.25 | **-1.8%** | **-15.6%** (better) | 93.94 | 93.81 | -1.5pp | +0.7pp |
-| d=0.5 | **-3.0%** | **-9.6%** (better) | 91.36 | 91.52 | -0.8pp | +1.0pp |
-| d=1.0 | +1.0% | +0.6% | 86.92 | 87.32 | -0.3pp | +0.2pp |
-| d=1.5 | +2.2% | +0.8% | 82.84 | 83.35 | +0.1pp | +0.2pp |
-| d=2.0 | +2.9% | +0.4% | 79.09 | 79.77 | -0.2pp | +0.2pp |
-| d=2.5 | +3.1% | **-0.5%** (better) | 75.53 | 76.31 | **-0.6pp** | -0.4pp |
-| d=3.0 | +3.0% | +1.2% | 72.23 | 73.34 | -0.3pp | +1.4pp |
-| d=4.0 | +3.5% | +1.4% | 66.50 | 67.74 | -0.3pp | +0.2pp |
-| d=5.0 | +3.1% | +1.3% | 60.91 | 62.66 | -0.1pp | +0.7pp |
+| Distance | Avg Size | Avg Butteraugli | Our SS2 | cjxl SS2 |
+|----------|----------|-----------------|---------|----------|
+| d=0.25 | **-1.9%** | **-15.6%** (better) | 93.94 | 93.81 |
+| d=0.5 | **-3.1%** | **-9.6%** (better) | 91.36 | 91.52 |
+| d=1.0 | +0.8% | +0.6% | 86.92 | 87.32 |
+| d=1.5 | +2.0% | +0.8% | 82.84 | 83.35 |
+| d=2.0 | +2.8% | +0.4% | 79.09 | 79.77 |
+| d=2.5 | +3.0% | **-0.5%** (better) | 75.53 | 76.31 |
+| d=3.0 | +2.9% | +1.2% | 72.23 | 73.34 |
+| d=4.0 | +3.4% | +1.4% | 66.50 | 67.74 |
+| d=5.0 | +2.9% | +1.3% | 60.91 | 62.66 |
 
-Δ columns show change from previous measurement (70b1a18: LZ77/coeff-order optimization).
-Δ Size = percentage-point change in size gap vs cjxl (negative = smaller files).
-Δ Bfly = percentage-point change in butteraugli gap vs cjxl (positive = slightly worse).
+**Progress** (3 changes this session, cumulative from +0.8% avg size):
+1. Disable VarDCT LZ77 at e<9 (70b1a18): -0.3pp size (matches libjxl kNone)
+2. Cost-gate custom coefficient orders (70b1a18): -0.3pp at high distances
+3. Disable HybridUint optimization for VarDCT at e<9 (c0329f3): -0.1pp size
 
 **Key patterns**:
-- **File size at near-parity**: Grand average +0.1% (was +0.8%), d=0.25-0.5 now smaller
-- Butteraugli at parity overall (+0.0%), still much better at low distances
-- d=2.5 beats cjxl on both size (+3.1%) and butteraugli (-0.5%)
-- Size gap closed by 0.7pp via LZ77 disable for VarDCT (e<9) and coeff order cost-gating
-- SSIM2 gap grows with distance (d=4.0: -1.9%, d=5.0: -2.8%), same pattern as before
+- **File size at parity**: Grand average -0.0% (was +0.8%), d=0.25-0.5 smaller than cjxl
+- Butteraugli at parity overall (+0.0%), much better at low distances
+- d=2.5 beats cjxl on butteraugli (-0.5%)
+- SSIM2 gap grows with distance (d=4.0: -1.9%, d=5.0: -2.8%)
+- Remaining size overhead at d>=2.0 is 2-3%, likely from AC strategy/cost model differences
 
 **Root causes found and fixed**:
 - **Gaborish ordering** (1af2202): adaptive quant was computed on gaborished (sharpened) XYB,
@@ -209,14 +210,15 @@ in-process encoding + jxl-oxide decode + Rust butteraugli/ssim2.
   with ix=1 table index. Impact: butteraugli gap halved at d=4.0 (+2.2% → +1.2%), d=2.5
   and d=3.0 now beat cjxl.
 
-**Remaining size overhead (files at near-parity on average, 1-8% larger at high d)**:
+**Remaining size overhead (at parity on average, 2-3% larger at high d)**:
 - ~~cjxl uses LfFrame (frame_type=1) for DC/LF~~ DONE (Feb 20, 2026, opt-in `--lf-frame`)
   LfFrame is for progressive display, NOT compression. Overhead: +1.2% to +3.8% file size.
 - ~~VarDCT LZ77 overhead~~ FIXED (Feb 24, 2026): disabled LZ77 for VarDCT at e<9 (libjxl parity)
 - ~~Custom coeff order overhead~~ FIXED (Feb 24, 2026): cost-gated with Lehmer cost vs AC savings
+- ~~HybridUint fast optimization overhead~~ FIXED (Feb 24, 2026): disabled for VarDCT at e<9
 - Some numerical differences in adaptive quant pipeline (FMA vs non-FMA, SIMD vs scalar)
 - Per-block DC coding uses fixed context tree (no VarDCT DC tree learning)
-- Size overhead increases at higher distances (d=5.0: +3-6%)
+- Size overhead increases at higher distances (d=5.0: +3%)
 
 **What's confirmed correct** (Feb 20, 2026):
 - **estimate_entropy_full matches libjxl exactly** — verified every component:
