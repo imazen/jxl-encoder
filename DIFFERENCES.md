@@ -184,7 +184,7 @@ Matches libjxl `enc_icc_codec.cc:455-482`.
 | Center-first group permutation | Progressive rendering order | Raster order only | Progressive UX |
 | `decoding_speed_tier` | Simplified output for fast decoders | Not implemented | Decoder perf |
 | Invisible pixel simplification | Smooth alpha=0 regions | Not implemented | ~0.5% size |
-| Multi-threading | Group-level parallelism | Single-threaded | Encode speed |
+| Multi-threading | Group-level parallelism | Group-level parallelism (rayon, opt-in `parallel` feature) | Encode speed |
 | `FindBestQuantizationHQ` | 5-iter max-error at Tortoise | Standard 2-4 iter only | Quality e9+ |
 | `FindBestQuantizationMaxError` | For LfFrame DC quality | Not implemented | LfFrame quality |
 | Recursive LfFrame (progressive_dc > 1) | Multi-level DC pyramid | 1 level only | Progressive |
