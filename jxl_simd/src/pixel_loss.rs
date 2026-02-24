@@ -160,11 +160,9 @@ pub fn pixel_domain_loss_avx2(
         let mask_row = &mask[mask_row_start..mask_row_start + block_width];
         let error_row = &pixel_error[error_row_start..error_row_start + block_width];
 
-        let mut px = 0;
-        while px < block_width {
-            // Load 8 mask values and 8 error values
-            let mask_v = f32x8::from_slice(token, &mask_row[px..]);
-            let error_v = f32x8::from_slice(token, &error_row[px..]);
+        for (mask_chunk, error_chunk) in mask_row.chunks_exact(8).zip(error_row.chunks_exact(8)) {
+            let mask_v = f32x8::from_slice(token, mask_chunk);
+            let error_v = f32x8::from_slice(token, error_chunk);
 
             // masked = (mask + offset) * error (in f32)
             let masked_v = (mask_v + offset_v) * error_v;
@@ -192,8 +190,6 @@ pub fn pixel_domain_loss_avx2(
             // Accumulate
             acc_lo += m8_lo;
             acc_hi += m8_hi;
-
-            px += 8;
         }
     }
 

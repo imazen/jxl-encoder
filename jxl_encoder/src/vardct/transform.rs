@@ -73,167 +73,125 @@ impl VarDctEncoder {
         raw_strategy: u8,
         output: &mut [f32],
     ) {
+        use super::common::{as_array_mut, uninit_buf};
+
         match raw_strategy {
             0 => {
-                let mut block = [0.0f32; 64];
+                let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                let mut dct_out = [0.0f32; 64];
-                dct_8x8(&block, &mut dct_out);
-                output[..64].copy_from_slice(&dct_out);
+                dct_8x8(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT16X8 => {
-                let mut block = [0.0f32; 128];
+                let mut block = uninit_buf::<128>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..16 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 8..dy * 8 + 8].copy_from_slice(&channel_data[src..src + 8]);
                 }
-                let mut dct_out = [0.0f32; 128];
-                dct_16x8(&block, &mut dct_out);
-                output[..128].copy_from_slice(&dct_out);
+                dct_16x8(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT8X16 => {
-                let mut block = [0.0f32; 128];
+                let mut block = uninit_buf::<128>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..8 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
-                let mut dct_out = [0.0f32; 128];
-                dct_8x16(&block, &mut dct_out);
-                output[..128].copy_from_slice(&dct_out);
+                dct_8x16(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT16X16 => {
-                let mut block = [0.0f32; 256];
+                let mut block = uninit_buf::<256>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..16 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
-                let mut dct_out = [0.0f32; 256];
-                dct_16x16(&block, &mut dct_out);
-                output[..256].copy_from_slice(&dct_out);
+                dct_16x16(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT32X32 => {
-                let mut block = [0.0f32; 1024];
+                let mut block = uninit_buf::<1024>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..32 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
-                let mut dct_out = [0.0f32; 1024];
-                dct_32x32(&block, &mut dct_out);
-                output[..1024].copy_from_slice(&dct_out);
+                dct_32x32(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT4X8 => {
-                // DCT4X8 full: two 4x8 transforms covering 8x8 pixels
-                let mut block = [0.0f32; 64];
+                let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                let mut dct_out = [0.0f32; 64];
-                dct_4x8_full(&block, &mut dct_out);
-                output[..64].copy_from_slice(&dct_out);
+                dct_4x8_full(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT8X4 => {
-                // DCT8X4 full: two 8x4 transforms covering 8x8 pixels
-                let mut block = [0.0f32; 64];
+                let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                let mut dct_out = [0.0f32; 64];
-                dct_8x4_full(&block, &mut dct_out);
-                output[..64].copy_from_slice(&dct_out);
+                dct_8x4_full(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT4X4 => {
-                // DCT4X4 full: four 4x4 transforms covering 8x8 pixels
-                let mut block = [0.0f32; 64];
+                let mut block = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut block);
-                let mut dct_out = [0.0f32; 64];
-                dct_4x4_full(&block, &mut dct_out);
-                output[..64].copy_from_slice(&dct_out);
+                dct_4x4_full(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_IDENTITY => {
-                // IDENTITY: pixel differences from reference pixel per 4x4 sub-block
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut input);
-                let mut out64 = [0.0f32; 64];
-                identity_transform(&input, &mut out64);
-                output[..64].copy_from_slice(&out64);
+                identity_transform(&input, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT2X2 => {
-                // DCT2X2: hierarchical 2x2 DCT
-                let mut input = [0.0f32; 64];
+                let mut input = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut input);
-                let mut out64 = [0.0f32; 64];
-                dct2x2_transform(&input, &mut out64);
-                output[..64].copy_from_slice(&out64);
+                dct2x2_transform(&input, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT32X16 => {
-                // DCT32X16: 32x16 transform (4 rows × 2 cols of 8x8 blocks = 32 rows × 16 cols)
-                let mut block = [0.0f32; 512];
+                let mut block = uninit_buf::<512>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..32 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 16..dy * 16 + 16].copy_from_slice(&channel_data[src..src + 16]);
                 }
-                let mut dct_out = [0.0f32; 512];
-                dct_32x16(&block, &mut dct_out);
-                output[..512].copy_from_slice(&dct_out);
+                dct_32x16(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT16X32 => {
-                // DCT16X32: 16x32 transform (2 rows × 4 cols of 8x8 blocks = 16 rows × 32 cols)
-                let mut block = [0.0f32; 512];
+                let mut block = uninit_buf::<512>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..16 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
-                let mut dct_out = [0.0f32; 512];
-                dct_16x32(&block, &mut dct_out);
-                output[..512].copy_from_slice(&dct_out);
+                dct_16x32(&block, as_array_mut(output, 0));
             }
             RAW_STRATEGY_DCT64X64 => {
-                // DCT64X64: 64x64 transform (8 rows × 8 cols of 8x8 blocks)
-                let mut block = [0.0f32; 4096];
+                let mut block = uninit_buf::<4096>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..64 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 64..dy * 64 + 64].copy_from_slice(&channel_data[src..src + 64]);
                 }
-                let mut dct_out = [0.0f32; 4096];
-                dct_64x64(&block, &mut dct_out);
-                output[..4096].copy_from_slice(&dct_out);
+                dct_64x64(&block, &mut output[..4096]);
             }
             RAW_STRATEGY_DCT64X32 => {
-                // DCT64X32: 64x32 transform (8 rows × 4 cols of 8x8 blocks = 64 rows × 32 cols)
-                let mut block = [0.0f32; 2048];
+                let mut block = uninit_buf::<2048>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..64 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 32..dy * 32 + 32].copy_from_slice(&channel_data[src..src + 32]);
                 }
-                let mut dct_out = [0.0f32; 2048];
-                dct_64x32(&block, &mut dct_out);
-                output[..2048].copy_from_slice(&dct_out);
+                dct_64x32(&block, &mut output[..2048]);
             }
             RAW_STRATEGY_DCT32X64 => {
-                // DCT32X64: 32x64 transform (4 rows × 8 cols of 8x8 blocks = 32 rows × 64 cols)
-                let mut block = [0.0f32; 2048];
+                let mut block = uninit_buf::<2048>();
                 let x0 = bx * BLOCK_DIM;
                 for dy in 0..32 {
                     let src = (by * BLOCK_DIM + dy) * stride + x0;
                     block[dy * 64..dy * 64 + 64].copy_from_slice(&channel_data[src..src + 64]);
                 }
-                let mut dct_out = [0.0f32; 2048];
-                dct_32x64(&block, &mut dct_out);
-                output[..2048].copy_from_slice(&dct_out);
+                dct_32x64(&block, &mut output[..2048]);
             }
             RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2 | RAW_STRATEGY_AFV3 => {
-                // AFV: Adaptive Frequency Variable (hybrid transform for corners)
-                // Extract 8x8 pixels and compute AFV transform
-                let mut pixels = [0.0f32; 64];
+                let mut pixels = uninit_buf::<64>();
                 extract_block_8x8(channel_data, stride, bx, by, &mut pixels);
                 let afv_kind = (raw_strategy - RAW_STRATEGY_AFV0) as usize;
-                let mut dct_out = [0.0f32; 64];
-                afv_transform_from_pixels(&pixels, afv_kind, &mut dct_out);
-                output[..64].copy_from_slice(&dct_out);
+                afv_transform_from_pixels(&pixels, afv_kind, as_array_mut(output, 0));
             }
             _ => unreachable!(),
         }
