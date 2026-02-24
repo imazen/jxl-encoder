@@ -68,6 +68,35 @@ fn build_allowed_counts(shift: u32) -> Vec<i32> {
     counts
 }
 
+/// Precomputed allowed counts tables for all shift values 0..=ANS_LOG_TAB_SIZE.
+/// These tables are deterministic (depend only on shift value) and can be
+/// computed once and reused across all histogram normalization calls.
+pub struct AllowedCountsCache {
+    // 13 entries: shifts 0 through 12 inclusive (ANS_LOG_TAB_SIZE = 12).
+    tables: [Vec<i32>; ANS_LOG_TAB_SIZE as usize + 1],
+}
+
+impl Default for AllowedCountsCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AllowedCountsCache {
+    /// Build all 13 allowed counts tables (one per shift value, 0..=12).
+    pub fn new() -> Self {
+        Self {
+            tables: core::array::from_fn(|shift| build_allowed_counts(shift as u32)),
+        }
+    }
+
+    /// Get the allowed counts table for a given shift.
+    #[inline]
+    pub fn get(&self, shift: u32) -> &[i32] {
+        &self.tables[shift as usize]
+    }
+}
+
 /// Find the index of the highest allowed count <= target in a decreasing-order table.
 /// Snaps DOWN to prevent rest from going negative (matches libjxl's mask-off behavior).
 /// If target < smallest allowed (1), returns the last index (count=1).
@@ -701,9 +730,25 @@ impl ANSEncodingHistogram {
     /// Create from a Histogram with the best normalization.
     ///
     /// Tries different shift values and picks the one with lowest cost.
+    /// Use `from_histogram_cached` with a precomputed `AllowedCountsCache`
+    /// when calling this in a loop to avoid repeated table construction.
     pub fn from_histogram(
         histo: &super::histogram::Histogram,
         strategy: ANSHistogramStrategy,
+    ) -> Result<Self> {
+        let cache = AllowedCountsCache::new();
+        Self::from_histogram_cached(histo, strategy, &cache)
+    }
+
+    /// Create from a Histogram using precomputed allowed counts tables.
+    ///
+    /// This is the fast path — call `AllowedCountsCache::new()` once and reuse
+    /// it across all histogram normalization calls to avoid repeated allocation
+    /// and sorting of allowed counts tables.
+    pub fn from_histogram_cached(
+        histo: &super::histogram::Histogram,
+        strategy: ANSHistogramStrategy,
+        cache: &AllowedCountsCache,
     ) -> Result<Self> {
         if histo.total_count == 0 {
             // Empty histogram
@@ -789,15 +834,23 @@ impl ANSEncodingHistogram {
             symbols,
         };
 
-        let shifts: Vec<u32> = match strategy {
-            ANSHistogramStrategy::Fast => vec![0, 6, 12],
-            ANSHistogramStrategy::Approximate => (0..=ANS_LOG_TAB_SIZE).step_by(2).collect(),
-            ANSHistogramStrategy::Precise => (0..ANS_LOG_TAB_SIZE).collect(),
+        // Reuse a single candidate buffer across all shift iterations to avoid
+        // allocating a new vec![0i32; alphabet_size] for each shift.
+        let mut candidate_counts = vec![0i32; alphabet_size];
+
+        // Iterate shifts directly without allocating a Vec<u32>.
+        let shift_iter: &[u32] = match strategy {
+            ANSHistogramStrategy::Fast => &[0, 6, 12],
+            ANSHistogramStrategy::Approximate => &[0, 2, 4, 6, 8, 10, 12],
+            ANSHistogramStrategy::Precise => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
         };
 
-        for shift in shifts {
+        for &shift in shift_iter {
+            // Reset candidate counts to zero
+            candidate_counts.fill(0);
+
             let mut candidate = Self {
-                counts: vec![0i32; alphabet_size],
+                counts: Vec::new(), // placeholder, swapped in below
                 alphabet_size,
                 cost: f32::MAX,
                 method: shift.min(ANS_LOG_TAB_SIZE - 1) + 1,
@@ -806,11 +859,26 @@ impl ANSEncodingHistogram {
                 symbols,
             };
 
-            if candidate.rebalance_histogram(histo, shift) {
+            // Swap the reusable buffer in for this iteration
+            core::mem::swap(&mut candidate.counts, &mut candidate_counts);
+
+            if candidate.rebalance_histogram_cached(histo, shift, cache.get(shift)) {
                 candidate.cost = candidate.estimate_cost(histo);
                 if candidate.cost < best.cost {
+                    // This candidate wins — take its counts and give it the old best's
+                    // buffer (or a fresh one) for the next iteration
+                    core::mem::swap(&mut candidate_counts, &mut best.counts);
                     best = candidate;
+                    // best now has the winning counts, candidate_counts has the old flat counts
+                    // (or previous best). Resize if needed.
+                    candidate_counts.resize(alphabet_size, 0);
+                } else {
+                    // Candidate lost — reclaim its buffer
+                    core::mem::swap(&mut candidate.counts, &mut candidate_counts);
                 }
+            } else {
+                // Rebalance failed — reclaim buffer
+                core::mem::swap(&mut candidate.counts, &mut candidate_counts);
             }
         }
 
@@ -833,21 +901,18 @@ impl ANSEncodingHistogram {
         Ok(best)
     }
 
-    /// Rebalance histogram using allowed counts table and greedy optimization.
+    /// Rebalance histogram using precomputed allowed counts table and greedy optimization.
     /// Matches libjxl's `RebalanceHistogram` (enc_ans.cc:416-559).
-    ///
-    /// 1. Build table of all representable counts for this shift
-    /// 2. Normalize each bin to nearest representable count
-    /// 3. Greedy loop: adjust bins within allowed counts to minimize entropy
-    /// 4. Set balancing bin (remainder_pos) as remainder
-    fn rebalance_histogram(&mut self, histo: &super::histogram::Histogram, shift: u32) -> bool {
+    fn rebalance_histogram_cached(
+        &mut self,
+        histo: &super::histogram::Histogram,
+        _shift: u32,
+        allowed: &[i32],
+    ) -> bool {
         let total_count = histo.total_count;
         if total_count == 0 {
             return false;
         }
-
-        // Build sorted table of representable count values (decreasing order).
-        let allowed = build_allowed_counts(shift);
 
         let norm = ANS_TAB_SIZE as f64 / total_count as f64;
 
@@ -874,7 +939,7 @@ impl ANSEncodingHistogram {
             let target = freq as f64 * norm;
             // Round and clamp to [1, ANS_TAB_SIZE-1], then snap DOWN to allowed
             let rounded = target.round().max(1.0).min((ANS_TAB_SIZE - 1) as f64) as i32;
-            let ai = find_allowed_leq(&allowed, rounded);
+            let ai = find_allowed_leq(allowed, rounded);
             let count = allowed[ai];
 
             self.counts[n] = count;
@@ -1049,7 +1114,7 @@ impl ANSEncodingHistogram {
                         omit_logcount
                     };
                     let max_value = (1i32 << target_logcount) - 1;
-                    let new_ai = find_allowed_leq(&allowed, max_value);
+                    let new_ai = find_allowed_leq(allowed, max_value);
                     let new_count = allowed[new_ai].max(1);
                     let reduction = self.counts[i] - new_count;
                     if reduction > 0 {
