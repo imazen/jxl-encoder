@@ -577,6 +577,261 @@ pub(super) fn find_best_16x16_transform(
     }
 }
 
+// ─── Lightweight non-aligned merge check ────────────────────────────────────
+
+/// Lightweight merge check for non-aligned 16×16 positions.
+///
+/// Instead of re-evaluating all single-block strategies (~45 `estimate_entropy`
+/// calls per position), reads cached single-block costs from
+/// `scratch.entropy_estimate` and only evaluates merge candidates (DCT16×16,
+/// DCT16×8, DCT8×16) — 5 calls total. Matches libjxl's TryMergeAcs approach.
+///
+/// Returns true if a multi-block transform was accepted.
+///
+/// PRECONDITIONS:
+/// - `scratch.entropy_estimate` must be populated by the aligned pass
+///   (i.e., this must be a full tile where `find_best_64x64_transform` ran)
+/// - `ac_strategy.can_evaluate_region(abs_bx, abs_by, 2)` must be true
+///   (all 4 blocks are single-block transforms)
+#[allow(clippy::too_many_arguments)]
+pub(super) fn try_merge_16x16(
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    let use_pixel_domain = mask1x1.is_some();
+    let cost_bases = (
+        profile.k_info_loss_mul_base,
+        profile.k_zeros_mul_base,
+        profile.k_cost_delta_base,
+    );
+
+    let (mul16x8, mul16x16) = if use_pixel_domain {
+        (1.0_f32, 1.0_f32)
+    } else {
+        let compute_mul = |k: (f32, f32, f32)| k.1 + k.0 / (distance + k.2);
+        (compute_mul(profile.k16x8), compute_mul(profile.k16x16))
+    };
+
+    let abs_bx = bx0 + cx;
+    let abs_by = by0 + cy;
+
+    // Read cached single-block costs from the aligned pass.
+    // (cx, cy) are tile-relative coords; entropy_estimate is indexed as [iy * 8 + ix].
+    let cached = [
+        [
+            scratch.entropy_estimate[cy * 8 + cx],
+            scratch.entropy_estimate[cy * 8 + (cx + 1)],
+        ],
+        [
+            scratch.entropy_estimate[(cy + 1) * 8 + cx],
+            scratch.entropy_estimate[(cy + 1) * 8 + (cx + 1)],
+        ],
+    ];
+    let cost_all_single = cached[0][0] + cached[0][1] + cached[1][0] + cached[1][1];
+
+    // Evaluate merge candidates only (5 calls instead of ~45)
+    let entropy_16x16 = mul16x16
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT16X16,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+
+    let entropy_16x8_left = mul16x8
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT16X8,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+    let entropy_16x8_right = mul16x8
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT16X8,
+            xyb,
+            stride,
+            abs_bx + 1,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+
+    let entropy_8x16_top = mul16x8
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT8X16,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+    let entropy_8x16_bottom = mul16x8
+        * estimate_entropy_with_mask(
+            RAW_STRATEGY_DCT8X16,
+            xyb,
+            stride,
+            abs_bx,
+            abs_by + 1,
+            distance,
+            quant_field,
+            xsize_blocks,
+            masking,
+            ytox,
+            ytob,
+            mask1x1,
+            mask1x1_stride,
+            0.0,
+            cost_bases,
+            &profile.entropy_mul_table,
+            scratch,
+        );
+
+    // Cost comparison (same logic as find_best_16x16_transform)
+    let cost_single_left = cached[0][0] + cached[1][0];
+    let cost_single_right = cached[0][1] + cached[1][1];
+    let cost_single_top = cached[0][0] + cached[0][1];
+    let cost_single_bottom = cached[1][0] + cached[1][1];
+
+    let cost16x8 =
+        entropy_16x8_left.min(cost_single_left) + entropy_16x8_right.min(cost_single_right);
+    let cost8x16 =
+        entropy_8x16_top.min(cost_single_top) + entropy_8x16_bottom.min(cost_single_bottom);
+    let cost16x16 = entropy_16x16;
+
+    let best_rect = cost16x8.min(cost8x16);
+    let best_large = best_rect.min(cost16x16);
+
+    if best_large >= cost_all_single {
+        return false; // No merge improvement
+    }
+
+    // A merge won — reset 2×2 region to DCT8 first to avoid orphaned non-first
+    // blocks from any previous multi-block transform in this region.
+    for dy in 0..2usize {
+        for dx in 0..2usize {
+            ac_strategy.set(abs_bx + dx, abs_by + dy, RAW_STRATEGY_DCT8);
+        }
+    }
+
+    // Apply the winning transform and update entropy cache.
+    if cost16x16 <= best_rect {
+        ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X16);
+        set_entropy_for_transform(&mut scratch.entropy_estimate, cx, cy, 2, 2, entropy_16x16);
+    } else if cost16x8 < cost8x16 {
+        // Try 16x8 for each column independently
+        if entropy_16x8_left < cost_single_left {
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT16X8);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx,
+                cy,
+                1,
+                2,
+                entropy_16x8_left,
+            );
+        }
+        if entropy_16x8_right < cost_single_right {
+            ac_strategy.set(abs_bx + 1, abs_by, RAW_STRATEGY_DCT16X8);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx + 1,
+                cy,
+                1,
+                2,
+                entropy_16x8_right,
+            );
+        }
+    } else {
+        // Try 8x16 for each row independently
+        if entropy_8x16_top < cost_single_top {
+            ac_strategy.set(abs_bx, abs_by, RAW_STRATEGY_DCT8X16);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx,
+                cy,
+                2,
+                1,
+                entropy_8x16_top,
+            );
+        }
+        if entropy_8x16_bottom < cost_single_bottom {
+            ac_strategy.set(abs_bx, abs_by + 1, RAW_STRATEGY_DCT8X16);
+            set_entropy_for_transform(
+                &mut scratch.entropy_estimate,
+                cx,
+                cy + 1,
+                2,
+                1,
+                entropy_8x16_bottom,
+            );
+        }
+    }
+
+    true
+}
+
 // ─── 32×32 transform selection ──────────────────────────────────────────────
 
 /// Find the best transform for a 32×32 block region (4×4 group of 8×8 blocks).
