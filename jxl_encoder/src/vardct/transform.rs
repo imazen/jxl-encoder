@@ -60,6 +60,60 @@ impl TransformOutput {
     }
 }
 
+/// Per-group transform results with locally-indexed output arrays.
+///
+/// Used by `transform_blocks_into` to produce results for a block range
+/// that can later be scattered into the global `TransformOutput`.
+pub(crate) struct GroupTransformResult {
+    pub start_bx: usize,
+    pub start_by: usize,
+    pub width: usize,
+    pub height: usize,
+    pub quant_dc: [Vec<Vec<i16>>; 3],
+    pub quant_ac: [Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    pub nzeros: [Vec<Vec<u8>>; 3],
+    pub raw_nzeros: [Vec<Vec<u16>>; 3],
+    pub float_dc: [Vec<f32>; 3],
+    /// Quant field adjustments: (global_index, new_value).
+    pub quant_adjustments: Vec<(usize, u8)>,
+}
+
+impl GroupTransformResult {
+    pub fn new(start_bx: usize, start_by: usize, width: usize, height: usize) -> Self {
+        let n = width * height;
+        Self {
+            start_bx,
+            start_by,
+            width,
+            height,
+            quant_dc: core::array::from_fn(|_| vec![vec![0i16; width]; height]),
+            quant_ac: core::array::from_fn(|_| vec![vec![[0i32; DCT_BLOCK_SIZE]; width]; height]),
+            nzeros: core::array::from_fn(|_| vec![vec![0u8; width]; height]),
+            raw_nzeros: core::array::from_fn(|_| vec![vec![0u16; width]; height]),
+            float_dc: core::array::from_fn(|_| vec![0.0f32; n]),
+            quant_adjustments: Vec::new(),
+        }
+    }
+
+    /// Copy this group's results into the global TransformOutput.
+    pub fn scatter_into(self, out: &mut TransformOutput, xsize_blocks: usize) {
+        for c in 0..3 {
+            for ly in 0..self.height {
+                let gy = self.start_by + ly;
+                for lx in 0..self.width {
+                    let gx = self.start_bx + lx;
+                    out.quant_dc[c][gy][gx] = self.quant_dc[c][ly][lx];
+                    out.quant_ac[c][gy][gx] = self.quant_ac[c][ly][lx];
+                    out.nzeros[c][gy][gx] = self.nzeros[c][ly][lx];
+                    out.raw_nzeros[c][gy][gx] = self.raw_nzeros[c][ly][lx];
+                    out.float_dc[c][gy * xsize_blocks + gx] =
+                        self.float_dc[c][ly * self.width + lx];
+                }
+            }
+        }
+    }
+}
+
 impl VarDctEncoder {
     /// Apply DCT to a single channel at block position (bx, by).
     ///
@@ -197,75 +251,39 @@ impl VarDctEncoder {
         }
     }
 
-    /// Perform DCT and quantization on all blocks.
+    /// Process a RANGE of blocks, writing to a `GroupTransformResult` with local coordinates.
     ///
-    /// Supports DCT8, DCT16X8, and DCT8X16 transforms based on ac_strategy.
-    /// For multi-block transforms, only first blocks are processed; the second
-    /// block's quant_ac slot stores the second half of the 128 coefficients.
-    ///
-    /// Processing order matches C++ WriteACGroup:
-    /// 1. DCT Y → extract Y DC → quantize Y AC (with thresholding)
-    /// 2. Dequantize Y AC back (AdjustQuantBias) → roundtripped Y
-    /// 3. DCT X, B → apply CfL using roundtripped Y → extract X/B DC
-    /// 4. Quantize X/B AC (with thresholding + x_qm_mul for X)
-    ///
-    /// Allocates output buffers and calls `transform_and_quantize_into`.
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub(crate) fn transform_and_quantize(
+    /// This is the same algorithm as `transform_and_quantize_into` but operates on a
+    /// sub-rectangle `[start_by..end_by, start_bx..end_bx]` and writes results into
+    /// locally-indexed arrays in `result`. The `quant_field` is read-only; any quant
+    /// adjustments are recorded in `result.quant_adjustments` for later application.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn transform_blocks_into(
         &self,
         xyb_x: &[f32],
         xyb_y: &[f32],
         xyb_b: &[f32],
         padded_width: usize,
         xsize_blocks: usize,
-        ysize_blocks: usize,
         params: &DistanceParams,
-        quant_field: &mut [u8],
+        quant_field: &[u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
-    ) -> TransformOutput {
-        let mut out = TransformOutput::new(xsize_blocks, ysize_blocks);
-        self.transform_and_quantize_into(
-            xyb_x,
-            xyb_y,
-            xyb_b,
-            padded_width,
-            xsize_blocks,
-            ysize_blocks,
-            params,
-            quant_field,
-            cfl_map,
-            ac_strategy,
-            &mut out,
-        );
-        out
-    }
-
-    /// Fill pre-allocated `TransformOutput` buffers.
-    ///
-    /// All positions are written by the block loop (every first-block position
-    /// gets its quant_dc, quant_ac, nzeros, raw_nzeros, and float_dc filled).
-    /// No pre-clearing is needed since `is_first()` blocks cover the entire grid.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn transform_and_quantize_into(
-        &self,
-        xyb_x: &[f32],
-        xyb_y: &[f32],
-        xyb_b: &[f32],
-        padded_width: usize, // stride for padded XYB data
-        xsize_blocks: usize,
-        ysize_blocks: usize,
-        params: &DistanceParams,
-        quant_field: &mut [u8],
-        cfl_map: &CflMap,
-        ac_strategy: &AcStrategyMap,
-        out: &mut TransformOutput,
+        start_by: usize,
+        end_by: usize,
+        start_bx: usize,
+        end_bx: usize,
+        result: &mut GroupTransformResult,
     ) {
-        let quant_dc = &mut out.quant_dc;
-        let quant_ac = &mut out.quant_ac;
-        let nzeros = &mut out.nzeros;
-        let raw_nzeros = &mut out.raw_nzeros;
-        let float_dc = &mut out.float_dc;
+        let yoff = start_by;
+        let xoff = start_bx;
+        let width = result.width;
+
+        let quant_dc = &mut result.quant_dc;
+        let quant_ac = &mut result.quant_ac;
+        let nzeros = &mut result.nzeros;
+        let raw_nzeros = &mut result.raw_nzeros;
+        let float_dc = &mut result.float_dc;
 
         let channels = [xyb_x, xyb_y, xyb_b];
 
@@ -300,11 +318,11 @@ impl VarDctEncoder {
         let mut quant_flat_scratch = vec![0i32; MAX_BLOCK_SIZE];
         // Scratch buffers for multi-block nzeros counting (reused per block)
         let mut nz_full_block_scratch = vec![0i32; MAX_BLOCK_SIZE];
-        // Max flat_nz size: for DCT64x64, covered = 8×8, flat_len = 7*xsize_blocks+8
-        let mut nz_flat_scratch = vec![0u8; 7 * xsize_blocks + 8];
+        // Max flat_nz size: for DCT64x64, covered = 8×8, flat_len = 7*width+8
+        let mut nz_flat_scratch = vec![0u8; 7 * width + 8];
 
-        for by in 0..ysize_blocks {
-            for bx in 0..xsize_blocks {
+        for by in start_by..end_by {
+            for bx in start_bx..end_bx {
                 // Skip non-first blocks of multi-block transforms
                 if !ac_strategy.is_first(bx, by) {
                     continue;
@@ -365,26 +383,28 @@ impl VarDctEncoder {
                                 params.scale_dc,
                                 (dct_coeffs[1][0] * inv_factor).round() as i16
                             );
-                            float_dc[1][by * xsize_blocks + bx] = dct_coeffs[1][0];
-                            quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
+                            float_dc[1][(by - yoff) * width + (bx - xoff)] = dct_coeffs[1][0];
+                            quant_dc[1][by - yoff][bx - xoff] =
+                                (dct_coeffs[1][0] * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT16X8 => {
                             let dcs = dc_from_dct_16x8(as_array_ref::<128>(&dct_coeffs[1], 0));
                             for iy in 0..2 {
-                                float_dc[1][(by + iy) * xsize_blocks + bx] = dcs[iy];
-                                quant_dc[1][by + iy][bx] = (dcs[iy] * inv_factor).round() as i16;
+                                float_dc[1][(by - yoff + iy) * width + (bx - xoff)] = dcs[iy];
+                                quant_dc[1][by - yoff + iy][bx - xoff] =
+                                    (dcs[iy] * inv_factor).round() as i16;
                             }
                         }
                         RAW_STRATEGY_DCT8X16 => {
                             let dcs = dc_from_dct_8x16(as_array_ref::<128>(&dct_coeffs[1], 0));
                             for ix in 0..2 {
-                                float_dc[1][by * xsize_blocks + bx + ix] = dcs[ix];
-                                quant_dc[1][by][bx + ix] = (dcs[ix] * inv_factor).round() as i16;
+                                float_dc[1][(by - yoff) * width + (bx - xoff + ix)] = dcs[ix];
+                                quant_dc[1][by - yoff][bx - xoff + ix] =
+                                    (dcs[ix] * inv_factor).round() as i16;
                             }
                         }
                         RAW_STRATEGY_DCT16X16 => {
                             let dcs = dc_from_dct_16x16(as_array_ref::<256>(&dct_coeffs[1], 0));
-                            // dcs = [dc00, dc01, dc10, dc11] in row-major 2x2
                             #[cfg(feature = "debug-dc")]
                             eprintln!(
                                 "DCT16x16 block (by={}, bx={}): dcs=[{:.4}, {:.4}, {:.4}, {:.4}], LLF=[{:.6}, {:.6}, {:.6}, {:.6}]",
@@ -401,7 +421,7 @@ impl VarDctEncoder {
                             );
                             for iy in 0..2 {
                                 for ix in 0..2 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 2 + ix];
                                     let qdc = (dcs[iy * 2 + ix] * inv_factor).round() as i16;
                                     #[cfg(feature = "debug-dc")]
@@ -413,7 +433,7 @@ impl VarDctEncoder {
                                         dcs[iy * 2 + ix],
                                         inv_factor
                                     );
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
@@ -436,7 +456,7 @@ impl VarDctEncoder {
                             // dcs = 16 DC values in row-major 4x4
                             for iy in 0..4 {
                                 for ix in 0..4 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
                                     #[cfg(feature = "debug-dc")]
@@ -447,7 +467,7 @@ impl VarDctEncoder {
                                         qdc,
                                         dcs[iy * 4 + ix]
                                     );
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
@@ -456,10 +476,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x16(as_array_ref::<512>(&dct_coeffs[1], 0));
                             for iy in 0..4 {
                                 for ix in 0..2 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 2 + ix];
                                     let qdc = (dcs[iy * 2 + ix] * inv_factor).round() as i16;
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
@@ -468,10 +488,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x32(as_array_ref::<512>(&dct_coeffs[1], 0));
                             for iy in 0..2 {
                                 for ix in 0..4 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
@@ -480,10 +500,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x64(&dct_coeffs[1]);
                             for iy in 0..8 {
                                 for ix in 0..8 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 8 + ix];
                                     let qdc = (dcs[iy * 8 + ix] * inv_factor).round() as i16;
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
@@ -492,10 +512,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x32(&dct_coeffs[1]);
                             for iy in 0..8 {
                                 for ix in 0..4 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
                                     let qdc = (dcs[iy * 4 + ix] * inv_factor).round() as i16;
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
@@ -504,38 +524,39 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x64(&dct_coeffs[1]);
                             for iy in 0..4 {
                                 for ix in 0..8 {
-                                    float_dc[1][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[1][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 8 + ix];
                                     let qdc = (dcs[iy * 8 + ix] * inv_factor).round() as i16;
-                                    quant_dc[1][by + iy][bx + ix] = qdc;
+                                    quant_dc[1][by - yoff + iy][bx - xoff + ix] = qdc;
                                 }
                             }
                         }
                         RAW_STRATEGY_DCT4X8 => {
                             let dc = dc_from_dct_4x8_full(as_array_ref::<64>(&dct_coeffs[1], 0));
-                            float_dc[1][by * xsize_blocks + bx] = dc;
-                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                            float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
+                            quant_dc[1][by - yoff][bx - xoff] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT8X4 => {
                             let dc = dc_from_dct_8x4_full(as_array_ref::<64>(&dct_coeffs[1], 0));
-                            float_dc[1][by * xsize_blocks + bx] = dc;
-                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                            float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
+                            quant_dc[1][by - yoff][bx - xoff] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT4X4 => {
                             let dc = dc_from_dct_4x4_full(as_array_ref::<64>(&dct_coeffs[1], 0));
-                            float_dc[1][by * xsize_blocks + bx] = dc;
-                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                            float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
+                            quant_dc[1][by - yoff][bx - xoff] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
                         | RAW_STRATEGY_AFV3 => {
                             let dc = dc_from_afv(as_array_ref::<64>(&dct_coeffs[1], 0));
-                            float_dc[1][by * xsize_blocks + bx] = dc;
-                            quant_dc[1][by][bx] = (dc * inv_factor).round() as i16;
+                            float_dc[1][(by - yoff) * width + (bx - xoff)] = dc;
+                            quant_dc[1][by - yoff][bx - xoff] = (dc * inv_factor).round() as i16;
                         }
                         RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
                             // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
-                            float_dc[1][by * xsize_blocks + bx] = dct_coeffs[1][0];
-                            quant_dc[1][by][bx] = (dct_coeffs[1][0] * inv_factor).round() as i16;
+                            float_dc[1][(by - yoff) * width + (bx - xoff)] = dct_coeffs[1][0];
+                            quant_dc[1][by - yoff][bx - xoff] =
+                                (dct_coeffs[1][0] * inv_factor).round() as i16;
                         }
                         _ => unreachable!(),
                     }
@@ -615,9 +636,9 @@ impl VarDctEncoder {
                             }
                             max_quant = max_quant.max(quant_c);
                         }
-                        let quant_before = quant_field[quant_idx];
                         quant_int = max_quant;
-                        quant_field[quant_idx] = quant_int.clamp(1, 255) as u8;
+                        let new_quant = quant_int.clamp(1, 255) as u8;
+                        result.quant_adjustments.push((quant_idx, new_quant));
                         debug_rect!(
                             "quant/adjust",
                             bx * 8,
@@ -626,8 +647,8 @@ impl VarDctEncoder {
                             cy * 8,
                             "strat={} q={}→{} (e>=5 AdjustQuantBlockAC)",
                             raw_strategy,
-                            quant_before,
-                            quant_field[quant_idx]
+                            quant_field[quant_idx],
+                            new_quant
                         );
                     } else {
                         // effort < Hare: fixed thresholds, no per-block adjustment
@@ -662,8 +683,8 @@ impl VarDctEncoder {
                         covered_blocks,
                         size,
                         raw_strategy,
-                        bx,
-                        by,
+                        bx - xoff,
+                        by - yoff,
                         &mut quant_ac[c],
                         self.error_diffusion,
                         zigzag,
@@ -717,8 +738,8 @@ impl VarDctEncoder {
                                             (coef_slot_y, coef_slot_x)
                                         };
                                         let pos_in_8x8 = pos_y * BLOCK_DIM + pos_x;
-                                        quant_ac[1][by + phys_row_off][bx + phys_col_off]
-                                            [pos_in_8x8]
+                                        quant_ac[1][by - yoff + phys_row_off]
+                                            [bx - xoff + phys_col_off][pos_in_8x8]
                                     };
                                     let adj = adjust_quant_bias(q, 1);
                                     coeff_row[x] = adj * w_row[x] * inv_qac;
@@ -772,26 +793,26 @@ impl VarDctEncoder {
                     match raw_strategy {
                         0 => {
                             let dc = dct_coeffs[c][0];
-                            float_dc[c][by * xsize_blocks + bx] = dc;
-                            let y_dc = quant_dc[1][by][bx] as f32;
-                            quant_dc[c][by][bx] =
+                            float_dc[c][(by - yoff) * width + (bx - xoff)] = dc;
+                            let y_dc = quant_dc[1][by - yoff][bx - xoff] as f32;
+                            quant_dc[c][by - yoff][bx - xoff] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT16X8 => {
                             let dcs = dc_from_dct_16x8(as_array_ref::<128>(&dct_coeffs[c], 0));
                             for iy in 0..2 {
-                                float_dc[c][(by + iy) * xsize_blocks + bx] = dcs[iy];
-                                let y_dc = quant_dc[1][by + iy][bx] as f32;
-                                quant_dc[c][by + iy][bx] =
+                                float_dc[c][(by - yoff + iy) * width + (bx - xoff)] = dcs[iy];
+                                let y_dc = quant_dc[1][by - yoff + iy][bx - xoff] as f32;
+                                quant_dc[c][by - yoff + iy][bx - xoff] =
                                     (dcs[iy] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                             }
                         }
                         RAW_STRATEGY_DCT8X16 => {
                             let dcs = dc_from_dct_8x16(as_array_ref::<128>(&dct_coeffs[c], 0));
                             for ix in 0..2 {
-                                float_dc[c][by * xsize_blocks + bx + ix] = dcs[ix];
-                                let y_dc = quant_dc[1][by][bx + ix] as f32;
-                                quant_dc[c][by][bx + ix] =
+                                float_dc[c][(by - yoff) * width + (bx - xoff + ix)] = dcs[ix];
+                                let y_dc = quant_dc[1][by - yoff][bx - xoff + ix] as f32;
+                                quant_dc[c][by - yoff][bx - xoff + ix] =
                                     (dcs[ix] * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                             }
                         }
@@ -799,10 +820,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x16(as_array_ref::<256>(&dct_coeffs[c], 0));
                             for iy in 0..2 {
                                 for ix in 0..2 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 2 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -812,10 +833,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x32(as_array_ref::<1024>(&dct_coeffs[c], 0));
                             for iy in 0..4 {
                                 for ix in 0..4 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -825,10 +846,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x16(as_array_ref::<512>(&dct_coeffs[c], 0));
                             for iy in 0..4 {
                                 for ix in 0..2 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 2 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 2 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -838,10 +859,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_16x32(as_array_ref::<512>(&dct_coeffs[c], 0));
                             for iy in 0..2 {
                                 for ix in 0..4 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -851,10 +872,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x64(&dct_coeffs[c]);
                             for iy in 0..8 {
                                 for ix in 0..8 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 8 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -864,10 +885,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_64x32(&dct_coeffs[c]);
                             for iy in 0..8 {
                                 for ix in 0..4 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 4 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 4 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -877,10 +898,10 @@ impl VarDctEncoder {
                             let dcs = dc_from_dct_32x64(&dct_coeffs[c]);
                             for iy in 0..4 {
                                 for ix in 0..8 {
-                                    float_dc[c][(by + iy) * xsize_blocks + (bx + ix)] =
+                                    float_dc[c][(by - yoff + iy) * width + (bx - xoff + ix)] =
                                         dcs[iy * 8 + ix];
-                                    let y_dc = quant_dc[1][by + iy][bx + ix] as f32;
-                                    quant_dc[c][by + iy][bx + ix] =
+                                    let y_dc = quant_dc[1][by - yoff + iy][bx - xoff + ix] as f32;
+                                    quant_dc[c][by - yoff + iy][bx - xoff + ix] =
                                         (dcs[iy * 8 + ix] * inv_factor - y_dc * dc_cfl_factor)
                                             .round() as i16;
                                 }
@@ -888,39 +909,39 @@ impl VarDctEncoder {
                         }
                         RAW_STRATEGY_DCT4X8 => {
                             let dc = dc_from_dct_4x8_full(as_array_ref::<64>(&dct_coeffs[c], 0));
-                            float_dc[c][by * xsize_blocks + bx] = dc;
-                            let y_dc = quant_dc[1][by][bx] as f32;
-                            quant_dc[c][by][bx] =
+                            float_dc[c][(by - yoff) * width + (bx - xoff)] = dc;
+                            let y_dc = quant_dc[1][by - yoff][bx - xoff] as f32;
+                            quant_dc[c][by - yoff][bx - xoff] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT8X4 => {
                             let dc = dc_from_dct_8x4_full(as_array_ref::<64>(&dct_coeffs[c], 0));
-                            float_dc[c][by * xsize_blocks + bx] = dc;
-                            let y_dc = quant_dc[1][by][bx] as f32;
-                            quant_dc[c][by][bx] =
+                            float_dc[c][(by - yoff) * width + (bx - xoff)] = dc;
+                            let y_dc = quant_dc[1][by - yoff][bx - xoff] as f32;
+                            quant_dc[c][by - yoff][bx - xoff] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         RAW_STRATEGY_DCT4X4 => {
                             let dc = dc_from_dct_4x4_full(as_array_ref::<64>(&dct_coeffs[c], 0));
-                            float_dc[c][by * xsize_blocks + bx] = dc;
-                            let y_dc = quant_dc[1][by][bx] as f32;
-                            quant_dc[c][by][bx] =
+                            float_dc[c][(by - yoff) * width + (bx - xoff)] = dc;
+                            let y_dc = quant_dc[1][by - yoff][bx - xoff] as f32;
+                            quant_dc[c][by - yoff][bx - xoff] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         RAW_STRATEGY_AFV0 | RAW_STRATEGY_AFV1 | RAW_STRATEGY_AFV2
                         | RAW_STRATEGY_AFV3 => {
                             let dc = dc_from_afv(as_array_ref::<64>(&dct_coeffs[c], 0));
-                            float_dc[c][by * xsize_blocks + bx] = dc;
-                            let y_dc = quant_dc[1][by][bx] as f32;
-                            quant_dc[c][by][bx] =
+                            float_dc[c][(by - yoff) * width + (bx - xoff)] = dc;
+                            let y_dc = quant_dc[1][by - yoff][bx - xoff] as f32;
+                            quant_dc[c][by - yoff][bx - xoff] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         RAW_STRATEGY_IDENTITY | RAW_STRATEGY_DCT2X2 => {
                             // IDENTITY/DCT2X2: 1×1 coverage, DC at position [0]
                             let dc = dct_coeffs[c][0];
-                            float_dc[c][by * xsize_blocks + bx] = dc;
-                            let y_dc = quant_dc[1][by][bx] as f32;
-                            quant_dc[c][by][bx] =
+                            float_dc[c][(by - yoff) * width + (bx - xoff)] = dc;
+                            let y_dc = quant_dc[1][by - yoff][bx - xoff] as f32;
+                            quant_dc[c][by - yoff][bx - xoff] =
                                 (dc * inv_factor - y_dc * dc_cfl_factor).round() as i16;
                         }
                         _ => unreachable!(),
@@ -952,8 +973,8 @@ impl VarDctEncoder {
                         covered_blocks,
                         size,
                         raw_strategy,
-                        bx,
-                        by,
+                        bx - xoff,
+                        by - yoff,
                         &mut quant_ac[c],
                         self.error_diffusion,
                         zigzag,
@@ -970,8 +991,12 @@ impl VarDctEncoder {
                 let transpose_slots = covered_y > covered_x;
                 for c in 0..3 {
                     if covered_blocks == 1 {
-                        num_nonzero_8x8_except_dc(&quant_ac[c][by][bx], &mut nzeros[c][by][bx]);
-                        raw_nzeros[c][by][bx] = nzeros[c][by][bx] as u16;
+                        num_nonzero_8x8_except_dc(
+                            &quant_ac[c][by - yoff][bx - xoff],
+                            &mut nzeros[c][by - yoff][bx - xoff],
+                        );
+                        raw_nzeros[c][by - yoff][bx - xoff] =
+                            nzeros[c][by - yoff][bx - xoff] as u16;
                     } else {
                         // Build flat block in cx*8 × cy*8 layout (stride = cx*8).
                         // num_nonzero_except_llf expects block[y * stride + x] for y,x in 0..cy*8, 0..cx*8.
@@ -990,7 +1015,8 @@ impl VarDctEncoder {
                                     } else {
                                         (coef_slot_y, coef_slot_x)
                                     };
-                                    let row = &quant_ac[c][by + phys_row_off][bx + phys_col_off];
+                                    let row = &quant_ac[c][by - yoff + phys_row_off]
+                                        [bx - xoff + phys_col_off];
                                     for pos_x in 0..BLOCK_DIM {
                                         let x = coef_slot_x * BLOCK_DIM + pos_x;
                                         fb_row[x] = row[pos_y * BLOCK_DIM + pos_x];
@@ -998,26 +1024,151 @@ impl VarDctEncoder {
                                 }
                             }
                         }
-                        let flat_len = (covered_y - 1) * xsize_blocks + covered_x;
+                        let flat_len = (covered_y - 1) * width + covered_x;
                         let flat_nz = &mut nz_flat_scratch[..flat_len];
                         flat_nz.fill(0);
                         let raw_nz = num_nonzero_except_llf(
-                            cx,
-                            cy,
-                            full_block,
-                            xsize_blocks,
-                            flat_nz,
-                            covered_x,
-                            covered_y,
+                            cx, cy, full_block, width, flat_nz, covered_x, covered_y,
                         );
                         for dy in 0..covered_y {
                             for dx in 0..covered_x {
-                                nzeros[c][by + dy][bx + dx] = flat_nz[dx + dy * xsize_blocks];
+                                nzeros[c][by - yoff + dy][bx - xoff + dx] =
+                                    flat_nz[dx + dy * width];
                             }
                         }
-                        raw_nzeros[c][by][bx] = raw_nz;
+                        raw_nzeros[c][by - yoff][bx - xoff] = raw_nz;
                     }
                 }
+            }
+        }
+    }
+
+    /// Perform DCT and quantization on all blocks (parallel over groups).
+    ///
+    /// Supports all AC strategies. For multi-block transforms, only first blocks
+    /// are processed; sub-block slots store their portion of the coefficients.
+    ///
+    /// Processing order per block matches C++ WriteACGroup:
+    /// 1. DCT Y → extract Y DC → quantize Y AC (with thresholding)
+    /// 2. Dequantize Y AC back (AdjustQuantBias) → roundtripped Y
+    /// 3. DCT X, B → apply CfL using roundtripped Y → extract X/B DC
+    /// 4. Quantize X/B AC (with thresholding + x_qm_mul for X)
+    ///
+    /// Groups are processed in parallel; results are scattered into the output.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(crate) fn transform_and_quantize(
+        &self,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        padded_width: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        params: &DistanceParams,
+        quant_field: &mut [u8],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+    ) -> TransformOutput {
+        let mut out = TransformOutput::new(xsize_blocks, ysize_blocks);
+
+        let xsize_groups = div_ceil(xsize_blocks, GROUP_DIM_IN_BLOCKS);
+        let ysize_groups = div_ceil(ysize_blocks, GROUP_DIM_IN_BLOCKS);
+        let num_groups = xsize_groups * ysize_groups;
+
+        let group_results = crate::parallel::parallel_map(num_groups, |group_idx| {
+            let gy = group_idx / xsize_groups;
+            let gx = group_idx % xsize_groups;
+            let start_bx = gx * GROUP_DIM_IN_BLOCKS;
+            let start_by = gy * GROUP_DIM_IN_BLOCKS;
+            let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+            let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+            let width = end_bx - start_bx;
+            let height = end_by - start_by;
+
+            let mut result = GroupTransformResult::new(start_bx, start_by, width, height);
+            self.transform_blocks_into(
+                xyb_x,
+                xyb_y,
+                xyb_b,
+                padded_width,
+                xsize_blocks,
+                params,
+                quant_field,
+                cfl_map,
+                ac_strategy,
+                start_by,
+                end_by,
+                start_bx,
+                end_bx,
+                &mut result,
+            );
+            result
+        });
+
+        for result in group_results {
+            for &(idx, val) in &result.quant_adjustments {
+                quant_field[idx] = val;
+            }
+            result.scatter_into(&mut out, xsize_blocks);
+        }
+
+        out
+    }
+
+    /// Fill pre-allocated `TransformOutput` buffers (sequential, for butteraugli loop).
+    ///
+    /// Processes groups sequentially via `transform_blocks_into` and scatters
+    /// results into the pre-allocated output. Used by the butteraugli quantization
+    /// loop which reuses the same `TransformOutput` across iterations.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn transform_and_quantize_into(
+        &self,
+        xyb_x: &[f32],
+        xyb_y: &[f32],
+        xyb_b: &[f32],
+        padded_width: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        params: &DistanceParams,
+        quant_field: &mut [u8],
+        cfl_map: &CflMap,
+        ac_strategy: &AcStrategyMap,
+        out: &mut TransformOutput,
+    ) {
+        let xsize_groups = div_ceil(xsize_blocks, GROUP_DIM_IN_BLOCKS);
+        let ysize_groups = div_ceil(ysize_blocks, GROUP_DIM_IN_BLOCKS);
+
+        for gy in 0..ysize_groups {
+            for gx in 0..xsize_groups {
+                let start_bx = gx * GROUP_DIM_IN_BLOCKS;
+                let start_by = gy * GROUP_DIM_IN_BLOCKS;
+                let end_bx = (start_bx + GROUP_DIM_IN_BLOCKS).min(xsize_blocks);
+                let end_by = (start_by + GROUP_DIM_IN_BLOCKS).min(ysize_blocks);
+                let width = end_bx - start_bx;
+                let height = end_by - start_by;
+
+                let mut result = GroupTransformResult::new(start_bx, start_by, width, height);
+                self.transform_blocks_into(
+                    xyb_x,
+                    xyb_y,
+                    xyb_b,
+                    padded_width,
+                    xsize_blocks,
+                    params,
+                    quant_field,
+                    cfl_map,
+                    ac_strategy,
+                    start_by,
+                    end_by,
+                    start_bx,
+                    end_bx,
+                    &mut result,
+                );
+                // Apply quant adjustments immediately so later groups see them.
+                for &(idx, val) in &result.quant_adjustments {
+                    quant_field[idx] = val;
+                }
+                result.scatter_into(out, xsize_blocks);
             }
         }
     }
