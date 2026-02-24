@@ -130,12 +130,8 @@ impl AccumulatedAnsData {
 ///
 /// This is Phase B of the two-phase approach: takes pre-accumulated statistics
 /// and builds the entropy code (clustering, HybridUint optimization, ANS distributions).
-///
-/// `num_contexts` can be less than `data.num_contexts` to ignore trailing contexts
-/// (e.g., when LZ77 was reserved but not used).
 pub fn build_entropy_code_from_accumulated_ans(
-    data: &AccumulatedAnsData,
-    num_contexts: usize,
+    data: AccumulatedAnsData,
     enhanced_clustering: bool,
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
@@ -145,7 +141,7 @@ pub fn build_entropy_code_from_accumulated_ans(
     };
     use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
-    debug_assert!(num_contexts <= data.num_contexts);
+    let num_contexts = data.num_contexts;
 
     // Cluster histograms
     let cluster_type = if enhanced_clustering {
@@ -161,7 +157,7 @@ pub fn build_entropy_code_from_accumulated_ans(
     let result = enhanced_cluster(
         cluster_type,
         EntropyType::Ans,
-        &data.histograms[..num_contexts],
+        &data.histograms,
         max_histograms,
     )
     .expect("ANS clustering failed");
@@ -328,8 +324,7 @@ pub fn build_entropy_code_ans_from_token_groups(
 
     // Phase B: Build entropy code from accumulated data.
     let code = build_entropy_code_from_accumulated_ans(
-        &accumulated,
-        num_contexts,
+        accumulated,
         enhanced_clustering,
         lz77,
         total_pixel_hint,
