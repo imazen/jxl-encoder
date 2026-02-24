@@ -233,7 +233,7 @@ pub fn count_zero_coefficients(
             // strategy_bucket expects bitstream strategy code
             let bucket = strategy_bucket(strategy_code) as usize;
             // ac_strategy_info expects raw strategy codes (0-6)
-            let (cx, cy, covered_blocks, _, _) = ac_strategy_info(raw_strategy);
+            let (_, _, covered_blocks, _, _) = ac_strategy_info(raw_strategy);
             let size = covered_blocks * DCT_BLOCK_SIZE;
 
             // Ensure count vector is large enough
@@ -267,14 +267,32 @@ pub fn count_zero_coefficients(
                         }
                     }
                 }
+            }
+        }
+    }
 
-                // Mark LLF positions with -1 so they sort first (ascending)
-                let (layout_cx, layout_cy) = if cx >= cy { (cx, cy) } else { (cy, cx) };
-                let block_dim = 8;
-                for iy in 0..layout_cy {
-                    for ix in 0..layout_cx {
-                        counts[bucket][c][iy * layout_cx * block_dim + ix] = -1;
-                    }
+    // Mark LLF positions with -1 so they sort first (ascending).
+    // Done once per bucket after all blocks are processed, instead of per-block.
+    for (bucket, bucket_counts) in counts.iter_mut().enumerate().take(NUM_ORDER_BUCKETS) {
+        let size = match bucket {
+            0 => 64,   // DCT8
+            2 => 256,  // DCT16x16
+            3 => 1024, // DCT32x32
+            4 => 128,  // DCT8x16/DCT16x8
+            6 => 512,  // DCT32x16/DCT16x32
+            7 => 4096, // DCT64x64
+            8 => 2048, // DCT64x32/DCT32x64
+            _ => continue,
+        };
+        if bucket_counts[0].len() < size {
+            continue; // Bucket not used
+        }
+        let (cx, cy) = bucket_to_cx_cy(bucket);
+        let (layout_cx, layout_cy) = if cx >= cy { (cx, cy) } else { (cy, cx) };
+        for channel_counts in bucket_counts.iter_mut().take(3) {
+            for iy in 0..layout_cy {
+                for ix in 0..layout_cx {
+                    channel_counts[iy * layout_cx * 8 + ix] = -1;
                 }
             }
         }
