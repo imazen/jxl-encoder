@@ -625,11 +625,11 @@ pub fn compute_pre_erosion_avx2(
             let xc = x.min(max_x); // For interior, x == xc
 
             // Load 4 neighbors + center
-            let top = f32x8::from_slice(token, &xyb_y[y1 * width + xc..]);
-            let bot = f32x8::from_slice(token, &xyb_y[y2 * width + xc..]);
-            let left = f32x8::from_slice(token, &xyb_y[yc * width + xc - 1..]);
-            let right = f32x8::from_slice(token, &xyb_y[yc * width + xc + 1..]);
-            let center = f32x8::from_slice(token, &xyb_y[yc * width + xc..]);
+            let top = crate::load_f32x8(token, xyb_y, y1 * width + xc);
+            let bot = crate::load_f32x8(token, xyb_y, y2 * width + xc);
+            let left = crate::load_f32x8(token, xyb_y, yc * width + xc - 1);
+            let right = crate::load_f32x8(token, xyb_y, yc * width + xc + 1);
+            let center = crate::load_f32x8(token, xyb_y, yc * width + xc);
 
             let base = quarter * (top + bot + left + right);
 
@@ -765,8 +765,8 @@ pub fn per_block_modulations_avx2(
             let mut ratio_acc = f32x8::splat(token, 0.0);
             for dy in 0..8 {
                 let row_off = (py + dy) * stride + px;
-                let y_vals = f32x8::from_slice(token, &xyb_y[row_off..]);
-                let x_vals = f32x8::from_slice(token, &xyb_x[row_off..]);
+                let y_vals = crate::load_f32x8(token, xyb_y, row_off);
+                let x_vals = crate::load_f32x8(token, xyb_x, row_off);
                 let iny = y_vals + bias_v;
                 let r = (iny - x_vals).max(zero_v);
                 let g = (iny + x_vals).max(zero_v);
@@ -796,8 +796,8 @@ pub fn per_block_modulations_avx2(
                 } else {
                     (py + dy + 1) * stride + px
                 };
-                let cur = f32x8::from_slice(token, &xyb_y[row_off..]);
-                let below = f32x8::from_slice(token, &xyb_y[next_row_off..]);
+                let cur = crate::load_f32x8(token, xyb_y, row_off);
+                let below = crate::load_f32x8(token, xyb_y, next_row_off);
                 // Below neighbor: abs(cur - below).min(valmin)
                 hf_acc = hf_acc + (cur - below).abs().min(valmin_v);
                 // Right neighbor: shift cur left by 1, duplicate last element.
@@ -821,9 +821,9 @@ pub fn per_block_modulations_avx2(
             let mut blue_acc = f32x8::splat(token, 0.0);
             for dy in 0..8 {
                 let row_off = (py + dy) * stride + px;
-                let x_vals = f32x8::from_slice(token, &xyb_x[row_off..]);
-                let y_vals = f32x8::from_slice(token, &xyb_y[row_off..]);
-                let b_vals = f32x8::from_slice(token, &xyb_b[row_off..]);
+                let x_vals = crate::load_f32x8(token, xyb_x, row_off);
+                let y_vals = crate::load_f32x8(token, xyb_y, row_off);
+                let b_vals = crate::load_f32x8(token, xyb_b, row_off);
                 let y_eff = y_vals + bm_offset_v + x_vals.abs();
                 let excess = (b_vals - y_eff).min(bm_limit_v).max(zero_v);
                 blue_acc = blue_acc + excess;

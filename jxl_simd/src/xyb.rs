@@ -369,9 +369,9 @@ pub fn forward_xyb_avx2(
 
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let rv = f32x8::from_slice(token, &r_s[base..]);
-        let gv = f32x8::from_slice(token, &g_s[base..]);
-        let bv = f32x8::from_slice(token, &b_s[base..]);
+        let rv = crate::load_f32x8(token, r_s, base);
+        let gv = crate::load_f32x8(token, g_s, base);
+        let bv = crate::load_f32x8(token, b_s, base);
 
         // Matrix multiply + bias (FMA chains)
         let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
@@ -404,9 +404,9 @@ pub fn forward_xyb_avx2(
         let xv = half * (l - m);
         let yv = half * (l + m);
 
-        xv.store((&mut x_out[base..base + 8]).try_into().unwrap());
-        yv.store((&mut y_out[base..base + 8]).try_into().unwrap());
-        s.store((&mut b_out[base..base + 8]).try_into().unwrap());
+        crate::store_f32x8(x_out, base, xv);
+        crate::store_f32x8(y_out, base, yv);
+        crate::store_f32x8(b_out, base, s);
     }
 
     // Scalar remainder
@@ -454,9 +454,9 @@ pub fn inverse_xyb_avx2(
     let chunks = n / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let x = f32x8::from_slice(token, &xyb_x[base..]);
-        let y = f32x8::from_slice(token, &xyb_y[base..]);
-        let b = f32x8::from_slice(token, &xyb_b[base..]);
+        let x = crate::load_f32x8(token, xyb_x, base);
+        let y = crate::load_f32x8(token, xyb_y, base);
+        let b = crate::load_f32x8(token, xyb_b, base);
 
         // Unmix to gamma-domain LMS + add cbrt(bias)
         let gamma_r = y + x + neg_cbrt0;
@@ -535,9 +535,9 @@ pub fn inverse_xyb_planar_avx2(
     let chunks = n / 8;
     for chunk in 0..chunks {
         let base = chunk * 8;
-        let x = f32x8::from_slice(token, &xyb_x[base..]);
-        let y = f32x8::from_slice(token, &xyb_y[base..]);
-        let b = f32x8::from_slice(token, &xyb_b[base..]);
+        let x = crate::load_f32x8(token, xyb_x, base);
+        let y = crate::load_f32x8(token, xyb_y, base);
+        let b = crate::load_f32x8(token, xyb_b, base);
 
         // Unmix to gamma-domain LMS + add cbrt(bias)
         let gamma_r = y + x + neg_cbrt0;
@@ -555,9 +555,9 @@ pub fn inverse_xyb_planar_avx2(
         let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
 
         // Store planar — direct SIMD store, no scalar interleave needed
-        rv.store((&mut out_r[base..base + 8]).try_into().unwrap());
-        gv.store((&mut out_g[base..base + 8]).try_into().unwrap());
-        bv.store((&mut out_b[base..base + 8]).try_into().unwrap());
+        crate::store_f32x8(out_r, base, rv);
+        crate::store_f32x8(out_g, base, gv);
+        crate::store_f32x8(out_b, base, bv);
     }
 
     // Scalar remainder

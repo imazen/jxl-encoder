@@ -231,11 +231,11 @@ pub fn compute_mask1x1_avx2(
 
         while x < simd_end {
             // Load neighbors
-            let top = f32x8::from_slice(token, &xyb_y[r_top + x..]);
-            let bot = f32x8::from_slice(token, &xyb_y[r_bot + x..]);
-            let left = f32x8::from_slice(token, &xyb_y[r_cur + x - 1..]);
-            let right = f32x8::from_slice(token, &xyb_y[r_cur + x + 1..]);
-            let center = f32x8::from_slice(token, &xyb_y[r_cur + x..]);
+            let top = crate::load_f32x8(token, xyb_y, r_top + x);
+            let bot = crate::load_f32x8(token, xyb_y, r_bot + x);
+            let left = crate::load_f32x8(token, xyb_y, r_cur + x - 1);
+            let right = crate::load_f32x8(token, xyb_y, r_cur + x + 1);
+            let center = crate::load_f32x8(token, xyb_y, r_cur + x);
 
             // base = 0.25 * (top + bot + left + right)
             let base = quarter * (top + bot + left + right);
@@ -271,9 +271,7 @@ pub fn compute_mask1x1_avx2(
             // output = K_MUL / (ln_val + K_OFFSET)
             let result = k_mul_v / (ln_val + k_offset_v);
 
-            let out_arr: &mut [f32; 8] =
-                (&mut output[r_cur + x..r_cur + x + 8]).try_into().unwrap();
-            result.store(out_arr);
+            crate::store_f32x8(output, r_cur + x, result);
 
             x += 8;
         }

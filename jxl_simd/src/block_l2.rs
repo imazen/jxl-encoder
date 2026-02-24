@@ -164,25 +164,25 @@ pub fn compute_block_l2_errors_avx2(
                 let row_start = (by * 8 + py) * padded_width + bx * 8;
 
                 // Load 8 mask values and square them
-                let mask_v = f32x8::from_slice(token, &mask1x1[row_start..]);
+                let mask_v = crate::load_f32x8(token, mask1x1, row_start);
                 let mask_sq = mask_v * mask_v;
 
                 // X channel: w_x * mask_sq * (orig_x - recon_x)^2
-                let orig_x = f32x8::from_slice(token, &original[0][row_start..]);
-                let recon_x = f32x8::from_slice(token, &reconstructed[0][row_start..]);
+                let orig_x = crate::load_f32x8(token, original[0], row_start);
+                let recon_x = crate::load_f32x8(token, reconstructed[0], row_start);
                 let diff_x = orig_x - recon_x;
                 acc += w_x * mask_sq * diff_x * diff_x;
 
                 // Y channel: w_y * mask_sq * (orig_y - recon_y)^2
-                let orig_y = f32x8::from_slice(token, &original[1][row_start..]);
-                let recon_y = f32x8::from_slice(token, &reconstructed[1][row_start..]);
+                let orig_y = crate::load_f32x8(token, original[1], row_start);
+                let recon_y = crate::load_f32x8(token, reconstructed[1], row_start);
                 let diff_y = orig_y - recon_y;
                 // w_y = 1.0, so skip the multiply
                 acc += mask_sq * diff_y * diff_y;
 
                 // B channel: w_b * mask_sq * (orig_b - recon_b)^2
-                let orig_b = f32x8::from_slice(token, &original[2][row_start..]);
-                let recon_b = f32x8::from_slice(token, &reconstructed[2][row_start..]);
+                let orig_b = crate::load_f32x8(token, original[2], row_start);
+                let recon_b = crate::load_f32x8(token, reconstructed[2], row_start);
                 let diff_b = orig_b - recon_b;
                 acc += w_b * mask_sq * diff_b * diff_b;
             }

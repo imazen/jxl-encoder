@@ -448,8 +448,8 @@ pub fn quantize_large_avx2(
             let base = row_off + x_base;
             let thr_idx = row_thr_base + if x_base >= half_w { 1 } else { 0 };
 
-            let c = f32x8::from_slice(token, &coeffs[base..]);
-            let w = f32x8::from_slice(token, &wts[base..]);
+            let c = crate::load_f32x8(token, coeffs, base);
+            let w = crate::load_f32x8(token, wts, base);
             let thr = thr_splat[thr_idx];
 
             // val = coeff / weight * qac_qm

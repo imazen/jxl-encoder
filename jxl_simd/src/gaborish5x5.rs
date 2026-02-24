@@ -242,45 +242,45 @@ pub fn gaborish_5x5_avx2(
 
         while x < simd_end {
             // Center
-            let center = f32x8::from_slice(token, &row_0[x..]);
+            let center = crate::load_f32x8(token, row_0, x);
 
             // r: 4 orthogonal at distance 1
-            let left1 = f32x8::from_slice(token, &row_0[x - 1..]);
-            let right1 = f32x8::from_slice(token, &row_0[x + 1..]);
-            let top1 = f32x8::from_slice(token, &row_m1[x..]);
-            let bot1 = f32x8::from_slice(token, &row_p1[x..]);
+            let left1 = crate::load_f32x8(token, row_0, x - 1);
+            let right1 = crate::load_f32x8(token, row_0, x + 1);
+            let top1 = crate::load_f32x8(token, row_m1, x);
+            let bot1 = crate::load_f32x8(token, row_p1, x);
             let r_sum = left1 + right1 + top1 + bot1;
 
             // d: 4 diagonal at distance sqrt(2)
-            let tl1 = f32x8::from_slice(token, &row_m1[x - 1..]);
-            let tr1 = f32x8::from_slice(token, &row_m1[x + 1..]);
-            let bl1 = f32x8::from_slice(token, &row_p1[x - 1..]);
-            let br1 = f32x8::from_slice(token, &row_p1[x + 1..]);
+            let tl1 = crate::load_f32x8(token, row_m1, x - 1);
+            let tr1 = crate::load_f32x8(token, row_m1, x + 1);
+            let bl1 = crate::load_f32x8(token, row_p1, x - 1);
+            let br1 = crate::load_f32x8(token, row_p1, x + 1);
             let d_sum = tl1 + tr1 + bl1 + br1;
 
             // R: 4 orthogonal at distance 2
-            let left2 = f32x8::from_slice(token, &row_0[x - 2..]);
-            let right2 = f32x8::from_slice(token, &row_0[x + 2..]);
-            let top2 = f32x8::from_slice(token, &row_m2[x..]);
-            let bot2 = f32x8::from_slice(token, &row_p2[x..]);
+            let left2 = crate::load_f32x8(token, row_0, x - 2);
+            let right2 = crate::load_f32x8(token, row_0, x + 2);
+            let top2 = crate::load_f32x8(token, row_m2, x);
+            let bot2 = crate::load_f32x8(token, row_p2, x);
             let big_r_sum = left2 + right2 + top2 + bot2;
 
             // L: 8 knight's move neighbors
-            let l_a = f32x8::from_slice(token, &row_m1[x - 2..]);
-            let l_b = f32x8::from_slice(token, &row_p1[x - 2..]);
-            let l_c = f32x8::from_slice(token, &row_m1[x + 2..]);
-            let l_d = f32x8::from_slice(token, &row_p1[x + 2..]);
-            let l_e = f32x8::from_slice(token, &row_m2[x - 1..]);
-            let l_f = f32x8::from_slice(token, &row_m2[x + 1..]);
-            let l_g = f32x8::from_slice(token, &row_p2[x - 1..]);
-            let l_h = f32x8::from_slice(token, &row_p2[x + 1..]);
+            let l_a = crate::load_f32x8(token, row_m1, x - 2);
+            let l_b = crate::load_f32x8(token, row_p1, x - 2);
+            let l_c = crate::load_f32x8(token, row_m1, x + 2);
+            let l_d = crate::load_f32x8(token, row_p1, x + 2);
+            let l_e = crate::load_f32x8(token, row_m2, x - 1);
+            let l_f = crate::load_f32x8(token, row_m2, x + 1);
+            let l_g = crate::load_f32x8(token, row_p2, x - 1);
+            let l_h = crate::load_f32x8(token, row_p2, x + 1);
             let l_sum = l_a + l_b + l_c + l_d + l_e + l_f + l_g + l_h;
 
             // D: 4 corner at distance 2*sqrt(2)
-            let tl2 = f32x8::from_slice(token, &row_m2[x - 2..]);
-            let tr2 = f32x8::from_slice(token, &row_m2[x + 2..]);
-            let bl2 = f32x8::from_slice(token, &row_p2[x - 2..]);
-            let br2 = f32x8::from_slice(token, &row_p2[x + 2..]);
+            let tl2 = crate::load_f32x8(token, row_m2, x - 2);
+            let tr2 = crate::load_f32x8(token, row_m2, x + 2);
+            let bl2 = crate::load_f32x8(token, row_p2, x - 2);
+            let br2 = crate::load_f32x8(token, row_p2, x + 2);
             let big_d_sum = tl2 + tr2 + bl2 + br2;
 
             // Combine with FMA chains:
@@ -296,8 +296,7 @@ pub fn gaborish_5x5_avx2(
                 ),
             );
 
-            let out_arr: &mut [f32; 8] = (&mut output[r_0 + x..r_0 + x + 8]).try_into().unwrap();
-            result.store(out_arr);
+            crate::store_f32x8(output, r_0 + x, result);
 
             x += 8;
         }
