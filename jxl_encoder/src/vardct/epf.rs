@@ -330,9 +330,9 @@ pub(crate) fn apply_epf(
         let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
         let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
         let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
-        let mut out_x = vec![0.0f32; n];
-        let mut out_y = vec![0.0f32; n];
-        let mut out_b = vec![0.0f32; n];
+        let mut out_x = jxl_simd::vec_f32_dirty(n);
+        let mut out_y = jxl_simd::vec_f32_dirty(n);
+        let mut out_b = jxl_simd::vec_f32_dirty(n);
         jxl_simd::epf_step1(
             &padded_x,
             &padded_y,
@@ -363,9 +363,9 @@ pub(crate) fn apply_epf(
         let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
         let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
         let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
-        let mut out_x = vec![0.0f32; n];
-        let mut out_y = vec![0.0f32; n];
-        let mut out_b = vec![0.0f32; n];
+        let mut out_x = jxl_simd::vec_f32_dirty(n);
+        let mut out_y = jxl_simd::vec_f32_dirty(n);
+        let mut out_b = jxl_simd::vec_f32_dirty(n);
         jxl_simd::epf_step2(
             &padded_x,
             &padded_y,
@@ -567,9 +567,9 @@ pub(crate) fn compute_epf_sharpness(
 
     // Pre-allocate scratch buffers for EPF output (reused across candidates)
     let n = padded_width * padded_height;
-    let mut scratch_x = vec![0.0f32; n];
-    let mut scratch_y = vec![0.0f32; n];
-    let mut scratch_b = vec![0.0f32; n];
+    let mut scratch_x = jxl_simd::vec_f32_dirty(n);
+    let mut scratch_y = jxl_simd::vec_f32_dirty(n);
+    let mut scratch_b = jxl_simd::vec_f32_dirty(n);
 
     // Pre-allocate padded scratch buffers for padding (reused across steps and candidates)
     // Size for the largest padding needed (pad=3 for step 0)
@@ -582,7 +582,8 @@ pub(crate) fn compute_epf_sharpness(
     };
     let max_padded_stride = padded_width + 2 * max_pad;
     let max_padded_len = max_padded_stride * (padded_height + 2 * max_pad);
-    let mut padded_scratch: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; max_padded_len]);
+    let mut padded_scratch: [Vec<f32>; 3] =
+        core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
 
     // Pre-allocate uniform sharpness map (reused across candidates)
     let mut uniform_sharpness = vec![0u8; nblocks];

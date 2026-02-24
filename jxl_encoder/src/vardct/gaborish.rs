@@ -83,7 +83,7 @@ pub fn gaborish_inverse(
     height: usize,
 ) {
     // Reuse one scratch buffer across all 3 channels to avoid 3 allocations
-    let mut scratch = vec![0.0f32; width * height];
+    let mut scratch = jxl_simd::vec_f32_dirty(width * height);
 
     // mul=1.0 for all channels, matching libjxl enc_heuristics.cc line 1137-1140
     apply_channel(xyb_x, &mut scratch, width, height, 1.0);

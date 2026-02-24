@@ -48,6 +48,29 @@ pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
     [0.0f32; N]
 }
 
+/// Allocate a `Vec<f32>` of length `n` without zeroing (unsafe-performance path).
+///
+/// # Safety
+/// Caller must write every element before reading it. Intended for output buffers
+/// that are immediately overwritten by IDCT, EPF, gaborish, or similar operations.
+#[cfg(feature = "unsafe-performance")]
+#[allow(unsafe_code, clippy::uninit_vec)]
+#[inline]
+pub fn vec_f32_dirty(n: usize) -> alloc::vec::Vec<f32> {
+    let mut v = alloc::vec::Vec::with_capacity(n);
+    // SAFETY: f32 has no trap representations on IEEE 754. Caller must write all
+    // elements before reading. Length is within the allocated capacity.
+    unsafe { v.set_len(n) };
+    v
+}
+
+/// Allocate a zero-initialized `Vec<f32>` of length `n` (safe default path).
+#[cfg(not(feature = "unsafe-performance"))]
+#[inline]
+pub fn vec_f32_dirty(n: usize) -> alloc::vec::Vec<f32> {
+    alloc::vec![0.0f32; n]
+}
+
 /// Slice from offset without bounds check (unsafe-performance path).
 ///
 /// # Safety

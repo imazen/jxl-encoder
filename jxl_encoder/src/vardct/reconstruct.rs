@@ -170,21 +170,21 @@ fn reconstruct_xyb_impl(
     // For each first-block of each transform, reconstruct the full coefficient block.
     // Output: per-channel float coefficient planes in pixel layout after IDCT.
     let mut planes = [
-        vec![0.0f32; num_pixels],
-        vec![0.0f32; num_pixels],
-        vec![0.0f32; num_pixels],
+        jxl_simd::vec_f32_dirty(num_pixels),
+        jxl_simd::vec_f32_dirty(num_pixels),
+        jxl_simd::vec_f32_dirty(num_pixels),
     ];
 
     // Pre-allocate scratch buffers to avoid per-block heap allocations.
     // Max block size is 4096 (DCT64x64 = 64x64 coefficients).
     const MAX_BLOCK_SIZE: usize = 4096;
     let mut dequant_scratch = [
-        vec![0.0f32; MAX_BLOCK_SIZE],
-        vec![0.0f32; MAX_BLOCK_SIZE],
-        vec![0.0f32; MAX_BLOCK_SIZE],
+        jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE),
+        jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE),
+        jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE),
     ];
-    let mut transpose_scratch = vec![0.0f32; MAX_BLOCK_SIZE];
-    let mut idct_scratch = vec![0.0f32; MAX_BLOCK_SIZE];
+    let mut transpose_scratch = jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE);
+    let mut idct_scratch = jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE);
 
     // Process all first-blocks
     for by in 0..ysize_blocks {

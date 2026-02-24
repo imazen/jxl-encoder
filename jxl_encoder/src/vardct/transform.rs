@@ -275,7 +275,8 @@ impl VarDctEncoder {
 
         // Pre-allocate scratch buffers for DCT coefficients (max DCT64x64 = 4096)
         const MAX_BLOCK_SIZE: usize = 4096;
-        let mut dct_scratch: [Vec<f32>; 3] = core::array::from_fn(|_| vec![0.0f32; MAX_BLOCK_SIZE]);
+        let mut dct_scratch: [Vec<f32>; 3] =
+            core::array::from_fn(|_| jxl_simd::vec_f32_dirty(MAX_BLOCK_SIZE));
 
         // Pre-compute zigzag orders for error diffusion (avoids per-block Vec allocation).
         // Index by (cx, cy) pair. Only 7 distinct pairs across all strategies.
