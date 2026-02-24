@@ -355,21 +355,27 @@ const CHANNEL_MUL: [f64; 3] = [
     1.26677008064,    // B channel: 1.03^8
 ];
 
-/// Default pixel-domain cost model base constants (info_loss, zeros, cost_delta).
-/// From libjxl enc_ac_strategy.cc:1111-1113.
-pub(super) const DEFAULT_COST_BASES: (f32, f32, f32) = (1.2, 9.308_906, 10.833_273);
-
 /// Distance scaling exponents from libjxl enc_ac_strategy.cc:1115-1120
 const K_BIAS: f32 = 0.137_317_43;
 const K_POW_INFO_LOSS: f32 = 0.336_778_07;
 const K_POW_ZEROS_MUL: f32 = 0.509_909_3;
 const K_POW_COST_DELTA: f32 = 0.367_029_4;
 
+/// Constants for coefficient-domain mode (libjxl-tiny style, not distance-scaled).
+/// Order: (info_loss_mul, cost_delta, zeros_mul) — matches compute_scaled_constants output.
+pub(super) const COEFF_DOMAIN_CONSTANTS: (f32, f32, f32) = (138.0, 5.335_918_5, 7.565_053_4);
+
 /// Compute distance-scaled constants for full libjxl cost model.
 /// At d=1.0, returns the base values. At higher distances, increases all values.
 ///
 /// `bases` is `(info_loss_mul_base, zeros_mul_base, cost_delta_base)` from
 /// [`EffortProfile`](crate::effort::EffortProfile).
+///
+/// Returns `(info_loss_mul, cost_delta, zeros_mul)`.
+///
+/// Call this ONCE per search function (not per estimate_entropy call) since
+/// distance and bases are constant within a search. Pass the result as
+/// `scaled_constants` to estimate_entropy_with_mask/estimate_entropy_full.
 pub(super) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) -> (f32, f32, f32) {
     let (info_loss_base, zeros_base, cost_delta_base) = bases;
     let ratio = (distance + K_BIAS) / (1.0 + K_BIAS);
@@ -453,7 +459,7 @@ pub(super) fn estimate_entropy(
         None,
         0,
         0.0,
-        DEFAULT_COST_BASES,
+        COEFF_DOMAIN_CONSTANTS,
         &table,
         &mut scratch,
     )
@@ -462,7 +468,7 @@ pub(super) fn estimate_entropy(
 /// Estimate entropy with optional pixel-domain loss.
 ///
 /// When `mask1x1` is Some, uses full libjxl pixel-domain loss model with:
-/// - Distance-scaled constants
+/// - Pre-computed distance-scaled constants (passed as `scaled_constants`)
 /// - Fixed entropy multiplier per transform type
 ///
 /// When `mask1x1` is None, uses coefficient-domain loss (libjxl-tiny style).
@@ -470,6 +476,10 @@ pub(super) fn estimate_entropy(
 /// `entropy_mul_adjust`: additive adjustment to entropy_mul. In libjxl,
 /// kFavor2X2AtHighQuality and kAvoidEntropyOfTransforms modify entropy_mul
 /// before passing to EstimateEntropy. Pass 0.0 for no adjustment.
+///
+/// `scaled_constants`: pre-computed `(info_loss_mul, cost_delta, zeros_mul)` from
+/// `compute_scaled_constants(distance, bases)` for pixel-domain mode, or
+/// `COEFF_DOMAIN_CONSTANTS` for coefficient-domain mode.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn estimate_entropy_with_mask(
@@ -487,7 +497,7 @@ pub(super) fn estimate_entropy_with_mask(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul_adjust: f32,
-    pixel_domain_cost_bases: (f32, f32, f32),
+    scaled_constants: (f32, f32, f32),
     entropy_mul_table: &EntropyMulTable,
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
@@ -517,20 +527,23 @@ pub(super) fn estimate_entropy_with_mask(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
-        pixel_domain_cost_bases,
+        scaled_constants,
         scratch,
     )
 }
 
 /// Estimate entropy with optional pixel-domain loss calculation.
 ///
-/// When `mask1x1` is Some, uses full libjxl pixel-domain loss model with
-/// distance-scaled constants.
+/// When `mask1x1` is Some, uses full libjxl pixel-domain loss model.
 /// When `mask1x1` is None, uses coefficient-domain loss (libjxl-tiny style).
 ///
 /// `entropy_mul` multiplies ONLY the entropy part, not the loss. In full libjxl
 /// mode, this is a fixed value per transform type. In libjxl-tiny mode, this
 /// is 1.0 and the caller applies multipliers externally.
+///
+/// `scaled_constants`: pre-computed `(info_loss_mul, cost_delta, zeros_mul)`.
+/// Use `compute_scaled_constants()` for pixel-domain, `COEFF_DOMAIN_CONSTANTS`
+/// for coefficient-domain.
 ///
 /// This function does NOT dispatch to SIMD — it relies on the CALLER being in
 /// a `#[target_feature]` context (e.g., via `#[arcane]` on the search functions).
@@ -554,7 +567,7 @@ pub(super) fn estimate_entropy_full(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
-    pixel_domain_cost_bases: (f32, f32, f32),
+    scaled_constants: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     estimate_entropy_full_impl(
@@ -572,7 +585,7 @@ pub(super) fn estimate_entropy_full(
         mask1x1,
         mask1x1_stride,
         entropy_mul,
-        pixel_domain_cost_bases,
+        scaled_constants,
         scratch,
     )
 }
@@ -600,7 +613,7 @@ fn estimate_entropy_full_impl(
     mask1x1: Option<&[f32]>,
     mask1x1_stride: usize,
     entropy_mul: f32,
-    pixel_domain_cost_bases: (f32, f32, f32),
+    scaled_constants: (f32, f32, f32),
     scratch: &mut EntropyEstScratch,
 ) -> f32 {
     let cx = COVERED_X[raw_strategy as usize];
@@ -611,15 +624,9 @@ fn estimate_entropy_full_impl(
     // Use different constants based on whether we're using pixel-domain loss
     let use_pixel_domain = mask1x1.is_some();
 
-    // Entropy estimation constants
-    // In pixel-domain mode: use distance-scaled constants
-    // In coefficient-domain mode: use libjxl-tiny static constants
-    let (k_info_loss_mul, k_cost_delta, k_zeros_mul) = if use_pixel_domain {
-        compute_scaled_constants(distance, pixel_domain_cost_bases)
-    } else {
-        // libjxl-tiny style constants (not distance-scaled)
-        (138.0_f32, 5.335_918_5_f32, 7.565_053_4_f32)
-    };
+    // Pre-computed constants: pixel-domain uses compute_scaled_constants(),
+    // coefficient-domain uses COEFF_DOMAIN_CONSTANTS.
+    let (k_info_loss_mul, k_cost_delta, k_zeros_mul) = scaled_constants;
     const K_INFO_LOSS_MULTIPLIER2: f32 = 50.468_4;
     const K_COST2: f32 = 4.462_815;
 
@@ -1862,6 +1869,7 @@ mod tests {
 
         let mut scratch = EntropyEstScratch::new();
         let cost_bases = (1.2_f32, 9.308_906_f32, 10.833_273_f32);
+        let pixel_constants = compute_scaled_constants(1.0, cost_bases);
 
         // Calculate coefficient-domain loss (without mask1x1)
         let ent_coeff = estimate_entropy_full(
@@ -1879,7 +1887,7 @@ mod tests {
             None,
             0,
             1.0, // entropy_mul = 1.0 for coefficient-domain (caller applies mul8x8)
-            cost_bases,
+            COEFF_DOMAIN_CONSTANTS,
             &mut scratch,
         );
 
@@ -1899,7 +1907,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()), // Normalized entropy_mul for DCT8 = 1.0
-            cost_bases,
+            pixel_constants,
             &mut scratch,
         );
 
@@ -1953,6 +1961,7 @@ mod tests {
 
         let mut scratch = EntropyEstScratch::new();
         let cost_bases = (1.2_f32, 9.308_906_f32, 10.833_273_f32);
+        let pixel_constants = compute_scaled_constants(1.0, cost_bases);
 
         // Test DCT8
         let ent_dct8 = estimate_entropy_full(
@@ -1970,7 +1979,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT8, &EntropyMulTable::reference()),
-            cost_bases,
+            pixel_constants,
             &mut scratch,
         );
         eprintln!("DCT8 pixel-domain entropy: {}", ent_dct8);
@@ -1992,7 +2001,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
-            cost_bases,
+            pixel_constants,
             &mut scratch,
         );
         eprintln!("DCT16x8 pixel-domain entropy: {}", ent_dct16x8);
@@ -2014,7 +2023,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X8, &EntropyMulTable::reference()),
-            cost_bases,
+            pixel_constants,
             &mut scratch,
         );
         eprintln!("DCT8x16 pixel-domain entropy: {}", ent_dct8x16);
@@ -2036,7 +2045,7 @@ mod tests {
             Some(&mask1x1),
             mask1x1_stride,
             entropy_mul_for_strategy(RAW_STRATEGY_DCT16X16, &EntropyMulTable::reference()),
-            cost_bases,
+            pixel_constants,
             &mut scratch,
         );
         eprintln!("DCT16x16 pixel-domain entropy: {}", ent_dct16x16);
