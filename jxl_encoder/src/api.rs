@@ -2843,8 +2843,8 @@ mod tests {
             for x in 0..16u8 {
                 let ci = ((y / 4) * 4 + x / 4) as usize % 4;
                 let noise = ((x.wrapping_mul(7).wrapping_add(y.wrapping_mul(13))) % 5) as i16 - 2;
-                for c in 0..3 {
-                    let v = (colors[ci][c] as i16 + noise).clamp(0, 255) as u8;
+                for &channel in &colors[ci][..3] {
+                    let v = (channel as i16 + noise).clamp(0, 255) as u8;
                     pixels.push(v);
                 }
             }
@@ -2891,8 +2891,8 @@ mod tests {
             for x in 0..300u32 {
                 let ci = ((y / 40) * 8 + x / 40) as usize % colors.len();
                 let noise = ((x.wrapping_mul(7).wrapping_add(y.wrapping_mul(13))) % 7) as i16 - 3;
-                for c in 0..3 {
-                    let v = (colors[ci][c] as i16 + noise).clamp(0, 255) as u8;
+                for &channel in &colors[ci][..3] {
+                    let v = (channel as i16 + noise).clamp(0, 255) as u8;
                     pixels.push(v);
                 }
             }
@@ -2942,9 +2942,9 @@ mod tests {
         // decoded.pixels is f32 in [0.0, 1.0] — convert to u8 for comparison
         let mut max_error = 0i32;
         let mut error_pos = (0, 0, 0);
-        for i in 0..pixels.len() {
-            let dec_u8 = (decoded.pixels[i] * 255.0).round().clamp(0.0, 255.0) as u8;
-            let diff = (pixels[i] as i32 - dec_u8 as i32).abs();
+        for (i, (&orig, &dec)) in pixels.iter().zip(decoded.pixels.iter()).enumerate() {
+            let dec_u8 = (dec * 255.0).round().clamp(0.0, 255.0) as u8;
+            let diff = (orig as i32 - dec_u8 as i32).abs();
             if diff > max_error {
                 max_error = diff;
                 let pixel = i / 3;
@@ -2989,12 +2989,12 @@ mod tests {
             .encode(&pixels, 32, 32, PixelLayout::Rgb8)
             .expect("palette 256-colors encode");
         let decoded = crate::test_helpers::decode_with_jxl_rs(&jxl).expect("jxl-rs decode failed");
-        for i in 0..pixels.len() {
-            let dec_u8 = (decoded.pixels[i] * 255.0).round().clamp(0.0, 255.0) as u8;
+        for (i, (&orig, &dec)) in pixels.iter().zip(decoded.pixels.iter()).enumerate() {
+            let dec_u8 = (dec * 255.0).round().clamp(0.0, 255.0) as u8;
             assert_eq!(
-                pixels[i], dec_u8,
+                orig, dec_u8,
                 "32x32: mismatch at byte {}: orig={} decoded={}",
-                i, pixels[i], dec_u8
+                i, orig, dec_u8
             );
         }
 
@@ -3074,10 +3074,10 @@ mod tests {
 
             let scale = 65535.0;
             let mut mismatches = 0;
-            for i in 0..pixels.len() {
-                let dec = (decoded.pixels[i] * scale).round().clamp(0.0, scale) as u16;
-                if pixels[i] != dec && mismatches < 3 {
-                    eprintln!("{}: mismatch[{}]: orig={} dec={}", label, i, pixels[i], dec);
+            for (i, (&orig, &dec_f)) in pixels.iter().zip(decoded.pixels.iter()).enumerate() {
+                let dec = (dec_f * scale).round().clamp(0.0, scale) as u16;
+                if orig != dec && mismatches < 3 {
+                    eprintln!("{}: mismatch[{}]: orig={} dec={}", label, i, orig, dec);
                     mismatches += 1;
                 }
             }

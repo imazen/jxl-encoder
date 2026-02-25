@@ -414,10 +414,10 @@ impl VarDctEncoder {
                                 dcs[1],
                                 dcs[2],
                                 dcs[3],
-                                coeffs_arr[0],
-                                coeffs_arr[1],
-                                coeffs_arr[16],
-                                coeffs_arr[17]
+                                dct_coeffs[1][0],
+                                dct_coeffs[1][1],
+                                dct_coeffs[1][16],
+                                dct_coeffs[1][17]
                             );
                             for iy in 0..2 {
                                 for ix in 0..2 {

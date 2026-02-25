@@ -184,7 +184,7 @@ fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
         // Verify pixels are in valid range (allow small overshoot from YCbCr→RGB)
         for (i, &p) in pixels.iter().enumerate() {
             assert!(
-                p >= -0.5 && p <= 1.5,
+                (-0.5..=1.5).contains(&p),
                 "{label}: pixel {i} out of range: {p}"
             );
         }
@@ -198,7 +198,7 @@ fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
         // JPEG coefficients can produce out-of-gamut values, especially with subsampling)
         for (i, &p) in pixels.iter().enumerate() {
             assert!(
-                p >= -0.5 && p <= 1.5,
+                (-0.5..=1.5).contains(&p),
                 "{label}: pixel {i} out of range: {p}"
             );
         }

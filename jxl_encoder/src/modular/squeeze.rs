@@ -629,14 +629,14 @@ mod tests {
         inverse_squeeze(&mut image, &params).unwrap();
 
         assert_eq!(image.channels.len(), 3);
-        for c in 0..3 {
-            assert_eq!(image.channels[c].width(), 32);
-            assert_eq!(image.channels[c].height(), 32);
+        for (c, (channel, original)) in image.channels.iter().zip(originals.iter()).enumerate() {
+            assert_eq!(channel.width(), 32);
+            assert_eq!(channel.height(), 32);
             for y in 0..32 {
                 for x in 0..32 {
                     assert_eq!(
-                        image.channels[c].get(x, y),
-                        originals[c][y * 32 + x],
+                        channel.get(x, y),
+                        original[y * 32 + x],
                         "ch{c} mismatch at ({x}, {y})"
                     );
                 }

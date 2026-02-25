@@ -698,7 +698,7 @@ fn main() {
             } else {
                 args.effort >= 3
             };
-            tiny.error_diffusion = if args.error_diffusion { true } else { false };
+            tiny.error_diffusion = args.error_diffusion;
             tiny.pixel_domain_loss = if args.no_pixel_domain_loss {
                 false
             } else {

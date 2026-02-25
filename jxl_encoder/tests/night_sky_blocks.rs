@@ -148,8 +148,8 @@ fn per_block_hf_energy(pixels: &[u8], width: usize, height: usize) -> (Vec<f64>,
                     }
                 }
             }
-            for c in 0..3 {
-                mean[c] /= 64.0;
+            for m in &mut mean {
+                *m /= 64.0;
             }
 
             // Sum of |pixel - mean| (proxy for HF energy)
@@ -494,7 +494,7 @@ fn test_night_sky_block_comparison() {
     let our_err_img: Vec<u8> = original_srgb
         .iter()
         .zip(our_srgb.iter())
-        .map(|(&o, &d)| ((o as i16 - d as i16).unsigned_abs() as u16 * 8).min(255) as u8)
+        .map(|(&o, &d)| ((o as i16 - d as i16).unsigned_abs() * 8).min(255) as u8)
         .collect();
     let our_err_png = image::RgbImage::from_raw(w as u32, h as u32, our_err_img).unwrap();
     our_err_png
@@ -504,7 +504,7 @@ fn test_night_sky_block_comparison() {
     let cjxl_err_img: Vec<u8> = original_srgb
         .iter()
         .zip(cjxl_srgb.iter())
-        .map(|(&o, &d)| ((o as i16 - d as i16).unsigned_abs() as u16 * 8).min(255) as u8)
+        .map(|(&o, &d)| ((o as i16 - d as i16).unsigned_abs() * 8).min(255) as u8)
         .collect();
     let cjxl_err_png = image::RgbImage::from_raw(w as u32, h as u32, cjxl_err_img).unwrap();
     cjxl_err_png

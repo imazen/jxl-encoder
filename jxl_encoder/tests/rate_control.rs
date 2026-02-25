@@ -183,6 +183,7 @@ fn test_encode_from_precomputed() {
         encoder.enable_denoise,
         encoder.enable_gaborish,
         encoder.force_strategy,
+        &encoder.profile,
     );
 
     // Verify precomputed state dimensions

@@ -406,7 +406,7 @@ fn pathological_horizontal_gradient_mono_256x256() {
 
     // Try to decode both with jxl-rs
     eprintln!("Decoding Huffman...");
-    let (hw, hh, hpix) = decode_jxl_rs(&encoded_huff);
+    let (hw, hh, _hpix) = decode_jxl_rs(&encoded_huff);
     eprintln!("Huffman decoded OK: {}x{}", hw, hh);
 
     eprintln!("Decoding ANS...");
