@@ -4526,9 +4526,9 @@ fn test_rgb_lossless_gradient_pattern_sweep() {
                 for y in 0..h {
                     for x in 0..w {
                         let idx = (y * w + x) * 3;
-                        data[idx] = ((x * 32 + y * 20 + 0 * 80) % 256) as u8;
-                        data[idx + 1] = ((x * 32 + y * 20 + 1 * 80) % 256) as u8;
-                        data[idx + 2] = ((x * 32 + y * 20 + 2 * 80) % 256) as u8;
+                        data[idx] = ((x * 32 + y * 20) % 256) as u8;
+                        data[idx + 1] = ((x * 32 + y * 20 + 80) % 256) as u8;
+                        data[idx + 2] = ((x * 32 + y * 20 + 160) % 256) as u8;
                     }
                 }
 
@@ -4604,19 +4604,14 @@ fn test_rgb_lossless_gradient_pattern_sweep() {
 #[test]
 #[ignore]
 fn test_tree_learning_debug_single() {
-    let cases: Vec<(&str, usize, usize, Box<dyn Fn(usize, usize) -> [u8; 3]>)> = vec![
+    type PixelFn = Box<dyn Fn(usize, usize) -> [u8; 3]>;
+    let cases: Vec<(&str, usize, usize, PixelFn)> = vec![
         // Gradient pattern
         (
             "gradient_11x13",
             11,
             13,
-            Box::new(|x, y| {
-                [
-                    ((x * 255) / 10.max(1)) as u8,
-                    ((y * 255) / 12.max(1)) as u8,
-                    128,
-                ]
-            }),
+            Box::new(|x, y| [((x * 255) / 10) as u8, ((y * 255) / 12) as u8, 128]),
         ),
         // 8-color pattern
         (

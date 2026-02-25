@@ -1270,9 +1270,9 @@ mod tests {
         // Large alphabet (256 symbols) with Zipf-like distribution
         let mut counts = alloc::vec![0i32; 256];
         let mut total = 0usize;
-        for i in 0..256 {
-            counts[i] = 10000 / (i as i32 + 1);
-            total += counts[i] as usize;
+        for (i, count) in counts.iter_mut().enumerate() {
+            *count = 10000 / (i as i32 + 1);
+            total += *count as usize;
         }
 
         let ref_ent = reference_shannon_entropy(&counts, total);

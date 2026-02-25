@@ -634,10 +634,8 @@ mod tests {
                     value |= read_bits(data, &mut pos, 8) << shift;
                     shift += 8;
                 }
-                if shift == 60 {
-                    if read_bits(data, &mut pos, 1) == 1 {
-                        value |= read_bits(data, &mut pos, 4) << shift;
-                    }
+                if shift == 60 && read_bits(data, &mut pos, 1) == 1 {
+                    value |= read_bits(data, &mut pos, 4) << shift;
                 }
                 value
             }

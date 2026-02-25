@@ -469,8 +469,8 @@ fn skip_entropy_data(data: &[u8], pos: &mut usize) {
 
 /// Extract DCT coefficients using zenjpeg's decoder.
 fn extract_coefficients_zenjpeg(data: &[u8], jpeg: &mut JpegData) -> Result<()> {
-    use enough::Unstoppable;
     use zenjpeg::decoder::DecodeConfig;
+    use zenjpeg::encoder::Unstoppable;
 
     let config = DecodeConfig::new();
     let decoded = config

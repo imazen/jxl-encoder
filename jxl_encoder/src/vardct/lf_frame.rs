@@ -22,7 +22,7 @@ use crate::modular::channel::{Channel, ModularImage};
 /// libjxl enc_params.h:201: "Below d0.05 is not useful and risks going outside
 /// Level 5 limits (in particular modular_16bit_buffers becomes an issue for DC)"
 #[cfg(test)]
-const K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
+const _K_MIN_BUTTERAUGLI_DISTANCE: f32 = 0.05;
 
 /// Custom DC quantization factors computed from distance.
 ///

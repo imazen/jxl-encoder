@@ -1259,6 +1259,9 @@ impl VarDctEncoder {
             &precomputed.noise_params,
             None, // TODO: compute sharpness_map for rate control path
             None, // TODO: thread alpha through butteraugli path
+            None, // patches
+            None, // splines
+            None, // float_dc
         )
     }
 }

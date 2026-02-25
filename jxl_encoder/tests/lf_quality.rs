@@ -3,7 +3,7 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear, srgb_to_linear};
 use image::GenericImageView;
-use imgref::{Img, ImgExt};
+use imgref::Img;
 use rgb::RGB;
 use std::io::Cursor;
 use std::path::PathBuf;

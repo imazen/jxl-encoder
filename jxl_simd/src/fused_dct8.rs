@@ -300,13 +300,13 @@ mod tests {
 
         let y_dct = [0.0f32; 64]; // Y channel: no CfL
         let mut weights = [1.0f32; 64];
-        for i in 0..64 {
-            weights[i] = 0.5 + (i as f32 * 0.1).sin().abs() * 2.0;
+        for (i, w) in weights.iter_mut().enumerate() {
+            *w = 0.5 + (i as f32 * 0.1).sin().abs() * 2.0;
         }
         weights[0] = 1.0; // DC weight (will be effectively zeroed)
         let mut inv_weights = [0.0f32; 64];
-        for i in 0..64 {
-            inv_weights[i] = 1.0 / weights[i];
+        for (i, iw) in inv_weights.iter_mut().enumerate() {
+            *iw = 1.0 / weights[i];
         }
 
         let cmap_factor = 0.0f32;
@@ -419,12 +419,12 @@ mod tests {
         }
 
         let mut weights = [1.0f32; 64];
-        for i in 0..64 {
-            weights[i] = 0.3 + (i as f32 * 0.2).cos().abs() * 3.0;
+        for (i, w) in weights.iter_mut().enumerate() {
+            *w = 0.3 + (i as f32 * 0.2).cos().abs() * 3.0;
         }
         let mut inv_weights = [0.0f32; 64];
-        for i in 0..64 {
-            inv_weights[i] = 1.0 / weights[i];
+        for (i, iw) in inv_weights.iter_mut().enumerate() {
+            *iw = 1.0 / weights[i];
         }
 
         let cmap_factor = 0.35f32;
