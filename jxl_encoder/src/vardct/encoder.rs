@@ -175,6 +175,10 @@ pub struct VarDctEncoder {
     /// When Some, writes have_gamma=true in the JXL header and uses gamma
     /// linearization instead of sRGB TF. Example: 0.45455 for gamma 2.2.
     pub source_gamma: Option<f32>,
+    /// Explicit color encoding override for the JXL header.
+    /// When Some, this is used instead of deriving from source_gamma / defaults.
+    /// Allows signaling HDR (PQ, HLG) or non-sRGB primaries (BT.2020, P3).
+    pub color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
 }
 
 impl Default for VarDctEncoder {
@@ -209,6 +213,7 @@ impl Default for VarDctEncoder {
             progressive: crate::api::ProgressiveMode::Single,
             use_lf_frame: false,
             source_gamma: None,
+            color_encoding: None,
         }
     }
 }
@@ -246,6 +251,7 @@ impl VarDctEncoder {
             progressive: crate::api::ProgressiveMode::Single,
             use_lf_frame: false,
             source_gamma: None,
+            color_encoding: None,
         }
     }
 

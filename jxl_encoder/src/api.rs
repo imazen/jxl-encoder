@@ -723,6 +723,7 @@ impl LosslessConfig {
             limits: None,
             stop: None,
             source_gamma: None,
+            color_encoding: None,
         }
     }
 
@@ -1190,6 +1191,7 @@ impl LossyConfig {
             limits: None,
             stop: None,
             source_gamma: None,
+            color_encoding: None,
         }
     }
 
@@ -1265,6 +1267,7 @@ pub struct EncodeRequest<'a> {
     limits: Option<&'a Limits>,
     stop: Option<&'a dyn Stop>,
     source_gamma: Option<f32>,
+    color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1298,6 +1301,25 @@ impl<'a> EncodeRequest<'a> {
     /// Example: `0.45455` for standard gamma 2.2 encoding (gAMA=45455).
     pub fn with_source_gamma(mut self, gamma: f32) -> Self {
         self.source_gamma = Some(gamma);
+        self
+    }
+
+    /// Override the color encoding written to the JXL header.
+    ///
+    /// When set, this color encoding is used instead of the default (sRGB for
+    /// u8/u16, linear sRGB for f32) or any gamma derived from
+    /// [`with_source_gamma`](Self::with_source_gamma).
+    ///
+    /// Use this for HDR content (PQ, HLG) or non-sRGB primaries (BT.2020, Display P3).
+    ///
+    /// Note: this only affects the signaled color encoding in the JXL header.
+    /// Pixel linearization for lossy encoding is still controlled by
+    /// `with_source_gamma()`. For float input, pixels are assumed already linear.
+    pub fn with_color_encoding(
+        mut self,
+        ce: crate::headers::color_encoding::ColorEncoding,
+    ) -> Self {
+        self.color_encoding = Some(ce);
         self
     }
 
@@ -1434,6 +1456,7 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
         use crate::bit_writer::BitWriter;
+        use crate::headers::color_encoding::ColorSpace;
         use crate::headers::{ColorEncoding, FileHeader};
         use crate::modular::channel::ModularImage;
         use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
@@ -1560,7 +1583,18 @@ impl<'a> EncodeRequest<'a> {
                 skip_rct: false,
             },
         );
-        let color_encoding = if let Some(gamma) = self.source_gamma {
+        let color_encoding = if let Some(ce) = self.color_encoding.clone() {
+            // Explicit color encoding overrides source_gamma and defaults.
+            // Adjust for grayscale if needed.
+            if image.is_grayscale && ce.color_space != ColorSpace::Gray {
+                ColorEncoding {
+                    color_space: ColorSpace::Gray,
+                    ..ce
+                }
+            } else {
+                ce
+            }
+        } else if let Some(gamma) = self.source_gamma {
             if image.is_grayscale {
                 ColorEncoding::gray_with_gamma(gamma)
             } else {
@@ -1759,6 +1793,7 @@ impl<'a> EncodeRequest<'a> {
 
         enc.bit_depth_16 = bit_depth_16;
         enc.source_gamma = self.source_gamma;
+        enc.color_encoding = self.color_encoding.clone();
 
         // ICC profile from metadata
         if let Some(meta) = self.metadata

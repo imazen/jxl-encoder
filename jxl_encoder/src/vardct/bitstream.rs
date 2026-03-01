@@ -25,7 +25,7 @@ use crate::entropy_coding::encode::{
 };
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
-use crate::headers::color_encoding::{ColorEncoding, RenderingIntent};
+use crate::headers::color_encoding::{ColorEncoding, ColorSpace, RenderingIntent};
 use crate::headers::extra_channels::ExtraChannelInfo;
 use crate::headers::file_header::{BitDepth, FileHeader, ImageMetadata};
 use crate::headers::frame_header::{BlendMode, FrameHeader, FrameOptions};
@@ -533,7 +533,17 @@ impl VarDctEncoder {
             BitDepth::uint8()
         };
 
-        let mut color_encoding = if self.is_grayscale {
+        let mut color_encoding = if let Some(ce) = self.color_encoding.clone() {
+            // Explicit color encoding overrides source_gamma and defaults.
+            if self.is_grayscale && ce.color_space != ColorSpace::Gray {
+                ColorEncoding {
+                    color_space: ColorSpace::Gray,
+                    ..ce
+                }
+            } else {
+                ce
+            }
+        } else if self.is_grayscale {
             if let Some(gamma) = self.source_gamma {
                 ColorEncoding::gray_with_gamma(gamma)
             } else {

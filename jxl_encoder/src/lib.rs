@@ -39,6 +39,9 @@ pub use api::{
     PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
 };
 pub use effort::EffortProfile;
+pub use headers::color_encoding::{
+    ColorEncoding, ColorSpace, Primaries, RenderingIntent, TransferFunction, WhitePoint,
+};
 pub use vardct::splines::{Spline, SplinePoint};
 
 /// Group dimension in pixels (256x256 groups).
