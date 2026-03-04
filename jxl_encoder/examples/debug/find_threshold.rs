@@ -1,7 +1,8 @@
 use std::process::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let djxl_path = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+    let djxl_path = std::env::var("DJXL_PATH")
+        .unwrap_or_else(|_| "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl".to_string());
 
     for h in 32..=42 {
         let w = 32;

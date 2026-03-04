@@ -133,8 +133,8 @@ fn test_clic_image_with_ssim2(path: &str) -> Option<f64> {
 fn test_clic2025_first_5() {
     eprintln!("\n=== CLIC 2025 Multi-Group Quality Test ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let entries: Vec<_> = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
@@ -177,8 +177,8 @@ fn test_clic2025_first_5() {
 fn test_clic2025_all() {
     eprintln!("\n=== CLIC 2025 Full Validation Set Test (32 images) ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let mut entries: Vec<_> = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
@@ -232,8 +232,8 @@ fn test_clic2025_all() {
 fn test_clic2025_small_crop() {
     eprintln!("\n=== CLIC 2025 Single-Group Quality Test (200x200 crop) ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
@@ -325,11 +325,9 @@ fn test_clic2025_small_crop() {
 fn test_save_multigroup_comparison() {
     eprintln!("\n=== Multi-Group Visual Comparison ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
-    let output_dir = "/mnt/v/output/jxl-encoder-rs/clic2025";
-
-    std::fs::create_dir_all(output_dir).expect("Failed to create output dir");
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
+    let output_dir = jxl_encoder::test_helpers::output_dir("clic2025");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
@@ -353,9 +351,9 @@ fn test_save_multigroup_comparison() {
     );
 
     // Save original
-    let orig_path = format!("{}/original_{}x{}.png", output_dir, cw, ch);
+    let orig_path = output_dir.join(format!("original_{}x{}.png", cw, ch));
     cropped.save(&orig_path).expect("Failed to save original");
-    eprintln!("Saved original to: {}", orig_path);
+    eprintln!("Saved original to: {}", orig_path.display());
 
     // Get original sRGB pixels
     let rgb = cropped.to_rgb8();
@@ -384,9 +382,9 @@ fn test_save_multigroup_comparison() {
     );
 
     // Save JXL
-    let jxl_path = format!("{}/encoded_{}x{}.jxl", output_dir, cw, ch);
+    let jxl_path = output_dir.join(format!("encoded_{}x{}.jxl", cw, ch));
     std::fs::write(&jxl_path, &bytes).expect("Failed to write JXL");
-    eprintln!("Saved JXL to: {}", jxl_path);
+    eprintln!("Saved JXL to: {}", jxl_path.display());
 
     // Decode
     let reader = Cursor::new(&bytes);
@@ -471,11 +469,11 @@ fn test_save_multigroup_comparison() {
     // Save decoded image
     let decoded_img =
         image::RgbImage::from_raw(cw, ch, decoded_srgb.clone()).expect("Failed to create image");
-    let decoded_path = format!("{}/decoded_{}x{}.png", output_dir, cw, ch);
+    let decoded_path = output_dir.join(format!("decoded_{}x{}.png", cw, ch));
     decoded_img
         .save(&decoded_path)
         .expect("Failed to save decoded");
-    eprintln!("Saved decoded to: {}", decoded_path);
+    eprintln!("Saved decoded to: {}", decoded_path.display());
 
     // Compute SSIM2
     let original_srgb: Vec<[u8; 3]> = rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect();
@@ -491,7 +489,7 @@ fn test_save_multigroup_comparison() {
 
     eprintln!("\nSSIM2 = {:.1}", ssim2);
     eprintln!("\nView images:");
-    eprintln!("  feh {} {} &", orig_path, decoded_path);
+    eprintln!("  feh {} {} &", orig_path.display(), decoded_path.display());
 }
 
 #[test]
@@ -499,8 +497,8 @@ fn test_save_multigroup_comparison() {
 fn test_exact_multiples() {
     eprintln!("\n=== Testing Exact Multiples of 256 ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -584,8 +582,8 @@ fn test_exact_multiples() {
 fn test_multigroup_sizes() {
     eprintln!("\n=== Multi-Group Size Scaling Test ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read clic2025 validation directory")
@@ -687,10 +685,9 @@ fn test_multigroup_sizes() {
 fn test_djxl_vs_jxl_oxide() {
     eprintln!("\n=== Comparing djxl vs jxl-oxide Decoding ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
-    let output_dir = "/mnt/v/output/jxl-encoder-rs/clic2025";
-    std::fs::create_dir_all(output_dir).ok();
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
+    let output_dir = jxl_encoder::test_helpers::output_dir("clic2025");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -706,7 +703,7 @@ fn test_djxl_vs_jxl_oxide() {
     let rgb = cropped.to_rgb8();
 
     // Save original for comparison
-    let orig_path = format!("{}/original_768.png", output_dir);
+    let orig_path = output_dir.join("original_768.png");
     cropped.save(&orig_path).ok();
 
     let linear_rgb: Vec<f32> = rgb
@@ -725,7 +722,7 @@ fn test_djxl_vs_jxl_oxide() {
         .expect("Encode failed")
         .data;
 
-    let jxl_path = format!("{}/test_768.jxl", output_dir);
+    let jxl_path = output_dir.join("test_768.jxl");
     std::fs::write(&jxl_path, &bytes).expect("Failed to write JXL");
 
     // Decode with jxl-oxide
@@ -757,10 +754,10 @@ fn test_djxl_vs_jxl_oxide() {
     );
 
     // Decode with djxl (writes PNG, we read it back)
-    let djxl_png = format!("{}/djxl_decoded_768.png", output_dir);
-    let djxl_path = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", base_dir);
+    let djxl_png = output_dir.join("djxl_decoded_768.png");
+    let djxl_bin = jxl_encoder::test_helpers::djxl_path();
 
-    let output = std::process::Command::new(&djxl_path)
+    let output = std::process::Command::new(&djxl_bin)
         .arg(&jxl_path)
         .arg(&djxl_png)
         .output();
@@ -850,8 +847,8 @@ fn test_djxl_vs_jxl_oxide() {
 fn test_section_sizes() {
     eprintln!("\n=== Section Size Analysis ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -896,12 +893,14 @@ fn test_section_sizes() {
     eprintln!("\nFirst 32 bytes: {:02x?}", &bytes[..32.min(bytes.len())]);
 
     // Save the JXL for external analysis
-    let output_dir = "/mnt/v/output/jxl-encoder-rs/clic2025";
-    std::fs::create_dir_all(output_dir).ok();
-    let jxl_path = format!("{}/test_768x768_sections.jxl", output_dir);
+    let output_dir = jxl_encoder::test_helpers::output_dir("clic2025");
+    let jxl_path = output_dir.join("test_768x768_sections.jxl");
     std::fs::write(&jxl_path, &bytes).expect("Failed to write JXL");
-    eprintln!("\nSaved to: {}", jxl_path);
-    eprintln!("Analyze with: djxl {} /dev/null --print_info", jxl_path);
+    eprintln!("\nSaved to: {}", jxl_path.display());
+    eprintln!(
+        "Analyze with: djxl {} /dev/null --print_info",
+        jxl_path.display()
+    );
 }
 
 #[test]
@@ -909,8 +908,8 @@ fn test_section_sizes() {
 fn test_compare_working_vs_broken() {
     eprintln!("\n=== Comparing Working (512) vs Broken (768) ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -989,8 +988,8 @@ fn test_compare_working_vs_broken() {
 fn test_nzeros_by_group() {
     eprintln!("\n=== Checking nzeros distribution by group ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -1071,8 +1070,8 @@ fn test_nzeros_by_group() {
 fn test_per_group_corruption() {
     eprintln!("\n=== Per-Group Corruption Analysis ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -1178,8 +1177,8 @@ fn test_real_photo_value_stats() {
     eprintln!("\n=== Real Photo Value Statistics ===\n");
     eprintln!("Checking decoded value ranges for real photos.\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -1993,8 +1992,8 @@ fn test_analyze_clic_photo() {
 
     eprintln!("\n=== Analyzing CLIC Photo Properties ===\n");
 
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let validation_dir = format!("{}/work/codec-corpus/clic2025/validation", base_dir);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let validation_dir = corpus.join("clic2025/validation");
 
     let first_png = std::fs::read_dir(&validation_dir)
         .expect("Could not read directory")
@@ -2816,10 +2815,7 @@ fn test_compare_libjxl_tiny() {
 #[ignore]
 fn test_cfl_quality_1024() {
     eprintln!("\n=== CfL Quality Test (clic2025-1024, d=1.0) ===\n");
-    let dir = format!(
-        "{}/work/codec-corpus/clic2025-1024",
-        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
-    );
+    let dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025-1024");
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -2923,10 +2919,7 @@ fn encode_and_measure_ssim2_cfl(
 #[ignore]
 fn test_cfl_quality_sweep() {
     eprintln!("\n=== CfL Quality Sweep (clic2025-1024, multiple distances) ===\n");
-    let dir = format!(
-        "{}/work/codec-corpus/clic2025-1024",
-        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
-    );
+    let dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025-1024");
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -2978,10 +2971,7 @@ fn test_cfl_quality_sweep() {
 #[ignore]
 fn test_cfl_ab_comparison() {
     eprintln!("\n=== CfL A/B Comparison (clic2025-1024) ===\n");
-    let dir = format!(
-        "{}/work/codec-corpus/clic2025-1024",
-        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
-    );
+    let dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025-1024");
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -3098,10 +3088,7 @@ fn encode_and_measure_ssim2_strategy(
 #[ignore]
 fn test_strategy_ab_comparison() {
     eprintln!("\n=== AC Strategy A/B Comparison (clic2025-1024) ===\n");
-    let dir = format!(
-        "{}/work/codec-corpus/clic2025-1024",
-        std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into())
-    );
+    let dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025-1024");
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -3187,13 +3174,18 @@ fn test_strategy_ab_comparison() {
 #[test]
 #[ignore]
 fn test_cpp_vs_rust_quality() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
-    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
-    let cjxl_tiny = format!("{}/work/libjxl-tiny/build/encoder/cjxl_tiny", home);
-    let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
-    let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
-    let work_dir = "/mnt/v/output/jxl-encoder-rs/quality-comparison";
-    std::fs::create_dir_all(work_dir).unwrap();
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let corpus_dir = corpus.join("clic2025-1024").to_string_lossy().to_string();
+    let cjxl_tiny = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+        format!("{}/work/libjxl-tiny/build/encoder/cjxl_tiny", home)
+    };
+    let djxl = jxl_encoder::test_helpers::djxl_path();
+    let ssim_tool = std::env::var("SSIMULACRA2_PATH").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+        format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home)
+    });
+    let work_dir = jxl_encoder::test_helpers::output_dir("quality-comparison");
 
     let have_cpp = std::path::Path::new(&cjxl_tiny).exists();
     assert!(
@@ -3246,7 +3238,10 @@ fn test_cpp_vs_rust_quality() {
         let cropped = img.crop_imm(cx, cy, cw, ch);
         let rgb = cropped.to_rgb8();
 
-        let png_path = format!("{}/crop_{}.png", work_dir, i);
+        let png_path = work_dir
+            .join(format!("crop_{}.png", i))
+            .to_string_lossy()
+            .to_string();
         rgb.save(&png_path).unwrap();
 
         let linear_rgb: Vec<f32> = rgb
@@ -3261,7 +3256,10 @@ fn test_cpp_vs_rust_quality() {
             .collect();
 
         // Write PFM (bottom-to-top row order, little-endian floats)
-        let pfm_path = format!("{}/crop_{}.pfm", work_dir, i);
+        let pfm_path = work_dir
+            .join(format!("crop_{}.pfm", i))
+            .to_string_lossy()
+            .to_string();
         {
             use std::io::Write;
             let mut f = std::fs::File::create(&pfm_path).unwrap();
@@ -3337,8 +3335,14 @@ fn test_cpp_vs_rust_quality() {
             let (w, h) = (crop.width as usize, crop.height as usize);
 
             // Rust ON
-            let ron_jxl = format!("{}/rust_{}_d{:.1}_on.jxl", work_dir, i, d);
-            let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
+            let ron_jxl = work_dir
+                .join(format!("rust_{}_d{:.1}_on.jxl", i, d))
+                .to_string_lossy()
+                .to_string();
+            let ron_dec = work_dir
+                .join(format!("rust_{}_d{:.1}_on_dec.png", i, d))
+                .to_string_lossy()
+                .to_string();
             let mut enc = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc.ac_strategy_enabled = true;
             let ron_bytes = enc.encode(w, h, &crop.linear_rgb, None).unwrap().data;
@@ -3348,8 +3352,14 @@ fn test_cpp_vs_rust_quality() {
             let ron_s = ssim2(&ssim_tool, &crop.png_path, &ron_dec);
 
             // Rust OFF
-            let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
-            let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
+            let roff_jxl = work_dir
+                .join(format!("rust_{}_d{:.1}_off.jxl", i, d))
+                .to_string_lossy()
+                .to_string();
+            let roff_dec = work_dir
+                .join(format!("rust_{}_d{:.1}_off_dec.png", i, d))
+                .to_string_lossy()
+                .to_string();
             enc.ac_strategy_enabled = false;
             let roff_bytes = enc.encode(w, h, &crop.linear_rgb, None).unwrap().data;
             let roff_size = roff_bytes.len();
@@ -3359,8 +3369,14 @@ fn test_cpp_vs_rust_quality() {
 
             // C++ (if available)
             let (cpp_s, cpp_size) = if have_cpp {
-                let cpp_jxl = format!("{}/cpp_{}_d{:.1}.jxl", work_dir, i, d);
-                let cpp_dec = format!("{}/cpp_{}_d{:.1}_dec.png", work_dir, i, d);
+                let cpp_jxl = work_dir
+                    .join(format!("cpp_{}_d{:.1}.jxl", i, d))
+                    .to_string_lossy()
+                    .to_string();
+                let cpp_dec = work_dir
+                    .join(format!("cpp_{}_d{:.1}_dec.png", i, d))
+                    .to_string_lossy()
+                    .to_string();
                 let d_str = format!("{}", d);
                 let ok = run(&cjxl_tiny, &[&crop.pfm_path, &cpp_jxl, "-d", &d_str]);
                 if ok {
@@ -3432,13 +3448,18 @@ fn test_cpp_vs_rust_quality() {
 #[test]
 #[ignore]
 fn test_multigroup_quality() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
-    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
-    let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
-    let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
-    let cjxl_tiny = format!("{}/work/libjxl-tiny/build/encoder/cjxl_tiny", home);
-    let work_dir = "/mnt/v/output/jxl-encoder-rs/multigroup-quality";
-    std::fs::create_dir_all(work_dir).unwrap();
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let corpus_dir = corpus.join("clic2025-1024").to_string_lossy().to_string();
+    let djxl = jxl_encoder::test_helpers::djxl_path();
+    let ssim_tool = std::env::var("SSIMULACRA2_PATH").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+        format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home)
+    });
+    let cjxl_tiny = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+        format!("{}/work/libjxl-tiny/build/encoder/cjxl_tiny", home)
+    };
+    let work_dir = jxl_encoder::test_helpers::output_dir("multigroup-quality");
 
     assert!(std::path::Path::new(&djxl).exists(), "djxl not found");
     assert!(
@@ -3505,7 +3526,10 @@ fn test_multigroup_quality() {
         let (w, h) = img.dimensions();
         let rgb = img.to_rgb8();
 
-        let png_path = format!("{}/ref_{}.png", work_dir, i);
+        let png_path = work_dir
+            .join(format!("ref_{}.png", i))
+            .to_string_lossy()
+            .to_string();
         rgb.save(&png_path).unwrap();
 
         let linear_rgb: Vec<f32> = rgb
@@ -3520,7 +3544,10 @@ fn test_multigroup_quality() {
             .collect();
 
         // Write PFM for C++ encoder (bottom-to-top row order, little-endian)
-        let pfm_path = format!("{}/ref_{}.pfm", work_dir, i);
+        let pfm_path = work_dir
+            .join(format!("ref_{}.pfm", i))
+            .to_string_lossy()
+            .to_string();
         {
             use std::io::Write;
             let mut f = std::fs::File::create(&pfm_path).unwrap();
@@ -3591,8 +3618,14 @@ fn test_multigroup_quality() {
             let mut cpp_s: Option<f64> = None;
             let mut cpp_size: usize = 0;
             if have_cpp {
-                let cpp_jxl = format!("{}/cpp_{}_d{:.1}.jxl", work_dir, i, d);
-                let cpp_dec = format!("{}/cpp_{}_d{:.1}_dec.png", work_dir, i, d);
+                let cpp_jxl = work_dir
+                    .join(format!("cpp_{}_d{:.1}.jxl", i, d))
+                    .to_string_lossy()
+                    .to_string();
+                let cpp_dec = work_dir
+                    .join(format!("cpp_{}_d{:.1}_dec.png", i, d))
+                    .to_string_lossy()
+                    .to_string();
                 let d_str = format!("{}", d);
                 if run(&cjxl_tiny, &[&img.pfm_path, &cpp_jxl, "-d", &d_str]) {
                     cpp_size = std::fs::metadata(&cpp_jxl)
@@ -3604,8 +3637,14 @@ fn test_multigroup_quality() {
             }
 
             // Rust ON
-            let ron_jxl = format!("{}/rust_{}_d{:.1}_on.jxl", work_dir, i, d);
-            let ron_dec = format!("{}/rust_{}_d{:.1}_on_dec.png", work_dir, i, d);
+            let ron_jxl = work_dir
+                .join(format!("rust_{}_d{:.1}_on.jxl", i, d))
+                .to_string_lossy()
+                .to_string();
+            let ron_dec = work_dir
+                .join(format!("rust_{}_d{:.1}_on_dec.png", i, d))
+                .to_string_lossy()
+                .to_string();
             let mut enc = jxl_encoder::vardct::VarDctEncoder::new(d);
             enc.ac_strategy_enabled = true;
             let ron_bytes = enc.encode(w, h, &img.linear_rgb, None).unwrap().data;
@@ -3615,8 +3654,14 @@ fn test_multigroup_quality() {
             let ron_s = ssim2(&ssim_tool, &img.png_path, &ron_dec);
 
             // Rust OFF
-            let roff_jxl = format!("{}/rust_{}_d{:.1}_off.jxl", work_dir, i, d);
-            let roff_dec = format!("{}/rust_{}_d{:.1}_off_dec.png", work_dir, i, d);
+            let roff_jxl = work_dir
+                .join(format!("rust_{}_d{:.1}_off.jxl", i, d))
+                .to_string_lossy()
+                .to_string();
+            let roff_dec = work_dir
+                .join(format!("rust_{}_d{:.1}_off_dec.png", i, d))
+                .to_string_lossy()
+                .to_string();
             enc.ac_strategy_enabled = false;
             let roff_bytes = enc.encode(w, h, &img.linear_rgb, None).unwrap().data;
             let roff_size = roff_bytes.len();
@@ -3707,11 +3752,8 @@ fn test_multigroup_quality() {
 #[test]
 #[ignore]
 fn test_enhanced_clustering_compression() {
-    use std::path::PathBuf;
-
     // Load real test images from CLIC 2025 1024x1024 crops
-    let corpus_dir =
-        PathBuf::from(std::env::var("HOME").unwrap()).join("work/codec-corpus/clic2025-1024");
+    let corpus_dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025-1024");
 
     let images: Vec<_> = match std::fs::read_dir(&corpus_dir) {
         Ok(entries) => entries
@@ -3735,9 +3777,8 @@ fn test_enhanced_clustering_compression() {
     }
 
     // Find djxl for decoding - check common locations
-    let home = std::env::var("HOME").unwrap();
     let djxl_candidates = [
-        format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home),
+        jxl_encoder::test_helpers::djxl_path(),
         "/usr/local/bin/djxl".to_string(),
         "/usr/bin/djxl".to_string(),
     ];
@@ -3830,13 +3871,13 @@ fn test_enhanced_clustering_compression() {
             );
 
             // Verify both decode correctly
-            let work_dir = "/tmp/enhanced_clustering_test";
+            let work_dir = std::path::Path::new("/tmp/enhanced_clustering_test");
             std::fs::create_dir_all(work_dir).ok();
 
-            let simple_jxl = format!("{}/simple.jxl", work_dir);
-            let enhanced_jxl = format!("{}/enhanced.jxl", work_dir);
-            let simple_dec = format!("{}/simple_dec.png", work_dir);
-            let enhanced_dec = format!("{}/enhanced_dec.png", work_dir);
+            let simple_jxl = work_dir.join("simple.jxl");
+            let enhanced_jxl = work_dir.join("enhanced.jxl");
+            let simple_dec = work_dir.join("simple_dec.png");
+            let enhanced_dec = work_dir.join("enhanced_dec.png");
 
             std::fs::write(&simple_jxl, &bytes_simple).unwrap();
             std::fs::write(&enhanced_jxl, &bytes_enhanced).unwrap();
@@ -3891,12 +3932,14 @@ fn test_enhanced_clustering_compression() {
 #[test]
 #[ignore]
 fn test_comprehensive_rd_sweep() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
-    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
-    let djxl = format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home);
-    let ssim_tool = format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home);
-    let work_dir = "/mnt/v/output/jxl-encoder-rs/rd-sweep";
-    std::fs::create_dir_all(work_dir).unwrap();
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let corpus_dir = corpus.join("clic2025-1024").to_string_lossy().to_string();
+    let djxl = jxl_encoder::test_helpers::djxl_path();
+    let ssim_tool = std::env::var("SSIMULACRA2_PATH").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
+        format!("{}/work/jxl-efforts/libjxl/build/tools/ssimulacra2", home)
+    });
+    let work_dir = jxl_encoder::test_helpers::output_dir("rd-sweep");
 
     // Verify tools exist
     if !std::path::Path::new(&djxl).exists() {
@@ -3976,7 +4019,10 @@ fn test_comprehensive_rd_sweep() {
             .collect();
 
         // Save original for SSIM2 comparison
-        let orig_path = format!("{}/{}_orig.png", work_dir, name);
+        let orig_path = work_dir
+            .join(format!("{}_orig.png", name))
+            .to_string_lossy()
+            .to_string();
         rgb.save(&orig_path).unwrap();
 
         for (di, &distance) in distances.iter().enumerate() {
@@ -3990,8 +4036,14 @@ fn test_comprehensive_rd_sweep() {
             let bpp = bytes.len() as f64 * 8.0 / pixels as f64;
 
             // Decode with djxl
-            let jxl_path = format!("{}/{}_{}.jxl", work_dir, name, distance);
-            let dec_path = format!("{}/{}_{}_dec.png", work_dir, name, distance);
+            let jxl_path = work_dir
+                .join(format!("{}_{}.jxl", name, distance))
+                .to_string_lossy()
+                .to_string();
+            let dec_path = work_dir
+                .join(format!("{}_{}_dec.png", name, distance))
+                .to_string_lossy()
+                .to_string();
             std::fs::write(&jxl_path, &bytes).unwrap();
 
             let decode_ok = std::process::Command::new(&djxl)
@@ -4072,7 +4124,7 @@ fn test_comprehensive_rd_sweep() {
         }
     }
 
-    eprintln!("\nOutput files saved to: {}", work_dir);
+    eprintln!("\nOutput files saved to: {}", work_dir.display());
 }
 
 /// Test that JXL distance parameter roughly matches Butteraugli score.
@@ -4091,8 +4143,8 @@ fn test_distance_vs_butteraugli() {
     use imgref::Img;
     use rgb::RGB;
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
-    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let corpus_dir = corpus.join("clic2025-1024").to_string_lossy().to_string();
 
     // Load first 3 images
     let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
@@ -4406,13 +4458,16 @@ fn test_encode_256_crop_for_comparison() {
             .unwrap()
             .data;
 
-        let out_path = format!(
-            "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl",
-            dist_str
-        );
+        let work = jxl_encoder::test_helpers::output_dir("compare-cpp-rust");
+        let out_path = work.join(format!("rust_d{}.jxl", dist_str));
         let mut out = File::create(&out_path).unwrap();
         out.write_all(&bytes).unwrap();
-        eprintln!("d={}: {} bytes -> {}", dist_str, bytes.len(), out_path);
+        eprintln!(
+            "d={}: {} bytes -> {}",
+            dist_str,
+            bytes.len(),
+            out_path.display()
+        );
     }
 }
 
@@ -4426,8 +4481,8 @@ fn test_cpp_vs_rust_butteraugli() {
     use rgb::RGB;
     use std::io::Cursor;
 
-    let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
-    let crop_path = format!("{}/crop_256.png", work);
+    let work = jxl_encoder::test_helpers::output_dir("compare-cpp-rust");
+    let crop_path = work.join("crop_256.png");
 
     // Load original image
     let img = image::open(&crop_path).unwrap();
@@ -4463,7 +4518,7 @@ fn test_cpp_vs_rust_butteraugli() {
 
     for dist in &["0.5", "1.0", "2.0", "3.0"] {
         // Read C++ JXL and decode with jxl-oxide
-        let cpp_path = format!("{}/cpp_d{}.jxl", work, dist);
+        let cpp_path = format!("{}/cpp_d{}.jxl", work.display(), dist);
         let cpp_bytes = std::fs::read(&cpp_path).unwrap_or_default();
         let cpp_size = cpp_bytes.len();
 
@@ -4495,7 +4550,7 @@ fn test_cpp_vs_rust_butteraugli() {
         };
 
         // Read Rust JXL and decode
-        let rust_path = format!("{}/rust_d{}.jxl", work, dist);
+        let rust_path = format!("{}/rust_d{}.jxl", work.display(), dist);
         let rust_bytes = std::fs::read(&rust_path).unwrap_or_default();
         let rust_size = rust_bytes.len();
 
@@ -4588,10 +4643,8 @@ fn test_encode_extra_distances() {
             .encode(width, height, &linear_rgb, None)
             .unwrap()
             .data;
-        let out_path = format!(
-            "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d{}.jxl",
-            dist
-        );
+        let work = jxl_encoder::test_helpers::output_dir("compare-cpp-rust");
+        let out_path = work.join(format!("rust_d{}.jxl", dist));
         std::fs::write(&out_path, &bytes).unwrap();
         eprintln!("d={}: {} bytes", dist, bytes.len());
     }
@@ -4606,8 +4659,8 @@ fn test_cpp_vs_rust_butteraugli_fine() {
     use rgb::RGB;
     use std::io::Cursor;
 
-    let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
-    let crop_path = format!("{}/crop_256.png", work);
+    let work = jxl_encoder::test_helpers::output_dir("compare-cpp-rust");
+    let crop_path = work.join("crop_256.png");
 
     let img = image::open(&crop_path).unwrap();
     let (w, h) = (img.width() as usize, img.height() as usize);
@@ -4640,7 +4693,7 @@ fn test_cpp_vs_rust_butteraugli_fine() {
     eprintln!("{}", "-".repeat(72));
 
     for dist in &["0.5", "0.9", "1.0", "1.1", "2.0", "3.0"] {
-        let cpp_path = format!("{}/cpp_d{}.jxl", work, dist);
+        let cpp_path = format!("{}/cpp_d{}.jxl", work.display(), dist);
         let cpp_bytes = std::fs::read(&cpp_path).unwrap_or_default();
         let cpp_size = cpp_bytes.len();
 
@@ -4671,7 +4724,7 @@ fn test_cpp_vs_rust_butteraugli_fine() {
             -1.0
         };
 
-        let rust_path = format!("{}/rust_d{}.jxl", work, dist);
+        let rust_path = format!("{}/rust_d{}.jxl", work.display(), dist);
         let rust_bytes = std::fs::read(&rust_path).unwrap_or_default();
         let rust_size = rust_bytes.len();
 
@@ -4777,8 +4830,8 @@ fn test_isolate_d1_butteraugli_gap() {
     use rgb::RGB;
     use std::io::Cursor;
 
-    let work = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust";
-    let crop_path = format!("{}/crop_256.png", work);
+    let work = jxl_encoder::test_helpers::output_dir("compare-cpp-rust");
+    let crop_path = work.join("crop_256.png");
 
     let img = image::open(&crop_path).unwrap();
     let (w, h) = (img.width() as usize, img.height() as usize);
@@ -4954,17 +5007,16 @@ fn test_isolate_d1_butteraugli_gap() {
         enc.cfl_enabled = true;
         enc.ac_strategy_enabled = true;
         let bytes = enc.encode(w, h, &linear_rgb, None).unwrap().data;
-        let jxl_path = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_on.jxl";
-        std::fs::write(jxl_path, &bytes).unwrap();
+        let jxl_path =
+            jxl_encoder::test_helpers::output_dir("compare-cpp-rust").join("rust_d1_on.jxl");
+        std::fs::write(&jxl_path, &bytes).unwrap();
 
         // Decode with djxl to 16-bit PNG
-        let djxl_png = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_on_djxl.png";
-        let djxl_bin = std::env::var("DJXL").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_default();
-            format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", home)
-        });
+        let djxl_png =
+            jxl_encoder::test_helpers::output_dir("compare-cpp-rust").join("rust_d1_on_djxl.png");
+        let djxl_bin = jxl_encoder::test_helpers::djxl_path();
         let output = std::process::Command::new(&djxl_bin)
-            .args([jxl_path, djxl_png])
+            .args([&jxl_path, &djxl_png])
             .output()
             .unwrap();
         if !output.status.success() {
@@ -4981,7 +5033,7 @@ fn test_isolate_d1_butteraugli_gap() {
             let oxide_buf = decoded_oxide.buf();
 
             // Load djxl output - convert from sRGB 16-bit to linear
-            let djxl_img = image::open(djxl_png).unwrap();
+            let djxl_img = image::open(&djxl_png).unwrap();
             let djxl_rgb16 = djxl_img.to_rgb16();
 
             // Compare pixel values
@@ -5022,11 +5074,13 @@ fn test_isolate_d1_butteraugli_gap() {
         enc2.cfl_enabled = true;
         enc2.ac_strategy_enabled = false;
         let bytes2 = enc2.encode(w, h, &linear_rgb, None).unwrap().data;
-        let jxl_path2 = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_off.jxl";
-        std::fs::write(jxl_path2, &bytes2).unwrap();
-        let djxl_png2 = "/mnt/v/output/jxl-encoder-rs/compare-cpp-rust/rust_d1_off_djxl.png";
+        let jxl_path2 =
+            jxl_encoder::test_helpers::output_dir("compare-cpp-rust").join("rust_d1_off.jxl");
+        std::fs::write(&jxl_path2, &bytes2).unwrap();
+        let djxl_png2 =
+            jxl_encoder::test_helpers::output_dir("compare-cpp-rust").join("rust_d1_off_djxl.png");
         let output2 = std::process::Command::new(&djxl_bin)
-            .args([jxl_path2, djxl_png2])
+            .args([&jxl_path2, &djxl_png2])
             .output()
             .unwrap();
         if output2.status.success() {
@@ -5038,7 +5092,7 @@ fn test_isolate_d1_butteraugli_gap() {
             let render2 = image2.render_frame(0).unwrap();
             let decoded2 = render2.image_all_channels();
             let oxide_buf2 = decoded2.buf();
-            let djxl_img2 = image::open(djxl_png2).unwrap();
+            let djxl_img2 = image::open(&djxl_png2).unwrap();
             let djxl_rgb16_2 = djxl_img2.to_rgb16();
             let mut max_diff2: f32 = 0.0;
             let mut sum_diff2: f64 = 0.0;
@@ -5087,8 +5141,8 @@ fn test_static_vs_dynamic_sweep() {
     use imgref::Img;
     use rgb::RGB;
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
-    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let corpus_dir = corpus.join("clic2025-1024").to_string_lossy().to_string();
 
     let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
         Ok(e) => e
@@ -5309,8 +5363,8 @@ fn test_static_vs_dynamic_sweep() {
 #[test]
 #[ignore]
 fn test_static_vs_optimize_codes() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into());
-    let corpus_dir = format!("{}/work/codec-corpus/clic2025-1024", home);
+    let corpus = jxl_encoder::test_helpers::corpus_dir();
+    let corpus_dir = corpus.join("clic2025-1024").to_string_lossy().to_string();
 
     let mut entries: Vec<_> = match std::fs::read_dir(&corpus_dir) {
         Ok(e) => e
@@ -5889,7 +5943,7 @@ fn test_rgba_simple() {
 #[test]
 #[ignore]
 fn test_ans_clic2025() {
-    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
+    let clic_dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025/final-test");
 
     if !clic_dir.exists() {
         eprintln!("CLIC 2025 directory not found: {:?}", clic_dir);
@@ -6132,8 +6186,9 @@ fn test_ans_multigroup_gradient() {
 fn test_ans_failing_image() {
     use std::io::Cursor;
 
-    let path = std::path::Path::new(env!("HOME"))
-        .join("work/codec-corpus/clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png");
+    let path = jxl_encoder::test_helpers::corpus_dir().join(
+        "clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png",
+    );
 
     if !path.exists() {
         eprintln!("Test image not found: {:?}", path);
@@ -6202,8 +6257,9 @@ fn test_ans_failing_image() {
 fn test_ans_vs_huffman_debug() {
     use std::io::Cursor;
 
-    let path = std::path::Path::new(env!("HOME"))
-        .join("work/codec-corpus/clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png");
+    let path = jxl_encoder::test_helpers::corpus_dir().join(
+        "clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png",
+    );
 
     if !path.exists() {
         eprintln!("Test image not found");
@@ -6282,8 +6338,9 @@ fn test_ans_vs_huffman_debug() {
 fn test_ans_crop_binary_search() {
     use std::io::Cursor;
 
-    let path = std::path::Path::new(env!("HOME"))
-        .join("work/codec-corpus/clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png");
+    let path = jxl_encoder::test_helpers::corpus_dir().join(
+        "clic2025/final-test/a365e6541bab5c0f4e01bf43a0c3a655d88292a8ac45403a889c308d11854555.png",
+    );
 
     if !path.exists() {
         eprintln!("Test image not found");
@@ -6352,7 +6409,7 @@ fn test_ans_crop_binary_search() {
 #[test]
 #[ignore = "Requires CLIC 2025 images"]
 fn test_custom_orders() {
-    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
+    let clic_dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025/final-test");
 
     if !clic_dir.exists() {
         eprintln!("CLIC 2025 directory not found: {:?}", clic_dir);
@@ -6479,7 +6536,7 @@ fn test_custom_orders() {
 #[test]
 #[ignore = "Requires CLIC 2025 images"]
 fn test_custom_orders_compression() {
-    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025/final-test");
+    let clic_dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025/final-test");
 
     if !clic_dir.exists() {
         eprintln!("CLIC 2025 directory not found: {:?}", clic_dir);
@@ -7437,7 +7494,7 @@ fn test_fair_comparison() {
     use rgb::RGB;
     use std::io::Cursor;
 
-    let clic_dir = std::path::Path::new(env!("HOME")).join("work/codec-corpus/clic2025-1024");
+    let clic_dir = jxl_encoder::test_helpers::corpus_dir().join("clic2025-1024");
     let jxl_dir = std::path::Path::new("/tmp/fair_cmp");
 
     let images: &[(&str, &str)] = &[
@@ -7712,11 +7769,10 @@ fn decode_djxl_for_patches(data: &[u8]) -> (usize, usize, Vec<u8>) {
     let temp_png = format!("/tmp/patches_test_{}_{}.png", pid, ts);
 
     std::fs::write(&temp_jxl, data).unwrap();
-    let output =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args([&temp_jxl, &temp_png])
-            .output()
-            .unwrap();
+    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .args([&temp_jxl, &temp_png])
+        .output()
+        .unwrap();
 
     assert!(
         output.status.success(),
@@ -7766,7 +7822,10 @@ fn encode_screenshot_with_patches(
 #[test]
 #[ignore] // Requires codec corpus
 fn test_patches_roundtrip_jxl_rs() {
-    let path = "/home/lilith/work/codec-corpus/gb82-sc/windows95.png";
+    let path = &format!(
+        "{}/gb82-sc/windows95.png",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let img = match image::open(path) {
         Ok(img) => img,
         Err(_) => {
@@ -7809,7 +7868,10 @@ fn test_patches_roundtrip_jxl_rs() {
 #[test]
 #[ignore] // Requires codec corpus + djxl
 fn test_patches_roundtrip_djxl() {
-    let path = "/home/lilith/work/codec-corpus/gb82-sc/windows95.png";
+    let path = &format!(
+        "{}/gb82-sc/windows95.png",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let img = match image::open(path) {
         Ok(img) => img,
         Err(_) => {
@@ -7852,7 +7914,10 @@ fn test_patches_roundtrip_djxl() {
 #[test]
 #[ignore] // Requires codec corpus
 fn test_patches_screenshot_corpus_size() {
-    let corpus = "/home/lilith/work/codec-corpus/gb82-sc";
+    let corpus = &format!(
+        "{}/gb82-sc",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let screenshots = [
         "windows95.png",
         "graph.png",
@@ -7913,7 +7978,10 @@ fn test_patches_screenshot_corpus_size() {
 #[test]
 #[ignore] // Requires codec corpus
 fn test_patches_no_regression_on_photos() {
-    let corpus = "/home/lilith/work/codec-corpus/clic2025-1024";
+    let corpus = &format!(
+        "{}/clic2025-1024",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let photos: Vec<String> = match std::fs::read_dir(corpus) {
         Ok(entries) => entries
             .filter_map(|e| e.ok())
@@ -8064,17 +8132,14 @@ fn test_patches_synthetic_screenshot_encode() {
     );
 
     // Verify patches version decodes with djxl
-    let _ = std::fs::create_dir_all("/mnt/v/output/jxl-encoder/patches");
-    let test_path = "/mnt/v/output/jxl-encoder/patches/synthetic_test.jxl";
-    std::fs::write(test_path, &data).unwrap();
+    let patches_dir = jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "patches");
+    let test_path = patches_dir.join("synthetic_test.jxl");
+    std::fs::write(&test_path, &data).unwrap();
 
-    let output =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args([
-                test_path,
-                "/mnt/v/output/jxl-encoder/patches/synthetic_test.png",
-            ])
-            .output();
+    let decoded_path = patches_dir.join("synthetic_test.png");
+    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .args([&test_path, &decoded_path])
+        .output();
     if let Ok(out) = output {
         assert!(
             out.status.success(),

@@ -7,8 +7,12 @@ use jxl_encoder::api::{LosslessConfig, PixelLayout};
 #[test]
 #[ignore]
 fn diagnose_frymire_lossless() {
-    let path = std::env::var("IMG")
-        .unwrap_or("/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire-srgb.png".into());
+    let path = std::env::var("IMG").unwrap_or_else(|_| {
+        format!(
+            "{}/imageflow/test_inputs/frymire-srgb.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        )
+    });
     let img = image::open(&path).expect("open image");
     let (w, h) = img.dimensions();
     let rgb = img.to_rgb8();
@@ -68,17 +72,26 @@ fn diagnose_single_group_comparison() {
     let images = [
         (
             "frymire-crop",
-            "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire-srgb.png",
+            &format!(
+                "{}/imageflow/test_inputs/frymire-srgb.png",
+                jxl_encoder::test_helpers::corpus_dir().display()
+            ),
             true, // crop to 256x256
         ),
         (
             "CID22-1025469",
-            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png",
+            &format!(
+                "{}/CID22/CID22-512/validation/1025469.png",
+                jxl_encoder::test_helpers::corpus_dir().display()
+            ),
             false,
         ),
         (
             "CID22-1044329",
-            "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1044329.png",
+            &format!(
+                "{}/CID22/CID22-512/validation/1044329.png",
+                jxl_encoder::test_helpers::corpus_dir().display()
+            ),
             false,
         ),
     ];

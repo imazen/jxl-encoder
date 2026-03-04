@@ -8,10 +8,10 @@ fn main() {
     let base = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
     let ssim2_bin = format!("{}/work/fast-ssim2/target/release/fast-ssim2-cli", base);
 
-    let img_path = format!(
-        "{}/work/codec-corpus/clic2025/final-test/07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png",
-        base
-    );
+    let img_path = jxl_encoder::test_helpers::corpus_dir()
+        .join("clic2025/final-test/07b9f93f170a0381836bdf301280a5b80b2c4be6e66f793a3c335dc200fb4e5b.png")
+        .to_string_lossy()
+        .to_string();
 
     eprintln!("Loading: {}", img_path);
     let img = image::open(&img_path).expect("Could not open image");
@@ -19,9 +19,8 @@ fn main() {
     let (width, height) = (rgb.width(), rgb.height());
     eprintln!("Size: {}x{}", width, height);
 
-    let out_dir = "/mnt/v/output/jxl-encoder-rs/distance_sweep";
-    std::fs::create_dir_all(out_dir).ok();
-    let orig_path = format!("{}/original.png", out_dir);
+    let out_dir = jxl_encoder::test_helpers::output_dir("distance_sweep");
+    let orig_path = out_dir.join("original.png");
     img.save(&orig_path).expect("Failed to save original");
 
     let distances = [2.0f32, 1.0, 0.5, 0.25, 0.1, 0.05, 0.01];
@@ -58,41 +57,35 @@ fn main() {
             let b = (decoded[i * 3 + 2].clamp(0.0, 1.0) * 255.0).round() as u8;
             *pixel = image::Rgb([r, g, b]);
         }
-        let tiny_dec_path = format!("{}/tiny_d{}.png", out_dir, dist);
+        let tiny_dec_path = format!("{}/tiny_d{}.png", out_dir.display(), dist);
         output_img.save(&tiny_dec_path).expect("Failed to save");
 
         // SSIM2 for tiny
-        let tiny_ssim = measure_ssim2(&ssim2_bin, &orig_path, &tiny_dec_path);
+        let tiny_ssim = measure_ssim2(&ssim2_bin, &orig_path.to_string_lossy(), &tiny_dec_path);
 
         // --- cjxl reference ---
-        let cjxl_path = format!("{}/cjxl_d{}.jxl", out_dir, dist);
-        let cjxl_dec_path = format!("{}/cjxl_d{}_decoded.png", out_dir, dist);
+        let cjxl_path = format!("{}/cjxl_d{}.jxl", out_dir.display(), dist);
+        let cjxl_dec_path = format!("{}/cjxl_d{}_decoded.png", out_dir.display(), dist);
 
-        let cjxl_ok = std::process::Command::new(format!(
-            "{}/work/jxl-efforts/libjxl/build/tools/cjxl",
-            base
-        ))
-        .args([&img_path, &cjxl_path, "-d", &dist.to_string(), "-e", "3"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+        let cjxl_ok = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
+            .args([&img_path, &cjxl_path, "-d", &dist.to_string(), "-e", "3"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
 
         let (cjxl_bytes, cjxl_bpp, cjxl_ssim) = if cjxl_ok {
             let cjxl_size = std::fs::metadata(&cjxl_path).map(|m| m.len()).unwrap_or(0);
             let cjxl_bpp_val = cjxl_size as f64 * 8.0 / (width as usize * height as usize) as f64;
 
             // Decode with djxl
-            let djxl_ok = std::process::Command::new(format!(
-                "{}/work/jxl-efforts/libjxl/build/tools/djxl",
-                base
-            ))
-            .args([&cjxl_path, &cjxl_dec_path])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+            let djxl_ok = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                .args([&cjxl_path, &cjxl_dec_path])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
 
             let ssim = if djxl_ok {
-                measure_ssim2(&ssim2_bin, &orig_path, &cjxl_dec_path)
+                measure_ssim2(&ssim2_bin, &orig_path.to_string_lossy(), &cjxl_dec_path)
             } else {
                 -999.0
             };

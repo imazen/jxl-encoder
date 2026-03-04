@@ -2944,7 +2944,10 @@ mod tests {
         assert!(jxl.len() < 300 * 300 * 3, "should compress");
 
         // Save to disk for inspection
-        std::fs::write("/mnt/v/output/lossy_palette_multi.jxl", &jxl).ok();
+        let out = crate::test_helpers::output_dir("lossy_palette");
+        let jxl_out = out.join("lossy_palette_multi.jxl");
+        let png_out = out.join("lossy_palette_multi.png");
+        std::fs::write(&jxl_out, &jxl).ok();
         eprintln!(
             "LOSSY_PALETTE_MULTI test: encoded {} bytes ({}x{})",
             jxl.len(),
@@ -2954,10 +2957,7 @@ mod tests {
 
         // Try djxl decode first for better error messages
         let djxl_result = std::process::Command::new("djxl")
-            .args([
-                "/mnt/v/output/lossy_palette_multi.jxl",
-                "/mnt/v/output/lossy_palette_multi.png",
-            ])
+            .args([jxl_out.to_str().unwrap(), png_out.to_str().unwrap()])
             .output();
         if let Ok(output) = djxl_result {
             eprintln!(

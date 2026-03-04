@@ -6,14 +6,15 @@
 set -e
 
 # Tools
-CJXL_RS="./target/release/cjxl-rs"
-CJXL=~/work/jxl-efforts/libjxl/build/tools/cjxl
-DJXL=~/work/jxl-efforts/libjxl/build/tools/djxl
-SSIM2=~/work/jxl-efforts/libjxl/build/tools/ssimulacra2
+CJXL_RS="${JXL_CLI_PATH:-./target/release/cjxl-rs}"
+CJXL="${CJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/cjxl}"
+DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
+SSIM2="${SSIMULACRA2_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/ssimulacra2}"
 
 # Corpus paths
-CLIC_DIR=~/work/codec-corpus/clic2025/final-test
-CID_DIR=~/work/codec-corpus/CID22/CID22-512/validation
+CORPUS="${CODEC_CORPUS_DIR:-$HOME/work/codec-corpus}"
+CLIC_DIR="${CORPUS}/clic2025/final-test"
+CID_DIR="${CORPUS}/CID22/CID22-512/validation"
 
 # Output directory
 OUT_DIR=/tmp/jxl_benchmark_$$

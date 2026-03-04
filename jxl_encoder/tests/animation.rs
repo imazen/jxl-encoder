@@ -163,7 +163,8 @@ fn test_lossless_animation_roundtrip_oxide() {
 
     // Save for external debugging
     std::fs::write(
-        "/mnt/v/output/jxl-encoder/animation/lossless_3frame.jxl",
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("lossless_3frame.jxl"),
         &data,
     )
     .ok();
@@ -293,7 +294,8 @@ fn test_lossy_animation_roundtrip_oxide() {
 
     // Save for external debugging
     std::fs::write(
-        "/mnt/v/output/jxl-encoder/animation/lossy_3frame.jxl",
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("lossy_3frame.jxl"),
         &data,
     )
     .ok();
@@ -433,7 +435,8 @@ fn test_lossless_crop_partial_change() {
         .expect("crop encode failed");
 
     std::fs::write(
-        "/mnt/v/output/jxl-encoder/animation/lossless_crop_partial.jxl",
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("lossless_crop_partial.jxl"),
         &cropped,
     )
     .ok();
@@ -554,7 +557,8 @@ fn test_lossless_crop_identical_frames() {
         .expect("encode failed");
 
     std::fs::write(
-        "/mnt/v/output/jxl-encoder/animation/lossless_crop_identical.jxl",
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("lossless_crop_identical.jxl"),
         &data,
     )
     .ok();
@@ -648,7 +652,8 @@ fn test_lossy_crop_partial_change() {
         .expect("lossy crop encode failed");
 
     std::fs::write(
-        "/mnt/v/output/jxl-encoder/animation/lossy_crop_partial.jxl",
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "animation")
+            .join("lossy_crop_partial.jxl"),
         &data,
     )
     .ok();

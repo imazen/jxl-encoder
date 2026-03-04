@@ -75,9 +75,18 @@ fn test_lf_frame_quality() {
     use jxl_encoder::api::{LossyConfig, PixelLayout};
 
     let images = [
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1025469.png",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1044329.png",
-        "/home/lilith/work/codec-corpus/CID22/CID22-512/validation/1189261.png",
+        &format!(
+            "{}/CID22/CID22-512/validation/1025469.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        ),
+        &format!(
+            "{}/CID22/CID22-512/validation/1044329.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        ),
+        &format!(
+            "{}/CID22/CID22-512/validation/1189261.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        ),
     ];
 
     println!(

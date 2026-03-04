@@ -4,16 +4,17 @@
 
 set -euo pipefail
 
-CJXL_RS="./target/release/cjxl-rs"
-CJXL="$HOME/work/jxl-efforts/libjxl/build/tools/cjxl"
-DJXL="$HOME/work/jxl-efforts/libjxl/build/tools/djxl"
-OUTDIR="/mnt/v/output/jxl-encoder-rs/lossless-parity"
+CJXL_RS="${JXL_CLI_PATH:-./target/release/cjxl-rs}"
+CJXL="${CJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/cjxl}"
+DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
+OUTDIR="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/lossless-parity"
 
 # Extra flags for cjxl-rs (passed as arguments to this script)
 EXTRA_FLAGS="${@}"
 
-CLIC_DIR="$HOME/work/codec-corpus/clic2025-1024"
-SC_DIR="$HOME/work/codec-corpus/gb82-sc"
+CORPUS="${CODEC_CORPUS_DIR:-$HOME/work/codec-corpus}"
+CLIC_DIR="${CORPUS}/clic2025-1024"
+SC_DIR="${CORPUS}/gb82-sc"
 
 # Pick 8 CLIC photos (first 8 non-pareto files)
 CLIC_IMAGES=$(ls "$CLIC_DIR"/*.png | grep -v pareto | head -8)

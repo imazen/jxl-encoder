@@ -4,12 +4,110 @@
 
 //! Test helpers to prevent false positives and verify what tests actually do.
 //!
+//! Path helper functions (`corpus_dir`, `djxl_path`, `cjxl_path`, `jxl_cli_path`,
+//! `output_dir`, `output_dir_for`) are always available and read environment variables
+//! with sensible defaults.
+//!
+//! Decode/roundtrip helpers require test dependencies and are only available
+//! under `#[cfg(test)]`.
+//!
 //! IMPORTANT: Use jxl-rs as the PRIMARY decoder for all roundtrip tests.
 //! jxl-oxide is only a secondary/fallback decoder.
 
+/// Returns the path to the codec corpus directory.
+///
+/// Uses `CODEC_CORPUS_DIR` env var, falling back to `/home/lilith/work/codec-corpus`.
+/// Panics if the directory does not exist.
+pub fn corpus_dir() -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(
+        std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
+    );
+    assert!(
+        dir.is_dir(),
+        "Codec corpus not found at {}. Set CODEC_CORPUS_DIR env var.",
+        dir.display()
+    );
+    dir
+}
+
+/// Returns the path to the djxl binary.
+///
+/// Uses `DJXL_PATH` env var, falling back to the libjxl build directory.
+pub fn djxl_path() -> String {
+    std::env::var("DJXL_PATH")
+        .unwrap_or_else(|_| "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl".into())
+}
+
+/// Returns the path to the cjxl binary.
+///
+/// Uses `CJXL_PATH` env var, falling back to the libjxl build directory.
+pub fn cjxl_path() -> String {
+    std::env::var("CJXL_PATH")
+        .unwrap_or_else(|_| "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl".into())
+}
+
+/// Returns the path to the jxl_cli binary (jxl-rs decoder).
+///
+/// Uses `JXL_CLI_PATH` env var, falling back to the jxl-rs build directory.
+pub fn jxl_cli_path() -> String {
+    std::env::var("JXL_CLI_PATH")
+        .unwrap_or_else(|_| "/home/lilith/work/jxl-rs/target/release/jxl_cli".into())
+}
+
+/// Returns a test output directory, creating it if needed.
+///
+/// Uses `JXL_ENCODER_OUTPUT_DIR` env var as the base, falling back to
+/// `/mnt/v/output/jxl-encoder-rs`. Appends the given subdir and creates
+/// the full path.
+///
+/// Falls back to `$TMPDIR/jxl-encoder-rs/{subdir}` when the preferred
+/// path is unavailable (CI, Docker, other machines).
+pub fn output_dir(subdir: &str) -> std::path::PathBuf {
+    let base = std::path::PathBuf::from(
+        std::env::var("JXL_ENCODER_OUTPUT_DIR")
+            .unwrap_or_else(|_| "/mnt/v/output/jxl-encoder-rs".into()),
+    );
+    let dir = base.join(subdir);
+    if std::fs::create_dir_all(&dir).is_ok() {
+        return dir;
+    }
+    let fallback = std::env::temp_dir().join(format!("jxl-encoder-rs/{subdir}"));
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+/// Returns an output directory for non-standard project subdirs.
+///
+/// Like `output_dir`, but uses the parent of `JXL_ENCODER_OUTPUT_DIR`
+/// (or `/mnt/v/output`) as the base, then appends the given project/subdir.
+/// Use for output paths like `/mnt/v/output/jpeg-reencoding/...` or
+/// `/mnt/v/output/jxl-encoder/...`.
+pub fn output_dir_for(project: &str, subdir: &str) -> std::path::PathBuf {
+    let base = match std::env::var("JXL_ENCODER_OUTPUT_DIR") {
+        Ok(dir) => {
+            // Go up one level from jxl-encoder-rs to the shared output root
+            let p = std::path::PathBuf::from(dir);
+            p.parent().unwrap_or(&p).to_path_buf()
+        }
+        Err(_) => std::path::PathBuf::from("/mnt/v/output"),
+    };
+    let dir = base.join(project).join(subdir);
+    if std::fs::create_dir_all(&dir).is_ok() {
+        return dir;
+    }
+    let fallback = std::env::temp_dir().join(format!("{project}/{subdir}"));
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+// --- Everything below requires test (dev) dependencies ---
+
+#[cfg(test)]
 use crate::error::Result;
 
 /// Encoding mode in JXL
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodingMode {
     VarDct,  // encoding=0 (lossy)
@@ -17,6 +115,7 @@ pub enum EncodingMode {
 }
 
 /// Decoded image result from jxl-rs
+#[cfg(test)]
 pub struct DecodedImage {
     /// Width in pixels
     pub width: usize,
@@ -28,6 +127,7 @@ pub struct DecodedImage {
     pub pixels: Vec<f32>,
 }
 
+#[cfg(test)]
 impl DecodedImage {
     /// Get pixel value at (x, y) for channel c
     pub fn get(&self, x: usize, y: usize, c: usize) -> f32 {
@@ -50,6 +150,7 @@ impl DecodedImage {
 /// For images >256x256, use decode_with_djxl() instead.
 ///
 /// Returns decoded image with f32 pixel values.
+#[cfg(test)]
 pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
     use jxl::api::states::Initialized;
     use jxl::api::{
@@ -203,7 +304,8 @@ pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
 /// This is the GOLD STANDARD decoder. Use for multi-group VarDCT images
 /// since both jxl-rs and jxl-oxide have multi-group decoder bugs.
 ///
-/// Requires djxl binary at `/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl`
+/// Requires djxl binary (set `DJXL_PATH` env var or use default libjxl build path).
+#[cfg(test)]
 pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
     use std::process::Command;
 
@@ -224,8 +326,8 @@ pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
     })?;
 
     // Run djxl
-    let djxl_path = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
-    let output = Command::new(djxl_path)
+    let djxl = djxl_path();
+    let output = Command::new(&djxl)
         .args([&temp_jxl, &temp_png])
         .output()
         .map_err(|e| crate::error::Error::InvalidInput(format!("Failed to run djxl: {:?}", e)))?;
@@ -276,6 +378,7 @@ pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
 ///
 /// WARNING: jxl-oxide has a multi-group VarDCT decoder bug.
 /// For images >256x256, use decode_with_djxl() instead.
+#[cfg(test)]
 pub fn decode_with_jxl_oxide(data: &[u8]) -> Result<DecodedImage> {
     let mut image = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(data))
@@ -315,6 +418,7 @@ pub fn decode_with_jxl_oxide(data: &[u8]) -> Result<DecodedImage> {
 
 /// Parse the encoding mode from a JXL bitstream.
 /// Returns None if unable to parse (ambiguous or invalid).
+#[cfg(test)]
 pub fn parse_encoding_mode(data: &[u8]) -> Option<EncodingMode> {
     if data.len() < 10 {
         return None;
@@ -363,6 +467,7 @@ pub fn parse_encoding_mode(data: &[u8]) -> Option<EncodingMode> {
 
 /// Assert that encoded data uses the expected encoding mode.
 /// Panics with a clear message if the mode doesn't match.
+#[cfg(test)]
 pub fn assert_encoding_mode(data: &[u8], expected: EncodingMode, test_name: &str) {
     let actual = parse_encoding_mode(data).unwrap_or_else(|| {
         panic!(
@@ -380,6 +485,7 @@ pub fn assert_encoding_mode(data: &[u8], expected: EncodingMode, test_name: &str
 
 /// Standard roundtrip test for lossless encoding.
 /// Encodes with Modular, verifies encoding mode, then decodes with jxl-rs (primary).
+#[cfg(test)]
 pub fn test_lossless_roundtrip(
     data: &[u8],
     width: usize,
@@ -403,6 +509,7 @@ pub fn test_lossless_roundtrip(
 
 /// Standard roundtrip test for lossy VarDCT encoding.
 /// Encodes with VarDCT, verifies encoding mode, then decodes with jxl-rs (primary).
+#[cfg(test)]
 pub fn test_lossy_roundtrip(
     data: &[u8],
     width: usize,
@@ -437,6 +544,7 @@ pub fn test_lossy_roundtrip(
 
 /// Lossy roundtrip test with quality verification using SSIMULACRA2.
 /// Returns SSIM2 score (higher is better, typically 50+ is acceptable).
+#[cfg(test)]
 pub fn test_lossy_roundtrip_with_quality(
     data: &[u8],
     width: usize,
@@ -475,6 +583,7 @@ pub fn test_lossy_roundtrip_with_quality(
 
 /// Calculate SSIMULACRA2 score between original RGB8 data and decoded image.
 /// Returns score where 100 = identical, 90+ = imperceptible, <50 = significant degradation.
+#[cfg(test)]
 pub fn calculate_ssim2(
     original: &[u8],
     decoded: &DecodedImage,
@@ -512,17 +621,11 @@ pub fn calculate_ssim2(
 
 /// Return a test output directory, creating it if possible.
 ///
-/// Prefers `/mnt/v/output/jxl-encoder-rs/{subdir}` (persistent, visible from Windows).
+/// Uses `JXL_ENCODER_OUTPUT_DIR` env var as base (default: `/mnt/v/output/jxl-encoder-rs`).
 /// Falls back to `$TMPDIR/jxl-encoder-rs/{subdir}` when that path is unavailable
 /// (CI, Docker, other machines).
 pub fn test_output_dir(subdir: &str) -> std::path::PathBuf {
-    let preferred = std::path::PathBuf::from(format!("/mnt/v/output/jxl-encoder-rs/{subdir}"));
-    if std::fs::create_dir_all(&preferred).is_ok() {
-        return preferred;
-    }
-    let fallback = std::env::temp_dir().join(format!("jxl-encoder-rs/{subdir}"));
-    let _ = std::fs::create_dir_all(&fallback);
-    fallback
+    output_dir(subdir)
 }
 
 /// Write test output to the best available directory. Never panics.

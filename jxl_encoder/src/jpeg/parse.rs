@@ -564,8 +564,10 @@ mod tests {
 
     #[test]
     fn test_parse_real_jpeg() {
-        let path =
-            "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_1.jpg";
+        let path = format!(
+            "{}/imageflow/test_inputs/orientation/Landscape_1.jpg",
+            crate::test_helpers::corpus_dir().display()
+        );
         let data = std::fs::read(path).expect("failed to read test JPEG");
         let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
 

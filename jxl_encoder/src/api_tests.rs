@@ -408,7 +408,11 @@ fn test_encode_gray_8x8_pattern() {
 mod corpus_tests {
     use crate::{LosslessConfig, PixelLayout};
 
-    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+    fn corpus_path_string() -> String {
+        crate::test_helpers::corpus_dir()
+            .to_string_lossy()
+            .into_owned()
+    }
 
     fn test_image_roundtrip(path: &str) -> Result<(usize, usize, usize), String> {
         let img = image::open(path).map_err(|e| format!("Failed to open {}: {}", path, e))?;
@@ -465,7 +469,7 @@ mod corpus_tests {
     #[test]
     fn test_pngsuite_gray() {
         // 8-bit grayscale from PNG suite
-        let path = format!("{}/pngsuite/basi0g08.png", CORPUS_PATH);
+        let path = format!("{}/pngsuite/basi0g08.png", corpus_path_string());
         if std::path::Path::new(&path).exists() {
             let img = image::open(&path).unwrap();
             let gray = img.to_luma8();
@@ -483,7 +487,10 @@ mod corpus_tests {
     #[test]
     fn test_pngsuite_rgb() {
         // 8-bit RGB from PNG suite
-        let path = format!("{}/pngsuite/basi2c08.png", CORPUS_PATH);
+        let path = format!(
+            "{}/pngsuite/basi2c08.png",
+            crate::test_helpers::corpus_dir().display()
+        );
         if std::path::Path::new(&path).exists() {
             let img = image::open(&path).unwrap();
             let rgb = img.to_rgb8();
@@ -500,7 +507,10 @@ mod corpus_tests {
 
     #[test]
     fn test_kodak_01() {
-        let path = format!("{}/kodak/1.png", CORPUS_PATH);
+        let path = format!(
+            "{}/kodak/1.png",
+            crate::test_helpers::corpus_dir().display()
+        );
         if std::path::Path::new(&path).exists() {
             match test_image_roundtrip(&path) {
                 Ok((w, h, size)) => {
@@ -537,7 +547,11 @@ mod corpus_tests {
         let mut failed = 0;
 
         for img_path in &test_images {
-            let full_path = format!("{}/{}", CORPUS_PATH, img_path);
+            let full_path = format!(
+                "{}/{}",
+                crate::test_helpers::corpus_dir().display(),
+                img_path
+            );
             if !std::path::Path::new(&full_path).exists() {
                 eprintln!("SKIP: {} (not found)", img_path);
                 continue;
@@ -926,8 +940,9 @@ mod decoder_validation {
     use crate::{LosslessConfig, LossyConfig, PixelLayout};
     use std::process::Command;
 
-    /// Path to djxl from libjxl for dual-decoder validation
-    const DJXL_PATH: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+    fn djxl_path_string() -> String {
+        crate::test_helpers::djxl_path()
+    }
 
     /// Validates lossless roundtrip: encode -> decode -> compare pixels exactly.
     ///
@@ -1235,7 +1250,8 @@ mod decoder_validation {
         };
 
         // 2. Validate with djxl (libjxl reference decoder)
-        if std::path::Path::new(DJXL_PATH).exists() {
+        let djxl = djxl_path_string();
+        if std::path::Path::new(&djxl).exists() {
             // Write JXL to temp file
             let temp_jxl = std::env::temp_dir().join(format!(
                 "dual_decode_test_{}.jxl",
@@ -1249,10 +1265,7 @@ mod decoder_validation {
 
             // Run djxl — may fail if binary exists but shared libs are missing
             // (e.g. cross-compilation container with host volume mount)
-            match Command::new(DJXL_PATH)
-                .args([&temp_jxl, &temp_png])
-                .output()
-            {
+            match Command::new(&djxl).args([&temp_jxl, &temp_png]).output() {
                 Ok(output) if output.status.success() => {
                     // Verify the PNG was created and has correct dimensions
                     if let Ok(img) = image::open(&temp_png) {
@@ -1301,7 +1314,7 @@ mod decoder_validation {
         } else {
             eprintln!(
                 "{}: PASSED jxl-oxide only (djxl not available at {})",
-                test_name, DJXL_PATH
+                test_name, djxl
             );
         }
 
@@ -1534,8 +1547,11 @@ mod decoder_validation {
     /// Test that pngsuite RGB images can be decoded by jxl-oxide
     #[test]
     fn test_decode_pngsuite_rgb() {
-        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
-        let path = format!("{}/pngsuite/basn2c08.png", CORPUS_PATH);
+        // (corpus path resolved via crate::test_helpers::corpus_dir)
+        let path = format!(
+            "{}/pngsuite/basn2c08.png",
+            crate::test_helpers::corpus_dir().display()
+        );
         if !std::path::Path::new(&path).exists() {
             eprintln!("Skipping test: {} not found", path);
             return;
@@ -1994,7 +2010,7 @@ mod decoder_validation {
     /// Dual-decoder validation for corpus images
     #[test]
     fn test_dual_decode_corpus_images() {
-        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
+        // (corpus path resolved via crate::test_helpers::corpus_dir)
 
         // Test a few representative images from the corpus
         let test_images = [
@@ -2003,7 +2019,11 @@ mod decoder_validation {
         ];
 
         for (image_path, is_gray) in test_images {
-            let path = format!("{}/{}", CORPUS_PATH, image_path);
+            let path = format!(
+                "{}/{}",
+                crate::test_helpers::corpus_dir().display(),
+                image_path
+            );
             if !std::path::Path::new(&path).exists() {
                 eprintln!("Skipping {}: not found", image_path);
                 continue;
@@ -2237,8 +2257,11 @@ mod decoder_validation {
     /// Test lossless roundtrip for corpus image (pngsuite)
     #[test]
     fn test_roundtrip_lossless_corpus_rgb() {
-        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
-        let path = format!("{}/pngsuite/basn2c08.png", CORPUS_PATH);
+        // (corpus path resolved via crate::test_helpers::corpus_dir)
+        let path = format!(
+            "{}/pngsuite/basn2c08.png",
+            crate::test_helpers::corpus_dir().display()
+        );
         if !std::path::Path::new(&path).exists() {
             eprintln!("Skipping: {} not found", path);
             return;
@@ -2253,8 +2276,11 @@ mod decoder_validation {
     /// Test lossless roundtrip for corpus grayscale (pngsuite)
     #[test]
     fn test_roundtrip_lossless_corpus_gray() {
-        const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
-        let path = format!("{}/pngsuite/basn0g08.png", CORPUS_PATH);
+        // (corpus path resolved via crate::test_helpers::corpus_dir)
+        let path = format!(
+            "{}/pngsuite/basn0g08.png",
+            crate::test_helpers::corpus_dir().display()
+        );
         if !std::path::Path::new(&path).exists() {
             eprintln!("Skipping: {} not found", path);
             return;
@@ -2299,9 +2325,13 @@ mod quality_comparison_tests {
     use std::process::Command;
     use yuvxyb::{ColorPrimaries, TransferCharacteristic};
 
-    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
-    const LIBJXL_CJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl";
-    const LIBJXL_DJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
+    // (corpus path resolved via crate::test_helpers::corpus_dir)
+    fn libjxl_cjxl() -> String {
+        crate::test_helpers::cjxl_path()
+    }
+    fn libjxl_djxl() -> String {
+        crate::test_helpers::djxl_path()
+    }
 
     /// Load a PNG image and return RGB8 data
     fn load_png(path: &str) -> Option<(Vec<u8>, usize, usize)> {
@@ -2361,7 +2391,7 @@ mod quality_comparison_tests {
         let out_path = std::env::temp_dir().join(format!("libjxl_test_{}.png", std::process::id()));
 
         // Encode with cjxl
-        let status = Command::new(LIBJXL_CJXL)
+        let status = Command::new(&libjxl_cjxl())
             .arg(input)
             .arg(&jxl_path)
             .arg("-d")
@@ -2375,7 +2405,7 @@ mod quality_comparison_tests {
         }
 
         // Decode with djxl
-        let status = Command::new(LIBJXL_DJXL)
+        let status = Command::new(&libjxl_djxl())
             .arg(&jxl_path)
             .arg(&out_path)
             .output()
@@ -2450,7 +2480,7 @@ mod quality_comparison_tests {
 
         // libjxl size
         let jxl_path = std::env::temp_dir().join(format!("libjxl_size_{}.jxl", std::process::id()));
-        let libjxl_size = Command::new(LIBJXL_CJXL)
+        let libjxl_size = Command::new(&libjxl_cjxl())
             .arg(input_path)
             .arg(&jxl_path)
             .arg("-d")
@@ -2472,7 +2502,10 @@ mod quality_comparison_tests {
 
     #[test]
     fn test_quality_comparison_kodak01() {
-        let path = format!("{}/kodak/1.png", CORPUS_PATH);
+        let path = format!(
+            "{}/kodak/1.png",
+            crate::test_helpers::corpus_dir().display()
+        );
         if !std::path::Path::new(&path).exists() {
             eprintln!("Skipping: Kodak image not found at {}", path);
             return;
@@ -2543,7 +2576,13 @@ mod quality_comparison_tests {
     #[ignore]
     fn test_quality_comparison_comprehensive() {
         let kodak_images: Vec<String> = (1..=24)
-            .map(|i| format!("{}/kodak/{}.png", CORPUS_PATH, i))
+            .map(|i| {
+                format!(
+                    "{}/kodak/{}.png",
+                    crate::test_helpers::corpus_dir().display(),
+                    i
+                )
+            })
             .filter(|p| std::path::Path::new(p).exists())
             .collect();
 
@@ -2755,8 +2794,7 @@ mod dual_decoder_butteraugli_tests {
     use std::io::Cursor;
     use std::process::Command;
 
-    const CORPUS_PATH: &str = "/home/lilith/work/codec-corpus";
-    const JXLRS_CLI: &str = "/home/lilith/work/jxl-rs/target/release/jxl_cli";
+    // (corpus path resolved via crate::test_helpers::corpus_dir)
 
     /// Load a PNG image and return RGB8 data with dimensions
     fn load_png(path: &str) -> Option<(Vec<u8>, usize, usize)> {
@@ -2805,7 +2843,7 @@ mod dual_decoder_butteraugli_tests {
             .map_err(|e| format!("Failed to write temp JXL: {}", e))?;
 
         // Decode with jxl-rs CLI
-        let output = Command::new(JXLRS_CLI)
+        let output = Command::new(&crate::test_helpers::jxl_cli_path())
             .args([&jxl_path, &png_path])
             .output()
             .map_err(|e| format!("Failed to run jxl_cli: {}", e))?;
@@ -2944,12 +2982,14 @@ mod dual_decoder_butteraugli_tests {
     #[ignore = "Requires codec-corpus and jxl-rs CLI; run with: cargo test dual_decoder_butteraugli -- --ignored --nocapture"]
     fn test_dual_decoder_butteraugli_sweep() {
         // Check prerequisites
-        if !std::path::Path::new(CORPUS_PATH).exists() {
-            eprintln!("SKIP: corpus not found at {}", CORPUS_PATH);
+        let corpus = crate::test_helpers::corpus_dir();
+        if !corpus.exists() {
+            eprintln!("SKIP: corpus not found at {}", corpus.display());
             return;
         }
-        if !std::path::Path::new(JXLRS_CLI).exists() {
-            eprintln!("SKIP: jxl-rs CLI not found at {}", JXLRS_CLI);
+        let jxlrs_cli = crate::test_helpers::jxl_cli_path();
+        if !std::path::Path::new(&jxlrs_cli).exists() {
+            eprintln!("SKIP: jxl-rs CLI not found at {}", jxlrs_cli);
             eprintln!("Build with: cd ~/work/jxl-rs && cargo build --release -p jxl_cli");
             return;
         }
@@ -2989,7 +3029,11 @@ mod dual_decoder_butteraugli_tests {
         let mut max_diff: f64 = 0.0;
 
         for image_rel in &test_images {
-            let path = format!("{}/{}", CORPUS_PATH, image_rel);
+            let path = format!(
+                "{}/{}",
+                crate::test_helpers::corpus_dir().display(),
+                image_rel
+            );
             if !std::path::Path::new(&path).exists() {
                 eprintln!("║ {:25} │ SKIP: file not found", image_rel);
                 continue;
@@ -3086,8 +3130,9 @@ mod dual_decoder_butteraugli_tests {
     #[test]
     #[ignore = "Requires jxl-rs CLI; run with: cargo test test_dual_decoder_butteraugli_quick -- --ignored --nocapture"]
     fn test_dual_decoder_butteraugli_quick() {
-        if !std::path::Path::new(JXLRS_CLI).exists() {
-            eprintln!("SKIP: jxl-rs CLI not found at {}", JXLRS_CLI);
+        let jxlrs_cli = crate::test_helpers::jxl_cli_path();
+        if !std::path::Path::new(&jxlrs_cli).exists() {
+            eprintln!("SKIP: jxl-rs CLI not found at {}", jxlrs_cli);
             return;
         }
 
@@ -3149,9 +3194,9 @@ mod dual_decoder_butteraugli_tests {
         use std::io::{BufRead, BufReader, Write};
         use std::time::Instant;
 
-        let corpus_path = std::path::Path::new(CORPUS_PATH);
+        let corpus_path = crate::test_helpers::corpus_dir();
         if !corpus_path.exists() {
-            println!("SKIP: corpus not found at {}", CORPUS_PATH);
+            println!("SKIP: corpus not found at {}", corpus_path.display());
             return;
         }
 
@@ -3250,7 +3295,7 @@ mod dual_decoder_butteraugli_tests {
 
         for image_path in images.iter() {
             let rel_path = image_path
-                .strip_prefix(corpus_path)
+                .strip_prefix(&corpus_path)
                 .unwrap_or(image_path)
                 .to_string_lossy()
                 .to_string();
@@ -3402,7 +3447,7 @@ mod dual_decoder_butteraugli_tests {
     #[test]
     #[ignore = "Quality sampling test"]
     fn test_corpus_quality_sample() {
-        let corpus_path = std::path::Path::new("/home/lilith/work/codec-corpus");
+        let corpus_path = crate::test_helpers::corpus_dir();
         if !corpus_path.exists() {
             eprintln!("SKIP: codec-corpus not found");
             return;
@@ -3479,9 +3524,12 @@ mod dual_decoder_butteraugli_tests {
     #[test]
     #[ignore = "Visual comparison test"]
     fn test_save_broken_image() {
-        let original_path = "/home/lilith/work/codec-corpus/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png";
+        let original_path = format!(
+            "{}/clic2025/validation/097cb426910ba8ce2525dd8bb7fb1777.png",
+            crate::test_helpers::corpus_dir().display()
+        );
 
-        let Some((original, width, height)) = load_png(original_path) else {
+        let Some((original, width, height)) = load_png(&original_path) else {
             panic!("Failed to load {}", original_path);
         };
 
@@ -4471,7 +4519,7 @@ fn test_rgb_lossless_djxl_sweep() {
             // Test djxl
             let path = format!("/tmp/sweep_{}x{}.jxl", w, h);
             std::fs::write(&path, &encoded).unwrap();
-            let output = Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+            let output = Command::new(&crate::test_helpers::djxl_path())
                 .args([&path, &format!("/tmp/sweep_{}x{}.png", w, h)])
                 .output();
             match output {
@@ -4561,7 +4609,7 @@ fn test_rgb_lossless_gradient_pattern_sweep() {
                 let tree_str = if use_tree { "tree" } else { "notree" };
                 let path = format!("/tmp/grad_{}x{}_{}.jxl", w, h, tree_str);
                 std::fs::write(&path, &encoded).unwrap();
-                let output = Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+                let output = Command::new(&crate::test_helpers::djxl_path())
                     .args([&path, &format!("/tmp/grad_{}x{}_{}.png", w, h, tree_str)])
                     .output();
                 match output {
@@ -4687,12 +4735,11 @@ fn test_tree_learning_debug_single() {
 
         // Decode with djxl and verify pixels
         let djxl_png_path = format!("/tmp/tree_debug_{}.png", name);
-        let djxl_status =
-            std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-                .args([&path, &djxl_png_path])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+        let djxl_status = std::process::Command::new(&crate::test_helpers::djxl_path())
+            .args([&path, &djxl_png_path])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
 
         let djxl_ok = if djxl_status {
             // Compare decoded pixels

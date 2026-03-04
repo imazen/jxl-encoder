@@ -22,7 +22,7 @@ test-armv7:
 
 # Cross-compile and test for AArch64 (requires cross + Docker)
 test-aarch64:
-    CROSS_CONTAINER_OPTS="--volume /home/lilith/work:/home/lilith/work" cross test --workspace --no-default-features --features safe-mode --lib --target aarch64-unknown-linux-gnu
+    CROSS_CONTAINER_OPTS="--volume $HOME/work:$HOME/work" cross test --workspace --no-default-features --features safe-mode --lib --target aarch64-unknown-linux-gnu
 
 # Build and test for WASM (requires wasmtime)
 test-wasm:
@@ -36,7 +36,7 @@ test-wasm-simd:
 bench-platforms:
     @echo "=== x86_64 native ===" && cargo run --example wasm_bench -p jxl-encoder --release --no-default-features --features safe-mode
     @echo "=== WASM (wasmtime) ===" && cargo build --example wasm_bench -p jxl-encoder --release --target wasm32-wasip1 --no-default-features --features safe-mode 2>/dev/null && wasmtime ./target/wasm32-wasip1/release/examples/wasm_bench.wasm
-    @echo "=== AArch64 (qemu) ===" && CROSS_CONTAINER_OPTS="--volume /home/lilith/work:/home/lilith/work" cross run --example wasm_bench -p jxl-encoder --release --target aarch64-unknown-linux-gnu --no-default-features --features safe-mode
+    @echo "=== AArch64 (qemu) ===" && CROSS_CONTAINER_OPTS="--volume $HOME/work:$HOME/work" cross run --example wasm_bench -p jxl-encoder --release --target aarch64-unknown-linux-gnu --no-default-features --features safe-mode
 
 # Run all cross-compilation targets
 test-cross: test-i686 test-armv7
@@ -79,13 +79,13 @@ generate-lossless-reference:
 #          Ours-cjxl 20x   | Ours Error 10x          | cjxl Error 10x
 # Usage: just compare-visual <source.png> <ours.jxl> <cjxl.jxl> <distance> [output_dir]
 # Ours/cjxl args can be .jxl (decoded via djxl) or .png (used directly)
-compare-visual source ours cjxl distance outdir="/mnt/v/output/jxl-encoder-rs/compare":
+compare-visual source ours cjxl distance outdir="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/compare":
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p "{{outdir}}"
-    DJXL="$HOME/work/jxl-efforts/libjxl/build/tools/djxl"
-    BFLY="$HOME/work/jxl-efforts/libjxl/build/tools/butteraugli_main"
-    SS2="$HOME/work/jxl-efforts/libjxl/build/tools/ssimulacra2"
+    DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
+    BFLY="${BUTTERAUGLI_MAIN_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/butteraugli_main}"
+    SS2="${SSIMULACRA2_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/ssimulacra2}"
     # Source info
     src_size=$(wc -c < "{{source}}")
     src_kb=$(python3 -c "print(f'{${src_size}/1024:.1f}KB')")
