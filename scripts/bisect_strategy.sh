@@ -2,13 +2,14 @@
 # Test each AC strategy individually to find which ones produce garbage
 set -euo pipefail
 
-CJXL_RS="/home/lilith/work/jxl-encoder-rs/target/release/cjxl-rs"
-DJXL="/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl"
-BFLY="/home/lilith/work/butteraugli/target/release/butteraugli"
-OUTDIR="/mnt/v/output/jxl-encoder-rs/bisect_strategy"
+CJXL_RS="${JXL_CLI_PATH:-/home/lilith/work/jxl-encoder-rs/target/release/cjxl-rs}"
+DJXL="${DJXL_PATH:-/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl}"
+BFLY="${BUTTERAUGLI_PATH:-/home/lilith/work/butteraugli/target/release/butteraugli}"
+OUTDIR="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/bisect_strategy"
 mkdir -p "$OUTDIR"
 
-IMG="/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"
+CORPUS="${CODEC_CORPUS_DIR:-/home/lilith/work/codec-corpus}"
+IMG="${CORPUS}/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"
 DIST="${1:-2.0}"
 
 echo "Testing forced strategies on 02809272 at d=$DIST"

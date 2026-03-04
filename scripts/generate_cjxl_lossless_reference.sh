@@ -10,12 +10,12 @@
 
 set -euo pipefail
 
-CJXL="$HOME/work/jxl-efforts/libjxl/build/tools/cjxl"
-DJXL="$HOME/work/jxl-efforts/libjxl/build/tools/djxl"
+CJXL="${CJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/cjxl}"
+DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
 
 PNM_DIR="/tmp/cjxl-lossless-ref-pnm"
 DECODED_DIR="/tmp/cjxl-lossless-ref-decoded"
-CACHE_DIR="/mnt/v/output/jxl-encoder-rs/cjxl-lossless-reference"
+CACHE_DIR="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/cjxl-lossless-reference"
 TIMING_FILE="/tmp/cjxl-lossless-ref-timing.txt"
 
 OUTCSV="reference/cjxl_lossless_reference.csv"
@@ -23,10 +23,11 @@ OUTCSV="reference/cjxl_lossless_reference.csv"
 EFFORTS="5 6 7 8 9"
 
 # Corpora
+CORPUS="${CODEC_CORPUS_DIR:-$HOME/work/codec-corpus}"
 declare -A CORPUS_DIRS
-CORPUS_DIRS[cid22]="$HOME/work/codec-corpus/CID22/CID22-512/validation"
-CORPUS_DIRS[cid22-train]="$HOME/work/codec-corpus/CID22/CID22-512/training"
-CORPUS_DIRS[gb82-sc]="$HOME/work/codec-corpus/gb82-sc"
+CORPUS_DIRS[cid22]="${CORPUS}/CID22/CID22-512/validation"
+CORPUS_DIRS[cid22-train]="${CORPUS}/CID22/CID22-512/training"
+CORPUS_DIRS[gb82-sc]="${CORPUS}/gb82-sc"
 CORPUS_DIRS[frymire]="$HOME/work/jxl-encoder-rs/jxl_encoder/tests/images"
 
 CORPORA="cid22 cid22-train gb82-sc frymire"

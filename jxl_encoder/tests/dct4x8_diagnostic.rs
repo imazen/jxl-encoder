@@ -196,7 +196,10 @@ fn analyze_pixels(pixels: &[f32], name: &str) {
 #[ignore]
 fn diagnose_dct4x8_real_photo() {
     let path = std::env::var("CLIC_IMAGE").unwrap_or_else(|_| {
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png".to_string()
+        format!(
+            "{}/imageflow/test_inputs/frymire.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        )
     });
 
     if !std::path::Path::new(&path).exists() {
@@ -365,7 +368,10 @@ fn diagnose_single_block_dct4x8() {
 #[ignore]
 fn find_extreme_pixels() {
     let path = std::env::var("CLIC_IMAGE").unwrap_or_else(|_| {
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png".to_string()
+        format!(
+            "{}/imageflow/test_inputs/frymire.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        )
     });
 
     if !std::path::Path::new(&path).exists() {
@@ -723,7 +729,10 @@ fn test_dct4x4_multigroup() {
 #[ignore]
 fn diagnose_dct4x4_real_photo() {
     let path = std::env::var("CLIC_IMAGE").unwrap_or_else(|_| {
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png".to_string()
+        format!(
+            "{}/imageflow/test_inputs/frymire.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        )
     });
 
     if !std::path::Path::new(&path).exists() {
@@ -901,7 +910,10 @@ fn test_error_diffusion_multigroup() {
 #[ignore]
 fn diagnose_error_diffusion_quality() {
     let path = std::env::var("CLIC_IMAGE").unwrap_or_else(|_| {
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png".to_string()
+        format!(
+            "{}/imageflow/test_inputs/frymire.png",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        )
     });
 
     if !std::path::Path::new(&path).exists() {

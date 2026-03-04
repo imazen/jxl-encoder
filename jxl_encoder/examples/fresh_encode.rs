@@ -4,15 +4,13 @@ use std::io::Cursor;
 use jxl_encoder::{LossyConfig, PixelLayout};
 
 fn main() {
-    let out_dir = "/mnt/v/output/jxl-encoder-rs/clic2025";
-    std::fs::create_dir_all(out_dir).ok();
+    let out_dir = jxl_encoder::test_helpers::output_dir("clic2025");
 
     // Load and crop a CLIC image to 256x256 (single group)
-    let base_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let img_path = format!(
-        "{}/work/codec-corpus/clic2025/validation/a36713f1943dac6bc74dea50cadaee6f.png",
-        base_dir
-    );
+    let img_path = jxl_encoder::test_helpers::corpus_dir()
+        .join("clic2025/validation/a36713f1943dac6bc74dea50cadaee6f.png")
+        .to_string_lossy()
+        .to_string();
 
     eprintln!("Loading: {}", img_path);
     let img = image::open(&img_path).expect("Could not open image");
@@ -23,7 +21,7 @@ fn main() {
     let (width, height) = (256u32, 256u32);
 
     // Save original crop
-    let orig_path = format!("{}/FRESH_original.png", out_dir);
+    let orig_path = format!("{}/FRESH_original.png", out_dir.display());
     cropped.save(&orig_path).expect("Failed to save original");
     eprintln!("Saved original: {}", orig_path);
 
@@ -39,7 +37,7 @@ fn main() {
     );
 
     // Save JXL
-    let jxl_path = format!("{}/FRESH.jxl", out_dir);
+    let jxl_path = format!("{}/FRESH.jxl", out_dir.display());
     std::fs::write(&jxl_path, &bytes).expect("Failed to write JXL");
     eprintln!("Saved JXL: {}", jxl_path);
 
@@ -62,14 +60,14 @@ fn main() {
         *pixel = image::Rgb([r, g, b]);
     }
 
-    let oxide_path = format!("{}/FRESH_decoded_oxide.png", out_dir);
+    let oxide_path = format!("{}/FRESH_decoded_oxide.png", out_dir.display());
     output_img
         .save(&oxide_path)
         .expect("Failed to save decoded PNG");
     eprintln!("Saved jxl-oxide decoded: {}", oxide_path);
 
     // Also decode with djxl for comparison
-    let djxl_path = format!("{}/FRESH_decoded_djxl.png", out_dir);
+    let djxl_path = format!("{}/FRESH_decoded_djxl.png", out_dir.display());
     let status = std::process::Command::new("djxl")
         .arg(&jxl_path)
         .arg(&djxl_path)
@@ -84,7 +82,9 @@ fn main() {
     eprintln!("\nTo compare:");
     eprintln!(
         "  montage {} {} -tile 2x1 -geometry +4+4 {}/FRESH_compare.png",
-        orig_path, oxide_path, out_dir
+        orig_path,
+        oxide_path,
+        out_dir.display()
     );
-    eprintln!("  display {}/FRESH_compare.png", out_dir);
+    eprintln!("  display {}/FRESH_compare.png", out_dir.display());
 }

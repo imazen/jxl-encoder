@@ -4,13 +4,14 @@
 
 set -euo pipefail
 
-CJXL_RS="/home/lilith/work/jxl-encoder-rs/target/release/cjxl-rs"
-DJXL="/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl"
-BFLY="/home/lilith/work/butteraugli/target/release/butteraugli"
-OUTDIR="/mnt/v/output/jxl-encoder-rs/bisect"
+CJXL_RS="${JXL_CLI_PATH:-/home/lilith/work/jxl-encoder-rs/target/release/cjxl-rs}"
+DJXL="${DJXL_PATH:-/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl}"
+BFLY="${BUTTERAUGLI_PATH:-/home/lilith/work/butteraugli/target/release/butteraugli}"
+OUTDIR="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/bisect"
 mkdir -p "$OUTDIR"
 
-IMG="/home/lilith/work/codec-corpus/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"
+CORPUS="${CODEC_CORPUS_DIR:-/home/lilith/work/codec-corpus}"
+IMG="${CORPUS}/clic2025-1024/02809272b4ca9b08af45771501b741296187c7e26907efb44abbbfcb6cd804f7.png"
 DIST="${1:-2.0}"
 
 echo "Testing image 02809272 at d=$DIST"
@@ -70,9 +71,9 @@ echo "Testing 3 more catastrophic images at d=$DIST..."
 echo "==========================================="
 
 for img_path in \
-    "/home/lilith/work/codec-corpus/clic2025-1024/50fe4c3d47d864858e1aaa60fecef5c453b4e18d2b368718eeb5c1e249e0c902.png" \
-    "/home/lilith/work/codec-corpus/clic2025-1024/bb7344a2ba499b2d48b891abee1b903dc17d265437ac57028b5999b6cd5bcdc4.png" \
-    "/home/lilith/work/codec-corpus/clic2025-1024/870516c65d81fb9267de6865964083a9.png"; do
+    "${CORPUS}/clic2025-1024/50fe4c3d47d864858e1aaa60fecef5c453b4e18d2b368718eeb5c1e249e0c902.png" \
+    "${CORPUS}/clic2025-1024/bb7344a2ba499b2d48b891abee1b903dc17d265437ac57028b5999b6cd5bcdc4.png" \
+    "${CORPUS}/clic2025-1024/870516c65d81fb9267de6865964083a9.png"; do
 
     short=$(basename "$img_path" .png | cut -c1-8)
     echo ""

@@ -476,11 +476,10 @@ fn decode_djxl(data: &[u8]) -> (usize, usize, Vec<u8>) {
     let temp_png = format!("/tmp/llf_test_{}_{}.png", pid, ts);
 
     std::fs::write(&temp_jxl, data).unwrap();
-    let output =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args([&temp_jxl, &temp_png])
-            .output()
-            .unwrap();
+    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .args([&temp_jxl, &temp_png])
+        .output()
+        .unwrap();
 
     assert!(
         output.status.success(),
@@ -2598,12 +2597,11 @@ fn diag_save_dct16x16_file() {
     eprintln!("Saved {} bytes to {}", bytes.len(), path);
 
     // Try to decode with djxl
-    let output =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(path)
-            .arg("/tmp/test_dct16x16.png")
-            .output()
-            .expect("djxl failed to run");
+    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .arg(path)
+        .arg("/tmp/test_dct16x16.png")
+        .output()
+        .expect("djxl failed to run");
 
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -3515,10 +3513,9 @@ fn trace_dct16x16_dc_detailed() {
     let tmp_ppm = "/tmp/dct16_trace.ppm";
     std::fs::write(tmp_jxl, &bytes).unwrap();
 
-    let status =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .args(&[tmp_jxl, tmp_ppm])
-            .status();
+    let status = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .args(&[tmp_jxl, tmp_ppm])
+        .status();
     if let Ok(s) = status {
         if s.success() {
             eprintln!("\ndjxl decoding succeeded");
@@ -4689,12 +4686,11 @@ fn layer3_single_group_dct4x8_decode_djxl() {
     eprintln!("DCT4X8: {} bytes saved to {}", bytes.len(), path);
 
     // Decode with djxl
-    let output =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(path)
-            .arg("/tmp/test_dct4x8_layer3.png")
-            .output()
-            .expect("djxl failed to run");
+    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .arg(path)
+        .arg("/tmp/test_dct4x8_layer3.png")
+        .output()
+        .expect("djxl failed to run");
 
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -4737,12 +4733,11 @@ fn layer3_single_group_dct8x4_decode_djxl() {
     eprintln!("DCT8X4: {} bytes saved to {}", bytes.len(), path);
 
     // Decode with djxl
-    let output =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(path)
-            .arg("/tmp/test_dct8x4_layer3.png")
-            .output()
-            .expect("djxl failed to run");
+    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .arg(path)
+        .arg("/tmp/test_dct8x4_layer3.png")
+        .output()
+        .expect("djxl failed to run");
 
     if !output.status.success() {
         eprintln!("djxl stderr: {}", String::from_utf8_lossy(&output.stderr));
@@ -5096,7 +5091,10 @@ fn test_dct4x8_vs_dct8_quality_real_photo() {
     use jxl_encoder::vardct::VarDctEncoder;
 
     // Load frymire image
-    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+    let path = &format!(
+        "{}/imageflow/test_inputs/frymire.png",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let (w, h, linear, srgb) = load_png_crop(path, 256, 256);
 
     // Encode with forced DCT4X8
@@ -5294,7 +5292,10 @@ fn debug_dct4x8_real_photo_save() {
     use std::io::Write;
 
     // Load frymire image
-    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+    let path = &format!(
+        "{}/imageflow/test_inputs/frymire.png",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let (w, h, linear, _srgb) = load_png_crop(path, 256, 256);
     eprintln!("Loaded {}x{} image", w, h);
 
@@ -5365,7 +5366,10 @@ fn debug_dct4x8_check_values() {
     use jxl_encoder::vardct::VarDctEncoder;
 
     // Load frymire image
-    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/frymire.png";
+    let path = &format!(
+        "{}/imageflow/test_inputs/frymire.png",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let (w, h, linear, _srgb) = load_png_crop(path, 256, 256);
 
     // Encode with forced DCT4X8

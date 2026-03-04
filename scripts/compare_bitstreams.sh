@@ -13,7 +13,7 @@ if [ $# -ne 1 ]; then
 fi
 
 TEST_NAME=$1
-CJXL=~/work/jxl-efforts/libjxl/build/tools/cjxl
+CJXL="${CJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/cjxl}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 

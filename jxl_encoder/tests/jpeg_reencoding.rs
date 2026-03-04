@@ -208,7 +208,8 @@ fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
 
 #[test]
 fn test_encode_small_jpeg() {
-    let path = "/mnt/v/output/jpeg-reencoding/test64_444.jpg";
+    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
+        .to_string_lossy();
     let data = std::fs::read(path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
@@ -226,14 +227,16 @@ fn test_encode_small_jpeg() {
     assert_eq!(jxl_bytes[1], 0x0A, "bad signature byte 1");
 
     // Save for djxl testing
-    let out_path = "/mnt/v/output/jpeg-reencoding/test64.jxl";
+    let out_path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64.jxl")
+        .to_string_lossy();
     std::fs::write(out_path, &jxl_bytes).expect("failed to write JXL");
     eprintln!("Saved to {out_path}");
 }
 
 #[test]
 fn test_decode_small_jpeg_oxide() {
-    let path = "/mnt/v/output/jpeg-reencoding/test64_444.jpg";
+    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
+        .to_string_lossy();
     let data = std::fs::read(path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
@@ -247,7 +250,8 @@ fn test_decode_small_jpeg_oxide() {
     );
 
     // Save for inspection
-    let out_path = "/mnt/v/output/jpeg-reencoding/test64.jxl";
+    let out_path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64.jxl")
+        .to_string_lossy();
     std::fs::write(out_path, &jxl_bytes).expect("failed to write JXL");
 
     // Decode with jxl-oxide
@@ -324,7 +328,10 @@ fn test_decode_small_jpeg_oxide() {
 
 #[test]
 fn test_decode_landscape_jpeg_oxide() {
-    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_1.jpg";
+    let path = &format!(
+        "{}/imageflow/test_inputs/orientation/Landscape_1.jpg",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let data = std::fs::read(path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
@@ -337,7 +344,8 @@ fn test_decode_landscape_jpeg_oxide() {
     );
 
     // Save for djxl testing
-    let out_path = "/mnt/v/output/jpeg-reencoding/landscape1.jxl";
+    let out_path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "landscape1.jxl")
+        .to_string_lossy();
     std::fs::write(out_path, &jxl_bytes).expect("failed to write JXL");
 
     // Decode with jxl-oxide
@@ -447,7 +455,8 @@ fn test_decode_landscape_jpeg_oxide() {
 /// Test JBRD box serialization and byte-exact JPEG reconstruction via djxl.
 #[test]
 fn test_jbrd_roundtrip_small() {
-    let path = "/mnt/v/output/jpeg-reencoding/test64_444.jpg";
+    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
+        .to_string_lossy();
     let jpeg_data = std::fs::read(path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&jpeg_data).expect("failed to parse JPEG");
     let jxl_bytes =
@@ -470,14 +479,15 @@ fn test_jbrd_roundtrip_small() {
     assert_eq!(&jxl_bytes[4..8], b"JXL ", "bad container signature type");
 
     // Save for manual inspection
-    let out_dir = "/mnt/v/output/jpeg-reencoding";
+    let out_dir =
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "").to_string_lossy();
     let jxl_path = format!("{out_dir}/test64_jbrd.jxl");
     std::fs::write(&jxl_path, &jxl_bytes).expect("failed to write JXL");
     eprintln!("Saved to {jxl_path}");
 
     // Try to reconstruct JPEG with djxl
     let reconstructed_path = format!("{out_dir}/test64_reconstructed.jpg");
-    let djxl = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+    let djxl = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
         .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
         .output()
         .expect("failed to run djxl");
@@ -524,7 +534,10 @@ fn test_jbrd_roundtrip_small() {
 /// Test JBRD box with a multi-group JPEG (600x450 Landscape_1.jpg).
 #[test]
 fn test_jbrd_roundtrip_landscape() {
-    let path = "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_1.jpg";
+    let path = &format!(
+        "{}/imageflow/test_inputs/orientation/Landscape_1.jpg",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     let jpeg_data = std::fs::read(path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&jpeg_data).expect("failed to parse JPEG");
     let jxl_bytes =
@@ -538,13 +551,14 @@ fn test_jbrd_roundtrip_landscape() {
         jxl_bytes.len()
     );
 
-    let out_dir = "/mnt/v/output/jpeg-reencoding";
+    let out_dir =
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "").to_string_lossy();
     let jxl_path = format!("{out_dir}/landscape1_jbrd.jxl");
     std::fs::write(&jxl_path, &jxl_bytes).expect("failed to write JXL");
 
     // Try to reconstruct JPEG with djxl
     let reconstructed_path = format!("{out_dir}/landscape1_reconstructed.jpg");
-    let djxl = std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
+    let djxl = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
         .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
         .output()
         .expect("failed to run djxl");
@@ -593,7 +607,10 @@ fn test_jbrd_roundtrip_large_photos() {
     // Only 4:4:4 baseline JPEGs with mult-of-8 dims
     // (our VarDCT encoder doesn't handle chroma subsampling or non-mult-of-8 yet)
     let test_images = [
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/roof_test_800x600.jpg", // 800x600 4:4:4
+        &format!(
+            "{}/imageflow/test_inputs/roof_test_800x600.jpg",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        ), // 800x600 4:4:4
     ];
 
     for path in test_images {
@@ -617,17 +634,17 @@ fn test_jbrd_roundtrip_large_photos() {
             jxl_bytes.len() as f64 / jpeg_data.len() as f64 * 100.0
         );
 
-        let out_dir = "/mnt/v/output/jpeg-reencoding";
+        let out_dir =
+            &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "").to_string_lossy();
         let stem = basename.trim_end_matches(".jpg").trim_end_matches(".jpeg");
         let jxl_path = format!("{out_dir}/{stem}_jbrd.jxl");
         std::fs::write(&jxl_path, &jxl_bytes).unwrap();
 
         let reconstructed_path = format!("{out_dir}/{stem}_reconstructed.jpg");
-        let djxl =
-            std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-                .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
-                .output()
-                .expect("failed to run djxl");
+        let djxl = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+            .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
+            .output()
+            .expect("failed to run djxl");
 
         let stderr = String::from_utf8_lossy(&djxl.stderr);
         assert!(
@@ -650,7 +667,8 @@ fn test_jbrd_roundtrip_large_photos() {
 /// Test JBRD header parsing with jxl-oxide's jxl-jbr crate.
 #[test]
 fn test_jbrd_parse_oxide() {
-    let path = "/mnt/v/output/jpeg-reencoding/test64_444.jpg";
+    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
+        .to_string_lossy();
     let jpeg_data = std::fs::read(path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&jpeg_data).expect("failed to parse JPEG");
     let jbrd_bytes = encode_jbrd(&jpeg).expect("failed to encode JBRD");
@@ -695,8 +713,15 @@ fn test_jbrd_parse_oxide() {
 
 // ── Chroma subsampling tests ──
 
-const DJXL: &str = "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl";
-const OUT_DIR: &str = "/mnt/v/output/jpeg-reencoding";
+fn djxl_bin() -> String {
+    jxl_encoder::test_helpers::djxl_path()
+}
+
+fn out_dir() -> String {
+    jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "")
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// Encode JPEG → JXL container, run djxl --reconstruct_jpeg, compare byte-for-byte.
 fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
@@ -728,11 +753,12 @@ fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
         jxl_bytes.len(),
     );
 
-    let jxl_path = format!("{OUT_DIR}/{label}.jxl");
+    let out = out_dir();
+    let jxl_path = format!("{out}/{label}.jxl");
     std::fs::write(&jxl_path, &jxl_bytes).unwrap();
 
-    let reconstructed_path = format!("{OUT_DIR}/{label}_reconstructed.jpg");
-    let djxl = std::process::Command::new(DJXL)
+    let reconstructed_path = format!("{out}/{label}_reconstructed.jpg");
+    let djxl = std::process::Command::new(&djxl_bin())
         .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
         .output()
         .expect("failed to run djxl");
@@ -774,7 +800,8 @@ fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
 #[test]
 fn test_subsamp_444_64x64() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test64_444.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
+            .to_string_lossy(),
         "subsamp_444_64x64",
     );
 }
@@ -782,7 +809,8 @@ fn test_subsamp_444_64x64() {
 #[test]
 fn test_subsamp_444_128x128() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test128_444.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_444.jpg")
+            .to_string_lossy(),
         "subsamp_444_128x128",
     );
 }
@@ -792,7 +820,8 @@ fn test_subsamp_444_128x128() {
 #[test]
 fn test_subsamp_420_64x64() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test64_420.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_420.jpg")
+            .to_string_lossy(),
         "subsamp_420_64x64",
     );
 }
@@ -800,7 +829,8 @@ fn test_subsamp_420_64x64() {
 #[test]
 fn test_subsamp_420_128x128() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test128_420.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_420.jpg")
+            .to_string_lossy(),
         "subsamp_420_128x128",
     );
 }
@@ -808,7 +838,8 @@ fn test_subsamp_420_128x128() {
 #[test]
 fn test_subsamp_420_512x512() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test512_420.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test512_420.jpg")
+            .to_string_lossy(),
         "subsamp_420_512x512",
     );
 }
@@ -816,7 +847,8 @@ fn test_subsamp_420_512x512() {
 #[test]
 fn test_subsamp_420_odd_size() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test_odd_420.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test_odd_420.jpg")
+            .to_string_lossy(),
         "subsamp_420_odd_100x75",
     );
 }
@@ -826,7 +858,8 @@ fn test_subsamp_420_real_photo() {
     // Use a stripped version of Landscape_2 (no ICC profile — ICC roundtrip is a
     // separate JBRD issue, not related to chroma subsampling).
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test_real_420_stripped.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test_real_420_stripped.jpg")
+            .to_string_lossy(),
         "subsamp_420_real_stripped",
     );
 }
@@ -834,7 +867,10 @@ fn test_subsamp_420_real_photo() {
 #[test]
 fn test_subsamp_420_real_photo_icc() {
     roundtrip_jpeg_byteexact(
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_2.jpg",
+        &format!(
+            "{}/imageflow/test_inputs/orientation/Landscape_2.jpg",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        ),
         "subsamp_420_landscape2",
     );
 }
@@ -844,7 +880,8 @@ fn test_subsamp_420_real_photo_icc() {
 #[test]
 fn test_subsamp_422_64x64() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test64_422.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_422.jpg")
+            .to_string_lossy(),
         "subsamp_422_64x64",
     );
 }
@@ -852,7 +889,8 @@ fn test_subsamp_422_64x64() {
 #[test]
 fn test_subsamp_422_128x128() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test128_422.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_422.jpg")
+            .to_string_lossy(),
         "subsamp_422_128x128",
     );
 }
@@ -862,7 +900,8 @@ fn test_subsamp_422_128x128() {
 #[test]
 fn test_subsamp_440_64x64() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test64_440.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_440.jpg")
+            .to_string_lossy(),
         "subsamp_440_64x64",
     );
 }
@@ -870,7 +909,8 @@ fn test_subsamp_440_64x64() {
 #[test]
 fn test_subsamp_440_128x128() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test128_440.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_440.jpg")
+            .to_string_lossy(),
         "subsamp_440_128x128",
     );
 }
@@ -880,7 +920,8 @@ fn test_subsamp_440_128x128() {
 #[test]
 fn test_subsamp_gray_128x128() {
     roundtrip_jpeg_byteexact(
-        "/mnt/v/output/jpeg-reencoding/test128_gray.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_gray.jpg")
+            .to_string_lossy(),
         "subsamp_gray_128x128",
     );
 }
@@ -890,7 +931,8 @@ fn test_subsamp_gray_128x128() {
 #[test]
 fn test_jxlrs_444_64x64() {
     verify_jxl_rs_decodes(
-        "/mnt/v/output/jpeg-reencoding/test64_444.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
+            .to_string_lossy(),
         "jxlrs_444_64x64",
     );
 }
@@ -898,7 +940,8 @@ fn test_jxlrs_444_64x64() {
 #[test]
 fn test_jxlrs_420_128x128() {
     verify_jxl_rs_decodes(
-        "/mnt/v/output/jpeg-reencoding/test128_420.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_420.jpg")
+            .to_string_lossy(),
         "jxlrs_420_128x128",
     );
 }
@@ -906,7 +949,8 @@ fn test_jxlrs_420_128x128() {
 #[test]
 fn test_jxlrs_422_128x128() {
     verify_jxl_rs_decodes(
-        "/mnt/v/output/jpeg-reencoding/test128_422.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_422.jpg")
+            .to_string_lossy(),
         "jxlrs_422_128x128",
     );
 }
@@ -914,7 +958,8 @@ fn test_jxlrs_422_128x128() {
 #[test]
 fn test_jxlrs_440_128x128() {
     verify_jxl_rs_decodes(
-        "/mnt/v/output/jpeg-reencoding/test128_440.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_440.jpg")
+            .to_string_lossy(),
         "jxlrs_440_128x128",
     );
 }
@@ -922,7 +967,8 @@ fn test_jxlrs_440_128x128() {
 #[test]
 fn test_jxlrs_gray_128x128() {
     verify_jxl_rs_decodes(
-        "/mnt/v/output/jpeg-reencoding/test128_gray.jpg",
+        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test128_gray.jpg")
+            .to_string_lossy(),
         "jxlrs_gray_128x128",
     );
 }
@@ -930,7 +976,10 @@ fn test_jxlrs_gray_128x128() {
 #[test]
 fn test_jxlrs_420_real_icc() {
     verify_jxl_rs_decodes(
-        "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_2.jpg",
+        &format!(
+            "{}/imageflow/test_inputs/orientation/Landscape_2.jpg",
+            jxl_encoder::test_helpers::corpus_dir().display()
+        ),
         "jxlrs_420_landscape2",
     );
 }

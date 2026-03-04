@@ -56,7 +56,11 @@ pub const BLOCK_SIZE: usize = BLOCK_DIM * BLOCK_DIM;
 /// JXL signature bytes.
 pub const JXL_SIGNATURE: [u8; 2] = [0xFF, 0x0A];
 
-#[cfg(test)]
+/// Test path helpers for integration tests and examples.
+///
+/// Provides configurable paths via environment variables for corpus directories,
+/// tool binaries, and output directories. Not part of the public API.
+#[doc(hidden)]
 pub mod test_helpers;
 
 #[cfg(test)]

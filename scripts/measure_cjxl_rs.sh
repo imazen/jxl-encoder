@@ -10,12 +10,12 @@
 
 set -euo pipefail
 
-CJXL_RS="$(pwd)/target/release/cjxl-rs"
-DJXL="$HOME/work/jxl-efforts/libjxl/build/tools/djxl"
-SSIM2="$HOME/work/fast-ssim2/target/release/fast-ssim2-cli"
-BFLY="$HOME/work/jxl-efforts/libjxl/build/tools/butteraugli_main"
+CJXL_RS="${JXL_CLI_PATH:-$(pwd)/target/release/cjxl-rs}"
+DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
+SSIM2="${SSIMULACRA2_PATH:-$HOME/work/fast-ssim2/target/release/fast-ssim2-cli}"
+BFLY="${BUTTERAUGLI_MAIN_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/butteraugli_main}"
 
-CACHE_DIR="/mnt/v/output/jxl-encoder-rs/cjxl-rs-latest"
+CACHE_DIR="${JXL_ENCODER_OUTPUT_DIR:-/mnt/v/output/jxl-encoder-rs}/cjxl-rs-latest"
 STRIP_DIR="/tmp/cjxl-ref-stripped"
 PNM_DIR="/tmp/cjxl-ref-pnm"
 DECODED_DIR="/tmp/cjxl-rs-decoded"
@@ -50,10 +50,11 @@ if [ ! -f "$REF_CSV" ]; then
 fi
 
 # Corpora
+CORPUS="${CODEC_CORPUS_DIR:-$HOME/work/codec-corpus}"
 declare -A CORPUS_DIRS
-CORPUS_DIRS[clic2025]="$HOME/work/codec-corpus/clic2025-1024"
-CORPUS_DIRS[cid22]="$HOME/work/codec-corpus/CID22/CID22-512/validation"
-CORPUS_DIRS[gb82-sc]="$HOME/work/codec-corpus/gb82-sc"
+CORPUS_DIRS[clic2025]="${CORPUS}/clic2025-1024"
+CORPUS_DIRS[cid22]="${CORPUS}/CID22/CID22-512/validation"
+CORPUS_DIRS[gb82-sc]="${CORPUS}/gb82-sc"
 
 mkdir -p "$CACHE_DIR" "$STRIP_DIR" "$PNM_DIR" "$DECODED_DIR"
 

@@ -1223,11 +1223,10 @@ fn test_dct64x64_forced_decode() {
     let tmp = std::env::temp_dir().join("test_dct64x64.jxl");
     let tmp_ppm = std::env::temp_dir().join("test_dct64x64.png");
     std::fs::write(&tmp, &encoded).unwrap();
-    let djxl_status =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(&tmp)
-            .arg(&tmp_ppm)
-            .output();
+    let djxl_status = std::process::Command::new(&crate::test_helpers::djxl_path())
+        .arg(&tmp)
+        .arg(&tmp_ppm)
+        .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
             eprintln!("DCT64x64: djxl decode OK");
@@ -1291,11 +1290,10 @@ fn test_dct64x32_forced_decode() {
 
     // Decode with djxl
     let tmp_ppm = std::env::temp_dir().join("test_dct64x32.png");
-    let djxl_status =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(&tmp_jxl)
-            .arg(&tmp_ppm)
-            .output();
+    let djxl_status = std::process::Command::new(&crate::test_helpers::djxl_path())
+        .arg(&tmp_jxl)
+        .arg(&tmp_ppm)
+        .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
             eprintln!("DCT64x32: djxl decode OK");
@@ -1359,11 +1357,10 @@ fn test_dct32x64_forced_decode() {
 
     // Decode with djxl
     let tmp_ppm = std::env::temp_dir().join("test_dct32x64.png");
-    let djxl_status =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(&tmp_jxl)
-            .arg(&tmp_ppm)
-            .output();
+    let djxl_status = std::process::Command::new(&crate::test_helpers::djxl_path())
+        .arg(&tmp_jxl)
+        .arg(&tmp_ppm)
+        .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
             eprintln!("DCT32x64: djxl decode OK");
@@ -1426,11 +1423,10 @@ fn test_dct64x64_forced_256x256() {
     let tmp_jxl = std::env::temp_dir().join("test_dct64x64_256.jxl");
     let tmp_png = std::env::temp_dir().join("test_dct64x64_256.png");
     std::fs::write(&tmp_jxl, &encoded).unwrap();
-    let djxl_status =
-        std::process::Command::new("/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl")
-            .arg(&tmp_jxl)
-            .arg(&tmp_png)
-            .output();
+    let djxl_status = std::process::Command::new(&crate::test_helpers::djxl_path())
+        .arg(&tmp_jxl)
+        .arg(&tmp_png)
+        .output();
     match djxl_status {
         Ok(output) if output.status.success() => {
             eprintln!("DCT64x64 256x256: djxl decode OK");

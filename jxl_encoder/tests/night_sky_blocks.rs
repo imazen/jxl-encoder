@@ -8,7 +8,11 @@ use rgb::RGB;
 use std::io::Cursor;
 use std::path::Path;
 
-const OUT_DIR: &str = "/mnt/v/output/jxl-encoder-rs/night_sky_coeff";
+fn out_dir() -> String {
+    jxl_encoder::test_helpers::output_dir("night_sky_coeff")
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// Convert sRGB u8 (normalized to 0..1) to linear light using correct sRGB EOTF.
 fn srgb_to_linear_val(c: f32) -> f32 {
@@ -46,13 +50,11 @@ fn decode_jxl_linear(bytes: &[u8]) -> (usize, usize, Vec<f32>) {
 /// Decode JXL bytes to sRGB u8 via djxl.
 fn decode_djxl_srgb(jxl_path: &str) -> Option<(usize, usize, Vec<u8>)> {
     let png_path = format!("{}.decoded.png", jxl_path);
-    let base = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    let ok =
-        std::process::Command::new(format!("{}/work/jxl-efforts/libjxl/build/tools/djxl", base))
-            .args([jxl_path, &png_path])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+    let ok = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        .args([jxl_path, &png_path])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     if !ok {
         return None;
     }
@@ -193,14 +195,16 @@ fn error_diff_image(orig: &[u8], ours: &[u8], cjxl: &[u8], width: usize, height:
 fn test_night_sky_block_comparison() {
     use jxl_encoder::api::{LossyConfig, PixelLayout};
 
-    let img_path = "/home/lilith/work/codec-corpus/gb82/night-lossless.png";
+    let img_path = &format!(
+        "{}/gb82/night-lossless.png",
+        jxl_encoder::test_helpers::corpus_dir().display()
+    );
     if !Path::new(img_path).exists() {
         eprintln!("SKIP: {} not found", img_path);
         return;
     }
 
-    let base = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/lilith"));
-    std::fs::create_dir_all(OUT_DIR).ok();
+    std::fs::create_dir_all(out_dir()).ok();
 
     let distance = 4.0f32;
 
@@ -218,7 +222,7 @@ fn test_night_sky_block_comparison() {
     let our_bytes = LossyConfig::new(distance)
         .encode(rgb.as_raw(), w as u32, h as u32, PixelLayout::Rgb8)
         .expect("our encode failed");
-    let our_jxl_path = format!("{}/ours_d{}.jxl", OUT_DIR, distance);
+    let our_jxl_path = format!("{}/ours_d{}.jxl", out_dir(), distance);
     std::fs::write(&our_jxl_path, &our_bytes).unwrap();
 
     // Decode our output
@@ -235,13 +239,12 @@ fn test_night_sky_block_comparison() {
         .collect();
 
     // --- Encode with cjxl ---
-    let cjxl_path = format!("{}/cjxl_d{}.jxl", OUT_DIR, distance);
-    let cjxl_ok =
-        std::process::Command::new(format!("{}/work/jxl-efforts/libjxl/build/tools/cjxl", base))
-            .args([img_path, &cjxl_path, "-d", &distance.to_string(), "-e", "7"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+    let cjxl_path = format!("{}/cjxl_d{}.jxl", out_dir(), distance);
+    let cjxl_ok = std::process::Command::new(&jxl_encoder::test_helpers::cjxl_path())
+        .args([img_path, &cjxl_path, "-d", &distance.to_string(), "-e", "7"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
     if !cjxl_ok {
         eprintln!("SKIP: cjxl encode failed");
@@ -480,14 +483,14 @@ fn test_night_sky_block_comparison() {
     }
 
     // --- Save decoded images for visual comparison ---
-    let our_png_path = format!("{}/ours_decoded.png", OUT_DIR);
+    let our_png_path = format!("{}/ours_decoded.png", out_dir());
     let our_img = image::RgbImage::from_raw(w as u32, h as u32, our_srgb.clone()).unwrap();
     our_img.save(&our_png_path).unwrap();
 
     // Save error diff map
     let diff_map = error_diff_image(&original_srgb, &our_srgb, &cjxl_srgb, w, h);
     let diff_img = image::RgbImage::from_raw(w as u32, h as u32, diff_map).unwrap();
-    let diff_path = format!("{}/error_diff_map.png", OUT_DIR);
+    let diff_path = format!("{}/error_diff_map.png", out_dir());
     diff_img.save(&diff_path).unwrap();
 
     // Save amplified error images (|original - decoded| * 8)
@@ -498,7 +501,7 @@ fn test_night_sky_block_comparison() {
         .collect();
     let our_err_png = image::RgbImage::from_raw(w as u32, h as u32, our_err_img).unwrap();
     our_err_png
-        .save(format!("{}/ours_error_8x.png", OUT_DIR))
+        .save(format!("{}/ours_error_8x.png", out_dir()))
         .unwrap();
 
     let cjxl_err_img: Vec<u8> = original_srgb
@@ -508,7 +511,7 @@ fn test_night_sky_block_comparison() {
         .collect();
     let cjxl_err_png = image::RgbImage::from_raw(w as u32, h as u32, cjxl_err_img).unwrap();
     cjxl_err_png
-        .save(format!("{}/cjxl_error_8x.png", OUT_DIR))
+        .save(format!("{}/cjxl_error_8x.png", out_dir()))
         .unwrap();
 
     // Per-block MSE heatmap
@@ -522,14 +525,14 @@ fn test_night_sky_block_comparison() {
         bw,
         bh,
         mse_max,
-        &format!("{}/ours_block_mse.png", OUT_DIR),
+        &format!("{}/ours_block_mse.png", out_dir()),
     );
     save_block_heatmap(
         &cjxl_mse,
         bw,
         bh,
         mse_max,
-        &format!("{}/cjxl_block_mse.png", OUT_DIR),
+        &format!("{}/cjxl_block_mse.png", out_dir()),
     );
 
     // Diff heatmap: our MSE - cjxl MSE
@@ -542,12 +545,12 @@ fn test_night_sky_block_comparison() {
         &mse_diff,
         bw,
         bh,
-        &format!("{}/block_mse_diff.png", OUT_DIR),
+        &format!("{}/block_mse_diff.png", out_dir()),
     );
 
     // Montage: original | ours | cjxl | error diff
-    let cjxl_decoded_path = format!("{}/cjxl_d{}.jxl.decoded.png", OUT_DIR, distance);
-    let orig_copy_path = format!("{}/original.png", OUT_DIR);
+    let cjxl_decoded_path = format!("{}/cjxl_d{}.jxl.decoded.png", out_dir(), distance);
+    let orig_copy_path = format!("{}/original.png", out_dir());
     img.save(&orig_copy_path).unwrap();
 
     let _ = std::process::Command::new("montage")
@@ -562,36 +565,36 @@ fn test_night_sky_block_comparison() {
             "+2+2",
             "-label",
             "",
-            &format!("{}/montage.png", OUT_DIR),
+            &format!("{}/montage.png", out_dir()),
         ])
         .status();
 
     let _ = std::process::Command::new("montage")
         .args([
-            &format!("{}/ours_error_8x.png", OUT_DIR),
-            &format!("{}/cjxl_error_8x.png", OUT_DIR),
+            &format!("{}/ours_error_8x.png", out_dir()),
+            &format!("{}/cjxl_error_8x.png", out_dir()),
             "-tile",
             "2x1",
             "-geometry",
             "+2+2",
-            &format!("{}/error_montage.png", OUT_DIR),
+            &format!("{}/error_montage.png", out_dir()),
         ])
         .status();
 
     eprintln!("\n--- Output Files ---");
-    eprintln!("Decoded:       {}/ours_decoded.png", OUT_DIR);
-    eprintln!("Error diff:    {}/error_diff_map.png", OUT_DIR);
+    eprintln!("Decoded:       {}/ours_decoded.png", out_dir());
+    eprintln!("Error diff:    {}/error_diff_map.png", out_dir());
     eprintln!(
         "Error 8x:      {}/ours_error_8x.png, cjxl_error_8x.png",
-        OUT_DIR
+        out_dir()
     );
     eprintln!(
         "Block MSE:     {}/ours_block_mse.png, cjxl_block_mse.png",
-        OUT_DIR
+        out_dir()
     );
-    eprintln!("MSE diff:      {}/block_mse_diff.png", OUT_DIR);
-    eprintln!("Montage:       {}/montage.png", OUT_DIR);
-    eprintln!("Error montage: {}/error_montage.png", OUT_DIR);
+    eprintln!("MSE diff:      {}/block_mse_diff.png", out_dir());
+    eprintln!("Montage:       {}/montage.png", out_dir());
+    eprintln!("Error montage: {}/error_montage.png", out_dir());
 
     // --- Strategy analysis (using internal encoder) ---
     let linear_rgb: Vec<f32> = rgb

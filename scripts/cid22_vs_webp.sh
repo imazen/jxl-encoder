@@ -1,12 +1,13 @@
 #!/bin/bash
 set -e
 
-CWEBP=~/work/libwebp/examples/cwebp
-DWEBP=~/work/libwebp/examples/dwebp
-SSIM2=~/work/fast-ssim2/target/release/fast-ssim2-cli
-CJXL=~/work/jxl-encoder-rs/target/debug/cjxl-rs
-DJXL=~/work/jxl-efforts/libjxl/build/tools/djxl
-IMGDIR=~/work/codec-corpus/CID22/CID22-512/validation
+CWEBP="${CWEBP_PATH:-$HOME/work/libwebp/examples/cwebp}"
+DWEBP="${DWEBP_PATH:-$HOME/work/libwebp/examples/dwebp}"
+SSIM2="${SSIMULACRA2_PATH:-$HOME/work/fast-ssim2/target/release/fast-ssim2-cli}"
+CJXL="${JXL_CLI_PATH:-$HOME/work/jxl-encoder-rs/target/debug/cjxl-rs}"
+DJXL="${DJXL_PATH:-$HOME/work/jxl-efforts/libjxl/build/tools/djxl}"
+CORPUS="${CODEC_CORPUS_DIR:-$HOME/work/codec-corpus}"
+IMGDIR="${CORPUS}/CID22/CID22-512/validation"
 TMPDIR=/tmp/rd_compare_$$
 mkdir -p "$TMPDIR"
 

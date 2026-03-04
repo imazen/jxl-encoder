@@ -791,8 +791,10 @@ mod tests {
 
     #[test]
     fn test_encode_real_jpeg() {
-        let path =
-            "/home/lilith/work/codec-corpus/imageflow/test_inputs/orientation/Landscape_1.jpg";
+        let path = format!(
+            "{}/imageflow/test_inputs/orientation/Landscape_1.jpg",
+            crate::test_helpers::corpus_dir().display()
+        );
         let data = std::fs::read(path).expect("failed to read test JPEG");
         let jpeg = super::super::parse::read_jpeg(&data).expect("failed to parse JPEG");
         let jxl = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
@@ -813,8 +815,9 @@ mod tests {
 
     #[test]
     fn test_encode_420_jpeg() {
-        let path = "/mnt/v/output/jpeg-reencoding/test128_420.jpg";
-        let data = std::fs::read(path).expect("failed to read test JPEG");
+        let path =
+            crate::test_helpers::output_dir_for("jpeg-reencoding", "").join("test128_420.jpg");
+        let data = std::fs::read(&path).expect("failed to read test JPEG");
         let jpeg = super::super::parse::read_jpeg(&data).expect("failed to parse JPEG");
 
         // Verify it's actually 4:2:0
