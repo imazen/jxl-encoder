@@ -398,7 +398,7 @@ fn test_16bit_lossless_djxl_decode() {
     let temp_png = "/tmp/test_16bit_lossless.png";
     std::fs::write(temp_jxl, &jxl).unwrap();
 
-    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([temp_jxl, temp_png])
         .output()
         .expect("djxl not found");
@@ -430,7 +430,7 @@ fn test_container_exif_djxl_decode() {
     let temp_png = "/tmp/test_container_exif.png";
     std::fs::write(temp_jxl, &jxl).unwrap();
 
-    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([temp_jxl, temp_png])
         .output()
         .expect("djxl not found");

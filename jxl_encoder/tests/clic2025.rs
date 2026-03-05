@@ -7769,7 +7769,7 @@ fn decode_djxl_for_patches(data: &[u8]) -> (usize, usize, Vec<u8>) {
     let temp_png = format!("/tmp/patches_test_{}_{}.png", pid, ts);
 
     std::fs::write(&temp_jxl, data).unwrap();
-    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([&temp_jxl, &temp_png])
         .output()
         .unwrap();
@@ -8137,7 +8137,7 @@ fn test_patches_synthetic_screenshot_encode() {
     std::fs::write(&test_path, &data).unwrap();
 
     let decoded_path = patches_dir.join("synthetic_test.png");
-    let output = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([&test_path, &decoded_path])
         .output();
     if let Ok(out) = output {

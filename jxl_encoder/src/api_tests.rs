@@ -2391,7 +2391,7 @@ mod quality_comparison_tests {
         let out_path = std::env::temp_dir().join(format!("libjxl_test_{}.png", std::process::id()));
 
         // Encode with cjxl
-        let status = Command::new(&libjxl_cjxl())
+        let status = Command::new(libjxl_cjxl())
             .arg(input)
             .arg(&jxl_path)
             .arg("-d")
@@ -2405,7 +2405,7 @@ mod quality_comparison_tests {
         }
 
         // Decode with djxl
-        let status = Command::new(&libjxl_djxl())
+        let status = Command::new(libjxl_djxl())
             .arg(&jxl_path)
             .arg(&out_path)
             .output()
@@ -2480,7 +2480,7 @@ mod quality_comparison_tests {
 
         // libjxl size
         let jxl_path = std::env::temp_dir().join(format!("libjxl_size_{}.jxl", std::process::id()));
-        let libjxl_size = Command::new(&libjxl_cjxl())
+        let libjxl_size = Command::new(libjxl_cjxl())
             .arg(input_path)
             .arg(&jxl_path)
             .arg("-d")
@@ -2843,7 +2843,7 @@ mod dual_decoder_butteraugli_tests {
             .map_err(|e| format!("Failed to write temp JXL: {}", e))?;
 
         // Decode with jxl-rs CLI
-        let output = Command::new(&crate::test_helpers::jxl_cli_path())
+        let output = Command::new(crate::test_helpers::jxl_cli_path())
             .args([&jxl_path, &png_path])
             .output()
             .map_err(|e| format!("Failed to run jxl_cli: {}", e))?;
@@ -4519,7 +4519,7 @@ fn test_rgb_lossless_djxl_sweep() {
             // Test djxl
             let path = format!("/tmp/sweep_{}x{}.jxl", w, h);
             std::fs::write(&path, &encoded).unwrap();
-            let output = Command::new(&crate::test_helpers::djxl_path())
+            let output = Command::new(crate::test_helpers::djxl_path())
                 .args([&path, &format!("/tmp/sweep_{}x{}.png", w, h)])
                 .output();
             match output {
@@ -4609,7 +4609,7 @@ fn test_rgb_lossless_gradient_pattern_sweep() {
                 let tree_str = if use_tree { "tree" } else { "notree" };
                 let path = format!("/tmp/grad_{}x{}_{}.jxl", w, h, tree_str);
                 std::fs::write(&path, &encoded).unwrap();
-                let output = Command::new(&crate::test_helpers::djxl_path())
+                let output = Command::new(crate::test_helpers::djxl_path())
                     .args([&path, &format!("/tmp/grad_{}x{}_{}.png", w, h, tree_str)])
                     .output();
                 match output {
@@ -4735,7 +4735,7 @@ fn test_tree_learning_debug_single() {
 
         // Decode with djxl and verify pixels
         let djxl_png_path = format!("/tmp/tree_debug_{}.png", name);
-        let djxl_status = std::process::Command::new(&crate::test_helpers::djxl_path())
+        let djxl_status = std::process::Command::new(crate::test_helpers::djxl_path())
             .args([&path, &djxl_png_path])
             .output()
             .map(|o| o.status.success())

@@ -2,6 +2,9 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
+// archmage::arcane macro expansion doesn't propagate function-level allows.
+#![allow(clippy::too_many_arguments)]
+
 //! Hierarchical AC strategy search for multi-block transforms.
 //!
 //! Evaluates DCT16x16, DCT32x32, DCT64x64, and their rectangular variants

@@ -2,6 +2,9 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
+// archmage::arcane macro expansion doesn't propagate function-level allows.
+#![allow(clippy::too_many_arguments)]
+
 //! Encoder-side reconstruction pipeline.
 //!
 //! Simulates what the decoder produces from quantized coefficients, enabling:

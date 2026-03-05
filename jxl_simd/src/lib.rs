@@ -23,6 +23,8 @@
 
 #![cfg_attr(not(feature = "unsafe-performance"), forbid(unsafe_code))]
 #![cfg_attr(feature = "unsafe-performance", deny(unsafe_code))]
+// Numerical SIMD/DSP code: range loops and many-parameter kernels are natural.
+#![allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 #![no_std]
 extern crate alloc;
 
