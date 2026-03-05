@@ -50,7 +50,7 @@ fn decode_jxl_linear(bytes: &[u8]) -> (usize, usize, Vec<f32>) {
 /// Decode JXL bytes to sRGB u8 via djxl.
 fn decode_djxl_srgb(jxl_path: &str) -> Option<(usize, usize, Vec<u8>)> {
     let png_path = format!("{}.decoded.png", jxl_path);
-    let ok = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let ok = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([jxl_path, &png_path])
         .output()
         .map(|o| o.status.success())
@@ -240,7 +240,7 @@ fn test_night_sky_block_comparison() {
 
     // --- Encode with cjxl ---
     let cjxl_path = format!("{}/cjxl_d{}.jxl", out_dir(), distance);
-    let cjxl_ok = std::process::Command::new(&jxl_encoder::test_helpers::cjxl_path())
+    let cjxl_ok = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
         .args([img_path, &cjxl_path, "-d", &distance.to_string(), "-e", "7"])
         .output()
         .map(|o| o.status.success())
