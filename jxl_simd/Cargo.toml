@@ -19,7 +19,7 @@ std = ["archmage/std", "magetypes/std"]
 unsafe-performance = []
 
 [dependencies]
-archmage = { version = "0.9", default-features = false, features = ["macros", "safe_unaligned_simd"] }
+archmage = { version = "0.9", default-features = false, features = ["macros"] }
 magetypes = { version = "0.9", default-features = false }
 
 [lints]
