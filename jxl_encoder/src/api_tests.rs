@@ -4812,10 +4812,12 @@ fn test_progressive_minimal() {
     // Test across effort levels to exercise different code paths
     // e1-2: DCT8 only; e3: multi-block transforms + custom orders; e5: ANS + pixel-domain loss
     for effort in [1, 3, 5] {
-        let encoded = LossyConfig::new(2.0)
+        let config = LossyConfig::new(2.0)
             .with_progressive(ProgressiveMode::QuantizedAcFullAc)
-            .with_effort(effort)
-            .with_butteraugli_iters(0)
+            .with_effort(effort);
+        #[cfg(feature = "butteraugli-loop")]
+        let config = config.with_butteraugli_iters(0);
+        let encoded = config
             .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
             .unwrap();
 
@@ -4865,10 +4867,12 @@ fn test_progressive_qprogressive_roundtrip() {
     }
 
     // Encode with 2-pass progressive
-    let encoded = LossyConfig::new(1.0)
+    let config = LossyConfig::new(1.0)
         .with_progressive(ProgressiveMode::QuantizedAcFullAc)
-        .with_effort(5) // lower effort for faster test
-        .with_butteraugli_iters(0)
+        .with_effort(5); // lower effort for faster test
+    #[cfg(feature = "butteraugli-loop")]
+    let config = config.with_butteraugli_iters(0);
+    let encoded = config
         .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
         .unwrap();
 
@@ -4938,17 +4942,20 @@ fn test_progressive_multigroup() {
     }
 
     // Encode without progressive for comparison
-    let nonprog = LossyConfig::new(2.0)
-        .with_effort(5)
-        .with_butteraugli_iters(0)
+    let nonprog_config = LossyConfig::new(2.0).with_effort(5);
+    #[cfg(feature = "butteraugli-loop")]
+    let nonprog_config = nonprog_config.with_butteraugli_iters(0);
+    let nonprog = nonprog_config
         .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
         .unwrap();
 
     // Encode with 2-pass progressive, effort 5
-    let encoded = LossyConfig::new(2.0)
+    let config = LossyConfig::new(2.0)
         .with_progressive(ProgressiveMode::QuantizedAcFullAc)
-        .with_effort(5)
-        .with_butteraugli_iters(0)
+        .with_effort(5);
+    #[cfg(feature = "butteraugli-loop")]
+    let config = config.with_butteraugli_iters(0);
+    let encoded = config
         .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
         .unwrap();
 
@@ -5024,10 +5031,12 @@ fn test_progressive_multigroup_photo() {
     eprintln!("Photo: {}x{}, {} bytes", w, h, data.len());
 
     // Encode with 2-pass progressive
-    let encoded = LossyConfig::new(2.0)
+    let config = LossyConfig::new(2.0)
         .with_progressive(ProgressiveMode::QuantizedAcFullAc)
-        .with_effort(5)
-        .with_butteraugli_iters(0)
+        .with_effort(5);
+    #[cfg(feature = "butteraugli-loop")]
+    let config = config.with_butteraugli_iters(0);
+    let encoded = config
         .encode(data, w as u32, h as u32, PixelLayout::Rgb8)
         .unwrap();
 
@@ -5083,10 +5092,12 @@ fn test_progressive_3pass_roundtrip() {
     }
 
     // Encode with 3-pass progressive
-    let encoded = LossyConfig::new(1.0)
+    let config = LossyConfig::new(1.0)
         .with_progressive(ProgressiveMode::DcVlfLfAc)
-        .with_effort(5)
-        .with_butteraugli_iters(0)
+        .with_effort(5);
+    #[cfg(feature = "butteraugli-loop")]
+    let config = config.with_butteraugli_iters(0);
+    let encoded = config
         .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
         .unwrap();
 

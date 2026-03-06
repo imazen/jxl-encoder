@@ -26,13 +26,15 @@ debug-rect = ["jxl_encoder/debug-rect"]
 rate-control = ["jxl_encoder/rate-control"]
 # Enable butteraugli quantization loop for per-block quality refinement
 butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
+# Enable SSIM2 quantization loop (alternative to butteraugli)
+ssim2-loop = ["jxl_encoder/ssim2-loop"]
 # Enable parallel group encoding with rayon
 parallel = ["jxl_encoder/parallel"]
 # Use MaybeUninit for hot-path buffers (eliminates memset zero-fill)
 unsafe-performance = ["jxl_encoder/unsafe-performance"]
 
 [dependencies]
-jxl_encoder = { package = "jxl-encoder", path = "../jxl_encoder", version = "0.1.0", default-features = false }
+jxl_encoder = { package = "jxl-encoder", path = "../jxl_encoder", version = "0.2.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 png = "0.18"
 
