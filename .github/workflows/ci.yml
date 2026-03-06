@@ -47,10 +47,10 @@ jobs:
         run: cargo test --workspace --release --no-default-features --features "${{ env.CI_FEATURES }}" --lib
 
   # ==========================================================================
-  # Native ARM64 testing (NEON SIMD validation)
+  # Native ARM64 + macOS Intel testing
   # ==========================================================================
-  build-aarch64:
-    name: Build aarch64 (${{ matrix.name }})
+  build-native:
+    name: Build native (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -60,6 +60,7 @@ jobs:
           - { os: macos-latest, name: macOS, run_tests: true }
           # Windows ARM: build-only (fd-lock dev-dep doesn't compile on aarch64-windows)
           - { os: windows-11-arm, name: "Windows ARM", run_tests: false }
+          - { os: macos-26-intel, name: "macOS Intel", run_tests: true }
 
     steps:
       - uses: actions/checkout@v6

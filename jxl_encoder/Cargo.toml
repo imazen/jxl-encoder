@@ -20,7 +20,7 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 whereat = "0.1.3"
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
-jxl_simd = { package = "jxl-encoder-simd", version = "0.1.1", path = "../jxl_simd", default-features = false }
+jxl_simd = { package = "jxl-encoder-simd", version = "0.2.0", path = "../jxl_simd", default-features = false }
 archmage = { version = "0.9", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.6.1", default-features = false, features = ["std", "decoder"], optional = true }
@@ -30,6 +30,7 @@ jxl-oxide = { version = "0.12.5", default-features = false, optional = true }
 butteraugli = { version = "0.8", path = "../../butteraugli/butteraugli", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
+fast-ssim2 = { version = "0.7.0", features = ["imgref"], optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -49,6 +50,7 @@ safe-mode = []
 rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
+ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 parallel = ["std", "dep:rayon"]
 # Use MaybeUninit for hot-path temporary buffers instead of zero-initialization.

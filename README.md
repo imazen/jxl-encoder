@@ -6,9 +6,9 @@
 [![codecov](https://codecov.io/gh/imazen/jxl-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder)
 [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
-A comprehensive, pure Rust JPEG XL encoder. 67k lines of library code, 19k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
+A comprehensive, pure Rust JPEG XL encoder. 77k lines of library code, 24k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
-`#![forbid(unsafe_code)]`. 740+ tests passing.
+`#![forbid(unsafe_code)]`. 940+ tests passing.
 
 ## Library usage
 
@@ -51,7 +51,7 @@ cjxl-rs --help
 
 ## Lossy quality vs libjxl
 
-At d=0.5, files are ~5% larger but 30% better butteraugli quality. At d=1.0, near-equal size with 14% better quality. At d=2.0+, equal or smaller files at comparable quality. Measured on 12 CLIC2025 1024x1024 images vs cjxl effort 5/7.
+At size parity overall vs cjxl effort 7 (357 commits of optimization). At d=0.25-0.5, files are 2-3% smaller with better butteraugli. At d=1.0-2.0, files are 1-3% larger at comparable quality. Measured on 41 CID22 images across 9 distances.
 
 ## Feature coverage
 
@@ -71,7 +71,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | Butteraugli quant loop (default-on) | Yes | Yes | Yes (2 iterations) |
 | EPF per-block sharpness | Yes | Yes | Yes |
 | Content-adaptive block context map | Yes | Yes | Yes |
-| Error diffusion in AC quantization | No | No | Yes (default-on) |
+| Error diffusion in AC quantization | No | No | Yes (opt-in) |
 | Noise synthesis (opt-in) | Yes | Yes | Yes |
 | Lossy + alpha (VarDCT RGB + modular alpha) | Yes | Yes | Yes |
 | JPEG re-encoding | Yes | Yes | Yes (opt-in feature) |
@@ -79,7 +79,9 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | 16-bit / float input | Yes | Yes | Yes (14 pixel layouts) |
 | Patches / dictionary (default-on for screenshots) | No | Yes | Yes |
 | Fine-grained AC strategy search | Yes | Yes | Yes (effort 9+) |
-| Splines / dots | No | Yes | No |
+| Splines (opt-in API) | No | Yes | Yes |
+| Dots detection | No | Yes | No |
+| Progressive VarDCT (2-pass / 3-pass) | Yes | Yes | Yes |
 
 ### Lossless (Modular) — comparison with libjxl
 
@@ -129,9 +131,7 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 
 | Feature | libjxl | Impact | Notes |
 |---------|--------|--------|-------|
-| Splines | e7+ | Content-specific | Parametric curves (power lines, horizons) |
 | Dots detection | e7+ | Niche | Star fields, specular highlights |
-| Progressive encoding | All | UX only | Multi-pass for incremental decode |
 
 ## AC strategy coverage
 
@@ -162,8 +162,8 @@ cargo clippy --workspace -- -D warnings    # lint
 ## Project structure
 
 ```
-jxl-encoder/                             ~113k lines of Rust
-├── jxl_encoder/             56k lib + 19k tests
+jxl-encoder/                             ~101k lines of Rust
+├── jxl_encoder/             77k lib + 24k tests
 │   └── src/
 │       ├── api.rs               # Public API (LossyConfig, LosslessConfig, EncodeRequest)
 │       ├── vardct/              # VarDCT (lossy) encoder
