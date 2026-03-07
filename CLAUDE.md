@@ -1421,7 +1421,7 @@ See `/home/lilith/work/zendiff/API_COMPARISON.md` for full cross-codec compariso
 - [x] `PixelLayout::bytes_per_pixel()` public + const, `is_linear()`, `has_alpha()`
 - [x] CLI updated to use new API (LosslessConfig/LossyConfig/PixelLayout)
 - [x] Hide old `EncoderOptions` + `Encoder` API (#[doc(hidden)], no root re-exports)
-- [ ] Add streaming `JxlEncoder` with `push()`/`finish()`/`finish_into()`/`finish_to()`
+- [x] Add streaming `LossyEncoder`/`LosslessEncoder` with `push_rows()`/`finish()`/`finish_into()`/`finish_to()`
 - [x] `encode_to()`/`finish_to()` std-only (gated behind `feature = "std"`)
 - [x] Add `At<>` error location tracking (from `whereat` crate)
 - [x] Add `EncodeStats` for encode metrics

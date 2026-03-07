@@ -1824,6 +1824,981 @@ impl<'a> EncodeRequest<'a> {
     }
 }
 
+// ── Streaming Encoders ──────────────────────────────────────────────────────
+
+/// Streaming lossy (VarDCT) encoder.
+///
+/// Accepts pixel rows incrementally via [`push_rows`](Self::push_rows), then
+/// encodes on [`finish`](Self::finish). This allows callers to free source pixel
+/// buffers as rows are pushed, rather than materializing the entire image in
+/// memory before encoding.
+///
+/// ```rust,no_run
+/// use jxl_encoder::{LossyConfig, PixelLayout};
+///
+/// let mut enc = LossyConfig::new(1.0)
+///     .encoder(800, 600, PixelLayout::Rgb8)?;
+///
+/// // Push rows from a streaming source (e.g. PNG decoder)
+/// # let row_bytes = 800 * 3;
+/// # let source_rows = vec![0u8; row_bytes * 600];
+/// for chunk in source_rows.chunks(row_bytes * 100) {
+///     enc.push_rows(chunk, 100)?;
+/// }
+///
+/// let jxl_bytes = enc.finish()?;
+/// # Ok::<_, jxl_encoder::At<jxl_encoder::EncodeError>>(())
+/// ```
+pub struct LossyEncoder {
+    cfg: LossyConfig,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    rows_pushed: u32,
+    linear_rgb: Vec<f32>,
+    alpha: Option<Vec<u8>>,
+    bit_depth_16: bool,
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
+    source_gamma: Option<f32>,
+    color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
+}
+
+impl LossyEncoder {
+    /// Attach an ICC color profile.
+    pub fn with_icc_profile(mut self, data: &[u8]) -> Self {
+        self.icc_profile = Some(data.to_vec());
+        self
+    }
+
+    /// Attach EXIF data.
+    pub fn with_exif(mut self, data: &[u8]) -> Self {
+        self.exif = Some(data.to_vec());
+        self
+    }
+
+    /// Attach XMP data.
+    pub fn with_xmp(mut self, data: &[u8]) -> Self {
+        self.xmp = Some(data.to_vec());
+        self
+    }
+
+    /// Specify that source pixels use a custom gamma transfer function.
+    pub fn with_source_gamma(mut self, gamma: f32) -> Self {
+        self.source_gamma = Some(gamma);
+        self
+    }
+
+    /// Override the color encoding written to the JXL header.
+    pub fn with_color_encoding(
+        mut self,
+        ce: crate::headers::color_encoding::ColorEncoding,
+    ) -> Self {
+        self.color_encoding = Some(ce);
+        self
+    }
+
+    /// Number of rows pushed so far.
+    pub fn rows_pushed(&self) -> u32 {
+        self.rows_pushed
+    }
+
+    /// Total expected height.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Push pixel rows into the encoder.
+    ///
+    /// `pixels` must contain exactly `width * num_rows * bytes_per_pixel` bytes.
+    /// Rows are converted to the internal linear f32 format immediately, so the
+    /// caller can free the source buffer after this call returns.
+    #[track_caller]
+    pub fn push_rows(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
+        self.push_rows_inner(pixels, num_rows).map_err(at)
+    }
+
+    fn push_rows_inner(
+        &mut self,
+        pixels: &[u8],
+        num_rows: u32,
+    ) -> core::result::Result<(), EncodeError> {
+        if num_rows == 0 {
+            return Ok(());
+        }
+        let remaining = self.height - self.rows_pushed;
+        if num_rows > remaining {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "push_rows: {num_rows} rows would exceed image height \
+                     ({} pushed + {num_rows} > {})",
+                    self.rows_pushed, self.height
+                ),
+            });
+        }
+        let w = self.width as usize;
+        let n = num_rows as usize;
+        let expected = w
+            .checked_mul(n)
+            .and_then(|wn| wn.checked_mul(self.layout.bytes_per_pixel()));
+        match expected {
+            Some(expected) if pixels.len() == expected => {}
+            Some(expected) => {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "push_rows: expected {expected} bytes for {w}x{n} {:?}, got {}",
+                        self.layout,
+                        pixels.len()
+                    ),
+                });
+            }
+            None => {
+                return Err(EncodeError::InvalidInput {
+                    message: "push_rows: row dimensions overflow".into(),
+                });
+            }
+        }
+
+        let gamma = self.source_gamma;
+
+        // Convert and append linear RGB
+        let new_linear: Vec<f32> = match self.layout {
+            PixelLayout::Rgb8 => {
+                if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(pixels, 3, g)
+                } else {
+                    srgb_u8_to_linear_f32(pixels, 3)
+                }
+            }
+            PixelLayout::Bgr8 => {
+                let rgb = bgr_to_rgb(pixels, 3);
+                if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(&rgb, 3, g)
+                } else {
+                    srgb_u8_to_linear_f32(&rgb, 3)
+                }
+            }
+            PixelLayout::Rgba8 => {
+                if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(pixels, 4, g)
+                } else {
+                    srgb_u8_to_linear_f32(pixels, 4)
+                }
+            }
+            PixelLayout::Bgra8 => {
+                let swapped = bgr_to_rgb(pixels, 4);
+                if let Some(g) = gamma {
+                    gamma_u8_to_linear_f32(&swapped, 4, g)
+                } else {
+                    srgb_u8_to_linear_f32(&swapped, 4)
+                }
+            }
+            PixelLayout::Gray8 => {
+                if let Some(g) = gamma {
+                    gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g)
+                } else {
+                    gray_u8_to_linear_f32_rgb(pixels, 1)
+                }
+            }
+            PixelLayout::GrayAlpha8 => {
+                if let Some(g) = gamma {
+                    gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g)
+                } else {
+                    gray_u8_to_linear_f32_rgb(pixels, 2)
+                }
+            }
+            PixelLayout::Rgb16 => {
+                if let Some(g) = gamma {
+                    gamma_u16_to_linear_f32(pixels, 3, g)
+                } else {
+                    srgb_u16_to_linear_f32(pixels, 3)
+                }
+            }
+            PixelLayout::Rgba16 => {
+                if let Some(g) = gamma {
+                    gamma_u16_to_linear_f32(pixels, 4, g)
+                } else {
+                    srgb_u16_to_linear_f32(pixels, 4)
+                }
+            }
+            PixelLayout::Gray16 => {
+                if let Some(g) = gamma {
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g)
+                } else {
+                    gray_u16_to_linear_f32_rgb(pixels, 1)
+                }
+            }
+            PixelLayout::GrayAlpha16 => {
+                if let Some(g) = gamma {
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g)
+                } else {
+                    gray_u16_to_linear_f32_rgb(pixels, 2)
+                }
+            }
+            PixelLayout::RgbLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                floats.to_vec()
+            }
+            PixelLayout::RgbaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                floats
+                    .chunks(4)
+                    .flat_map(|px| [px[0], px[1], px[2]])
+                    .collect()
+            }
+            PixelLayout::GrayLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                gray_f32_to_linear_f32_rgb(floats, 1)
+            }
+            PixelLayout::GrayAlphaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                gray_f32_to_linear_f32_rgb(floats, 2)
+            }
+        };
+        self.linear_rgb.extend_from_slice(&new_linear);
+
+        // Extract and append alpha
+        match self.layout {
+            PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
+                let new_alpha = extract_alpha(pixels, 4, 3);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::GrayAlpha8 => {
+                let new_alpha = extract_alpha(pixels, 2, 1);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::Rgba16 => {
+                let new_alpha = extract_alpha_u16(pixels, 4, 3);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::GrayAlpha16 => {
+                let new_alpha = extract_alpha_u16(pixels, 2, 1);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::RgbaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let new_alpha = extract_alpha_f32(floats, 4, 3);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::GrayAlphaLinearF32 => {
+                let floats: &[f32] = bytemuck::cast_slice(pixels);
+                let new_alpha = extract_alpha_f32(floats, 2, 1);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            _ => {}
+        }
+
+        self.rows_pushed += num_rows;
+        Ok(())
+    }
+
+    /// Encode the accumulated pixels and return the JXL bytes.
+    ///
+    /// All rows must have been pushed via [`push_rows`](Self::push_rows) before
+    /// calling this. Returns an error if the image is incomplete.
+    #[track_caller]
+    pub fn finish(self) -> Result<Vec<u8>> {
+        self.finish_inner()
+            .map(|mut r| r.take_data().unwrap())
+            .map_err(at)
+    }
+
+    /// Encode and return JXL bytes together with [`EncodeStats`].
+    #[track_caller]
+    pub fn finish_with_stats(self) -> Result<EncodeResult> {
+        self.finish_inner().map_err(at)
+    }
+
+    /// Encode, appending to an existing buffer.
+    #[track_caller]
+    pub fn finish_into(self, out: &mut Vec<u8>) -> Result<EncodeResult> {
+        let mut result = self.finish_inner().map_err(at)?;
+        if let Some(data) = result.data.take() {
+            out.extend_from_slice(&data);
+        }
+        Ok(result)
+    }
+
+    /// Encode, writing to a `std::io::Write` destination.
+    #[cfg(feature = "std")]
+    #[track_caller]
+    pub fn finish_to(self, mut dest: impl std::io::Write) -> Result<EncodeResult> {
+        let mut result = self.finish_inner().map_err(at)?;
+        if let Some(data) = result.data.take() {
+            dest.write_all(&data)
+                .map_err(|e| at(EncodeError::from(e)))?;
+        }
+        Ok(result)
+    }
+
+    fn finish_inner(self) -> core::result::Result<EncodeResult, EncodeError> {
+        if self.rows_pushed != self.height {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "incomplete image: {} of {} rows pushed",
+                    self.rows_pushed, self.height
+                ),
+            });
+        }
+
+        let cfg = &self.cfg;
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let linear_rgb = self.linear_rgb;
+        let alpha = self.alpha;
+
+        let (codestream, mut stats) = run_with_threads(cfg.threads, || {
+            let mut profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+            if let Some(max_size) = cfg.max_strategy_size {
+                if max_size < 16 {
+                    profile.try_dct16 = false;
+                }
+                if max_size < 32 {
+                    profile.try_dct32 = false;
+                }
+                if max_size < 64 {
+                    profile.try_dct64 = false;
+                }
+            }
+
+            let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
+            enc.effort = cfg.effort;
+            enc.profile = profile;
+            enc.use_ans = cfg.use_ans;
+            enc.optimize_codes = enc.profile.optimize_codes;
+            enc.custom_orders = enc.profile.custom_orders;
+            enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
+            enc.enable_noise = cfg.noise;
+            enc.enable_denoise = cfg.denoise;
+            enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
+            enc.error_diffusion = cfg.error_diffusion;
+            enc.pixel_domain_loss = cfg.pixel_domain_loss;
+            enc.enable_lz77 = cfg.lz77;
+            enc.lz77_method = cfg.lz77_method;
+            enc.force_strategy = cfg.force_strategy;
+            enc.enable_patches = cfg.patches;
+            enc.encoder_mode = cfg.mode;
+            enc.splines = cfg.splines.clone();
+            enc.is_grayscale = self.layout.is_grayscale();
+            enc.progressive = cfg.progressive;
+            enc.use_lf_frame = cfg.lf_frame;
+            #[cfg(feature = "butteraugli-loop")]
+            {
+                enc.butteraugli_iters = cfg.butteraugli_iters;
+            }
+            enc.bit_depth_16 = self.bit_depth_16;
+            enc.source_gamma = self.source_gamma;
+            enc.color_encoding = self.color_encoding.clone();
+            if let Some(ref icc) = self.icc_profile {
+                enc.icc_profile = Some(icc.clone());
+            }
+
+            let output = enc
+                .encode(w, h, &linear_rgb, alpha.as_deref())
+                .map_err(EncodeError::from)?;
+
+            #[cfg(feature = "butteraugli-loop")]
+            let butteraugli_iters_actual = cfg.butteraugli_iters;
+            #[cfg(not(feature = "butteraugli-loop"))]
+            let butteraugli_iters_actual = 0u32;
+
+            let stats = EncodeStats {
+                mode: EncodeMode::Lossy,
+                strategy_counts: output.strategy_counts,
+                gaborish: cfg.gaborish,
+                ans: cfg.use_ans,
+                butteraugli_iters: butteraugli_iters_actual,
+                pixel_domain_loss: cfg.pixel_domain_loss,
+                ..Default::default()
+            };
+            Ok::<_, EncodeError>((output.data, stats))
+        })?;
+
+        stats.codestream_size = codestream.len();
+
+        let output = if self.exif.is_some() || self.xmp.is_some() {
+            crate::container::wrap_in_container(
+                &codestream,
+                self.exif.as_deref(),
+                self.xmp.as_deref(),
+            )
+        } else {
+            codestream
+        };
+
+        stats.output_size = output.len();
+        Ok(EncodeResult {
+            data: Some(output),
+            stats,
+        })
+    }
+}
+
+impl LossyConfig {
+    /// Create a streaming encoder for incremental row input.
+    ///
+    /// Pixels are converted to the internal format as rows are pushed via
+    /// [`LossyEncoder::push_rows`], allowing callers to free source buffers
+    /// incrementally rather than materializing the entire image.
+    #[track_caller]
+    pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LossyEncoder> {
+        if width == 0 || height == 0 {
+            return Err(at(EncodeError::InvalidInput {
+                message: format!("zero dimensions: {width}x{height}"),
+            }));
+        }
+        let w = width as usize;
+        let h = height as usize;
+        let rgb_capacity = w.checked_mul(h).and_then(|n| n.checked_mul(3));
+        let Some(rgb_capacity) = rgb_capacity else {
+            return Err(at(EncodeError::InvalidInput {
+                message: "image dimensions overflow".into(),
+            }));
+        };
+
+        let bit_depth_16 = layout.is_16bit();
+        let has_alpha = layout.has_alpha();
+        let alpha = if has_alpha {
+            let mut v = Vec::new();
+            v.try_reserve(w * h)
+                .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
+            Some(v)
+        } else {
+            None
+        };
+
+        let mut linear_rgb = Vec::new();
+        linear_rgb
+            .try_reserve(rgb_capacity)
+            .map_err(|e| at(EncodeError::from(crate::error::Error::from(e))))?;
+
+        Ok(LossyEncoder {
+            cfg: self.clone(),
+            width,
+            height,
+            layout,
+            rows_pushed: 0,
+            linear_rgb,
+            alpha,
+            bit_depth_16,
+            icc_profile: None,
+            exif: None,
+            xmp: None,
+            source_gamma: None,
+            color_encoding: None,
+        })
+    }
+}
+
+/// Streaming lossless (modular) encoder.
+///
+/// Accepts pixel rows incrementally via [`push_rows`](Self::push_rows), then
+/// encodes on [`finish`](Self::finish). This allows callers to free source pixel
+/// buffers as rows are pushed, rather than materializing the entire image in
+/// memory before encoding.
+///
+/// ```rust,no_run
+/// use jxl_encoder::{LosslessConfig, PixelLayout};
+///
+/// let mut enc = LosslessConfig::new()
+///     .encoder(800, 600, PixelLayout::Rgb8)?;
+///
+/// # let row_bytes = 800 * 3;
+/// # let source_rows = vec![0u8; row_bytes * 600];
+/// for chunk in source_rows.chunks(row_bytes * 100) {
+///     enc.push_rows(chunk, 100)?;
+/// }
+///
+/// let jxl_bytes = enc.finish()?;
+/// # Ok::<_, jxl_encoder::At<jxl_encoder::EncodeError>>(())
+/// ```
+pub struct LosslessEncoder {
+    cfg: LosslessConfig,
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    rows_pushed: u32,
+    channels: Vec<crate::modular::channel::Channel>,
+    num_source_channels: usize,
+    bit_depth: u32,
+    is_grayscale: bool,
+    has_alpha: bool,
+    icc_profile: Option<Vec<u8>>,
+    exif: Option<Vec<u8>>,
+    xmp: Option<Vec<u8>>,
+    source_gamma: Option<f32>,
+    color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
+}
+
+impl LosslessEncoder {
+    /// Attach an ICC color profile.
+    pub fn with_icc_profile(mut self, data: &[u8]) -> Self {
+        self.icc_profile = Some(data.to_vec());
+        self
+    }
+
+    /// Attach EXIF data.
+    pub fn with_exif(mut self, data: &[u8]) -> Self {
+        self.exif = Some(data.to_vec());
+        self
+    }
+
+    /// Attach XMP data.
+    pub fn with_xmp(mut self, data: &[u8]) -> Self {
+        self.xmp = Some(data.to_vec());
+        self
+    }
+
+    /// Specify that source pixels use a custom gamma transfer function.
+    pub fn with_source_gamma(mut self, gamma: f32) -> Self {
+        self.source_gamma = Some(gamma);
+        self
+    }
+
+    /// Override the color encoding written to the JXL header.
+    pub fn with_color_encoding(
+        mut self,
+        ce: crate::headers::color_encoding::ColorEncoding,
+    ) -> Self {
+        self.color_encoding = Some(ce);
+        self
+    }
+
+    /// Number of rows pushed so far.
+    pub fn rows_pushed(&self) -> u32 {
+        self.rows_pushed
+    }
+
+    /// Total expected height.
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Push pixel rows into the encoder.
+    ///
+    /// `pixels` must contain exactly `width * num_rows * bytes_per_pixel` bytes.
+    /// Rows are deinterleaved into per-channel planes immediately, so the caller
+    /// can free the source buffer after this call returns.
+    #[track_caller]
+    pub fn push_rows(&mut self, pixels: &[u8], num_rows: u32) -> Result<()> {
+        self.push_rows_inner(pixels, num_rows).map_err(at)
+    }
+
+    fn push_rows_inner(
+        &mut self,
+        pixels: &[u8],
+        num_rows: u32,
+    ) -> core::result::Result<(), EncodeError> {
+        if num_rows == 0 {
+            return Ok(());
+        }
+        let remaining = self.height - self.rows_pushed;
+        if num_rows > remaining {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "push_rows: {num_rows} rows would exceed image height \
+                     ({} pushed + {num_rows} > {})",
+                    self.rows_pushed, self.height
+                ),
+            });
+        }
+        let w = self.width as usize;
+        let n = num_rows as usize;
+        let bpp = self.layout.bytes_per_pixel();
+        let expected = w.checked_mul(n).and_then(|wn| wn.checked_mul(bpp));
+        match expected {
+            Some(expected) if pixels.len() == expected => {}
+            Some(expected) => {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "push_rows: expected {expected} bytes for {w}x{n} {:?}, got {}",
+                        self.layout,
+                        pixels.len()
+                    ),
+                });
+            }
+            None => {
+                return Err(EncodeError::InvalidInput {
+                    message: "push_rows: row dimensions overflow".into(),
+                });
+            }
+        }
+
+        let y_start = self.rows_pushed as usize;
+        let nc = self.num_source_channels;
+
+        match self.layout {
+            PixelLayout::Rgb8 | PixelLayout::Bgr8 => {
+                let is_bgr = matches!(self.layout, PixelLayout::Bgr8);
+                for y in 0..n {
+                    let row_offset = y * w * 3;
+                    let dst_y = y_start + y;
+                    for x in 0..w {
+                        let src = row_offset + x * 3;
+                        let (r, g, b) = if is_bgr {
+                            (pixels[src + 2], pixels[src + 1], pixels[src])
+                        } else {
+                            (pixels[src], pixels[src + 1], pixels[src + 2])
+                        };
+                        self.channels[0].set(x, dst_y, r as i32);
+                        self.channels[1].set(x, dst_y, g as i32);
+                        self.channels[2].set(x, dst_y, b as i32);
+                    }
+                }
+            }
+            PixelLayout::Rgba8 | PixelLayout::Bgra8 => {
+                let is_bgr = matches!(self.layout, PixelLayout::Bgra8);
+                for y in 0..n {
+                    let row_offset = y * w * 4;
+                    let dst_y = y_start + y;
+                    for x in 0..w {
+                        let src = row_offset + x * 4;
+                        let (r, g, b) = if is_bgr {
+                            (pixels[src + 2], pixels[src + 1], pixels[src])
+                        } else {
+                            (pixels[src], pixels[src + 1], pixels[src + 2])
+                        };
+                        self.channels[0].set(x, dst_y, r as i32);
+                        self.channels[1].set(x, dst_y, g as i32);
+                        self.channels[2].set(x, dst_y, b as i32);
+                        self.channels[3].set(x, dst_y, pixels[src + 3] as i32);
+                    }
+                }
+            }
+            PixelLayout::Gray8 => {
+                for y in 0..n {
+                    let row_offset = y * w;
+                    let dst_y = y_start + y;
+                    for x in 0..w {
+                        self.channels[0].set(x, dst_y, pixels[row_offset + x] as i32);
+                    }
+                }
+            }
+            PixelLayout::GrayAlpha8 => {
+                for y in 0..n {
+                    let row_offset = y * w * 2;
+                    let dst_y = y_start + y;
+                    for x in 0..w {
+                        let src = row_offset + x * 2;
+                        self.channels[0].set(x, dst_y, pixels[src] as i32);
+                        self.channels[1].set(x, dst_y, pixels[src + 1] as i32);
+                    }
+                }
+            }
+            PixelLayout::Rgb16
+            | PixelLayout::Rgba16
+            | PixelLayout::Gray16
+            | PixelLayout::GrayAlpha16 => {
+                let pixels_u16: &[u16] = bytemuck::cast_slice(pixels);
+                for y in 0..n {
+                    let row_offset = y * w * nc;
+                    let dst_y = y_start + y;
+                    for x in 0..w {
+                        let src = row_offset + x * nc;
+                        for c in 0..nc {
+                            self.channels[c].set(x, dst_y, pixels_u16[src + c] as i32);
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(EncodeError::UnsupportedPixelLayout(self.layout));
+            }
+        }
+
+        self.rows_pushed += num_rows;
+        Ok(())
+    }
+
+    /// Encode the accumulated pixels and return the JXL bytes.
+    ///
+    /// All rows must have been pushed via [`push_rows`](Self::push_rows) before
+    /// calling this. Returns an error if the image is incomplete.
+    #[track_caller]
+    pub fn finish(self) -> Result<Vec<u8>> {
+        self.finish_inner()
+            .map(|mut r| r.take_data().unwrap())
+            .map_err(at)
+    }
+
+    /// Encode and return JXL bytes together with [`EncodeStats`].
+    #[track_caller]
+    pub fn finish_with_stats(self) -> Result<EncodeResult> {
+        self.finish_inner().map_err(at)
+    }
+
+    /// Encode, appending to an existing buffer.
+    #[track_caller]
+    pub fn finish_into(self, out: &mut Vec<u8>) -> Result<EncodeResult> {
+        let mut result = self.finish_inner().map_err(at)?;
+        if let Some(data) = result.data.take() {
+            out.extend_from_slice(&data);
+        }
+        Ok(result)
+    }
+
+    /// Encode, writing to a `std::io::Write` destination.
+    #[cfg(feature = "std")]
+    #[track_caller]
+    pub fn finish_to(self, mut dest: impl std::io::Write) -> Result<EncodeResult> {
+        let mut result = self.finish_inner().map_err(at)?;
+        if let Some(data) = result.data.take() {
+            dest.write_all(&data)
+                .map_err(|e| at(EncodeError::from(e)))?;
+        }
+        Ok(result)
+    }
+
+    fn finish_inner(self) -> core::result::Result<EncodeResult, EncodeError> {
+        use crate::bit_writer::BitWriter;
+        use crate::headers::color_encoding::ColorSpace;
+        use crate::headers::{ColorEncoding, FileHeader};
+        use crate::modular::channel::ModularImage;
+        use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
+
+        if self.rows_pushed != self.height {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "incomplete image: {} of {} rows pushed",
+                    self.rows_pushed, self.height
+                ),
+            });
+        }
+
+        let cfg = &self.cfg;
+        let w = self.width as usize;
+        let h = self.height as usize;
+
+        let mut image = ModularImage {
+            channels: self.channels,
+            bit_depth: self.bit_depth,
+            is_grayscale: self.is_grayscale,
+            has_alpha: self.has_alpha,
+        };
+
+        let (codestream, mut stats) = run_with_threads(cfg.threads, || {
+            // Reconstruct interleaved pixels for patch detection (8-bit RGB only)
+            let num_channels = self.layout.bytes_per_pixel();
+            let can_use_patches =
+                cfg.patches && !image.is_grayscale && image.bit_depth <= 8 && num_channels >= 3;
+            let patches_data = if can_use_patches {
+                let mut detection_pixels = vec![0u8; w * h * num_channels];
+                let nc = core::cmp::min(num_channels, image.channels.len());
+                for y in 0..h {
+                    for x in 0..w {
+                        for c in 0..nc {
+                            detection_pixels[(y * w + x) * num_channels + c] =
+                                image.channels[c].get(x, y) as u8;
+                        }
+                        // Fill remaining channels (alpha) from the image
+                        for c in nc..num_channels {
+                            if c < image.channels.len() {
+                                detection_pixels[(y * w + x) * num_channels + c] =
+                                    image.channels[c].get(x, y) as u8;
+                            }
+                        }
+                    }
+                }
+                crate::vardct::patches::find_and_build_lossless(
+                    &detection_pixels,
+                    w,
+                    h,
+                    num_channels,
+                    image.bit_depth,
+                )
+            } else {
+                None
+            };
+
+            // Build file header
+            let mut file_header = if image.is_grayscale {
+                FileHeader::new_gray(self.width, self.height)
+            } else if image.has_alpha {
+                FileHeader::new_rgba(self.width, self.height)
+            } else {
+                FileHeader::new_rgb(self.width, self.height)
+            };
+            if image.bit_depth == 16 {
+                file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
+                for ec in &mut file_header.metadata.extra_channels {
+                    ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
+                }
+            }
+            if self.icc_profile.is_some() {
+                file_header.metadata.color_encoding.want_icc = true;
+            }
+
+            let mut writer = BitWriter::new();
+            file_header.write(&mut writer).map_err(EncodeError::from)?;
+            if let Some(ref icc) = self.icc_profile {
+                crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
+            }
+            writer.zero_pad_to_byte();
+
+            // Write reference frame and subtract patches
+            if let Some(ref pd) = patches_data {
+                let lossless_profile = crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode);
+                crate::vardct::patches::encode_reference_frame_rgb(
+                    pd,
+                    image.bit_depth,
+                    cfg.use_ans,
+                    lossless_profile.patch_ref_tree_learning,
+                    &mut writer,
+                )
+                .map_err(EncodeError::from)?;
+                writer.zero_pad_to_byte();
+                let bd = image.bit_depth;
+                crate::vardct::patches::subtract_patches_modular(&mut image, pd, bd);
+            }
+
+            // Encode frame
+            let frame_encoder = FrameEncoder::new(
+                w,
+                h,
+                FrameEncoderOptions {
+                    use_modular: true,
+                    effort: cfg.effort,
+                    use_ans: cfg.use_ans,
+                    use_tree_learning: cfg.tree_learning,
+                    use_squeeze: cfg.squeeze,
+                    enable_lz77: cfg.lz77,
+                    lz77_method: cfg.lz77_method,
+                    lossy_palette: cfg.lossy_palette,
+                    encoder_mode: cfg.mode,
+                    profile: crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode),
+                    have_animation: false,
+                    duration: 0,
+                    is_last: true,
+                    crop: None,
+                    skip_rct: false,
+                },
+            );
+            let color_encoding = if let Some(ce) = self.color_encoding.clone() {
+                if image.is_grayscale && ce.color_space != ColorSpace::Gray {
+                    ColorEncoding {
+                        color_space: ColorSpace::Gray,
+                        ..ce
+                    }
+                } else {
+                    ce
+                }
+            } else if let Some(gamma) = self.source_gamma {
+                if image.is_grayscale {
+                    ColorEncoding::gray_with_gamma(gamma)
+                } else {
+                    ColorEncoding::with_gamma(gamma)
+                }
+            } else if image.is_grayscale {
+                ColorEncoding::gray()
+            } else {
+                ColorEncoding::srgb()
+            };
+            frame_encoder
+                .encode_modular_with_patches(
+                    &image,
+                    &color_encoding,
+                    &mut writer,
+                    patches_data.as_ref(),
+                )
+                .map_err(EncodeError::from)?;
+
+            let stats = EncodeStats {
+                mode: EncodeMode::Lossless,
+                ans: cfg.use_ans,
+                ..Default::default()
+            };
+            Ok::<_, EncodeError>((writer.finish_with_padding(), stats))
+        })?;
+
+        stats.codestream_size = codestream.len();
+
+        let output = if self.exif.is_some() || self.xmp.is_some() {
+            crate::container::wrap_in_container(
+                &codestream,
+                self.exif.as_deref(),
+                self.xmp.as_deref(),
+            )
+        } else {
+            codestream
+        };
+
+        stats.output_size = output.len();
+        Ok(EncodeResult {
+            data: Some(output),
+            stats,
+        })
+    }
+}
+
+impl LosslessConfig {
+    /// Create a streaming encoder for incremental row input.
+    ///
+    /// Per-channel planes are pre-allocated and filled as rows are pushed via
+    /// [`LosslessEncoder::push_rows`], allowing callers to free source buffers
+    /// incrementally rather than materializing the entire image.
+    #[track_caller]
+    pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LosslessEncoder> {
+        use crate::modular::channel::Channel;
+
+        if width == 0 || height == 0 {
+            return Err(at(EncodeError::InvalidInput {
+                message: format!("zero dimensions: {width}x{height}"),
+            }));
+        }
+
+        let w = width as usize;
+        let h = height as usize;
+
+        let (num_channels, bit_depth, is_grayscale, has_alpha) = match layout {
+            PixelLayout::Rgb8 | PixelLayout::Bgr8 => (3, 8u32, false, false),
+            PixelLayout::Rgba8 | PixelLayout::Bgra8 => (4, 8, false, true),
+            PixelLayout::Gray8 => (1, 8, true, false),
+            PixelLayout::GrayAlpha8 => (2, 8, true, true),
+            PixelLayout::Rgb16 => (3, 16, false, false),
+            PixelLayout::Rgba16 => (4, 16, false, true),
+            PixelLayout::Gray16 => (1, 16, true, false),
+            PixelLayout::GrayAlpha16 => (2, 16, true, true),
+            other => return Err(at(EncodeError::UnsupportedPixelLayout(other))),
+        };
+
+        let mut channels = Vec::with_capacity(num_channels);
+        for _ in 0..num_channels {
+            channels.push(Channel::new(w, h).map_err(|e| at(EncodeError::from(e)))?);
+        }
+
+        Ok(LosslessEncoder {
+            cfg: self.clone(),
+            width,
+            height,
+            layout,
+            rows_pushed: 0,
+            channels,
+            num_source_channels: num_channels,
+            bit_depth,
+            is_grayscale,
+            has_alpha,
+            icc_profile: None,
+            exif: None,
+            xmp: None,
+            source_gamma: None,
+            color_encoding: None,
+        })
+    }
+}
+
 // ── Thread pool helper ──────────────────────────────────────────────────────
 
 /// Run a closure inside a scoped rayon thread pool when the `parallel` feature

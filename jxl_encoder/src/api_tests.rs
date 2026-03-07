@@ -5386,3 +5386,248 @@ fn test_lossy_grayscale_roundtrip_djxl() {
     assert_eq!(decoded.width, 32);
     assert_eq!(decoded.height, 32);
 }
+
+// ── Streaming encoder tests ─────────────────────────────────────────────────
+
+#[test]
+fn test_streaming_lossy_matches_oneshot() {
+    // Encode a small image both ways and verify identical output.
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 251) as u8).collect();
+
+    let cfg = LossyConfig::new(2.0).with_effort(3);
+
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).unwrap();
+    enc.push_rows(&pixels, h).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming, "streaming and oneshot output differ");
+}
+
+#[test]
+fn test_streaming_lossy_row_at_a_time() {
+    let w = 8u32;
+    let h = 8;
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 199) as u8).collect();
+    let row_bytes = w as usize * 3;
+
+    let cfg = LossyConfig::new(2.0).with_effort(3);
+
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).unwrap();
+    for row in 0..h {
+        let start = row as usize * row_bytes;
+        enc.push_rows(&pixels[start..start + row_bytes], 1).unwrap();
+    }
+    assert_eq!(enc.rows_pushed(), h);
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(
+        oneshot, streaming,
+        "row-at-a-time streaming differs from oneshot"
+    );
+}
+
+#[test]
+fn test_streaming_lossy_rgba() {
+    let w = 8u32;
+    let h = 8;
+    let pixels: Vec<u8> = (0..w * h * 4).map(|i| (i % 211) as u8).collect();
+
+    let cfg = LossyConfig::new(2.0).with_effort(3);
+
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgba8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgba8).unwrap();
+    // Push in two halves
+    let half = h / 2;
+    let mid = half as usize * w as usize * 4;
+    enc.push_rows(&pixels[..mid], half).unwrap();
+    enc.push_rows(&pixels[mid..], h - half).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming);
+}
+
+#[test]
+fn test_streaming_lossless_matches_oneshot() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 251) as u8).collect();
+
+    let cfg = LosslessConfig::new().with_effort(3);
+
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).unwrap();
+    enc.push_rows(&pixels, h).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming, "lossless streaming and oneshot differ");
+}
+
+#[test]
+fn test_streaming_lossless_row_at_a_time() {
+    let w = 8u32;
+    let h = 8;
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 199) as u8).collect();
+    let row_bytes = w as usize * 3;
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).unwrap();
+    for row in 0..h {
+        let start = row as usize * row_bytes;
+        enc.push_rows(&pixels[start..start + row_bytes], 1).unwrap();
+    }
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(
+        oneshot, streaming,
+        "lossless row-at-a-time differs from oneshot"
+    );
+}
+
+#[test]
+fn test_streaming_lossless_gray() {
+    let w = 8u32;
+    let h = 8;
+    let pixels: Vec<u8> = (0..w * h).map(|i| (i % 200) as u8).collect();
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Gray8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Gray8).unwrap();
+    enc.push_rows(&pixels, h).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming);
+}
+
+#[test]
+fn test_streaming_lossless_rgba() {
+    let w = 8u32;
+    let h = 8;
+    let pixels: Vec<u8> = (0..w * h * 4).map(|i| (i % 211) as u8).collect();
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgba8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgba8).unwrap();
+    enc.push_rows(&pixels[..w as usize * 4 * 4], 4).unwrap();
+    enc.push_rows(&pixels[w as usize * 4 * 4..], 4).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming);
+}
+
+#[test]
+fn test_streaming_error_too_many_rows() {
+    let w = 4u32;
+    let h = 4;
+    let pixels = vec![0u8; w as usize * h as usize * 3];
+
+    let mut enc = LossyConfig::new(2.0)
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap();
+    // Push all rows, then try to push more
+    enc.push_rows(&pixels, h).unwrap();
+    let err = enc.push_rows(&[0u8; 12], 1);
+    assert!(err.is_err(), "should reject rows beyond height");
+}
+
+#[test]
+fn test_streaming_error_incomplete_finish() {
+    let w = 4u32;
+    let h = 4;
+
+    let mut enc = LosslessConfig::new()
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap();
+    // Push only 2 of 4 rows
+    enc.push_rows(&vec![0u8; w as usize * 2 * 3], 2).unwrap();
+    let err = enc.finish();
+    assert!(err.is_err(), "should reject incomplete image on finish");
+}
+
+#[test]
+fn test_streaming_error_wrong_buffer_size() {
+    let w = 4u32;
+    let h = 4;
+
+    let mut enc = LossyConfig::new(2.0)
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap();
+    // Pass wrong number of bytes
+    let err = enc.push_rows(&[0u8; 10], 1);
+    assert!(err.is_err(), "should reject wrong buffer size");
+}
+
+#[test]
+fn test_streaming_zero_rows_noop() {
+    let w = 4u32;
+    let h = 4;
+
+    let mut enc = LossyConfig::new(2.0)
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap();
+    // Pushing zero rows should be a no-op
+    enc.push_rows(&[], 0).unwrap();
+    assert_eq!(enc.rows_pushed(), 0);
+}
+
+#[test]
+fn test_streaming_lossy_finish_into() {
+    let w = 8u32;
+    let h = 8;
+    let pixels: Vec<u8> = (0..w * h * 3).map(|i| (i % 199) as u8).collect();
+
+    let cfg = LossyConfig::new(2.0).with_effort(3);
+    let oneshot = cfg.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).unwrap();
+    enc.push_rows(&pixels, h).unwrap();
+    let mut out = Vec::new();
+    let result = enc.finish_into(&mut out).unwrap();
+    assert_eq!(out, oneshot);
+    assert!(result.stats().codestream_size() > 0);
+}
+
+#[test]
+fn test_streaming_lossy_16bit() {
+    let w = 8u32;
+    let h = 8;
+    let pixels_u16: Vec<u16> = (0..w * h * 3).map(|i| (i * 100 % 65535) as u16).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(2.0).with_effort(3);
+    let oneshot = cfg.encode(pixels, w, h, PixelLayout::Rgb16).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb16).unwrap();
+    enc.push_rows(pixels, h).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming);
+}
+
+#[test]
+fn test_streaming_lossless_16bit() {
+    let w = 8u32;
+    let h = 8;
+    let pixels_u16: Vec<u16> = (0..w * h * 3).map(|i| (i * 100 % 65535) as u16).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let oneshot = cfg.encode(pixels, w, h, PixelLayout::Rgb16).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb16).unwrap();
+    enc.push_rows(pixels, h).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming);
+}
