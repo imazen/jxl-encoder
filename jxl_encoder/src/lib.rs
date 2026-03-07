@@ -35,8 +35,9 @@ pub mod vardct;
 // Re-export new API as primary
 pub use api::{
     AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
-    EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LossyConfig, Lz77Method,
-    PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop, Unstoppable, at,
+    EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LosslessEncoder, LossyConfig,
+    LossyEncoder, Lz77Method, PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop,
+    Unstoppable, at,
 };
 pub use effort::EffortProfile;
 pub use headers::color_encoding::{
