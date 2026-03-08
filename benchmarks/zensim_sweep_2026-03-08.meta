@@ -1,0 +1,29 @@
+# Zensim parameter sweep validation results
+# Date: 2026-03-08
+# Encoder: jxl-encoder-rs (feat/metric-loops branch, commit 87f620a)
+# Zensim: 499c811 (HF features) + 1bd4695 (docs update)
+# Dataset: 2 CLIC 2025 (1024×1024) + 2 CID22 (512×512), d=1.0 and d=2.0
+# Modes: e7 (baseline), e7-zen (zensim 4 iters), e8-zen (bfly 2 + zen 4)
+#
+# Three configs compared:
+#   defaults: masking=4, sqrt=1, hf=1, alpha=0.20, factor=1.15
+#   optimal:  masking=8, sqrt=0, hf=1, alpha=0.30, factor=1.15
+#   alt:      masking=8, sqrt=0, hf=1, alpha=0.25, factor=1.15
+#
+# Results (relative to e7 baseline, averaged over 4 images × 2 distances):
+#
+#   Config     | e7-zen4          | e8-zen4
+#              | ΔSize%   ΔSS2    | ΔSize%   ΔSS2
+#   -----------|------------------|------------------
+#   defaults   | +1.22%  +0.780  | -3.97%  +0.134
+#   optimal    | +0.49%  +0.928  | -4.88%  -0.059
+#   alt (new)  | +0.50%  +0.922  | -4.67%  +0.041
+#
+# Selected: "alt" config as new defaults
+#   - e7-zen4: 19% more SSIM2 gain, 60% less size inflation
+#   - e8-zen4: 0.7pp more size savings while maintaining SSIM2
+#
+# Key findings from 3-phase sweep:
+#   Phase 1 (24 configs): sqrt=0 universally better, masking=8 best
+#   Phase 2 (29 configs): alpha=0.25-0.30, factor_max=1.10-1.15 optimal
+#   Phase 3: not completed (script bug), using defaults for norm/spatial_w
