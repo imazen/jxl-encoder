@@ -1,0 +1,23 @@
+# Threshold-optimized coord descent validation
+# Date: 2026-03-08
+# Optimizer: coord descent, 8 images, d=2.0, --size-threshold 1.5
+# Config: masking=18.1, norm=2.0, sw=0.46, rmax=2.65, alpha=0.25, factor=1.15
+#
+# 20-image results (e7-zen4 vs e7):
+#   ΔSS2=+1.122, ΔSz=+0.94%
+#
+# Comparison with P1+P2 (masking=8):
+#   e7-zen4: -0.140 SSIM2 loss (1.122 vs 1.262), -0.16pp less size
+#   e8-zen4: -0.099 SSIM2 (P1+P2 is 0.000)
+#
+# Masking Pareto analysis (from sweep):
+#   m=1:  ΔSS2=+1.320 ΔSz=+3.60% (most quality, most size)
+#   m=8:  ΔSS2=+1.156 ΔSz=+2.26% (good balance)
+#   m=18: ΔSS2=+1.005 ΔSz=+1.66% (least size, least quality)
+#
+# Higher masking suppresses error signal → less redistribution signal →
+# less quality gain but also less size inflation. The optimizer naturally
+# pushed masking high because both score functions reward low size cost.
+#
+# CONCLUSION: masking=8 remains optimal for quality-first use.
+# masking=12-18 could be offered as a "size-constrained" mode.
