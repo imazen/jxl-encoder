@@ -1,0 +1,29 @@
+# Zensim Phase 3 sweep: tile aggregation parameters
+# Date: 2026-03-08
+# Fixed params: masking=8, sqrt=0, hf=1, alpha=0.25, factor=1.15
+# Sweep: norm × spatial_weight × ratio_max (120 configs)
+#   norm: 1, 2, 3, 4, 6
+#   spatial_w: 0.3, 0.5, 0.6, 0.7, 0.8, 1.0
+#   ratio_max: 2.0, 3.0, 5.0, 10.0
+# Mode: e7-zen4 only (4 images × 2 distances)
+# Score = ΔSS2 - 0.5 * max(0, ΔSize%)
+#
+# Top 10 by score:
+#   L4, sw=1.0, rmax=3.0:  ΔSS2=+0.933 ΔSz=+0.07%  score=0.900
+#   L4, sw=1.0, rmax=10.0: ΔSS2=+0.901 ΔSz=+0.05%  score=0.876
+#   L6, sw=1.0, rmax=2.0:  ΔSS2=+0.874 ΔSz=-0.12%  score=0.874
+#   L4, sw=1.0, rmax=5.0:  ΔSS2=+0.902 ΔSz=+0.06%  score=0.873
+#   L6, sw=1.0, rmax=3.0:  ΔSS2=+0.862 ΔSz=+0.01%  score=0.859
+#   L4, sw=1.0, rmax=2.0:  ΔSS2=+0.882 ΔSz=+0.07%  score=0.848
+#   L6, sw=1.0, rmax=5.0:  ΔSS2=+0.844 ΔSz=+0.00%  score=0.842
+#   L6, sw=0.7, rmax=5.0:  ΔSS2=+0.926 ΔSz=+0.17%  score=0.840
+#   L6, sw=0.7, rmax=10.0: ΔSS2=+0.921 ΔSz=+0.18%  score=0.832
+#   L6, sw=1.0, rmax=10.0: ΔSS2=+0.835 ΔSz=+0.01%  score=0.830
+#
+# Current defaults (L2, sw=0.6, rmax=3.0): ΔSS2=+0.922, ΔSz=+0.50%, score=0.674
+#
+# Key findings:
+#   - Higher Lp norms (L4, L6) are universally better — emphasize outlier errors
+#   - sw=1.0 (full spatial) minimizes size inflation while preserving quality
+#   - ratio_max is relatively insensitive above 3.0
+#   - L4 sw=1.0 rmax=3.0 is the optimal config: 33% better score than current
