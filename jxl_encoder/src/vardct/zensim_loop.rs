@@ -49,9 +49,10 @@ fn compute_tile_dist(
 ) {
     tile_dist.fill(0.0);
 
-    // Step 1: Compute L4 norm of diffmap error per tile.
-    // L4 emphasizes peaks more than mean (catches bad pixels) but less
-    // aggressively than L16 (appropriate for SSIM which already spatially pools).
+    // Step 1: Compute L2 (RMS) norm of diffmap error per tile.
+    // L2 is appropriate because the diffmap already includes 11×11 SSIM spatial
+    // pooling — further peak emphasis (L4/L16) amplifies outlier tiles and
+    // causes excessive size inflation on non-uniform images.
     let mut sum_raw = 0.0f64;
     let mut n_tiles = 0u32;
     for by in 0..ysize_blocks {
@@ -77,24 +78,23 @@ fn compute_tile_dist(
                     if !v.is_finite() {
                         continue;
                     }
-                    let v2 = v * v;
-                    norm_sum += v2 * v2; // v^4
+                    norm_sum += v * v; // v^2
                     pixels += 1.0;
                 }
             }
             if pixels == 0.0 {
                 pixels = 1.0;
             }
-            // L4 norm: (sum(v^4) / n)^(1/4)
-            let tile_l4 = (norm_sum / pixels).sqrt().sqrt() as f32;
+            // L2 (RMS) norm: (sum(v^2) / n)^(1/2)
+            let tile_rms = (norm_sum / pixels).sqrt() as f32;
 
             for sy in 0..covered_y {
                 for sx in 0..covered_x {
-                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = tile_l4;
+                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = tile_rms;
                 }
             }
 
-            sum_raw += tile_l4 as f64;
+            sum_raw += tile_rms as f64;
             n_tiles += 1;
         }
     }
@@ -223,12 +223,21 @@ impl VarDctEncoder {
         };
         drop((src_r, src_g, src_b));
 
-        // Diffmap options: include edge artifact + MSE features for comprehensive
-        // spatial error detection (blocking, ringing, detail loss) beyond just SSIM.
+        // Diffmap options: include edge artifact + MSE + HF features for comprehensive
+        // spatial error detection (blocking, ringing, detail loss, texture energy)
+        // beyond just SSIM. HF features (energy/magnitude loss/gain) help the
+        // diffmap express AC coefficient quantization artifacts.
+        //
+        // Contrast masking (strength=4.0) suppresses errors in textured regions where
+        // they're less visible, focusing redistribution on smooth areas (sky, gradients)
+        // where quality matters most. Sqrt compresses dynamic range for more uniform
+        // redistribution across tiles.
         let diffmap_opts = zensim::DiffmapOptions {
             weighting: zensim::DiffmapWeighting::Trained,
             include_edge_mse: true,
-            ..Default::default()
+            include_hf: true,
+            masking_strength: Some(4.0),
+            sqrt: true,
         };
 
         // Deviation bounds (same as butteraugli loop).
@@ -366,42 +375,10 @@ impl VarDctEncoder {
                 &mut tile_dist,
             );
 
-            // Step 6.5: Strategy refinement — split large transforms with high error.
-            // Only on early iterations (0-1) when strategy issues dominate over quant.
-            const K_SPLIT_THRESHOLD: f32 = 1.3;
-            if iter <= 1 {
-                let splits = refine_strategy_from_diffmap(
-                    ac_strategy,
-                    &tile_dist,
-                    xsize_blocks,
-                    ysize_blocks,
-                    target_distance,
-                    K_SPLIT_THRESHOLD,
-                );
-                if splits > 0 {
-                    debug_rect!(
-                        "zensim/strategy",
-                        0,
-                        0,
-                        width,
-                        height,
-                        "iter={} split {} transforms (threshold={:.2}×d)",
-                        iter,
-                        splits,
-                        K_SPLIT_THRESHOLD
-                    );
-                    compute_tile_dist(
-                        diffmap,
-                        width,
-                        height,
-                        ac_strategy,
-                        xsize_blocks,
-                        ysize_blocks,
-                        target_distance,
-                        &mut tile_dist,
-                    );
-                }
-            }
+            // Strategy refinement disabled: splitting large transforms with high
+            // error causes size inflation (+5-12%) without proportional quality gain.
+            // Pure quant redistribution is more size-neutral.
+            // TODO: re-enable with better thresholds once RD impact is characterized.
 
             // Log per-iteration summary
             {
@@ -460,21 +437,44 @@ impl VarDctEncoder {
             // - approx_butteraugli bias (MAE=1.64) causing file size inflation
             // - Asymmetric pow adjustments causing net quant_field growth
             // - Scale mismatch between zensim and butteraugli units
-            const K_ALPHA: f32 = 0.10; // Conservative: 10% of the ratio
+            // Adaptive redistribution: scale K_ALPHA inversely with tile_dist
+            // non-uniformity. Non-uniform images (a few hot tiles) pay high
+            // rate costs for redistribution, so we reduce aggressiveness.
+            const K_ALPHA_BASE: f32 = 0.20;
+            const K_FACTOR_MAX: f32 = 1.15; // Max +15% per tile per iteration
+            const K_FACTOR_MIN: f32 = 0.85; // Max -15% per tile per iteration
 
-            // Compute average tile error (L4 norms already in tile_dist)
             let td_sum: f64 = tile_dist.iter().map(|&v| v as f64).sum();
             let td_avg = (td_sum / num_blocks as f64) as f32;
 
             if td_avg > 1e-10 {
+                // Coefficient of variation: std(tile_dist) / mean(tile_dist)
+                // Measures how non-uniform the error distribution is.
+                let td_var: f64 = tile_dist
+                    .iter()
+                    .map(|&v| {
+                        let d = v as f64 - td_avg as f64;
+                        d * d
+                    })
+                    .sum::<f64>()
+                    / num_blocks as f64;
+                let td_cv = (td_var.sqrt() / td_avg as f64) as f32;
+
+                // Adaptive K_ALPHA: reduce for non-uniform images
+                // cv ≈ 0: k_alpha ≈ 0.20 (uniform, cheap redistribution)
+                // cv ≈ 1: k_alpha ≈ 0.10 (moderately non-uniform)
+                // cv > 2: k_alpha < 0.07 (very non-uniform, expensive)
+                let k_alpha = K_ALPHA_BASE / (1.0 + td_cv);
+
                 // Record pre-adjustment sum for renormalization
                 let qf_sum_before: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
 
                 for bi in 0..num_blocks {
                     let ratio = tile_dist[bi] / td_avg; // >1 = worse than avg
-                    // Apply dampened ratio: qf *= 1 + alpha*(ratio - 1)
-                    // ratio=1: no change. ratio=2: +15%. ratio=0.5: -7.5%.
-                    let factor = 1.0 + K_ALPHA * (ratio - 1.0);
+                    // Apply dampened ratio with per-tile clamp to prevent
+                    // extreme changes that cause size inflation.
+                    let factor =
+                        (1.0 + k_alpha * (ratio - 1.0)).clamp(K_FACTOR_MIN, K_FACTOR_MAX);
                     quant_field_float[bi] *= factor;
 
                     // Enforce deviation bounds
