@@ -31,27 +31,29 @@ struct ZensimParams {
     include_hf: bool,              // ZENSIM_HF (0/1)
     include_edge_mse: bool,        // ZENSIM_EDGE_MSE (0/1)
     // Tile aggregation
-    norm_power: f32,    // ZENSIM_NORM (2.0=L2, 4.0=L4, etc.)
+    norm_power: f32,     // ZENSIM_NORM (2.0=L2, 4.0=L4, etc.)
     spatial_weight: f32, // ZENSIM_SPATIAL_W (0.0-1.0)
-    ratio_max: f32,     // ZENSIM_RATIO_MAX (1.0-10.0)
+    ratio_max: f32,      // ZENSIM_RATIO_MAX (1.0-10.0)
     // Redistribution
-    alpha_base: f32,    // ZENSIM_ALPHA (0.01-1.0)
-    factor_max: f32,    // ZENSIM_FACTOR_MAX (1.01-2.0)
+    alpha_base: f32, // ZENSIM_ALPHA (0.01-1.0)
+    factor_max: f32, // ZENSIM_FACTOR_MAX (1.01-2.0)
 }
 
 impl ZensimParams {
     fn from_env() -> Self {
         Self {
-            // Defaults tuned by parameter sweep (2026-03-08, 4 images × 2 distances).
-            // masking=8,sqrt=0,hf=1: +19% more SSIM2 gain at 60% less size inflation
-            // vs previous defaults (masking=4,sqrt=1,alpha=0.20).
+            // Defaults tuned by 3-phase parameter sweep (2026-03-08).
+            // Phase 1+2: masking=8,sqrt=0,hf=1,alpha=0.25,factor=1.15
+            // Phase 3: L6 norm, full spatial weight, rmax=2.0
+            //   → +0.874 SSIM2 at -0.12% size (e7-zen4 vs e7 baseline)
+            //   → -5.37% size at 0.000 SSIM2 cost (e8-zen4 vs e7 baseline)
             masking_strength: Self::env_masking("ZENSIM_MASKING", Some(8.0)),
             sqrt: Self::env_bool("ZENSIM_SQRT", false),
             include_hf: Self::env_bool("ZENSIM_HF", true),
             include_edge_mse: Self::env_bool("ZENSIM_EDGE_MSE", true),
-            norm_power: Self::env_f32("ZENSIM_NORM", 2.0),
-            spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 0.6),
-            ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 3.0),
+            norm_power: Self::env_f32("ZENSIM_NORM", 6.0),
+            spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 1.0),
+            ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 2.0),
             alpha_base: Self::env_f32("ZENSIM_ALPHA", 0.25),
             factor_max: Self::env_f32("ZENSIM_FACTOR_MAX", 1.15),
         }
@@ -488,8 +490,8 @@ impl VarDctEncoder {
 
                 for bi in 0..num_blocks {
                     let ratio = tile_dist[bi] / td_avg;
-                    let factor = (1.0 + k_alpha * (ratio - 1.0))
-                        .clamp(1.0 / factor_max, factor_max);
+                    let factor =
+                        (1.0 + k_alpha * (ratio - 1.0)).clamp(1.0 / factor_max, factor_max);
                     quant_field_float[bi] *= factor;
 
                     if quant_field_float[bi] > qf_higher {
