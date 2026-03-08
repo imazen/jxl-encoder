@@ -141,6 +141,13 @@ pub struct VarDctEncoder {
     /// Default: 0 (disabled)
     #[cfg(feature = "butteraugli-loop")]
     pub butteraugli_iters: u32,
+    /// Number of SSIM2 quantization loop iterations.
+    /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
+    /// Requires the `ssim2-loop` feature.
+    ///
+    /// Default: 0 (disabled)
+    #[cfg(feature = "ssim2-loop")]
+    pub ssim2_iters: u32,
     /// Whether the input has 16-bit samples. When true, the file header signals
     /// bit_depth=16 instead of 8. The actual VarDCT encoding is the same (XYB
     /// is always f32 internally), but the decoder uses this to reconstruct at
@@ -204,6 +211,8 @@ impl Default for VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            #[cfg(feature = "ssim2-loop")]
+            ssim2_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
@@ -242,6 +251,8 @@ impl VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            #[cfg(feature = "ssim2-loop")]
+            ssim2_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
@@ -699,7 +710,33 @@ impl VarDctEncoder {
             );
         }
 
-        // Free float quant field — no longer needed after butteraugli refinement.
+        // SSIM2 quantization loop: alternative to butteraugli using SSIM2 + per-block RMSE.
+        #[cfg(feature = "ssim2-loop")]
+        if self.ssim2_iters > 0 {
+            let initial_qf_float = quant_field_float.clone();
+            params = self.ssim2_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
+                &cfl_map,
+                &ac_strategy,
+                patches_data.as_ref(),
+                splines_data.as_ref(),
+            );
+        }
+
+        // Free float quant field — no longer needed after loop refinement.
         drop(quant_field_float);
 
         // Log quant field statistics after all adjustments

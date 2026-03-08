@@ -45,6 +45,8 @@ mod precomputed;
 #[cfg(feature = "rate-control")]
 pub mod rate_control;
 pub(crate) mod splines;
+#[cfg(feature = "ssim2-loop")]
+mod ssim2_loop;
 #[cfg(feature = "rate-control")]
 mod tile_distmap;
 
