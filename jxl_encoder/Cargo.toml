@@ -31,6 +31,7 @@ butteraugli = { version = "0.8", path = "../../butteraugli/butteraugli", optiona
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 fast-ssim2 = { version = "0.7.0", features = ["imgref"], optional = true }
+zensim = { version = "0.1.0", path = "../../zensim/zensim", optional = true }
 
 [features]
 std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
@@ -51,6 +52,7 @@ rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
+zensim-loop = ["dep:zensim"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 parallel = ["std", "dep:rayon"]
 # Use MaybeUninit for hot-path temporary buffers instead of zero-initialization.

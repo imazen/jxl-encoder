@@ -28,6 +28,8 @@ rate-control = ["jxl_encoder/rate-control"]
 butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
 # Enable SSIM2 quantization loop (alternative to butteraugli)
 ssim2-loop = ["jxl_encoder/ssim2-loop"]
+# Enable zensim quantization loop (alternative to butteraugli)
+zensim-loop = ["jxl_encoder/zensim-loop"]
 # Enable parallel group encoding with rayon
 parallel = ["jxl_encoder/parallel"]
 # Use MaybeUninit for hot-path buffers (eliminates memset zero-fill)

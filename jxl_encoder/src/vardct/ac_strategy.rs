@@ -265,6 +265,48 @@ impl AcStrategyMap {
         (bx, by, raw)
     }
 
+    /// Split a multi-block transform one level down at the given block position.
+    ///
+    /// Finds the owning transform and replaces it with the next smaller size:
+    /// - DCT64x64/DCT64x32/DCT32x64 → DCT32x32
+    /// - DCT32x32/DCT32x16/DCT16x32 → DCT16x16
+    /// - DCT16x16/DCT16x8/DCT8x16 → DCT8
+    ///
+    /// Returns true if a split occurred (block was a multi-block transform).
+    #[cfg(feature = "zensim-loop")]
+    pub fn split_one_level(&mut self, bx: usize, by: usize) -> bool {
+        let (fx, fy, raw) = self.find_first_block(bx, by);
+        let cx = COVERED_X[raw as usize];
+        let cy = COVERED_Y[raw as usize];
+
+        if cx <= 1 && cy <= 1 {
+            return false;
+        }
+
+        let sub = match raw {
+            RAW_STRATEGY_DCT64X64 | RAW_STRATEGY_DCT64X32 | RAW_STRATEGY_DCT32X64 => {
+                RAW_STRATEGY_DCT32X32
+            }
+            RAW_STRATEGY_DCT32X32 | RAW_STRATEGY_DCT32X16 | RAW_STRATEGY_DCT16X32 => {
+                RAW_STRATEGY_DCT16X16
+            }
+            RAW_STRATEGY_DCT16X16 | RAW_STRATEGY_DCT16X8 | RAW_STRATEGY_DCT8X16 => {
+                RAW_STRATEGY_DCT8
+            }
+            _ => return false,
+        };
+
+        let sub_cx = COVERED_X[sub as usize];
+        let sub_cy = COVERED_Y[sub as usize];
+
+        for sy in (0..cy).step_by(sub_cy) {
+            for sx in (0..cx).step_by(sub_cx) {
+                self.set(fx + sx, fy + sy, sub);
+            }
+        }
+        true
+    }
+
     /// Check if a proposed `blocks × blocks` region at `(bx, by)` can be
     /// re-evaluated without breaking any existing larger transform.
     ///
