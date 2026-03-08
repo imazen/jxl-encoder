@@ -193,6 +193,12 @@ struct Args {
     #[arg(long, value_name = "N")]
     ssim2_iters: Option<u32>,
 
+    /// Number of zensim quantization loop iterations.
+    /// Alternative to butteraugli loop: uses zensim psychovisual metric with
+    /// per-pixel diffmap in XYB space. Requires the zensim-loop feature.
+    #[arg(long, value_name = "N")]
+    zensim_iters: Option<u32>,
+
     /// EXIF metadata file to embed in the output JXL container
     #[arg(long, value_name = "FILE")]
     exif: Option<PathBuf>,
@@ -409,6 +415,13 @@ fn main() {
                         cfg = cfg.with_ssim2_iters(n);
                         if !args.quiet && n > 0 {
                             println!("SSIM2 loop: {} iterations", n);
+                        }
+                    }
+                    #[cfg(feature = "zensim-loop")]
+                    if let Some(n) = args.zensim_iters {
+                        cfg = cfg.with_zensim_iters(n);
+                        if !args.quiet && n > 0 {
+                            println!("Zensim loop: {} iterations", n);
                         }
                     }
 
@@ -702,6 +715,18 @@ fn main() {
         if args.ssim2_iters.is_some() {
             eprintln!("Warning: --ssim2-iters requires the ssim2-loop feature");
             eprintln!("Rebuild with: cargo build --features ssim2-loop");
+        }
+        #[cfg(feature = "zensim-loop")]
+        if let Some(n) = args.zensim_iters {
+            cfg = cfg.with_zensim_iters(n);
+            if !args.quiet && n > 0 {
+                println!("Zensim loop: {} iterations", n);
+            }
+        }
+        #[cfg(not(feature = "zensim-loop"))]
+        if args.zensim_iters.is_some() {
+            eprintln!("Warning: --zensim-iters requires the zensim-loop feature");
+            eprintln!("Rebuild with: cargo build --features zensim-loop");
         }
 
         // Rate control path (uses internal VarDctEncoder directly)

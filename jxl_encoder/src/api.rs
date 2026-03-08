@@ -867,6 +867,8 @@ pub struct LossyConfig {
     butteraugli_iters_explicit: bool,
     #[cfg(feature = "ssim2-loop")]
     ssim2_iters: u32,
+    #[cfg(feature = "zensim-loop")]
+    zensim_iters: u32,
     threads: usize,
 }
 
@@ -902,6 +904,8 @@ impl LossyConfig {
             butteraugli_iters_explicit: false,
             #[cfg(feature = "ssim2-loop")]
             ssim2_iters: 0,
+            #[cfg(feature = "zensim-loop")]
+            zensim_iters: 0,
             threads: 0,
         }
     }
@@ -943,6 +947,10 @@ impl LossyConfig {
         #[cfg(feature = "ssim2-loop")]
         {
             new.ssim2_iters = self.ssim2_iters;
+        }
+        #[cfg(feature = "zensim-loop")]
+        {
+            new.zensim_iters = self.zensim_iters;
         }
         new
     }
@@ -1094,6 +1102,19 @@ impl LossyConfig {
     #[cfg(feature = "ssim2-loop")]
     pub fn with_ssim2_iters(mut self, n: u32) -> Self {
         self.ssim2_iters = n;
+        self
+    }
+
+    /// Set zensim quantization loop iterations.
+    ///
+    /// Alternative to butteraugli loop: uses zensim's psychovisual metric for
+    /// both global quality tracking and per-pixel spatial error map (diffmap in XYB space).
+    /// Also refines AC strategy by splitting large transforms with high perceptual error.
+    /// Can stack with butteraugli loop (butteraugli runs first, then zensim fine-tunes).
+    /// Requires the `zensim-loop` feature.
+    #[cfg(feature = "zensim-loop")]
+    pub fn with_zensim_iters(mut self, n: u32) -> Self {
+        self.zensim_iters = n;
         self
     }
 
@@ -1811,6 +1832,10 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(feature = "ssim2-loop")]
         {
             enc.ssim2_iters = cfg.ssim2_iters;
+        }
+        #[cfg(feature = "zensim-loop")]
+        {
+            enc.zensim_iters = cfg.zensim_iters;
         }
 
         enc.bit_depth_16 = bit_depth_16;
@@ -3102,6 +3127,10 @@ fn encode_animation_lossy(
     #[cfg(feature = "ssim2-loop")]
     {
         enc.ssim2_iters = cfg.ssim2_iters;
+    }
+    #[cfg(feature = "zensim-loop")]
+    {
+        enc.zensim_iters = cfg.zensim_iters;
     }
 
     // Detect alpha and 16-bit from layout

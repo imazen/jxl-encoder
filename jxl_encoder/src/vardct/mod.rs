@@ -49,6 +49,8 @@ pub(crate) mod splines;
 mod ssim2_loop;
 #[cfg(feature = "rate-control")]
 mod tile_distmap;
+#[cfg(feature = "zensim-loop")]
+mod zensim_loop;
 
 mod quant;
 mod quantize;
