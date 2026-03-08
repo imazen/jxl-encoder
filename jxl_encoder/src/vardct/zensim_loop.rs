@@ -420,36 +420,26 @@ impl VarDctEncoder {
                 break;
             }
 
-            // Step 7: Sum-preserving redistribution of quant_field.
+            // Step 7: Symmetric sum-preserving redistribution of quant_field.
             //
-            // Instead of mapping zensim diffmap to butteraugli distances (which
-            // requires the noisy approx_butteraugli mapping), use the diffmap
-            // purely for RELATIVE spatial redistribution. The total quant_field
-            // budget (sum) is preserved exactly, so file sizes stay close to the
-            // e7 baseline.
+            // Tiles with above-average error get lower quant_field (more bits),
+            // tiles with below-average error get higher quant_field (fewer bits).
+            // Renormalization preserves the total budget → size-neutral.
             //
-            // For each tile, compute ratio = tile_error / avg_error. Tiles with
-            // above-average error get more quant (better quality), tiles below
-            // average lose quant (save bits). The redistribution power K_ALPHA
-            // controls aggressiveness: 0.0 = no change, 1.0 = full ratio.
+            // Adaptive K_ALPHA scales by 1/(1+CV) — less aggressive when error
+            // is already uniform (less room to improve), more aggressive when
+            // error is non-uniform (more room to redistribute).
             //
-            // This avoids:
-            // - approx_butteraugli bias (MAE=1.64) causing file size inflation
-            // - Asymmetric pow adjustments causing net quant_field growth
-            // - Scale mismatch between zensim and butteraugli units
-            // Adaptive redistribution: scale K_ALPHA inversely with tile_dist
-            // non-uniformity. Non-uniform images (a few hot tiles) pay high
-            // rate costs for redistribution, so we reduce aggressiveness.
+            // Factor clamped to ±15% per tile per iteration to prevent compounding
+            // over multiple iterations from producing extreme outliers.
             const K_ALPHA_BASE: f32 = 0.20;
-            const K_FACTOR_MAX: f32 = 1.15; // Max +15% per tile per iteration
-            const K_FACTOR_MIN: f32 = 0.85; // Max -15% per tile per iteration
+            const K_FACTOR_MAX: f32 = 1.15; // Max ±15% per tile per iteration
 
             let td_sum: f64 = tile_dist.iter().map(|&v| v as f64).sum();
             let td_avg = (td_sum / num_blocks as f64) as f32;
 
             if td_avg > 1e-10 {
-                // Coefficient of variation: std(tile_dist) / mean(tile_dist)
-                // Measures how non-uniform the error distribution is.
+                // Coefficient of variation for adaptive K_ALPHA
                 let td_var: f64 = tile_dist
                     .iter()
                     .map(|&v| {
@@ -459,22 +449,14 @@ impl VarDctEncoder {
                     .sum::<f64>()
                     / num_blocks as f64;
                 let td_cv = (td_var.sqrt() / td_avg as f64) as f32;
-
-                // Adaptive K_ALPHA: reduce for non-uniform images
-                // cv ≈ 0: k_alpha ≈ 0.20 (uniform, cheap redistribution)
-                // cv ≈ 1: k_alpha ≈ 0.10 (moderately non-uniform)
-                // cv > 2: k_alpha < 0.07 (very non-uniform, expensive)
                 let k_alpha = K_ALPHA_BASE / (1.0 + td_cv);
 
-                // Record pre-adjustment sum for renormalization
                 let qf_sum_before: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
 
                 for bi in 0..num_blocks {
                     let ratio = tile_dist[bi] / td_avg; // >1 = worse than avg
-                    // Apply dampened ratio with per-tile clamp to prevent
-                    // extreme changes that cause size inflation.
-                    let factor =
-                        (1.0 + k_alpha * (ratio - 1.0)).clamp(K_FACTOR_MIN, K_FACTOR_MAX);
+                    let factor = (1.0 + k_alpha * (ratio - 1.0))
+                        .clamp(1.0 / K_FACTOR_MAX, K_FACTOR_MAX);
                     quant_field_float[bi] *= factor;
 
                     // Enforce deviation bounds
@@ -486,7 +468,7 @@ impl VarDctEncoder {
                     }
                 }
 
-                // Renormalize: restore original sum to preserve file size budget
+                // Renormalize: preserve original sum to control size growth.
                 let qf_sum_after: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
                 if qf_sum_after > 1e-10 {
                     let scale = (qf_sum_before / qf_sum_after) as f32;
