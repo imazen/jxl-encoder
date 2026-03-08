@@ -42,14 +42,17 @@ struct ZensimParams {
 impl ZensimParams {
     fn from_env() -> Self {
         Self {
-            masking_strength: Self::env_masking("ZENSIM_MASKING", Some(4.0)),
-            sqrt: Self::env_bool("ZENSIM_SQRT", true),
+            // Defaults tuned by parameter sweep (2026-03-08, 4 images × 2 distances).
+            // masking=8,sqrt=0,hf=1: +19% more SSIM2 gain at 60% less size inflation
+            // vs previous defaults (masking=4,sqrt=1,alpha=0.20).
+            masking_strength: Self::env_masking("ZENSIM_MASKING", Some(8.0)),
+            sqrt: Self::env_bool("ZENSIM_SQRT", false),
             include_hf: Self::env_bool("ZENSIM_HF", true),
             include_edge_mse: Self::env_bool("ZENSIM_EDGE_MSE", true),
             norm_power: Self::env_f32("ZENSIM_NORM", 2.0),
             spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 0.6),
             ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 3.0),
-            alpha_base: Self::env_f32("ZENSIM_ALPHA", 0.20),
+            alpha_base: Self::env_f32("ZENSIM_ALPHA", 0.25),
             factor_max: Self::env_f32("ZENSIM_FACTOR_MAX", 1.15),
         }
     }
