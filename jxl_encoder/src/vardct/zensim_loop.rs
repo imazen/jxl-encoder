@@ -21,6 +21,63 @@ use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use crate::debug_rect;
 
+/// Tunable parameters for the zensim loop, readable from environment variables.
+/// Allows parameter sweeps without recompilation.
+#[derive(Debug, Clone)]
+struct ZensimParams {
+    // Diffmap options
+    masking_strength: Option<f32>, // ZENSIM_MASKING (f32 or "none")
+    sqrt: bool,                    // ZENSIM_SQRT (0/1)
+    include_hf: bool,              // ZENSIM_HF (0/1)
+    include_edge_mse: bool,        // ZENSIM_EDGE_MSE (0/1)
+    // Tile aggregation
+    norm_power: f32,    // ZENSIM_NORM (2.0=L2, 4.0=L4, etc.)
+    spatial_weight: f32, // ZENSIM_SPATIAL_W (0.0-1.0)
+    ratio_max: f32,     // ZENSIM_RATIO_MAX (1.0-10.0)
+    // Redistribution
+    alpha_base: f32,    // ZENSIM_ALPHA (0.01-1.0)
+    factor_max: f32,    // ZENSIM_FACTOR_MAX (1.01-2.0)
+}
+
+impl ZensimParams {
+    fn from_env() -> Self {
+        Self {
+            masking_strength: Self::env_masking("ZENSIM_MASKING", Some(4.0)),
+            sqrt: Self::env_bool("ZENSIM_SQRT", true),
+            include_hf: Self::env_bool("ZENSIM_HF", true),
+            include_edge_mse: Self::env_bool("ZENSIM_EDGE_MSE", true),
+            norm_power: Self::env_f32("ZENSIM_NORM", 2.0),
+            spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 0.6),
+            ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 3.0),
+            alpha_base: Self::env_f32("ZENSIM_ALPHA", 0.20),
+            factor_max: Self::env_f32("ZENSIM_FACTOR_MAX", 1.15),
+        }
+    }
+
+    fn env_f32(name: &str, default: f32) -> f32 {
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default)
+    }
+
+    fn env_bool(name: &str, default: bool) -> bool {
+        match std::env::var(name).ok().as_deref() {
+            Some("0" | "false" | "no") => false,
+            Some("1" | "true" | "yes") => true,
+            _ => default,
+        }
+    }
+
+    fn env_masking(name: &str, default: Option<f32>) -> Option<f32> {
+        match std::env::var(name).ok().as_deref() {
+            Some("none" | "0" | "off") => None,
+            Some(s) => s.parse().ok().map(Some).unwrap_or(default),
+            None => default,
+        }
+    }
+}
+
 /// Compute per-block tile distance from a zensim diffmap.
 ///
 /// For each transform in the strategy map, computes the L4 norm of diffmap
@@ -46,13 +103,13 @@ fn compute_tile_dist(
     ysize_blocks: usize,
     anchor_dist: f32,
     tile_dist: &mut [f32],
+    params: &ZensimParams,
 ) {
     tile_dist.fill(0.0);
 
-    // Step 1: Compute L2 (RMS) norm of diffmap error per tile.
-    // L2 is appropriate because the diffmap already includes 11×11 SSIM spatial
-    // pooling — further peak emphasis (L4/L16) amplifies outlier tiles and
-    // causes excessive size inflation on non-uniform images.
+    let norm_power = params.norm_power as f64;
+    let inv_power = 1.0 / norm_power;
+
     let mut sum_raw = 0.0f64;
     let mut n_tiles = 0u32;
     for by in 0..ysize_blocks {
@@ -78,49 +135,41 @@ fn compute_tile_dist(
                     if !v.is_finite() {
                         continue;
                     }
-                    norm_sum += v * v; // v^2
+                    norm_sum += v.abs().powf(norm_power);
                     pixels += 1.0;
                 }
             }
             if pixels == 0.0 {
                 pixels = 1.0;
             }
-            // L2 (RMS) norm: (sum(v^2) / n)^(1/2)
-            let tile_rms = (norm_sum / pixels).sqrt() as f32;
+            // Lp norm: (sum(|v|^p) / n)^(1/p)
+            let tile_norm = (norm_sum / pixels).powf(inv_power) as f32;
 
             for sy in 0..covered_y {
                 for sx in 0..covered_x {
-                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = tile_rms;
+                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = tile_norm;
                 }
             }
 
-            sum_raw += tile_rms as f64;
+            sum_raw += tile_norm as f64;
             n_tiles += 1;
         }
     }
 
-    // Step 2: Normalize so average tile_dist equals anchor_dist.
-    // This converts raw diffmap L4 norms (arbitrary SSIM-error units) to
-    // butteraugli-compatible distance units. The spatial variation from the
-    // diffmap drives per-tile redistribution; the anchor controls the
-    // overall scale.
     if n_tiles == 0 || sum_raw < 1e-12 {
         tile_dist.fill(anchor_dist);
         return;
     }
     let avg_raw = (sum_raw / n_tiles as f64) as f32;
-    // Blend spatial variation with uniform baseline.
-    // K_SPATIAL_WEIGHT=0.6: spatial signal has moderate influence.
-    // Range: [0.4×, 2.2×] anchor_dist for ratio in [0, 3].
-    const K_SPATIAL_WEIGHT: f32 = 0.6;
-    const K_RATIO_MAX: f32 = 3.0;
+    let spatial_weight = params.spatial_weight;
+    let ratio_max = params.ratio_max;
     for td in tile_dist.iter_mut() {
         let ratio = if avg_raw > 1e-10 {
-            (*td / avg_raw).min(K_RATIO_MAX)
+            (*td / avg_raw).min(ratio_max)
         } else {
             1.0
         };
-        let blended = 1.0 - K_SPATIAL_WEIGHT + K_SPATIAL_WEIGHT * ratio;
+        let blended = 1.0 - spatial_weight + spatial_weight * ratio;
         *td = anchor_dist * blended;
     }
 }
@@ -205,39 +254,29 @@ impl VarDctEncoder {
         let padded_pixels = padded_width * padded_height;
         let n = width * height;
 
-        // Precompute zensim reference from original linear RGB.
-        // Use planar API — the source is interleaved RGB, so we extract to
-        // temporary planar buffers for precompute_reference_linear_planar.
+        // Read tunable parameters from environment variables.
+        // Defaults match the benchmark-validated configuration.
+        let params = ZensimParams::from_env();
+
         let (src_r, src_g, src_b) = deinterleave_rgb(linear_rgb, n);
-        // Disable zensim's internal parallelism — the encoder already uses rayon
-        // at the group level, so nested parallelism just adds overhead.
         let z = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
         let precomputed = match z.precompute_reference_linear_planar(
             [&src_r, &src_g, &src_b],
             width,
             height,
-            width, // contiguous stride = width
+            width,
         ) {
             Ok(r) => r,
             Err(_) => return initial_params.clone(),
         };
         drop((src_r, src_g, src_b));
 
-        // Diffmap options: include edge artifact + MSE + HF features for comprehensive
-        // spatial error detection (blocking, ringing, detail loss, texture energy)
-        // beyond just SSIM. HF features (energy/magnitude loss/gain) help the
-        // diffmap express AC coefficient quantization artifacts.
-        //
-        // Contrast masking (strength=4.0) suppresses errors in textured regions where
-        // they're less visible, focusing redistribution on smooth areas (sky, gradients)
-        // where quality matters most. Sqrt compresses dynamic range for more uniform
-        // redistribution across tiles.
         let diffmap_opts = zensim::DiffmapOptions {
             weighting: zensim::DiffmapWeighting::Trained,
-            include_edge_mse: true,
-            include_hf: true,
-            masking_strength: Some(4.0),
-            sqrt: true,
+            include_edge_mse: params.include_edge_mse,
+            include_hf: params.include_hf,
+            masking_strength: params.masking_strength,
+            sqrt: params.sqrt,
         };
 
         // Deviation bounds (same as butteraugli loop).
@@ -371,8 +410,9 @@ impl VarDctEncoder {
                 ac_strategy,
                 xsize_blocks,
                 ysize_blocks,
-                target_distance, // anchor to target (budget-neutral)
+                target_distance,
                 &mut tile_dist,
+                &params,
             );
 
             // Strategy refinement disabled: splitting large transforms with high
@@ -424,22 +464,11 @@ impl VarDctEncoder {
             //
             // Tiles with above-average error get lower quant_field (more bits),
             // tiles with below-average error get higher quant_field (fewer bits).
-            // Renormalization preserves the total budget → size-neutral.
-            //
-            // Adaptive K_ALPHA scales by 1/(1+CV) — less aggressive when error
-            // is already uniform (less room to improve), more aggressive when
-            // error is non-uniform (more room to redistribute).
-            //
-            // Factor clamped to ±15% per tile per iteration to prevent compounding
-            // over multiple iterations from producing extreme outliers.
-            const K_ALPHA_BASE: f32 = 0.20;
-            const K_FACTOR_MAX: f32 = 1.15; // Max ±15% per tile per iteration
-
+            // Adaptive K_ALPHA scales by 1/(1+CV). Factor clamped per iteration.
             let td_sum: f64 = tile_dist.iter().map(|&v| v as f64).sum();
             let td_avg = (td_sum / num_blocks as f64) as f32;
 
             if td_avg > 1e-10 {
-                // Coefficient of variation for adaptive K_ALPHA
                 let td_var: f64 = tile_dist
                     .iter()
                     .map(|&v| {
@@ -449,17 +478,17 @@ impl VarDctEncoder {
                     .sum::<f64>()
                     / num_blocks as f64;
                 let td_cv = (td_var.sqrt() / td_avg as f64) as f32;
-                let k_alpha = K_ALPHA_BASE / (1.0 + td_cv);
+                let k_alpha = params.alpha_base / (1.0 + td_cv);
+                let factor_max = params.factor_max;
 
                 let qf_sum_before: f64 = quant_field_float.iter().map(|&v| v as f64).sum();
 
                 for bi in 0..num_blocks {
-                    let ratio = tile_dist[bi] / td_avg; // >1 = worse than avg
+                    let ratio = tile_dist[bi] / td_avg;
                     let factor = (1.0 + k_alpha * (ratio - 1.0))
-                        .clamp(1.0 / K_FACTOR_MAX, K_FACTOR_MAX);
+                        .clamp(1.0 / factor_max, factor_max);
                     quant_field_float[bi] *= factor;
 
-                    // Enforce deviation bounds
                     if quant_field_float[bi] > qf_higher {
                         quant_field_float[bi] = qf_higher;
                     }
