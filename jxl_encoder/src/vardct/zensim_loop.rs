@@ -42,18 +42,20 @@ struct ZensimParams {
 impl ZensimParams {
     fn from_env() -> Self {
         Self {
-            // Defaults tuned by 3-phase parameter sweep (2026-03-08).
-            // Phase 1+2: masking=8,sqrt=0,hf=1,alpha=0.25,factor=1.15
-            // Phase 3: L6 norm, full spatial weight, rmax=2.0
-            //   → +0.874 SSIM2 at -0.12% size (e7-zen4 vs e7 baseline)
-            //   → -5.37% size at 0.000 SSIM2 cost (e8-zen4 vs e7 baseline)
+            // Defaults tuned by parameter sweep (2026-03-08, 20 images validated).
+            // masking=8,sqrt=0: preserves diffmap dynamic range for redistribution.
+            // L2/sw=0.6/rmax=3.0: best quality gain across diverse images.
+            //   → +1.262 SSIM2 at +1.10% size (e7-zen4 vs e7, 20-img avg)
+            //   → +0.000 SSIM2 at -4.61% size (e8-zen4 vs e7, 20-img avg)
+            // L6/sw=1.0/rmax=2.0 tested: lower size cost but -11% less quality
+            // gain and e8-zen4 regression (-0.114 SSIM2). Overfits on 4-img sample.
             masking_strength: Self::env_masking("ZENSIM_MASKING", Some(8.0)),
             sqrt: Self::env_bool("ZENSIM_SQRT", false),
             include_hf: Self::env_bool("ZENSIM_HF", true),
             include_edge_mse: Self::env_bool("ZENSIM_EDGE_MSE", true),
-            norm_power: Self::env_f32("ZENSIM_NORM", 6.0),
-            spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 1.0),
-            ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 2.0),
+            norm_power: Self::env_f32("ZENSIM_NORM", 2.0),
+            spatial_weight: Self::env_f32("ZENSIM_SPATIAL_W", 0.6),
+            ratio_max: Self::env_f32("ZENSIM_RATIO_MAX", 3.0),
             alpha_base: Self::env_f32("ZENSIM_ALPHA", 0.25),
             factor_max: Self::env_f32("ZENSIM_FACTOR_MAX", 1.15),
         }
