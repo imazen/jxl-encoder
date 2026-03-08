@@ -395,7 +395,17 @@ fn quality_compare() {
     eprintln!("(Rust butteraugli + ssim2, metadata-immune)\n");
     eprintln!(
         "{:<10} {:>5}  {:>8} {:>8} {:>6}  {:>7} {:>7} {:>7}  {:>6} {:>6} {:>6}",
-        "Image", "Dist", "RS_size", "C_size", "S%", "RS_bfly", "C_bfly", "B%", "RS_ss2", "C_ss2", "Δss2"
+        "Image",
+        "Dist",
+        "RS_size",
+        "C_size",
+        "S%",
+        "RS_bfly",
+        "C_bfly",
+        "B%",
+        "RS_ss2",
+        "C_ss2",
+        "Δss2"
     );
     eprintln!("{}", "-".repeat(99));
 
