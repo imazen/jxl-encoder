@@ -187,6 +187,12 @@ struct Args {
     #[arg(long)]
     no_butteraugli: bool,
 
+    /// Number of SSIM2 quantization loop iterations.
+    /// Alternative to butteraugli loop: uses per-block RMSE + full-image SSIM2.
+    /// Requires the ssim2-loop feature.
+    #[arg(long, value_name = "N")]
+    ssim2_iters: Option<u32>,
+
     /// EXIF metadata file to embed in the output JXL container
     #[arg(long, value_name = "FILE")]
     exif: Option<PathBuf>,
@@ -396,6 +402,13 @@ fn main() {
                         }
                         if !args.quiet && cfg.butteraugli_iters() > 0 {
                             println!("Butteraugli loop: {} iterations", cfg.butteraugli_iters());
+                        }
+                    }
+                    #[cfg(feature = "ssim2-loop")]
+                    if let Some(n) = args.ssim2_iters {
+                        cfg = cfg.with_ssim2_iters(n);
+                        if !args.quiet && n > 0 {
+                            println!("SSIM2 loop: {} iterations", n);
                         }
                     }
 
@@ -677,6 +690,18 @@ fn main() {
         if args.butteraugli_iters.is_some() && !args.no_butteraugli {
             eprintln!("Warning: --butteraugli-iters requires the butteraugli-loop feature");
             eprintln!("Rebuild with: cargo build --features butteraugli-loop");
+        }
+        #[cfg(feature = "ssim2-loop")]
+        if let Some(n) = args.ssim2_iters {
+            cfg = cfg.with_ssim2_iters(n);
+            if !args.quiet && n > 0 {
+                println!("SSIM2 loop: {} iterations", n);
+            }
+        }
+        #[cfg(not(feature = "ssim2-loop"))]
+        if args.ssim2_iters.is_some() {
+            eprintln!("Warning: --ssim2-iters requires the ssim2-loop feature");
+            eprintln!("Rebuild with: cargo build --features ssim2-loop");
         }
 
         // Rate control path (uses internal VarDctEncoder directly)
