@@ -141,6 +141,22 @@ pub struct VarDctEncoder {
     /// Default: 0 (disabled)
     #[cfg(feature = "butteraugli-loop")]
     pub butteraugli_iters: u32,
+    /// Number of SSIM2 quantization loop iterations.
+    /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
+    /// Requires the `ssim2-loop` feature.
+    ///
+    /// Default: 0 (disabled)
+    #[cfg(feature = "ssim2-loop")]
+    pub ssim2_iters: u32,
+    /// Number of zensim quantization loop iterations.
+    /// Alternative to butteraugli loop: uses zensim's psychovisual metric for both
+    /// global quality tracking and per-pixel spatial error map (diffmap in XYB space).
+    /// Also refines AC strategy by splitting large transforms with high perceptual error.
+    /// Requires the `zensim-loop` feature.
+    ///
+    /// Default: 0 (disabled)
+    #[cfg(feature = "zensim-loop")]
+    pub zensim_iters: u32,
     /// Whether the input has 16-bit samples. When true, the file header signals
     /// bit_depth=16 instead of 8. The actual VarDCT encoding is the same (XYB
     /// is always f32 internally), but the decoder uses this to reconstruct at
@@ -204,6 +220,10 @@ impl Default for VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            #[cfg(feature = "ssim2-loop")]
+            ssim2_iters: 0, // Off by default. Set via LossyConfig.
+            #[cfg(feature = "zensim-loop")]
+            zensim_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
@@ -242,6 +262,10 @@ impl VarDctEncoder {
             dc_tree_learning: false, // DC tree learning (experimental)
             #[cfg(feature = "butteraugli-loop")]
             butteraugli_iters: 0, // Effort-gated: default off (effort 7). Set via LossyConfig.
+            #[cfg(feature = "ssim2-loop")]
+            ssim2_iters: 0, // Off by default. Set via LossyConfig.
+            #[cfg(feature = "zensim-loop")]
+            zensim_iters: 0, // Off by default. Set via LossyConfig.
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
@@ -563,7 +587,8 @@ impl VarDctEncoder {
         );
 
         // Compute adaptive AC strategy (DCT8/DCT16x8/DCT8x16/DCT16x16/DCT32x32)
-        let ac_strategy = if let Some(forced) = self.force_strategy {
+        #[allow(unused_mut)]
+        let mut ac_strategy = if let Some(forced) = self.force_strategy {
             // Force a specific strategy for all blocks that fit
             force_strategy_map(xsize_blocks, ysize_blocks, forced)
         } else if !self.ac_strategy_enabled {
@@ -670,10 +695,11 @@ impl VarDctEncoder {
         adjust_quant_field_with_distance(&ac_strategy, &mut quant_field, self.distance);
         adjust_quant_field_float_with_distance(&ac_strategy, &mut quant_field_float, self.distance);
 
-        // Butteraugli quantization loop: iteratively refine quant_field using
-        // perceptual distance feedback. AC strategy is fixed; only quant_field changes.
-        // Works in float quant field domain with per-iteration global_scale recomputation
-        // (matching libjxl FindBestQuantization). Returns final DistanceParams.
+        // Quantization loops: iteratively refine quant_field using perceptual
+        // distance feedback. Butteraugli and zensim loops can stack: butteraugli
+        // handles global convergence, zensim adds SSIM-aware spatial fine-tuning.
+        // Works in float quant field domain with per-iteration global_scale
+        // recomputation (matching libjxl FindBestQuantization).
         #[cfg(feature = "butteraugli-loop")]
         if self.butteraugli_iters > 0 {
             let initial_qf_float = quant_field_float.clone();
@@ -699,7 +725,60 @@ impl VarDctEncoder {
             );
         }
 
-        // Free float quant field — no longer needed after butteraugli refinement.
+        // SSIM2 quantization loop: alternative to butteraugli using SSIM2 + per-block RMSE.
+        #[cfg(feature = "ssim2-loop")]
+        if self.ssim2_iters > 0 {
+            let initial_qf_float = quant_field_float.clone();
+            params = self.ssim2_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
+                &cfl_map,
+                &ac_strategy,
+                patches_data.as_ref(),
+                splines_data.as_ref(),
+            );
+        }
+
+        // Zensim quantization loop: uses zensim psychovisual metric + per-pixel diffmap.
+        // Also refines AC strategy by splitting large transforms with high perceptual error.
+        #[cfg(feature = "zensim-loop")]
+        if self.zensim_iters > 0 {
+            let initial_qf_float = quant_field_float.clone();
+            params = self.zensim_refine_quant_field(
+                linear_rgb,
+                width,
+                height,
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                &params,
+                &mut quant_field,
+                &mut quant_field_float,
+                &initial_qf_float,
+                &cfl_map,
+                &mut ac_strategy,
+                patches_data.as_ref(),
+                splines_data.as_ref(),
+            );
+        }
+
+        // Free float quant field — no longer needed after loop refinement.
         drop(quant_field_float);
 
         // Log quant field statistics after all adjustments

@@ -1,0 +1,21 @@
+# Zensim stacking benchmark
+# Date: 2026-03-07
+# Commit: 3ffa136
+# Command: /tmp/zensim_compare.sh (5 modes × 6 CLIC 1024 images × 3 distances)
+# Metrics: Rust butteraugli + SSIMULACRA2 via jxl-oxide decode
+#
+# Modes tested:
+#   e7       = effort 7, no iterative loop (baseline)
+#   e8-bfly  = effort 8, butteraugli loop (2 iters)
+#   e7-zen2  = effort 7, zensim loop (2 iters, no butteraugli)
+#   e8-zen2  = effort 8, butteraugli loop (2 iters) + zensim loop (2 iters)
+#   e8-zen4  = effort 8, butteraugli loop (2 iters) + zensim loop (4 iters)
+#
+# Grand average deltas vs e7 baseline:
+#   e8-bfly:  size -2.6%  bfly -6.9%  ss2 -0.05
+#   e7-zen2:  size +7.0%  bfly -4.0%  ss2 +1.63
+#   e8-zen2:  size -0.6%  bfly -5.3%  ss2 +0.42
+#   e8-zen4:  size +0.3%  bfly -0.1%  ss2 +0.66
+#
+# Conclusion: butteraugli loop alone gives best RD efficiency.
+# Zensim most useful at e7 for SSIM2 improvement.

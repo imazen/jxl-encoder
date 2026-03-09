@@ -1,0 +1,21 @@
+# Coordinate descent optimization validation
+# Date: 2026-03-08
+# Optimizer: tools/zensim-optimize.py (coord descent, 8 images, d=2.0, 3 rounds)
+# Config: masking=18.1, norm=2.4, spatial_w=0.91, ratio_max=3.0, alpha=0.25, factor_max=1.15
+# Validated on: 20 images × 3 distances × 4 modes
+#
+# 20-image results vs e7 baseline:
+#   e7-zen4: +1.013 SSIM2 at +0.03% size (near-zero size cost)
+#   e8-zen4: -0.261 SSIM2 at -5.49% size (quality regression)
+#
+# Comparison with P1+P2 defaults (masking=8, norm=2, sw=0.6):
+#   e7-zen4: -0.249 SSIM2 (1.013 vs 1.262) — 20% less quality gain
+#   e8-zen4: -0.261 vs +0.000 — regression not present in P1+P2
+#
+# The coord optimizer correctly maximized score = ΔSS2 - 0.5*max(0,ΔSz%),
+# achieving +0.997 vs +0.711 for P1+P2 by eliminating size cost.
+# But higher masking (18 vs 8) over-suppresses error signal, reducing
+# both quality gain and e8-zen4 performance.
+#
+# CONCLUSION: P1+P2 defaults (masking=8) remain the production choice.
+# The score function should weight quality gain more heavily.

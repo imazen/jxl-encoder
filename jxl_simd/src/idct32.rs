@@ -52,6 +52,7 @@ const WC_MULTIPLIERS_32: [f32; 16] = [
 ];
 
 // Pre-computed reciprocals to replace division with multiplication.
+#[cfg(target_arch = "x86_64")]
 #[allow(clippy::excessive_precision)]
 const INV_WC32: [f32; 16] = [
     1.0 / 0.5006029982351963,

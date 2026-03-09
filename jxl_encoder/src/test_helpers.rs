@@ -14,21 +14,53 @@
 //! IMPORTANT: Use jxl-rs as the PRIMARY decoder for all roundtrip tests.
 //! jxl-oxide is only a secondary/fallback decoder.
 
+/// Returns the path to the codec corpus directory, if available.
+///
+/// Uses `CODEC_CORPUS_DIR` env var, falling back to `/home/lilith/work/codec-corpus`.
+/// Returns `None` if the directory does not exist (e.g., in CI).
+pub fn try_corpus_dir() -> Option<std::path::PathBuf> {
+    let dir = std::path::PathBuf::from(
+        std::env::var("CODEC_CORPUS_DIR")
+            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
+    );
+    dir.is_dir().then_some(dir)
+}
+
 /// Returns the path to the codec corpus directory.
 ///
 /// Uses `CODEC_CORPUS_DIR` env var, falling back to `/home/lilith/work/codec-corpus`.
 /// Panics if the directory does not exist.
 pub fn corpus_dir() -> std::path::PathBuf {
-    let dir = std::path::PathBuf::from(
-        std::env::var("CODEC_CORPUS_DIR")
-            .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".into()),
-    );
-    assert!(
-        dir.is_dir(),
-        "Codec corpus not found at {}. Set CODEC_CORPUS_DIR env var.",
-        dir.display()
-    );
-    dir
+    try_corpus_dir().unwrap_or_else(|| {
+        panic!(
+            "Codec corpus not found. Set CODEC_CORPUS_DIR env var or install codec-corpus crate."
+        )
+    })
+}
+
+/// Skip the current test if the codec corpus is not available.
+///
+/// Use at the top of any test that requires external corpus files.
+/// In CI (no corpus), the test will pass silently instead of failing.
+#[macro_export]
+macro_rules! skip_without_corpus {
+    () => {
+        if $crate::test_helpers::try_corpus_dir().is_none() {
+            eprintln!("SKIPPED: codec corpus not available");
+            return;
+        }
+    };
+}
+
+/// Skip the current test if the given external binary is not available.
+#[macro_export]
+macro_rules! skip_without_binary {
+    ($path:expr) => {
+        if !std::path::Path::new(&$path).exists() {
+            eprintln!("SKIPPED: {} not available", $path);
+            return;
+        }
+    };
 }
 
 /// Returns the path to the djxl binary.

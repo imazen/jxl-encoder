@@ -394,17 +394,28 @@ fn quality_compare() {
     eprintln!("\n=== Quality Comparison: cjxl-rs vs cjxl e{effort} ===");
     eprintln!("(Rust butteraugli + ssim2, metadata-immune)\n");
     eprintln!(
-        "{:<10} {:>5}  {:>8} {:>8} {:>6}  {:>7} {:>7} {:>7}  {:>6} {:>6}",
-        "Image", "Dist", "RS_size", "C_size", "S%", "RS_bfly", "C_bfly", "B%", "RS_ss2", "C_ss2"
+        "{:<10} {:>5}  {:>8} {:>8} {:>6}  {:>7} {:>7} {:>7}  {:>6} {:>6} {:>6}",
+        "Image",
+        "Dist",
+        "RS_size",
+        "C_size",
+        "S%",
+        "RS_bfly",
+        "C_bfly",
+        "B%",
+        "RS_ss2",
+        "C_ss2",
+        "Δss2"
     );
-    eprintln!("{}", "-".repeat(92));
+    eprintln!("{}", "-".repeat(99));
 
     // Print per-image rows
     for r in &sorted {
         let size_pct = (r.rs_size as f64 / r.cjxl_size as f64 - 1.0) * 100.0;
         let bfly_pct = (r.rs_bfly / r.cjxl_bfly - 1.0) * 100.0;
+        let ss2_delta = r.rs_ssim2 - r.cjxl_ssim2;
         eprintln!(
-            "{:<10} {:>5}  {:>8} {:>8} {:>+5.1}%  {:>7.3} {:>7.3} {:>+6.1}%  {:>6.2} {:>6.2}",
+            "{:<10} {:>5}  {:>8} {:>8} {:>+5.1}%  {:>7.3} {:>7.3} {:>+6.1}%  {:>6.2} {:>6.2} {:>+5.2}",
             r.image,
             fmt_dist(r.distance),
             r.rs_size,
@@ -414,7 +425,8 @@ fn quality_compare() {
             r.cjxl_bfly,
             bfly_pct,
             r.rs_ssim2,
-            r.cjxl_ssim2
+            r.cjxl_ssim2,
+            ss2_delta
         );
     }
 
@@ -442,7 +454,7 @@ fn quality_compare() {
     }
 
     // Per-distance averages
-    eprintln!("{}", "-".repeat(92));
+    eprintln!("{}", "-".repeat(99));
     for &dist in &distances {
         let rows: Vec<&CompareResult> = sorted
             .iter()
@@ -460,8 +472,9 @@ fn quality_compare() {
         let avg_c_ssim2 = rows.iter().map(|r| r.cjxl_ssim2).sum::<f64>() / n;
         let avg_size_pct = (avg_rs_size / avg_c_size - 1.0) * 100.0;
         let avg_bfly_pct = (avg_rs_bfly / avg_c_bfly - 1.0) * 100.0;
+        let avg_ss2_delta = avg_rs_ssim2 - avg_c_ssim2;
         eprintln!(
-            "{:<10} {:>5}  {:>8.0} {:>8.0} {:>+5.1}%  {:>7.3} {:>7.3} {:>+6.1}%  {:>6.2} {:>6.2}",
+            "{:<10} {:>5}  {:>8.0} {:>8.0} {:>+5.1}%  {:>7.3} {:>7.3} {:>+6.1}%  {:>6.2} {:>6.2} {:>+5.2}",
             format!("Avg({})", rows.len()),
             fmt_dist(dist),
             avg_rs_size,
@@ -471,7 +484,8 @@ fn quality_compare() {
             avg_c_bfly,
             avg_bfly_pct,
             avg_rs_ssim2,
-            avg_c_ssim2
+            avg_c_ssim2,
+            avg_ss2_delta
         );
     }
 
@@ -486,8 +500,9 @@ fn quality_compare() {
         let grand_c_ssim2 = sorted.iter().map(|r| r.cjxl_ssim2).sum::<f64>() / n;
         let grand_size_pct = (grand_rs_size / grand_c_size - 1.0) * 100.0;
         let grand_bfly_pct = (grand_rs_bfly / grand_c_bfly - 1.0) * 100.0;
+        let grand_ss2_delta = grand_rs_ssim2 - grand_c_ssim2;
         eprintln!(
-            "\n{:<10} {:>5}  {:>8.0} {:>8.0} {:>+5.1}%  {:>7.3} {:>7.3} {:>+6.1}%  {:>6.2} {:>6.2}",
+            "\n{:<10} {:>5}  {:>8.0} {:>8.0} {:>+5.1}%  {:>7.3} {:>7.3} {:>+6.1}%  {:>6.2} {:>6.2} {:>+5.2}",
             format!("GRAND({})", sorted.len()),
             "",
             grand_rs_size,
@@ -497,7 +512,8 @@ fn quality_compare() {
             grand_c_bfly,
             grand_bfly_pct,
             grand_rs_ssim2,
-            grand_c_ssim2
+            grand_c_ssim2,
+            grand_ss2_delta
         );
     }
     eprintln!();

@@ -1,0 +1,35 @@
+# Zensim zen4 benchmark: definitive stacking results
+# Date: 2026-03-08
+# Encoder: jxl-encoder-rs (uncommitted, zensim_loop.rs modified)
+# Zensim: 499c811 (HF features) + 1bd4695 (docs update)
+# Command: /tmp/zen4_benchmark.sh (4 modes × 20 images × 3 distances)
+# Metrics: libjxl butteraugli_main + ssimulacra2 via djxl decode
+#
+# Config:
+#   Redistribution: adaptive K_ALPHA (base=0.20, K=0.20/(1+CV)),
+#     L2 (RMS) norm, factor clamp [0.85, 1.15] per tile per iteration
+#   DiffmapOptions: include_edge_mse=true, include_hf=true,
+#     masking_strength=4.0, sqrt=true
+#   K_SPATIAL_WEIGHT=0.6, K_RATIO_MAX=3.0
+#   Strategy splitting: disabled
+#
+# Modes:
+#   e7       = effort 7, no iterative loop (baseline)
+#   e8-bfly  = effort 8, butteraugli loop (2 iters)
+#   e7-zen4  = effort 7, zensim loop (4 iters)
+#   e8-zen4  = effort 8, butteraugli (2 iters) + zensim (4 iters)
+#
+# Dataset: 10 CLIC 2025 (1024×1024) + 10 CID22 (512×512)
+#
+# Grand averages vs e7 baseline:
+#   e8-bfly:  size -4.24%  bfly -4.45%  ss2 -0.56
+#   e7-zen4:  size +2.87%  bfly -2.37%  ss2 +1.10
+#   e8-zen4:  size -4.03%  bfly -1.46%  ss2 -0.05
+#
+# Stacking value (e8-zen4 vs e8-bfly):
+#   ALL:  +0.51 SSIM2 improvement for 0.21pp less size savings
+#   CLIC: +0.43 SSIM2 (zen4 is Pareto-superior: better size AND quality)
+#   CID22: +0.59 SSIM2 (zen4 recovers most of bfly's SSIM2 loss)
+#
+# Key insight: 4 zensim iterations after butteraugli preserves the SSIM2
+# that butteraugli sacrifices for size savings. Larger images benefit more.
