@@ -362,6 +362,7 @@ pub use dct4::{
     dct_4x4_full_avx2, dct_4x8_full_avx2, dct_8x4_full_avx2, idct_4x4_full_avx2,
     idct_4x8_full_avx2, idct_8x4_full_avx2,
 };
+#[cfg(target_arch = "x86_64")]
 pub use dct8::{dct_8x8_avx2, idct_8x8_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use dct16::{dct_8x16_avx2, dct_16x8_avx2, dct_16x16_avx2};

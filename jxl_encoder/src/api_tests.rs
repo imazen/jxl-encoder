@@ -486,6 +486,7 @@ mod corpus_tests {
 
     #[test]
     fn test_pngsuite_rgb() {
+        crate::skip_without_corpus!();
         // 8-bit RGB from PNG suite
         let path = format!(
             "{}/pngsuite/basi2c08.png",
@@ -507,6 +508,7 @@ mod corpus_tests {
 
     #[test]
     fn test_kodak_01() {
+        crate::skip_without_corpus!();
         let path = format!(
             "{}/kodak/1.png",
             crate::test_helpers::corpus_dir().display()
@@ -532,6 +534,7 @@ mod corpus_tests {
 
     #[test]
     fn test_corpus_batch() {
+        crate::skip_without_corpus!();
         // Test multiple images from the corpus
         let test_images = [
             "pngsuite/basi0g01.png", // 1-bit grayscale
@@ -1547,6 +1550,7 @@ mod decoder_validation {
     /// Test that pngsuite RGB images can be decoded by jxl-oxide
     #[test]
     fn test_decode_pngsuite_rgb() {
+        crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
         let path = format!(
             "{}/pngsuite/basn2c08.png",
@@ -2010,6 +2014,7 @@ mod decoder_validation {
     /// Dual-decoder validation for corpus images
     #[test]
     fn test_dual_decode_corpus_images() {
+        crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
 
         // Test a few representative images from the corpus
@@ -2257,6 +2262,7 @@ mod decoder_validation {
     /// Test lossless roundtrip for corpus image (pngsuite)
     #[test]
     fn test_roundtrip_lossless_corpus_rgb() {
+        crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
         let path = format!(
             "{}/pngsuite/basn2c08.png",
@@ -2276,6 +2282,7 @@ mod decoder_validation {
     /// Test lossless roundtrip for corpus grayscale (pngsuite)
     #[test]
     fn test_roundtrip_lossless_corpus_gray() {
+        crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
         let path = format!(
             "{}/pngsuite/basn0g08.png",
@@ -2502,6 +2509,7 @@ mod quality_comparison_tests {
 
     #[test]
     fn test_quality_comparison_kodak01() {
+        crate::skip_without_corpus!();
         let path = format!(
             "{}/kodak/1.png",
             crate::test_helpers::corpus_dir().display()
@@ -5196,6 +5204,7 @@ fn test_splines_roundtrip_jxl_rs() {
 /// Test that encoding with splines produces a valid JXL that djxl can decode.
 #[test]
 fn test_splines_roundtrip_djxl() {
+    crate::skip_without_binary!(crate::test_helpers::djxl_path());
     use crate::test_helpers::decode_with_djxl;
     use crate::{LossyConfig, PixelLayout, Spline, SplinePoint};
 
@@ -5366,6 +5375,7 @@ fn test_lossy_grayscale_alpha_roundtrip_jxl_rs() {
 /// Test lossy grayscale decodes with djxl (libjxl reference decoder).
 #[test]
 fn test_lossy_grayscale_roundtrip_djxl() {
+    crate::skip_without_binary!(crate::test_helpers::djxl_path());
     use crate::test_helpers::decode_with_djxl;
     use crate::{LossyConfig, PixelLayout};
 
