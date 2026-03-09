@@ -393,7 +393,11 @@ fn pathological_horizontal_gradient_mono_256x256() {
     let encoded_ans = LosslessConfig::new()
         .encode(&data, 256, 256, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/mono_gradient_ans.jxl", &encoded_ans).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("mono_gradient_ans.jxl"),
+        &encoded_ans,
+    )
+    .unwrap();
     eprintln!("ANS: {} bytes", encoded_ans.len());
 
     // Save Huffman file for comparison
@@ -401,7 +405,11 @@ fn pathological_horizontal_gradient_mono_256x256() {
         .with_ans(false)
         .encode(&data, 256, 256, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/mono_gradient_huff.jxl", &encoded_huff).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("mono_gradient_huff.jxl"),
+        &encoded_huff,
+    )
+    .unwrap();
     eprintln!("Huffman: {} bytes", encoded_huff.len());
 
     // Try to decode both with jxl-rs
@@ -889,13 +897,17 @@ fn pathological_palette_ans_mono_256x2() {
         .encode(&data, 256, 2, PixelLayout::Rgb8)
         .unwrap();
     eprintln!("Palette+ANS mono 256x2: {} bytes", encoded.len());
-    std::fs::write("/tmp/mono_256x2_ans.jxl", &encoded).unwrap();
+    std::fs::write(std::env::temp_dir().join("mono_256x2_ans.jxl"), &encoded).unwrap();
     // Also try Huffman for comparison
     let encoded_huff = LosslessConfig::new()
         .with_ans(false)
         .encode(&data, 256, 2, PixelLayout::Rgb8)
         .unwrap();
-    std::fs::write("/tmp/mono_256x2_huff.jxl", &encoded_huff).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("mono_256x2_huff.jxl"),
+        &encoded_huff,
+    )
+    .unwrap();
     eprintln!("Huffman version: {} bytes", encoded_huff.len());
     let (dw, dh, _) = decode_jxl_rs(&encoded);
     eprintln!("Decoded OK: {}x{}", dw, dh);
