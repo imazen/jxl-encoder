@@ -1073,7 +1073,11 @@ fn diag_dct16x16_solid_16x16() {
     eprintln!("solid 16x16: encoded {} bytes", bytes.len());
 
     // Save for external inspection
-    std::fs::write("/tmp/diag_solid16x16_dct16.jxl", &bytes).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("diag_solid16x16_dct16.jxl"),
+        &bytes,
+    )
+    .unwrap();
 
     // Decode with jxl-oxide
     let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
@@ -1116,7 +1120,11 @@ fn diag_dct16x16_solid_16x16() {
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap().data;
-    std::fs::write("/tmp/diag_solid16x16_dct8.jxl", &bytes8).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("diag_solid16x16_dct8.jxl"),
+        &bytes8,
+    )
+    .unwrap();
 
     let (_, _, djxl8) = decode_djxl(&bytes8);
     eprintln!("\nDCT8 reference (djxl sRGB u8):");
@@ -1144,13 +1152,21 @@ fn diag_dct16x16_real_16x16() {
     let mut enc16 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc16.ac_strategy_enabled = true;
     let bytes16 = enc16.encode(w, h, &linear, None).unwrap().data;
-    std::fs::write("/tmp/diag_real16x16_dct16.jxl", &bytes16).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("diag_real16x16_dct16.jxl"),
+        &bytes16,
+    )
+    .unwrap();
 
     // DCT8
     let mut enc8 = jxl_encoder::vardct::VarDctEncoder::new(1.0);
     enc8.ac_strategy_enabled = false;
     let bytes8 = enc8.encode(w, h, &linear, None).unwrap().data;
-    std::fs::write("/tmp/diag_real16x16_dct8.jxl", &bytes8).unwrap();
+    std::fs::write(
+        std::env::temp_dir().join("diag_real16x16_dct8.jxl"),
+        &bytes8,
+    )
+    .unwrap();
 
     // Decode both with djxl
     let (_, _, d16) = decode_djxl(&bytes16);
@@ -1539,8 +1555,9 @@ fn layer2_single_group_dct32x32_decode_jxl_oxide() {
         bytes.len()
     );
     // Save for manual inspection
-    std::fs::write("/tmp/test_dct32x32_forced.jxl", &bytes).unwrap();
-    eprintln!("Saved to /tmp/test_dct32x32_forced.jxl");
+    let tmp_path = std::env::temp_dir().join("test_dct32x32_forced.jxl");
+    std::fs::write(&tmp_path, &bytes).unwrap();
+    eprintln!("Saved to {}", tmp_path.display());
 
     let (dw, dh, pixels) = decode_jxl_oxide(&bytes);
     assert_eq!(dw, w, "width mismatch");
