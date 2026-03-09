@@ -274,6 +274,7 @@ impl AcStrategyMap {
     ///
     /// Returns true if a split occurred (block was a multi-block transform).
     #[cfg(feature = "zensim-loop")]
+    #[allow(dead_code)]
     pub fn split_one_level(&mut self, bx: usize, by: usize) -> bool {
         let (fx, fy, raw) = self.find_first_block(bx, by);
         let cx = COVERED_X[raw as usize];
