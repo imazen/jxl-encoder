@@ -77,7 +77,7 @@ pub fn vec_f32_dirty(n: usize) -> alloc::vec::Vec<f32> {
 ///
 /// # Safety
 /// Caller must ensure `offset <= s.len()`.
-#[cfg(feature = "unsafe-performance")]
+#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
 #[inline(always)]
 #[allow(unsafe_code)]
 pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
@@ -87,7 +87,7 @@ pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
 }
 
 /// Slice from offset with bounds check (safe default path).
-#[cfg(not(feature = "unsafe-performance"))]
+#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
 #[inline(always)]
 pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
     &s[offset..]

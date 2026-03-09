@@ -19,6 +19,7 @@ const EPF_CHANNEL_SCALE: [f32; 3] = [40.0, 5.0, 3.5];
 
 #[cfg(target_arch = "x86_64")]
 use crate::load_f32x8;
+#[cfg(target_arch = "x86_64")]
 use crate::slice_from;
 
 /// Pad a single channel plane with edge replication.

@@ -468,6 +468,7 @@ mod corpus_tests {
 
     #[test]
     fn test_pngsuite_gray() {
+        crate::skip_without_corpus!();
         // 8-bit grayscale from PNG suite
         let path = format!("{}/pngsuite/basi0g08.png", corpus_path_string());
         if std::path::Path::new(&path).exists() {
