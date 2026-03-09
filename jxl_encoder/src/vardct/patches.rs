@@ -1978,8 +1978,10 @@ mod tests {
     #[test]
     #[ignore]
     fn test_ref_frame_value_ranges() {
-        let path =
-            std::path::Path::new(env!("HOME")).join("work/codec-corpus/gb82-sc/terminal.png");
+        let path = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
+        )
+        .join("work/codec-corpus/gb82-sc/terminal.png");
         if !path.exists() {
             eprintln!("Skipping: {path:?} not found");
             return;
@@ -2066,8 +2068,10 @@ mod tests {
     #[test]
     #[ignore]
     fn test_terminal_patch_coverage() {
-        let path =
-            std::path::Path::new(env!("HOME")).join("work/codec-corpus/gb82-sc/terminal.png");
+        let path = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
+        )
+        .join("work/codec-corpus/gb82-sc/terminal.png");
         if !path.exists() {
             eprintln!("Skipping: {path:?} not found");
             return;
