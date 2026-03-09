@@ -188,6 +188,11 @@ fn compute_tile_dist(
 /// are split one level down (e.g., DCT32x32 → four DCT16x16).
 ///
 /// Returns the number of splits performed.
+///
+/// Currently disabled: splitting large transforms with high error causes size
+/// inflation (+5-12%) without proportional quality gain. Kept for future
+/// re-enablement once RD impact is characterized.
+#[allow(dead_code)]
 fn refine_strategy_from_diffmap(
     ac_strategy: &mut AcStrategyMap,
     tile_dist: &[f32],
