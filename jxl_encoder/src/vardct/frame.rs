@@ -207,12 +207,12 @@ impl DistanceParams {
         // Compute median using nth_element equivalent (partial sort)
         let mut data: Vec<f32> = quant_field.to_vec();
         let mid = data.len() / 2;
-        data.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
+        data.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
         let quant_median = data[mid];
 
         // Compute median absolute deviation from median
         let mut deviations: Vec<f32> = data.iter().map(|&x| (x - quant_median).abs()).collect();
-        deviations.select_nth_unstable_by(mid, |a, b| a.partial_cmp(b).unwrap());
+        deviations.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));
         let quant_median_absd = deviations[mid];
 
         #[cfg(feature = "debug-tokens")]

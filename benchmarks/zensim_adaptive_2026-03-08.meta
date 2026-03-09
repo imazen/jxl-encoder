@@ -1,0 +1,40 @@
+# Zensim adaptive redistribution benchmark
+# Date: 2026-03-08
+# Encoder commit: a56aa5e (modified, uncommitted)
+# Zensim commit: 499c811 (feat: add HF features to diffmap)
+# Command: /tmp/final_benchmark.sh (4 modes × 20 images × 3 distances)
+# Metrics: libjxl butteraugli_main + ssimulacra2 via djxl decode
+#
+# Config: K_ALPHA=0.15 (constant), L4 norm, no strategy splitting
+#   DiffmapOptions: include_edge_mse=true, include_hf=true,
+#                   masking_strength=4.0, sqrt=true
+#   K_SPATIAL_WEIGHT=0.6, K_RATIO_MAX=3.0
+#
+# Modes:
+#   e7       = effort 7, no iterative loop (baseline)
+#   e8-bfly  = effort 8, butteraugli loop (2 iters)
+#   e7-zen2  = effort 7, zensim loop (2 iters)
+#   e8-zen2  = effort 8, butteraugli (2 iters) + zensim (2 iters)
+#
+# Dataset: 10 CLIC 2025 (1024×1024) + 10 CID22 (512×512), first 10 sorted
+#
+# Grand averages vs e7 baseline (ALL images):
+#   e8-bfly:  size -4.24%  bfly -4.45%  ss2 -0.56
+#   e7-zen2:  size +2.86%  bfly -2.34%  ss2 +0.91
+#   e8-zen2:  size -4.20%  bfly -3.46%  ss2 -0.25
+#
+# CLIC-only averages vs e7 baseline:
+#   e8-bfly:  size -2.58%  bfly -7.65%  ss2 -0.13
+#   e7-zen2:  size +4.50%  bfly -1.84%  ss2 +1.18
+#   e8-zen2:  size -2.51%  bfly -5.76%  ss2 +0.05
+#
+# Improvement vs previous benchmark (zensim_stacking_2026-03-07):
+#   e7-zen2: size inflation reduced from +4.56% to +2.86% (ALL)
+#   e8-zen2: now saves -4.20% size (was -2.92%) but SSIM2 worse (-0.25 vs -0.01)
+#
+# Key findings:
+# - nosplit+masking+sqrt reduces e7-zen2 size inflation
+# - e8-zen2 saves more size with this config
+# - Separate 3-image test of 4 iterations (zen4) showed:
+#   e7-zen4: +4.75% size, +1.65 SSIM2 (less inflation than zen2 on hard images)
+#   e8-zen4: -2.85% size, +0.51 SSIM2 (Pareto-superior to e8-zen2 and e8-bfly)

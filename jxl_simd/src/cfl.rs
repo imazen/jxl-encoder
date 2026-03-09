@@ -672,9 +672,9 @@ pub fn find_best_multiplier_newton_neon(
             let above = av.simd_ge(thres_v);
             let above_pe = avpe.simd_ge(thres_v);
             let above_me = avme.simd_ge(thres_v);
-            acc_fd = acc_fd + f32x4::blend(above, zero, d);
-            acc_fdpe = acc_fdpe + f32x4::blend(above_pe, zero, dpe);
-            acc_fdme = acc_fdme + f32x4::blend(above_me, zero, dme);
+            acc_fd += f32x4::blend(above, zero, d);
+            acc_fdpe += f32x4::blend(above_pe, zero, dpe);
+            acc_fdme += f32x4::blend(above_me, zero, dme);
 
             i += 4;
         }

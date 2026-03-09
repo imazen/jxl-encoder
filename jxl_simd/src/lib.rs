@@ -77,7 +77,7 @@ pub fn vec_f32_dirty(n: usize) -> alloc::vec::Vec<f32> {
 ///
 /// # Safety
 /// Caller must ensure `offset <= s.len()`.
-#[cfg(feature = "unsafe-performance")]
+#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
 #[inline(always)]
 #[allow(unsafe_code)]
 pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
@@ -87,7 +87,7 @@ pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
 }
 
 /// Slice from offset with bounds check (safe default path).
-#[cfg(not(feature = "unsafe-performance"))]
+#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
 #[inline(always)]
 pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
     &s[offset..]
@@ -362,6 +362,7 @@ pub use dct4::{
     dct_4x4_full_avx2, dct_4x8_full_avx2, dct_8x4_full_avx2, idct_4x4_full_avx2,
     idct_4x8_full_avx2, idct_8x4_full_avx2,
 };
+#[cfg(target_arch = "x86_64")]
 pub use dct8::{dct_8x8_avx2, idct_8x8_avx2};
 #[cfg(target_arch = "x86_64")]
 pub use dct16::{dct_8x16_avx2, dct_16x8_avx2, dct_16x16_avx2};

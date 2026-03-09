@@ -564,6 +564,7 @@ mod tests {
 
     #[test]
     fn test_parse_real_jpeg() {
+        crate::skip_without_corpus!();
         let path = format!(
             "{}/imageflow/test_inputs/orientation/Landscape_1.jpg",
             crate::test_helpers::corpus_dir().display()

@@ -1,0 +1,24 @@
+# Zensim optimized defaults benchmark
+# Date: 2026-03-08
+# Encoder: jxl-encoder-rs (feat/metric-loops branch, commit 87f620a)
+# Zensim: 499c811 (HF features) + sweep-optimized defaults
+# Dataset: 10 CLIC 2025 (1024×1024) + 10 CID22 (various), d=1.0/2.0/3.0
+# Config: masking=8, sqrt=0, hf=1, alpha=0.25, factor=1.15
+#         (optimized from 3-phase parameter sweep)
+#
+# Results (relative to e7 baseline, averaged over 20 images × 3 distances):
+#
+#   Mode         ΔSize%   ΔSS2    ΔBfly
+#   e8-bfly      -3.12   -0.558  -0.094
+#   e7-zen4      +1.10   +1.262  -0.029
+#   e8-zen4      -4.61   +0.000  +0.164
+#
+# vs previous defaults (masking=4, sqrt=1, hf=1, alpha=0.20, factor=1.15):
+#
+#   e7-zen4: +0.165 more SSIM2, -1.0pp less size inflation (2.10% → 1.10%)
+#   e8-zen4: +0.048 more SSIM2, -0.81pp more size savings (-3.80% → -4.61%)
+#
+# Per-distance breakdown:
+#   d=1.0: e7-zen4 ΔSS2=+0.452 ΔSz=-0.06%  |  e8-zen4 ΔSS2=-0.184 ΔSz=-3.77%
+#   d=2.0: e7-zen4 ΔSS2=+1.253 ΔSz=+1.61%  |  e8-zen4 ΔSS2=-0.018 ΔSz=-5.31%
+#   d=3.0: e7-zen4 ΔSS2=+2.080 ΔSz=+3.11%  |  e8-zen4 ΔSS2=+0.203 ΔSz=-5.60%
