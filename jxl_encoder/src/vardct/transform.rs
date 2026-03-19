@@ -1120,7 +1120,7 @@ impl VarDctEncoder {
     /// Processes groups sequentially via `transform_blocks_into` and scatters
     /// results into the pre-allocated output. Used by the butteraugli quantization
     /// loop which reuses the same `TransformOutput` across iterations.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn transform_and_quantize_into(
         &self,
         xyb_x: &[f32],

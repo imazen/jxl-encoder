@@ -635,6 +635,7 @@ pub(crate) fn subtract_splines(
 }
 
 /// Add splines to XYB planes (reconstruction: after VarDCT decode, for butteraugli).
+#[allow(dead_code)]
 pub(crate) fn add_splines(
     planes: &mut [Vec<f32>; 3],
     stride: usize,
