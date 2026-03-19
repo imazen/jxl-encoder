@@ -208,9 +208,8 @@ fn verify_jxl_rs_decodes(jpeg_path: &str, label: &str) {
 
 #[test]
 fn test_encode_small_jpeg() {
-    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
-        .to_string_lossy();
-    let data = std::fs::read(path).expect("failed to read test JPEG");
+    let path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg");
+    let data = std::fs::read(&path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
 
@@ -227,17 +226,16 @@ fn test_encode_small_jpeg() {
     assert_eq!(jxl_bytes[1], 0x0A, "bad signature byte 1");
 
     // Save for djxl testing
-    let out_path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64.jxl")
-        .to_string_lossy();
-    std::fs::write(out_path, &jxl_bytes).expect("failed to write JXL");
-    eprintln!("Saved to {out_path}");
+    let out_path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64.jxl");
+    std::fs::write(&out_path, &jxl_bytes).expect("failed to write JXL");
+    eprintln!("Saved to {}", out_path.display());
 }
 
 #[test]
 fn test_decode_small_jpeg_oxide() {
-    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
-        .to_string_lossy();
-    let data = std::fs::read(path).expect("failed to read test JPEG");
+    let path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg");
+    let path_str = path.to_string_lossy().into_owned();
+    let data = std::fs::read(&path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&data).expect("failed to parse JPEG");
     let jxl_bytes = encode_jpeg_to_jxl(&jpeg).expect("failed to encode JPEG to JXL");
 
@@ -250,9 +248,8 @@ fn test_decode_small_jpeg_oxide() {
     );
 
     // Save for inspection
-    let out_path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64.jxl")
-        .to_string_lossy();
-    std::fs::write(out_path, &jxl_bytes).expect("failed to write JXL");
+    let out_path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64.jxl");
+    std::fs::write(&out_path, &jxl_bytes).expect("failed to write JXL");
 
     // Decode with jxl-oxide
     let reader = std::io::Cursor::new(&jxl_bytes);
@@ -275,9 +272,9 @@ fn test_decode_small_jpeg_oxide() {
     assert!(pixels.len() >= num_pixels * 3);
 
     // Decode JPEG with djpeg for reference
-    let _jpeg_data = std::fs::read(path).unwrap();
+    let _jpeg_data = std::fs::read(&path).unwrap();
     let djpeg = std::process::Command::new("djpeg")
-        .args(["-pnm", path])
+        .args(["-pnm", &path_str])
         .output()
         .expect("failed to run djpeg");
     assert!(djpeg.status.success(), "djpeg failed");
@@ -344,9 +341,8 @@ fn test_decode_landscape_jpeg_oxide() {
     );
 
     // Save for djxl testing
-    let out_path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "landscape1.jxl")
-        .to_string_lossy();
-    std::fs::write(out_path, &jxl_bytes).expect("failed to write JXL");
+    let out_path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "landscape1.jxl");
+    std::fs::write(&out_path, &jxl_bytes).expect("failed to write JXL");
 
     // Decode with jxl-oxide
     let reader = std::io::Cursor::new(&jxl_bytes);
@@ -455,9 +451,8 @@ fn test_decode_landscape_jpeg_oxide() {
 /// Test JBRD box serialization and byte-exact JPEG reconstruction via djxl.
 #[test]
 fn test_jbrd_roundtrip_small() {
-    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
-        .to_string_lossy();
-    let jpeg_data = std::fs::read(path).expect("failed to read test JPEG");
+    let path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg");
+    let jpeg_data = std::fs::read(&path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&jpeg_data).expect("failed to parse JPEG");
     let jxl_bytes =
         encode_jpeg_to_jxl_container(&jpeg).expect("failed to encode JPEG to JXL container");
@@ -479,8 +474,8 @@ fn test_jbrd_roundtrip_small() {
     assert_eq!(&jxl_bytes[4..8], b"JXL ", "bad container signature type");
 
     // Save for manual inspection
-    let out_dir =
-        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "").to_string_lossy();
+    let out_dir = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "");
+    let out_dir = out_dir.to_string_lossy();
     let jxl_path = format!("{out_dir}/test64_jbrd.jxl");
     std::fs::write(&jxl_path, &jxl_bytes).expect("failed to write JXL");
     eprintln!("Saved to {jxl_path}");
@@ -551,8 +546,8 @@ fn test_jbrd_roundtrip_landscape() {
         jxl_bytes.len()
     );
 
-    let out_dir =
-        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "").to_string_lossy();
+    let out_dir = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "");
+    let out_dir = out_dir.to_string_lossy();
     let jxl_path = format!("{out_dir}/landscape1_jbrd.jxl");
     std::fs::write(&jxl_path, &jxl_bytes).expect("failed to write JXL");
 
@@ -634,8 +629,8 @@ fn test_jbrd_roundtrip_large_photos() {
             jxl_bytes.len() as f64 / jpeg_data.len() as f64 * 100.0
         );
 
-        let out_dir =
-            &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "").to_string_lossy();
+        let out_dir = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "");
+        let out_dir = out_dir.to_string_lossy();
         let stem = basename.trim_end_matches(".jpg").trim_end_matches(".jpeg");
         let jxl_path = format!("{out_dir}/{stem}_jbrd.jxl");
         std::fs::write(&jxl_path, &jxl_bytes).unwrap();
@@ -667,9 +662,8 @@ fn test_jbrd_roundtrip_large_photos() {
 /// Test JBRD header parsing with jxl-oxide's jxl-jbr crate.
 #[test]
 fn test_jbrd_parse_oxide() {
-    let path = &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
-        .to_string_lossy();
-    let jpeg_data = std::fs::read(path).expect("failed to read test JPEG");
+    let path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg");
+    let jpeg_data = std::fs::read(&path).expect("failed to read test JPEG");
     let jpeg = read_jpeg(&jpeg_data).expect("failed to parse JPEG");
     let jbrd_bytes = encode_jbrd(&jpeg).expect("failed to encode JBRD");
 
@@ -799,11 +793,8 @@ fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
 
 #[test]
 fn test_subsamp_444_64x64() {
-    roundtrip_jpeg_byteexact(
-        &jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg")
-            .to_string_lossy(),
-        "subsamp_444_64x64",
-    );
+    let path = jxl_encoder::test_helpers::output_dir_for("jpeg-reencoding", "test64_444.jpg");
+    roundtrip_jpeg_byteexact(&path.to_string_lossy(), "subsamp_444_64x64");
 }
 
 #[test]
