@@ -297,7 +297,7 @@ fn reverse_bits(num_bits: u8, bits: u16) -> u16 {
 
 /// Converts code depths to canonical Huffman codes.
 ///
-/// Returns (codes, depths) where codes[i] is the bit pattern for symbol i.
+/// Returns (codes, depths) where `codes[i]` is the bit pattern for symbol `i`.
 ///
 /// ```cpp
 /// // libjxl: enc_huffman_tree.cc

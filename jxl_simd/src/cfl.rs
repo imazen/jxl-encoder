@@ -44,9 +44,9 @@ const NEWTON_CONVERGENCE: f32 = 3e-3;
 
 /// Find the best integer CfL multiplier via regularized least-squares.
 ///
-/// Computes: x = -sum_ab / (sum_aa + num * distance_mul * 0.5)
-/// where sum_aa = sum(a_i^2), sum_ab = sum(a_i * b_i),
-/// a_i = values_m[i] / 84, b_i = base * values_m[i] - values_s[i].
+/// Computes: `x = -sum_ab / (sum_aa + num * distance_mul * 0.5)`
+/// where `sum_aa = sum(a_i^2)`, `sum_ab = sum(a_i * b_i)`,
+/// `a_i = values_m[i] / 84`, `b_i = base * values_m[i] - values_s[i]`.
 pub fn find_best_multiplier(
     values_m: &[f32],
     values_s: &[f32],
