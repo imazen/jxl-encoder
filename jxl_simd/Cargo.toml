@@ -19,8 +19,8 @@ std = ["archmage/std", "magetypes/std"]
 unsafe-performance = []
 
 [dependencies]
-archmage = { version = "0.9.4", default-features = false, features = ["macros"] }
-magetypes = { version = "0.9.4", default-features = false }
+archmage = { version = "0.9.12", default-features = false, features = ["macros"] }
+magetypes = { version = "0.9.12", default-features = false }
 
 [lints]
 workspace = true
