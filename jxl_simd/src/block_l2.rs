@@ -18,7 +18,7 @@ const CHANNEL_WEIGHTS: [f32; 3] = [12.339_445, 1.0, 0.2];
 /// Compute per-block masked weighted L2 error between original and reconstructed XYB planes.
 ///
 /// Each block's error = sum over 8x8 pixels of:
-///   mask[px]^2 * (w_x * dx^2 + w_y * dy^2 + w_b * db^2)
+///   `mask[px]^2 * (w_x * dx^2 + w_y * dy^2 + w_b * db^2)`
 ///
 /// All planes and mask have stride = `xsize_blocks * 8`.
 #[inline]

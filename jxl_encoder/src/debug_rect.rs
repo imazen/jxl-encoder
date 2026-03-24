@@ -3,7 +3,7 @@
 
 //! Spatial decision logging for encoder debugging.
 //!
-//! When the `debug-rect` feature is enabled, the [`debug_rect!`] macro logs every
+//! When the `debug-rect` feature is enabled, the `debug_rect!` macro logs every
 //! encoder decision alongside the rectangle it affects. Logs are collected in a
 //! global buffer and flushed to a sidecar CSV when the frame is complete.
 //!

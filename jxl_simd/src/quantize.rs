@@ -13,18 +13,18 @@
 
 /// Quantize a DCT8 block (64 coefficients) with dead-zone thresholding.
 ///
-/// For each coefficient i (except DC at index 0):
-///   val = dct_coeffs[i] / weights[i] * qac_qm
-///   if |val| < threshold[quadrant]: output 0
+/// For each coefficient `i` (except DC at index 0):
+///   `val = dct_coeffs[i] / weights[i] * qac_qm`
+///   if `|val| < threshold[quadrant]`: output 0
 ///   else: output round(val) as i32
 ///
 /// DC (index 0) is always set to 0 (handled separately by LLF coding).
 ///
 /// `thresholds` are the 4 quadrant thresholds:
-///   [0] = top-left (y<4, x<4)
-///   [1] = top-right (y<4, x>=4)
-///   [2] = bottom-left (y>=4, x<4)
-///   [3] = bottom-right (y>=4, x>=4)
+///   `[0]` = top-left (y<4, x<4),
+///   `[1]` = top-right (y<4, x>=4),
+///   `[2]` = bottom-left (y>=4, x<4),
+///   `[3]` = bottom-right (y>=4, x>=4)
 #[inline]
 pub fn quantize_block_dct8(
     dct_coeffs: &[f32; 64],
@@ -266,7 +266,7 @@ pub fn quantize_dct8_wasm128(
 /// For each coefficient at position (y, x) in the grid:
 ///   val = dct_coeffs[y*grid_width + x] / weights[y*grid_width + x] * qac_qm
 ///   if y < llf_y && x < llf_x: output 0 (LLF handled separately)
-///   elif |val| < threshold[quadrant]: output 0
+///   elif `|val| < threshold[quadrant]`: output 0
 ///   else: output round_ties_even(val) as i32
 ///
 /// `grid_width` MUST be a multiple of 8.

@@ -511,7 +511,7 @@ fn idct1d_n_ref(input: &[f32], output: &mut [f32], n: usize) {
 }
 
 /// Extract DC value from 8x8 DCT coefficients.
-/// For DCT8, DC is just the [0,0] coefficient.
+/// For DCT8, DC is just the `[0,0]` coefficient.
 #[inline]
 pub fn dc_from_dct_8x8(coeffs: &[f32; 64]) -> f32 {
     coeffs[0]

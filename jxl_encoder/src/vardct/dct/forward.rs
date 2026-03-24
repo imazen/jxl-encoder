@@ -245,7 +245,7 @@ pub fn dct_8x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
 /// Extract DC value from DCT4X8 full transform coefficients.
 ///
 /// For DCT4X8 (and DCT8X4), the 8x8 block is covered by a single 1x1 DC region.
-/// The DC combining step already produced the DC at position [0].
+/// The DC combining step already produced the DC at position `[0]`.
 #[inline]
 pub fn dc_from_dct_4x8_full(coeffs: &[f32; 64]) -> f32 {
     coeffs[0]
@@ -253,7 +253,7 @@ pub fn dc_from_dct_4x8_full(coeffs: &[f32; 64]) -> f32 {
 
 /// Extract DC value from DCT8X4 full transform coefficients.
 ///
-/// Same as DCT4X8 - single DC at position [0].
+/// Same as DCT4X8 - single DC at position `[0]`.
 #[inline]
 pub fn dc_from_dct_8x4_full(coeffs: &[f32; 64]) -> f32 {
     coeffs[0]
@@ -301,8 +301,8 @@ pub fn dct_4x4_full(input: &[f32; 64], output: &mut [f32; 64]) {
 
 /// Extract DC value from DCT4X4 full transform coefficients.
 ///
-/// For DCT4X4, the 8x8 block has a 2x2 LLF region at positions [0,1,8,9].
-/// The DC (average) is at position [0].
+/// For DCT4X4, the 8x8 block has a 2x2 LLF region at positions `[0,1,8,9]`.
+/// The DC (average) is at position `[0]`.
 #[inline]
 pub fn dc_from_dct_4x4_full(coeffs: &[f32; 64]) -> f32 {
     coeffs[0]
@@ -342,7 +342,7 @@ pub fn dct_16x16(input: &[f32; 256], output: &mut [f32; 256]) {
 /// Returns 4 DC values in spatial order: `[top-left, top-right, bottom-left, bottom-right]`.
 ///
 /// The caller stores `dcs[iy * 2 + ix]` at position `(by + iy, bx + ix)`, so:
-///   dcs[0] → (by, bx), dcs[1] → (by, bx+1), dcs[2] → (by+1, bx), dcs[3] → (by+1, bx+1).
+///   `dcs[0]` → (by, bx), `dcs[1]` → (by, bx+1), `dcs[2]` → (by+1, bx), `dcs[3]` → (by+1, bx+1).
 ///
 /// The LLF region is 2x2 coefficients at positions [0, 1, 16, 17] in the 16x16 layout
 /// (stride 16). We apply `DCTTotalResampleScale<16, 2>` to each dimension, then a

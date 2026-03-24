@@ -151,12 +151,12 @@ impl Neighbors {
     /// Gathers neighbor values from a channel, matching the JXL spec's edge handling.
     ///
     /// Edge clamping rules (from jxl-rs PredictionData::get_rows):
-    /// - left: x>0 ? row[x-1] : (y>0 ? top_row[0] : 0)
-    /// - top: y>0 ? top_row[x] : left
-    /// - topleft: x>0 && y>0 ? top_row[x-1] : left
-    /// - topright: x+1 < width && y>0 ? top_row[x+1] : top
-    /// - leftleft: x>1 ? row[x-2] : left
-    /// - toptop: y>1 ? toptop_row[x] : top
+    /// - left: `x>0 ? row[x-1] : (y>0 ? top_row[0] : 0)`
+    /// - top: `y>0 ? top_row[x] : left`
+    /// - topleft: `x>0 && y>0 ? top_row[x-1] : left`
+    /// - topright: `x+1 < width && y>0 ? top_row[x+1] : top`
+    /// - leftleft: `x>1 ? row[x-2] : left`
+    /// - toptop: `y>1 ? toptop_row[x] : top`
     #[inline]
     pub fn gather(channel: &Channel, x: usize, y: usize) -> Self {
         let width = channel.width();

@@ -35,8 +35,8 @@ impl EntropyCoeffResult {
 
 /// Vectorized entropy coefficient processing.
 ///
-/// For each coefficient i in 0..n:
-///   val = (block_c[i] - block_y[i] * cmap_factor) * inv_weights[i] * quant
+/// For each coefficient `i` in 0..n:
+///   `val = (block_c[i] - block_y[i] * cmap_factor) * inv_weights[i] * quant`
 ///   rval = round(val)
 ///   entropy_sum += sqrt(|rval|) * k_cost_delta
 ///   nzeros += (rval != 0)

@@ -14,7 +14,7 @@
 ///
 /// The 8x8 block is divided into four 4x4 sub-blocks. For each sub-block:
 /// 1. Compute block_dc = average of 16 pixels
-/// 2. Store AC: pixel[iy][ix] - pixel[1][1] (reference pixel)
+/// 2. Store AC: `pixel[iy][ix] - pixel[1][1]` (reference pixel)
 /// 3. Merge the four sub-block DCs with 2x2 Hadamard (x0.25)
 ///
 /// Input: `pixels` is 8x8 in stride-8 layout.
@@ -158,7 +158,7 @@ pub fn dct2x2_transform(pixels: &[f32; 64], coefficients: &mut [f32; 64]) {
 
 /// Inverse of `identity_transform`. Reconstructs 8x8 pixels from coefficients.
 ///
-/// 1. Inverse Hadamard on DC positions [0],[1],[8],[9] (no x0.25 — full sum)
+/// 1. Inverse Hadamard on DC positions `[0],[1],[8],[9]` (no x0.25 — full sum)
 /// 2. For each 4x4 sub-block: compute residual_sum, derive ref_pixel = dc - residual_sum/16
 /// 3. Reconstruct: pixel = coefficient + ref_pixel; corner from coefficients[(y+2)*8+x+2]
 ///

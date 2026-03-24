@@ -10,13 +10,13 @@
 
 /// Dequantize a DCT8 block and apply CfL (chroma-from-luma) in one pass.
 ///
-/// For each channel c and coefficient i (except DC at index 0):
-///   biased = adjust_quant_bias(quant_ac[c][i], c)
-///   dequant[c][i] = biased * weights[c][i] / (qac * qm_mul[c])
+/// For each channel `c` and coefficient `i` (except DC at index 0):
+///   `biased = adjust_quant_bias(quant_ac[c][i], c)`
+///   `dequant[c][i] = biased * weights[c][i] / (qac * qm_mul[c])`
 ///
 /// Then CfL restore (AC positions only):
-///   dequant[X][i] += x_factor * dequant[Y][i]
-///   dequant[B][i] += b_factor * dequant[Y][i]
+///   `dequant[X][i] += x_factor * dequant[Y][i]`
+///   `dequant[B][i] += b_factor * dequant[Y][i]`
 ///
 /// DC (index 0) is left as-is in the output (caller must restore LLF from DC).
 ///
