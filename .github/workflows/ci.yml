@@ -237,3 +237,20 @@ jobs:
 
       - name: Format check
         run: cargo fmt --all -- --check
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check MSRV
+        run: cargo hack check --rust-version --workspace
