@@ -574,6 +574,11 @@ impl VarDctEncoder {
                 color_encoding,
                 extra_channels,
                 xyb_encoded: true, // Required for VarDCT
+                intensity_target: self.intensity_target,
+                min_nits: self.min_nits,
+                have_intrinsic_size: self.intrinsic_size.is_some(),
+                intrinsic_width: self.intrinsic_size.map_or(0, |(w, _)| w),
+                intrinsic_height: self.intrinsic_size.map_or(0, |(_, h)| h),
                 ..ImageMetadata::default()
             },
         }

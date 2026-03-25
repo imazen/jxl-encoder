@@ -377,12 +377,18 @@ fn percent_to_distance(quality: u32) -> f32 {
 
 // ── Supporting types ────────────────────────────────────────────────────────
 
-/// Image metadata (ICC, EXIF, XMP) to embed in the JXL file.
+/// Image metadata (ICC, EXIF, XMP, tone mapping) to embed in the JXL file.
 #[derive(Clone, Debug, Default)]
 pub struct ImageMetadata<'a> {
     icc_profile: Option<&'a [u8]>,
     exif: Option<&'a [u8]>,
     xmp: Option<&'a [u8]>,
+    /// Peak display luminance in nits (cd/m²). `None` uses the JXL default (255.0 = SDR).
+    intensity_target: Option<f32>,
+    /// Minimum display luminance in nits. `None` uses the JXL default (0.0).
+    min_nits: Option<f32>,
+    /// Intrinsic display size `(width, height)`, if different from coded dimensions.
+    intrinsic_size: Option<(u32, u32)>,
 }
 
 impl<'a> ImageMetadata<'a> {
@@ -422,6 +428,48 @@ impl<'a> ImageMetadata<'a> {
     /// Get the XMP data, if set.
     pub fn xmp(&self) -> Option<&[u8]> {
         self.xmp
+    }
+
+    /// Set the peak display luminance in nits (cd/m²) for HDR content.
+    ///
+    /// Written to the JXL codestream `ToneMapping.intensity_target` field.
+    /// Default is 255.0 (SDR). Set to e.g. 4000.0 or 10000.0 for HDR.
+    pub fn with_intensity_target(mut self, nits: f32) -> Self {
+        self.intensity_target = Some(nits);
+        self
+    }
+
+    /// Set the minimum display luminance in nits.
+    ///
+    /// Written to the JXL codestream `ToneMapping.min_nits` field.
+    /// Default is 0.0.
+    pub fn with_min_nits(mut self, nits: f32) -> Self {
+        self.min_nits = Some(nits);
+        self
+    }
+
+    /// Get the intensity target, if set.
+    pub fn intensity_target(&self) -> Option<f32> {
+        self.intensity_target
+    }
+
+    /// Get the min nits, if set.
+    pub fn min_nits(&self) -> Option<f32> {
+        self.min_nits
+    }
+
+    /// Set the intrinsic display size.
+    ///
+    /// When set, the image should be rendered at this `(width, height)` rather
+    /// than the coded dimensions. Written to the JXL codestream `intrinsic_size` field.
+    pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
+        self.intrinsic_size = Some((width, height));
+        self
+    }
+
+    /// Get the intrinsic size, if set.
+    pub fn intrinsic_size(&self) -> Option<(u32, u32)> {
+        self.intrinsic_size
     }
 }
 
@@ -1567,10 +1615,21 @@ impl<'a> EncodeRequest<'a> {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
             }
         }
-        if let Some(meta) = self.metadata
-            && meta.icc_profile.is_some()
-        {
-            file_header.metadata.color_encoding.want_icc = true;
+        if let Some(meta) = self.metadata {
+            if meta.icc_profile.is_some() {
+                file_header.metadata.color_encoding.want_icc = true;
+            }
+            if let Some(it) = meta.intensity_target {
+                file_header.metadata.intensity_target = it;
+            }
+            if let Some(mn) = meta.min_nits {
+                file_header.metadata.min_nits = mn;
+            }
+            if let Some((w, h)) = meta.intrinsic_size {
+                file_header.metadata.have_intrinsic_size = true;
+                file_header.metadata.intrinsic_width = w;
+                file_header.metadata.intrinsic_height = h;
+            }
         }
 
         // Write codestream
@@ -1842,6 +1901,19 @@ impl<'a> EncodeRequest<'a> {
         enc.source_gamma = self.source_gamma;
         enc.color_encoding = self.color_encoding.clone();
 
+        // Tone mapping and intrinsic size from metadata
+        if let Some(meta) = self.metadata {
+            if let Some(it) = meta.intensity_target {
+                enc.intensity_target = it;
+            }
+            if let Some(mn) = meta.min_nits {
+                enc.min_nits = mn;
+            }
+            if meta.intrinsic_size.is_some() {
+                enc.intrinsic_size = meta.intrinsic_size;
+            }
+        }
+
         // ICC profile from metadata
         if let Some(meta) = self.metadata
             && let Some(icc) = meta.icc_profile
@@ -1910,6 +1982,9 @@ pub struct LossyEncoder {
     xmp: Option<Vec<u8>>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
+    intensity_target: f32,
+    min_nits: f32,
+    intrinsic_size: Option<(u32, u32)>,
 }
 
 impl LossyEncoder {
@@ -1943,6 +2018,24 @@ impl LossyEncoder {
         ce: crate::headers::color_encoding::ColorEncoding,
     ) -> Self {
         self.color_encoding = Some(ce);
+        self
+    }
+
+    /// Set the peak display luminance in nits for HDR content.
+    pub fn with_intensity_target(mut self, nits: f32) -> Self {
+        self.intensity_target = nits;
+        self
+    }
+
+    /// Set the minimum display luminance in nits.
+    pub fn with_min_nits(mut self, nits: f32) -> Self {
+        self.min_nits = nits;
+        self
+    }
+
+    /// Set the intrinsic display size.
+    pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
+        self.intrinsic_size = Some((width, height));
         self
     }
 
@@ -2249,6 +2342,9 @@ impl LossyEncoder {
             enc.bit_depth_16 = self.bit_depth_16;
             enc.source_gamma = self.source_gamma;
             enc.color_encoding = self.color_encoding.clone();
+            enc.intensity_target = self.intensity_target;
+            enc.min_nits = self.min_nits;
+            enc.intrinsic_size = self.intrinsic_size;
             if let Some(ref icc) = self.icc_profile {
                 enc.icc_profile = Some(icc.clone());
             }
@@ -2346,6 +2442,9 @@ impl LossyConfig {
             xmp: None,
             source_gamma: None,
             color_encoding: None,
+            intensity_target: 255.0,
+            min_nits: 0.0,
+            intrinsic_size: None,
         })
     }
 }
@@ -2388,6 +2487,9 @@ pub struct LosslessEncoder {
     xmp: Option<Vec<u8>>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
+    intensity_target: f32,
+    min_nits: f32,
+    intrinsic_size: Option<(u32, u32)>,
 }
 
 impl LosslessEncoder {
@@ -2421,6 +2523,24 @@ impl LosslessEncoder {
         ce: crate::headers::color_encoding::ColorEncoding,
     ) -> Self {
         self.color_encoding = Some(ce);
+        self
+    }
+
+    /// Set the peak display luminance in nits for HDR content.
+    pub fn with_intensity_target(mut self, nits: f32) -> Self {
+        self.intensity_target = nits;
+        self
+    }
+
+    /// Set the minimum display luminance in nits.
+    pub fn with_min_nits(mut self, nits: f32) -> Self {
+        self.min_nits = nits;
+        self
+    }
+
+    /// Set the intrinsic display size.
+    pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
+        self.intrinsic_size = Some((width, height));
         self
     }
 
@@ -2687,6 +2807,13 @@ impl LosslessEncoder {
             if self.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
             }
+            file_header.metadata.intensity_target = self.intensity_target;
+            file_header.metadata.min_nits = self.min_nits;
+            if let Some((w, h)) = self.intrinsic_size {
+                file_header.metadata.have_intrinsic_size = true;
+                file_header.metadata.intrinsic_width = w;
+                file_header.metadata.intrinsic_height = h;
+            }
 
             let mut writer = BitWriter::new();
             file_header.write(&mut writer).map_err(EncodeError::from)?;
@@ -2842,6 +2969,9 @@ impl LosslessConfig {
             xmp: None,
             source_gamma: None,
             color_encoding: None,
+            intensity_target: 255.0,
+            min_nits: 0.0,
+            intrinsic_size: None,
         })
     }
 }
