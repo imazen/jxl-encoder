@@ -1,3 +1,5 @@
+> **Resolved.** The mutual exclusion gate between palette and tree learning has been removed. Tree learning now handles palette internally when beneficial (see `frame.rs` comment "Tree learning: handles palette internally when beneficial" and `encode.rs:1294` where `should_use_palette` is called inside the tree-learning path). This document is retained as historical design reference.
+
 # Modular Palette + Tree Learning Investigation
 
 ## Problem
