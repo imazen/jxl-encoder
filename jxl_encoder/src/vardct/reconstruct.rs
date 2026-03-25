@@ -86,6 +86,23 @@ pub(crate) fn reconstruct_xyb(
             );
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::Wasm128Token::summon() {
+            return reconstruct_xyb_wasm128(
+                token,
+                quant_dc,
+                quant_ac,
+                params,
+                quant_field,
+                cfl_map,
+                ac_strategy,
+                xsize_blocks,
+                ysize_blocks,
+            );
+        }
+    }
     reconstruct_xyb_impl(
         quant_dc,
         quant_ac,
@@ -129,6 +146,32 @@ fn reconstruct_xyb_avx2(
 #[allow(clippy::too_many_arguments)]
 fn reconstruct_xyb_neon(
     _token: jxl_simd::NeonToken,
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
+    params: &DistanceParams,
+    quant_field: &[u8],
+    cfl_map: &CflMap,
+    ac_strategy: &AcStrategyMap,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+) -> [Vec<f32>; 3] {
+    reconstruct_xyb_impl(
+        quant_dc,
+        quant_ac,
+        params,
+        quant_field,
+        cfl_map,
+        ac_strategy,
+        xsize_blocks,
+        ysize_blocks,
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn reconstruct_xyb_wasm128(
+    _token: jxl_simd::Wasm128Token,
     quant_dc: &[Vec<Vec<i16>>; 3],
     quant_ac: &[Vec<Vec<[i32; DCT_BLOCK_SIZE]>>; 3],
     params: &DistanceParams,
