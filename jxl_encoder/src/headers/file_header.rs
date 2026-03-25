@@ -484,8 +484,7 @@ impl FileHeader {
 
         // tone_mapping - only if extra_fields
         if extra_fields {
-            let tone_all_default =
-                meta.intensity_target == 255.0 && meta.min_nits == 0.0;
+            let tone_all_default = meta.intensity_target == 255.0 && meta.min_nits == 0.0;
             writer.write_bit(tone_all_default)?;
             if !tone_all_default {
                 crate::f16::write_f16(meta.intensity_target, writer)?;
