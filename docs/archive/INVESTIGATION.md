@@ -2,6 +2,8 @@
 
 ## 2026-02-02: Quantization Calibration Gap vs libjxl
 
+> **Resolved.** This investigation was concluded; the constants were ruled out as the cause.
+
 ### Status: ACTIVE
 
 ### Problem Statement
