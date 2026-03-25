@@ -32,6 +32,9 @@ pub(crate) mod parallel;
 pub mod trace;
 pub mod vardct;
 
+#[cfg(feature = "convenience")]
+pub mod convenience;
+
 // Re-export new API as primary
 pub use api::{
     AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
@@ -44,6 +47,12 @@ pub use headers::color_encoding::{
     ColorEncoding, ColorSpace, Primaries, RenderingIntent, TransferFunction, WhitePoint,
 };
 pub use vardct::splines::{Spline, SplinePoint};
+
+#[cfg(feature = "convenience")]
+pub use convenience::{
+    encode_bgra8, encode_bgra8_lossless, encode_gray8, encode_gray8_lossless, encode_rgb8,
+    encode_rgb8_lossless, encode_rgba8, encode_rgba8_lossless,
+};
 
 /// Group dimension in pixels (256x256 groups).
 pub const GROUP_DIM: usize = 256;
