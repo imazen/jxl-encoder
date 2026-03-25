@@ -1,3 +1,5 @@
+> **Completed.** This reorganization was finished. The changes described below have all been applied.
+
 # Module Reorganization Plan
 
 ## Goal
