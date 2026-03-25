@@ -6,9 +6,9 @@
 [![codecov](https://codecov.io/gh/imazen/jxl-encoder/branch/main/graph/badge.svg)](https://codecov.io/gh/imazen/jxl-encoder)
 [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue.svg)](https://blog.rust-lang.org/)
 
-A comprehensive, pure Rust JPEG XL encoder. 77k lines of library code, 24k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
+A comprehensive, pure Rust JPEG XL encoder. 80k lines of library code, 29k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
-`#![forbid(unsafe_code)]`. 940+ tests passing.
+Default: `#![forbid(unsafe_code)]` (relaxed with `unsafe-performance` feature). 940+ tests passing.
 
 ## Library usage
 
@@ -162,8 +162,8 @@ cargo clippy --workspace -- -D warnings    # lint
 ## Project structure
 
 ```
-jxl-encoder/                             ~101k lines of Rust
-├── jxl_encoder/             77k lib + 24k tests
+jxl-encoder/                             ~265k lines of Rust
+├── jxl_encoder/             80k lib + 29k tests
 │   └── src/
 │       ├── api.rs               # Public API (LossyConfig, LosslessConfig, EncodeRequest)
 │       ├── vardct/              # VarDCT (lossy) encoder
