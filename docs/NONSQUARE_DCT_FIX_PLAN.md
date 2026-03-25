@@ -1,5 +1,7 @@
 # Plan: Fix Non-Square DCT Transform Quality Bugs
 
+> **Completed (February 2026).** All non-square DCT transforms and AFV modes described here have been fixed and enabled.
+
 ## Problem
 
 All non-square transforms produce garbage butteraugli when forced:
