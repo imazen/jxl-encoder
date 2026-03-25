@@ -195,6 +195,12 @@ pub struct VarDctEncoder {
     /// When Some, this is used instead of deriving from source_gamma / defaults.
     /// Allows signaling HDR (PQ, HLG) or non-sRGB primaries (BT.2020, P3).
     pub color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
+    /// Peak display luminance in nits for ToneMapping. Default 255.0 (SDR).
+    pub intensity_target: f32,
+    /// Minimum display luminance in nits for ToneMapping. Default 0.0.
+    pub min_nits: f32,
+    /// Intrinsic display size `(width, height)`, if different from coded dimensions.
+    pub intrinsic_size: Option<(u32, u32)>,
 }
 
 impl Default for VarDctEncoder {
@@ -234,6 +240,9 @@ impl Default for VarDctEncoder {
             use_lf_frame: false,
             source_gamma: None,
             color_encoding: None,
+            intensity_target: 255.0,
+            min_nits: 0.0,
+            intrinsic_size: None,
         }
     }
 }
@@ -276,6 +285,9 @@ impl VarDctEncoder {
             use_lf_frame: false,
             source_gamma: None,
             color_encoding: None,
+            intensity_target: 255.0,
+            min_nits: 0.0,
+            intrinsic_size: None,
         }
     }
 

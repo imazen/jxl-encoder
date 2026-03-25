@@ -407,7 +407,8 @@ impl FileHeader {
         let extra_fields = meta.animation.is_some()
             || meta.orientation != Orientation::Identity
             || meta.have_intrinsic_size
-            || meta.intensity_target != 255.0;
+            || meta.intensity_target != 255.0
+            || meta.min_nits != 0.0;
         crate::trace::debug_eprintln!(
             "META [bit {}]: extra_fields = {}",
             writer.bits_written(),
@@ -483,7 +484,15 @@ impl FileHeader {
 
         // tone_mapping - only if extra_fields
         if extra_fields {
-            writer.write_bit(true)?; // all_default
+            let tone_all_default =
+                meta.intensity_target == 255.0 && meta.min_nits == 0.0;
+            writer.write_bit(tone_all_default)?;
+            if !tone_all_default {
+                crate::f16::write_f16(meta.intensity_target, writer)?;
+                crate::f16::write_f16(meta.min_nits, writer)?;
+                writer.write_bit(false)?; // relative_to_max_display
+                crate::f16::write_f16(0.0, writer)?; // linear_below
+            }
         }
 
         // extensions (u64 selector, 0 = no extensions)
