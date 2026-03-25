@@ -86,8 +86,8 @@ Butteraugli and SSIM2 metrics within ±1% at most distances.
 ### Dependencies
 
 - archmage 0.9, magetypes 0.9
-- butteraugli 0.8
-- zensim 0.1 (optional, for zensim-loop feature)
+- butteraugli 0.9
+- zensim 0.2 (optional, for zensim-loop feature)
 - fast-ssim2 0.7 (optional, for ssim2-loop feature)
 
 ## [0.1.3] — 2026-02-14
