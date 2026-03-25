@@ -137,6 +137,8 @@ Both decoders parse histograms identically:
 
 ## Our Encoder Issue: TransformId=3 Error
 
+> **Resolved (January 4, 2026).** This bug was fixed; all VarDCT sizes decode correctly.
+
 The error `InvalidEnum { name: "TransformId", value: 3 }` means:
 - jxl-oxide is reading 2 bits and getting value 3
 - This happens during HfMetadata modular substream parsing
@@ -196,6 +198,6 @@ But if bit alignment is wrong, the decoder could read:
 ### Our Encoder
 | Component | File |
 |-----------|------|
-| write_group_header | `jxl_enc/src/vardct/encoder.rs:940-960` |
-| write_hf_metadata | `jxl_enc/src/vardct/encoder.rs:856-938` |
-| write_vardct_modular_substream | `jxl_enc/src/modular/improved.rs:491-611` |
+| write_group_header | `jxl_encoder/src/vardct/encoder.rs:940-960` |
+| write_hf_metadata | `jxl_encoder/src/vardct/encoder.rs:856-938` |
+| write_vardct_modular_substream | `jxl_encoder/src/modular/improved.rs:491-611` |
