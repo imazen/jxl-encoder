@@ -118,6 +118,35 @@ pub(super) fn find_best_16x16_transform(
             return;
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::Wasm128Token::summon() {
+            find_best_16x16_transform_wasm128(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                favor_single_mul,
+                cache_offset,
+                profile,
+            );
+            return;
+        }
+    }
     find_best_16x16_transform_impl(
         xyb,
         stride,
@@ -194,6 +223,54 @@ fn find_best_16x16_transform_avx2(
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn find_best_16x16_transform_neon(
     _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    favor_single_mul: f32,
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) {
+    find_best_16x16_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        favor_single_mul,
+        cache_offset,
+        profile,
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_16x16_transform_wasm128(
+    _token: jxl_simd::Wasm128Token,
     xyb: [&[f32]; 3],
     stride: usize,
     bx0: usize,
@@ -873,6 +950,32 @@ pub(super) fn try_merge_16x16(
             );
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::Wasm128Token::summon() {
+            return try_merge_16x16_wasm128(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+        }
+    }
     try_merge_16x16_impl(
         xyb,
         stride,
@@ -943,6 +1046,50 @@ fn try_merge_16x16_avx2(
 #[allow(clippy::too_many_arguments)]
 fn try_merge_16x16_neon(
     _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    try_merge_16x16_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_16x16_wasm128(
+    _token: jxl_simd::Wasm128Token,
     xyb: [&[f32]; 3],
     stride: usize,
     bx0: usize,
@@ -1315,6 +1462,32 @@ pub(super) fn try_merge_32x32(
             );
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::Wasm128Token::summon() {
+            return try_merge_32x32_wasm128(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+        }
+    }
     try_merge_32x32_impl(
         xyb,
         stride,
@@ -1385,6 +1558,50 @@ fn try_merge_32x32_avx2(
 #[allow(clippy::too_many_arguments)]
 fn try_merge_32x32_neon(
     _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) -> bool {
+    try_merge_32x32_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments)]
+fn try_merge_32x32_wasm128(
+    _token: jxl_simd::Wasm128Token,
     xyb: [&[f32]; 3],
     stride: usize,
     bx0: usize,
@@ -1741,6 +1958,33 @@ pub(super) fn find_best_32x32_transform(
             );
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::Wasm128Token::summon() {
+            return find_best_32x32_transform_wasm128(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                cache_offset,
+                profile,
+            );
+        }
+    }
     find_best_32x32_transform_impl(
         xyb,
         stride,
@@ -1822,6 +2066,56 @@ fn find_best_32x32_transform_avx2(
 )]
 fn find_best_32x32_transform_neon(
     _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    cache_offset: Option<(usize, usize)>,
+    profile: &EffortProfile,
+) -> bool {
+    find_best_32x32_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        cache_offset,
+        profile,
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    unreachable_code
+)]
+fn find_best_32x32_transform_wasm128(
+    _token: jxl_simd::Wasm128Token,
     xyb: [&[f32]; 3],
     stride: usize,
     bx0: usize,
@@ -2370,6 +2664,33 @@ pub(super) fn find_best_64x64_transform(
             return;
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use jxl_simd::SimdToken;
+        if let Some(token) = jxl_simd::Wasm128Token::summon() {
+            find_best_64x64_transform_wasm128(
+                token,
+                xyb,
+                stride,
+                bx0,
+                by0,
+                cx,
+                cy,
+                distance,
+                quant_field,
+                xsize_blocks,
+                masking,
+                ytox,
+                ytob,
+                mask1x1,
+                mask1x1_stride,
+                ac_strategy,
+                scratch,
+                profile,
+            );
+            return;
+        }
+    }
     find_best_64x64_transform_impl(
         xyb,
         stride,
@@ -2440,6 +2761,50 @@ fn find_best_64x64_transform_avx2(
 #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn find_best_64x64_transform_neon(
     _token: jxl_simd::NeonToken,
+    xyb: [&[f32]; 3],
+    stride: usize,
+    bx0: usize,
+    by0: usize,
+    cx: usize,
+    cy: usize,
+    distance: f32,
+    quant_field: &[f32],
+    xsize_blocks: usize,
+    masking: &[f32],
+    ytox: i8,
+    ytob: i8,
+    mask1x1: Option<&[f32]>,
+    mask1x1_stride: usize,
+    ac_strategy: &mut AcStrategyMap,
+    scratch: &mut EntropyEstScratch,
+    profile: &EffortProfile,
+) {
+    find_best_64x64_transform_impl(
+        xyb,
+        stride,
+        bx0,
+        by0,
+        cx,
+        cy,
+        distance,
+        quant_field,
+        xsize_blocks,
+        masking,
+        ytox,
+        ytob,
+        mask1x1,
+        mask1x1_stride,
+        ac_strategy,
+        scratch,
+        profile,
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::arcane]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+fn find_best_64x64_transform_wasm128(
+    _token: jxl_simd::Wasm128Token,
     xyb: [&[f32]; 3],
     stride: usize,
     bx0: usize,

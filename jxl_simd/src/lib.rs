@@ -443,6 +443,28 @@ pub use xyb::{forward_xyb_neon, inverse_xyb_neon, inverse_xyb_planar_neon};
 #[cfg(target_arch = "wasm32")]
 pub use adaptive_quant::{compute_pre_erosion_wasm128, per_block_modulations_wasm128};
 #[cfg(target_arch = "wasm32")]
+pub use block_l2::compute_block_l2_errors_wasm128;
+#[cfg(target_arch = "wasm32")]
 pub use cfl::find_best_multiplier_wasm128 as cfl_find_best_multiplier_wasm128;
 #[cfg(target_arch = "wasm32")]
+pub use dct8::{dct_8x8_wasm128, idct_8x8_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use dct16::{dct_8x16_wasm128, dct_16x8_wasm128, dct_16x16_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use dequant::dequant_dct8_wasm128;
+#[cfg(target_arch = "wasm32")]
+pub use entropy::{entropy_coeffs_wasm128, shannon_entropy_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use epf::{epf_step1_wasm128, epf_step2_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use idct16::{idct_8x16_wasm128, idct_16x8_wasm128, idct_16x16_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use mask1x1::compute_mask1x1_wasm128;
+#[cfg(target_arch = "wasm32")]
 pub use noise::denoise_channel_wasm128;
+#[cfg(target_arch = "wasm32")]
+pub use pixel_loss::pixel_domain_loss_wasm128;
+#[cfg(target_arch = "wasm32")]
+pub use quantize::{quantize_dct8_wasm128, quantize_large_wasm128};
+#[cfg(target_arch = "wasm32")]
+pub use xyb::{forward_xyb_wasm128, inverse_xyb_planar_wasm128, inverse_xyb_wasm128};
