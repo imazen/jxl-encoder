@@ -195,7 +195,7 @@ Matches libjxl `enc_icc_codec.cc:455-482`.
 
 | Feature | libjxl | Our status | Impact |
 |---------|--------|------------|--------|
-| Extended 64-bit box headers | For >4GB payloads | Not implemented | See BUG-2 |
+| Extended 64-bit box headers | For >4GB payloads | **FIXED** (25a813e) | See BUG-2 |
 | `jxll` level box | Codestream level > 5 | Not implemented | Huge images |
 | `jxli` frame index box | Random-access animations | Not implemented | Animation |
 | `brob` Brotli-compressed metadata | Compressed EXIF/XMP | Not implemented | Metadata size |
