@@ -1,5 +1,7 @@
 # magetypes 0.5 & archmage 0.5 — NEON Implementation Guide
 
+> **Version note:** This guide was written for archmage 0.5. The current version is 0.9.x. Core patterns (`#[archmage::arcane]`, token-based dispatch) remain the same, but some API details may differ.
+
 ## Quick Reference
 
 **magetypes 0.5** provides cross-platform SIMD types with natural operators.
@@ -398,8 +400,8 @@ Same as f32x4 except:
 
 ## 9. Resources
 
-- **archmage docs**: https://docs.rs/archmage/0.5
-- **magetypes docs**: https://docs.rs/magetypes/0.5
+- **archmage docs**: https://docs.rs/archmage/0.9
+- **magetypes docs**: https://docs.rs/magetypes/0.9
 - **Existing NEON code**: `jxl_simd/src/gaborish5x5.rs` (lines with `#[cfg(target_arch = "aarch64")]`)
 - **AVX2 examples**: All other kernels in `jxl_simd/src/` (dct8.rs, quantize.rs, etc.)
 
