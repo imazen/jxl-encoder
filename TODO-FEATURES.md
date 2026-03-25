@@ -1,3 +1,5 @@
+> **Completed.** Both Patches and Splines have been implemented and shipped in v0.2.0. This document is retained as historical design reference.
+
 # TODO Features — jxl-encoder-rs
 
 ## Patches (Dictionary-Based Repeated Patterns)
