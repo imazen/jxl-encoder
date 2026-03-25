@@ -53,6 +53,8 @@ rate-control = ["dep:jxl-oxide", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 ssim2-loop = ["dep:fast-ssim2", "dep:imgref"]
 zensim-loop = ["dep:zensim"]
+# Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
+convenience = ["dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 parallel = ["std", "dep:rayon"]
 # Use MaybeUninit for hot-path temporary buffers instead of zero-initialization.
