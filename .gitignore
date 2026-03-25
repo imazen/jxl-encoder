@@ -1,10 +1,4 @@
-/target/
 Cargo.lock
-*.swp
-*.swo
-*~
-.idea/
-.vscode/
 *.orig
 comparison_outputs/
 test_baselines/
@@ -13,3 +7,49 @@ test_images/
 callgrind.out.*
 debug_rect.csv
 *.debug_rect.csv
+
+# === Standard exclusions (do not depend on user ~/.gitignore) ===
+
+# Rust build artifacts
+target/
+
+# Fuzz build artifacts and crashes
+fuzz/target/
+fuzz/artifacts/
+
+# Profiling
+perf.data
+perf.data.old
+flamegraph.svg
+heaptrack.*.zst
+cachegrind.out.*
+callgrind.out.*
+massif.out.*
+
+# C/C++ build artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.rlib
+
+# Compiled binaries with no extension
+rust_out
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
