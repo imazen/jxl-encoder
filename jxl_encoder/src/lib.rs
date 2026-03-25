@@ -37,7 +37,7 @@ pub use api::{
     AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
     EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LosslessEncoder, LossyConfig,
     LossyEncoder, Lz77Method, PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop,
-    Unstoppable, at,
+    Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
 };
 pub use effort::EffortProfile;
 pub use headers::color_encoding::{
