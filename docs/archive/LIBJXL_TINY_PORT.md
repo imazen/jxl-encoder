@@ -1,5 +1,7 @@
 # libjxl-tiny Port to Rust
 
+> **Historical.** The tiny/ module was renamed to vardct/ and TinyEncoder to VarDctEncoder on Feb 8, 2026. All source paths in this document use the old names.
+
 **Status**: FEATURE-COMPLETE (2026-01-31)
 **Started**: 2026-01-26
 **Source**: `~/work/libjxl-tiny` (BSD-3-Clause)
