@@ -20,7 +20,7 @@ hashbrown = { version = "0.16", default-features = false, features = ["default-h
 whereat = "0.1.4"
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
-jxl_simd = { package = "jxl-encoder-simd", version = "0.2.0", path = "../jxl_simd", default-features = false }
+jxl_simd = { package = "jxl-encoder-simd", version = "0.2.0", path = "../jxl-encoder-simd", default-features = false }
 archmage = { version = "0.9.12", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.6.1", default-features = false, features = ["std", "decoder"], optional = true }
