@@ -24,7 +24,7 @@ unsafe_op_in_unsafe_fn = "deny"
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
-license = "AGPL-3.0-or-later"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 repository = "https://github.com/imazen/jxl-encoder"
 homepage = "https://github.com/imazen/jxl-encoder"
 authors = ["Lilith River"]
