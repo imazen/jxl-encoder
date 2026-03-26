@@ -73,8 +73,8 @@ image encoded as 81 bytes).
 
 ### Critical blocker: no auto-detection exists
 
-**libjxl's `FindSplines()` is a stub that returns empty.** After years of development,
-they never implemented auto-detection. The encoder only supports manually-provided splines
+**libjxl's `FindSplines()` is a stub that returns empty.** Auto-detection is not
+implemented upstream either — the encoder only supports manually-provided splines
 via `cparams.custom_splines`. This means:
 
 - The rendering/decoding infrastructure works and is well-tested

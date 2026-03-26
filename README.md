@@ -182,7 +182,7 @@ jxl-encoder/                             ~265k lines of Rust
 ## Credits
 
 - **[libjxl](https://github.com/libjxl/libjxl)** (JPEG XL Project Authors, BSD-3-Clause) — Reference encoder. Our algorithms, quantization weights, cost models, and bitstream format are derived from libjxl. [libjxl-tiny](https://github.com/nicoshev/libjxl-tiny) was the initial porting target.
-- **[zune-jpegxl](https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl)** (Caleb Etemesi, MIT/Apache-2.0/Zlib) — Seeing a working pure-Rust JXL encoder (lossless, ~2.5k lines) was the inspiration to build a comprehensive one covering lossy, lossless, and the 30+ features listed above.
+- **[zune-jpegxl](https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpegxl)** (Caleb Etemesi, MIT/Apache-2.0/Zlib) — Seeing a working pure-Rust JXL lossless encoder (~2.5k lines) was the inspiration for this project, which extends into lossy encoding and the features listed above.
 - **[jxl-rs](https://github.com/libjxl/jxl-rs)** (BSD-3-Clause) — Primary roundtrip validation decoder.
 - **[jxl-oxide](https://github.com/tirr-c/jxl-oxide)** — Secondary validation decoder.
 - **Claude** (Anthropic) — AI-assisted development. Not all code has been manually reviewed; review critical paths before production use.
