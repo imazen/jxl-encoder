@@ -482,7 +482,7 @@ fn test_jbrd_roundtrip_small() {
 
     // Try to reconstruct JPEG with djxl
     let reconstructed_path = format!("{out_dir}/test64_reconstructed.jpg");
-    let djxl = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let djxl = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
         .output()
         .expect("failed to run djxl");
@@ -553,7 +553,7 @@ fn test_jbrd_roundtrip_landscape() {
 
     // Try to reconstruct JPEG with djxl
     let reconstructed_path = format!("{out_dir}/landscape1_reconstructed.jpg");
-    let djxl = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+    let djxl = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
         .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
         .output()
         .expect("failed to run djxl");
@@ -636,7 +636,7 @@ fn test_jbrd_roundtrip_large_photos() {
         std::fs::write(&jxl_path, &jxl_bytes).unwrap();
 
         let reconstructed_path = format!("{out_dir}/{stem}_reconstructed.jpg");
-        let djxl = std::process::Command::new(&jxl_encoder::test_helpers::djxl_path())
+        let djxl = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
             .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
             .output()
             .expect("failed to run djxl");
@@ -752,7 +752,7 @@ fn roundtrip_jpeg_byteexact(jpeg_path: &str, label: &str) {
     std::fs::write(&jxl_path, &jxl_bytes).unwrap();
 
     let reconstructed_path = format!("{out}/{label}_reconstructed.jpg");
-    let djxl = std::process::Command::new(&djxl_bin())
+    let djxl = std::process::Command::new(djxl_bin())
         .args([&jxl_path, &reconstructed_path, "--reconstruct_jpeg"])
         .output()
         .expect("failed to run djxl");
