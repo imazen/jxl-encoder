@@ -14,14 +14,14 @@ keywords = ["jpeg-xl", "encoder", "image"]
 categories = ["multimedia::images", "multimedia::encoding"]
 
 [dependencies]
-enough = "0.4.2"
+enough = "0.4.3"
 once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
-whereat = "0.1.4"
+whereat = "0.1.5"
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.2.0", path = "../jxl-encoder-simd", default-features = false }
-archmage = { version = "0.9.12", default-features = false, features = ["macros"] }
+archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
 rayon = { version = "1.10", optional = true }
 zenjpeg = { version = "0.6.1", default-features = false, features = ["std", "decoder"], optional = true }
 brotli = { version = "8.0", default-features = false, features = ["std"], optional = true }
@@ -30,7 +30,7 @@ jxl-oxide = { version = "0.12.5", default-features = false, optional = true }
 butteraugli = { version = "0.9", optional = true }
 imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
-fast-ssim2 = { version = "0.7.0", features = ["imgref"], optional = true }
+fast-ssim2 = { version = "0.7.1", features = ["imgref"], optional = true }
 zensim = { version = "0.2", optional = true }
 
 [features]
@@ -74,7 +74,7 @@ jxl_transforms = "0.4.0"
 jxl-oxide = "0.12.5"
 jxl-jbr = "0.2.1"
 # SSIMULACRA2 for perceptual quality metrics
-fast-ssim2 = { version = "0.7.0", features = ["imgref"] }
+fast-ssim2 = { version = "0.7.1", features = ["imgref"] }
 yuvxyb = "0.5.0"
 # Butteraugli perceptual quality metric
 butteraugli = "0.9"
