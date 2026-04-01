@@ -39,6 +39,13 @@ pub enum Error {
     #[error("Invalid number of channels: {0}")]
     InvalidChannelCount(usize),
 
+    #[error("Dimension overflow: {width}x{height}x{channels} exceeds usize")]
+    DimensionOverflow {
+        width: usize,
+        height: usize,
+        channels: usize,
+    },
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 

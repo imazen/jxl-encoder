@@ -86,6 +86,13 @@ impl From<crate::error::Error> for EncodeError {
             crate::error::Error::ImageTooLarge(w, h, mw, mh) => Self::LimitExceeded {
                 message: format!("image {w}x{h} exceeds max {mw}x{mh}"),
             },
+            crate::error::Error::DimensionOverflow {
+                width,
+                height,
+                channels,
+            } => Self::InvalidInput {
+                message: format!("dimension overflow: {width}x{height}x{channels} exceeds usize"),
+            },
             crate::error::Error::InvalidInput(msg) => Self::InvalidInput { message: msg },
             crate::error::Error::OutOfMemory(e) => Self::Oom(e),
             #[cfg(feature = "std")]

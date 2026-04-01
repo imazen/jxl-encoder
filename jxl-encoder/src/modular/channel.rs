@@ -262,7 +262,15 @@ pub struct ModularImage {
 impl ModularImage {
     /// Creates a new modular image from 8-bit RGB data.
     pub fn from_rgb8(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 3 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(3))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 3,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
 
@@ -288,7 +296,15 @@ impl ModularImage {
 
     /// Creates a new modular image from 8-bit RGBA data.
     pub fn from_rgba8(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 4 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 4,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
 
@@ -314,7 +330,12 @@ impl ModularImage {
 
     /// Creates a new modular image from 8-bit grayscale data.
     pub fn from_gray8(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height {
+        let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+            width,
+            height,
+            channels: 1,
+        })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
 
@@ -335,7 +356,15 @@ impl ModularImage {
 
     /// Creates a new modular image from 16-bit RGB data (big-endian).
     pub fn from_rgb16(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 6 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(6))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 3,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
 
@@ -365,7 +394,15 @@ impl ModularImage {
     /// Input is a byte slice interpreted as `&[u16]` in native endian order
     /// (6 bytes per pixel: R_lo, R_hi, G_lo, G_hi, B_lo, B_hi on little-endian).
     pub fn from_rgb16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 6 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(6))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 3,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
         let pixels: &[u16] = bytemuck::cast_slice(data);
@@ -392,7 +429,15 @@ impl ModularImage {
     ///
     /// Input is 8 bytes per pixel (R, G, B, A as native-endian u16).
     pub fn from_rgba16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 8 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(8))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 4,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
         let pixels: &[u16] = bytemuck::cast_slice(data);
@@ -417,7 +462,15 @@ impl ModularImage {
 
     /// Creates a new modular image from 8-bit grayscale + alpha data (2 bytes per pixel).
     pub fn from_grayalpha8(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 2 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(2))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 2,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
         let mut gray = Channel::new(width, height)?;
@@ -441,7 +494,15 @@ impl ModularImage {
     ///
     /// Input is 2 bytes per pixel (native-endian u16).
     pub fn from_gray16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 2 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(2))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 1,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
         let pixels: &[u16] = bytemuck::cast_slice(data);
@@ -463,7 +524,15 @@ impl ModularImage {
     ///
     /// Input is 4 bytes per pixel (native-endian u16 gray, u16 alpha).
     pub fn from_grayalpha16_native(data: &[u8], width: usize, height: usize) -> Result<Self> {
-        if data.len() != width * height * 4 {
+        let expected = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 2,
+            })?;
+        if data.len() != expected {
             return Err(Error::InvalidImageDimensions(width, height));
         }
         let pixels: &[u16] = bytemuck::cast_slice(data);
