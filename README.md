@@ -231,12 +231,6 @@ See [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) for details.
 Upstream code from [libjxl/libjxl](https://github.com/libjxl/libjxl) is licensed under BSD-3-Clause.
 Our additions and improvements are dual-licensed (AGPL-3.0 or commercial) as above.
 
-### Upstream Contribution
-
-We are willing to release our improvements under the original BSD-3-Clause
-license if upstream takes over maintenance of those improvements. We'd rather
-contribute back than maintain a parallel codebase. Open an issue or reach out.
-
 [zenjpeg]: https://github.com/imazen/zenjpeg
 [zenpng]: https://github.com/imazen/zenpng
 [zenwebp]: https://github.com/imazen/zenwebp
