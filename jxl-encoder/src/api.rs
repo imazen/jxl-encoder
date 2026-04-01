@@ -1572,6 +1572,16 @@ impl<'a> EncodeRequest<'a> {
                 message: format!("zero dimensions: {w}x{h}"),
             });
         }
+        // JXL spec limits each dimension to 2^30.
+        const MAX_JXL_DIM: u32 = 1 << 30;
+        if self.width > MAX_JXL_DIM || self.height > MAX_JXL_DIM {
+            return Err(EncodeError::LimitExceeded {
+                message: format!(
+                    "image {}x{} exceeds JXL spec maximum of {MAX_JXL_DIM} per dimension",
+                    self.width, self.height
+                ),
+            });
+        }
         let expected = w
             .checked_mul(h)
             .and_then(|n| n.checked_mul(self.layout.bytes_per_pixel()));
@@ -1616,6 +1626,19 @@ impl<'a> EncodeRequest<'a> {
             return Err(EncodeError::LimitExceeded {
                 message: format!("pixels {}x{} = {} > max {max_px}", w, h, w * h),
             });
+        }
+        if let Some(max_mem) = limits.max_memory_bytes {
+            // Conservative estimate: ~40 bytes per pixel covers XYB (3×f32=12),
+            // quantization fields, strategy maps, and entropy coding buffers.
+            let estimated = w.saturating_mul(h).saturating_mul(40);
+            if estimated > max_mem {
+                return Err(EncodeError::LimitExceeded {
+                    message: format!(
+                        "estimated memory {estimated} bytes > max {max_mem} bytes \
+                         (for {w}x{h} image)"
+                    ),
+                });
+            }
         }
         Ok(())
     }
