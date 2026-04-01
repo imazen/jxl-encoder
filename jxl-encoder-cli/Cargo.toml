@@ -36,7 +36,7 @@ parallel = ["jxl_encoder/parallel"]
 unsafe-performance = ["jxl_encoder/unsafe-performance"]
 
 [dependencies]
-jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.1.4", default-features = false }
+jxl_encoder = { package = "jxl-encoder", path = "../jxl-encoder", version = "0.2.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 png = "0.18"
 

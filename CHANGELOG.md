@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.0] — 2026-03-06
+## [0.2.0] — 2026-04-01
 
 ### Quality — At parity with cjxl e7
 
