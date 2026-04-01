@@ -249,7 +249,10 @@ pub fn create_huffman_tree(histogram: &[u32], tree_limit: u8) -> Vec<u8> {
         }
 
         // Tree too deep - retry with higher count_limit
-        count_limit *= 2;
+        count_limit = match count_limit.checked_mul(2) {
+            Some(v) => v,
+            None => break, // u32 overflow — stop retrying, use best depth so far
+        };
     }
 
     depth
