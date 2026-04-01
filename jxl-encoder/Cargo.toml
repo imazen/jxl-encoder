@@ -17,7 +17,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 enough = "0.4.3"
 once_cell = { version = "1.21", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
-whereat = "0.1.5"
+whereat = { version = "0.1.5"}
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
 jxl_simd = { package = "jxl-encoder-simd", version = "0.1.4", path = "../jxl-encoder-simd", default-features = false }
