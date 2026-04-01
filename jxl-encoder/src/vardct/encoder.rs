@@ -19,7 +19,7 @@ use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
 use crate::debug_log;
 use crate::debug_rect;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::headers::frame_header::FrameHeader;
 
 // Re-export types from entropy_code sub-module.
@@ -305,9 +305,34 @@ impl VarDctEncoder {
         linear_rgb: &[f32],
         alpha: Option<&[u8]>,
     ) -> Result<VarDctOutput> {
-        assert_eq!(linear_rgb.len(), width * height * 3);
+        let expected_rgb = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(3))
+            .ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 3,
+            })?;
+        if linear_rgb.len() != expected_rgb {
+            return Err(Error::InvalidInput(format!(
+                "linear_rgb length {} != expected {}",
+                linear_rgb.len(),
+                expected_rgb
+            )));
+        }
         if let Some(a) = alpha {
-            assert_eq!(a.len(), width * height);
+            let expected_alpha = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 1,
+            })?;
+            if a.len() != expected_alpha {
+                return Err(Error::InvalidInput(format!(
+                    "alpha length {} != expected {}",
+                    a.len(),
+                    expected_alpha
+                )));
+            }
         }
 
         crate::debug_rect::clear();
