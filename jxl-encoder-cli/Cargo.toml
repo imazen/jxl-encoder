@@ -32,7 +32,7 @@ name = "cjxl-rs"
 path = "src/main.rs"
 
 [features]
-default = ["jxl_encoder/std", "jxl_encoder/safe-mode", "butteraugli-loop", "unsafe-performance", "parallel"]
+default = ["jxl_encoder/std", "butteraugli-loop", "unsafe-performance", "parallel"]
 debug-tokens = ["jxl_encoder/debug-tokens"]
 debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
 debug-rect = ["jxl_encoder/debug-rect"]
