@@ -34,10 +34,10 @@ not present in libjxl.
 | Configurable bits_per_sample | 12-bit in u16 container | Always full-range | Low |
 | Row stride/padding | `JxlPixelFormat.align` | Tightly packed only | Low |
 | Endianness parameter | `JxlEndianness` | Native-endian only | Low |
-| Premultiplied alpha | `alpha_associated` | Not tracked | Low |
-| Extra channel types | Depth, SpotColor, CFA, etc. | Alpha only | Medium |
-| PQ/HLG/BT.709 pixel conversion | Full TF implementations | Header signaling only | Low |
-| Wide-gamut input (P3, Rec2020) | CMS integration | sRGB only | Low |
+| Premultiplied alpha | `alpha_associated` | Not tracked — **wrong output if set** | Medium |
+| Extra channel types | Depth, SpotColor, CFA, etc. | Alpha only; 4 latent serialization bugs | Medium |
+| PQ/HLG/BT.709 pixel conversion | Full TF implementations | Header signaling only (f32 workaround) | Low |
+| Wide-gamut input (P3, Rec2020) | Linear sRGB via CMS | XYB assumes sRGB primaries — **silent wrong colors for P3** | High |
 
 ### Encoding Pipeline
 
@@ -48,12 +48,9 @@ not present in libjxl.
 | 2x/4x/8x resampling | Auto at distance >= 10 | Not implemented | High distance |
 | Center-first group permutation | Progressive rendering order | Raster order only | Progressive UX |
 | `decoding_speed_tier` | Simplified output for fast decoders | Not implemented | Decoder perf |
-| Invisible pixel simplification | Smooth alpha=0 regions | Not implemented | ~0.5% size |
-| `FindBestQuantizationHQ` | 5-iter max-error at Tortoise | Standard 2-4 iter only | Quality e9+ |
-| `FindBestQuantizationMaxError` | For LfFrame DC quality | Not implemented | LfFrame quality |
+| Invisible pixel simplification | Smooth alpha=0 regions | Not implemented | 5-20% on sprites/UI |
 | Recursive LfFrame (progressive_dc > 1) | Multi-level DC pyramid | 1 level only | Progressive |
-| Dot detection | Star fields, specular highlights | Not implemented | Niche |
-| Phase 3 non-aligned merging | Effort 8-9 feature | Not implemented | Quality e8+ |
+| Dot detection | Star fields, specular highlights | Not implemented (d>=3.0, niche) | Very low |
 
 ### Container Format
 
