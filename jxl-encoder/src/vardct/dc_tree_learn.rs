@@ -744,6 +744,7 @@ const NUM_AC_META_CONTEXTS: u32 = 11;
 pub fn tree_tokens_with_ac_metadata_prefix(
     dc_tree: &DcTree,
     learned_num_contexts: u32,
+    num_dc_groups: usize,
 ) -> (
     Vec<(u32, u32)>,
     u32,
@@ -871,10 +872,15 @@ pub fn tree_tokens_with_ac_metadata_prefix(
     // leaves deeper in BFS, but decoders validate that splitval is within the
     // property's narrowing range, making repeated same-property splits fail.
     //
-    // Property 1 (stream_id), splitval=2:
-    //   LEFT (stream_id > 2): AC metadata (stream_id=3)
-    //   RIGHT (stream_id <= 2): DC subtree (stream_id=1)
-    let root = mk_internal(&mut flat, 1, 2, ac_root, dc_root_idx);
+    // Property 1 (stream_id), splitval=num_dc_groups:
+    //   LEFT (stream_id > num_dc_groups): AC metadata
+    //   RIGHT (stream_id <= num_dc_groups): DC subtree
+    //
+    // DC groups have stream_ids 1..num_dc_groups (from ModularStreamId::VarDCTDC).
+    // AC metadata groups have stream_ids 1+2*num_dc_groups.. (from ModularStreamId::ACMetadata).
+    // So splitval=num_dc_groups correctly routes all DC groups to the DC subtree
+    // and all AC metadata groups to the AC metadata subtree.
+    let root = mk_internal(&mut flat, 1, num_dc_groups as i32, ac_root, dc_root_idx);
 
     // ─── BFS to generate token stream and track context ID mapping ───
     //
@@ -1414,7 +1420,7 @@ fn test_wrapped_tree_tokens() {
     }];
 
     let (wrapped_tokens, total_contexts, dc_remap, ac_map) =
-        tree_tokens_with_ac_metadata_prefix(&tree, 1);
+        tree_tokens_with_ac_metadata_prefix(&tree, 1, 1);
     eprintln!(
         "Merged tree: {} tokens, {} contexts, dc_remap={:?}, ac_map={:?}",
         wrapped_tokens.len(),
@@ -1478,7 +1484,7 @@ fn test_wrapped_tree_tokens_depth1_dc() {
         },
     ];
 
-    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 2);
+    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 2, 1);
     eprintln!(
         "Depth-1 DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
@@ -1546,7 +1552,7 @@ fn test_wrapped_tree_tokens_deep_dc() {
         });
     }
 
-    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 32);
+    let (_, total_contexts, dc_remap, ac_map) = tree_tokens_with_ac_metadata_prefix(&tree, 32, 1);
     eprintln!(
         "Deep DC: total={}, dc_remap={:?}, ac_map={:?}",
         total_contexts, dc_remap, ac_map
