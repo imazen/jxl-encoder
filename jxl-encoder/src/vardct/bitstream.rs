@@ -1628,6 +1628,7 @@ impl VarDctEncoder {
                 super::dc_tree_learn::tree_tokens_with_ac_metadata_prefix(
                     &wp_dc_tree,
                     wp_dc_num_contexts,
+                    num_dc_groups,
                 );
 
             learned_tree_tokens = Some(wrapped_tokens);
