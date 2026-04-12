@@ -6683,7 +6683,7 @@ fn test_rd_regression() {
 
     let mut images = vec![TestImage {
         name: "frymire".into(),
-        path: project_root.join("jxl_encoder/tests/images/frymire.png"),
+        path: project_root.join("jxl-encoder/tests/images/frymire.png"),
     }];
     for name in &CID22_NAMES {
         images.push(TestImage {
@@ -7125,7 +7125,7 @@ fn test_rd_regression_high_distance() {
 
     let mut images = vec![TestImage {
         name: "frymire".into(),
-        path: project_root.join("jxl_encoder/tests/images/frymire.png"),
+        path: project_root.join("jxl-encoder/tests/images/frymire.png"),
     }];
     for name in &CID22_NAMES {
         images.push(TestImage {

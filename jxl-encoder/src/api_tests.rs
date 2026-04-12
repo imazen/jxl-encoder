@@ -1602,10 +1602,7 @@ mod decoder_validation {
     }
 
     /// Test multi-group lossy encoding (512x512 = 4 groups)
-    /// NOTE: Multi-group VarDCT is broken and produces garbage output.
-    /// This test is skipped when safe-mode is enabled (default).
     #[test]
-    #[cfg(not(feature = "safe-mode"))]
     fn test_decode_lossy_multi_group() {
         // 512x512 checkerboard pattern = 4 groups (2x2)
         let mut data = vec![0u8; 512 * 512 * 3];
@@ -1652,6 +1649,128 @@ mod decoder_validation {
                 }
                 panic!("jxl-oxide failed to decode multi-group file: {:?}", e);
             }
+        }
+    }
+
+    /// Test VarDCT lossy encoding for images requiring multiple DC groups (>2048px).
+    /// This is a regression test for imazen/jxl-encoder#3 where a context tree
+    /// mismatch caused decode failures on wide images.
+    #[test]
+    fn test_lossy_multi_dc_group_roundtrip() {
+        // 2100x256: requires 2 DC groups in x (ceil(2100/2048) = 2)
+        let (w, h) = (2100, 256);
+        let mut data = vec![0u8; w * h * 3];
+        let mut seed = 42u64;
+        for val in data.iter_mut() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *val = (seed >> 56) as u8;
+        }
+
+        for effort in [3, 5, 7] {
+            let encoded = LossyConfig::new(2.0)
+                .with_effort(effort)
+                .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+                .unwrap();
+
+            // Verify with jxl-oxide
+            let image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&encoded))
+                .unwrap_or_else(|e| panic!("jxl-oxide decode failed for {w}x{h} e{effort}: {e:?}"));
+            assert_eq!(image.width(), w as u32);
+            assert_eq!(image.height(), h as u32);
+            let _render = image
+                .render_frame(0)
+                .unwrap_or_else(|e| panic!("jxl-oxide render failed for {w}x{h} e{effort}: {e:?}"));
+
+            // Verify with djxl
+            let djxl = djxl_path_string();
+            if std::path::Path::new(&djxl).exists() {
+                let tmp = std::env::temp_dir().join(format!("multi_dc_{w}x{h}_e{effort}.jxl"));
+                std::fs::write(&tmp, &encoded).unwrap();
+                let out = std::env::temp_dir().join(format!("multi_dc_{w}x{h}_e{effort}_dec.png"));
+                let result = Command::new(&djxl)
+                    .args([&tmp, &out])
+                    .output()
+                    .expect("djxl failed to run");
+                assert!(
+                    result.status.success(),
+                    "djxl failed for {w}x{h} e{effort}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        }
+    }
+
+    /// Test multi-DC-group with varying widths to cover different DC group counts.
+    #[test]
+    fn test_lossy_multi_dc_group_widths() {
+        // Each width exercises a different number of DC groups:
+        // 2049 → 2 DC groups, 4097 → 3, 6145 → 4
+        for w in [2049u32, 4097, 6145] {
+            let h = 64u32;
+            let mut data = vec![128u8; (w * h * 3) as usize];
+            let mut seed = w as u64;
+            for val in data.iter_mut() {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *val = (seed >> 56) as u8;
+            }
+
+            let encoded = LossyConfig::new(2.0)
+                .with_effort(7)
+                .encode(&data, w, h, PixelLayout::Rgb8)
+                .unwrap();
+
+            // djxl is the ground-truth decoder
+            let djxl = djxl_path_string();
+            if std::path::Path::new(&djxl).exists() {
+                let tmp = std::env::temp_dir().join(format!("multi_dc_{w}x{h}.jxl"));
+                std::fs::write(&tmp, &encoded).unwrap();
+                let out = std::env::temp_dir().join(format!("multi_dc_{w}x{h}_dec.png"));
+                let result = Command::new(&djxl)
+                    .args([&tmp, &out])
+                    .output()
+                    .expect("djxl failed to run");
+                assert!(
+                    result.status.success(),
+                    "djxl failed for {w}x{h}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        }
+    }
+
+    /// Test VarDCT lossy + alpha with multi-DC-groups.
+    /// Alpha is encoded as a modular extra channel in HfGroup sections.
+    #[test]
+    fn test_lossy_multi_dc_group_alpha() {
+        let (w, h) = (2100, 256);
+        let mut data = vec![0u8; w * h * 4]; // RGBA
+        let mut seed = 99u64;
+        for val in data.iter_mut() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *val = (seed >> 56) as u8;
+        }
+
+        let encoded = LossyConfig::new(2.0)
+            .with_effort(7)
+            .encode(&data, w as u32, h as u32, PixelLayout::Rgba8)
+            .unwrap();
+
+        // djxl handles alpha correctly
+        let djxl = djxl_path_string();
+        if std::path::Path::new(&djxl).exists() {
+            let tmp = std::env::temp_dir().join("multi_dc_alpha.jxl");
+            std::fs::write(&tmp, &encoded).unwrap();
+            let out = std::env::temp_dir().join("multi_dc_alpha_dec.png");
+            let result = Command::new(&djxl)
+                .args([&tmp, &out])
+                .output()
+                .expect("djxl failed to run");
+            assert!(
+                result.status.success(),
+                "djxl failed for RGBA {w}x{h}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
         }
     }
 
