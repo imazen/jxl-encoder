@@ -1,5 +1,5 @@
 /// Minimal encode benchmark for WASM/AArch64 speed testing.
-/// Build: cargo build --example wasm_bench --target wasm32-wasip1 --release --no-default-features --features safe-mode
+/// Build: cargo build --example wasm_bench --target wasm32-wasip1 --release --no-default-features
 /// Run:   wasmtime ./target/wasm32-wasip1/release/examples/wasm_bench.wasm
 use jxl_encoder::{LosslessConfig, LossyConfig, PixelLayout};
 

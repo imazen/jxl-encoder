@@ -57,7 +57,6 @@ Lossy encoding supports all layouts including alpha (VarDCT for RGB + modular fo
 |---------|---------|-------------|
 | `std` | yes | Standard library support; enables `encode_to()` for `Write` targets |
 | `butteraugli-loop` | yes | Iterative quant field refinement via butteraugli distmap |
-| `safe-mode` | yes | Guard flag (no behavioral effect; multi-group works correctly) |
 | `rate-control` | no | Iterative encode for precise distance targeting |
 | `jpeg-reencoding` | no | JPEG bitstream re-encoding into JXL |
 | `trace-bitstream` | no | Zero-cost bitstream tracing for debugging |
