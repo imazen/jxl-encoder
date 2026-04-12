@@ -1,164 +1,30 @@
-# Implementation Differences: jxl-encoder-rs vs libjxl
+# Implementation Differences: jxl-encoder vs libjxl
 
-Last updated: 2026-04-12 (source-verified against libjxl C++ code, fixes applied)
+Last updated: 2026-04-12 (source-verified against libjxl C++ code)
 
-Systematic audit against `/home/lilith/work/jxl-efforts/libjxl/docs/src/` (55 doc files).
-Each item verified against actual libjxl source code (not just docs).
-Organized by severity: bugs first, then behavioral differences, then optimizations,
-then missing features, then verified matches.
-
-**Score: 15 fixed, 3 false alarms, 1 remaining (1 DIFF)**
+Systematic audit against libjxl source. Each item verified against actual C++ code.
 
 ---
 
-## BUGS (will produce invalid bitstreams under certain conditions)
+## REMAINING DIFFERENCES
 
-### ~~BUG-1~~: `write_u64_coder` broken for values >= 273 — FIXED (dd2a29a)
+### Coefficient-domain mode constants (legacy, non-default path)
 
-**File**: `jxl_encoder/src/bit_writer.rs:399-430`
-**Status**: FIXED. Replaced incorrect fixed-width encoding with correct varint loop
-matching libjxl `enc_fields.cc:129-166`. Added roundtrip tests for all values from
-libjxl's `TestU64Coder` (0, 1, 15, 16, 17, 271, 272, 273, 4096, 1<<16, 1<<28,
-(1<<32)-1, 1<<32, 1<<63). Was latent — all current callers pass values 0-179.
+Only affects `--no-pixel-domain-loss`. The default pixel-domain mode matches libjxl.
 
-### ~~BUG-2~~: Container box size overflow for >4GB payloads — FIXED (25a813e)
+| Constant | Rust | libjxl | Status |
+|----------|------|--------|--------|
+| k8x8mul1 | -0.55 * 0.75 = -0.4125 | -0.4 | **DIFFERS** |
+| k8x8mul2 | 1.0736 * 0.75 = 0.8052 | 1.0 | **DIFFERS** |
+| k8x8base | 1.4 | 1.4 | **MATCH** |
 
-**File**: `jxl_encoder/src/container.rs`
-**Status**: FIXED. All three box-writing functions (`write_box`, `write_jxlp_box`,
-`write_exif_box`) now use extended 64-bit box headers (size=1 + 8-byte extended size)
-when total_size > u32::MAX. Also extracted Exif box into `write_exif_box()` helper.
-Was latent — no current images this large.
-
-**Not yet done**: `jxll` level box for codestream level > 5 (separate feature).
+Extra 0.75 scale factor and different base values. Legacy from initial tuning.
+Per-strategy multipliers (k8x16, k16x16, k4x8, k4x4) are a custom extension
+not present in libjxl.
 
 ---
 
-## BEHAVIORAL DIFFERENCES (valid output, but not matching libjxl exactly)
-
-### ~~DIFF-1~~: F16 overflow handling — clamp vs reject — FIXED (cf75fe8)
-
-**Status**: FIXED. `f32_to_f16_bits()` now returns `Result<u16>`, rejecting Inf, NaN,
-and overflow (|value| > 65504). Matches libjxl `F16Coder::CanEncode` behavior.
-
-### ~~DIFF-2~~: ~~F16 underflow boundary off-by-one~~ FALSE ALARM
-
-**Verified against source**: Both implementations produce identical output for all inputs.
-Our subnormal path for biased_exp32=102 computes `half_mantissa = (m >> (13+shift)) = 0`
-(zero), same result as libjxl's early-out `if (exp < -24) return 0`. Different code paths,
-same output. No fix needed.
-
-### ~~DIFF-3~~: F16 Inf/NaN not rejected on encode — FIXED (cf75fe8)
-
-**Status**: FIXED. Merged with DIFF-1 fix. `f32_to_f16_bits()` returns error for
-`exp == 0xFF` (Inf/NaN), matching libjxl `F16Coder::CanEncode`.
-
-### ~~DIFF-4~~: XYB missing `ZeroIfNegative` clamp — FIXED (f534bb4)
-
-**Status**: FIXED. Added `.max(0.0)` clamp to mixed values before bias addition,
-matching libjxl `enc_xyb.cc:91-95`. No-op for sRGB, prevents `cbrt(negative)` for
-wide-gamut inputs.
-
-### ~~DIFF-5~~: XYB missing `intensity_target` scaling — FIXED (399b697)
-
-**Status**: FIXED. Added `linear_rgb_to_xyb_scaled()` with explicit intensity_target
-parameter. Existing `linear_rgb_to_xyb()` uses default 255.0 (no-op for SDR).
-Matches libjxl `ComputePremulAbsorb` (enc_xyb.cc:214-228).
-
-### ~~DIFF-6~~: ~~Modular tree properties differ from libjxl~~ FALSE ALARM (dead code)
-
-**Verified against source**: The `Property` enum in `tree.rs:54-87` is unused in production.
-The production tree learning in `tree_learn.rs` uses `compute_spec_properties()` with
-inline index constants matching libjxl's `context_predict.h:534-554` exactly.
-`Property`/`PixelProperties` are only used by `traverse_tree` (test helper). Re-exported
-in public API but has no external consumers.
-
-### ~~DIFF-7~~: Reference channel properties (16+) in tree learning — FIXED
-
-**Status**: FIXED. Added dynamic reference channel properties (indices 16+) to
-modular tree learning. For each channel, preceding channels with matching dimensions
-contribute 4 properties: |ref_value|, ref_value, |ref_value - clamped_gradient|,
-ref_value - clamped_gradient. Effort-gated: e<9 uses only gradient residual (offset 3)
-per ref channel, e9+ uses all 4. Squeeze and lossy paths excluded (channels have
-different dimensions). 11.4% compression improvement on cross-channel correlated data.
-Pixel-exact roundtrip verified with jxl-rs.
-
-### ~~DIFF-8~~: Custom coefficient orders for DCT64+ — FIXED (37e34d5)
-
-**Status**: FIXED. Added `if bucket > 6 { continue; }` in `compute_custom_orders()`,
-matching libjxl's `ComputeUsedOrders` (`enc_coeff_order.cc:53-58`). Buckets 7+
-(DCT64x64, DCT64x32/DCT32x64) now use natural (default) order.
-
-### ~~DIFF-9~~: ~~CfL pass 1 missing full weighting~~ FALSE ALARM
-
-**Verified against source**: libjxl's `enc_chroma_from_luma.cc:326-331` shows pass 1
-uses `q = use_dct8 ? 1 : quantizer->Scale() * 128 * qq`. When `use_dct8=true` (pass 1),
-`q=1` — no multiplier applied. Our pass 1 also uses `q=1`. Our pass 2 correctly uses
-`quant_scale * 128.0 * qq`. Both passes match libjxl exactly.
-
----
-
-## ENTROPY CODING OPTIMIZATIONS (valid output, suboptimal compression)
-
-### ~~OPT-1~~: Missing greedy entropy optimization in RebalanceHistogram — FIXED (795a077)
-
-**File**: `jxl_encoder/src/entropy_coding/ans.rs`
-**Status**: FIXED. Ported libjxl's `RebalanceHistogram` greedy optimization
-(enc_ans.cc:416-559). Key components:
-- `build_allowed_counts(shift)`: builds sorted table of all representable count values
-- `find_allowed_leq()`: snaps counts DOWN to nearest allowed value (prevents rest < 0)
-- Greedy loop navigates allowed counts by index, computing entropy deltas with f64 log2.
-  Each iteration picks the best bin to increment or decrement, with the balancing bin
-  (highest-frequency symbol) absorbing changes. Tractor logic handles out-of-range rest.
-- Omit enforcement loop ensures decoder's omit_pos detection matches encoder.
-
-### ~~OPT-2~~: ANS population cost is approximate in clustering — FIXED (71943ac)
-
-**File**: `jxl_encoder/src/entropy_coding/ans.rs`
-**Status**: FIXED. Replaced Shannon cross-entropy approximation with precise ANS
-cost function matching libjxl's `EstimateDataBits` (enc_ans.cc:362-370).
-New `estimate_data_bits_normalized()` computes `cost = total * ANS_LOG_TAB_SIZE -
-sum(actual_count * log2(norm_count))` using actual symbol counts against normalized
-ANS table counts. Uses f64 for precision. Affects shift selection in `from_histogram`.
-
-### ~~OPT-3~~: Missing kBest 28-config HybridUint search — FIXED (6900b43)
-
-**Status**: FIXED. Added `optimize_uint_configs_best()` with exact 28 curated configs
-from libjxl `enc_ans.cc:747-783`. Activated when enhanced_clustering is enabled.
-Per-histogram Shannon entropy + extra bits + signaling cost evaluation.
-
-### ~~OPT-4~~: Missing flat distribution cost baseline in ANS strategy selection — FIXED (dc321e4)
-
-**Status**: FIXED. `from_histogram()` now initializes with flat distribution cost
-(header + `total_count * log2(alphabet_size)`) before trying shift-based encodings.
-Matches libjxl's flat-first approach (`enc_ans.cc:97-102`).
-
-### ~~OPT-5~~: No RLE in ANS logcount encoding — FIXED (7c25011)
-
-**Status**: FIXED. Added RLE compression for runs of 4+ consecutive symbols with
-identical normalized counts. Emits RLE marker (symbol 13) + VarLenUint8(run-4).
-Skips precision bits for RLE-covered positions (matching decoder). Runs check
-actual counts and break at omit_pos boundaries.
-
-### ~~OPT-6~~: LZ77 distance cost table 11 entries short — FIXED (a42664b)
-
-**Status**: FIXED. Extended `DIST_COST_TABLE` from 128 to 139 entries, adding 11
-special distance code costs (2.4-9.7 range) from libjxl `enc_lz77.cc:442-446`.
-Previously clamped to entry 127 (17.2), dramatically undervaluing vertical matches.
-
-### ~~OPT-7~~: No LZ77 for ICC profile encoding — FIXED (e51a035)
-
-**Status**: FIXED. ICC profiles now use LZ77 backward references before Huffman
-entropy coding. Optimal LZ77 for small profiles (<16KB), greedy for larger.
-Matches libjxl `enc_icc_codec.cc:455-482`.
-
-### ~~OPT-8~~: Max histogram clusters capped at 96 vs 128 — FIXED (d03697f)
-
-**Status**: FIXED. Changed caller-side cap from 96 to 128, matching libjxl
-`kClustersLimit = 128` (`enc_context_map.h:24`).
-
----
-
-## MISSING FEATURES (not implemented)
+## MISSING FEATURES
 
 ### Input/Format
 
@@ -183,7 +49,6 @@ Matches libjxl `enc_icc_codec.cc:455-482`.
 | Center-first group permutation | Progressive rendering order | Raster order only | Progressive UX |
 | `decoding_speed_tier` | Simplified output for fast decoders | Not implemented | Decoder perf |
 | Invisible pixel simplification | Smooth alpha=0 regions | Not implemented | ~0.5% size |
-| Multi-threading | Group-level parallelism | Group-level parallelism (rayon, opt-in `parallel` feature) | Encode speed |
 | `FindBestQuantizationHQ` | 5-iter max-error at Tortoise | Standard 2-4 iter only | Quality e9+ |
 | `FindBestQuantizationMaxError` | For LfFrame DC quality | Not implemented | LfFrame quality |
 | Recursive LfFrame (progressive_dc > 1) | Multi-level DC pyramid | 1 level only | Progressive |
@@ -466,17 +331,43 @@ Two-piece formula: `v / 12.92` for `<= 0.04045`, else `((v + 0.055) / 1.055)^2.4
 
 ---
 
-## COEFFICIENT-DOMAIN MODE (legacy, not default path)
+## FIX LOG (resolved items, newest first)
 
-These differences only affect the non-default coefficient-domain mode
-(`--no-pixel-domain-loss`). The default pixel-domain mode matches libjxl.
+### Entropy Coding
 
-| Constant | Rust | libjxl | Status |
-|----------|------|--------|--------|
-| k8x8mul1 | -0.55 * 0.75 = -0.4125 | -0.4 | **DIFFERS** |
-| k8x8mul2 | 1.0736 * 0.75 = 0.8052 | 1.0 | **DIFFERS** |
-| k8x8base | 1.4 | 1.4 | **MATCH** |
+| ID | Issue | Fix |
+|----|-------|-----|
+| OPT-8 | Max histogram clusters capped at 96 vs 128 | d03697f — changed to 128 matching `kClustersLimit` |
+| OPT-7 | No LZ77 for ICC profile encoding | e51a035 — optimal/greedy LZ77 before Huffman |
+| OPT-6 | LZ77 distance cost table 11 entries short | a42664b — extended to 139 entries |
+| OPT-5 | No RLE in ANS logcount encoding | 7c25011 — RLE for runs of 4+ identical counts |
+| OPT-4 | Missing flat distribution cost baseline | dc321e4 — flat-first approach |
+| OPT-3 | Missing kBest 28-config HybridUint search | 6900b43 — exact configs from libjxl |
+| OPT-2 | ANS population cost approximate in clustering | 71943ac — precise ANS cost function |
+| OPT-1 | Missing greedy optimization in RebalanceHistogram | 795a077 — full port of greedy loop |
 
-Extra 0.75 scale factor and different base values. Legacy from initial tuning.
-Per-strategy multipliers (k8x16, k16x16, k4x8, k4x4) are a custom extension
-not present in libjxl.
+### Behavioral
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| DIFF-8 | Custom coefficient orders for DCT64+ | 37e34d5 — skip buckets 7+ |
+| DIFF-7 | Reference channel properties missing in tree learning | Added indices 16+, effort-gated |
+| DIFF-5 | XYB missing `intensity_target` scaling | 399b697 — `linear_rgb_to_xyb_scaled()` |
+| DIFF-4 | XYB missing `ZeroIfNegative` clamp | f534bb4 — `.max(0.0)` before bias |
+| DIFF-3 | F16 Inf/NaN not rejected on encode | cf75fe8 — merged with DIFF-1 |
+| DIFF-1 | F16 overflow handling: clamp vs reject | cf75fe8 — returns `Result<u16>` |
+
+### Bugs
+
+| ID | Issue | Fix |
+|----|-------|-----|
+| BUG-2 | Container box size overflow for >4GB | 25a813e — extended 64-bit box headers |
+| BUG-1 | `write_u64_coder` broken for values >= 273 | dd2a29a — correct varint loop |
+
+### False Alarms
+
+| ID | Issue | Finding |
+|----|-------|---------|
+| DIFF-9 | CfL pass 1 missing full weighting | Both use `q=1` for pass 1 — identical |
+| DIFF-6 | Modular tree properties differ | `Property` enum unused in production; `compute_spec_properties()` matches |
+| DIFF-2 | F16 underflow boundary off-by-one | Different code paths, same output |
