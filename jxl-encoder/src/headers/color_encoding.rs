@@ -278,8 +278,9 @@ impl ColorEncoding {
         );
         writer.write_enum_default(wp)?;
         if self.white_point == WhitePoint::Custom {
-            // Custom white point coordinates would follow
-            todo!("Custom white point not implemented");
+            return Err(crate::error::Error::NotImplemented(
+                "custom white point encoding".into(),
+            ));
         }
 
         // primaries (only for RGB) - uses jxl-rs default u2S encoding
@@ -298,8 +299,9 @@ impl ColorEncoding {
             );
             writer.write_enum_default(prim)?;
             if self.primaries == Primaries::Custom {
-                // Custom primaries would follow
-                todo!("Custom primaries not implemented");
+                return Err(crate::error::Error::NotImplemented(
+                    "custom primaries encoding".into(),
+                ));
             }
         } else {
             crate::trace::debug_eprintln!(
