@@ -97,6 +97,7 @@ impl EncoderPrecomputed {
         enable_gaborish: bool,
         force_strategy: Option<u8>,
         profile: &crate::effort::EffortProfile,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
     ) -> Self {
         use super::ac_strategy::compute_ac_strategy;
         use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float};
@@ -113,8 +114,14 @@ impl EncoderPrecomputed {
         let padded_height = ysize_blocks * BLOCK_DIM;
 
         // Convert to XYB with edge-replicated padding
-        let (mut xyb_x, mut xyb_y, mut xyb_b) =
-            convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
+        let (mut xyb_x, mut xyb_y, mut xyb_b) = convert_to_xyb_padded(
+            width,
+            height,
+            padded_width,
+            padded_height,
+            linear_rgb,
+            color_encoding,
+        );
 
         // Estimate noise parameters (if enabled)
         let noise_params = if enable_noise {
@@ -277,32 +284,52 @@ impl EncoderPrecomputed {
 }
 
 /// Convert linear RGB to XYB color space with padding to block boundaries.
+///
+/// If `primaries` is non-sRGB, applies a 3x3 matrix to convert to sRGB primaries
+/// before the XYB transform (the opsin matrix is defined for sRGB/BT.709).
 fn convert_to_xyb_padded(
     width: usize,
     height: usize,
     padded_width: usize,
     padded_height: usize,
     linear_rgb: &[f32],
+    color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
 ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    use super::xyb::primaries_to_srgb_matrix;
     use crate::color::xyb::linear_rgb_to_xyb;
+
+    let primaries_matrix = color_encoding.and_then(primaries_to_srgb_matrix);
 
     let padded_n = padded_width * padded_height;
     let mut xyb_x = vec![0.0f32; padded_n];
     let mut xyb_y = vec![0.0f32; padded_n];
     let mut xyb_b = vec![0.0f32; padded_n];
 
+    // Scratch buffers for deinterleaving + optional matrix transform
+    let mut row_r = vec![0.0f32; width];
+    let mut row_g = vec![0.0f32; width];
+    let mut row_b = vec![0.0f32; width];
+
     // Convert the actual image pixels
     for y in 0..height {
+        let src_row = y * width;
         for x in 0..width {
-            let src_idx = y * width + x;
-            let dst_idx = y * padded_width + x;
-            let r = linear_rgb[src_idx * 3];
-            let g = linear_rgb[src_idx * 3 + 1];
-            let b = linear_rgb[src_idx * 3 + 2];
-            let (xv, yv, bv) = linear_rgb_to_xyb(r, g, b);
-            xyb_x[dst_idx] = xv;
-            xyb_y[dst_idx] = yv;
-            xyb_b[dst_idx] = bv;
+            let si = (src_row + x) * 3;
+            row_r[x] = linear_rgb[si];
+            row_g[x] = linear_rgb[si + 1];
+            row_b[x] = linear_rgb[si + 2];
+        }
+
+        if let Some(ref m) = primaries_matrix {
+            super::xyb::apply_matrix_3x3(&mut row_r, &mut row_g, &mut row_b, m);
+        }
+
+        let dst_row = y * padded_width;
+        for x in 0..width {
+            let (xv, yv, bv) = linear_rgb_to_xyb(row_r[x], row_g[x], row_b[x]);
+            xyb_x[dst_row + x] = xv;
+            xyb_y[dst_row + x] = yv;
+            xyb_b[dst_row + x] = bv;
         }
 
         // Pad right edge with last pixel value

@@ -107,11 +107,11 @@ jobs:
       # Cross-compile uses no-default-features to avoid butteraugli's
       # linear-srgb dependency issues on some cross targets.
       - name: Build (cross)
-        run: cross build --workspace --release --no-default-features --features "std,safe-mode" --target ${{ matrix.target }}
+        run: cross build --workspace --release --no-default-features --features "std" --target ${{ matrix.target }}
 
       - name: Test lib (cross/QEMU)
         if: matrix.run_tests
-        run: cross test --workspace --release --no-default-features --features "std,safe-mode" --lib --target ${{ matrix.target }}
+        run: cross test --workspace --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
 
   # ==========================================================================
   # WASM Runtime Tests (wasm32-wasip1 + simd128)
@@ -147,7 +147,7 @@ jobs:
       - name: Build for WASM
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --workspace --release --no-default-features --features "std,safe-mode" --target wasm32-wasip1
+        run: cargo build --workspace --release --no-default-features --features "std" --target wasm32-wasip1
 
       - name: Test jxl-encoder-simd (SIMD-vs-scalar tests)
         env:
