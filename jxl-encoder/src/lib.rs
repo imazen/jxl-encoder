@@ -44,7 +44,8 @@ pub use api::{
 };
 pub use effort::EffortProfile;
 pub use headers::color_encoding::{
-    ColorEncoding, ColorSpace, Primaries, RenderingIntent, TransferFunction, WhitePoint,
+    CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,
+    TransferFunction, WhitePoint,
 };
 pub use vardct::splines::{Spline, SplinePoint};
 
