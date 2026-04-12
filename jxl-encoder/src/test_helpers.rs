@@ -341,15 +341,18 @@ pub fn decode_with_jxl_rs(data: &[u8]) -> Result<DecodedImage> {
 pub fn decode_with_djxl(data: &[u8]) -> Result<DecodedImage> {
     use std::process::Command;
 
-    // Use unique temp file names to avoid race conditions
-    let pid = std::process::id();
+    // Use unique temp file names: PID + thread ID + monotonic counter to avoid
+    // race conditions when tests run in parallel threads within the same process.
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp_dir = std::env::temp_dir();
     let temp_jxl = temp_dir
-        .join(format!("decode_test_djxl_{}.jxl", pid))
+        .join(format!("decode_test_djxl_{id}.jxl"))
         .to_string_lossy()
         .into_owned();
     let temp_png = temp_dir
-        .join(format!("decode_test_djxl_{}.png", pid))
+        .join(format!("decode_test_djxl_{id}.png"))
         .to_string_lossy()
         .into_owned();
 
