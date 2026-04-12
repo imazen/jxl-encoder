@@ -1,6 +1,6 @@
 # Implementation Differences: jxl-encoder-rs vs libjxl
 
-Last updated: 2026-02-22 (source-verified against libjxl C++ code, fixes applied)
+Last updated: 2026-04-12 (source-verified against libjxl C++ code, fixes applied)
 
 Systematic audit against `/home/lilith/work/jxl-efforts/libjxl/docs/src/` (55 doc files).
 Each item verified against actual libjxl source code (not just docs).
@@ -66,12 +66,11 @@ Matches libjxl `ComputePremulAbsorb` (enc_xyb.cc:214-228).
 
 ### ~~DIFF-6~~: ~~Modular tree properties differ from libjxl~~ FALSE ALARM (dead code)
 
-**Verified against source**: The `Property` enum in `tree.rs:54-87` is **dead code**.
-The production tree learning in `tree_learn.rs:416-454` uses `compute_spec_properties()`
-which matches libjxl's `context_predict.h:534-554` exactly: |N|, |W|, N signed, W signed,
-W-prev_gradient, W+N-NW, W-NW, NW-N, N-NE, N-NN, W-WW.
-
-**Cleanup**: The stale `Property` enum in `tree.rs` should be deleted to avoid confusion.
+**Verified against source**: The `Property` enum in `tree.rs:54-87` is unused in production.
+The production tree learning in `tree_learn.rs` uses `compute_spec_properties()` with
+inline index constants matching libjxl's `context_predict.h:534-554` exactly.
+`Property`/`PixelProperties` are only used by `traverse_tree` (test helper). Re-exported
+in public API but has no external consumers.
 
 ### ~~DIFF-7~~: Reference channel properties (16+) in tree learning — FIXED
 
@@ -195,7 +194,6 @@ Matches libjxl `enc_icc_codec.cc:455-482`.
 
 | Feature | libjxl | Our status | Impact |
 |---------|--------|------------|--------|
-| Extended 64-bit box headers | For >4GB payloads | **FIXED** (25a813e) | See BUG-2 |
 | `jxll` level box | Codestream level > 5 | Not implemented | Huge images |
 | `jxli` frame index box | Random-access animations | Not implemented | Animation |
 | `brob` Brotli-compressed metadata | Compressed EXIF/XMP | Not implemented | Metadata size |
