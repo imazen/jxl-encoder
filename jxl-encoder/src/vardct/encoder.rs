@@ -1532,8 +1532,8 @@ mod tests {
         let hash = hash_bytes(&bytes);
 
         // Lock the hash - if this changes, the encoding has changed
-        // Updated: error_diffusion default changed from true to false
-        const EXPECTED_HASH: u64 = 0x311e7f185fbbf3f1;
+        // Updated: fix multi-DC-group context tree splitval
+        const EXPECTED_HASH: u64 = 0xfde7b582460edebc;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1561,8 +1561,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fix global_scale to use effort-matched fixed q (libjxl parity)
-        const EXPECTED_HASH: u64 = 0x1fd8e75f15fd418c;
+        // Updated: fix multi-DC-group context tree splitval
+        const EXPECTED_HASH: u64 = 0xb71172a676faf64d;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1602,8 +1602,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: fast_log2f replaces glibc log2 in ANS frequency optimization
-        const EXPECTED_HASH: u64 = 0x777dbc66ef3d69a3;
+        // Updated: fix multi-DC-group context tree splitval
+        const EXPECTED_HASH: u64 = 0xeb729ad9e2766dd7;
         assert_eq!(
             hash,
             EXPECTED_HASH,
@@ -1638,8 +1638,8 @@ mod tests {
             .data;
         let hash = hash_bytes(&bytes);
 
-        // Updated: error_diffusion default changed from true to false
-        const EXPECTED_HASH: u64 = 0x0c54e44d071039db;
+        // Updated: fix multi-DC-group context tree splitval
+        const EXPECTED_HASH: u64 = 0x8a3db6460320e743;
         assert_eq!(
             hash,
             EXPECTED_HASH,

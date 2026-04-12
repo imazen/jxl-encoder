@@ -470,19 +470,15 @@ pub fn write_context_tree(num_dc_groups: usize, writer: &mut BitWriter) -> Resul
 /// * `writer` - Bitstream writer
 pub fn write_learned_context_tree(
     tree_tokens: &[(u32, u32)],
-    num_dc_groups: usize,
+    _num_dc_groups: usize,
     writer: &mut BitWriter,
 ) -> Result<()> {
-    // For multi-group images, we need to wrap the learned tree with a group split.
-    // The static tree uses property 1 (stream/group) with splitval = 1 + num_dc_groups
-    // to route different DC groups to their respective subtrees.
-    //
-    // For now, we support single DC group (num_dc_groups == 1) only.
-    // Multi-group support would require duplicating the learned tree per group.
-    if num_dc_groups > 1 {
-        // Fall back to static tree for multi-group
-        return write_context_tree(num_dc_groups, writer);
-    }
+    // The learned tree already has the correct root split on property 1
+    // (stream_id) with splitval=num_dc_groups, set by
+    // tree_tokens_with_ac_metadata_prefix. This routes DC groups
+    // (stream_ids 1..num_dc_groups) to the DC subtree and AC metadata
+    // (stream_ids 1+2*num_dc_groups..) to the AC metadata subtree.
+    // Works for any number of DC groups.
 
     // Convert tree tokens to Token objects
     let tokens: Vec<Token> = tree_tokens
