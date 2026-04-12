@@ -1290,6 +1290,7 @@ impl VarDctEncoder {
             self.enable_gaborish,
             self.force_strategy,
             &self.profile,
+            self.color_encoding.as_ref(),
         );
 
         // Run rate control loop
