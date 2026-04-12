@@ -103,18 +103,18 @@ All five major algorithmic components for matching full libjxl's cost model are 
 implemented and enabled by default. Use `--no-pixel-domain-loss` to disable.
 
 1. **Per-pixel (1x1) masking field** ✅
-   - `compute_mask1x1()` in `tiny/adaptive_quant.rs`
+   - `compute_mask1x1()` in `vardct/adaptive_quant.rs`
    - Laplacian of Y intensity: `diff = |gamma(Y) * (Y - avg_neighbors)|`
    - `mask1x1 = 1.0 / (log1p(diff) + 0.01)`
    - Symmetric5 blur applied after computation (matching libjxl's BlurMasking)
 
 2. **Inverse DCT transforms** ✅
-   - `idct_8x8`, `idct_16x16`, `idct_16x8`, `idct_8x16` in `tiny/dct.rs`
+   - `idct_8x8`, `idct_16x16`, `idct_16x8`, `idct_8x16` in `vardct/dct.rs`
    - Matched fast IDCTs (idct1d_2/4/8/16) that exactly reverse forward DCT
    - ~0 roundtrip error (floating point precision only)
 
 3. **Pixel-domain loss in EstimateEntropy** ✅
-   - `estimate_entropy_full()` in `tiny/ac_strategy.rs`
+   - `estimate_entropy_full()` in `vardct/ac_strategy.rs`
    - IDCT of quantization error → per-pixel masking → 8th power norm
    - Channel offsets [12.0, 0.0, 4.0], multipliers [8.2^8, 1.0, 1.03^8]
 
@@ -340,7 +340,7 @@ Result: butteraugli 7.58 → 2.52, matching DCT8 quality. All 4 AFV variants ena
 2. ~~AFV corner DCT~~ — DONE (Feb 4, 2026, all 4 variants verified with decoders)
 3. ~~DC tree learning~~ — DONE (Feb 4, 2026)
    - `dc_tree_learn.rs`: Learns optimal context tree from DC statistics
-   - `TinyEncoder.dc_tree_learning` flag (off by default, opt-in feature)
+   - `VarDctEncoder.dc_tree_learning` flag (off by default, opt-in feature)
    - Merges learned DC tree with AC metadata prefix subtree (11 fixed contexts)
    - Uses BFS ordering for tree tokens with full context remapping
    - Key fixes: JXL tree direction convention (LEFT=property>splitval, RIGHT=property≤splitval),
@@ -578,30 +578,11 @@ Key patterns to watch for when working on this codebase:
 
 ### CfL on DC/LLF: Why AC-Only Is Correct (Jan 31, 2026)
 
-C++ libjxl-tiny applies CfL to ALL coefficient positions (0..size) including DC/LLF.
 Our encoder applies CfL to AC only (covered_blocks..size). Testing full CfL produces
 SSIM2 = -40 (catastrophic). Root cause: the decoder's `DequantBlock` calls
 `LowestFrequenciesFromDC` AFTER `DequantLane`, overwriting LLF positions with
 DC-derived values. Coefficient-level CfL on LLF is discarded. DC CfL uses
 dc_cfl_factor (0.5) separately. Our AC-only approach is correct for this decoder.
-
-### AC Strategy Quality vs libjxl-tiny (Jan 31, 2026)
-
-We match libjxl-tiny's algorithm exactly and produce equivalent output.
-Note: libjxl-tiny (cjxl_tiny) crashes on multi-group images (>256x256).
-
-Test: `cargo test -p jxl_encoder --test clic2025 test_cpp_vs_rust_quality -- --ignored --nocapture`
-
-### AC Strategy Cost Model Investigation (Feb 2, 2026)
-
-**Finding**: Strategy selection is working correctly and provides quality benefit.
-The apparent quality gap vs cjxl is a distance calibration difference, not an
-algorithm deficiency. At equal file sizes, RD curves are competitive.
-
-**Algorithmic status**: We match libjxl-tiny exactly. See "Algorithmic Differences
-vs Full libjxl" section above for what's needed to match full libjxl.
-
-**CLI flags added**: `--dct8-only` (forces DCT8), `--error-diffusion` (enables ED)
 
 ## Build Commands
 
@@ -654,7 +635,7 @@ jxl-encoder-rs/
 │   │   ├── icc.rs             # ICC profile encoding
 │   │   ├── image/             # Image buffer types
 │   │   ├── modular/           # Modular (lossless) encoder + FrameEncoder
-│   │   ├── vardct/            # VarDCT (lossy) encoder (was tiny/)
+│   │   ├── vardct/            # VarDCT (lossy) encoder
 │   │   └── error.rs           # Error types
 └── jxl_encoder_cli/         # Command-line tool (cjxl-rs)
 ```
@@ -1216,75 +1197,17 @@ without refinement) is already near-optimal for Huffman.
 - Header cost for Huffman: simple tree (1-4 symbols) ~4+n*8 bits, complex tree ~40+n*2.5 bits
 - ANS header cost: ~5 bits per symbol for frequency table
 
-**Implication for ANS:**
-When ANS is implemented, enhanced clustering SHOULD help because:
-- ANS has larger header cost (~5 bits/symbol vs Huffman's ~2.5 bits/symbol for complex trees)
-- Merging clusters saves more header bits with ANS
-- The pair merge refinement cost model (`EntropyType::Ans`) is designed for this
+**ANS:** Enhanced clustering is beneficial with ANS (larger header cost per symbol).
+Enabled at effort >= 9 for VarDCT via `enhanced_clustering_vardct`.
 
-**Test:** `cargo test -p jxl_encoder --test clic2025 test_enhanced_clustering_compression -- --ignored`
+### DC Tree Learning (Feb 4, 2026)
 
-### Pixel-Domain Loss Partial Fix (Feb 2, 2026)
+WP-based DC tree with AC metadata prefix subtree. Property 1 (stream_id) split at root
+with dynamic splitval=num_dc_groups routes DC groups to WP subtree and AC metadata to
+its own subtree. Works for any number of DC groups (fixed Apr 2026 — previously hardcoded
+splitval=2 caused decode failures for images >2048px wide, imazen/jxl-encoder#3).
 
-**Status**: Partially working - strategy selection now occurs, but cost model needs tuning
-
-**Previous symptom**: Pixel-domain loss mode produced identical output to `--dct8-only` mode.
-
-**Fixes applied** (commit 0ca040e):
-1. **Normalized entropy_mul by DCT8's base value (0.8)** - libjxl divides all entropy_mul
-   values by DCT8's value, so DCT8 gets entropy_mul=1.0, not 0.8. This was giving DCT8
-   a 20% unfair advantage. Now: DCT8=1.0, DCT16X8=1.5125, DCT16X16=1.675.
-
-2. **Fixed X channel penalty timing** - The penalty `w = 1 + min(3, num_blocks/8)` must
-   be applied to the TOTAL accumulated loss, not the per-channel loss. This matches
-   libjxl enc_ac_strategy.cc:500-501.
-
-**Current behavior**: Pixel-domain mode now selects varied strategies (different file
-size than DCT8-only), but produces slightly larger files than coefficient-domain:
-- DCT8-only:          740,996 bytes (baseline)
-- Coefficient-domain:  728,745 bytes (-1.7%)
-- Pixel-domain:        745,295 bytes (+0.6%)
-
-**Remaining issues**:
-- Pixel-domain produces LARGER files than coefficient-domain
-- This suggests the loss calculation may still have calibration issues
-- The loss term may be overweighted, causing too-aggressive strategy selection
-
-**Next steps for further improvement**:
-1. Add debug logging to compare entropy vs loss breakdown against libjxl
-2. Verify IDCT output layout matches libjxl's TransformToPixels
-3. Check if quant_norm16 computation differs from libjxl's behavior
-
-
-### DC Tree Learning — FIXED (Feb 4, 2026)
-
-**Status**: Working — opt-in feature via `TinyEncoder.dc_tree_learning = true`
-
-**Key fixes applied**:
-
-1. **JXL tree direction convention**: Our DC tree builder used lchild=property≤splitval,
-   rchild=property>splitval. JXL spec uses LEFT=property>splitval, RIGHT=property≤splitval.
-   Fixed by swapping children when converting DC tree nodes to flat representation.
-
-2. **Removed padding chain**: Previous approach used repeated splits on property 1 (stream_id)
-   with splitval=0 or splitval=1 to push DC leaves deeper in BFS. Decoders narrow property
-   ranges at each branch, rejecting splits outside the narrowed range. Instead, we use a
-   full BFS context remap array that correctly maps any tree structure.
-
-3. **Full BFS remap array**: Changed from simple `dc_ctx_offset` (assumed sequential BFS)
-   to `dc_ctx_remap: Vec<u32>` that maps each DFS-assigned DC context to its actual BFS
-   position. This handles unbalanced trees where BFS and DFS visit leaves differently.
-
-4. **AC metadata prefix subtree**: Uses property 1 (stream_id), splitval=2 at root.
-   LEFT (stream_id>2): AC metadata subtree with 11 contexts (EPF, CfL, QF, ACS)
-   RIGHT (stream_id≤2): DC subtree with learned contexts
-
-**Files involved**:
-- `dc_tree_learn.rs`: Tree learning, `tree_tokens_with_ac_metadata_prefix()`
-- `encoder.rs`: Integration, token context remapping
-
-**Impact**: -18.9% file size on 64x64 gradient (482 → 391 bytes). Real-world impact varies
-by image content — gradient images with regular DC patterns benefit most.
+**Files**: `dc_tree_learn.rs` (tree building), `context_tree.rs` (bitstream writing)
 
 
 ### Modular Encoder Parity vs libjxl (Feb 6, 2026)

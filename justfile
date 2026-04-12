@@ -14,19 +14,19 @@ cid22-vs-webp:
 
 # Cross-compile and test for 32-bit x86 (requires cross: cargo install cross --git https://github.com/cross-rs/cross)
 test-i686:
-    cross test --workspace --no-default-features --features safe-mode --lib --target i686-unknown-linux-gnu
+    cross test --workspace --no-default-features --lib --target i686-unknown-linux-gnu
 
 # Cross-compile and test for 32-bit ARM (requires cross)
 test-armv7:
-    cross test --workspace --no-default-features --features safe-mode --lib --target armv7-unknown-linux-gnueabihf
+    cross test --workspace --no-default-features --lib --target armv7-unknown-linux-gnueabihf
 
 # Cross-compile and test for AArch64 (requires cross + Docker)
 test-aarch64:
-    CROSS_CONTAINER_OPTS="--volume $HOME/work:$HOME/work" cross test --workspace --no-default-features --features safe-mode --lib --target aarch64-unknown-linux-gnu
+    CROSS_CONTAINER_OPTS="--volume $HOME/work:$HOME/work" cross test --workspace --no-default-features --lib --target aarch64-unknown-linux-gnu
 
 # Build and test for WASM (requires wasmtime)
 test-wasm:
-    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --" cargo test -p jxl-encoder --target wasm32-wasip1 --no-default-features --features safe-mode --lib -- api::tests
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --" cargo test -p jxl-encoder --target wasm32-wasip1 --no-default-features --lib -- api::tests
 
 # Test jxl-encoder-simd under WASM SIMD128 (requires wasmtime)
 test-wasm-simd:
@@ -34,9 +34,9 @@ test-wasm-simd:
 
 # Run encode benchmark on all platforms
 bench-platforms:
-    @echo "=== x86_64 native ===" && cargo run --example wasm_bench -p jxl-encoder --release --no-default-features --features safe-mode
-    @echo "=== WASM (wasmtime) ===" && cargo build --example wasm_bench -p jxl-encoder --release --target wasm32-wasip1 --no-default-features --features safe-mode 2>/dev/null && wasmtime ./target/wasm32-wasip1/release/examples/wasm_bench.wasm
-    @echo "=== AArch64 (qemu) ===" && CROSS_CONTAINER_OPTS="--volume $HOME/work:$HOME/work" cross run --example wasm_bench -p jxl-encoder --release --target aarch64-unknown-linux-gnu --no-default-features --features safe-mode
+    @echo "=== x86_64 native ===" && cargo run --example wasm_bench -p jxl-encoder --release --no-default-features
+    @echo "=== WASM (wasmtime) ===" && cargo build --example wasm_bench -p jxl-encoder --release --target wasm32-wasip1 --no-default-features 2>/dev/null && wasmtime ./target/wasm32-wasip1/release/examples/wasm_bench.wasm
+    @echo "=== AArch64 (qemu) ===" && CROSS_CONTAINER_OPTS="--volume $HOME/work:$HOME/work" cross run --example wasm_bench -p jxl-encoder --release --target aarch64-unknown-linux-gnu --no-default-features
 
 # Run all cross-compilation targets
 test-cross: test-i686 test-armv7

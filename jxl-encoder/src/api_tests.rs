@@ -1602,10 +1602,7 @@ mod decoder_validation {
     }
 
     /// Test multi-group lossy encoding (512x512 = 4 groups)
-    /// NOTE: Multi-group VarDCT is broken and produces garbage output.
-    /// This test is skipped when safe-mode is enabled (default).
     #[test]
-    #[cfg(not(feature = "safe-mode"))]
     fn test_decode_lossy_multi_group() {
         // 512x512 checkerboard pattern = 4 groups (2x2)
         let mut data = vec![0u8; 512 * 512 * 3];
@@ -1652,6 +1649,355 @@ mod decoder_validation {
                 }
                 panic!("jxl-oxide failed to decode multi-group file: {:?}", e);
             }
+        }
+    }
+
+    /// Test VarDCT lossy encoding for images requiring multiple DC groups (>2048px).
+    /// This is a regression test for imazen/jxl-encoder#3 where a context tree
+    /// mismatch caused decode failures on wide images.
+    #[test]
+    fn test_lossy_multi_dc_group_roundtrip() {
+        // 2100x256: requires 2 DC groups in x (ceil(2100/2048) = 2)
+        let (w, h) = (2100, 256);
+        let mut data = vec![0u8; w * h * 3];
+        let mut seed = 42u64;
+        for val in data.iter_mut() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *val = (seed >> 56) as u8;
+        }
+
+        for effort in [3, 5, 7] {
+            let encoded = LossyConfig::new(2.0)
+                .with_effort(effort)
+                .encode(&data, w as u32, h as u32, PixelLayout::Rgb8)
+                .unwrap();
+
+            // Verify with jxl-oxide
+            let image = jxl_oxide::JxlImage::builder()
+                .read(std::io::Cursor::new(&encoded))
+                .unwrap_or_else(|e| panic!("jxl-oxide decode failed for {w}x{h} e{effort}: {e:?}"));
+            assert_eq!(image.width(), w as u32);
+            assert_eq!(image.height(), h as u32);
+            let _render = image
+                .render_frame(0)
+                .unwrap_or_else(|e| panic!("jxl-oxide render failed for {w}x{h} e{effort}: {e:?}"));
+
+            // Verify with djxl
+            let djxl = djxl_path_string();
+            if std::path::Path::new(&djxl).exists() {
+                let tmp = std::env::temp_dir().join(format!("multi_dc_{w}x{h}_e{effort}.jxl"));
+                std::fs::write(&tmp, &encoded).unwrap();
+                let out = std::env::temp_dir().join(format!("multi_dc_{w}x{h}_e{effort}_dec.png"));
+                let result = Command::new(&djxl)
+                    .args([&tmp, &out])
+                    .output()
+                    .expect("djxl failed to run");
+                assert!(
+                    result.status.success(),
+                    "djxl failed for {w}x{h} e{effort}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        }
+    }
+
+    /// Test multi-DC-group with varying widths to cover different DC group counts.
+    #[test]
+    fn test_lossy_multi_dc_group_widths() {
+        // Each width exercises a different number of DC groups:
+        // 2049 → 2 DC groups, 4097 → 3, 6145 → 4
+        for w in [2049u32, 4097, 6145] {
+            let h = 64u32;
+            let mut data = vec![128u8; (w * h * 3) as usize];
+            let mut seed = w as u64;
+            for val in data.iter_mut() {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *val = (seed >> 56) as u8;
+            }
+
+            let encoded = LossyConfig::new(2.0)
+                .with_effort(7)
+                .encode(&data, w, h, PixelLayout::Rgb8)
+                .unwrap();
+
+            // djxl is the ground-truth decoder
+            let djxl = djxl_path_string();
+            if std::path::Path::new(&djxl).exists() {
+                let tmp = std::env::temp_dir().join(format!("multi_dc_{w}x{h}.jxl"));
+                std::fs::write(&tmp, &encoded).unwrap();
+                let out = std::env::temp_dir().join(format!("multi_dc_{w}x{h}_dec.png"));
+                let result = Command::new(&djxl)
+                    .args([&tmp, &out])
+                    .output()
+                    .expect("djxl failed to run");
+                assert!(
+                    result.status.success(),
+                    "djxl failed for {w}x{h}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        }
+    }
+
+    /// Test VarDCT lossy + alpha with multi-DC-groups.
+    /// Alpha is encoded as a modular extra channel in HfGroup sections.
+    #[test]
+    fn test_lossy_multi_dc_group_alpha() {
+        let (w, h) = (2100, 256);
+        let mut data = vec![0u8; w * h * 4]; // RGBA
+        let mut seed = 99u64;
+        for val in data.iter_mut() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *val = (seed >> 56) as u8;
+        }
+
+        let encoded = LossyConfig::new(2.0)
+            .with_effort(7)
+            .encode(&data, w as u32, h as u32, PixelLayout::Rgba8)
+            .unwrap();
+
+        // djxl handles alpha correctly
+        let djxl = djxl_path_string();
+        if std::path::Path::new(&djxl).exists() {
+            let tmp = std::env::temp_dir().join("multi_dc_alpha.jxl");
+            std::fs::write(&tmp, &encoded).unwrap();
+            let out = std::env::temp_dir().join("multi_dc_alpha_dec.png");
+            let result = Command::new(&djxl)
+                .args([&tmp, &out])
+                .output()
+                .expect("djxl failed to run");
+            assert!(
+                result.status.success(),
+                "djxl failed for RGBA {w}x{h}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+    }
+
+    /// Encode a P3 gradient, decode to linear sRGB, and verify the decoded pixels
+    /// match P3→sRGB reference values within lossy tolerance.
+    ///
+    /// This is the real correctness test: without the primaries matrix, the
+    /// decoded sRGB values would match the raw P3 input (wrong), not the
+    /// P3→sRGB converted reference (correct).
+    #[test]
+    fn test_lossy_wide_gamut_p3_roundtrip() {
+        use crate::headers::color_encoding::{ColorEncoding, Primaries, TransferFunction};
+
+        // P3→sRGB matrix (same values as in vardct/xyb.rs)
+        #[allow(clippy::excessive_precision)]
+        const P3_TO_SRGB: [[f32; 3]; 3] = [
+            [1.2249401763, -0.2249401763, 0.0000000000],
+            [-0.0420569547, 1.0420569547, 0.0000000000],
+            [-0.0196375546, -0.0786360456, 1.0982736001],
+        ];
+
+        let width = 32u32;
+        let height = 32u32;
+        let n = (width * height) as usize;
+
+        // Build a gradient that exercises the gamut: R and G ramp, B inverse
+        let mut linear_p3 = vec![0.0f32; n * 3];
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let i = (y * width as usize + x) * 3;
+                linear_p3[i] = x as f32 / 31.0;
+                linear_p3[i + 1] = y as f32 / 31.0;
+                linear_p3[i + 2] = 0.3 * (1.0 - x as f32 / 31.0);
+            }
+        }
+
+        // Compute reference: what the decoded sRGB linear values SHOULD be
+        let mut reference_srgb = vec![0.0f32; n * 3];
+        for i in 0..n {
+            let r = linear_p3[i * 3];
+            let g = linear_p3[i * 3 + 1];
+            let b = linear_p3[i * 3 + 2];
+            reference_srgb[i * 3] =
+                P3_TO_SRGB[0][0] * r + P3_TO_SRGB[0][1] * g + P3_TO_SRGB[0][2] * b;
+            reference_srgb[i * 3 + 1] =
+                P3_TO_SRGB[1][0] * r + P3_TO_SRGB[1][1] * g + P3_TO_SRGB[1][2] * b;
+            reference_srgb[i * 3 + 2] =
+                P3_TO_SRGB[2][0] * r + P3_TO_SRGB[2][1] * g + P3_TO_SRGB[2][2] * b;
+        }
+
+        // Encode with P3 primaries
+        let p3_encoding = ColorEncoding {
+            primaries: Primaries::P3,
+            transfer_function: TransferFunction::Srgb,
+            ..ColorEncoding::srgb()
+        };
+        let bytes: &[u8] = bytemuck::cast_slice(&linear_p3);
+        let cfg = LossyConfig::new(0.5); // low distance for tight tolerance
+        let encoded = cfg
+            .encode_request(width, height, PixelLayout::RgbLinearF32)
+            .with_color_encoding(p3_encoding)
+            .encode(bytes)
+            .unwrap();
+
+        // Decode to sRGB linear via jxl-oxide
+        let mut image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&encoded))
+            .expect("jxl-oxide parse failed");
+        image.request_color_encoding(jxl_oxide::EnumColourEncoding::srgb_linear(
+            jxl_oxide::RenderingIntent::Relative,
+        ));
+        let render = image.render_frame(0).expect("jxl-oxide render failed");
+        let fb = render.image_all_channels();
+        let decoded_f32 = fb.buf(); // flat [R,G,B, R,G,B, ...] f32 array
+        let channels = fb.channels();
+
+        // Compare decoded sRGB linear against reference (P3→sRGB converted input)
+        let mut max_err_vs_ref = 0.0f32;
+        let mut sum_err_vs_ref = 0.0f64;
+        let mut max_err_vs_raw = 0.0f32;
+        let mut sum_err_vs_raw = 0.0f64;
+        let pixels = (width * height) as usize;
+        for i in 0..pixels {
+            for c in 0..3.min(channels) {
+                let decoded = decoded_f32[i * channels + c];
+                let ref_val = reference_srgb[i * 3 + c];
+                let raw_val = linear_p3[i * 3 + c]; // what you'd get WITHOUT the matrix
+
+                let err_ref = (decoded - ref_val).abs();
+                let err_raw = (decoded - raw_val).abs();
+                max_err_vs_ref = max_err_vs_ref.max(err_ref);
+                sum_err_vs_ref += err_ref as f64;
+                max_err_vs_raw = max_err_vs_raw.max(err_raw);
+                sum_err_vs_raw += err_raw as f64;
+            }
+        }
+        let count = (pixels * 3) as f64;
+        let avg_ref = sum_err_vs_ref / count;
+        let avg_raw = sum_err_vs_raw / count;
+
+        eprintln!(
+            "P3 roundtrip: decoded vs P3→sRGB reference: max={max_err_vs_ref:.4}, avg={avg_ref:.6}"
+        );
+        eprintln!(
+            "P3 roundtrip: decoded vs raw P3 (wrong):    max={max_err_vs_raw:.4}, avg={avg_raw:.6}"
+        );
+
+        // Decoded should be CLOSE to the reference (P3→sRGB), not the raw P3 input
+        assert!(
+            avg_ref < avg_raw,
+            "decoded pixels should be closer to P3→sRGB reference ({avg_ref:.6}) \
+             than to raw P3 input ({avg_raw:.6})"
+        );
+        // At d=0.5, max error vs reference should be well under 0.1
+        assert!(
+            max_err_vs_ref < 0.1,
+            "max error vs P3→sRGB reference too high: {max_err_vs_ref:.4}"
+        );
+    }
+
+    /// Full-gamut gradient: encode the same linear pixels as P3 vs sRGB,
+    /// decode both to linear sRGB, and verify the primaries matrix produces
+    /// measurably different (correct) output.
+    #[test]
+    fn test_lossy_wide_gamut_p3_gradient_difference() {
+        use crate::headers::color_encoding::{ColorEncoding, Primaries, TransferFunction};
+
+        let w = 64u32;
+        let h = 64u32;
+        let n = (w * h) as usize;
+        let mut linear = vec![0.0f32; n * 3];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let i = (y * w as usize + x) * 3;
+                linear[i] = x as f32 / 63.0; // R: 0→1
+                linear[i + 1] = y as f32 / 63.0; // G: 0→1
+                linear[i + 2] = 0.5 * (1.0 - linear[i]); // B: 0.5→0
+            }
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&linear);
+
+        // Encode with P3 primaries (correct — applies P3→sRGB matrix)
+        let p3_enc = ColorEncoding {
+            primaries: Primaries::P3,
+            transfer_function: TransferFunction::Srgb,
+            ..ColorEncoding::srgb()
+        };
+        let cfg = LossyConfig::new(1.0);
+        let encoded_p3 = cfg
+            .encode_request(w, h, PixelLayout::RgbLinearF32)
+            .with_color_encoding(p3_enc)
+            .encode(bytes)
+            .unwrap();
+
+        // Encode with default sRGB primaries (wrong — no matrix)
+        let encoded_srgb = cfg
+            .encode_request(w, h, PixelLayout::RgbLinearF32)
+            .encode(bytes)
+            .unwrap();
+
+        // Files should differ in size (different XYB values → different quantization)
+        assert_ne!(
+            encoded_p3.len(),
+            encoded_srgb.len(),
+            "P3 and sRGB encodings should differ in size"
+        );
+
+        // Both should decode successfully
+        let djxl = djxl_path_string();
+        if std::path::Path::new(&djxl).exists() {
+            for (data, name) in [(&encoded_p3, "p3"), (&encoded_srgb, "srgb")] {
+                let tmp = std::env::temp_dir().join(format!("gamut_gradient_{name}.jxl"));
+                std::fs::write(&tmp, data).unwrap();
+                let out = std::env::temp_dir().join(format!("gamut_gradient_{name}_dec.png"));
+                let result = Command::new(&djxl)
+                    .args([&tmp, &out])
+                    .output()
+                    .expect("djxl failed to run");
+                assert!(
+                    result.status.success(),
+                    "djxl failed on {name} gradient: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        }
+    }
+
+    /// Verify that BT.2020 primaries roundtrip correctly.
+    #[test]
+    fn test_lossy_wide_gamut_bt2020_roundtrip() {
+        use crate::headers::color_encoding::{ColorEncoding, Primaries, TransferFunction};
+
+        let width = 16u32;
+        let height = 16u32;
+        let n = (width * height) as usize;
+        // Mid-gray in BT.2020 linear — should transform cleanly
+        let linear_bt2020 = vec![0.5f32; n * 3];
+
+        let bt2020_encoding = ColorEncoding {
+            primaries: Primaries::Bt2100,
+            transfer_function: TransferFunction::Srgb,
+            ..ColorEncoding::srgb()
+        };
+
+        let bytes: &[u8] = bytemuck::cast_slice(&linear_bt2020);
+        let cfg = LossyConfig::new(1.0);
+        let encoded = cfg
+            .encode_request(width, height, PixelLayout::RgbLinearF32)
+            .with_color_encoding(bt2020_encoding)
+            .encode(bytes)
+            .unwrap();
+
+        // Verify djxl decodes
+        let djxl = djxl_path_string();
+        if std::path::Path::new(&djxl).exists() {
+            let tmp = std::env::temp_dir().join("bt2020_test.jxl");
+            std::fs::write(&tmp, &encoded).unwrap();
+            let out = std::env::temp_dir().join("bt2020_test_dec.png");
+            let result = Command::new(&djxl)
+                .args([&tmp, &out])
+                .output()
+                .expect("djxl failed to run");
+            assert!(
+                result.status.success(),
+                "djxl failed on BT.2020 encoded file: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
         }
     }
 
