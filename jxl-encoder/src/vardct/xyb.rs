@@ -231,27 +231,71 @@ impl VarDctEncoder {
             &mut xyb_b,
         );
 
-        // Pad bottom rows by copying the last row
+        // Pad bottom rows by copying the last row. Each channel's pad loop
+        // is independent; run the three channels in parallel via rayon::scope
+        // when the `parallel` feature is enabled.
         if padded_height > height {
             let last_row_start = (height - 1) * padded_width;
-            // Snapshot the last source row first so we can write into all rows
-            // below it without aliasing (copy_within would work sequentially,
-            // but a snapshot lets us use disjoint writes consistently).
-            let mut last_x = jxl_simd::vec_f32_dirty(padded_width);
-            let mut last_y = jxl_simd::vec_f32_dirty(padded_width);
-            let mut last_b = jxl_simd::vec_f32_dirty(padded_width);
-            last_x.copy_from_slice(&xyb_x[last_row_start..last_row_start + padded_width]);
-            last_y.copy_from_slice(&xyb_y[last_row_start..last_row_start + padded_width]);
-            last_b.copy_from_slice(&xyb_b[last_row_start..last_row_start + padded_width]);
-            for y in height..padded_height {
-                let dst_row_start = y * padded_width;
-                xyb_x[dst_row_start..dst_row_start + padded_width].copy_from_slice(&last_x);
-                xyb_y[dst_row_start..dst_row_start + padded_width].copy_from_slice(&last_y);
-                xyb_b[dst_row_start..dst_row_start + padded_width].copy_from_slice(&last_b);
-            }
+            pad_bottom_three_channels(
+                &mut xyb_x,
+                &mut xyb_y,
+                &mut xyb_b,
+                last_row_start,
+                padded_width,
+                height,
+                padded_height,
+            );
         }
 
         (xyb_x, xyb_y, xyb_b)
+    }
+}
+
+/// Pad bottom rows of 3 XYB planes in parallel. Each plane's pad loop only
+/// reads its own last source row (snapshotted) and writes to disjoint rows,
+/// so the three channels are independent.
+#[allow(clippy::too_many_arguments)]
+fn pad_bottom_three_channels(
+    xyb_x: &mut [f32],
+    xyb_y: &mut [f32],
+    xyb_b: &mut [f32],
+    last_row_start: usize,
+    padded_width: usize,
+    height: usize,
+    padded_height: usize,
+) {
+    fn pad_one(
+        plane: &mut [f32],
+        last_row_start: usize,
+        padded_width: usize,
+        height: usize,
+        padded_height: usize,
+    ) {
+        let mut last = jxl_simd::vec_f32_dirty(padded_width);
+        last.copy_from_slice(&plane[last_row_start..last_row_start + padded_width]);
+        for y in height..padded_height {
+            let dst = y * padded_width;
+            plane[dst..dst + padded_width].copy_from_slice(&last);
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        let (((), ()), ()) = rayon::join(
+            || {
+                rayon::join(
+                    || pad_one(xyb_x, last_row_start, padded_width, height, padded_height),
+                    || pad_one(xyb_y, last_row_start, padded_width, height, padded_height),
+                )
+            },
+            || pad_one(xyb_b, last_row_start, padded_width, height, padded_height),
+        );
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        pad_one(xyb_x, last_row_start, padded_width, height, padded_height);
+        pad_one(xyb_y, last_row_start, padded_width, height, padded_height);
+        pad_one(xyb_b, last_row_start, padded_width, height, padded_height);
     }
 }
 
