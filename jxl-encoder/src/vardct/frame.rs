@@ -57,8 +57,12 @@ pub(crate) struct PixelStatsForChromacityAdjustment {
 impl PixelStatsForChromacityAdjustment {
     /// Compute all pixel stats from XYB image.
     ///
-    /// Merged single-pass with early exit: once all thresholds are saturated,
-    /// the result is fully determined and we skip remaining rows.
+    /// Serial path: single-pass with early exit once all thresholds saturate.
+    /// Parallel path: row strips processed independently, results max-reduced.
+    /// The parallel path skips early-exit — saturated-early images become
+    /// slightly slower, but these are rare and the phase is <1% of encode
+    /// time anyway. Max-reduction is associative/commutative for finite f32,
+    /// so the output is bit-exact regardless of strip count.
     pub(crate) fn calc(
         xyb_x: &[f32],
         xyb_y: &[f32],
@@ -71,51 +75,92 @@ impl PixelStatsForChromacityAdjustment {
         const DB_MAX_THRESH: f32 = 0.38;
         const EB_THRESH: f32 = 0.13;
 
+        // Rows 1..height only (row 0 is skipped because the inner loop needs a prev row).
+        if height < 2 {
+            return Self {
+                dx: 0.0,
+                db: 0.0,
+                exposed_blue: 0.0,
+            };
+        }
+
+        // Each strip processes a range of ROW INDICES ty_start..ty_end (never 0).
+        // Requires xyb_*[(ty_start - 1) * width ..] readable, so chunk the input
+        // index space to `row_span = ty_end - ty_start` rows with 1 row of back-overlap.
+        let calc_strip = |ty_start: usize, ty_end: usize| -> (f32, f32, f32) {
+            let mut dx: f32 = 0.0;
+            let mut db: f32 = 0.0;
+            let mut exposed_blue: f32 = 0.0;
+            for ty in ty_start..ty_end {
+                let x_row = &xyb_x[ty * width..(ty + 1) * width];
+                let y_row = &xyb_y[ty * width..(ty + 1) * width];
+                let b_row = &xyb_b[ty * width..(ty + 1) * width];
+                let x_prev_row = &xyb_x[(ty - 1) * width..ty * width];
+                let y_prev_row = &xyb_y[(ty - 1) * width..ty * width];
+                let b_prev_row = &xyb_b[(ty - 1) * width..ty * width];
+                for tx in 1..width {
+                    let cur_x = x_row[tx];
+                    dx = dx
+                        .max((cur_x - x_row[tx - 1]).abs())
+                        .max((cur_x - x_prev_row[tx]).abs());
+                    let cur_y = y_row[tx];
+                    let cur_b = b_row[tx];
+                    let diff_b = cur_b - cur_y;
+                    let diff_prev = b_row[tx - 1] - y_row[tx - 1];
+                    let diff_prev_row = b_prev_row[tx] - y_prev_row[tx];
+                    db = db
+                        .max((diff_b - diff_prev).abs())
+                        .max((diff_b - diff_prev_row).abs());
+                    let exposed_b = cur_b - cur_y * 1.2;
+                    if exposed_b >= 0.0 {
+                        let eb_val = exposed_b
+                            * ((cur_b - b_row[tx - 1]).abs() + (cur_b - b_prev_row[tx]).abs());
+                        exposed_blue = exposed_blue.max(eb_val);
+                    }
+                }
+            }
+            (dx, db, exposed_blue)
+        };
+
+        #[cfg(feature = "parallel")]
+        {
+            // Only parallelize for images tall enough to amortize task overhead.
+            // Below 256 rows, the serial early-exit path is almost certainly faster.
+            const PAR_MIN_ROWS: usize = 256;
+            if height >= PAR_MIN_ROWS {
+                const STRIP_ROWS: usize = 64;
+                let total = height - 1; // rows 1..height
+                let n_strips = total.div_ceil(STRIP_ROWS);
+                let results: Vec<(f32, f32, f32)> = crate::parallel::parallel_map(n_strips, |s| {
+                    let start = 1 + s * STRIP_ROWS;
+                    let end = (start + STRIP_ROWS).min(height);
+                    calc_strip(start, end)
+                });
+                let (dx, db, exposed_blue) =
+                    results.into_iter().fold((0.0f32, 0.0f32, 0.0f32), |a, b| {
+                        (a.0.max(b.0), a.1.max(b.1), a.2.max(b.2))
+                    });
+                return Self {
+                    dx,
+                    db,
+                    exposed_blue,
+                };
+            }
+        }
+
+        // Serial path with early exit (short images or parallel disabled).
         let mut dx: f32 = 0.0;
         let mut db: f32 = 0.0;
         let mut exposed_blue: f32 = 0.0;
-
         for ty in 1..height {
-            // Pre-slice rows to eliminate per-element bounds checks
-            let x_row = &xyb_x[ty * width..(ty + 1) * width];
-            let y_row = &xyb_y[ty * width..(ty + 1) * width];
-            let b_row = &xyb_b[ty * width..(ty + 1) * width];
-            let x_prev_row = &xyb_x[(ty - 1) * width..ty * width];
-            let y_prev_row = &xyb_y[(ty - 1) * width..ty * width];
-            let b_prev_row = &xyb_b[(ty - 1) * width..ty * width];
-
-            for tx in 1..width {
-                // X channel gradient (for dx)
-                let cur_x = x_row[tx];
-                dx = dx
-                    .max((cur_x - x_row[tx - 1]).abs())
-                    .max((cur_x - x_prev_row[tx]).abs());
-
-                // B-Y gradient (for db)
-                let cur_y = y_row[tx];
-                let cur_b = b_row[tx];
-                let diff_b = cur_b - cur_y;
-                let diff_prev = b_row[tx - 1] - y_row[tx - 1];
-                let diff_prev_row = b_prev_row[tx] - y_prev_row[tx];
-                db = db
-                    .max((diff_b - diff_prev).abs())
-                    .max((diff_b - diff_prev_row).abs());
-
-                // Exposed blue metric
-                let exposed_b = cur_b - cur_y * 1.2;
-                if exposed_b >= 0.0 {
-                    let eb_val = exposed_b
-                        * ((cur_b - b_row[tx - 1]).abs() + (cur_b - b_prev_row[tx]).abs());
-                    exposed_blue = exposed_blue.max(eb_val);
-                }
-            }
-
-            // Early exit: once all thresholds are saturated, result is fully determined
+            let (sdx, sdb, seb) = calc_strip(ty, ty + 1);
+            dx = dx.max(sdx);
+            db = db.max(sdb);
+            exposed_blue = exposed_blue.max(seb);
             if dx >= DX_MAX_THRESH && db > DB_MAX_THRESH && exposed_blue >= EB_THRESH {
                 break;
             }
         }
-
         Self {
             dx,
             db,
