@@ -612,33 +612,83 @@ pub fn denoise_xyb(
     let orig_y = xyb_y.to_vec();
     let orig_b = xyb_b.to_vec();
 
-    denoise_channel(
-        xyb_x,
-        &orig_x,
-        &orig_y,
-        width,
-        height,
-        params,
-        denoise_scale,
-    );
-    denoise_channel(
-        xyb_y,
-        &orig_y,
-        &orig_y,
-        width,
-        height,
-        params,
-        denoise_scale,
-    );
-    denoise_channel(
-        xyb_b,
-        &orig_b,
-        &orig_y,
-        width,
-        height,
-        params,
-        denoise_scale,
-    );
+    // Three channels read only from &orig_* (immutable borrows) and write to
+    // disjoint output slices. Run them concurrently when the `parallel`
+    // feature is enabled — bit-exact with the serial path since each channel
+    // computes its output from independent inputs.
+    #[cfg(feature = "parallel")]
+    {
+        let orig_y_ref = &orig_y; // shared immutable borrow across all three
+        let (((), ()), ()) = rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        denoise_channel(
+                            xyb_x,
+                            &orig_x,
+                            orig_y_ref,
+                            width,
+                            height,
+                            params,
+                            denoise_scale,
+                        );
+                    },
+                    || {
+                        denoise_channel(
+                            xyb_y,
+                            orig_y_ref,
+                            orig_y_ref,
+                            width,
+                            height,
+                            params,
+                            denoise_scale,
+                        );
+                    },
+                )
+            },
+            || {
+                denoise_channel(
+                    xyb_b,
+                    &orig_b,
+                    orig_y_ref,
+                    width,
+                    height,
+                    params,
+                    denoise_scale,
+                );
+            },
+        );
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        denoise_channel(
+            xyb_x,
+            &orig_x,
+            &orig_y,
+            width,
+            height,
+            params,
+            denoise_scale,
+        );
+        denoise_channel(
+            xyb_y,
+            &orig_y,
+            &orig_y,
+            width,
+            height,
+            params,
+            denoise_scale,
+        );
+        denoise_channel(
+            xyb_b,
+            &orig_b,
+            &orig_y,
+            width,
+            height,
+            params,
+            denoise_scale,
+        );
+    }
 }
 
 /// Wiener filter for a single channel. SIMD-accelerated via jxl_simd.

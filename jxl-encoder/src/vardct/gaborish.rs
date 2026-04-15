@@ -82,13 +82,41 @@ pub fn gaborish_inverse(
     width: usize,
     height: usize,
 ) {
-    // Reuse one scratch buffer across all 3 channels to avoid 3 allocations
-    let mut scratch = jxl_simd::vec_f32_dirty(width * height);
-
-    // mul=1.0 for all channels, matching libjxl enc_heuristics.cc line 1137-1140
-    apply_channel(xyb_x, &mut scratch, width, height, 1.0);
-    apply_channel(xyb_y, &mut scratch, width, height, 1.0);
-    apply_channel(xyb_b, &mut scratch, width, height, 1.0);
+    // mul=1.0 for all channels, matching libjxl enc_heuristics.cc line 1137-1140.
+    //
+    // Channels are independent: apply_channel mutates its own input slice using
+    // its own scratch. With `parallel`, run all 3 concurrently via rayon::join.
+    // Serial fallback reuses one scratch buffer across channels for allocation
+    // economy.
+    #[cfg(feature = "parallel")]
+    {
+        let (((), ()), ()) = rayon::join(
+            || {
+                rayon::join(
+                    || {
+                        let mut scratch = jxl_simd::vec_f32_dirty(width * height);
+                        apply_channel(xyb_x, &mut scratch, width, height, 1.0);
+                    },
+                    || {
+                        let mut scratch = jxl_simd::vec_f32_dirty(width * height);
+                        apply_channel(xyb_y, &mut scratch, width, height, 1.0);
+                    },
+                )
+            },
+            || {
+                let mut scratch = jxl_simd::vec_f32_dirty(width * height);
+                apply_channel(xyb_b, &mut scratch, width, height, 1.0);
+            },
+        );
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        // Reuse one scratch buffer across all 3 channels to avoid 3 allocations
+        let mut scratch = jxl_simd::vec_f32_dirty(width * height);
+        apply_channel(xyb_x, &mut scratch, width, height, 1.0);
+        apply_channel(xyb_y, &mut scratch, width, height, 1.0);
+        apply_channel(xyb_b, &mut scratch, width, height, 1.0);
+    }
 }
 
 #[cfg(test)]

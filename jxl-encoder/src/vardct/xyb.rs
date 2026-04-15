@@ -213,77 +213,200 @@ impl VarDctEncoder {
             .and_then(primaries_to_srgb_matrix);
 
         let padded_n = padded_width * padded_height;
-        let mut xyb_x = vec![0.0f32; padded_n];
-        let mut xyb_y = vec![0.0f32; padded_n];
-        let mut xyb_b = vec![0.0f32; padded_n];
+        // Output planes are fully overwritten: rows 0..height by the per-row XYB
+        // conversion + right-edge pad, rows height..padded_height by the bottom
+        // pad loop below. Safe to use vec_f32_dirty.
+        let mut xyb_x = jxl_simd::vec_f32_dirty(padded_n);
+        let mut xyb_y = jxl_simd::vec_f32_dirty(padded_n);
+        let mut xyb_b = jxl_simd::vec_f32_dirty(padded_n);
 
-        // Scratch buffers for deinterleaving one row of RGB input
-        let mut row_r = vec![0.0f32; width];
-        let mut row_g = vec![0.0f32; width];
-        let mut row_b = vec![0.0f32; width];
-
-        // Convert the actual image pixels row by row
-        for y in 0..height {
-            let src_row = y * width;
-
-            // Deinterleave RGB row
-            for x in 0..width {
-                let si = (src_row + x) * 3;
-                row_r[x] = linear_rgb[si];
-                row_g[x] = linear_rgb[si + 1];
-                row_b[x] = linear_rgb[si + 2];
-            }
-
-            // Transform non-sRGB primaries to sRGB before XYB conversion
-            if let Some(ref m) = primaries_matrix {
-                apply_matrix_3x3(&mut row_r, &mut row_g, &mut row_b, m);
-            }
-
-            // Convert row via SIMD (or scalar fallback)
-            let dst_row = y * padded_width;
-            jxl_simd::linear_rgb_to_xyb_batch(
-                &row_r,
-                &row_g,
-                &row_b,
-                &mut xyb_x[dst_row..dst_row + width],
-                &mut xyb_y[dst_row..dst_row + width],
-                &mut xyb_b[dst_row..dst_row + width],
-            );
-
-            #[cfg(feature = "debug-dc")]
-            if y == 0 {
-                eprintln!(
-                    "XYB[0,0]: linear_rgb=({:.6},{:.6},{:.6}) -> XYB=({:.6},{:.6},{:.6})",
-                    row_r[0], row_g[0], row_b[0], xyb_x[0], xyb_y[0], xyb_b[0]
-                );
-            }
-
-            // Pad right edge with last pixel value (edge replication)
-            if padded_width > width {
-                let last_x_idx = dst_row + width - 1;
-                let last_x = xyb_x[last_x_idx];
-                let last_y = xyb_y[last_x_idx];
-                let last_b = xyb_b[last_x_idx];
-                for x in width..padded_width {
-                    let dst_idx = dst_row + x;
-                    xyb_x[dst_idx] = last_x;
-                    xyb_y[dst_idx] = last_y;
-                    xyb_b[dst_idx] = last_b;
-                }
-            }
-        }
+        convert_rows_to_xyb(
+            width,
+            height,
+            padded_width,
+            linear_rgb,
+            primaries_matrix.as_ref(),
+            &mut xyb_x,
+            &mut xyb_y,
+            &mut xyb_b,
+        );
 
         // Pad bottom rows by copying the last row
         if padded_height > height {
             let last_row_start = (height - 1) * padded_width;
+            // Snapshot the last source row first so we can write into all rows
+            // below it without aliasing (copy_within would work sequentially,
+            // but a snapshot lets us use disjoint writes consistently).
+            let mut last_x = jxl_simd::vec_f32_dirty(padded_width);
+            let mut last_y = jxl_simd::vec_f32_dirty(padded_width);
+            let mut last_b = jxl_simd::vec_f32_dirty(padded_width);
+            last_x.copy_from_slice(&xyb_x[last_row_start..last_row_start + padded_width]);
+            last_y.copy_from_slice(&xyb_y[last_row_start..last_row_start + padded_width]);
+            last_b.copy_from_slice(&xyb_b[last_row_start..last_row_start + padded_width]);
             for y in height..padded_height {
                 let dst_row_start = y * padded_width;
-                xyb_x.copy_within(last_row_start..last_row_start + padded_width, dst_row_start);
-                xyb_y.copy_within(last_row_start..last_row_start + padded_width, dst_row_start);
-                xyb_b.copy_within(last_row_start..last_row_start + padded_width, dst_row_start);
+                xyb_x[dst_row_start..dst_row_start + padded_width].copy_from_slice(&last_x);
+                xyb_y[dst_row_start..dst_row_start + padded_width].copy_from_slice(&last_y);
+                xyb_b[dst_row_start..dst_row_start + padded_width].copy_from_slice(&last_b);
             }
         }
 
         (xyb_x, xyb_y, xyb_b)
+    }
+}
+
+/// Strip height (in rows) for parallel XYB conversion. Chosen large enough to
+/// amortize per-task scheduling overhead; small enough that typical images
+/// produce multiple strips.
+const XYB_STRIP_ROWS: usize = 16;
+
+/// Convert rows 0..height of linear_rgb into XYB planes (with right-edge pad).
+///
+/// Output planes must be sized padded_width * padded_height (or at least
+/// `height * padded_width`). Rows `height..padded_height` are NOT touched here —
+/// the caller is responsible for bottom padding.
+///
+/// Parallelized in strips of `XYB_STRIP_ROWS` rows when the `parallel` feature
+/// is enabled; each strip owns its own row scratch and writes to disjoint
+/// output plane ranges. Bit-exact equivalent to the serial fallback: every
+/// floating-point operation happens in the same order (inside `linear_rgb_to_xyb_batch`
+/// for each pixel, and the per-row right-edge replication).
+#[allow(clippy::too_many_arguments)]
+fn convert_rows_to_xyb(
+    width: usize,
+    height: usize,
+    padded_width: usize,
+    linear_rgb: &[f32],
+    primaries_matrix: Option<&[[f32; 3]; 3]>,
+    xyb_x: &mut [f32],
+    xyb_y: &mut [f32],
+    xyb_b: &mut [f32],
+) {
+    let strip_len = XYB_STRIP_ROWS * padded_width;
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        xyb_x[..height * padded_width]
+            .par_chunks_mut(strip_len)
+            .zip(xyb_y[..height * padded_width].par_chunks_mut(strip_len))
+            .zip(xyb_b[..height * padded_width].par_chunks_mut(strip_len))
+            .enumerate()
+            .for_each(|(strip_idx, ((strip_x, strip_y), strip_b))| {
+                let y_start = strip_idx * XYB_STRIP_ROWS;
+                let strip_rows = strip_x.len() / padded_width;
+                convert_strip(
+                    width,
+                    padded_width,
+                    y_start,
+                    strip_rows,
+                    linear_rgb,
+                    primaries_matrix,
+                    strip_x,
+                    strip_y,
+                    strip_b,
+                );
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let full_len = height * padded_width;
+        let mut y_start = 0;
+        let mut offset = 0;
+        while offset < full_len {
+            let this_len = strip_len.min(full_len - offset);
+            let strip_rows = this_len / padded_width;
+            convert_strip(
+                width,
+                padded_width,
+                y_start,
+                strip_rows,
+                linear_rgb,
+                primaries_matrix,
+                &mut xyb_x[offset..offset + this_len],
+                &mut xyb_y[offset..offset + this_len],
+                &mut xyb_b[offset..offset + this_len],
+            );
+            y_start += strip_rows;
+            offset += this_len;
+        }
+    }
+}
+
+/// Convert a single strip of rows. Self-contained: owns its per-row scratch.
+///
+/// Writes every element of `strip_x`, `strip_y`, `strip_b` (which correspond to
+/// the full padded_width of each row in the strip). Safe to call with
+/// dirty-initialized output slices.
+#[allow(clippy::too_many_arguments)]
+fn convert_strip(
+    width: usize,
+    padded_width: usize,
+    y_start: usize,
+    strip_rows: usize,
+    linear_rgb: &[f32],
+    primaries_matrix: Option<&[[f32; 3]; 3]>,
+    strip_x: &mut [f32],
+    strip_y: &mut [f32],
+    strip_b: &mut [f32],
+) {
+    // Per-strip scratch for deinterleaving one row of RGB input. Allocated
+    // fresh per strip; for a sequential run this is one allocation per strip
+    // (at most ~padded_height/16), negligible vs the row allocations it replaces.
+    let mut row_r = jxl_simd::vec_f32_dirty(width);
+    let mut row_g = jxl_simd::vec_f32_dirty(width);
+    let mut row_b = jxl_simd::vec_f32_dirty(width);
+
+    for local_y in 0..strip_rows {
+        let y = y_start + local_y;
+        let src_row = y * width;
+
+        // Deinterleave RGB row
+        for x in 0..width {
+            let si = (src_row + x) * 3;
+            row_r[x] = linear_rgb[si];
+            row_g[x] = linear_rgb[si + 1];
+            row_b[x] = linear_rgb[si + 2];
+        }
+
+        // Transform non-sRGB primaries to sRGB before XYB conversion
+        if let Some(m) = primaries_matrix {
+            apply_matrix_3x3(&mut row_r, &mut row_g, &mut row_b, m);
+        }
+
+        // Convert row via SIMD (or scalar fallback). Output goes to the strip's
+        // row slice, offset by local_y within the strip.
+        let dst_row = local_y * padded_width;
+        jxl_simd::linear_rgb_to_xyb_batch(
+            &row_r,
+            &row_g,
+            &row_b,
+            &mut strip_x[dst_row..dst_row + width],
+            &mut strip_y[dst_row..dst_row + width],
+            &mut strip_b[dst_row..dst_row + width],
+        );
+
+        #[cfg(feature = "debug-dc")]
+        if y == 0 {
+            eprintln!(
+                "XYB[0,0]: linear_rgb=({:.6},{:.6},{:.6}) -> XYB=({:.6},{:.6},{:.6})",
+                row_r[0], row_g[0], row_b[0], strip_x[0], strip_y[0], strip_b[0]
+            );
+        }
+
+        // Pad right edge with last pixel value (edge replication)
+        if padded_width > width {
+            let last_x_idx = dst_row + width - 1;
+            let last_x = strip_x[last_x_idx];
+            let last_y = strip_y[last_x_idx];
+            let last_b = strip_b[last_x_idx];
+            for x in width..padded_width {
+                let dst_idx = dst_row + x;
+                strip_x[dst_idx] = last_x;
+                strip_y[dst_idx] = last_y;
+                strip_b[dst_idx] = last_b;
+            }
+        }
     }
 }

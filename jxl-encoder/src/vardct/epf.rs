@@ -121,21 +121,354 @@ fn pad_plane_into(plane: &[f32], width: usize, height: usize, pad: usize, out: &
     }
 }
 
-/// Compute the SAD (sum of absolute differences) for a 3x3 plus pattern on padded planes.
+/// Get the border SAD multiplier for a pixel position within a block.
 ///
-/// Compares the 5-pixel plus pattern centered at (cx, cy) with the same pattern
-/// at (nx, ny), using channel importance weights.
-/// All coordinates are in padded-buffer space (already offset by pad).
-fn sad_3x3_plus_padded(
-    planes: &[Vec<f32>; 3],
+/// Pixels at block edges (first/last row or column of an 8x8 block) use a
+/// reduced multiplier to avoid filtering across block boundaries where
+/// quantization may cause artificial edges.
+#[inline(always)]
+fn border_mul(px: usize, py: usize) -> f32 {
+    let at_border_x = px.is_multiple_of(BLOCK_DIM) || px % BLOCK_DIM == BLOCK_DIM - 1;
+    let at_border_y = py.is_multiple_of(BLOCK_DIM) || py % BLOCK_DIM == BLOCK_DIM - 1;
+    if at_border_x || at_border_y {
+        EPF_BORDER_SAD_MUL
+    } else {
+        1.0
+    }
+}
+
+/// Strip height for parallel EPF (multiple of BLOCK_DIM for border-mul alignment).
+///
+/// The per-strip processing reads padded input rows `[y0, y1+2*pad)` and writes
+/// output rows `[y0, y1)`. Strip size is a tradeoff between parallelism and
+/// cache reuse; 32 rows keeps padded input for a strip small enough to fit
+/// comfortably in L2.
+const EPF_STRIP_H: usize = 32;
+
+/// 12 neighbor offsets for the 5x5 plus pattern used in step 0 (dy, dx).
+const EPF0_NEIGHBORS: [(isize, isize); 12] = [
+    (-2, 0),
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, -2),
+    (0, -1),
+    (0, 1),
+    (0, 2),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+    (2, 0),
+];
+
+/// Compute `rows` rows of EPF step 0 output, starting at global row `py_start`.
+///
+/// `padded_planes` must contain at least rows `[py_start, py_start + rows + 2*pad)`
+/// (indexed from the slice's own origin — i.e., the slice passed in should already
+/// be shifted so its row 0 corresponds to global row `py_start - pad`... actually,
+/// we pass the FULL padded plane unchanged and pass `py_start` so row arithmetic
+/// matches the original non-parallel version exactly, preserving bit-exactness).
+#[allow(clippy::too_many_arguments)]
+fn epf_step0_strip(
+    padded_planes: [&[f32]; 3],
+    inv_sigma: &[f32],
+    xsize_blocks: usize,
+    width: usize,
+    py_start: usize,
+    rows: usize,
+    in_stride: usize,
+    pad: usize,
+    out_x: &mut [f32],
+    out_y: &mut [f32],
+    out_b: &mut [f32],
+) {
+    let base_sm = EPF_PASS0_SIGMA_SCALE * 1.65;
+
+    for row in 0..rows {
+        let py = py_start + row;
+        let by = py / BLOCK_DIM;
+        for px in 0..width {
+            let bx = px / BLOCK_DIM;
+            let sigma_idx = by * xsize_blocks + bx;
+            let is = inv_sigma[sigma_idx];
+
+            let oidx = row * width + px;
+
+            if is == 0.0 {
+                // No filtering — copy from padded to unpadded output
+                let padded_idx = (py + pad) * in_stride + (px + pad);
+                out_x[oidx] = padded_planes[0][padded_idx];
+                out_y[oidx] = padded_planes[1][padded_idx];
+                out_b[oidx] = padded_planes[2][padded_idx];
+                continue;
+            }
+
+            let sm = base_sm * border_mul(px, py);
+            let eff_inv_sigma = is * sm;
+
+            // Coordinates in padded-buffer space
+            let cx = px + pad;
+            let cy = py + pad;
+
+            let center_idx = cy * in_stride + cx;
+            let mut total_weight = 1.0f32;
+            let mut sum_x = padded_planes[0][center_idx];
+            let mut sum_y = padded_planes[1][center_idx];
+            let mut sum_b = padded_planes[2][center_idx];
+
+            for &(dy, dx) in &EPF0_NEIGHBORS {
+                let nx = (cx as isize + dx) as usize;
+                let ny = (cy as isize + dy) as usize;
+                let sad = sad_3x3_plus_padded_slices(padded_planes, cx, cy, nx, ny, in_stride);
+                let w = epf_weight(sad, eff_inv_sigma);
+                total_weight += w;
+                let n_idx = ny * in_stride + nx;
+                sum_x += w * padded_planes[0][n_idx];
+                sum_y += w * padded_planes[1][n_idx];
+                sum_b += w * padded_planes[2][n_idx];
+            }
+
+            let inv_tw = 1.0 / total_weight;
+            out_x[oidx] = sum_x * inv_tw;
+            out_y[oidx] = sum_y * inv_tw;
+            out_b[oidx] = sum_b * inv_tw;
+        }
+    }
+}
+
+/// Apply EPF Step 0: 5x5 plus kernel with 3x3-plus SAD.
+///
+/// This is the heaviest filter step, using 12 neighbor positions with
+/// multi-point SAD comparison.
+///
+/// Input planes must be pre-padded with `pad_plane(plane, width, height, 3)`.
+/// Output planes are unpadded (width * height).
+///
+/// Strip-parallel: when the `parallel` feature is enabled, the row range is
+/// split into strips of `EPF_STRIP_H` rows and processed in parallel. Strip
+/// boundaries are aligned to `BLOCK_DIM` so `border_mul` produces identical
+/// results — floating-point output is bit-exact with the serial path.
+fn epf_step0(
+    padded_planes: &[Vec<f32>; 3],
+    inv_sigma: &[f32],
+    xsize_blocks: usize,
+    width: usize,
+    height: usize,
+    in_stride: usize,
+    pad: usize,
+) -> [Vec<f32>; 3] {
+    let mut output = [
+        vec![0.0f32; width * height],
+        vec![0.0f32; width * height],
+        vec![0.0f32; width * height],
+    ];
+
+    let pad_slices: [&[f32]; 3] = [&padded_planes[0], &padded_planes[1], &padded_planes[2]];
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        let strip_h = EPF_STRIP_H;
+        let stride_out = strip_h * width;
+        let [ref mut ox, ref mut oy, ref mut ob] = output;
+        // Split the three output planes into matching row chunks, then zip them
+        // so each parallel task receives one strip of each channel.
+        let chunks_x: Vec<&mut [f32]> = ox.par_chunks_mut(stride_out).collect();
+        let chunks_y: Vec<&mut [f32]> = oy.par_chunks_mut(stride_out).collect();
+        let chunks_b: Vec<&mut [f32]> = ob.par_chunks_mut(stride_out).collect();
+
+        chunks_x
+            .into_par_iter()
+            .zip(chunks_y.into_par_iter())
+            .zip(chunks_b.into_par_iter())
+            .enumerate()
+            .for_each(|(strip_idx, ((cx, cy), cb))| {
+                let py_start = strip_idx * strip_h;
+                let rows = (strip_h).min(height - py_start);
+                epf_step0_strip(
+                    pad_slices,
+                    inv_sigma,
+                    xsize_blocks,
+                    width,
+                    py_start,
+                    rows,
+                    in_stride,
+                    pad,
+                    cx,
+                    cy,
+                    cb,
+                );
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let [ref mut ox, ref mut oy, ref mut ob] = output;
+        epf_step0_strip(
+            pad_slices,
+            inv_sigma,
+            xsize_blocks,
+            width,
+            0,
+            height,
+            in_stride,
+            pad,
+            ox,
+            oy,
+            ob,
+        );
+    }
+
+    output
+}
+
+/// Strip-parallel wrapper for a SIMD EPF kernel (step 1 or step 2).
+///
+/// Calls `kernel` on horizontal strips of `EPF_STRIP_H` rows each. Strip
+/// boundaries are aligned to `BLOCK_DIM`, and the kernel's internal
+/// `py % BLOCK_DIM` border check is preserved because `py_start` is a multiple
+/// of `BLOCK_DIM`. Output floats are bit-exact vs. the serial path because
+/// each pixel's arithmetic is identical (only the order of independent rows
+/// across threads changes).
+#[allow(clippy::too_many_arguments)]
+fn epf_simd_strip_parallel<F>(
+    kernel: F,
+    padded_x: &[f32],
+    padded_y: &[f32],
+    padded_b: &[f32],
+    out_x: &mut [f32],
+    out_y: &mut [f32],
+    out_b: &mut [f32],
+    inv_sigma: &[f32],
+    xsize_blocks: usize,
+    width: usize,
+    height: usize,
+    in_stride: usize,
+    pad: usize,
+    sigma_scale: f32,
+    border_sigma_mul: f32,
+) where
+    F: Fn(
+            &[f32],
+            &[f32],
+            &[f32],
+            &mut [f32],
+            &mut [f32],
+            &mut [f32],
+            &[f32],
+            usize,
+            usize,
+            usize,
+            usize,
+            usize,
+            f32,
+            f32,
+        ) + Sync
+        + Send,
+{
+    // strip_h is a multiple of BLOCK_DIM so that:
+    //   - border_mul(px, py) (py % BLOCK_DIM == 0 or == BLOCK_DIM-1) is identical
+    //     whether we use global or strip-local `py` (py_start is aligned).
+    //   - inv_sigma row slicing (by * xsize_blocks) starts on a block boundary.
+    debug_assert!(EPF_STRIP_H.is_multiple_of(BLOCK_DIM));
+    debug_assert!(height.is_multiple_of(BLOCK_DIM));
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        let strip_h = EPF_STRIP_H;
+        let out_chunks_x: Vec<&mut [f32]> = out_x.par_chunks_mut(strip_h * width).collect();
+        let out_chunks_y: Vec<&mut [f32]> = out_y.par_chunks_mut(strip_h * width).collect();
+        let out_chunks_b: Vec<&mut [f32]> = out_b.par_chunks_mut(strip_h * width).collect();
+
+        out_chunks_x
+            .into_par_iter()
+            .zip(out_chunks_y.into_par_iter())
+            .zip(out_chunks_b.into_par_iter())
+            .enumerate()
+            .for_each(|(strip_idx, ((ox, oy), ob))| {
+                let py_start = strip_idx * strip_h;
+                let rows = strip_h.min(height - py_start);
+                // Padded input for this strip: rows [py_start, py_start + rows + 2*pad).
+                // When we pass a slice starting at `py_start * in_stride`, the kernel's
+                // internal `(py_local + pad) * in_stride + (px + pad)` indexing lands
+                // on the same global padded-buffer coordinates it would have with the
+                // full buffer — because the slice's own row 0 IS global row `py_start`,
+                // so `(py_local + pad) * stride` points to the correct padded row.
+                //
+                // But wait: the padded buffer's row 0 corresponds to global row
+                // `-pad` (top padding). The original kernel treats its input as the
+                // padded buffer where `py + pad` is the interior. So in the strip
+                // view, row 0 of the slice should be the padded buffer's row
+                // `py_start` — i.e., slice offset = `py_start * in_stride`.
+                let in_start = py_start * in_stride;
+                let in_len = (rows + 2 * pad) * in_stride;
+                let px = &padded_x[in_start..in_start + in_len];
+                let py = &padded_y[in_start..in_start + in_len];
+                let pb = &padded_b[in_start..in_start + in_len];
+
+                // inv_sigma row range: block rows [py_start/BLOCK_DIM, .. + rows/BLOCK_DIM).
+                // Since rows is always a multiple of BLOCK_DIM (enforced by strip
+                // size or the last-strip remainder also being a multiple of BLOCK_DIM
+                // when height is a multiple of BLOCK_DIM), this is clean.
+                let by_start = py_start / BLOCK_DIM;
+                let by_rows = rows.div_ceil(BLOCK_DIM);
+                let sig_start = by_start * xsize_blocks;
+                let sig_len = by_rows * xsize_blocks;
+                let sig = &inv_sigma[sig_start..sig_start + sig_len];
+
+                kernel(
+                    px,
+                    py,
+                    pb,
+                    ox,
+                    oy,
+                    ob,
+                    sig,
+                    xsize_blocks,
+                    width,
+                    rows,
+                    in_stride,
+                    pad,
+                    sigma_scale,
+                    border_sigma_mul,
+                );
+            });
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        kernel(
+            padded_x,
+            padded_y,
+            padded_b,
+            out_x,
+            out_y,
+            out_b,
+            inv_sigma,
+            xsize_blocks,
+            width,
+            height,
+            in_stride,
+            pad,
+            sigma_scale,
+            border_sigma_mul,
+        );
+    }
+}
+
+/// Variant of `sad_3x3_plus_padded` taking slices rather than a Vec array —
+/// needed so parallel closures can pass `[&[f32]; 3]` without re-borrowing
+/// the original Vec array.
+#[inline(always)]
+fn sad_3x3_plus_padded_slices(
+    planes: [&[f32]; 3],
     cx: usize,
     cy: usize,
     nx: usize,
     ny: usize,
     stride: usize,
 ) -> f32 {
-    // Plus pattern offsets: center, up, left, right, down
-    // In padded space, these are safe direct index arithmetic
     let c_offsets = [
         cy * stride + cx,
         (cy - 1) * stride + cx,
@@ -158,114 +491,6 @@ fn sad_3x3_plus_padded(
         }
     }
     sad
-}
-
-/// Get the border SAD multiplier for a pixel position within a block.
-///
-/// Pixels at block edges (first/last row or column of an 8x8 block) use a
-/// reduced multiplier to avoid filtering across block boundaries where
-/// quantization may cause artificial edges.
-#[inline(always)]
-fn border_mul(px: usize, py: usize) -> f32 {
-    let at_border_x = px.is_multiple_of(BLOCK_DIM) || px % BLOCK_DIM == BLOCK_DIM - 1;
-    let at_border_y = py.is_multiple_of(BLOCK_DIM) || py % BLOCK_DIM == BLOCK_DIM - 1;
-    if at_border_x || at_border_y {
-        EPF_BORDER_SAD_MUL
-    } else {
-        1.0
-    }
-}
-
-/// Apply EPF Step 0: 5x5 plus kernel with 3x3-plus SAD.
-///
-/// This is the heaviest filter step, using 12 neighbor positions with
-/// multi-point SAD comparison.
-///
-/// Input planes must be pre-padded with `pad_plane(plane, width, height, 3)`.
-/// Output planes are unpadded (width * height).
-fn epf_step0(
-    padded_planes: &[Vec<f32>; 3],
-    inv_sigma: &[f32],
-    xsize_blocks: usize,
-    width: usize,
-    height: usize,
-    in_stride: usize,
-    pad: usize,
-) -> [Vec<f32>; 3] {
-    let base_sm = EPF_PASS0_SIGMA_SCALE * 1.65;
-
-    // 12 neighbor offsets for the 5x5 plus pattern (dy, dx)
-    const NEIGHBORS: [(isize, isize); 12] = [
-        (-2, 0),
-        (-1, -1),
-        (-1, 0),
-        (-1, 1),
-        (0, -2),
-        (0, -1),
-        (0, 1),
-        (0, 2),
-        (1, -1),
-        (1, 0),
-        (1, 1),
-        (2, 0),
-    ];
-
-    let mut output = [
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-    ];
-
-    for py in 0..height {
-        let by = py / BLOCK_DIM;
-        for px in 0..width {
-            let bx = px / BLOCK_DIM;
-            let sigma_idx = by * xsize_blocks + bx;
-            let is = inv_sigma[sigma_idx];
-
-            if is == 0.0 {
-                // No filtering — copy from padded to unpadded output
-                let padded_idx = (py + pad) * in_stride + (px + pad);
-                for c in 0..3 {
-                    output[c][py * width + px] = padded_planes[c][padded_idx];
-                }
-                continue;
-            }
-
-            let sm = base_sm * border_mul(px, py);
-            let eff_inv_sigma = is * sm;
-
-            // Coordinates in padded-buffer space
-            let cx = px + pad;
-            let cy = py + pad;
-
-            let center_idx = cy * in_stride + cx;
-            let mut total_weight = 1.0f32;
-            let mut sums = [0.0f32; 3];
-            for c in 0..3 {
-                sums[c] = padded_planes[c][center_idx];
-            }
-
-            for &(dy, dx) in &NEIGHBORS {
-                let nx = (cx as isize + dx) as usize;
-                let ny = (cy as isize + dy) as usize;
-                let sad = sad_3x3_plus_padded(padded_planes, cx, cy, nx, ny, in_stride);
-                let w = epf_weight(sad, eff_inv_sigma);
-                total_weight += w;
-                let n_idx = ny * in_stride + nx;
-                for c in 0..3 {
-                    sums[c] += w * padded_planes[c][n_idx];
-                }
-            }
-
-            let inv_tw = 1.0 / total_weight;
-            for c in 0..3 {
-                output[c][py * width + px] = sums[c] * inv_tw;
-            }
-        }
-    }
-
-    output
 }
 
 /// Apply the full EPF pipeline to XYB pixel planes.
@@ -333,7 +558,8 @@ pub(crate) fn apply_epf(
         let mut out_x = jxl_simd::vec_f32_dirty(n);
         let mut out_y = jxl_simd::vec_f32_dirty(n);
         let mut out_b = jxl_simd::vec_f32_dirty(n);
-        jxl_simd::epf_step1(
+        epf_simd_strip_parallel(
+            jxl_simd::epf_step1,
             &padded_x,
             &padded_y,
             &padded_b,
@@ -366,7 +592,8 @@ pub(crate) fn apply_epf(
         let mut out_x = jxl_simd::vec_f32_dirty(n);
         let mut out_y = jxl_simd::vec_f32_dirty(n);
         let mut out_b = jxl_simd::vec_f32_dirty(n);
-        jxl_simd::epf_step2(
+        epf_simd_strip_parallel(
+            jxl_simd::epf_step2,
             &padded_x,
             &padded_y,
             &padded_b,
@@ -446,7 +673,8 @@ fn apply_epf_with_scratch(
         pad_plane_into(&planes[1], width, height, pad, &mut padded_scratch[1]);
         pad_plane_into(&planes[2], width, height, pad, &mut padded_scratch[2]);
         // No zeroing needed — EPF kernels write every output pixel
-        jxl_simd::epf_step1(
+        epf_simd_strip_parallel(
+            jxl_simd::epf_step1,
             &padded_scratch[0],
             &padded_scratch[1],
             &padded_scratch[2],
@@ -481,7 +709,8 @@ fn apply_epf_with_scratch(
         pad_plane_into(&planes[1], width, height, pad, &mut padded_scratch[1]);
         pad_plane_into(&planes[2], width, height, pad, &mut padded_scratch[2]);
         // No zeroing needed — EPF kernels write every output pixel
-        jxl_simd::epf_step2(
+        epf_simd_strip_parallel(
+            jxl_simd::epf_step2,
             &padded_scratch[0],
             &padded_scratch[1],
             &padded_scratch[2],
@@ -565,13 +794,6 @@ pub(crate) fn compute_epf_sharpness(
         gab_smooth(&mut base_recon, padded_width, padded_height);
     }
 
-    // Pre-allocate scratch buffers for EPF output (reused across candidates)
-    let n = padded_width * padded_height;
-    let mut scratch_x = jxl_simd::vec_f32_dirty(n);
-    let mut scratch_y = jxl_simd::vec_f32_dirty(n);
-    let mut scratch_b = jxl_simd::vec_f32_dirty(n);
-
-    // Pre-allocate padded scratch buffers for padding (reused across steps and candidates)
     // Size for the largest padding needed (pad=3 for step 0)
     let max_pad = if params.epf_iters >= 3 {
         3
@@ -582,20 +804,19 @@ pub(crate) fn compute_epf_sharpness(
     };
     let max_padded_stride = padded_width + 2 * max_pad;
     let max_padded_len = max_padded_stride * (padded_height + 2 * max_pad);
-    let mut padded_scratch: [Vec<f32>; 3] =
-        core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
+    let n = padded_width * padded_height;
 
-    // Pre-allocate uniform sharpness map (reused across candidates)
-    let mut uniform_sharpness = vec![0u8; nblocks];
-
-    // For each candidate, clone the base reconstruction and apply EPF
-    let mut error_maps: Vec<Vec<f32>> = Vec::with_capacity(candidates.len());
-
-    for &sharpness_val in candidates {
+    // Compute per-candidate error maps in parallel. Each candidate needs its own
+    // reconstruction clone and scratch buffers since they cannot be shared across
+    // threads; in the sequential fallback `parallel_map` runs each closure in
+    // turn, which still allocates per-candidate scratch (matches previous
+    // behaviour modulo scratch sharing — the allocation cost is dwarfed by the
+    // EPF + L2 compute for realistic image sizes).
+    let error_maps: Vec<Vec<f32>> = crate::parallel::parallel_map(candidates.len(), |ci| {
+        let sharpness_val = candidates[ci];
         let mut recon = base_recon.clone();
 
-        // Compute inv_sigma for this sharpness candidate
-        uniform_sharpness.fill(sharpness_val);
+        let uniform_sharpness = vec![sharpness_val; nblocks];
         let inv_sigma = compute_inv_sigma_map(
             quant_field,
             &uniform_sharpness,
@@ -604,7 +825,12 @@ pub(crate) fn compute_epf_sharpness(
             ysize_blocks,
         );
 
-        // Apply EPF with pre-allocated scratch (avoids repeated mmap/munmap)
+        let mut scratch_x = jxl_simd::vec_f32_dirty(n);
+        let mut scratch_y = jxl_simd::vec_f32_dirty(n);
+        let mut scratch_b = jxl_simd::vec_f32_dirty(n);
+        let mut padded_scratch: [Vec<f32>; 3] =
+            core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
+
         apply_epf_with_scratch(
             &mut recon,
             &inv_sigma,
@@ -618,17 +844,14 @@ pub(crate) fn compute_epf_sharpness(
             &mut padded_scratch,
         );
 
-        // Compute per-block masked L2 error vs original
-        let errors = compute_block_l2_errors(
+        compute_block_l2_errors(
             original_xyb,
             [&recon[0], &recon[1], &recon[2]],
             mask1x1,
             xsize_blocks,
             ysize_blocks,
-        );
-
-        error_maps.push(errors);
-    }
+        )
+    });
 
     // Map candidate index to sharpness LUT index for context computation
     let candidate_lut: Vec<usize> = candidates
