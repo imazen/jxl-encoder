@@ -301,14 +301,18 @@ fn convert_to_xyb_padded(
     let primaries_matrix = color_encoding.and_then(primaries_to_srgb_matrix);
 
     let padded_n = padded_width * padded_height;
-    let mut xyb_x = vec![0.0f32; padded_n];
-    let mut xyb_y = vec![0.0f32; padded_n];
-    let mut xyb_b = vec![0.0f32; padded_n];
+    // Output planes are fully overwritten below: rows 0..height by the per-row
+    // conversion + right-edge pad, rows height..padded_height by the bottom-pad
+    // loop. Safe to dirty-initialize.
+    let mut xyb_x = jxl_simd::vec_f32_dirty(padded_n);
+    let mut xyb_y = jxl_simd::vec_f32_dirty(padded_n);
+    let mut xyb_b = jxl_simd::vec_f32_dirty(padded_n);
 
-    // Scratch buffers for deinterleaving + optional matrix transform
-    let mut row_r = vec![0.0f32; width];
-    let mut row_g = vec![0.0f32; width];
-    let mut row_b = vec![0.0f32; width];
+    // Scratch buffers for deinterleaving + optional matrix transform. These
+    // are written in full every row before being read.
+    let mut row_r = jxl_simd::vec_f32_dirty(width);
+    let mut row_g = jxl_simd::vec_f32_dirty(width);
+    let mut row_b = jxl_simd::vec_f32_dirty(width);
 
     // Convert the actual image pixels
     for y in 0..height {
