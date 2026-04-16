@@ -25,6 +25,8 @@ exclude = [
     "justfile",
     "Cargo.toml.original.txt",
     "fuzz/",
+    "examples/debug/",
+    "tests/images/",
 ]
 
 [dependencies]
