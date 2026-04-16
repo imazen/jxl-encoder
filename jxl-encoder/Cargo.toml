@@ -12,22 +12,7 @@ authors.workspace = true
 rust-version.workspace = true
 keywords = ["jpeg-xl", "encoder", "image"]
 categories = ["multimedia::images", "multimedia::encoding"]
-exclude = [
-    "CLAUDE.md",
-    "CONTEXT-HANDOFF.md",
-    "FEEDBACK.md",
-    ".claude/",
-    ".superwork/",
-    ".zenbench/",
-    "copter-report/",
-    ".github/",
-    "Cross.toml",
-    "justfile",
-    "Cargo.toml.original.txt",
-    "fuzz/",
-    "examples/debug/",
-    "tests/images/",
-]
+include = ["/src/**", "/examples/*.rs", "/tests/*.rs", "/tests/*.txt", "/README.md", "/LICENSE*"]
 
 [dependencies]
 enough = "0.4.3"

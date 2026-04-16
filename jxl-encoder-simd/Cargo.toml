@@ -12,21 +12,7 @@ authors.workspace = true
 rust-version.workspace = true
 keywords = ["jpeg-xl", "simd", "dct"]
 categories = ["multimedia::images", "algorithms"]
-exclude = [
-    "CLAUDE.md",
-    "CONTEXT-HANDOFF.md",
-    "FEEDBACK.md",
-    ".claude/",
-    ".superwork/",
-    ".zenbench/",
-    "copter-report/",
-    ".github/",
-    "Cross.toml",
-    "justfile",
-    "Cargo.toml.original.txt",
-    "fuzz/",
-    "SIMD_GAPS.md",
-]
+include = ["/src/**", "/README.md", "/LICENSE*"]
 
 [features]
 default = ["std"]
