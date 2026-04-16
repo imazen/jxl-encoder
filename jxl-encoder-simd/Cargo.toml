@@ -25,6 +25,7 @@ exclude = [
     "justfile",
     "Cargo.toml.original.txt",
     "fuzz/",
+    "SIMD_GAPS.md",
 ]
 
 [features]
