@@ -780,7 +780,12 @@ impl LosslessConfig {
         self
     }
 
-    /// Set thread count for parallel encoding (0 = auto, 1 = sequential).
+    /// Set thread count for parallel encoding.
+    ///
+    /// - `0` (default): use the ambient rayon pool. The caller can control
+    ///   thread count by wrapping the encode call in `pool.install(|| ...)`.
+    /// - `1`: force sequential encoding (no rayon).
+    /// - `N >= 2`: create a dedicated N-thread pool for this encode.
     ///
     /// Requires the `parallel` feature. When `parallel` is not enabled,
     /// this value is ignored and encoding is always sequential.
@@ -1251,7 +1256,12 @@ impl LossyConfig {
         self
     }
 
-    /// Set thread count for parallel encoding (0 = auto, 1 = sequential).
+    /// Set thread count for parallel encoding.
+    ///
+    /// - `0` (default): use the ambient rayon pool. The caller can control
+    ///   thread count by wrapping the encode call in `pool.install(|| ...)`.
+    /// - `1`: force sequential encoding (no rayon).
+    /// - `N >= 2`: create a dedicated N-thread pool for this encode.
     ///
     /// Requires the `parallel` feature. When `parallel` is not enabled,
     /// this value is ignored and encoding is always sequential.
@@ -3086,23 +3096,24 @@ impl LosslessConfig {
 
 // ── Thread pool helper ──────────────────────────────────────────────────────
 
-/// Run a closure inside a scoped rayon thread pool when the `parallel` feature
-/// is enabled and `threads != 1`. Otherwise, just call the closure directly.
+/// Run a closure inside a rayon thread pool when the `parallel` feature
+/// is enabled and `threads > 1`. Otherwise, just call the closure directly.
+///
+/// - `threads == 0`: use the ambient rayon pool (caller controls via
+///   `pool.install()` or the global default).
+/// - `threads == 1`: sequential — call `f()` on the current thread.
+/// - `threads >= 2`: create a dedicated pool with that many threads.
 #[cfg(feature = "parallel")]
 fn run_with_threads<T>(threads: usize, f: impl FnOnce() -> T + Send) -> T
 where
     T: Send,
 {
-    if threads == 1 {
+    if threads <= 1 {
         return f();
     }
-    let mut builder = rayon::ThreadPoolBuilder::new();
-    if threads > 0 {
-        builder = builder.num_threads(threads);
-    }
-    match builder.build() {
+    match rayon::ThreadPoolBuilder::new().num_threads(threads).build() {
         Ok(pool) => pool.install(f),
-        Err(_) => f(), // fall back to global pool / sequential
+        Err(_) => f(),
     }
 }
 
