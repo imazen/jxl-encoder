@@ -1,5 +1,49 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Custom white point and custom primaries encoding for `ColorEncoding`
+  (`WhitePoint::Custom`, `Primaries::Custom`). New `CIExy` and `CustomPrimaries`
+  types with convenience constructors `with_custom_white_point()`,
+  `with_custom_primaries()`, `with_custom_white_point_and_primaries()`. Bit-level
+  U32 encoding follows libjxl's `Customxy::VisitFields`. 24 new tests including
+  three roundtrips verified with jxl-rs (8732d1c).
+
+### Changed
+
+- `with_threads(0)` now uses the ambient rayon pool instead of creating a fresh
+  `ThreadPool` on every encode. `threads=1` is sequential; `threads>=2` creates
+  a dedicated pool. Lets orchestrators control thread count externally via
+  `pool.install(|| ...)` (ad7a100).
+- Parallelized EPF (steps 0/1/2 and candidate sharpness search), XYB conversion,
+  gaborish inverse, and noise denoise across strips and channels under the
+  `parallel` feature. Bit-exact vs serial at all thread counts. 1.32x faster on
+  CID22 2048x2048 effort=7 q=80 (795 -> 601 ms at 32 threads) (90c9daa).
+- Further parallelized XYB bottom-row padding (three independent channels via
+  `rayon::join`) and `PixelStatsForChromacityAdjustment::calc` (64-row strips,
+  max-reduction). Gated at height >= 256 so short images keep the serial
+  early-exit. Cumulative speedup 1.39x vs pre-easy-stack baseline (1a4664e).
+- Removed the no-op `safe-mode` feature flag from both crates, CI, justfile,
+  README, and examples. All multi-group VarDCT paths are covered by tests (2d71d84).
+
+### Fixed
+
+- Decode failure for images wider than 2048 pixels (more than one DC group). The
+  encoder wrote a static context tree while collecting tokens with the WP tree's
+  contexts, causing decoders to read wrong histograms. The WP tree's root
+  splitval is now dynamic (`num_dc_groups`). Fixes imazen/jxl-encoder#3 (3e2f1eb).
+- Display P3 and BT.2020 primaries are now transformed to sRGB before XYB
+  conversion. The XYB opsin matrix is defined for sRGB/BT.709 primaries;
+  feeding wide-gamut linear RGB directly produced wrong colors. Adds
+  `P3_TO_SRGB` and `BT2020_TO_SRGB` 3x3 matrices to both the main and
+  rate-control XYB paths. Fixes #7 (2c87854).
+- Custom white point and custom primaries paths returned `Error::NotImplemented`
+  instead of panicking via `todo!()` on valid-but-uncommon color profiles. Now
+  superseded by the full implementation above; the intermediate fix avoided
+  runtime panics while the feature was in progress (7649ac1).
+
 ## [0.2.0] — 2026-04-01
 
 ### Quality — At parity with cjxl e7
