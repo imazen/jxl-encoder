@@ -1156,7 +1156,7 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
     }
 
     // Sort by area (largest first) for better bin-packing
-    infos.sort_by(|a, b| b.patch.num_pixels().cmp(&a.patch.num_pixels()));
+    infos.sort_by_key(|info| core::cmp::Reverse(info.patch.num_pixels()));
 
     // Bin-pack into reference frame (no size limit — FrameEncoder handles multi-group)
     let (ref_width, ref_height, pack_positions) = bin_pack_patches(&infos);
@@ -1434,7 +1434,7 @@ pub(crate) fn find_and_build(
         .iter()
         .map(|p| p.patch.xsize.max(p.patch.ysize))
         .max()
-        .unwrap_or(0) as usize;
+        .unwrap_or(0);
     let coverage_pct = total_patch_pixels as f64 / (width * height) as f64 * 100.0;
     debug_rect!(
         "patches/detect",

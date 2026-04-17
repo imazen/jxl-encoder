@@ -614,7 +614,7 @@ fn apply_splines(
         let last = data.segment_y_start[y + 1];
         for seg_idx_pos in first..last {
             let segment = &data.segments[data.segment_indices[seg_idx_pos]];
-            let x0 = 0usize.max((segment.center_x - segment.maximum_distance).round() as usize);
+            let x0 = (segment.center_x - segment.maximum_distance).round().max(0.0) as usize;
             let x1 = width.min((segment.center_x + segment.maximum_distance).round() as usize + 1);
             for x in x0..x1 {
                 apply_segment_at(planes, stride, x, y, segment, add);
