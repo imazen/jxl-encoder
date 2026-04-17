@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-16
+
 ### Added
 
 - Custom white point and custom primaries encoding for `ColorEncoding`
