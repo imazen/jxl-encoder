@@ -85,6 +85,14 @@ sha2 = "0.11.0"
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 codec-corpus = "1.0.1"
+# Picker training oracle sweep (lossless_pareto_calibrate / lossy_pareto_calibrate examples).
+zenanalyze = { path = "../../zenanalyze" }
+rayon = "1.10"
+
+[[example]]
+name = "lossless_pareto_calibrate"
+path = "examples/lossless_pareto_calibrate.rs"
+required-features = ["std", "parallel"]
 
 [lints]
 workspace = true
