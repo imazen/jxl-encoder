@@ -94,5 +94,10 @@ name = "lossless_pareto_calibrate"
 path = "examples/lossless_pareto_calibrate.rs"
 required-features = ["std", "parallel"]
 
+[[example]]
+name = "lossy_pareto_calibrate"
+path = "examples/lossy_pareto_calibrate.rs"
+required-features = ["std", "parallel", "butteraugli-loop"]
+
 [lints]
 workspace = true
