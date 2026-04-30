@@ -666,6 +666,10 @@ pub struct LosslessConfig {
     patches: bool,
     lossy_palette: bool,
     threads: usize,
+    /// Sweep / picker hook: when set, replaces the effort+mode-derived
+    /// `EffortProfile` everywhere the encoder asks for one. See
+    /// [`Self::with_effort_profile_override`].
+    profile_override: Option<crate::effort::EffortProfile>,
 }
 
 impl Default for LosslessConfig {
@@ -688,7 +692,34 @@ impl LosslessConfig {
             patches: profile.patches,
             lossy_palette: false,
             threads: 0,
+            profile_override: None,
         }
+    }
+
+    /// Resolve the effective [`EffortProfile`]: the override if set,
+    /// otherwise the standard profile derived from effort + mode.
+    pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
+        self.profile_override
+            .clone()
+            .unwrap_or_else(|| crate::effort::EffortProfile::lossless(self.effort, self.mode))
+    }
+
+    /// Replace the entire effort-derived profile with a custom one.
+    ///
+    /// This is the picker / sweep escape hatch: every internal knob the
+    /// encoder normally derives from `(effort, mode)` (RCT search depth,
+    /// WP parameter scan, tree-learning shape, LZ77 method, etc.) is
+    /// taken from the supplied [`EffortProfile`] instead. Per-knob
+    /// public setters (`with_lz77_method`, `with_squeeze`, …) called
+    /// after this still take precedence on the few knobs they cover.
+    ///
+    /// **Not stable.** Intended for sweep harnesses and picker runtime
+    /// integration. The underlying [`EffortProfile`] struct may grow
+    /// fields between minor versions.
+    #[doc(hidden)]
+    pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
+        self.profile_override = Some(profile);
+        self
     }
 
     /// Create a new lossless config with defaults (effort 7).
@@ -711,6 +742,7 @@ impl LosslessConfig {
         // Preserve settings that aren't effort-derived
         new.mode = self.mode;
         new.squeeze = self.squeeze;
+        new.profile_override = self.profile_override;
         new
     }
 
@@ -1008,6 +1040,10 @@ pub struct LossyConfig {
     #[cfg(feature = "zensim-loop")]
     zensim_iters: u32,
     threads: usize,
+    /// Sweep / picker hook: when set, replaces the effort+mode-derived
+    /// `EffortProfile` everywhere the encoder asks for one. See
+    /// [`Self::with_effort_profile_override`].
+    profile_override: Option<crate::effort::EffortProfile>,
 }
 
 impl LossyConfig {
@@ -1045,7 +1081,35 @@ impl LossyConfig {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0,
             threads: 0,
+            profile_override: None,
         }
+    }
+
+    /// Resolve the effective [`EffortProfile`]: the override if set,
+    /// otherwise the standard profile derived from effort + mode.
+    pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
+        self.profile_override
+            .clone()
+            .unwrap_or_else(|| crate::effort::EffortProfile::lossy(self.effort, self.mode))
+    }
+
+    /// Replace the entire effort-derived profile with a custom one.
+    ///
+    /// This is the picker / sweep escape hatch: every internal knob the
+    /// encoder normally derives from `(effort, mode)` (AC strategy gates,
+    /// CfL settings, butteraugli-loop iteration count, cost-model
+    /// constants, entropy-mul table, etc.) is taken from the supplied
+    /// [`EffortProfile`] instead. Per-knob public setters
+    /// (`with_butteraugli_iters`, `with_gaborish`, …) called after this
+    /// still take precedence on the few knobs they cover.
+    ///
+    /// **Not stable.** Intended for sweep harnesses and picker runtime
+    /// integration. The underlying [`EffortProfile`] struct may grow
+    /// fields between minor versions.
+    #[doc(hidden)]
+    pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
+        self.profile_override = Some(profile);
+        self
     }
 
     /// Create from a [`Quality`] specification.
@@ -1090,6 +1154,7 @@ impl LossyConfig {
         {
             new.zensim_iters = self.zensim_iters;
         }
+        new.profile_override = self.profile_override;
         new
     }
 
@@ -1762,7 +1827,7 @@ impl<'a> EncodeRequest<'a> {
 
         // Write reference frame and subtract patches from image if detected
         if let Some(ref pd) = patches_data {
-            let lossless_profile = crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode);
+            let lossless_profile = cfg.effective_profile();
             crate::vardct::patches::encode_reference_frame_rgb(
                 pd,
                 image.bit_depth,
@@ -1791,7 +1856,7 @@ impl<'a> EncodeRequest<'a> {
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
-                profile: crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode),
+                profile: cfg.effective_profile(),
                 have_animation: false,
                 duration: 0,
                 is_last: true,
@@ -1965,7 +2030,7 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
-        let mut profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+        let mut profile = cfg.effective_profile();
 
         // Apply max_strategy_size to profile flags
         if let Some(max_size) = cfg.max_strategy_size {
@@ -2419,7 +2484,7 @@ impl LossyEncoder {
         let alpha = self.alpha;
 
         let (codestream, mut stats) = run_with_threads(cfg.threads, || {
-            let mut profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+            let mut profile = cfg.effective_profile();
             if let Some(max_size) = cfg.max_strategy_size {
                 if max_size < 16 {
                     profile.try_dct16 = false;
@@ -2942,7 +3007,7 @@ impl LosslessEncoder {
 
             // Write reference frame and subtract patches
             if let Some(ref pd) = patches_data {
-                let lossless_profile = crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode);
+                let lossless_profile = cfg.effective_profile();
                 crate::vardct::patches::encode_reference_frame_rgb(
                     pd,
                     image.bit_depth,
@@ -2970,7 +3035,7 @@ impl LosslessEncoder {
                     lz77_method: cfg.lz77_method,
                     lossy_palette: cfg.lossy_palette,
                     encoder_mode: cfg.mode,
-                    profile: crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode),
+                    profile: cfg.effective_profile(),
                     have_animation: false,
                     duration: 0,
                     is_last: true,
@@ -3299,7 +3364,7 @@ fn encode_animation_lossless(
                 lz77_method: cfg.lz77_method,
                 lossy_palette: cfg.lossy_palette,
                 encoder_mode: cfg.mode,
-                profile: crate::effort::EffortProfile::lossless(cfg.effort, cfg.mode),
+                profile: cfg.effective_profile(),
                 have_animation: true,
                 duration: frame.duration,
                 is_last: i == num_frames - 1,
@@ -3336,7 +3401,7 @@ fn encode_animation_lossy(
     let num_frames = frames.len();
 
     // Set up VarDCT encoder
-    let mut profile = crate::effort::EffortProfile::lossy(cfg.effort, cfg.mode);
+    let mut profile = cfg.effective_profile();
 
     // Apply max_strategy_size to profile flags
     if let Some(max_size) = cfg.max_strategy_size {
