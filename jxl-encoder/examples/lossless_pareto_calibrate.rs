@@ -56,10 +56,12 @@ use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 
 const NB_RCTS_GRID: &[u8] = &[0, 4, 7, 9, 19];
 const WP_PARAM_GRID: &[u8] = &[0, 2, 5];
-// 256 dropped per >10s rule: hour-6 oracle showed avg 24s @ tiny, 661s @ small,
-// 8.9s @ medium for tree_max_buckets=256 (modular tree learning blows up at this
-// bucket count). 192 stays — averaged 3-5s across sizes.
-const TREE_MAX_BUCKETS_GRID: &[u16] = &[16, 32, 48, 64, 96, 128, 192];
+// 192 + 256 dropped per >10s rule: 256 catastrophic (avg 661s @ small),
+// 192 borderline (medium 4.7s, large 3.9s with n=9 — biased toward easy
+// units; native CLIC photos extrapolate to 10-20s at 192 buckets).
+// Picker can recommend up to 128 — well-covered range matching libjxl's
+// e8 default (kKitten=128).
+const TREE_MAX_BUCKETS_GRID: &[u16] = &[16, 32, 48, 64, 96, 128];
 const TREE_NUM_PROPS_GRID: &[u8] = &[3, 5, 7, 10, 13, 16];
 const TREE_SAMPLE_FRACTION_GRID: &[f32] = &[0.10, 0.20, 0.35, 0.50, 0.65];
 
