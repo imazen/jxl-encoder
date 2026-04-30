@@ -1,35 +1,48 @@
 //! Pareto calibration sweep for the zenjxl lossless picker (issue #24).
 //!
-//! Sweeps four axes per the global benchmark-discipline rule:
-//!   - **size**: tiny (64), small (256), medium (1024), large (native)
-//!   - **config**: effort × {squeeze, tree_learning, patches} bool axes
-//!     × LZ77 method {Rle, Greedy, Optimal at e>=7}
-//!   - **content**: photo + screenshot + mixed via the picker-train corpus
+//! Sweeps INDEPENDENT internal knobs via `LosslessConfig::with_effort_profile_override`.
+//! The picker is going to *replace* the bundled-effort axis, so the oracle
+//! must expose each underlying knob independently — not the bundled effort.
 //!
-//! Per (image, size, config) we emit one TSV row capturing
-//! `bytes + encode_ms`. Per-image zenanalyze features are captured separately.
+//! Cells (categorical, 16):
+//!   - lz77_method ∈ {None, Rle, Greedy, Optimal}    (4)
+//!   - use_squeeze ∈ {false, true}                   (2)
+//!   - use_patches ∈ {false, true}                   (2)
 //!
-//! v1 limitation: only public LosslessConfig knobs are swept. Underlying
-//! `nb_rcts_to_try`, `wp_num_param_sets`, `tree_max_buckets`,
-//! `tree_num_properties`, `tree_sample_fraction` are bundled into the
-//! effort knob. Decoupling those requires API additions tracked in #24.
+//! Per-cell scalar samples (continuous, dense random):
+//!   - nb_rcts_to_try         ∈ {0, 4, 7, 9, 19}
+//!   - wp_num_param_sets      ∈ {0, 2, 5}
+//!   - tree_max_buckets       ∈ {16, 32, 48, 64, 96, 128, 192, 256}
+//!   - tree_num_properties    ∈ {3, 5, 7, 10, 13, 16}
+//!   - tree_sample_fraction   ∈ {0.10, 0.20, 0.35, 0.50, 0.65}
+//!
+//! Per-cell sample plan: 25 random scalar tuples (with deterministic RNG
+//! seed = hash(image_sha, size, cell_id) so reruns produce identical data).
+//! 16 cells × 25 samples = 400 configs per (image, size).
+//!
+//! Plus 16 anchor configs holding (mid-scalar) per cell to give the picker
+//! a stable reference point per cell.
+//!
+//! Per row: bytes + encode_ms + all knob values, joined to per-(image,size)
+//! features TSV. Pareto extraction + scalar regression labels happen at
+//! training time per zenanalyze#43 (time_budgeted objective).
 //!
 //! Usage:
 //!   cargo run --release -p jxl-encoder \
 //!     --features 'std parallel' \
 //!     --example lossless_pareto_calibrate -- \
-//!       --manifest /home/lilith/work/codec-corpus/picker-train/manifest.tsv \
-//!       --split train \
+//!       --manifest /home/lilith/work/codec-corpus/picker-train/manifest_v1_100.tsv \
 //!       --output benchmarks/lossless_pareto_<DATE>.tsv \
 //!       --features-output benchmarks/lossless_pareto_features_<DATE>.tsv \
-//!       [--max-images N] [--sizes 64,256,1024,native] [--threads N]
+//!       [--samples-per-cell N] [--max-images N] [--sizes 64,256,1024,native]
 //!       [--features-only] [--smoke]
-//!
-//! Output is appended row-by-row so a partial run is still useful.
 
 use jxl_encoder::api::{LosslessConfig, Lz77Method, PixelLayout};
+use jxl_encoder::EffortProfile;
+use jxl_encoder::api::EncoderMode;
 use rayon::prelude::*;
 use std::fs::OpenOptions;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -38,84 +51,95 @@ use zenanalyze::analyze_features_rgb8;
 use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 
 // ---------------------------------------------------------------------
-// Sweep grid
+// Scalar grids
+// ---------------------------------------------------------------------
+
+const NB_RCTS_GRID: &[u8] = &[0, 4, 7, 9, 19];
+const WP_PARAM_GRID: &[u8] = &[0, 2, 5];
+const TREE_MAX_BUCKETS_GRID: &[u16] = &[16, 32, 48, 64, 96, 128, 192, 256];
+const TREE_NUM_PROPS_GRID: &[u8] = &[3, 5, 7, 10, 13, 16];
+const TREE_SAMPLE_FRACTION_GRID: &[f32] = &[0.10, 0.20, 0.35, 0.50, 0.65];
+
+// ---------------------------------------------------------------------
+// Categorical cell axes
+// ---------------------------------------------------------------------
+
+const LZ77_AXES: &[(u8, &str, Option<Lz77Method>)] = &[
+    (0, "none", None),
+    (1, "rle", Some(Lz77Method::Rle)),
+    (2, "greedy", Some(Lz77Method::Greedy)),
+    (3, "optimal", Some(Lz77Method::Optimal)),
+];
+
+#[derive(Clone, Copy, Debug)]
+struct CellSpec {
+    cell_id: u8,
+    lz77_label: &'static str,
+    lz77_method: Option<Lz77Method>,
+    squeeze: bool,
+    patches: bool,
+}
+
+fn enumerate_cells() -> Vec<CellSpec> {
+    let mut out = Vec::new();
+    let mut id = 0u8;
+    for &(_lz_id, lz_label, lz_method) in LZ77_AXES {
+        for &squeeze in &[false, true] {
+            for &patches in &[false, true] {
+                out.push(CellSpec {
+                    cell_id: id,
+                    lz77_label: lz_label,
+                    lz77_method: lz_method,
+                    squeeze,
+                    patches,
+                });
+                id += 1;
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------
+// Config (one row per encode)
 // ---------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug)]
-struct ConfigSpec {
-    id: u32,
-    name: &'static str,
-    effort: u8,
-    squeeze: bool,
-    tree_learning: bool,
-    patches: bool,
-    lz77_method: Option<Lz77Method>, // None = use default-by-effort
+struct RowConfig {
+    cell: CellSpec,
+    nb_rcts_to_try: u8,
+    wp_num_param_sets: u8,
+    tree_max_buckets: u16,
+    tree_num_properties: u8,
+    tree_sample_fraction: f32,
+    /// Anchor=0 means a deterministic mid-scalar reference; anchor=N means
+    /// the N-th random sample for this (image, size, cell).
+    sample_idx: u32,
 }
 
-const fn cfg(id: u32, name: &'static str, effort: u8, sq: bool, tl: bool, pa: bool, lz: Option<Lz77Method>) -> ConfigSpec {
-    ConfigSpec { id, name, effort, squeeze: sq, tree_learning: tl, patches: pa, lz77_method: lz }
+/// Anchor scalar values placed at one row per cell.
+fn anchor_scalars() -> (u8, u8, u16, u8, f32) {
+    // mid-of-grid for each (matches roughly e7 defaults).
+    (7, 2, 96, 7, 0.50)
 }
 
-/// 76 configs covering the picker's outer search space at public-API
-/// granularity. Inner knobs (nb_rcts_to_try, wp_num_param_sets,
-/// tree_max_buckets/num_properties/sample_fraction) are bundled into
-/// `effort` for v1. Two-stage sweep follows once underlying knobs are
-/// exposed.
-const CONFIGS: &[ConfigSpec] = &[
-    // === Effort 5 (Hare) — defaults at this effort have squeeze off,
-    // tree_learning off, patches on, lz77=Rle. Vary squeeze and patches.
-    cfg(0, "e5_default",                            5, false, false, true,  None),
-    cfg(1, "e5_no_patches",                         5, false, false, false, None),
-    cfg(2, "e5_squeeze",                            5, true,  false, true,  None),
-    cfg(3, "e5_squeeze_no_patches",                 5, true,  false, false, None),
-
-    // === Effort 7 (Squirrel) — defaults: tree_learning on, patches on, lz77=Rle.
-    // Varying squeeze + tree_learning + patches + lz77 method.
-    cfg(10, "e7_default",                           7, false, true,  true,  None),
-    cfg(11, "e7_lz77_greedy",                       7, false, true,  true,  Some(Lz77Method::Greedy)),
-    cfg(12, "e7_lz77_optimal",                      7, false, true,  true,  Some(Lz77Method::Optimal)),
-    cfg(13, "e7_no_tree",                           7, false, false, true,  None),
-    cfg(14, "e7_no_patches",                        7, false, true,  false, None),
-    cfg(15, "e7_no_tree_no_patches",                7, false, false, false, None),
-    cfg(16, "e7_squeeze",                           7, true,  true,  true,  None),
-    cfg(17, "e7_squeeze_lz77_greedy",               7, true,  true,  true,  Some(Lz77Method::Greedy)),
-    cfg(18, "e7_squeeze_lz77_optimal",              7, true,  true,  true,  Some(Lz77Method::Optimal)),
-    cfg(19, "e7_squeeze_no_tree",                   7, true,  false, true,  None),
-    cfg(20, "e7_squeeze_no_patches",                7, true,  true,  false, None),
-
-    // === Effort 8 (Kitten) — defaults: tree_learning on, patches on, lz77=Greedy.
-    cfg(30, "e8_default",                           8, false, true,  true,  None),
-    cfg(31, "e8_lz77_rle",                          8, false, true,  true,  Some(Lz77Method::Rle)),
-    cfg(32, "e8_lz77_optimal",                      8, false, true,  true,  Some(Lz77Method::Optimal)),
-    cfg(33, "e8_no_tree",                           8, false, false, true,  None),
-    cfg(34, "e8_no_patches",                        8, false, true,  false, None),
-    cfg(35, "e8_no_tree_no_patches",                8, false, false, false, None),
-    cfg(36, "e8_squeeze",                           8, true,  true,  true,  None),
-    cfg(37, "e8_squeeze_lz77_rle",                  8, true,  true,  true,  Some(Lz77Method::Rle)),
-    cfg(38, "e8_squeeze_lz77_optimal",              8, true,  true,  true,  Some(Lz77Method::Optimal)),
-    cfg(39, "e8_squeeze_no_tree",                   8, true,  false, true,  None),
-    cfg(40, "e8_squeeze_no_patches",                8, true,  true,  false, None),
-
-    // === Effort 9 (Tortoise) — defaults: tree_learning on, patches on, lz77=Optimal.
-    cfg(50, "e9_default",                           9, false, true,  true,  None),
-    cfg(51, "e9_lz77_rle",                          9, false, true,  true,  Some(Lz77Method::Rle)),
-    cfg(52, "e9_lz77_greedy",                       9, false, true,  true,  Some(Lz77Method::Greedy)),
-    cfg(53, "e9_no_tree",                           9, false, false, true,  None),
-    cfg(54, "e9_no_patches",                        9, false, true,  false, None),
-    cfg(55, "e9_no_tree_no_patches",                9, false, false, false, None),
-    cfg(56, "e9_squeeze",                           9, true,  true,  true,  None),
-    cfg(57, "e9_squeeze_lz77_rle",                  9, true,  true,  true,  Some(Lz77Method::Rle)),
-    cfg(58, "e9_squeeze_lz77_greedy",               9, true,  true,  true,  Some(Lz77Method::Greedy)),
-    cfg(59, "e9_squeeze_no_tree",                   9, true,  false, true,  None),
-    cfg(60, "e9_squeeze_no_patches",                9, true,  true,  false, None),
-
-    // === Anchors: e3 (fast baseline), e10 (max effort)
-    cfg(70, "e3_default",                           3, false, false, false, None),
-    cfg(71, "e10_default",                         10, false, true,  true,  None),
-];
-
-/// Default size axis. `0` means "use native dimensions" (large).
-const DEFAULT_SIZES: &[u32] = &[64, 256, 1024, 0];
+/// Random scalar tuple deterministic from (image_sha, size_class, cell_id, sample_idx).
+fn sample_scalars(image_sha: &str, size_class: &str, cell_id: u8, sample_idx: u32) -> (u8, u8, u16, u8, f32) {
+    let mut hasher = DefaultHasher::new();
+    image_sha.hash(&mut hasher);
+    size_class.hash(&mut hasher);
+    cell_id.hash(&mut hasher);
+    sample_idx.hash(&mut hasher);
+    let seed = hasher.finish();
+    let mut r = fastrand::Rng::with_seed(seed);
+    (
+        NB_RCTS_GRID[r.usize(0..NB_RCTS_GRID.len())],
+        WP_PARAM_GRID[r.usize(0..WP_PARAM_GRID.len())],
+        TREE_MAX_BUCKETS_GRID[r.usize(0..TREE_MAX_BUCKETS_GRID.len())],
+        TREE_NUM_PROPS_GRID[r.usize(0..TREE_NUM_PROPS_GRID.len())],
+        TREE_SAMPLE_FRACTION_GRID[r.usize(0..TREE_SAMPLE_FRACTION_GRID.len())],
+    )
+}
 
 // ---------------------------------------------------------------------
 // Args
@@ -127,6 +151,7 @@ struct Args {
     sizes: Vec<u32>,
     output: PathBuf,
     features_output: PathBuf,
+    samples_per_cell: u32,
     max_images: usize,
     threads: usize,
     features_only: bool,
@@ -134,9 +159,10 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut manifest = PathBuf::from("/home/lilith/work/codec-corpus/picker-train/manifest.tsv");
-    let mut split = "train".to_string();
+    let mut manifest = PathBuf::from("/home/lilith/work/codec-corpus/picker-train/manifest_v1_100.tsv");
+    let mut split = "".to_string(); // empty = all splits
     let mut sizes: Vec<u32> = Vec::new();
+    let mut samples_per_cell = 25u32;
     let mut max_images = usize::MAX;
     let mut threads = 0;
     let mut features_only = false;
@@ -161,6 +187,7 @@ fn parse_args() -> Args {
                     }
                 }
             }
+            "--samples-per-cell" => samples_per_cell = it.next().unwrap().parse().expect("uint"),
             "--output" => output = PathBuf::from(it.next().unwrap()),
             "--features-output" => features_output = PathBuf::from(it.next().unwrap()),
             "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
@@ -168,7 +195,8 @@ fn parse_args() -> Args {
             "--features-only" => features_only = true,
             "--smoke" => {
                 smoke = true;
-                max_images = max_images.min(5);
+                max_images = max_images.min(2);
+                samples_per_cell = samples_per_cell.min(3);
                 if sizes.is_empty() {
                     sizes = vec![256];
                 }
@@ -177,7 +205,7 @@ fn parse_args() -> Args {
         }
     }
     if sizes.is_empty() {
-        sizes = DEFAULT_SIZES.to_vec();
+        sizes = vec![64, 256, 1024, 0];
     }
     Args {
         manifest,
@@ -185,6 +213,7 @@ fn parse_args() -> Args {
         sizes,
         output,
         features_output,
+        samples_per_cell,
         max_images,
         threads,
         features_only,
@@ -212,7 +241,7 @@ fn chrono_today() -> String {
 }
 
 // ---------------------------------------------------------------------
-// Manifest loading
+// Manifest
 // ---------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -228,7 +257,7 @@ fn load_manifest(path: &std::path::Path, split_filter: &str) -> Vec<ManifestEntr
     let mut out = Vec::new();
     for (i, line) in txt.lines().enumerate() {
         if i == 0 {
-            continue; // header
+            continue;
         }
         let cols: Vec<&str> = line.split('\t').collect();
         if cols.len() < 6 {
@@ -248,14 +277,11 @@ fn load_manifest(path: &std::path::Path, split_filter: &str) -> Vec<ManifestEntr
 }
 
 // ---------------------------------------------------------------------
-// Image loading + resize
+// Image IO
 // ---------------------------------------------------------------------
 
 fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
-    let img = match image::open(path) {
-        Ok(i) => i,
-        Err(_) => return None,
-    };
+    let img = image::open(path).ok()?;
     let rgb = img.to_rgb8();
     Some((rgb.as_raw().clone(), rgb.width(), rgb.height()))
 }
@@ -275,24 +301,53 @@ fn resize_to(rgb: &[u8], w: u32, h: u32, target_max: u32) -> (Vec<u8>, u32, u32)
 }
 
 // ---------------------------------------------------------------------
-// Encoding
+// Encoder construction with custom EffortProfile
 // ---------------------------------------------------------------------
 
-fn build_encoder(spec: ConfigSpec) -> LosslessConfig {
+/// Build a LosslessConfig where the EffortProfile is customized per the
+/// row's scalar values. We start from e7 (a sane midpoint for the bundled
+/// fields we don't sweep) and override the swept fields.
+fn build_encoder(rc: &RowConfig) -> LosslessConfig {
+    let mut profile = EffortProfile::lossless(7, EncoderMode::Reference);
+
+    // Scalar overrides
+    profile.nb_rcts_to_try = rc.nb_rcts_to_try;
+    profile.wp_num_param_sets = rc.wp_num_param_sets;
+    profile.tree_max_buckets = rc.tree_max_buckets;
+    profile.tree_num_properties = rc.tree_num_properties;
+    profile.tree_sample_fraction = rc.tree_sample_fraction;
+    // Use fraction-based sampling (clear the fixed cap)
+    profile.tree_max_samples_fixed = 0;
+    // Force tree learning ON whenever any tree_* knob is meaningful; the
+    // picker would only reach for these knobs when learning is enabled.
+    profile.tree_learning = true;
+
+    // Cell-level categorical overrides
+    profile.lz77 = rc.cell.lz77_method.is_some();
+    if let Some(m) = rc.cell.lz77_method {
+        profile.lz77_method = m;
+    }
+    profile.patches = rc.cell.patches;
+
+    // Build the LosslessConfig with this profile. squeeze + patches +
+    // lz77_method also have public setters that take precedence — set them
+    // explicitly to ensure consistency.
     let mut cfg = LosslessConfig::new()
-        .with_effort(spec.effort)
-        .with_squeeze(spec.squeeze)
-        .with_tree_learning(spec.tree_learning)
-        .with_patches(spec.patches)
-        .with_threads(1); // outer rayon parallelism — disable inner
-    if let Some(method) = spec.lz77_method {
-        cfg = cfg.with_lz77(true).with_lz77_method(method);
+        .with_effort_profile_override(profile)
+        .with_squeeze(rc.cell.squeeze)
+        .with_patches(rc.cell.patches)
+        .with_threads(1);
+
+    if let Some(m) = rc.cell.lz77_method {
+        cfg = cfg.with_lz77(true).with_lz77_method(m);
+    } else {
+        cfg = cfg.with_lz77(false);
     }
     cfg
 }
 
-fn encode_one(rgb: &[u8], w: u32, h: u32, spec: ConfigSpec) -> Option<(usize, f64)> {
-    let cfg = build_encoder(spec);
+fn encode_one(rgb: &[u8], w: u32, h: u32, rc: &RowConfig) -> Option<(usize, f64)> {
+    let cfg = build_encoder(rc);
     let start = Instant::now();
     let bytes = match cfg.encode(rgb, w, h, PixelLayout::Rgb8) {
         Ok(b) => b,
@@ -303,7 +358,7 @@ fn encode_one(rgb: &[u8], w: u32, h: u32, spec: ConfigSpec) -> Option<(usize, f6
 }
 
 // ---------------------------------------------------------------------
-// Feature extraction
+// Features
 // ---------------------------------------------------------------------
 
 fn feature_columns() -> Vec<AnalysisFeature> {
@@ -344,17 +399,21 @@ fn main() {
     let entries = load_manifest(&args.manifest, &args.split);
     let n_images = entries.len().min(args.max_images);
     let entries: Vec<ManifestEntry> = entries.into_iter().take(n_images).collect();
+    let cells = enumerate_cells();
 
-    let cells = entries.len() * args.sizes.len() * CONFIGS.len();
+    // Each (image, size, cell) generates 1 anchor + samples_per_cell random rows.
+    let rows_per_image_size = (cells.len() as u32) * (1 + args.samples_per_cell);
+    let total_encodes = (entries.len() as u32) * (args.sizes.len() as u32) * rows_per_image_size;
     eprintln!(
-        "[lossless_pareto_calibrate] {} images × {} sizes × {} configs = {} encodes ({})",
+        "[lossless_pareto_calibrate] {} images × {} sizes × {} cells × (1+{}) samples = {} encodes ({})",
         entries.len(),
         args.sizes.len(),
-        CONFIGS.len(),
-        cells,
+        cells.len(),
+        args.samples_per_cell,
+        total_encodes,
         if args.features_only { "features-only" } else { "full sweep" },
     );
-    eprintln!("[lossless_pareto_calibrate] manifest: {} ({})", args.manifest.display(), args.split);
+    eprintln!("[lossless_pareto_calibrate] manifest: {} (split={})", args.manifest.display(), if args.split.is_empty() { "<all>" } else { &args.split });
     eprintln!("[lossless_pareto_calibrate] output:   {}", args.output.display());
     eprintln!("[lossless_pareto_calibrate] features: {}", args.features_output.display());
 
@@ -375,7 +434,7 @@ fn main() {
             let mut g = f.lock().unwrap();
             writeln!(
                 g,
-                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tconfig_id\tconfig_name\teffort\tsqueeze\ttree_learning\tpatches\tlz77_method\tbytes\tencode_ms"
+                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tcell_id\tlz77_method\tsqueeze\tpatches\tnb_rcts_to_try\twp_num_param_sets\ttree_max_buckets\ttree_num_properties\ttree_sample_fraction\tsample_idx\tbytes\tencode_ms"
             )
             .ok();
         }
@@ -430,7 +489,6 @@ fn main() {
             _ => "custom",
         };
 
-        // Per-(image, size) features.
         let analysis = analyze_features_rgb8(&rgb, w, h, &query);
         {
             let mut f = feat_file.lock().unwrap();
@@ -448,61 +506,88 @@ fn main() {
         }
 
         if let Some(main_file) = main_file.as_ref() {
-            for spec in CONFIGS {
-                let row = encode_one(&rgb, w, h, *spec);
-                let lz77_str = match spec.lz77_method {
-                    None => "default",
-                    Some(Lz77Method::Rle) => "rle",
-                    Some(Lz77Method::Greedy) => "greedy",
-                    Some(Lz77Method::Optimal) => "optimal",
-                };
-                let mut f = main_file.lock().unwrap();
-                match row {
-                    Some((bytes, encode_ms)) => {
-                        writeln!(
-                            f,
-                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.3}",
-                            entry.sha256,
-                            entry.split,
-                            entry.content_class,
-                            size_class,
-                            w,
-                            h,
-                            spec.id,
-                            spec.name,
-                            spec.effort,
-                            spec.squeeze as u8,
-                            spec.tree_learning as u8,
-                            spec.patches as u8,
-                            lz77_str,
-                            bytes,
-                            encode_ms,
-                        )
-                        .ok();
-                    }
-                    None => {
-                        writeln!(
-                            f,
-                            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t\t",
-                            entry.sha256,
-                            entry.split,
-                            entry.content_class,
-                            size_class,
-                            w,
-                            h,
-                            spec.id,
-                            spec.name,
-                            spec.effort,
-                            spec.squeeze as u8,
-                            spec.tree_learning as u8,
-                            spec.patches as u8,
-                            lz77_str,
-                        )
-                        .ok();
+            let (a_rcts, a_wp, a_buckets, a_props, a_frac) = anchor_scalars();
+            for cell in &cells {
+                // Build all configs for this cell: 1 anchor + N samples.
+                let mut row_cfgs: Vec<RowConfig> = Vec::with_capacity(1 + args.samples_per_cell as usize);
+                row_cfgs.push(RowConfig {
+                    cell: *cell,
+                    nb_rcts_to_try: a_rcts,
+                    wp_num_param_sets: a_wp,
+                    tree_max_buckets: a_buckets,
+                    tree_num_properties: a_props,
+                    tree_sample_fraction: a_frac,
+                    sample_idx: 0,
+                });
+                for s in 1..=args.samples_per_cell {
+                    let (r, wpr, b, p, f) = sample_scalars(&entry.sha256, size_class, cell.cell_id, s);
+                    row_cfgs.push(RowConfig {
+                        cell: *cell,
+                        nb_rcts_to_try: r,
+                        wp_num_param_sets: wpr,
+                        tree_max_buckets: b,
+                        tree_num_properties: p,
+                        tree_sample_fraction: f,
+                        sample_idx: s,
+                    });
+                }
+
+                for rc in &row_cfgs {
+                    let row = encode_one(&rgb, w, h, rc);
+                    let mut f = main_file.lock().unwrap();
+                    match row {
+                        Some((bytes, encode_ms)) => {
+                            writeln!(
+                                f,
+                                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}",
+                                entry.sha256,
+                                entry.split,
+                                entry.content_class,
+                                size_class,
+                                w,
+                                h,
+                                rc.cell.cell_id,
+                                rc.cell.lz77_label,
+                                rc.cell.squeeze as u8,
+                                rc.cell.patches as u8,
+                                rc.nb_rcts_to_try,
+                                rc.wp_num_param_sets,
+                                rc.tree_max_buckets,
+                                rc.tree_num_properties,
+                                rc.tree_sample_fraction,
+                                rc.sample_idx,
+                                bytes,
+                                encode_ms,
+                            )
+                            .ok();
+                        }
+                        None => {
+                            writeln!(
+                                f,
+                                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t\t",
+                                entry.sha256,
+                                entry.split,
+                                entry.content_class,
+                                size_class,
+                                w,
+                                h,
+                                rc.cell.cell_id,
+                                rc.cell.lz77_label,
+                                rc.cell.squeeze as u8,
+                                rc.cell.patches as u8,
+                                rc.nb_rcts_to_try,
+                                rc.wp_num_param_sets,
+                                rc.tree_max_buckets,
+                                rc.tree_num_properties,
+                                rc.tree_sample_fraction,
+                                rc.sample_idx,
+                            )
+                            .ok();
+                        }
                     }
                 }
+                main_file.lock().unwrap().flush().ok();
             }
-            main_file.lock().unwrap().flush().ok();
         }
 
         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -512,11 +597,7 @@ fn main() {
             let eta = (unit_count - n) as f64 / rate;
             eprintln!(
                 "  progress: {}/{}  ({:.2}/sec, ETA {:.0}s = {:.1}h)",
-                n,
-                unit_count,
-                rate,
-                eta,
-                eta / 3600.0,
+                n, unit_count, rate, eta, eta / 3600.0,
             );
         }
     });

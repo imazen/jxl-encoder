@@ -88,6 +88,8 @@ codec-corpus = "1.0.1"
 # Picker training oracle sweep (lossless_pareto_calibrate / lossy_pareto_calibrate examples).
 zenanalyze = { path = "../../zenanalyze" }
 rayon = "1.10"
+# Deterministic RNG for picker oracle scalar sampling.
+fastrand = "2.4.1"
 
 [[example]]
 name = "lossless_pareto_calibrate"
