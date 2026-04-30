@@ -1,38 +1,41 @@
 //! Pareto calibration sweep for the zenjxl lossy picker.
 //!
-//! Sweeps four axes per the global benchmark-discipline rule:
-//!   - **size**: tiny (64), small (256), medium (1024), large (native)
-//!   - **distance**: 0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0
-//!     (dense at low quality per web-focused-codec rule)
-//!   - **config**: effort × butteraugli_iters override × cost-model knobs
-//!   - **content**: photo + screenshot + mixed via the picker-train corpus
+//! Sweeps INDEPENDENT internal knobs via `LossyConfig::with_effort_profile_override`,
+//! at single-shot quantization (butteraugli_iters = 0 always). The decision
+//! "should I run the butteraugli loop on this image?" is a separate-stage
+//! picker question; the underlying first-shot quantization tuning is what
+//! we want this oracle to characterize.
 //!
-//! Per (image, size, distance, config) we emit one TSV row capturing
-//! `bytes + encode_ms + butteraugli + ssim2`. The picker's "is the
-//! butteraugli loop worth it?" decision is trained on the bytes/quality
-//! delta between e9_loop=4 and e9_loop=0 across (image, distance) cells.
+//! Cells (categorical, 8):
+//!   - ac_strategy_intensity ∈ {compact, full}     (2)
+//!     - compact: try_dct64=false, fine_grained_step=2 (e7-style)
+//!     - full:    try_dct64=true,  fine_grained_step=1 (e9-style)
+//!   - enhanced_clustering_vardct ∈ {off, on}      (2)
+//!   - gaborish ∈ {off, on}                        (2)
+//!   - patches ∈ {off, on}                         (2)
 //!
-//! Per CLAUDE.md: jxl-oxide decode in linear sRGB to avoid PNG-metadata
-//! butteraugli inflation. NEVER use butteraugli_main CLI; always Rust
-//! butteraugli on linear f32.
+//! Per-cell scalar samples (continuous, dense random):
+//!   - k_info_loss_mul_base   ∈ [1.0, 1.5]   (cost-model: pixel-domain loss weight)
+//!   - k_ac_quant             ∈ [0.65, 0.85] (AC quantization threshold)
+//!   - entropy_mul_dct8       ∈ [0.70, 0.95] (DCT8 favor in AC strategy selection)
 //!
-//! Usage:
-//!   cargo run --release -p jxl-encoder \
-//!     --features 'std parallel butteraugli-loop' \
-//!     --example lossy_pareto_calibrate -- \
-//!       --manifest /home/lilith/work/codec-corpus/picker-train/manifest.tsv \
-//!       --split train \
-//!       --output benchmarks/lossy_pareto_<DATE>.tsv \
-//!       --features-output benchmarks/lossy_pareto_features_<DATE>.tsv \
-//!       [--max-images N] [--sizes 64,256,1024,native] [--threads N]
-//!       [--features-only] [--smoke]
+//! Distance axis: 9 distances {0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0}.
+//!
+//! Per row: bytes + encode_ms + butteraugli + ssim2, all knob values, joined to
+//! per-(image, size) features. Pareto extraction + scalar regression labels
+//! happen at training time per zenanalyze#43 (time_budgeted objective).
+//!
+//! Per CLAUDE.md: jxl-oxide decode in srgb_linear; butteraugli on linear f32;
+//! SSIM2 on decoded-linear→sRGB u8.
 
 use butteraugli::{butteraugli_linear, ButteraugliParams};
 use imgref::Img;
-use jxl_encoder::api::{LossyConfig, PixelLayout};
+use jxl_encoder::api::{EncoderMode, LossyConfig, PixelLayout};
+use jxl_encoder::EffortProfile;
 use rayon::prelude::*;
 use rgb::RGB;
 use std::fs::OpenOptions;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -41,76 +44,97 @@ use zenanalyze::analyze_features_rgb8;
 use zenanalyze::feature::{AnalysisFeature, AnalysisQuery, FeatureSet};
 
 // ---------------------------------------------------------------------
-// Sweep grid
+// Distance grid + scalar bands
+// ---------------------------------------------------------------------
+
+const DEFAULT_DISTANCES: &[f32] = &[0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0];
+
+/// Discrete value grids for stratified random sampling of scalar knobs.
+const K_INFO_LOSS_MUL_GRID: &[f32] = &[1.0, 1.1, 1.2, 1.3, 1.4, 1.5];
+const K_AC_QUANT_GRID: &[f32] = &[0.65, 0.70, 0.75, 0.80, 0.85];
+const ENTROPY_MUL_DCT8_GRID: &[f32] = &[0.70, 0.75, 0.80, 0.85, 0.90, 0.95];
+
+// ---------------------------------------------------------------------
+// Cells
 // ---------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug)]
-struct ConfigSpec {
-    id: u32,
-    name: &'static str,
-    effort: u8,
-    /// `Some(n)` → override butteraugli_iters; `None` → use effort default.
-    butteraugli_iters: Option<u32>,
-    gaborish: Option<bool>,
-    pixel_domain_loss: Option<bool>,
-    patches: Option<bool>,
+enum AcIntensity {
+    Compact, // e7-style: try_dct64=false, fine_grained_step=2
+    Full,    // e9-style: try_dct64=true, fine_grained_step=1
 }
 
-const fn cfg(
-    id: u32,
-    name: &'static str,
-    effort: u8,
-    bi: Option<u32>,
-    gab: Option<bool>,
-    pdl: Option<bool>,
-    pa: Option<bool>,
-) -> ConfigSpec {
-    ConfigSpec {
-        id,
-        name,
-        effort,
-        butteraugli_iters: bi,
-        gaborish: gab,
-        pixel_domain_loss: pdl,
-        patches: pa,
+#[derive(Clone, Copy, Debug)]
+struct CellSpec {
+    cell_id: u8,
+    ac_intensity: AcIntensity,
+    enhanced_clustering: bool,
+    gaborish: bool,
+    patches: bool,
+}
+
+fn enumerate_cells() -> Vec<CellSpec> {
+    let mut out = Vec::new();
+    let mut id = 0u8;
+    for &ac in &[AcIntensity::Compact, AcIntensity::Full] {
+        for &ec in &[false, true] {
+            for &gab in &[false, true] {
+                for &pa in &[false, true] {
+                    out.push(CellSpec {
+                        cell_id: id,
+                        ac_intensity: ac,
+                        enhanced_clustering: ec,
+                        gaborish: gab,
+                        patches: pa,
+                    });
+                    id += 1;
+                }
+            }
+        }
     }
+    out
 }
 
-/// Distance grid — dense at low-q regime per web-codec rule
-/// (q5–q60 same density as q60–q100). 9 distances spanning the
-/// production range.
-const DISTANCES: &[f32] = &[0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0];
+// ---------------------------------------------------------------------
+// Row config
+// ---------------------------------------------------------------------
 
-/// Configs spanning the picker's outer search at each distance.
-/// The picker's main short-circuit opportunity: detect when the
-/// butteraugli loop pays off vs when first-shot quant is fine.
-const CONFIGS: &[ConfigSpec] = &[
-    // Effort baselines
-    cfg(0, "e5_baseline",     5, None,    None, None, None),
-    cfg(1, "e7_default",      7, None,    None, None, None),
+#[derive(Clone, Copy, Debug)]
+struct RowConfig {
+    cell: CellSpec,
+    distance: f32,
+    k_info_loss_mul: f32,
+    k_ac_quant: f32,
+    entropy_mul_dct8: f32,
+    sample_idx: u32,
+}
 
-    // Effort 8 — default loop=2 vs no-loop
-    cfg(10, "e8_default",     8, None,    None, None, None),
-    cfg(11, "e8_no_loop",     8, Some(0), None, None, None),
+fn anchor_scalars() -> (f32, f32, f32) {
+    // Match e7 reference defaults.
+    (1.2, 0.765, 0.8)
+}
 
-    // Effort 9 — default loop=4, scan loop counts
-    cfg(20, "e9_default",     9, None,    None, None, None),
-    cfg(21, "e9_loop_2",      9, Some(2), None, None, None),
-    cfg(22, "e9_loop_1",      9, Some(1), None, None, None),
-    cfg(23, "e9_no_loop",     9, Some(0), None, None, None),
-
-    // Effort 9 cost-model knobs at default loop count (4 iters).
-    // Used to disentangle "loop" from "knob" effects on quality.
-    cfg(30, "e9_no_gaborish",       9, None, Some(false), None,        None),
-    cfg(31, "e9_no_pixel_loss",     9, None, None,        Some(false), None),
-    cfg(32, "e9_no_patches",        9, None, None,        None,        Some(false)),
-
-    // Effort 10 anchor (max effort)
-    cfg(40, "e10_default",   10, None,    None, None, None),
-];
-
-/// Default size axis. `0` means native dims.
-const DEFAULT_SIZES: &[u32] = &[64, 256, 1024, 0];
+fn sample_scalars(
+    image_sha: &str,
+    size_class: &str,
+    cell_id: u8,
+    distance: f32,
+    sample_idx: u32,
+) -> (f32, f32, f32) {
+    let mut hasher = DefaultHasher::new();
+    image_sha.hash(&mut hasher);
+    size_class.hash(&mut hasher);
+    cell_id.hash(&mut hasher);
+    distance.to_bits().hash(&mut hasher);
+    sample_idx.hash(&mut hasher);
+    let seed = hasher.finish();
+    let mut r = fastrand::Rng::with_seed(seed);
+    (
+        K_INFO_LOSS_MUL_GRID[r.usize(0..K_INFO_LOSS_MUL_GRID.len())],
+        K_AC_QUANT_GRID[r.usize(0..K_AC_QUANT_GRID.len())],
+        ENTROPY_MUL_DCT8_GRID[r.usize(0..ENTROPY_MUL_DCT8_GRID.len())],
+    )
+}
 
 // ---------------------------------------------------------------------
 // Args
@@ -123,6 +147,7 @@ struct Args {
     distances: Vec<f32>,
     output: PathBuf,
     features_output: PathBuf,
+    samples_per_cell: u32,
     max_images: usize,
     threads: usize,
     features_only: bool,
@@ -130,10 +155,12 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut manifest = PathBuf::from("/home/lilith/work/codec-corpus/picker-train/manifest.tsv");
-    let mut split = "train".to_string();
+    let mut manifest =
+        PathBuf::from("/home/lilith/work/codec-corpus/picker-train/manifest_v1_100.tsv");
+    let mut split = "".to_string();
     let mut sizes: Vec<u32> = Vec::new();
     let mut distances: Vec<f32> = Vec::new();
+    let mut samples_per_cell = 10u32;
     let mut max_images = usize::MAX;
     let mut threads = 0;
     let mut features_only = false;
@@ -161,17 +188,19 @@ fn parse_args() -> Args {
             "--distances" => {
                 let s = it.next().unwrap();
                 for tok in s.split(',') {
-                    distances.push(tok.parse().expect("distance must be float"));
+                    distances.push(tok.parse().expect("float"));
                 }
             }
+            "--samples-per-cell" => samples_per_cell = it.next().unwrap().parse().expect("uint"),
             "--output" => output = PathBuf::from(it.next().unwrap()),
             "--features-output" => features_output = PathBuf::from(it.next().unwrap()),
-            "--max-images" => max_images = it.next().unwrap().parse().expect("max-images uint"),
-            "--threads" => threads = it.next().unwrap().parse().expect("threads uint"),
+            "--max-images" => max_images = it.next().unwrap().parse().expect("uint"),
+            "--threads" => threads = it.next().unwrap().parse().expect("uint"),
             "--features-only" => features_only = true,
             "--smoke" => {
                 smoke = true;
-                max_images = max_images.min(3);
+                max_images = max_images.min(2);
+                samples_per_cell = samples_per_cell.min(2);
                 if sizes.is_empty() {
                     sizes = vec![256];
                 }
@@ -183,10 +212,10 @@ fn parse_args() -> Args {
         }
     }
     if sizes.is_empty() {
-        sizes = DEFAULT_SIZES.to_vec();
+        sizes = vec![64, 256, 1024, 0];
     }
     if distances.is_empty() {
-        distances = DISTANCES.to_vec();
+        distances = DEFAULT_DISTANCES.to_vec();
     }
     Args {
         manifest,
@@ -195,6 +224,7 @@ fn parse_args() -> Args {
         distances,
         output,
         features_output,
+        samples_per_cell,
         max_images,
         threads,
         features_only,
@@ -222,7 +252,7 @@ fn chrono_today() -> String {
 }
 
 // ---------------------------------------------------------------------
-// Manifest loading (shared shape with lossless harness)
+// Manifest
 // ---------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -258,14 +288,11 @@ fn load_manifest(path: &std::path::Path, split_filter: &str) -> Vec<ManifestEntr
 }
 
 // ---------------------------------------------------------------------
-// Image loading + resize + reference precomputation
+// Image IO + linear conversion
 // ---------------------------------------------------------------------
 
 fn load_png(path: &std::path::Path) -> Option<(Vec<u8>, u32, u32)> {
-    let img = match image::open(path) {
-        Ok(i) => i,
-        Err(_) => return None,
-    };
+    let img = image::open(path).ok()?;
     let rgb = img.to_rgb8();
     Some((rgb.as_raw().clone(), rgb.width(), rgb.height()))
 }
@@ -320,25 +347,54 @@ fn srgb_pixels_to_arr3(rgb: &[u8]) -> Vec<[u8; 3]> {
 }
 
 // ---------------------------------------------------------------------
-// Encode + decode + score
+// Encoder construction with custom EffortProfile
 // ---------------------------------------------------------------------
 
-fn build_encoder(spec: ConfigSpec, distance: f32) -> LossyConfig {
-    let mut cfg = LossyConfig::new(distance)
-        .with_effort(spec.effort)
+/// Build a LossyConfig where the EffortProfile is customized per the row's
+/// scalar values + cell. Starts from e7 (sane midpoint), applies cell
+/// gates (AC strategy intensity, enhanced_clustering, gaborish, patches),
+/// and overrides the swept scalar fields. butteraugli_iters is forced to 0.
+fn build_encoder(rc: &RowConfig) -> LossyConfig {
+    let mut profile = EffortProfile::lossy(7, EncoderMode::Reference);
+
+    // Cell-level categorical overrides
+    match rc.cell.ac_intensity {
+        AcIntensity::Compact => {
+            profile.try_dct64 = false;
+            profile.fine_grained_step = 2;
+            profile.try_dct32 = true;  // keep
+            profile.try_dct16 = true;  // keep
+            profile.try_dct4x8_afv = true; // keep
+            profile.non_aligned_eval = true; // keep
+        }
+        AcIntensity::Full => {
+            profile.try_dct64 = true;
+            profile.fine_grained_step = 1;
+            profile.try_dct32 = true;
+            profile.try_dct16 = true;
+            profile.try_dct4x8_afv = true;
+            profile.non_aligned_eval = true;
+        }
+    }
+    profile.enhanced_clustering_vardct = rc.cell.enhanced_clustering;
+    profile.gaborish = rc.cell.gaborish;
+    profile.patches = rc.cell.patches;
+    // Single-shot (no butteraugli loop) per design.
+    profile.butteraugli_iters = 0;
+
+    // Scalar overrides
+    profile.k_info_loss_mul_base = rc.k_info_loss_mul;
+    profile.k_ac_quant = rc.k_ac_quant;
+    profile.entropy_mul_table.dct8 = rc.entropy_mul_dct8;
+
+    let mut cfg = LossyConfig::new(rc.distance)
+        .with_effort_profile_override(profile)
         .with_threads(1);
-    if let Some(n) = spec.butteraugli_iters {
-        cfg = cfg.with_butteraugli_iters(n);
-    }
-    if let Some(g) = spec.gaborish {
-        cfg = cfg.with_gaborish(g);
-    }
-    if let Some(p) = spec.pixel_domain_loss {
-        cfg = cfg.with_pixel_domain_loss(p);
-    }
-    if let Some(p) = spec.patches {
-        cfg = cfg.with_patches(p);
-    }
+    // Public setters take precedence — explicit gaborish/patches to keep
+    // consistent.
+    cfg = cfg.with_gaborish(rc.cell.gaborish).with_patches(rc.cell.patches);
+    // Force iter=0 explicitly via the public setter too.
+    cfg = cfg.with_butteraugli_iters(0);
     cfg
 }
 
@@ -353,17 +409,15 @@ fn decode_jxl_linear(bytes: &[u8]) -> Option<(usize, usize, Vec<f32>)> {
     Some((fb.width(), fb.height(), fb.buf().to_vec()))
 }
 
-/// Returns (bytes, encode_ms, butteraugli, ssim2).
 fn encode_and_score(
     rgb: &[u8],
     orig_linear: &Img<Vec<RGB<f32>>>,
     orig_srgb: &Img<Vec<[u8; 3]>>,
     w: u32,
     h: u32,
-    spec: ConfigSpec,
-    distance: f32,
+    rc: &RowConfig,
 ) -> Option<(usize, f64, f64, f64)> {
-    let cfg = build_encoder(spec, distance);
+    let cfg = build_encoder(rc);
     let start = Instant::now();
     let bytes = match cfg.encode(rgb, w, h, PixelLayout::Rgb8) {
         Ok(b) => b,
@@ -376,7 +430,6 @@ fn encode_and_score(
         return None;
     }
 
-    // Butteraugli on linear f32.
     let dec_pixels: Vec<RGB<f32>> = dec_lin
         .chunks(3)
         .map(|c| RGB::new(c[0], c[1], c[2]))
@@ -391,7 +444,6 @@ fn encode_and_score(
         Err(_) => return None,
     };
 
-    // SSIM2 on sRGB u8 (decoded linear -> sRGB).
     let dec_srgb: Vec<[u8; 3]> = dec_lin
         .chunks(3)
         .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
@@ -447,18 +499,24 @@ fn main() {
     let entries = load_manifest(&args.manifest, &args.split);
     let n_images = entries.len().min(args.max_images);
     let entries: Vec<ManifestEntry> = entries.into_iter().take(n_images).collect();
+    let cells = enumerate_cells();
 
-    let cells = entries.len() * args.sizes.len() * args.distances.len() * CONFIGS.len();
+    let rows_per_image_size_distance = (cells.len() as u32) * (1 + args.samples_per_cell);
+    let total_encodes = (entries.len() as u32)
+        * (args.sizes.len() as u32)
+        * (args.distances.len() as u32)
+        * rows_per_image_size_distance;
     eprintln!(
-        "[lossy_pareto_calibrate] {} images × {} sizes × {} distances × {} configs = {} encodes ({})",
+        "[lossy_pareto_calibrate] {} images × {} sizes × {} distances × {} cells × (1+{}) samples = {} encodes ({})",
         entries.len(),
         args.sizes.len(),
         args.distances.len(),
-        CONFIGS.len(),
-        cells,
+        cells.len(),
+        args.samples_per_cell,
+        total_encodes,
         if args.features_only { "features-only" } else { "full sweep" },
     );
-    eprintln!("[lossy_pareto_calibrate] manifest: {} ({})", args.manifest.display(), args.split);
+    eprintln!("[lossy_pareto_calibrate] manifest: {} (split={})", args.manifest.display(), if args.split.is_empty() { "<all>" } else { &args.split });
     eprintln!("[lossy_pareto_calibrate] output:   {}", args.output.display());
     eprintln!("[lossy_pareto_calibrate] features: {}", args.features_output.display());
 
@@ -479,7 +537,7 @@ fn main() {
             let mut g = f.lock().unwrap();
             writeln!(
                 g,
-                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tdistance\tconfig_id\tconfig_name\teffort\tbutteraugli_iters\tgaborish\tpixel_domain_loss\tpatches\tbytes\tencode_ms\tbutteraugli\tssim2"
+                "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight\tdistance\tcell_id\tac_intensity\tenhanced_clustering\tgaborish\tpatches\tk_info_loss_mul\tk_ac_quant\tentropy_mul_dct8\tsample_idx\tbytes\tencode_ms\tbutteraugli\tssim2"
             )
             .ok();
         }
@@ -534,7 +592,6 @@ fn main() {
             _ => "custom",
         };
 
-        // Per-(image, size) features.
         let analysis = analyze_features_rgb8(&rgb, w, h, &query);
         {
             let mut f = feat_file.lock().unwrap();
@@ -552,8 +609,6 @@ fn main() {
         }
 
         if let Some(main_file) = main_file.as_ref() {
-            // Pre-compute reference: linear-light pixels for butteraugli,
-            // [u8;3] arrays for SSIM2.
             let orig_linear_pixels = srgb_pixels_to_linear(&rgb);
             let orig_srgb_arrs = srgb_pixels_to_arr3(&rgb);
             let orig_lin_img: Img<Vec<RGB<f32>>> =
@@ -561,77 +616,93 @@ fn main() {
             let orig_srgb_img: Img<Vec<[u8; 3]>> =
                 Img::new(orig_srgb_arrs, w as usize, h as usize);
 
+            let (a_info, a_aq, a_dct8) = anchor_scalars();
+
             for &distance in &args.distances {
-                for spec in CONFIGS {
-                    let row = encode_and_score(
-                        &rgb,
-                        &orig_lin_img,
-                        &orig_srgb_img,
-                        w,
-                        h,
-                        *spec,
+                for cell in &cells {
+                    let mut row_cfgs: Vec<RowConfig> = Vec::with_capacity(1 + args.samples_per_cell as usize);
+                    row_cfgs.push(RowConfig {
+                        cell: *cell,
                         distance,
-                    );
-                    let bi_str = match spec.butteraugli_iters {
-                        Some(n) => n.to_string(),
-                        None => "default".to_string(),
-                    };
-                    let opt_bool = |b: Option<bool>| match b {
-                        Some(true) => "1".to_string(),
-                        Some(false) => "0".to_string(),
-                        None => "default".to_string(),
-                    };
-                    let mut f = main_file.lock().unwrap();
-                    match row {
-                        Some((bytes, encode_ms, bfly, ssim2)) => {
-                            writeln!(
-                                f,
-                                "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.4}\t{:.3}",
-                                entry.sha256,
-                                entry.split,
-                                entry.content_class,
-                                size_class,
-                                w,
-                                h,
-                                distance,
-                                spec.id,
-                                spec.name,
-                                spec.effort,
-                                bi_str,
-                                opt_bool(spec.gaborish),
-                                opt_bool(spec.pixel_domain_loss),
-                                opt_bool(spec.patches),
-                                bytes,
-                                encode_ms,
-                                bfly,
-                                ssim2,
-                            )
-                            .ok();
-                        }
-                        None => {
-                            writeln!(
-                                f,
-                                "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t\t\t\t",
-                                entry.sha256,
-                                entry.split,
-                                entry.content_class,
-                                size_class,
-                                w,
-                                h,
-                                distance,
-                                spec.id,
-                                spec.name,
-                                spec.effort,
-                                bi_str,
-                                opt_bool(spec.gaborish),
-                                opt_bool(spec.pixel_domain_loss),
-                                opt_bool(spec.patches),
-                            )
-                            .ok();
+                        k_info_loss_mul: a_info,
+                        k_ac_quant: a_aq,
+                        entropy_mul_dct8: a_dct8,
+                        sample_idx: 0,
+                    });
+                    for s in 1..=args.samples_per_cell {
+                        let (i, q, d) = sample_scalars(&entry.sha256, size_class, cell.cell_id, distance, s);
+                        row_cfgs.push(RowConfig {
+                            cell: *cell,
+                            distance,
+                            k_info_loss_mul: i,
+                            k_ac_quant: q,
+                            entropy_mul_dct8: d,
+                            sample_idx: s,
+                        });
+                    }
+
+                    for rc in &row_cfgs {
+                        let row = encode_and_score(&rgb, &orig_lin_img, &orig_srgb_img, w, h, rc);
+                        let ac_str = match rc.cell.ac_intensity {
+                            AcIntensity::Compact => "compact",
+                            AcIntensity::Full => "full",
+                        };
+                        let mut f = main_file.lock().unwrap();
+                        match row {
+                            Some((bytes, encode_ms, bfly, ssim2)) => {
+                                writeln!(
+                                    f,
+                                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.3}\t{:.4}\t{:.3}",
+                                    entry.sha256,
+                                    entry.split,
+                                    entry.content_class,
+                                    size_class,
+                                    w,
+                                    h,
+                                    rc.distance,
+                                    rc.cell.cell_id,
+                                    ac_str,
+                                    rc.cell.enhanced_clustering as u8,
+                                    rc.cell.gaborish as u8,
+                                    rc.cell.patches as u8,
+                                    rc.k_info_loss_mul,
+                                    rc.k_ac_quant,
+                                    rc.entropy_mul_dct8,
+                                    rc.sample_idx,
+                                    bytes,
+                                    encode_ms,
+                                    bfly,
+                                    ssim2,
+                                )
+                                .ok();
+                            }
+                            None => {
+                                writeln!(
+                                    f,
+                                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t\t\t\t",
+                                    entry.sha256,
+                                    entry.split,
+                                    entry.content_class,
+                                    size_class,
+                                    w,
+                                    h,
+                                    rc.distance,
+                                    rc.cell.cell_id,
+                                    ac_str,
+                                    rc.cell.enhanced_clustering as u8,
+                                    rc.cell.gaborish as u8,
+                                    rc.cell.patches as u8,
+                                    rc.k_info_loss_mul,
+                                    rc.k_ac_quant,
+                                    rc.entropy_mul_dct8,
+                                    rc.sample_idx,
+                                )
+                                .ok();
+                            }
                         }
                     }
+                    main_file.lock().unwrap().flush().ok();
                 }
-                main_file.lock().unwrap().flush().ok();
             }
         }
 
