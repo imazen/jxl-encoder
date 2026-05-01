@@ -17,6 +17,11 @@ pub mod bit_writer;
 pub mod color;
 pub mod container;
 pub mod debug_rect;
+// `effort` carries internal effort-derived knobs. Kept `pub` for
+// backwards-compatibility with 0.3.0 (which re-exported `EffortProfile`
+// at the crate root). The actual sweep / picker escape-hatch entry point
+// (`LosslessConfig::with_effort_profile_override` / its lossy twin) is
+// gated behind the `unstable-tuning-knobs` feature.
 pub mod effort;
 pub mod entropy_coding;
 pub mod error;
@@ -42,7 +47,13 @@ pub use api::{
     LossyEncoder, Lz77Method, PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop,
     Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
 };
-pub use effort::EffortProfile;
+// `EffortProfile` was re-exported at the crate root in 0.3.0, so we keep
+// it reachable for back-compat. `EntropyMulTable` was reachable as
+// `effort::EntropyMulTable` in 0.3.0; re-exporting it at the root is
+// additive. The sweep / picker entry point that *uses* these (the
+// `with_effort_profile_override` builder) is the part gated behind
+// `unstable-tuning-knobs`.
+pub use effort::{EffortProfile, EntropyMulTable};
 pub use headers::color_encoding::{
     CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,
     TransferFunction, WhitePoint,

@@ -706,16 +706,17 @@ impl LosslessConfig {
 
     /// Replace the entire effort-derived profile with a custom one.
     ///
-    /// This is the picker / sweep escape hatch: every internal knob the
-    /// encoder normally derives from `(effort, mode)` (RCT search depth,
-    /// WP parameter scan, tree-learning shape, LZ77 method, etc.) is
-    /// taken from the supplied [`EffortProfile`] instead. Per-knob
-    /// public setters (`with_lz77_method`, `with_squeeze`, …) called
-    /// after this still take precedence on the few knobs they cover.
+    /// Picker / sweep escape hatch: every internal knob the encoder normally
+    /// derives from `(effort, mode)` (RCT search depth, WP parameter scan,
+    /// tree-learning shape, LZ77 method, etc.) is taken from the supplied
+    /// [`crate::effort::EffortProfile`] instead. Per-knob public setters
+    /// (`with_lz77_method`, `with_squeeze`, …) called after this still take
+    /// precedence on the few knobs they cover.
     ///
-    /// **Not stable.** Intended for sweep harnesses and picker runtime
-    /// integration. The underlying [`EffortProfile`] struct may grow
-    /// fields between minor versions.
+    /// **Requires the `unstable-tuning-knobs` cargo feature.**
+    /// Not stable; the underlying `EffortProfile` struct may grow fields
+    /// between minor versions.
+    #[cfg(feature = "unstable-tuning-knobs")]
     #[doc(hidden)]
     pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
         self.profile_override = Some(profile);
@@ -1095,17 +1096,18 @@ impl LossyConfig {
 
     /// Replace the entire effort-derived profile with a custom one.
     ///
-    /// This is the picker / sweep escape hatch: every internal knob the
-    /// encoder normally derives from `(effort, mode)` (AC strategy gates,
-    /// CfL settings, butteraugli-loop iteration count, cost-model
-    /// constants, entropy-mul table, etc.) is taken from the supplied
-    /// [`EffortProfile`] instead. Per-knob public setters
-    /// (`with_butteraugli_iters`, `with_gaborish`, …) called after this
-    /// still take precedence on the few knobs they cover.
+    /// Picker / sweep escape hatch: every internal knob the encoder normally
+    /// derives from `(effort, mode)` (AC strategy gates, CfL settings,
+    /// butteraugli-loop iteration count, cost-model constants, entropy-mul
+    /// table, etc.) is taken from the supplied
+    /// [`crate::effort::EffortProfile`] instead. Per-knob public setters
+    /// (`with_butteraugli_iters`, `with_gaborish`, …) called after this still
+    /// take precedence on the few knobs they cover.
     ///
-    /// **Not stable.** Intended for sweep harnesses and picker runtime
-    /// integration. The underlying [`EffortProfile`] struct may grow
-    /// fields between minor versions.
+    /// **Requires the `unstable-tuning-knobs` cargo feature.**
+    /// Not stable; the underlying `EffortProfile` struct may grow fields
+    /// between minor versions.
+    #[cfg(feature = "unstable-tuning-knobs")]
     #[doc(hidden)]
     pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
         self.profile_override = Some(profile);
@@ -4521,5 +4523,129 @@ mod tests {
         assert_eq!(interp_quality(table, 20.0), 40.0);
         // Midpoint
         assert!((interp_quality(table, 15.0) - 30.0).abs() < 0.001);
+    }
+
+    // -----------------------------------------------------------------
+    // Effort profile override (unstable-tuning-knobs)
+    // -----------------------------------------------------------------
+
+    #[cfg(feature = "unstable-tuning-knobs")]
+    mod profile_override {
+        use super::*;
+
+        // Pseudo-random RGB image — large enough + complex enough to exercise
+        // RCT search, WP, and tree-learning splits so different profile
+        // settings produce different bitstreams.
+        fn pseudo_random_rgb8(w: u32, h: u32) -> Vec<u8> {
+            let mut out = Vec::with_capacity((w * h * 3) as usize);
+            let mut state: u32 = 0xDEAD_BEEF;
+            for _ in 0..(w * h) {
+                let r = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                state = r;
+                let g = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                state = g;
+                let b = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                state = b;
+                out.push((r >> 24) as u8);
+                out.push((g >> 24) as u8);
+                out.push((b >> 24) as u8);
+            }
+            out
+        }
+
+        #[test]
+        fn lossless_override_replaces_profile() {
+            // Build a profile that's distinguishable from the e7 default —
+            // tighten tree learning shape and disable patches.
+            let mut profile = crate::EffortProfile::lossless(7, EncoderMode::Reference);
+            profile.tree_max_buckets = 16;
+            profile.tree_num_properties = 3;
+            profile.nb_rcts_to_try = 0;
+            profile.lz77 = false;
+            profile.patches = false;
+
+            let cfg_override = LosslessConfig::new()
+                .with_effort(7)
+                .with_effort_profile_override(profile)
+                .with_threads(1);
+            let cfg_default = LosslessConfig::new().with_effort(7).with_threads(1);
+
+            let pixels = pseudo_random_rgb8(64, 64);
+            let bytes_a = cfg_override
+                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                .expect("override encode");
+            let bytes_b = cfg_default
+                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                .expect("default encode");
+
+            // Both must produce valid JXL with the magic signature.
+            assert_eq!(&bytes_a[..2], &crate::JXL_SIGNATURE);
+            assert_eq!(&bytes_b[..2], &crate::JXL_SIGNATURE);
+            // Output should differ — the override changes encoder behavior.
+            assert_ne!(
+                bytes_a, bytes_b,
+                "override profile should produce different bitstream"
+            );
+        }
+
+        #[test]
+        fn lossy_override_replaces_profile() {
+            let mut profile = crate::EffortProfile::lossy(7, EncoderMode::Reference);
+            // Disable a few effort-derived knobs; tweak a tuning constant.
+            profile.try_dct16 = false;
+            profile.try_dct32 = false;
+            profile.try_dct64 = false;
+            profile.try_dct4x8_afv = false;
+            profile.k_info_loss_mul_base = 1.5;
+            profile.entropy_mul_table.dct8 = 0.95;
+
+            let cfg_override = LossyConfig::new(2.0)
+                .with_effort(7)
+                .with_effort_profile_override(profile)
+                .with_threads(1);
+            let cfg_default = LossyConfig::new(2.0).with_effort(7).with_threads(1);
+
+            let pixels = pseudo_random_rgb8(64, 64);
+            let bytes_a = cfg_override
+                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                .expect("override encode");
+            let bytes_b = cfg_default
+                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                .expect("default encode");
+
+            assert_eq!(&bytes_a[..2], &crate::JXL_SIGNATURE);
+            assert_eq!(&bytes_b[..2], &crate::JXL_SIGNATURE);
+            assert_ne!(
+                bytes_a, bytes_b,
+                "override profile should produce different bitstream"
+            );
+        }
+
+        #[test]
+        fn override_survives_with_effort_call() {
+            // Override applied before with_effort should still take effect.
+            let mut profile = crate::EffortProfile::lossless(7, EncoderMode::Reference);
+            profile.lz77 = false;
+            profile.patches = false;
+            profile.tree_max_buckets = 16;
+
+            let cfg = LosslessConfig::new()
+                .with_effort_profile_override(profile)
+                .with_effort(9) // should NOT clobber the override
+                .with_threads(1);
+
+            let pixels = pseudo_random_rgb8(64, 64);
+            let bytes_with_override = cfg.encode(&pixels, 64, 64, PixelLayout::Rgb8).expect("encode");
+            let bytes_e9_plain = LosslessConfig::new()
+                .with_effort(9)
+                .with_threads(1)
+                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                .expect("encode");
+
+            assert_ne!(
+                bytes_with_override, bytes_e9_plain,
+                "override should persist across with_effort()"
+            );
+        }
     }
 }

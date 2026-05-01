@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
+     Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
+- `EffortProfile` and `EntropyMulTable` will become `#[non_exhaustive]`
+  so we can grow them additively without breaking external struct-literal
+  constructions. Callers that construct via struct literal must switch
+  to `EffortProfile::lossy(effort, mode)` /
+  `EffortProfile::lossless(effort, mode)` /
+  `EntropyMulTable::reference()` / `EntropyMulTable::experimental()`
+  and mutate fields as needed. Already in main; held for next minor bump.
+
+### Added
+
+- Picker / sweep escape hatch behind new `unstable-tuning-knobs` cargo
+  feature (eebd561, 6bdab0b, 25bb80f and follow-up). When enabled,
+  exposes `LosslessConfig::with_effort_profile_override(EffortProfile)`
+  and `LossyConfig::with_effort_profile_override(EffortProfile)`. Picker
+  training and sweep harnesses use this to vary internal knobs
+  (`nb_rcts_to_try`, `wp_num_param_sets`, `tree_max_buckets`,
+  `tree_num_properties`, `tree_sample_fraction`, cost-model constants,
+  `entropy_mul_table`, AC-strategy gates, etc.) independently of the
+  bundled effort axis. `with_effort()` preserves the override across
+  effort-level changes. Marked `#[doc(hidden)]`; underlying
+  `EffortProfile` may grow fields between minor versions. Default API
+  surface is unchanged when the feature is off.
+- `EntropyMulTable` re-exported at crate root for symmetry with
+  `EffortProfile` (was reachable as `effort::EntropyMulTable` in 0.3.0).
+- New examples under `unstable-tuning-knobs`:
+  `lossless_pareto_calibrate` and `lossy_pareto_calibrate` (picker
+  training oracle harnesses; see imazen/jxl-encoder#24).
+
 ## [0.3.0] - 2026-04-16
 
 ### Added
