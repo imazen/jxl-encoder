@@ -20,7 +20,12 @@ use crate::entropy_coding::lz77::Lz77Method;
 ///
 /// Default values match libjxl `enc_ac_strategy.cc:584` (`kTransforms8x8[i].entropy_mul`).
 /// Experimental values from libjxl PR #4506 (Jon Sneyers, VarDCT cost tuning).
+///
+/// `#[non_exhaustive]` so future libjxl-side strategy additions can land
+/// without a breaking change. Construct via [`Self::reference`] or
+/// [`Self::experimental`] and mutate fields as needed.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct EntropyMulTable {
     /// DCT8 base value. All 8x8-class transforms are normalized by this.
     /// Reference: 0.8 (libjxl `enc_ac_strategy.cc:357`, `kTransforms8x8[0].entropy_mul`).
@@ -113,7 +118,20 @@ impl EntropyMulTable {
 ///
 /// Replaces scattered `if effort >= N` checks throughout the codebase.
 /// Construct once from (effort, mode, encoding path), pass to all subsystems.
+///
+/// **Field categories**:
+/// - **Effort-derived**: changes value across effort levels (e.g., `nb_rcts_to_try`,
+///   `tree_max_buckets`, `butteraugli_iters`).
+/// - **Tuning constants**: same value at every effort in the reference profile,
+///   mode-dependent in experimental (e.g., `k_favor_2x2`, `k_info_loss_mul_base`,
+///   `entropy_mul_table`, `k8x8` etc.). The picker can dial these independently
+///   of effort.
+///
+/// `#[non_exhaustive]` so we can grow the field set as the picker discovers new
+/// useful knobs without breaking external `EffortProfile { ... }` constructions.
+/// Construct via [`Self::lossy`] or [`Self::lossless`] and mutate fields as needed.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct EffortProfile {
     /// The raw effort level (1–10).
     pub effort: u8,

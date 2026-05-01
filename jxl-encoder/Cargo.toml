@@ -62,6 +62,11 @@ parallel = ["std", "dep:rayon"]
 # is downgraded from `forbid(unsafe_code)` to `deny(unsafe_code)` so that
 # individual functions can `#[allow(unsafe_code)]`.
 unsafe-performance = ["jxl_simd/unsafe-performance"]
+# Picker training / sweep escape hatch: exposes EffortProfile, EntropyMulTable,
+# LosslessConfig::with_effort_profile_override, LossyConfig::with_effort_profile_override.
+# These let callers replace every internal effort-derived knob in one shot.
+# Not stable; the EffortProfile struct fields may change between minor versions.
+unstable-tuning-knobs = []
 default = ["std", "butteraugli-loop"]
 
 [dev-dependencies]
@@ -94,12 +99,12 @@ fastrand = "2.4.1"
 [[example]]
 name = "lossless_pareto_calibrate"
 path = "examples/lossless_pareto_calibrate.rs"
-required-features = ["std", "parallel"]
+required-features = ["std", "parallel", "unstable-tuning-knobs"]
 
 [[example]]
 name = "lossy_pareto_calibrate"
 path = "examples/lossy_pareto_calibrate.rs"
-required-features = ["std", "parallel", "butteraugli-loop"]
+required-features = ["std", "parallel", "butteraugli-loop", "unstable-tuning-knobs"]
 
 [lints]
 workspace = true
