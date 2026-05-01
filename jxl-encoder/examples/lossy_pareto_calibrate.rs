@@ -28,10 +28,10 @@
 //! Per CLAUDE.md: jxl-oxide decode in srgb_linear; butteraugli on linear f32;
 //! SSIM2 on decoded-linear→sRGB u8.
 
-use butteraugli::{butteraugli_linear, ButteraugliParams};
+use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::api::{EncoderMode, LossyConfig, PixelLayout};
 use jxl_encoder::EffortProfile;
+use jxl_encoder::api::{EncoderMode, LossyConfig, PixelLayout};
 use rayon::prelude::*;
 use rgb::RGB;
 use std::fs::OpenOptions;
@@ -167,8 +167,7 @@ fn parse_args() -> Args {
     let mut smoke = false;
     let date = chrono_today();
     let mut output = PathBuf::from(format!("benchmarks/lossy_pareto_{date}.tsv"));
-    let mut features_output =
-        PathBuf::from(format!("benchmarks/lossy_pareto_features_{date}.tsv"));
+    let mut features_output = PathBuf::from(format!("benchmarks/lossy_pareto_features_{date}.tsv"));
 
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -362,8 +361,8 @@ fn build_encoder(rc: &RowConfig) -> LossyConfig {
         AcIntensity::Compact => {
             profile.try_dct64 = false;
             profile.fine_grained_step = 2;
-            profile.try_dct32 = true;  // keep
-            profile.try_dct16 = true;  // keep
+            profile.try_dct32 = true; // keep
+            profile.try_dct16 = true; // keep
             profile.try_dct4x8_afv = true; // keep
             profile.non_aligned_eval = true; // keep
         }
@@ -392,7 +391,9 @@ fn build_encoder(rc: &RowConfig) -> LossyConfig {
         .with_threads(1);
     // Public setters take precedence — explicit gaborish/patches to keep
     // consistent.
-    cfg = cfg.with_gaborish(rc.cell.gaborish).with_patches(rc.cell.patches);
+    cfg = cfg
+        .with_gaborish(rc.cell.gaborish)
+        .with_patches(rc.cell.patches);
     // Force iter=0 explicitly via the public setter too.
     cfg = cfg.with_butteraugli_iters(0);
     cfg
@@ -446,7 +447,13 @@ fn encode_and_score(
 
     let dec_srgb: Vec<[u8; 3]> = dec_lin
         .chunks(3)
-        .map(|c| [linear_to_srgb_u8(c[0]), linear_to_srgb_u8(c[1]), linear_to_srgb_u8(c[2])])
+        .map(|c| {
+            [
+                linear_to_srgb_u8(c[0]),
+                linear_to_srgb_u8(c[1]),
+                linear_to_srgb_u8(c[2]),
+            ]
+        })
         .collect();
     let dec_srgb_img: Img<Vec<[u8; 3]>> = Img::new(dec_srgb, dw, dh);
     let ssim2 = match fast_ssim2::compute_ssimulacra2(orig_srgb.as_ref(), dec_srgb_img.as_ref()) {
@@ -514,11 +521,29 @@ fn main() {
         cells.len(),
         args.samples_per_cell,
         total_encodes,
-        if args.features_only { "features-only" } else { "full sweep" },
+        if args.features_only {
+            "features-only"
+        } else {
+            "full sweep"
+        },
     );
-    eprintln!("[lossy_pareto_calibrate] manifest: {} (split={})", args.manifest.display(), if args.split.is_empty() { "<all>" } else { &args.split });
-    eprintln!("[lossy_pareto_calibrate] output:   {}", args.output.display());
-    eprintln!("[lossy_pareto_calibrate] features: {}", args.features_output.display());
+    eprintln!(
+        "[lossy_pareto_calibrate] manifest: {} (split={})",
+        args.manifest.display(),
+        if args.split.is_empty() {
+            "<all>"
+        } else {
+            &args.split
+        }
+    );
+    eprintln!(
+        "[lossy_pareto_calibrate] output:   {}",
+        args.output.display()
+    );
+    eprintln!(
+        "[lossy_pareto_calibrate] features: {}",
+        args.features_output.display()
+    );
 
     if let Some(parent) = args.output.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -557,7 +582,11 @@ fn main() {
     let cols = feature_columns();
     if feat_is_new {
         let mut f = feat_file.lock().unwrap();
-        write!(f, "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight").ok();
+        write!(
+            f,
+            "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight"
+        )
+        .ok();
         for c in &cols {
             write!(f, "\tfeat_{}", c.name()).ok();
         }
