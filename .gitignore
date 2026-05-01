@@ -66,3 +66,6 @@ Cargo.toml.original.txt
 *.profdata
 fuzz-*.log
 .workongoing
+
+# Picker oracle TSVs (large; archived to /mnt/v/output/jxl-encoder/picker-oracle-*/ until we decide on git-lfs vs direct)
+jxl-encoder/benchmarks/*.tsv

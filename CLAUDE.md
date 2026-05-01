@@ -576,6 +576,39 @@ Key patterns to watch for when working on this codebase:
 
 ## Investigation Notes
 
+### Picker Oracle Sweep TSVs (April 30, 2026)
+
+Picker training oracle (issue #24) ran on 100-image stratified subset
+(`~/work/codec-corpus/picker-train/manifest_v1_100.tsv`). Both phases
+captured per-row `bytes + encode_ms` (lossless) and
+`bytes + encode_ms + butteraugli + ssim2` (lossy at single-shot,
+butteraugli_iters=0). Knobs swept via `LosslessConfig::with_effort_profile_override`
+and `LossyConfig::with_effort_profile_override` (`#[doc(hidden)]` API hooks).
+
+**TSVs archived at**: `/mnt/v/output/jxl-encoder/picker-oracle-2026-04-30/`
+- `lossless_pareto_2026-04-30.tsv` (22 MB, 165,478 rows, 99.4% coverage)
+- `lossless_pareto_features_2026-04-30.tsv` (199 KB, 401 (image, size) features)
+- `lossy_pareto_2026-04-30.tsv` (95 MB, 610,594 rows, 96.4% coverage)
+- `lossy_pareto_features_2026-04-30.tsv` (199 KB)
+
+The `jxl-encoder/benchmarks/*.tsv` paths are gitignored — too large for
+direct git, decision deferred (git-lfs vs external mount). `/mnt/v/` is
+the canonical archive until that decision lands.
+
+**Sweep design notes**:
+- Lossless cells (16): lz77_method × use_squeeze × use_patches.
+  Scalars per cell: nb_rcts_to_try {0,4,7,9,19} × wp_num_param_sets {0,2,5}
+  × tree_max_buckets {16,32,48,64,96,128} × tree_num_properties {3,5,7,10,13,16}
+  × tree_sample_fraction {0.10,0.20,0.35,0.50,0.65}. tree_max_buckets=192
+  and =256 dropped from grid per >10s rule (256 catastrophic at 661s avg
+  on small images, 192 borderline at native).
+- Lossy cells (16): ac_intensity {compact, full} × enhanced_clustering
+  × gaborish × patches. Scalars per cell: k_info_loss_mul ∈ [1.0..1.5],
+  k_ac_quant ∈ [0.65..0.85], entropy_mul_dct8 ∈ [0.70..0.95]. Distance
+  axis: 9 points {0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0}.
+  butteraugli_iters=0 always — loop count is a separate-stage picker decision.
+- Reproducible via `cargo run -p jxl-encoder --release --features 'std parallel butteraugli-loop' --example {lossless,lossy}_pareto_calibrate`.
+
 ### CfL on DC/LLF: Why AC-Only Is Correct (Jan 31, 2026)
 
 Our encoder applies CfL to AC only (covered_blocks..size). Testing full CfL produces
