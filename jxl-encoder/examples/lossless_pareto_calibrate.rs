@@ -499,13 +499,14 @@ fn main() {
     let unit_count = entries.len() * args.sizes.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
 
-    let work_units: Vec<(ManifestEntry, u32)> = entries
-        .iter()
-        .flat_map(|e| args.sizes.iter().map(move |&sz| (e.clone(), sz)))
-        .collect();
-
-    work_units.par_iter().for_each(|(entry, target_size)| {
-        let target_size = *target_size;
+    // Outer parallelism on entries (not (entry, size) pairs) so each
+    // image's PNG decodes once instead of once per size. Features are
+    // computed by resizing directly from the native buffer for each
+    // size (same pixels as the original per-pair version — no
+    // cascading approximation). Saves the 4× redundant PNG decode and
+    // shrinks features-only wall-clock by ~50%; encode-dominated full
+    // sweeps see a smaller relative gain since encoding dwarfs IO.
+    entries.par_iter().for_each(|entry| {
         let (rgb_native, w_native, h_native) = match load_png(&entry.path) {
             Some(t) => t,
             None => {
@@ -513,125 +514,133 @@ fn main() {
                 return;
             }
         };
-        let (rgb, w, h) = resize_to(&rgb_native, w_native, h_native, target_size);
-        let size_class = match target_size {
-            64 => "tiny",
-            256 => "small",
-            1024 => "medium",
-            0 => "large",
-            _ => "custom",
-        };
 
-        let analysis = analyze_features_rgb8(&rgb, w, h, &query);
-        {
-            let mut f = feat_file.lock().unwrap();
-            write!(
-                f,
-                "{}\t{}\t{}\t{}\t{}\t{}",
-                entry.sha256, entry.split, entry.content_class, size_class, w, h
-            )
-            .ok();
-            for c in &cols {
-                write!(f, "\t{}", feature_value_str(&analysis, *c)).ok();
+        for &target_size in &args.sizes {
+            // Resize from native every time — bit-exact same as the
+            // original per-pair version. The win is the load skip,
+            // not the resize chain.
+            let (rgb_owned, w, h) =
+                resize_to(&rgb_native, w_native, h_native, target_size);
+            let rgb = rgb_owned.as_slice();
+            let size_class = match target_size {
+                64 => "tiny",
+                256 => "small",
+                1024 => "medium",
+                0 => "large",
+                _ => "custom",
+            };
+
+            let analysis = analyze_features_rgb8(rgb, w, h, &query);
+            {
+                let mut f = feat_file.lock().unwrap();
+                write!(
+                    f,
+                    "{}\t{}\t{}\t{}\t{}\t{}",
+                    entry.sha256, entry.split, entry.content_class, size_class, w, h
+                )
+                .ok();
+                for c in &cols {
+                    write!(f, "\t{}", feature_value_str(&analysis, *c)).ok();
+                }
+                writeln!(f).ok();
+                f.flush().ok();
             }
-            writeln!(f).ok();
-            f.flush().ok();
-        }
 
-        if let Some(main_file) = main_file.as_ref() {
-            let (a_rcts, a_wp, a_buckets, a_props, a_frac) = anchor_scalars();
-            for cell in &cells {
-                // Build all configs for this cell: 1 anchor + N samples.
-                let mut row_cfgs: Vec<RowConfig> = Vec::with_capacity(1 + args.samples_per_cell as usize);
-                row_cfgs.push(RowConfig {
-                    cell: *cell,
-                    nb_rcts_to_try: a_rcts,
-                    wp_num_param_sets: a_wp,
-                    tree_max_buckets: a_buckets,
-                    tree_num_properties: a_props,
-                    tree_sample_fraction: a_frac,
-                    sample_idx: 0,
-                });
-                for s in 1..=args.samples_per_cell {
-                    let (r, wpr, b, p, f) = sample_scalars(&entry.sha256, size_class, cell.cell_id, s);
+            if let Some(main_file) = main_file.as_ref() {
+                let (a_rcts, a_wp, a_buckets, a_props, a_frac) = anchor_scalars();
+                for cell in &cells {
+                    // Build all configs for this cell: 1 anchor + N samples.
+                    let mut row_cfgs: Vec<RowConfig> = Vec::with_capacity(1 + args.samples_per_cell as usize);
                     row_cfgs.push(RowConfig {
                         cell: *cell,
-                        nb_rcts_to_try: r,
-                        wp_num_param_sets: wpr,
-                        tree_max_buckets: b,
-                        tree_num_properties: p,
-                        tree_sample_fraction: f,
-                        sample_idx: s,
+                        nb_rcts_to_try: a_rcts,
+                        wp_num_param_sets: a_wp,
+                        tree_max_buckets: a_buckets,
+                        tree_num_properties: a_props,
+                        tree_sample_fraction: a_frac,
+                        sample_idx: 0,
                     });
-                }
+                    for s in 1..=args.samples_per_cell {
+                        let (r, wpr, b, p, f) = sample_scalars(&entry.sha256, size_class, cell.cell_id, s);
+                        row_cfgs.push(RowConfig {
+                            cell: *cell,
+                            nb_rcts_to_try: r,
+                            wp_num_param_sets: wpr,
+                            tree_max_buckets: b,
+                            tree_num_properties: p,
+                            tree_sample_fraction: f,
+                            sample_idx: s,
+                        });
+                    }
 
-                for rc in &row_cfgs {
-                    let row = encode_one(&rgb, w, h, rc);
-                    let mut f = main_file.lock().unwrap();
-                    match row {
-                        Some((bytes, encode_ms)) => {
-                            writeln!(
-                                f,
-                                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}",
-                                entry.sha256,
-                                entry.split,
-                                entry.content_class,
-                                size_class,
-                                w,
-                                h,
-                                rc.cell.cell_id,
-                                rc.cell.lz77_label,
-                                rc.cell.squeeze as u8,
-                                rc.cell.patches as u8,
-                                rc.nb_rcts_to_try,
-                                rc.wp_num_param_sets,
-                                rc.tree_max_buckets,
-                                rc.tree_num_properties,
-                                rc.tree_sample_fraction,
-                                rc.sample_idx,
-                                bytes,
-                                encode_ms,
-                            )
-                            .ok();
-                        }
-                        None => {
-                            writeln!(
-                                f,
-                                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t\t",
-                                entry.sha256,
-                                entry.split,
-                                entry.content_class,
-                                size_class,
-                                w,
-                                h,
-                                rc.cell.cell_id,
-                                rc.cell.lz77_label,
-                                rc.cell.squeeze as u8,
-                                rc.cell.patches as u8,
-                                rc.nb_rcts_to_try,
-                                rc.wp_num_param_sets,
-                                rc.tree_max_buckets,
-                                rc.tree_num_properties,
-                                rc.tree_sample_fraction,
-                                rc.sample_idx,
-                            )
-                            .ok();
+                    for rc in &row_cfgs {
+                        let row = encode_one(rgb, w, h, rc);
+                        let mut f = main_file.lock().unwrap();
+                        match row {
+                            Some((bytes, encode_ms)) => {
+                                writeln!(
+                                    f,
+                                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t{}\t{:.3}",
+                                    entry.sha256,
+                                    entry.split,
+                                    entry.content_class,
+                                    size_class,
+                                    w,
+                                    h,
+                                    rc.cell.cell_id,
+                                    rc.cell.lz77_label,
+                                    rc.cell.squeeze as u8,
+                                    rc.cell.patches as u8,
+                                    rc.nb_rcts_to_try,
+                                    rc.wp_num_param_sets,
+                                    rc.tree_max_buckets,
+                                    rc.tree_num_properties,
+                                    rc.tree_sample_fraction,
+                                    rc.sample_idx,
+                                    bytes,
+                                    encode_ms,
+                                )
+                                .ok();
+                            }
+                            None => {
+                                writeln!(
+                                    f,
+                                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{}\t\t",
+                                    entry.sha256,
+                                    entry.split,
+                                    entry.content_class,
+                                    size_class,
+                                    w,
+                                    h,
+                                    rc.cell.cell_id,
+                                    rc.cell.lz77_label,
+                                    rc.cell.squeeze as u8,
+                                    rc.cell.patches as u8,
+                                    rc.nb_rcts_to_try,
+                                    rc.wp_num_param_sets,
+                                    rc.tree_max_buckets,
+                                    rc.tree_num_properties,
+                                    rc.tree_sample_fraction,
+                                    rc.sample_idx,
+                                )
+                                .ok();
+                            }
                         }
                     }
+                    main_file.lock().unwrap().flush().ok();
                 }
-                main_file.lock().unwrap().flush().ok();
             }
-        }
 
-        let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n % 4 == 0 || n == unit_count {
-            let dt = started.elapsed().as_secs_f64();
-            let rate = n as f64 / dt;
-            let eta = (unit_count - n) as f64 / rate;
-            eprintln!(
-                "  progress: {}/{}  ({:.2}/sec, ETA {:.0}s = {:.1}h)",
-                n, unit_count, rate, eta, eta / 3600.0,
-            );
+            let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n % 4 == 0 || n == unit_count {
+                let dt = started.elapsed().as_secs_f64();
+                let rate = n as f64 / dt;
+                let eta = (unit_count - n) as f64 / rate;
+                eprintln!(
+                    "  progress: {}/{}  ({:.2}/sec, ETA {:.0}s = {:.1}h)",
+                    n, unit_count, rate, eta, eta / 3600.0,
+                );
+            }
         }
     });
 

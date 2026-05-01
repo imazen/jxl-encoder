@@ -598,13 +598,11 @@ fn main() {
     let unit_count = entries.len() * args.sizes.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
 
-    let work_units: Vec<(ManifestEntry, u32)> = entries
-        .iter()
-        .flat_map(|e| args.sizes.iter().map(move |&sz| (e.clone(), sz)))
-        .collect();
-
-    work_units.par_iter().for_each(|(entry, target_size)| {
-        let target_size = *target_size;
+    // Outer parallelism on entries (not (entry, size) pairs) so each
+    // image's PNG decodes once instead of once per size. Resize from
+    // native each time keeps the features bit-exact identical to the
+    // original per-pair version.
+    entries.par_iter().for_each(|entry| {
         let (rgb_native, w_native, h_native) = match load_png(&entry.path) {
             Some(t) => t,
             None => {
@@ -612,138 +610,143 @@ fn main() {
                 return;
             }
         };
-        let (rgb, w, h) = resize_to(&rgb_native, w_native, h_native, target_size);
-        let size_class = match target_size {
-            64 => "tiny",
-            256 => "small",
-            1024 => "medium",
-            0 => "large",
-            _ => "custom",
-        };
 
-        let analysis = analyze_features_rgb8(&rgb, w, h, &query);
-        {
-            let mut f = feat_file.lock().unwrap();
-            write!(
-                f,
-                "{}\t{}\t{}\t{}\t{}\t{}",
-                entry.sha256, entry.split, entry.content_class, size_class, w, h
-            )
-            .ok();
-            for c in &cols {
-                write!(f, "\t{}", feature_value_str(&analysis, *c)).ok();
+        for &target_size in &args.sizes {
+            let (rgb_owned, w, h) =
+                resize_to(&rgb_native, w_native, h_native, target_size);
+            let rgb = rgb_owned.as_slice();
+            let size_class = match target_size {
+                64 => "tiny",
+                256 => "small",
+                1024 => "medium",
+                0 => "large",
+                _ => "custom",
+            };
+
+            let analysis = analyze_features_rgb8(rgb, w, h, &query);
+            {
+                let mut f = feat_file.lock().unwrap();
+                write!(
+                    f,
+                    "{}\t{}\t{}\t{}\t{}\t{}",
+                    entry.sha256, entry.split, entry.content_class, size_class, w, h
+                )
+                .ok();
+                for c in &cols {
+                    write!(f, "\t{}", feature_value_str(&analysis, *c)).ok();
+                }
+                writeln!(f).ok();
+                f.flush().ok();
             }
-            writeln!(f).ok();
-            f.flush().ok();
-        }
 
-        if let Some(main_file) = main_file.as_ref() {
-            let orig_linear_pixels = srgb_pixels_to_linear(&rgb);
-            let orig_srgb_arrs = srgb_pixels_to_arr3(&rgb);
-            let orig_lin_img: Img<Vec<RGB<f32>>> =
-                Img::new(orig_linear_pixels, w as usize, h as usize);
-            let orig_srgb_img: Img<Vec<[u8; 3]>> =
-                Img::new(orig_srgb_arrs, w as usize, h as usize);
+            if let Some(main_file) = main_file.as_ref() {
+                let orig_linear_pixels = srgb_pixels_to_linear(rgb);
+                let orig_srgb_arrs = srgb_pixels_to_arr3(rgb);
+                let orig_lin_img: Img<Vec<RGB<f32>>> =
+                    Img::new(orig_linear_pixels, w as usize, h as usize);
+                let orig_srgb_img: Img<Vec<[u8; 3]>> =
+                    Img::new(orig_srgb_arrs, w as usize, h as usize);
 
-            let (a_info, a_aq, a_dct8) = anchor_scalars();
+                let (a_info, a_aq, a_dct8) = anchor_scalars();
 
-            for &distance in &args.distances {
-                for cell in &cells {
-                    let mut row_cfgs: Vec<RowConfig> = Vec::with_capacity(1 + args.samples_per_cell as usize);
-                    row_cfgs.push(RowConfig {
-                        cell: *cell,
-                        distance,
-                        k_info_loss_mul: a_info,
-                        k_ac_quant: a_aq,
-                        entropy_mul_dct8: a_dct8,
-                        sample_idx: 0,
-                    });
-                    for s in 1..=args.samples_per_cell {
-                        let (i, q, d) = sample_scalars(&entry.sha256, size_class, cell.cell_id, distance, s);
+                for &distance in &args.distances {
+                    for cell in &cells {
+                        let mut row_cfgs: Vec<RowConfig> = Vec::with_capacity(1 + args.samples_per_cell as usize);
                         row_cfgs.push(RowConfig {
                             cell: *cell,
                             distance,
-                            k_info_loss_mul: i,
-                            k_ac_quant: q,
-                            entropy_mul_dct8: d,
-                            sample_idx: s,
+                            k_info_loss_mul: a_info,
+                            k_ac_quant: a_aq,
+                            entropy_mul_dct8: a_dct8,
+                            sample_idx: 0,
                         });
-                    }
+                        for s in 1..=args.samples_per_cell {
+                            let (i, q, d) = sample_scalars(&entry.sha256, size_class, cell.cell_id, distance, s);
+                            row_cfgs.push(RowConfig {
+                                cell: *cell,
+                                distance,
+                                k_info_loss_mul: i,
+                                k_ac_quant: q,
+                                entropy_mul_dct8: d,
+                                sample_idx: s,
+                            });
+                        }
 
-                    for rc in &row_cfgs {
-                        let row = encode_and_score(&rgb, &orig_lin_img, &orig_srgb_img, w, h, rc);
-                        let ac_str = match rc.cell.ac_intensity {
-                            AcIntensity::Compact => "compact",
-                            AcIntensity::Full => "full",
-                        };
-                        let mut f = main_file.lock().unwrap();
-                        match row {
-                            Some((bytes, encode_ms, bfly, ssim2)) => {
-                                writeln!(
-                                    f,
-                                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.3}\t{:.4}\t{:.3}",
-                                    entry.sha256,
-                                    entry.split,
-                                    entry.content_class,
-                                    size_class,
-                                    w,
-                                    h,
-                                    rc.distance,
-                                    rc.cell.cell_id,
-                                    ac_str,
-                                    rc.cell.enhanced_clustering as u8,
-                                    rc.cell.gaborish as u8,
-                                    rc.cell.patches as u8,
-                                    rc.k_info_loss_mul,
-                                    rc.k_ac_quant,
-                                    rc.entropy_mul_dct8,
-                                    rc.sample_idx,
-                                    bytes,
-                                    encode_ms,
-                                    bfly,
-                                    ssim2,
-                                )
-                                .ok();
-                            }
-                            None => {
-                                writeln!(
-                                    f,
-                                    "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t\t\t\t",
-                                    entry.sha256,
-                                    entry.split,
-                                    entry.content_class,
-                                    size_class,
-                                    w,
-                                    h,
-                                    rc.distance,
-                                    rc.cell.cell_id,
-                                    ac_str,
-                                    rc.cell.enhanced_clustering as u8,
-                                    rc.cell.gaborish as u8,
-                                    rc.cell.patches as u8,
-                                    rc.k_info_loss_mul,
-                                    rc.k_ac_quant,
-                                    rc.entropy_mul_dct8,
-                                    rc.sample_idx,
-                                )
-                                .ok();
+                        for rc in &row_cfgs {
+                            let row = encode_and_score(rgb, &orig_lin_img, &orig_srgb_img, w, h, rc);
+                            let ac_str = match rc.cell.ac_intensity {
+                                AcIntensity::Compact => "compact",
+                                AcIntensity::Full => "full",
+                            };
+                            let mut f = main_file.lock().unwrap();
+                            match row {
+                                Some((bytes, encode_ms, bfly, ssim2)) => {
+                                    writeln!(
+                                        f,
+                                        "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.3}\t{:.4}\t{:.3}",
+                                        entry.sha256,
+                                        entry.split,
+                                        entry.content_class,
+                                        size_class,
+                                        w,
+                                        h,
+                                        rc.distance,
+                                        rc.cell.cell_id,
+                                        ac_str,
+                                        rc.cell.enhanced_clustering as u8,
+                                        rc.cell.gaborish as u8,
+                                        rc.cell.patches as u8,
+                                        rc.k_info_loss_mul,
+                                        rc.k_ac_quant,
+                                        rc.entropy_mul_dct8,
+                                        rc.sample_idx,
+                                        bytes,
+                                        encode_ms,
+                                        bfly,
+                                        ssim2,
+                                    )
+                                    .ok();
+                                }
+                                None => {
+                                    writeln!(
+                                        f,
+                                        "{}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t\t\t\t",
+                                        entry.sha256,
+                                        entry.split,
+                                        entry.content_class,
+                                        size_class,
+                                        w,
+                                        h,
+                                        rc.distance,
+                                        rc.cell.cell_id,
+                                        ac_str,
+                                        rc.cell.enhanced_clustering as u8,
+                                        rc.cell.gaborish as u8,
+                                        rc.cell.patches as u8,
+                                        rc.k_info_loss_mul,
+                                        rc.k_ac_quant,
+                                        rc.entropy_mul_dct8,
+                                        rc.sample_idx,
+                                    )
+                                    .ok();
+                                }
                             }
                         }
+                        main_file.lock().unwrap().flush().ok();
                     }
-                    main_file.lock().unwrap().flush().ok();
                 }
             }
-        }
 
-        let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n % 4 == 0 || n == unit_count {
-            let dt = started.elapsed().as_secs_f64();
-            let rate = n as f64 / dt;
-            let eta = (unit_count - n) as f64 / rate;
-            eprintln!(
-                "  progress: {}/{}  ({:.2}/sec, ETA {:.0}s = {:.1}h)",
-                n, unit_count, rate, eta, eta / 3600.0,
-            );
+            let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n % 4 == 0 || n == unit_count {
+                let dt = started.elapsed().as_secs_f64();
+                let rate = n as f64 / dt;
+                let eta = (unit_count - n) as f64 / rate;
+                eprintln!(
+                    "  progress: {}/{}  ({:.2}/sec, ETA {:.0}s = {:.1}h)",
+                    n, unit_count, rate, eta, eta / 3600.0,
+                );
+            }
         }
     });
 
