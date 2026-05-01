@@ -37,9 +37,9 @@
 //!       [--samples-per-cell N] [--max-images N] [--sizes 64,256,1024,native]
 //!       [--features-only] [--smoke]
 
-use jxl_encoder::api::{LosslessConfig, Lz77Method, PixelLayout};
 use jxl_encoder::EffortProfile;
 use jxl_encoder::api::EncoderMode;
+use jxl_encoder::api::{LosslessConfig, Lz77Method, PixelLayout};
 use rayon::prelude::*;
 use std::fs::OpenOptions;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -129,7 +129,12 @@ fn anchor_scalars() -> (u8, u8, u16, u8, f32) {
 }
 
 /// Random scalar tuple deterministic from (image_sha, size_class, cell_id, sample_idx).
-fn sample_scalars(image_sha: &str, size_class: &str, cell_id: u8, sample_idx: u32) -> (u8, u8, u16, u8, f32) {
+fn sample_scalars(
+    image_sha: &str,
+    size_class: &str,
+    cell_id: u8,
+    sample_idx: u32,
+) -> (u8, u8, u16, u8, f32) {
     let mut hasher = DefaultHasher::new();
     image_sha.hash(&mut hasher);
     size_class.hash(&mut hasher);
@@ -164,7 +169,8 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut manifest = PathBuf::from("/home/lilith/work/codec-corpus/picker-train/manifest_v1_100.tsv");
+    let mut manifest =
+        PathBuf::from("/home/lilith/work/codec-corpus/picker-train/manifest_v1_100.tsv");
     let mut split = "".to_string(); // empty = all splits
     let mut sizes: Vec<u32> = Vec::new();
     let mut samples_per_cell = 25u32;
@@ -416,11 +422,29 @@ fn main() {
         cells.len(),
         args.samples_per_cell,
         total_encodes,
-        if args.features_only { "features-only" } else { "full sweep" },
+        if args.features_only {
+            "features-only"
+        } else {
+            "full sweep"
+        },
     );
-    eprintln!("[lossless_pareto_calibrate] manifest: {} (split={})", args.manifest.display(), if args.split.is_empty() { "<all>" } else { &args.split });
-    eprintln!("[lossless_pareto_calibrate] output:   {}", args.output.display());
-    eprintln!("[lossless_pareto_calibrate] features: {}", args.features_output.display());
+    eprintln!(
+        "[lossless_pareto_calibrate] manifest: {} (split={})",
+        args.manifest.display(),
+        if args.split.is_empty() {
+            "<all>"
+        } else {
+            &args.split
+        }
+    );
+    eprintln!(
+        "[lossless_pareto_calibrate] output:   {}",
+        args.output.display()
+    );
+    eprintln!(
+        "[lossless_pareto_calibrate] features: {}",
+        args.features_output.display()
+    );
 
     if let Some(parent) = args.output.parent() {
         std::fs::create_dir_all(parent).ok();
@@ -459,7 +483,11 @@ fn main() {
     let cols = feature_columns();
     if feat_is_new {
         let mut f = feat_file.lock().unwrap();
-        write!(f, "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight").ok();
+        write!(
+            f,
+            "image_sha\tsplit\tcontent_class\tsize_class\twidth\theight"
+        )
+        .ok();
         for c in &cols {
             write!(f, "\tfeat_{}", c.name()).ok();
         }

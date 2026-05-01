@@ -4635,7 +4635,9 @@ mod tests {
                 .with_threads(1);
 
             let pixels = pseudo_random_rgb8(64, 64);
-            let bytes_with_override = cfg.encode(&pixels, 64, 64, PixelLayout::Rgb8).expect("encode");
+            let bytes_with_override = cfg
+                .encode(&pixels, 64, 64, PixelLayout::Rgb8)
+                .expect("encode");
             let bytes_e9_plain = LosslessConfig::new()
                 .with_effort(9)
                 .with_threads(1)
