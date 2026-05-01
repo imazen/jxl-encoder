@@ -12,7 +12,7 @@
 //! Per-cell scalar samples (continuous, dense random):
 //!   - nb_rcts_to_try         ∈ {0, 4, 7, 9, 19}
 //!   - wp_num_param_sets      ∈ {0, 2, 5}
-//!   - tree_max_buckets       ∈ {16, 32, 48, 64, 96, 128, 192, 256}
+//!   - tree_max_buckets       ∈ {16, 32, 48, 64, 96, 128}   (192/256 dropped per >10s rule)
 //!   - tree_num_properties    ∈ {3, 5, 7, 10, 13, 16}
 //!   - tree_sample_fraction   ∈ {0.10, 0.20, 0.35, 0.50, 0.65}
 //!
