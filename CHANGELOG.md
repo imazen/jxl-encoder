@@ -35,6 +35,31 @@
 - New examples under `unstable-tuning-knobs`:
   `lossless_pareto_calibrate` and `lossy_pareto_calibrate` (picker
   training oracle harnesses; see imazen/jxl-encoder#24).
+- `effort_expert_tests` module gated on `__expert`: per-knob OAT
+  (one-at-a-time) coverage for the lossy and lossless override
+  surfaces, profile-builder coverage across `effort ∈ {1,4,7,10}` and
+  both encoder modes, override-roundtrip checks, and a
+  default-baseline byte-equivalence test asserting that an override
+  built from `EffortProfile::{lossy,lossless}(7, Reference)` produces
+  identical bytes to the no-override path. Pins the documented
+  limitation that `cfg`-owned fields (`lz77`, `lz77_method`,
+  `gaborish`, `patches`, `butteraugli_iters`, etc.) and modular-only
+  fields (`nb_rcts_to_try`, `wp_num_param_sets`, the `tree_*`
+  family) do not affect lossy bytes — VarDCT lossy emits its DC
+  frame with a fixed Gradient predictor.
+
+### Changed
+
+- Expanded `EffortProfile` field-level theory docs: pipeline stage,
+  override rationale, mechanism (with src/-relative line refs),
+  and effort-level interaction now documented for the
+  cost-model constants (`k_*`), tree-learning shape
+  (`tree_num_properties`, `tree_max_buckets`, `tree_threshold_base`,
+  `tree_max_samples_fixed`, `tree_sample_fraction`), modular search
+  knobs (`nb_rcts_to_try`, `wp_num_param_sets`),
+  coefficient-domain multipliers (`k8x8`/`k16x8`/`k16x16`/`k4x8`/`k4x4`),
+  and quantization thresholds (`fixed_thresholds_y`,
+  `adjust_thresholds`).
 
 ## [0.3.0] - 2026-04-16
 
