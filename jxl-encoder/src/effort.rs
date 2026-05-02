@@ -212,38 +212,88 @@ pub struct EffortProfile {
     /// libjxl: 0.39 at effort >= 5, 0.79 at effort < 5.
     /// global_scale = 65536 * (initial_q_numerator / distance) / 5.0
     pub initial_q_numerator: f32,
-    /// Fixed thresholds for Y channel when adjust_quant_ac is false.
-    /// From libjxl enc_group.cc:358.
+    /// Fixed quantization thresholds applied per-coefficient on the Y channel
+    /// when [`Self::adjust_quant_ac`] is `false`.
+    ///
+    /// Pipeline stage: VarDCT post-DCT quantization (`vardct/transform.rs`).
+    /// The four entries gate progressively higher coefficient bands; values
+    /// below the threshold round to zero.
+    /// From libjxl `enc_group.cc:358` (`kThresholdMul` constants for low-effort path).
+    /// Lowering the entries preserves more high-frequency Y detail at the cost
+    /// of bitrate; raising flattens texture. Override when an asset class needs
+    /// different texture-vs-bitrate balance than the libjxl defaults give.
     pub fixed_thresholds_y: [f32; 4],
-    /// Initial thresholds when adjust_quant_ac is true.
-    /// From libjxl enc_group.cc:390.
+    /// Initial quantization thresholds used when [`Self::adjust_quant_ac`] is
+    /// `true` (effort >= 5). Per-block adjustment iterates from these.
+    /// From libjxl `enc_group.cc:390`.
+    /// Pipeline stage: VarDCT post-DCT quantization, prior to the
+    /// `AdjustQuantBlockAC` per-block tweak. Useful as a starting point for
+    /// pickers exploring the threshold-vs-rate frontier per content class.
     pub adjust_thresholds: [f32; 4],
 
     // ─── Cost model constants ────────────────────────────────────────────
-    /// kFavor2X2AtHighQuality weight (-0.4 in libjxl).
-    /// Applied as `-0.4 * ((5-d)/5)^2` to IDENTITY/DCT2X2 entropy.
+    // All five `k_*` constants below feed `vardct/ac_strategy_search.rs`
+    // (the per-8×8 cost evaluator that picks DCT8 vs DCT4x4 vs IDENTITY vs
+    // larger merges). Default values come from libjxl's reference encoder
+    // and are *the same at every effort level* — they describe the cost
+    // model itself, not the search depth. The picker / sweep harness uses
+    // them to retune the model per content class without touching effort.
+    /// kFavor2X2AtHighQuality weight (-0.4 in libjxl,
+    /// `enc_ac_strategy.cc::kFavor2X2AtHighQuality`).
+    /// Applied as `k_favor_2x2 * ((5-distance)/5)^2` to IDENTITY/DCT2X2
+    /// entropy at distance < 5. More-negative values aggressively favor
+    /// pixel-copy / 2×2 blocks at low distances; useful for screenshots /
+    /// pixel art where the default photo-tuned bias under-uses IDENTITY.
     pub k_favor_2x2: f32,
-    /// kAvoidEntropyOfTransforms base penalty (0.5 in libjxl).
+    /// Base penalty added to every non-DCT8 strategy's cost
+    /// (libjxl `kAvoidEntropyOfTransforms = 0.5`,
+    /// `enc_ac_strategy.cc::EvalAcStrategy`). Higher values discourage the
+    /// AC strategy search from leaving DCT8; lower values let it spread to
+    /// IDENTITY / DCT4x4 / DCT16x16 more freely.
     pub k_avoid_transforms_base: f32,
-    /// Base multiplier for info loss estimation (1.2 in libjxl).
+    /// Base multiplier on the IDCT-domain (pixel-domain) error term in
+    /// `EstimateEntropy` (libjxl 1.2, `enc_ac_strategy.cc`).
+    /// PR #4506 raised this to 1.3 for the experimental profile — heavier
+    /// weight on visible artifacts vs coefficient-domain entropy.
     pub k_info_loss_mul_base: f32,
-    /// Base multiplier for zero coefficient cost (9.309 in libjxl).
+    /// Base multiplier on the zero-coefficient cost term (libjxl 9.309,
+    /// `enc_ac_strategy.cc`). Increasing rewards strategies that leave
+    /// many coefficients exactly zero (boosts large-DCT use on smooth
+    /// regions). Lowering lets non-zero residuals stay cheaper.
     pub k_zeros_mul_base: f32,
-    /// Base delta for cost model (10.833 in libjxl).
+    /// Base delta added inside the cost-model interpolation (libjxl 10.833,
+    /// `enc_ac_strategy.cc`). Acts as an "exchange rate" between rate
+    /// (entropy proxy) and distortion (info-loss term); rarely retuned
+    /// outside picker/sweep work.
     pub k_cost_delta_base: f32,
-    /// Quantization constant (0.765 in libjxl).
+    /// Quantization-cost constant used when materializing the initial
+    /// quant field (libjxl 0.765, `enc_adaptive_quantization.cc`). Read by
+    /// `vardct/precomputed.rs` and `vardct/encoder.rs`. Lower values
+    /// produce a coarser initial field (less rate, more distortion);
+    /// higher refines.
     pub k_ac_quant: f32,
 
     // ─── Coefficient-domain multiplier constants ─────────────────────────
-    /// DCT8x8 coefficient-domain multiplier (mul1, mul2, base).
+    // Each tuple is `(mul1, mul2, base)` for the EstimateEntropy /
+    // info-loss formula in `vardct/ac_strategy_search.rs`. `mul1` weights
+    // the negative log-rate term, `mul2` weights the AC magnitude term,
+    // and `base` is added unconditionally. Defaults come from libjxl's
+    // `enc_ac_strategy.cc`. Mode-/effort-independent in both reference
+    // and experimental — cost-model knobs the picker can dial.
+    /// DCT8x8 coefficient-domain multiplier `(mul1, mul2, base)`.
+    /// Note: stored values include libjxl's 0.75 factor on `mul1`/`mul2`
+    /// (applied at `enc_ac_strategy.cc:790` for 8×8-class transforms).
     pub k8x8: (f32, f32, f32),
-    /// DCT16x8/8x16 coefficient-domain multiplier.
+    /// DCT16x8 / DCT8x16 coefficient-domain multiplier `(mul1, mul2, base)`.
+    /// Larger transforms skip the 0.75 factor and use the libjxl raw values.
     pub k16x8: (f32, f32, f32),
-    /// DCT16x16 coefficient-domain multiplier.
+    /// DCT16x16 coefficient-domain multiplier `(mul1, mul2, base)`.
     pub k16x16: (f32, f32, f32),
-    /// DCT4x8/8x4 coefficient-domain multiplier.
+    /// DCT4x8 / DCT8x4 coefficient-domain multiplier `(mul1, mul2, base)`.
+    /// 4×N strategies share the 0.75 factor with 8×8.
     pub k4x8: (f32, f32, f32),
-    /// DCT4x4 coefficient-domain multiplier.
+    /// DCT4x4 coefficient-domain multiplier `(mul1, mul2, base)`.
+    /// 4×4 strategies share the 0.75 factor with 8×8.
     pub k4x4: (f32, f32, f32),
 
     // ─── Entropy multiplier table ──────────────────────────────────────────
@@ -260,24 +310,78 @@ pub struct EffortProfile {
     pub patch_ref_tree_learning: bool,
 
     // ─── RCT selection ───────────────────────────────────────────────────
-    /// Number of RCT variants to try (0 = no selection, use YCoCg).
+    /// Number of Reversible Color Transform variants to evaluate before
+    /// committing to one (0 = skip search, use YCoCg unconditionally).
+    ///
+    /// Pipeline stage: modular pre-transform, before predictor + tree
+    /// learning (`modular/encode.rs::select_best_rct`,
+    /// `modular/frame.rs::select_best_rct_at`). Each candidate runs a
+    /// cost estimate; the cheapest wins.
+    /// Effort interaction: 0 at e<5, 4 at e5, 5 at e6, 7 at e7, 9 at e8,
+    /// 19 at e9+ (libjxl `kSquirrel`/`kKitten`/`kTortoise` schedule).
+    /// Override when a specific content class (e.g., film stills) has a
+    /// known-best RCT and the search is wasted compute, or when sweeping
+    /// to discover content-specific defaults.
     pub nb_rcts_to_try: u8,
 
     // ─── WP parameter search ───────────────────────────────────────────────
-    /// Number of weighted predictor parameter sets to try (0 = default only).
-    /// libjxl: 2 at effort 8 (kKitten), 5 at effort 9+ (kTortoise).
+    /// Number of weighted-predictor parameter sets to try when tuning the
+    /// modular WP per channel (0 = use the libjxl default parameters
+    /// without searching).
+    ///
+    /// Pipeline stage: modular predictor selection
+    /// (`modular/predictor.rs::find_best_wp_params`, called from
+    /// `modular/section.rs`, `modular/frame.rs`, `modular/encode.rs`).
+    /// Effort interaction: 0 at e<8, 2 at e8, 5 at e9+. The search is
+    /// expensive (each candidate runs a cost estimate over all WP-eligible
+    /// channels), which is why libjxl gates it behind `kKitten`/`kTortoise`.
+    /// Override to force the search on at lower effort (e.g., when a picker
+    /// wants e6-quality bytes with WP-fitted parameters), or off at e9 for
+    /// faster sweeps.
     pub wp_num_param_sets: u8,
 
     // ─── Tree learning parameters ────────────────────────────────────────
-    /// Number of MA tree properties to evaluate.
+    // Read by `modular/tree_learn.rs::TreeLearningParams::from_profile`.
+    // These describe the *shape* of the MA tree — wider trees split on
+    // more properties / finer buckets, deeper trees use lower thresholds,
+    // and the sampling caps trade tree-learning compute for accuracy.
+    /// Number of MA-tree decision properties to evaluate per split.
+    /// Capped to the order length defined in `modular/tree_learn.rs`
+    /// (15 without `group_id`, 16 with).
+    /// Effort interaction: 3 at e<=4, 4 at e5, 5 at e6, 7 at e7, 10 at e8,
+    /// 16 at e9+. More properties = better trees but quadratic cost in
+    /// `LearnTree`. Override to retune the speed/quality knee per content.
     pub tree_num_properties: u8,
-    /// Maximum quantization buckets per property.
+    /// Maximum number of quantization buckets per property when building
+    /// the histogram for tree splits. Matches libjxl
+    /// `enc_modular.cc:556-590` `max_property_values` per speed tier.
+    /// Effort interaction: 32 at e<=4, 48 at e5, 64 at e6, 96 at e7,
+    /// 128 at e8, 256 at e9+. Higher = finer thresholds at higher learning
+    /// cost. Override when a corpus benefits from coarser/finer splits
+    /// than the libjxl tier table predicts.
     pub tree_max_buckets: u16,
-    /// Base threshold for tree splitting (75 + 14 * speed_tier in libjxl).
+    /// Base entropy-cost threshold a candidate split must beat to be
+    /// accepted (libjxl `75 + 14 * speed_tier` in
+    /// `enc_modular.cc::LearnTreeHeuristics`).
+    /// Effort interaction: 173 at e<=1 (speed_tier=9), 117 at e5 (5),
+    /// 75 at e9+ (1). Lower threshold = more splits = larger tree. Override
+    /// to bias the tree shallower (cheaper decode) or deeper (better fit).
     pub tree_threshold_base: f32,
-    /// Fixed sample cap for tree learning (0 = use fraction instead).
+    /// Hard cap on samples drawn for tree learning when set; `0` defers
+    /// to [`Self::tree_sample_fraction`].
+    /// Read by `modular/tree_learn.rs::sample_count_for_profile`.
+    /// Effort interaction: 65,000 at e<=4 (cheap, fixed budget), 0 at e>=5
+    /// (let the fraction-based path scale with image size). Override to
+    /// fix the tree-learning compute regardless of input pixels.
     pub tree_max_samples_fixed: u32,
-    /// Fraction of total pixels to sample (0.0 = use fixed cap).
+    /// Fraction of total pixels to sample for tree learning when
+    /// [`Self::tree_max_samples_fixed`] is `0`. Floor of 65,536 samples.
+    /// Read by `modular/tree_learn.rs::sample_count_for_profile`.
+    /// Effort interaction: 0.15 at e<=4, 0.25 at e5, 0.35 at e6, 0.5 at e7,
+    /// 0.55 at e8, 0.65 at e9+ (libjxl PR #4236). Higher fractions improve
+    /// tree fit (especially on large images) at proportional cost. Override
+    /// to densify sampling on large images at moderate effort, or thin
+    /// sampling for fast sweeps at high effort.
     pub tree_sample_fraction: f32,
 }
 
@@ -582,6 +686,252 @@ impl EffortProfile {
             7 => 96,     // Squirrel
             8 => 128,    // Kitten
             _ => 256,    // Tortoise
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Public expert surface — segmented Lossy / Lossless internal-param structs
+// ─────────────────────────────────────────────────────────────────────────
+//
+// `LossyInternalParams` and `LosslessInternalParams` are the public picker /
+// sweep escape hatch (gated behind `__expert`). They split the internal
+// [`EffortProfile`] into two type-disjoint surfaces — one per encode mode —
+// so callers cannot accidentally hand the lossy encoder a knob that only
+// affects modular output, and vice-versa. The type system enforces
+// mode-correctness instead of relying on documentation.
+//
+// Each `Some(_)` field overrides the corresponding `EffortProfile` field
+// the lossy / lossless code path actually reads. Fields left at `None` keep
+// the (effort, mode)-derived default. This matches the segmented
+// `InternalParams` pattern used by zenavif / zenwebp / zenravif.
+
+/// Picker / sweep override knobs for the **lossy (VarDCT)** encode path.
+///
+/// Apply via [`crate::api::LossyConfig::with_internal_params`]. Fields are
+/// optional: `Some(value)` overrides the corresponding effort-derived
+/// default; `None` keeps the default. `#[non_exhaustive]` so additional
+/// knobs can land additively without a breaking change.
+///
+/// The fields here are the lossy-side knobs that flow through `profile.X`
+/// at lossy encode time (verified against `vardct/encoder.rs`,
+/// `vardct/ac_strategy_search.rs`, `vardct/transform.rs`,
+/// `vardct/precomputed.rs`, and `vardct/bitstream.rs`). Modular-only knobs
+/// (RCT search, WP parameter scan, tree-learning shape) live on
+/// [`LosslessInternalParams`] — VarDCT's DC frame uses a fixed Gradient
+/// predictor, so those knobs do not affect lossy bytes.
+#[cfg(feature = "__expert")]
+#[non_exhaustive]
+#[derive(Default, Clone, Debug)]
+pub struct LossyInternalParams {
+    /// Try DCT16x16 / DCT16x8 / DCT8x16 transforms in AC strategy search.
+    /// Default at effort 7: `true`. Disabling forces no 16×16-class merges.
+    pub try_dct16: Option<bool>,
+
+    /// Try DCT32x32 / DCT32x16 / DCT16x32 transforms.
+    /// Default at effort 7: `true`. Disabling forces no 32×32-class merges.
+    pub try_dct32: Option<bool>,
+
+    /// Try DCT64x64 / DCT64x32 / DCT32x64 transforms.
+    /// Default at effort 7: `true`. Disabling forces no 64×64-class merges.
+    pub try_dct64: Option<bool>,
+
+    /// Try DCT4x8 / DCT8x4 / DCT4x4 / AFV transforms.
+    /// Default at effort 6+: `true`. Disabling forces 8×8-or-larger only.
+    pub try_dct4x8_afv: Option<bool>,
+
+    /// Step size for fine-grained AC strategy search on 32×32+ blocks.
+    /// `1` evaluates every position (effort 9+), `2` every other (default).
+    pub fine_grained_step: Option<u8>,
+
+    /// Base multiplier on the IDCT-domain (pixel-domain) error term in
+    /// `EstimateEntropy`. Reference: 1.2 (libjxl). Experimental: 1.3
+    /// (PR #4506). Higher values weight visible artifacts more heavily
+    /// vs coefficient-domain entropy.
+    pub k_info_loss_mul_base: Option<f32>,
+
+    /// Per-strategy entropy multipliers for AC strategy cost model.
+    /// Controls relative preference for each transform type.
+    pub entropy_mul_table: Option<EntropyMulTable>,
+
+    /// Recompute CfL map after initial quantization for better estimates.
+    /// Default at effort 7+: `true`.
+    pub cfl_two_pass: Option<bool>,
+
+    /// Apply pixel-level chromacity adjustments. Default at effort 7+:
+    /// `true`. Disabling skips per-pixel chromacity nudges.
+    pub chromacity_adjustment: Option<bool>,
+
+    /// Use tree learning for patch reference frame encoding instead of the
+    /// fixed Gradient predictor. Reference: `false`. Experimental at
+    /// effort 7+: `true`. Significant on screenshots / packed glyph patches.
+    pub patch_ref_tree_learning: Option<bool>,
+
+    /// Enable non-aligned evaluation pass (odd-aligned 16×16 regions) in
+    /// AC strategy search. Default at effort 6+: `true`. Disabling halves
+    /// the search depth.
+    pub non_aligned_eval: Option<bool>,
+
+    /// Use pair-merge clustering for VarDCT entropy codes. Reference at
+    /// effort 9+: `true`; experimental at effort 7+: `true`. When `false`,
+    /// uses fast k-means-only clustering (cheaper, slightly larger codes).
+    pub enhanced_clustering_vardct: Option<bool>,
+
+    /// Quantization-cost constant used when materializing the initial
+    /// quant field (libjxl 0.765, `enc_adaptive_quantization.cc`). Lower
+    /// values produce a coarser initial field (less rate, more distortion);
+    /// higher values refine.
+    pub k_ac_quant: Option<f32>,
+}
+
+/// Picker / sweep override knobs for the **lossless (modular)** encode path.
+///
+/// Apply via [`crate::api::LosslessConfig::with_internal_params`]. Fields
+/// are optional: `Some(value)` overrides the corresponding effort-derived
+/// default; `None` keeps the default. `#[non_exhaustive]` so additional
+/// knobs can land additively without a breaking change.
+///
+/// The fields here are the modular-path knobs that flow through `profile.X`
+/// in `modular/encode.rs`, `modular/frame.rs`, `modular/section.rs`,
+/// `modular/predictor.rs`, and `modular/tree_learn.rs`. AC-strategy and
+/// CfL knobs live on [`LossyInternalParams`].
+#[cfg(feature = "__expert")]
+#[non_exhaustive]
+#[derive(Default, Clone, Debug)]
+pub struct LosslessInternalParams {
+    /// Number of Reversible Color Transform variants to evaluate before
+    /// committing (0 = skip search, use YCoCg unconditionally).
+    /// Effort interaction: 0 at e<5, 4 at e5, 5 at e6, 7 at e7, 9 at e8,
+    /// 19 at e9+ (libjxl `kSquirrel`/`kKitten`/`kTortoise` schedule).
+    pub nb_rcts_to_try: Option<u8>,
+
+    /// Number of weighted-predictor parameter sets to try per WP-eligible
+    /// channel (0 = use libjxl defaults without searching).
+    /// Effort interaction: 0 at e<8, 2 at e8, 5 at e9+.
+    pub wp_num_param_sets: Option<u8>,
+
+    /// Maximum quantization buckets per property when building the
+    /// histogram for tree splits.
+    /// Effort interaction: 32 at e<=4, 48 at e5, 64 at e6, 96 at e7,
+    /// 128 at e8, 256 at e9+. Higher = finer thresholds at higher cost.
+    pub tree_max_buckets: Option<u16>,
+
+    /// Number of MA-tree decision properties to evaluate per split.
+    /// Effort interaction: 3 at e<=4, 4 at e5, 5 at e6, 7 at e7, 10 at e8,
+    /// 16 at e9+.
+    pub tree_num_properties: Option<u8>,
+
+    /// Base entropy-cost threshold a candidate split must beat to be
+    /// accepted (libjxl `75 + 14 * speed_tier`). Lower = more splits =
+    /// larger tree.
+    pub tree_threshold_base: Option<f32>,
+
+    /// Fraction of total pixels to sample for tree learning (when
+    /// `tree_max_samples_fixed` is `0`). Floor of 65,536 samples.
+    /// Effort interaction: 0.15 at e<=4 ramping to 0.65 at e9+
+    /// (libjxl PR #4236).
+    pub tree_sample_fraction: Option<f32>,
+
+    /// Hard cap on samples drawn for tree learning when set; `0` defers
+    /// to [`Self::tree_sample_fraction`].
+    /// Effort interaction: 65,000 at e<=4, 0 at e>=5.
+    pub tree_max_samples_fixed: Option<u32>,
+}
+
+#[cfg(feature = "__expert")]
+impl LossyInternalParams {
+    /// Apply each `Some(_)` field on top of `profile`.
+    pub(crate) fn apply_to(self, profile: &mut EffortProfile) {
+        let LossyInternalParams {
+            try_dct16,
+            try_dct32,
+            try_dct64,
+            try_dct4x8_afv,
+            fine_grained_step,
+            k_info_loss_mul_base,
+            entropy_mul_table,
+            cfl_two_pass,
+            chromacity_adjustment,
+            patch_ref_tree_learning,
+            non_aligned_eval,
+            enhanced_clustering_vardct,
+            k_ac_quant,
+        } = self;
+        if let Some(v) = try_dct16 {
+            profile.try_dct16 = v;
+        }
+        if let Some(v) = try_dct32 {
+            profile.try_dct32 = v;
+        }
+        if let Some(v) = try_dct64 {
+            profile.try_dct64 = v;
+        }
+        if let Some(v) = try_dct4x8_afv {
+            profile.try_dct4x8_afv = v;
+        }
+        if let Some(v) = fine_grained_step {
+            profile.fine_grained_step = v;
+        }
+        if let Some(v) = k_info_loss_mul_base {
+            profile.k_info_loss_mul_base = v;
+        }
+        if let Some(v) = entropy_mul_table {
+            profile.entropy_mul_table = v;
+        }
+        if let Some(v) = cfl_two_pass {
+            profile.cfl_two_pass = v;
+        }
+        if let Some(v) = chromacity_adjustment {
+            profile.chromacity_adjustment = v;
+        }
+        if let Some(v) = patch_ref_tree_learning {
+            profile.patch_ref_tree_learning = v;
+        }
+        if let Some(v) = non_aligned_eval {
+            profile.non_aligned_eval = v;
+        }
+        if let Some(v) = enhanced_clustering_vardct {
+            profile.enhanced_clustering_vardct = v;
+        }
+        if let Some(v) = k_ac_quant {
+            profile.k_ac_quant = v;
+        }
+    }
+}
+
+#[cfg(feature = "__expert")]
+impl LosslessInternalParams {
+    /// Apply each `Some(_)` field on top of `profile`.
+    pub(crate) fn apply_to(self, profile: &mut EffortProfile) {
+        let LosslessInternalParams {
+            nb_rcts_to_try,
+            wp_num_param_sets,
+            tree_max_buckets,
+            tree_num_properties,
+            tree_threshold_base,
+            tree_sample_fraction,
+            tree_max_samples_fixed,
+        } = self;
+        if let Some(v) = nb_rcts_to_try {
+            profile.nb_rcts_to_try = v;
+        }
+        if let Some(v) = wp_num_param_sets {
+            profile.wp_num_param_sets = v;
+        }
+        if let Some(v) = tree_max_buckets {
+            profile.tree_max_buckets = v;
+        }
+        if let Some(v) = tree_num_properties {
+            profile.tree_num_properties = v;
+        }
+        if let Some(v) = tree_threshold_base {
+            profile.tree_threshold_base = v;
+        }
+        if let Some(v) = tree_sample_fraction {
+            profile.tree_sample_fraction = v;
+        }
+        if let Some(v) = tree_max_samples_fixed {
+            profile.tree_max_samples_fixed = v;
         }
     }
 }

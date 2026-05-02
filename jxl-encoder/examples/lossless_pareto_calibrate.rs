@@ -1,6 +1,6 @@
 //! Pareto calibration sweep for the zenjxl lossless picker (issue #24).
 //!
-//! Sweeps INDEPENDENT internal knobs via `LosslessConfig::with_effort_profile_override`.
+//! Sweeps INDEPENDENT internal knobs via `LosslessConfig::with_internal_params`.
 //! The picker is going to *replace* the bundled-effort axis, so the oracle
 //! must expose each underlying knob independently — not the bundled effort.
 //!
@@ -37,8 +37,7 @@
 //!       [--samples-per-cell N] [--max-images N] [--sizes 64,256,1024,native]
 //!       [--features-only] [--smoke]
 
-use jxl_encoder::EffortProfile;
-use jxl_encoder::api::EncoderMode;
+use jxl_encoder::LosslessInternalParams;
 use jxl_encoder::api::{LosslessConfig, Lz77Method, PixelLayout};
 use rayon::prelude::*;
 use std::fs::OpenOptions;
@@ -312,39 +311,35 @@ fn resize_to(rgb: &[u8], w: u32, h: u32, target_max: u32) -> (Vec<u8>, u32, u32)
 }
 
 // ---------------------------------------------------------------------
-// Encoder construction with custom EffortProfile
+// Encoder construction with custom LosslessInternalParams
 // ---------------------------------------------------------------------
 
-/// Build a LosslessConfig where the EffortProfile is customized per the
-/// row's scalar values. We start from e7 (a sane midpoint for the bundled
-/// fields we don't sweep) and override the swept fields.
+/// Build a LosslessConfig from the row's scalar values, applying overrides
+/// via [`LosslessInternalParams`]. We start from `with_effort(7)` (a sane
+/// midpoint for the bundled fields we don't sweep) and feed only the
+/// sweep-controlled fields through the segmented public surface. Cell
+/// categoricals (`lz77_method`, `patches`, `squeeze`) ride on the existing
+/// per-knob public setters because they're not part of the internal-param
+/// surface.
 fn build_encoder(rc: &RowConfig) -> LosslessConfig {
-    let mut profile = EffortProfile::lossless(7, EncoderMode::Reference);
+    let params = LosslessInternalParams {
+        nb_rcts_to_try: Some(rc.nb_rcts_to_try),
+        wp_num_param_sets: Some(rc.wp_num_param_sets),
+        tree_max_buckets: Some(rc.tree_max_buckets),
+        tree_num_properties: Some(rc.tree_num_properties),
+        tree_sample_fraction: Some(rc.tree_sample_fraction),
+        // Use fraction-based sampling (clear the fixed cap).
+        tree_max_samples_fixed: Some(0),
+        ..Default::default()
+    };
 
-    // Scalar overrides
-    profile.nb_rcts_to_try = rc.nb_rcts_to_try;
-    profile.wp_num_param_sets = rc.wp_num_param_sets;
-    profile.tree_max_buckets = rc.tree_max_buckets;
-    profile.tree_num_properties = rc.tree_num_properties;
-    profile.tree_sample_fraction = rc.tree_sample_fraction;
-    // Use fraction-based sampling (clear the fixed cap)
-    profile.tree_max_samples_fixed = 0;
-    // Force tree learning ON whenever any tree_* knob is meaningful; the
-    // picker would only reach for these knobs when learning is enabled.
-    profile.tree_learning = true;
-
-    // Cell-level categorical overrides
-    profile.lz77 = rc.cell.lz77_method.is_some();
-    if let Some(m) = rc.cell.lz77_method {
-        profile.lz77_method = m;
-    }
-    profile.patches = rc.cell.patches;
-
-    // Build the LosslessConfig with this profile. squeeze + patches +
-    // lz77_method also have public setters that take precedence — set them
-    // explicitly to ensure consistency.
+    // Build the LosslessConfig: apply the effort first so the
+    // internal-params builder snapshots the right effort-derived defaults
+    // before applying overrides; squeeze + patches + lz77_method ride on
+    // the per-knob public setters.
     let mut cfg = LosslessConfig::new()
-        .with_effort_profile_override(profile)
+        .with_effort(7)
+        .with_internal_params(params)
         .with_squeeze(rc.cell.squeeze)
         .with_patches(rc.cell.patches)
         .with_threads(1);
