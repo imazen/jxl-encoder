@@ -91,3 +91,7 @@ mod tests;
 #[cfg(test)]
 #[path = "api_tests.rs"]
 mod api_tests;
+
+#[cfg(all(test, feature = "__expert"))]
+#[path = "effort_expert_tests.rs"]
+mod effort_expert_tests;
