@@ -13,6 +13,10 @@ rust-version.workspace = true
 keywords = ["jpeg-xl", "encoder", "image"]
 categories = ["multimedia::images", "multimedia::encoding"]
 include = ["/src/**", "/examples/*.rs", "/tests/*.rs", "/tests/*.txt", "/README.md", "/LICENSE*"]
+# Disable example auto-discovery so internal-only tools (e.g. picker oracle
+# calibration harnesses with sibling-repo path deps) don't break out-of-tree
+# CI builds. Examples must be listed explicitly via [[example]] below.
+autoexamples = false
 
 [dependencies]
 enough = "0.4.3"
@@ -90,21 +94,55 @@ sha2 = "0.11.0"
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 codec-corpus = "1.0.1"
-# Picker training oracle sweep (lossless_pareto_calibrate / lossy_pareto_calibrate examples).
-zenanalyze = { path = "../../zenanalyze", features = ["experimental"] }
 rayon = "1.10"
 # Deterministic RNG for picker oracle scalar sampling.
 fastrand = "2.4.1"
 
+# Standard examples (autoexamples is disabled above; list each explicitly).
 [[example]]
-name = "lossless_pareto_calibrate"
-path = "examples/lossless_pareto_calibrate.rs"
-required-features = ["std", "parallel", "__expert"]
+name = "distance_sweep"
+path = "examples/distance_sweep.rs"
 
 [[example]]
-name = "lossy_pareto_calibrate"
-path = "examples/lossy_pareto_calibrate.rs"
-required-features = ["std", "parallel", "butteraugli-loop", "__expert"]
+name = "fresh_encode"
+path = "examples/fresh_encode.rs"
+
+[[example]]
+name = "multigroup_gallery"
+path = "examples/multigroup_gallery.rs"
+
+[[example]]
+name = "test_300_debug"
+path = "examples/test_300_debug.rs"
+
+[[example]]
+name = "test_multi_group"
+path = "examples/test_multi_group.rs"
+
+[[example]]
+name = "test_ssim2"
+path = "examples/test_ssim2.rs"
+
+[[example]]
+name = "test_ssim2_300"
+path = "examples/test_ssim2_300.rs"
+
+[[example]]
+name = "test_ssim2_exact"
+path = "examples/test_ssim2_exact.rs"
+
+[[example]]
+name = "wasm_bench"
+path = "examples/wasm_bench.rs"
+
+# Picker oracle calibration harnesses (lossless_pareto_calibrate /
+# lossy_pareto_calibrate) live under examples/ but are NOT registered as
+# cargo examples — they depend on a sibling-repo `zenanalyze` path that
+# isn't present on CI. Run them locally with:
+#   cargo run --release --manifest-path jxl-encoder/Cargo.toml \
+#       --example lossless_pareto_calibrate --features __expert
+# after editing this file to add a [[example]] entry plus the path dep
+# (see git history pre-2026-05-02 for the previous wiring).
 
 [lints]
 workspace = true
