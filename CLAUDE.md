@@ -582,8 +582,10 @@ Picker training oracle (issue #24) ran on 100-image stratified subset
 (`~/work/codec-corpus/picker-train/manifest_v1_100.tsv`). Both phases
 captured per-row `bytes + encode_ms` (lossless) and
 `bytes + encode_ms + butteraugli + ssim2` (lossy at single-shot,
-butteraugli_iters=0). Knobs swept via `LosslessConfig::with_effort_profile_override`
-and `LossyConfig::with_effort_profile_override` (`#[doc(hidden)]` API hooks).
+butteraugli_iters=0). Knobs swept via `LosslessConfig::with_internal_params`
+(takes [`LosslessInternalParams`]) and `LossyConfig::with_internal_params`
+(takes [`LossyInternalParams`]) — segmented per encode mode, gated behind
+the `__expert` cargo feature, marked `#[doc(hidden)]`.
 
 **TSVs archived at**: `/mnt/v/output/jxl-encoder/picker-oracle-2026-04-30/`
 - `lossless_pareto_2026-04-30.tsv` (22 MB, 165,478 rows, 99.4% coverage)

@@ -704,21 +704,27 @@ impl LosslessConfig {
             .unwrap_or_else(|| crate::effort::EffortProfile::lossless(self.effort, self.mode))
     }
 
-    /// Replace the entire effort-derived profile with a custom one.
+    /// Apply picker / sweep override knobs scoped to the **lossless
+    /// (modular)** encode path.
     ///
-    /// Picker / sweep escape hatch: every internal knob the encoder normally
-    /// derives from `(effort, mode)` (RCT search depth, WP parameter scan,
-    /// tree-learning shape, LZ77 method, etc.) is taken from the supplied
-    /// [`crate::effort::EffortProfile`] instead. Per-knob public setters
-    /// (`with_lz77_method`, `with_squeeze`, …) called after this still take
-    /// precedence on the few knobs they cover.
+    /// Each `Some(_)` field on the supplied
+    /// [`crate::effort::LosslessInternalParams`] overrides the corresponding
+    /// effort-derived default; `None` fields keep the default. Per-knob
+    /// public setters (`with_lz77_method`, `with_squeeze`, …) called after
+    /// this still take precedence on the few knobs they cover.
     ///
-    /// **Requires the `unstable-tuning-knobs` cargo feature.**
-    /// Not stable; the underlying `EffortProfile` struct may grow fields
-    /// between minor versions.
-    #[cfg(feature = "unstable-tuning-knobs")]
+    /// The type system enforces mode-correctness: lossy-only knobs
+    /// (AC strategy gates, CfL, cost-model constants) live on
+    /// [`crate::effort::LossyInternalParams`] and cannot be passed here.
+    ///
+    /// **Requires the `__expert` cargo feature.**
+    /// Not stable; the underlying field set may grow additively between
+    /// minor versions.
+    #[cfg(feature = "__expert")]
     #[doc(hidden)]
-    pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
+    pub fn with_internal_params(mut self, params: crate::effort::LosslessInternalParams) -> Self {
+        let mut profile = crate::effort::EffortProfile::lossless(self.effort, self.mode);
+        params.apply_to(&mut profile);
         self.profile_override = Some(profile);
         self
     }
@@ -872,6 +878,13 @@ impl LosslessConfig {
     /// Thread count (0 = auto, 1 = sequential).
     pub fn threads(&self) -> usize {
         self.threads
+    }
+
+    /// Borrow the resolved `EffortProfile` override, if any. Internal hook
+    /// used by [`crate::validation`].
+    #[cfg(feature = "__expert")]
+    pub(crate) fn profile_override_ref(&self) -> Option<&crate::effort::EffortProfile> {
+        self.profile_override.as_ref()
     }
 
     // ── Request / fluent encode ─────────────────────────────────────
@@ -1094,22 +1107,27 @@ impl LossyConfig {
             .unwrap_or_else(|| crate::effort::EffortProfile::lossy(self.effort, self.mode))
     }
 
-    /// Replace the entire effort-derived profile with a custom one.
+    /// Apply picker / sweep override knobs scoped to the **lossy (VarDCT)**
+    /// encode path.
     ///
-    /// Picker / sweep escape hatch: every internal knob the encoder normally
-    /// derives from `(effort, mode)` (AC strategy gates, CfL settings,
-    /// butteraugli-loop iteration count, cost-model constants, entropy-mul
-    /// table, etc.) is taken from the supplied
-    /// [`crate::effort::EffortProfile`] instead. Per-knob public setters
-    /// (`with_butteraugli_iters`, `with_gaborish`, …) called after this still
-    /// take precedence on the few knobs they cover.
+    /// Each `Some(_)` field on the supplied
+    /// [`crate::effort::LossyInternalParams`] overrides the corresponding
+    /// effort-derived default; `None` fields keep the default. Per-knob
+    /// public setters (`with_butteraugli_iters`, `with_gaborish`, …) called
+    /// after this still take precedence on the few knobs they cover.
     ///
-    /// **Requires the `unstable-tuning-knobs` cargo feature.**
-    /// Not stable; the underlying `EffortProfile` struct may grow fields
-    /// between minor versions.
-    #[cfg(feature = "unstable-tuning-knobs")]
+    /// The type system enforces mode-correctness: modular-only knobs
+    /// (RCT search, WP parameter scan, tree-learning shape) live on
+    /// [`crate::effort::LosslessInternalParams`] and cannot be passed here.
+    ///
+    /// **Requires the `__expert` cargo feature.**
+    /// Not stable; the underlying field set may grow additively between
+    /// minor versions.
+    #[cfg(feature = "__expert")]
     #[doc(hidden)]
-    pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
+    pub fn with_internal_params(mut self, params: crate::effort::LossyInternalParams) -> Self {
+        let mut profile = crate::effort::EffortProfile::lossy(self.effort, self.mode);
+        params.apply_to(&mut profile);
         self.profile_override = Some(profile);
         self
     }
@@ -1413,6 +1431,25 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub fn butteraugli_iters(&self) -> u32 {
         self.butteraugli_iters
+    }
+
+    /// SSIM2 quantization loop iterations (internal accessor for validation).
+    #[cfg(feature = "ssim2-loop")]
+    pub(crate) fn ssim2_iters_value(&self) -> u32 {
+        self.ssim2_iters
+    }
+
+    /// zensim quantization loop iterations (internal accessor for validation).
+    #[cfg(feature = "zensim-loop")]
+    pub(crate) fn zensim_iters_value(&self) -> u32 {
+        self.zensim_iters
+    }
+
+    /// Borrow the resolved `EffortProfile` override, if any. Internal hook
+    /// used by [`crate::validation`].
+    #[cfg(feature = "__expert")]
+    pub(crate) fn profile_override_ref(&self) -> Option<&crate::effort::EffortProfile> {
+        self.profile_override.as_ref()
     }
 
     /// Thread count (0 = auto, 1 = sequential).
@@ -4526,15 +4563,16 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Effort profile override (unstable-tuning-knobs)
+    // Internal-params override (__expert) — segmented Lossy / Lossless
     // -----------------------------------------------------------------
 
-    #[cfg(feature = "unstable-tuning-knobs")]
-    mod profile_override {
+    #[cfg(feature = "__expert")]
+    mod internal_params {
         use super::*;
+        use crate::effort::{LosslessInternalParams, LossyInternalParams};
 
         // Pseudo-random RGB image — large enough + complex enough to exercise
-        // RCT search, WP, and tree-learning splits so different profile
+        // RCT search, WP, and tree-learning splits so different param
         // settings produce different bitstreams.
         fn pseudo_random_rgb8(w: u32, h: u32) -> Vec<u8> {
             let mut out = Vec::with_capacity((w * h * 3) as usize);
@@ -4554,19 +4592,19 @@ mod tests {
         }
 
         #[test]
-        fn lossless_override_replaces_profile() {
-            // Build a profile that's distinguishable from the e7 default —
-            // tighten tree learning shape and disable patches.
-            let mut profile = crate::EffortProfile::lossless(7, EncoderMode::Reference);
-            profile.tree_max_buckets = 16;
-            profile.tree_num_properties = 3;
-            profile.nb_rcts_to_try = 0;
-            profile.lz77 = false;
-            profile.patches = false;
+        fn lossless_internal_params_changes_bitstream() {
+            // Tighten tree learning + skip RCT search to push bytes off the
+            // e7 default.
+            let params = LosslessInternalParams {
+                tree_max_buckets: Some(16),
+                tree_num_properties: Some(3),
+                nb_rcts_to_try: Some(0),
+                ..Default::default()
+            };
 
             let cfg_override = LosslessConfig::new()
                 .with_effort(7)
-                .with_effort_profile_override(profile)
+                .with_internal_params(params)
                 .with_threads(1);
             let cfg_default = LosslessConfig::new().with_effort(7).with_threads(1);
 
@@ -4578,30 +4616,31 @@ mod tests {
                 .encode(&pixels, 64, 64, PixelLayout::Rgb8)
                 .expect("default encode");
 
-            // Both must produce valid JXL with the magic signature.
             assert_eq!(&bytes_a[..2], &crate::JXL_SIGNATURE);
             assert_eq!(&bytes_b[..2], &crate::JXL_SIGNATURE);
-            // Output should differ — the override changes encoder behavior.
             assert_ne!(
                 bytes_a, bytes_b,
-                "override profile should produce different bitstream"
+                "internal_params override should produce different bitstream"
             );
         }
 
         #[test]
-        fn lossy_override_replaces_profile() {
-            let mut profile = crate::EffortProfile::lossy(7, EncoderMode::Reference);
-            // Disable a few effort-derived knobs; tweak a tuning constant.
-            profile.try_dct16 = false;
-            profile.try_dct32 = false;
-            profile.try_dct64 = false;
-            profile.try_dct4x8_afv = false;
-            profile.k_info_loss_mul_base = 1.5;
-            profile.entropy_mul_table.dct8 = 0.95;
+        fn lossy_internal_params_changes_bitstream() {
+            let mut entropy = crate::effort::EntropyMulTable::reference();
+            entropy.dct8 = 0.95;
+            let params = LossyInternalParams {
+                try_dct16: Some(false),
+                try_dct32: Some(false),
+                try_dct64: Some(false),
+                try_dct4x8_afv: Some(false),
+                k_info_loss_mul_base: Some(1.5),
+                entropy_mul_table: Some(entropy),
+                ..Default::default()
+            };
 
             let cfg_override = LossyConfig::new(2.0)
                 .with_effort(7)
-                .with_effort_profile_override(profile)
+                .with_internal_params(params)
                 .with_threads(1);
             let cfg_default = LossyConfig::new(2.0).with_effort(7).with_threads(1);
 
@@ -4617,20 +4656,21 @@ mod tests {
             assert_eq!(&bytes_b[..2], &crate::JXL_SIGNATURE);
             assert_ne!(
                 bytes_a, bytes_b,
-                "override profile should produce different bitstream"
+                "internal_params override should produce different bitstream"
             );
         }
 
         #[test]
-        fn override_survives_with_effort_call() {
-            // Override applied before with_effort should still take effect.
-            let mut profile = crate::EffortProfile::lossless(7, EncoderMode::Reference);
-            profile.lz77 = false;
-            profile.patches = false;
-            profile.tree_max_buckets = 16;
+        fn lossless_internal_params_persist_across_with_effort() {
+            // Override applied before with_effort should still take effect
+            // (with_effort preserves profile_override).
+            let params = LosslessInternalParams {
+                tree_max_buckets: Some(16),
+                ..Default::default()
+            };
 
             let cfg = LosslessConfig::new()
-                .with_effort_profile_override(profile)
+                .with_internal_params(params)
                 .with_effort(9) // should NOT clobber the override
                 .with_threads(1);
 
