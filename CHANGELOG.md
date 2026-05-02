@@ -12,6 +12,9 @@
   `EffortProfile::lossless(effort, mode)` /
   `EntropyMulTable::reference()` / `EntropyMulTable::experimental()`
   and mutate fields as needed. Already in main; held for next minor bump.
+- The crate-root `EffortProfile` re-export is now `#[doc(hidden)]`. New
+  expert callers must use `LossyInternalParams` / `LosslessInternalParams`
+  via the segmented `with_internal_params` setters instead.
 
 ### Added
 
@@ -19,37 +22,59 @@
   (eebd561, 6bdab0b, 25bb80f and follow-up; renamed from
   `unstable-tuning-knobs` for cross-codec consistency with
   zenavif/zenwebp/zenravif). The double-underscore prefix signals
-  "private — do not depend on this in production code." When enabled,
-  exposes `LosslessConfig::with_effort_profile_override(EffortProfile)`
-  and `LossyConfig::with_effort_profile_override(EffortProfile)`. Picker
-  training and sweep harnesses use this to vary internal knobs
-  (`nb_rcts_to_try`, `wp_num_param_sets`, `tree_max_buckets`,
-  `tree_num_properties`, `tree_sample_fraction`, cost-model constants,
-  `entropy_mul_table`, AC-strategy gates, etc.) independently of the
-  bundled effort axis. `with_effort()` preserves the override across
-  effort-level changes. Marked `#[doc(hidden)]`; underlying
-  `EffortProfile` may grow fields between minor versions. Default API
+  "private — do not depend on this in production code." Default API
   surface is unchanged when the feature is off.
-- `EntropyMulTable` re-exported at crate root for symmetry with
-  `EffortProfile` (was reachable as `effort::EntropyMulTable` in 0.3.0).
-- New examples under `unstable-tuning-knobs`:
-  `lossless_pareto_calibrate` and `lossy_pareto_calibrate` (picker
-  training oracle harnesses; see imazen/jxl-encoder#24).
+- **Segmented expert surface**: `LossyInternalParams` and
+  `LosslessInternalParams` structs (gated `__expert`) replace the single
+  `EffortProfile` knob bag. Each carries `Option<T>` fields for the knobs
+  the corresponding encode mode actually reads, applied via
+  `LossyConfig::with_internal_params(LossyInternalParams)` and
+  `LosslessConfig::with_internal_params(LosslessInternalParams)`.
+  - **Why**: the type system enforces mode-correctness — lossy-only knobs
+    (AC strategy gates, CfL, cost-model constants) cannot be passed to
+    the lossless setter, and modular-only knobs (RCT search, WP scan,
+    tree-learning shape) cannot be passed to the lossy setter. Pickers
+    can train per-mode independently because the input space is
+    disjoint by construction. Matches the segmented `InternalParams`
+    pattern used in zenavif / zenwebp / zenravif.
+  - **`LossyInternalParams` fields** (13): `try_dct16`, `try_dct32`,
+    `try_dct64`, `try_dct4x8_afv`, `fine_grained_step`,
+    `k_info_loss_mul_base`, `entropy_mul_table`, `cfl_two_pass`,
+    `chromacity_adjustment`, `patch_ref_tree_learning`, `non_aligned_eval`,
+    `enhanced_clustering_vardct`, `k_ac_quant`.
+  - **`LosslessInternalParams` fields** (7): `nb_rcts_to_try`,
+    `wp_num_param_sets`, `tree_max_buckets`, `tree_num_properties`,
+    `tree_threshold_base`, `tree_sample_fraction`,
+    `tree_max_samples_fixed`.
+  - Both structs are `#[non_exhaustive]` and `Default`; field sets may
+    grow additively between minor versions. `with_effort()` preserves
+    the params across effort-level changes (the underlying
+    `EffortProfile` snapshot is retained).
+- `EntropyMulTable` re-exported at crate root (used by
+  `LossyInternalParams::entropy_mul_table`).
+- Examples (`lossless_pareto_calibrate` / `lossy_pareto_calibrate`)
+  rewired through the segmented surface; see imazen/jxl-encoder#24.
 - `effort_expert_tests` module gated on `__expert`: per-knob OAT
-  (one-at-a-time) coverage for the lossy and lossless override
-  surfaces, profile-builder coverage across `effort ∈ {1,4,7,10}` and
-  both encoder modes, override-roundtrip checks, and a
-  default-baseline byte-equivalence test asserting that an override
-  built from `EffortProfile::{lossy,lossless}(7, Reference)` produces
-  identical bytes to the no-override path. Pins the documented
-  limitation that `cfg`-owned fields (`lz77`, `lz77_method`,
-  `gaborish`, `patches`, `butteraugli_iters`, etc.) and modular-only
-  fields (`nb_rcts_to_try`, `wp_num_param_sets`, the `tree_*`
-  family) do not affect lossy bytes — VarDCT lossy emits its DC
-  frame with a fixed Gradient predictor.
+  (one-at-a-time) coverage for the lossy and lossless internal-params
+  surfaces, override-roundtrip checks, and default-baseline
+  byte-equivalence tests asserting that an all-`None`
+  `LossyInternalParams::default()` / `LosslessInternalParams::default()`
+  override produces byte-identical output to the no-override path at
+  the same effort + distance.
 
 ### Changed
 
+- **`EffortProfile` becomes an internal type** for back-compat. The
+  crate-root re-export is `#[doc(hidden)]`; existing callers continue
+  to compile, but new code should reach for `LossyInternalParams` /
+  `LosslessInternalParams` via the `with_internal_params` setters.
+- **Removed `with_effort_profile_override`** from both `LossyConfig`
+  and `LosslessConfig`. Replaced by the segmented
+  `with_internal_params(LossyInternalParams)` /
+  `with_internal_params(LosslessInternalParams)` setters. Never
+  published — `__expert` was renamed before any release shipped — so
+  no migration path is needed for external callers; internal harnesses
+  (calibrate examples) were rewired in the same change.
 - Expanded `EffortProfile` field-level theory docs: pipeline stage,
   override rationale, mechanism (with src/-relative line refs),
   and effort-level interaction now documented for the
