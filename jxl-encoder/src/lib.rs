@@ -47,13 +47,20 @@ pub use api::{
     LossyEncoder, Lz77Method, PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop,
     Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
 };
-// `EffortProfile` was re-exported at the crate root in 0.3.0, so we keep
-// it reachable for back-compat. `EntropyMulTable` was reachable as
-// `effort::EntropyMulTable` in 0.3.0; re-exporting it at the root is
-// additive. The sweep / picker entry point that *uses* these (the
-// `with_effort_profile_override` builder) is the part gated behind
-// `__expert`.
-pub use effort::{EffortProfile, EntropyMulTable};
+// `EffortProfile` was re-exported at the crate root in 0.3.0; it is now an
+// **internal** type that drives the encoder's effort-derived decisions.
+// The public picker / sweep escape hatch is the segmented
+// `LossyInternalParams` / `LosslessInternalParams` pair, applied via
+// `LossyConfig::with_internal_params` / `LosslessConfig::with_internal_params`
+// (gated behind `__expert`). `EntropyMulTable` remains reachable because
+// `LossyInternalParams::entropy_mul_table` carries it. The `EffortProfile`
+// re-export is `#[doc(hidden)]` to discourage new use; existing callers
+// that still reference it keep working.
+#[doc(hidden)]
+pub use effort::EffortProfile;
+pub use effort::EntropyMulTable;
+#[cfg(feature = "__expert")]
+pub use effort::{LosslessInternalParams, LossyInternalParams};
 pub use headers::color_encoding::{
     CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,
     TransferFunction, WhitePoint,

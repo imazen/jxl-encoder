@@ -1,6 +1,6 @@
 //! Pareto calibration sweep for the zenjxl lossy picker.
 //!
-//! Sweeps INDEPENDENT internal knobs via `LossyConfig::with_effort_profile_override`,
+//! Sweeps INDEPENDENT internal knobs via `LossyConfig::with_internal_params`,
 //! at single-shot quantization (butteraugli_iters = 0 always). The decision
 //! "should I run the butteraugli loop on this image?" is a separate-stage
 //! picker question; the underlying first-shot quantization tuning is what
@@ -30,8 +30,8 @@
 
 use butteraugli::{ButteraugliParams, butteraugli_linear};
 use imgref::Img;
-use jxl_encoder::EffortProfile;
-use jxl_encoder::api::{EncoderMode, LossyConfig, PixelLayout};
+use jxl_encoder::LossyInternalParams;
+use jxl_encoder::api::{LossyConfig, PixelLayout};
 use rayon::prelude::*;
 use rgb::RGB;
 use std::fs::OpenOptions;
@@ -346,57 +346,51 @@ fn srgb_pixels_to_arr3(rgb: &[u8]) -> Vec<[u8; 3]> {
 }
 
 // ---------------------------------------------------------------------
-// Encoder construction with custom EffortProfile
+// Encoder construction with custom LossyInternalParams
 // ---------------------------------------------------------------------
 
-/// Build a LossyConfig where the EffortProfile is customized per the row's
-/// scalar values + cell. Starts from e7 (sane midpoint), applies cell
-/// gates (AC strategy intensity, enhanced_clustering, gaborish, patches),
-/// and overrides the swept scalar fields. butteraugli_iters is forced to 0.
+/// Build a LossyConfig from the row's scalar values + cell, applying
+/// overrides via [`LossyInternalParams`]. Starts from `with_effort(7)`
+/// (sane midpoint), applies cell gates (AC strategy intensity,
+/// enhanced_clustering) through the segmented public surface, and overrides
+/// the swept scalar fields. `gaborish` / `patches` / `butteraugli_iters`
+/// ride on the existing per-knob public setters because they're not part
+/// of the internal-param surface.
 fn build_encoder(rc: &RowConfig) -> LossyConfig {
-    let mut profile = EffortProfile::lossy(7, EncoderMode::Reference);
+    // AC strategy intensity gate: bundles try_dct64 + fine_grained_step.
+    let (try_dct64, fine_grained_step) = match rc.cell.ac_intensity {
+        AcIntensity::Compact => (false, 2u8), // e7-style
+        AcIntensity::Full => (true, 1u8),     // e9-style
+    };
 
-    // Cell-level categorical overrides
-    match rc.cell.ac_intensity {
-        AcIntensity::Compact => {
-            profile.try_dct64 = false;
-            profile.fine_grained_step = 2;
-            profile.try_dct32 = true; // keep
-            profile.try_dct16 = true; // keep
-            profile.try_dct4x8_afv = true; // keep
-            profile.non_aligned_eval = true; // keep
-        }
-        AcIntensity::Full => {
-            profile.try_dct64 = true;
-            profile.fine_grained_step = 1;
-            profile.try_dct32 = true;
-            profile.try_dct16 = true;
-            profile.try_dct4x8_afv = true;
-            profile.non_aligned_eval = true;
-        }
-    }
-    profile.enhanced_clustering_vardct = rc.cell.enhanced_clustering;
-    profile.gaborish = rc.cell.gaborish;
-    profile.patches = rc.cell.patches;
-    // Single-shot (no butteraugli loop) per design.
-    profile.butteraugli_iters = 0;
+    let mut entropy_mul = jxl_encoder::EntropyMulTable::reference();
+    entropy_mul.dct8 = rc.entropy_mul_dct8;
 
-    // Scalar overrides
-    profile.k_info_loss_mul_base = rc.k_info_loss_mul;
-    profile.k_ac_quant = rc.k_ac_quant;
-    profile.entropy_mul_table.dct8 = rc.entropy_mul_dct8;
+    let params = LossyInternalParams {
+        try_dct64: Some(try_dct64),
+        fine_grained_step: Some(fine_grained_step),
+        try_dct32: Some(true),
+        try_dct16: Some(true),
+        try_dct4x8_afv: Some(true),
+        non_aligned_eval: Some(true),
+        enhanced_clustering_vardct: Some(rc.cell.enhanced_clustering),
+        k_info_loss_mul_base: Some(rc.k_info_loss_mul),
+        k_ac_quant: Some(rc.k_ac_quant),
+        entropy_mul_table: Some(entropy_mul),
+        ..Default::default()
+    };
 
-    let mut cfg = LossyConfig::new(rc.distance)
-        .with_effort_profile_override(profile)
-        .with_threads(1);
-    // Public setters take precedence — explicit gaborish/patches to keep
-    // consistent.
-    cfg = cfg
+    // Apply effort first so the internal-params builder snapshots the right
+    // effort-derived defaults before our overrides land. gaborish / patches /
+    // butteraugli_iters use per-knob public setters (not part of the
+    // internal-param surface). Single-shot quantization (iter=0) per design.
+    LossyConfig::new(rc.distance)
+        .with_effort(7)
+        .with_internal_params(params)
         .with_gaborish(rc.cell.gaborish)
-        .with_patches(rc.cell.patches);
-    // Force iter=0 explicitly via the public setter too.
-    cfg = cfg.with_butteraugli_iters(0);
-    cfg
+        .with_patches(rc.cell.patches)
+        .with_butteraugli_iters(0)
+        .with_threads(1)
 }
 
 fn decode_jxl_linear(bytes: &[u8]) -> Option<(usize, usize, Vec<f32>)> {

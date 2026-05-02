@@ -66,10 +66,13 @@ parallel = ["std", "dep:rayon"]
 # is downgraded from `forbid(unsafe_code)` to `deny(unsafe_code)` so that
 # individual functions can `#[allow(unsafe_code)]`.
 unsafe-performance = ["jxl_simd/unsafe-performance"]
-# Picker training / sweep escape hatch: exposes EffortProfile, EntropyMulTable,
-# LosslessConfig::with_effort_profile_override, LossyConfig::with_effort_profile_override.
-# These let callers replace every internal effort-derived knob in one shot.
-# Not stable; the EffortProfile struct fields may change between minor versions.
+# Picker training / sweep escape hatch: exposes the segmented
+# LossyInternalParams / LosslessInternalParams structs and the
+# LossyConfig::with_internal_params / LosslessConfig::with_internal_params
+# setters. The split mirrors the encoder's mode boundary so the type system
+# enforces mode-correctness (lossy-only knobs cannot be passed to the
+# lossless setter, and vice versa). Not stable; field sets may grow
+# additively between minor versions.
 __expert = []
 default = ["std", "butteraugli-loop"]
 

@@ -690,6 +690,252 @@ impl EffortProfile {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Public expert surface — segmented Lossy / Lossless internal-param structs
+// ─────────────────────────────────────────────────────────────────────────
+//
+// `LossyInternalParams` and `LosslessInternalParams` are the public picker /
+// sweep escape hatch (gated behind `__expert`). They split the internal
+// [`EffortProfile`] into two type-disjoint surfaces — one per encode mode —
+// so callers cannot accidentally hand the lossy encoder a knob that only
+// affects modular output, and vice-versa. The type system enforces
+// mode-correctness instead of relying on documentation.
+//
+// Each `Some(_)` field overrides the corresponding `EffortProfile` field
+// the lossy / lossless code path actually reads. Fields left at `None` keep
+// the (effort, mode)-derived default. This matches the segmented
+// `InternalParams` pattern used by zenavif / zenwebp / zenravif.
+
+/// Picker / sweep override knobs for the **lossy (VarDCT)** encode path.
+///
+/// Apply via [`crate::api::LossyConfig::with_internal_params`]. Fields are
+/// optional: `Some(value)` overrides the corresponding effort-derived
+/// default; `None` keeps the default. `#[non_exhaustive]` so additional
+/// knobs can land additively without a breaking change.
+///
+/// The fields here are the lossy-side knobs that flow through `profile.X`
+/// at lossy encode time (verified against `vardct/encoder.rs`,
+/// `vardct/ac_strategy_search.rs`, `vardct/transform.rs`,
+/// `vardct/precomputed.rs`, and `vardct/bitstream.rs`). Modular-only knobs
+/// (RCT search, WP parameter scan, tree-learning shape) live on
+/// [`LosslessInternalParams`] — VarDCT's DC frame uses a fixed Gradient
+/// predictor, so those knobs do not affect lossy bytes.
+#[cfg(feature = "__expert")]
+#[non_exhaustive]
+#[derive(Default, Clone, Debug)]
+pub struct LossyInternalParams {
+    /// Try DCT16x16 / DCT16x8 / DCT8x16 transforms in AC strategy search.
+    /// Default at effort 7: `true`. Disabling forces no 16×16-class merges.
+    pub try_dct16: Option<bool>,
+
+    /// Try DCT32x32 / DCT32x16 / DCT16x32 transforms.
+    /// Default at effort 7: `true`. Disabling forces no 32×32-class merges.
+    pub try_dct32: Option<bool>,
+
+    /// Try DCT64x64 / DCT64x32 / DCT32x64 transforms.
+    /// Default at effort 7: `true`. Disabling forces no 64×64-class merges.
+    pub try_dct64: Option<bool>,
+
+    /// Try DCT4x8 / DCT8x4 / DCT4x4 / AFV transforms.
+    /// Default at effort 6+: `true`. Disabling forces 8×8-or-larger only.
+    pub try_dct4x8_afv: Option<bool>,
+
+    /// Step size for fine-grained AC strategy search on 32×32+ blocks.
+    /// `1` evaluates every position (effort 9+), `2` every other (default).
+    pub fine_grained_step: Option<u8>,
+
+    /// Base multiplier on the IDCT-domain (pixel-domain) error term in
+    /// `EstimateEntropy`. Reference: 1.2 (libjxl). Experimental: 1.3
+    /// (PR #4506). Higher values weight visible artifacts more heavily
+    /// vs coefficient-domain entropy.
+    pub k_info_loss_mul_base: Option<f32>,
+
+    /// Per-strategy entropy multipliers for AC strategy cost model.
+    /// Controls relative preference for each transform type.
+    pub entropy_mul_table: Option<EntropyMulTable>,
+
+    /// Recompute CfL map after initial quantization for better estimates.
+    /// Default at effort 7+: `true`.
+    pub cfl_two_pass: Option<bool>,
+
+    /// Apply pixel-level chromacity adjustments. Default at effort 7+:
+    /// `true`. Disabling skips per-pixel chromacity nudges.
+    pub chromacity_adjustment: Option<bool>,
+
+    /// Use tree learning for patch reference frame encoding instead of the
+    /// fixed Gradient predictor. Reference: `false`. Experimental at
+    /// effort 7+: `true`. Significant on screenshots / packed glyph patches.
+    pub patch_ref_tree_learning: Option<bool>,
+
+    /// Enable non-aligned evaluation pass (odd-aligned 16×16 regions) in
+    /// AC strategy search. Default at effort 6+: `true`. Disabling halves
+    /// the search depth.
+    pub non_aligned_eval: Option<bool>,
+
+    /// Use pair-merge clustering for VarDCT entropy codes. Reference at
+    /// effort 9+: `true`; experimental at effort 7+: `true`. When `false`,
+    /// uses fast k-means-only clustering (cheaper, slightly larger codes).
+    pub enhanced_clustering_vardct: Option<bool>,
+
+    /// Quantization-cost constant used when materializing the initial
+    /// quant field (libjxl 0.765, `enc_adaptive_quantization.cc`). Lower
+    /// values produce a coarser initial field (less rate, more distortion);
+    /// higher values refine.
+    pub k_ac_quant: Option<f32>,
+}
+
+/// Picker / sweep override knobs for the **lossless (modular)** encode path.
+///
+/// Apply via [`crate::api::LosslessConfig::with_internal_params`]. Fields
+/// are optional: `Some(value)` overrides the corresponding effort-derived
+/// default; `None` keeps the default. `#[non_exhaustive]` so additional
+/// knobs can land additively without a breaking change.
+///
+/// The fields here are the modular-path knobs that flow through `profile.X`
+/// in `modular/encode.rs`, `modular/frame.rs`, `modular/section.rs`,
+/// `modular/predictor.rs`, and `modular/tree_learn.rs`. AC-strategy and
+/// CfL knobs live on [`LossyInternalParams`].
+#[cfg(feature = "__expert")]
+#[non_exhaustive]
+#[derive(Default, Clone, Debug)]
+pub struct LosslessInternalParams {
+    /// Number of Reversible Color Transform variants to evaluate before
+    /// committing (0 = skip search, use YCoCg unconditionally).
+    /// Effort interaction: 0 at e<5, 4 at e5, 5 at e6, 7 at e7, 9 at e8,
+    /// 19 at e9+ (libjxl `kSquirrel`/`kKitten`/`kTortoise` schedule).
+    pub nb_rcts_to_try: Option<u8>,
+
+    /// Number of weighted-predictor parameter sets to try per WP-eligible
+    /// channel (0 = use libjxl defaults without searching).
+    /// Effort interaction: 0 at e<8, 2 at e8, 5 at e9+.
+    pub wp_num_param_sets: Option<u8>,
+
+    /// Maximum quantization buckets per property when building the
+    /// histogram for tree splits.
+    /// Effort interaction: 32 at e<=4, 48 at e5, 64 at e6, 96 at e7,
+    /// 128 at e8, 256 at e9+. Higher = finer thresholds at higher cost.
+    pub tree_max_buckets: Option<u16>,
+
+    /// Number of MA-tree decision properties to evaluate per split.
+    /// Effort interaction: 3 at e<=4, 4 at e5, 5 at e6, 7 at e7, 10 at e8,
+    /// 16 at e9+.
+    pub tree_num_properties: Option<u8>,
+
+    /// Base entropy-cost threshold a candidate split must beat to be
+    /// accepted (libjxl `75 + 14 * speed_tier`). Lower = more splits =
+    /// larger tree.
+    pub tree_threshold_base: Option<f32>,
+
+    /// Fraction of total pixels to sample for tree learning (when
+    /// `tree_max_samples_fixed` is `0`). Floor of 65,536 samples.
+    /// Effort interaction: 0.15 at e<=4 ramping to 0.65 at e9+
+    /// (libjxl PR #4236).
+    pub tree_sample_fraction: Option<f32>,
+
+    /// Hard cap on samples drawn for tree learning when set; `0` defers
+    /// to [`Self::tree_sample_fraction`].
+    /// Effort interaction: 65,000 at e<=4, 0 at e>=5.
+    pub tree_max_samples_fixed: Option<u32>,
+}
+
+#[cfg(feature = "__expert")]
+impl LossyInternalParams {
+    /// Apply each `Some(_)` field on top of `profile`.
+    pub(crate) fn apply_to(self, profile: &mut EffortProfile) {
+        let LossyInternalParams {
+            try_dct16,
+            try_dct32,
+            try_dct64,
+            try_dct4x8_afv,
+            fine_grained_step,
+            k_info_loss_mul_base,
+            entropy_mul_table,
+            cfl_two_pass,
+            chromacity_adjustment,
+            patch_ref_tree_learning,
+            non_aligned_eval,
+            enhanced_clustering_vardct,
+            k_ac_quant,
+        } = self;
+        if let Some(v) = try_dct16 {
+            profile.try_dct16 = v;
+        }
+        if let Some(v) = try_dct32 {
+            profile.try_dct32 = v;
+        }
+        if let Some(v) = try_dct64 {
+            profile.try_dct64 = v;
+        }
+        if let Some(v) = try_dct4x8_afv {
+            profile.try_dct4x8_afv = v;
+        }
+        if let Some(v) = fine_grained_step {
+            profile.fine_grained_step = v;
+        }
+        if let Some(v) = k_info_loss_mul_base {
+            profile.k_info_loss_mul_base = v;
+        }
+        if let Some(v) = entropy_mul_table {
+            profile.entropy_mul_table = v;
+        }
+        if let Some(v) = cfl_two_pass {
+            profile.cfl_two_pass = v;
+        }
+        if let Some(v) = chromacity_adjustment {
+            profile.chromacity_adjustment = v;
+        }
+        if let Some(v) = patch_ref_tree_learning {
+            profile.patch_ref_tree_learning = v;
+        }
+        if let Some(v) = non_aligned_eval {
+            profile.non_aligned_eval = v;
+        }
+        if let Some(v) = enhanced_clustering_vardct {
+            profile.enhanced_clustering_vardct = v;
+        }
+        if let Some(v) = k_ac_quant {
+            profile.k_ac_quant = v;
+        }
+    }
+}
+
+#[cfg(feature = "__expert")]
+impl LosslessInternalParams {
+    /// Apply each `Some(_)` field on top of `profile`.
+    pub(crate) fn apply_to(self, profile: &mut EffortProfile) {
+        let LosslessInternalParams {
+            nb_rcts_to_try,
+            wp_num_param_sets,
+            tree_max_buckets,
+            tree_num_properties,
+            tree_threshold_base,
+            tree_sample_fraction,
+            tree_max_samples_fixed,
+        } = self;
+        if let Some(v) = nb_rcts_to_try {
+            profile.nb_rcts_to_try = v;
+        }
+        if let Some(v) = wp_num_param_sets {
+            profile.wp_num_param_sets = v;
+        }
+        if let Some(v) = tree_max_buckets {
+            profile.tree_max_buckets = v;
+        }
+        if let Some(v) = tree_num_properties {
+            profile.tree_num_properties = v;
+        }
+        if let Some(v) = tree_threshold_base {
+            profile.tree_threshold_base = v;
+        }
+        if let Some(v) = tree_sample_fraction {
+            profile.tree_sample_fraction = v;
+        }
+        if let Some(v) = tree_max_samples_fixed {
+            profile.tree_max_samples_fixed = v;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
