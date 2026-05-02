@@ -66,7 +66,7 @@ unsafe-performance = ["jxl_simd/unsafe-performance"]
 # LosslessConfig::with_effort_profile_override, LossyConfig::with_effort_profile_override.
 # These let callers replace every internal effort-derived knob in one shot.
 # Not stable; the EffortProfile struct fields may change between minor versions.
-unstable-tuning-knobs = []
+__expert = []
 default = ["std", "butteraugli-loop"]
 
 [dev-dependencies]
@@ -99,12 +99,12 @@ fastrand = "2.4.1"
 [[example]]
 name = "lossless_pareto_calibrate"
 path = "examples/lossless_pareto_calibrate.rs"
-required-features = ["std", "parallel", "unstable-tuning-knobs"]
+required-features = ["std", "parallel", "__expert"]
 
 [[example]]
 name = "lossy_pareto_calibrate"
 path = "examples/lossy_pareto_calibrate.rs"
-required-features = ["std", "parallel", "butteraugli-loop", "unstable-tuning-knobs"]
+required-features = ["std", "parallel", "butteraugli-loop", "__expert"]
 
 [lints]
 workspace = true

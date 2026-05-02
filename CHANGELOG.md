@@ -15,8 +15,11 @@
 
 ### Added
 
-- Picker / sweep escape hatch behind new `unstable-tuning-knobs` cargo
-  feature (eebd561, 6bdab0b, 25bb80f and follow-up). When enabled,
+- Picker / sweep escape hatch behind new `__expert` cargo feature
+  (eebd561, 6bdab0b, 25bb80f and follow-up; renamed from
+  `unstable-tuning-knobs` for cross-codec consistency with
+  zenavif/zenwebp/zenravif). The double-underscore prefix signals
+  "private — do not depend on this in production code." When enabled,
   exposes `LosslessConfig::with_effort_profile_override(EffortProfile)`
   and `LossyConfig::with_effort_profile_override(EffortProfile)`. Picker
   training and sweep harnesses use this to vary internal knobs

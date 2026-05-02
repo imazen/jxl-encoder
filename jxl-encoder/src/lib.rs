@@ -21,7 +21,7 @@ pub mod debug_rect;
 // backwards-compatibility with 0.3.0 (which re-exported `EffortProfile`
 // at the crate root). The actual sweep / picker escape-hatch entry point
 // (`LosslessConfig::with_effort_profile_override` / its lossy twin) is
-// gated behind the `unstable-tuning-knobs` feature.
+// gated behind the `__expert` feature.
 pub mod effort;
 pub mod entropy_coding;
 pub mod error;
@@ -52,7 +52,7 @@ pub use api::{
 // `effort::EntropyMulTable` in 0.3.0; re-exporting it at the root is
 // additive. The sweep / picker entry point that *uses* these (the
 // `with_effort_profile_override` builder) is the part gated behind
-// `unstable-tuning-knobs`.
+// `__expert`.
 pub use effort::{EffortProfile, EntropyMulTable};
 pub use headers::color_encoding::{
     CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,

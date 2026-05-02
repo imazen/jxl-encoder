@@ -713,10 +713,10 @@ impl LosslessConfig {
     /// (`with_lz77_method`, `with_squeeze`, …) called after this still take
     /// precedence on the few knobs they cover.
     ///
-    /// **Requires the `unstable-tuning-knobs` cargo feature.**
+    /// **Requires the `__expert` cargo feature.**
     /// Not stable; the underlying `EffortProfile` struct may grow fields
     /// between minor versions.
-    #[cfg(feature = "unstable-tuning-knobs")]
+    #[cfg(feature = "__expert")]
     #[doc(hidden)]
     pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
         self.profile_override = Some(profile);
@@ -1104,10 +1104,10 @@ impl LossyConfig {
     /// (`with_butteraugli_iters`, `with_gaborish`, …) called after this still
     /// take precedence on the few knobs they cover.
     ///
-    /// **Requires the `unstable-tuning-knobs` cargo feature.**
+    /// **Requires the `__expert` cargo feature.**
     /// Not stable; the underlying `EffortProfile` struct may grow fields
     /// between minor versions.
-    #[cfg(feature = "unstable-tuning-knobs")]
+    #[cfg(feature = "__expert")]
     #[doc(hidden)]
     pub fn with_effort_profile_override(mut self, profile: crate::effort::EffortProfile) -> Self {
         self.profile_override = Some(profile);
@@ -4526,10 +4526,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Effort profile override (unstable-tuning-knobs)
+    // Effort profile override (__expert)
     // -----------------------------------------------------------------
 
-    #[cfg(feature = "unstable-tuning-knobs")]
+    #[cfg(feature = "__expert")]
     mod profile_override {
         use super::*;
 
