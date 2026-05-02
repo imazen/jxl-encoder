@@ -61,6 +61,21 @@
   `LossyInternalParams::default()` / `LosslessInternalParams::default()`
   override produces byte-identical output to the no-override path at
   the same effort + distance.
+- `validate()` methods on `LossyConfig`, `LosslessConfig`, and (gated
+  `__expert`) `LossyInternalParams` / `LosslessInternalParams`. Returns
+  `Result<(), ValidationError>` with one variant per failure mode
+  (`DistanceOutOfRange`, `EffortOutOfRange`, `IterCountOutOfRange`,
+  `QualityLoopMutuallyExclusive`, `FineGrainedStepOutOfRange`,
+  `KInfoLossMulBaseInvalid`, `KAcQuantInvalid`, `NbRctsToTryOutOfRange`,
+  `WpNumParamSetsOutOfRange`, `TreeMaxBucketsZero`,
+  `TreeNumPropertiesOutOfRange`, `TreeThresholdBaseInvalid`,
+  `TreeSampleFractionOutOfRange`, …). `ValidationError` is
+  `#[non_exhaustive]`. Existing encode paths still clamp out-of-range
+  values; `validate()` is opt-in for batch jobs that prefer fail-fast
+  over silent coercion. Cross-param: catches stacking of butteraugli /
+  ssim2 / zensim quality loops (mutually exclusive). New `validation`
+  module + 37-test coverage matrix (one test per error variant + happy
+  paths + cross-param).
 
 ### Changed
 

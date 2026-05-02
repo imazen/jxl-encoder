@@ -880,6 +880,13 @@ impl LosslessConfig {
         self.threads
     }
 
+    /// Borrow the resolved `EffortProfile` override, if any. Internal hook
+    /// used by [`crate::validation`].
+    #[cfg(feature = "__expert")]
+    pub(crate) fn profile_override_ref(&self) -> Option<&crate::effort::EffortProfile> {
+        self.profile_override.as_ref()
+    }
+
     // ── Request / fluent encode ─────────────────────────────────────
 
     /// Create an encode request for an image with this config.
@@ -1424,6 +1431,25 @@ impl LossyConfig {
     #[cfg(feature = "butteraugli-loop")]
     pub fn butteraugli_iters(&self) -> u32 {
         self.butteraugli_iters
+    }
+
+    /// SSIM2 quantization loop iterations (internal accessor for validation).
+    #[cfg(feature = "ssim2-loop")]
+    pub(crate) fn ssim2_iters_value(&self) -> u32 {
+        self.ssim2_iters
+    }
+
+    /// zensim quantization loop iterations (internal accessor for validation).
+    #[cfg(feature = "zensim-loop")]
+    pub(crate) fn zensim_iters_value(&self) -> u32 {
+        self.zensim_iters
+    }
+
+    /// Borrow the resolved `EffortProfile` override, if any. Internal hook
+    /// used by [`crate::validation`].
+    #[cfg(feature = "__expert")]
+    pub(crate) fn profile_override_ref(&self) -> Option<&crate::effort::EffortProfile> {
+        self.profile_override.as_ref()
     }
 
     /// Thread count (0 = auto, 1 = sequential).

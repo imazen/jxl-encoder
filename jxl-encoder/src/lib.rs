@@ -35,6 +35,9 @@ pub mod jpeg;
 pub mod modular;
 pub(crate) mod parallel;
 pub mod trace;
+pub mod validation;
+#[cfg(test)]
+mod validation_tests;
 pub mod vardct;
 
 #[cfg(feature = "convenience")]
@@ -65,6 +68,7 @@ pub use headers::color_encoding::{
     CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,
     TransferFunction, WhitePoint,
 };
+pub use validation::ValidationError;
 pub use vardct::splines::{Spline, SplinePoint};
 
 #[cfg(feature = "convenience")]
