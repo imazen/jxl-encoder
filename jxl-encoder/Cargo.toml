@@ -60,12 +60,6 @@ zensim-loop = ["dep:zensim"]
 convenience = ["dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
 parallel = ["std", "dep:rayon"]
-# Use MaybeUninit for hot-path temporary buffers instead of zero-initialization.
-# Eliminates ~584M memset writes (24.7% of total data writes) at the cost of
-# requiring `unsafe` in a few carefully audited locations. The crate-level lint
-# is downgraded from `forbid(unsafe_code)` to `deny(unsafe_code)` so that
-# individual functions can `#[allow(unsafe_code)]`.
-unsafe-performance = ["jxl_simd/unsafe-performance"]
 # Picker training / sweep escape hatch: exposes the segmented
 # LossyInternalParams / LosslessInternalParams structs and the
 # LossyConfig::with_internal_params / LosslessConfig::with_internal_params
