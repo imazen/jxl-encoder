@@ -1679,23 +1679,9 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn validate_pixels(&self, pixels: &[u8]) -> core::result::Result<(), EncodeError> {
+        validate_dims(self.width, self.height)?;
         let w = self.width as usize;
         let h = self.height as usize;
-        if w == 0 || h == 0 {
-            return Err(EncodeError::InvalidInput {
-                message: format!("zero dimensions: {w}x{h}"),
-            });
-        }
-        // JXL spec limits each dimension to 2^30.
-        const MAX_JXL_DIM: u32 = 1 << 30;
-        if self.width > MAX_JXL_DIM || self.height > MAX_JXL_DIM {
-            return Err(EncodeError::LimitExceeded {
-                message: format!(
-                    "image {}x{} exceeds JXL spec maximum of {MAX_JXL_DIM} per dimension",
-                    self.width, self.height
-                ),
-            });
-        }
         let expected = w
             .checked_mul(h)
             .and_then(|n| n.checked_mul(self.layout.bytes_per_pixel()));
@@ -2612,6 +2598,56 @@ impl LossyEncoder {
     }
 }
 
+/// JXL spec maximum dimension (2^30) per axis.
+///
+/// Both width and height must be `<= MAX_JXL_DIM`. This is enforced on every
+/// encode entry point (one-shot, streaming, animation) so that the file header
+/// `write_size_u2s` (30-bit field) cannot silently truncate caller-supplied
+/// dimensions and produce a bitstream whose declared dimensions disagree with
+/// the encoded data.
+const MAX_JXL_DIM: u32 = 1 << 30;
+
+/// Internal scale headroom factor used by working-buffer overflow checks
+/// (matches the one-shot `validate_pixels` 16x factor).
+const MAX_INTERNAL_SCALE: usize = 16;
+
+/// Validate `(width, height)` against the JXL spec ceiling and `usize`
+/// working-buffer overflow.
+///
+/// Shared by `validate_pixels` (one-shot), `LossyConfig::encoder` /
+/// `LosslessConfig::encoder` (streaming), and `validate_animation_input`.
+/// Without this check the streaming entry points silently accepted
+/// `width = u32::MAX`, which `write_size_u2s` would then truncate to 30 bits,
+/// emitting a header whose declared width does not match the encoded data.
+fn validate_dims(width: u32, height: u32) -> core::result::Result<(), EncodeError> {
+    if width == 0 || height == 0 {
+        return Err(EncodeError::InvalidInput {
+            message: format!("zero dimensions: {width}x{height}"),
+        });
+    }
+    if width > MAX_JXL_DIM || height > MAX_JXL_DIM {
+        return Err(EncodeError::LimitExceeded {
+            message: format!(
+                "image {width}x{height} exceeds JXL spec maximum of {MAX_JXL_DIM} per dimension",
+            ),
+        });
+    }
+    let w = width as usize;
+    let h = height as usize;
+    if w
+        .checked_mul(h)
+        .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
+        .is_none()
+    {
+        return Err(EncodeError::LimitExceeded {
+            message: format!(
+                "image dimensions {width}x{height} overflow internal working-buffer sizing",
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl LossyConfig {
     /// Create a streaming encoder for incremental row input.
     ///
@@ -2620,11 +2656,7 @@ impl LossyConfig {
     /// incrementally rather than materializing the entire image.
     #[track_caller]
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LossyEncoder> {
-        if width == 0 || height == 0 {
-            return Err(at(EncodeError::InvalidInput {
-                message: format!("zero dimensions: {width}x{height}"),
-            }));
-        }
+        validate_dims(width, height).map_err(at)?;
         let w = width as usize;
         let h = height as usize;
         let rgb_capacity = w.checked_mul(h).and_then(|n| n.checked_mul(3));
@@ -3149,11 +3181,7 @@ impl LosslessConfig {
     pub fn encoder(&self, width: u32, height: u32, layout: PixelLayout) -> Result<LosslessEncoder> {
         use crate::modular::channel::Channel;
 
-        if width == 0 || height == 0 {
-            return Err(at(EncodeError::InvalidInput {
-                message: format!("zero dimensions: {width}x{height}"),
-            }));
-        }
+        validate_dims(width, height).map_err(at)?;
 
         let w = width as usize;
         let h = height as usize;
@@ -3234,11 +3262,7 @@ fn validate_animation_input(
     layout: PixelLayout,
     frames: &[AnimationFrame<'_>],
 ) -> core::result::Result<(), EncodeError> {
-    if width == 0 || height == 0 {
-        return Err(EncodeError::InvalidInput {
-            message: format!("zero dimensions: {width}x{height}"),
-        });
-    }
+    validate_dims(width, height)?;
     if frames.is_empty() {
         return Err(EncodeError::InvalidInput {
             message: "animation requires at least one frame".into(),
