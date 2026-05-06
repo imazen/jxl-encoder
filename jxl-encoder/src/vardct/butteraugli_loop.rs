@@ -369,6 +369,25 @@ impl VarDctEncoder {
                     // bypasses the clamps below (every NaN comparison is
                     // false), leaking non-finite quant_field values into
                     // downstream `f32 as i32` casts.
+                    //
+                    // butteraugli's ButteraugliReference is supposed to
+                    // produce finite per-tile distances on legitimate
+                    // input. A `debug_assert` catches any test regression
+                    // where the upstream returns NaN; release builds
+                    // continue with the fallback to keep DoS protection
+                    // intact.
+                    debug_assert!(
+                        tile_dist[bi].is_finite(),
+                        "butteraugli loop: non-finite tile_dist[{bi}] = {} \
+                         (upstream butteraugli should never produce non-finite)",
+                        tile_dist[bi]
+                    );
+                    debug_assert!(
+                        quant_field_float[bi].is_finite(),
+                        "butteraugli loop: non-finite quant_field_float[{bi}] = {} \
+                         (clamps should keep this finite every iter)",
+                        quant_field_float[bi]
+                    );
                     let td = if tile_dist[bi].is_finite() {
                         tile_dist[bi]
                     } else {
@@ -402,6 +421,16 @@ impl VarDctEncoder {
             } else {
                 // Adjust both directions (libjxl enc_adaptive_quantization.cc:1087-1110)
                 for bi in 0..num_blocks {
+                    debug_assert!(
+                        tile_dist[bi].is_finite(),
+                        "butteraugli loop: non-finite tile_dist[{bi}] = {}",
+                        tile_dist[bi]
+                    );
+                    debug_assert!(
+                        quant_field_float[bi].is_finite(),
+                        "butteraugli loop: non-finite quant_field_float[{bi}] = {}",
+                        quant_field_float[bi]
+                    );
                     let td = if tile_dist[bi].is_finite() {
                         tile_dist[bi]
                     } else {

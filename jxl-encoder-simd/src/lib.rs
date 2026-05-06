@@ -274,6 +274,7 @@ mod mask1x1;
 mod noise;
 mod pixel_loss;
 mod quantize;
+mod sanitize;
 mod transpose;
 mod xyb;
 
@@ -316,6 +317,7 @@ pub use mask1x1::compute_mask1x1;
 pub use noise::denoise_channel;
 pub use pixel_loss::pixel_domain_loss;
 pub use quantize::{quantize_block_dct8, quantize_block_large};
+pub use sanitize::sanitize_finite;
 pub use transpose::transpose_8x8;
 pub use xyb::{linear_rgb_to_xyb_batch, xyb_to_linear_rgb_batch, xyb_to_linear_rgb_planar};
 
@@ -346,6 +348,7 @@ pub use mask1x1::compute_mask1x1_scalar;
 pub use noise::denoise_channel_scalar;
 pub use pixel_loss::pixel_domain_loss_scalar;
 pub use quantize::{quantize_dct8_scalar, quantize_large_scalar};
+pub use sanitize::sanitize_finite_scalar;
 // transpose has no separate scalar — the dispatching fn IS the scalar fallback
 pub use xyb::{forward_xyb_scalar, inverse_xyb_planar_scalar, inverse_xyb_scalar};
 
@@ -397,6 +400,8 @@ pub use pixel_loss::pixel_domain_loss_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use quantize::{quantize_dct8_avx2, quantize_large_avx2};
 #[cfg(target_arch = "x86_64")]
+pub use sanitize::sanitize_finite_avx2;
+#[cfg(target_arch = "x86_64")]
 pub use transpose::transpose_8x8_avx2;
 #[cfg(target_arch = "x86_64")]
 pub use xyb::{forward_xyb_avx2, inverse_xyb_avx2, inverse_xyb_planar_avx2};
@@ -433,6 +438,8 @@ pub use noise::denoise_channel_neon;
 pub use pixel_loss::pixel_domain_loss_neon;
 #[cfg(target_arch = "aarch64")]
 pub use quantize::{quantize_dct8_neon, quantize_large_neon};
+#[cfg(target_arch = "aarch64")]
+pub use sanitize::sanitize_finite_neon;
 #[cfg(target_arch = "aarch64")]
 pub use transpose::transpose_8x8_neon;
 #[cfg(target_arch = "aarch64")]

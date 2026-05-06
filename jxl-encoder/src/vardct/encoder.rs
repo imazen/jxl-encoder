@@ -36,17 +36,20 @@ pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
 /// observed in production sweeps.
 ///
 /// Legitimate inputs *can* produce non-finite XYB values (e.g.,
-/// all-zero RGB → log(0) = -Inf in the XYB opsin transform). This is
-/// not a bug; it's a numerical edge case the rest of the encoder
-/// handled by accident-bypass before NaN propagation became visible.
-/// Replace with 0.0 (mid-gray, valid XYB origin); a tiny number of
-/// non-finite values per encode is expected on degenerate input.
-fn sanitize_xyb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
-    for v in x.iter_mut().chain(y.iter_mut()).chain(b.iter_mut()) {
-        if !v.is_finite() {
-            *v = 0.0;
-        }
-    }
+/// all-zero RGB → log(0) = -Inf in the XYB opsin transform). The
+/// replacement to 0.0 (mid-gray, valid XYB origin) is correct for that
+/// case, so this function never fails or panics in release. Returns
+/// `true` if any replacement occurred — callers in tests can assert
+/// `false` against synthetic-content invariants to catch upstream
+/// regressions.
+///
+/// Backed by the SIMD `sanitize_finite` kernel in jxl-encoder-simd
+/// (see `sanitize.rs` for the `(v * 0).simd_eq(0)` finite-mask trick).
+fn sanitize_xyb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) -> bool {
+    let rx = jxl_simd::sanitize_finite(x);
+    let ry = jxl_simd::sanitize_finite(y);
+    let rb = jxl_simd::sanitize_finite(b);
+    rx | ry | rb
 }
 
 /// Output of a VarDCT encode operation.
@@ -394,7 +397,21 @@ impl VarDctEncoder {
         // 0x40000000-prefix corruption pattern. Replacing non-finite with
         // 0.0 is correctness-safe (XYB 0.0 is a valid mid-gray) and
         // bounded.
-        sanitize_xyb_planes(&mut xyb_x, &mut xyb_y, &mut xyb_b);
+        let _xyb_had_nonfinite = sanitize_xyb_planes(&mut xyb_x, &mut xyb_y, &mut xyb_b);
+        // The scalar fallback in `sanitize_finite` will catch any tail bytes;
+        // legitimate input can produce non-finite XYB (e.g. all-zero RGB →
+        // log(0) = -Inf), so we don't assert against `_xyb_had_nonfinite`
+        // here. Tests that exercise non-degenerate content can `debug_assert`
+        // on the encoder's behavior end-to-end via the patches/lz77 OOB
+        // regression suites — those would re-trip if the upstream invariant
+        // breaks again.
+        #[cfg(feature = "debug-tokens")]
+        if _xyb_had_nonfinite {
+            eprintln!(
+                "sanitize_xyb_planes: replaced non-finite values \
+                 (degenerate input — see vardct/encoder.rs:48)"
+            );
+        }
 
         // Estimate noise parameters (if enabled).
         // The decoder adds noise during rendering; the encoder just encodes the params.

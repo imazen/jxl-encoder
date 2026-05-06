@@ -124,26 +124,19 @@ impl From<enough::StopReason> for EncodeError {
 /// production-safe error tracking without debuginfo or backtraces.
 pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 
-// ── Public limit constants ──────────────────────────────────────────────────
+// ── Limit aliases ──────────────────────────────────────────────────────────
 
-/// Maximum iterations for any quantization-loop knob (butteraugli, ssim2,
-/// zensim). Each iteration runs a full perceptual-metric pass over the image
-/// and is *expensive* — capping this prevents a malicious caller from passing
-/// `u32::MAX` and DoS-ing the encoder. At default usage the encoder picks
-/// 0–4 iterations based on effort.
-///
-/// Matches [`crate::validation::ITER_MAX`] so callers see consistent
-/// behavior whether they validate the config explicitly or rely on the
-/// encoder's automatic clamping.
-pub const MAX_QUANT_LOOP_ITERS: u32 = crate::validation::ITER_MAX;
+/// Hard upper bound for quantization-loop iterations. Alias of
+/// [`Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`] — preserved for callers that
+/// referenced the bare const before per-encode limits became
+/// configurable. Prefer setting [`Limits::with_max_quant_loop_iters`]
+/// (or letting the default apply) over hard-coding this constant.
+pub const MAX_QUANT_LOOP_ITERS: u32 = Limits::DEFAULT_MAX_QUANT_LOOP_ITERS;
 
-/// Default soft cap on encoder working-set memory when the caller passes no
-/// explicit [`Limits`]. Computed conservatively as ~40 bytes/pixel
-/// (XYB f32, quant fields, strategy maps, entropy buffers). Encoders that
-/// expect larger workloads should set [`Limits::max_memory_bytes`]
-/// explicitly. Encoders embedded in real-time image proxies should keep
-/// this bounded — see [`Limits`].
-pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Default soft cap on encoder working-set memory when no explicit
+/// [`Limits::max_memory_bytes`] is set. Alias of
+/// [`Limits::DEFAULT_MAX_MEMORY_BYTES`].
+pub const DEFAULT_MAX_MEMORY_BYTES: u64 = Limits::DEFAULT_MAX_MEMORY_BYTES;
 
 // ── EncodeResult / EncodeStats ──────────────────────────────────────────────
 
@@ -580,15 +573,51 @@ impl<'a> ImageMetadata<'a> {
 }
 
 /// Resource limits for encoding.
+///
+/// Every field is `Option<…>`; `None` means "unlimited" (or "use the
+/// validator-side default", for fields that have one). Callers wire a
+/// [`Limits`] onto an [`EncodeRequest`] via
+/// [`EncodeRequest::with_limits`]; the encoder consults it before any
+/// dimension-driven allocation and before each per-encode CPU budget
+/// check.
+///
+/// Two policy fields are intentionally NOT bare `pub const`s:
+///
+/// - [`Self::max_quant_loop_iters`] — the cap on
+///   butteraugli/ssim2/zensim quantization-loop iterations. The
+///   validator's hard upper bound is [`Self::DEFAULT_MAX_QUANT_LOOP_ITERS`]
+///   (= [`crate::validation::ITER_MAX`]); a caller may set a lower limit
+///   here, but never a higher one. The encoder saturates at the lower of
+///   `Limits.max_quant_loop_iters` (or its default) and the validator
+///   max.
+/// - [`Self::max_memory_bytes`] — when `None`, the encoder applies
+///   [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 2 GB) as a soft cap so that an
+///   image proxy without explicit `Limits` configuration still has a
+///   working-set ceiling. Set to `Some(u64::MAX)` to opt out of the soft
+///   cap explicitly (this surfaces in logs as "user explicitly disabled
+///   memory limit").
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
     max_width: Option<u64>,
     max_height: Option<u64>,
     max_pixels: Option<u64>,
     max_memory_bytes: Option<u64>,
+    max_quant_loop_iters: Option<u32>,
 }
 
 impl Limits {
+    /// Hard upper bound for quantization-loop iterations. Mirrors
+    /// [`crate::validation::ITER_MAX`] so the validator and the encoder
+    /// agree on what counts as "too many iters".
+    pub const DEFAULT_MAX_QUANT_LOOP_ITERS: u32 = crate::validation::ITER_MAX;
+
+    /// Default soft cap on encoder working-set memory when no explicit
+    /// `max_memory_bytes` is set. ~40 bytes/pixel × 50 megapixels is
+    /// roughly 2 GB; encoders embedded in real-time image proxies should
+    /// keep this bounded — set a tighter cap explicitly via
+    /// [`Self::with_max_memory_bytes`] for hostile-input scenarios.
+    pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
     /// Create limits with no restrictions (all `None`).
     pub fn new() -> Self {
         Self::default()
@@ -613,8 +642,23 @@ impl Limits {
     }
 
     /// Set maximum memory bytes the encoder may allocate.
+    ///
+    /// When unset, the encoder applies
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as a soft cap. Pass
+    /// `u64::MAX` explicitly to disable the cap (with the understanding
+    /// that an unbounded working set on a hostile input can OOM the
+    /// process).
     pub fn with_max_memory_bytes(mut self, bytes: u64) -> Self {
         self.max_memory_bytes = Some(bytes);
+        self
+    }
+
+    /// Set maximum quantization-loop iterations (butteraugli / ssim2 /
+    /// zensim). Saturated at [`Self::DEFAULT_MAX_QUANT_LOOP_ITERS`] —
+    /// passing a higher value silently lowers it to the validator-side
+    /// hard limit. Use a lower value to bound CPU on untrusted callers.
+    pub fn with_max_quant_loop_iters(mut self, n: u32) -> Self {
+        self.max_quant_loop_iters = Some(n.min(Self::DEFAULT_MAX_QUANT_LOOP_ITERS));
         self
     }
 
@@ -633,9 +677,32 @@ impl Limits {
         self.max_pixels
     }
 
-    /// Get maximum memory bytes, if set.
+    /// Get maximum memory bytes, if set. When `None`,
+    /// [`Self::effective_max_memory_bytes`] gives the soft default the
+    /// encoder will actually enforce.
     pub fn max_memory_bytes(&self) -> Option<u64> {
         self.max_memory_bytes
+    }
+
+    /// The cap the encoder will actually apply: explicit
+    /// `max_memory_bytes` if set, else
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`].
+    pub fn effective_max_memory_bytes(&self) -> u64 {
+        self.max_memory_bytes
+            .unwrap_or(Self::DEFAULT_MAX_MEMORY_BYTES)
+    }
+
+    /// Get maximum quantization-loop iterations.
+    pub fn max_quant_loop_iters(&self) -> Option<u32> {
+        self.max_quant_loop_iters
+    }
+
+    /// The cap the encoder will actually apply: explicit
+    /// `max_quant_loop_iters` if set, else
+    /// [`Self::DEFAULT_MAX_QUANT_LOOP_ITERS`].
+    pub fn effective_max_quant_loop_iters(&self) -> u32 {
+        self.max_quant_loop_iters
+            .unwrap_or(Self::DEFAULT_MAX_QUANT_LOOP_ITERS)
     }
 }
 
@@ -1810,7 +1877,59 @@ impl<'a> EncodeRequest<'a> {
                 });
             }
         }
+        // If the caller set an explicit max_quant_loop_iters and the
+        // resolved config is asking for more, reject. The encoder still
+        // saturates at the validator hard cap (`Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`)
+        // at consumption sites — this lets a caller set a *tighter* cap
+        // and have it surface as an error rather than a silent saturation.
+        if let Some(max_iters) = limits.max_quant_loop_iters {
+            let configured = match self.config {
+                ConfigRef::Lossy(cfg) => self.lossy_max_iter_value(cfg),
+                ConfigRef::Lossless(_) => 0,
+            };
+            if configured > max_iters {
+                return Err(EncodeError::LimitExceeded {
+                    message: format!(
+                        "quantization-loop iterations ({configured}) exceed \
+                         Limits::max_quant_loop_iters ({max_iters})"
+                    ),
+                });
+            }
+        }
         Ok(())
+    }
+
+    /// Maximum of butteraugli/ssim2/zensim iters across the loop knobs
+    /// available on this config — used by `check_limits` to surface a
+    /// caller-set per-encode iter cap.
+    #[cfg(any(
+        feature = "butteraugli-loop",
+        feature = "ssim2-loop",
+        feature = "zensim-loop"
+    ))]
+    fn lossy_max_iter_value(&self, cfg: &LossyConfig) -> u32 {
+        let mut m = 0u32;
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            m = m.max(cfg.butteraugli_iters);
+        }
+        #[cfg(feature = "ssim2-loop")]
+        {
+            m = m.max(cfg.ssim2_iters);
+        }
+        #[cfg(feature = "zensim-loop")]
+        {
+            m = m.max(cfg.zensim_iters);
+        }
+        m
+    }
+    #[cfg(not(any(
+        feature = "butteraugli-loop",
+        feature = "ssim2-loop",
+        feature = "zensim-loop"
+    )))]
+    fn lossy_max_iter_value(&self, _cfg: &LossyConfig) -> u32 {
+        0
     }
 
     // ── Lossless path ───────────────────────────────────────────────────

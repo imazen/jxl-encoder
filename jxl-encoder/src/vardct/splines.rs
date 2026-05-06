@@ -28,8 +28,19 @@ use crate::error::Result;
 /// 0/0 in arc-length parameterization). Without this, `(NaN).round() as
 /// usize` saturates to 0 (fine) but `(Inf).round() as usize + 1` overflows
 /// in debug builds.
+///
+/// Spline rendering on the encoder side never *should* see non-finite
+/// values for a legitimately-constructed [`Spline`]; the `debug_assert`
+/// catches upstream regressions in test builds while preserving the
+/// release defense.
 #[inline]
 fn finite_round_to_usize(v: f32, cap: usize) -> usize {
+    debug_assert!(
+        v.is_finite(),
+        "splines::finite_round_to_usize: non-finite input {v} \
+         (upstream spline parameter should be finite — check Catmull-Rom \
+         interpolation / arc-length parameterization)"
+    );
     if !v.is_finite() {
         return if v.is_sign_negative() { 0 } else { cap };
     }
@@ -46,6 +57,10 @@ fn finite_round_to_usize(v: f32, cap: usize) -> usize {
 /// Same as [`finite_round_to_usize`] but returns an `i64` clamped to `[lo, hi]`.
 #[inline]
 fn finite_round_to_i64(v: f32, lo: i64, hi: i64) -> i64 {
+    debug_assert!(
+        v.is_finite(),
+        "splines::finite_round_to_i64: non-finite input {v}"
+    );
     if !v.is_finite() {
         return if v.is_sign_negative() { lo } else { hi };
     }
