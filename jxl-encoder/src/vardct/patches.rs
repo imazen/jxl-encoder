@@ -549,10 +549,28 @@ pub(crate) fn find_text_like_patches(
         let (cxu, cyu) = (cx as usize, cy as usize);
         let (sxu, syu) = (sx as usize, sy as usize);
 
-        // Cache source color once per queue entry (avoids re-reading xyb[c][si]
-        // for every neighbor — up to 9 bounds-checked reads per entry).
+        // SECURITY: defensive bounds check. The push paths at lines below
+        // verify (nx as usize) < width && (ny as usize) < height, but
+        // background[c] is sized `stride * height` — if a caller ever
+        // passes `stride < width` (or the queue is otherwise corrupted),
+        // the (cyu * stride + cxu) index can exceed background.len()
+        // and panic. v11 sweep crashed here in the wild on
+        // `size-dense-renders/4cd...sz1280.png` after a butteraugli NaN
+        // cascade; the actual bad-write site is not yet identified.
+        // Skipping the entry preserves correctness (drops a stray
+        // queue item) and prevents the DoS while we trace the root
+        // cause.
+        if cxu >= width || cyu >= height || sxu >= width || syu >= height {
+            continue;
+        }
         let ci = cyu * stride + cxu;
         let si = syu * stride + sxu;
+        if ci >= background[0].len() || si >= xyb_ref[0].len() {
+            continue;
+        }
+
+        // Cache source color once per queue entry (avoids re-reading xyb[c][si]
+        // for every neighbor — up to 9 bounds-checked reads per entry).
         let src_color = [xyb_ref[0][si], xyb_ref[1][si], xyb_ref[2][si]];
         for c in 0..3 {
             background[c][ci] = src_color[c];
