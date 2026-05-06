@@ -130,9 +130,12 @@ pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 /// zensim). Each iteration runs a full perceptual-metric pass over the image
 /// and is *expensive* — capping this prevents a malicious caller from passing
 /// `u32::MAX` and DoS-ing the encoder. At default usage the encoder picks
-/// 0–4 iterations based on effort; values beyond ~16 produce diminishing
-/// returns even for legitimate use.
-pub const MAX_QUANT_LOOP_ITERS: u32 = 64;
+/// 0–4 iterations based on effort.
+///
+/// Matches [`crate::validation::ITER_MAX`] so callers see consistent
+/// behavior whether they validate the config explicitly or rely on the
+/// encoder's automatic clamping.
+pub const MAX_QUANT_LOOP_ITERS: u32 = crate::validation::ITER_MAX;
 
 /// Default soft cap on encoder working-set memory when the caller passes no
 /// explicit [`Limits`]. Computed conservatively as ~40 bytes/pixel
@@ -1328,12 +1331,15 @@ impl LossyConfig {
     /// Set butteraugli quantization loop iterations explicitly.
     ///
     /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
-    /// Saturated to [`MAX_QUANT_LOOP_ITERS`] to bound worst-case CPU on
-    /// untrusted callers — each iteration runs a full butteraugli pipeline.
+    /// Stores the value as-given for [`Self::validate`] to surface as
+    /// [`crate::ValidationError::IterCountOutOfRange`] if it exceeds
+    /// [`MAX_QUANT_LOOP_ITERS`]. The encoder additionally saturates at
+    /// consumption time so callers that skip `validate()` still cannot
+    /// DoS the encoder by passing a huge value.
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
-        self.butteraugli_iters = n.min(MAX_QUANT_LOOP_ITERS);
+        self.butteraugli_iters = n;
         self.butteraugli_iters_explicit = true;
         self
     }
@@ -1341,11 +1347,12 @@ impl LossyConfig {
     /// Set SSIM2 quantization loop iterations.
     ///
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
-    /// Saturated to [`MAX_QUANT_LOOP_ITERS`].
+    /// See [`Self::with_butteraugli_iters`] for how out-of-range values
+    /// are handled.
     /// Requires the `ssim2-loop` feature.
     #[cfg(feature = "ssim2-loop")]
     pub fn with_ssim2_iters(mut self, n: u32) -> Self {
-        self.ssim2_iters = n.min(MAX_QUANT_LOOP_ITERS);
+        self.ssim2_iters = n;
         self
     }
 
@@ -1358,7 +1365,7 @@ impl LossyConfig {
     /// Requires the `zensim-loop` feature.
     #[cfg(feature = "zensim-loop")]
     pub fn with_zensim_iters(mut self, n: u32) -> Self {
-        self.zensim_iters = n.min(MAX_QUANT_LOOP_ITERS);
+        self.zensim_iters = n;
         self
     }
 

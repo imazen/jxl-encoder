@@ -34,6 +34,13 @@ pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
 /// `f32 as i32` / `as usize` casts in patch detection and spline rendering
 /// — the suspected upstream of the 0x40000000-prefix index corruption
 /// observed in production sweeps.
+///
+/// Legitimate inputs *can* produce non-finite XYB values (e.g.,
+/// all-zero RGB → log(0) = -Inf in the XYB opsin transform). This is
+/// not a bug; it's a numerical edge case the rest of the encoder
+/// handled by accident-bypass before NaN propagation became visible.
+/// Replace with 0.0 (mid-gray, valid XYB origin); a tiny number of
+/// non-finite values per encode is expected on degenerate input.
 fn sanitize_xyb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
     for v in x.iter_mut().chain(y.iter_mut()).chain(b.iter_mut()) {
         if !v.is_finite() {

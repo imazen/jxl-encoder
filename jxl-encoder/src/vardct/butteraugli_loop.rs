@@ -129,7 +129,12 @@ impl VarDctEncoder {
         let mut recon_b = vec![0.0f32; padded_pixels];
         let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
-        let iters = self.butteraugli_iters as usize;
+        // Saturate at consumption to bound worst-case CPU even when the
+        // caller skipped LossyConfig::validate (which would have rejected
+        // values > MAX_QUANT_LOOP_ITERS with IterCountOutOfRange). Each
+        // iteration runs a full butteraugli pipeline; capping prevents
+        // a malicious or buggy caller from DoS-ing the encoder.
+        let iters = (self.butteraugli_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
         let mut current_params;
 
         // Loop runs iters+1 times (matching libjxl: last iteration is compare-only).

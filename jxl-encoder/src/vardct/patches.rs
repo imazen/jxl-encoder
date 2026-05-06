@@ -556,15 +556,31 @@ pub(crate) fn find_text_like_patches(
         // the (cyu * stride + cxu) index can exceed background.len()
         // and panic. v11 sweep crashed here in the wild on
         // `size-dense-renders/4cd...sz1280.png` after a butteraugli NaN
-        // cascade; the actual bad-write site is not yet identified.
-        // Skipping the entry preserves correctness (drops a stray
-        // queue item) and prevents the DoS while we trace the root
-        // cause.
+        // cascade.
+        //
+        // The release-build behavior must remain a `continue` — that's
+        // the DoS fix. But in debug we want to fail loudly on *legitimate*
+        // input that hits this path, because that means the upstream
+        // sanitization or bounds invariants regressed. Add a debug_assert
+        // that surfaces in tests + release builds with debug_assertions
+        // (the default `cargo test`); release production keeps the
+        // defensive skip.
+        debug_assert!(
+            cxu < width && cyu < height && sxu < width && syu < height,
+            "patches BFS pop: queue entry out of range — possible upstream corruption \
+             (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, width={width}, height={height})"
+        );
         if cxu >= width || cyu >= height || sxu >= width || syu >= height {
             continue;
         }
         let ci = cyu * stride + cxu;
         let si = syu * stride + sxu;
+        debug_assert!(
+            ci < background[0].len() && si < xyb_ref[0].len(),
+            "patches BFS pop: derived flat index out of range — possible stride mismatch \
+             (ci={ci}, si={si}, n={})",
+            background[0].len()
+        );
         if ci >= background[0].len() || si >= xyb_ref[0].len() {
             continue;
         }
@@ -588,6 +604,11 @@ pub(crate) fn find_text_like_patches(
             // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
             let ni = (ci as isize + neighbor_offsets[k]) as usize;
             // Defensive: same skip pattern as the DFS below.
+            debug_assert!(
+                ni < is_background.len(),
+                "patches BFS neighbor: flat index out of range (ni={ni}, n={})",
+                is_background.len()
+            );
             if ni >= is_background.len() {
                 continue;
             }
@@ -661,11 +682,23 @@ pub(crate) fn find_text_like_patches(
                 // (e.g., by an OOB write from elsewhere — see the
                 // `unsafe-performance` feature note in vardct/common.rs),
                 // a popped (px, py) could be out of range. Skip rather than
-                // panic on the subsequent `visited[pi]` index.
+                // panic on the subsequent `visited[pi]` index. debug_assert
+                // surfaces the regression in test builds.
+                debug_assert!(
+                    px < width && py < height,
+                    "patches DFS pop: stack entry out of range \
+                     (px={px}, py={py}, width={width}, height={height})"
+                );
                 if px >= width || py >= height {
                     continue;
                 }
                 let pi = py * stride + px;
+                debug_assert!(
+                    pi < visited.len(),
+                    "patches DFS pop: derived flat index out of range \
+                     (pi={pi}, n={})",
+                    visited.len()
+                );
                 if pi >= visited.len() {
                     continue;
                 }
@@ -698,7 +731,13 @@ pub(crate) fn find_text_like_patches(
                     // Defensive: even with the (nx, ny) range check above,
                     // pre-computed stride offsets assume `stride >= width`.
                     // A degenerate stride or memory corruption could put ni
-                    // out of bounds; skip rather than panic.
+                    // out of bounds; skip rather than panic in release.
+                    // debug_assert surfaces the regression in tests.
+                    debug_assert!(
+                        ni < is_background.len(),
+                        "patches DFS neighbor: flat index out of range (ni={ni}, n={})",
+                        is_background.len()
+                    );
                     if ni >= is_background.len() {
                         continue;
                     }
@@ -1102,9 +1141,11 @@ pub(crate) fn find_text_like_patches(
 /// - After success, trim `ref_height` to actual used height.
 ///
 /// Returns the reference frame dimensions and positions of each patch.
-fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
+type BinPackResult = core::result::Result<(usize, usize, Vec<(u32, u32)>), &'static str>;
+
+fn bin_pack_patches(patches: &[PatchInfo]) -> BinPackResult {
     if patches.is_empty() {
-        return (0, 0, Vec::new());
+        return Ok((0, 0, Vec::new()));
     }
 
     // Patches should already be sorted largest-first by caller
@@ -1187,12 +1228,20 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
 
         if success {
             // Trim height to actual used extent
-            return (ref_width, max_y, positions);
+            return Ok((ref_width, max_y, positions));
         }
     }
-    // Fell through retry cap without packing. Return an empty layout so the
-    // caller treats this as "no patches" rather than panicking elsewhere.
-    (0, 0, Vec::new())
+    // Fell through retry cap without packing. This is suspicious — the
+    // canvas grew by ~×11 over 50 retries; failing to fit means either an
+    // input shape we don't expect or a real bug. Surface as an error so
+    // the caller can decide whether to bail or fall back to "no patches"
+    // rather than silently dropping a quality-improving feature.
+    debug_assert!(
+        false,
+        "bin_pack_patches: failed to pack {} patches in {BIN_PACK_MAX_RETRIES} retries",
+        patches.len()
+    );
+    Err("bin_pack_patches: retry cap reached without successful pack")
 }
 
 // ── Build PatchesData ──────────────────────────────────────────────────────────
@@ -1209,8 +1258,17 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
     // Sort by area (largest first) for better bin-packing
     infos.sort_by_key(|info| core::cmp::Reverse(info.patch.num_pixels()));
 
-    // Bin-pack into reference frame (no size limit — FrameEncoder handles multi-group)
-    let (ref_width, ref_height, pack_positions) = bin_pack_patches(&infos);
+    // Bin-pack into reference frame (no size limit — FrameEncoder handles multi-group).
+    // bin_pack_patches surfaces an Err when its retry cap is hit (a
+    // genuinely-degenerate input or a bug); treat that the same as "no
+    // patches detected" so we degrade quality but don't kill the encode.
+    let (ref_width, ref_height, pack_positions) = match bin_pack_patches(&infos) {
+        Ok(v) => v,
+        Err(reason) => {
+            debug_rect!("patches/build", 0, 0, 0, 0, "bin_pack failed: {reason}");
+            return None;
+        }
+    };
     if ref_width == 0 || ref_height == 0 {
         return None;
     }
@@ -1321,7 +1379,12 @@ pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patch
                 // Defensive bounds: detection currently produces in-range
                 // positions, but if PatchPosition mutates between detection
                 // and apply (or the caller threads a mismatched stride),
-                // every patch occurrence panics. Skip the offending pixel.
+                // every patch occurrence panics. Skip the offending pixel
+                // in release; surface the regression in test/debug.
+                debug_assert!(
+                    img_i < xyb[0].len() && ref_i < patches.ref_image[0].len(),
+                    "patches apply: index out of range (img_i={img_i}, ref_i={ref_i})"
+                );
                 if img_i >= xyb[0].len() || ref_i >= patches.ref_image[0].len() {
                     continue;
                 }
@@ -1965,7 +2028,7 @@ mod tests {
             },
         ];
 
-        let (w, h, positions) = bin_pack_patches(&infos);
+        let (w, h, positions) = bin_pack_patches(&infos).expect("bin_pack should succeed");
         assert!(w > 0);
         assert!(h > 0);
         assert_eq!(positions.len(), 2);
