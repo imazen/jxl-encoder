@@ -99,6 +99,11 @@ imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 sha2 = "0.11.0"
+# archmage is already a regular dep (`default-features = false, features = ["macros"]`);
+# the test suite needs `std` for `archmage::testing::for_each_token_permutation`
+# (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.
+# fallback paths on the trigger fixtures).
+archmage = { version = "0.9.15", default-features = false, features = ["macros", "std"] }
 
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]

@@ -6,6 +6,12 @@
 // surface any sanitize_xyb_planes / butteraugli-loop / splines / patches
 // assert! fires across the v09/v11 sweep config grid. Runs in both
 // debug and release (asserts now fire in both).
+//
+// `repro_*_all_dispatch_tiers` re-runs the same fixtures through
+// `archmage::testing::for_each_token_permutation`, exercising scalar /
+// SSE / AVX2 / AVX-512 fallback paths in turn — catches bugs that only
+// surface on a non-default dispatch tier (e.g., a scalar `forward_xyb`
+// that produces NaN on a specific input).
 
 use jxl_encoder::{LossyConfig, PixelLayout};
 use std::path::Path;
@@ -121,4 +127,109 @@ fn repro_other_sz1280_siblings() {
         total_panics += p;
     }
     assert_eq!(total_panics, 0);
+}
+
+/// Exercise every available SIMD dispatch tier on the v09 trigger
+/// image — scalar fallback, SSE-only, AVX2 (natural), AVX-512, etc.
+/// Any tier-specific bug (e.g., a scalar `forward_xyb` that produces
+/// NaN on a specific input, an AVX-512 path with a different rounding
+/// mode) would surface here when our defenses fire.
+///
+/// Light grid (smaller distance × effort × biters) because each
+/// permutation re-encodes the full set; total work is
+/// `permutations × encodes_per_grid`.
+#[test]
+#[ignore = "requires zentrain-corpus fixtures + archmage testing module"]
+fn repro_v09_sz96_all_dispatch_tiers() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    let path = "/home/lilith/work/zentrain-corpus/mlp-tune/size-dense-renders/4cd6910a0b7b39365fda5df87618d091__sz96.png";
+    let Some((pixels, w, h)) = try_load(path) else {
+        eprintln!("skip — fixture not present at {path}");
+        return;
+    };
+
+    // Light grid: 3 distances × 2 efforts × 2 biters = 12 encodes per
+    // permutation. With ~5-8 permutations that's 60-100 encodes total.
+    let dists = [0.5f32, 1.0, 4.0];
+    let efforts = [5u8, 9];
+    let biters = [0u32, 2];
+
+    let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        eprintln!("  dispatch tier: {perm}");
+        let mut panics = 0u32;
+        for &distance in &dists {
+            for &effort in &efforts {
+                for &b in &biters {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        LossyConfig::new(distance)
+                            .with_effort(effort)
+                            .with_butteraugli_iters(b)
+                            .encode(&pixels, w, h, PixelLayout::Rgb8)
+                    }));
+                    match result {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => {
+                            eprintln!("    err d={distance} e={effort} b={b}: {e:?}");
+                        }
+                        Err(_) => {
+                            panics += 1;
+                            eprintln!("    PANIC d={distance} e={effort} b={b} (tier {perm})");
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            panics, 0,
+            "panics on dispatch tier {perm} — see stderr for triggering configs",
+        );
+    });
+    eprintln!("{report}");
+}
+
+#[test]
+#[ignore = "requires zentrain-corpus fixtures + archmage testing module"]
+fn repro_v11_sz1280_all_dispatch_tiers() {
+    use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
+
+    let path = "/home/lilith/work/zentrain-corpus/mlp-tune/size-dense-renders/4cd6910a0b7b39365fda5df87618d091__sz1280.png";
+    let Some((pixels, w, h)) = try_load(path) else {
+        eprintln!("skip — fixture not present at {path}");
+        return;
+    };
+
+    // Even lighter grid for the 1280×639 image — encode is heavier per call.
+    let dists = [1.0f32, 4.0];
+    let efforts = [7u8];
+    let biters = [0u32, 2];
+
+    let report = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
+        eprintln!("  dispatch tier: {perm}");
+        let mut panics = 0u32;
+        for &distance in &dists {
+            for &effort in &efforts {
+                for &b in &biters {
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        LossyConfig::new(distance)
+                            .with_effort(effort)
+                            .with_butteraugli_iters(b)
+                            .encode(&pixels, w, h, PixelLayout::Rgb8)
+                    }));
+                    match result {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => {
+                            eprintln!("    err d={distance} e={effort} b={b}: {e:?}");
+                        }
+                        Err(_) => {
+                            panics += 1;
+                            eprintln!("    PANIC d={distance} e={effort} b={b} (tier {perm})");
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(panics, 0, "panics on dispatch tier {perm}");
+    });
+    eprintln!("{report}");
 }

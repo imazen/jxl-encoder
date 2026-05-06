@@ -32,7 +32,7 @@ fn make_checker_rgb8(width: usize, height: usize, tile: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(width * height * 3);
     for y in 0..height {
         for x in 0..width {
-            let v = if ((x / tile) + (y / tile)) % 2 == 0 {
+            let v = if ((x / tile) + (y / tile)).is_multiple_of(2) {
                 0u8
             } else {
                 255u8
