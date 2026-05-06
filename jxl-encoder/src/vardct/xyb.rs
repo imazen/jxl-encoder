@@ -126,7 +126,12 @@ pub(crate) fn compute_primaries_to_srgb(
 }
 
 /// Compute the primaries-to-sRGB matrix for a given color encoding, if needed.
-/// Returns None for sRGB (no transform needed).
+///
+/// Returns `None` for sRGB (no transform needed). For `Primaries::Custom`
+/// without a `custom_primaries` field, returns `None` to skip the matrix
+/// application — this is a defensive fallback only; validation happens
+/// upstream via [`validate_color_encoding`] which surfaces the
+/// inconsistency as a regular [`crate::error::Error::InvalidInput`].
 pub(crate) fn primaries_to_srgb_matrix(
     ce: &crate::headers::color_encoding::ColorEncoding,
 ) -> Option<[[f32; 3]; 3]> {
@@ -134,10 +139,7 @@ pub(crate) fn primaries_to_srgb_matrix(
         Primaries::P3 => Some(P3_TO_SRGB),
         Primaries::Bt2100 => Some(BT2020_TO_SRGB),
         Primaries::Custom => {
-            let cp = ce
-                .custom_primaries
-                .as_ref()
-                .expect("custom_primaries must be set when primaries is Custom");
+            let cp = ce.custom_primaries.as_ref()?;
             Some(compute_primaries_to_srgb(
                 (cp.red.x, cp.red.y),
                 (cp.green.x, cp.green.y),
@@ -148,11 +150,35 @@ pub(crate) fn primaries_to_srgb_matrix(
     }
 }
 
+/// Validate that a `ColorEncoding` is internally consistent.
+///
+/// Use this at every public encode boundary that accepts a `ColorEncoding`
+/// to surface bad configurations as `Err(InvalidInput)` rather than letting
+/// downstream code silently fall back or (pre-this-change) panic.
+pub(crate) fn validate_color_encoding(
+    ce: &crate::headers::color_encoding::ColorEncoding,
+) -> crate::error::Result<()> {
+    if matches!(ce.primaries, Primaries::Custom) && ce.custom_primaries.is_none() {
+        return Err(crate::error::Error::InvalidInput(
+            "ColorEncoding has Primaries::Custom but custom_primaries is None".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Apply a 3x3 matrix to RGB row buffers in-place.
 ///
 /// Uses chunks of 8 for autovectorization — LLVM emits SIMD for the inner
 /// multiply-accumulate on the fixed-size slices without any bounds checks.
 pub(crate) fn apply_matrix_3x3(r: &mut [f32], g: &mut [f32], b: &mut [f32], m: &[[f32; 3]; 3]) {
+    // Length-equality guard: callers pass three independently-sized slices,
+    // so a future strip/extraction bug could pass mismatched lengths and
+    // panic deep inside the loop (or worse, produce wrong output past the
+    // shared prefix). Truncating to the common length is harmless for
+    // correctly-sized inputs and bounds the damage on bugs.
+    let len = r.len().min(g.len()).min(b.len());
+    debug_assert_eq!(r.len(), g.len(), "apply_matrix_3x3: r/g length mismatch");
+    debug_assert_eq!(r.len(), b.len(), "apply_matrix_3x3: r/b length mismatch");
     let m00 = m[0][0];
     let m01 = m[0][1];
     let m02 = m[0][2];
@@ -163,7 +189,6 @@ pub(crate) fn apply_matrix_3x3(r: &mut [f32], g: &mut [f32], b: &mut [f32], m: &
     let m21 = m[2][1];
     let m22 = m[2][2];
 
-    let len = r.len();
     let chunks = len / 8;
     let remainder = chunks * 8;
 

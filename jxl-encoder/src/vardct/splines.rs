@@ -14,6 +14,45 @@ use core::f32::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
 use super::common::pack_signed;
 use crate::bit_writer::BitWriter;
+
+/// Convert a possibly-NaN / non-finite f32 to a clamped usize.
+///
+/// `NaN` and negatives map to `0`. `+Inf` and very large finite values map
+/// to `cap`. This bounds the damage when caller-supplied spline parameters
+/// produce non-finite intermediates (e.g., zero-direction tangent producing
+/// 0/0 in arc-length parameterization). Without this, `(NaN).round() as
+/// usize` saturates to 0 (fine) but `(Inf).round() as usize + 1` overflows
+/// in debug builds.
+#[inline]
+fn finite_round_to_usize(v: f32, cap: usize) -> usize {
+    if !v.is_finite() {
+        return if v.is_sign_negative() { 0 } else { cap };
+    }
+    let r = v.round();
+    if r <= 0.0 {
+        0
+    } else if r >= cap as f32 {
+        cap
+    } else {
+        r as usize
+    }
+}
+
+/// Same as [`finite_round_to_usize`] but returns an `i64` clamped to `[lo, hi]`.
+#[inline]
+fn finite_round_to_i64(v: f32, lo: i64, hi: i64) -> i64 {
+    if !v.is_finite() {
+        return if v.is_sign_negative() { lo } else { hi };
+    }
+    let r = v.round();
+    if r <= lo as f32 {
+        lo
+    } else if r >= hi as f32 {
+        hi
+    } else {
+        r as i64
+    }
+}
 use crate::entropy_coding::encode::{
     build_entropy_code_ans_with_options, write_entropy_code_ans, write_tokens_ans,
 };
@@ -614,10 +653,13 @@ fn apply_splines(
         let last = data.segment_y_start[y + 1];
         for seg_idx_pos in first..last {
             let segment = &data.segments[data.segment_indices[seg_idx_pos]];
-            let x0 = (segment.center_x - segment.maximum_distance)
-                .round()
-                .max(0.0) as usize;
-            let x1 = width.min((segment.center_x + segment.maximum_distance).round() as usize + 1);
+            let x0 = finite_round_to_usize(
+                segment.center_x - segment.maximum_distance,
+                width,
+            );
+            let x1_raw =
+                finite_round_to_usize(segment.center_x + segment.maximum_distance, width);
+            let x1 = x1_raw.saturating_add(1).min(width);
             for x in x0..x1 {
                 apply_segment_at(planes, stride, x, y, segment, add);
             }
@@ -679,9 +721,17 @@ impl SplinesData {
             let base_idx = all_segments.len();
             for (i, seg) in segs.iter().enumerate() {
                 let seg_idx = base_idx + i;
-                let y0 = 0i64.max((seg.center_y - seg.maximum_distance).round() as i64);
-                let y1 = (image_height as i64)
-                    .min((seg.center_y + seg.maximum_distance).round() as i64 + 1);
+                let y0 = finite_round_to_i64(
+                    seg.center_y - seg.maximum_distance,
+                    0,
+                    image_height as i64,
+                );
+                let y1_raw = finite_round_to_i64(
+                    seg.center_y + seg.maximum_distance,
+                    0,
+                    image_height as i64,
+                );
+                let y1 = y1_raw.saturating_add(1).min(image_height as i64);
                 for y in y0..y1 {
                     segments_by_y.push((y as usize, seg_idx));
                 }

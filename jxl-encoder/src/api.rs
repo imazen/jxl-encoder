@@ -124,6 +124,24 @@ impl From<enough::StopReason> for EncodeError {
 /// production-safe error tracking without debuginfo or backtraces.
 pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 
+// ── Public limit constants ──────────────────────────────────────────────────
+
+/// Maximum iterations for any quantization-loop knob (butteraugli, ssim2,
+/// zensim). Each iteration runs a full perceptual-metric pass over the image
+/// and is *expensive* — capping this prevents a malicious caller from passing
+/// `u32::MAX` and DoS-ing the encoder. At default usage the encoder picks
+/// 0–4 iterations based on effort; values beyond ~16 produce diminishing
+/// returns even for legitimate use.
+pub const MAX_QUANT_LOOP_ITERS: u32 = 64;
+
+/// Default soft cap on encoder working-set memory when the caller passes no
+/// explicit [`Limits`]. Computed conservatively as ~40 bytes/pixel
+/// (XYB f32, quant fields, strategy maps, entropy buffers). Encoders that
+/// expect larger workloads should set [`Limits::max_memory_bytes`]
+/// explicitly. Encoders embedded in real-time image proxies should keep
+/// this bounded — see [`Limits`].
+pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 // ── EncodeResult / EncodeStats ──────────────────────────────────────────────
 
 /// Result of an encode operation. Holds encoded data and metrics.
@@ -1310,10 +1328,12 @@ impl LossyConfig {
     /// Set butteraugli quantization loop iterations explicitly.
     ///
     /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
+    /// Saturated to [`MAX_QUANT_LOOP_ITERS`] to bound worst-case CPU on
+    /// untrusted callers — each iteration runs a full butteraugli pipeline.
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
-        self.butteraugli_iters = n;
+        self.butteraugli_iters = n.min(MAX_QUANT_LOOP_ITERS);
         self.butteraugli_iters_explicit = true;
         self
     }
@@ -1321,10 +1341,11 @@ impl LossyConfig {
     /// Set SSIM2 quantization loop iterations.
     ///
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
+    /// Saturated to [`MAX_QUANT_LOOP_ITERS`].
     /// Requires the `ssim2-loop` feature.
     #[cfg(feature = "ssim2-loop")]
     pub fn with_ssim2_iters(mut self, n: u32) -> Self {
-        self.ssim2_iters = n;
+        self.ssim2_iters = n.min(MAX_QUANT_LOOP_ITERS);
         self
     }
 
@@ -1337,7 +1358,7 @@ impl LossyConfig {
     /// Requires the `zensim-loop` feature.
     #[cfg(feature = "zensim-loop")]
     pub fn with_zensim_iters(mut self, n: u32) -> Self {
-        self.zensim_iters = n;
+        self.zensim_iters = n.min(MAX_QUANT_LOOP_ITERS);
         self
     }
 
@@ -1648,6 +1669,29 @@ impl<'a> EncodeRequest<'a> {
     fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<EncodeResult, EncodeError> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
+        if let Some(ref ce) = self.color_encoding {
+            crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;
+        }
+        if let Some(meta) = self.metadata
+            && let Some(icc) = meta.icc_profile
+        {
+            // Surface ICC issues here rather than letting predict_icc/write_icc
+            // panic deep in the bitstream-writing path.
+            const ICC_SIZE_LIMIT: usize = u32::MAX as usize >> 2;
+            if icc.is_empty() {
+                return Err(EncodeError::InvalidInput {
+                    message: "ICC profile must not be empty".into(),
+                });
+            }
+            if icc.len() > ICC_SIZE_LIMIT {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "ICC profile too large: {} bytes (max {ICC_SIZE_LIMIT})",
+                        icc.len()
+                    ),
+                });
+            }
+        }
 
         let threads = match self.config {
             ConfigRef::Lossless(cfg) => cfg.threads,

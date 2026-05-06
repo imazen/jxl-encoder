@@ -587,6 +587,10 @@ pub(crate) fn find_text_like_patches(
             }
             // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
             let ni = (ci as isize + neighbor_offsets[k]) as usize;
+            // Defensive: same skip pattern as the DFS below.
+            if ni >= is_background.len() {
+                continue;
+            }
             if is_background[ni] {
                 continue;
             }
@@ -651,7 +655,20 @@ pub(crate) fn find_text_like_patches(
 
             while let Some((px32, py32)) = stack.pop() {
                 let (px, py) = (px32 as usize, py32 as usize);
+                // SECURITY: defensive bounds check — same class of fix as the
+                // BFS loop above. Stack entries are always pushed with valid
+                // coordinates, but if the stack memory itself is corrupted
+                // (e.g., by an OOB write from elsewhere — see the
+                // `unsafe-performance` feature note in vardct/common.rs),
+                // a popped (px, py) could be out of range. Skip rather than
+                // panic on the subsequent `visited[pi]` index.
+                if px >= width || py >= height {
+                    continue;
+                }
                 let pi = py * stride + px;
+                if pi >= visited.len() {
+                    continue;
+                }
                 if visited[pi] {
                     continue;
                 }
@@ -678,6 +695,13 @@ pub(crate) fn find_text_like_patches(
                     }
                     // Flat index via pre-computed stride offset.
                     let ni = (pi as isize + neighbor_offsets[k]) as usize;
+                    // Defensive: even with the (nx, ny) range check above,
+                    // pre-computed stride offsets assume `stride >= width`.
+                    // A degenerate stride or memory corruption could put ni
+                    // out of bounds; skip rather than panic.
+                    if ni >= is_background.len() {
+                        continue;
+                    }
                     if !is_background[ni] {
                         // Foreground neighbor — push to stack (skip if already visited
                         // to avoid redundant pop/check cycles from duplicate pushes)
@@ -1093,8 +1117,14 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
     let mut ref_width = side.max(max_x_size);
     let mut ref_height = side.max(max_y_size);
 
-    // First-fit grid placement with grow-and-retry
-    loop {
+    // First-fit grid placement with grow-and-retry.
+    // Defensive iteration cap: each retry grows the canvas by 1.05× + 1.
+    // Patches here are bounded by MAX_PATCH_SIZE=32 and the largest input
+    // image dimension, so even pathological inputs converge in <50 retries.
+    // Bail with a single-row layout rather than loop forever if some
+    // future bug invariant breaks.
+    const BIN_PACK_MAX_RETRIES: usize = 50;
+    for _retry in 0..BIN_PACK_MAX_RETRIES {
         // Grow by 5% + 1 before each attempt (matches libjxl: grow at start of do-while)
         ref_width = (ref_width as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
         ref_height = (ref_height as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
@@ -1160,6 +1190,9 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
             return (ref_width, max_y, positions);
         }
     }
+    // Fell through retry cap without packing. Return an empty layout so the
+    // caller treats this as "no patches" rather than panicking elsewhere.
+    (0, 0, Vec::new())
 }
 
 // ── Build PatchesData ──────────────────────────────────────────────────────────
@@ -1285,6 +1318,13 @@ pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patch
             for dx in 0..pw {
                 let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
                 let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
+                // Defensive bounds: detection currently produces in-range
+                // positions, but if PatchPosition mutates between detection
+                // and apply (or the caller threads a mismatched stride),
+                // every patch occurrence panics. Skip the offending pixel.
+                if img_i >= xyb[0].len() || ref_i >= patches.ref_image[0].len() {
+                    continue;
+                }
                 for c in 0..3 {
                     xyb[c][img_i] -= patches.ref_image[c][ref_i];
                 }
@@ -1311,6 +1351,10 @@ pub(crate) fn add_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &
             for dx in 0..pw {
                 let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
                 let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
+                // Defensive bounds: same rationale as subtract_patches above.
+                if img_i >= xyb[0].len() || ref_i >= patches.ref_image[0].len() {
+                    continue;
+                }
                 for c in 0..3 {
                     xyb[c][img_i] += patches.ref_image[c][ref_i];
                 }
