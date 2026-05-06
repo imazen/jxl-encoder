@@ -1729,6 +1729,25 @@ impl<'a> EncodeRequest<'a> {
         let expected = w
             .checked_mul(h)
             .and_then(|n| n.checked_mul(self.layout.bytes_per_pixel()));
+        // Internal allocations are sized as `width * height * N` for N up
+        // to 8 (4 channels × f32 = 16 bytes/px would also fit since
+        // `usize` can absorb a 4× multiplier on top of `bpp` ≤ 4 within
+        // the same budget). Enforce a single up-front check that
+        // `width * height * 16` fits in `usize` so the encoder never has
+        // to re-validate inside hot loops. This bounds the per-pixel
+        // working-set scaling factor for all downstream callers.
+        const MAX_INTERNAL_SCALE: usize = 16;
+        if w.checked_mul(h)
+            .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
+            .is_none()
+        {
+            return Err(EncodeError::LimitExceeded {
+                message: format!(
+                    "image {w}x{h} too large for encoder working buffers \
+                     (width × height × {MAX_INTERNAL_SCALE} overflows usize)"
+                ),
+            });
+        }
         match expected {
             Some(expected) if pixels.len() == expected => Ok(()),
             Some(expected) => Err(EncodeError::InvalidInput {
@@ -3317,6 +3336,17 @@ fn validate_animation_input(
         .ok_or_else(|| EncodeError::InvalidInput {
             message: "image dimensions overflow".into(),
         })?;
+    // Match the still-image working-buffer headroom check (validate_pixels).
+    const MAX_INTERNAL_SCALE: usize = 16;
+    if (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
+        .is_none()
+    {
+        return Err(EncodeError::LimitExceeded {
+            message: format!("image {width}x{height} too large for encoder working buffers"),
+        });
+    }
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() != expected_size {
             return Err(EncodeError::InvalidInput {

@@ -25,6 +25,23 @@ use crate::headers::frame_header::FrameHeader;
 // Re-export types from entropy_code sub-module.
 pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
 
+/// Replace any NaN or non-finite f32 in the three XYB planes with 0.0.
+///
+/// Called once at the boundary between XYB conversion and the downstream
+/// pipeline (patches, splines, gaborish, adaptive quant, butteraugli loop).
+/// NaN comparisons are always false, which would bypass clamps in the
+/// butteraugli iteration loop and propagate non-finite values into
+/// `f32 as i32` / `as usize` casts in patch detection and spline rendering
+/// — the suspected upstream of the 0x40000000-prefix index corruption
+/// observed in production sweeps.
+fn sanitize_xyb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
+    for v in x.iter_mut().chain(y.iter_mut()).chain(b.iter_mut()) {
+        if !v.is_finite() {
+            *v = 0.0;
+        }
+    }
+}
+
 /// Output of a VarDCT encode operation.
 pub struct VarDctOutput {
     /// Encoded JXL codestream bytes.
@@ -358,6 +375,19 @@ impl VarDctEncoder {
         // This allows SIMD to process full blocks without bounds checking.
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
+
+        // SECURITY: sanitize XYB at the boundary before any downstream
+        // consumer (patches, splines, gaborish, adaptive quant). NaN/Inf in
+        // XYB has been observed to leak through after butteraugli quant-loop
+        // numeric blowups (`diff = tile_dist / target_distance` where
+        // both are zero, then `pow(diff, cur_pow)` returns NaN, then NaN
+        // bypasses the qf clamp because all NaN comparisons are false).
+        // NaN that reaches `f32 as i32`/`as usize` casts in patches /
+        // splines / quantization is the suspected upstream of the
+        // 0x40000000-prefix corruption pattern. Replacing non-finite with
+        // 0.0 is correctness-safe (XYB 0.0 is a valid mid-gray) and
+        // bounded.
+        sanitize_xyb_planes(&mut xyb_x, &mut xyb_y, &mut xyb_b);
 
         // Estimate noise parameters (if enabled).
         // The decoder adds noise during rendering; the encoder just encodes the params.

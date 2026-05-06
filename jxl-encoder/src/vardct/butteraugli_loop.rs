@@ -356,9 +356,26 @@ impl VarDctEncoder {
                 // Only adjust bad blocks (diff > 1.0)
                 // (libjxl enc_adaptive_quantization.cc:1066-1086)
                 for bi in 0..num_blocks {
-                    let diff = tile_dist[bi] / target_distance;
+                    // SECURITY: defensively replace non-finite tile_dist or
+                    // quant_field values with finite fallbacks. NaN
+                    // (e.g., 0/0 when both tile_dist and target_distance are
+                    // zero, or when butteraugli returns NaN on a degenerate
+                    // input) propagates through these arithmetic ops and
+                    // bypasses the clamps below (every NaN comparison is
+                    // false), leaking non-finite quant_field values into
+                    // downstream `f32 as i32` casts.
+                    let td = if tile_dist[bi].is_finite() {
+                        tile_dist[bi]
+                    } else {
+                        target_distance
+                    };
+                    let diff = td / target_distance;
                     if diff > 1.0 {
-                        let old = quant_field_float[bi];
+                        let old = if quant_field_float[bi].is_finite() {
+                            quant_field_float[bi]
+                        } else {
+                            qf_lower
+                        };
                         quant_field_float[bi] = old * diff;
                         // Minimum step check: if rounding to integer quant produces
                         // the same value, bump by one quantizer step
@@ -370,23 +387,37 @@ impl VarDctEncoder {
                             quant_field_float[bi] = old + quantizer_scale;
                         }
                     }
-                    if quant_field_float[bi] > qf_higher {
-                        quant_field_float[bi] = qf_higher;
-                    }
-                    if quant_field_float[bi] < qf_lower {
+                    // .clamp() is NaN-safe (returns lo for NaN); explicit
+                    // is_finite check above keeps this as a belt-and-braces.
+                    if !quant_field_float[bi].is_finite() {
                         quant_field_float[bi] = qf_lower;
                     }
+                    quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
                 }
             } else {
                 // Adjust both directions (libjxl enc_adaptive_quantization.cc:1087-1110)
                 for bi in 0..num_blocks {
-                    let diff = tile_dist[bi] / target_distance;
+                    let td = if tile_dist[bi].is_finite() {
+                        tile_dist[bi]
+                    } else {
+                        target_distance
+                    };
+                    let diff = td / target_distance;
                     if diff <= 1.0 {
-                        // Good quality: reduce precision to save bits
-                        quant_field_float[bi] *= (diff as f64).powf(cur_pow) as f32;
+                        // Good quality: reduce precision to save bits.
+                        // diff < 0.0 (negative) would produce NaN through
+                        // powf for non-integer cur_pow — guard.
+                        let safe_diff = diff.max(0.0) as f64;
+                        let factor = safe_diff.powf(cur_pow) as f32;
+                        let factor = if factor.is_finite() { factor } else { 1.0 };
+                        quant_field_float[bi] *= factor;
                     } else {
                         // Bad quality: increase precision
-                        let old = quant_field_float[bi];
+                        let old = if quant_field_float[bi].is_finite() {
+                            quant_field_float[bi]
+                        } else {
+                            qf_lower
+                        };
                         quant_field_float[bi] = old * diff;
                         // Minimum step check
                         let qf_old = (old * inv_global_scale + 0.5).floor() as i32;
@@ -396,12 +427,10 @@ impl VarDctEncoder {
                             quant_field_float[bi] = old + quantizer_scale;
                         }
                     }
-                    if quant_field_float[bi] > qf_higher {
-                        quant_field_float[bi] = qf_higher;
-                    }
-                    if quant_field_float[bi] < qf_lower {
+                    if !quant_field_float[bi].is_finite() {
                         quant_field_float[bi] = qf_lower;
                     }
+                    quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
                 }
             }
         }

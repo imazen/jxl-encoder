@@ -14,6 +14,11 @@ use core::f32::consts::{FRAC_1_SQRT_2, PI, SQRT_2};
 
 use super::common::pack_signed;
 use crate::bit_writer::BitWriter;
+use crate::entropy_coding::encode::{
+    build_entropy_code_ans_with_options, write_entropy_code_ans, write_tokens_ans,
+};
+use crate::entropy_coding::token::Token;
+use crate::error::Result;
 
 /// Convert a possibly-NaN / non-finite f32 to a clamped usize.
 ///
@@ -53,11 +58,6 @@ fn finite_round_to_i64(v: f32, lo: i64, hi: i64) -> i64 {
         r as i64
     }
 }
-use crate::entropy_coding::encode::{
-    build_entropy_code_ans_with_options, write_entropy_code_ans, write_tokens_ans,
-};
-use crate::entropy_coding::token::Token;
-use crate::error::Result;
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -653,12 +653,8 @@ fn apply_splines(
         let last = data.segment_y_start[y + 1];
         for seg_idx_pos in first..last {
             let segment = &data.segments[data.segment_indices[seg_idx_pos]];
-            let x0 = finite_round_to_usize(
-                segment.center_x - segment.maximum_distance,
-                width,
-            );
-            let x1_raw =
-                finite_round_to_usize(segment.center_x + segment.maximum_distance, width);
+            let x0 = finite_round_to_usize(segment.center_x - segment.maximum_distance, width);
+            let x1_raw = finite_round_to_usize(segment.center_x + segment.maximum_distance, width);
             let x1 = x1_raw.saturating_add(1).min(width);
             for x in x0..x1 {
                 apply_segment_at(planes, stride, x, y, segment, add);
