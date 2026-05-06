@@ -35,21 +35,37 @@ pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
 /// — the suspected upstream of the 0x40000000-prefix index corruption
 /// observed in production sweeps.
 ///
-/// Legitimate inputs *can* produce non-finite XYB values (e.g.,
-/// all-zero RGB → log(0) = -Inf in the XYB opsin transform). The
-/// replacement to 0.0 (mid-gray, valid XYB origin) is correct for that
-/// case, so this function never fails or panics in release. Returns
-/// `true` if any replacement occurred — callers in tests can assert
-/// `false` against synthetic-content invariants to catch upstream
-/// regressions.
+/// **Non-finite XYB is always an upstream bug.** The opsin transform
+/// (`color::xyb::linear_rgb_to_xyb`) is `cbrt(mixed + bias) - cbrt(bias)`
+/// per channel — bias is positive, so the cube-root argument is always
+/// strictly positive for any finite linear-RGB input, and the output is
+/// finite. The only way non-finite XYB reaches this boundary is:
 ///
-/// Backed by the SIMD `sanitize_finite` kernel in jxl-encoder-simd
-/// (see `sanitize.rs` for the `(v * 0).simd_eq(0)` finite-mask trick).
+/// 1. The caller passed non-finite linear-RGB (a caller bug — the
+///    `LinearF32` pixel layouts allow this; we should validate at
+///    intake but currently don't).
+/// 2. An upstream computation (butteraugli loop reconstruction, EPF,
+///    gaborish) leaked NaN into XYB — that's a fix-the-upstream bug.
+/// 3. Memory corruption (the original v09/v11 sweep cause).
+///
+/// Release builds replace with 0.0 (DoS protection — keeps the encoder
+/// from panicking on hostile input), but a `debug_assert!` surfaces the
+/// regression in test builds so it isn't silently absorbed. Backed by
+/// the SIMD `sanitize_finite` kernel in jxl-encoder-simd.
 fn sanitize_xyb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) -> bool {
     let rx = jxl_simd::sanitize_finite(x);
     let ry = jxl_simd::sanitize_finite(y);
     let rb = jxl_simd::sanitize_finite(b);
-    rx | ry | rb
+    let replaced = rx | ry | rb;
+    debug_assert!(
+        !replaced,
+        "sanitize_xyb_planes: replaced non-finite XYB values — \
+         this indicates an upstream NaN/Inf source that should be fixed at \
+         the source. Check: (1) non-finite linear-RGB input from caller, \
+         (2) butteraugli-loop reconstruction polluting XYB, \
+         (3) memory corruption. See vardct/encoder.rs:48 for context."
+    );
+    replaced
 }
 
 /// Output of a VarDCT encode operation.
@@ -397,19 +413,15 @@ impl VarDctEncoder {
         // 0x40000000-prefix corruption pattern. Replacing non-finite with
         // 0.0 is correctness-safe (XYB 0.0 is a valid mid-gray) and
         // bounded.
+        // Returns true (with a debug_assert! firing in test builds) if any
+        // non-finite XYB value was found and zeroed. Release builds keep
+        // running with the cleaned planes — that's the DoS protection.
         let _xyb_had_nonfinite = sanitize_xyb_planes(&mut xyb_x, &mut xyb_y, &mut xyb_b);
-        // The scalar fallback in `sanitize_finite` will catch any tail bytes;
-        // legitimate input can produce non-finite XYB (e.g. all-zero RGB →
-        // log(0) = -Inf), so we don't assert against `_xyb_had_nonfinite`
-        // here. Tests that exercise non-degenerate content can `debug_assert`
-        // on the encoder's behavior end-to-end via the patches/lz77 OOB
-        // regression suites — those would re-trip if the upstream invariant
-        // breaks again.
         #[cfg(feature = "debug-tokens")]
         if _xyb_had_nonfinite {
             eprintln!(
-                "sanitize_xyb_planes: replaced non-finite values \
-                 (degenerate input — see vardct/encoder.rs:48)"
+                "sanitize_xyb_planes: replaced non-finite values — \
+                 upstream bug (see vardct/encoder.rs:48 for diagnosis paths)"
             );
         }
 

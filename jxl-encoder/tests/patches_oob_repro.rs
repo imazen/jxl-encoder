@@ -122,16 +122,23 @@ fn patches_does_not_panic_across_distance_grid() {
 }
 
 #[test]
-fn patches_does_not_panic_with_nan_inducing_input() {
-    // All-zero input pushes butteraugli into the 0/0 → NaN regime;
-    // sanitize_xyb_planes + the butteraugli loop's NaN clamp must keep
-    // the encoder finite end-to-end.
+fn patches_handles_all_zero_input() {
+    // All-zero RGB → XYB(0, 0, 0) (cbrt(bias) - cbrt(bias) = 0). This is
+    // a finite, well-defined "all black" image — the encoder should
+    // produce a valid bitstream without exercising any NaN-handling
+    // path. Asserts upgraded in debug builds: `sanitize_xyb_planes`
+    // would fire its debug_assert! if the XYB transform leaked
+    // non-finite values for this input. (Originally written as a
+    // "NaN-inducing" test under the mistaken belief that `log(0) = -Inf`
+    // would fire — the real opsin transform is `cbrt(mixed + bias)`,
+    // which is finite at zero. Renamed and re-purposed as a
+    // "finite-input-stays-finite" smoke test.)
     let (w, h) = (256u32, 256u32);
     let pixels = vec![0u8; (w * h * 3) as usize];
     let bytes = LossyConfig::new(2.0)
         .with_effort(9)
         .with_butteraugli_iters(2)
         .encode(&pixels, w, h, PixelLayout::Rgb8)
-        .expect("encode panicked or errored on all-zero NaN-bait input");
+        .expect("encode failed on all-zero (all-black) input");
     assert_eq!(&bytes[..2], &[0xFF, 0x0A], "missing JXL signature");
 }
