@@ -549,41 +549,33 @@ pub(crate) fn find_text_like_patches(
         let (cxu, cyu) = (cx as usize, cy as usize);
         let (sxu, syu) = (sx as usize, sy as usize);
 
-        // SECURITY: defensive bounds check. The push paths at lines below
-        // verify (nx as usize) < width && (ny as usize) < height, but
-        // background[c] is sized `stride * height` — if a caller ever
-        // passes `stride < width` (or the queue is otherwise corrupted),
-        // the (cyu * stride + cxu) index can exceed background.len()
-        // and panic. v11 sweep crashed here in the wild on
-        // `size-dense-renders/4cd...sz1280.png` after a butteraugli NaN
-        // cascade.
+        // SECURITY: every queue entry that this loop pops was pushed
+        // earlier with `(nx as usize) < width && (ny as usize) < height`
+        // bound-checked at push time, so cxu/cyu/sxu/syu are always in
+        // range — UNLESS the queue's heap memory was corrupted by an
+        // OOB write from elsewhere (the v09/v11 sweep cause, traced to
+        // the `unsafe-performance` feature and removed in PR #34).
         //
-        // The release-build behavior must remain a `continue` — that's
-        // the DoS fix. But in debug we want to fail loudly on *legitimate*
-        // input that hits this path, because that means the upstream
-        // sanitization or bounds invariants regressed. Add a debug_assert
-        // that surfaces in tests + release builds with debug_assertions
-        // (the default `cargo test`); release production keeps the
-        // defensive skip.
-        debug_assert!(
+        // Convert from "skip on bounds failure (DoS protection)" to
+        // unconditional `assert!` because the upstream cause is no
+        // longer reachable on the post-PR-#34 chain. If a future
+        // regression re-introduces queue corruption, surface it loudly.
+        // The 270-encode trigger-fixture sweep confirmed this never
+        // fires on legitimate input.
+        assert!(
             cxu < width && cyu < height && sxu < width && syu < height,
-            "patches BFS pop: queue entry out of range — possible upstream corruption \
-             (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, width={width}, height={height})"
+            "patches BFS pop: queue entry out of range — possible upstream \
+             corruption (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, \
+             width={width}, height={height})"
         );
-        if cxu >= width || cyu >= height || sxu >= width || syu >= height {
-            continue;
-        }
         let ci = cyu * stride + cxu;
         let si = syu * stride + sxu;
-        debug_assert!(
+        assert!(
             ci < background[0].len() && si < xyb_ref[0].len(),
-            "patches BFS pop: derived flat index out of range — possible stride mismatch \
-             (ci={ci}, si={si}, n={})",
+            "patches BFS pop: derived flat index out of range — possible \
+             stride mismatch (ci={ci}, si={si}, n={})",
             background[0].len()
         );
-        if ci >= background[0].len() || si >= xyb_ref[0].len() {
-            continue;
-        }
 
         // Cache source color once per queue entry (avoids re-reading xyb[c][si]
         // for every neighbor — up to 9 bounds-checked reads per entry).
@@ -603,15 +595,15 @@ pub(crate) fn find_text_like_patches(
             }
             // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
             let ni = (ci as isize + neighbor_offsets[k]) as usize;
-            // Defensive: same skip pattern as the DFS below.
-            debug_assert!(
+            // The (nx, ny) range check above + the pre-computed stride
+            // offsets guarantee ni < n on every legitimate path. Assert
+            // loudly — we no longer skip silently.
+            assert!(
                 ni < is_background.len(),
-                "patches BFS neighbor: flat index out of range (ni={ni}, n={})",
+                "patches BFS neighbor: flat index out of range \
+                 (ni={ni}, n={})",
                 is_background.len()
             );
-            if ni >= is_background.len() {
-                continue;
-            }
             if is_background[ni] {
                 continue;
             }
@@ -676,32 +668,22 @@ pub(crate) fn find_text_like_patches(
 
             while let Some((px32, py32)) = stack.pop() {
                 let (px, py) = (px32 as usize, py32 as usize);
-                // SECURITY: defensive bounds check — same class of fix as the
-                // BFS loop above. Stack entries are always pushed with valid
-                // coordinates, but if the stack memory itself is corrupted
-                // (e.g., by an OOB write from elsewhere — see the
-                // `unsafe-performance` feature note in vardct/common.rs),
-                // a popped (px, py) could be out of range. Skip rather than
-                // panic on the subsequent `visited[pi]` index. debug_assert
-                // surfaces the regression in test builds.
-                debug_assert!(
+                // Same upgrade as the BFS pop above: assert! instead of
+                // skip-on-bounds-failure. Stack memory corruption was the
+                // v09/v11 cause; removing `unsafe-performance` in PR #34
+                // closes the upstream bug, so the assert can be loud.
+                assert!(
                     px < width && py < height,
                     "patches DFS pop: stack entry out of range \
                      (px={px}, py={py}, width={width}, height={height})"
                 );
-                if px >= width || py >= height {
-                    continue;
-                }
                 let pi = py * stride + px;
-                debug_assert!(
+                assert!(
                     pi < visited.len(),
                     "patches DFS pop: derived flat index out of range \
                      (pi={pi}, n={})",
                     visited.len()
                 );
-                if pi >= visited.len() {
-                    continue;
-                }
                 if visited[pi] {
                     continue;
                 }
@@ -728,19 +710,12 @@ pub(crate) fn find_text_like_patches(
                     }
                     // Flat index via pre-computed stride offset.
                     let ni = (pi as isize + neighbor_offsets[k]) as usize;
-                    // Defensive: even with the (nx, ny) range check above,
-                    // pre-computed stride offsets assume `stride >= width`.
-                    // A degenerate stride or memory corruption could put ni
-                    // out of bounds; skip rather than panic in release.
-                    // debug_assert surfaces the regression in tests.
-                    debug_assert!(
+                    assert!(
                         ni < is_background.len(),
-                        "patches DFS neighbor: flat index out of range (ni={ni}, n={})",
+                        "patches DFS neighbor: flat index out of range \
+                         (ni={ni}, n={})",
                         is_background.len()
                     );
-                    if ni >= is_background.len() {
-                        continue;
-                    }
                     if !is_background[ni] {
                         // Foreground neighbor — push to stack (skip if already visited
                         // to avoid redundant pop/check cycles from duplicate pushes)
@@ -1376,18 +1351,14 @@ pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patch
             for dx in 0..pw {
                 let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
                 let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
-                // Defensive bounds: detection currently produces in-range
-                // positions, but if PatchPosition mutates between detection
-                // and apply (or the caller threads a mismatched stride),
-                // every patch occurrence panics. Skip the offending pixel
-                // in release; surface the regression in test/debug.
-                debug_assert!(
+                // Detection produces in-range positions by construction.
+                // assert! loudly if a future bug threads a mismatched
+                // stride or mutated PatchPosition.
+                assert!(
                     img_i < xyb[0].len() && ref_i < patches.ref_image[0].len(),
-                    "patches apply: index out of range (img_i={img_i}, ref_i={ref_i})"
+                    "patches apply: index out of range \
+                     (img_i={img_i}, ref_i={ref_i})"
                 );
-                if img_i >= xyb[0].len() || ref_i >= patches.ref_image[0].len() {
-                    continue;
-                }
                 for c in 0..3 {
                     xyb[c][img_i] -= patches.ref_image[c][ref_i];
                 }

@@ -361,45 +361,27 @@ impl VarDctEncoder {
                 // Only adjust bad blocks (diff > 1.0)
                 // (libjxl enc_adaptive_quantization.cc:1066-1086)
                 for bi in 0..num_blocks {
-                    // SECURITY: defensively replace non-finite tile_dist or
-                    // quant_field values with finite fallbacks. NaN
-                    // (e.g., 0/0 when both tile_dist and target_distance are
-                    // zero, or when butteraugli returns NaN on a degenerate
-                    // input) propagates through these arithmetic ops and
-                    // bypasses the clamps below (every NaN comparison is
-                    // false), leaking non-finite quant_field values into
-                    // downstream `f32 as i32` casts.
-                    //
-                    // butteraugli's ButteraugliReference is supposed to
-                    // produce finite per-tile distances on legitimate
-                    // input. A `debug_assert` catches any test regression
-                    // where the upstream returns NaN; release builds
-                    // continue with the fallback to keep DoS protection
-                    // intact.
-                    debug_assert!(
+                    // butteraugli's ButteraugliReference is finite by
+                    // construction on any finite XYB input — non-finite
+                    // here is always an upstream bug. The 270-encode
+                    // trigger-fixture sweep + the math (XYB transform is
+                    // total on ℝ via cbrt + bias) prove these never fire
+                    // on legitimate input.
+                    assert!(
                         tile_dist[bi].is_finite(),
                         "butteraugli loop: non-finite tile_dist[{bi}] = {} \
                          (upstream butteraugli should never produce non-finite)",
                         tile_dist[bi]
                     );
-                    debug_assert!(
+                    assert!(
                         quant_field_float[bi].is_finite(),
                         "butteraugli loop: non-finite quant_field_float[{bi}] = {} \
                          (clamps should keep this finite every iter)",
                         quant_field_float[bi]
                     );
-                    let td = if tile_dist[bi].is_finite() {
-                        tile_dist[bi]
-                    } else {
-                        target_distance
-                    };
-                    let diff = td / target_distance;
+                    let diff = tile_dist[bi] / target_distance;
                     if diff > 1.0 {
-                        let old = if quant_field_float[bi].is_finite() {
-                            quant_field_float[bi]
-                        } else {
-                            qf_lower
-                        };
+                        let old = quant_field_float[bi];
                         quant_field_float[bi] = old * diff;
                         // Minimum step check: if rounding to integer quant produces
                         // the same value, bump by one quantizer step
@@ -411,47 +393,36 @@ impl VarDctEncoder {
                             quant_field_float[bi] = old + quantizer_scale;
                         }
                     }
-                    // .clamp() is NaN-safe (returns lo for NaN); explicit
-                    // is_finite check above keeps this as a belt-and-braces.
-                    if !quant_field_float[bi].is_finite() {
-                        quant_field_float[bi] = qf_lower;
-                    }
                     quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
                 }
             } else {
                 // Adjust both directions (libjxl enc_adaptive_quantization.cc:1087-1110)
                 for bi in 0..num_blocks {
-                    debug_assert!(
+                    assert!(
                         tile_dist[bi].is_finite(),
                         "butteraugli loop: non-finite tile_dist[{bi}] = {}",
                         tile_dist[bi]
                     );
-                    debug_assert!(
+                    assert!(
                         quant_field_float[bi].is_finite(),
                         "butteraugli loop: non-finite quant_field_float[{bi}] = {}",
                         quant_field_float[bi]
                     );
-                    let td = if tile_dist[bi].is_finite() {
-                        tile_dist[bi]
-                    } else {
-                        target_distance
-                    };
-                    let diff = td / target_distance;
+                    let diff = tile_dist[bi] / target_distance;
                     if diff <= 1.0 {
                         // Good quality: reduce precision to save bits.
                         // diff < 0.0 (negative) would produce NaN through
-                        // powf for non-integer cur_pow — guard.
+                        // powf for non-integer cur_pow — guard via max(0).
                         let safe_diff = diff.max(0.0) as f64;
                         let factor = safe_diff.powf(cur_pow) as f32;
-                        let factor = if factor.is_finite() { factor } else { 1.0 };
+                        assert!(
+                            factor.is_finite(),
+                            "butteraugli loop: non-finite powf factor diff={diff} pow={cur_pow}"
+                        );
                         quant_field_float[bi] *= factor;
                     } else {
                         // Bad quality: increase precision
-                        let old = if quant_field_float[bi].is_finite() {
-                            quant_field_float[bi]
-                        } else {
-                            qf_lower
-                        };
+                        let old = quant_field_float[bi];
                         quant_field_float[bi] = old * diff;
                         // Minimum step check
                         let qf_old = (old * inv_global_scale + 0.5).floor() as i32;
@@ -460,9 +431,6 @@ impl VarDctEncoder {
                         if qf_old == qf_new {
                             quant_field_float[bi] = old + quantizer_scale;
                         }
-                    }
-                    if !quant_field_float[bi].is_finite() {
-                        quant_field_float[bi] = qf_lower;
                     }
                     quant_field_float[bi] = quant_field_float[bi].clamp(qf_lower, qf_higher);
                 }

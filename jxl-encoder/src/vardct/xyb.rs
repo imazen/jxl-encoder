@@ -171,14 +171,12 @@ pub(crate) fn validate_color_encoding(
 /// Uses chunks of 8 for autovectorization — LLVM emits SIMD for the inner
 /// multiply-accumulate on the fixed-size slices without any bounds checks.
 pub(crate) fn apply_matrix_3x3(r: &mut [f32], g: &mut [f32], b: &mut [f32], m: &[[f32; 3]; 3]) {
-    // Mismatched-length r/g/b is an internal bug — callers MUST pass
-    // three independently-sized slices of identical length. Trip a
-    // debug_assert in test/debug builds; in release the slice access at
-    // line g[base..base+8] / b[base..base+8] panics loudly on length
-    // mismatch, which is the correct outcome (a wrong-pixels silent
-    // truncation hides bugs).
-    debug_assert_eq!(r.len(), g.len(), "apply_matrix_3x3: r/g length mismatch");
-    debug_assert_eq!(r.len(), b.len(), "apply_matrix_3x3: r/b length mismatch");
+    // Callers MUST pass three slices of identical length. assert_eq!
+    // surfaces a bug at the entry boundary with a clear message,
+    // before the inner loop's slice indexing would panic with a less
+    // useful "index out of range" message.
+    assert_eq!(r.len(), g.len(), "apply_matrix_3x3: r/g length mismatch");
+    assert_eq!(r.len(), b.len(), "apply_matrix_3x3: r/b length mismatch");
     let len = r.len();
     let m00 = m[0][0];
     let m01 = m[0][1];
