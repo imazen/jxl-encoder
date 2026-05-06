@@ -2634,8 +2634,7 @@ fn validate_dims(width: u32, height: u32) -> core::result::Result<(), EncodeErro
     }
     let w = width as usize;
     let h = height as usize;
-    if w
-        .checked_mul(h)
+    if w.checked_mul(h)
         .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
         .is_none()
     {
