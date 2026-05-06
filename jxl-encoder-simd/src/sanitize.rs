@@ -2,7 +2,7 @@
 // Algorithms and constants derived from libjxl (BSD-3-Clause).
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
-//! Replace non-finite f32 values (NaN / ±Inf) with 0.0 in-place.
+//! Detect / replace non-finite f32 values (NaN / ±Inf) in pixel planes.
 //!
 //! Used at the XYB→downstream-pipeline boundary in the encoder. NaN
 //! comparisons are always false, which silently bypasses clamps in the
@@ -11,15 +11,117 @@
 //! rendering — the suspected upstream of the `0x40000000`-prefix index
 //! corruption observed in production sweeps.
 //!
-//! Detection trick: `v * 0.0` evaluates to:
+//! Two entry points:
+//!
+//! - [`is_finite_plane`] — read-only check. Returns `true` if every
+//!   value in the plane is finite. Memory-bandwidth-bound; touches each
+//!   byte once. Use when the caller wants to fail-fast with an error.
+//!
+//! - [`sanitize_finite`] — read-modify-write. Replaces non-finite
+//!   values with `0.0` and returns whether any replacement happened.
+//!   Memory-bandwidth-bound; touches each byte twice (load + store) on
+//!   chunks where any replacement is needed. Use when the caller wants
+//!   defense-in-depth on hostile input.
+//!
+//! Detection trick (shared between both kernels): `v * 0.0` evaluates to:
 //! - `0.0` (or `-0.0`) for finite `v` — both compare equal to `0.0`
 //! - `NaN` for ±Inf or NaN inputs — does not compare equal to anything,
 //!   including `0.0`
 //!
 //! So `(v * 0.0).simd_eq(splat(0.0))` is the SIMD finite-mask. Blend
-//! with `0.0` and store. Returns whether any replacement happened so
-//! the caller can `debug_assert!` against legitimate inputs producing
-//! non-finite XYB (which means upstream invariants regressed).
+//! with `0.0` for sanitize; sum and check finite for the read-only check.
+
+/// Read-only check: returns `true` if every value in `plane` is finite
+/// (no NaN, no ±Inf). Faster than [`sanitize_finite`] — no buffer writes,
+/// just a load + accumulate + reduce.
+///
+/// Dispatches to the best available SIMD at runtime.
+#[inline]
+pub fn is_finite_plane(plane: &[f32]) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::X64V3Token::summon() {
+            return is_finite_plane_avx2(token, plane);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            return is_finite_plane_neon(token, plane);
+        }
+    }
+    is_finite_plane_scalar(plane)
+}
+
+#[inline]
+pub fn is_finite_plane_scalar(plane: &[f32]) -> bool {
+    plane.iter().all(|v| v.is_finite())
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[archmage::arcane]
+pub fn is_finite_plane_avx2(token: archmage::X64V3Token, plane: &[f32]) -> bool {
+    use magetypes::simd::f32x8;
+    let zero = f32x8::splat(token, 0.0);
+
+    let n = plane.len();
+    let chunks = n / 8;
+    let tail_start = chunks * 8;
+
+    // Accumulator: `v * 0` is 0 for finite v, NaN for ±Inf or NaN.
+    // Sum across chunks — NaN propagates through addition. At the end,
+    // if any lane is non-zero or non-finite, some input lane was
+    // non-finite.
+    let mut acc = f32x8::splat(token, 0.0);
+
+    for c in 0..chunks {
+        let off = c * 8;
+        let arr: &[f32; 8] = (&plane[off..off + 8]).try_into().unwrap();
+        let v = f32x8::load(token, arr);
+        acc += v * zero;
+    }
+
+    let mut a = [0.0f32; 8];
+    acc.store(&mut a);
+    if a.iter().any(|&x| x != 0.0 || !x.is_finite()) {
+        return false;
+    }
+
+    // Tail
+    plane[tail_start..].iter().all(|v| v.is_finite())
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+pub fn is_finite_plane_neon(token: archmage::NeonToken, plane: &[f32]) -> bool {
+    use magetypes::simd::f32x4;
+    let zero = f32x4::splat(token, 0.0);
+
+    let n = plane.len();
+    let chunks = n / 4;
+    let tail_start = chunks * 4;
+
+    let mut acc = f32x4::splat(token, 0.0);
+
+    for c in 0..chunks {
+        let off = c * 4;
+        let arr: &[f32; 4] = (&plane[off..off + 4]).try_into().unwrap();
+        let v = f32x4::load(token, arr);
+        acc += v * zero;
+    }
+
+    let mut a = [0.0f32; 4];
+    acc.store(&mut a);
+    if a.iter().any(|&x| x != 0.0 || !x.is_finite()) {
+        return false;
+    }
+
+    plane[tail_start..].iter().all(|v| v.is_finite())
+}
 
 /// Replace any NaN or ±Inf in `plane` with `0.0`. Returns `true` if any
 /// replacement happened.
@@ -227,5 +329,74 @@ mod tests {
         let replaced = sanitize_finite(&mut v);
         assert!(replaced);
         assert!(v.iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn is_finite_plane_scalar_all_finite() {
+        let v: Vec<f32> = (0..256).map(|i| i as f32 * 0.1).collect();
+        assert!(is_finite_plane_scalar(&v));
+    }
+
+    #[test]
+    fn is_finite_plane_scalar_detects_nan() {
+        let mut v: Vec<f32> = (0..256).map(|i| i as f32 * 0.1).collect();
+        v[100] = f32::NAN;
+        assert!(!is_finite_plane_scalar(&v));
+    }
+
+    #[test]
+    fn is_finite_plane_scalar_detects_inf() {
+        let mut v: Vec<f32> = (0..256).map(|i| i as f32 * 0.1).collect();
+        v[200] = f32::INFINITY;
+        assert!(!is_finite_plane_scalar(&v));
+        v[200] = 0.0;
+        v[200] = f32::NEG_INFINITY;
+        assert!(!is_finite_plane_scalar(&v));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn is_finite_plane_avx2_matches_scalar() {
+        use archmage::SimdToken;
+        let Some(token) = archmage::X64V3Token::summon() else {
+            return;
+        };
+        let cases: &[Vec<f32>] = &[
+            (0..15).map(|i| i as f32).collect(),
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            {
+                let mut v: Vec<f32> = (0..1000).map(|i| i as f32 * 0.001).collect();
+                v[500] = f32::NAN;
+                v
+            },
+            {
+                let mut v: Vec<f32> = (0..1000).map(|i| i as f32 * 0.001).collect();
+                v[7] = f32::INFINITY; // first chunk
+                v
+            },
+            {
+                let mut v: Vec<f32> = (0..1000).map(|i| i as f32 * 0.001).collect();
+                v[999] = f32::NEG_INFINITY; // tail
+                v
+            },
+            vec![f32::NAN; 17], // all NaN, tail
+            vec![],             // empty
+        ];
+        for (i, v) in cases.iter().enumerate() {
+            assert_eq!(
+                is_finite_plane_scalar(v),
+                is_finite_plane_avx2(token, v),
+                "mismatch on case {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_finite_plane_dispatch() {
+        let v: Vec<f32> = (0..1000).map(|i| i as f32 * 0.001).collect();
+        assert!(is_finite_plane(&v));
+        let mut v_bad = v.clone();
+        v_bad[500] = f32::NAN;
+        assert!(!is_finite_plane(&v_bad));
     }
 }

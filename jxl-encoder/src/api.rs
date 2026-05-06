@@ -1142,10 +1142,37 @@ pub struct LossyConfig {
     #[cfg(feature = "zensim-loop")]
     zensim_iters: u32,
     threads: usize,
+    non_finite_action: NonFiniteAction,
     /// Sweep / picker hook: when set, replaces the effort+mode-derived
     /// `EffortProfile` everywhere the encoder asks for one. See
     /// [`Self::with_effort_profile_override`].
     profile_override: Option<crate::effort::EffortProfile>,
+}
+
+/// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
+/// f32 values in the XYB pixel planes at the conversion→pipeline
+/// boundary.
+///
+/// The opsin XYB transform (`cbrt(mixed + bias) - cbrt(bias)`) is
+/// finite for any finite linear-RGB input — non-finite XYB indicates
+/// an upstream bug (caller passed non-finite linear-RGB, internal
+/// arithmetic leaked NaN, or memory corruption). The encoder runs a
+/// SIMD scan at the boundary either way; this enum picks what happens
+/// when the scan reports non-finite.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NonFiniteAction {
+    /// **Default.** Read-only SIMD scan; return
+    /// [`EncodeError::InvalidInput`] on first non-finite value.
+    /// ~4× faster than [`Sanitize`](Self::Sanitize) (no buffer writes
+    /// — single pass through cache hierarchy). Fail-fast surface, no
+    /// DoS exposure because the encode never touches the bad data.
+    #[default]
+    Error,
+    /// Read-modify-write SIMD scan; replace any non-finite value with
+    /// `0.0` and continue encoding. Use for image-proxy deployments
+    /// that prefer best-effort encoding over fail-fast on hostile
+    /// input. Costs ~2 passes through cache hierarchy.
+    Sanitize,
 }
 
 impl LossyConfig {
@@ -1183,6 +1210,7 @@ impl LossyConfig {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0,
             threads: 0,
+            non_finite_action: NonFiniteAction::default(),
             profile_override: None,
         }
     }
@@ -1409,6 +1437,20 @@ impl LossyConfig {
         self.butteraugli_iters = n;
         self.butteraugli_iters_explicit = true;
         self
+    }
+
+    /// Set the policy for non-finite XYB values at the
+    /// conversion→pipeline boundary. See [`NonFiniteAction`] for the
+    /// trade-off between fail-fast (default, `Error`) and best-effort
+    /// (`Sanitize`).
+    pub fn with_non_finite_action(mut self, action: NonFiniteAction) -> Self {
+        self.non_finite_action = action;
+        self
+    }
+
+    /// The currently-configured [`NonFiniteAction`] policy.
+    pub fn non_finite_action(&self) -> NonFiniteAction {
+        self.non_finite_action
     }
 
     /// Set SSIM2 quantization loop iterations.
@@ -2297,6 +2339,7 @@ impl<'a> EncodeRequest<'a> {
         enc.bit_depth_16 = bit_depth_16;
         enc.source_gamma = self.source_gamma;
         enc.color_encoding = self.color_encoding.clone();
+        enc.non_finite_action = cfg.non_finite_action;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -2742,6 +2785,7 @@ impl LossyEncoder {
             enc.intensity_target = self.intensity_target;
             enc.min_nits = self.min_nits;
             enc.intrinsic_size = self.intrinsic_size;
+            enc.non_finite_action = self.cfg.non_finite_action;
             if let Some(ref icc) = self.icc_profile {
                 enc.icc_profile = Some(icc.clone());
             }
@@ -3708,6 +3752,7 @@ fn encode_animation_lossy(
     {
         enc.zensim_iters = cfg.zensim_iters;
     }
+    enc.non_finite_action = cfg.non_finite_action;
 
     // Detect alpha and 16-bit from layout
     let has_alpha = layout.has_alpha();

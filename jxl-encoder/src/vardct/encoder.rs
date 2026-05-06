@@ -25,44 +25,64 @@ use crate::headers::frame_header::FrameHeader;
 // Re-export types from entropy_code sub-module.
 pub(crate) use super::entropy_code::{BuiltEntropyCode, force_strategy_map};
 
-/// Replace any NaN or non-finite f32 in the three XYB planes with 0.0,
-/// and panic if any replacement happened.
+/// Validate the three XYB planes against caller-configured policy at
+/// the conversion→pipeline boundary.
 ///
-/// Called once at the boundary between XYB conversion and the downstream
-/// pipeline. **Non-finite XYB is always an upstream bug:** the opsin
-/// transform (`color::xyb::linear_rgb_to_xyb`) is `cbrt(mixed + bias) -
-/// cbrt(bias)` per channel — bias is positive, so the cube-root argument
-/// is always strictly positive for any finite linear-RGB input, and the
-/// output is finite.
+/// The opsin transform (`color::xyb::linear_rgb_to_xyb`) is
+/// `cbrt(mixed + bias) - cbrt(bias)` per channel — bias is positive, so
+/// the cube-root argument is always strictly positive for any finite
+/// linear-RGB input, and the output is finite. Non-finite XYB at this
+/// boundary indicates an upstream bug:
 ///
-/// The only ways non-finite XYB can reach this boundary are:
-///
-/// 1. The caller passed non-finite linear-RGB (a caller bug — the
-///    `LinearF32` pixel layouts allow this; we should validate at
-///    intake but currently don't).
-/// 2. An upstream computation (butteraugli loop reconstruction, EPF,
+/// 1. The caller passed non-finite linear-RGB (the `LinearF32` pixel
+///    layouts allow this; we should validate at intake but currently
+///    don't).
+/// 2. An upstream computation (butteraugli-loop reconstruction, EPF,
 ///    gaborish) leaked NaN into XYB — fix-the-upstream bug.
 /// 3. Memory corruption (the original v09/v11 sweep cause, mitigated
 ///    by removing `unsafe-performance` in PR #34).
 ///
-/// All three are real bugs we want to surface as panics, not silently
-/// sanitize. The 270-encode trigger-fixture sweep on every image
-/// known to crash the v09/v11 production sweep showed zero non-finite
-/// values, so this assertion does not fire on legitimate input.
+/// Behavior:
 ///
-/// Backed by the SIMD `sanitize_finite` kernel in jxl-encoder-simd.
-fn sanitize_xyb_planes(x: &mut [f32], y: &mut [f32], b: &mut [f32]) {
-    let rx = jxl_simd::sanitize_finite(x);
-    let ry = jxl_simd::sanitize_finite(y);
-    let rb = jxl_simd::sanitize_finite(b);
-    assert!(
-        !(rx | ry | rb),
-        "sanitize_xyb_planes: non-finite XYB values found at the \
-         conversion→pipeline boundary. This is always an upstream bug. \
-         Check: (1) non-finite linear-RGB input from caller, \
-         (2) butteraugli-loop reconstruction polluting XYB, \
-         (3) memory corruption. See vardct/encoder.rs:48 for context."
-    );
+/// - [`NonFiniteAction::Error`] (default): runs the **read-only**
+///   `is_finite_plane` SIMD scan (~55 GB/s) and returns
+///   [`crate::error::Error::InvalidInput`] on first non-finite plane.
+///   Nothing downstream ever sees the bad data.
+/// - [`NonFiniteAction::Sanitize`]: runs the read-modify-write
+///   `sanitize_finite` SIMD kernel (~12.5 GB/s) and replaces non-finite
+///   values with `0.0`. Encoding continues.
+fn validate_xyb_planes(
+    action: crate::api::NonFiniteAction,
+    x: &mut [f32],
+    y: &mut [f32],
+    b: &mut [f32],
+) -> crate::error::Result<()> {
+    match action {
+        crate::api::NonFiniteAction::Error => {
+            if !(jxl_simd::is_finite_plane(x)
+                && jxl_simd::is_finite_plane(y)
+                && jxl_simd::is_finite_plane(b))
+            {
+                return Err(crate::error::Error::InvalidInput(
+                    "non-finite (NaN / ±Inf) value detected in XYB pixel planes. \
+                     This is an upstream bug. Common causes: caller passed \
+                     non-finite linear-RGB, butteraugli-loop reconstruction \
+                     polluted XYB, memory corruption. To accept and silently \
+                     replace with 0.0 instead of erroring, use \
+                     LossyConfig::with_non_finite_action(NonFiniteAction::Sanitize)."
+                        .into(),
+                ));
+            }
+        }
+        crate::api::NonFiniteAction::Sanitize => {
+            // Always run all three so each plane gets cleaned even if
+            // an earlier one was clean.
+            let _ = jxl_simd::sanitize_finite(x);
+            let _ = jxl_simd::sanitize_finite(y);
+            let _ = jxl_simd::sanitize_finite(b);
+        }
+    }
+    Ok(())
 }
 
 /// Output of a VarDCT encode operation.
@@ -241,6 +261,9 @@ pub struct VarDctEncoder {
     pub min_nits: f32,
     /// Intrinsic display size `(width, height)`, if different from coded dimensions.
     pub intrinsic_size: Option<(u32, u32)>,
+    /// Policy for non-finite XYB values at the conversion→pipeline
+    /// boundary. See [`crate::api::NonFiniteAction`].
+    pub non_finite_action: crate::api::NonFiniteAction,
 }
 
 impl Default for VarDctEncoder {
@@ -283,6 +306,7 @@ impl Default for VarDctEncoder {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            non_finite_action: crate::api::NonFiniteAction::default(),
         }
     }
 }
@@ -328,6 +352,7 @@ impl VarDctEncoder {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            non_finite_action: crate::api::NonFiniteAction::default(),
         }
     }
 
@@ -394,25 +419,40 @@ impl VarDctEncoder {
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
 
+        // Validate linear-RGB at intake (Error mode only). The
+        // `forward_xyb` SIMD kernel uses `mixed.max(0.0)` per channel,
+        // which silently coerces NaN to `0.0` (IEEE-754 ordered max
+        // returns the non-NaN operand). That means a caller-supplied
+        // NaN linear-RGB never reaches the XYB output — the post-XYB
+        // check would not fire. To surface caller bugs we have to check
+        // here, before forward_xyb runs. For 8-bit / 16-bit pixel
+        // layouts the linear-RGB conversion is total (no non-finite
+        // possible) and this check is a fast read-only no-op.
+        //
+        // Sanitize mode skips this check on the assumption that the
+        // XYB transform's silent NaN→0 clamp is the desired behavior
+        // for image-proxy use cases.
+        if matches!(self.non_finite_action, crate::api::NonFiniteAction::Error)
+            && !jxl_simd::is_finite_plane(linear_rgb)
+        {
+            return Err(crate::error::Error::InvalidInput(
+                "non-finite (NaN / ±Inf) value detected in linear-RGB input. \
+                 Use LossyConfig::with_non_finite_action(NonFiniteAction::Sanitize) \
+                 to silently clamp at the XYB transform instead."
+                    .into(),
+            ));
+        }
+
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
 
-        // SECURITY: sanitize XYB at the boundary before any downstream
-        // consumer (patches, splines, gaborish, adaptive quant). NaN/Inf in
-        // XYB has been observed to leak through after butteraugli quant-loop
-        // numeric blowups (`diff = tile_dist / target_distance` where
-        // both are zero, then `pow(diff, cur_pow)` returns NaN, then NaN
-        // bypasses the qf clamp because all NaN comparisons are false).
-        // NaN that reaches `f32 as i32`/`as usize` casts in patches /
-        // splines / quantization is the suspected upstream of the
-        // 0x40000000-prefix corruption pattern. Replacing non-finite with
-        // 0.0 is correctness-safe (XYB 0.0 is a valid mid-gray) and
-        // bounded.
-        // Panics if any non-finite XYB value reaches this boundary —
-        // that's always an upstream bug (see fn doc).
-        sanitize_xyb_planes(&mut xyb_x, &mut xyb_y, &mut xyb_b);
+        // Defense-in-depth XYB scan. Catches downstream-bug non-finite
+        // (memory corruption, butteraugli-loop reconstruction polluting
+        // XYB) — should never fire on the encode-fresh path because
+        // forward_xyb is finite-output-for-finite-input.
+        validate_xyb_planes(self.non_finite_action, &mut xyb_x, &mut xyb_y, &mut xyb_b)?;
 
         // Estimate noise parameters (if enabled).
         // The decoder adds noise during rendering; the encoder just encodes the params.
