@@ -86,68 +86,30 @@ pub const fn floor_log2_nonzero(n: u32) -> u32 {
     31 - n.leading_zeros()
 }
 
-/// Return an uninitialized `[f32; N]` buffer.
+/// Return a zero-initialized `[f32; N]` buffer.
 ///
-/// With the `unsafe-performance` feature, this skips the memset zero-fill and
-/// returns memory with indeterminate contents via [`core::mem::MaybeUninit`].
-/// **Every caller MUST write all `N` positions before reading any of them.**
-///
-/// Without the feature (default), this returns `[0.0f32; N]`.
-#[cfg(feature = "unsafe-performance")]
-#[allow(unsafe_code, clippy::uninit_assumed_init)]
-#[inline(always)]
-pub fn uninit_buf<const N: usize>() -> [f32; N] {
-    // SAFETY: All call sites write every element via extract_block_* / DCT /
-    // IDCT before any read.  f32 has no trap representations on IEEE 754
-    // hardware, and LLVM treats the bytes as "undef" which is exactly what we
-    // want — the dead-store memset is eliminated.
-    unsafe { core::mem::MaybeUninit::<[f32; N]>::uninit().assume_init() }
-}
-
-/// Return a zero-initialized `[f32; N]` buffer (safe default path).
-#[cfg(not(feature = "unsafe-performance"))]
+/// LLVM elides the dead-store memset on stack arrays whose every position
+/// is later written, so on hot paths this compiles to a no-op zero-fill
+/// or is fully optimized away. Previously gated behind `unsafe-performance`
+/// with a `MaybeUninit::uninit().assume_init()` body, but wall-clock
+/// benchmarks (serial and 32-thread parallel) found no measurable
+/// advantage from the unsafe form — the safe path ships unconditionally.
 #[inline(always)]
 pub fn uninit_buf<const N: usize>() -> [f32; N] {
     [0.0f32; N]
 }
 
-/// Convert `&slice[offset..offset+N]` to `&[f32; N]` without bounds checking.
+/// Convert `&slice[offset..offset+N]` to `&[f32; N]`.
 ///
-/// With `unsafe-performance`, skips the slice range check and `try_into` length check.
-/// **Caller MUST ensure `offset + N <= slice.len()`.**
-///
-/// Without the feature, falls back to `slice[offset..offset+N].try_into().unwrap()`.
-#[cfg(feature = "unsafe-performance")]
-#[allow(unsafe_code)]
-#[inline(always)]
-pub fn as_array_ref<const N: usize>(slice: &[f32], offset: usize) -> &[f32; N] {
-    debug_assert!(offset + N <= slice.len());
-    // SAFETY: caller guarantees offset + N <= slice.len()
-    unsafe { &*(slice.as_ptr().add(offset) as *const [f32; N]) }
-}
-
-#[cfg(not(feature = "unsafe-performance"))]
+/// LLVM optimizes the slice + `try_into` to the same codegen as a raw
+/// pointer cast on the success path; the panic edge is a cold branch.
+/// Same wall-clock cost as the previous unsafe pointer-add path.
 #[inline(always)]
 pub fn as_array_ref<const N: usize>(slice: &[f32], offset: usize) -> &[f32; N] {
     slice[offset..offset + N].try_into().unwrap()
 }
 
-/// Convert `&mut slice[offset..offset+N]` to `&mut [f32; N]` without bounds checking.
-///
-/// With `unsafe-performance`, skips the slice range check and `try_into` length check.
-/// **Caller MUST ensure `offset + N <= slice.len()`.**
-///
-/// Without the feature, falls back to `(&mut slice[offset..offset+N]).try_into().unwrap()`.
-#[cfg(feature = "unsafe-performance")]
-#[allow(unsafe_code)]
-#[inline(always)]
-pub fn as_array_mut<const N: usize>(slice: &mut [f32], offset: usize) -> &mut [f32; N] {
-    debug_assert!(offset + N <= slice.len());
-    // SAFETY: caller guarantees offset + N <= slice.len()
-    unsafe { &mut *(slice.as_mut_ptr().add(offset) as *mut [f32; N]) }
-}
-
-#[cfg(not(feature = "unsafe-performance"))]
+/// Convert `&mut slice[offset..offset+N]` to `&mut [f32; N]`.
 #[inline(always)]
 pub fn as_array_mut<const N: usize>(slice: &mut [f32], offset: usize) -> &mut [f32; N] {
     (&mut slice[offset..offset + N]).try_into().unwrap()

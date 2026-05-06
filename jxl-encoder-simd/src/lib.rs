@@ -21,108 +21,50 @@
 //! variant directly from an `#[arcane]` function so LLVM can inline across the
 //! target-feature boundary.
 
-#![cfg_attr(not(feature = "unsafe-performance"), forbid(unsafe_code))]
-#![cfg_attr(feature = "unsafe-performance", deny(unsafe_code))]
+#![forbid(unsafe_code)]
 // Numerical SIMD/DSP code: range loops and many-parameter kernels are natural.
 #![allow(clippy::needless_range_loop, clippy::too_many_arguments)]
 #![no_std]
 extern crate alloc;
 
-/// Return an uninitialized `[f32; N]` scratch buffer (unsafe-performance path).
+/// Return a zero-initialized `[f32; N]` scratch buffer.
 ///
-/// # Safety
-/// Caller must write every element before reading it. All call sites are DCT/IDCT
-/// scratch arrays that are immediately filled by copy_from_slice, transpose, or
-/// gather_col before any read occurs.
-#[cfg(feature = "unsafe-performance")]
-#[allow(unsafe_code, clippy::uninit_assumed_init)]
-#[inline(always)]
-pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
-    // SAFETY: All call sites write every element via copy_from_slice, transpose,
-    // or gather_col before any read. f32 has no trap representations on IEEE 754.
-    unsafe { core::mem::MaybeUninit::<[f32; N]>::uninit().assume_init() }
-}
-
-/// Return a zero-initialized `[f32; N]` scratch buffer (safe default path).
-#[cfg(not(feature = "unsafe-performance"))]
+/// LLVM elides the dead-store memset on stack arrays whose every position
+/// is later written, so on hot paths this compiles to a no-op zero-fill or
+/// is fully optimized away. Wall-clock benchmarks confirmed no measurable
+/// gain from `MaybeUninit` here on the AMD Ryzen 7950X.
 #[inline(always)]
 pub(crate) fn scratch_buf<const N: usize>() -> [f32; N] {
     [0.0f32; N]
 }
 
-/// Allocate a `Vec<f32>` of length `n` without zeroing (unsafe-performance path).
+/// Allocate a zero-initialized `Vec<f32>` of length `n`.
 ///
-/// # Safety
-/// Caller must write every element before reading it. Intended for output buffers
-/// that are immediately overwritten by IDCT, EPF, gaborish, or similar operations.
-#[cfg(feature = "unsafe-performance")]
-#[allow(unsafe_code, clippy::uninit_vec)]
-#[inline]
-pub fn vec_f32_dirty(n: usize) -> alloc::vec::Vec<f32> {
-    let mut v = alloc::vec::Vec::with_capacity(n);
-    // SAFETY: f32 has no trap representations on IEEE 754. Caller must write all
-    // elements before reading. Length is within the allocated capacity.
-    unsafe { v.set_len(n) };
-    v
-}
-
-/// Allocate a zero-initialized `Vec<f32>` of length `n` (safe default path).
-#[cfg(not(feature = "unsafe-performance"))]
+/// On Linux glibc / musl the underlying `calloc` returns kernel-zeroed
+/// pages from `mmap(MAP_ANON)` for any allocation big enough to bypass
+/// the small-bin allocator — the userspace memset cost is essentially
+/// zero. Wall-clock benchmarks (single-threaded and 32-thread parallel)
+/// found no measurable advantage over the previous `set_len`-on-uninit
+/// `MaybeUninit` form, so the simple safe form ships.
 #[inline]
 pub fn vec_f32_dirty(n: usize) -> alloc::vec::Vec<f32> {
     alloc::vec![0.0f32; n]
 }
 
-/// Slice from offset without bounds check (unsafe-performance path).
-///
-/// # Safety
-/// Caller must ensure `offset <= s.len()`.
-#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
-#[inline(always)]
-#[allow(unsafe_code)]
-pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
-    debug_assert!(offset <= s.len());
-    // SAFETY: Caller guarantees offset <= s.len(); debug_assert checks in debug builds.
-    unsafe { s.get_unchecked(offset..) }
-}
-
-/// Slice from offset with bounds check (safe default path).
-#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
+/// Slice from offset (bounds-checked).
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn slice_from(s: &[f32], offset: usize) -> &[f32] {
     &s[offset..]
 }
 
-/// Load 8 floats at offset — no bounds checks (unsafe-performance path).
+/// Load 8 floats at offset.
 ///
-/// Bypasses both slice-from bounds check AND `f32x8::from_slice`'s internal
-/// `[..8]` bounds check by using `_mm256_loadu_ps` directly.
-///
-/// # Safety
-/// Caller must ensure `offset + 8 <= s.len()`.
-#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
-#[inline(always)]
-#[allow(unsafe_code)]
-pub(crate) fn load_f32x8(
-    token: archmage::X64V3Token,
-    s: &[f32],
-    offset: usize,
-) -> magetypes::simd::f32x8 {
-    use magetypes::simd::f32x8;
-    debug_assert!(
-        offset + 8 <= s.len(),
-        "load_f32x8: offset={offset}, len={}",
-        s.len()
-    );
-    // SAFETY: Caller guarantees offset + 8 <= s.len(); debug_assert checks in debug builds.
-    unsafe {
-        let ptr = s.as_ptr().add(offset);
-        f32x8::from_m256(token, core::arch::x86_64::_mm256_loadu_ps(ptr))
-    }
-}
-
-/// Load 8 floats at offset — with bounds checks (safe default path).
-#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
+/// `f32x8::from_slice` does the equivalent of `s[offset..offset+8]` plus a
+/// length check; LLVM emits the AVX2 load instruction with the panic edge
+/// as a cold branch — same codegen as a hand-rolled `_mm256_loadu_ps` on
+/// the success path.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn load_f32x8(
     token: archmage::X64V3Token,
@@ -133,31 +75,8 @@ pub(crate) fn load_f32x8(
     f32x8::from_slice(token, &s[offset..])
 }
 
-/// Store 8 floats at offset — no bounds checks (unsafe-performance path).
-///
-/// Bypasses slice bounds check and `try_into().unwrap()` by using
-/// `_mm256_storeu_ps` directly.
-///
-/// # Safety
-/// Caller must ensure `offset + 8 <= s.len()`.
-#[cfg(all(feature = "unsafe-performance", target_arch = "x86_64"))]
-#[inline(always)]
-#[allow(unsafe_code)]
-pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x8) {
-    debug_assert!(
-        offset + 8 <= s.len(),
-        "store_f32x8: offset={offset}, len={}",
-        s.len()
-    );
-    // SAFETY: Caller guarantees offset + 8 <= s.len(); debug_assert checks in debug builds.
-    unsafe {
-        let ptr = s.as_mut_ptr().add(offset);
-        core::arch::x86_64::_mm256_storeu_ps(ptr, v.raw());
-    }
-}
-
-/// Store 8 floats at offset — with bounds checks (safe default path).
-#[cfg(all(not(feature = "unsafe-performance"), target_arch = "x86_64"))]
+/// Store 8 floats at offset.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x8) {
     let out: &mut [f32; 8] = (&mut s[offset..offset + 8]).try_into().unwrap();
@@ -165,12 +84,8 @@ pub(crate) fn store_f32x8(s: &mut [f32], offset: usize, v: magetypes::simd::f32x
 }
 
 /// Load column `j` from 8 consecutive rows starting at `base_row` with given stride.
-///
-/// Unsafe-performance path: uses unchecked indexing (validated by debug_assert).
-/// Safe path: uses bounds-checked indexing.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[cfg_attr(feature = "unsafe-performance", allow(unsafe_code))]
 pub(crate) fn gather_col_strided(
     token: archmage::X64V3Token,
     data: &[f32],
@@ -178,30 +93,6 @@ pub(crate) fn gather_col_strided(
     j: usize,
     stride: usize,
 ) -> magetypes::simd::f32x8 {
-    #[cfg(feature = "unsafe-performance")]
-    {
-        debug_assert!(
-            (base_row + 7) * stride + j < data.len(),
-            "gather_col_strided OOB: base_row={base_row}, j={j}, stride={stride}, len={}",
-            data.len()
-        );
-        // SAFETY: Caller guarantees (base_row + 7) * stride + j < data.len().
-        // All lower indices are within bounds since base_row + r <= base_row + 7.
-        unsafe {
-            let arr = [
-                *data.get_unchecked(base_row * stride + j),
-                *data.get_unchecked((base_row + 1) * stride + j),
-                *data.get_unchecked((base_row + 2) * stride + j),
-                *data.get_unchecked((base_row + 3) * stride + j),
-                *data.get_unchecked((base_row + 4) * stride + j),
-                *data.get_unchecked((base_row + 5) * stride + j),
-                *data.get_unchecked((base_row + 6) * stride + j),
-                *data.get_unchecked((base_row + 7) * stride + j),
-            ];
-            magetypes::simd::f32x8::from_array(token, arr)
-        }
-    }
-    #[cfg(not(feature = "unsafe-performance"))]
     magetypes::simd::f32x8::from_array(
         token,
         [
@@ -218,12 +109,8 @@ pub(crate) fn gather_col_strided(
 }
 
 /// Store f32x8 lanes back to column `j` of 8 consecutive rows with given stride.
-///
-/// Unsafe-performance path: uses unchecked indexing (validated by debug_assert).
-/// Safe path: uses bounds-checked indexing.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-#[cfg_attr(feature = "unsafe-performance", allow(unsafe_code))]
 pub(crate) fn scatter_col_strided(
     v: magetypes::simd::f32x8,
     data: &mut [f32],
@@ -233,21 +120,6 @@ pub(crate) fn scatter_col_strided(
 ) {
     let mut lane = [0.0f32; 8];
     v.store(&mut lane);
-    #[cfg(feature = "unsafe-performance")]
-    {
-        debug_assert!(
-            (base_row + 7) * stride + j < data.len(),
-            "scatter_col_strided OOB: base_row={base_row}, j={j}, stride={stride}, len={}",
-            data.len()
-        );
-        // SAFETY: Caller guarantees (base_row + 7) * stride + j < data.len().
-        unsafe {
-            for (r, &val) in lane.iter().enumerate() {
-                *data.get_unchecked_mut((base_row + r) * stride + j) = val;
-            }
-        }
-    }
-    #[cfg(not(feature = "unsafe-performance"))]
     for (r, &val) in lane.iter().enumerate() {
         data[(base_row + r) * stride + j] = val;
     }
