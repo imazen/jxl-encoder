@@ -138,6 +138,14 @@ path = "examples/test_ssim2_exact.rs"
 name = "wasm_bench"
 path = "examples/wasm_bench.rs"
 
+[[example]]
+name = "bench_lossy_palette"
+path = "examples/bench_lossy_palette.rs"
+
+[[example]]
+name = "bench_lossy_palette_dump"
+path = "examples/bench_lossy_palette_dump.rs"
+
 # Picker oracle calibration harnesses (lossless_pareto_calibrate /
 # lossy_pareto_calibrate) live under examples/ but are NOT registered as
 # cargo examples — they depend on a sibling-repo `zenanalyze` path that
