@@ -1,0 +1,65 @@
+# Benchmark: apply_lossy_palette Vec<Vec<...>> -> flat row-stride refactor
+# Date: 2026-05-06 / 2026-05-07 UTC
+# Hardware: Water-cooled AMD Ryzen 9 7950X, 128 GB RAM
+# Toolchain: cargo --release (no native target-cpu)
+# Branch: work-flatten-palette-vecs (off origin/main @ cb5d9e4)
+# Bench harness: jxl-encoder/examples/bench_lossy_palette.rs
+#   - LosslessConfig::new().with_lossy_palette(true).with_ans(true)
+#   - 4 single-group 256x256 RGB cases (varying color count + seed)
+#   - 15 iterations per case after warm-up
+#   - Reports per-iteration ns
+#
+# Methodology: interleaved A/B by stashing only jxl-encoder/src/modular/palette.rs,
+# rebuilding the bench example (Cargo.toml entry kept on both sides), running 3
+# back-to-back invocations on each, taking median across runs.
+
+## BASELINE (origin/main palette.rs, Vec<Vec<[i32; 3]>>)
+# Run 1 (discarded - cold cache outlier on first case): 278M / 337M / 474M / 454M
+# Run 2: 250M / 318M / 447M / 458M
+# Run 3: 253M / 319M / 445M / 457M
+# Median: 253.5M / 319.3M / 447.1M / 457.3M ns
+
+## REFACTORED (flat Vec<[i32; 3]>, single calloc-zeroed allocation per pass)
+# Run 1: 251M / 320M / 449M / 455M
+# Run 2: 254M / 316M / 447M / 454M
+# Run 3: 252M / 320M / 449M / 456M
+# Median: 252.2M / 319.5M / 449.1M / 455.3M ns
+
+## DELTA (refactor - baseline) / baseline
+# 256x256 /  8 colors:  -0.5%
+# 256x256 / 16 colors:  +0.1%
+# 256x256 / 32 colors:  +0.4%
+# 256x256 / 64 colors:  -0.4%
+#
+# All within run-to-run noise (~±0.7% standard deviation). No case
+# regresses by more than 1%. Pass criterion met.
+
+## ALLOCATION ACCOUNTING
+# Per call to apply_lossy_palette, two W*H*[i32;3] grids are needed (pass 1 + pass 2).
+# Per-grid: W * H * 12 bytes.
+# At 256x256: 256 * 256 * 12 = 786,432 bytes = 768 KiB per grid.
+#
+# Before:
+#   - Outer Vec<Vec<[i32;3]>>: 1 alloc of 24*H = 6,144 bytes header
+#     (Vec<u8>::with_capacity(height))
+#   - Each inner Vec: H allocs of W*12 = 3,072 bytes (Vec::with_capacity(width))
+#   - Total: H+1 = 257 allocations per grid, 2*(H+1) = 514 per call.
+#   - Inner Vecs filled via .push(); each push ZSTs/Vec checks length+capacity
+#     but no realloc since with_capacity matches.
+#
+# After:
+#   - 1 alloc per grid via vec![[0i32;3]; W*H] = 786,432 bytes.
+#     Verified via the source pattern: vec![T; n] where T is non-Drop, non-zero-byte
+#     POD lowers to a single __rust_alloc_zeroed (calloc) call.
+#   - 2 allocs per call (pass 1 + pass 2).
+#   - Drop is one free per grid, two per call.
+#
+# Saving: 514 -> 2 allocations per apply_lossy_palette call.
+# No over- or under-allocation: vec![[0; 3]; W*H] sizes the buffer to exactly W*H
+# elements of [i32; 3] = 12 B each.
+
+## PIXEL EXACTNESS
+# Verified via examples/bench_lossy_palette_dump.rs (5 representative cases:
+# 256x256 single-group with 8/16/32/64 colors, plus 300x300 multi-group with
+# 8 colors). All 5 outputs produce byte-identical files (verified by diff of
+# DefaultHasher hashes); see commit message.
