@@ -703,7 +703,7 @@ fn gather_channel_samples(
                     let residual = pixel - prediction;
                     let packed = pack_signed(residual);
                     let (token, _extra_bits, num_extra) = GATHER_HYBRID_UINT.encode(packed);
-                    samples.residual_tokens[pred_idx].push(saturating_token_u8(token));
+                    samples.residual_tokens[pred_idx].push(token as u8);
                     samples.extra_bits[pred_idx].push(num_extra as u8);
                 }
 
@@ -1609,33 +1609,18 @@ pub fn compute_best_tree_with_multipliers(
     tree
 }
 
-/// Padded histogram size for count_increase: next power of 2 above the
-/// observed maximum token value, after saturation to `u8::MAX` (see the
-/// `saturating_token_u8` helper). Using a power-of-2 stride with bitmask
-/// indexing eliminates bounds checks: `tok & HISTO_MASK` is guaranteed
-/// `< HISTO_PADDED`.
+/// Padded histogram size for `count_increase`: power-of-2 stride above the
+/// maximum token `GATHER_HYBRID_UINT.encode` can produce. Bitmask indexing
+/// (`tok & HISTO_MASK`) is bounds-check-free given `tok < HISTO_PADDED`.
 ///
-/// Sized to 256 so the workspace can accommodate every possible u8 token,
-/// closing the security audit H3 panic in `SplitWorkspace::new` for
-/// adversarial 16-bit input (tokens above 127 are reachable through
-/// caller-controlled pixel residuals).
+/// Bound derivation for `GATHER_HYBRID_UINT { split=16, m=1, l=2 }`:
+/// `token = 16 + 8·n_extra + 4·token_shift + low_bits`. With u32 input,
+/// `value_shifted ≤ 2^30 − 1`, `value_bits ≤ 30`, `n ≤ 28`, `n_extra ≤ 27`,
+/// so `token ≤ 16 + 216 + 4 + 3 = 239`. The previous size (128) was
+/// reachable past via RCT/Squeeze-amplified 16-bit residuals — closed
+/// by the bump to 256 (security audit H3).
 const HISTO_PADDED: usize = 256;
 const HISTO_MASK: usize = HISTO_PADDED - 1;
-
-/// Saturate a `u32` token to `u8` instead of silently wrapping.
-///
-/// The downstream `SplitWorkspace::count_increase` table is sized at
-/// `HISTO_PADDED = 256` entries per bucket and indexed by the u8 token,
-/// so saturating to `u8::MAX` keeps all logical tokens above 255 bucketed
-/// into the same overflow slot rather than aliasing into low-numbered
-/// histogram bins via wrapping `as u8` truncation. This bounds the
-/// histogram size at 256 (the workspace capacity) and prevents both the
-/// `SplitWorkspace::new` panic and the silent histogram-bucket collision
-/// flagged in the security audit (H3, L4).
-#[inline]
-fn saturating_token_u8(token: u32) -> u8 {
-    token.min(u8::MAX as u32) as u8
-}
 
 /// Pre-allocated workspace for find_best_split, reused across calls.
 /// Avoids per-call Vec allocation and resize overhead.
@@ -1660,13 +1645,8 @@ struct SplitWorkspace {
 
 impl SplitWorkspace {
     fn new(max_count: usize, histogram_size: usize, max_buckets: usize) -> Self {
-        // Saturating_token_u8 keeps every observed token within `[0, u8::MAX]`,
-        // and HISTO_PADDED = 256 covers that full range. Clamp defensively
-        // here in case histogram_size ever drifts above the workspace size:
-        // overflow tokens collide into the highest histogram bin rather than
-        // panicking the encoder. The previous `assert!` was reachable from
-        // caller-controlled 16-bit pixel residuals (security audit H3).
-        let histogram_size = histogram_size.min(HISTO_PADDED);
+        // Provable: `histogram_size` derives from `GATHER_HYBRID_UINT.encode`
+        // tokens, max 239 for any u32 input (see HISTO_PADDED comment).
         debug_assert!(histogram_size <= HISTO_PADDED);
         Self {
             count_increase: vec![0u32; max_buckets * HISTO_PADDED],
@@ -2480,35 +2460,32 @@ mod tests {
     }
 
     #[test]
-    fn saturating_token_u8_is_saturating_not_wrapping() {
-        // Below the cap: pass-through.
-        assert_eq!(saturating_token_u8(0), 0);
-        assert_eq!(saturating_token_u8(127), 127);
-        assert_eq!(saturating_token_u8(255), 255);
-        // At and above the cap: saturate to u8::MAX, never wrap.
-        assert_eq!(saturating_token_u8(256), 255);
-        assert_eq!(saturating_token_u8(1024), 255);
-        assert_eq!(saturating_token_u8(u32::MAX), 255);
-    }
-
-    #[test]
-    fn split_workspace_clamps_oversize_histogram() {
-        // Security audit H3: the previous implementation `assert!`-panicked
-        // for histogram_size > HISTO_PADDED, which was reachable via
-        // adversarial 16-bit pixel residuals. After the fix the workspace
-        // clamps the histogram size and never panics.
-        let max_count = 32;
-        let max_buckets = 4;
-        let _ws = SplitWorkspace::new(max_count, HISTO_PADDED + 64, max_buckets);
-        let _ws = SplitWorkspace::new(max_count, usize::MAX / 2, max_buckets);
-    }
-
-    #[test]
     fn split_workspace_handles_boundary_histogram_size() {
-        // Exactly at the cap is also accepted.
+        // HISTO_PADDED = 256 covers the max token (239) the GATHER_HYBRID_UINT
+        // config can produce; this confirms the workspace constructs at the cap.
         let _ws = SplitWorkspace::new(8, HISTO_PADDED, 2);
         let _ws = SplitWorkspace::new(8, HISTO_PADDED - 1, 2);
         let _ws = SplitWorkspace::new(8, 1, 2);
+    }
+
+    #[test]
+    fn gather_hybrid_uint_token_bound() {
+        // Proof companion to HISTO_PADDED's bound derivation: any u32 input
+        // produces a token <= 239, which fits in a u8 without saturation.
+        let probes: [u32; 8] = [
+            0,
+            15,
+            16,
+            (1u32 << 17) - 2, // max packed for ±65535 (16-bit pixel residual)
+            (1u32 << 20),
+            (1u32 << 25),
+            (1u32 << 30),
+            u32::MAX,
+        ];
+        for v in probes {
+            let (token, _, _) = GATHER_HYBRID_UINT.encode(v);
+            assert!(token <= 239, "token {token} exceeded 239 for input {v}");
+        }
     }
 
     #[test]
