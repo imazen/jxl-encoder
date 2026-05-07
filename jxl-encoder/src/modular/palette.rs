@@ -636,10 +636,21 @@ pub fn apply_lossy_palette(
             .or_insert(total_palette_size + k);
     }
 
-    // Pass 1 quantization: find best index for each pixel, record deltas
-    let mut quant_rows: Vec<Vec<[i32; 3]>> = Vec::with_capacity(height);
+    // Pass 1 quantization: find best index for each pixel, record deltas.
+    //
+    // `quant_grid` is flat row-major storage of `[i32; 3]` per pixel. A single
+    // calloc-zeroed allocation of `width * height * 12` bytes replaces the
+    // previous `Vec<Vec<[i32; 3]>>` (1 + height allocations). We split off the
+    // current row as `&mut [[i32; 3]]` and look at the previous row as `&[[i32; 3]]`.
+    let mut quant_grid: Vec<[i32; 3]> = vec![[0i32; 3]; width * height];
     for y in 0..height {
-        let mut qrow: Vec<[i32; 3]> = Vec::with_capacity(width);
+        let (prev_part, curr_part) = quant_grid.split_at_mut(y * width);
+        let prev_row: Option<&[[i32; 3]]> = if y > 0 {
+            Some(&prev_part[(y - 1) * width..y * width])
+        } else {
+            None
+        };
+        let qrow: &mut [[i32; 3]] = &mut curr_part[..width];
         for x in 0..width {
             let color: Vec<i32> = (begin_c..begin_c + num_c)
                 .map(|c| image.channels[c].get(x, y))
@@ -649,11 +660,6 @@ pub fn apply_lossy_palette(
             // Get prediction from quantized neighbors
             let predictions: Vec<i32> = (0..num_c.min(3))
                 .map(|c| {
-                    let prev_row = if y > 0 {
-                        Some(quant_rows[y - 1].as_slice())
-                    } else {
-                        None
-                    };
                     let w = if x > 0 { qrow[x - 1][c] } else { 0 };
                     let n = prev_row.map_or(0, |r| r[x][c]);
                     let nw = if x > 0 {
@@ -734,9 +740,8 @@ pub fn apply_lossy_palette(
                 delta_distances.push(best_distance);
             }
 
-            qrow.push(best_val);
+            qrow[x] = best_val;
         }
-        quant_rows.push(qrow);
     }
 
     // Find frequent color deltas
@@ -852,8 +857,12 @@ pub fn apply_lossy_palette(
         vec![[0.0; 3]; width + 4],
     ];
 
-    // Quantized output for prediction
-    let mut quant_out: Vec<Vec<[i32; 3]>> = Vec::with_capacity(height);
+    // Quantized output for prediction.
+    //
+    // Flat row-major storage of `[i32; 3]` per pixel, identical layout to pass 1's
+    // `quant_grid`. Single calloc-zeroed allocation of `width * height * 12` bytes
+    // replaces the previous `Vec<Vec<[i32; 3]>>` (1 + height allocations).
+    let mut quant_out: Vec<[i32; 3]> = vec![[0i32; 3]; width * height];
 
     // Create palette channel (total_size wide, num_c high)
     let mut palette_channel = Channel::new(total_size, num_c).ok()?;
@@ -868,7 +877,13 @@ pub fn apply_lossy_palette(
     let mut delta_used = false;
 
     for y in 0..height {
-        let mut qrow: Vec<[i32; 3]> = Vec::with_capacity(width);
+        let (prev_part, curr_part) = quant_out.split_at_mut(y * width);
+        let prev_row: Option<&[[i32; 3]]> = if y > 0 {
+            Some(&prev_part[(y - 1) * width..y * width])
+        } else {
+            None
+        };
+        let qrow: &mut [[i32; 3]] = &mut curr_part[..width];
         for x in 0..width {
             let orig_color: Vec<i32> = (begin_c..begin_c + num_c)
                 .map(|c| image.channels[c].get(x, y))
@@ -877,11 +892,6 @@ pub fn apply_lossy_palette(
             // Get prediction from quantized neighbors
             let predictions: Vec<i32> = (0..num_c.min(3))
                 .map(|c| {
-                    let prev_row = if y > 0 {
-                        Some(quant_out[y - 1].as_slice())
-                    } else {
-                        None
-                    };
                     let w = if x > 0 { qrow[x - 1][c] } else { 0 };
                     let n = prev_row.map_or(0, |r| r[x][c]);
                     let nw = if x > 0 {
@@ -995,7 +1005,7 @@ pub fn apply_lossy_palette(
 
             delta_used |= best_is_delta;
             index_channel.set(x, y, best_index);
-            qrow.push(best_val);
+            qrow[x] = best_val;
 
             // Error diffusion (matching libjxl's 12-neighbor cancellation + spread)
             let mut len_error = 0.0f32;
@@ -1076,7 +1086,6 @@ pub fn apply_lossy_palette(
                 }
             }
         }
-        quant_out.push(qrow);
 
         // Rotate error rows
         let tmp = core::mem::take(&mut error_rows[0]);
