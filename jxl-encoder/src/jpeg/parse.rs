@@ -398,7 +398,27 @@ fn parse_sos_header(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
         return Err(JpegError::Invalid("SOS truncated".into()));
     }
 
+    // The SOS marker payload (after the 2-byte length) must contain:
+    //   1 byte  Ns
+    //   2*Ns    component selectors
+    //   3 bytes Ss, Se, Ah|Al
+    // Validate `len` against this layout BEFORE indexing into `data` so a
+    // crafted truncated SOS marker (e.g. `len = 0`) does not panic via
+    // out-of-bounds indexing. Security audit 2026-05-06 H4.
+    if len < 3 {
+        return Err(JpegError::Invalid("SOS marker too short for Ns".into()));
+    }
     let ns = data[p + 2] as u32;
+    let required = 3usize
+        .checked_add((ns as usize).saturating_mul(2))
+        .and_then(|n| n.checked_add(3))
+        .ok_or_else(|| JpegError::Invalid("SOS Ns overflow".into()))?;
+    if len < required {
+        return Err(JpegError::Invalid(format!(
+            "SOS marker length {len} too short for Ns={ns} (need {required})"
+        )));
+    }
+
     let mut comp_indices = Vec::with_capacity(ns as usize);
     let mut dc_idx = Vec::with_capacity(ns as usize);
     let mut ac_idx = Vec::with_capacity(ns as usize);
@@ -560,6 +580,69 @@ mod tests {
             let back = JPEG_ZIGZAG_ORDER[natural];
             assert_eq!(i, back, "zigzag roundtrip failed at {i}");
         }
+    }
+
+    /// Security audit 2026-05-06 H4 regression: a truncated SOS marker with
+    /// `len < 6 + 2*Ns` previously panicked with index-out-of-bounds when
+    /// `parse_sos_header` indexed `data[spec_base..spec_base + 3]` past the
+    /// declared marker length. Reachable from the public `read_jpeg` API.
+    #[test]
+    fn read_jpeg_rejects_truncated_sos_marker_with_zero_length() {
+        // SOI + minimal SOF0 (so component table has entries) + truncated SOS
+        // marker with len = 0 declared after the FFDA marker bytes.
+        let mut data = Vec::new();
+        // SOI
+        data.extend_from_slice(&[0xFF, 0xD8]);
+        // SOF0: marker FFC0, len 17, P=8, Y=8, X=8, Nf=3, then 3*3 component bytes
+        data.extend_from_slice(&[0xFF, 0xC0]);
+        data.extend_from_slice(&17u16.to_be_bytes());
+        data.push(8); // precision
+        data.extend_from_slice(&8u16.to_be_bytes()); // height
+        data.extend_from_slice(&8u16.to_be_bytes()); // width
+        data.push(3); // Nf
+        // component 1
+        data.extend_from_slice(&[1, 0x22, 0]);
+        // component 2
+        data.extend_from_slice(&[2, 0x11, 1]);
+        // component 3
+        data.extend_from_slice(&[3, 0x11, 1]);
+        // SOS marker with declared len = 0 (truncated). Without the bounds
+        // check this panicked while reading data[spec_base..spec_base+3].
+        data.extend_from_slice(&[0xFF, 0xDA]);
+        data.extend_from_slice(&0u16.to_be_bytes());
+
+        let result = read_jpeg(&data);
+        assert!(matches!(result, Err(JpegError::Invalid(_))));
+    }
+
+    /// Security audit 2026-05-06 H4 regression: SOS marker with a body
+    /// covering Ns and component selectors but missing the trailing 3-byte
+    /// (Ss, Se, Ah/Al) tuple. `len = 3 + 2*Ns` (no Ss/Se/Ah/Al). Should error,
+    /// not panic.
+    #[test]
+    fn read_jpeg_rejects_sos_marker_missing_spec_bytes() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xFF, 0xD8]); // SOI
+        // SOF0
+        data.extend_from_slice(&[0xFF, 0xC0]);
+        data.extend_from_slice(&17u16.to_be_bytes());
+        data.push(8);
+        data.extend_from_slice(&8u16.to_be_bytes());
+        data.extend_from_slice(&8u16.to_be_bytes());
+        data.push(3);
+        data.extend_from_slice(&[1, 0x22, 0]);
+        data.extend_from_slice(&[2, 0x11, 1]);
+        data.extend_from_slice(&[3, 0x11, 1]);
+        // SOS: Ns = 1, then 2 bytes selector, but len declared as 5 (covers
+        // length-bytes + Ns + 2 selector bytes only — no trailing Ss/Se/Ah).
+        // Required: 3 + 2*Ns + 3 = 8. Declared: 5.
+        data.extend_from_slice(&[0xFF, 0xDA]);
+        data.extend_from_slice(&5u16.to_be_bytes());
+        data.push(1); // Ns
+        data.extend_from_slice(&[1, 0x00]); // component selector + table
+
+        let result = read_jpeg(&data);
+        assert!(matches!(result, Err(JpegError::Invalid(_))));
     }
 
     #[test]
