@@ -96,6 +96,28 @@ pub const JXL_SIGNATURE: [u8; 2] = [0xFF, 0x0A];
 #[doc(hidden)]
 pub mod test_helpers;
 
+/// Re-exports of private vardct internals for downstream parity testing
+/// (notably from `jxl-encoder-gpu`'s `forks::*` G5.1 parity tests).
+///
+/// **Not part of the stable API.** Items here may move or change at any time.
+/// Gated behind the `__internals` cargo feature; off by default.
+///
+/// Naming convention: `pub use crate::path::to::Symbol;` — pure re-exports,
+/// no wrapping logic. Wrapper functions (e.g., for `pub(crate)` impl methods
+/// that can't be `pub use`d directly) live in `crate::vardct::__internals_wrappers`.
+#[cfg(feature = "__internals")]
+#[doc(hidden)]
+pub mod __internals {
+    // Pub re-exports of already-pub items in private/pub(crate) modules.
+    pub use crate::vardct::chroma_from_luma::{ytox_ratio, ytob_ratio};
+    pub use crate::vardct::quant::INV_DC_QUANT;
+    // Wrappers around pub(crate) helpers and pub(crate) impl methods that
+    // can't be `pub use`d directly.
+    pub use crate::vardct::ac_strategy::compute_scaled_constants_free;
+    pub use crate::vardct::epf::epf_step0_strip_free;
+    pub use crate::vardct::quantize::adjust_quant_block_ac_free;
+}
+
 #[cfg(test)]
 mod tests;
 

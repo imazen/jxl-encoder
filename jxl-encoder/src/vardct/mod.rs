@@ -52,8 +52,8 @@ mod tile_distmap;
 #[cfg(feature = "zensim-loop")]
 mod zensim_loop;
 
-mod quant;
-mod quantize;
+pub(crate) mod quant;
+pub(crate) mod quantize;
 #[allow(dead_code)] // Functions used in upcoming phases (EPF, butteraugli)
 pub(crate) mod reconstruct;
 mod static_codes;

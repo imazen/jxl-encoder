@@ -168,8 +168,12 @@ const EPF0_NEIGHBORS: [(isize, isize); 12] = [
 /// be shifted so its row 0 corresponds to global row `py_start - pad`... actually,
 /// we pass the FULL padded plane unchanged and pass `py_start` so row arithmetic
 /// matches the original non-parallel version exactly, preserving bit-exactness).
+///
+/// Visibility note: bumped from `fn` to `pub(crate) fn` so the
+/// `__internals` cargo feature's free-function wrapper
+/// `epf_step0_strip_free` (below) can call it.
 #[allow(clippy::too_many_arguments)]
-fn epf_step0_strip(
+pub(crate) fn epf_step0_strip(
     padded_planes: [&[f32]; 3],
     inv_sigma: &[f32],
     xsize_blocks: usize,
@@ -234,6 +238,40 @@ fn epf_step0_strip(
             out_b[oidx] = sum_b * inv_tw;
         }
     }
+}
+
+/// Free-function wrapper around `epf_step0_strip` for the
+/// `__internals` cargo feature's downstream parity testing
+/// (jxl-encoder-gpu's `examples/epf_step0_parity.rs`).
+#[cfg(feature = "__internals")]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn epf_step0_strip_free(
+    padded_planes: [&[f32]; 3],
+    inv_sigma: &[f32],
+    xsize_blocks: usize,
+    width: usize,
+    py_start: usize,
+    rows: usize,
+    in_stride: usize,
+    pad: usize,
+    out_x: &mut [f32],
+    out_y: &mut [f32],
+    out_b: &mut [f32],
+) {
+    epf_step0_strip(
+        padded_planes,
+        inv_sigma,
+        xsize_blocks,
+        width,
+        py_start,
+        rows,
+        in_stride,
+        pad,
+        out_x,
+        out_y,
+        out_b,
+    );
 }
 
 /// Apply EPF Step 0: 5x5 plus kernel with 3x3-plus SAD.
