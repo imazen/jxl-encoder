@@ -437,13 +437,27 @@ pub(super) const COEFF_DOMAIN_CONSTANTS: (f32, f32, f32) = (138.0, 5.335_918_5, 
 /// Call this ONCE per search function (not per estimate_entropy call) since
 /// distance and bases are constant within a search. Pass the result as
 /// `scaled_constants` to estimate_entropy_with_mask/estimate_entropy_full.
-pub(super) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) -> (f32, f32, f32) {
+// Visibility note: bumped from pub(super) to pub(crate) so the
+// `__internals` cargo feature's free-function wrapper
+// `compute_scaled_constants_free` (below) can call it.
+pub(crate) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) -> (f32, f32, f32) {
     let (info_loss_base, zeros_base, cost_delta_base) = bases;
     let ratio = (distance + K_BIAS) / (1.0 + K_BIAS);
     let info_loss_mul = info_loss_base * jxl_simd::fast_powf(ratio, K_POW_INFO_LOSS);
     let zeros_mul = zeros_base * jxl_simd::fast_powf(ratio, K_POW_ZEROS_MUL);
     let cost_delta = cost_delta_base * jxl_simd::fast_powf(ratio, K_POW_COST_DELTA);
     (info_loss_mul, cost_delta, zeros_mul)
+}
+
+/// Free-function wrapper around `compute_scaled_constants` for the
+/// `__internals` cargo feature's downstream parity testing.
+#[cfg(feature = "__internals")]
+#[doc(hidden)]
+pub fn compute_scaled_constants_free(
+    distance: f32,
+    bases: (f32, f32, f32),
+) -> (f32, f32, f32) {
+    compute_scaled_constants(distance, bases)
 }
 
 use crate::effort::EntropyMulTable;

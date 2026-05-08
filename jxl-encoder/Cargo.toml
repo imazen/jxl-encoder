@@ -74,6 +74,12 @@ unsafe-performance = ["jxl_simd/unsafe-performance"]
 # lossless setter, and vice versa). Not stable; field sets may grow
 # additively between minor versions.
 __expert = []
+# Re-exports private vardct internals (epf_step0_strip, adjust_quant_block_ac,
+# compute_scaled_constants, ytox_ratio, ytob_ratio, INV_DC_QUANT) under a
+# `pub mod __internals` for downstream parity testing (notably from
+# jxl-encoder-gpu's forks::* tests). Off by default; not part of the
+# stable API surface — items here may move or change at any time.
+__internals = []
 default = ["std", "butteraugli-loop"]
 
 [dev-dependencies]

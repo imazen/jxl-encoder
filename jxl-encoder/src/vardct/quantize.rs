@@ -645,3 +645,42 @@ impl VarDctEncoder {
         }
     }
 }
+
+/// Free-function wrapper around `VarDctEncoder::adjust_quant_block_ac`
+/// for the `__internals` cargo feature's downstream parity testing.
+/// The inner method takes no `&self`, so this is a pure passthrough.
+///
+/// Visibility note: keeps the impl method `pub(crate)` and exposes
+/// only this wrapper so the public API surface stays minimal.
+#[cfg(feature = "__internals")]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn adjust_quant_block_ac_free(
+    block_coeffs: &[f32],
+    weights: &[f32],
+    qac: f32,
+    qm_multiplier: f32,
+    c: usize,
+    raw_strategy: u8,
+    block_width: usize,
+    block_height: usize,
+    xsize: usize,
+    ysize: usize,
+    thresholds: &mut [f32; 4],
+    quant: &mut i32,
+) -> (u8, f32, f32, i32) {
+    VarDctEncoder::adjust_quant_block_ac(
+        block_coeffs,
+        weights,
+        qac,
+        qm_multiplier,
+        c,
+        raw_strategy,
+        block_width,
+        block_height,
+        xsize,
+        ysize,
+        thresholds,
+        quant,
+    )
+}
