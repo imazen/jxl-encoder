@@ -411,8 +411,20 @@ impl VarDctEncoder {
                     let diff = tile_dist[bi] / target_distance;
                     if diff <= 1.0 {
                         // Good quality: reduce precision to save bits.
-                        // diff < 0.0 (negative) would produce NaN through
-                        // powf for non-integer cur_pow — guard via max(0).
+                        // `diff` must be finite — NaN here indicates a real bug
+                        // (target_distance == 0, or polluted reconstruction from
+                        // a previous butteraugli iteration). Surface loudly rather
+                        // than silently coercing to 0 via .max() (IEEE-754 ordered
+                        // max returns the non-NaN operand, and 0.0.powf(x) = 0.0
+                        // is finite, so the downstream assert can't catch it).
+                        assert!(
+                            diff.is_finite(),
+                            "butteraugli loop: non-finite diff = {diff} \
+                             (tile_dist={}, target_distance={target_distance})",
+                            tile_dist[bi]
+                        );
+                        // Negative diff would produce NaN through powf for
+                        // non-integer cur_pow — guard via max(0).
                         let safe_diff = diff.max(0.0) as f64;
                         let factor = safe_diff.powf(cur_pow) as f32;
                         assert!(
