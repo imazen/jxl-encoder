@@ -7,8 +7,7 @@
 //! This crate provides a complete JPEG XL encoder implementation, supporting
 //! both lossless (modular) and lossy (VarDCT) encoding modes.
 
-#![cfg_attr(not(feature = "unsafe-performance"), forbid(unsafe_code))]
-#![cfg_attr(feature = "unsafe-performance", deny(unsafe_code))]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 
