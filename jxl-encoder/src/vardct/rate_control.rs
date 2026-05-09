@@ -118,7 +118,8 @@ pub fn encode_with_rate_control(
             &decoded,
             precomputed.width,
             precomputed.height,
-        );
+            encoder.budget.as_ref(),
+        )?;
 
         // Compute tile distances
         let tile_dist = TileDistMap::from_diffmap(
@@ -126,7 +127,8 @@ pub fn encode_with_rate_control(
             precomputed.width,
             precomputed.height,
             &precomputed.ac_strategy,
-        );
+            encoder.budget.as_ref(),
+        )?;
 
         let p95_dist = tile_dist.percentile_95();
 

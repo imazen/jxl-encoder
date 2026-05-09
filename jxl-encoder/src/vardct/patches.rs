@@ -1729,7 +1729,7 @@ pub(crate) fn trial_encode_ref_frame_bytes(patches: &PatchesData, use_ans: bool)
     let mut writer = BitWriter::new();
     // Trial encode always uses default (no tree learning) — tree learning is slower
     // and the cost estimate only needs to be approximate for the gating decision.
-    if encode_reference_frame(patches, use_ans, false, &mut writer).is_ok() {
+    if encode_reference_frame(patches, use_ans, false, &mut writer, None).is_ok() {
         writer.zero_pad_to_byte();
         writer.bytes_written()
     } else {
@@ -1751,6 +1751,7 @@ pub(crate) fn encode_reference_frame_rgb(
     use_ans: bool,
     use_tree_learning: bool,
     writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
 
@@ -1808,7 +1809,10 @@ pub(crate) fn encode_reference_frame_rgb(
         is_last: false,
         ..Default::default() // skip_rct=false → RCT applied to RGB channels
     };
-    let encoder = FrameEncoder::new(ref_w, ref_h, options);
+    let mut encoder = FrameEncoder::new(ref_w, ref_h, options);
+    if let Some(b) = budget {
+        encoder = encoder.with_budget(alloc::sync::Arc::clone(b));
+    }
     encoder.encode_modular_body(&image, writer)?;
 
     Ok(())
@@ -1831,6 +1835,7 @@ pub(crate) fn encode_reference_frame(
     use_ans: bool,
     use_tree_learning: bool,
     writer: &mut BitWriter,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<()> {
     use crate::headers::frame_header::{Encoding, FrameHeader, FrameType};
 
@@ -1932,7 +1937,10 @@ pub(crate) fn encode_reference_frame(
         is_last: false,
         ..Default::default()
     };
-    let encoder = FrameEncoder::new(ref_w, ref_h, options);
+    let mut encoder = FrameEncoder::new(ref_w, ref_h, options);
+    if let Some(b) = budget {
+        encoder = encoder.with_budget(alloc::sync::Arc::clone(b));
+    }
     encoder.encode_modular_body(&image, writer)?;
 
     #[cfg(feature = "trace-bitstream")]

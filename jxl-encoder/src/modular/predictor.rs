@@ -497,9 +497,59 @@ impl WeightedPredictorState {
         }
     }
 
+    /// Creates a new weighted predictor state with an optional allocation
+    /// budget. The two scratch buffers (`pred_errors_buffer` of
+    /// `(xsize + 2) * 2 * NUM_WP_PREDICTORS` u32 and `error` of
+    /// `(xsize + 2) * 2` i32) are width-driven and therefore charged
+    /// against the per-encode cap. Returns
+    /// [`crate::error::Error::AllocationLimit`] when the cap is exceeded;
+    /// callers convert to `EncodeError` upstream.
+    ///
+    /// `budget = None` is zero-overhead — equivalent to [`Self::new`].
+    pub(crate) fn new_with_budget(
+        params: &WeightedPredictorParams,
+        xsize: usize,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> crate::error::Result<Self> {
+        let num_errors = (xsize + 2) * 2;
+        let buffer_bytes = (num_errors as u64)
+            .checked_mul(NUM_WP_PREDICTORS as u64)
+            .and_then(|n| n.checked_mul(core::mem::size_of::<u32>() as u64))
+            .ok_or(crate::error::Error::AllocationLimit {
+                requested: u64::MAX,
+                used: 0,
+                cap: 0,
+            })?;
+        let error_bytes = (num_errors as u64)
+            .checked_mul(core::mem::size_of::<i32>() as u64)
+            .ok_or(crate::error::Error::AllocationLimit {
+                requested: u64::MAX,
+                used: 0,
+                cap: 0,
+            })?;
+        crate::budget::MemoryBudget::reserve_permanent_opt(budget, buffer_bytes)?;
+        crate::budget::MemoryBudget::reserve_permanent_opt(budget, error_bytes)?;
+        Ok(Self {
+            prediction: [0; NUM_WP_PREDICTORS],
+            pred: 0,
+            pred_errors_buffer: vec![0; num_errors * NUM_WP_PREDICTORS],
+            error: vec![0; num_errors],
+            params: *params,
+        })
+    }
+
     /// Creates with default parameters.
     pub fn with_defaults(xsize: usize) -> Self {
         Self::new(&WeightedPredictorParams::default(), xsize)
+    }
+
+    /// Creates with default parameters and an optional allocation budget.
+    /// Counterpart to [`Self::new_with_budget`].
+    pub(crate) fn with_defaults_and_budget(
+        xsize: usize,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> crate::error::Result<Self> {
+        Self::new_with_budget(&WeightedPredictorParams::default(), xsize, budget)
     }
 
     /// Get all predictor errors for a given position (contiguous in memory).

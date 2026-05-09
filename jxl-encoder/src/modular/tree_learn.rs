@@ -594,6 +594,35 @@ pub fn gather_samples_strided(
     stride: usize,
     wp_params: &WeightedPredictorParams,
 ) {
+    // Backwards-compatible wrapper: budget-less. Allocations fall back to
+    // panicking on OOM, same as before. New callers should prefer the
+    // `_with_budget` variant.
+    gather_samples_strided_with_budget(
+        samples,
+        image,
+        group_id,
+        channel_offset,
+        stride,
+        wp_params,
+        None,
+    )
+    .expect("budget-less gather_samples_strided must not return AllocationLimit")
+}
+
+/// `gather_samples_strided` with explicit allocation budget.
+///
+/// Per-channel `WeightedPredictorState` scratch (`(width + 2) * 2` errors
+/// plus same length × 4 sub-predictor errors) is reserved against the
+/// cap. `budget = None` is zero-overhead.
+pub(crate) fn gather_samples_strided_with_budget(
+    samples: &mut TreeSamples,
+    image: &ModularImage,
+    group_id: u32,
+    channel_offset: u32,
+    stride: usize,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<()> {
     for (ch_idx, channel) in image.channels.iter().enumerate() {
         // Find reference channels for this channel (preceding channels with matching dims)
         let ref_channel_indices = if samples.num_ref_channels > 0 {
@@ -611,8 +640,10 @@ pub fn gather_samples_strided(
             wp_params,
             image,
             &ref_channel_indices,
-        );
+            budget,
+        )?;
     }
+    Ok(())
 }
 
 /// Compute maximum tree samples from an [`EffortProfile`].
@@ -662,15 +693,16 @@ fn gather_channel_samples(
     wp_params: &WeightedPredictorParams,
     image: &ModularImage,
     ref_channel_indices: &[usize],
-) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<()> {
     let width = channel.width();
     let height = channel.height();
     if width == 0 || height == 0 {
-        return;
+        return Ok(());
     }
 
     // WP state for computing weighted predictions and property 15
-    let mut wp_state = WeightedPredictorState::new(wp_params, width);
+    let mut wp_state = WeightedPredictorState::new_with_budget(wp_params, width, budget)?;
 
     // prev_gradient tracks the gradient from the previous pixel in scan order.
     // Property 8 = W - prev_gradient. At the start of each row, prev_gradient = 0.
@@ -787,6 +819,7 @@ fn gather_channel_samples(
             }
         }
     }
+    Ok(())
 }
 
 /// Size of the precomputed n*log2(n) lookup table.
@@ -990,19 +1023,53 @@ struct SplitCandidate {
 /// - `params.split_threshold`: minimum bits saved for a split to be accepted
 /// - `params.max_nodes`: maximum tree nodes
 pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams) -> Tree {
+    compute_best_tree_with_budget(samples, params, None)
+        .expect("budget-less compute_best_tree must not return AllocationLimit")
+}
+
+/// `compute_best_tree` with explicit allocation budget.
+///
+/// Charges the dimension-driven allocations against the cap:
+///
+/// - `indices: Vec<usize>` of `num_samples` entries (8 B each)
+/// - `bucket_indices` from [`TreeSamples::pre_quantize`]: up to
+///   `total_num_properties × num_samples` u8 entries (1 B each)
+/// - `entropy_counts: Vec<u32>` of `histogram_size` (small, but charged
+///   for completeness)
+///
+/// `num_samples` itself is dim-driven: see
+/// [`max_tree_samples_from_profile`], which scales with image area
+/// (`tree_sample_fraction × total_pixels`, capped at `tree_max_samples_fixed`).
+///
+/// `budget = None` is zero-overhead.
+pub(crate) fn compute_best_tree_with_budget(
+    samples: &mut TreeSamples,
+    params: &TreeLearningParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Tree> {
     // Scale threshold by pixel_fraction, matching libjxl's required_cost formula.
     let required_cost = params.pixel_fraction * 0.9 + 0.1;
     let threshold = params.split_threshold * required_cost;
     let n = samples.num_samples;
     if n == 0 {
-        return vec![PropertyDecisionNode {
+        return Ok(vec![PropertyDecisionNode {
             property: -1,
             predictor: Predictor::Gradient,
             context_id: 0,
             multiplier: 1,
             ..Default::default()
-        }];
+        }]);
     }
+
+    // Reserve the dim-driven scratch up front.
+    //  - `indices`: n × usize
+    //  - `bucket_indices`: up to (total_num_properties × n) bytes
+    let usize_bytes = core::mem::size_of::<usize>() as u64;
+    let bi_bytes = (samples.total_num_properties() as u64).saturating_mul(n as u64);
+    let total_bytes = (n as u64)
+        .saturating_mul(usize_bytes)
+        .saturating_add(bi_bytes);
+    crate::budget::MemoryBudget::reserve_permanent_opt(budget, total_bytes)?;
 
     // Pre-quantize all properties globally (replaces per-node binary_search)
     let mut pq = samples.pre_quantize(params);
@@ -1209,7 +1276,7 @@ pub fn compute_best_tree(samples: &mut TreeSamples, params: &TreeLearningParams)
         max_nodes,
     );
 
-    tree
+    Ok(tree)
 }
 
 /// Make a tree node into a leaf with the given predictor.
@@ -2102,6 +2169,21 @@ pub fn collect_residuals_with_tree(
     collect_residuals_with_tree_offset(image, tree, group_id, 0, wp_params)
 }
 
+/// `collect_residuals_with_tree` with explicit allocation budget.
+///
+/// Per-channel `WeightedPredictorState` scratch is reserved against the
+/// cap. Returns [`crate::error::Error::AllocationLimit`] when the cap is
+/// exceeded. `budget = None` is zero-overhead.
+pub(crate) fn collect_residuals_with_tree_with_budget(
+    image: &ModularImage,
+    tree: &Tree,
+    group_id: u32,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
+    collect_residuals_with_tree_offset_with_budget(image, tree, group_id, 0, wp_params, budget)
+}
+
 /// Collect residuals using a learned tree, with a channel index offset.
 ///
 /// When collecting from a sub-image that represents channels [offset..offset+N] of a larger
@@ -2114,6 +2196,29 @@ pub fn collect_residuals_with_tree_offset(
     channel_offset: u32,
     wp_params: &WeightedPredictorParams,
 ) -> Vec<crate::entropy_coding::token::Token> {
+    collect_residuals_with_tree_offset_with_budget(
+        image,
+        tree,
+        group_id,
+        channel_offset,
+        wp_params,
+        None,
+    )
+    .expect("budget-less collect_residuals_with_tree_offset must not return AllocationLimit")
+}
+
+/// `collect_residuals_with_tree_offset` with explicit allocation budget.
+///
+/// Per-channel `WeightedPredictorState` scratch is reserved against the
+/// cap. `budget = None` is zero-overhead.
+pub(crate) fn collect_residuals_with_tree_offset_with_budget(
+    image: &ModularImage,
+    tree: &Tree,
+    group_id: u32,
+    channel_offset: u32,
+    wp_params: &WeightedPredictorParams,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<crate::entropy_coding::token::Token>> {
     use crate::entropy_coding::token::Token as AnsToken;
 
     // Check if the tree uses any reference channel properties (indices >= 16).
@@ -2150,7 +2255,7 @@ pub fn collect_residuals_with_tree_offset(
             Vec::new()
         };
 
-        let mut wp_state = WeightedPredictorState::new(wp_params, width);
+        let mut wp_state = WeightedPredictorState::new_with_budget(wp_params, width, budget)?;
         let mut prev_gradient: i32;
 
         for y in 0..height {
@@ -2264,7 +2369,7 @@ pub fn collect_residuals_with_tree_offset(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Traverse a tree using spec-matching property values (base 16 properties only).

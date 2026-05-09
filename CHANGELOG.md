@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-06
+
+### Fixed (security)
+
+- **Two OOB index DoS vectors** in encoder hot paths (#30, 1498053):
+  LZ77 chain follows in `entropy_coding/lz77.rs` now masked with
+  `window_mask`, and patches.rs flood-fill BFS gained defensive
+  bounds checks at queue-pop. Both panics had bit-30 set in the
+  failing index (0x40000000 pattern), suggesting a shared upstream
+  cause; the fixes are defensive at the panic sites.
+- **Hardened encoder DoS surface** across multiple components
+  (499ac75): bounded transform-tree growth, capped quant-iteration
+  in butteraugli/ssim2 loops, additional bit-reader guards.
+- **NaN/Inf sanitization + dimension arithmetic** (f178000): float
+  inputs now sanitized at the boundary; width × height × channel
+  arithmetic uses checked multiplies to prevent overflow into
+  small-allocation paths.
+- **Silent defenses made loud + quant-iter cap aligned with
+  validator** (3767210): defenses that previously degraded silently
+  now surface `EncodeError`, and the per-component quant-iteration
+  cap matches the validator-side limit to prevent inconsistent
+  reject/accept behavior.
+
+### Changed
+
+- **Up-front working-set precheck against memory cap** (061862f):
+  `Limits::with_max_memory_bytes(n)` is now enforced at
+  `EncodeRequest::encode_inner` via an estimate of peak working-set
+  (~40 bytes/pixel). Encodes that would exceed the cap return
+  `EncodeError::LimitExceeded` immediately rather than allocating.
+  Default cap is `DEFAULT_MAX_MEMORY_BYTES = 2 GB` when `Limits` is
+  unset. Internal `MemoryBudget` type added (`pub(crate)`) for
+  per-allocation accounting; no public API change.
+
 ## [0.3.1] - 2026-05-02
 
 ### QUEUED BREAKING CHANGES

@@ -22,6 +22,7 @@ use super::common::*;
 use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use crate::debug_rect;
+use crate::error::Result;
 
 /// Map butteraugli distance to approximate target SSIM2 score.
 /// Based on measured data from quality_compare (CID22, 41 images × 9 distances).
@@ -75,32 +76,46 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
-    ) -> DistanceParams {
+    ) -> Result<DistanceParams> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
+        use crate::budget::MemoryBudget;
 
+        let budget = self.budget.as_ref();
         let target_distance = self.distance;
         let _target_ssim2 = distance_to_target_ssim2(target_distance);
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
 
         // Precompute SSIM2 reference from source image (linear RGB → interleaved [f32; 3]).
+        // The interleaved buffer is transient — released before the iteration loop;
+        // the reference internally clones what it needs.
         let n = width * height;
-        let mut source_rgb3: Vec<[f32; 3]> = Vec::with_capacity(n);
-        for i in 0..n {
-            source_rgb3.push([
-                linear_rgb[i * 3],
-                linear_rgb[i * 3 + 1],
-                linear_rgb[i * 3 + 2],
-            ]);
-        }
-        let source_img = imgref::Img::new(source_rgb3, width, height);
-        let ssim2_ref = match fast_ssim2::Ssimulacra2Reference::new(source_img.as_ref()) {
-            Ok(r) => r,
-            Err(_) => return initial_params.clone(),
+        let ssim2_ref = {
+            let _g = MemoryBudget::reserve_opt(
+                budget,
+                (n as u64).saturating_mul(core::mem::size_of::<[f32; 3]>() as u64),
+            )?;
+            // Build via collect rather than push-in-loop — fewer reallocations.
+            let source_rgb3: Vec<[f32; 3]> = (0..n)
+                .map(|i| {
+                    [
+                        linear_rgb[i * 3],
+                        linear_rgb[i * 3 + 1],
+                        linear_rgb[i * 3 + 2],
+                    ]
+                })
+                .collect();
+            let source_img = imgref::Img::new(source_rgb3, width, height);
+            match fast_ssim2::Ssimulacra2Reference::new(source_img.as_ref()) {
+                Ok(r) => r,
+                Err(_) => return Ok(initial_params.clone()),
+            }
         };
 
         // Pre-deinterleave original linear RGB for per-block error computation.
+        // These three planes are loop-lifetime — accounted permanently.
+        MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
         let mut orig_r = vec![0.0f32; n];
         let mut orig_g = vec![0.0f32; n];
         let mut orig_b = vec![0.0f32; n];
@@ -128,13 +143,28 @@ impl VarDctEncoder {
         let qf_lower = initial_qf_min / (asymmetry * qf_max_deviation_low);
         let qf_higher = initial_qf_max * (qf_max_deviation_low / asymmetry);
 
-        // Pre-allocate buffers
+        // Pre-allocate buffers reused across iterations.
+        MemoryBudget::reserve_permanent_opt(
+            budget,
+            (num_blocks as u64)
+                .saturating_add((num_blocks as u64).saturating_mul(4))
+                .saturating_add((padded_pixels as u64).saturating_mul(4 * 3)),
+        )?;
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
         let mut recon_r = vec![0.0f32; padded_pixels];
         let mut recon_g = vec![0.0f32; padded_pixels];
         let mut recon_b = vec![0.0f32; padded_pixels];
-        let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
+        let mut transform_out =
+            super::transform::TransformOutput::new(xsize_blocks, ysize_blocks, budget)?;
+        // Reusable per-iteration interleaved RGB scratch — was previously
+        // reallocated every iteration (line 219 below). Lift it to one alloc
+        // here, clear+extend each iteration. Permanent for the whole loop.
+        MemoryBudget::reserve_permanent_opt(
+            budget,
+            (n as u64).saturating_mul(core::mem::size_of::<[f32; 3]>() as u64),
+        )?;
+        let mut recon_rgb3: Vec<[f32; 3]> = Vec::with_capacity(n);
 
         // Saturate at consumption — see butteraugli_loop.rs for rationale.
         let iters = (self.ssim2_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
@@ -193,7 +223,8 @@ impl VarDctEncoder {
                     ysize_blocks,
                     padded_width,
                     padded_height,
-                );
+                    budget,
+                )?;
             }
 
             if let Some(pd) = patches_data {
@@ -215,16 +246,17 @@ impl VarDctEncoder {
                 padded_pixels,
             );
 
-            // Step 5: Compute full-image SSIM2 (using precomputed reference)
-            let mut recon_rgb3: Vec<[f32; 3]> = Vec::with_capacity(n);
+            // Step 5: Compute full-image SSIM2 (using precomputed reference).
+            // Reuse the recon_rgb3 buffer — clear and refill each iteration.
+            recon_rgb3.clear();
             for y in 0..height {
                 for x in 0..width {
                     let pi = y * padded_width + x;
                     recon_rgb3.push([recon_r[pi], recon_g[pi], recon_b[pi]]);
                 }
             }
-            let recon_img = imgref::Img::new(recon_rgb3, width, height);
-            let ssim2_score = ssim2_ref.compare(recon_img.as_ref()).unwrap_or(100.0);
+            let recon_img = imgref::Img::new(recon_rgb3.as_slice(), width, height);
+            let ssim2_score = ssim2_ref.compare(recon_img).unwrap_or(100.0);
 
             // Step 6: Compute per-block tile distance from linear RGB RMSE.
             // Weight by luminance (0.2126R + 0.7152G + 0.0722B) so bright-channel
@@ -403,6 +435,6 @@ impl VarDctEncoder {
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);
 
-        final_params
+        Ok(final_params)
     }
 }

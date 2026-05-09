@@ -83,6 +83,8 @@ impl EncoderPrecomputed {
     /// - CfL map
     /// - Per-pixel mask (if pixel-domain loss enabled)
     /// - AC strategy selection
+    ///
+    /// Public entry point. Equivalent to [`Self::compute_with_budget`] with no allocation cap.
     #[allow(clippy::too_many_arguments)]
     pub fn compute(
         width: usize,
@@ -98,9 +100,46 @@ impl EncoderPrecomputed {
         force_strategy: Option<u8>,
         profile: &crate::effort::EffortProfile,
         color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
-    ) -> Self {
+    ) -> crate::error::Result<Self> {
+        Self::compute_with_budget(
+            width,
+            height,
+            linear_rgb,
+            distance,
+            cfl_enabled,
+            ac_strategy_enabled,
+            pixel_domain_loss,
+            enable_noise,
+            enable_denoise,
+            enable_gaborish,
+            force_strategy,
+            profile,
+            color_encoding,
+            None,
+        )
+    }
+
+    /// Internal-only variant that accounts allocations against an optional
+    /// per-encode [`MemoryBudget`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn compute_with_budget(
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        distance: f32,
+        cfl_enabled: bool,
+        ac_strategy_enabled: bool,
+        pixel_domain_loss: bool,
+        enable_noise: bool,
+        enable_denoise: bool,
+        enable_gaborish: bool,
+        force_strategy: Option<u8>,
+        profile: &crate::effort::EffortProfile,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> crate::error::Result<Self> {
         use super::ac_strategy::compute_ac_strategy;
-        use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float};
+        // adaptive_quant helpers are referenced through their module path below.
         use super::chroma_from_luma::compute_cfl_map;
         use super::gaborish::gaborish_inverse;
         use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
@@ -121,7 +160,8 @@ impl EncoderPrecomputed {
             padded_height,
             linear_rgb,
             color_encoding,
-        );
+            budget,
+        )?;
 
         // Estimate noise parameters (if enabled)
         let noise_params = if enable_noise {
@@ -179,7 +219,8 @@ impl EncoderPrecomputed {
                 &mut xyb_b,
                 padded_width,
                 padded_height,
-            );
+                budget,
+            )?;
         }
 
         // Compute adaptive per-block quantization field and masking
@@ -190,17 +231,19 @@ impl EncoderPrecomputed {
             distance * 0.62
         };
 
-        let (quant_field_float, masking) = compute_quant_field_float(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            padded_width,
-            padded_height,
-            xsize_blocks,
-            ysize_blocks,
-            distance_for_iqf,
-            profile.k_ac_quant,
-        );
+        let (quant_field_float, masking) =
+            super::adaptive_quant::compute_quant_field_float_with_budget(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                distance_for_iqf,
+                profile.k_ac_quant,
+                budget,
+            )?;
 
         // Compute CfL map
         let cfl_map = if cfl_enabled {
@@ -225,7 +268,12 @@ impl EncoderPrecomputed {
 
         // Compute per-pixel mask for pixel-domain loss
         let mask1x1 = if ac_strategy_enabled && pixel_domain_loss {
-            Some(compute_mask1x1(&xyb_y, padded_width, padded_height))
+            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+                &xyb_y,
+                padded_width,
+                padded_height,
+                budget,
+            )?)
         } else {
             None
         };
@@ -258,7 +306,7 @@ impl EncoderPrecomputed {
         // produces the final quant_field. No refinement here — pass 1 values from
         // compute_cfl_map are sufficient for initial AC strategy selection.
 
-        Self {
+        Ok(Self {
             width,
             height,
             xsize_blocks,
@@ -279,7 +327,7 @@ impl EncoderPrecomputed {
             base_distance: distance,
             chromacity_x_pixelized,
             chromacity_b_pixelized,
-        }
+        })
     }
 }
 
@@ -294,13 +342,26 @@ fn convert_to_xyb_padded(
     padded_height: usize,
     linear_rgb: &[f32],
     color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
     use super::xyb::primaries_to_srgb_matrix;
     use crate::color::xyb::linear_rgb_to_xyb;
 
     let primaries_matrix = color_encoding.and_then(primaries_to_srgb_matrix);
 
-    let padded_n = padded_width * padded_height;
+    let padded_n =
+        padded_width
+            .checked_mul(padded_height)
+            .ok_or(crate::error::Error::DimensionOverflow {
+                width: padded_width,
+                height: padded_height,
+                channels: 3,
+            })?;
+    // Three padded XYB planes are returned to caller — account permanently.
+    crate::budget::MemoryBudget::reserve_permanent_opt(
+        budget,
+        (padded_n as u64).saturating_mul(4 * 3),
+    )?;
     // Output planes are fully overwritten below: rows 0..height by the per-row
     // conversion + right-edge pad, rows height..padded_height by the bottom-pad
     // loop. Safe to dirty-initialize.
@@ -309,7 +370,10 @@ fn convert_to_xyb_padded(
     let mut xyb_b = jxl_simd::vec_f32_dirty(padded_n);
 
     // Scratch buffers for deinterleaving + optional matrix transform. These
-    // are written in full every row before being read.
+    // are written in full every row before being read. Transient — released
+    // before this function returns.
+    let _row_g =
+        crate::budget::MemoryBudget::reserve_opt(budget, (width as u64).saturating_mul(4 * 3))?;
     let mut row_r = jxl_simd::vec_f32_dirty(width);
     let mut row_g = jxl_simd::vec_f32_dirty(width);
     let mut row_b = jxl_simd::vec_f32_dirty(width);
@@ -364,5 +428,5 @@ fn convert_to_xyb_padded(
         }
     }
 
-    (xyb_x, xyb_y, xyb_b)
+    Ok((xyb_x, xyb_y, xyb_b))
 }
