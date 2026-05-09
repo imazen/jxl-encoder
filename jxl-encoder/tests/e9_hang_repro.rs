@@ -66,7 +66,9 @@ fn e9_checker_pattern_does_not_hang() {
     const W: usize = 1024;
     const H: usize = 1024;
     const TILE: usize = 8;
-    const BUDGET: Duration = Duration::from_secs(5);
+    // Hang detection only — generous budget to absorb coverage-instrumented
+    // and slow-target builds. A real hang is unbounded; 30s still catches it.
+    const BUDGET: Duration = Duration::from_secs(30);
 
     let pixels = make_checker_rgb8(W, H, TILE);
     let input_len = pixels.len();
@@ -77,7 +79,7 @@ fn e9_checker_pattern_does_not_hang() {
             .encode(&pixels, W as u32, H as u32, PixelLayout::Rgb8)
     });
 
-    let encoded = result.expect("encode did not complete within 5s budget (hang)");
+    let encoded = result.expect("encode did not complete within 30s budget (hang)");
     let encoded = encoded.expect("encode returned an error");
 
     assert_eq!(
