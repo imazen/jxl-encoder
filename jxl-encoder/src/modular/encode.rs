@@ -487,6 +487,7 @@ pub fn write_modular_stream_with_palette(
 ///
 /// The lossy palette quantizes colors to a small palette + delta entries,
 /// producing smaller files at the cost of some color accuracy.
+#[allow(dead_code)] // public wrapper; internal callers thread budget via the `_budget` variant
 pub fn write_modular_stream_with_lossy_palette(
     image: &ModularImage,
     writer: &mut BitWriter,
@@ -495,10 +496,40 @@ pub fn write_modular_stream_with_lossy_palette(
     num_c: usize,
     max_palette_colors: usize,
 ) -> Result<()> {
-    use super::palette::apply_lossy_palette;
+    write_modular_stream_with_lossy_palette_budget(
+        image,
+        writer,
+        use_ans,
+        begin_c,
+        num_c,
+        max_palette_colors,
+        None,
+    )
+}
+
+/// `write_modular_stream_with_lossy_palette` with explicit allocation
+/// budget. The budget is forwarded to `apply_lossy_palette` so the
+/// dim-driven scratch buffers (deltas, quant rows, error diffusion,
+/// index channel) are charged against the per-encode cap.
+pub(crate) fn write_modular_stream_with_lossy_palette_budget(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    begin_c: usize,
+    num_c: usize,
+    max_palette_colors: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<()> {
+    use super::palette::apply_lossy_palette_with_budget;
 
     let mut transformed = image.clone();
-    let result = apply_lossy_palette(&mut transformed, begin_c, num_c, max_palette_colors);
+    let result = apply_lossy_palette_with_budget(
+        &mut transformed,
+        begin_c,
+        num_c,
+        max_palette_colors,
+        budget,
+    );
 
     let result = match result {
         Some(r) => r,
@@ -816,6 +847,19 @@ pub fn write_modular_stream_with_weighted(
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
+    write_modular_stream_with_weighted_with_budget(image, writer, use_ans, None)
+}
+
+/// `write_modular_stream_with_weighted` with explicit allocation budget.
+///
+/// Per-channel `WeightedPredictorState` scratch is reserved against the
+/// cap. `budget = None` is zero-overhead.
+pub(crate) fn write_modular_stream_with_weighted_with_budget(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<()> {
     use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
 
     let params = WeightedPredictorParams::default();
@@ -826,7 +870,7 @@ pub fn write_modular_stream_with_weighted(
     for channel in &image.channels {
         let width = channel.width();
         let height = channel.height();
-        let mut wp_state = WeightedPredictorState::new(&params, width);
+        let mut wp_state = WeightedPredictorState::new_with_budget(&params, width, budget)?;
 
         for y in 0..height {
             for x in 0..width {
@@ -883,6 +927,19 @@ pub fn write_modular_stream_with_rct_weighted(
     writer: &mut BitWriter,
     use_ans: bool,
 ) -> Result<()> {
+    write_modular_stream_with_rct_weighted_with_budget(image, writer, use_ans, None)
+}
+
+/// `write_modular_stream_with_rct_weighted` with explicit allocation budget.
+///
+/// Per-channel `WeightedPredictorState` scratch is reserved against the
+/// cap. `budget = None` is zero-overhead.
+pub(crate) fn write_modular_stream_with_rct_weighted_with_budget(
+    image: &ModularImage,
+    writer: &mut BitWriter,
+    use_ans: bool,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> Result<()> {
     use super::predictor::{Neighbors, WeightedPredictorParams, WeightedPredictorState};
 
     // Check if palette is more beneficial
@@ -891,7 +948,7 @@ pub fn write_modular_stream_with_rct_weighted(
     }
 
     if image.channels.len() < 3 {
-        return write_modular_stream_with_weighted(image, writer, use_ans);
+        return write_modular_stream_with_weighted_with_budget(image, writer, use_ans, budget);
     }
 
     let mut transformed = image.clone();
@@ -906,7 +963,7 @@ pub fn write_modular_stream_with_rct_weighted(
     for channel in &transformed.channels {
         let width = channel.width();
         let height = channel.height();
-        let mut wp_state = WeightedPredictorState::new(&params, width);
+        let mut wp_state = WeightedPredictorState::new_with_budget(&params, width, budget)?;
 
         for y in 0..height {
             for x in 0..width {

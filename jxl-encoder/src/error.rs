@@ -49,6 +49,17 @@ pub enum Error {
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 
+    /// A configured memory-allocation budget would be exceeded.
+    ///
+    /// Distinct from [`Error::OutOfMemory`] (which is the system
+    /// allocator returning failure) and [`Error::InvalidInput`] (which
+    /// is parameter validation). The encoder raises this *before*
+    /// touching the heap when an upcoming `Vec::with_capacity` or
+    /// equivalent would push cumulative reservations past the cap
+    /// configured via [`crate::api::Limits::max_memory_bytes`].
+    #[error("memory budget exceeded: requested {requested} bytes on top of {used} (cap {cap})")]
+    AllocationLimit { requested: u64, used: u64, cap: u64 },
+
     // Entropy coding errors
     #[error("Invalid histogram: {0}")]
     InvalidHistogram(String),

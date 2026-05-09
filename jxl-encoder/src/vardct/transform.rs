@@ -27,7 +27,10 @@ use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use super::quant::INV_DC_QUANT;
 use super::quantize::adjust_quant_bias;
+use crate::budget::MemoryBudget;
 use crate::debug_rect;
+use crate::error::{Error, Result};
+use alloc::sync::Arc;
 
 /// Pre-allocated output buffers for `transform_and_quantize`.
 ///
@@ -46,9 +49,28 @@ pub(crate) struct TransformOutput {
 }
 
 impl TransformOutput {
-    pub fn new(xsize_blocks: usize, ysize_blocks: usize) -> Self {
-        let n = xsize_blocks * ysize_blocks;
-        Self {
+    pub fn new(
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        budget: Option<&Arc<MemoryBudget>>,
+    ) -> Result<Self> {
+        let n = xsize_blocks
+            .checked_mul(ysize_blocks)
+            .ok_or(Error::DimensionOverflow {
+                width: xsize_blocks,
+                height: ysize_blocks,
+                channels: 3,
+            })?;
+        // Bytes per channel:
+        //   quant_dc:    n * sizeof(i16)              = 2n
+        //   quant_ac:    n * 64 * sizeof(i32)         = 256n
+        //   nzeros:      n * sizeof(u8)               = n
+        //   raw_nzeros:  n * sizeof(u16)              = 2n
+        //   float_dc:    n * sizeof(f32)              = 4n
+        // Per channel: 265n; three channels: 795n.
+        let bytes = (n as u64).saturating_mul(265 * 3);
+        MemoryBudget::reserve_permanent_opt(budget, bytes)?;
+        Ok(Self {
             quant_dc: core::array::from_fn(|_| vec![vec![0i16; xsize_blocks]; ysize_blocks]),
             quant_ac: core::array::from_fn(|_| {
                 vec![vec![[0i32; DCT_BLOCK_SIZE]; xsize_blocks]; ysize_blocks]
@@ -56,7 +78,7 @@ impl TransformOutput {
             nzeros: core::array::from_fn(|_| vec![vec![0u8; xsize_blocks]; ysize_blocks]),
             raw_nzeros: core::array::from_fn(|_| vec![vec![0u16; xsize_blocks]; ysize_blocks]),
             float_dc: core::array::from_fn(|_| vec![0.0f32; n]),
-        }
+        })
     }
 }
 
@@ -1068,8 +1090,8 @@ impl VarDctEncoder {
         quant_field: &mut [u8],
         cfl_map: &CflMap,
         ac_strategy: &AcStrategyMap,
-    ) -> TransformOutput {
-        let mut out = TransformOutput::new(xsize_blocks, ysize_blocks);
+    ) -> Result<TransformOutput> {
+        let mut out = TransformOutput::new(xsize_blocks, ysize_blocks, self.budget.as_ref())?;
 
         let xsize_groups = div_ceil(xsize_blocks, GROUP_DIM_IN_BLOCKS);
         let ysize_groups = div_ceil(ysize_blocks, GROUP_DIM_IN_BLOCKS);
@@ -1112,7 +1134,7 @@ impl VarDctEncoder {
             result.scatter_into(&mut out, xsize_blocks);
         }
 
-        out
+        Ok(out)
     }
 
     /// Fill pre-allocated `TransformOutput` buffers (sequential, for butteraugli loop).

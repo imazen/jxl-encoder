@@ -94,6 +94,15 @@ impl From<crate::error::Error> for EncodeError {
                 message: format!("dimension overflow: {width}x{height}x{channels} exceeds usize"),
             },
             crate::error::Error::InvalidInput(msg) => Self::InvalidInput { message: msg },
+            crate::error::Error::AllocationLimit {
+                requested,
+                used,
+                cap,
+            } => Self::LimitExceeded {
+                message: format!(
+                    "memory budget exceeded: requested {requested} bytes on top of {used} (cap {cap})"
+                ),
+            },
             crate::error::Error::OutOfMemory(e) => Self::Oom(e),
             #[cfg(feature = "std")]
             crate::error::Error::IoError(e) => Self::Io(e),
@@ -612,10 +621,11 @@ impl Limits {
     pub const DEFAULT_MAX_QUANT_LOOP_ITERS: u32 = crate::validation::ITER_MAX;
 
     /// Default soft cap on encoder working-set memory when no explicit
-    /// `max_memory_bytes` is set. ~40 bytes/pixel × 50 megapixels is
-    /// roughly 2 GB; encoders embedded in real-time image proxies should
-    /// keep this bounded — set a tighter cap explicitly via
-    /// [`Self::with_max_memory_bytes`] for hostile-input scenarios.
+    /// [`Self::with_max_memory_bytes`] is set. ~40 bytes/pixel × ~50
+    /// megapixels is roughly 2 GB. Image proxies that don't configure
+    /// `Limits` still get this ceiling so an oversized upload can't OOM
+    /// the process; set a tighter cap explicitly for hostile-input
+    /// scenarios.
     pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
     /// Create limits with no restrictions (all `None`).
@@ -1046,7 +1056,28 @@ impl LosslessConfig {
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
-        encode_animation_lossless(self, width, height, layout, animation, frames).map_err(at)
+        encode_animation_lossless(self, width, height, layout, animation, frames, None).map_err(at)
+    }
+
+    /// Encode a multi-frame animation with explicit resource [`Limits`].
+    ///
+    /// Same shape as [`Self::encode_animation`], plus a per-encode
+    /// allocation cap that the modular FrameEncoder consults at every
+    /// dimension-driven allocation site. The cap applies across **all**
+    /// frames combined — a single oversized frame is rejected before any
+    /// of the per-frame buffers are allocated.
+    #[track_caller]
+    pub fn encode_animation_with_limits(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+        limits: &Limits,
+    ) -> Result<Vec<u8>> {
+        encode_animation_lossless(self, width, height, layout, animation, frames, Some(limits))
+            .map_err(at)
     }
 }
 
@@ -1668,7 +1699,28 @@ impl LossyConfig {
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
-        encode_animation_lossy(self, width, height, layout, animation, frames).map_err(at)
+        encode_animation_lossy(self, width, height, layout, animation, frames, None).map_err(at)
+    }
+
+    /// Encode a multi-frame animation with explicit resource [`Limits`].
+    ///
+    /// Same shape as [`Self::encode_animation`], plus a per-encode
+    /// allocation cap that the VarDCT encoder consults at every
+    /// dimension-driven allocation site. The cap applies across **all**
+    /// frames combined — a single oversized frame is rejected before any
+    /// of the per-frame buffers are allocated.
+    #[track_caller]
+    pub fn encode_animation_with_limits(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+        limits: &Limits,
+    ) -> Result<Vec<u8>> {
+        encode_animation_lossy(self, width, height, layout, animation, frames, Some(limits))
+            .map_err(at)
     }
 }
 
@@ -1830,14 +1882,50 @@ impl<'a> EncodeRequest<'a> {
             }
         }
 
+        // Build the per-encode allocation budget. Caller-supplied
+        // Limits.max_memory_bytes wins; otherwise Limits provides its
+        // soft-default cap (~2 GB). The budget is threaded through to
+        // major dimension-driven allocation sites (XYB planes, padded
+        // scratch, group buffers, modular channels) via RAII guards;
+        // peak working-set is observable post-encode via `peak()`.
+        //
+        // Up-front reservation of the rough working-set estimate gives
+        // an early bail-out for absurd dimensions before any allocator
+        // call would have to fail individually. We also refuse a budget
+        // smaller than that estimate, so callers see a meaningful
+        // error instead of a confusing mid-encode failure.
+        let budget_cap = self
+            .limits
+            .map(|l| l.effective_max_memory_bytes())
+            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let est_bytes = (self.width as u64)
+            .checked_mul(self.height as u64)
+            .and_then(|n| n.checked_mul(40))
+            .ok_or_else(|| EncodeError::LimitExceeded {
+                message: format!(
+                    "image {}x{} too large for working-set estimate",
+                    self.width, self.height
+                ),
+            })?;
+        if est_bytes > budget_cap {
+            return Err(EncodeError::LimitExceeded {
+                message: format!(
+                    "estimated working set {est_bytes} bytes for {}x{} image \
+                     exceeds budget cap {budget_cap}",
+                    self.width, self.height
+                ),
+            });
+        }
+
         let threads = match self.config {
             ConfigRef::Lossless(cfg) => cfg.threads,
             ConfigRef::Lossy(cfg) => cfg.threads,
         };
 
         let (codestream, mut stats) = run_with_threads(threads, || match self.config {
-            ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels),
-            ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels),
+            ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels, &budget),
+            ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels, &budget),
         })?;
 
         stats.codestream_size = codestream.len();
@@ -2001,6 +2089,7 @@ impl<'a> EncodeRequest<'a> {
         &self,
         cfg: &LosslessConfig,
         pixels: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
         use crate::bit_writer::BitWriter;
         use crate::headers::color_encoding::ColorSpace;
@@ -2029,12 +2118,22 @@ impl<'a> EncodeRequest<'a> {
             }
         };
 
-        // Build ModularImage from pixel layout
+        // Build ModularImage from pixel layout. The 8-bit RGB(A) paths
+        // route through `from_*_with_budget` so the channel allocations
+        // (the dominant working-set in lossless mode) are charged
+        // against the per-encode cap. Other layouts allocate the same
+        // shape but route through legacy constructors; the up-front
+        // working-set check in `encode_inner` already gates them.
+        let budget_opt = Some(budget);
         let mut image = match self.layout {
-            PixelLayout::Rgb8 => ModularImage::from_rgb8(pixels, w, h),
-            PixelLayout::Rgba8 => ModularImage::from_rgba8(pixels, w, h),
-            PixelLayout::Bgr8 => ModularImage::from_rgb8(&bgr_to_rgb(pixels, 3), w, h),
-            PixelLayout::Bgra8 => ModularImage::from_rgba8(&bgr_to_rgb(pixels, 4), w, h),
+            PixelLayout::Rgb8 => ModularImage::from_rgb8_with_budget(pixels, w, h, budget_opt),
+            PixelLayout::Rgba8 => ModularImage::from_rgba8_with_budget(pixels, w, h, budget_opt),
+            PixelLayout::Bgr8 => {
+                ModularImage::from_rgb8_with_budget(&bgr_to_rgb(pixels, 3), w, h, budget_opt)
+            }
+            PixelLayout::Bgra8 => {
+                ModularImage::from_rgba8_with_budget(&bgr_to_rgb(pixels, 4), w, h, budget_opt)
+            }
             PixelLayout::Gray8 => ModularImage::from_gray8(pixels, w, h),
             PixelLayout::GrayAlpha8 => ModularImage::from_grayalpha8(pixels, w, h),
             PixelLayout::Rgb16 => ModularImage::from_rgb16_native(pixels, w, h),
@@ -2111,6 +2210,7 @@ impl<'a> EncodeRequest<'a> {
                 cfg.use_ans,
                 lossless_profile.patch_ref_tree_learning,
                 &mut writer,
+                Some(budget),
             )
             .map_err(EncodeError::from)?;
             writer.zero_pad_to_byte();
@@ -2140,7 +2240,8 @@ impl<'a> EncodeRequest<'a> {
                 crop: None,
                 skip_rct: false,
             },
-        );
+        )
+        .with_budget(alloc::sync::Arc::clone(budget));
         let color_encoding = if let Some(ce) = self.color_encoding.clone() {
             // Explicit color encoding overrides source_gamma and defaults.
             // Adjust for grayscale if needed.
@@ -2186,6 +2287,7 @@ impl<'a> EncodeRequest<'a> {
         &self,
         cfg: &LossyConfig,
         pixels: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
         let w = self.width as usize;
         let h = self.height as usize;
@@ -2361,6 +2463,7 @@ impl<'a> EncodeRequest<'a> {
         enc.source_gamma = self.source_gamma;
         enc.color_encoding = self.color_encoding.clone();
         enc.non_finite_action = cfg.non_finite_action;
+        enc.budget = Some(alloc::sync::Arc::clone(budget));
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -2446,6 +2549,11 @@ pub struct LossyEncoder {
     intensity_target: f32,
     min_nits: f32,
     intrinsic_size: Option<(u32, u32)>,
+    /// Optional caller-supplied resource cap. When present, dimension-
+    /// driven allocations charge against the cap; when absent, the
+    /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
+    /// a soft default.
+    limits: Option<Limits>,
 }
 
 impl LossyEncoder {
@@ -2497,6 +2605,17 @@ impl LossyEncoder {
     /// Set the intrinsic display size.
     pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
         self.intrinsic_size = Some((width, height));
+        self
+    }
+
+    /// Attach resource limits.
+    ///
+    /// The supplied [`Limits`] is consulted at [`finish`](Self::finish)
+    /// time to derive the per-encode allocation cap, mirroring
+    /// [`EncodeRequest::with_limits`]. When unset the encoder applies the
+    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~2 GB).
+    pub fn with_limits(mut self, limits: &Limits) -> Self {
+        self.limits = Some(limits.clone());
         self
     }
 
@@ -2761,6 +2880,37 @@ impl LossyEncoder {
         let linear_rgb = self.linear_rgb;
         let alpha = self.alpha;
 
+        // Construct the per-encode allocation budget. Streaming callers
+        // can attach a [`Limits`] via [`Self::with_limits`]; otherwise we
+        // apply the same soft default the request path uses (~2 GB).
+        // Mirrors the up-front working-set check in
+        // `EncodeRequest::encode_inner` so absurd dimensions get an early
+        // `LimitExceeded` instead of a confusing mid-encode failure.
+        let budget_cap = self
+            .limits
+            .as_ref()
+            .map(|l| l.effective_max_memory_bytes())
+            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let est_bytes = (self.width as u64)
+            .checked_mul(self.height as u64)
+            .and_then(|n| n.checked_mul(40))
+            .ok_or_else(|| EncodeError::LimitExceeded {
+                message: format!(
+                    "image {}x{} too large for working-set estimate",
+                    self.width, self.height
+                ),
+            })?;
+        if est_bytes > budget_cap {
+            return Err(EncodeError::LimitExceeded {
+                message: format!(
+                    "estimated working set {est_bytes} bytes for {}x{} image \
+                     exceeds budget cap {budget_cap}",
+                    self.width, self.height
+                ),
+            });
+        }
+
         let (codestream, mut stats) = run_with_threads(cfg.threads, || {
             let mut profile = cfg.effective_profile();
             if let Some(max_size) = cfg.max_strategy_size {
@@ -2807,6 +2957,7 @@ impl LossyEncoder {
             enc.min_nits = self.min_nits;
             enc.intrinsic_size = self.intrinsic_size;
             enc.non_finite_action = self.cfg.non_finite_action;
+            enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
                 enc.icc_profile = Some(icc.clone());
             }
@@ -2952,6 +3103,7 @@ impl LossyConfig {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            limits: None,
         })
     }
 }
@@ -2997,6 +3149,11 @@ pub struct LosslessEncoder {
     intensity_target: f32,
     min_nits: f32,
     intrinsic_size: Option<(u32, u32)>,
+    /// Optional caller-supplied resource cap. When present, dimension-
+    /// driven allocations charge against the cap; when absent, the
+    /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
+    /// a soft default.
+    limits: Option<Limits>,
 }
 
 impl LosslessEncoder {
@@ -3048,6 +3205,17 @@ impl LosslessEncoder {
     /// Set the intrinsic display size.
     pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
         self.intrinsic_size = Some((width, height));
+        self
+    }
+
+    /// Attach resource limits.
+    ///
+    /// The supplied [`Limits`] is consulted at [`finish`](Self::finish)
+    /// time to derive the per-encode allocation cap, mirroring
+    /// [`EncodeRequest::with_limits`]. When unset the encoder applies the
+    /// soft default ([`Limits::DEFAULT_MAX_MEMORY_BYTES`], ~2 GB).
+    pub fn with_limits(mut self, limits: &Limits) -> Self {
+        self.limits = Some(limits.clone());
         self
     }
 
@@ -3256,6 +3424,34 @@ impl LosslessEncoder {
         let w = self.width as usize;
         let h = self.height as usize;
 
+        // Construct the per-encode allocation budget. Mirrors the request
+        // path's up-front working-set check and propagates the cap through
+        // to the modular FrameEncoder for hot allocation sites.
+        let budget_cap = self
+            .limits
+            .as_ref()
+            .map(|l| l.effective_max_memory_bytes())
+            .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+        let budget = crate::budget::MemoryBudget::new(budget_cap);
+        let est_bytes = (self.width as u64)
+            .checked_mul(self.height as u64)
+            .and_then(|n| n.checked_mul(40))
+            .ok_or_else(|| EncodeError::LimitExceeded {
+                message: format!(
+                    "image {}x{} too large for working-set estimate",
+                    self.width, self.height
+                ),
+            })?;
+        if est_bytes > budget_cap {
+            return Err(EncodeError::LimitExceeded {
+                message: format!(
+                    "estimated working set {est_bytes} bytes for {}x{} image \
+                     exceeds budget cap {budget_cap}",
+                    self.width, self.height
+                ),
+            });
+        }
+
         let mut image = ModularImage {
             channels: self.channels,
             bit_depth: self.bit_depth,
@@ -3338,6 +3534,7 @@ impl LosslessEncoder {
                     cfg.use_ans,
                     lossless_profile.patch_ref_tree_learning,
                     &mut writer,
+                    Some(&budget),
                 )
                 .map_err(EncodeError::from)?;
                 writer.zero_pad_to_byte();
@@ -3366,7 +3563,8 @@ impl LosslessEncoder {
                     crop: None,
                     skip_rct: false,
                 },
-            );
+            )
+            .with_budget(alloc::sync::Arc::clone(&budget));
             let color_encoding = if let Some(ce) = self.color_encoding.clone() {
                 if image.is_grayscale && ce.color_space != ColorSpace::Gray {
                     ColorEncoding {
@@ -3475,6 +3673,7 @@ impl LosslessConfig {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            limits: None,
         })
     }
 }
@@ -3559,6 +3758,7 @@ fn encode_animation_lossless(
     layout: PixelLayout,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
+    limits: Option<&Limits>,
 ) -> core::result::Result<Vec<u8>, EncodeError> {
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
@@ -3571,6 +3771,29 @@ fn encode_animation_lossless(
     let w = width as usize;
     let h = height as usize;
     let num_frames = frames.len();
+
+    // Per-encode allocation budget. Spans the lifetime of the entire
+    // animation: every per-frame allocation charges against the same cap,
+    // so an attacker cannot multiply the working set by sending many
+    // oversized frames.
+    let budget_cap = limits
+        .map(|l| l.effective_max_memory_bytes())
+        .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+    let budget = crate::budget::MemoryBudget::new(budget_cap);
+    let est_bytes = (width as u64)
+        .checked_mul(height as u64)
+        .and_then(|n| n.checked_mul(40))
+        .ok_or_else(|| EncodeError::LimitExceeded {
+            message: format!("image {width}x{height} too large for working-set estimate"),
+        })?;
+    if est_bytes > budget_cap {
+        return Err(EncodeError::LimitExceeded {
+            message: format!(
+                "estimated working set {est_bytes} bytes for {width}x{height} \
+                 image exceeds budget cap {budget_cap}"
+            ),
+        });
+    }
 
     // Build file header with animation
     let sample_image = match layout {
@@ -3698,7 +3921,8 @@ fn encode_animation_lossless(
                 crop,
                 skip_rct: false,
             },
-        );
+        )
+        .with_budget(alloc::sync::Arc::clone(&budget));
         frame_encoder
             .encode_modular(&image, &color_encoding, &mut writer)
             .map_err(EncodeError::from)?;
@@ -3716,6 +3940,7 @@ fn encode_animation_lossy(
     layout: PixelLayout,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
+    limits: Option<&Limits>,
 ) -> core::result::Result<Vec<u8>, EncodeError> {
     use crate::bit_writer::BitWriter;
     use crate::headers::file_header::AnimationHeader;
@@ -3726,6 +3951,27 @@ fn encode_animation_lossy(
     let w = width as usize;
     let h = height as usize;
     let num_frames = frames.len();
+
+    // Per-encode allocation budget. Spans the lifetime of the entire
+    // animation; see `encode_animation_lossless` for the reasoning.
+    let budget_cap = limits
+        .map(|l| l.effective_max_memory_bytes())
+        .unwrap_or(Limits::DEFAULT_MAX_MEMORY_BYTES);
+    let budget = crate::budget::MemoryBudget::new(budget_cap);
+    let est_bytes = (width as u64)
+        .checked_mul(height as u64)
+        .and_then(|n| n.checked_mul(40))
+        .ok_or_else(|| EncodeError::LimitExceeded {
+            message: format!("image {width}x{height} too large for working-set estimate"),
+        })?;
+    if est_bytes > budget_cap {
+        return Err(EncodeError::LimitExceeded {
+            message: format!(
+                "estimated working set {est_bytes} bytes for {width}x{height} \
+                 image exceeds budget cap {budget_cap}"
+            ),
+        });
+    }
 
     // Set up VarDCT encoder
     let mut profile = cfg.effective_profile();
@@ -3774,6 +4020,7 @@ fn encode_animation_lossy(
         enc.zensim_iters = cfg.zensim_iters;
     }
     enc.non_finite_action = cfg.non_finite_action;
+    enc.budget = Some(alloc::sync::Arc::clone(&budget));
 
     // Detect alpha and 16-bit from layout
     let has_alpha = layout.has_alpha();

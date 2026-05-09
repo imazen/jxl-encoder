@@ -1179,7 +1179,7 @@ impl VarDctEncoder {
         let padded_height = ysize_blocks * BLOCK_DIM;
 
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
-            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
+            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb)?;
 
         let noise_params = if self.enable_noise {
             let quality_coef = super::noise::noise_quality_coef(self.distance);
@@ -1232,7 +1232,8 @@ impl VarDctEncoder {
                 &mut xyb_b,
                 padded_width,
                 padded_height,
-            );
+                self.budget.as_ref(),
+            )?;
         }
 
         let distance_for_iqf = if self.enable_gaborish {
@@ -1241,17 +1242,19 @@ impl VarDctEncoder {
             self.distance * 0.62
         };
 
-        let (mut quant_field_float, masking) = super::adaptive_quant::compute_quant_field_float(
-            &xyb_x,
-            &xyb_y,
-            &xyb_b,
-            padded_width,
-            padded_height,
-            xsize_blocks,
-            ysize_blocks,
-            distance_for_iqf,
-            self.profile.k_ac_quant,
-        );
+        let (mut quant_field_float, masking) =
+            super::adaptive_quant::compute_quant_field_float_with_budget(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                xsize_blocks,
+                ysize_blocks,
+                distance_for_iqf,
+                self.profile.k_ac_quant,
+                self.budget.as_ref(),
+            )?;
 
         let mut params = DistanceParams::compute_for_profile(self.distance, &self.profile);
         if self.profile.chromacity_adjustment {
@@ -1282,11 +1285,12 @@ impl VarDctEncoder {
         };
 
         let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
-            Some(super::adaptive_quant::compute_mask1x1(
+            Some(super::adaptive_quant::compute_mask1x1_with_budget(
                 &xyb_y,
                 padded_width,
                 padded_height,
-            ))
+                self.budget.as_ref(),
+            )?)
         } else {
             None
         };
@@ -1347,7 +1351,7 @@ impl VarDctEncoder {
                 &ac_strategy,
                 None, // No patches in this code path
                 None, // No splines in this code path
-            );
+            )?;
         }
 
         let transform_out = self.transform_and_quantize(
@@ -1361,13 +1365,19 @@ impl VarDctEncoder {
             &mut quant_field,
             &cfl_map,
             &ac_strategy,
-        );
+        )?;
 
         let sharpness_map =
             if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
-                let mask = mask1x1.unwrap_or_else(|| {
-                    super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height)
-                });
+                let mask = match mask1x1 {
+                    Some(m) => m,
+                    None => super::adaptive_quant::compute_mask1x1_with_budget(
+                        &xyb_y,
+                        padded_width,
+                        padded_height,
+                        self.budget.as_ref(),
+                    )?,
+                };
                 Some(super::epf::compute_epf_sharpness(
                     [&xyb_x, &xyb_y, &xyb_b],
                     &transform_out.quant_dc,
@@ -1380,7 +1390,8 @@ impl VarDctEncoder {
                     self.enable_gaborish,
                     xsize_blocks,
                     ysize_blocks,
-                ))
+                    self.budget.as_ref(),
+                )?)
             } else {
                 None
             };
@@ -1496,6 +1507,7 @@ impl VarDctEncoder {
                 self.use_ans,
                 self.profile.patch_ref_tree_learning,
                 &mut writer,
+                self.budget.as_ref(),
             )?;
             writer.zero_pad_to_byte();
             #[cfg(feature = "trace-bitstream")]

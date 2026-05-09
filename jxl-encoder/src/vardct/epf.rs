@@ -17,6 +17,9 @@ use super::chroma_from_luma::CflMap;
 use super::common::BLOCK_DIM;
 use super::frame::DistanceParams;
 use super::reconstruct::{gab_smooth, reconstruct_xyb};
+use crate::budget::MemoryBudget;
+use crate::error::Result;
+use alloc::sync::Arc;
 
 /// Constants from libjxl epf.h
 const K_INV_SIGMA_NUM: f32 = -1.171_572_9;
@@ -286,6 +289,7 @@ pub fn epf_step0_strip_free(
 /// split into strips of `EPF_STRIP_H` rows and processed in parallel. Strip
 /// boundaries are aligned to `BLOCK_DIM` so `border_mul` produces identical
 /// results — floating-point output is bit-exact with the serial path.
+#[allow(clippy::too_many_arguments)]
 fn epf_step0(
     padded_planes: &[Vec<f32>; 3],
     inv_sigma: &[f32],
@@ -294,12 +298,21 @@ fn epf_step0(
     height: usize,
     in_stride: usize,
     pad: usize,
-) -> [Vec<f32>; 3] {
-    let mut output = [
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-        vec![0.0f32; width * height],
-    ];
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<[Vec<f32>; 3]> {
+    // Three w*h f32 planes, accounted permanently against the budget — they live
+    // for the rest of `apply_epf` (until *planes = result swap), which spans all
+    // the strip-parallel work below. Single permanent reservation keeps the
+    // peak high-water mark accurate and avoids per-strip churn.
+    let n = width
+        .checked_mul(height)
+        .ok_or(crate::error::Error::DimensionOverflow {
+            width,
+            height,
+            channels: 3,
+        })?;
+    MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+    let mut output = [vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]];
 
     let pad_slices: [&[f32]; 3] = [&padded_planes[0], &padded_planes[1], &padded_planes[2]];
 
@@ -357,7 +370,7 @@ fn epf_step0(
         );
     }
 
-    output
+    Ok(output)
 }
 
 /// Strip-parallel wrapper for a SIMD EPF kernel (step 1 or step 2).
@@ -549,9 +562,10 @@ pub(crate) fn apply_epf(
     ysize_blocks: usize,
     width: usize,
     height: usize,
-) {
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<()> {
     if epf_iters == 0 {
-        return;
+        return Ok(());
     }
 
     let inv_sigma = compute_inv_sigma_map(
@@ -567,6 +581,9 @@ pub(crate) fn apply_epf(
     if epf_iters >= 3 {
         let pad = 3;
         let in_stride = width + 2 * pad;
+        // Three padded f32 planes: stride * (height + 2*pad) each.
+        let padded_len = in_stride.saturating_mul(height + 2 * pad);
+        MemoryBudget::reserve_permanent_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
             core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(
@@ -577,7 +594,8 @@ pub(crate) fn apply_epf(
             height,
             in_stride,
             pad,
-        );
+            budget,
+        )?;
         *planes = result;
     }
 
@@ -590,6 +608,14 @@ pub(crate) fn apply_epf(
     if epf_iters >= 1 {
         let pad = 2;
         let in_stride = width + 2 * pad;
+        let padded_len = in_stride.saturating_mul(height + 2 * pad);
+        // Three padded planes + three out planes, all f32, all dimension-driven.
+        MemoryBudget::reserve_permanent_opt(
+            budget,
+            (padded_len as u64)
+                .saturating_mul(4 * 3)
+                .saturating_add((n as u64).saturating_mul(4 * 3)),
+        )?;
         let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
         let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
         let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
@@ -624,6 +650,13 @@ pub(crate) fn apply_epf(
     if epf_iters >= 2 {
         let pad = 1;
         let in_stride = width + 2 * pad;
+        let padded_len = in_stride.saturating_mul(height + 2 * pad);
+        MemoryBudget::reserve_permanent_opt(
+            budget,
+            (padded_len as u64)
+                .saturating_mul(4 * 3)
+                .saturating_add((n as u64).saturating_mul(4 * 3)),
+        )?;
         let padded_x = jxl_simd::pad_plane(&planes[0], width, height, pad);
         let padded_y = jxl_simd::pad_plane(&planes[1], width, height, pad);
         let padded_b = jxl_simd::pad_plane(&planes[2], width, height, pad);
@@ -651,6 +684,7 @@ pub(crate) fn apply_epf(
         planes[1] = out_y;
         planes[2] = out_b;
     }
+    Ok(())
 }
 
 /// Apply EPF with pre-allocated scratch buffers and pre-computed inv_sigma.
@@ -672,9 +706,10 @@ fn apply_epf_with_scratch(
     scratch_y: &mut Vec<f32>,
     scratch_b: &mut Vec<f32>,
     padded_scratch: &mut [Vec<f32>; 3],
-) {
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<()> {
     if epf_iters == 0 {
-        return;
+        return Ok(());
     }
 
     // Step 0: heavy 5x5 plus (only at epf_iters >= 3)
@@ -682,6 +717,10 @@ fn apply_epf_with_scratch(
     if epf_iters >= 3 {
         let pad = 3;
         let in_stride = width + 2 * pad;
+        let padded_len = in_stride.saturating_mul(height + 2 * pad);
+        // Three padded planes built fresh each call; epf_step0 also reserves its
+        // own three output planes internally.
+        MemoryBudget::reserve_permanent_opt(budget, (padded_len as u64).saturating_mul(4 * 3))?;
         let padded: [Vec<f32>; 3] =
             core::array::from_fn(|c| jxl_simd::pad_plane(&planes[c], width, height, pad));
         let result = epf_step0(
@@ -692,7 +731,8 @@ fn apply_epf_with_scratch(
             height,
             in_stride,
             pad,
-        );
+            budget,
+        )?;
         *planes = result;
     }
 
@@ -768,6 +808,7 @@ fn apply_epf_with_scratch(
         core::mem::swap(&mut planes[1], scratch_y);
         core::mem::swap(&mut planes[2], scratch_b);
     }
+    Ok(())
 }
 
 /// Compute per-block masked L2 distance between original and reconstructed XYB.
@@ -803,7 +844,8 @@ pub(crate) fn compute_epf_sharpness(
     enable_gaborish: bool,
     xsize_blocks: usize,
     ysize_blocks: usize,
-) -> Vec<u8> {
+    budget: Option<&Arc<MemoryBudget>>,
+) -> Result<Vec<u8>> {
     let nblocks = xsize_blocks * ysize_blocks;
     let padded_width = xsize_blocks * BLOCK_DIM;
     let padded_height = ysize_blocks * BLOCK_DIM;
@@ -850,46 +892,57 @@ pub(crate) fn compute_epf_sharpness(
     // turn, which still allocates per-candidate scratch (matches previous
     // behaviour modulo scratch sharing — the allocation cost is dwarfed by the
     // EPF + L2 compute for realistic image sizes).
-    let error_maps: Vec<Vec<f32>> = crate::parallel::parallel_map(candidates.len(), |ci| {
-        let sharpness_val = candidates[ci];
-        let mut recon = base_recon.clone();
+    // Each candidate's per-thread scratch (3 output planes + 3 padded planes +
+    // a clone of base_recon's 3 planes) is transient — held only inside the
+    // closure. Account it as a transient guard so peak tracking stays accurate
+    // when sharpness search runs after a permanent reservation.
+    let scratch_bytes_per_candidate: u64 = (n as u64)
+        .saturating_mul(4 * 3) // scratch_x/y/b
+        .saturating_add((max_padded_len as u64).saturating_mul(4 * 3))
+        .saturating_add((n as u64).saturating_mul(4 * 3)); // base_recon clone
+    let error_maps: Vec<Vec<f32>> =
+        crate::parallel::parallel_map_result(candidates.len(), |ci| -> Result<Vec<f32>> {
+            let _scratch_guard = MemoryBudget::reserve_opt(budget, scratch_bytes_per_candidate)?;
+            let sharpness_val = candidates[ci];
+            let mut recon = base_recon.clone();
 
-        let uniform_sharpness = vec![sharpness_val; nblocks];
-        let inv_sigma = compute_inv_sigma_map(
-            quant_field,
-            &uniform_sharpness,
-            params.scale,
-            xsize_blocks,
-            ysize_blocks,
-        );
+            let uniform_sharpness = vec![sharpness_val; nblocks];
+            let inv_sigma = compute_inv_sigma_map(
+                quant_field,
+                &uniform_sharpness,
+                params.scale,
+                xsize_blocks,
+                ysize_blocks,
+            );
 
-        let mut scratch_x = jxl_simd::vec_f32_dirty(n);
-        let mut scratch_y = jxl_simd::vec_f32_dirty(n);
-        let mut scratch_b = jxl_simd::vec_f32_dirty(n);
-        let mut padded_scratch: [Vec<f32>; 3] =
-            core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
+            let mut scratch_x = jxl_simd::vec_f32_dirty(n);
+            let mut scratch_y = jxl_simd::vec_f32_dirty(n);
+            let mut scratch_b = jxl_simd::vec_f32_dirty(n);
+            let mut padded_scratch: [Vec<f32>; 3] =
+                core::array::from_fn(|_| jxl_simd::vec_f32_dirty(max_padded_len));
 
-        apply_epf_with_scratch(
-            &mut recon,
-            &inv_sigma,
-            params.epf_iters,
-            xsize_blocks,
-            padded_width,
-            padded_height,
-            &mut scratch_x,
-            &mut scratch_y,
-            &mut scratch_b,
-            &mut padded_scratch,
-        );
+            apply_epf_with_scratch(
+                &mut recon,
+                &inv_sigma,
+                params.epf_iters,
+                xsize_blocks,
+                padded_width,
+                padded_height,
+                &mut scratch_x,
+                &mut scratch_y,
+                &mut scratch_b,
+                &mut padded_scratch,
+                budget,
+            )?;
 
-        compute_block_l2_errors(
-            original_xyb,
-            [&recon[0], &recon[1], &recon[2]],
-            mask1x1,
-            xsize_blocks,
-            ysize_blocks,
-        )
-    });
+            Ok(compute_block_l2_errors(
+                original_xyb,
+                [&recon[0], &recon[1], &recon[2]],
+                mask1x1,
+                xsize_blocks,
+                ysize_blocks,
+            ))
+        })?;
 
     // Map candidate index to sharpness LUT index for context computation
     let candidate_lut: Vec<usize> = candidates
@@ -1035,7 +1088,7 @@ pub(crate) fn compute_epf_sharpness(
         }
     }
 
-    sharpness_map
+    Ok(sharpness_map)
 }
 
 #[cfg(test)]
@@ -1065,7 +1118,9 @@ mod tests {
             ysize_blocks,
             w,
             h,
-        );
+            None,
+        )
+        .unwrap();
 
         // Constant input -> constant output
         for (c, plane) in planes.iter().enumerate() {
@@ -1108,7 +1163,9 @@ mod tests {
             ysize_blocks,
             w,
             h,
-        );
+            None,
+        )
+        .unwrap();
 
         // sharpness=0 -> sharp_lut[0]=0 -> sigma=0 -> inv_sigma=0 -> no filtering
         for c in 0..3 {
@@ -1160,7 +1217,9 @@ mod tests {
             ysize_blocks,
             w,
             h,
-        );
+            None,
+        )
+        .unwrap();
 
         // Mean should be approximately preserved
         let filtered_mean: f32 = planes[1].iter().sum::<f32>() / (w * h) as f32;
@@ -1213,7 +1272,9 @@ mod tests {
             ysize_blocks,
             w,
             h,
-        );
+            None,
+        )
+        .unwrap();
 
         for c in 0..3 {
             for i in 0..w * h {

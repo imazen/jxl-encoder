@@ -8,7 +8,7 @@ use super::ac_strategy::{
     AcStrategyMap, adjust_quant_field_float_with_distance, adjust_quant_field_with_distance,
     compute_ac_strategy,
 };
-use super::adaptive_quant::{compute_mask1x1, compute_quant_field_float, quantize_quant_field};
+use super::adaptive_quant::quantize_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
 use super::common::*;
 use super::frame::{DistanceParams, write_toc};
@@ -264,6 +264,13 @@ pub struct VarDctEncoder {
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
+    /// Per-encode allocation budget. When `Some`, dimension-driven
+    /// buffers (XYB planes, padded scratch) reserve their byte count
+    /// before allocating and surface
+    /// [`crate::error::Error::AllocationLimit`] if the cap would be
+    /// exceeded. When `None` (the test/library default), allocation
+    /// proceeds unbounded.
+    pub(crate) budget: Option<alloc::sync::Arc<crate::budget::MemoryBudget>>,
 }
 
 impl Default for VarDctEncoder {
@@ -307,6 +314,7 @@ impl Default for VarDctEncoder {
             min_nits: 0.0,
             intrinsic_size: None,
             non_finite_action: crate::api::NonFiniteAction::default(),
+            budget: None,
         }
     }
 }
@@ -353,7 +361,25 @@ impl VarDctEncoder {
             min_nits: 0.0,
             intrinsic_size: None,
             non_finite_action: crate::api::NonFiniteAction::default(),
+            budget: None,
         }
+    }
+
+    /// Attach a per-encode allocation budget. Internal-only; the public
+    /// API plumbs this from [`crate::api::Limits::max_memory_bytes`].
+    ///
+    /// Currently the API path sets [`Self::budget`] directly; this
+    /// builder is here for future call sites (e.g., the streaming
+    /// encoder, precomputed entry points) that don't have field
+    /// access.
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub(crate) fn with_budget(
+        mut self,
+        budget: alloc::sync::Arc<crate::budget::MemoryBudget>,
+    ) -> Self {
+        self.budget = Some(budget);
+        self
     }
 
     /// Encode an image in linear sRGB format, optionally with an alpha channel.
@@ -468,7 +494,7 @@ impl VarDctEncoder {
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
-            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb);
+            self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb)?;
 
         // Defense-in-depth XYB scan. Catches downstream-bug non-finite
         // (memory corruption, butteraugli-loop reconstruction polluting
@@ -614,7 +640,7 @@ impl VarDctEncoder {
         // - effort < 5 (speed_tier > kHare): flat quant field = q_numerator/distance
         // - effort >= 5 (speed_tier <= kHare): adaptive via InitialQuantField
         let (mut quant_field_float, masking) = if self.profile.use_adaptive_quant {
-            compute_quant_field_float(
+            super::adaptive_quant::compute_quant_field_float_with_budget(
                 &xyb_x,
                 &xyb_y,
                 &xyb_b,
@@ -624,13 +650,26 @@ impl VarDctEncoder {
                 ysize_blocks,
                 distance_for_iqf,
                 self.profile.k_ac_quant,
-            )
+                self.budget.as_ref(),
+            )?
         } else {
-            // Flat quant field for low effort (matches libjxl enc_heuristics.cc:1105-1106)
+            // Flat quant field for low effort (matches libjxl enc_heuristics.cc:1105-1106).
+            // Account both nblocks-sized f32 buffers against the budget.
+            let nblocks = xsize_blocks.checked_mul(ysize_blocks).ok_or(
+                crate::error::Error::DimensionOverflow {
+                    width: xsize_blocks,
+                    height: ysize_blocks,
+                    channels: 1,
+                },
+            )?;
+            crate::budget::MemoryBudget::reserve_permanent_opt(
+                self.budget.as_ref(),
+                (nblocks as u64).saturating_mul(4 * 2),
+            )?;
             let q = self.profile.initial_q_numerator / self.distance;
-            let flat_qf = vec![q; xsize_blocks * ysize_blocks];
+            let flat_qf = vec![q; nblocks];
             let masking_val = 1.0 / (q + 0.001);
-            let flat_masking = vec![masking_val; xsize_blocks * ysize_blocks];
+            let flat_masking = vec![masking_val; nblocks];
             (flat_qf, flat_masking)
         };
 
@@ -669,7 +708,12 @@ impl VarDctEncoder {
         // Compute per-pixel mask on PRE-GABORISH image (matches libjxl:
         // initial_quant_masking1x1 is computed in InitialQuantField before GaborishInverse)
         let mask1x1 = if self.ac_strategy_enabled && self.pixel_domain_loss {
-            Some(compute_mask1x1(&xyb_y, padded_width, padded_height))
+            Some(super::adaptive_quant::compute_mask1x1_with_budget(
+                &xyb_y,
+                padded_width,
+                padded_height,
+                self.budget.as_ref(),
+            )?)
         } else {
             None
         };
@@ -687,7 +731,8 @@ impl VarDctEncoder {
                 &mut xyb_b,
                 padded_width,
                 padded_height,
-            );
+                self.budget.as_ref(),
+            )?;
         }
 
         // Float DC for LfFrame is now extracted from the transform pipeline
@@ -876,7 +921,7 @@ impl VarDctEncoder {
                 &ac_strategy,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
-            );
+            )?;
         }
 
         // SSIM2 quantization loop: alternative to butteraugli using SSIM2 + per-block RMSE.
@@ -902,7 +947,7 @@ impl VarDctEncoder {
                 &ac_strategy,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
-            );
+            )?;
         }
 
         // Zensim quantization loop: uses zensim psychovisual metric + per-pixel diffmap.
@@ -929,7 +974,7 @@ impl VarDctEncoder {
                 &mut ac_strategy,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
-            );
+            )?;
         }
 
         // Free float quant field — no longer needed after loop refinement.
@@ -1023,7 +1068,7 @@ impl VarDctEncoder {
             &mut quant_field,
             &cfl_map,
             &ac_strategy,
-        );
+        )?;
         let quant_dc = &transform_out.quant_dc;
         let quant_ac = &transform_out.quant_ac;
         let nzeros = &transform_out.nzeros;
@@ -1031,35 +1076,38 @@ impl VarDctEncoder {
 
         // Compute per-block EPF sharpness map when EPF is active
         // Dynamic sharpness gated at effort >= 6 (speed_tier <= kWombat) matching libjxl
-        let sharpness_map = if params.epf_iters > 0
-            && self.distance >= 0.5
-            && self.profile.epf_dynamic_sharpness
-        {
-            let mask_fallback;
-            let mask: &[f32] = match &mask1x1 {
-                Some(m) => m,
-                None => {
-                    mask_fallback =
-                        super::adaptive_quant::compute_mask1x1(&xyb_y, padded_width, padded_height);
-                    &mask_fallback
-                }
+        let sharpness_map =
+            if params.epf_iters > 0 && self.distance >= 0.5 && self.profile.epf_dynamic_sharpness {
+                let mask_fallback;
+                let mask: &[f32] = match &mask1x1 {
+                    Some(m) => m,
+                    None => {
+                        mask_fallback = super::adaptive_quant::compute_mask1x1_with_budget(
+                            &xyb_y,
+                            padded_width,
+                            padded_height,
+                            self.budget.as_ref(),
+                        )?;
+                        &mask_fallback
+                    }
+                };
+                Some(super::epf::compute_epf_sharpness(
+                    [&xyb_x, &xyb_y, &xyb_b],
+                    quant_dc,
+                    quant_ac,
+                    &quant_field,
+                    mask,
+                    &params,
+                    &cfl_map,
+                    &ac_strategy,
+                    self.enable_gaborish,
+                    xsize_blocks,
+                    ysize_blocks,
+                    self.budget.as_ref(),
+                )?)
+            } else {
+                None
             };
-            Some(super::epf::compute_epf_sharpness(
-                [&xyb_x, &xyb_y, &xyb_b],
-                quant_dc,
-                quant_ac,
-                &quant_field,
-                mask,
-                &params,
-                &cfl_map,
-                &ac_strategy,
-                self.enable_gaborish,
-                xsize_blocks,
-                ysize_blocks,
-            ))
-        } else {
-            None
-        };
 
         // Free XYB planes — no longer needed after EPF sharpness computation.
         // At 4K (6720×4480), this frees ~339 MB (3 channels × padded_pixels × f32).
@@ -1114,7 +1162,13 @@ impl VarDctEncoder {
         let dc_code = BuiltEntropyCode::StaticHuffman(get_dc_entropy_code());
         let ac_code = BuiltEntropyCode::StaticHuffman(get_ac_entropy_code());
 
-        // Create main writer
+        // Create main writer. The capacity is a heuristic upper bound on the
+        // bitstream size — actual usage is much smaller in compression but
+        // we budget the full reservation since BitWriter eagerly allocates.
+        let main_cap = (width as u64)
+            .saturating_mul(height as u64)
+            .saturating_mul(4);
+        crate::budget::MemoryBudget::reserve_permanent_opt(self.budget.as_ref(), main_cap)?;
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
         // Write file header (includes JXL signature, ICC, and byte padding)
@@ -1172,6 +1226,13 @@ impl VarDctEncoder {
             let dc_huffman = dc_code.as_huffman();
             let ac_huffman = ac_code.as_huffman();
 
+            // dc_group + ac_group BitWriters are sized proportional to the
+            // image (10 bytes/block DC + 100 bytes/block AC heuristic).
+            // Account both up front against the budget.
+            crate::budget::MemoryBudget::reserve_permanent_opt(
+                self.budget.as_ref(),
+                (num_blocks as u64).saturating_mul(110),
+            )?;
             let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
             self.write_dc_group(
                 0,
@@ -1258,7 +1319,17 @@ impl VarDctEncoder {
             );
             writer.append_bytes(&combined_bytes)?;
         } else {
-            // Multi-group: use byte-aligned sections
+            // Multi-group: use byte-aligned sections.
+            // Section bytes accumulate across groups; the heuristic capacity
+            // is num_groups * blocks_per_group * 100 + num_dc_groups * 10240
+            // ≈ num_blocks * 100 in total. Account up front.
+            let total_groups_bytes = (xsize_blocks as u64)
+                .saturating_mul(ysize_blocks as u64)
+                .saturating_mul(110);
+            crate::budget::MemoryBudget::reserve_permanent_opt(
+                self.budget.as_ref(),
+                total_groups_bytes,
+            )?;
             let mut sections: Vec<Vec<u8>> = Vec::with_capacity(num_sections);
             let dc_huffman = dc_code.as_huffman();
             let ac_huffman = ac_code.as_huffman();
@@ -1394,7 +1465,7 @@ impl VarDctEncoder {
         config: &super::rate_control::RateControlConfig,
     ) -> Result<(Vec<u8>, usize)> {
         // Compute precomputed state
-        let precomputed = super::precomputed::EncoderPrecomputed::compute(
+        let precomputed = super::precomputed::EncoderPrecomputed::compute_with_budget(
             width,
             height,
             linear_rgb,
@@ -1408,7 +1479,8 @@ impl VarDctEncoder {
             self.force_strategy,
             &self.profile,
             self.color_encoding.as_ref(),
-        );
+            self.budget.as_ref(),
+        )?;
 
         // Run rate control loop
         super::rate_control::encode_with_rate_control(self, &precomputed, config)
@@ -1469,7 +1541,7 @@ impl VarDctEncoder {
             &mut quant_field,
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
-        );
+        )?;
         let quant_dc = &transform_out.quant_dc;
         let quant_ac = &transform_out.quant_ac;
         let nzeros = &transform_out.nzeros;
@@ -1552,7 +1624,9 @@ mod tests {
 
         // Gray pixel (1x1 image -> padded to 8x8)
         let linear_rgb = vec![0.5, 0.5, 0.5];
-        let (x, y, b) = encoder.convert_to_xyb_padded(1, 1, 8, 8, &linear_rgb);
+        let (x, y, b) = encoder
+            .convert_to_xyb_padded(1, 1, 8, 8, &linear_rgb)
+            .unwrap();
 
         // Padded to 8x8 = 64 pixels
         assert_eq!(x.len(), 64);

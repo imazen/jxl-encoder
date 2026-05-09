@@ -36,6 +36,20 @@ pub struct Channel {
 impl Channel {
     /// Creates a new channel filled with zeros.
     pub fn new(width: usize, height: usize) -> Result<Self> {
+        Self::new_with_budget(width, height, None)
+    }
+
+    /// Creates a new channel filled with zeros, charging the
+    /// allocation against an optional [`MemoryBudget`].
+    ///
+    /// `budget = None` is equivalent to [`Channel::new`] and pays
+    /// essentially nothing at runtime — a single cold predicted-not-
+    /// taken atomic load.
+    pub(crate) fn new_with_budget(
+        width: usize,
+        height: usize,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> Result<Self> {
         if width == 0 || height == 0 {
             return Err(Error::InvalidImageDimensions(width, height));
         }
@@ -43,6 +57,10 @@ impl Channel {
         let size = width
             .checked_mul(height)
             .ok_or(Error::InvalidImageDimensions(width, height))?;
+
+        // Channel data is `Vec<i32>` — 4 bytes per entry.
+        let bytes = (size as u64).saturating_mul(core::mem::size_of::<i32>() as u64);
+        crate::budget::MemoryBudget::reserve_permanent_opt(budget, bytes)?;
 
         let mut data = Vec::new();
         data.try_reserve_exact(size)?;
@@ -262,6 +280,17 @@ pub struct ModularImage {
 impl ModularImage {
     /// Creates a new modular image from 8-bit RGB data.
     pub fn from_rgb8(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        Self::from_rgb8_with_budget(data, width, height, None)
+    }
+
+    /// Build a 3-channel modular image from interleaved RGB8, charging
+    /// the resulting channel allocations against an optional budget.
+    pub(crate) fn from_rgb8_with_budget(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> Result<Self> {
         let expected = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(3))
@@ -276,7 +305,7 @@ impl ModularImage {
 
         let mut channels = Vec::with_capacity(3);
         for c in 0..3 {
-            let mut channel = Channel::new(width, height)?;
+            let mut channel = Channel::new_with_budget(width, height, budget)?;
             for y in 0..height {
                 for x in 0..width {
                     let idx = (y * width + x) * 3 + c;
@@ -296,6 +325,17 @@ impl ModularImage {
 
     /// Creates a new modular image from 8-bit RGBA data.
     pub fn from_rgba8(data: &[u8], width: usize, height: usize) -> Result<Self> {
+        Self::from_rgba8_with_budget(data, width, height, None)
+    }
+
+    /// Build a 4-channel modular image from interleaved RGBA8, charging
+    /// the resulting channel allocations against an optional budget.
+    pub(crate) fn from_rgba8_with_budget(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> Result<Self> {
         let expected = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(4))
@@ -310,7 +350,7 @@ impl ModularImage {
 
         let mut channels = Vec::with_capacity(4);
         for c in 0..4 {
-            let mut channel = Channel::new(width, height)?;
+            let mut channel = Channel::new_with_budget(width, height, budget)?;
             for y in 0..height {
                 for x in 0..width {
                     let idx = (y * width + x) * 4 + c;

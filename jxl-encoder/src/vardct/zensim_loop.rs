@@ -20,6 +20,7 @@ use super::common::*;
 use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use crate::debug_rect;
+use crate::error::Result;
 
 /// Tunable parameters for the zensim loop, readable from environment variables.
 /// Allows parameter sweeps without recompilation.
@@ -257,10 +258,12 @@ impl VarDctEncoder {
         ac_strategy: &mut AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
-    ) -> DistanceParams {
+    ) -> Result<DistanceParams> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
+        use crate::budget::MemoryBudget;
 
+        let budget = self.budget.as_ref();
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
@@ -270,18 +273,23 @@ impl VarDctEncoder {
         // Defaults match the benchmark-validated configuration.
         let params = ZensimParams::from_env();
 
-        let (src_r, src_g, src_b) = deinterleave_rgb(linear_rgb, n);
         let z = zensim::Zensim::new(zensim::ZensimProfile::latest()).with_parallel(false);
-        let precomputed = match z.precompute_reference_linear_planar(
-            [&src_r, &src_g, &src_b],
-            width,
-            height,
-            width,
-        ) {
-            Ok(r) => r,
-            Err(_) => return initial_params.clone(),
+        // The deinterleaved planes are transient: only used to build the zensim
+        // precomputed reference, then dropped.
+        let precomputed = {
+            let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+            let (src_r, src_g, src_b) = deinterleave_rgb(linear_rgb, n);
+            match z.precompute_reference_linear_planar(
+                [&src_r, &src_g, &src_b],
+                width,
+                height,
+                width,
+            ) {
+                Ok(r) => r,
+                Err(_) => return Ok(initial_params.clone()),
+            }
+            // src_r/g/b drop here; _g releases the reservation.
         };
-        drop((src_r, src_g, src_b));
 
         let diffmap_opts = zensim::DiffmapOptions {
             weighting: zensim::DiffmapWeighting::Trained,
@@ -309,13 +317,20 @@ impl VarDctEncoder {
         let qf_lower = initial_qf_min / (asymmetry * qf_max_deviation_low);
         let qf_higher = initial_qf_max * (qf_max_deviation_low / asymmetry);
 
-        // Pre-allocate buffers
+        // Pre-allocate buffers reused across iterations.
+        MemoryBudget::reserve_permanent_opt(
+            budget,
+            (num_blocks as u64)
+                .saturating_add((num_blocks as u64).saturating_mul(4))
+                .saturating_add((padded_pixels as u64).saturating_mul(4 * 3)),
+        )?;
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
         let mut recon_r = vec![0.0f32; padded_pixels];
         let mut recon_g = vec![0.0f32; padded_pixels];
         let mut recon_b = vec![0.0f32; padded_pixels];
-        let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
+        let mut transform_out =
+            super::transform::TransformOutput::new(xsize_blocks, ysize_blocks, budget)?;
 
         // Saturate at consumption — see butteraugli_loop.rs for rationale.
         let iters = (self.zensim_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
@@ -374,7 +389,8 @@ impl VarDctEncoder {
                     ysize_blocks,
                     padded_width,
                     padded_height,
-                );
+                    budget,
+                )?;
             }
 
             if let Some(pd) = patches_data {
@@ -407,7 +423,7 @@ impl VarDctEncoder {
                 diffmap_opts,
             ) {
                 Ok(r) => r,
-                Err(_) => return current_params,
+                Err(_) => return Ok(current_params),
             };
 
             let zensim_score = dm_result.score();
@@ -531,7 +547,7 @@ impl VarDctEncoder {
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);
 
-        final_params
+        Ok(final_params)
     }
 }
 

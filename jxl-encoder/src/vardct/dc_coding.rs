@@ -290,13 +290,31 @@ pub fn collect_dc_tokens_wp(
     end_bx: usize,
     end_by: usize,
 ) -> Vec<Token> {
+    collect_dc_tokens_wp_with_budget(quant_dc, wp_tree, start_bx, start_by, end_bx, end_by, None)
+        .expect("budget-less collect_dc_tokens_wp must not return AllocationLimit")
+}
+
+/// `collect_dc_tokens_wp` with explicit allocation budget.
+///
+/// The WP state's per-channel scratch is `(region_width + 2) * 2` errors
+/// plus four sub-predictor errors of the same length — region-driven,
+/// charged against the cap. `budget = None` is zero-overhead.
+pub(crate) fn collect_dc_tokens_wp_with_budget(
+    quant_dc: &[Vec<Vec<i16>>; 3],
+    wp_tree: &super::dc_tree_learn::DcTree,
+    start_bx: usize,
+    start_by: usize,
+    end_bx: usize,
+    end_by: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<Token>> {
     use crate::modular::predictor::{Neighbors, WeightedPredictorState};
 
     let region_width = end_bx - start_bx;
     let region_height = end_by - start_by;
 
     if region_width == 0 || region_height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut tokens = Vec::with_capacity(region_width * region_height * 3);
@@ -305,7 +323,7 @@ pub fn collect_dc_tokens_wp(
     // Each channel gets a FRESH WP state (matches libjxl per-channel processing)
     for &c in &[1, 0, 2] {
         let channel = &quant_dc[c];
-        let mut wp_state = WeightedPredictorState::with_defaults(region_width);
+        let mut wp_state = WeightedPredictorState::with_defaults_and_budget(region_width, budget)?;
 
         for y in start_by..end_by {
             for x in start_bx..end_bx {
@@ -387,7 +405,7 @@ pub fn collect_dc_tokens_wp(
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 /// Collect DC tokens for a specific region (gradient predictor path).

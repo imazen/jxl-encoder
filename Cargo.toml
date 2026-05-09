@@ -22,7 +22,7 @@ undocumented_unsafe_blocks = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
 repository = "https://github.com/imazen/jxl-encoder"
