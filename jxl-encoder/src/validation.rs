@@ -137,11 +137,8 @@ pub(crate) const DISTANCE_MAX: f32 = 25.0;
 pub(crate) const EFFORT_RANGE: RangeInclusive<u8> = 1..=10;
 /// Cap on quality-loop iter counts. libjxl's kTortoise butteraugli runs 4
 /// passes; 16 leaves room for sweep harnesses without inviting absurd values.
-#[cfg(any(
-    feature = "butteraugli-loop",
-    feature = "ssim2-loop",
-    feature = "zensim-loop"
-))]
+/// Referenced unconditionally by `Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`, so
+/// not feature-gated even though the loops themselves are.
 pub(crate) const ITER_MAX: u32 = 16;
 #[cfg(feature = "__expert")]
 pub(crate) const FINE_GRAINED_STEP_RANGE: RangeInclusive<u8> = 1..=8;
