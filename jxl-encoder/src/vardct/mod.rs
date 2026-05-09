@@ -58,7 +58,7 @@ pub(crate) mod quantize;
 pub(crate) mod reconstruct;
 mod static_codes;
 mod transform;
-mod xyb;
+pub(crate) mod xyb;
 
 pub use encoder::{VarDctEncoder, VarDctOutput};
 #[cfg(feature = "rate-control")]

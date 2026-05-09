@@ -344,9 +344,13 @@ fn predict_flags(order: i32, width: usize, stride: usize) -> u8 {
 ///
 /// The output is a varint-encoded size, followed by commands, followed by data.
 /// This matches libjxl's `PredictICC()`.
-fn predict_icc(icc: &[u8]) -> Vec<u8> {
+fn predict_icc(icc: &[u8]) -> Result<Vec<u8>> {
     let size = icc.len();
-    assert!(size <= SIZE_LIMIT, "ICC profile too large");
+    if size > SIZE_LIMIT {
+        return Err(crate::error::Error::InvalidInput(format!(
+            "ICC profile too large: {size} bytes (max {SIZE_LIMIT})"
+        )));
+    }
 
     let mut result = Vec::new();
     let mut commands = Vec::new();
@@ -364,7 +368,7 @@ fn predict_icc(icc: &[u8]) -> Vec<u8> {
     if size <= ICC_HEADER_SIZE {
         encode_var_int(0, &mut result); // 0 commands
         result.extend_from_slice(&data);
-        return result;
+        return Ok(result);
     }
 
     // Parse tag table
@@ -694,7 +698,7 @@ fn predict_icc(icc: &[u8]) -> Vec<u8> {
     encode_var_int(commands.len() as u64, &mut result);
     result.extend_from_slice(&commands);
     result.extend_from_slice(&data);
-    result
+    Ok(result)
 }
 
 // ── U64 Coder ───────────────────────────────────────────────────────────────
@@ -738,9 +742,13 @@ fn write_u64(value: u64, writer: &mut BitWriter) -> Result<()> {
 /// The ICC data is transformed via PredictICC for better compressibility, then
 /// entropy-coded using Huffman with 41 contexts (matching libjxl's force_huffman=true).
 pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
-    assert!(!icc.is_empty(), "ICC profile must not be empty");
+    if icc.is_empty() {
+        return Err(crate::error::Error::InvalidInput(
+            "ICC profile must not be empty".into(),
+        ));
+    }
 
-    let enc = predict_icc(icc);
+    let enc = predict_icc(icc)?;
 
     // Write predicted size as U64
     write_u64(enc.len() as u64, writer)?;
@@ -804,7 +812,7 @@ mod tests {
         let size_bytes = 128u32.to_be_bytes();
         icc[..4].copy_from_slice(&size_bytes);
 
-        let predicted = predict_icc(&icc);
+        let predicted = predict_icc(&icc).unwrap();
         assert!(!predicted.is_empty());
     }
 
@@ -824,7 +832,7 @@ mod tests {
         icc[140..144].copy_from_slice(&12u32.to_be_bytes());
         icc[144..148].copy_from_slice(b"text");
 
-        let predicted = predict_icc(&icc);
+        let predicted = predict_icc(&icc).unwrap();
         assert!(!predicted.is_empty());
     }
 
