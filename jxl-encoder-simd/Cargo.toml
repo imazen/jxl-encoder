@@ -17,7 +17,6 @@ include = ["/src/**", "/README.md", "/LICENSE*"]
 [features]
 default = ["std"]
 std = ["archmage/std", "magetypes/std"]
-unsafe-performance = []
 
 [dependencies]
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
