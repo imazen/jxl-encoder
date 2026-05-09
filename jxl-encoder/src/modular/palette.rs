@@ -496,11 +496,31 @@ pub struct LossyPaletteResult {
 /// 2. Second pass applies the palette with error diffusion, using discovered deltas.
 ///
 /// Returns `Some(LossyPaletteResult)` on success, `None` if palette is not beneficial.
+#[allow(dead_code)] // public wrapper; internal callers thread budget via `_with_budget`
 pub fn apply_lossy_palette(
     image: &mut ModularImage,
     begin_c: usize,
     num_c: usize,
     max_palette_colors: usize,
+) -> Option<LossyPaletteResult> {
+    apply_lossy_palette_with_budget(image, begin_c, num_c, max_palette_colors, None)
+}
+
+/// `apply_lossy_palette` with explicit allocation budget. Dimension-
+/// driven scratch (`width × height` delta channels, palette data, error
+/// diffusion rows, quantized output rows) is reserved against the cap;
+/// the function returns `None` on budget exhaustion as well as on
+/// "palette not beneficial".
+///
+/// Pass `budget = None` for zero-overhead, equivalent to
+/// [`apply_lossy_palette`].
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn apply_lossy_palette_with_budget(
+    image: &mut ModularImage,
+    begin_c: usize,
+    num_c: usize,
+    max_palette_colors: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Option<LossyPaletteResult> {
     if num_c < 3 || image.bit_depth < 8 {
         return None;
@@ -518,13 +538,20 @@ pub fn apply_lossy_palette(
     let mut color_freq: BTreeMap<Vec<i32>, usize> = BTreeMap::new();
     let mut cross_colors: BTreeMap<Vec<i32>, usize> = BTreeMap::new();
 
-    // Count all color frequencies and cross-pattern colors
+    // Count all color frequencies and cross-pattern colors.
+    //
+    // `apply_lossy_palette_with_budget` requires `num_c >= 3` and
+    // downstream loops cap at `num_c.min(3)`, so the color tuple key is
+    // a stack-allocated `[i32; 3]` rather than a per-pixel `Vec<i32>` —
+    // saves a heap allocation per pixel on the hot path.
+    let cmin = num_c.min(3);
     for y in 0..height {
         for x in 0..width {
-            let color: Vec<i32> = (begin_c..begin_c + num_c)
-                .map(|c| image.channels[c].get(x, y))
-                .collect();
-            *color_freq.entry(color.clone()).or_insert(0) += 1;
+            let mut color = [0i32; 3];
+            for (i, c) in (begin_c..begin_c + cmin).enumerate() {
+                color[i] = image.channels[c].get(x, y);
+            }
+            *color_freq.entry(color.to_vec()).or_insert(0) += 1;
 
             // Check cross pattern (center matches all 4 neighbors)
             if x > 0 && x + 1 < width && y > 0 && y + 1 < height {
@@ -534,12 +561,12 @@ pub fn apply_lossy_palette(
                         .all(|&(dx, dy)| {
                             let nx = (x as i32 + dx) as usize;
                             let ny = (y as i32 + dy) as usize;
-                            (begin_c..begin_c + num_c)
+                            (begin_c..begin_c + cmin)
                                 .enumerate()
                                 .all(|(i, c)| image.channels[c].get(nx, ny) == color[i])
                         });
                 if makes_cross {
-                    *cross_colors.entry(color).or_insert(0) += 1;
+                    *cross_colors.entry(color.to_vec()).or_insert(0) += 1;
                 }
             }
         }
@@ -577,9 +604,12 @@ pub fn apply_lossy_palette(
             if candidate_palette.len() >= max_palette_colors {
                 break;
             }
-            let color: Vec<i32> = (begin_c..begin_c + num_c)
-                .map(|c| image.channels[c].get(x, y))
-                .collect();
+            // Stack-allocated 3-channel color (see note above on `cmin`).
+            let mut color_arr = [0i32; 3];
+            for (i, c) in (begin_c..begin_c + cmin).enumerate() {
+                color_arr[i] = image.channels[c].get(x, y);
+            }
+            let color = color_arr.to_vec();
             if palette_set.contains_key(&color) {
                 continue;
             }
@@ -603,8 +633,15 @@ pub fn apply_lossy_palette(
         return None;
     }
 
-    // Pass 1: collect deltas (residuals from prediction) for each pixel
-    // Use a simple quantized image to get predictions
+    // Pass 1: collect deltas (residuals from prediction) for each pixel.
+    // Reserve all four `num_pixels`-sized scratch buffers up front
+    // against the budget (3 × i32 + 1 × f32 = 16 B/pixel). Returning
+    // `None` on cap exhaustion mirrors the "palette not beneficial"
+    // bailout — encode falls back to the lossless RCT path.
+    let pass1_bytes = (num_pixels as u64).saturating_mul(16);
+    if crate::budget::MemoryBudget::reserve_permanent_opt(budget, pass1_bytes).is_err() {
+        return None;
+    }
     let mut deltas_r: Vec<i32> = Vec::with_capacity(num_pixels);
     let mut deltas_g: Vec<i32> = Vec::with_capacity(num_pixels);
     let mut deltas_b: Vec<i32> = Vec::with_capacity(num_pixels);
@@ -617,7 +654,16 @@ pub fn apply_lossy_palette(
 
     // Build palette data array for get_palette_value lookups
     let palette_row_stride = total_palette_size;
-    let mut palette_data = vec![0i32; num_c * palette_row_stride.max(1)];
+    let palette_data_len = num_c.saturating_mul(palette_row_stride.max(1));
+    if crate::budget::MemoryBudget::reserve_permanent_opt(
+        budget,
+        (palette_data_len as u64).saturating_mul(4),
+    )
+    .is_err()
+    {
+        return None;
+    }
+    let mut palette_data = vec![0i32; palette_data_len];
     for (i, color) in candidate_palette.iter().enumerate() {
         for (c, &val) in color.iter().enumerate() {
             palette_data[c * palette_row_stride + nb_deltas_pass1 + i] = val;
@@ -642,6 +688,11 @@ pub fn apply_lossy_palette(
     // calloc-zeroed allocation of `width * height * 12` bytes replaces the
     // previous `Vec<Vec<[i32; 3]>>` (1 + height allocations). We split off the
     // current row as `&mut [[i32; 3]]` and look at the previous row as `&[[i32; 3]]`.
+    // Reserve the dim-driven 12 B/pixel grid against the budget.
+    let quant_grid_bytes = (num_pixels as u64).saturating_mul(12);
+    if crate::budget::MemoryBudget::reserve_permanent_opt(budget, quant_grid_bytes).is_err() {
+        return None;
+    }
     let mut quant_grid: Vec<[i32; 3]> = vec![[0i32; 3]; width * height];
     for y in 0..height {
         let (prev_part, curr_part) = quant_grid.split_at_mut(y * width);
@@ -652,27 +703,28 @@ pub fn apply_lossy_palette(
         };
         let qrow: &mut [[i32; 3]] = &mut curr_part[..width];
         for x in 0..width {
-            let color: Vec<i32> = (begin_c..begin_c + num_c)
-                .map(|c| image.channels[c].get(x, y))
-                .collect();
-            let color_f: Vec<f32> = color.iter().map(|&v| v as f32).collect();
+            // Stack-allocated 3-channel color (see `cmin` note above).
+            let mut color = [0i32; 3];
+            for (i, c) in (begin_c..begin_c + cmin).enumerate() {
+                color[i] = image.channels[c].get(x, y);
+            }
+            let color_f: [f32; 3] = [color[0] as f32, color[1] as f32, color[2] as f32];
 
             // Get prediction from quantized neighbors
-            let predictions: Vec<i32> = (0..num_c.min(3))
-                .map(|c| {
-                    let w = if x > 0 { qrow[x - 1][c] } else { 0 };
-                    let n = prev_row.map_or(0, |r| r[x][c]);
-                    let nw = if x > 0 {
-                        prev_row.map_or(0, |r| r[x - 1][c])
-                    } else {
-                        0
-                    };
-                    let grad = n as i64 + w as i64 - nw as i64;
-                    let lo = n.min(w) as i64;
-                    let hi = n.max(w) as i64;
-                    grad.clamp(lo, hi) as i32
-                })
-                .collect();
+            let mut predictions = [0i32; 3];
+            for c in 0..num_c.min(3) {
+                let w = if x > 0 { qrow[x - 1][c] } else { 0 };
+                let n = prev_row.map_or(0, |r| r[x][c]);
+                let nw = if x > 0 {
+                    prev_row.map_or(0, |r| r[x - 1][c])
+                } else {
+                    0
+                };
+                let grad = n as i64 + w as i64 - nw as i64;
+                let lo = n.min(w) as i64;
+                let hi = n.max(w) as i64;
+                predictions[c] = grad.clamp(lo, hi) as i32;
+            }
 
             // Try all palette entries, implicit cubes
             let mut best_index = 0i32;
@@ -826,7 +878,16 @@ pub fn apply_lossy_palette(
 
     // Build final palette data
     let final_row_stride = total_size.max(1);
-    let mut final_palette_data = vec![0i32; num_c * final_row_stride];
+    let final_palette_len = num_c.saturating_mul(final_row_stride);
+    if crate::budget::MemoryBudget::reserve_permanent_opt(
+        budget,
+        (final_palette_len as u64).saturating_mul(4),
+    )
+    .is_err()
+    {
+        return None;
+    }
+    let mut final_palette_data = vec![0i32; final_palette_len];
 
     // Write deltas first
     for (i, delta) in frequent_deltas.iter().enumerate() {
@@ -850,7 +911,19 @@ pub fn apply_lossy_palette(
         inv_palette2.entry(color.clone()).or_insert(total_size + k);
     }
 
-    // Error diffusion buffers: 3 rows, each with width + 4 padding
+    // Error diffusion buffers: 3 rows × (width + 4) × [f32; 3] = 36 B/col.
+    // Quant_out grid: height × width × [i32; 3] = 12 B/pixel.
+    let edge_w = width.saturating_add(4);
+    let error_rows_bytes = (edge_w as u64).saturating_mul(36 * 3);
+    let quant_out_bytes = (num_pixels as u64).saturating_mul(12);
+    if crate::budget::MemoryBudget::reserve_permanent_opt(
+        budget,
+        error_rows_bytes.saturating_add(quant_out_bytes),
+    )
+    .is_err()
+    {
+        return None;
+    }
     let mut error_rows: [Vec<[f32; 3]>; 3] = [
         vec![[0.0; 3]; width + 4],
         vec![[0.0; 3]; width + 4],
@@ -864,16 +937,18 @@ pub fn apply_lossy_palette(
     // replaces the previous `Vec<Vec<[i32; 3]>>` (1 + height allocations).
     let mut quant_out: Vec<[i32; 3]> = vec![[0i32; 3]; width * height];
 
-    // Create palette channel (total_size wide, num_c high)
-    let mut palette_channel = Channel::new(total_size, num_c).ok()?;
+    // Create palette channel (total_size wide, num_c high). Tiny —
+    // bounded by max_palette_colors + LARGE_CUBE_OFFSET, not dim-driven.
+    let mut palette_channel = Channel::new_with_budget(total_size, num_c, budget).ok()?;
     for c in 0..num_c {
         for i in 0..total_size {
             palette_channel.set(i, c, final_palette_data[c * final_row_stride + i]);
         }
     }
 
-    // Create index channel
-    let mut index_channel = Channel::new(width, height).ok()?;
+    // Create index channel — `width × height × i32` is dim-driven and
+    // routed through the budget-aware constructor.
+    let mut index_channel = Channel::new_with_budget(width, height, budget).ok()?;
     let mut delta_used = false;
 
     for y in 0..height {
@@ -885,26 +960,27 @@ pub fn apply_lossy_palette(
         };
         let qrow: &mut [[i32; 3]] = &mut curr_part[..width];
         for x in 0..width {
-            let orig_color: Vec<i32> = (begin_c..begin_c + num_c)
-                .map(|c| image.channels[c].get(x, y))
-                .collect();
+            // Stack-allocated 3-channel color (see `cmin` note above).
+            let mut orig_color = [0i32; 3];
+            for (i, c) in (begin_c..begin_c + cmin).enumerate() {
+                orig_color[i] = image.channels[c].get(x, y);
+            }
 
             // Get prediction from quantized neighbors
-            let predictions: Vec<i32> = (0..num_c.min(3))
-                .map(|c| {
-                    let w = if x > 0 { qrow[x - 1][c] } else { 0 };
-                    let n = prev_row.map_or(0, |r| r[x][c]);
-                    let nw = if x > 0 {
-                        prev_row.map_or(0, |r| r[x - 1][c])
-                    } else {
-                        0
-                    };
-                    let grad = n as i64 + w as i64 - nw as i64;
-                    let lo = n.min(w) as i64;
-                    let hi = n.max(w) as i64;
-                    grad.clamp(lo, hi) as i32
-                })
-                .collect();
+            let mut predictions = [0i32; 3];
+            for c in 0..num_c.min(3) {
+                let w = if x > 0 { qrow[x - 1][c] } else { 0 };
+                let n = prev_row.map_or(0, |r| r[x][c]);
+                let nw = if x > 0 {
+                    prev_row.map_or(0, |r| r[x - 1][c])
+                } else {
+                    0
+                };
+                let grad = n as i64 + w as i64 - nw as i64;
+                let lo = n.min(w) as i64;
+                let hi = n.max(w) as i64;
+                predictions[c] = grad.clamp(lo, hi) as i32;
+            }
 
             // Try two diffusion multipliers (matching libjxl)
             let mut best_index = 0i32;

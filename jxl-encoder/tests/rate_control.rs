@@ -184,7 +184,9 @@ fn test_encode_from_precomputed() {
         encoder.enable_gaborish,
         encoder.force_strategy,
         &encoder.profile,
-    );
+        encoder.color_encoding.as_ref(),
+    )
+    .expect("precomputed");
 
     // Verify precomputed state dimensions
     assert_eq!(precomputed.width, width);

@@ -40,10 +40,23 @@ impl TileDistMap {
         width: usize,
         height: usize,
         _ac_strategy: &AcStrategyMap,
-    ) -> Self {
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> crate::error::Result<Self> {
         let xsize_blocks = div_ceil(width, BLOCK_DIM);
         let ysize_blocks = div_ceil(height, BLOCK_DIM);
-        let mut distances = vec![0.0f32; xsize_blocks * ysize_blocks];
+        let nblocks = xsize_blocks.checked_mul(ysize_blocks).ok_or(
+            crate::error::Error::DimensionOverflow {
+                width: xsize_blocks,
+                height: ysize_blocks,
+                channels: 1,
+            },
+        )?;
+        // distances buffer is returned to caller; account permanently.
+        crate::budget::MemoryBudget::reserve_permanent_opt(
+            budget,
+            (nblocks as u64).saturating_mul(4),
+        )?;
+        let mut distances = vec![0.0f32; nblocks];
 
         for by in 0..ysize_blocks {
             for bx in 0..xsize_blocks {
@@ -88,11 +101,11 @@ impl TileDistMap {
             }
         }
 
-        Self {
+        Ok(Self {
             distances,
             xsize_blocks,
             ysize_blocks,
-        }
+        })
     }
 
     /// Get the distance for a specific block.
@@ -156,17 +169,36 @@ impl TileDistMap {
 /// local butteraugli distance at that pixel.
 ///
 /// Both images must be the same size and in linear RGB format.
-pub fn compute_butteraugli_diffmap(
+pub(crate) fn compute_butteraugli_diffmap(
     original: &[f32],
     decoded: &[f32],
     width: usize,
     height: usize,
-) -> Vec<f32> {
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<f32>> {
     // Use the butteraugli crate's linear comparison function
     // Both images should be in linear RGB (not sRGB)
     use butteraugli::{ButteraugliParams, butteraugli_linear};
     use imgref::Img;
     use rgb::RGB;
+
+    let n = width
+        .checked_mul(height)
+        .ok_or(crate::error::Error::DimensionOverflow {
+            width,
+            height,
+            channels: 3,
+        })?;
+    // Two transient RGB<f32> arrays (n elements × 12 bytes each), then a
+    // returned diffmap (n × 4 bytes). Peak is RGB+RGB+diffmap simultaneously
+    // until butteraugli_linear releases the inputs internally; account
+    // conservatively as the sum.
+    let rgb_bytes_each = (n as u64).saturating_mul(core::mem::size_of::<RGB<f32>>() as u64);
+    let diffmap_bytes = (n as u64).saturating_mul(4);
+    // Permanent for the returned diffmap.
+    crate::budget::MemoryBudget::reserve_permanent_opt(budget, diffmap_bytes)?;
+    // Transient for the two RGB Vecs — released after the call.
+    let _g = crate::budget::MemoryBudget::reserve_opt(budget, rgb_bytes_each.saturating_mul(2))?;
 
     // Convert flat arrays to RGB arrays
     let orig_rgb: Vec<RGB<f32>> = original
@@ -186,21 +218,21 @@ pub fn compute_butteraugli_diffmap(
     let params = ButteraugliParams::new().with_compute_diffmap(true);
 
     // butteraugli_linear returns Result<ButteraugliResult, ButteraugliError>
-    match butteraugli_linear(orig_img, decoded_img, &params) {
+    Ok(match butteraugli_linear(orig_img, decoded_img, &params) {
         Ok(result) => {
             if let Some(diffmap_img) = result.diffmap {
                 // Extract the buffer from ImgVec<f32>
                 diffmap_img.into_buf()
             } else {
                 // Fallback: create uniform diffmap from score
-                vec![result.score as f32; width * height]
+                vec![result.score as f32; n]
             }
         }
         Err(_) => {
             // On error, return a high-distance diffmap
-            vec![10.0; width * height]
+            vec![10.0; n]
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -215,7 +247,8 @@ mod tests {
         let diffmap = vec![1.5f32; width * height];
 
         let ac_strategy = AcStrategyMap::new_dct8(div_ceil(width, 8), div_ceil(height, 8));
-        let tile_dist = TileDistMap::from_diffmap(&diffmap, width, height, &ac_strategy);
+        let tile_dist =
+            TileDistMap::from_diffmap(&diffmap, width, height, &ac_strategy, None).unwrap();
 
         // With uniform values, each block should have the same distance
         for d in &tile_dist.distances {
@@ -237,7 +270,8 @@ mod tests {
         diffmap[0] = 10.0;
 
         let ac_strategy = AcStrategyMap::new_dct8(1, 1);
-        let tile_dist = TileDistMap::from_diffmap(&diffmap, width, height, &ac_strategy);
+        let tile_dist =
+            TileDistMap::from_diffmap(&diffmap, width, height, &ac_strategy, None).unwrap();
 
         // With 16th-norm, the outlier should dominate
         // (1^16 * 63 + 10^16) / 64 = (63 + 1e16) / 64 ≈ 1.56e14

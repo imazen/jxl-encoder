@@ -186,8 +186,33 @@ fn compute_mask_for_ac_strategy_use(out_val: f32) -> f32 {
 /// # Returns
 /// Per-pixel mask field of size `width * height`, row-major layout.
 /// After computing the raw mask, applies libjxl's Symmetric5 blur.
-pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let mut mask1x1 = vec![0.0_f32; width * height];
+#[cfg(test)]
+pub(crate) fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
+    compute_mask1x1_with_budget(xyb_y, width, height, None)
+        .expect("compute_mask1x1: unbudgeted call should never fail")
+}
+
+/// Same as [`compute_mask1x1`] but accounts allocations against an optional
+/// [`MemoryBudget`].
+pub(crate) fn compute_mask1x1_with_budget(
+    xyb_y: &[f32],
+    width: usize,
+    height: usize,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<Vec<f32>> {
+    let n = width
+        .checked_mul(height)
+        .ok_or(crate::error::Error::DimensionOverflow {
+            width,
+            height,
+            channels: 1,
+        })?;
+    // Two w*h f32 buffers are alive at peak: the returned mask1x1 and the
+    // internal `scratch` used by gaborish_5x5_channel. Account both as
+    // permanent — mask1x1 has caller-owned lifetime, scratch is dropped here
+    // but at peak we need 2*n*4 budget to allocate them simultaneously.
+    crate::budget::MemoryBudget::reserve_permanent_opt(budget, (n as u64).saturating_mul(4 * 2))?;
+    let mut mask1x1 = vec![0.0_f32; n];
 
     // SIMD-accelerated per-pixel masking (neighbor avg → gamma ratio → log1p → reciprocal)
     jxl_simd::compute_mask1x1(xyb_y, width, height, &mut mask1x1);
@@ -222,7 +247,7 @@ pub fn compute_mask1x1(xyb_y: &[f32], width: usize, height: usize) -> Vec<f32> {
         inv_sum * W_D2, // w_big_d (diagonal dist 2)
     );
 
-    mask1x1
+    Ok(mask1x1)
 }
 
 // symmetric5_blur_mask1x1 replaced by jxl_simd::gaborish_5x5_channel with
@@ -269,7 +294,8 @@ fn per_block_modulations(
 ///
 /// Returns `(quant_field_float, masking)`.
 #[allow(clippy::too_many_arguments)]
-pub fn compute_quant_field_float(
+#[cfg(test)]
+pub(crate) fn compute_quant_field_float(
     xyb_x: &[f32],
     xyb_y: &[f32],
     xyb_b: &[f32],
@@ -280,6 +306,53 @@ pub fn compute_quant_field_float(
     distance: f32,
     k_ac_quant: f32,
 ) -> (Vec<f32>, Vec<f32>) {
+    compute_quant_field_float_with_budget(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        width,
+        height,
+        xsize_blocks,
+        ysize_blocks,
+        distance,
+        k_ac_quant,
+        None,
+    )
+    .expect("compute_quant_field_float: unbudgeted call should never fail")
+}
+
+/// Budget-aware variant of [`compute_quant_field_float`]. Accounts the two
+/// output planes (`masking` + `quant_field_float`, each `xsize_blocks * ysize_blocks`
+/// floats) plus the transient `aq_map` (~`width/4 * height/4` floats) against
+/// the per-encode cap.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_quant_field_float_with_budget(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    width: usize,
+    height: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    distance: f32,
+    k_ac_quant: f32,
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+) -> crate::error::Result<(Vec<f32>, Vec<f32>)> {
+    let nblocks =
+        xsize_blocks
+            .checked_mul(ysize_blocks)
+            .ok_or(crate::error::Error::DimensionOverflow {
+                width: xsize_blocks,
+                height: ysize_blocks,
+                channels: 1,
+            })?;
+    // Returned: masking + quant_field_float (each nblocks * f32 = 4 * nblocks bytes).
+    // Transient peak (aq_map after fuzzy_erosion): xsize_blocks * ysize_blocks * f32
+    // ≈ same as nblocks since erosion downsample yields one value per 8x8 block.
+    crate::budget::MemoryBudget::reserve_permanent_opt(
+        budget,
+        (nblocks as u64).saturating_mul(4 * 2),
+    )?;
     let scale = k_ac_quant / distance;
 
     let tile_x0_pixels = 0;
@@ -346,7 +419,7 @@ pub fn compute_quant_field_float(
         }
     }
 
-    (quant_field_float, masking)
+    Ok((quant_field_float, masking))
 }
 
 /// Convert float quant field to u8 raw_quant values.
@@ -365,6 +438,7 @@ pub fn quantize_quant_field(quant_field_float: &[f32], inv_scale: f32) -> Vec<u8
 
 /// Convenience wrapper that calls `compute_quant_field_float()` then
 /// `quantize_quant_field()`.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments, dead_code)]
 pub fn compute_adaptive_quant_field(
     xyb_x: &[f32],

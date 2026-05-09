@@ -88,6 +88,11 @@ pub struct FrameEncoder {
     #[allow(dead_code)]
     /// Number of extra channels (e.g., 1 for alpha).
     num_extra_channels: usize,
+    /// Optional per-encode allocation budget. When present, dimension-
+    /// driven heap allocations inside the modular path charge against
+    /// the cap and fail with [`crate::error::Error::AllocationLimit`]
+    /// rather than panicking on OOM.
+    pub(crate) budget: Option<alloc::sync::Arc<crate::budget::MemoryBudget>>,
 }
 
 impl FrameEncoder {
@@ -98,6 +103,7 @@ impl FrameEncoder {
             width,
             height,
             num_extra_channels: 0,
+            budget: None,
         }
     }
 
@@ -113,7 +119,19 @@ impl FrameEncoder {
             width,
             height,
             num_extra_channels,
+            budget: None,
         }
+    }
+
+    /// Attach a per-encode allocation budget. Returns `self` for builder
+    /// chaining. Caller-supplied budget is threaded through to the
+    /// modular path's hot allocation sites.
+    pub(crate) fn with_budget(
+        mut self,
+        budget: alloc::sync::Arc<crate::budget::MemoryBudget>,
+    ) -> Self {
+        self.budget = Some(budget);
+        self
     }
 
     /// Encodes a modular image into a frame with optional patches.
@@ -178,13 +196,14 @@ impl FrameEncoder {
 
             if self.options.lossy_palette && image.channels.len() >= 3 {
                 let max_colors = 1usize << image.bit_depth.min(12);
-                super::encode::write_modular_stream_with_lossy_palette(
+                super::encode::write_modular_stream_with_lossy_palette_budget(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
                     0,
                     image.channels.len().min(3),
                     max_colors,
+                    self.budget.as_ref(),
                 )?;
             } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 super::encode::write_modular_stream_with_squeeze_and_tree(
@@ -279,13 +298,14 @@ impl FrameEncoder {
             if self.options.lossy_palette && image.channels.len() >= 3 {
                 // Lossy delta palette: near-lossless with error diffusion
                 let max_colors = 1usize << image.bit_depth.min(12);
-                super::encode::write_modular_stream_with_lossy_palette(
+                super::encode::write_modular_stream_with_lossy_palette_budget(
                     image,
                     &mut section_writer,
                     self.options.use_ans,
                     0,
                     image.channels.len().min(3),
                     max_colors,
+                    self.budget.as_ref(),
                 )?;
             } else if has_squeeze && self.options.use_tree_learning && self.options.use_ans {
                 // Combined squeeze + tree learning: best compression
@@ -740,7 +760,13 @@ impl FrameEncoder {
         let mut transformed = image.clone();
         let max_colors = 1usize << image.bit_depth.min(12);
         let num_c = image.channels.len().min(3);
-        let result = super::palette::apply_lossy_palette(&mut transformed, 0, num_c, max_colors);
+        let result = super::palette::apply_lossy_palette_with_budget(
+            &mut transformed,
+            0,
+            num_c,
+            max_colors,
+            self.budget.as_ref(),
+        );
         let result = match result {
             Some(r) => r,
             None => {
@@ -1411,8 +1437,9 @@ impl FrameEncoder {
         use super::squeeze::{apply_squeeze, default_squeeze_params};
         use super::tree::count_contexts;
         use super::tree_learn::{
-            TreeLearningParams, TreeSamples, collect_residuals_with_tree, compute_best_tree,
-            compute_gather_stride_from_profile, gather_samples_strided,
+            TreeLearningParams, TreeSamples, collect_residuals_with_tree_with_budget,
+            compute_best_tree_with_budget, compute_gather_stride_from_profile,
+            gather_samples_strided_with_budget,
         };
         use crate::entropy_coding::encode::build_entropy_code_ans_with_options;
         use crate::entropy_coding::encode::{write_entropy_code_ans, write_tokens_ans};
@@ -1505,7 +1532,15 @@ impl FrameEncoder {
             has_alpha: false,
         };
         // group_id=0 for global section, channel_offset=0
-        gather_samples_strided(&mut samples, &global_sub, 0, 0, stride, &wp_params);
+        gather_samples_strided_with_budget(
+            &mut samples,
+            &global_sub,
+            0,
+            0,
+            stride,
+            &wp_params,
+            self.budget.as_ref(),
+        )?;
 
         // 3b: LfGroup channels — crop to each LfGroup rect
         let num_lf_groups_x = self.width.div_ceil(lf_group_dim);
@@ -1570,14 +1605,15 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             // stream_id for LfGroup: ModularLF(lg) = 1 + num_lf_groups + lg
-            gather_samples_strided(
+            gather_samples_strided_with_budget(
                 &mut samples,
                 &sub_image,
                 (stream_id_lf_base + lg) as u32,
                 0,
                 stride,
                 &wp_params,
-            );
+                self.budget.as_ref(),
+            )?;
         }
 
         // 3c: PassGroup channels — crop to each group rect
@@ -1606,14 +1642,15 @@ impl FrameEncoder {
                 has_alpha: false,
             };
             // stream_id for PassGroup: ModularHF(pass=0, group=g) = 1 + 3*num_lf_groups + 17 + g
-            gather_samples_strided(
+            gather_samples_strided_with_budget(
                 &mut samples,
                 &sub_image,
                 (stream_id_hf_base + g) as u32,
                 0,
                 stride,
                 &wp_params,
-            );
+                self.budget.as_ref(),
+            )?;
         }
 
         // Step 4: Learn tree
@@ -1625,7 +1662,7 @@ impl FrameEncoder {
         let tree_params = TreeLearningParams::from_profile(&self.options.profile)
             .with_pixel_fraction(pixel_fraction)
             .with_total_pixels(total_pixels);
-        let tree = compute_best_tree(&mut samples, &tree_params);
+        let tree = compute_best_tree_with_budget(&mut samples, &tree_params, self.budget.as_ref())?;
         let num_contexts = count_contexts(&tree) as usize;
 
         crate::trace::debug_eprintln!(
@@ -1638,7 +1675,13 @@ impl FrameEncoder {
 
         // Step 5: Collect residuals per section with the learned tree
         // Global section tokens
-        let mut global_tokens = collect_residuals_with_tree(&global_sub, &tree, 0, &wp_params);
+        let mut global_tokens = collect_residuals_with_tree_with_budget(
+            &global_sub,
+            &tree,
+            0,
+            &wp_params,
+            self.budget.as_ref(),
+        )?;
 
         // LfGroup section tokens
         let mut lf_group_tokens: Vec<Vec<AnsToken>> = Vec::with_capacity(num_lf_groups);
@@ -1653,12 +1696,13 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            let tokens = collect_residuals_with_tree(
+            let tokens = collect_residuals_with_tree_with_budget(
                 &sub_image,
                 &tree,
                 (stream_id_lf_base + lg) as u32,
                 &wp_params,
-            );
+                self.budget.as_ref(),
+            )?;
             lf_group_tokens.push(tokens);
         }
 
@@ -1675,12 +1719,13 @@ impl FrameEncoder {
                 is_grayscale: squeezed.is_grayscale,
                 has_alpha: false,
             };
-            let tokens = collect_residuals_with_tree(
+            let tokens = collect_residuals_with_tree_with_budget(
                 &sub_image,
                 &tree,
                 (stream_id_hf_base + g) as u32,
                 &wp_params,
-            );
+                self.budget.as_ref(),
+            )?;
             pass_group_tokens.push(tokens);
         }
 

@@ -228,7 +228,7 @@ impl VarDctEncoder {
         padded_width: usize,
         padded_height: usize,
         linear_rgb: &[f32],
-    ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    ) -> crate::error::Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         // Determine if we need a primaries-to-sRGB conversion.
         // The XYB opsin matrix is defined for sRGB/BT.709 primaries.
         let primaries_matrix = self
@@ -236,13 +236,28 @@ impl VarDctEncoder {
             .as_ref()
             .and_then(primaries_to_srgb_matrix);
 
-        let padded_n = padded_width * padded_height;
+        let padded_n = padded_width.checked_mul(padded_height).ok_or(
+            crate::error::Error::DimensionOverflow {
+                width: padded_width,
+                height: padded_height,
+                channels: 1,
+            },
+        )?;
         // Output planes are fully overwritten: rows 0..height by the per-row XYB
         // conversion + right-edge pad, rows height..padded_height by the bottom
         // pad loop below. Safe to use vec_f32_dirty.
-        let mut xyb_x = jxl_simd::vec_f32_dirty(padded_n);
-        let mut xyb_y = jxl_simd::vec_f32_dirty(padded_n);
-        let mut xyb_b = jxl_simd::vec_f32_dirty(padded_n);
+        //
+        // Reserve the three planes against the per-encode budget before
+        // touching the heap. These buffers live for the full encode, so
+        // we use the "permanent" helper that doesn't return a guard —
+        // the budget itself is dropped at end-of-encode and recovers all
+        // accounting wholesale. The `None` branch is a single cold
+        // predicted-not-taken atomic load; allocations on the unbounded
+        // path pay no overhead.
+        let budget = self.budget.as_ref();
+        let mut xyb_x = crate::budget::try_alloc_vec_f32_dirty_permanent(budget, padded_n)?;
+        let mut xyb_y = crate::budget::try_alloc_vec_f32_dirty_permanent(budget, padded_n)?;
+        let mut xyb_b = crate::budget::try_alloc_vec_f32_dirty_permanent(budget, padded_n)?;
 
         convert_rows_to_xyb(
             width,
@@ -271,7 +286,7 @@ impl VarDctEncoder {
             );
         }
 
-        (xyb_x, xyb_y, xyb_b)
+        Ok((xyb_x, xyb_y, xyb_b))
     }
 }
 

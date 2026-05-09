@@ -19,6 +19,7 @@ use super::common::*;
 use super::encoder::VarDctEncoder;
 use super::frame::DistanceParams;
 use crate::debug_rect;
+use crate::error::Result;
 
 impl VarDctEncoder {
     /// Butteraugli quantization loop: iteratively refines per-block quant_field
@@ -63,10 +64,12 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         patches_data: Option<&super::patches::PatchesData>,
         splines_data: Option<&super::splines::SplinesData>,
-    ) -> DistanceParams {
+    ) -> Result<DistanceParams> {
         use super::epf;
         use super::reconstruct::{gab_smooth, reconstruct_xyb, xyb_to_linear_rgb_planar};
+        use crate::budget::MemoryBudget;
 
+        let budget = self.budget.as_ref();
         let target_distance = self.distance;
         let num_blocks = xsize_blocks * ysize_blocks;
         let padded_pixels = padded_width * padded_height;
@@ -74,33 +77,35 @@ impl VarDctEncoder {
         // Precompute butteraugli reference from original image ONCE.
         // Deinterleave to planar to avoid interleave round-trip inside the crate.
         let n = width * height;
-        let mut ref_r = vec![0.0f32; n];
-        let mut ref_g = vec![0.0f32; n];
-        let mut ref_b = vec![0.0f32; n];
-        for i in 0..n {
-            ref_r[i] = linear_rgb[i * 3];
-            ref_g[i] = linear_rgb[i * 3 + 1];
-            ref_b[i] = linear_rgb[i * 3 + 2];
-        }
-        let butteraugli_params = butteraugli::ButteraugliParams::new()
-            .with_intensity_target(80.0)
-            .with_compute_diffmap(true);
-        let reference = match butteraugli::ButteraugliReference::new_linear_planar(
-            &ref_r,
-            &ref_g,
-            &ref_b,
-            width,
-            height,
-            width,
-            butteraugli_params,
-        ) {
-            Ok(r) => r,
-            Err(_) => return initial_params.clone(),
+        // Three transient planar buffers — released as soon as the reference
+        // crate finishes consuming them.
+        let reference = {
+            let _g = MemoryBudget::reserve_opt(budget, (n as u64).saturating_mul(4 * 3))?;
+            let mut ref_r = vec![0.0f32; n];
+            let mut ref_g = vec![0.0f32; n];
+            let mut ref_b = vec![0.0f32; n];
+            for i in 0..n {
+                ref_r[i] = linear_rgb[i * 3];
+                ref_g[i] = linear_rgb[i * 3 + 1];
+                ref_b[i] = linear_rgb[i * 3 + 2];
+            }
+            let butteraugli_params = butteraugli::ButteraugliParams::new()
+                .with_intensity_target(80.0)
+                .with_compute_diffmap(true);
+            match butteraugli::ButteraugliReference::new_linear_planar(
+                &ref_r,
+                &ref_g,
+                &ref_b,
+                width,
+                height,
+                width,
+                butteraugli_params,
+            ) {
+                Ok(r) => r,
+                Err(_) => return Ok(initial_params.clone()),
+            }
+            // _g drops here, releasing the three n*4 reservations
         };
-        // Free the planar buffers — reference data is already precomputed inside.
-        drop(ref_r);
-        drop(ref_g);
-        drop(ref_b);
 
         // Compute deviation bounds from the FLOAT initial field (libjxl lines 968-976).
         // These prevent the quant field from diverging too far from the initial field.
@@ -121,13 +126,22 @@ impl VarDctEncoder {
         let qf_lower = initial_qf_min / (asymmetry * qf_max_deviation_low);
         let qf_higher = initial_qf_max * (qf_max_deviation_low / asymmetry);
 
-        // Pre-allocate buffers reused across iterations
+        // Pre-allocate buffers reused across iterations.
+        // These live for the duration of the loop — accounted permanently.
+        // sharpness is u8, tile_dist is f32 of num_blocks, recon_* are f32 of padded_pixels.
+        MemoryBudget::reserve_permanent_opt(
+            budget,
+            (num_blocks as u64)
+                .saturating_add((num_blocks as u64).saturating_mul(4))
+                .saturating_add((padded_pixels as u64).saturating_mul(4 * 3)),
+        )?;
         let sharpness = vec![4u8; num_blocks];
         let mut tile_dist = vec![0.0f32; num_blocks];
         let mut recon_r = vec![0.0f32; padded_pixels];
         let mut recon_g = vec![0.0f32; padded_pixels];
         let mut recon_b = vec![0.0f32; padded_pixels];
-        let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
+        let mut transform_out =
+            super::transform::TransformOutput::new(xsize_blocks, ysize_blocks, budget)?;
 
         // Saturate at consumption to bound worst-case CPU even when the
         // caller skipped LossyConfig::validate (which would have rejected
@@ -198,7 +212,8 @@ impl VarDctEncoder {
                     ysize_blocks,
                     padded_width,
                     padded_height,
-                );
+                    self.budget.as_ref(),
+                )?;
             }
 
             if let Some(pd) = patches_data {
@@ -224,12 +239,12 @@ impl VarDctEncoder {
             let result =
                 match reference.compare_linear_planar(&recon_r, &recon_g, &recon_b, padded_width) {
                     Ok(r) => r,
-                    Err(_) => return current_params,
+                    Err(_) => return Ok(current_params),
                 };
 
             let diffmap = match result.diffmap {
                 Some(dm) => dm,
-                None => return current_params,
+                None => return Ok(current_params),
             };
 
             // Step 6: Compute per-block tile distance (16th-power norm, matching libjxl TileDistMap)
@@ -461,6 +476,6 @@ impl VarDctEncoder {
         let qf_vec = quantize_quant_field(quant_field_float, final_params.inv_scale);
         quant_field.copy_from_slice(&qf_vec);
 
-        final_params
+        Ok(final_params)
     }
 }

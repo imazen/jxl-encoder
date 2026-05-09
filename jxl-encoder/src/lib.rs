@@ -13,6 +13,7 @@ extern crate alloc;
 
 pub mod api;
 pub mod bit_writer;
+pub(crate) mod budget;
 pub mod color;
 pub mod container;
 pub mod debug_rect;
