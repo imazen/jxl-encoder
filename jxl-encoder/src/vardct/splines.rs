@@ -20,6 +20,46 @@ use crate::entropy_coding::encode::{
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
 
+/// Round f32 → usize, clamped to `[0, cap]`. Panics on non-finite input.
+///
+/// Spline rendering operates on Catmull-Rom-interpolated control points
+/// and arc-length parameterization — both finite by construction on
+/// finite input. Non-finite here is always an upstream bug.
+#[inline]
+fn finite_round_to_usize(v: f32, cap: usize) -> usize {
+    assert!(
+        v.is_finite(),
+        "splines::finite_round_to_usize: non-finite input {v} \
+         (upstream spline parameter should be finite — check Catmull-Rom \
+         interpolation / arc-length parameterization)"
+    );
+    let r = v.round();
+    if r <= 0.0 {
+        0
+    } else if r >= cap as f32 {
+        cap
+    } else {
+        r as usize
+    }
+}
+
+/// Round f32 → i64, clamped to `[lo, hi]`. Panics on non-finite input.
+#[inline]
+fn finite_round_to_i64(v: f32, lo: i64, hi: i64) -> i64 {
+    assert!(
+        v.is_finite(),
+        "splines::finite_round_to_i64: non-finite input {v}"
+    );
+    let r = v.round();
+    if r <= lo as f32 {
+        lo
+    } else if r >= hi as f32 {
+        hi
+    } else {
+        r as i64
+    }
+}
+
 // ── Public types ────────────────────────────────────────────────────────────
 
 /// A control point on a spline curve.
@@ -614,10 +654,9 @@ fn apply_splines(
         let last = data.segment_y_start[y + 1];
         for seg_idx_pos in first..last {
             let segment = &data.segments[data.segment_indices[seg_idx_pos]];
-            let x0 = (segment.center_x - segment.maximum_distance)
-                .round()
-                .max(0.0) as usize;
-            let x1 = width.min((segment.center_x + segment.maximum_distance).round() as usize + 1);
+            let x0 = finite_round_to_usize(segment.center_x - segment.maximum_distance, width);
+            let x1_raw = finite_round_to_usize(segment.center_x + segment.maximum_distance, width);
+            let x1 = x1_raw.saturating_add(1).min(width);
             for x in x0..x1 {
                 apply_segment_at(planes, stride, x, y, segment, add);
             }
@@ -679,9 +718,17 @@ impl SplinesData {
             let base_idx = all_segments.len();
             for (i, seg) in segs.iter().enumerate() {
                 let seg_idx = base_idx + i;
-                let y0 = 0i64.max((seg.center_y - seg.maximum_distance).round() as i64);
-                let y1 = (image_height as i64)
-                    .min((seg.center_y + seg.maximum_distance).round() as i64 + 1);
+                let y0 = finite_round_to_i64(
+                    seg.center_y - seg.maximum_distance,
+                    0,
+                    image_height as i64,
+                );
+                let y1_raw = finite_round_to_i64(
+                    seg.center_y + seg.maximum_distance,
+                    0,
+                    image_height as i64,
+                );
+                let y1 = y1_raw.saturating_add(1).min(image_height as i64);
                 for y in y0..y1 {
                     segments_by_y.push((y as usize, seg_idx));
                 }

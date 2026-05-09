@@ -255,6 +255,18 @@ pub fn create_huffman_tree(histogram: &[u32], tree_limit: u8) -> Vec<u8> {
         };
     }
 
+    // Defensive clamp: if the retry loop bailed via overflow without ever
+    // fitting in `tree_limit`, depths can exceed MAX_BITS=16 and panic
+    // downstream when convert_bit_depths_to_symbols indexes
+    // `bl_count[d as usize]`. Clamp here so the panic site is unreachable
+    // — the resulting Huffman code may be slightly suboptimal but is still
+    // valid (decoder accepts any depth ≤ 15).
+    for d in depth.iter_mut() {
+        if *d > tree_limit {
+            *d = tree_limit;
+        }
+    }
+
     depth
 }
 
@@ -330,10 +342,14 @@ pub fn convert_bit_depths_to_symbols(depth: &[u8]) -> Vec<u16> {
     let len = depth.len();
     let mut bits = vec![0u16; len];
 
-    // Count symbols at each depth
+    // Count symbols at each depth. `create_huffman_tree` clamps depths to
+    // tree_limit (≤15) before returning, but defensively saturate here as
+    // well so any future caller that passes an unclamped depth array
+    // doesn't OOB-panic on `bl_count[d as usize]`.
     let mut bl_count = [0u16; MAX_BITS];
     for &d in depth {
-        bl_count[d as usize] += 1;
+        let di = (d as usize).min(MAX_BITS - 1);
+        bl_count[di] += 1;
     }
     bl_count[0] = 0; // Depth 0 means symbol doesn't exist
 

@@ -549,25 +549,33 @@ pub(crate) fn find_text_like_patches(
         let (cxu, cyu) = (cx as usize, cy as usize);
         let (sxu, syu) = (sx as usize, sy as usize);
 
-        // SECURITY: defensive bounds check. The push paths at lines below
-        // verify (nx as usize) < width && (ny as usize) < height, but
-        // background[c] is sized `stride * height` — if a caller ever
-        // passes `stride < width` (or the queue is otherwise corrupted),
-        // the (cyu * stride + cxu) index can exceed background.len()
-        // and panic. v11 sweep crashed here in the wild on
-        // `size-dense-renders/4cd...sz1280.png` after a butteraugli NaN
-        // cascade; the actual bad-write site is not yet identified.
-        // Skipping the entry preserves correctness (drops a stray
-        // queue item) and prevents the DoS while we trace the root
-        // cause.
-        if cxu >= width || cyu >= height || sxu >= width || syu >= height {
-            continue;
-        }
+        // SECURITY: every queue entry that this loop pops was pushed
+        // earlier with `(nx as usize) < width && (ny as usize) < height`
+        // bound-checked at push time, so cxu/cyu/sxu/syu are always in
+        // range — UNLESS the queue's heap memory was corrupted by an
+        // OOB write from elsewhere (the v09/v11 sweep cause, traced to
+        // the `unsafe-performance` feature and removed in PR #34).
+        //
+        // Convert from "skip on bounds failure (DoS protection)" to
+        // unconditional `assert!` because the upstream cause is no
+        // longer reachable on the post-PR-#34 chain. If a future
+        // regression re-introduces queue corruption, surface it loudly.
+        // The 270-encode trigger-fixture sweep confirmed this never
+        // fires on legitimate input.
+        assert!(
+            cxu < width && cyu < height && sxu < width && syu < height,
+            "patches BFS pop: queue entry out of range — possible upstream \
+             corruption (cxu={cxu}, cyu={cyu}, sxu={sxu}, syu={syu}, \
+             width={width}, height={height})"
+        );
         let ci = cyu * stride + cxu;
         let si = syu * stride + sxu;
-        if ci >= background[0].len() || si >= xyb_ref[0].len() {
-            continue;
-        }
+        assert!(
+            ci < background[0].len() && si < xyb_ref[0].len(),
+            "patches BFS pop: derived flat index out of range — possible \
+             stride mismatch (ci={ci}, si={si}, n={})",
+            background[0].len()
+        );
 
         // Cache source color once per queue entry (avoids re-reading xyb[c][si]
         // for every neighbor — up to 9 bounds-checked reads per entry).
@@ -587,6 +595,15 @@ pub(crate) fn find_text_like_patches(
             }
             // Flat index via pre-computed stride offset (avoids nyu * stride + nxu multiply).
             let ni = (ci as isize + neighbor_offsets[k]) as usize;
+            // The (nx, ny) range check above + the pre-computed stride
+            // offsets guarantee ni < n on every legitimate path. Assert
+            // loudly — we no longer skip silently.
+            assert!(
+                ni < is_background.len(),
+                "patches BFS neighbor: flat index out of range \
+                 (ni={ni}, n={})",
+                is_background.len()
+            );
             if is_background[ni] {
                 continue;
             }
@@ -651,7 +668,22 @@ pub(crate) fn find_text_like_patches(
 
             while let Some((px32, py32)) = stack.pop() {
                 let (px, py) = (px32 as usize, py32 as usize);
+                // Same upgrade as the BFS pop above: assert! instead of
+                // skip-on-bounds-failure. Stack memory corruption was the
+                // v09/v11 cause; removing `unsafe-performance` in PR #34
+                // closes the upstream bug, so the assert can be loud.
+                assert!(
+                    px < width && py < height,
+                    "patches DFS pop: stack entry out of range \
+                     (px={px}, py={py}, width={width}, height={height})"
+                );
                 let pi = py * stride + px;
+                assert!(
+                    pi < visited.len(),
+                    "patches DFS pop: derived flat index out of range \
+                     (pi={pi}, n={})",
+                    visited.len()
+                );
                 if visited[pi] {
                     continue;
                 }
@@ -678,6 +710,12 @@ pub(crate) fn find_text_like_patches(
                     }
                     // Flat index via pre-computed stride offset.
                     let ni = (pi as isize + neighbor_offsets[k]) as usize;
+                    assert!(
+                        ni < is_background.len(),
+                        "patches DFS neighbor: flat index out of range \
+                         (ni={ni}, n={})",
+                        is_background.len()
+                    );
                     if !is_background[ni] {
                         // Foreground neighbor — push to stack (skip if already visited
                         // to avoid redundant pop/check cycles from duplicate pushes)
@@ -1078,9 +1116,11 @@ pub(crate) fn find_text_like_patches(
 /// - After success, trim `ref_height` to actual used height.
 ///
 /// Returns the reference frame dimensions and positions of each patch.
-fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
+type BinPackResult = core::result::Result<(usize, usize, Vec<(u32, u32)>), &'static str>;
+
+fn bin_pack_patches(patches: &[PatchInfo]) -> BinPackResult {
     if patches.is_empty() {
-        return (0, 0, Vec::new());
+        return Ok((0, 0, Vec::new()));
     }
 
     // Patches should already be sorted largest-first by caller
@@ -1093,8 +1133,14 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
     let mut ref_width = side.max(max_x_size);
     let mut ref_height = side.max(max_y_size);
 
-    // First-fit grid placement with grow-and-retry
-    loop {
+    // First-fit grid placement with grow-and-retry.
+    // Defensive iteration cap: each retry grows the canvas by 1.05× + 1.
+    // Patches here are bounded by MAX_PATCH_SIZE=32 and the largest input
+    // image dimension, so even pathological inputs converge in <50 retries.
+    // Bail with a single-row layout rather than loop forever if some
+    // future bug invariant breaks.
+    const BIN_PACK_MAX_RETRIES: usize = 50;
+    for _retry in 0..BIN_PACK_MAX_RETRIES {
         // Grow by 5% + 1 before each attempt (matches libjxl: grow at start of do-while)
         ref_width = (ref_width as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
         ref_height = (ref_height as f32 * BIN_PACKING_SLACKNESS) as usize + 1;
@@ -1157,9 +1203,20 @@ fn bin_pack_patches(patches: &[PatchInfo]) -> (usize, usize, Vec<(u32, u32)>) {
 
         if success {
             // Trim height to actual used extent
-            return (ref_width, max_y, positions);
+            return Ok((ref_width, max_y, positions));
         }
     }
+    // Fell through retry cap without packing. This is suspicious — the
+    // canvas grew by ~×11 over 50 retries; failing to fit means either an
+    // input shape we don't expect or a real bug. Surface as an error so
+    // the caller can decide whether to bail or fall back to "no patches"
+    // rather than silently dropping a quality-improving feature.
+    debug_assert!(
+        false,
+        "bin_pack_patches: failed to pack {} patches in {BIN_PACK_MAX_RETRIES} retries",
+        patches.len()
+    );
+    Err("bin_pack_patches: retry cap reached without successful pack")
 }
 
 // ── Build PatchesData ──────────────────────────────────────────────────────────
@@ -1176,8 +1233,17 @@ pub(crate) fn build_patches_data(mut infos: Vec<PatchInfo>) -> Option<PatchesDat
     // Sort by area (largest first) for better bin-packing
     infos.sort_by_key(|info| core::cmp::Reverse(info.patch.num_pixels()));
 
-    // Bin-pack into reference frame (no size limit — FrameEncoder handles multi-group)
-    let (ref_width, ref_height, pack_positions) = bin_pack_patches(&infos);
+    // Bin-pack into reference frame (no size limit — FrameEncoder handles multi-group).
+    // bin_pack_patches surfaces an Err when its retry cap is hit (a
+    // genuinely-degenerate input or a bug); treat that the same as "no
+    // patches detected" so we degrade quality but don't kill the encode.
+    let (ref_width, ref_height, pack_positions) = match bin_pack_patches(&infos) {
+        Ok(v) => v,
+        Err(reason) => {
+            debug_rect!("patches/build", 0, 0, 0, 0, "bin_pack failed: {reason}");
+            return None;
+        }
+    };
     if ref_width == 0 || ref_height == 0 {
         return None;
     }
@@ -1285,6 +1351,14 @@ pub(crate) fn subtract_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patch
             for dx in 0..pw {
                 let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
                 let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
+                // Detection produces in-range positions by construction.
+                // assert! loudly if a future bug threads a mismatched
+                // stride or mutated PatchPosition.
+                assert!(
+                    img_i < xyb[0].len() && ref_i < patches.ref_image[0].len(),
+                    "patches apply: index out of range \
+                     (img_i={img_i}, ref_i={ref_i})"
+                );
                 for c in 0..3 {
                     xyb[c][img_i] -= patches.ref_image[c][ref_i];
                 }
@@ -1311,6 +1385,10 @@ pub(crate) fn add_patches(xyb: &mut [Vec<f32>; 3], xyb_stride: usize, patches: &
             for dx in 0..pw {
                 let img_i = (pos_y + dy) * xyb_stride + (pos_x + dx);
                 let ref_i = (ref_y0 + dy) * patches.ref_width + (ref_x0 + dx);
+                // Defensive bounds: same rationale as subtract_patches above.
+                if img_i >= xyb[0].len() || ref_i >= patches.ref_image[0].len() {
+                    continue;
+                }
                 for c in 0..3 {
                     xyb[c][img_i] += patches.ref_image[c][ref_i];
                 }
@@ -1921,7 +1999,7 @@ mod tests {
             },
         ];
 
-        let (w, h, positions) = bin_pack_patches(&infos);
+        let (w, h, positions) = bin_pack_patches(&infos).expect("bin_pack should succeed");
         assert!(w > 0);
         assert!(h > 0);
         assert_eq!(positions.len(), 2);

@@ -38,17 +38,26 @@ pub fn corpus_dir() -> std::path::PathBuf {
     })
 }
 
-/// Skip the current test if the codec corpus is not available.
+/// Require the codec corpus directory; panic loudly if it isn't available.
 ///
-/// Use at the top of any test that requires external corpus files.
-/// In CI (no corpus), the test will pass silently instead of failing.
+/// Use at the top of any test that requires external corpus files. The
+/// caller is expected to gate the *test itself* with
+/// `#[cfg_attr(not(feature = "corpus-tests"), ignore = "...")]` (or the
+/// equivalent at the harness level) so the skip decision is visible as a
+/// `#[ignore]` attribute rather than a silent in-body return.
+///
+/// CLAUDE.md "NO GRACEFUL SKIPS IN TESTS": this macro intentionally does
+/// NOT swallow missing-corpus into an `eprintln!("SKIPPED ..."); return;`.
+/// If a corpus-using test runs (i.e. the `corpus-tests` feature is on)
+/// and the corpus path can't be found, that's a CI configuration bug —
+/// the test panics so the failure is loud.
 #[macro_export]
 macro_rules! skip_without_corpus {
     () => {
-        if $crate::test_helpers::try_corpus_dir().is_none() {
-            eprintln!("SKIPPED: codec corpus not available");
-            return;
-        }
+        // Resolves to the corpus dir or panics with a clear actionable
+        // message. Kept under the same name for callsite churn-free
+        // migration; consider renaming to `require_corpus!` in a follow-up.
+        let _ = $crate::test_helpers::corpus_dir();
     };
 }
 

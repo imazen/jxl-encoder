@@ -181,6 +181,22 @@ impl TreeLearningParams {
             // (enc_modular.cc:546-549). This is our typical single-group case.
             PROP_ORDER_NO_SQUEEZE_NO_GID
         };
+        // Surface caller misconfiguration loudly. The `__expert` setter on
+        // LosslessConfig accepts any u8; previously the over-bound case
+        // silently clamped here. Runtime validation lives in
+        // `validate()` (opt-in); this debug_assert catches misconfigured
+        // sweep harnesses early during testing without panicking release
+        // builds (the `.min(order.len())` clamp below remains as a safety
+        // net so we never panic on out-of-bounds slice access).
+        debug_assert!(
+            (profile.tree_num_properties as usize) <= order.len(),
+            "tree_num_properties = {} exceeds property-order length {} \
+             for {}; clamp here is hiding a misconfigured \
+             LosslessInternalParams. Validate via LosslessConfig::validate().",
+            profile.tree_num_properties,
+            order.len(),
+            if is_squeeze { "squeeze" } else { "no-squeeze" },
+        );
         let num_props = (profile.tree_num_properties as usize).min(order.len());
 
         Self {

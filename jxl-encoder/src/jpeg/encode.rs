@@ -790,6 +790,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_encode_real_jpeg() {
         crate::skip_without_corpus!();
         let path = format!(

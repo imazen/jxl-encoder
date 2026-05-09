@@ -124,6 +124,20 @@ impl From<enough::StopReason> for EncodeError {
 /// production-safe error tracking without debuginfo or backtraces.
 pub type Result<T> = core::result::Result<T, At<EncodeError>>;
 
+// ── Limit aliases ──────────────────────────────────────────────────────────
+
+/// Hard upper bound for quantization-loop iterations. Alias of
+/// [`Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`] — preserved for callers that
+/// referenced the bare const before per-encode limits became
+/// configurable. Prefer setting [`Limits::with_max_quant_loop_iters`]
+/// (or letting the default apply) over hard-coding this constant.
+pub const MAX_QUANT_LOOP_ITERS: u32 = Limits::DEFAULT_MAX_QUANT_LOOP_ITERS;
+
+/// Default soft cap on encoder working-set memory when no explicit
+/// [`Limits::max_memory_bytes`] is set. Alias of
+/// [`Limits::DEFAULT_MAX_MEMORY_BYTES`].
+pub const DEFAULT_MAX_MEMORY_BYTES: u64 = Limits::DEFAULT_MAX_MEMORY_BYTES;
+
 // ── EncodeResult / EncodeStats ──────────────────────────────────────────────
 
 /// Result of an encode operation. Holds encoded data and metrics.
@@ -559,15 +573,51 @@ impl<'a> ImageMetadata<'a> {
 }
 
 /// Resource limits for encoding.
+///
+/// Every field is `Option<…>`; `None` means "unlimited" (or "use the
+/// validator-side default", for fields that have one). Callers wire a
+/// [`Limits`] onto an [`EncodeRequest`] via
+/// [`EncodeRequest::with_limits`]; the encoder consults it before any
+/// dimension-driven allocation and before each per-encode CPU budget
+/// check.
+///
+/// Two policy fields are intentionally NOT bare `pub const`s:
+///
+/// - [`Self::max_quant_loop_iters`] — the cap on
+///   butteraugli/ssim2/zensim quantization-loop iterations. The
+///   validator's hard upper bound is [`Self::DEFAULT_MAX_QUANT_LOOP_ITERS`]
+///   (= [`crate::validation::ITER_MAX`]); a caller may set a lower limit
+///   here, but never a higher one. The encoder saturates at the lower of
+///   `Limits.max_quant_loop_iters` (or its default) and the validator
+///   max.
+/// - [`Self::max_memory_bytes`] — when `None`, the encoder applies
+///   [`Self::DEFAULT_MAX_MEMORY_BYTES`] (≈ 2 GB) as a soft cap so that an
+///   image proxy without explicit `Limits` configuration still has a
+///   working-set ceiling. Set to `Some(u64::MAX)` to opt out of the soft
+///   cap explicitly (this surfaces in logs as "user explicitly disabled
+///   memory limit").
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
     max_width: Option<u64>,
     max_height: Option<u64>,
     max_pixels: Option<u64>,
     max_memory_bytes: Option<u64>,
+    max_quant_loop_iters: Option<u32>,
 }
 
 impl Limits {
+    /// Hard upper bound for quantization-loop iterations. Mirrors
+    /// [`crate::validation::ITER_MAX`] so the validator and the encoder
+    /// agree on what counts as "too many iters".
+    pub const DEFAULT_MAX_QUANT_LOOP_ITERS: u32 = crate::validation::ITER_MAX;
+
+    /// Default soft cap on encoder working-set memory when no explicit
+    /// `max_memory_bytes` is set. ~40 bytes/pixel × 50 megapixels is
+    /// roughly 2 GB; encoders embedded in real-time image proxies should
+    /// keep this bounded — set a tighter cap explicitly via
+    /// [`Self::with_max_memory_bytes`] for hostile-input scenarios.
+    pub const DEFAULT_MAX_MEMORY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
     /// Create limits with no restrictions (all `None`).
     pub fn new() -> Self {
         Self::default()
@@ -592,8 +642,23 @@ impl Limits {
     }
 
     /// Set maximum memory bytes the encoder may allocate.
+    ///
+    /// When unset, the encoder applies
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as a soft cap. Pass
+    /// `u64::MAX` explicitly to disable the cap (with the understanding
+    /// that an unbounded working set on a hostile input can OOM the
+    /// process).
     pub fn with_max_memory_bytes(mut self, bytes: u64) -> Self {
         self.max_memory_bytes = Some(bytes);
+        self
+    }
+
+    /// Set maximum quantization-loop iterations (butteraugli / ssim2 /
+    /// zensim). Saturated at [`Self::DEFAULT_MAX_QUANT_LOOP_ITERS`] —
+    /// passing a higher value silently lowers it to the validator-side
+    /// hard limit. Use a lower value to bound CPU on untrusted callers.
+    pub fn with_max_quant_loop_iters(mut self, n: u32) -> Self {
+        self.max_quant_loop_iters = Some(n.min(Self::DEFAULT_MAX_QUANT_LOOP_ITERS));
         self
     }
 
@@ -612,9 +677,32 @@ impl Limits {
         self.max_pixels
     }
 
-    /// Get maximum memory bytes, if set.
+    /// Get maximum memory bytes, if set. When `None`,
+    /// [`Self::effective_max_memory_bytes`] gives the soft default the
+    /// encoder will actually enforce.
     pub fn max_memory_bytes(&self) -> Option<u64> {
         self.max_memory_bytes
+    }
+
+    /// The cap the encoder will actually apply: explicit
+    /// `max_memory_bytes` if set, else
+    /// [`Self::DEFAULT_MAX_MEMORY_BYTES`].
+    pub fn effective_max_memory_bytes(&self) -> u64 {
+        self.max_memory_bytes
+            .unwrap_or(Self::DEFAULT_MAX_MEMORY_BYTES)
+    }
+
+    /// Get maximum quantization-loop iterations.
+    pub fn max_quant_loop_iters(&self) -> Option<u32> {
+        self.max_quant_loop_iters
+    }
+
+    /// The cap the encoder will actually apply: explicit
+    /// `max_quant_loop_iters` if set, else
+    /// [`Self::DEFAULT_MAX_QUANT_LOOP_ITERS`].
+    pub fn effective_max_quant_loop_iters(&self) -> u32 {
+        self.max_quant_loop_iters
+            .unwrap_or(Self::DEFAULT_MAX_QUANT_LOOP_ITERS)
     }
 }
 
@@ -1054,10 +1142,40 @@ pub struct LossyConfig {
     #[cfg(feature = "zensim-loop")]
     zensim_iters: u32,
     threads: usize,
+    non_finite_action: NonFiniteAction,
     /// Sweep / picker hook: when set, replaces the effort+mode-derived
     /// `EffortProfile` everywhere the encoder asks for one. See
     /// [`Self::with_effort_profile_override`].
     profile_override: Option<crate::effort::EffortProfile>,
+}
+
+/// Policy for what to do if the encoder finds non-finite (NaN / ±Inf)
+/// f32 values in the XYB pixel planes at the conversion→pipeline
+/// boundary.
+///
+/// The opsin XYB transform (`cbrt(mixed + bias) - cbrt(bias)`) is
+/// finite for any finite linear-RGB input — non-finite XYB indicates
+/// an upstream bug (caller passed non-finite linear-RGB, internal
+/// arithmetic leaked NaN, or memory corruption). The encoder runs a
+/// SIMD scan at the boundary either way; this enum picks what happens
+/// when the scan reports non-finite.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NonFiniteAction {
+    /// **Default.** Read-only SIMD scan; return
+    /// [`EncodeError::InvalidInput`] on first non-finite value.
+    /// ~4× faster than [`Sanitize`](Self::Sanitize) (no buffer writes
+    /// — single pass through cache hierarchy). Fail-fast surface, no
+    /// DoS exposure because the encode never touches the bad data.
+    #[default]
+    Error,
+    /// Read-modify-write SIMD scrub on the linear-RGB input plane (and
+    /// defense-in-depth on XYB output): replace any non-finite value
+    /// with `0.0` and continue encoding. Use for image-proxy
+    /// deployments that prefer best-effort encoding over fail-fast on
+    /// hostile input. Costs an extra owned-buffer copy + one
+    /// read-modify-write SIMD pass (~12.5 GB/s) over the linear-RGB
+    /// plane vs. the read-only [`Error`](Self::Error) path.
+    Sanitize,
 }
 
 impl LossyConfig {
@@ -1095,6 +1213,7 @@ impl LossyConfig {
             #[cfg(feature = "zensim-loop")]
             zensim_iters: 0,
             threads: 0,
+            non_finite_action: NonFiniteAction::default(),
             profile_override: None,
         }
     }
@@ -1310,6 +1429,11 @@ impl LossyConfig {
     /// Set butteraugli quantization loop iterations explicitly.
     ///
     /// Overrides the automatic effort-based default (effort 7: 0, effort 8: 2, effort 9+: 4).
+    /// Stores the value as-given for [`Self::validate`] to surface as
+    /// [`crate::ValidationError::IterCountOutOfRange`] if it exceeds
+    /// [`MAX_QUANT_LOOP_ITERS`]. The encoder additionally saturates at
+    /// consumption time so callers that skip `validate()` still cannot
+    /// DoS the encoder by passing a huge value.
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     pub fn with_butteraugli_iters(mut self, n: u32) -> Self {
@@ -1318,9 +1442,25 @@ impl LossyConfig {
         self
     }
 
+    /// Set the policy for non-finite XYB values at the
+    /// conversion→pipeline boundary. See [`NonFiniteAction`] for the
+    /// trade-off between fail-fast (default, `Error`) and best-effort
+    /// (`Sanitize`).
+    pub fn with_non_finite_action(mut self, action: NonFiniteAction) -> Self {
+        self.non_finite_action = action;
+        self
+    }
+
+    /// The currently-configured [`NonFiniteAction`] policy.
+    pub fn non_finite_action(&self) -> NonFiniteAction {
+        self.non_finite_action
+    }
+
     /// Set SSIM2 quantization loop iterations.
     ///
     /// Alternative to butteraugli loop: uses per-block linear RGB RMSE + full-image SSIM2.
+    /// See [`Self::with_butteraugli_iters`] for how out-of-range values
+    /// are handled.
     /// Requires the `ssim2-loop` feature.
     #[cfg(feature = "ssim2-loop")]
     pub fn with_ssim2_iters(mut self, n: u32) -> Self {
@@ -1648,6 +1788,47 @@ impl<'a> EncodeRequest<'a> {
     fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<EncodeResult, EncodeError> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
+        // Reject distances outside the libjxl-documented `[0.0, 25.0]` band
+        // here (lossy only). The `validate()` API is opt-in and only the
+        // belt-and-suspenders harness ever calls it; the encode path used to
+        // accept e.g. distance=50 and silently clamp internally, producing a
+        // ~25 bitstream while the caller saw no error. Surface explicitly.
+        if let ConfigRef::Lossy(cfg) = self.config
+            && (!cfg.distance.is_finite()
+                || cfg.distance <= 0.0
+                || cfg.distance > crate::validation::DISTANCE_MAX)
+        {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "lossy distance {} out of range (0.0, {}]",
+                    cfg.distance,
+                    crate::validation::DISTANCE_MAX
+                ),
+            });
+        }
+        if let Some(ref ce) = self.color_encoding {
+            crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;
+        }
+        if let Some(meta) = self.metadata
+            && let Some(icc) = meta.icc_profile
+        {
+            // Surface ICC issues here rather than letting predict_icc/write_icc
+            // panic deep in the bitstream-writing path.
+            const ICC_SIZE_LIMIT: usize = u32::MAX as usize >> 2;
+            if icc.is_empty() {
+                return Err(EncodeError::InvalidInput {
+                    message: "ICC profile must not be empty".into(),
+                });
+            }
+            if icc.len() > ICC_SIZE_LIMIT {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "ICC profile too large: {} bytes (max {ICC_SIZE_LIMIT})",
+                        icc.len()
+                    ),
+                });
+            }
+        }
 
         let threads = match self.config {
             ConfigRef::Lossless(cfg) => cfg.threads,
@@ -1685,6 +1866,25 @@ impl<'a> EncodeRequest<'a> {
         let expected = w
             .checked_mul(h)
             .and_then(|n| n.checked_mul(self.layout.bytes_per_pixel()));
+        // Internal allocations are sized as `width * height * N` for N up
+        // to 8 (4 channels × f32 = 16 bytes/px would also fit since
+        // `usize` can absorb a 4× multiplier on top of `bpp` ≤ 4 within
+        // the same budget). Enforce a single up-front check that
+        // `width * height * 16` fits in `usize` so the encoder never has
+        // to re-validate inside hot loops. This bounds the per-pixel
+        // working-set scaling factor for all downstream callers.
+        const MAX_INTERNAL_SCALE: usize = 16;
+        if w.checked_mul(h)
+            .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
+            .is_none()
+        {
+            return Err(EncodeError::LimitExceeded {
+                message: format!(
+                    "image {w}x{h} too large for encoder working buffers \
+                     (width × height × {MAX_INTERNAL_SCALE} overflows usize)"
+                ),
+            });
+        }
         match expected {
             Some(expected) if pixels.len() == expected => Ok(()),
             Some(expected) => Err(EncodeError::InvalidInput {
@@ -1740,7 +1940,59 @@ impl<'a> EncodeRequest<'a> {
                 });
             }
         }
+        // If the caller set an explicit max_quant_loop_iters and the
+        // resolved config is asking for more, reject. The encoder still
+        // saturates at the validator hard cap (`Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`)
+        // at consumption sites — this lets a caller set a *tighter* cap
+        // and have it surface as an error rather than a silent saturation.
+        if let Some(max_iters) = limits.max_quant_loop_iters {
+            let configured = match self.config {
+                ConfigRef::Lossy(cfg) => self.lossy_max_iter_value(cfg),
+                ConfigRef::Lossless(_) => 0,
+            };
+            if configured > max_iters {
+                return Err(EncodeError::LimitExceeded {
+                    message: format!(
+                        "quantization-loop iterations ({configured}) exceed \
+                         Limits::max_quant_loop_iters ({max_iters})"
+                    ),
+                });
+            }
+        }
         Ok(())
+    }
+
+    /// Maximum of butteraugli/ssim2/zensim iters across the loop knobs
+    /// available on this config — used by `check_limits` to surface a
+    /// caller-set per-encode iter cap.
+    #[cfg(any(
+        feature = "butteraugli-loop",
+        feature = "ssim2-loop",
+        feature = "zensim-loop"
+    ))]
+    fn lossy_max_iter_value(&self, cfg: &LossyConfig) -> u32 {
+        let mut m = 0u32;
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            m = m.max(cfg.butteraugli_iters);
+        }
+        #[cfg(feature = "ssim2-loop")]
+        {
+            m = m.max(cfg.ssim2_iters);
+        }
+        #[cfg(feature = "zensim-loop")]
+        {
+            m = m.max(cfg.zensim_iters);
+        }
+        m
+    }
+    #[cfg(not(any(
+        feature = "butteraugli-loop",
+        feature = "ssim2-loop",
+        feature = "zensim-loop"
+    )))]
+    fn lossy_max_iter_value(&self, _cfg: &LossyConfig) -> u32 {
+        0
     }
 
     // ── Lossless path ───────────────────────────────────────────────────
@@ -2108,6 +2360,7 @@ impl<'a> EncodeRequest<'a> {
         enc.bit_depth_16 = bit_depth_16;
         enc.source_gamma = self.source_gamma;
         enc.color_encoding = self.color_encoding.clone();
+        enc.non_finite_action = cfg.non_finite_action;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -2553,6 +2806,7 @@ impl LossyEncoder {
             enc.intensity_target = self.intensity_target;
             enc.min_nits = self.min_nits;
             enc.intrinsic_size = self.intrinsic_size;
+            enc.non_finite_action = self.cfg.non_finite_action;
             if let Some(ref icc) = self.icc_profile {
                 enc.icc_profile = Some(icc.clone());
             }
@@ -3273,6 +3527,17 @@ fn validate_animation_input(
         .ok_or_else(|| EncodeError::InvalidInput {
             message: "image dimensions overflow".into(),
         })?;
+    // Match the still-image working-buffer headroom check (validate_pixels).
+    const MAX_INTERNAL_SCALE: usize = 16;
+    if (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(MAX_INTERNAL_SCALE))
+        .is_none()
+    {
+        return Err(EncodeError::LimitExceeded {
+            message: format!("image {width}x{height} too large for encoder working buffers"),
+        });
+    }
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() != expected_size {
             return Err(EncodeError::InvalidInput {
@@ -3508,6 +3773,7 @@ fn encode_animation_lossy(
     {
         enc.zensim_iters = cfg.zensim_iters;
     }
+    enc.non_finite_action = cfg.non_finite_action;
 
     // Detect alpha and 16-bit from layout
     let has_alpha = layout.has_alpha();

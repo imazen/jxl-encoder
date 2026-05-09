@@ -693,7 +693,12 @@ pub fn apply_lz77_backref(
 
     let max_distance = tokens.len();
     let min_length = lz77.min_length as usize;
-    let max_length = tokens.len();
+    // SECURITY: same hard cap as the optimal path — see lz77_optimal for
+    // rationale. Greedy already has MAX_LAZY_MATCH_LEN=256 capping `lazy`
+    // matches, but find_matches itself can extend up to `max_length` per
+    // chain step, and that's the dimension we need to bound.
+    const LZ77_GREEDY_MAX_MATCH_LEN: usize = 1024;
+    let max_length = tokens.len().min(LZ77_GREEDY_MAX_MATCH_LEN);
 
     // Use next power of two as window size
     let mut window_size = 1usize;
@@ -1012,7 +1017,18 @@ pub fn apply_lz77_optimal(
     // Step 4: Forward DP pass.
     let max_distance = tokens.len();
     let min_length = lz77.min_length as usize;
-    let max_length = tokens.len();
+    // SECURITY: cap match length to a hard ceiling. Without this, the optimal
+    // LZ77 DP is O(n × chain_length × max_match_extend) where max_match_extend
+    // can reach `tokens.len()` on periodic adversarial input (e.g., a tight
+    // checker pattern at effort 9) — that's the e9 hang regression observed
+    // in the wild. Capping max_length bounds both the per-position
+    // find_matches work and the size of the dist_symbols accumulator that's
+    // re-iterated for each outer index. 1024 covers essentially every real
+    // long match (LZ77 RD benefit drops to noise past a few hundred symbols)
+    // while keeping worst-case work to O(n × 1024 × 256) ≈ a few seconds at
+    // n=4M tokens instead of indefinite hang.
+    const LZ77_OPTIMAL_MAX_MATCH_LEN: usize = 1024;
+    let max_length = tokens.len().min(LZ77_OPTIMAL_MAX_MATCH_LEN);
 
     let mut window_size = 1usize;
     while window_size < max_distance && window_size < WINDOW_SIZE {

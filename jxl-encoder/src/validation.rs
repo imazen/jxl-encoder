@@ -137,11 +137,8 @@ pub(crate) const DISTANCE_MAX: f32 = 25.0;
 pub(crate) const EFFORT_RANGE: RangeInclusive<u8> = 1..=10;
 /// Cap on quality-loop iter counts. libjxl's kTortoise butteraugli runs 4
 /// passes; 16 leaves room for sweep harnesses without inviting absurd values.
-#[cfg(any(
-    feature = "butteraugli-loop",
-    feature = "ssim2-loop",
-    feature = "zensim-loop"
-))]
+/// Referenced unconditionally by `Limits::DEFAULT_MAX_QUANT_LOOP_ITERS`, so
+/// not feature-gated even though the loops themselves are.
 pub(crate) const ITER_MAX: u32 = 16;
 #[cfg(feature = "__expert")]
 pub(crate) const FINE_GRAINED_STEP_RANGE: RangeInclusive<u8> = 1..=8;
@@ -152,7 +149,10 @@ pub(crate) const NB_RCTS_RANGE: RangeInclusive<u8> = 0..=19;
 #[cfg(feature = "__expert")]
 pub(crate) const WP_NUM_PARAM_SETS_RANGE: RangeInclusive<u8> = 0..=5;
 /// `PROP_ORDER_NO_SQUEEZE` / `PROP_ORDER_SQUEEZE` are 16 entries; values
-/// above are silently clamped by `from_profile_impl`.
+/// above are clamped by `from_profile_impl`. A `debug_assert!` in
+/// `from_profile_impl` fires if a misconfigured sweep harness pushes a
+/// value past the bound; release builds still clamp (as a safety net so
+/// the encoder never panics on out-of-bounds slice access).
 #[cfg(feature = "__expert")]
 pub(crate) const TREE_NUM_PROPERTIES_RANGE: RangeInclusive<u8> = 0..=16;
 #[cfg(feature = "__expert")]

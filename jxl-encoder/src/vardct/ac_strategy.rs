@@ -453,10 +453,7 @@ pub(crate) fn compute_scaled_constants(distance: f32, bases: (f32, f32, f32)) ->
 /// `__internals` cargo feature's downstream parity testing.
 #[cfg(feature = "__internals")]
 #[doc(hidden)]
-pub fn compute_scaled_constants_free(
-    distance: f32,
-    bases: (f32, f32, f32),
-) -> (f32, f32, f32) {
+pub fn compute_scaled_constants_free(distance: f32, bases: (f32, f32, f32)) -> (f32, f32, f32) {
     compute_scaled_constants(distance, bases)
 }
 

@@ -4,13 +4,17 @@
 //! Repro for an effort=9 encoder hang on synthetic high-frequency images.
 //!
 //! `LossyConfig::new(0.5).with_effort(9)` on a 1024x1024 grayscale 8-pixel
-//! checker pattern hangs indefinitely (single thread, ~100% CPU, no progress
-//! after 60+ seconds). The same image at effort=7 finishes in ~170ms, and
-//! libjxl C reference (cjxl 0.10.3) at effort=9 finishes in ~2 seconds.
+//! checker pattern hung indefinitely before commit 1498053 + the LZ77 match
+//! length cap (single thread, ~100% CPU, no progress after 60+ seconds).
+//! The same image at effort=7 finishes in ~170ms; libjxl C reference at
+//! effort=9 finishes in ~2 seconds.
 //!
-//! This test is `#[ignore]`d because it currently hangs. Remove the ignore
-//! once the bug is fixed; the test enforces a 5-second wallclock budget for
-//! the encode (generous: libjxl C does it in ~2s, e7 does it in <1s).
+//! Root cause: optimal LZ77 (effort >= 9) DP scaled as
+//! O(n × chain_length × max_match_extend) where max_match_extend was
+//! tokens.len(); on a tight periodic checker, every position chains to a
+//! match extending the full remaining stream. Fixed by capping
+//! `max_length` at LZ77_OPTIMAL_MAX_MATCH_LEN (1024) — bounds worst-case
+//! per-position work to a constant.
 //!
 //! Tracking issue: https://github.com/imazen/jxl-encoder/issues/27
 
@@ -28,7 +32,7 @@ fn make_checker_rgb8(width: usize, height: usize, tile: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(width * height * 3);
     for y in 0..height {
         for x in 0..width {
-            let v = if ((x / tile) + (y / tile)) % 2 == 0 {
+            let v = if ((x / tile) + (y / tile)).is_multiple_of(2) {
                 0u8
             } else {
                 255u8
@@ -58,12 +62,13 @@ where
 }
 
 #[test]
-#[ignore = "currently hangs indefinitely; see issue tracker"]
 fn e9_checker_pattern_does_not_hang() {
     const W: usize = 1024;
     const H: usize = 1024;
     const TILE: usize = 8;
-    const BUDGET: Duration = Duration::from_secs(5);
+    // Hang detection only — generous budget to absorb coverage-instrumented
+    // and slow-target builds. A real hang is unbounded; 30s still catches it.
+    const BUDGET: Duration = Duration::from_secs(30);
 
     let pixels = make_checker_rgb8(W, H, TILE);
     let input_len = pixels.len();
@@ -74,7 +79,7 @@ fn e9_checker_pattern_does_not_hang() {
             .encode(&pixels, W as u32, H as u32, PixelLayout::Rgb8)
     });
 
-    let encoded = result.expect("encode did not complete within 5s budget (hang)");
+    let encoded = result.expect("encode did not complete within 30s budget (hang)");
     let encoded = encoded.expect("encode returned an error");
 
     assert_eq!(

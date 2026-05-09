@@ -47,8 +47,8 @@ pub mod convenience;
 pub use api::{
     AnimationFrame, AnimationParams, At, EncodeError, EncodeMode, EncodeRequest, EncodeResult,
     EncodeStats, EncoderMode, ImageMetadata, Limits, LosslessConfig, LosslessEncoder, LossyConfig,
-    LossyEncoder, Lz77Method, PixelLayout, ProgressiveMode, Quality, ResultAtExt, Stop,
-    Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
+    LossyEncoder, Lz77Method, NonFiniteAction, PixelLayout, ProgressiveMode, Quality, ResultAtExt,
+    Stop, Unstoppable, at, calibrated_jxl_quality, quality_to_distance,
 };
 // `EffortProfile` was re-exported at the crate root in 0.3.0; it is now an
 // **internal** type that drives the encoder's effort-derived decisions.
@@ -109,7 +109,7 @@ pub mod test_helpers;
 #[doc(hidden)]
 pub mod __internals {
     // Pub re-exports of already-pub items in private/pub(crate) modules.
-    pub use crate::vardct::chroma_from_luma::{ytox_ratio, ytob_ratio};
+    pub use crate::vardct::chroma_from_luma::{ytob_ratio, ytox_ratio};
     pub use crate::vardct::quant::INV_DC_QUANT;
     // Wrappers around pub(crate) helpers and pub(crate) impl methods that
     // can't be `pub use`d directly.

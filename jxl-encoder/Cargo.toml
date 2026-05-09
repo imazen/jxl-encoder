@@ -80,6 +80,12 @@ __expert = []
 # jxl-encoder-gpu's forks::* tests). Off by default; not part of the
 # stable API surface — items here may move or change at any time.
 __internals = []
+# Corpus-dependent tests. When enabled, tests under
+# `#[cfg_attr(not(feature = "corpus-tests"), ignore = "...")]` run; otherwise
+# they're marked as #[ignore] so the skip decision is visible at the test
+# attribute level (caller-controlled), not buried inside the test body.
+# CI must enable this feature explicitly when corpus is staged.
+corpus-tests = []
 default = ["std", "butteraugli-loop"]
 
 [dev-dependencies]
@@ -99,6 +105,11 @@ imgref = "1.12"
 rgb = "0.8"
 walkdir = "2.5"
 sha2 = "0.11.0"
+# archmage is already a regular dep (`default-features = false, features = ["macros"]`);
+# the test suite needs `std` for `archmage::testing::for_each_token_permutation`
+# (used by `tests/nonfinite_xyb_repro.rs` to exercise scalar / SSE / AVX2 / etc.
+# fallback paths on the trigger fixtures).
+archmage = { version = "0.9.15", default-features = false, features = ["macros", "std"] }
 
 # codec-corpus uses fd-lock which doesn't compile on WASM
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]

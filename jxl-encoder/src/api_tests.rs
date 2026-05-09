@@ -467,6 +467,10 @@ mod corpus_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_pngsuite_gray() {
         crate::skip_without_corpus!();
         // 8-bit grayscale from PNG suite
@@ -486,6 +490,10 @@ mod corpus_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_pngsuite_rgb() {
         crate::skip_without_corpus!();
         // 8-bit RGB from PNG suite
@@ -508,6 +516,10 @@ mod corpus_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_kodak_01() {
         crate::skip_without_corpus!();
         let path = format!(
@@ -534,6 +546,10 @@ mod corpus_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_corpus_batch() {
         crate::skip_without_corpus!();
         // Test multiple images from the corpus
@@ -1550,6 +1566,10 @@ mod decoder_validation {
 
     /// Test that pngsuite RGB images can be decoded by jxl-oxide
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_decode_pngsuite_rgb() {
         crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
@@ -2360,6 +2380,10 @@ mod decoder_validation {
 
     /// Dual-decoder validation for corpus images
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_dual_decode_corpus_images() {
         crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
@@ -2608,6 +2632,10 @@ mod decoder_validation {
 
     /// Test lossless roundtrip for corpus image (pngsuite)
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_roundtrip_lossless_corpus_rgb() {
         crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
@@ -2628,6 +2656,10 @@ mod decoder_validation {
 
     /// Test lossless roundtrip for corpus grayscale (pngsuite)
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_roundtrip_lossless_corpus_gray() {
         crate::skip_without_corpus!();
         // (corpus path resolved via crate::test_helpers::corpus_dir)
@@ -2855,6 +2887,10 @@ mod quality_comparison_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_quality_comparison_kodak01() {
         crate::skip_without_corpus!();
         let path = format!(

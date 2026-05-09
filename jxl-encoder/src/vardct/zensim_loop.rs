@@ -317,7 +317,8 @@ impl VarDctEncoder {
         let mut recon_b = vec![0.0f32; padded_pixels];
         let mut transform_out = super::transform::TransformOutput::new(xsize_blocks, ysize_blocks);
 
-        let iters = self.zensim_iters as usize;
+        // Saturate at consumption — see butteraugli_loop.rs for rationale.
+        let iters = (self.zensim_iters.min(crate::api::MAX_QUANT_LOOP_ITERS)) as usize;
         let mut current_params;
 
         for iter in 0..iters + 1 {
