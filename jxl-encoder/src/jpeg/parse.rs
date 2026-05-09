@@ -646,7 +646,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(feature = "corpus-tests"), ignore = "requires codec corpus; enable `corpus-tests` feature")]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_parse_real_jpeg() {
         crate::skip_without_corpus!();
         let path = format!(

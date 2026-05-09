@@ -109,7 +109,7 @@ pub mod test_helpers;
 #[doc(hidden)]
 pub mod __internals {
     // Pub re-exports of already-pub items in private/pub(crate) modules.
-    pub use crate::vardct::chroma_from_luma::{ytox_ratio, ytob_ratio};
+    pub use crate::vardct::chroma_from_luma::{ytob_ratio, ytox_ratio};
     pub use crate::vardct::quant::INV_DC_QUANT;
     // Wrappers around pub(crate) helpers and pub(crate) impl methods that
     // can't be `pub use`d directly.

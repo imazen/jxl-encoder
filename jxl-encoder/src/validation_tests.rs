@@ -538,7 +538,6 @@ mod expert {
             ValidationError::TreeMaxBucketsZero
         ));
     }
-
 }
 
 // ─── Existing encode behaviour is unchanged ──
