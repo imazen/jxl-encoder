@@ -80,6 +80,12 @@ __expert = []
 # jxl-encoder-gpu's forks::* tests). Off by default; not part of the
 # stable API surface — items here may move or change at any time.
 __internals = []
+# Corpus-dependent tests. When enabled, tests under
+# `#[cfg_attr(not(feature = "corpus-tests"), ignore = "...")]` run; otherwise
+# they're marked as #[ignore] so the skip decision is visible at the test
+# attribute level (caller-controlled), not buried inside the test body.
+# CI must enable this feature explicitly when corpus is staged.
+corpus-tests = []
 default = ["std", "butteraugli-loop"]
 
 [dev-dependencies]
