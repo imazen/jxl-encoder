@@ -419,29 +419,51 @@ impl VarDctEncoder {
         let padded_width = xsize_blocks * BLOCK_DIM;
         let padded_height = ysize_blocks * BLOCK_DIM;
 
-        // Validate linear-RGB at intake (Error mode only). The
-        // `forward_xyb` SIMD kernel uses `mixed.max(0.0)` per channel,
-        // which silently coerces NaN to `0.0` (IEEE-754 ordered max
-        // returns the non-NaN operand). That means a caller-supplied
-        // NaN linear-RGB never reaches the XYB output — the post-XYB
-        // check would not fire. To surface caller bugs we have to check
-        // here, before forward_xyb runs. For 8-bit / 16-bit pixel
-        // layouts the linear-RGB conversion is total (no non-finite
-        // possible) and this check is a fast read-only no-op.
+        // Validate linear-RGB at intake. The `forward_xyb` SIMD kernel
+        // uses `mixed.max(0.0)` per channel, which silently coerces NaN
+        // to `0.0` (IEEE-754 ordered max returns the non-NaN operand).
+        // That means a caller-supplied NaN linear-RGB never reaches the
+        // XYB output — the post-XYB check would not fire either. To
+        // surface caller bugs (Error mode) or actively scrub them
+        // (Sanitize mode), we must check / fix here, before forward_xyb
+        // runs. For 8-bit / 16-bit pixel layouts the linear-RGB
+        // conversion is total (no non-finite possible) and the
+        // is_finite_plane scan is a fast read-only no-op (~55 GB/s).
         //
-        // Sanitize mode skips this check on the assumption that the
-        // XYB transform's silent NaN→0 clamp is the desired behavior
-        // for image-proxy use cases.
-        if matches!(self.non_finite_action, crate::api::NonFiniteAction::Error)
-            && !jxl_simd::is_finite_plane(linear_rgb)
-        {
-            return Err(crate::error::Error::InvalidInput(
-                "non-finite (NaN / ±Inf) value detected in linear-RGB input. \
-                 Use LossyConfig::with_non_finite_action(NonFiniteAction::Sanitize) \
-                 to silently clamp at the XYB transform instead."
-                    .into(),
-            ));
-        }
+        // Sanitize mode used to skip the input check entirely, relying
+        // on forward_xyb's silent NaN→0 max to mask non-finite values.
+        // That left the advertised "SIMD scrub" never running on the
+        // linear-RGB plane and made Error/Sanitize behavior diverge.
+        // Now Sanitize actively rewrites non-finite values to 0.0
+        // (~12.5 GB/s), then runs the rest of the pipeline on a clean
+        // buffer; the downstream XYB scan stays as defense-in-depth.
+        let sanitized_linear_rgb_storage: Option<alloc::vec::Vec<f32>> =
+            match self.non_finite_action {
+                crate::api::NonFiniteAction::Error => {
+                    if !jxl_simd::is_finite_plane(linear_rgb) {
+                        return Err(crate::error::Error::InvalidInput(
+                            "non-finite (NaN / ±Inf) value detected in linear-RGB input. \
+                             Use LossyConfig::with_non_finite_action(NonFiniteAction::Sanitize) \
+                             to silently scrub non-finite values to 0.0 instead."
+                                .into(),
+                        ));
+                    }
+                    None
+                }
+                crate::api::NonFiniteAction::Sanitize => {
+                    // sanitize_finite needs &mut, but the caller-supplied
+                    // buffer is borrowed. Clone-and-sanitize when (and
+                    // only when) Sanitize mode is selected. For 8-bit /
+                    // 16-bit pixel layouts there are never non-finite
+                    // values, so most callers stay on the Error fast path.
+                    let mut owned: alloc::vec::Vec<f32> = linear_rgb.to_vec();
+                    let _ = jxl_simd::sanitize_finite(&mut owned);
+                    Some(owned)
+                }
+            };
+        let linear_rgb: &[f32] = sanitized_linear_rgb_storage
+            .as_deref()
+            .unwrap_or(linear_rgb);
 
         // Convert to XYB with edge-replicated padding to block boundaries.
         // This allows SIMD to process full blocks without bounds checking.

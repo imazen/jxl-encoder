@@ -1168,10 +1168,13 @@ pub enum NonFiniteAction {
     /// DoS exposure because the encode never touches the bad data.
     #[default]
     Error,
-    /// Read-modify-write SIMD scan; replace any non-finite value with
-    /// `0.0` and continue encoding. Use for image-proxy deployments
-    /// that prefer best-effort encoding over fail-fast on hostile
-    /// input. Costs ~2 passes through cache hierarchy.
+    /// Read-modify-write SIMD scrub on the linear-RGB input plane (and
+    /// defense-in-depth on XYB output): replace any non-finite value
+    /// with `0.0` and continue encoding. Use for image-proxy
+    /// deployments that prefer best-effort encoding over fail-fast on
+    /// hostile input. Costs an extra owned-buffer copy + one
+    /// read-modify-write SIMD pass (~12.5 GB/s) over the linear-RGB
+    /// plane vs. the read-only [`Error`](Self::Error) path.
     Sanitize,
 }
 
