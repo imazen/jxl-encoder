@@ -1788,6 +1788,24 @@ impl<'a> EncodeRequest<'a> {
     fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<EncodeResult, EncodeError> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
+        // Reject distances outside the libjxl-documented `[0.0, 25.0]` band
+        // here (lossy only). The `validate()` API is opt-in and only the
+        // belt-and-suspenders harness ever calls it; the encode path used to
+        // accept e.g. distance=50 and silently clamp internally, producing a
+        // ~25 bitstream while the caller saw no error. Surface explicitly.
+        if let ConfigRef::Lossy(cfg) = self.config
+            && (!cfg.distance.is_finite()
+                || cfg.distance <= 0.0
+                || cfg.distance > crate::validation::DISTANCE_MAX)
+        {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "lossy distance {} out of range (0.0, {}]",
+                    cfg.distance,
+                    crate::validation::DISTANCE_MAX
+                ),
+            });
+        }
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;
         }

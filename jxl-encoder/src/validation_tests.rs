@@ -539,18 +539,49 @@ mod expert {
         ));
     }
 
-    // ─── Existing encode behaviour is unchanged ──
+}
 
-    #[test]
-    fn validate_does_not_alter_encode_path() {
-        // A "bad" distance > 25 is silently accepted by the encode path
-        // (clamped internally). validate() rejects it but the Config still
-        // works for callers that don't validate.
-        let cfg = LossyConfig::new(50.0);
-        assert!(cfg.validate().is_err());
-        // Don't actually encode here — that path is exercised by the rest
-        // of the test suite. We just confirm `validate()` is purely
-        // observational and does not mutate state.
-        assert_eq!(cfg.distance(), 50.0);
+// ─── Existing encode behaviour is unchanged ──
+
+#[test]
+fn validate_does_not_alter_encode_path() {
+    // `validate()` is observational: it doesn't mutate `LossyConfig`
+    // state. The Config still holds the as-set distance.
+    let cfg = LossyConfig::new(50.0);
+    assert!(cfg.validate().is_err());
+    assert_eq!(cfg.distance(), 50.0);
+}
+
+#[test]
+fn encode_rejects_distance_above_max() {
+    // The encode path itself MUST reject distance > DISTANCE_MAX
+    // (= 25.0). Previously the encoder silently clamped internally
+    // and produced a ~25 bitstream while the caller saw no error.
+    // Now distance=50 fails fast at encode_inner.
+    let cfg = LossyConfig::new(50.0);
+    let pixels = vec![0u8; 4 * 4 * 3];
+    let err = cfg
+        .encode(&pixels, 4, 4, crate::api::PixelLayout::Rgb8)
+        .unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("distance") && msg.contains("out of range"),
+        "expected out-of-range error, got: {msg}"
+    );
+}
+
+#[test]
+fn encode_rejects_distance_zero_and_below() {
+    // Lossy distance must be > 0 (libjxl convention; d = 0 is lossless,
+    // accessible via `LosslessConfig`). Negative / zero / non-finite
+    // distance must not silently produce a bitstream.
+    let pixels = vec![0u8; 4 * 4 * 3];
+    for &d in &[0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+        let cfg = LossyConfig::new(d);
+        assert!(
+            cfg.encode(&pixels, 4, 4, crate::api::PixelLayout::Rgb8)
+                .is_err(),
+            "encode unexpectedly succeeded for distance = {d}"
+        );
     }
 }
