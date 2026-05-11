@@ -6421,6 +6421,87 @@ fn test_request_lossy_valid_intensity_target_accepted() {
     }
 }
 
+#[test]
+fn test_request_lossy_invalid_source_gamma_rejected() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    for (bad, label) in &[
+        (f32::NAN, "NaN"),
+        (f32::INFINITY, "Inf"),
+        (0.0_f32, "zero"),
+        (-0.5_f32, "negative"),
+        (1.5_f32, "above 1"),
+    ] {
+        let result = LossyConfig::new(1.0)
+            .with_effort(3)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_source_gamma(*bad)
+            .encode(&pixels);
+        assert!(result.is_err(), "source_gamma={label} ({bad}) must reject");
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            msg.contains("source_gamma"),
+            "expected source_gamma error for {label}, got: {msg}",
+        );
+    }
+}
+
+#[test]
+fn test_request_lossy_valid_source_gamma_accepted() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    // Common gamma values: 1/2.2 ≈ 0.4545 (sRGB-ish), 1/1.8 ≈ 0.5556 (Mac),
+    // 1.0 (linear).
+    for &gamma in &[0.4545_f32, 0.5556, 1.0, 1.0 / 255.0 + 1e-6] {
+        let result = LossyConfig::new(2.0)
+            .with_effort(3)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_source_gamma(gamma)
+            .encode(&pixels);
+        assert!(
+            result.is_ok(),
+            "source_gamma={gamma} should encode, got: {:?}",
+            result.err(),
+        );
+    }
+}
+
+#[test]
+fn test_request_lossy_invalid_intrinsic_size_rejected() {
+    use crate::ImageMetadata;
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    // Zero dim.
+    let meta = ImageMetadata::new();
+    // ImageMetadata doesn't expose intrinsic_size as a builder; the
+    // request-level setter does. EncodeRequest::with_metadata only
+    // attaches the icc/exif/xmp side. Test the request-level setters.
+    drop(meta);
+
+    // Note: there's no `EncodeRequest::with_intrinsic_size` —
+    // intrinsic_size is set on `LossyConfig` / `LosslessConfig`. The
+    // request validates whatever's on the config or metadata.
+    // Test via the streaming path instead.
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
+    enc = enc.with_intrinsic_size(0, 100);
+    let row_bytes = (w as usize) * 3;
+    for y in 0..(h as usize) {
+        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
+            .expect("push");
+    }
+    let result = enc.finish();
+    assert!(result.is_err(), "intrinsic_size=0x100 must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("intrinsic_size"),
+        "expected intrinsic_size error, got: {msg}",
+    );
+}
+
 /// `validate_metadata_sizes` is wired into both the one-shot and
 /// streaming paths. Empty ICC must be rejected (encoder cannot
 /// embed a zero-byte ICC profile); the > 1 GB cap can't be

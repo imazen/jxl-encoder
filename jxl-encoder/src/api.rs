@@ -2225,6 +2225,9 @@ impl<'a> EncodeRequest<'a> {
         let it = self.intensity_target.or_else(|| self.metadata.and_then(|m| m.intensity_target));
         let mn = self.min_nits.or_else(|| self.metadata.and_then(|m| m.min_nits));
         validate_tone_mapping(it, mn)?;
+        // Source gamma + intrinsic size up-front checks.
+        validate_source_gamma(self.source_gamma)?;
+        validate_intrinsic_size(self.metadata.and_then(|m| m.intrinsic_size))?;
 
         // Build the per-encode allocation budget. Caller-supplied
         // Limits.max_memory_bytes wins; otherwise Limits provides its
@@ -3685,6 +3688,8 @@ impl LossyEncoder {
         let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
         let mn = (self.min_nits != 0.0).then_some(self.min_nits);
         validate_tone_mapping(it, mn)?;
+        validate_source_gamma(self.source_gamma)?;
+        validate_intrinsic_size(self.intrinsic_size)?;
         let cfg = &self.cfg;
         let w = self.width as usize;
         let h = self.height as usize;
@@ -4008,6 +4013,63 @@ fn validate_metadata_sizes(
             message: format!(
                 "XMP metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
                 xmp.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Validate `with_source_gamma(gamma)` value. JXL spec stores the
+/// gamma exponent in (1/255, 1] (decode: `pixel = sample^gamma`).
+/// Our encode pipeline uses `inv_gamma = 1.0 / gamma`, so any
+/// non-positive / non-finite value yields silently garbage output
+/// (LUT becomes all-zero or all-one, or contains NaN/Inf). Reject
+/// up front instead.
+fn validate_source_gamma(gamma: Option<f32>) -> core::result::Result<(), EncodeError> {
+    let Some(g) = gamma else { return Ok(()); };
+    if !g.is_finite() {
+        return Err(EncodeError::InvalidInput {
+            message: format!("source_gamma must be finite (got {g})"),
+        });
+    }
+    // libjxl accepts gamma in (1/255, 1]; we mirror that exactly so
+    // codestreams round-trip through cjxl/djxl unchanged.
+    const GAMMA_MIN: f32 = 1.0 / 255.0;
+    if g <= GAMMA_MIN {
+        return Err(EncodeError::InvalidInput {
+            message: format!(
+                "source_gamma must be > {GAMMA_MIN:.6} (got {g}); typical sRGB-ish values are 1/2.2 ≈ 0.4545",
+            ),
+        });
+    }
+    if g > 1.0 {
+        return Err(EncodeError::InvalidInput {
+            message: format!(
+                "source_gamma must be <= 1.0 (got {g}); the stored value is the encoding exponent, not its inverse",
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Validate `with_intrinsic_size(width, height)`. Same shape as the
+/// coded-image dimension validator: zero rejected, exceeds-spec-max
+/// rejected. Reused at the same up-front spots so a caller who sets
+/// intrinsic_size to nonsense gets a clean error before the encoder
+/// allocates anything.
+fn validate_intrinsic_size(
+    intrinsic: Option<(u32, u32)>,
+) -> core::result::Result<(), EncodeError> {
+    let Some((iw, ih)) = intrinsic else { return Ok(()); };
+    if iw == 0 || ih == 0 {
+        return Err(EncodeError::InvalidInput {
+            message: format!("intrinsic_size must be non-zero (got {iw}x{ih})"),
+        });
+    }
+    if iw > MAX_JXL_DIM || ih > MAX_JXL_DIM {
+        return Err(EncodeError::LimitExceeded {
+            message: format!(
+                "intrinsic_size {iw}x{ih} exceeds JXL spec maximum of {MAX_JXL_DIM} per dimension",
             ),
         });
     }
@@ -4477,6 +4539,8 @@ impl LosslessEncoder {
         let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
         let mn = (self.min_nits != 0.0).then_some(self.min_nits);
         validate_tone_mapping(it, mn)?;
+        validate_source_gamma(self.source_gamma)?;
+        validate_intrinsic_size(self.intrinsic_size)?;
 
         let cfg = &self.cfg;
         let w = self.width as usize;
