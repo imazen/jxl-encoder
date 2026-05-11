@@ -1045,6 +1045,7 @@ impl LosslessConfig {
             intensity_target: None,
             min_nits: None,
             premultiplied_alpha: false,
+            bits_per_sample: None,
         }
     }
 
@@ -1717,6 +1718,7 @@ impl LossyConfig {
             intensity_target: None,
             min_nits: None,
             premultiplied_alpha: false,
+            bits_per_sample: None,
         }
     }
 
@@ -1817,6 +1819,11 @@ pub struct EncodeRequest<'a> {
     intensity_target: Option<f32>,
     min_nits: Option<f32>,
     premultiplied_alpha: bool,
+    /// Optional input precision override for u16 layouts. `None` →
+    /// full 16-bit (input divisor 65535). `Some(N)` → input divisor
+    /// `(1 << N) - 1` and codestream `BitDepth.bits_per_sample = N`.
+    /// Closes the configurable bits_per_sample portion of #18.
+    bits_per_sample: Option<u32>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1921,6 +1928,28 @@ impl<'a> EncodeRequest<'a> {
     /// Default is `false` (straight / unassociated alpha).
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
+        self
+    }
+
+    /// Override the input precision for u16 layouts (closes
+    /// `bits_per_sample` portion of #18). 10-bit (broadcast / video),
+    /// 12-bit (medical / cinema DPX), and 14-bit (DSLR raw) are
+    /// commonly stored in u16 buffers with the value occupying the
+    /// LOW bits — i.e. a 12-bit white pixel is `4095u16`, not `65535`.
+    /// Without this builder the encoder would normalize 4095 / 65535 ≈
+    /// 0.062 instead of 4095 / 4095 = 1.0, producing a near-black
+    /// encoded image.
+    ///
+    /// When set:
+    /// - u16 input is normalized as `value / ((1 << bits) - 1)`
+    /// - codestream `BitDepth.bits_per_sample` is `bits`
+    /// - decoder sees the correct precision metadata
+    ///
+    /// `bits` must be in `1..=16`; out-of-range values are clamped.
+    /// Currently only the one-shot `EncodeRequest` path honors this;
+    /// streaming-encoder parity remains TBD.
+    pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
+        self.bits_per_sample = Some(bits.clamp(1, 16));
         self
     }
 
@@ -2441,6 +2470,13 @@ impl<'a> EncodeRequest<'a> {
         // Grayscale layouts are expanded to RGB (R=G=B) for VarDCT encoding.
         // When source_gamma is set, use gamma linearization instead of sRGB TF.
         let gamma = self.source_gamma;
+        // Configurable bits_per_sample for u16 input (closes that
+        // sub-feature of #18). Default 65535 = full 16-bit precision;
+        // override via with_bits_per_sample(N) so 10/12/14-bit data
+        // stored in the LOW bits of u16 normalizes to [0, 1.0] correctly.
+        let u16_max = self
+            .bits_per_sample
+            .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -2497,36 +2533,36 @@ impl<'a> EncodeRequest<'a> {
             }
             PixelLayout::Rgb16 => {
                 let linear = if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 3, g)
+                    gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 3)
+                    srgb_u16_to_linear_f32(pixels, 3, u16_max)
                 };
                 (linear, None, true)
             }
             PixelLayout::Rgba16 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 4, g)
+                    gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 4)
+                    srgb_u16_to_linear_f32(pixels, 4, u16_max)
                 };
-                let alpha = extract_alpha_u16(pixels, 4, 3);
+                let alpha = extract_alpha_u16(pixels, 4, 3, u16_max);
                 (rgb, Some(alpha), true)
             }
             PixelLayout::Gray16 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 1)
+                    gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
                 };
                 (rgb, None, true)
             }
             PixelLayout::GrayAlpha16 => {
                 let rgb = if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 2)
+                    gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
                 };
-                let alpha = extract_alpha_u16(pixels, 2, 1);
+                let alpha = extract_alpha_u16(pixels, 2, 1, u16_max);
                 (rgb, Some(alpha), true)
             }
             PixelLayout::RgbLinearF32 => {
@@ -2670,6 +2706,10 @@ impl<'a> EncodeRequest<'a> {
         // The unpremultiplication of the input pixels already happened
         // above (immediately after building linear_rgb).
         enc.alpha_associated = self.premultiplied_alpha;
+        // Configurable bits_per_sample (#18 sub-feature) — drives the
+        // codestream BitDepth header. Input normalization (u16_max)
+        // handles the matching pixel scaling above.
+        enc.bits_per_sample_override = self.bits_per_sample;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -2961,30 +3001,30 @@ impl LossyEncoder {
             }
             PixelLayout::Rgb16 => {
                 if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 3, g)
+                    gamma_u16_to_linear_f32(pixels, 3, g, 65535.0)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 3)
+                    srgb_u16_to_linear_f32(pixels, 3, 65535.0)
                 }
             }
             PixelLayout::Rgba16 => {
                 if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 4, g)
+                    gamma_u16_to_linear_f32(pixels, 4, g, 65535.0)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 4)
+                    srgb_u16_to_linear_f32(pixels, 4, 65535.0)
                 }
             }
             PixelLayout::Gray16 => {
                 if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, 65535.0)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 1)
+                    gray_u16_to_linear_f32_rgb(pixels, 1, 65535.0)
                 }
             }
             PixelLayout::GrayAlpha16 => {
                 if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, 65535.0)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 2)
+                    gray_u16_to_linear_f32_rgb(pixels, 2, 65535.0)
                 }
             }
             PixelLayout::RgbLinearF32 => {
@@ -3029,13 +3069,13 @@ impl LossyEncoder {
                     .extend_from_slice(&new_alpha);
             }
             PixelLayout::Rgba16 => {
-                let new_alpha = extract_alpha_u16(pixels, 4, 3);
+                let new_alpha = extract_alpha_u16(pixels, 4, 3, 65535.0);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
             }
             PixelLayout::GrayAlpha16 => {
-                let new_alpha = extract_alpha_u16(pixels, 2, 1);
+                let new_alpha = extract_alpha_u16(pixels, 2, 1, 65535.0);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
@@ -4414,16 +4454,16 @@ fn encode_animation_lossy(
                 let alpha = extract_alpha(src_pixels, 2, 1);
                 (rgb, Some(alpha))
             }
-            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3), None),
+            PixelLayout::Rgb16 => (srgb_u16_to_linear_f32(src_pixels, 3, 65535.0), None),
             PixelLayout::Rgba16 => {
-                let rgb = srgb_u16_to_linear_f32(src_pixels, 4);
-                let alpha = extract_alpha_u16(src_pixels, 4, 3);
+                let rgb = srgb_u16_to_linear_f32(src_pixels, 4, 65535.0);
+                let alpha = extract_alpha_u16(src_pixels, 4, 3, 65535.0);
                 (rgb, Some(alpha))
             }
-            PixelLayout::Gray16 => (gray_u16_to_linear_f32_rgb(src_pixels, 1), None),
+            PixelLayout::Gray16 => (gray_u16_to_linear_f32_rgb(src_pixels, 1, 65535.0), None),
             PixelLayout::GrayAlpha16 => {
-                let rgb = gray_u16_to_linear_f32_rgb(src_pixels, 2);
-                let alpha = extract_alpha_u16(src_pixels, 2, 1);
+                let rgb = gray_u16_to_linear_f32_rgb(src_pixels, 2, 65535.0);
+                let alpha = extract_alpha_u16(src_pixels, 2, 1, 65535.0);
                 (rgb, Some(alpha))
             }
             PixelLayout::RgbLinearF32 => {
@@ -4676,15 +4716,20 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 }
 
 /// sRGB u16 → linear f32 (IEC 61966-2-1).
-fn srgb_u16_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+///
+/// `u16_max` is the divisor for input normalization — `65535.0` for
+/// full 16-bit input (the default), or `(1 << bits) - 1` for narrower
+/// precision (e.g., 1023 for 10-bit, 4095 for 12-bit, 16383 for 14-bit).
+/// See `EncodeRequest::with_bits_per_sample`.
+fn srgb_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
             [
-                srgb_to_linear_f(px[0] as f32 / 65535.0),
-                srgb_to_linear_f(px[1] as f32 / 65535.0),
-                srgb_to_linear_f(px[2] as f32 / 65535.0),
+                srgb_to_linear_f(px[0] as f32 / u16_max),
+                srgb_to_linear_f(px[1] as f32 / u16_max),
+                srgb_to_linear_f(px[2] as f32 / u16_max),
             ]
         })
         .collect()
@@ -4717,17 +4762,17 @@ fn gamma_u8_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> 
         .collect()
 }
 
-/// Gamma u16 → linear f32 RGB. `linear = (encoded/65535)^(1/gamma)`
-fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32) -> Vec<f32> {
+/// Gamma u16 → linear f32 RGB. `linear = (encoded/u16_max)^(1/gamma)`
+fn gamma_u16_to_linear_f32(data: &[u8], channels: usize, gamma: f32, u16_max: f32) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels
         .chunks(channels)
         .flat_map(|px| {
             [
-                jxl_simd::fast_powf(px[0] as f32 / 65535.0, inv_gamma),
-                jxl_simd::fast_powf(px[1] as f32 / 65535.0, inv_gamma),
-                jxl_simd::fast_powf(px[2] as f32 / 65535.0, inv_gamma),
+                jxl_simd::fast_powf(px[0] as f32 / u16_max, inv_gamma),
+                jxl_simd::fast_powf(px[1] as f32 / u16_max, inv_gamma),
+                jxl_simd::fast_powf(px[2] as f32 / u16_max, inv_gamma),
             ]
         })
         .collect()
@@ -4746,25 +4791,36 @@ fn gamma_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> Ve
         .collect()
 }
 
-/// Gamma u16 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/65535)^(1/gamma)`
-fn gamma_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, gamma: f32) -> Vec<f32> {
+/// Gamma u16 grayscale → linear f32 RGB (gray→R=G=B). `linear = (encoded/u16_max)^(1/gamma)`
+fn gamma_gray_u16_to_linear_f32_rgb(
+    data: &[u8],
+    stride: usize,
+    gamma: f32,
+    u16_max: f32,
+) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
-            let v = jxl_simd::fast_powf(px[0] as f32 / 65535.0, inv_gamma);
+            let v = jxl_simd::fast_powf(px[0] as f32 / u16_max, inv_gamma);
             [v, v, v]
         })
         .collect()
 }
 
 /// Extract alpha channel from interleaved 16-bit pixel data as u8 (quantized).
-fn extract_alpha_u16(data: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
+///
+/// `u16_max` is the source-precision max value (65535 for 16-bit,
+/// `(1 << bits) - 1` for narrower precision). Used to scale alpha
+/// from `0..=u16_max` to `0..=255` correctly.
+fn extract_alpha_u16(data: &[u8], stride: usize, alpha_offset: usize, u16_max: f32) -> Vec<u8> {
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels
         .chunks(stride)
-        .map(|px| (px[alpha_offset] >> 8) as u8)
+        .map(|px| {
+            ((px[alpha_offset] as f32 / u16_max).clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+        })
         .collect()
 }
 
@@ -4800,12 +4856,12 @@ fn gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
 }
 
 /// Expand 16-bit sRGB grayscale to linear f32 RGB (gray→R=G=B).
-fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels
         .chunks(stride)
         .flat_map(|px| {
-            let v = srgb_to_linear_f(px[0] as f32 / 65535.0);
+            let v = srgb_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
         })
         .collect()

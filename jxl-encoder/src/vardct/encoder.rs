@@ -269,6 +269,11 @@ pub struct VarDctEncoder {
     /// `LossyEncoder` API does the unpremultiply pre-pass before
     /// handing us the linear RGB.
     pub alpha_associated: bool,
+    /// Override `BitDepth.bits_per_sample` in the codestream header.
+    /// `None` → derives from `bit_depth_16` (8 or 16). `Some(N)` →
+    /// emits `N`. Closes configurable bits_per_sample sub-feature
+    /// of #18 — lets callers signal 10/12/14-bit input precision.
+    pub bits_per_sample_override: Option<u32>,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
@@ -322,6 +327,7 @@ impl Default for VarDctEncoder {
             min_nits: 0.0,
             intrinsic_size: None,
             alpha_associated: false,
+            bits_per_sample_override: None,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -370,6 +376,7 @@ impl VarDctEncoder {
             min_nits: 0.0,
             intrinsic_size: None,
             alpha_associated: false,
+            bits_per_sample_override: None,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
