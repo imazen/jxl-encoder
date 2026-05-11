@@ -87,6 +87,13 @@
   `Vec::with_capacity` in the container wrapper and exhausted system
   memory at write time. Empty ICC also remains rejected with a
   clear error message.
+- **Tone-mapping validated up front** (29103ed): bad values for
+  `with_intensity_target` / `with_min_nits` (NaN, Inf, negative,
+  zero peak, peak > f16 max ≈ 65504, min > peak) are now rejected
+  with a clean `EncodeError::InvalidInput` at the API surface
+  rather than failing deep inside `f32_to_f16_bits` in the file-
+  header writer. Wired into all three paths via a new
+  `validate_tone_mapping` helper.
 - **4 latent serialization bugs in non-alpha extra-channel paths**
   (closes #8, 4cb33e8): enum coder, F16 vs F32 alpha range, CFA
   channel distribution, name-length distribution. Alpha encodes were
