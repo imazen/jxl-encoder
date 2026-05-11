@@ -2348,10 +2348,24 @@ impl<'a> EncodeRequest<'a> {
             });
         }
         // When row_stride is set, the buffer is `height * stride`
-        // bytes (stride may include per-row padding). The strided
-        // unpack downstream validates bounds; here we only check the
-        // tightly-packed case.
+        // bytes (stride may include per-row padding). Validate
+        // `stride >= width * bytes_per_pixel` and the buffer size up
+        // front so callers fail before any allocation; the strided
+        // unpack downstream re-checks defensively.
         if let Some(stride) = self.row_stride {
+            let row_bytes = w
+                .checked_mul(self.layout.bytes_per_pixel())
+                .ok_or_else(|| EncodeError::InvalidInput {
+                    message: "width * bytes_per_pixel overflows usize".into(),
+                })?;
+            if stride < row_bytes {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "row_stride {stride} is less than width * bytes_per_pixel = {w} * {} = {row_bytes}",
+                        self.layout.bytes_per_pixel(),
+                    ),
+                });
+            }
             let needed = h.checked_mul(stride).ok_or_else(|| EncodeError::InvalidInput {
                 message: "height * row_stride overflows usize".into(),
             })?;

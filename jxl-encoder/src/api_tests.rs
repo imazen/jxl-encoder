@@ -6317,6 +6317,31 @@ fn test_encode_request_row_stride_validates_too_small() {
     );
 }
 
+/// Up-front validation of `row_stride` rejects an oversized stride
+/// that would overflow `height * stride` before the encoder
+/// allocates anything. This test would have OOM'd if the check ran
+/// only inside `unpack_strided_pixels` after the working-set
+/// estimate succeeded.
+#[test]
+fn test_encode_request_row_stride_validates_overflow() {
+    let w = 16u32;
+    let h = 16;
+    // A small valid pixel buffer — content irrelevant; we expect to
+    // reject at validate before reading.
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let result = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_row_stride(usize::MAX)
+        .encode(&pixels);
+    assert!(result.is_err(), "stride=usize::MAX must reject up front");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("overflows") || msg.contains("too small") || msg.contains("row_stride"),
+        "expected overflow / size error, got: {msg}",
+    );
+}
+
 #[test]
 fn test_encode_request_row_stride_lossless_round_trip() {
     // Same as the lossy stride test but for the lossless pipeline,
