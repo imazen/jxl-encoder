@@ -2525,16 +2525,22 @@ impl<'a> EncodeRequest<'a> {
         let u16_max = self
             .bits_per_sample
             .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
-        // PQ EOTF dispatch (closes PQ portion of #17). When the caller
-        // sets a color_encoding with TransferFunction::Pq, the input
-        // pixels are PQ-encoded; we apply ST 2084 EOTF instead of the
-        // default sRGB linearization. source_gamma still wins (caller
-        // explicitly chose gamma over the encoding's TF). Currently
-        // wired only for the u16 RGB(A) layouts — broader coverage
-        // (u8 PQ, HLG, BT.709, lossless) is the remainder of #17.
+        // PQ / HLG EOTF dispatch (closes PQ + HLG portions of #17).
+        // When the caller sets a color_encoding with
+        // TransferFunction::Pq or ::Hlg, the input pixels are
+        // PQ/HLG-encoded; we apply the matching inverse EOTF instead
+        // of the default sRGB linearization. source_gamma still wins
+        // (caller explicitly chose gamma over the encoding's TF).
+        // Currently wired only for the u16 RGB(A) layouts — broader
+        // coverage (u8 / Gray / BT.709, lossless) is the remainder
+        // of #17.
         let source_is_pq = gamma.is_none()
             && self.color_encoding.as_ref().is_some_and(|ce| {
                 ce.transfer_function == crate::headers::color_encoding::TransferFunction::Pq
+            });
+        let source_is_hlg = gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Hlg
             });
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
@@ -2595,6 +2601,8 @@ impl<'a> EncodeRequest<'a> {
                     gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
                 } else if source_is_pq {
                     pq_u16_to_linear_f32(pixels, 3, u16_max)
+                } else if source_is_hlg {
+                    hlg_u16_to_linear_f32(pixels, 3, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 3, u16_max)
                 };
@@ -2605,6 +2613,8 @@ impl<'a> EncodeRequest<'a> {
                     gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
                 } else if source_is_pq {
                     pq_u16_to_linear_f32(pixels, 4, u16_max)
+                } else if source_is_hlg {
+                    hlg_u16_to_linear_f32(pixels, 4, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 4, u16_max)
                 };
@@ -4887,6 +4897,22 @@ fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> 
         .collect()
 }
 
+/// HLG u16 → linear scene-light f32. Same shape as
+/// `pq_u16_to_linear_f32`. Closes HLG portion of #17.
+fn hlg_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(channels)
+        .flat_map(|px| {
+            [
+                hlg_to_linear_f(px[0] as f32 / u16_max),
+                hlg_to_linear_f(px[1] as f32 / u16_max),
+                hlg_to_linear_f(px[2] as f32 / u16_max),
+            ]
+        })
+        .collect()
+}
+
 /// sRGB u16 → linear f32 (IEC 61966-2-1).
 ///
 /// `u16_max` is the divisor for input normalization — `65535.0` for
@@ -4937,6 +4963,35 @@ fn pq_to_linear_f(c: f32) -> f32 {
     let num = (n - C1).max(0.0);
     let den = C2 - C3 * n;
     jxl_simd::fast_powf(num / den, 1.0 / M1)
+}
+
+/// HLG (Hybrid Log-Gamma, BT.2100 / ARIB STD-B67) inverse OETF:
+/// HLG-encoded normalized [0,1] → linear scene-light [0,1].
+///
+/// HLG is piecewise: a square-root-like toe in the lower half plus a
+/// logarithmic shoulder in the upper half. Scene-light output is in
+/// [0, 1] where 1.0 = peak signal; downstream display mapping (the
+/// HLG OOTF) is the decoder's responsibility, NOT the encoder's.
+///
+/// Closes HLG portion of #17.
+#[inline]
+fn hlg_to_linear_f(c: f32) -> f32 {
+    const A: f32 = 0.17883277;
+    const B: f32 = 1.0 - 4.0 * A; // 0.28466892
+    // c_const = 0.5 - a * ln(4 * a). Hard-coded literal because the
+    // spec gives this value to high precision and we want bit-exact
+    // agreement with reference decoders.
+    const C_CONST: f32 = 0.55991073;
+    let e = c.max(0.0);
+    if e <= 0.5 {
+        // Lower half: square-root-like toe. L = E²/3.
+        (e * e) / 3.0
+    } else {
+        // Upper half: logarithmic shoulder. L = (exp((E - c)/a) + b)/12.
+        // The /12 normalization keeps L in [0, 1] for E in [0, 1]
+        // (HLG peak signal corresponds to 12 × the SDR diffuse white).
+        ((((e - C_CONST) / A).exp()) + B) / 12.0
+    }
 }
 
 /// Gamma u8 → linear f32 RGB. `linear = (encoded/255)^(1/gamma)`
@@ -5222,6 +5277,37 @@ mod tests {
         let v = pq_to_linear_f(-0.1);
         assert!(v.is_finite(), "PQ(-0.1) should be finite; got {v}");
         assert!(v.abs() < 1e-3, "PQ(-0.1) should clamp to ~0; got {v}");
+    }
+
+    /// Reference points for HLG inverse OETF (BT.2100).
+    /// - HLG(0) = 0
+    /// - HLG(0.5) = 0.25 / 3 = 0.083333... (boundary of toe / shoulder)
+    /// - HLG(1) = 1.0 (peak signal → peak scene-light)
+    /// - Monotonic
+    #[test]
+    fn test_hlg_to_linear_f_reference_points() {
+        assert!(hlg_to_linear_f(0.0).abs() < 1e-6);
+        let half = hlg_to_linear_f(0.5);
+        assert!(
+            (half - (0.25 / 3.0)).abs() < 1e-5,
+            "HLG(0.5) should be 0.0833...; got {half}",
+        );
+        let one = hlg_to_linear_f(1.0);
+        assert!(
+            (one - 1.0).abs() < 1e-3,
+            "HLG(1.0) should be 1.0 (peak); got {one}",
+        );
+        let a = hlg_to_linear_f(0.25);
+        let b = hlg_to_linear_f(0.5);
+        let c = hlg_to_linear_f(0.75);
+        assert!(a < b && b < c, "HLG should be monotone; got {a}, {b}, {c}");
+    }
+
+    #[test]
+    fn test_hlg_to_linear_f_clamps_negative() {
+        let v = hlg_to_linear_f(-0.1);
+        assert!(v.is_finite());
+        assert!(v >= 0.0 && v < 1e-3, "HLG(-0.1) should clamp to ~0; got {v}");
     }
 
     #[test]
