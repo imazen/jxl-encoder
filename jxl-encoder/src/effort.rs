@@ -425,6 +425,21 @@ impl EffortProfile {
             //     (enc_frame.cc overrides since tier > kTortoise).
             // Only kTortoise (effort 9+) enables LZ77 for VarDCT streams.
             lz77: effort >= 9,
+            // **Lz77Method::Optimal at e9+ is deliberate** (issue #29).
+            // libjxl uses Lz77Method::Rle for ALL VarDCT encodes regardless
+            // of tier; we use Optimal because v07 RD analysis shows ~5×
+            // size regression on synthetic gradients with RLE
+            // (498B → 2,417B on 1024×1024 gradients), bit-identical
+            // quality, while photographic content (~98% of inputs) is
+            // byte-identical RLE-vs-Optimal.
+            //
+            // Caveat: Optimal trips a latent bug in jxl-rs's VarDCT AC
+            // decoder path (libjxl/jxl-rs#765, our tracker #29). Affected
+            // pipelines: anything that round-trips through zenjxl-decoder
+            // (which forks jxl-rs unchanged). djxl + jxl-oxide decode
+            // these bitstreams cleanly. DO NOT flip the default to RLE
+            // to "fix" the decoder — that'd silently degrade gradient
+            // encodes 5×. Wait for the upstream jxl-rs fix.
             lz77_method: match effort {
                 0..=8 => Lz77Method::Rle,
                 _ => Lz77Method::Optimal,
