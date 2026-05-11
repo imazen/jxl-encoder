@@ -6084,6 +6084,62 @@ fn test_encode_request_with_intensity_target_and_color_encoding() {
     );
 }
 
+/// #13 streaming-API parity (LosslessEncoder): same builder available
+/// on the streaming path; `alpha_associated=true` lands in the encoded
+/// header.
+#[test]
+fn test_streaming_lossless_encoder_premultiplied_alpha() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let cfg = LosslessConfig::new().with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgba8)
+        .unwrap()
+        .with_premultiplied_alpha(true);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let alpha_assoc = img
+        .image_header()
+        .metadata
+        .ec_info
+        .iter()
+        .find_map(|ec| ec.alpha_associated());
+    assert_eq!(
+        alpha_assoc,
+        Some(true),
+        "LosslessEncoder::with_premultiplied_alpha(true) should set alpha_associated=true",
+    );
+}
+
+/// #13 streaming-API parity (LossyEncoder): builder rejects at finish()
+/// time, mirroring the EncodeRequest::encode_lossy gate.
+#[test]
+fn test_streaming_lossy_encoder_premultiplied_alpha_rejects() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgba8)
+        .unwrap()
+        .with_premultiplied_alpha(true);
+    enc.push_rows(&pixels, h).unwrap();
+    let result = enc.finish();
+    let Err(err) = result else {
+        panic!("expected error, got Ok");
+    };
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("premultiplied alpha"),
+        "expected premultiplied-alpha rejection, got: {msg}",
+    );
+}
+
 /// Closes lossless portion of #13: `EncodeRequest::with_premultiplied_alpha(true)`
 /// sets `alpha_associated=true` in the encoded `ExtraChannelInfo`.
 /// Verified by parsing the codestream via jxl-oxide and reading the

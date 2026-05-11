@@ -2750,6 +2750,10 @@ pub struct LossyEncoder {
     intensity_target: f32,
     min_nits: f32,
     intrinsic_size: Option<(u32, u32)>,
+    /// Premultiplied (associated) alpha signaling. On lossy this is a
+    /// no-op until the unpremultiplication pre-pass lands (#13);
+    /// `finish()` returns `EncodeError::InvalidInput` if set.
+    premultiplied_alpha: bool,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
@@ -2806,6 +2810,19 @@ impl LossyEncoder {
     /// Set the intrinsic display size.
     pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
         self.intrinsic_size = Some((width, height));
+        self
+    }
+
+    /// Signal that the input alpha channel is premultiplied (associated).
+    /// Mirrors [`EncodeRequest::with_premultiplied_alpha`]. See that
+    /// builder for the lossless-vs-lossy semantic discussion. On the
+    /// `LossyEncoder` this returns an `EncodeError::InvalidInput` from
+    /// [`finish`](Self::finish) until the unpremultiplication pre-pass
+    /// is implemented (#13). On the `LosslessEncoder` it sets
+    /// `alpha_associated=true` in the encoded header and writes pixels
+    /// unchanged.
+    pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
+        self.premultiplied_alpha = enable;
         self
     }
 
@@ -3091,6 +3108,15 @@ impl LossyEncoder {
                 ),
             });
         }
+        // Mirror EncodeRequest::encode_lossy gate (closes lossy gating
+        // half of #13). Lossy unpremultiplication is the harder follow-up.
+        if self.premultiplied_alpha {
+            return Err(EncodeError::InvalidInput {
+                message: "premultiplied alpha is not yet supported on lossy encode (#13); \
+                          use lossless or unpremultiply before encoding"
+                    .into(),
+            });
+        }
 
         let cfg = &self.cfg;
         let w = self.width as usize;
@@ -3338,6 +3364,7 @@ impl LossyConfig {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            premultiplied_alpha: false,
             limits: None,
         })
     }
@@ -3384,6 +3411,11 @@ pub struct LosslessEncoder {
     intensity_target: f32,
     min_nits: f32,
     intrinsic_size: Option<(u32, u32)>,
+    /// Premultiplied (associated) alpha signaling. When `true`, the
+    /// alpha extra channel header is written with `alpha_associated=true`.
+    /// Encoded pixels are unchanged (lossless preserves them bit-exactly).
+    /// Default `false`. Mirrors `EncodeRequest::with_premultiplied_alpha`.
+    premultiplied_alpha: bool,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
@@ -3440,6 +3472,19 @@ impl LosslessEncoder {
     /// Set the intrinsic display size.
     pub fn with_intrinsic_size(mut self, width: u32, height: u32) -> Self {
         self.intrinsic_size = Some((width, height));
+        self
+    }
+
+    /// Signal that the input alpha channel is premultiplied (associated).
+    /// Mirrors [`EncodeRequest::with_premultiplied_alpha`]. See that
+    /// builder for the lossless-vs-lossy semantic discussion. On the
+    /// `LossyEncoder` this returns an `EncodeError::InvalidInput` from
+    /// [`finish`](Self::finish) until the unpremultiplication pre-pass
+    /// is implemented (#13). On the `LosslessEncoder` it sets
+    /// `alpha_associated=true` in the encoded header and writes pixels
+    /// unchanged.
+    pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
+        self.premultiplied_alpha = enable;
         self
     }
 
@@ -3742,6 +3787,17 @@ impl LosslessEncoder {
                     ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
                 }
             }
+            // Premultiplied-alpha signaling — mirrors EncodeRequest's
+            // wiring (#13 lossless portion). Encoded pixels are written
+            // unchanged; the decoder learns from the bit how to
+            // interpret them.
+            if self.premultiplied_alpha {
+                for ec in &mut file_header.metadata.extra_channels {
+                    if ec.ec_type == crate::headers::extra_channels::ExtraChannelType::Alpha {
+                        ec.alpha_associated = true;
+                    }
+                }
+            }
             if self.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
             }
@@ -3908,6 +3964,7 @@ impl LosslessConfig {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            premultiplied_alpha: false,
             limits: None,
         })
     }
