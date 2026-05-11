@@ -328,10 +328,291 @@ pub fn fit_gaussian_fast(
         ans.intensity[c] = gd / (gg + K_EPSILON);
     }
 
-    // libjxl's FitGaussianFast then calls ComputeDotLosses; we defer
-    // that to the next tick to keep this commit small + reviewable.
+    // Final step: l1/l2/custom losses + neg_pixels accounting.
+    compute_dot_losses(&mut ans, cc, image_w, image_h, &img_planes, &bg_planes);
 
     Some(ans)
+}
+
+/// Compute l1/l2/custom losses + neg_pixels for an already-fit
+/// `GaussianEllipse`. Mirrors libjxl `ComputeDotLosses`
+/// (`enc_detect_dots.cc:345-408`).
+///
+/// `kOptimizeBackground = true` in libjxl: the prediction `pred` uses
+/// `ellipse.bg_color[c]` instead of the per-pixel background row,
+/// so the background is treated as a per-CC constant. We mirror that
+/// branch.
+pub(crate) fn compute_dot_losses(
+    ellipse: &mut GaussianEllipse,
+    cc: &ConnectedComponent,
+    image_w: i32,
+    image_h: i32,
+    img_planes: &[&[f32]; 3],
+    _bg_planes: &[&[f32]; 3],
+) {
+    const RECT_BOUNDS: i32 = 2;
+    const K_INTENSITY_R: f64 = 0.0; // libjxl: 0.015 (commented out)
+    const K_SIGMA_R: f64 = 0.0; // libjxl: 0.01 (commented out)
+    const K_ZERO_EPSILON: f64 = 0.1;
+    const CHANNEL_GAINS: [f64; 3] = [1.0, 1.0, 1.0];
+
+    let stride = image_w as usize;
+    let ct = ellipse.angle.cos();
+    let st = ellipse.angle.sin();
+
+    let mut n: usize = 0;
+    ellipse.l1_loss = 0.0;
+    ellipse.l2_loss = 0.0;
+    ellipse.custom_loss = 0.0;
+    ellipse.neg_pixels = 0;
+    ellipse.neg_value = [0.0; 3];
+
+    let dx_mode = cc.mode.x as f64 - ellipse.x;
+    let dy_mode = cc.mode.y as f64 - ellipse.y;
+    let dist_mean_mode_sq = dx_mode * dx_mode + dy_mode * dy_mode;
+
+    for c in 0..3 {
+        for sy in -RECT_BOUNDS..(cc.bounds.ysize + RECT_BOUNDS) {
+            let y = sy + cc.bounds.y0;
+            if y < 0 || y >= image_h {
+                continue;
+            }
+            for sx in -RECT_BOUNDS..(cc.bounds.xsize + RECT_BOUNDS) {
+                let x = sx + cc.bounds.x0;
+                if x < 0 || x >= image_w {
+                    continue;
+                }
+                let target = img_planes[c][(y as usize) * stride + (x as usize)] as f64;
+                let dot_delta = dot_gaussian_model(
+                    x as f64 - ellipse.x,
+                    y as f64 - ellipse.y,
+                    ct,
+                    st,
+                    ellipse.sigma_x,
+                    ellipse.sigma_y,
+                    ellipse.intensity[c],
+                );
+                if dot_delta > target + K_ZERO_EPSILON {
+                    ellipse.neg_pixels += 1;
+                    ellipse.neg_value[c] += dot_delta - target;
+                }
+                let bkg = ellipse.bg_color[c]; // kOptimizeBackground = true
+                let pred = bkg + dot_delta;
+                let diff = target - pred;
+                let l2 = CHANNEL_GAINS[c] * diff * diff;
+                let l1 = CHANNEL_GAINS[c] * diff.abs();
+                ellipse.l2_loss += l2;
+                ellipse.l1_loss += l1;
+                let w = dot_gaussian_model(
+                    x as f64 - cc.mode.x as f64,
+                    y as f64 - cc.mode.y as f64,
+                    1.0,
+                    0.0,
+                    1.0 + ellipse.sigma_x,
+                    1.0 + ellipse.sigma_y,
+                    1.0,
+                );
+                ellipse.custom_loss += w * l2;
+                n += 1;
+            }
+        }
+    }
+    if n > 0 {
+        let inv_n = 1.0 / n as f64;
+        ellipse.l2_loss *= inv_n;
+        ellipse.l1_loss *= inv_n;
+        ellipse.custom_loss *= inv_n;
+    }
+    // libjxl: custom_loss += 20 * dist_mean_mode_sq + neg_value[1].
+    ellipse.custom_loss += 20.0 * dist_mean_mode_sq + ellipse.neg_value[1];
+    let mut ridge = K_SIGMA_R * ellipse.sigma_x + K_SIGMA_R * ellipse.sigma_y;
+    for c in 0..3 {
+        ridge += K_INTENSITY_R * ellipse.intensity[c] * ellipse.intensity[c];
+    }
+    ellipse.ridge_loss = ellipse.l2_loss + ridge;
+}
+
+/// Tuning knobs for [`detect_gaussian_ellipses`]. Mirrors libjxl
+/// `GaussianDetectParams` (`enc_detect_dots.h:14-30`).
+#[derive(Clone, Copy, Debug)]
+pub struct GaussianDetectParams {
+    pub t_high: f32,
+    pub t_low: f32,
+    pub max_win_size: usize,
+    pub max_l2_loss: f64,
+    pub max_custom_loss: f64,
+    pub min_intensity: f64,
+    pub max_dist_mean_mode: f64,
+    pub max_neg_pixels: usize,
+    pub min_score: f32,
+    pub max_cc: usize,
+    pub perc_cc: usize,
+}
+
+impl Default for GaussianDetectParams {
+    /// libjxl default knobs (cjxl uses these in `enc_heuristics.cc`).
+    fn default() -> Self {
+        Self {
+            t_high: 0.04,
+            t_low: 0.02,
+            max_win_size: ELLIPSE_WINDOW_SIZE,
+            max_l2_loss: 0.005,
+            max_custom_loss: 300.0,
+            min_intensity: 0.12,
+            max_dist_mean_mode: 1.0,
+            max_neg_pixels: 0,
+            min_score: 4.0,
+            max_cc: 50,
+            perc_cc: 15,
+        }
+    }
+}
+
+/// One detected dot: bounding-box origin + per-channel residual
+/// pixel data (relative to the smoothed background) ready to feed the
+/// patch dictionary.
+#[derive(Clone, Debug)]
+pub struct DetectedDot {
+    pub x0: u32,
+    pub y0: u32,
+    pub xsize: usize,
+    pub ysize: usize,
+    /// `[plane][y * xsize + x]` residual = `orig - smooth`.
+    pub residuals: [Vec<f32>; 3],
+}
+
+/// Detect dot-like Gaussian ellipses in an XYB-encoded image.
+/// Mirrors libjxl `DetectGaussianEllipses` (`enc_detect_dots.cc:553-618`).
+///
+/// Inputs are three planar XYB f32 channels of size `image_w * image_h`.
+/// Output is a list of dots with their bounding-box origins and the
+/// XYB residual data (orig − smooth) ready to feed
+/// [`crate::vardct::patches`] as a Gaussian-ellipse-style patch.
+///
+/// **Pipeline**:
+/// 1. [`compute_energy_image`] → `energy` + smooth XYB
+/// 2. [`find_cc`] → connected components above the dual threshold
+/// 3. Sort by score, keep the top `min(max_cc, perc_cc% * total)`
+/// 4. For each, [`fit_gaussian_fast`] → quality filter
+/// 5. Surviving dots emit residuals
+pub fn detect_gaussian_ellipses(
+    img_x: &[f32],
+    img_y: &[f32],
+    img_b: &[f32],
+    width: usize,
+    height: usize,
+    params: &GaussianDetectParams,
+) -> Vec<DetectedDot> {
+    let n = width * height;
+    let mut smooth_x = vec![0.0_f32; n];
+    let mut smooth_y = vec![0.0_f32; n];
+    let mut smooth_b = vec![0.0_f32; n];
+    let mut energy = vec![0.0_f32; n];
+    compute_energy_image(
+        img_x,
+        img_y,
+        img_b,
+        width,
+        height,
+        &mut smooth_x,
+        &mut smooth_y,
+        &mut smooth_b,
+        &mut energy,
+    );
+
+    let mut ccs = find_cc(
+        &energy,
+        width,
+        height,
+        params.t_low,
+        params.t_high,
+        params.max_win_size,
+        params.min_score,
+    );
+
+    // Keep top-N CCs by score (per libjxl: min(max_cc, perc_cc% * total)).
+    let num_keep = params.max_cc.min((ccs.len() * params.perc_cc) / 100);
+    if ccs.len() > num_keep {
+        ccs.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+        ccs.truncate(num_keep);
+    }
+
+    let mut dots = Vec::new();
+    let img_planes = [img_x, img_y, img_b];
+    let smooth_planes = [&smooth_x[..], &smooth_y[..], &smooth_b[..]];
+    let stride = width;
+    for cc in &ccs {
+        let Some(ellipse) = fit_gaussian_fast(
+            cc,
+            width as i32,
+            height as i32,
+            img_x,
+            img_y,
+            img_b,
+            &smooth_x,
+            &smooth_y,
+            &smooth_b,
+        ) else {
+            continue;
+        };
+        // Quality filter mirroring libjxl `DetectGaussianEllipses` body.
+        if ellipse.x < 0.0 || ellipse.x.ceil() >= width as f64 {
+            continue;
+        }
+        if ellipse.y < 0.0 || ellipse.y.ceil() >= height as f64 {
+            continue;
+        }
+        if ellipse.neg_pixels > params.max_neg_pixels {
+            continue;
+        }
+        // libjxl perceptual luminance weighting:
+        // intensity = 0.21 * I_X + 0.72 * I_Y + 0.07 * I_B.
+        let intensity =
+            0.21 * ellipse.intensity[0] + 0.72 * ellipse.intensity[1] + 0.07 * ellipse.intensity[2];
+        let intensity_sq = intensity * intensity;
+        let dx = ellipse.x - cc.mode.x as f64;
+        let dy = ellipse.y - cc.mode.y as f64;
+        let sq_dist_mean_mode = dx * dx + dy * dy;
+        let l2_ok = ellipse.l2_loss < params.max_l2_loss;
+        let custom_ok = ellipse.custom_loss < params.max_custom_loss;
+        let intensity_ok = intensity_sq > params.min_intensity * params.min_intensity;
+        let dist_ok = sq_dist_mean_mode < params.max_dist_mean_mode * params.max_dist_mean_mode;
+        if !(l2_ok && custom_ok && intensity_ok && dist_ok) {
+            continue;
+        }
+        // Emit the dot's residual data (orig - smooth) in its
+        // bounding rectangle.
+        let x0 = cc.bounds.x0 as usize;
+        let y0 = cc.bounds.y0 as usize;
+        let xsize = cc.bounds.xsize as usize;
+        let ysize = cc.bounds.ysize as usize;
+        let mut residuals: [Vec<f32>; 3] = [
+            vec![0.0_f32; xsize * ysize],
+            vec![0.0_f32; xsize * ysize],
+            vec![0.0_f32; xsize * ysize],
+        ];
+        for c in 0..3 {
+            for y in 0..ysize {
+                for x in 0..xsize {
+                    let src_idx = (y0 + y) * stride + (x0 + x);
+                    residuals[c][y * xsize + x] =
+                        img_planes[c][src_idx] - smooth_planes[c][src_idx];
+                }
+            }
+        }
+        dots.push(DetectedDot {
+            x0: cc.bounds.x0 as u32,
+            y0: cc.bounds.y0 as u32,
+            xsize,
+            ysize,
+            residuals,
+        });
+    }
+    dots
 }
 
 /// Single-pixel coordinate for the BFS queue. Mirrors libjxl
@@ -1087,6 +1368,143 @@ mod tests {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert!((sorted[0] - 1.0).abs() < 1e-9, "smallest eigval ≈ 1");
         assert!((sorted[1] - 3.0).abs() < 1e-9, "largest eigval ≈ 3");
+    }
+
+    #[test]
+    fn test_default_gaussian_detect_params() {
+        let p = GaussianDetectParams::default();
+        assert_eq!(p.t_high, 0.04);
+        assert_eq!(p.t_low, 0.02);
+        assert_eq!(p.max_win_size, ELLIPSE_WINDOW_SIZE);
+        assert_eq!(p.max_cc, 50);
+        assert_eq!(p.perc_cc, 15);
+    }
+
+    #[test]
+    fn test_detect_gaussian_ellipses_uniform_image_no_dots() {
+        // Uniform image → no dots.
+        let w = 32;
+        let h = 32;
+        let img = vec![0.5_f32; w * h];
+        let dots =
+            detect_gaussian_ellipses(&img, &img, &img, w, h, &GaussianDetectParams::default());
+        assert!(dots.is_empty());
+    }
+
+    #[test]
+    fn test_detect_gaussian_ellipses_finds_synthetic_dot() {
+        // 32×32 background of 0.0 with a single bright Gaussian dot
+        // at (16, 16) on the Y channel. Use parameters lenient enough
+        // to actually pick it up.
+        let w = 32;
+        let h = 32;
+        let img_x = vec![0.0_f32; w * h];
+        let img_b = vec![0.0_f32; w * h];
+        let mut img_y = vec![0.0_f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f64 - 16.0;
+                let dy = y as f64 - 16.0;
+                let g = dot_gaussian_model(dx, dy, 1.0, 0.0, 0.5, 0.5, 1.0);
+                img_y[y * w + x] = g as f32;
+            }
+        }
+        let mut params = GaussianDetectParams::default();
+        params.min_score = -1e9; // accept any score
+        params.max_l2_loss = 1.0;
+        params.max_custom_loss = 1e9;
+        params.min_intensity = 0.0;
+        params.max_dist_mean_mode = 100.0;
+        params.max_neg_pixels = 10000;
+        // perc_cc=15 with a single CC rounds to 0 → drops it.
+        // Test wants the single dot to make it through; use 100%.
+        params.perc_cc = 100;
+        let dots = detect_gaussian_ellipses(&img_x, &img_y, &img_b, w, h, &params);
+        // We should detect at least one dot near (16, 16).
+        assert!(!dots.is_empty(), "expected at least one detected dot");
+        let near_center = dots.iter().any(|d| {
+            let cx = (d.x0 as i32) + (d.xsize as i32) / 2;
+            let cy = (d.y0 as i32) + (d.ysize as i32) / 2;
+            (cx - 16).abs() <= 3 && (cy - 16).abs() <= 3
+        });
+        assert!(near_center, "no detected dot near the synthesized center");
+    }
+
+    #[test]
+    fn test_compute_dot_losses_zero_for_perfect_fit() {
+        // If the dot is already a perfect fit (intensity matches
+        // exactly, no neg pixels), losses should be approximately zero.
+        let w = 16;
+        let h = 16;
+        let bg_val = 0.5_f32;
+        let mut img_y = vec![bg_val; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f64 - 8.0;
+                let dy = y as f64 - 8.0;
+                let g = dot_gaussian_model(dx, dy, 1.0, 0.0, 1.0, 1.0, 0.5);
+                img_y[y * w + x] = (img_y[y * w + x] as f64 + g) as f32;
+            }
+        }
+        let img_x = vec![bg_val; w * h];
+        let img_b = vec![bg_val; w * h];
+        let bg_x = vec![bg_val; w * h];
+        let bg_y = vec![bg_val; w * h];
+        let bg_b = vec![bg_val; w * h];
+        let cc = ConnectedComponent {
+            bounds: Rect {
+                x0: 7,
+                y0: 7,
+                xsize: 3,
+                ysize: 3,
+            },
+            pixels: vec![Pixel { x: 8, y: 8 }],
+            max_energy: 0.5,
+            mean_energy: 0.5,
+            var_energy: 0.0,
+            mean_bg: 0.0,
+            var_bg: 0.0,
+            score: 1.0,
+            mode: Pixel { x: 8, y: 8 },
+        };
+        let mut ellipse = GaussianEllipse {
+            x: 8.0,
+            y: 8.0,
+            sigma_x: 1.0,
+            sigma_y: 1.0,
+            angle: 0.0,
+            intensity: [0.0, 0.5, 0.0],
+            l2_loss: 0.0,
+            l1_loss: 0.0,
+            ridge_loss: 0.0,
+            custom_loss: 0.0,
+            bg_color: [bg_val as f64, bg_val as f64, bg_val as f64],
+            neg_pixels: 0,
+            neg_value: [0.0; 3],
+        };
+        compute_dot_losses(
+            &mut ellipse,
+            &cc,
+            w as i32,
+            h as i32,
+            &[&img_x, &img_y, &img_b],
+            &[&bg_x, &bg_y, &bg_b],
+        );
+        // Y-channel residual should be ~0 because the synthesized dot
+        // is exactly the model. Other channels are uniform background
+        // → also ~0 residual.
+        assert!(
+            ellipse.l2_loss < 1e-3,
+            "perfect-fit l2_loss should be ~0; got {}",
+            ellipse.l2_loss,
+        );
+        // dist_mean_mode_sq is 0, neg_value[1] is 0 → custom_loss
+        // should also be small.
+        assert!(
+            ellipse.custom_loss < 0.01,
+            "perfect-fit custom_loss should be ~0; got {}",
+            ellipse.custom_loss,
+        );
     }
 
     #[test]
