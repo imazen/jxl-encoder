@@ -2525,6 +2525,17 @@ impl<'a> EncodeRequest<'a> {
         let u16_max = self
             .bits_per_sample
             .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
+        // PQ EOTF dispatch (closes PQ portion of #17). When the caller
+        // sets a color_encoding with TransferFunction::Pq, the input
+        // pixels are PQ-encoded; we apply ST 2084 EOTF instead of the
+        // default sRGB linearization. source_gamma still wins (caller
+        // explicitly chose gamma over the encoding's TF). Currently
+        // wired only for the u16 RGB(A) layouts — broader coverage
+        // (u8 PQ, HLG, BT.709, lossless) is the remainder of #17.
+        let source_is_pq = gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Pq
+            });
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -2582,6 +2593,8 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Rgb16 => {
                 let linear = if let Some(g) = gamma {
                     gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
+                } else if source_is_pq {
+                    pq_u16_to_linear_f32(pixels, 3, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 3, u16_max)
                 };
@@ -2590,6 +2603,8 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Rgba16 => {
                 let rgb = if let Some(g) = gamma {
                     gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
+                } else if source_is_pq {
+                    pq_u16_to_linear_f32(pixels, 4, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 4, u16_max)
                 };
@@ -4854,6 +4869,24 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     out
 }
 
+/// PQ u16 → linear f32. `u16_max` mirrors the convention in
+/// `srgb_u16_to_linear_f32` — the divisor for input normalization.
+/// Output is in linear [0..1] where 1.0 corresponds to the encoder's
+/// `intensity_target` peak luminance. Closes PQ portion of #17.
+fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(channels)
+        .flat_map(|px| {
+            [
+                pq_to_linear_f(px[0] as f32 / u16_max),
+                pq_to_linear_f(px[1] as f32 / u16_max),
+                pq_to_linear_f(px[2] as f32 / u16_max),
+            ]
+        })
+        .collect()
+}
+
 /// sRGB u16 → linear f32 (IEC 61966-2-1).
 ///
 /// `u16_max` is the divisor for input normalization — `65535.0` for
@@ -4882,6 +4915,28 @@ fn srgb_to_linear_f(c: f32) -> f32 {
     } else {
         jxl_simd::fast_powf((c + 0.055) / 1.055, 2.4)
     }
+}
+
+/// PQ (SMPTE ST 2084) EOTF: PQ-encoded normalized [0,1] → linear [0,1]
+/// where 1.0 = peak luminance (= the encoder's `intensity_target`,
+/// typically 10 000 nits for full-spec PQ). Closes PQ portion of #17.
+///
+/// Constants per SMPTE ST 2084-2014 (m1 / m2 / c1 / c2 / c3). Negative
+/// inputs are clamped to 0; outputs are non-negative by construction.
+#[inline]
+fn pq_to_linear_f(c: f32) -> f32 {
+    const M1: f32 = 2610.0 / 16384.0; // 0.1593017578125
+    const M2: f32 = (2523.0 / 4096.0) * 128.0; // 78.84375
+    const C1: f32 = 3424.0 / 4096.0; // 0.8359375
+    const C2: f32 = (2413.0 / 4096.0) * 32.0; // 18.8515625
+    const C3: f32 = (2392.0 / 4096.0) * 32.0; // 18.6875
+    let e = c.max(0.0);
+    let n = jxl_simd::fast_powf(e, 1.0 / M2);
+    // numerator clamped at 0; denominator can't reach 0 in [0,1] domain
+    // (c2 = 18.85, c3 = 18.69, c3*N <= 18.69 at N=1, c2 - c3*N >= 0.16)
+    let num = (n - C1).max(0.0);
+    let den = C2 - C3 * n;
+    jxl_simd::fast_powf(num / den, 1.0 / M1)
 }
 
 /// Gamma u8 → linear f32 RGB. `linear = (encoded/255)^(1/gamma)`
@@ -5125,6 +5180,67 @@ fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── PQ EOTF (closes PQ portion of #17) ───────────────────────
+
+    /// Spot-check the PQ EOTF against published reference points
+    /// (BT.2100 Table 4 / ST 2084 inverse). Tolerance is 1e-3 because
+    /// the encoder uses fast_powf instead of std::powf — accuracy
+    /// is in the same neighborhood as libjxl's PQ implementation.
+    #[test]
+    fn test_pq_to_linear_f_reference_points() {
+        // EOTF[0] = 0
+        assert!(pq_to_linear_f(0.0).abs() < 1e-3);
+        // EOTF[1] = 1.0 (peak luminance / 10000 nits = full scale)
+        let one = pq_to_linear_f(1.0);
+        assert!(
+            (one - 1.0).abs() < 1e-3,
+            "PQ(1.0) should be 1.0 (peak); got {one}",
+        );
+        // EOTF[0.5081] ≈ 0.01 (= 100 nits / 10000) — the SDR diffuse
+        // white reference. Per BT.2100 the encoded value for 100 nits
+        // is ~0.508. Tolerance loosened a touch because fast_powf
+        // diverges from std::powf in the middle of the range.
+        let mid = pq_to_linear_f(0.5081);
+        assert!(
+            (mid - 0.01).abs() < 5e-3,
+            "PQ(0.5081) should be ≈0.01 (100 nits); got {mid}",
+        );
+        // Monotonic
+        let a = pq_to_linear_f(0.25);
+        let b = pq_to_linear_f(0.5);
+        let c = pq_to_linear_f(0.75);
+        assert!(a < b && b < c, "PQ should be monotone; got {a}, {b}, {c}");
+    }
+
+    #[test]
+    fn test_pq_to_linear_f_clamps_negative() {
+        // Negative input clamps to 0 → output ~0 (avoids NaN from
+        // x.powf(non-int) on negative x). fast_powf can produce a
+        // tiny negative result from rounding; both must be safe to
+        // feed into the encoder (no NaN/Inf).
+        let v = pq_to_linear_f(-0.1);
+        assert!(v.is_finite(), "PQ(-0.1) should be finite; got {v}");
+        assert!(v.abs() < 1e-3, "PQ(-0.1) should clamp to ~0; got {v}");
+    }
+
+    #[test]
+    fn test_pq_u16_to_linear_f32_uses_pq_eotf() {
+        // 16-bit PQ value 65535 should give linear ≈1.0.
+        let pixels_u16: Vec<u16> = vec![65535, 65535, 65535];
+        let bytes: &[u8] = bytemuck::cast_slice(&pixels_u16);
+        let linear = pq_u16_to_linear_f32(bytes, 3, 65535.0);
+        for v in &linear {
+            assert!((v - 1.0).abs() < 1e-3, "PQ(1.0) should be ≈1.0; got {v}");
+        }
+        // 16-bit PQ value 0 should give 0.
+        let pixels0: Vec<u16> = vec![0, 0, 0];
+        let bytes0: &[u8] = bytemuck::cast_slice(&pixels0);
+        let linear0 = pq_u16_to_linear_f32(bytes0, 3, 65535.0);
+        for v in &linear0 {
+            assert!(v.abs() < 1e-6, "PQ(0) should be 0; got {v}");
+        }
+    }
 
     #[test]
     fn test_lossless_config_builder_and_getters() {
