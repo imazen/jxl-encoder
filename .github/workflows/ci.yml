@@ -40,6 +40,16 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --release
 
+      # Belt-and-suspenders: ensure the no_std + alloc path keeps
+      # compiling. `jxl-encoder-simd` is `#![no_std]` unconditionally
+      # and depends on `libm` for `f32` math (closes #38). Without
+      # this CI step a future change reintroducing an inherent
+      # `f32::method()` call would silently break wasm / embedded
+      # downstream builds.
+      - name: Build (no-std, no-default-features)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo build -p jxl-encoder --no-default-features
+
   # ==========================================================================
   # Native ARM64 + macOS Intel testing
   # ==========================================================================
