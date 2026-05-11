@@ -6202,6 +6202,78 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// u8 PQ/HLG/BT.709 sub-feature of #17 — non-default TFs now wire
+/// through the Rgb8 / Rgba8 / Bgr8 / Bgra8 paths via 256-entry LUTs.
+/// Verified by encoding the same u8 bytes with each TF tag and
+/// asserting the codestreams differ pairwise.
+#[test]
+fn test_encode_request_u8_non_srgb_tfs_distinct() {
+    use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_srgb = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .unwrap();
+    let bytes_pq = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(&pixels)
+        .unwrap();
+    let bytes_hlg = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_hlg())
+        .encode(&pixels)
+        .unwrap();
+    let mut bt709_ce = ColorEncoding::srgb();
+    bt709_ce.transfer_function = TransferFunction::Bt709;
+    let bytes_bt709 = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(bt709_ce)
+        .encode(&pixels)
+        .unwrap();
+
+    // All 4 TFs should produce distinct codestreams (different
+    // linearization → different XYB → different encoded bytes).
+    assert_ne!(bytes_srgb, bytes_pq, "Rgb8 sRGB vs PQ");
+    assert_ne!(bytes_srgb, bytes_hlg, "Rgb8 sRGB vs HLG");
+    assert_ne!(bytes_srgb, bytes_bt709, "Rgb8 sRGB vs BT.709");
+    assert_ne!(bytes_pq, bytes_hlg, "Rgb8 PQ vs HLG");
+    assert_ne!(bytes_pq, bytes_bt709, "Rgb8 PQ vs BT.709");
+    assert_ne!(bytes_hlg, bytes_bt709, "Rgb8 HLG vs BT.709");
+}
+
+/// u8 RGBA sub-feature of #17 — alpha extraction unaffected (same
+/// path as srgb_u8 case), but RGB conversion picks the right TF.
+#[test]
+fn test_encode_request_rgba8_pq_uses_pq_eotf() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_pq = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(&pixels)
+        .unwrap();
+    let bytes_srgb = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .encode(&pixels)
+        .unwrap();
+    assert_ne!(bytes_pq, bytes_srgb, "Rgba8 PQ should differ from Rgba8 sRGB");
+
+    // Header should report PQ.
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_pq))
+        .expect("jxl-oxide parse failed");
+    let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
+    assert!(ce_dbg.contains("Pq"));
+}
+
 /// BT.709 sub-feature of #17: when caller signals
 /// `with_color_encoding(ce.transfer_function = Bt709)`, u16 input is
 /// linearized via the BT.709 inverse OETF.

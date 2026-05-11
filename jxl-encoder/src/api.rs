@@ -2550,6 +2550,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(pixels, 3, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(pixels, 3)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(pixels, 3)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(pixels, 3)
                 } else {
                     srgb_u8_to_linear_f32(pixels, 3)
                 };
@@ -2559,6 +2565,12 @@ impl<'a> EncodeRequest<'a> {
                 let rgb = bgr_to_rgb(pixels, 3);
                 let linear = if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(&rgb, 3, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(&rgb, 3)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(&rgb, 3)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(&rgb, 3)
                 } else {
                     srgb_u8_to_linear_f32(&rgb, 3)
                 };
@@ -2567,6 +2579,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Rgba8 => {
                 let rgb = if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(pixels, 4, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(pixels, 4)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(pixels, 4)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(pixels, 4)
                 } else {
                     srgb_u8_to_linear_f32(pixels, 4)
                 };
@@ -2577,6 +2595,12 @@ impl<'a> EncodeRequest<'a> {
                 let swapped = bgr_to_rgb(pixels, 4);
                 let rgb = if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(&swapped, 4, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(&swapped, 4)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(&swapped, 4)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(&swapped, 4)
                 } else {
                     srgb_u8_to_linear_f32(&swapped, 4)
                 };
@@ -4885,6 +4909,33 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
         rgb[2] = lut[px[2] as usize];
     }
     out
+}
+
+/// PQ u8 → linear f32 RGB. Uses a 256-entry LUT (avoids per-pixel
+/// powf — matches the gamma_u8_to_linear_f32 optimization). 8-bit
+/// PQ is unusual in practice (PQ's headroom rewards wider precision)
+/// but accepting it lets callers tag low-bit-depth content correctly.
+fn pq_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+    let lut: [f32; 256] = core::array::from_fn(|i| pq_to_linear_f(i as f32 / 255.0));
+    data.chunks(channels)
+        .flat_map(|px| [lut[px[0] as usize], lut[px[1] as usize], lut[px[2] as usize]])
+        .collect()
+}
+
+/// HLG u8 → linear f32 RGB. 256-entry LUT.
+fn hlg_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+    let lut: [f32; 256] = core::array::from_fn(|i| hlg_to_linear_f(i as f32 / 255.0));
+    data.chunks(channels)
+        .flat_map(|px| [lut[px[0] as usize], lut[px[1] as usize], lut[px[2] as usize]])
+        .collect()
+}
+
+/// BT.709 u8 → linear f32 RGB. 256-entry LUT.
+fn bt709_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
+    let lut: [f32; 256] = core::array::from_fn(|i| bt709_to_linear_f(i as f32 / 255.0));
+    data.chunks(channels)
+        .flat_map(|px| [lut[px[0] as usize], lut[px[1] as usize], lut[px[2] as usize]])
+        .collect()
 }
 
 /// PQ u16 → linear f32. `u16_max` mirrors the convention in
