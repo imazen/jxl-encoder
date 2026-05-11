@@ -2610,6 +2610,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Gray8 => {
                 let rgb = if let Some(g) = gamma {
                     gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g)
+                } else if source_is_pq {
+                    pq_gray_u8_to_linear_f32_rgb(pixels, 1)
+                } else if source_is_hlg {
+                    hlg_gray_u8_to_linear_f32_rgb(pixels, 1)
+                } else if source_is_bt709 {
+                    bt709_gray_u8_to_linear_f32_rgb(pixels, 1)
                 } else {
                     gray_u8_to_linear_f32_rgb(pixels, 1)
                 };
@@ -2618,6 +2624,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::GrayAlpha8 => {
                 let rgb = if let Some(g) = gamma {
                     gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g)
+                } else if source_is_pq {
+                    pq_gray_u8_to_linear_f32_rgb(pixels, 2)
+                } else if source_is_hlg {
+                    hlg_gray_u8_to_linear_f32_rgb(pixels, 2)
+                } else if source_is_bt709 {
+                    bt709_gray_u8_to_linear_f32_rgb(pixels, 2)
                 } else {
                     gray_u8_to_linear_f32_rgb(pixels, 2)
                 };
@@ -2656,6 +2668,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::Gray16 => {
                 let rgb = if let Some(g) = gamma {
                     gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max)
+                } else if source_is_pq {
+                    pq_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                } else if source_is_hlg {
+                    hlg_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                } else if source_is_bt709 {
+                    bt709_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
                 } else {
                     gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
                 };
@@ -2664,6 +2682,12 @@ impl<'a> EncodeRequest<'a> {
             PixelLayout::GrayAlpha16 => {
                 let rgb = if let Some(g) = gamma {
                     gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max)
+                } else if source_is_pq {
+                    pq_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                } else if source_is_hlg {
+                    hlg_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                } else if source_is_bt709 {
+                    bt709_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
                 } else {
                     gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
                 };
@@ -5210,6 +5234,77 @@ fn gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f
         .chunks(stride)
         .flat_map(|px| {
             let v = srgb_to_linear_f(px[0] as f32 / u16_max);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand u8 grayscale to linear f32 RGB via the PQ EOTF. Uses a
+/// 256-entry LUT to avoid per-pixel powf, mirroring the PQ u8 RGB
+/// helper. Closes Gray PQ portion of #17.
+fn pq_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+    let lut: [f32; 256] = core::array::from_fn(|i| pq_to_linear_f(i as f32 / 255.0));
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = lut[px[0] as usize];
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand u16 grayscale to linear f32 RGB via the PQ EOTF.
+fn pq_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            let v = pq_to_linear_f(px[0] as f32 / u16_max);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand u8 grayscale to linear f32 RGB via the HLG inverse OETF.
+fn hlg_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+    let lut: [f32; 256] = core::array::from_fn(|i| hlg_to_linear_f(i as f32 / 255.0));
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = lut[px[0] as usize];
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand u16 grayscale to linear f32 RGB via the HLG inverse OETF.
+fn hlg_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            let v = hlg_to_linear_f(px[0] as f32 / u16_max);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand u8 grayscale to linear f32 RGB via the BT.709 inverse OETF.
+fn bt709_gray_u8_to_linear_f32_rgb(data: &[u8], stride: usize) -> Vec<f32> {
+    let lut: [f32; 256] = core::array::from_fn(|i| bt709_to_linear_f(i as f32 / 255.0));
+    data.chunks(stride)
+        .flat_map(|px| {
+            let v = lut[px[0] as usize];
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Expand u16 grayscale to linear f32 RGB via the BT.709 inverse OETF.
+fn bt709_gray_u16_to_linear_f32_rgb(data: &[u8], stride: usize, u16_max: f32) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            let v = bt709_to_linear_f(px[0] as f32 / u16_max);
             [v, v, v]
         })
         .collect()

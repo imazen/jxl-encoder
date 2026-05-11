@@ -6202,6 +6202,55 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// Gray + GrayAlpha sub-feature of #17: 4 grayscale layouts
+/// (Gray8 / GrayAlpha8 / Gray16 / GrayAlpha16) now dispatch through
+/// PQ / HLG / BT.709 EOTFs when caller signals the matching color
+/// encoding. Verified by encoding the same gray bytes with each TF
+/// and asserting the codestreams differ.
+#[test]
+fn test_encode_request_gray_non_srgb_tfs_distinct() {
+    use crate::headers::color_encoding::{ColorEncoding, ColorSpace, TransferFunction};
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h)).map(|i| (i % 251) as u8).collect();
+
+    // Build gray-space color encodings tagged with each TF. The
+    // bt2100_pq() / bt2100_hlg() presets are RGB; for gray we
+    // construct manually.
+    let mut gray_pq = ColorEncoding::grayscale();
+    gray_pq.transfer_function = TransferFunction::Pq;
+    let mut gray_hlg = ColorEncoding::grayscale();
+    gray_hlg.transfer_function = TransferFunction::Hlg;
+    let mut gray_bt709 = ColorEncoding::grayscale();
+    gray_bt709.transfer_function = TransferFunction::Bt709;
+    debug_assert_eq!(gray_pq.color_space, ColorSpace::Gray);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_srgb = cfg
+        .encode_request(w, h, PixelLayout::Gray8)
+        .encode(&pixels)
+        .unwrap();
+    let bytes_pq = cfg
+        .encode_request(w, h, PixelLayout::Gray8)
+        .with_color_encoding(gray_pq)
+        .encode(&pixels)
+        .unwrap();
+    let bytes_hlg = cfg
+        .encode_request(w, h, PixelLayout::Gray8)
+        .with_color_encoding(gray_hlg)
+        .encode(&pixels)
+        .unwrap();
+    let bytes_bt709 = cfg
+        .encode_request(w, h, PixelLayout::Gray8)
+        .with_color_encoding(gray_bt709)
+        .encode(&pixels)
+        .unwrap();
+    assert_ne!(bytes_srgb, bytes_pq, "Gray8 sRGB vs PQ");
+    assert_ne!(bytes_srgb, bytes_hlg, "Gray8 sRGB vs HLG");
+    assert_ne!(bytes_srgb, bytes_bt709, "Gray8 sRGB vs BT.709");
+    assert_ne!(bytes_pq, bytes_hlg, "Gray8 PQ vs HLG");
+}
+
 /// u8 PQ/HLG/BT.709 sub-feature of #17 — non-default TFs now wire
 /// through the Rgb8 / Rgba8 / Bgr8 / Bgra8 paths via 256-entry LUTs.
 /// Verified by encoding the same u8 bytes with each TF tag and
