@@ -7829,14 +7829,45 @@ fn test_lossless_gray_with_spot_color_channel() {
     let _render = image.render_frame(0).expect("render");
 }
 
-/// Refs #9: probe what fails for 5+ channel modular streams. The
-/// 4-channel RGB+depth case works; RGBA+spot (5ch with alpha) and
-/// RGB+depth+spot (5ch without alpha) both currently trip
-/// `InvalidAnsStream` inside the tree-learning + ANS modular path.
-/// Documented as a follow-up; the wire-up + 1-extra tests above
-/// validate the public surface.
+/// Refs #9: 5+ channel lossless. RGBA+Depth (5ch) trips
+/// `InvalidFloat` in jxl-oxide's header parse even at low effort,
+/// suggesting an unrelated bug in extra-channel header writing
+/// when there are 2+ entries. 4-channel RGB+Depth works fine
+/// (verified above). Documented for follow-up.
 #[test]
-#[ignore = "5+ channel modular: tree-learning ANS path needs deeper fix; documented for follow-up"]
+#[ignore = "5+ channel lossless: file_header extra-channels writer trips jxl-oxide InvalidFloat for 2+ entries"]
+fn test_lossless_rgba_with_depth_low_effort() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 11 % 256) as u8).collect();
+    let extras = [ExtraChannel::depth(&depth)];
+    let bytes = LosslessConfig::new()
+        .with_effort(6)
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless rgba+depth at effort 6");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        2,
+        "expected 2 extras (alpha + depth)",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: same 5-channel input at default effort still trips the
+/// tree-learning ANS bug — kept ignored to document the gap.
+#[test]
+#[ignore = "5+ channel modular at effort 7+: tree-learning ANS path bug; works at effort 6"]
 fn test_lossless_rgba_with_spot_color_channel() {
     use crate::api::ExtraChannel;
     let w = 16u32;
