@@ -16,7 +16,7 @@ pub(crate) mod ac_context;
 pub(crate) mod ac_group;
 pub(crate) mod ac_strategy;
 mod ac_strategy_search;
-mod adaptive_quant;
+pub(crate) mod adaptive_quant;
 mod afv;
 mod bitstream;
 mod block_extract;
@@ -40,10 +40,11 @@ mod gaborish;
 pub(crate) mod lf_frame;
 pub(crate) mod noise;
 pub(crate) mod patches;
-#[cfg(feature = "rate-control")]
-mod precomputed;
+#[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
+pub(crate) mod precomputed;
 #[cfg(feature = "rate-control")]
 pub mod rate_control;
+pub(crate) mod simplify_invisible;
 pub(crate) mod splines;
 #[cfg(feature = "ssim2-loop")]
 mod ssim2_loop;
@@ -61,7 +62,7 @@ mod transform;
 pub(crate) mod xyb;
 
 pub use encoder::{VarDctEncoder, VarDctOutput};
-#[cfg(feature = "rate-control")]
+#[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
 pub use precomputed::EncoderPrecomputed;
 #[cfg(feature = "rate-control")]
 pub use rate_control::RateControlConfig;
