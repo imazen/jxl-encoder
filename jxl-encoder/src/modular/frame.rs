@@ -150,8 +150,12 @@ impl FrameEncoder {
         }
         let patches = patches.unwrap();
 
-        // Compute num_extra_channels from image
-        let num_extra_channels = if image.has_alpha { 1 } else { 0 };
+        // Compute num_extra_channels from image. Channels beyond the
+        // base color set (1 for grayscale, 3 for RGB) are extra
+        // channels — alpha is the historical case but [`ModularImage`]
+        // can hold N additional channels (refs #9 depth/spot color).
+        let num_color = if image.is_grayscale { 1 } else { 3 };
+        let num_extra_channels = image.channels.len().saturating_sub(num_color);
 
         // Write frame header with PATCHES_FLAG
         {
@@ -260,8 +264,12 @@ impl FrameEncoder {
         _color_encoding: &ColorEncoding,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        // Compute num_extra_channels from image
-        let num_extra_channels = if image.has_alpha { 1 } else { 0 };
+        // Compute num_extra_channels from image. Channels beyond the
+        // base color set (1 for grayscale, 3 for RGB) are extra
+        // channels — alpha is the historical case but [`ModularImage`]
+        // can hold N additional channels (refs #9 depth/spot color).
+        let num_color = if image.is_grayscale { 1 } else { 3 };
+        let num_extra_channels = image.channels.len().saturating_sub(num_color);
 
         // Write frame header using unified FrameHeader
         {

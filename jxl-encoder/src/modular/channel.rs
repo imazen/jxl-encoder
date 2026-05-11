@@ -368,6 +368,37 @@ impl ModularImage {
         })
     }
 
+    /// Append an 8-bit extra channel (depth, spot color, etc.) at the
+    /// end of [`Self::channels`]. The channel must have the same
+    /// dimensions as the existing channels. Refs #9.
+    ///
+    /// The caller is responsible for adding a matching
+    /// [`crate::headers::extra_channels::ExtraChannelInfo`] to the
+    /// file header so the decoder knows the channel's type / bit depth /
+    /// dim_shift.
+    pub fn push_extra_channel_u8(
+        &mut self,
+        data: &[u8],
+        width: usize,
+        height: usize,
+    ) -> Result<()> {
+        if data.len() != width * height {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        // Match dimensions with existing channels.
+        if let Some(first) = self.channels.first() {
+            if first.width() != width || first.height() != height {
+                return Err(Error::InvalidImageDimensions(width, height));
+            }
+        }
+        let mut channel = Channel::new(width, height)?;
+        for (i, &val) in data.iter().enumerate() {
+            channel.set(i % width, i / width, val as i32);
+        }
+        self.channels.push(channel);
+        Ok(())
+    }
+
     /// Creates a new modular image from 8-bit grayscale data.
     pub fn from_gray8(data: &[u8], width: usize, height: usize) -> Result<Self> {
         let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {

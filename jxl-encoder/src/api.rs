@@ -1065,6 +1065,7 @@ impl LosslessConfig {
             bits_per_sample: None,
             brotli_metadata_quality: None,
             row_stride: None,
+            extra_channels: &[],
         }
     }
 
@@ -1895,6 +1896,7 @@ impl LossyConfig {
             bits_per_sample: None,
             brotli_metadata_quality: None,
             row_stride: None,
+            extra_channels: &[],
         }
     }
 
@@ -2015,6 +2017,114 @@ pub struct EncodeRequest<'a> {
     /// and any source that aligns rows to a power of 2.
     /// Closes row-stride portion of #18.
     row_stride: Option<usize>,
+    /// Optional extra-channel buffers (refs #9). Each channel's
+    /// dimensions match the request's `(width, height)`. Currently
+    /// only u8 8-bit channels of `Depth` or `SpotColor` type are
+    /// wired through the lossless encode path; lossy + 16-bit + the
+    /// other libjxl channel types (SelectionMask, CFA, Thermal) are
+    /// queued for follow-up ticks.
+    extra_channels: &'a [ExtraChannel<'a>],
+}
+
+/// One additional channel (depth, spot color, selection mask, …)
+/// to attach to the encoded image alongside the color + alpha
+/// planes. Refs #9.
+///
+/// Built via [`Self::depth`] / [`Self::spot_color`] /
+/// [`Self::selection_mask`] / [`Self::thermal`] / [`Self::cfa`].
+/// The buffer dimensions must match the
+/// [`EncodeRequest`]'s `(width, height)`. Only 8-bit u8 buffers are
+/// supported in this iteration; 16-bit + dim_shift > 0 follow-up
+/// ticks will widen the surface.
+///
+/// Wire-up status:
+/// - Lossless RGB(A) + extra channels: WORKING (channels appended to
+///   the modular image; ExtraChannelInfo entries written to file
+///   header)
+/// - Lossy VarDCT + extras beyond alpha: NOT YET (encoder pipeline
+///   for additional modular sub-bitstreams pending)
+#[derive(Debug, Clone)]
+pub struct ExtraChannel<'a> {
+    info: crate::headers::extra_channels::ExtraChannelInfo,
+    data: &'a [u8],
+}
+
+impl<'a> ExtraChannel<'a> {
+    /// Attach a depth channel (`ExtraChannelType::Depth`). Use cases:
+    /// 3D photos, iPhone Portrait Mode, structured-light scan output.
+    /// `data` is `width * height` bytes of u8 depth values.
+    pub fn depth(data: &'a [u8]) -> Self {
+        Self {
+            info: crate::headers::extra_channels::ExtraChannelInfo::depth(),
+            data,
+        }
+    }
+
+    /// Attach a spot-color channel (`ExtraChannelType::SpotColor`).
+    /// `data` is `width * height` bytes of u8 spot intensity (0 =
+    /// no coverage, 255 = full coverage). `color` is the RGBA tint
+    /// applied at decode time. Used in print production for
+    /// non-CMYK inks (Pantone-style spot colors).
+    pub fn spot_color(data: &'a [u8], color: [f32; 4]) -> Self {
+        Self {
+            info: crate::headers::extra_channels::ExtraChannelInfo::spot_color(color),
+            data,
+        }
+    }
+
+    /// Attach a selection-mask channel
+    /// (`ExtraChannelType::SelectionMask`). `data` is `width * height`
+    /// bytes. Editing tools can use this to round-trip Photoshop-style
+    /// per-image selections. *Header-only support today — the buffer
+    /// is encoded but no dedicated semantics; treat it as an opaque
+    /// 8-bit auxiliary channel.*
+    pub fn selection_mask(data: &'a [u8]) -> Self {
+        Self {
+            info: crate::headers::extra_channels::ExtraChannelInfo {
+                ec_type: crate::headers::extra_channels::ExtraChannelType::SelectionMask,
+                ..Default::default()
+            },
+            data,
+        }
+    }
+
+    /// Attach a thermal-data channel (`ExtraChannelType::Thermal`).
+    /// `data` is `width * height` bytes. Same opaque-channel caveat
+    /// as [`Self::selection_mask`].
+    pub fn thermal(data: &'a [u8]) -> Self {
+        Self {
+            info: crate::headers::extra_channels::ExtraChannelInfo {
+                ec_type: crate::headers::extra_channels::ExtraChannelType::Thermal,
+                ..Default::default()
+            },
+            data,
+        }
+    }
+
+    /// Attach a CFA (Color Filter Array) channel
+    /// (`ExtraChannelType::Cfa`). `data` is `width * height` bytes;
+    /// `cfa_index` selects the Bayer-style pattern used.
+    pub fn cfa(data: &'a [u8], cfa_index: u32) -> Self {
+        Self {
+            info: crate::headers::extra_channels::ExtraChannelInfo {
+                ec_type: crate::headers::extra_channels::ExtraChannelType::Cfa,
+                cfa_channel: cfa_index,
+                ..Default::default()
+            },
+            data,
+        }
+    }
+
+    /// Read-only access to the metadata that will be written into
+    /// the file header for this channel.
+    pub fn info(&self) -> &crate::headers::extra_channels::ExtraChannelInfo {
+        &self.info
+    }
+
+    /// Read-only access to the channel's pixel buffer.
+    pub fn data(&self) -> &[u8] {
+        self.data
+    }
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -2167,6 +2277,21 @@ impl<'a> EncodeRequest<'a> {
     /// (linearization, XYB, DCT, etc.).
     pub fn with_row_stride(mut self, stride: usize) -> Self {
         self.row_stride = Some(stride);
+        self
+    }
+
+    /// Attach extra-channel buffers (refs #9) — depth, spot color,
+    /// selection mask, thermal, CFA. Each [`ExtraChannel`] carries
+    /// `width * height` bytes of u8 channel data plus the
+    /// metadata that gets written into the file header.
+    ///
+    /// Currently wired through the **lossless** encode path. Lossy
+    /// encodes with extras beyond alpha return
+    /// `EncodeError::InvalidInput("extra channels beyond alpha not
+    /// yet supported in lossy encode")`. 16-bit channels and
+    /// `dim_shift > 0` (per-channel downsampling) follow-up ticks.
+    pub fn with_extra_channels(mut self, channels: &'a [ExtraChannel<'a>]) -> Self {
+        self.extra_channels = channels;
         self
     }
 
@@ -2578,6 +2703,25 @@ impl<'a> EncodeRequest<'a> {
         }
         .map_err(EncodeError::from)?;
 
+        // Append extra channels (refs #9 — Depth, SpotColor, etc.).
+        // Each `ExtraChannel` carries an 8-bit u8 plane of the same
+        // dimensions; the channel is added to the modular image and
+        // its `ExtraChannelInfo` is written into the file header.
+        for (idx, ec) in self.extra_channels.iter().enumerate() {
+            if ec.data.len() != w * h {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "extra_channels[{idx}]: expected {} bytes for {w}x{h}, got {}",
+                        w * h,
+                        ec.data.len(),
+                    ),
+                });
+            }
+            image
+                .push_extra_channel_u8(ec.data, w, h)
+                .map_err(EncodeError::from)?;
+        }
+
         // Detect patches for lossless mode (RGB 8-bit only, non-grayscale)
         let num_channels = self.layout.bytes_per_pixel();
         let can_use_patches =
@@ -2607,6 +2751,11 @@ impl<'a> EncodeRequest<'a> {
             for ec in &mut file_header.metadata.extra_channels {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
             }
+        }
+        // Append extra-channel metadata (refs #9). The corresponding
+        // pixel data was added to `image.channels` above.
+        for ec in self.extra_channels.iter() {
+            file_header.metadata.extra_channels.push(ec.info.clone());
         }
         // Override file_header's default color_encoding with the
         // caller's `with_color_encoding(...)` if set. Closes lossless
