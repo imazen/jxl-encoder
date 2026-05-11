@@ -31,8 +31,11 @@ pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
+// libjxl enc_detect_dots.cc port (refs #19). Wired into encoder.rs at
+// effort >= 7, distance >= 3.0; full PatchesData integration pending,
+// so several DetectedDot fields and `ConnectedComponent::pixels` are
+// computed but not yet consumed.
 #[allow(dead_code)]
-// Foundation-only port of libjxl enc_detect_dots.cc; awaiting CC + fitting + wire-up (refs #19)
 pub(crate) mod dot_detection;
 pub(crate) mod encoder;
 pub(crate) mod entropy_code;

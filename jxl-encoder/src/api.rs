@@ -1220,6 +1220,9 @@ pub struct LossyConfig {
     force_strategy: Option<u8>,
     max_strategy_size: Option<u8>,
     patches: bool,
+    /// libjxl-style dot detection (refs #19). Default `false`. Only
+    /// fires when both effort >= 7 and distance >= 3.0.
+    dot_detection: bool,
     /// Smear color values in alpha=0 pixels to a weighted average of
     /// visible neighbors (libjxl `SimplifyInvisible` lossy mode,
     /// `enc_frame.cc:511`). 5-20% smaller files on sprites/icons with
@@ -1323,6 +1326,7 @@ impl LossyConfig {
             force_strategy: None,
             max_strategy_size: None,
             patches: profile.patches,
+            dot_detection: false, // refs #19; off by default
             simplify_invisible: true,
             center_first: false,
             resampling: 1,
@@ -1521,6 +1525,25 @@ impl LossyConfig {
     /// Default: true. Huge wins on screenshots, zero cost on photos.
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = enable;
+        self
+    }
+
+    /// Enable libjxl-style **dot detection** (refs #19). Default `false`.
+    ///
+    /// When enabled and the encode runs at effort ≥ 7 and distance ≥ 3.0,
+    /// the encoder runs a star-field / specular-highlight detector that
+    /// finds isolated bright Gaussian-shaped pixels too small to survive
+    /// VarDCT quantization at high distances. Each surviving dot is (in
+    /// a follow-up tick) appended to the patch dictionary so the
+    /// decoder reconstructs it exactly.
+    ///
+    /// **Niche feature** — only fires on astronomy images, specular
+    /// highlights on dark backgrounds, certain noise patterns. Has no
+    /// effect on typical photographic content. libjxl ports the
+    /// algorithm in `enc_detect_dots.cc`; we mirror its gating + the
+    /// 7-neighbor flood-fill bug for bit-parity.
+    pub fn with_dot_detection(mut self, enable: bool) -> Self {
+        self.dot_detection = enable;
         self
     }
 
@@ -3052,6 +3075,7 @@ impl<'a> EncodeRequest<'a> {
         enc.lz77_method = cfg.lz77_method;
         enc.force_strategy = cfg.force_strategy;
         enc.enable_patches = cfg.patches;
+        enc.enable_dot_detection = cfg.dot_detection;
         enc.encoder_mode = cfg.mode;
         enc.splines = cfg.splines.clone();
         enc.is_grayscale = self.layout.is_grayscale();
@@ -3808,6 +3832,7 @@ impl LossyEncoder {
             enc.lz77_method = cfg.lz77_method;
             enc.force_strategy = cfg.force_strategy;
             enc.enable_patches = cfg.patches;
+            enc.enable_dot_detection = cfg.dot_detection;
             enc.encoder_mode = cfg.mode;
             enc.splines = cfg.splines.clone();
             enc.is_grayscale = self.layout.is_grayscale();
