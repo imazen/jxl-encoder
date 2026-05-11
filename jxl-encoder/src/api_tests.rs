@@ -6202,6 +6202,115 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// Lossless TF round-trip (#17 final piece). Lossless preserves
+/// pixels bit-exactly so the only thing the TF affects is the
+/// codestream header signal — but it MUST land correctly so the
+/// decoder applies the right interpretation downstream.
+///
+/// Verified by encoding lossless with each of {sRGB, PQ, HLG,
+/// BT.709}, parsing via jxl-oxide, and asserting the header reports
+/// the right TF. Same input bytes produce the SAME codestream
+/// across TFs (the lossless modular pipeline is TF-agnostic — only
+/// the header field changes).
+#[test]
+fn test_encode_request_lossless_pq_header() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let cfg = LosslessConfig::new().with_effort(3);
+
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(&pixels)
+        .unwrap();
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
+    assert!(ce_dbg.contains("Pq"), "lossless PQ header should contain Pq; got {ce_dbg}");
+    assert!(
+        ce_dbg.contains("Bt2100"),
+        "lossless PQ header should contain BT.2100; got {ce_dbg}",
+    );
+}
+
+#[test]
+fn test_encode_request_lossless_hlg_header() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let cfg = LosslessConfig::new().with_effort(3);
+
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_color_encoding(ColorEncoding::bt2100_hlg())
+        .encode(&pixels)
+        .unwrap();
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
+    assert!(ce_dbg.contains("Hlg"), "lossless HLG header should contain Hlg; got {ce_dbg}");
+}
+
+#[test]
+fn test_encode_request_lossless_bt709_header() {
+    use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let mut bt709_ce = ColorEncoding::srgb();
+    bt709_ce.transfer_function = TransferFunction::Bt709;
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(bt709_ce)
+        .encode(&pixels)
+        .unwrap();
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
+    assert!(
+        ce_dbg.contains("Bt709"),
+        "lossless BT.709 header should contain Bt709; got {ce_dbg}",
+    );
+}
+
+/// Streaming LosslessEncoder TF parity. Mirrors the streaming
+/// Lossy parity tests landed alongside #17.
+#[test]
+fn test_streaming_lossless_pq_matches_oneshot() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let cfg = LosslessConfig::new().with_effort(3);
+
+    let oneshot = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(&pixels)
+        .unwrap();
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_color_encoding(ColorEncoding::bt2100_pq());
+    let mid = (h / 2) as usize * w as usize * 3;
+    enc.push_rows(&pixels[..mid], h / 2).unwrap();
+    enc.push_rows(&pixels[mid..], h - h / 2).unwrap();
+    let streaming = enc.finish().unwrap();
+    assert_eq!(
+        oneshot, streaming,
+        "lossless PQ streaming should match one-shot bit-exact",
+    );
+}
+
 /// Streaming-encoder TF parity (#17 follow-up): LossyEncoder
 /// streaming path now honors with_color_encoding's transfer
 /// function. Verified by encoding the same bytes one-shot vs
