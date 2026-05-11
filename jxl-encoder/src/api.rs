@@ -2434,19 +2434,6 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
-        // Premultiplied alpha on the lossy path needs an
-        // unpremultiplication pre-pass (libjxl `enc_frame.cc:1588-1597`)
-        // before XYB conversion — otherwise quantization errors get
-        // multiplied with alpha and the decoder sees wrong colors.
-        // That pre-pass isn't implemented yet; reject explicitly so
-        // callers don't get silently-broken output.
-        if self.premultiplied_alpha {
-            return Err(EncodeError::InvalidInput {
-                message: "premultiplied alpha is not yet supported on lossy encode (#13); \
-                          use lossless or unpremultiply before encoding"
-                    .into(),
-            });
-        }
         let w = self.width as usize;
         let h = self.height as usize;
 
@@ -2582,6 +2569,22 @@ impl<'a> EncodeRequest<'a> {
 
         let mut profile = cfg.effective_profile();
 
+        let mut linear_rgb = linear_rgb;
+
+        // Unpremultiply alpha BEFORE the SimplifyInvisible pre-pass and
+        // BEFORE XYB conversion (closes lossy portion of #13). libjxl
+        // `enc_frame.cc:1588-1597` runs SimplifyInvisible only when
+        // alpha is straight (`!alpha_eci->alpha_associated`); when the
+        // caller signals premultiplied input we unpremultiply first so
+        // the encoder can run the rest of its pipeline on straight
+        // RGB. The header gets `alpha_associated=true` so the decoder
+        // re-premultiplies on output, closing the round-trip.
+        if self.premultiplied_alpha
+            && let Some(ref alpha_buf) = alpha
+        {
+            unpremultiply_alpha_inplace(&mut linear_rgb, alpha_buf);
+        }
+
         // SimplifyInvisible pre-pass (closes #10): smooth color
         // values in alpha=0 pixels to a weighted average of visible
         // neighbors, reducing high-frequency DCT energy from arbitrary
@@ -2590,8 +2593,13 @@ impl<'a> EncodeRequest<'a> {
         // photos with mostly-opaque alpha pay only the cheap
         // `has_any_invisible_pixels` predicate (single linear scan
         // with early-exit on the first zero).
-        let mut linear_rgb = linear_rgb;
+        //
+        // libjxl gates SimplifyInvisible on `!alpha_associated` — for
+        // premultiplied input the alpha-zero pixels already hold black
+        // (premultiplication zeros them) so the smear contribution is
+        // dilution-only, no win. We mirror that gate.
         if cfg.simplify_invisible
+            && !self.premultiplied_alpha
             && let Some(ref alpha_buf) = alpha
             && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
         {
@@ -2657,6 +2665,11 @@ impl<'a> EncodeRequest<'a> {
         enc.color_encoding = self.color_encoding.clone();
         enc.non_finite_action = cfg.non_finite_action;
         enc.budget = Some(alloc::sync::Arc::clone(budget));
+        // Lossy portion of #13: signal premultiplied alpha in the
+        // codestream header (decoder re-premultiplies on output).
+        // The unpremultiplication of the input pixels already happened
+        // above (immediately after building linear_rgb).
+        enc.alpha_associated = self.premultiplied_alpha;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -3108,27 +3121,29 @@ impl LossyEncoder {
                 ),
             });
         }
-        // Mirror EncodeRequest::encode_lossy gate (closes lossy gating
-        // half of #13). Lossy unpremultiplication is the harder follow-up.
-        if self.premultiplied_alpha {
-            return Err(EncodeError::InvalidInput {
-                message: "premultiplied alpha is not yet supported on lossy encode (#13); \
-                          use lossless or unpremultiply before encoding"
-                    .into(),
-            });
-        }
-
         let cfg = &self.cfg;
         let w = self.width as usize;
         let h = self.height as usize;
         let mut linear_rgb = self.linear_rgb;
         let alpha = self.alpha;
 
+        // Unpremultiply BEFORE SimplifyInvisible / XYB — see the
+        // matching block in `EncodeRequest::encode_lossy` for the full
+        // reasoning. Closes lossy portion of #13.
+        if self.premultiplied_alpha
+            && let Some(ref alpha_buf) = alpha
+        {
+            unpremultiply_alpha_inplace(&mut linear_rgb, alpha_buf);
+        }
+
         // SimplifyInvisible pre-pass (closes #10) — mirrored from the
         // one-shot path in `EncodeRequest::encode_lossy`. Required to
         // keep `oneshot == streaming` byte-exact when the input has any
         // alpha=0 pixel (caught by `test_streaming_lossy_rgba`).
+        // Gated on !premultiplied_alpha to match libjxl
+        // `enc_frame.cc:1588`.
         if cfg.simplify_invisible
+            && !self.premultiplied_alpha
             && let Some(ref alpha_buf) = alpha
             && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
         {
@@ -3217,6 +3232,7 @@ impl LossyEncoder {
             enc.intensity_target = self.intensity_target;
             enc.min_nits = self.min_nits;
             enc.intrinsic_size = self.intrinsic_size;
+            enc.alpha_associated = self.premultiplied_alpha;
             enc.non_finite_action = self.cfg.non_finite_action;
             enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
@@ -4839,6 +4855,35 @@ fn f16_gray_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
             [v, v, v]
         })
         .collect()
+}
+
+/// Divide premultiplied (associated) linear RGB values by alpha so the
+/// encoded codestream stores straight (unassociated) color. Mirrors
+/// libjxl `UnpremultiplyAlpha` in `lib/jxl/alpha.cc:106`. Pairs with
+/// `alpha_associated=true` in the codestream header — the decoder is
+/// responsible for re-premultiplying the output.
+///
+/// `alpha_u8` is the per-pixel alpha after our standard u8 quantization
+/// (matching the codestream's 8-bit BitDepth default). Using the same
+/// quantized value the decoder will see ensures the round-trip
+/// premultiplied → encode → decode → re-premultiplied closes.
+///
+/// `kSmallAlpha = 1.0 / (1<<26)` floor on the divisor — matches
+/// libjxl `lib/jxl/alpha.h:21`. Lifts division-by-zero on alpha=0
+/// pixels (where the original color is undefined anyway).
+fn unpremultiply_alpha_inplace(linear_rgb_interleaved: &mut [f32], alpha_u8: &[u8]) {
+    const K_SMALL_ALPHA: f32 = 1.0_f32 / ((1u32 << 26) as f32);
+    debug_assert_eq!(linear_rgb_interleaved.len(), alpha_u8.len() * 3);
+    for (rgb, &a) in linear_rgb_interleaved
+        .chunks_exact_mut(3)
+        .zip(alpha_u8.iter())
+    {
+        let a_f = (a as f32) / 255.0;
+        let inv = 1.0 / a_f.max(K_SMALL_ALPHA);
+        rgb[0] *= inv;
+        rgb[1] *= inv;
+        rgb[2] *= inv;
+    }
 }
 
 /// Extract alpha from interleaved f16 pixel data, converting to u8

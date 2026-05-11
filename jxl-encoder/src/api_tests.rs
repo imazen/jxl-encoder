@@ -6116,30 +6116,6 @@ fn test_streaming_lossless_encoder_premultiplied_alpha() {
     );
 }
 
-/// #13 streaming-API parity (LossyEncoder): builder rejects at finish()
-/// time, mirroring the EncodeRequest::encode_lossy gate.
-#[test]
-fn test_streaming_lossy_encoder_premultiplied_alpha_rejects() {
-    let w = 16u32;
-    let h = 16;
-    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
-    let cfg = LossyConfig::new(1.0).with_effort(3);
-    let mut enc = cfg
-        .encoder(w, h, PixelLayout::Rgba8)
-        .unwrap()
-        .with_premultiplied_alpha(true);
-    enc.push_rows(&pixels, h).unwrap();
-    let result = enc.finish();
-    let Err(err) = result else {
-        panic!("expected error, got Ok");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("premultiplied alpha"),
-        "expected premultiplied-alpha rejection, got: {msg}",
-    );
-}
-
 /// Closes lossless portion of #13: `EncodeRequest::with_premultiplied_alpha(true)`
 /// sets `alpha_associated=true` in the encoded `ExtraChannelInfo`.
 /// Verified by parsing the codestream via jxl-oxide and reading the
@@ -6193,27 +6169,95 @@ fn test_encode_request_premultiplied_alpha_lossless() {
     );
 }
 
-/// #13 lossy variant: until we implement the unpremultiplication
-/// pre-pass, calling `with_premultiplied_alpha(true)` on a lossy
-/// encode must fail loudly (not silently produce wrong output).
+/// #13 lossy variant: encoding premultiplied RGBA via lossy now goes
+/// through the unpremultiplication pre-pass, encodes the straight RGB,
+/// and signals `alpha_associated=true` so the decoder re-premultiplies
+/// on output.
 #[test]
-fn test_encode_request_premultiplied_alpha_lossy_rejects() {
+fn test_encode_request_premultiplied_alpha_lossy_round_trip() {
     let w = 16u32;
     let h = 16;
-    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    // Build a premultiplied RGBA buffer where most pixels have a known
+    // alpha value, so the codestream's alpha_associated bit must be
+    // honored for the decoder to produce the correct output.
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            // straight color we want decoded (after re-premultiply):
+            let r_straight = (x * 16) as u8;
+            let g_straight = (y * 16) as u8;
+            let b_straight = ((x + y) * 8) as u8;
+            let a = if (x + y) % 4 == 0 { 64u8 } else { 255u8 };
+            // Premultiply for input. (a/255 * c rounded.)
+            let mul = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
+            pixels[idx] = mul(r_straight);
+            pixels[idx + 1] = mul(g_straight);
+            pixels[idx + 2] = mul(b_straight);
+            pixels[idx + 3] = a;
+        }
+    }
+
     let cfg = LossyConfig::new(1.0).with_effort(3);
-    let result = cfg
+    let bytes = cfg
         .encode_request(w, h, PixelLayout::Rgba8)
         .with_premultiplied_alpha(true)
-        .encode(&pixels);
-    let Err(err) = result else {
-        panic!("expected error, got Ok");
-    };
-    let msg = format!("{:?}", err);
-    assert!(
-        msg.contains("premultiplied alpha"),
-        "expected premultiplied-alpha rejection, got: {msg}",
+        .encode(&pixels)
+        .unwrap();
+
+    // Verify the codestream signaled premultiplied alpha.
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let alpha_assoc = img
+        .image_header()
+        .metadata
+        .ec_info
+        .iter()
+        .find_map(|ec| ec.alpha_associated());
+    assert_eq!(
+        alpha_assoc,
+        Some(true),
+        "lossy with_premultiplied_alpha(true) should set alpha_associated=true",
     );
+}
+
+/// #13 lossy streaming variant — same end-state as the one-shot path.
+#[test]
+fn test_streaming_lossy_premultiplied_alpha_round_trip() {
+    let w = 16u32;
+    let h = 16;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            let a = if (x + y) % 4 == 0 { 64u8 } else { 255u8 };
+            let mul = |c: u8| ((c as u16 * a as u16 + 127) / 255) as u8;
+            pixels[idx] = mul((x * 16) as u8);
+            pixels[idx + 1] = mul((y * 16) as u8);
+            pixels[idx + 2] = mul(((x + y) * 8) as u8);
+            pixels[idx + 3] = a;
+        }
+    }
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgba8)
+        .unwrap()
+        .with_premultiplied_alpha(true);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let alpha_assoc = img
+        .image_header()
+        .metadata
+        .ec_info
+        .iter()
+        .find_map(|ec| ec.alpha_associated());
+    assert_eq!(alpha_assoc, Some(true));
 }
 
 /// Closes FLOAT16 portion of #18: encoder accepts the new
