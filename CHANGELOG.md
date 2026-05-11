@@ -72,6 +72,11 @@
   3f8b89b): `LosslessConfig` / `LosslessEncoder`'s `color_encoding`
   override was being silently dropped; the file header is now built
   with the override before write.
+- **`row_stride` validated up front** (a2c915d): bad strides
+  (`stride < width * bytes_per_pixel`, or `height * stride` overflow)
+  are now rejected at `validate_pixels` before any allocation rather
+  than later inside `unpack_strided_pixels`. The error message
+  shape is preserved; only fail-fast timing changed.
 - **4 latent serialization bugs in non-alpha extra-channel paths**
   (closes #8, 4cb33e8): enum coder, F16 vs F32 alpha range, CFA
   channel distribution, name-length distribution. Alpha encodes were
