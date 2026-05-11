@@ -6150,7 +6150,7 @@ mod tests {
     fn test_bt709_to_linear_f_clamps_negative() {
         let v = bt709_to_linear_f(-0.1);
         assert!(v.is_finite());
-        assert!(v >= 0.0 && v < 1e-3, "BT.709(-0.1) should clamp to ~0; got {v}");
+        assert!((0.0..1e-3).contains(&v), "BT.709(-0.1) should clamp to ~0; got {v}");
     }
 
     /// Reference points for HLG inverse OETF (BT.2100).
@@ -6181,7 +6181,7 @@ mod tests {
     fn test_hlg_to_linear_f_clamps_negative() {
         let v = hlg_to_linear_f(-0.1);
         assert!(v.is_finite());
-        assert!(v >= 0.0 && v < 1e-3, "HLG(-0.1) should clamp to ~0; got {v}");
+        assert!((0.0..1e-3).contains(&v), "HLG(-0.1) should clamp to ~0; got {v}");
     }
 
     #[test]

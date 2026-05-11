@@ -459,7 +459,7 @@ mod tests {
             info.write(&mut writer).unwrap();
             // Sanity: name bytes contribute at least 8*len bits.
             assert!(
-                writer.bits_written() as usize >= 8 * len,
+                writer.bits_written() >= 8 * len,
                 "len={len}: bits_written {} < 8*len {}",
                 writer.bits_written(),
                 8 * len,
