@@ -3037,14 +3037,18 @@ impl<'a> EncodeRequest<'a> {
             enc.icc_profile = Some(icc.to_vec());
         }
 
-        // Apply box-filter downsampling for resampling > 1 (refs #12).
-        // The encoder runs at the downsampled resolution; the decoder
-        // upsamples back per the frame header. The fast path
-        // (resampling == 1) leaves the buffers untouched.
+        // Apply downsampling for resampling > 1 (refs #12). Factor 2
+        // uses libjxl's sharper 12×12 kernel (`enc_heuristics.cc:279`)
+        // which preserves edge detail; factors 4 and 8 use the simple
+        // box filter (libjxl behavior).
         let (encode_rgb, encode_alpha, encode_w, encode_h) = if cfg.resampling > 1 {
-            let (down_rgb, dw, dh) = crate::vardct::resampling::box_downsample_rgb(
-                &linear_rgb, w, h, cfg.resampling,
-            );
+            let (down_rgb, dw, dh) = if cfg.resampling == 2 {
+                crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
+            } else {
+                crate::vardct::resampling::box_downsample_rgb(
+                    &linear_rgb, w, h, cfg.resampling,
+                )
+            };
             let down_alpha = alpha.as_ref().map(|a| {
                 let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
                     a, w, h, cfg.resampling,
@@ -3716,9 +3720,13 @@ impl LossyEncoder {
             }
 
             let (encode_rgb, encode_alpha, encode_w, encode_h) = if self.cfg.resampling > 1 {
-                let (down_rgb, dw, dh) = crate::vardct::resampling::box_downsample_rgb(
-                    &linear_rgb, w, h, self.cfg.resampling,
-                );
+                let (down_rgb, dw, dh) = if self.cfg.resampling == 2 {
+                    crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
+                } else {
+                    crate::vardct::resampling::box_downsample_rgb(
+                        &linear_rgb, w, h, self.cfg.resampling,
+                    )
+                };
                 let down_alpha = alpha.as_ref().map(|a| {
                     let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
                         a, w, h, self.cfg.resampling,
