@@ -1099,6 +1099,13 @@ pub(crate) fn xyb_to_linear_rgb(
 /// Converts XYB planes to planar linear RGB (3 separate channel buffers).
 ///
 /// Avoids the interleave step when the consumer needs planar data (e.g., butteraugli).
+/// Only consumers under `butteraugli-loop` / `ssim2-loop` / `zensim-loop` use
+/// this; gated on the same set so non-loop builds don't trip dead-code warnings.
+#[cfg(any(
+    feature = "butteraugli-loop",
+    feature = "ssim2-loop",
+    feature = "zensim-loop"
+))]
 pub(crate) fn xyb_to_linear_rgb_planar(
     xyb_x: &[f32],
     xyb_y: &[f32],
