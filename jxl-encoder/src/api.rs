@@ -2046,7 +2046,30 @@ pub struct EncodeRequest<'a> {
 #[derive(Debug, Clone)]
 pub struct ExtraChannel<'a> {
     info: crate::headers::extra_channels::ExtraChannelInfo,
-    data: &'a [u8],
+    data: ExtraChannelBuf<'a>,
+}
+
+/// Per-channel pixel data — either 8-bit or 16-bit samples.
+#[derive(Debug, Clone, Copy)]
+pub enum ExtraChannelBuf<'a> {
+    /// `width * height` u8 samples.
+    U8(&'a [u8]),
+    /// `width * height` u16 samples (native byte order).
+    U16(&'a [u16]),
+}
+
+impl<'a> ExtraChannelBuf<'a> {
+    /// Number of samples in the buffer.
+    pub fn len(&self) -> usize {
+        match self {
+            ExtraChannelBuf::U8(s) => s.len(),
+            ExtraChannelBuf::U16(s) => s.len(),
+        }
+    }
+    /// `true` if the buffer has no samples.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl<'a> ExtraChannel<'a> {
@@ -2056,7 +2079,19 @@ impl<'a> ExtraChannel<'a> {
     pub fn depth(data: &'a [u8]) -> Self {
         Self {
             info: crate::headers::extra_channels::ExtraChannelInfo::depth(),
-            data,
+            data: ExtraChannelBuf::U8(data),
+        }
+    }
+
+    /// Attach a 16-bit depth channel. `data` is `width * height`
+    /// u16 samples; the channel info is marked as 16-bit so the
+    /// decoder preserves the precision.
+    pub fn depth_u16(data: &'a [u16]) -> Self {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::depth();
+        info.bit_depth = crate::headers::file_header::BitDepth::uint16();
+        Self {
+            info,
+            data: ExtraChannelBuf::U16(data),
         }
     }
 
@@ -2068,7 +2103,7 @@ impl<'a> ExtraChannel<'a> {
     pub fn spot_color(data: &'a [u8], color: [f32; 4]) -> Self {
         Self {
             info: crate::headers::extra_channels::ExtraChannelInfo::spot_color(color),
-            data,
+            data: ExtraChannelBuf::U8(data),
         }
     }
 
@@ -2084,7 +2119,7 @@ impl<'a> ExtraChannel<'a> {
                 ec_type: crate::headers::extra_channels::ExtraChannelType::SelectionMask,
                 ..Default::default()
             },
-            data,
+            data: ExtraChannelBuf::U8(data),
         }
     }
 
@@ -2097,7 +2132,7 @@ impl<'a> ExtraChannel<'a> {
                 ec_type: crate::headers::extra_channels::ExtraChannelType::Thermal,
                 ..Default::default()
             },
-            data,
+            data: ExtraChannelBuf::U8(data),
         }
     }
 
@@ -2111,7 +2146,7 @@ impl<'a> ExtraChannel<'a> {
                 cfa_channel: cfa_index,
                 ..Default::default()
             },
-            data,
+            data: ExtraChannelBuf::U8(data),
         }
     }
 
@@ -2122,7 +2157,7 @@ impl<'a> ExtraChannel<'a> {
     }
 
     /// Read-only access to the channel's pixel buffer.
-    pub fn data(&self) -> &[u8] {
+    pub fn data(&self) -> ExtraChannelBuf<'_> {
         self.data
     }
 }
@@ -2704,22 +2739,25 @@ impl<'a> EncodeRequest<'a> {
         .map_err(EncodeError::from)?;
 
         // Append extra channels (refs #9 — Depth, SpotColor, etc.).
-        // Each `ExtraChannel` carries an 8-bit u8 plane of the same
-        // dimensions; the channel is added to the modular image and
-        // its `ExtraChannelInfo` is written into the file header.
+        // Each `ExtraChannel` carries an 8-bit or 16-bit plane of
+        // the same dimensions as the image; the channel is added to
+        // the modular image and its `ExtraChannelInfo` is written
+        // into the file header.
         for (idx, ec) in self.extra_channels.iter().enumerate() {
-            if ec.data.len() != w * h {
+            let len = ec.data.len();
+            if len != w * h {
                 return Err(EncodeError::InvalidInput {
                     message: format!(
-                        "extra_channels[{idx}]: expected {} bytes for {w}x{h}, got {}",
+                        "extra_channels[{idx}]: expected {} samples for {w}x{h}, got {len}",
                         w * h,
-                        ec.data.len(),
                     ),
                 });
             }
-            image
-                .push_extra_channel_u8(ec.data, w, h)
-                .map_err(EncodeError::from)?;
+            match ec.data {
+                ExtraChannelBuf::U8(d) => image.push_extra_channel_u8(d, w, h),
+                ExtraChannelBuf::U16(d) => image.push_extra_channel_u16(d, w, h),
+            }
+            .map_err(EncodeError::from)?;
         }
 
         // Detect patches for lossless mode (RGB 8-bit only, non-grayscale)
