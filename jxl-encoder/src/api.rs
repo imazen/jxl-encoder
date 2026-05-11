@@ -1232,6 +1232,18 @@ pub struct LossyConfig {
     /// reduction at very high distances. libjxl auto-selects 2× at
     /// d ≥ 10. See [`Self::with_resampling`].
     resampling: u32,
+    /// `true` when [`Self::with_resampling`] was called explicitly.
+    /// Used to decide whether the auto-resample-at-high-distance
+    /// gate fires (refs #12). Auto only kicks in if the caller did
+    /// **not** pin a resampling factor.
+    resampling_explicit: bool,
+    /// `true` (default) enables libjxl's auto-resample-at-d≥10 rule
+    /// (`enc_frame.cc:103-115`). When the effective gate triggers,
+    /// the encoder uses the sharper 2× kernel and adjusts the
+    /// internal distance to `d * 0.25 + 0.25` so the bpp stays
+    /// roughly comparable. Disable via [`Self::with_auto_resampling`]
+    /// if you want strict pinned behavior.
+    auto_resampling: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
     lf_frame: bool,
@@ -1306,6 +1318,8 @@ impl LossyConfig {
             simplify_invisible: true,
             center_first: false,
             resampling: 1,
+            resampling_explicit: false,
+            auto_resampling: true,
             splines: None,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
@@ -1564,12 +1578,59 @@ impl LossyConfig {
     /// (`enc_heuristics.cc:279-405`) which is TBD.
     pub fn with_resampling(mut self, factor: u32) -> Self {
         self.resampling = if matches!(factor, 1 | 2 | 4 | 8) { factor } else { 1 };
+        self.resampling_explicit = true;
         self
     }
 
     /// Current resampling factor (1, 2, 4, or 8). Default `1`.
+    ///
+    /// When auto-resample is enabled (the default) and the distance
+    /// is ≥ 10, the **effective** resampling factor at encode time is
+    /// `2`, but this getter still returns the explicitly-set value
+    /// (or `1` if unset). Use [`Self::effective_resampling`] to query
+    /// what the encoder actually uses.
     pub fn resampling(&self) -> u32 {
         self.resampling
+    }
+
+    /// Enable / disable libjxl's auto-resample-at-d≥10 rule (refs #12).
+    /// Default `true`. When enabled and the caller has *not* pinned a
+    /// resampling factor via [`Self::with_resampling`], the encoder
+    /// engages 2× sharper downsampling at distance ≥ 10 and adjusts
+    /// the internal target distance to `d * 0.25 + 0.25`. libjxl
+    /// reference: `enc_frame.cc:103-115`.
+    pub fn with_auto_resampling(mut self, enable: bool) -> Self {
+        self.auto_resampling = enable;
+        self
+    }
+
+    /// Current auto-resample setting. Default `true`.
+    pub fn auto_resampling(&self) -> bool {
+        self.auto_resampling
+    }
+
+    /// Effective resampling factor the encoder will actually use,
+    /// after applying auto-resample at d≥10 (refs #12). Returns
+    /// `self.resampling` unless auto-resample is enabled, no explicit
+    /// factor was set, and `self.distance >= 10`.
+    pub fn effective_resampling(&self) -> u32 {
+        if !self.resampling_explicit && self.auto_resampling && self.distance >= 10.0 {
+            2
+        } else {
+            self.resampling
+        }
+    }
+
+    /// Effective butteraugli distance the encoder will actually use,
+    /// after applying libjxl's distance adjustment when auto-resample
+    /// kicks in (refs #12). Returns `self.distance` unless auto-resample
+    /// fires; otherwise returns `distance * 0.25 + 0.25`.
+    pub fn effective_distance(&self) -> f32 {
+        if !self.resampling_explicit && self.auto_resampling && self.distance >= 10.0 {
+            self.distance * 0.25 + 0.25
+        } else {
+            self.distance
+        }
     }
 
     /// Set manual splines to overlay on the image.
@@ -2950,7 +3011,13 @@ impl<'a> EncodeRequest<'a> {
             }
         }
 
-        let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
+        // Apply libjxl's auto-resample-at-d≥10 (refs #12,
+        // enc_frame.cc:103-115). The effective distance + resampling
+        // are derived once here and used everywhere downstream.
+        let effective_resampling = cfg.effective_resampling();
+        let effective_distance = cfg.effective_distance();
+
+        let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
         enc.effort = cfg.effort;
         enc.profile = profile;
         enc.use_ans = cfg.use_ans;
@@ -2960,7 +3027,7 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_noise = cfg.noise;
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
-        enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
+        enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
         enc.error_diffusion = cfg.error_diffusion;
         enc.pixel_domain_loss = cfg.pixel_domain_loss;
         enc.enable_lz77 = cfg.lz77;
@@ -3007,7 +3074,7 @@ impl<'a> EncodeRequest<'a> {
         // at the downsampled resolution and signals the decoder to
         // upsample after rendering. The file-header dims still report
         // the original (pre-downsample) size.
-        enc.upsampling = cfg.resampling;
+        enc.upsampling = effective_resampling;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -3041,17 +3108,17 @@ impl<'a> EncodeRequest<'a> {
         // uses libjxl's sharper 12×12 kernel (`enc_heuristics.cc:279`)
         // which preserves edge detail; factors 4 and 8 use the simple
         // box filter (libjxl behavior).
-        let (encode_rgb, encode_alpha, encode_w, encode_h) = if cfg.resampling > 1 {
-            let (down_rgb, dw, dh) = if cfg.resampling == 2 {
+        let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1 {
+            let (down_rgb, dw, dh) = if effective_resampling == 2 {
                 crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
             } else {
                 crate::vardct::resampling::box_downsample_rgb(
-                    &linear_rgb, w, h, cfg.resampling,
+                    &linear_rgb, w, h, effective_resampling,
                 )
             };
             let down_alpha = alpha.as_ref().map(|a| {
                 let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                    a, w, h, cfg.resampling,
+                    a, w, h, effective_resampling,
                 );
                 a_down
             });
@@ -3676,7 +3743,12 @@ impl LossyEncoder {
                 }
             }
 
-            let mut enc = crate::vardct::VarDctEncoder::new(cfg.distance);
+            // Apply auto-resample-at-d≥10 (refs #12) before building
+            // the encoder so distance + resampling stay coherent.
+            let effective_resampling = cfg.effective_resampling();
+            let effective_distance = cfg.effective_distance();
+
+            let mut enc = crate::vardct::VarDctEncoder::new(effective_distance);
             enc.effort = cfg.effort;
             enc.profile = profile;
             enc.use_ans = cfg.use_ans;
@@ -3685,7 +3757,7 @@ impl LossyEncoder {
             enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
             enc.enable_noise = cfg.noise;
             enc.enable_denoise = cfg.denoise;
-            enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
+            enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
             enc.error_diffusion = cfg.error_diffusion;
             enc.pixel_domain_loss = cfg.pixel_domain_loss;
             enc.enable_lz77 = cfg.lz77;
@@ -3712,24 +3784,24 @@ impl LossyEncoder {
             enc.center_first = self.cfg.center_first;
             // Decoder upsampling factor (refs #12). Mirrors the
             // EncodeRequest::encode_lossy wire-up below.
-            enc.upsampling = self.cfg.resampling;
+            enc.upsampling = effective_resampling;
             enc.non_finite_action = self.cfg.non_finite_action;
             enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
                 enc.icc_profile = Some(icc.clone());
             }
 
-            let (encode_rgb, encode_alpha, encode_w, encode_h) = if self.cfg.resampling > 1 {
-                let (down_rgb, dw, dh) = if self.cfg.resampling == 2 {
+            let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1 {
+                let (down_rgb, dw, dh) = if effective_resampling == 2 {
                     crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
                 } else {
                     crate::vardct::resampling::box_downsample_rgb(
-                        &linear_rgb, w, h, self.cfg.resampling,
+                        &linear_rgb, w, h, effective_resampling,
                     )
                 };
                 let down_alpha = alpha.as_ref().map(|a| {
                     let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                        a, w, h, self.cfg.resampling,
+                        a, w, h, effective_resampling,
                     );
                     a_down
                 });

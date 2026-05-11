@@ -7260,6 +7260,90 @@ fn test_lossy_with_resampling_invalid_falls_back_to_1() {
     assert_eq!(cfg.resampling(), 1);
 }
 
+/// Refs #12: auto-resample at distance ≥ 10 (libjxl
+/// `enc_frame.cc:103-115`). When the caller has not pinned a
+/// resampling factor and `auto_resampling` is on (default), the
+/// encoder engages 2× downsampling at d ≥ 10 and rescales the
+/// internal target distance to `d * 0.25 + 0.25`.
+#[test]
+fn test_lossy_auto_resampling_at_distance_10() {
+    // d = 10: effective resampling = 2, effective distance = 2.75
+    let cfg = LossyConfig::new(10.0);
+    assert_eq!(cfg.effective_resampling(), 2);
+    assert!((cfg.effective_distance() - 2.75).abs() < 1e-5);
+
+    // d = 25: same gate fires (resampling stays at 2).
+    let cfg = LossyConfig::new(25.0);
+    assert_eq!(cfg.effective_resampling(), 2);
+    assert!((cfg.effective_distance() - 6.5).abs() < 1e-5);
+
+    // d = 9.99: gate does NOT fire.
+    let cfg = LossyConfig::new(9.99);
+    assert_eq!(cfg.effective_resampling(), 1);
+    assert_eq!(cfg.effective_distance(), 9.99);
+
+    // Explicit with_resampling(1) suppresses auto.
+    let cfg = LossyConfig::new(15.0).with_resampling(1);
+    assert_eq!(cfg.effective_resampling(), 1);
+    assert_eq!(cfg.effective_distance(), 15.0);
+
+    // with_auto_resampling(false) suppresses auto.
+    let cfg = LossyConfig::new(15.0).with_auto_resampling(false);
+    assert_eq!(cfg.effective_resampling(), 1);
+    assert_eq!(cfg.effective_distance(), 15.0);
+
+    // Explicit with_resampling(4) overrides — does NOT engage 2x.
+    let cfg = LossyConfig::new(15.0).with_resampling(4);
+    assert_eq!(cfg.effective_resampling(), 4);
+    assert_eq!(cfg.effective_distance(), 15.0);
+}
+
+/// Refs #12: end-to-end auto-resample → smaller file, decoded dims
+/// preserved, frame renders end-to-end.
+#[test]
+fn test_lossy_auto_resampling_round_trip() {
+    let w = 64u32;
+    let h = 64u32;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    // Without auto: full d=12 encode (large file).
+    let bytes_no_auto = LossyConfig::new(12.0)
+        .with_effort(5)
+        .with_auto_resampling(false)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("no-auto encode");
+
+    // With auto (default): d=12 → effective d=3.25 + 2× sharper.
+    let bytes_auto = LossyConfig::new(12.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("auto encode");
+
+    // Auto path should produce a strictly smaller file than the
+    // no-auto baseline at d=12.
+    assert!(
+        bytes_auto.len() < bytes_no_auto.len(),
+        "auto-resample at d=12 should shrink the file (auto={}, no-auto={})",
+        bytes_auto.len(),
+        bytes_no_auto.len(),
+    );
+
+    // Decoded image still reports original dims.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_auto))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let render = image.render_frame(0).expect("render");
+    let fb = render.image_all_channels();
+    assert_eq!(fb.width() as u32, w);
+    assert_eq!(fb.height() as u32, h);
+}
+
 /// Refs #12: streaming `LossyEncoder` honors `with_resampling(2)` —
 /// file header reports original dims, decoder upsamples.
 #[test]
