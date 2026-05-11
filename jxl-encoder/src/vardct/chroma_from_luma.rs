@@ -34,6 +34,159 @@ pub fn ytob_ratio(b: i8) -> f32 {
     1.0 + b as f32 * K_INV_COLOR_FACTOR
 }
 
+/// libjxl `kCFLFixedPointPrecision` — bit precision of the
+/// `RatioJPEG` fixed-point factor (`enc/chroma_from_luma.h:43`).
+#[cfg(feature = "jpeg-reencoding")]
+pub const CFL_FIXED_POINT_PRECISION: i32 = 11;
+
+/// libjxl `kDefaultColorFactor` — denominator in `RatioJPEG`
+/// (`chroma_from_luma.h:37`). JPEG-compatible CfL maps must use
+/// this factor (other values are not encodable in the JPEG
+/// recompression path).
+#[cfg(feature = "jpeg-reencoding")]
+pub const DEFAULT_COLOR_FACTOR: i32 = 84;
+
+/// libjxl `RatioJPEG(factor)` (`chroma_from_luma.h:68-70`):
+/// `factor << 11 / 84`. Returns the fixed-point Y multiplier the
+/// decoder applies to luma DCT coefficients before subtracting them
+/// from chroma when undoing JPEG-CfL.
+#[cfg(feature = "jpeg-reencoding")]
+#[inline]
+pub fn ratio_jpeg(factor: i32) -> i32 {
+    (factor * (1 << CFL_FIXED_POINT_PRECISION)) / DEFAULT_COLOR_FACTOR
+}
+
+/// Per-channel zero-bias used by the JPEG-CfL search. libjxl
+/// `kZeroBiasDefault` (`quantizer.h:36`).
+#[cfg(feature = "jpeg-reencoding")]
+pub const JPEG_CFL_ZERO_BIAS_DEFAULT: [f32; 3] = [0.5, 0.5, 0.5];
+
+/// Search for an integer YtoX (c=0) or YtoB (c=2) multiplier per
+/// 8×8-block color tile that maximizes the count of zero chroma AC
+/// coefficients after subtracting `RatioJPEG(factor) * Y` from each.
+/// Mirrors libjxl `enc_frame.cc:855-941` (the JPEG-CfL search loop).
+///
+/// **JPEG mode constraints** (mirrors libjxl `IsJPEGCompatible`):
+/// - `base_correlation_x = base_correlation_b = 0`
+/// - DC factors zero (only AC coefficients participate)
+/// - color_factor = 84 (the default)
+///
+/// Inputs:
+/// - `c` — chroma channel index in JXL convention (0=X/Cb, 2=B/Cr)
+/// - `xsize_blocks` × `ysize_blocks` — frame dimensions in 8×8 blocks
+/// - `luma_ac` / `chroma_ac` — per-channel AC coefficients indexed
+///   `[by][bx][coeffpos]`. `coeffpos == 0` is DC and is skipped.
+///   Block layout matches libjxl's transposed `scaled_qtable` order.
+/// - `scaled_qtable_chroma` — 64-entry fixed-point quant table
+///   `(1 << 11) * qt_y[pos] / qt_c[pos]` per position, transposed.
+///
+/// Returns a `Vec<i8>` of length `xsize_tiles * ysize_tiles` —
+/// the per-tile multiplier (relative to libjxl's `kOffset = 127`).
+/// Caller writes into `CflMap.ytox` (c=0) or `CflMap.ytob` (c=2).
+#[cfg(feature = "jpeg-reencoding")]
+pub fn jpeg_cfl_search(
+    c: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    luma_ac: &[Vec<[i32; 64]>],
+    chroma_ac: &[Vec<[i32; 64]>],
+    scaled_qtable_chroma: &[i32; 64],
+) -> Vec<i8> {
+    debug_assert!(
+        c == 0 || c == 2,
+        "JPEG-CfL search only valid for c=0 or c=2"
+    );
+    let xsize_tiles = xsize_blocks.div_ceil(TILE_DIM_IN_BLOCKS);
+    let ysize_tiles = ysize_blocks.div_ceil(TILE_DIM_IN_BLOCKS);
+    let k_scale = DEFAULT_COLOR_FACTOR as f32;
+    const K_OFFSET: i32 = 127;
+    let k_base: f32 = 0.0;
+    let k_zero_thresh = k_scale * JPEG_CFL_ZERO_BIAS_DEFAULT[c] * 0.9999;
+    let inv_fp = 1.0 / ((1 << CFL_FIXED_POINT_PRECISION) as f32);
+
+    let mut out = vec![0i8; xsize_tiles * ysize_tiles];
+    for ty in 0..ysize_tiles {
+        for tx in 0..xsize_tiles {
+            let y0 = ty * TILE_DIM_IN_BLOCKS;
+            let x0 = tx * TILE_DIM_IN_BLOCKS;
+            let y1 = ((ty + 1) * TILE_DIM_IN_BLOCKS).min(ysize_blocks);
+            let x1 = ((tx + 1) * TILE_DIM_IN_BLOCKS).min(xsize_blocks);
+
+            let mut d_num_zeros = [0i32; 257];
+            for by in y0..y1 {
+                if by >= luma_ac.len() || by >= chroma_ac.len() {
+                    continue;
+                }
+                let luma_row = &luma_ac[by];
+                let chroma_row = &chroma_ac[by];
+                for bx in x0..x1 {
+                    if bx >= luma_row.len() || bx >= chroma_row.len() {
+                        continue;
+                    }
+                    let luma_block = &luma_row[bx];
+                    let chroma_block = &chroma_row[bx];
+                    for coeffpos in 1..64 {
+                        let scaled_m = (luma_block[coeffpos] as f32)
+                            * (scaled_qtable_chroma[coeffpos] as f32)
+                            * inv_fp;
+                        let scaled_s = k_scale * (chroma_block[coeffpos] as f32)
+                            + (K_OFFSET as f32 - k_base * k_scale) * scaled_m;
+                        if scaled_m.abs() <= 1e-8 {
+                            continue;
+                        }
+                        let (mut from, mut to) = if scaled_m > 0.0 {
+                            (
+                                (scaled_s - k_zero_thresh) / scaled_m,
+                                (scaled_s + k_zero_thresh) / scaled_m,
+                            )
+                        } else {
+                            (
+                                (scaled_s + k_zero_thresh) / scaled_m,
+                                (scaled_s - k_zero_thresh) / scaled_m,
+                            )
+                        };
+                        if from < 0.0 {
+                            from = 0.0;
+                        }
+                        if to > 255.0 {
+                            to = 255.0;
+                        }
+                        if from <= to {
+                            let lo = from.ceil() as i32;
+                            let hi = (to + 1.0).floor() as i32;
+                            if (0..=256).contains(&lo) {
+                                d_num_zeros[lo as usize] += 1;
+                            }
+                            if (0..=256).contains(&hi) {
+                                d_num_zeros[hi as usize] -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut best_i: i32 = 0;
+            let mut best_sum: i32 = 0;
+            let mut offset_sum: i32 = 0;
+            let mut running: i32 = 0;
+            for i in 0..256 {
+                running += d_num_zeros[i];
+                if running > best_sum {
+                    best_sum = running;
+                    best_i = i as i32;
+                }
+                if i as i32 == K_OFFSET {
+                    offset_sum = running;
+                }
+            }
+            if best_sum > offset_sum + 1 {
+                out[ty * xsize_tiles + tx] = (best_i - K_OFFSET) as i8;
+            }
+        }
+    }
+    out
+}
+
 /// Per-tile chroma-from-luma map.
 pub struct CflMap {
     /// YtoX values per tile, row-major.
