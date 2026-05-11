@@ -2597,7 +2597,7 @@ mod decoder_validation {
     /// Lossy roundtrip at distance 1.0 (high quality). 16×16 RGB
     /// synthetic gradient — a parse-and-decode compatibility check
     /// (per CLAUDE.md, synthetic images are fine for "does it parse
-    /// + decode without error" — not a quality assertion). The
+    /// and decode without error" — not a quality assertion). The
     /// `ignore` marker pre-dating today's encoder work was stale.
     #[test]
     fn test_roundtrip_lossy_rgb_d1() {
@@ -6319,9 +6319,9 @@ fn test_encode_request_row_stride_validates_too_small() {
     );
 }
 
-/// Tone-mapping numeric range checks reject NaN / Inf / negative /
-/// > f16-max values on `intensity_target` and `min_nits`. These
-/// would otherwise fail deep in `f32_to_f16_bits` inside the
+/// Tone-mapping numeric range checks reject NaN / Inf / negative
+/// / above-f16-max values on `intensity_target` and `min_nits`.
+/// These would otherwise fail deep in `f32_to_f16_bits` inside the
 /// codestream writer with a generic error.
 #[test]
 fn test_request_lossy_invalid_intensity_target_rejected() {
@@ -6497,20 +6497,15 @@ fn test_request_lossy_valid_source_gamma_accepted() {
 
 #[test]
 fn test_request_lossy_invalid_intrinsic_size_rejected() {
-    use crate::ImageMetadata;
     let w = 8u32;
     let h = 8u32;
     let pixels = vec![0u8; (w * h * 3) as usize];
     // Zero dim.
-    let meta = ImageMetadata::new();
-    // ImageMetadata doesn't expose intrinsic_size as a builder; the
-    // request-level setter does. EncodeRequest::with_metadata only
-    // attaches the icc/exif/xmp side. Test the request-level setters.
-    drop(meta);
-
     // Note: there's no `EncodeRequest::with_intrinsic_size` —
     // intrinsic_size is set on `LossyConfig` / `LosslessConfig`. The
     // request validates whatever's on the config or metadata.
+    // (`ImageMetadata::new()` doesn't expose intrinsic_size as a
+    // builder either; only icc / exif / xmp.)
     // Test via the streaming path instead.
     let cfg = LossyConfig::new(1.0).with_effort(3);
     let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
