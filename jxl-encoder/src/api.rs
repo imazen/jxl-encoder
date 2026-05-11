@@ -1163,6 +1163,13 @@ pub struct LossyConfig {
     force_strategy: Option<u8>,
     max_strategy_size: Option<u8>,
     patches: bool,
+    /// Smear color values in alpha=0 pixels to a weighted average of
+    /// visible neighbors (libjxl `SimplifyInvisible` lossy mode,
+    /// `enc_frame.cc:511`). 5-20% smaller files on sprites/icons with
+    /// large transparent regions; near-zero cost on photos with
+    /// mostly-opaque alpha. Default `true`. Disable via
+    /// [`Self::with_simplify_invisible`].
+    simplify_invisible: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
     lf_frame: bool,
@@ -1234,6 +1241,7 @@ impl LossyConfig {
             force_strategy: None,
             max_strategy_size: None,
             patches: profile.patches,
+            simplify_invisible: true,
             splines: None,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
@@ -1427,6 +1435,24 @@ impl LossyConfig {
     /// Default: true. Huge wins on screenshots, zero cost on photos.
     pub fn with_patches(mut self, enable: bool) -> Self {
         self.patches = enable;
+        self
+    }
+
+    /// Enable/disable invisible-pixel simplification (closes #10).
+    ///
+    /// When `true` (default), color values in alpha=0 pixels are
+    /// replaced with a smooth weighted average of visible neighbors
+    /// before XYB conversion. Mirrors libjxl's `SimplifyInvisible`
+    /// pre-pass (`enc_frame.cc:511`). 5-20% file-size reduction on
+    /// sprites / icons / UI elements with large transparent regions;
+    /// near-zero cost on photos with mostly-opaque alpha.
+    ///
+    /// Decoded visible pixels are unaffected — the simplification only
+    /// touches data that no decoder will display. Disable only if you
+    /// need bit-exact preservation of arbitrary garbage in invisible
+    /// pixels (e.g., for steganography or alpha-channel side data).
+    pub fn with_simplify_invisible(mut self, enable: bool) -> Self {
+        self.simplify_invisible = enable;
         self
     }
 
@@ -2454,6 +2480,28 @@ impl<'a> EncodeRequest<'a> {
 
         let mut profile = cfg.effective_profile();
 
+        // SimplifyInvisible pre-pass (closes #10): smooth color
+        // values in alpha=0 pixels to a weighted average of visible
+        // neighbors, reducing high-frequency DCT energy from arbitrary
+        // garbage in transparent regions. libjxl `enc_frame.cc:511`
+        // (default-on for lossy). Sprites/icons benefit (5-20% smaller);
+        // photos with mostly-opaque alpha pay only the cheap
+        // `has_any_invisible_pixels` predicate (single linear scan
+        // with early-exit on the first zero).
+        let mut linear_rgb = linear_rgb;
+        if cfg.simplify_invisible
+            && let Some(ref alpha_buf) = alpha
+            && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
+        {
+            crate::vardct::simplify_invisible::simplify_invisible_rgb(
+                &mut linear_rgb,
+                alpha_buf,
+                w,
+                h,
+                false, // lossless = false (smear, not zero)
+            );
+        }
+
         // Apply max_strategy_size to profile flags
         if let Some(max_size) = cfg.max_strategy_size {
             if max_size < 16 {
@@ -2928,8 +2976,25 @@ impl LossyEncoder {
         let cfg = &self.cfg;
         let w = self.width as usize;
         let h = self.height as usize;
-        let linear_rgb = self.linear_rgb;
+        let mut linear_rgb = self.linear_rgb;
         let alpha = self.alpha;
+
+        // SimplifyInvisible pre-pass (closes #10) — mirrored from the
+        // one-shot path in `EncodeRequest::encode_lossy`. Required to
+        // keep `oneshot == streaming` byte-exact when the input has any
+        // alpha=0 pixel (caught by `test_streaming_lossy_rgba`).
+        if cfg.simplify_invisible
+            && let Some(ref alpha_buf) = alpha
+            && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
+        {
+            crate::vardct::simplify_invisible::simplify_invisible_rgb(
+                &mut linear_rgb,
+                alpha_buf,
+                w,
+                h,
+                false,
+            );
+        }
 
         // Construct the per-encode allocation budget. Streaming callers
         // can attach a [`Limits`] via [`Self::with_limits`]; otherwise we

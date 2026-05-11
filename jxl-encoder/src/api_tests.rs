@@ -6084,6 +6084,65 @@ fn test_encode_request_with_intensity_target_and_color_encoding() {
     );
 }
 
+/// Closes #10: SimplifyInvisible pre-pass measurably reduces encoded
+/// bytes on RGBA images with large transparent regions.
+///
+/// Synthetic 32×32 sprite: a 12×12 visible square in the top-left
+/// corner, the rest is alpha=0 with high-frequency garbage in the
+/// color channels. Without simplification the noise fills the
+/// invisible blocks with high DCT energy → big files.
+#[test]
+fn test_simplify_invisible_shrinks_sprite_files() {
+    let w = 32u32;
+    let h = 32u32;
+    // Build RGBA: visible 12×12 patch at (0,0) (alpha=255, smooth
+    // gradient), invisible elsewhere (alpha=0, high-frequency noise).
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let idx = (y * w as usize + x) * 4;
+            if x < 12 && y < 12 {
+                pixels[idx] = (x * 20) as u8;
+                pixels[idx + 1] = (y * 20) as u8;
+                pixels[idx + 2] = ((x + y) * 10) as u8;
+                pixels[idx + 3] = 255;
+            } else {
+                // Garbage in the invisible region — pseudo-random,
+                // high-frequency noise so the DCT can't compress it.
+                let g = ((x * 13 + y * 31) ^ 0xA5) as u8;
+                pixels[idx] = g;
+                pixels[idx + 1] = !g;
+                pixels[idx + 2] = g.wrapping_mul(7);
+                pixels[idx + 3] = 0;
+            }
+        }
+    }
+
+    let cfg_with = LossyConfig::new(1.0).with_effort(3);
+    let cfg_without = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_simplify_invisible(false);
+
+    let bytes_with = cfg_with.encode(&pixels, w, h, PixelLayout::Rgba8).unwrap();
+    let bytes_without = cfg_without
+        .encode(&pixels, w, h, PixelLayout::Rgba8)
+        .unwrap();
+
+    eprintln!(
+        "simplify_invisible: with={} bytes, without={} bytes (-{:.1}%)",
+        bytes_with.len(),
+        bytes_without.len(),
+        100.0 * (bytes_without.len() as f64 - bytes_with.len() as f64) / bytes_without.len() as f64,
+    );
+
+    assert!(
+        bytes_with.len() < bytes_without.len(),
+        "simplify_invisible should shrink the sprite (with={}, without={})",
+        bytes_with.len(),
+        bytes_without.len(),
+    );
+}
+
 /// Closes #21: HLG variant — round-trip the HLG transfer + intensity_target.
 #[test]
 fn test_encode_request_with_intensity_target_hlg() {
