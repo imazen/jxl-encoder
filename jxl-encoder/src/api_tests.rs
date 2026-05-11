@@ -7829,13 +7829,12 @@ fn test_lossless_gray_with_spot_color_channel() {
     let _render = image.render_frame(0).expect("render");
 }
 
-/// Refs #9: 5+ channel lossless. RGBA+Depth (5ch) trips
-/// `InvalidFloat` in jxl-oxide's header parse even at low effort,
-/// suggesting an unrelated bug in extra-channel header writing
-/// when there are 2+ entries. 4-channel RGB+Depth works fine
-/// (verified above). Documented for follow-up.
+/// Refs #9: lossless RGBA + Depth (5 channels: R, G, B, alpha,
+/// depth). Used to fail with `InvalidFloat` because the
+/// `num_extra_channels` size coder mis-encoded selector 2 as
+/// `Val(2)` instead of `Bits(4) + 2`, shifting every subsequent
+/// header field by 4 bits. Fixed in the same series.
 #[test]
-#[ignore = "5+ channel lossless: file_header extra-channels writer trips jxl-oxide InvalidFloat for 2+ entries"]
 fn test_lossless_rgba_with_depth_low_effort() {
     use crate::api::ExtraChannel;
     let w = 16u32;
@@ -7864,10 +7863,47 @@ fn test_lossless_rgba_with_depth_low_effort() {
     let _render = image.render_frame(0).expect("render");
 }
 
-/// Refs #9: same 5-channel input at default effort still trips the
-/// tree-learning ANS bug — kept ignored to document the gap.
+/// Refs #9: lossless RGBA + Depth + SpotColor (6 channels) —
+/// stress test that the num_extra_channels size-coder fix
+/// extends past 2 entries. With 3 extras the size coder still
+/// uses selector 2 (Bits(4) + 2 → 4 bits + offset 2 = 3
+/// representable as `001`).
 #[test]
-#[ignore = "5+ channel modular at effort 7+: tree-learning ANS path bug; works at effort 6"]
+fn test_lossless_rgba_with_three_extras() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 7 % 256) as u8).collect();
+    let spot: Vec<u8> = vec![64u8; (w * h) as usize];
+    let extras = [
+        ExtraChannel::depth(&depth),
+        ExtraChannel::spot_color(&spot, [0.5, 0.5, 0.5, 1.0]),
+    ];
+    let bytes = LosslessConfig::new()
+        .with_effort(6)
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless rgba+depth+spot");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        3,
+        "expected 3 extras (alpha + depth + spot)",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: lossless RGBA + SpotColor (5 channels: R, G, B,
+/// alpha, spot). Used to fail along with the RGBA+Depth case
+/// before the num_extra_channels size-coder fix.
+#[test]
 fn test_lossless_rgba_with_spot_color_channel() {
     use crate::api::ExtraChannel;
     let w = 16u32;

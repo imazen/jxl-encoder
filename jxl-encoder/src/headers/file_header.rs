@@ -453,14 +453,40 @@ impl FileHeader {
         );
         writer.write_bit(mod16_sufficient)?;
 
-        // num_extra_channels
+        // num_extra_channels — per jxl-rs ImageMetadata
+        // `extra_channel_info: Vec<...>` with
+        // `#[size_coder(implicit(u2S(0, 1, Bits(4) + 2, Bits(12) + 1)))]`.
+        // Selectors:
+        //   0 → Val(0)        (2 bits)
+        //   1 → Val(1)        (2 bits)
+        //   2 → Bits(4) + 2   (2 + 4 bits, range 2..=17)
+        //   3 → Bits(12) + 1  (2 + 12 bits, range 1..)
+        // The previous call `write_u32_coder(n, 0, 1, 2, 1, 12)`
+        // emitted selector 2 = Val(2) — wrong for n >= 2 (2 bits
+        // instead of 6) which shifted every subsequent header field
+        // and broke 2+ extra-channel decodes (refs #9). Fix mirrors
+        // libjxl + jxl-rs spec exactly.
         let num_extra = meta.extra_channels.len() as u32;
         crate::trace::debug_eprintln!(
             "META [bit {}]: num_extra_channels = {}",
             writer.bits_written(),
             num_extra
         );
-        writer.write_u32_coder(num_extra, 0, 1, 2, 1, 12)?;
+        if num_extra == 0 {
+            writer.write(2, 0)?;
+        } else if num_extra == 1 {
+            writer.write(2, 1)?;
+        } else if num_extra <= 17 {
+            // selector 2: Bits(4) + 2 — values 2..=17
+            writer.write(2, 2)?;
+            writer.write(4, (num_extra - 2) as u64)?;
+        } else {
+            // selector 3: Bits(12) + 1 — values 1..=4096; we never
+            // emit this for <= 17 since selector 2 covers it.
+            debug_assert!(num_extra >= 1 && num_extra <= 4096);
+            writer.write(2, 3)?;
+            writer.write(12, (num_extra - 1) as u64)?;
+        }
 
         for ec in &meta.extra_channels {
             ec.write(writer)?;
