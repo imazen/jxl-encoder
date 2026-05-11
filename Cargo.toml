@@ -17,6 +17,12 @@ resolver = "2"
 [workspace.lints.clippy]
 missing_safety_doc = "deny"
 undocumented_unsafe_blocks = "deny"
+# We port many constants verbatim from libjxl C++ source where they
+# are written at double precision. Rust f32 literals get truncated at
+# parse time so the runtime value is identical to a "shortened"
+# representation, but preserving the source-heritage digit count
+# helps audits and parity checks. 145+ such constants in this crate.
+excessive_precision = "allow"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

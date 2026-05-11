@@ -2297,8 +2297,8 @@ impl VarDctEncoder {
                     permutation.push(i as u32);
                 }
                 let prefix_u32 = prefix_len as u32;
-                for orig_idx in 0..num_groups {
-                    permutation.push(prefix_u32 + inv_ac[orig_idx]);
+                for &val in &inv_ac[..num_groups] {
+                    permutation.push(prefix_u32 + val);
                 }
                 let mut new_sections: Vec<Vec<u8>> =
                     (0..total).map(|_| Vec::new()).collect();

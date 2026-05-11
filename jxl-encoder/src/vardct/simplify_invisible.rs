@@ -129,7 +129,7 @@ pub fn simplify_invisible_rgb(
 /// invisible pixels exist. Sprites/icons trigger; photos with
 /// fully-opaque alpha do not.
 pub fn has_any_invisible_pixels(alpha: &[u8]) -> bool {
-    alpha.iter().any(|&a| a == 0)
+    alpha.contains(&0)
 }
 
 #[cfg(test)]
