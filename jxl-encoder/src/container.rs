@@ -42,6 +42,62 @@ pub fn wrap_in_container(codestream: &[u8], exif: Option<&[u8]>, xmp: Option<&[u
     wrap_in_container_with_jbrd(codestream, None, exif, xmp)
 }
 
+/// Wraps a JXL codestream like [`wrap_in_container`], but Brotli-compresses
+/// EXIF / XMP metadata into `brob` boxes when it saves bytes (closes #15).
+///
+/// `brotli_quality` (0-11; libjxl default 4) controls the Brotli encoder
+/// effort. Each metadata blob is independently evaluated: if the brob
+/// (compressed) version would be smaller, it lands in a `brob` box;
+/// otherwise the function falls back to the uncompressed Exif/xml box.
+/// Sub-500-byte metadata typically falls back due to Brotli framing
+/// overhead.
+///
+/// The codestream itself is never compressed (always written as `jxlc`).
+/// Compression for `jbrd` is handled separately by the
+/// `jpeg-reencoding` feature.
+#[cfg(feature = "brotli-metadata")]
+pub fn wrap_in_container_with_brob(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    brotli_quality: u32,
+) -> Vec<u8> {
+    let header_size = JXL_CONTAINER_SIGNATURE.len() + FTYP_BOX.len();
+    let jxlc_size = 8 + codestream.len();
+    // Worst-case sizes for pre-allocation: assume each metadata blob
+    // either compresses (8 + 4 + payload.len) or stays uncompressed
+    // (8 + 4 + payload.len for exif, 8 + payload.len for xmp). The
+    // uncompressed Exif size already includes the 4-byte Tiff prefix.
+    let exif_size = exif.map_or(0, |e| 8 + 4 + e.len());
+    let xmp_size = xmp.map_or(0, |x| 8 + x.len());
+    let total = header_size + jxlc_size + exif_size + xmp_size;
+    let mut out = Vec::with_capacity(total);
+
+    out.extend_from_slice(&JXL_CONTAINER_SIGNATURE);
+    out.extend_from_slice(&FTYP_BOX);
+    write_box(&mut out, b"jxlc", codestream);
+
+    // Exif: build the Exif payload (4-byte Tiff offset + EXIF data),
+    // then try brob. The brob's "original type" is the box type that
+    // would have been used, INCLUDING the 4-byte Tiff prefix in the
+    // payload — matches libjxl's brob-Exif convention.
+    if let Some(exif_data) = exif {
+        let mut exif_payload = Vec::with_capacity(4 + exif_data.len());
+        exif_payload.extend_from_slice(&[0u8; 4]); // Tiff offset
+        exif_payload.extend_from_slice(exif_data);
+        if !try_write_brob_box(&mut out, b"Exif", &exif_payload, brotli_quality) {
+            write_exif_box(&mut out, exif_data);
+        }
+    }
+    // XMP: payload is the raw XML; type is `xml ` (note trailing space).
+    if let Some(xmp_data) = xmp
+        && !try_write_brob_box(&mut out, b"xml ", xmp_data, brotli_quality)
+    {
+        write_box(&mut out, b"xml ", xmp_data);
+    }
+    out
+}
+
 /// Wraps a JXL codestream in a container with optional JBRD, EXIF, and XMP.
 ///
 /// The `jbrd` box contains JPEG Bitstream Reconstruction Data needed for
@@ -180,6 +236,73 @@ fn write_exif_box(out: &mut Vec<u8>, exif_data: &[u8]) {
     }
     out.extend_from_slice(&[0u8; 4]); // Tiff header offset (always 0)
     out.extend_from_slice(exif_data);
+}
+
+/// Brotli-compress `payload` and emit a `brob` box (closes #15).
+///
+/// Format: `[box_size] [b"brob"] [original_type: 4 bytes]
+/// [brotli_compressed_payload]`. Decoders read the first 4 bytes of
+/// the payload to learn the original box type, then Brotli-decompress
+/// the rest. libjxl quality default is 4 (good balance for typical
+/// XMP/EXIF blobs).
+///
+/// Skips compression when the brob output would be >= the
+/// uncompressed alternative (e.g. tiny / already-compressed payloads):
+/// the caller's intent is "save bytes if possible". When skipping
+/// returns `false`; the caller falls back to the uncompressed box.
+/// When compressing returns `true`.
+///
+/// Per spec, `original_type` MUST NOT be one of `jxl*`, `jbrd`, or
+/// `brob` (nested brob is forbidden). The function does not validate
+/// — caller is responsible for routing only metadata boxes
+/// (Exif/xml/jumb).
+#[cfg(feature = "brotli-metadata")]
+#[must_use]
+pub(crate) fn try_write_brob_box(
+    out: &mut Vec<u8>,
+    original_type: &[u8; 4],
+    payload: &[u8],
+    quality: u32,
+) -> bool {
+    use brotli::enc::BrotliEncoderParams;
+    use std::io::Write;
+
+    // Brotli params: quality 0-11, libjxl default 4. lgwin 22 (4 MiB
+    // window) matches Brotli default; mode = generic.
+    let mut params = BrotliEncoderParams::default();
+    params.quality = quality.min(11) as i32;
+    let mut compressed: Vec<u8> = Vec::with_capacity(payload.len() / 2);
+    {
+        let mut writer = brotli::CompressorWriter::with_params(&mut compressed, 4096, &params);
+        if writer.write_all(payload).is_err() {
+            return false;
+        }
+        if writer.flush().is_err() {
+            return false;
+        }
+    }
+    // brob payload = 4-byte original_type + brotli stream.
+    let brob_payload_size = 4 + compressed.len();
+    let uncompressed_box_size = 8 + payload.len();
+    let brob_box_size = 8 + brob_payload_size;
+    if brob_box_size >= uncompressed_box_size {
+        // Brotli overhead beat the savings — skip and let the caller
+        // emit the uncompressed box.
+        return false;
+    }
+    let total_size = brob_box_size as u64;
+    if total_size <= u32::MAX as u64 {
+        out.extend_from_slice(&(total_size as u32).to_be_bytes());
+        out.extend_from_slice(b"brob");
+    } else {
+        let extended_size = 16u64 + brob_payload_size as u64;
+        out.extend_from_slice(&1u32.to_be_bytes());
+        out.extend_from_slice(b"brob");
+        out.extend_from_slice(&extended_size.to_be_bytes());
+    }
+    out.extend_from_slice(original_type);
+    out.extend_from_slice(&compressed);
+    true
 }
 
 /// Write an ISOBMFF box: 4-byte big-endian size + 4-byte type + payload.
@@ -385,5 +508,82 @@ mod tests {
         let size = u32::from_be_bytes([out[0], out[1], out[2], out[3]]);
         assert_eq!(size, 8);
         assert_eq!(&out[4..8], b"emty");
+    }
+
+    // ─── #15 brotli-metadata (brob boxes) ─────────────────────────
+
+    #[cfg(feature = "brotli-metadata")]
+    #[test]
+    fn test_brob_compresses_large_xmp() {
+        // Synthetic 4 KB of repeated XMP-like XML — Brotli compresses
+        // this trivially (>10x). Verifies a brob box lands.
+        let codestream = b"\xFF\x0A";
+        let xmp_blob = "<rdf:Description><exif:CreatorTool>Test</exif:CreatorTool></rdf:Description>".repeat(64);
+        let xmp = xmp_blob.as_bytes();
+        let result = wrap_in_container_with_brob(codestream, None, Some(xmp), 4);
+        // Find a brob box header somewhere in the result.
+        let mut found_brob = false;
+        for i in 0..result.len().saturating_sub(8) {
+            if &result[i..i + 4] == b"brob" {
+                found_brob = true;
+                // Next 4 bytes should be the original type ("xml ").
+                assert_eq!(
+                    &result[i + 4..i + 8],
+                    b"xml ",
+                    "brob original_type should be `xml ` for XMP",
+                );
+                break;
+            }
+        }
+        assert!(found_brob, "expected a brob box for compressible XMP");
+        // Result should be smaller than the uncompressed equivalent.
+        let uncompressed = wrap_in_container(codestream, None, Some(xmp));
+        assert!(
+            result.len() < uncompressed.len(),
+            "brob version {} should be smaller than uncompressed {}",
+            result.len(),
+            uncompressed.len(),
+        );
+    }
+
+    #[cfg(feature = "brotli-metadata")]
+    #[test]
+    fn test_brob_skips_tiny_xmp() {
+        // Small payload where Brotli framing overhead would beat the
+        // savings. Should fall back to the uncompressed `xml ` box.
+        let codestream = b"\xFF\x0A";
+        let xmp = b"<x>1</x>";
+        let result = wrap_in_container_with_brob(codestream, None, Some(xmp), 4);
+        let mut found_brob = false;
+        let mut found_xml = false;
+        for i in 0..result.len().saturating_sub(4) {
+            if &result[i..i + 4] == b"brob" {
+                found_brob = true;
+            }
+            if &result[i..i + 4] == b"xml " {
+                found_xml = true;
+            }
+        }
+        assert!(!found_brob, "tiny XMP should NOT use brob");
+        assert!(found_xml, "tiny XMP should fall back to plain `xml ` box");
+    }
+
+    #[cfg(feature = "brotli-metadata")]
+    #[test]
+    fn test_brob_exif_with_tiff_prefix() {
+        // EXIF brob includes the 4-byte Tiff prefix in the compressed
+        // payload (matches libjxl convention). Verify the brob's
+        // original_type is `Exif`.
+        let codestream = b"\xFF\x0A";
+        let exif = vec![0x4D, 0x4D, 0x00, 0x2A].repeat(64); // 256-byte TIFF-MM-tagged blob
+        let result = wrap_in_container_with_brob(codestream, Some(&exif), None, 4);
+        let mut found_brob_exif = false;
+        for i in 0..result.len().saturating_sub(8) {
+            if &result[i..i + 4] == b"brob" && &result[i + 4..i + 8] == b"Exif" {
+                found_brob_exif = true;
+                break;
+            }
+        }
+        assert!(found_brob_exif, "expected brob box with original_type=Exif");
     }
 }
