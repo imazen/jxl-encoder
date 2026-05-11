@@ -261,6 +261,14 @@ pub struct VarDctEncoder {
     pub min_nits: f32,
     /// Intrinsic display size `(width, height)`, if different from coded dimensions.
     pub intrinsic_size: Option<(u32, u32)>,
+    /// When `true`, the alpha extra-channel header is emitted with
+    /// `alpha_associated=true` (premultiplied / associated alpha).
+    /// The encoder DOES NOT premultiply or unpremultiply pixels here —
+    /// it's the caller's responsibility to feed straight color and
+    /// declare the encoded form. The high-level `EncodeRequest` /
+    /// `LossyEncoder` API does the unpremultiply pre-pass before
+    /// handing us the linear RGB.
+    pub alpha_associated: bool,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
@@ -313,6 +321,7 @@ impl Default for VarDctEncoder {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            alpha_associated: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -360,6 +369,7 @@ impl VarDctEncoder {
             intensity_target: 255.0,
             min_nits: 0.0,
             intrinsic_size: None,
+            alpha_associated: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -1492,8 +1502,14 @@ impl VarDctEncoder {
     /// It skips XYB conversion, CfL, masking, and AC strategy computation,
     /// using the values from `precomputed` instead.
     ///
-    /// Requires the `rate-control` feature.
-    #[cfg(feature = "rate-control")]
+    /// Requires the `rate-control` OR `__pre_quantized` feature. The
+    /// latter is the unstable downstream-callable path used by
+    /// jxl-encoder-gpu (or any other pre-quantized caller) to feed
+    /// already-prepared XYB / AC strategy / CfL / quant field directly
+    /// to the bitstream emit path, skipping XYB / CfL / masking /
+    /// strat-search / butteraugli refinement that the encoder would
+    /// otherwise re-do.
+    #[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
     pub fn encode_from_precomputed(
         &self,
         precomputed: &super::precomputed::EncoderPrecomputed,

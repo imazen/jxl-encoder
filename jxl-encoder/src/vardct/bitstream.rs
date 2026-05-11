@@ -561,7 +561,9 @@ impl VarDctEncoder {
         }
 
         let extra_channels = if has_alpha {
-            vec![ExtraChannelInfo::alpha()]
+            let mut alpha_ec = ExtraChannelInfo::alpha();
+            alpha_ec.alpha_associated = self.alpha_associated;
+            vec![alpha_ec]
         } else {
             Vec::new()
         };
