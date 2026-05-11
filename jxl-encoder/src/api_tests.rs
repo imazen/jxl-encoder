@@ -6116,6 +6116,80 @@ fn test_streaming_lossless_encoder_premultiplied_alpha() {
     );
 }
 
+/// Closes bits_per_sample sub-feature of #18: caller can signal
+/// 10/12/14-bit input precision via `with_bits_per_sample(N)`. The
+/// encoder normalizes by `(1 << N) - 1` and writes
+/// `BitDepth.bits_per_sample = N` in the codestream header.
+#[test]
+fn test_encode_request_bits_per_sample_12_lossy() {
+    use crate::headers::file_header::BitDepth as _Bd;
+    let _ = _Bd::default(); // suppress unused-import lint if needed
+    let w = 16u32;
+    let h = 16;
+    // 12-bit data: max value 4095. Stored in low bits of u16.
+    // Generate a smooth gradient that uses the full 12-bit range.
+    let pixels_u16: Vec<u16> = (0..(w * h * 3))
+        .map(|i| ((i % 4096) as u16))
+        .collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_bits_per_sample(12)
+        .encode(pixels)
+        .unwrap();
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let bd = &img.image_header().metadata.bit_depth;
+    let bd_dbg = format!("{bd:?}");
+    assert!(
+        bd_dbg.contains("12"),
+        "BitDepth should report 12 bits_per_sample; got {bd_dbg}",
+    );
+}
+
+#[test]
+fn test_encode_request_bits_per_sample_normalization_changes_output() {
+    // The same u16 bytes encoded with `with_bits_per_sample(10)` vs
+    // the default (16-bit) should produce DIFFERENT codestreams,
+    // because the input normalization divisor differs (1023 vs 65535).
+    let w = 16u32;
+    let h = 16;
+    let pixels_u16: Vec<u16> = (0..(w * h * 3)).map(|i| (i % 1024) as u16).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_default = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .encode(pixels)
+        .unwrap();
+    let bytes_10bit = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_bits_per_sample(10)
+        .encode(pixels)
+        .unwrap();
+    assert_ne!(
+        bytes_default, bytes_10bit,
+        "with_bits_per_sample(10) should change input normalization → different bytes",
+    );
+}
+
+#[test]
+fn test_encode_request_bits_per_sample_clamps_out_of_range() {
+    // Out-of-range values are clamped to 1..=16. 17 → 16 (full
+    // 16-bit, equivalent to no override). 0 → 1.
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let pixels = vec![0u8; 16 * 16 * 6];
+    let _ = cfg
+        .encode_request(16, 16, PixelLayout::Rgb16)
+        .with_bits_per_sample(17)
+        .encode(&pixels)
+        .unwrap();
+}
+
 /// Closes lossless portion of #13: `EncodeRequest::with_premultiplied_alpha(true)`
 /// sets `alpha_associated=true` in the encoded `ExtraChannelInfo`.
 /// Verified by parsing the codestream via jxl-oxide and reading the

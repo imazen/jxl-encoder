@@ -527,11 +527,18 @@ impl VarDctEncoder {
         height: usize,
         has_alpha: bool,
     ) -> FileHeader {
-        let bit_depth = if self.bit_depth_16 {
+        let mut bit_depth = if self.bit_depth_16 {
             BitDepth::uint16()
         } else {
             BitDepth::uint8()
         };
+        // Optional bits_per_sample override (#18 sub-feature). Keeps
+        // float_sample / exponent_bits from the int default; only the
+        // bits_per_sample field is replaced so callers can signal
+        // narrower-precision integer input (10/12/14-bit).
+        if let Some(bits) = self.bits_per_sample_override {
+            bit_depth.bits_per_sample = bits;
+        }
 
         let mut color_encoding = if let Some(ce) = self.color_encoding.clone() {
             // Explicit color encoding overrides source_gamma and defaults.
