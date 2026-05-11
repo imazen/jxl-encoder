@@ -7863,6 +7863,40 @@ fn test_lossless_rgba_with_depth_low_effort() {
     let _render = image.render_frame(0).expect("render");
 }
 
+/// Refs #9: lossless RGB + 16-bit Depth (u16 extra channel).
+/// `ExtraChannel::depth_u16` sets the channel info's bit_depth
+/// to 16 so the decoder knows to preserve the full precision.
+#[test]
+fn test_lossless_rgb_with_16bit_depth_channel() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    // 16-bit depth values spanning the full 0..=65535 range.
+    let depth_u16: Vec<u16> = (0..(w * h)).map(|i| (i * 257) as u16).collect();
+    let extras = [ExtraChannel::depth_u16(&depth_u16)];
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless rgb + 16-bit depth");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(header.metadata.ec_info.len(), 1);
+    let ec = &header.metadata.ec_info[0];
+    assert_eq!(
+        ec.bit_depth.bits_per_sample(),
+        16,
+        "depth_u16 should signal 16-bit bit_depth",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
 /// Refs #9: lossless RGBA + Depth + SpotColor (6 channels) —
 /// stress test that the num_extra_channels size-coder fix
 /// extends past 2 entries. With 3 extras the size coder still

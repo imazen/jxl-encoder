@@ -399,6 +399,33 @@ impl ModularImage {
         Ok(())
     }
 
+    /// Append a 16-bit extra channel. Same shape as
+    /// [`Self::push_extra_channel_u8`] but the input is a `&[u16]`
+    /// (`width * height` samples). Caller is responsible for
+    /// setting the matching `ExtraChannelInfo.bit_depth` to 16 in
+    /// the file header.
+    pub fn push_extra_channel_u16(
+        &mut self,
+        data: &[u16],
+        width: usize,
+        height: usize,
+    ) -> Result<()> {
+        if data.len() != width * height {
+            return Err(Error::InvalidImageDimensions(width, height));
+        }
+        if let Some(first) = self.channels.first() {
+            if first.width() != width || first.height() != height {
+                return Err(Error::InvalidImageDimensions(width, height));
+            }
+        }
+        let mut channel = Channel::new(width, height)?;
+        for (i, &val) in data.iter().enumerate() {
+            channel.set(i % width, i / width, val as i32);
+        }
+        self.channels.push(channel);
+        Ok(())
+    }
+
     /// Creates a new modular image from 8-bit grayscale data.
     pub fn from_gray8(data: &[u8], width: usize, height: usize) -> Result<Self> {
         let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {
