@@ -6421,6 +6421,31 @@ fn test_request_lossy_valid_intensity_target_accepted() {
     }
 }
 
+/// `LossyConfig::validate()` is now auto-invoked at every encode
+/// entry point. A `LossyConfig::new(50.0)` (above DISTANCE_MAX) used
+/// to silently work for the streaming path because `validate()` was
+/// opt-in; now both paths reject up front.
+#[test]
+fn test_streaming_lossy_invalid_distance_rejected_at_finish() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let cfg = LossyConfig::new(50.0).with_effort(3); // distance > 25
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
+    let row_bytes = (w as usize) * 3;
+    for y in 0..(h as usize) {
+        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
+            .expect("push");
+    }
+    let result = enc.finish();
+    assert!(result.is_err(), "distance > DISTANCE_MAX must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("distance") && msg.contains("range"),
+        "expected distance/range error, got: {msg}",
+    );
+}
+
 #[test]
 fn test_request_lossy_invalid_source_gamma_rejected() {
     let w = 8u32;
