@@ -7801,9 +7801,6 @@ fn test_lossless_rgb_with_depth_channel() {
 
 /// Refs #9: lossless Gray + SpotColor — header reports the spot
 /// color extra channel and the bitstream decodes via jxl-oxide.
-/// (RGBA + SpotColor = 5 channels currently trips an
-/// `InvalidAnsStream` error inside the modular encoder for >4
-/// channels; documented as a follow-up wire-up gap.)
 #[test]
 fn test_lossless_gray_with_spot_color_channel() {
     use crate::api::ExtraChannel;
@@ -7828,6 +7825,41 @@ fn test_lossless_gray_with_spot_color_channel() {
         header.metadata.ec_info.len(),
         1,
         "expected 1 extra channel (spot color)",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: probe what fails for 5+ channel modular streams. The
+/// 4-channel RGB+depth case works; RGBA+spot (5ch with alpha) and
+/// RGB+depth+spot (5ch without alpha) both currently trip
+/// `InvalidAnsStream` inside the tree-learning + ANS modular path.
+/// Documented as a follow-up; the wire-up + 1-extra tests above
+/// validate the public surface.
+#[test]
+#[ignore = "5+ channel modular: tree-learning ANS path needs deeper fix; documented for follow-up"]
+fn test_lossless_rgba_with_spot_color_channel() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let spot: Vec<u8> = vec![64u8; (w * h) as usize];
+    let extras = [ExtraChannel::spot_color(&spot, [1.0, 0.5, 0.0, 1.0])];
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless rgba+spot");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        2,
+        "expected 2 extras (alpha + spot color)",
     );
     let _render = image.render_frame(0).expect("render");
 }
