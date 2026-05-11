@@ -174,7 +174,7 @@ fn dct1d_4_scalar(mem: &mut [f32]) {
     tmp[2] = a;
     tmp[3] = b;
 
-    tmp[2] = SQRT2.mul_add(tmp[2], tmp[3]);
+    tmp[2] = crate::scalarmath::mul_add_f32(SQRT2, tmp[2], tmp[3]);
 
     mem[0] = tmp[0];
     mem[2] = tmp[1];
@@ -199,7 +199,7 @@ fn dct1d_8_scalar(mem: &mut [f32]) {
 
     dct1d_4_scalar(&mut tmp[4..8]);
 
-    tmp[4] = SQRT2.mul_add(tmp[4], tmp[5]);
+    tmp[4] = crate::scalarmath::mul_add_f32(SQRT2, tmp[4], tmp[5]);
     tmp[5] += tmp[6];
     tmp[6] += tmp[7];
 

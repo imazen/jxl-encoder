@@ -27,6 +27,45 @@
 #![no_std]
 extern crate alloc;
 
+/// Crate-internal `f32` math veneer that always routes through
+/// [`libm`] so the same code compiles under both `std` and `no_std`
+/// without fork/cfg gates. `f32`'s inherent `floor` / `sqrt` /
+/// `mul_add` / `round` / `round_ties_even` only exist with `std`,
+/// but the crate is `#![no_std]` and downstream may build with
+/// `--no-default-features` (closes #38). Each helper is `#[inline]`
+/// so std builds compile to the same call as the inherent method
+/// would have via the compiler intrinsic.
+pub(crate) mod scalarmath {
+    /// Largest integer ≤ x. Mirrors `f32::floor`.
+    #[inline(always)]
+    pub fn floor_f32(x: f32) -> f32 {
+        libm::floorf(x)
+    }
+    /// Square root. Mirrors `f32::sqrt`.
+    #[inline(always)]
+    pub fn sqrt_f32(x: f32) -> f32 {
+        libm::sqrtf(x)
+    }
+    /// Round half away from zero. Mirrors `f32::round`.
+    #[inline(always)]
+    pub fn round_f32(x: f32) -> f32 {
+        libm::roundf(x)
+    }
+    /// Round half to even (banker's rounding). Mirrors
+    /// `f32::round_ties_even`. Uses libm's `roundevenf` which always
+    /// rounds halves to even regardless of the FP rounding mode.
+    #[inline(always)]
+    pub fn round_ties_even_f32(x: f32) -> f32 {
+        libm::roundevenf(x)
+    }
+    /// Fused multiply-add: `a * b + c` with a single rounding.
+    /// Mirrors `f32::mul_add`. Uses libm's `fmaf`.
+    #[inline(always)]
+    pub fn mul_add_f32(a: f32, b: f32, c: f32) -> f32 {
+        libm::fmaf(a, b, c)
+    }
+}
+
 /// Return a zero-initialized `[f32; N]` scratch buffer.
 ///
 /// LLVM elides the dead-store memset on stack arrays whose every position

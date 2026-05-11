@@ -24,7 +24,7 @@ const EPS: f32 = 1e-10;
 fn index_and_frac(x: f32) -> (usize, f32) {
     let k_scale_numerator = (NUM_NOISE_POINTS - 2) as f32;
     let scaled_x = (x * k_scale_numerator).max(0.0);
-    let floor_x = scaled_x.floor();
+    let floor_x = crate::scalarmath::floor_f32(scaled_x);
     let frac_x = scaled_x - floor_x;
     if scaled_x >= k_scale_numerator + 1.0 {
         (k_scale_numerator as usize, 1.0)

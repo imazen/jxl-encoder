@@ -113,7 +113,7 @@ fn fast_log2f(x: f32) -> f32 {
 
 #[inline(always)]
 fn fast_pow2f(x: f32) -> f32 {
-    let floorx = x.floor();
+    let floorx = crate::scalarmath::floor_f32(x);
     let exp = f32::from_bits(((floorx as i32 + 127) << 23) as u32);
     let frac = x - floorx;
     let num = ((frac + 1.017_490_63e+01) * frac + 4.886_877_98e+01) * frac + 9.855_065_91e+01;
@@ -146,7 +146,7 @@ fn ratio_of_deriv_inverted(v: f32) -> f32 {
 #[inline(always)]
 fn masking_sqrt(v: f32) -> f32 {
     let mul_v = MASKING_K_MUL * 1e8;
-    0.25 * (v * mul_v.sqrt() + MASKING_K_LOG_OFFSET).sqrt()
+    0.25 * crate::scalarmath::sqrt_f32(v * crate::scalarmath::sqrt_f32(mul_v) + MASKING_K_LOG_OFFSET)
 }
 
 // ============================================================================
@@ -579,7 +579,7 @@ pub fn compute_pre_erosion_avx2(
     let k_den_mul_v = f32x8::splat(token, K_DEN_MUL);
     let k_v_offset_v = f32x8::splat(token, K_V_OFFSET);
     let limit_v = f32x8::splat(token, LIMIT);
-    let masking_mul_v = f32x8::splat(token, (MASKING_K_MUL * 1e8_f32).sqrt());
+    let masking_mul_v = f32x8::splat(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
     let masking_offset_v = f32x8::splat(token, MASKING_K_LOG_OFFSET);
     let masking_scale = f32x8::splat(token, 0.25);
 
