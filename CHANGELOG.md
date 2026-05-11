@@ -4,6 +4,42 @@
 
 ### Added
 
+- **Dot detection** (closes #19, 8bff5247 + 6dec363d + 14872a54 +
+  6c667f6b + 98adc2d4 + 05dd7695): full port of libjxl's
+  `enc_detect_dots.cc` star-field / specular-highlight detector.
+  Pipeline: weighted XYB energy image (Gaussian-0.65 vs 2×Gaussian-3
+  background) → 7-neighbor flood-fill connected components (cap
+  1000 px / 5×5 window) → 2D anisotropic Gaussian ellipse fit
+  (1st/2nd central moments + 2×2 eigendecomposition + LSQ
+  intensity refit) → quality filter (l2/custom losses, intensity,
+  centroid alignment). Surviving dots promoted to a fresh
+  `PatchesData` via new `from_dots()` and routed through the
+  existing patches subtract → quantize → reconstruct pipeline.
+  Default off (`LossyConfig::with_dot_detection(true)`); auto-gates
+  at effort >= 7 + distance >= 3.0 like libjxl. Niche feature
+  (astronomy / specular-on-dark content).
+- **CfL for JPEG recompression** (closes #16, ff54ef1f): full port
+  of libjxl's `enc_frame.cc:855-941` JPEG-CfL search. New
+  `vardct/chroma_from_luma::jpeg_cfl_search` builds a per-tile
+  histogram of YtoX/YtoB multipliers that zero each chroma AC
+  coefficient (after subtracting `RatioJPEG(factor) * Y` in fixed
+  point), picks the multiplier with most zeros above the
+  offset_sum baseline. Wired into `jpeg/encode.rs` for 4:4:4 YCbCr
+  3-component JPEGs; other shapes (4:2:0, 4:2:2, grayscale) keep
+  the zero map (libjxl behavior). Targets the 1-3% savings the
+  issue described. Gated behind the `jpeg-reencoding` feature.
+- **Extra channel types beyond alpha** (closes #9, 79dd06b7 +
+  3cb79b80 + 6f5f0ff7): new public `ExtraChannel<'a>` type with
+  `depth` / `spot_color(color)` / `selection_mask` / `thermal` /
+  `cfa(idx)` constructors. `EncodeRequest::with_extra_channels`
+  builder. Lossless RGB(A) / Gray + 1-N extra channels works
+  end-to-end through the modular encode path; ec_info entries
+  written in the file header. New `ModularImage::push_extra_channel_u8`.
+  `FrameEncoder::num_extra_channels` derivation widened from
+  alpha-only (`if has_alpha { 1 }`) to channel-count-based
+  (`channels.len() - num_color`). Tests cover RGB+Depth, Gray+Spot,
+  RGBA+Depth, RGBA+SpotColor, RGBA+Depth+SpotColor (6 channels).
+
 - **2×/4×/8× input resampling for high-distance encoding** (closes #12,
   46b4b78 + 5ecc0c1 + c3a9b5d + 4e4d186): new
   `LossyConfig::with_resampling(factor)` accepts 1/2/4/8; the encoder
@@ -68,6 +104,21 @@
 
 ### Fixed
 
+- **`num_extra_channels` size coder spec** (refs #9, 6f5f0ff7):
+  selector 2 was `Val(2)` instead of `Bits(4) + 2` per jxl-rs
+  `#[size_coder(implicit(u2S(0, 1, Bits(4) + 2, Bits(12) + 1)))]`,
+  shifting every subsequent header field by 4 bits. Manifested as
+  `InvalidFloat` deep in `tone_mapping` / `color_encoding` parse for
+  any image with 2+ extra channels. Now decodes cleanly via
+  jxl-oxide.
+- **Modular `num_color_channels` derivation** (refs #9, 3cb79b80):
+  `should_use_palette` (palette.rs) and ChannelCompact in
+  `write_modular_stream_with_tree` (encode.rs) used
+  `if has_alpha { len - 1 } else { len }`. For RGBA + 1 extra (5
+  channels), this would treat the spot/depth/etc as a color
+  channel and try to palette-encode 4 channels — wrong. Now uses
+  base color set: 1 (gray) or 3 (RGB), regardless of how many
+  extras follow.
 - **`color_encoding` wired into lossless file header** (closes #17,
   3f8b89b): `LosslessConfig` / `LosslessEncoder`'s `color_encoding`
   override was being silently dropped; the file header is now built
