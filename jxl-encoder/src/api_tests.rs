@@ -6317,6 +6317,110 @@ fn test_encode_request_row_stride_validates_too_small() {
     );
 }
 
+/// Tone-mapping numeric range checks reject NaN / Inf / negative /
+/// > f16-max values on `intensity_target` and `min_nits`. These
+/// would otherwise fail deep in `f32_to_f16_bits` inside the
+/// codestream writer with a generic error.
+#[test]
+fn test_request_lossy_invalid_intensity_target_rejected() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+
+    for (bad, label) in &[
+        (f32::NAN, "NaN"),
+        (f32::INFINITY, "Inf"),
+        (-1.0, "negative"),
+        (0.0, "zero"),
+        (1e9, "above f16 max"),
+    ] {
+        let result = LossyConfig::new(1.0)
+            .with_effort(3)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_intensity_target(*bad)
+            .encode(&pixels);
+        assert!(
+            result.is_err(),
+            "intensity_target={label} ({bad}) must reject",
+        );
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            msg.contains("intensity_target"),
+            "expected intensity_target error for {label}, got: {msg}",
+        );
+    }
+}
+
+#[test]
+fn test_request_lossy_min_nits_validation() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+
+    // min_nits > intensity_target — physical impossibility.
+    let result = LossyConfig::new(1.0)
+        .with_effort(3)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_intensity_target(100.0)
+        .with_min_nits(200.0)
+        .encode(&pixels);
+    assert!(result.is_err());
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(msg.contains("min_nits"), "expected min_nits error, got: {msg}");
+
+    // min_nits NaN.
+    let result = LossyConfig::new(1.0)
+        .with_effort(3)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_min_nits(f32::NAN)
+        .encode(&pixels);
+    assert!(result.is_err());
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(msg.contains("min_nits"), "expected min_nits NaN error, got: {msg}");
+}
+
+#[test]
+fn test_streaming_lossy_invalid_intensity_target_rejected_at_finish() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
+    enc = enc.with_intensity_target(f32::NAN);
+    let row_bytes = (w as usize) * 3;
+    for y in 0..(h as usize) {
+        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
+            .expect("push");
+    }
+    let result = enc.finish();
+    assert!(result.is_err(), "NaN intensity_target must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("intensity_target"),
+        "expected intensity_target error, got: {msg}",
+    );
+}
+
+#[test]
+fn test_request_lossy_valid_intensity_target_accepted() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    // Common HDR peak values.
+    for &nits in &[100.0f32, 203.0, 1000.0, 4000.0, 10000.0, 65504.0] {
+        let result = LossyConfig::new(2.0)
+            .with_effort(3)
+            .encode_request(w, h, PixelLayout::Rgb8)
+            .with_intensity_target(nits)
+            .encode(&pixels);
+        assert!(
+            result.is_ok(),
+            "intensity_target={nits} should encode, got: {:?}",
+            result.err(),
+        );
+    }
+}
+
 /// `validate_metadata_sizes` is wired into both the one-shot and
 /// streaming paths. Empty ICC must be rejected (encoder cannot
 /// embed a zero-byte ICC profile); the > 1 GB cap can't be

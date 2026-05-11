@@ -2218,6 +2218,13 @@ impl<'a> EncodeRequest<'a> {
             self.metadata.and_then(|m| m.exif),
             self.metadata.and_then(|m| m.xmp),
         )?;
+        // Tone-mapping numeric range checks. Request-level overrides
+        // win over metadata-level values (`encode_lossy` line ~3018);
+        // we apply the same precedence here so the validator sees the
+        // value the encoder will actually use.
+        let it = self.intensity_target.or_else(|| self.metadata.and_then(|m| m.intensity_target));
+        let mn = self.min_nits.or_else(|| self.metadata.and_then(|m| m.min_nits));
+        validate_tone_mapping(it, mn)?;
 
         // Build the per-encode allocation budget. Caller-supplied
         // Limits.max_memory_bytes wins; otherwise Limits provides its
@@ -3671,6 +3678,13 @@ impl LossyEncoder {
             self.exif.as_deref(),
             self.xmp.as_deref(),
         )?;
+        // Tone-mapping numeric range checks. Stored as plain f32 on
+        // the encoder; pass `Some(_)` only when set away from the
+        // libjxl default so a caller who never touched these knobs
+        // gets the encoder default behavior.
+        let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
+        let mn = (self.min_nits != 0.0).then_some(self.min_nits);
+        validate_tone_mapping(it, mn)?;
         let cfg = &self.cfg;
         let w = self.width as usize;
         let h = self.height as usize;
@@ -3888,6 +3902,69 @@ const MAX_INTERNAL_SCALE: usize = 16;
 /// container wrapper, exhausts system memory at write time, and the
 /// kernel kills the process.
 const METADATA_SIZE_LIMIT: usize = u32::MAX as usize >> 2;
+
+/// Maximum value (in nits) accepted for `intensity_target` /
+/// `min_nits`. Bounded by the f16 representation used in the
+/// codestream (`f16::MAX = 65504`). Anything larger silently fails
+/// in `f32_to_f16_bits` deep in `file_header.write`; this lets us
+/// surface a clean `InvalidInput` instead.
+const F16_MAX_NITS: f32 = 65504.0;
+
+/// Validate caller-supplied tone-mapping fields. `None` means
+/// "use the encoder default" — only `Some(_)` values are checked.
+/// Rules:
+/// - `intensity_target` must be finite, `> 0`, and `<= 65504`
+///   (f16 representation cap; anything larger silently fails in the
+///   header writer).
+/// - `min_nits` must be finite, `>= 0`, and `<= intensity_target`
+///   (or `<= 65504` if `intensity_target` is unset). A min above
+///   the peak is physically nonsensical and would confuse decoders.
+fn validate_tone_mapping(
+    intensity_target: Option<f32>,
+    min_nits: Option<f32>,
+) -> core::result::Result<(), EncodeError> {
+    let it = intensity_target;
+    if let Some(it) = it {
+        if !it.is_finite() {
+            return Err(EncodeError::InvalidInput {
+                message: format!("intensity_target must be finite (got {it})"),
+            });
+        }
+        if it <= 0.0 {
+            return Err(EncodeError::InvalidInput {
+                message: format!("intensity_target must be > 0 (got {it})"),
+            });
+        }
+        if it > F16_MAX_NITS {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "intensity_target {it} exceeds f16 max ({F16_MAX_NITS}); the codestream cannot represent it",
+                ),
+            });
+        }
+    }
+    if let Some(mn) = min_nits {
+        if !mn.is_finite() {
+            return Err(EncodeError::InvalidInput {
+                message: format!("min_nits must be finite (got {mn})"),
+            });
+        }
+        if mn < 0.0 {
+            return Err(EncodeError::InvalidInput {
+                message: format!("min_nits must be >= 0 (got {mn})"),
+            });
+        }
+        let cap = it.unwrap_or(F16_MAX_NITS);
+        if mn > cap {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "min_nits {mn} exceeds intensity_target {cap} (min cannot exceed peak)",
+                ),
+            });
+        }
+    }
+    Ok(())
+}
 
 /// Apply [`METADATA_SIZE_LIMIT`] to caller-supplied ICC, EXIF, and
 /// XMP buffers. Empty ICC is also rejected (the encoder cannot
@@ -4395,6 +4472,11 @@ impl LosslessEncoder {
             self.exif.as_deref(),
             self.xmp.as_deref(),
         )?;
+        // Tone-mapping numeric range checks. See the lossy-encoder
+        // mirror above for the `Some(_) iff non-default` shape.
+        let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
+        let mn = (self.min_nits != 0.0).then_some(self.min_nits);
+        validate_tone_mapping(it, mn)?;
 
         let cfg = &self.cfg;
         let w = self.width as usize;
