@@ -1057,7 +1057,6 @@ fn test_lz77_backref_roundtrip() {
 }
 
 #[test]
-#[ignore] // Decoder integration test
 fn test_dct32x16_16x32_roundtrip() {
     use std::io::Cursor;
 
@@ -1106,7 +1105,6 @@ fn test_dct32x16_16x32_roundtrip() {
 }
 
 #[test]
-#[ignore] // Decoder integration test
 fn test_afv_strategy_roundtrip() {
     use super::ac_strategy::RAW_STRATEGY_AFV0;
     use std::io::Cursor;
