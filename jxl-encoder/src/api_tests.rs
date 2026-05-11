@@ -6202,6 +6202,40 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// BT.709 sub-feature of #17: when caller signals
+/// `with_color_encoding(ce.transfer_function = Bt709)`, u16 input is
+/// linearized via the BT.709 inverse OETF.
+#[test]
+fn test_encode_request_bt709_u16_uses_bt709_eotf() {
+    use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
+    let w = 16u32;
+    let h = 16;
+    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16).map(|i| i.wrapping_mul(257)).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let mut bt709_ce = ColorEncoding::srgb();
+    bt709_ce.transfer_function = TransferFunction::Bt709;
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_bt709 = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_color_encoding(bt709_ce)
+        .encode(pixels)
+        .unwrap();
+    let bytes_srgb = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .encode(pixels)
+        .unwrap();
+
+    assert_ne!(bytes_bt709, bytes_srgb, "BT.709 should differ from sRGB");
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_bt709))
+        .expect("jxl-oxide parse failed");
+    let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
+    assert!(ce_dbg.contains("Bt709"), "header should signal BT.709; got {ce_dbg}");
+}
+
 /// HLG sub-feature of #17: `with_color_encoding(ColorEncoding::bt2100_hlg())`
 /// triggers the HLG inverse OETF path for u16 input.
 #[test]

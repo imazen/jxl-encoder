@@ -2542,6 +2542,10 @@ impl<'a> EncodeRequest<'a> {
             && self.color_encoding.as_ref().is_some_and(|ce| {
                 ce.transfer_function == crate::headers::color_encoding::TransferFunction::Hlg
             });
+        let source_is_bt709 = gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Bt709
+            });
         let (linear_rgb, alpha, bit_depth_16) = match self.layout {
             PixelLayout::Rgb8 => {
                 let linear = if let Some(g) = gamma {
@@ -2603,6 +2607,8 @@ impl<'a> EncodeRequest<'a> {
                     pq_u16_to_linear_f32(pixels, 3, u16_max)
                 } else if source_is_hlg {
                     hlg_u16_to_linear_f32(pixels, 3, u16_max)
+                } else if source_is_bt709 {
+                    bt709_u16_to_linear_f32(pixels, 3, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 3, u16_max)
                 };
@@ -2615,6 +2621,8 @@ impl<'a> EncodeRequest<'a> {
                     pq_u16_to_linear_f32(pixels, 4, u16_max)
                 } else if source_is_hlg {
                     hlg_u16_to_linear_f32(pixels, 4, u16_max)
+                } else if source_is_bt709 {
+                    bt709_u16_to_linear_f32(pixels, 4, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 4, u16_max)
                 };
@@ -4897,6 +4905,22 @@ fn pq_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> 
         .collect()
 }
 
+/// BT.709 u16 → linear f32. Same shape as `pq_u16_to_linear_f32`.
+/// Closes BT.709 portion of #17.
+fn bt709_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
+    let pixels: &[u16] = bytemuck::cast_slice(data);
+    pixels
+        .chunks(channels)
+        .flat_map(|px| {
+            [
+                bt709_to_linear_f(px[0] as f32 / u16_max),
+                bt709_to_linear_f(px[1] as f32 / u16_max),
+                bt709_to_linear_f(px[2] as f32 / u16_max),
+            ]
+        })
+        .collect()
+}
+
 /// HLG u16 → linear scene-light f32. Same shape as
 /// `pq_u16_to_linear_f32`. Closes HLG portion of #17.
 fn hlg_u16_to_linear_f32(data: &[u8], channels: usize, u16_max: f32) -> Vec<f32> {
@@ -4963,6 +4987,30 @@ fn pq_to_linear_f(c: f32) -> f32 {
     let num = (n - C1).max(0.0);
     let den = C2 - C3 * n;
     jxl_simd::fast_powf(num / den, 1.0 / M1)
+}
+
+/// BT.709 inverse OETF (Rec. ITU-R BT.709-6, the broadcast camera
+/// transfer): encoded normalized [0,1] → linear scene-light [0,1].
+///
+/// Piecewise: linear toe below 0.081 (= 4.5 × 0.018) plus a power
+/// curve above with effective inverse gamma ≈ 2.222. Note this is
+/// the SCENE-light EOTF (the inverse of the broadcast OETF), NOT the
+/// display EOTF (which would be a pure gamma 2.4 per BT.1886).
+/// Matches libjxl's interpretation of `TransferFunction::Bt709` for
+/// encoder input. Closes BT.709 portion of #17.
+#[inline]
+fn bt709_to_linear_f(c: f32) -> f32 {
+    // Threshold = beta * alpha = 0.018 * 4.5 = 0.081 (encoded value
+    // below which the toe is linear). Some references quote 0.0812
+    // due to the alpha = 1.099 derivation; we use the spec's exact
+    // 0.081 cutoff per Rec. BT.709-6 §1.2.
+    const TOE_CUTOFF: f32 = 0.081;
+    let e = c.max(0.0);
+    if e <= TOE_CUTOFF {
+        e / 4.5
+    } else {
+        jxl_simd::fast_powf((e + 0.099) / 1.099, 1.0 / 0.45)
+    }
 }
 
 /// HLG (Hybrid Log-Gamma, BT.2100 / ARIB STD-B67) inverse OETF:
@@ -5277,6 +5325,38 @@ mod tests {
         let v = pq_to_linear_f(-0.1);
         assert!(v.is_finite(), "PQ(-0.1) should be finite; got {v}");
         assert!(v.abs() < 1e-3, "PQ(-0.1) should clamp to ~0; got {v}");
+    }
+
+    /// BT.709 inverse OETF reference points (Rec. BT.709-6).
+    /// - BT709(0) = 0
+    /// - BT709(0.081) = 0.018 (toe/shoulder boundary)
+    /// - BT709(1) = 1.0
+    /// - Monotonic
+    #[test]
+    fn test_bt709_to_linear_f_reference_points() {
+        assert!(bt709_to_linear_f(0.0).abs() < 1e-6);
+        // Boundary: encoded 0.081 → linear 0.018 (= 0.081 / 4.5).
+        let boundary = bt709_to_linear_f(0.081);
+        assert!(
+            (boundary - 0.018).abs() < 1e-5,
+            "BT.709(0.081) should be ≈0.018; got {boundary}",
+        );
+        let one = bt709_to_linear_f(1.0);
+        assert!(
+            (one - 1.0).abs() < 1e-3,
+            "BT.709(1.0) should be 1.0; got {one}",
+        );
+        let a = bt709_to_linear_f(0.25);
+        let b = bt709_to_linear_f(0.5);
+        let c = bt709_to_linear_f(0.75);
+        assert!(a < b && b < c, "BT.709 should be monotone; got {a}, {b}, {c}");
+    }
+
+    #[test]
+    fn test_bt709_to_linear_f_clamps_negative() {
+        let v = bt709_to_linear_f(-0.1);
+        assert!(v.is_finite());
+        assert!(v >= 0.0 && v < 1e-3, "BT.709(-0.1) should clamp to ~0; got {v}");
     }
 
     /// Reference points for HLG inverse OETF (BT.2100).
