@@ -59,6 +59,11 @@ zensim-loop = ["dep:zensim"]
 # Convenience encode functions that accept imgref::ImgRef with typed pixel formats.
 convenience = ["dep:imgref", "dep:rgb"]
 jpeg-reencoding = ["dep:zenjpeg", "dep:brotli"]
+# Brotli-compressed metadata boxes (`brob`) for EXIF/XMP. Wraps each
+# metadata blob in a brob box that decompresses to the original
+# Exif/xml/jumb box, typically 2-4× smaller for XML / binary metadata.
+# libjxl default-on (`jpeg_compress_boxes = true`).
+brotli-metadata = ["dep:brotli"]
 parallel = ["std", "dep:rayon"]
 # Picker training / sweep escape hatch: exposes the segmented
 # LossyInternalParams / LosslessInternalParams structs and the
@@ -74,6 +79,16 @@ __expert = []
 # jxl-encoder-gpu's forks::* tests). Off by default; not part of the
 # stable API surface — items here may move or change at any time.
 __internals = []
+# Pre-quantized AC entry point: exposes EncoderPrecomputed::from_parts
+# constructor and lifts the rate-control gate on
+# VarDctEncoder::encode_from_precomputed, transform_and_quantize, and
+# encode_two_pass. Lets jxl-encoder-gpu (or any pre-quantized caller)
+# hand the encoder a fully-prepared XYB plane + AC strategy + CfL map +
+# quant field and skip the encoder's own XYB / CfL / masking / strat-
+# search / butteraugli refinement work, going straight to bitstream
+# emit. Off by default; not stable; mirrors `__internals` shape — items
+# may move or change at any time.
+__pre_quantized = []
 # Corpus-dependent tests. When enabled, tests under
 # `#[cfg_attr(not(feature = "corpus-tests"), ignore = "...")]` run; otherwise
 # they're marked as #[ignore] so the skip decision is visible at the test
