@@ -31,6 +31,9 @@ pub(crate) mod dc_coding;
 mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
+#[allow(dead_code)]
+// Foundation-only port of libjxl enc_detect_dots.cc; awaiting CC + fitting + wire-up (refs #19)
+pub(crate) mod dot_detection;
 pub(crate) mod encoder;
 pub(crate) mod entropy_code;
 pub(crate) mod epf;
