@@ -146,10 +146,60 @@ fn encode_jpeg_to_jxl_inner(jpeg: &JpegData) -> Result<(Vec<u8>, usize)> {
     // All blocks use DCT8
     let ac_strategy = AcStrategyMap::new_dct8(xsize_blocks, ysize_blocks);
 
-    // No chroma-from-luma for JPEG mode (YCbCr handles color decorrelation)
+    // JPEG-CfL search (refs #16): mirrors libjxl's
+    // `force_cfl_jpeg_recompression` (default ON) at
+    // `enc_frame.cc:855-941`. Only applies to 4:4:4 YCbCr JPEGs with
+    // 3 components — for 4:2:0 / 4:2:2 / grayscale we keep the
+    // zero-map. Each 8×8-block color tile gets a per-channel YtoX /
+    // YtoB multiplier that maximizes zero AC coefficients in chroma
+    // after subtracting `RatioJPEG(factor) * Y` (fixed-point).
     let xsize_tiles = div_ceil(xsize_blocks, TILE_DIM_IN_BLOCKS);
     let ysize_tiles = div_ceil(ysize_blocks, TILE_DIM_IN_BLOCKS);
-    let cfl_map = CflMap::zeros(xsize_tiles, ysize_tiles);
+    let is_444 = jpeg_upsampling.iter().all(|&u| u == 0);
+    let cfl_map = if !is_gray && is_444 && num_components == 3 {
+        // Build scaled_qtable per chroma channel: position-transposed
+        // `(1 << 11) * qt_y[pos] / qt_c[pos]`. quant_ac is already
+        // transposed (block[x*8+y] = JPEG[y*8+x]), so we use the
+        // raw qtables and transpose to match.
+        let qt = build_raw_qtables(jpeg, &jpeg_c_map)?;
+        let mut scaled_qtable = [[0i32; 64]; 3];
+        for c in 0..3 {
+            for y in 0..8usize {
+                for x in 0..8usize {
+                    let coeffpos = y * 8 + x;
+                    let transposed = x * 8 + y;
+                    // qt is already transposed in build_raw_qtables, so
+                    // index directly. Guard against zero divisor.
+                    let qy = qt[64 + transposed];
+                    let qc = qt[64 * c + transposed];
+                    if qc != 0 {
+                        scaled_qtable[c][coeffpos] = ((1 << 11) * qy) / qc;
+                    }
+                }
+            }
+        }
+        let mut map = CflMap::zeros(xsize_tiles, ysize_tiles);
+        // c=0 → JXL Cb (YtoX), c=2 → JXL Cr (YtoB)
+        map.ytox = crate::vardct::chroma_from_luma::jpeg_cfl_search(
+            0,
+            xsize_blocks,
+            ysize_blocks,
+            &quant_ac[1],
+            &quant_ac[0],
+            &scaled_qtable[0],
+        );
+        map.ytob = crate::vardct::chroma_from_luma::jpeg_cfl_search(
+            2,
+            xsize_blocks,
+            ysize_blocks,
+            &quant_ac[1],
+            &quant_ac[2],
+            &scaled_qtable[2],
+        );
+        map
+    } else {
+        CflMap::zeros(xsize_tiles, ysize_tiles)
+    };
 
     // Quant field: all 1s (JPEG already quantized)
     let quant_field = vec![1u8; xsize_blocks * ysize_blocks];
