@@ -6084,6 +6084,82 @@ fn test_encode_request_with_intensity_target_and_color_encoding() {
     );
 }
 
+/// Closes lossless portion of #13: `EncodeRequest::with_premultiplied_alpha(true)`
+/// sets `alpha_associated=true` in the encoded `ExtraChannelInfo`.
+/// Verified by parsing the codestream via jxl-oxide and reading the
+/// alpha extra channel's `alpha_associated` field.
+#[test]
+fn test_encode_request_premultiplied_alpha_lossless() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+
+    // Baseline: straight alpha (default).
+    let cfg = LosslessConfig::new().with_effort(3);
+    let bytes_straight = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .encode(&pixels)
+        .unwrap();
+    let img_straight = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_straight))
+        .expect("jxl-oxide parse failed (straight)");
+    let alpha_assoc_straight = img_straight
+        .image_header()
+        .metadata
+        .ec_info
+        .iter()
+        .find_map(|ec| ec.alpha_associated());
+    assert_eq!(
+        alpha_assoc_straight,
+        Some(false),
+        "default should be straight (alpha_associated=false)",
+    );
+
+    // Premultiplied: alpha_associated should now be true.
+    let bytes_premul = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_premultiplied_alpha(true)
+        .encode(&pixels)
+        .unwrap();
+    let img_premul = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_premul))
+        .expect("jxl-oxide parse failed (premul)");
+    let alpha_assoc_premul = img_premul
+        .image_header()
+        .metadata
+        .ec_info
+        .iter()
+        .find_map(|ec| ec.alpha_associated());
+    assert_eq!(
+        alpha_assoc_premul,
+        Some(true),
+        "with_premultiplied_alpha(true) should set alpha_associated=true",
+    );
+}
+
+/// #13 lossy variant: until we implement the unpremultiplication
+/// pre-pass, calling `with_premultiplied_alpha(true)` on a lossy
+/// encode must fail loudly (not silently produce wrong output).
+#[test]
+fn test_encode_request_premultiplied_alpha_lossy_rejects() {
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let result = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_premultiplied_alpha(true)
+        .encode(&pixels);
+    let Err(err) = result else {
+        panic!("expected error, got Ok");
+    };
+    let msg = format!("{:?}", err);
+    assert!(
+        msg.contains("premultiplied alpha"),
+        "expected premultiplied-alpha rejection, got: {msg}",
+    );
+}
+
 /// Closes FLOAT16 portion of #18: encoder accepts the new
 /// PixelLayout::*LinearF16 variants and produces identical bitstreams
 /// to the equivalent f32 layout (at f16 precision).
