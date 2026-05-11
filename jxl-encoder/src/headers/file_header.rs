@@ -501,12 +501,30 @@ impl FileHeader {
         Ok(())
     }
 
-    /// Checks if all metadata is default.
-    /// Per JXL spec, all_default=true implies xyb_encoded=false (lossless mode).
+    /// Checks if all metadata is at the JXL spec defaults so the
+    /// encoder can write `all_default=1` and skip the rest of the
+    /// metadata block (saves ~50-70 bits per encode).
+    ///
+    /// Per JXL spec (jxl-rs `headers/image_metadata.rs`):
+    /// - `bit_depth` = 8-bit int (`floating_point_sample=false`,
+    ///   `bits_per_sample=8`, `exponent_bits=0`)
+    /// - `extra_fields` = `false` (no orientation/intrinsic/preview/
+    ///   animation/tone-mapping deviations)
+    /// - `extra_channel_info` = `[]` (no extra channels)
+    /// - `xyb_encoded` = `true` *(spec default — note: NOT false; an
+    ///   earlier comment here had this backwards)*
+    /// - `color_encoding` = sRGB defaults
+    /// - `extensions` = none
+    ///
+    /// Implication: lossless modular encodes (which need
+    /// `xyb_encoded=false`) cannot use `all_default=true`. Lossy
+    /// VarDCT encodes with sRGB / no alpha / 8-bit / no metadata
+    /// deviations CAN.
+    ///
+    /// Currently disabled: enabling shifts every hash-lock sidecar
+    /// entry by ~50-70 bits, which is a mechanical migration that
+    /// hasn't been done yet.
     fn is_metadata_default(&self) -> bool {
-        // For now, always return false to write explicit metadata.
-        // This ensures compatibility while we investigate the all_default parsing issue.
-        // TODO: Enable all_default optimization once we confirm decoder compatibility.
         false
     }
 }
