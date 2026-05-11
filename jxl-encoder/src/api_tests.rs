@@ -7720,3 +7720,72 @@ fn test_lossy_with_resampling_streaming() {
     assert_eq!(fb.width() as u32, w);
     assert_eq!(fb.height() as u32, h);
 }
+
+/// Refs #19: dot detection at effort 7, distance 3.0 — synthesize a
+/// star-field-like image (sparse bright Gaussian dots on a dark
+/// background) and verify the encode pipeline accepts the feature
+/// and produces a parseable + renderable JXL output. We don't
+/// assert on file size or detected-dot count because the perc_cc
+/// gate (`min(50, total*15/100)`) may zero out a small synthetic
+/// scene; the goal here is a smoke test that the wire-up doesn't
+/// crash or produce an undecodable bitstream.
+#[test]
+fn test_lossy_with_dot_detection_roundtrip() {
+    let w = 64u32;
+    let h = 64u32;
+    let mut pixels = vec![20u8; (w * h * 3) as usize];
+    // Place a handful of sparse bright dots — these are the targets
+    // the dot detector should find.
+    for &(cx, cy) in &[(16u32, 16), (32, 24), (48, 40), (24, 48), (40, 16)] {
+        for &(dy, dx) in &[(0i32, 0i32), (0, 1), (0, -1), (1, 0), (-1, 0)] {
+            let yy = cy as i32 + dy;
+            let xx = cx as i32 + dx;
+            if (0..h as i32).contains(&yy) && (0..w as i32).contains(&xx) {
+                let i = ((yy as u32 * w + xx as u32) * 3) as usize;
+                pixels[i] = 240;
+                pixels[i + 1] = 240;
+                pixels[i + 2] = 240;
+            }
+        }
+    }
+    let bytes = LossyConfig::new(3.0)
+        .with_effort(7)
+        .with_dot_detection(true)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode with dot detection");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let render = image.render_frame(0).expect("render");
+    let fb = render.image_all_channels();
+    assert_eq!(fb.width() as u32, w);
+    assert_eq!(fb.height() as u32, h);
+}
+
+/// Refs #19: dot detection off by default — same input should
+/// encode identically regardless of `with_dot_detection(false)` vs
+/// no call at all. Verifies the new builder really is gated.
+#[test]
+fn test_lossy_with_dot_detection_off_is_default() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels = vec![128u8; (w * h * 3) as usize];
+    let bytes_default = LossyConfig::new(3.0)
+        .with_effort(7)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("baseline");
+    let bytes_off = LossyConfig::new(3.0)
+        .with_effort(7)
+        .with_dot_detection(false)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("explicit off");
+    assert_eq!(
+        bytes_default, bytes_off,
+        "with_dot_detection(false) must match the default",
+    );
+}
