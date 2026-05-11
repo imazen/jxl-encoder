@@ -44,6 +44,7 @@ pub(crate) mod patches;
 pub(crate) mod precomputed;
 #[cfg(feature = "rate-control")]
 pub mod rate_control;
+pub(crate) mod resampling;
 pub(crate) mod simplify_invisible;
 pub(crate) mod splines;
 #[cfg(feature = "ssim2-loop")]
