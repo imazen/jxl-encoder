@@ -3120,12 +3120,33 @@ impl LossyEncoder {
         let u16_max = self
             .bits_per_sample
             .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
+        // Streaming PQ/HLG/BT.709 dispatch (#17). Mirrors the
+        // EncodeRequest::encode_lossy `source_is_*` predicates.
+        // Same dispatch order: gamma > PQ > HLG > BT.709 > sRGB.
+        let source_is_pq = gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Pq
+            });
+        let source_is_hlg = gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Hlg
+            });
+        let source_is_bt709 = gamma.is_none()
+            && self.color_encoding.as_ref().is_some_and(|ce| {
+                ce.transfer_function == crate::headers::color_encoding::TransferFunction::Bt709
+            });
 
         // Convert and append linear RGB
         let new_linear: Vec<f32> = match self.layout {
             PixelLayout::Rgb8 => {
                 if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(pixels, 3, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(pixels, 3)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(pixels, 3)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(pixels, 3)
                 } else {
                     srgb_u8_to_linear_f32(pixels, 3)
                 }
@@ -3134,6 +3155,12 @@ impl LossyEncoder {
                 let rgb = bgr_to_rgb(pixels, 3);
                 if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(&rgb, 3, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(&rgb, 3)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(&rgb, 3)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(&rgb, 3)
                 } else {
                     srgb_u8_to_linear_f32(&rgb, 3)
                 }
@@ -3141,6 +3168,12 @@ impl LossyEncoder {
             PixelLayout::Rgba8 => {
                 if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(pixels, 4, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(pixels, 4)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(pixels, 4)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(pixels, 4)
                 } else {
                     srgb_u8_to_linear_f32(pixels, 4)
                 }
@@ -3149,6 +3182,12 @@ impl LossyEncoder {
                 let swapped = bgr_to_rgb(pixels, 4);
                 if let Some(g) = gamma {
                     gamma_u8_to_linear_f32(&swapped, 4, g)
+                } else if source_is_pq {
+                    pq_u8_to_linear_f32(&swapped, 4)
+                } else if source_is_hlg {
+                    hlg_u8_to_linear_f32(&swapped, 4)
+                } else if source_is_bt709 {
+                    bt709_u8_to_linear_f32(&swapped, 4)
                 } else {
                     srgb_u8_to_linear_f32(&swapped, 4)
                 }
@@ -3156,6 +3195,12 @@ impl LossyEncoder {
             PixelLayout::Gray8 => {
                 if let Some(g) = gamma {
                     gamma_gray_u8_to_linear_f32_rgb(pixels, 1, g)
+                } else if source_is_pq {
+                    pq_gray_u8_to_linear_f32_rgb(pixels, 1)
+                } else if source_is_hlg {
+                    hlg_gray_u8_to_linear_f32_rgb(pixels, 1)
+                } else if source_is_bt709 {
+                    bt709_gray_u8_to_linear_f32_rgb(pixels, 1)
                 } else {
                     gray_u8_to_linear_f32_rgb(pixels, 1)
                 }
@@ -3163,6 +3208,12 @@ impl LossyEncoder {
             PixelLayout::GrayAlpha8 => {
                 if let Some(g) = gamma {
                     gamma_gray_u8_to_linear_f32_rgb(pixels, 2, g)
+                } else if source_is_pq {
+                    pq_gray_u8_to_linear_f32_rgb(pixels, 2)
+                } else if source_is_hlg {
+                    hlg_gray_u8_to_linear_f32_rgb(pixels, 2)
+                } else if source_is_bt709 {
+                    bt709_gray_u8_to_linear_f32_rgb(pixels, 2)
                 } else {
                     gray_u8_to_linear_f32_rgb(pixels, 2)
                 }
@@ -3170,6 +3221,12 @@ impl LossyEncoder {
             PixelLayout::Rgb16 => {
                 if let Some(g) = gamma {
                     gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
+                } else if source_is_pq {
+                    pq_u16_to_linear_f32(pixels, 3, u16_max)
+                } else if source_is_hlg {
+                    hlg_u16_to_linear_f32(pixels, 3, u16_max)
+                } else if source_is_bt709 {
+                    bt709_u16_to_linear_f32(pixels, 3, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 3, u16_max)
                 }
@@ -3177,6 +3234,12 @@ impl LossyEncoder {
             PixelLayout::Rgba16 => {
                 if let Some(g) = gamma {
                     gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
+                } else if source_is_pq {
+                    pq_u16_to_linear_f32(pixels, 4, u16_max)
+                } else if source_is_hlg {
+                    hlg_u16_to_linear_f32(pixels, 4, u16_max)
+                } else if source_is_bt709 {
+                    bt709_u16_to_linear_f32(pixels, 4, u16_max)
                 } else {
                     srgb_u16_to_linear_f32(pixels, 4, u16_max)
                 }
@@ -3184,6 +3247,12 @@ impl LossyEncoder {
             PixelLayout::Gray16 => {
                 if let Some(g) = gamma {
                     gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max)
+                } else if source_is_pq {
+                    pq_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                } else if source_is_hlg {
+                    hlg_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
+                } else if source_is_bt709 {
+                    bt709_gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
                 } else {
                     gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
                 }
@@ -3191,6 +3260,12 @@ impl LossyEncoder {
             PixelLayout::GrayAlpha16 => {
                 if let Some(g) = gamma {
                     gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max)
+                } else if source_is_pq {
+                    pq_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                } else if source_is_hlg {
+                    hlg_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
+                } else if source_is_bt709 {
+                    bt709_gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
                 } else {
                     gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
                 }

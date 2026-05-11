@@ -6202,6 +6202,65 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// Streaming-encoder TF parity (#17 follow-up): LossyEncoder
+/// streaming path now honors with_color_encoding's transfer
+/// function. Verified by encoding the same bytes one-shot vs
+/// streaming with PQ/HLG/BT.709 tags and asserting bit-identical
+/// outputs (oneshot == streaming) — the same parity contract the
+/// existing test_streaming_lossy_rgba enforces for sRGB.
+#[test]
+fn test_streaming_lossy_pq_matches_oneshot() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+
+    let oneshot = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(&pixels)
+        .unwrap();
+
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_color_encoding(ColorEncoding::bt2100_pq());
+    let mid = (h / 2) as usize * w as usize * 3;
+    enc.push_rows(&pixels[..mid], h / 2).unwrap();
+    enc.push_rows(&pixels[mid..], h - h / 2).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(
+        oneshot, streaming,
+        "PQ-tagged streaming should match one-shot bit-exact",
+    );
+}
+
+#[test]
+fn test_streaming_lossy_hlg_matches_oneshot() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+
+    let oneshot = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_color_encoding(ColorEncoding::bt2100_hlg())
+        .encode(&pixels)
+        .unwrap();
+
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgba8)
+        .unwrap()
+        .with_color_encoding(ColorEncoding::bt2100_hlg());
+    enc.push_rows(&pixels, h).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming, "HLG streaming should match one-shot bit-exact");
+}
+
 /// Gray + GrayAlpha sub-feature of #17: 4 grayscale layouts
 /// (Gray8 / GrayAlpha8 / Gray16 / GrayAlpha16) now dispatch through
 /// PQ / HLG / BT.709 EOTFs when caller signals the matching color
