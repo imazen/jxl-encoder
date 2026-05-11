@@ -556,6 +556,116 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
     tokens
 }
 
+/// Tokenize a single permutation as Lehmer codes (centerfirst, group
+/// reordering, etc). Generalized version of the per-bucket loop in
+/// `tokenize_coeff_orders` — used by callers that have ONE permutation
+/// rather than 13 per-bucket ones (e.g., the TOC group permutation
+/// for libjxl's centerfirst feature, see #14).
+///
+/// `order` is a permutation: `order[i]` is the original index that
+/// goes at position `i` in the permuted output. Length must be `size`.
+/// `skip` is the number of leading positions to skip during Lehmer
+/// encoding (the spec emits the count `end - skip` as the first token,
+/// then the trimmed Lehmer codes from `skip..end`).
+///
+/// Output tokens are interleaved with the existing permutation entropy
+/// code (8 contexts via [`coeff_order_context`]) so the same
+/// [`build_and_write_coeff_orders`] writer handles them.
+pub fn tokenize_permutation(order: &[u32], skip: usize, size: usize) -> Vec<Token> {
+    debug_assert_eq!(order.len(), size, "tokenize_permutation: order.len() != size");
+    debug_assert!(skip <= size, "tokenize_permutation: skip > size");
+    let mut tokens = Vec::new();
+    let lehmer = compute_lehmer_code(order);
+
+    // Trim trailing zeros past `skip` so we encode the smallest count.
+    let mut end = size;
+    while end > skip && lehmer[end - 1] == 0 {
+        end -= 1;
+    }
+
+    // First token: end - skip (how many Lehmer codes follow).
+    tokens.push(Token::new(
+        coeff_order_context(size as u32) as u32,
+        (end - skip) as u32,
+    ));
+
+    // Remaining tokens: Lehmer codes with context from previous value.
+    let mut last = 0u32;
+    for &val in &lehmer[skip..end] {
+        tokens.push(Token::new(coeff_order_context(last) as u32, val));
+        last = val;
+    }
+    tokens
+}
+
+/// Compute libjxl-style center-first AC group permutation (#14).
+///
+/// Sorts AC group indices by concentric-square distance from the
+/// image center, with ties broken by clockwise angle. Mirrors
+/// libjxl `enc_frame.cc:1688-1766` (`PermuteGroups`) for the
+/// AC-group sub-portion (the global DC/AC and DC group prefix is
+/// identity — left as-is by the libjxl algorithm too).
+///
+/// Returns a `Vec<u32>` of length `num_ac_groups` where
+/// `result[on_disk_position] = original_group_index`. Caller
+/// reorders the on-disk AC group sections to match.
+///
+/// `xsize_groups` × `ysize_groups` = `num_ac_groups`. Group dimension
+/// is fixed at 256 pixels (matching libjxl `frame_dim.group_dim`).
+///
+/// `(center_x, center_y)` are pixel coordinates of the image center
+/// (typically `(width/2, height/2)`); accept arbitrary points to
+/// match libjxl's `cparams.center_x / center_y` overrides.
+pub fn compute_center_first_ac_permutation(
+    xsize_groups: usize,
+    ysize_groups: usize,
+    center_x: u32,
+    center_y: u32,
+) -> Vec<u32> {
+    use core::cmp::Ordering;
+    const GROUP_DIM: u32 = 256;
+    let num_ac_groups = xsize_groups * ysize_groups;
+    if num_ac_groups <= 1 {
+        return (0..num_ac_groups as u32).collect();
+    }
+    // Center of the GROUP containing the image center.
+    let cx = ((center_x / GROUP_DIM) * GROUP_DIM + GROUP_DIM / 2) as i64;
+    let cy = ((center_y / GROUP_DIM) * GROUP_DIM + GROUP_DIM / 2) as i64;
+    // Direction within the central group; mirrors libjxl's
+    // `direction = -atan2(imag_cy - cy, imag_cx - cx)` and
+    // `side = floor(((direction + 5*pi/4) mod 2pi) * 2 / pi)`.
+    let dx_c = center_x as f64 - cx as f64;
+    let dy_c = center_y as f64 - cy as f64;
+    let direction = -dy_c.atan2(dx_c);
+    let side = ((direction + 5.0 * core::f64::consts::PI / 4.0)
+        .rem_euclid(2.0 * core::f64::consts::PI)
+        * 2.0
+        / core::f64::consts::PI)
+        .floor() as i64;
+    // libjxl uses (max(|dx|, |dy|), angle_with_side_offset). Tie-break
+    // by angle. Total ordering uses partial_cmp + .unwrap_or(Equal).
+    let key = |gid: u32| -> (i64, f64) {
+        let bx = (gid as usize % xsize_groups) as i64;
+        let by = (gid as usize / xsize_groups) as i64;
+        let gcx = bx * GROUP_DIM as i64 + GROUP_DIM as i64 / 2;
+        let gcy = by * GROUP_DIM as i64 + GROUP_DIM as i64 / 2;
+        let dx = gcx - cx;
+        let dy = gcy - cy;
+        let angle = ((dy as f64).atan2(dx as f64)
+            + core::f64::consts::PI / 4.0
+            + side as f64 * core::f64::consts::PI / 2.0)
+            .rem_euclid(2.0 * core::f64::consts::PI);
+        (dx.abs().max(dy.abs()), angle)
+    };
+    let mut order: Vec<u32> = (0..num_ac_groups as u32).collect();
+    order.sort_by(|a, b| {
+        let (ka, aa) = key(*a);
+        let (kb, ab) = key(*b);
+        ka.cmp(&kb).then_with(|| aa.partial_cmp(&ab).unwrap_or(Ordering::Equal))
+    });
+    order
+}
+
 /// Build entropy code and write coefficient orders to the bitstream.
 ///
 /// This writes the permutation entropy code header followed by all the
@@ -615,6 +725,80 @@ pub fn get_custom_order(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── #14 center-first foundations ─────────────────────────────
+
+    #[test]
+    fn test_tokenize_permutation_identity_emits_only_count() {
+        // Identity permutation (already sorted) → all Lehmer codes
+        // are 0. After trim, end == skip == 0, so only the
+        // count-token is emitted (value 0).
+        let order = vec![0u32, 1, 2, 3, 4];
+        let tokens = tokenize_permutation(&order, 0, 5);
+        assert_eq!(tokens.len(), 1, "identity permutation → 1 count token");
+        assert_eq!(tokens[0].value, 0, "count = 0 for identity");
+    }
+
+    #[test]
+    fn test_tokenize_permutation_reverse_emits_all_codes() {
+        // Reverse permutation [4, 3, 2, 1, 0]: Lehmer codes are
+        // [4, 3, 2, 1, 0]. After trimming the trailing 0 (idx 4):
+        // end = 4, count = 4, then 4 codes [4, 3, 2, 1].
+        let order = vec![4u32, 3, 2, 1, 0];
+        let tokens = tokenize_permutation(&order, 0, 5);
+        assert_eq!(tokens.len(), 5, "reverse permutation → 1 count + 4 codes");
+        assert_eq!(tokens[0].value, 4, "count = 4 (trimmed)");
+        assert_eq!(tokens[1].value, 4);
+        assert_eq!(tokens[2].value, 3);
+        assert_eq!(tokens[3].value, 2);
+        assert_eq!(tokens[4].value, 1);
+    }
+
+    #[test]
+    fn test_tokenize_permutation_skip() {
+        // skip=2 → first 2 positions are not Lehmer-encoded.
+        // Permutation [0, 1, 3, 2]: Lehmer codes [0, 0, 1, 0].
+        // After skip=2, codes are [1, 0]. Trim trailing 0 → end=3,
+        // count = end - skip = 1, codes = [1].
+        let order = vec![0u32, 1, 3, 2];
+        let tokens = tokenize_permutation(&order, 2, 4);
+        assert_eq!(tokens.len(), 2, "1 count + 1 code");
+        assert_eq!(tokens[0].value, 1);
+        assert_eq!(tokens[1].value, 1);
+    }
+
+    #[test]
+    fn test_compute_center_first_ac_permutation_single_group_identity() {
+        // 1x1 grid → identity (always-position-0 group).
+        let perm = compute_center_first_ac_permutation(1, 1, 128, 128);
+        assert_eq!(perm, vec![0u32]);
+    }
+
+    #[test]
+    fn test_compute_center_first_ac_permutation_2x2_center_in_middle() {
+        // 2x2 grid (= 4 AC groups), image center at (256, 256) — the
+        // exact corner where all 4 groups meet. Result is a valid
+        // permutation of [0..4) (all 4 groups appear exactly once).
+        let perm = compute_center_first_ac_permutation(2, 2, 256, 256);
+        assert_eq!(perm.len(), 4);
+        let mut sorted = perm.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![0u32, 1, 2, 3]);
+    }
+
+    #[test]
+    fn test_compute_center_first_ac_permutation_3x3_center_first() {
+        // 3x3 grid (= 9 AC groups), center at (384, 384) (middle of
+        // the central group). The center group (index 4) MUST appear
+        // first in the permutation (zero distance from center).
+        let perm = compute_center_first_ac_permutation(3, 3, 384, 384);
+        assert_eq!(perm.len(), 9);
+        assert_eq!(perm[0], 4, "center group should be first; got {:?}", perm);
+        // Permutation property: every index in [0..9) appears exactly once.
+        let mut sorted = perm.clone();
+        sorted.sort();
+        assert_eq!(sorted, (0u32..9).collect::<Vec<_>>());
+    }
 
     #[test]
     fn test_natural_coeff_order_8x8() {
