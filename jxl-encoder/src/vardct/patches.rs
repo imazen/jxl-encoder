@@ -2079,17 +2079,18 @@ mod tests {
     }
 
     /// Test reference frame integer value ranges for XYB patches.
+    /// Requires the codec-corpus `gb82-sc/terminal.png` screenshot;
+    /// gated behind the `corpus-tests` feature so default `cargo test`
+    /// runs skip it without the silent in-body short-circuit that the
+    /// previous `#[ignore]` + `if !path.exists()` pattern hid behind.
     #[test]
-    #[ignore]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_ref_frame_value_ranges() {
-        let path = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
-        )
-        .join("work/codec-corpus/gb82-sc/terminal.png");
-        if !path.exists() {
-            eprintln!("Skipping: {path:?} not found");
-            return;
-        }
+        crate::skip_without_corpus!();
+        let path = crate::test_helpers::corpus_dir().join("gb82-sc/terminal.png");
         let img = image::open(&path).unwrap().to_rgb8();
         let (w, h) = (img.width() as usize, img.height() as usize);
         let pixels = img.as_raw();
@@ -2167,19 +2168,18 @@ mod tests {
         );
     }
 
-    /// Diagnostic test: run patch detection on terminal.png and print pipeline stats.
-    /// Use `cargo test -p jxl_encoder --lib patches::tests::test_terminal_patch_coverage -- --ignored --nocapture`
+    /// Diagnostic test: run patch detection on terminal.png and print
+    /// pipeline stats. Same gating as `test_ref_frame_value_ranges`
+    /// — requires codec-corpus, gated behind the `corpus-tests`
+    /// feature.
     #[test]
-    #[ignore]
+    #[cfg_attr(
+        not(feature = "corpus-tests"),
+        ignore = "requires codec corpus; enable `corpus-tests` feature"
+    )]
     fn test_terminal_patch_coverage() {
-        let path = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_else(|_| "/home/lilith".into()),
-        )
-        .join("work/codec-corpus/gb82-sc/terminal.png");
-        if !path.exists() {
-            eprintln!("Skipping: {path:?} not found");
-            return;
-        }
+        crate::skip_without_corpus!();
+        let path = crate::test_helpers::corpus_dir().join("gb82-sc/terminal.png");
         let img = image::open(&path).unwrap().to_rgb8();
         let (w, h) = (img.width() as usize, img.height() as usize);
         let pixels = img.as_raw();
