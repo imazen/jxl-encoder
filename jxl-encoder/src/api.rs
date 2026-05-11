@@ -2211,26 +2211,13 @@ impl<'a> EncodeRequest<'a> {
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;
         }
-        if let Some(meta) = self.metadata
-            && let Some(icc) = meta.icc_profile
-        {
-            // Surface ICC issues here rather than letting predict_icc/write_icc
-            // panic deep in the bitstream-writing path.
-            const ICC_SIZE_LIMIT: usize = u32::MAX as usize >> 2;
-            if icc.is_empty() {
-                return Err(EncodeError::InvalidInput {
-                    message: "ICC profile must not be empty".into(),
-                });
-            }
-            if icc.len() > ICC_SIZE_LIMIT {
-                return Err(EncodeError::InvalidInput {
-                    message: format!(
-                        "ICC profile too large: {} bytes (max {ICC_SIZE_LIMIT})",
-                        icc.len()
-                    ),
-                });
-            }
-        }
+        // Defensive caps on caller-supplied metadata buffers (see
+        // `validate_metadata_sizes` for rationale).
+        validate_metadata_sizes(
+            self.metadata.and_then(|m| m.icc_profile),
+            self.metadata.and_then(|m| m.exif),
+            self.metadata.and_then(|m| m.xmp),
+        )?;
 
         // Build the per-encode allocation budget. Caller-supplied
         // Limits.max_memory_bytes wins; otherwise Limits provides its
@@ -3677,6 +3664,13 @@ impl LossyEncoder {
                 ),
             });
         }
+        // Defensive caps on caller-supplied metadata buffers (mirrors
+        // EncodeRequest::encode_inner).
+        validate_metadata_sizes(
+            self.icc_profile.as_deref(),
+            self.exif.as_deref(),
+            self.xmp.as_deref(),
+        )?;
         let cfg = &self.cfg;
         let w = self.width as usize;
         let h = self.height as usize;
@@ -3887,6 +3881,62 @@ const MAX_INTERNAL_SCALE: usize = 16;
 /// Without this check the streaming entry points silently accepted
 /// `width = u32::MAX`, which `write_size_u2s` would then truncate to 30 bits,
 /// emitting a header whose declared width does not match the encoded data.
+/// Per-blob cap for caller-supplied metadata buffers (ICC / EXIF /
+/// XMP). Real-world payloads are well under 10 MB; the ~1 GB cap is
+/// purely defensive and never rejects legitimate input. Without this,
+/// pathological multi-GB metadata reaches `Vec::with_capacity` in the
+/// container wrapper, exhausts system memory at write time, and the
+/// kernel kills the process.
+const METADATA_SIZE_LIMIT: usize = u32::MAX as usize >> 2;
+
+/// Apply [`METADATA_SIZE_LIMIT`] to caller-supplied ICC, EXIF, and
+/// XMP buffers. Empty ICC is also rejected (the encoder cannot
+/// embed a zero-byte ICC profile). Used by `EncodeRequest`,
+/// `LossyEncoder::finish_inner`, and `LosslessEncoder::finish_inner`
+/// for parity.
+fn validate_metadata_sizes(
+    icc: Option<&[u8]>,
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+) -> core::result::Result<(), EncodeError> {
+    if let Some(icc) = icc {
+        if icc.is_empty() {
+            return Err(EncodeError::InvalidInput {
+                message: "ICC profile must not be empty".into(),
+            });
+        }
+        if icc.len() > METADATA_SIZE_LIMIT {
+            return Err(EncodeError::InvalidInput {
+                message: format!(
+                    "ICC profile too large: {} bytes (max {METADATA_SIZE_LIMIT})",
+                    icc.len()
+                ),
+            });
+        }
+    }
+    if let Some(exif) = exif
+        && exif.len() > METADATA_SIZE_LIMIT
+    {
+        return Err(EncodeError::InvalidInput {
+            message: format!(
+                "EXIF metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
+                exif.len()
+            ),
+        });
+    }
+    if let Some(xmp) = xmp
+        && xmp.len() > METADATA_SIZE_LIMIT
+    {
+        return Err(EncodeError::InvalidInput {
+            message: format!(
+                "XMP metadata too large: {} bytes (max {METADATA_SIZE_LIMIT})",
+                xmp.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn validate_dims(width: u32, height: u32) -> core::result::Result<(), EncodeError> {
     if width == 0 || height == 0 {
         return Err(EncodeError::InvalidInput {
@@ -4338,6 +4388,13 @@ impl LosslessEncoder {
                 ),
             });
         }
+        // Defensive caps on caller-supplied metadata buffers (mirrors
+        // EncodeRequest::encode_inner).
+        validate_metadata_sizes(
+            self.icc_profile.as_deref(),
+            self.exif.as_deref(),
+            self.xmp.as_deref(),
+        )?;
 
         let cfg = &self.cfg;
         let w = self.width as usize;
