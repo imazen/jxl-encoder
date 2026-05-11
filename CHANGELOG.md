@@ -132,6 +132,18 @@
   individual hot-path allocations would exceed the cap rather than
   only at the up-front estimate.
 
+### Fixed (build)
+
+- **`cargo build --no-default-features` now succeeds** (closes #38,
+  f15b90c). The `jxl-encoder-simd` crate has `#![no_std]`
+  unconditionally but used 35 inherent `f32` methods (`floor`,
+  `sqrt`, `mul_add`, `round`, `round_ties_even`) that only exist
+  under `std`. New crate-internal `scalarmath` module wraps
+  `libm 0.2.16` (`floorf` / `sqrtf` / `roundf` / `roundevenf` /
+  `fmaf`); call sites switched. Adds one tiny pure-Rust dep, zero
+  measurable cost in `std` builds (LLVM inlines through). Required
+  for WASM and embedded targets that disable `std`.
+
 ### Removed
 
 - **`unsafe-performance` cargo feature** (#37, 1972037): unused
