@@ -7,6 +7,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel earlier in-flight runs of this workflow on the same branch
+# when a new commit lands. Without this, a rapid push burst stacks
+# 10+ full matrices in the runner queue, and the latest commit's CI
+# only starts after every prior commit's CI finishes — even though
+# only the head matters for "is main green?". Pull-request runs use
+# the PR number to keep concurrent reviews from cancelling each
+# other's CI.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CI: true
