@@ -6116,6 +6116,52 @@ fn test_streaming_lossless_encoder_premultiplied_alpha() {
     );
 }
 
+/// #18 streaming-encoder parity for bits_per_sample (LossyEncoder).
+#[test]
+fn test_streaming_lossy_encoder_bits_per_sample_12() {
+    let w = 16u32;
+    let h = 16;
+    let pixels_u16: Vec<u16> = (0..(w * h * 3)).map(|i| (i % 4096) as u16).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb16)
+        .unwrap()
+        .with_bits_per_sample(12);
+    enc.push_rows(pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let bd_dbg = format!("{:?}", img.image_header().metadata.bit_depth);
+    assert!(bd_dbg.contains("12"), "BitDepth should report 12; got {bd_dbg}");
+}
+
+/// #18 streaming-encoder parity for bits_per_sample (LosslessEncoder).
+#[test]
+fn test_streaming_lossless_encoder_bits_per_sample_10() {
+    let w = 16u32;
+    let h = 16;
+    let pixels_u16: Vec<u16> = (0..(w * h * 3)).map(|i| (i % 1024) as u16).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb16)
+        .unwrap()
+        .with_bits_per_sample(10);
+    enc.push_rows(pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let bd_dbg = format!("{:?}", img.image_header().metadata.bit_depth);
+    assert!(bd_dbg.contains("10"), "BitDepth should report 10; got {bd_dbg}");
+}
+
 /// Closes bits_per_sample sub-feature of #18: caller can signal
 /// 10/12/14-bit input precision via `with_bits_per_sample(N)`. The
 /// encoder normalizes by `(1 << N) - 1` and writes
