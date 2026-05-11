@@ -1369,12 +1369,14 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
     // Matches libjxl enc_modular.cc:395-438 with channel_colors_pre_transform_percent=95.
     let compact_analyses: Vec<(usize, super::palette::PaletteAnalysis)> =
         if palette_info.is_none() && !is_lossy && palette && image.channels.len() >= 2 {
-            let num_color_channels = if image.has_alpha {
-                image.channels.len() - 1
-            } else {
-                image.channels.len()
-            };
-            (0..num_color_channels)
+            // Color channels = base color set (1 gray or 3 RGB).
+            // Everything beyond is extra (alpha, depth, spot, …) and
+            // ChannelCompact must skip them. The previous formula
+            // `len - 1 if has_alpha` was wrong for >1 extras (refs #9):
+            // it would treat the spot/depth/etc as a color channel and
+            // try to compact it alongside RGB, blowing the layout.
+            let num_color_channels = if image.is_grayscale { 1 } else { 3 };
+            (0..num_color_channels.min(image.channels.len()))
                 .filter_map(|i| {
                     super::palette::analyze_channel_compact(
                         &image.channels[i],

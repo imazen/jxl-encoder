@@ -1211,13 +1211,17 @@ pub fn should_use_palette(image: &ModularImage) -> Option<(usize, usize)> {
         return None;
     }
 
-    // RGB or RGBA: palettize the color channels (not alpha)
-    let num_color_channels = if image.has_alpha {
-        image.channels.len() - 1
-    } else {
-        image.channels.len()
-    };
-
+    // RGB or RGBA: palettize the color channels (not alpha or other
+    // extras). Color channels are exactly the base color set: 1 for
+    // grayscale, 3 for RGB. Anything beyond is extra and must NOT be
+    // palettized alongside RGB. Refs #9 — the previous formula
+    // `len - 1 if has_alpha` only handled the single-extra case
+    // (alpha) and would palettize an attached depth / spot color
+    // channel as if it were a color channel.
+    let num_color_channels = if image.is_grayscale { 1 } else { 3 };
+    if image.channels.len() < num_color_channels {
+        return None;
+    }
     if num_color_channels < 2 {
         return None;
     }
