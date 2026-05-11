@@ -21,12 +21,11 @@ std = ["archmage/std", "magetypes/std"]
 [dependencies]
 archmage = { version = "0.9.15", default-features = false, features = ["macros"] }
 magetypes = { version = "0.9.15", default-features = false }
-# Pure-Rust libm. Required because the crate is `#![no_std]` and the
-# scalar fallback paths use `f32::floor` / `sqrt` / `mul_add` /
-# `round` / `round_ties_even`, which are inherent methods only
-# available under `std`. Always pulled in (closes #38) — adds ~160 KB
-# of source but compiles to a tiny call-through veneer that LLVM
-# inlines at use sites, so std builds pay near-zero cost.
+# Pure-Rust libm fallback. Only pulled in when `std` is OFF — the
+# `scalarmath` veneer in `lib.rs` cfg-gates each `f32` math call so
+# `std` builds use the inherent methods (which lower to hardware
+# intrinsics like FMA / SSE rounding) and `no_std` builds fall back
+# to libm's software implementations. Closes #38.
 libm = { version = "0.2.16", default-features = false }
 
 [lints]
