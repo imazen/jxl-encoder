@@ -2262,9 +2262,59 @@ impl VarDctEncoder {
                 }
             }
 
-            write_toc(&section_sizes, writer)?;
-            for section in sections {
-                writer.append_bytes(&section)?;
+            // Center-first AC group reordering (#14). Identity prefix
+            // for [LfGlobal, LfGroups..., HfGlobal], then AC groups
+            // permuted by concentric-square distance from image
+            // center. Only wired for num_passes == 1 (multi-pass
+            // progressive + center-first interaction is a future
+            // extension matching libjxl's per-pass loop).
+            if self.center_first && num_groups > 1 && num_passes == 1 {
+                use crate::vardct::coeff_order::compute_center_first_ac_permutation;
+                use crate::vardct::frame::write_toc_with_permutation;
+                let cx = (width as u32) / 2;
+                let cy = (height as u32) / 2;
+                let ac_group_order = compute_center_first_ac_permutation(
+                    xsize_groups,
+                    _ysize_groups,
+                    cx,
+                    cy,
+                );
+                let mut inv_ac = vec![0u32; num_groups];
+                for (on_disk_pos, &orig_idx) in ac_group_order.iter().enumerate() {
+                    inv_ac[orig_idx as usize] = on_disk_pos as u32;
+                }
+                let prefix_len = 2 + num_dc_groups;
+                let total = prefix_len + num_groups;
+                let mut permutation = Vec::with_capacity(total);
+                for i in 0..prefix_len {
+                    permutation.push(i as u32);
+                }
+                let prefix_u32 = prefix_len as u32;
+                for orig_idx in 0..num_groups {
+                    permutation.push(prefix_u32 + inv_ac[orig_idx]);
+                }
+                let mut new_sections: Vec<Vec<u8>> =
+                    (0..total).map(|_| Vec::new()).collect();
+                for (logical_idx, section_data) in sections.into_iter().enumerate() {
+                    let on_disk = permutation[logical_idx] as usize;
+                    new_sections[on_disk] = section_data;
+                }
+                let permuted_sizes: Vec<usize> =
+                    new_sections.iter().map(|s| s.len()).collect();
+                write_toc_with_permutation(
+                    &permuted_sizes,
+                    &permutation,
+                    self.use_ans,
+                    writer,
+                )?;
+                for section in new_sections {
+                    writer.append_bytes(&section)?;
+                }
+            } else {
+                write_toc(&section_sizes, writer)?;
+                for section in sections {
+                    writer.append_bytes(&section)?;
+                }
             }
         }
 

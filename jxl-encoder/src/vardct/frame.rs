@@ -568,7 +568,48 @@ pub fn assemble_frame_sections(
 
 /// Write the TOC (table of contents).
 pub fn write_toc(section_sizes: &[usize], writer: &mut BitWriter) -> Result<()> {
-    writer.write(1, 0)?; // no permutation
+    write_toc_inner(section_sizes, None, true, writer)
+}
+
+/// Write the TOC with an optional permutation (closes #14).
+///
+/// When `permutation` is `Some(perm)`, the TOC `permuted` flag bit
+/// is `1` and the permutation is encoded as Lehmer codes via
+/// [`crate::vardct::coeff_order::tokenize_permutation`] +
+/// [`crate::vardct::coeff_order::build_and_write_coeff_orders`].
+/// `section_sizes` MUST already be in the on-disk (permuted) order
+/// — caller is responsible for reordering them before passing in.
+///
+/// `use_ans` controls whether the permutation entropy code is
+/// written as ANS (`true`) or static Huffman (`false`); pass through
+/// the same flag the rest of the encoder uses.
+pub fn write_toc_with_permutation(
+    section_sizes: &[usize],
+    permutation: &[u32],
+    use_ans: bool,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_toc_inner(section_sizes, Some((permutation, use_ans)), true, writer)
+}
+
+fn write_toc_inner(
+    section_sizes: &[usize],
+    permutation: Option<(&[u32], bool)>,
+    _expect_byte_align: bool,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    if let Some((perm, use_ans)) = permutation {
+        debug_assert_eq!(
+            perm.len(),
+            section_sizes.len(),
+            "permutation length must match section count",
+        );
+        writer.write(1, 1)?; // permuted = 1
+        let tokens = crate::vardct::coeff_order::tokenize_permutation(perm, 0, perm.len());
+        crate::vardct::coeff_order::build_and_write_coeff_orders(&tokens, use_ans, writer)?;
+    } else {
+        writer.write(1, 0)?; // no permutation
+    }
     writer.zero_pad_to_byte(); // before TOC entries
 
     const BITS: [usize; 4] = [10, 14, 22, 30];

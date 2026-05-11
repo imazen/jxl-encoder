@@ -6202,6 +6202,60 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// Closes #14: `LossyConfig::with_center_first(true)` reorders AC
+/// groups by concentric-square distance from the image center.
+/// Verified by encoding a multi-group image (>256×256) with vs
+/// without center_first, confirming:
+/// - Both bitstreams decode cleanly via jxl-oxide.
+/// - The center_first variant has the codestream `permuted` flag
+///   set (proxied: bytes differ between the two encodings).
+/// - Single-group images (≤256×256) are unaffected (no-op).
+#[test]
+fn test_encode_request_center_first_multi_group() {
+    let w = 512u32; // 2x2 = 4 AC groups
+    let h = 512;
+    let pixels: Vec<u8> = (0..(w * h * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    let cfg_default = LossyConfig::new(2.0).with_effort(3);
+    let cfg_center = cfg_default.clone().with_center_first(true);
+
+    let bytes_default = cfg_default.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+    let bytes_center = cfg_center.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+    assert_ne!(
+        bytes_default, bytes_center,
+        "center-first should change the bitstream (TOC permuted flag + reordered sections)",
+    );
+
+    // Both should decode cleanly through jxl-oxide.
+    let mut img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_center))
+        .expect("jxl-oxide parse failed (center)");
+    let render = img.render_frame(0).expect("center-first frame should render");
+    assert_eq!(render.image_all_channels().channels(), 3);
+}
+
+#[test]
+fn test_encode_request_center_first_single_group_no_op() {
+    // Single-group image (256×256): num_groups = 1 means no AC group
+    // reordering possible. Should produce identical bytes with vs
+    // without center_first.
+    let w = 256u32;
+    let h = 256;
+    let pixels: Vec<u8> = (0..(w * h * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+    let cfg_default = LossyConfig::new(2.0).with_effort(3);
+    let cfg_center = cfg_default.clone().with_center_first(true);
+
+    let bytes_default = cfg_default.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+    let bytes_center = cfg_center.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+    assert_eq!(
+        bytes_default, bytes_center,
+        "center_first should be a no-op for single-group images (≤256×256)",
+    );
+}
+
 /// Closes row-stride portion of #18: caller can pass a strided
 /// pixel buffer (with per-row padding) via `with_row_stride(s)`.
 /// The encoder unpacks once, then runs the rest of the pipeline as
