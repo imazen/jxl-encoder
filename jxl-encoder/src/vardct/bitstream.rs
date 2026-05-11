@@ -2280,12 +2280,8 @@ impl VarDctEncoder {
                 use crate::vardct::frame::write_toc_with_permutation;
                 let cx = (width as u32) / 2;
                 let cy = (height as u32) / 2;
-                let ac_group_order = compute_center_first_ac_permutation(
-                    xsize_groups,
-                    _ysize_groups,
-                    cx,
-                    cy,
-                );
+                let ac_group_order =
+                    compute_center_first_ac_permutation(xsize_groups, _ysize_groups, cx, cy);
                 let mut inv_ac = vec![0u32; num_groups];
                 for (on_disk_pos, &orig_idx) in ac_group_order.iter().enumerate() {
                     inv_ac[orig_idx as usize] = on_disk_pos as u32;
@@ -2300,20 +2296,13 @@ impl VarDctEncoder {
                 for &val in &inv_ac[..num_groups] {
                     permutation.push(prefix_u32 + val);
                 }
-                let mut new_sections: Vec<Vec<u8>> =
-                    (0..total).map(|_| Vec::new()).collect();
+                let mut new_sections: Vec<Vec<u8>> = (0..total).map(|_| Vec::new()).collect();
                 for (logical_idx, section_data) in sections.into_iter().enumerate() {
                     let on_disk = permutation[logical_idx] as usize;
                     new_sections[on_disk] = section_data;
                 }
-                let permuted_sizes: Vec<usize> =
-                    new_sections.iter().map(|s| s.len()).collect();
-                write_toc_with_permutation(
-                    &permuted_sizes,
-                    &permutation,
-                    self.use_ans,
-                    writer,
-                )?;
+                let permuted_sizes: Vec<usize> = new_sections.iter().map(|s| s.len()).collect();
+                write_toc_with_permutation(&permuted_sizes, &permutation, self.use_ans, writer)?;
                 for section in new_sections {
                     writer.append_bytes(&section)?;
                 }

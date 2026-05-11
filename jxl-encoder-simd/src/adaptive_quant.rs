@@ -146,7 +146,9 @@ fn ratio_of_deriv_inverted(v: f32) -> f32 {
 #[inline(always)]
 fn masking_sqrt(v: f32) -> f32 {
     let mul_v = MASKING_K_MUL * 1e8;
-    0.25 * crate::scalarmath::sqrt_f32(v * crate::scalarmath::sqrt_f32(mul_v) + MASKING_K_LOG_OFFSET)
+    0.25 * crate::scalarmath::sqrt_f32(
+        v * crate::scalarmath::sqrt_f32(mul_v) + MASKING_K_LOG_OFFSET,
+    )
 }
 
 // ============================================================================

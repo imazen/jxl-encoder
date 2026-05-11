@@ -572,7 +572,11 @@ pub fn tokenize_coeff_orders(orders: &[Vec<Vec<u32>>], used_orders: u32) -> Vec<
 /// code (8 contexts via [`coeff_order_context`]) so the same
 /// [`build_and_write_coeff_orders`] writer handles them.
 pub fn tokenize_permutation(order: &[u32], skip: usize, size: usize) -> Vec<Token> {
-    debug_assert_eq!(order.len(), size, "tokenize_permutation: order.len() != size");
+    debug_assert_eq!(
+        order.len(),
+        size,
+        "tokenize_permutation: order.len() != size"
+    );
     debug_assert!(skip <= size, "tokenize_permutation: skip > size");
     let mut tokens = Vec::new();
     let lehmer = compute_lehmer_code(order);
@@ -661,7 +665,8 @@ pub fn compute_center_first_ac_permutation(
     order.sort_by(|a, b| {
         let (ka, aa) = key(*a);
         let (kb, ab) = key(*b);
-        ka.cmp(&kb).then_with(|| aa.partial_cmp(&ab).unwrap_or(Ordering::Equal))
+        ka.cmp(&kb)
+            .then_with(|| aa.partial_cmp(&ab).unwrap_or(Ordering::Equal))
     });
     order
 }

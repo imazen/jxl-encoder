@@ -1467,12 +1467,8 @@ impl VarDctEncoder {
                 use crate::vardct::coeff_order::compute_center_first_ac_permutation;
                 let cx = (width as u32) / 2;
                 let cy = (height as u32) / 2;
-                let ac_group_order = compute_center_first_ac_permutation(
-                    xsize_groups,
-                    ysize_groups,
-                    cx,
-                    cy,
-                );
+                let ac_group_order =
+                    compute_center_first_ac_permutation(xsize_groups, ysize_groups, cx, cy);
                 // Build inverse mapping: inv[orig_idx] = on_disk_pos.
                 let mut inv_ac = vec![0u32; num_groups];
                 for (on_disk_pos, &orig_idx) in ac_group_order.iter().enumerate() {
@@ -1491,14 +1487,12 @@ impl VarDctEncoder {
                     permutation.push(prefix_u32 + val);
                 }
                 // Reorder sections: new[permutation[i]] = sections[i].
-                let mut new_sections: Vec<Vec<u8>> =
-                    (0..total).map(|_| Vec::new()).collect();
+                let mut new_sections: Vec<Vec<u8>> = (0..total).map(|_| Vec::new()).collect();
                 for (logical_idx, section_data) in sections.into_iter().enumerate() {
                     let on_disk = permutation[logical_idx] as usize;
                     new_sections[on_disk] = section_data;
                 }
-                let section_sizes: Vec<usize> =
-                    new_sections.iter().map(|s| s.len()).collect();
+                let section_sizes: Vec<usize> = new_sections.iter().map(|s| s.len()).collect();
                 write_toc_with_permutation(
                     &section_sizes,
                     &permutation,

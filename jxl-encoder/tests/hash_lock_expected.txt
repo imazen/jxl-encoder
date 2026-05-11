@@ -70,3 +70,4 @@ lossy_with_error_diffusion 197 0x3ba5403031c1499f 0xc66c698b46075c4b
 lossy_with_lz77_greedy 3425 0xb81c2f58aebac4b3 0x38736eb1c87965b4
 lossy_with_lz77_rle 3425 0xb81c2f58aebac4b3 0x38736eb1c87965b4
 lossy_with_noise 3425 0xb81c2f58aebac4b3 0x38736eb1c87965b4
+lossy_rgba_32x32 638 0xe058fd017b3de453 0xe9501332e57fe80c
