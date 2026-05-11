@@ -94,6 +94,13 @@
   rather than failing deep inside `f32_to_f16_bits` in the file-
   header writer. Wired into all three paths via a new
   `validate_tone_mapping` helper.
+- **`source_gamma` + `intrinsic_size` validated up front**
+  (c8bcfb7): bad `with_source_gamma` values (NaN, Inf, ≤ 1/255, > 1)
+  and `with_intrinsic_size(0, 0)` / above-spec dims now reject at
+  the API surface. `source_gamma` matches libjxl's accepted range
+  exactly so codestreams round-trip through cjxl/djxl unchanged;
+  previously, out-of-range values silently produced garbage encodes
+  via overflow in the gamma LUT (`inv_gamma = 1.0 / gamma`).
 - **4 latent serialization bugs in non-alpha extra-channel paths**
   (closes #8, 4cb33e8): enum coder, F16 vs F32 alpha range, CFA
   channel distribution, name-length distribution. Alpha encodes were
