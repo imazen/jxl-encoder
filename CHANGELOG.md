@@ -101,6 +101,17 @@
   exactly so codestreams round-trip through cjxl/djxl unchanged;
   previously, out-of-range values silently produced garbage encodes
   via overflow in the gamma LUT (`inv_gamma = 1.0 / gamma`).
+- **`cfg.validate()` is now auto-invoked on every encode path**
+  (5ecc8e6): `LossyConfig::validate()` / `LosslessConfig::validate()`
+  used to be opt-in; only callers who remembered to call them got
+  the full validation. The encode pipeline now invokes them
+  automatically at `EncodeRequest::encode_inner`,
+  `LossyEncoder::finish_inner`, and `LosslessEncoder::finish_inner`,
+  so distance / effort / iter-count / mutual-exclusivity checks
+  fire for every encode regardless of caller. New
+  `From<ValidationError>` for `EncodeError`. The streaming path in
+  particular was previously silent on `LossyConfig::new(50.0)`
+  (above DISTANCE_MAX); now both paths reject identically.
 - **4 latent serialization bugs in non-alpha extra-channel paths**
   (closes #8, 4cb33e8): enum coder, F16 vs F32 alpha range, CFA
   channel distribution, name-length distribution. Alpha encodes were
