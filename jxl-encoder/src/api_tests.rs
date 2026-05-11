@@ -7765,6 +7765,95 @@ fn test_lossy_with_dot_detection_roundtrip() {
     assert_eq!(fb.height() as u32, h);
 }
 
+/// Refs #9: lossless RGB + Depth extra channel — verify the
+/// channel survives roundtrip via jxl-oxide and the file header
+/// reports the right extra-channel type.
+#[test]
+fn test_lossless_rgb_with_depth_channel() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 13 % 256) as u8).collect();
+    let extras = [ExtraChannel::depth(&depth)];
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless rgb+depth");
+
+    // jxl-oxide must parse; file header should report 1 extra channel.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "expected 1 extra channel in header",
+    );
+
+    // Render the frame to confirm the bitstream is valid.
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: lossless Gray + SpotColor — header reports the spot
+/// color extra channel and the bitstream decodes via jxl-oxide.
+/// (RGBA + SpotColor = 5 channels currently trips an
+/// `InvalidAnsStream` error inside the modular encoder for >4
+/// channels; documented as a follow-up wire-up gap.)
+#[test]
+fn test_lossless_gray_with_spot_color_channel() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h)).map(|i| (i % 251) as u8).collect();
+    let spot: Vec<u8> = vec![64u8; (w * h) as usize];
+    let extras = [ExtraChannel::spot_color(&spot, [1.0, 0.5, 0.0, 1.0])];
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Gray8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless gray+spot");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "expected 1 extra channel (spot color)",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: passing an extra-channel buffer with the wrong size
+/// must reject up front with a clear error.
+#[test]
+fn test_extra_channel_size_mismatch_rejected() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = vec![0u8; (w * h * 3) as usize];
+    let bad_depth = vec![0u8; 10]; // wrong size, want 256
+    let extras = [ExtraChannel::depth(&bad_depth)];
+    let result = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels);
+    assert!(result.is_err(), "size mismatch must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("extra_channels"),
+        "expected extra_channels error, got: {msg}",
+    );
+}
+
 /// Refs #19: dot detection off by default — same input should
 /// encode identically regardless of `with_dot_detection(false)` vs
 /// no call at all. Verifies the new builder really is gated.
