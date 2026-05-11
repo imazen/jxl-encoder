@@ -6317,6 +6317,77 @@ fn test_encode_request_row_stride_validates_too_small() {
     );
 }
 
+/// `validate_metadata_sizes` is wired into both the one-shot and
+/// streaming paths. Empty ICC must be rejected (encoder cannot
+/// embed a zero-byte ICC profile); the > 1 GB cap can't be
+/// practically tested without allocating a gigabyte, so we trust
+/// the source-level constant + the empty-ICC negative case as
+/// proof the helper is reached.
+#[test]
+fn test_streaming_lossy_empty_icc_rejected_at_finish() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
+    enc = enc.with_icc_profile(&[]); // 0-byte ICC
+    let row_bytes = (w as usize) * 3;
+    for y in 0..(h as usize) {
+        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
+            .expect("push");
+    }
+    let result = enc.finish();
+    assert!(result.is_err(), "empty ICC must reject at finish");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("ICC") && msg.contains("empty"),
+        "expected empty-ICC error, got: {msg}",
+    );
+}
+
+#[test]
+fn test_request_lossy_empty_icc_rejected_at_encode() {
+    use crate::ImageMetadata;
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let bad_icc = b"";
+    let meta = ImageMetadata::new().with_icc_profile(bad_icc);
+    let result = LossyConfig::new(1.0)
+        .with_effort(3)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&pixels);
+    assert!(result.is_err(), "empty ICC must reject at encode");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("ICC") && msg.contains("empty"),
+        "expected empty-ICC error, got: {msg}",
+    );
+}
+
+#[test]
+fn test_streaming_lossless_empty_icc_rejected_at_finish() {
+    let w = 8u32;
+    let h = 8u32;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let cfg = LosslessConfig::new();
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
+    enc = enc.with_icc_profile(&[]);
+    let row_bytes = (w as usize) * 3;
+    for y in 0..(h as usize) {
+        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
+            .expect("push");
+    }
+    let result = enc.finish();
+    assert!(result.is_err(), "empty ICC must reject at finish");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("ICC") && msg.contains("empty"),
+        "expected empty-ICC error, got: {msg}",
+    );
+}
+
 /// Up-front validation of `row_stride` rejects an oversized stride
 /// that would overflow `height * stride` before the encoder
 /// allocates anything. This test would have OOM'd if the check ran
