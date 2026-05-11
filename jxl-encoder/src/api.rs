@@ -278,6 +278,18 @@ pub enum PixelLayout {
     GrayLinearF32,
     /// Linear f32 grayscale + alpha, 8 bytes per pixel.
     GrayAlphaLinearF32,
+    /// Linear IEEE 754 binary16 RGB, 6 bytes per pixel — native-endian
+    /// u16. Common for GPU pipelines (WebGPU, CUDA, Metal, Vulkan,
+    /// Direct2D). Same semantics as [`Self::RgbLinearF32`] but at
+    /// half precision; encoder converts to f32 internally before XYB.
+    RgbLinearF16,
+    /// Linear IEEE 754 binary16 RGBA, 8 bytes per pixel — native-endian
+    /// u16. See [`Self::RgbLinearF16`].
+    RgbaLinearF16,
+    /// Linear IEEE 754 binary16 grayscale, 2 bytes per pixel.
+    GrayLinearF16,
+    /// Linear IEEE 754 binary16 grayscale + alpha, 4 bytes per pixel.
+    GrayAlphaLinearF16,
 }
 
 impl PixelLayout {
@@ -296,6 +308,10 @@ impl PixelLayout {
             Self::RgbaLinearF32 => 16,
             Self::GrayLinearF32 => 4,
             Self::GrayAlphaLinearF32 => 8,
+            Self::RgbLinearF16 => 6,
+            Self::RgbaLinearF16 => 8,
+            Self::GrayLinearF16 => 2,
+            Self::GrayAlphaLinearF16 => 4,
         }
     }
 
@@ -307,6 +323,10 @@ impl PixelLayout {
                 | Self::RgbaLinearF32
                 | Self::GrayLinearF32
                 | Self::GrayAlphaLinearF32
+                | Self::RgbLinearF16
+                | Self::RgbaLinearF16
+                | Self::GrayLinearF16
+                | Self::GrayAlphaLinearF16
         )
     }
 
@@ -329,6 +349,18 @@ impl PixelLayout {
         )
     }
 
+    /// Whether this layout uses IEEE 754 binary16 (f16, half-float)
+    /// samples in native-endian u16 storage.
+    pub const fn is_f16(self) -> bool {
+        matches!(
+            self,
+            Self::RgbLinearF16
+                | Self::RgbaLinearF16
+                | Self::GrayLinearF16
+                | Self::GrayAlphaLinearF16
+        )
+    }
+
     /// Whether this layout includes an alpha channel.
     pub const fn has_alpha(self) -> bool {
         matches!(
@@ -340,6 +372,8 @@ impl PixelLayout {
                 | Self::GrayAlpha16
                 | Self::RgbaLinearF32
                 | Self::GrayAlphaLinearF32
+                | Self::RgbaLinearF16
+                | Self::GrayAlphaLinearF16
         )
     }
 
@@ -353,6 +387,8 @@ impl PixelLayout {
                 | Self::GrayAlpha16
                 | Self::GrayLinearF32
                 | Self::GrayAlphaLinearF32
+                | Self::GrayLinearF16
+                | Self::GrayAlphaLinearF16
         )
     }
 }
@@ -2476,6 +2512,19 @@ impl<'a> EncodeRequest<'a> {
                 let alpha = extract_alpha_f32(floats, 2, 1);
                 (rgb, Some(alpha), false)
             }
+            // Closes FLOAT16 portion of #18.
+            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(pixels, 3), None, false),
+            PixelLayout::RgbaLinearF16 => {
+                let rgb = f16_to_linear_f32_rgb(pixels, 4);
+                let alpha = extract_alpha_f16(pixels, 4, 3);
+                (rgb, Some(alpha), false)
+            }
+            PixelLayout::GrayLinearF16 => (f16_gray_to_linear_f32_rgb(pixels, 1), None, false),
+            PixelLayout::GrayAlphaLinearF16 => {
+                let rgb = f16_gray_to_linear_f32_rgb(pixels, 2);
+                let alpha = extract_alpha_f16(pixels, 2, 1);
+                (rgb, Some(alpha), false)
+            }
         };
 
         let mut profile = cfg.effective_profile();
@@ -2874,6 +2923,11 @@ impl LossyEncoder {
                 let floats: &[f32] = bytemuck::cast_slice(pixels);
                 gray_f32_to_linear_f32_rgb(floats, 2)
             }
+            // FLOAT16 streaming input (closes FLOAT16 portion of #18).
+            PixelLayout::RgbLinearF16 => f16_to_linear_f32_rgb(pixels, 3),
+            PixelLayout::RgbaLinearF16 => f16_to_linear_f32_rgb(pixels, 4),
+            PixelLayout::GrayLinearF16 => f16_gray_to_linear_f32_rgb(pixels, 1),
+            PixelLayout::GrayAlphaLinearF16 => f16_gray_to_linear_f32_rgb(pixels, 2),
         };
         self.linear_rgb.extend_from_slice(&new_linear);
 
@@ -2913,6 +2967,18 @@ impl LossyEncoder {
             PixelLayout::GrayAlphaLinearF32 => {
                 let floats: &[f32] = bytemuck::cast_slice(pixels);
                 let new_alpha = extract_alpha_f32(floats, 2, 1);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::RgbaLinearF16 => {
+                let new_alpha = extract_alpha_f16(pixels, 4, 3);
+                self.alpha
+                    .get_or_insert_with(Vec::new)
+                    .extend_from_slice(&new_alpha);
+            }
+            PixelLayout::GrayAlphaLinearF16 => {
+                let new_alpha = extract_alpha_f16(pixels, 2, 1);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
@@ -4257,6 +4323,18 @@ fn encode_animation_lossy(
                 let alpha = extract_alpha_f32(floats, 2, 1);
                 (rgb, Some(alpha))
             }
+            PixelLayout::RgbLinearF16 => (f16_to_linear_f32_rgb(src_pixels, 3), None),
+            PixelLayout::RgbaLinearF16 => {
+                let rgb = f16_to_linear_f32_rgb(src_pixels, 4);
+                let alpha = extract_alpha_f16(src_pixels, 4, 3);
+                (rgb, Some(alpha))
+            }
+            PixelLayout::GrayLinearF16 => (f16_gray_to_linear_f32_rgb(src_pixels, 1), None),
+            PixelLayout::GrayAlphaLinearF16 => {
+                let rgb = f16_gray_to_linear_f32_rgb(src_pixels, 2);
+                let alpha = extract_alpha_f16(src_pixels, 2, 1);
+                (rgb, Some(alpha))
+            }
         };
 
         let frame_options = FrameOptions {
@@ -4613,6 +4691,56 @@ fn gray_f32_to_linear_f32_rgb(data: &[f32], stride: usize) -> Vec<f32> {
         .flat_map(|px| {
             let v = px[0];
             [v, v, v]
+        })
+        .collect()
+}
+
+// ─── f16 (linear) input helpers ───────────────────────────────────
+// Closes the FLOAT16 portion of #18. Storage is native-endian u16
+// per channel; conversion via `crate::f16::f16_bits_to_f32`.
+
+/// Convert interleaved linear f16 RGB(A) bytes (`stride` channels per
+/// pixel) to interleaved linear f32 RGB (stride 3, alpha dropped).
+/// `bytes` must contain exactly `n_pixels * stride * 2` u16-bytes.
+fn f16_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
+    use crate::f16::f16_bits_to_f32;
+    let pixels: &[u16] = bytemuck::cast_slice(bytes);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            [
+                f16_bits_to_f32(px[0]),
+                f16_bits_to_f32(px[1]),
+                f16_bits_to_f32(px[2]),
+            ]
+        })
+        .collect()
+}
+
+/// Expand interleaved linear f16 grayscale (`stride=1` for gray-only,
+/// `stride=2` for gray+alpha) to interleaved linear f32 RGB.
+fn f16_gray_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
+    use crate::f16::f16_bits_to_f32;
+    let pixels: &[u16] = bytemuck::cast_slice(bytes);
+    pixels
+        .chunks(stride)
+        .flat_map(|px| {
+            let v = f16_bits_to_f32(px[0]);
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// Extract alpha from interleaved f16 pixel data, converting to u8
+/// (0..255). Mirrors `extract_alpha_f32` but reads u16 bytes via f16
+/// conversion before clamping.
+fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8> {
+    use crate::f16::f16_bits_to_f32;
+    let pixels: &[u16] = bytemuck::cast_slice(bytes);
+    pixels
+        .chunks(stride)
+        .map(|px| {
+            (f16_bits_to_f32(px[alpha_offset]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8
         })
         .collect()
 }

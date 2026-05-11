@@ -6084,6 +6084,115 @@ fn test_encode_request_with_intensity_target_and_color_encoding() {
     );
 }
 
+/// Closes FLOAT16 portion of #18: encoder accepts the new
+/// PixelLayout::*LinearF16 variants and produces identical bitstreams
+/// to the equivalent f32 layout (at f16 precision).
+#[test]
+fn test_pixel_layout_f16_rgb_matches_f32() {
+    use crate::f16::{f16_bits_to_f32, f32_to_f16_bits};
+    let w = 16u32;
+    let h = 16;
+    // Build a synthetic RGB image where all values are exactly f16-representable.
+    let n = (w * h) as usize;
+    let mut f32_rgb = Vec::with_capacity(n * 3);
+    let mut f16_rgb = Vec::with_capacity(n * 3);
+    for i in 0..(n * 3) {
+        let v = (i as f32 / (n * 3) as f32).clamp(0.0, 1.0);
+        let v_f16 = f16_bits_to_f32(f32_to_f16_bits(v).unwrap());
+        f32_rgb.push(v_f16);
+        f16_rgb.push(f32_to_f16_bits(v).unwrap());
+    }
+    let f32_bytes: &[u8] = bytemuck::cast_slice(&f32_rgb);
+    let f16_bytes: &[u8] = bytemuck::cast_slice(&f16_rgb);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_f32 = cfg
+        .encode(f32_bytes, w, h, PixelLayout::RgbLinearF32)
+        .unwrap();
+    let bytes_f16 = cfg
+        .encode(f16_bytes, w, h, PixelLayout::RgbLinearF16)
+        .unwrap();
+    assert_eq!(
+        bytes_f32, bytes_f16,
+        "RgbLinearF16 should produce same bytes as RgbLinearF32 for f16-representable input"
+    );
+}
+
+#[test]
+fn test_pixel_layout_f16_rgba_matches_f32() {
+    use crate::f16::{f16_bits_to_f32, f32_to_f16_bits};
+    let w = 16u32;
+    let h = 16;
+    let n = (w * h) as usize;
+    let mut f32_rgba = Vec::with_capacity(n * 4);
+    let mut f16_rgba = Vec::with_capacity(n * 4);
+    for i in 0..(n * 4) {
+        let v = (i as f32 / (n * 4) as f32).clamp(0.0, 1.0);
+        let v_f16 = f16_bits_to_f32(f32_to_f16_bits(v).unwrap());
+        f32_rgba.push(v_f16);
+        f16_rgba.push(f32_to_f16_bits(v).unwrap());
+    }
+    let f32_bytes: &[u8] = bytemuck::cast_slice(&f32_rgba);
+    let f16_bytes: &[u8] = bytemuck::cast_slice(&f16_rgba);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_f32 = cfg
+        .encode(f32_bytes, w, h, PixelLayout::RgbaLinearF32)
+        .unwrap();
+    let bytes_f16 = cfg
+        .encode(f16_bytes, w, h, PixelLayout::RgbaLinearF16)
+        .unwrap();
+    assert_eq!(bytes_f32, bytes_f16);
+}
+
+#[test]
+fn test_pixel_layout_f16_predicates() {
+    assert!(PixelLayout::RgbLinearF16.is_f16());
+    assert!(PixelLayout::RgbaLinearF16.is_f16());
+    assert!(PixelLayout::GrayLinearF16.is_f16());
+    assert!(PixelLayout::GrayAlphaLinearF16.is_f16());
+    assert!(!PixelLayout::RgbLinearF32.is_f16());
+    assert!(!PixelLayout::Rgb8.is_f16());
+
+    assert!(PixelLayout::RgbLinearF16.is_linear());
+    assert!(PixelLayout::RgbaLinearF16.has_alpha());
+    assert!(PixelLayout::GrayAlphaLinearF16.has_alpha());
+    assert!(!PixelLayout::RgbLinearF16.has_alpha());
+
+    assert!(PixelLayout::GrayLinearF16.is_grayscale());
+    assert!(PixelLayout::GrayAlphaLinearF16.is_grayscale());
+    assert!(!PixelLayout::RgbLinearF16.is_grayscale());
+
+    assert_eq!(PixelLayout::RgbLinearF16.bytes_per_pixel(), 6);
+    assert_eq!(PixelLayout::RgbaLinearF16.bytes_per_pixel(), 8);
+    assert_eq!(PixelLayout::GrayLinearF16.bytes_per_pixel(), 2);
+    assert_eq!(PixelLayout::GrayAlphaLinearF16.bytes_per_pixel(), 4);
+}
+
+#[test]
+fn test_streaming_lossy_f16_matches_oneshot() {
+    use crate::f16::f32_to_f16_bits;
+    let w = 16u32;
+    let h = 16;
+    let n = (w * h) as usize;
+    let f16_pixels: Vec<u16> = (0..(n * 4))
+        .map(|i| f32_to_f16_bits((i as f32 / (n * 4) as f32).clamp(0.0, 1.0)).unwrap())
+        .collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&f16_pixels);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let oneshot = cfg.encode(pixels, w, h, PixelLayout::RgbaLinearF16).unwrap();
+
+    let mut enc = cfg.encoder(w, h, PixelLayout::RgbaLinearF16).unwrap();
+    let half = h / 2;
+    let mid = (half as usize) * (w as usize) * 8; // 8 bytes per pixel
+    enc.push_rows(&pixels[..mid], half).unwrap();
+    enc.push_rows(&pixels[mid..], h - half).unwrap();
+    let streaming = enc.finish().unwrap();
+
+    assert_eq!(oneshot, streaming);
+}
+
 /// Closes #10: SimplifyInvisible pre-pass measurably reduces encoded
 /// bytes on RGBA images with large transparent regions.
 ///
