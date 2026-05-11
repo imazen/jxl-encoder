@@ -78,6 +78,262 @@ pub(crate) const MAX_CC_SIZE: usize = 1000;
 /// `kExtraRect = 4`, `enc_detect_dots.cc:299`.
 pub(crate) const CC_EXTRA_RECT: i32 = 4;
 
+/// 2×2 anisotropic Gaussian "dot" model evaluated at a relative
+/// position `(dx, dy)`. `(ct, st)` is the rotation
+/// `(cos(angle), sin(angle))`; `sigma_x`/`sigma_y` are squared
+/// standard-deviation parameters along the rotated axes;
+/// `intensity` scales the peak. Mirrors libjxl `DotGaussianModel`
+/// (`enc_detect_dots.cc:115-122`).
+pub(crate) fn dot_gaussian_model(
+    dx: f64,
+    dy: f64,
+    ct: f64,
+    st: f64,
+    sigma_x: f64,
+    sigma_y: f64,
+    intensity: f64,
+) -> f64 {
+    let rx = ct * dx + st * dy;
+    let ry = -st * dx + ct * dy;
+    let md = rx * rx / sigma_x + ry * ry / sigma_y;
+    intensity * (-0.5 * md).exp()
+}
+
+/// 2×2 symmetric matrix eigendecomposition. Given symmetric `a`,
+/// returns `(diag, U)` such that `diag` is the eigenvalue pair and
+/// `U` is the orthonormal eigenvector basis (rows of U are the
+/// eigenvectors). Mirrors libjxl `ConvertToDiagonal`
+/// (`enc_linalg.cc:14-46`). Inputs are stored row-major as
+/// `[[a00, a01], [a10, a11]]` with the symmetry assumption
+/// `a01 == a10`.
+pub(crate) fn convert_to_diagonal_2x2(a: [[f64; 2]; 2]) -> ([f64; 2], [[f64; 2]; 2]) {
+    debug_assert!((a[0][1] - a[1][0]).abs() < 1e-15, "matrix not symmetric");
+    let b = -(a[0][0] + a[1][1]);
+    let c = a[0][0] * a[1][1] - a[0][1] * a[0][1];
+    let disc = b * b - 4.0 * c;
+    if a[0][1].abs() < 1e-10 || disc < 0.0 {
+        // Already diagonal.
+        return ([a[0][0], a[1][1]], [[1.0, 0.0], [0.0, 1.0]]);
+    }
+    let sqd = disc.sqrt();
+    let l1 = (-b - sqd) * 0.5;
+    let l2 = (-b + sqd) * 0.5;
+    let v1x = a[0][0] - l1;
+    let v1y = a[1][0];
+    let v1n = 1.0 / v1x.hypot(v1y);
+    let v1x = v1x * v1n;
+    let v1y = v1y * v1n;
+    // U rows are the eigenvectors; libjxl's convention swaps cols.
+    ([l1, l2], [[v1y, -v1x], [v1x, v1y]])
+}
+
+/// 2D anisotropic Gaussian ellipse with per-channel intensity, as
+/// fit by [`fit_gaussian_fast`]. Mirrors libjxl `GaussianEllipse`
+/// (`enc_detect_dots.cc:101-122`). Position + shape are encoded into
+/// the patch dictionary; the loss fields drive quality filtering.
+#[derive(Clone, Debug)]
+pub(crate) struct GaussianEllipse {
+    pub x: f64,
+    pub y: f64,
+    pub sigma_x: f64,
+    pub sigma_y: f64,
+    pub angle: f64,
+    pub intensity: [f64; 3],
+    pub l2_loss: f64,
+    pub l1_loss: f64,
+    pub ridge_loss: f64,
+    pub custom_loss: f64,
+    pub bg_color: [f64; 3],
+    pub neg_pixels: usize,
+    pub neg_value: [f64; 3],
+}
+
+impl GaussianEllipse {
+    fn zero() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            sigma_x: 0.0,
+            sigma_y: 0.0,
+            angle: 0.0,
+            intensity: [0.0; 3],
+            l2_loss: 0.0,
+            l1_loss: 0.0,
+            ridge_loss: 0.0,
+            custom_loss: 0.0,
+            bg_color: [0.0; 3],
+            neg_pixels: 0,
+            neg_value: [0.0; 3],
+        }
+    }
+}
+
+/// Fit a 2D anisotropic Gaussian ellipse to a connected component's
+/// energy distribution + per-channel intensity. Mirrors libjxl
+/// `FitGaussianFast` (`enc_detect_dots.cc:410-520`).
+///
+/// Inputs:
+/// - `cc`: connected component (provides `mode`, `bounds`)
+/// - `image_w`/`image_h`: dimensions of the planar XYB inputs
+/// - `img_x`/`img_y`/`img_b`: original XYB planes (planar f32)
+/// - `bg_x`/`bg_y`/`bg_b`: background-smoothed XYB planes (planar f32)
+///
+/// The "fast" variant in libjxl computes 1st/2nd central moments of
+/// the Y channel around `cc.mode`, eigendecomposes the resulting 2×2
+/// covariance to recover (sigma_x, sigma_y, angle), then re-fits
+/// per-channel intensity via least squares against the dot model.
+/// libjxl's `FitGaussian` adds a quality check on top — we'll add
+/// that in a subsequent tick when wiring losses.
+#[allow(clippy::too_many_arguments)]
+pub fn fit_gaussian_fast(
+    cc: &ConnectedComponent,
+    image_w: i32,
+    image_h: i32,
+    img_x: &[f32],
+    img_y: &[f32],
+    img_b: &[f32],
+    bg_x: &[f32],
+    bg_y: &[f32],
+    bg_b: &[f32],
+) -> Option<GaussianEllipse> {
+    debug_assert_eq!(img_x.len(), (image_w * image_h) as usize);
+    debug_assert_eq!(img_y.len(), (image_w * image_h) as usize);
+    debug_assert_eq!(img_b.len(), (image_w * image_h) as usize);
+    debug_assert_eq!(bg_x.len(), (image_w * image_h) as usize);
+    debug_assert_eq!(bg_y.len(), (image_w * image_h) as usize);
+    debug_assert_eq!(bg_b.len(), (image_w * image_h) as usize);
+
+    const K_EPSILON: f64 = 1e-6;
+    const K_RECT_BOUNDS: i32 = (ELLIPSE_WINDOW_SIZE >> 1) as i32; // 5 >> 1 = 2
+    const K_SIGMA_MULT: f64 = 1.0;
+    const K_SCALE_MULT: [f64; 3] = [1.1, 1.1, 1.1];
+
+    let mut ans = GaussianEllipse::zero();
+    let img_planes = [img_x, img_y, img_b];
+    let bg_planes = [bg_x, bg_y, bg_b];
+    let stride = image_w as usize;
+
+    // Bounds-checked planar fetch.
+    let fetch = |plane: &[f32], x: i32, y: i32| -> Option<f32> {
+        if x < 0 || x >= image_w || y < 0 || y >= image_h {
+            None
+        } else {
+            Some(plane[(y as usize) * stride + (x as usize)])
+        }
+    };
+
+    // Per-channel `color` at the CC mode.
+    let mut color = [0.0_f64; 3];
+    for c in 0..3 {
+        let v = fetch(img_planes[c], cc.mode.x, cc.mode.y)?;
+        let bg = fetch(bg_planes[c], cc.mode.x, cc.mode.y)?;
+        color[c] = (v - bg) as f64;
+    }
+    let sign = if color[1] > 0.0 { 1.0 } else { -1.0 };
+
+    // Weighted moments around cc.mode, in the kRectBounds×kRectBounds
+    // window (libjxl's `kEllipseWindowSize >> 1` half-window).
+    let mut sum = 0.0_f64;
+    let mut m1 = [0.0_f64; 3];
+    let mut m2 = [0.0_f64; 3];
+    let mut bg_color = [0.0_f64; 3];
+    let mut n: usize = 0;
+    for sy in -K_RECT_BOUNDS..=K_RECT_BOUNDS {
+        let y = sy + cc.mode.y;
+        if y < 0 || y >= image_h {
+            continue;
+        }
+        for sx in -K_RECT_BOUNDS..=K_RECT_BOUNDS {
+            let x = sx + cc.mode.x;
+            if x < 0 || x >= image_w {
+                continue;
+            }
+            let yval = img_y[(y as usize) * stride + (x as usize)] as f64;
+            let bgval = bg_y[(y as usize) * stride + (x as usize)] as f64;
+            let w = (sign * (yval - bgval)).max(K_EPSILON);
+            sum += w;
+            m1[0] += w * x as f64;
+            m1[1] += w * y as f64;
+            m2[0] += w * (x as f64) * (x as f64);
+            m2[1] += w * (x as f64) * (y as f64);
+            m2[2] += w * (y as f64) * (y as f64);
+            for c in 0..3 {
+                bg_color[c] += bg_planes[c][(y as usize) * stride + (x as usize)] as f64;
+            }
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return None;
+    }
+    for i in 0..3 {
+        m1[i] /= sum;
+        m2[i] /= sum;
+        bg_color[i] /= n as f64;
+    }
+
+    ans.x = m1[0];
+    ans.y = m1[1];
+    for j in 0..3 {
+        ans.intensity[j] = K_SCALE_MULT[j] * color[j];
+    }
+
+    // Build the 2×2 covariance and eigen-decompose to recover
+    // (sigma_x, sigma_y, angle).
+    let sigma = [
+        [m2[0] - m1[0] * m1[0], m2[1] - m1[0] * m1[1]],
+        [m2[1] - m1[0] * m1[1], m2[2] - m1[1] * m1[1]],
+    ];
+    let (d, u) = convert_to_diagonal_2x2(sigma);
+    // u rows = eigenvectors; libjxl uses U[1] (second eigenvector) for
+    // the angle. p1 indexes the larger eigenvalue.
+    let (p1, p2) = if d[0] < d[1] { (1, 0) } else { (0, 1) };
+    ans.sigma_x = K_SIGMA_MULT * d[p1];
+    ans.sigma_y = K_SIGMA_MULT * d[p2];
+    ans.angle = u[1][p1].atan2(u[1][p2]);
+    ans.bg_color = bg_color;
+
+    // Least-squares per-channel intensity fit (regularized).
+    let ct = ans.angle.cos();
+    let st = ans.angle.sin();
+    for c in 0..3 {
+        let mut gg = 0.0_f64;
+        let mut gd = 0.0_f64;
+        for sy in -K_RECT_BOUNDS..=K_RECT_BOUNDS {
+            let y = sy + cc.mode.y;
+            if y < 0 || y >= image_h {
+                continue;
+            }
+            for sx in -K_RECT_BOUNDS..=K_RECT_BOUNDS {
+                let x = sx + cc.mode.x;
+                if x < 0 || x >= image_w {
+                    continue;
+                }
+                let target = (img_planes[c][(y as usize) * stride + (x as usize)]
+                    - bg_planes[c][(y as usize) * stride + (x as usize)])
+                    as f64;
+                let g = dot_gaussian_model(
+                    x as f64 - ans.x,
+                    y as f64 - ans.y,
+                    ct,
+                    st,
+                    ans.sigma_x,
+                    ans.sigma_y,
+                    1.0,
+                );
+                gg += g * g;
+                gd += g * target;
+            }
+        }
+        ans.intensity[c] = gd / (gg + K_EPSILON);
+    }
+
+    // libjxl's FitGaussianFast then calls ComputeDotLosses; we defer
+    // that to the next tick to keep this commit small + reviewable.
+
+    Some(ans)
+}
+
 /// Single-pixel coordinate for the BFS queue. Mirrors libjxl
 /// `Pixel { int x; int y; }` at `enc_detect_dots.cc:178-181`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -791,6 +1047,105 @@ mod tests {
         assert!(
             ccs.is_empty() || ccs.iter().all(|cc| (cc.bounds.xsize as usize) < 5),
             "wide CC should be dropped",
+        );
+    }
+
+    #[test]
+    fn test_dot_gaussian_model_peak_at_origin() {
+        // intensity * exp(-0.5 * 0) = intensity at (dx, dy) = (0, 0).
+        let v = dot_gaussian_model(0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 5.0);
+        assert!((v - 5.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_dot_gaussian_model_drops_with_distance() {
+        // With sigma_x = sigma_y = 1.0 and angle = 0, the radial
+        // exponent is dx² + dy²; at (1, 0) → exp(-0.5 * 1) = 0.6065.
+        let v = dot_gaussian_model(1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0);
+        assert!((v - (-0.5_f64).exp()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_convert_to_diagonal_identity() {
+        let (d, u) = convert_to_diagonal_2x2([[1.0, 0.0], [0.0, 1.0]]);
+        assert_eq!(d, [1.0, 1.0]);
+        assert_eq!(u, [[1.0, 0.0], [0.0, 1.0]]);
+    }
+
+    #[test]
+    fn test_convert_to_diagonal_already_diagonal() {
+        let (d, u) = convert_to_diagonal_2x2([[3.0, 0.0], [0.0, 5.0]]);
+        assert_eq!(d, [3.0, 5.0]);
+        assert_eq!(u, [[1.0, 0.0], [0.0, 1.0]]);
+    }
+
+    #[test]
+    fn test_convert_to_diagonal_symmetric_2x2() {
+        // Eigenvalues of [[2, 1], [1, 2]] are 1 and 3.
+        let (d, _u) = convert_to_diagonal_2x2([[2.0, 1.0], [1.0, 2.0]]);
+        let mut sorted = d;
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((sorted[0] - 1.0).abs() < 1e-9, "smallest eigval ≈ 1");
+        assert!((sorted[1] - 3.0).abs() < 1e-9, "largest eigval ≈ 3");
+    }
+
+    #[test]
+    fn test_fit_gaussian_fast_isolated_dot_recovers_position() {
+        // Synthesize a 16×16 image with a Gaussian dot centered at
+        // (8, 8) with sigma=1.5 and Y-channel intensity 0.3 above a
+        // uniform background.
+        let w = 16;
+        let h = 16;
+        let mut img_x = vec![0.5_f32; w * h];
+        let mut img_y = vec![0.5_f32; w * h];
+        let mut img_b = vec![0.5_f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f64 - 8.0;
+                let dy = y as f64 - 8.0;
+                let g = dot_gaussian_model(dx, dy, 1.0, 0.0, 1.5, 1.5, 0.3);
+                img_y[y * w + x] = (img_y[y * w + x] as f64 + g) as f32;
+            }
+        }
+        let bg_x = vec![0.5_f32; w * h];
+        let bg_y = vec![0.5_f32; w * h];
+        let bg_b = vec![0.5_f32; w * h];
+
+        // Build a CC at (8, 8) with mode = (8, 8).
+        let cc = ConnectedComponent {
+            bounds: Rect {
+                x0: 7,
+                y0: 7,
+                xsize: 3,
+                ysize: 3,
+            },
+            pixels: vec![Pixel { x: 8, y: 8 }],
+            max_energy: 0.3,
+            mean_energy: 0.3,
+            var_energy: 0.0,
+            mean_bg: 0.0,
+            var_bg: 0.0,
+            score: 1.0,
+            mode: Pixel { x: 8, y: 8 },
+        };
+
+        let fit = fit_gaussian_fast(
+            &cc, w as i32, h as i32, &img_x, &img_y, &img_b, &bg_x, &bg_y, &bg_b,
+        )
+        .expect("fit should succeed for in-bounds CC");
+
+        // Center should land near (8, 8). Because the moments only
+        // weight a 5×5 window around the mode, the recovered center
+        // is a moment-weighted estimate; tolerance ~0.5 px is fine.
+        assert!((fit.x - 8.0).abs() < 0.5, "x={}", fit.x);
+        assert!((fit.y - 8.0).abs() < 0.5, "y={}", fit.y);
+        // Y-channel intensity recovered via least squares should be
+        // close to the true 0.3 (within ~10% — the 5×5 window only
+        // captures part of the Gaussian).
+        assert!(
+            fit.intensity[1] > 0.2 && fit.intensity[1] < 0.5,
+            "intensity[1]={}, want ≈ 0.3",
+            fit.intensity[1]
         );
     }
 }
