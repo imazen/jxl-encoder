@@ -2365,6 +2365,26 @@ impl<'a> EncodeRequest<'a> {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
             }
         }
+        // Override file_header's default color_encoding with the
+        // caller's `with_color_encoding(...)` if set. Closes lossless
+        // portion of #17 — without this, the codestream header
+        // always reports sRGB regardless of the caller's TF tag.
+        // For grayscale layouts, the existing logic at the
+        // encode_modular_with_patches call site (line 2467) coerces
+        // ce.color_space to Gray; we mirror that here so the
+        // file_header matches.
+        if let Some(ce) = self.color_encoding.clone() {
+            file_header.metadata.color_encoding = if image.is_grayscale
+                && ce.color_space != ColorSpace::Gray
+            {
+                crate::headers::color_encoding::ColorEncoding {
+                    color_space: ColorSpace::Gray,
+                    ..ce
+                }
+            } else {
+                ce
+            };
+        }
         // Configurable bits_per_sample for one-shot lossless (#18
         // sub-feature). Lossless preserves pixels bit-exactly so this
         // only affects the codestream BitDepth header signaling.
@@ -4124,6 +4144,22 @@ impl LosslessEncoder {
                 for ec in &mut file_header.metadata.extra_channels {
                     ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
                 }
+            }
+            // Override file_header's color_encoding with the caller's
+            // `with_color_encoding(...)` if set. Closes lossless
+            // streaming portion of #17. Mirrors the encode_lossless
+            // (one-shot) wiring.
+            if let Some(ce) = self.color_encoding.clone() {
+                file_header.metadata.color_encoding = if image.is_grayscale
+                    && ce.color_space != ColorSpace::Gray
+                {
+                    crate::headers::color_encoding::ColorEncoding {
+                        color_space: ColorSpace::Gray,
+                        ..ce
+                    }
+                } else {
+                    ce
+                };
             }
             // Configurable bits_per_sample (#18 sub-feature). Lossless
             // preserves pixels bit-exactly so this only affects header
