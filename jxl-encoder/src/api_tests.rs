@@ -6162,6 +6162,46 @@ fn test_streaming_lossless_encoder_bits_per_sample_10() {
     assert!(bd_dbg.contains("10"), "BitDepth should report 10; got {bd_dbg}");
 }
 
+/// Closes PQ portion of #17: when caller signals
+/// `with_color_encoding(ColorEncoding::bt2100_pq())`, u16 input is
+/// linearized via the ST 2084 EOTF (not the default sRGB transfer).
+/// The encoded bitstream should DIFFER from the same u16 bytes
+/// encoded as sRGB-tagged input — the linearization changes pixels.
+#[test]
+fn test_encode_request_pq_u16_uses_pq_eotf() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    // Synthetic PQ-encoded gradient. Using the full u16 range so the
+    // PQ vs sRGB linearization actually produces different f32 values.
+    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16).map(|i| i.wrapping_mul(257)).collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_pq = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .encode(pixels)
+        .unwrap();
+    // Default (no color_encoding): encoder linearizes as sRGB.
+    let bytes_srgb = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .encode(pixels)
+        .unwrap();
+    assert_ne!(
+        bytes_pq, bytes_srgb,
+        "PQ-tagged encode should differ from sRGB-tagged (PQ EOTF != sRGB TF)",
+    );
+
+    // The PQ-tagged file should round-trip through jxl-oxide and
+    // report the PQ transfer function in the header.
+    let img = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_pq))
+        .expect("jxl-oxide parse failed");
+    let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
+    assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
+}
+
 /// Closes #15 API wire-up: `EncodeRequest::with_brotli_metadata`
 /// routes through `wrap_in_container_with_brob`. The encoded
 /// container should contain a `brob` box (not a plain `xml ` box)
