@@ -2594,10 +2594,12 @@ mod decoder_validation {
         validate_lossless_roundtrip_rgb(&data, 300, 300, "rgb_multigroup_300x300");
     }
 
-    /// Test lossy roundtrip at distance 1.0 (high quality)
-    /// NOTE: VarDCT encoding is WIP - some decode issues exist
+    /// Lossy roundtrip at distance 1.0 (high quality). 16×16 RGB
+    /// synthetic gradient — a parse-and-decode compatibility check
+    /// (per CLAUDE.md, synthetic images are fine for "does it parse
+    /// + decode without error" — not a quality assertion). The
+    /// `ignore` marker pre-dating today's encoder work was stale.
     #[test]
-    #[ignore = "VarDCT lossy encoding has known jxl-oxide compatibility issues"]
     fn test_roundtrip_lossy_rgb_d1() {
         let mut data = vec![0u8; 16 * 16 * 3];
         for y in 0..16 {
@@ -2612,10 +2614,10 @@ mod decoder_validation {
         validate_lossy_roundtrip_rgb(&data, 16, 16, 1.0, 80, "rgb_lossy_d1_16x16");
     }
 
-    /// Test lossy roundtrip at distance 2.0 (medium quality)
-    /// NOTE: VarDCT encoding is WIP - some decode issues exist
+    /// Lossy roundtrip at distance 2.0 (medium quality). Same
+    /// shape as `test_roundtrip_lossy_rgb_d1`; the `ignore` marker
+    /// here was also stale.
     #[test]
-    #[ignore = "VarDCT lossy encoding has known jxl-oxide compatibility issues"]
     fn test_roundtrip_lossy_rgb_d2() {
         let mut data = vec![0u8; 16 * 16 * 3];
         for y in 0..16 {
