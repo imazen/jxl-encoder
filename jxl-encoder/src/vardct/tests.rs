@@ -195,67 +195,24 @@ fn test_tiny_encoder_various_sizes() {
     }
 }
 
-/// Test that libjxl-tiny reference output can be decoded by jxl-oxide.
-/// This verifies that jxl-oxide supports libjxl-tiny's output format.
+/// Sanity round-trip: 16×16 red lossy encode parses and renders via
+/// jxl-oxide. Originally a development scratchpad against libjxl-tiny
+/// references; the libjxl-tiny ref-comparison branch + "expected
+/// during development" dev-noise are gone now that the bitstream is
+/// stable. Keeps the encoder + jxl-oxide parse + render in one
+/// regression test that runs under the default suite.
 #[test]
-#[ignore = "Decoder integration test - run with --ignored"]
-fn test_decode_libjxl_tiny_reference() {
-    use std::io::Cursor;
-
-    // Try both OPTIMIZE_CODE=1 (175 bytes) and OPTIMIZE_CODE=0 (1101 bytes) references
-    let ref_paths = [
-        std::env::temp_dir().join("tiny_ref_16x16.jxl"),
-        std::env::temp_dir().join("tiny_ref_static_16x16.jxl"),
-    ];
-    for path in &ref_paths {
-        if !path.exists() {
-            eprintln!("Reference file not found at {}", path.display());
-            continue;
-        }
-
-        let data = std::fs::read(path).expect("read reference file");
-        eprintln!(
-            "\n=== Testing {} ({} bytes) ===",
-            path.display(),
-            data.len()
-        );
-        eprintln!("First 20 bytes: {:02x?}", &data[..20.min(data.len())]);
-
-        let result = jxl_oxide::JxlImage::builder().read(Cursor::new(&data));
-        match result {
-            Ok(img) => {
-                eprintln!("Parsed! Size: {}x{}", img.width(), img.height());
-                match img.render_frame(0) {
-                    Ok(frame) => {
-                        eprintln!("Decoded frame successfully!");
-                        let fb = frame.image_all_channels();
-                        eprintln!("  Frame buffer: {}x{}", fb.width(), fb.height());
-                    }
-                    Err(e) => eprintln!("Render failed: {:?}", e),
-                }
-            }
-            Err(e) => eprintln!("Parse failed: {:?}", e),
-        }
-    }
-}
-
-/// Test that the VarDCT encoder output can be at least parsed (header read) by a decoder.
-/// This verifies the entropy code header writing is valid.
-#[test]
-#[ignore = "Decoder integration test - run with --ignored"]
 fn test_tiny_encoder_decode() {
     use std::io::Cursor;
 
     let encoder = VarDctEncoder::new(1.0);
-
-    // Create a simple 16x16 red image (linear RGB) - same as libjxl-tiny reference
     let width = 16;
     let height = 16;
     let mut linear_rgb = vec![0.0f32; width * height * 3];
     for i in 0..(width * height) {
-        linear_rgb[i * 3] = 1.0; // R
-        linear_rgb[i * 3 + 1] = 0.0; // G
-        linear_rgb[i * 3 + 2] = 0.0; // B
+        linear_rgb[i * 3] = 1.0;
+        linear_rgb[i * 3 + 1] = 0.0;
+        linear_rgb[i * 3 + 2] = 0.0;
     }
 
     let encoded = encoder
@@ -263,73 +220,19 @@ fn test_tiny_encoder_decode() {
         .expect("encoding should succeed")
         .data;
 
-    // Save to file for manual inspection
     crate::test_helpers::save_test_output("tiny", "test_16x16.jxl", &encoded);
 
-    // Compare with libjxl-tiny OPTIMIZE_CODE=0 (static) reference if available
-    // The static reference uses the same code path as our encoder
-    let ref_path = std::env::temp_dir().join("tiny_ref_static_16x16.jxl");
-    if ref_path.exists() {
-        let ref_data = std::fs::read(&ref_path).expect("read reference");
-        eprintln!("\n=== Comparison with libjxl-tiny static reference (OPTIMIZE_CODE=0) ===");
-        eprintln!(
-            "Our size: {} bytes, Reference: {} bytes",
-            encoded.len(),
-            ref_data.len()
-        );
-
-        // Byte-by-byte comparison with bit breakdown
-        let min_len = encoded.len().min(ref_data.len()).min(50);
-        eprintln!("\nByte comparison (first {} bytes):", min_len);
-        eprintln!("Byte | Ours | Ref  | Match");
-        eprintln!("-----|------|------|------");
-        for i in 0..min_len {
-            let ours = encoded[i];
-            let refs = ref_data[i];
-            let mark = if ours == refs { "  ✓" } else { "<<< DIFF" };
-            eprintln!("{:4} | 0x{:02x} | 0x{:02x} | {}", i, ours, refs, mark);
-            if ours != refs {
-                eprintln!("      ours bits: {:08b}", ours);
-                eprintln!("      ref  bits: {:08b}", refs);
-            }
-        }
-    }
-
-    // Try to parse the header with jxl-oxide
-    let result = jxl_oxide::JxlImage::builder().read(Cursor::new(&encoded));
-
-    match result {
-        Ok(img) => {
-            eprintln!("Successfully parsed JXL header!");
-            eprintln!("  Size: {}x{}", img.width(), img.height());
-            eprintln!("  Encoded size: {} bytes", encoded.len());
-
-            // Try to render the frame
-            match img.render_frame(0) {
-                Ok(frame) => {
-                    eprintln!("Successfully decoded frame!");
-                    let fb = frame.image_all_channels();
-                    eprintln!("  Frame size: {}x{}", fb.width(), fb.height());
-                }
-                Err(e) => {
-                    eprintln!("Failed to render frame: {:?}", e);
-                    // This is expected for now until the bitstream is fully correct
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to parse JXL: {:?}", e);
-            eprintln!(
-                "Encoded bytes ({} total): {:02x?}",
-                encoded.len(),
-                &encoded[..encoded.len().min(100)]
-            );
-            // Don't panic yet - we're still developing
-            eprintln!(
-                "Note: This is expected during development. The tiny encoder is a work in progress."
-            );
-        }
-    }
+    let img = jxl_oxide::JxlImage::builder()
+        .read(Cursor::new(&encoded))
+        .expect("jxl-oxide must parse our 16×16 red lossy output");
+    assert_eq!(img.width(), width as u32);
+    assert_eq!(img.height(), height as u32);
+    let frame = img
+        .render_frame(0)
+        .expect("jxl-oxide must render our 16×16 red lossy output");
+    let fb = frame.image_all_channels();
+    assert_eq!(fb.width(), width);
+    assert_eq!(fb.height(), height);
 }
 
 #[test]
