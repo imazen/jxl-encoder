@@ -877,6 +877,15 @@ impl LosslessConfig {
     /// - **e8**: + LZ77 greedy hash chain
     /// - **e9–10**: + LZ77 optimal (Viterbi DP)
     ///
+    /// **WARNING — e6→e7 cliff** (#23): tree learning at e7 dominates
+    /// the time profile and is significantly slower than e6 (a single
+    /// 1024×683 illustration measured ~28× slower at e7 vs e3 for
+    /// a ~38% size win). Picking e7 as a default silently pays this
+    /// cost; for batch / interactive workloads where time matters
+    /// more than the last 5-10% of size, e6 is often the better
+    /// trade. Re-evaluate when the tree-learning sample budget gets
+    /// a tunable knob.
+    ///
     /// Individual `with_*()` calls after `with_effort()` override these defaults.
     pub fn with_effort(self, effort: u8) -> Self {
         let mut new = Self::with_effort_level(effort);
