@@ -6024,3 +6024,94 @@ fn test_streaming_lossless_16bit() {
 
     assert_eq!(oneshot, streaming);
 }
+
+/// Closes #21: HDR signaling reachable from the convenience encode path
+/// via `EncodeRequest::with_intensity_target` / `with_min_nits`. Without
+/// these builders, callers had to either construct an `ImageMetadata`
+/// or switch to the streaming `Encoder` to set HDR metadata.
+#[test]
+fn test_encode_request_with_intensity_target_and_color_encoding() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    // 16-bit PQ-tagged buffer (synthetic content; codec doesn't validate
+    // PQ-encoded values, just records the signaling).
+    let pixels_u16: Vec<u16> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i * 1000 % 65535) as u16)
+        .collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(7);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_color_encoding(ColorEncoding::bt2100_pq())
+        .with_intensity_target(10000.0)
+        .with_min_nits(0.005)
+        .encode(pixels)
+        .unwrap();
+
+    // Decode and verify the signaling actually landed in the codestream.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let header = image.image_header();
+    let ce = &header.metadata.colour_encoding;
+    let tone = &header.metadata.tone_mapping;
+
+    // The intensity_target / min_nits round-trip exactly (encoded as
+    // f32-quantized fields in the JXL header).
+    assert!(
+        (tone.intensity_target - 10000.0).abs() < 1.0,
+        "intensity_target {} != 10000",
+        tone.intensity_target
+    );
+    assert!(
+        (tone.min_nits - 0.005).abs() < 1e-3,
+        "min_nits {} != 0.005",
+        tone.min_nits
+    );
+
+    // The color encoding round-trips as PQ + BT.2100 (not the
+    // pre-fix sRGB default).
+    let dbg = format!("{ce:?}");
+    assert!(
+        dbg.contains("Pq"),
+        "expected PQ transfer in colour_encoding; got {dbg}",
+    );
+    assert!(
+        dbg.contains("Bt2100"),
+        "expected BT.2100 primaries in colour_encoding; got {dbg}",
+    );
+}
+
+/// Closes #21: HLG variant — round-trip the HLG transfer + intensity_target.
+#[test]
+fn test_encode_request_with_intensity_target_hlg() {
+    use crate::headers::color_encoding::ColorEncoding;
+    let w = 16u32;
+    let h = 16;
+    let pixels_u16: Vec<u16> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i * 1000 % 65535) as u16)
+        .collect();
+    let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
+
+    let cfg = LossyConfig::new(1.0).with_effort(7);
+    let bytes = cfg
+        .encode_request(w, h, PixelLayout::Rgb16)
+        .with_color_encoding(ColorEncoding::bt2100_hlg())
+        .with_intensity_target(1000.0)
+        .encode(pixels)
+        .unwrap();
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse failed");
+    let header = image.image_header();
+    let ce = &header.metadata.colour_encoding;
+    let tone = &header.metadata.tone_mapping;
+
+    assert!((tone.intensity_target - 1000.0).abs() < 1.0);
+    let dbg = format!("{ce:?}");
+    assert!(dbg.contains("Hlg"), "expected HLG transfer; got {dbg}");
+    assert!(dbg.contains("Bt2100"), "expected BT.2100; got {dbg}");
+}
