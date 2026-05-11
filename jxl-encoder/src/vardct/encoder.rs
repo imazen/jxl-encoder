@@ -11,7 +11,7 @@ use super::ac_strategy::{
 use super::adaptive_quant::quantize_quant_field;
 use super::chroma_from_luma::{CflMap, compute_cfl_map};
 use super::common::*;
-use super::frame::{DistanceParams, write_toc};
+use super::frame::{DistanceParams, write_toc, write_toc_with_permutation};
 use super::gaborish::gaborish_inverse;
 use super::noise::{denoise_xyb, estimate_noise_params, noise_quality_coef};
 use super::static_codes::{get_ac_entropy_code, get_dc_entropy_code};
@@ -274,6 +274,13 @@ pub struct VarDctEncoder {
     /// emits `N`. Closes configurable bits_per_sample sub-feature
     /// of #18 — lets callers signal 10/12/14-bit input precision.
     pub bits_per_sample_override: Option<u32>,
+    /// When `true`, AC groups in the multi-group TOC are emitted in
+    /// concentric-square order from the image center (libjxl
+    /// `cparams.centerfirst`). The TOC `permuted` flag is set and
+    /// the permutation is encoded as Lehmer codes via
+    /// `coeff_order::tokenize_permutation` /
+    /// `build_and_write_coeff_orders`. Closes #14.
+    pub center_first: bool,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
@@ -328,6 +335,7 @@ impl Default for VarDctEncoder {
             intrinsic_size: None,
             alpha_associated: false,
             bits_per_sample_override: None,
+            center_first: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -377,6 +385,7 @@ impl VarDctEncoder {
             intrinsic_size: None,
             alpha_associated: false,
             bits_per_sample_override: None,
+            center_first: false,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -1426,10 +1435,65 @@ impl VarDctEncoder {
                 sections.push(ac_group_writer.finish());
             }
 
-            let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
-            write_toc(&section_sizes, &mut writer)?;
-            for section in sections {
-                writer.append_bytes(&section)?;
+            // Center-first AC group reordering (closes #14). Identity
+            // prefix for [DC global, DC groups..., AC global], then
+            // AC groups permuted by concentric-square distance from
+            // image center. libjxl-faithful PermuteGroups algorithm.
+            //
+            // Single-pass only — multi-pass progressive interaction
+            // is a future extension. num_groups <= 1 → no-op (nothing
+            // to reorder).
+            if self.center_first && num_groups > 1 {
+                use crate::vardct::coeff_order::compute_center_first_ac_permutation;
+                let cx = (width as u32) / 2;
+                let cy = (height as u32) / 2;
+                let ac_group_order = compute_center_first_ac_permutation(
+                    xsize_groups,
+                    ysize_groups,
+                    cx,
+                    cy,
+                );
+                // Build inverse mapping: inv[orig_idx] = on_disk_pos.
+                let mut inv_ac = vec![0u32; num_groups];
+                for (on_disk_pos, &orig_idx) in ac_group_order.iter().enumerate() {
+                    inv_ac[orig_idx as usize] = on_disk_pos as u32;
+                }
+                // libjxl permutation array: identity prefix +
+                // inv_ac_group_order offset by prefix length.
+                let prefix_len = 2 + num_dc_groups;
+                let total = prefix_len + num_groups;
+                let mut permutation = Vec::with_capacity(total);
+                for i in 0..prefix_len {
+                    permutation.push(i as u32);
+                }
+                let prefix_u32 = prefix_len as u32;
+                for orig_idx in 0..num_groups {
+                    permutation.push(prefix_u32 + inv_ac[orig_idx]);
+                }
+                // Reorder sections: new[permutation[i]] = sections[i].
+                let mut new_sections: Vec<Vec<u8>> =
+                    (0..total).map(|_| Vec::new()).collect();
+                for (logical_idx, section_data) in sections.into_iter().enumerate() {
+                    let on_disk = permutation[logical_idx] as usize;
+                    new_sections[on_disk] = section_data;
+                }
+                let section_sizes: Vec<usize> =
+                    new_sections.iter().map(|s| s.len()).collect();
+                write_toc_with_permutation(
+                    &section_sizes,
+                    &permutation,
+                    self.use_ans,
+                    &mut writer,
+                )?;
+                for section in new_sections {
+                    writer.append_bytes(&section)?;
+                }
+            } else {
+                let section_sizes: Vec<usize> = sections.iter().map(|s| s.len()).collect();
+                write_toc(&section_sizes, &mut writer)?;
+                for section in sections {
+                    writer.append_bytes(&section)?;
+                }
             }
         }
 

@@ -1219,6 +1219,12 @@ pub struct LossyConfig {
     /// mostly-opaque alpha. Default `true`. Disable via
     /// [`Self::with_simplify_invisible`].
     simplify_invisible: bool,
+    /// Reorder AC groups in the multi-group TOC so groups near the
+    /// image center appear first in the bitstream — for progressive
+    /// renderers that show partial frames during download. libjxl
+    /// `cparams.centerfirst`. Default `false` (raster order). See
+    /// [`Self::with_center_first`].
+    center_first: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
     lf_frame: bool,
@@ -1291,6 +1297,7 @@ impl LossyConfig {
             max_strategy_size: None,
             patches: profile.patches,
             simplify_invisible: true,
+            center_first: false,
             splines: None,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
@@ -1502,6 +1509,25 @@ impl LossyConfig {
     /// pixels (e.g., for steganography or alpha-channel side data).
     pub fn with_simplify_invisible(mut self, enable: bool) -> Self {
         self.simplify_invisible = enable;
+        self
+    }
+
+    /// Reorder AC groups in the multi-group TOC by concentric-square
+    /// distance from the image center (closes #14).
+    ///
+    /// When `true`, the encoder writes the AC group sections in
+    /// "center-first" order so progressive decoders display the most
+    /// important content (image center) before edges/corners. The
+    /// codestream `permuted` flag is set and the permutation is
+    /// encoded as Lehmer codes via the existing permutation entropy
+    /// code (8 contexts).
+    ///
+    /// No effect on single-group images (≤256×256 pixels) — the
+    /// reorder is a no-op when num_groups ≤ 1.
+    ///
+    /// libjxl `cparams.centerfirst`. Default `false`.
+    pub fn with_center_first(mut self, enable: bool) -> Self {
+        self.center_first = enable;
         self
     }
 
@@ -2932,6 +2958,8 @@ impl<'a> EncodeRequest<'a> {
         // codestream BitDepth header. Input normalization (u16_max)
         // handles the matching pixel scaling above.
         enc.bits_per_sample_override = self.bits_per_sample;
+        // Center-first AC group permutation (#14).
+        enc.center_first = cfg.center_first;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -3610,6 +3638,7 @@ impl LossyEncoder {
             enc.intrinsic_size = self.intrinsic_size;
             enc.alpha_associated = self.premultiplied_alpha;
             enc.bits_per_sample_override = self.bits_per_sample;
+            enc.center_first = self.cfg.center_first;
             enc.non_finite_action = self.cfg.non_finite_action;
             enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
