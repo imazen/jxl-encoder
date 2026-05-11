@@ -160,6 +160,47 @@
 - **`LosslessConfig::with_effort` e6→e7 cliff warning**
   (refs #23, 6b5cdf5): in-source comment surfaces the ~28× encode-time
   jump from e6 to e7 for ~38% size win on typical photos.
+- **README**: dropped stale `unsafe-performance` mention (removed
+  in #37); refreshed test-count claim from "940+" to "850+" for
+  the workspace README (c8913279). The published per-crate README
+  is unchanged pending author review.
+
+### Internal (tests + CI)
+
+- **`concurrency: cancel-in-progress` on the CI workflow**
+  (061cfe66): rapid push bursts no longer stack 10+ full matrices
+  in the runner queue; only the head commit's CI runs for any given
+  branch. PR runs use the PR number to keep concurrent reviews
+  isolated.
+- **Up-front no-default-features build step in CI**
+  (cb329ba): catches future regressions of the kind that closed
+  #38 (inherent `f32::method()` calls reintroduced into
+  `jxl-encoder-simd`).
+- **Clippy + format cleanup** (a9fdb0fb + e1d793bd + 83253aad +
+  61e5c31a + f508b54f): workspace `excessive_precision = "allow"`
+  (libjxl-port heritage), `iter().any` → `contains`, `Range::contains`
+  for `0.0..1e-3`-style bounds checks, fold loop-var-only-used-as-
+  index, drop two stale clippy warnings (unused mut, redundant
+  parens), drop three stale `#[allow(dead_code)]` on `f16` /
+  `vardct::epf` / `vardct::reconstruct`, gate `xyb_to_linear_rgb`
+  /`xyb_to_linear_rgb_planar` / `apply_epf` on the right
+  `cfg(any(test, feature = ...))` so non-loop builds stay clean.
+- **Stale-`#[ignore]` test triage** (c5eeaab + f002702e + da2b4bb3
+  + 6fe6dcf8): un-ignored 3 lossy-roundtrip tests that pre-dated
+  recent encoder fixes (`test_roundtrip_lossy_rgb_d1`,
+  `test_roundtrip_lossy_rgb_d2`, `test_dct32x16_16x32_roundtrip`,
+  `test_afv_strategy_roundtrip`, `test_tiny_encoder_decode`);
+  removed `test_decode_libjxl_tiny_reference` entirely (libjxl-tiny
+  is no longer the reference per CLAUDE.md); migrated two
+  corpus-using `patches::tests` from buried `if !path.exists()`
+  silent-skip to proper `#[cfg_attr(not(feature = "corpus-tests"),
+  ignore = "...")]` + `crate::skip_without_corpus!()`. Lib test
+  count: 837 → 853 (+16); ignored: 34 → 28 (-6).
+- **Hash-lock sidecar entry** for `lossy_rgba_32x32` at 638 bytes
+  (61e5c31a): the SimplifyInvisible commit (#10, 6f7c9fa) silently
+  changed the byte count from 636 to 638 without updating
+  `hash_lock_expected.txt`. CI's "Build native (Linux)" + "Coverage"
+  jobs were silently failing; appended the new hash entry.
 
 ## [0.3.2] - 2026-05-06
 
