@@ -518,7 +518,9 @@ mod tests {
         // Synthetic 4 KB of repeated XMP-like XML — Brotli compresses
         // this trivially (>10x). Verifies a brob box lands.
         let codestream = b"\xFF\x0A";
-        let xmp_blob = "<rdf:Description><exif:CreatorTool>Test</exif:CreatorTool></rdf:Description>".repeat(64);
+        let xmp_blob =
+            "<rdf:Description><exif:CreatorTool>Test</exif:CreatorTool></rdf:Description>"
+                .repeat(64);
         let xmp = xmp_blob.as_bytes();
         let result = wrap_in_container_with_brob(codestream, None, Some(xmp), 4);
         // Find a brob box header somewhere in the result.

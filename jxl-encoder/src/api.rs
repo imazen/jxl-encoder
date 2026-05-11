@@ -1585,7 +1585,11 @@ impl LossyConfig {
     /// and 8× paths; libjxl's 2× path uses a sharper 12×12 kernel
     /// (`enc_heuristics.cc:279-405`) which is TBD.
     pub fn with_resampling(mut self, factor: u32) -> Self {
-        self.resampling = if matches!(factor, 1 | 2 | 4 | 8) { factor } else { 1 };
+        self.resampling = if matches!(factor, 1 | 2 | 4 | 8) {
+            factor
+        } else {
+            1
+        };
         self.resampling_explicit = true;
         self
     }
@@ -2220,8 +2224,12 @@ impl<'a> EncodeRequest<'a> {
         // win over metadata-level values (`encode_lossy` line ~3018);
         // we apply the same precedence here so the validator sees the
         // value the encoder will actually use.
-        let it = self.intensity_target.or_else(|| self.metadata.and_then(|m| m.intensity_target));
-        let mn = self.min_nits.or_else(|| self.metadata.and_then(|m| m.min_nits));
+        let it = self
+            .intensity_target
+            .or_else(|| self.metadata.and_then(|m| m.intensity_target));
+        let mn = self
+            .min_nits
+            .or_else(|| self.metadata.and_then(|m| m.min_nits));
         validate_tone_mapping(it, mn)?;
         // Source gamma + intrinsic size up-front checks.
         validate_source_gamma(self.source_gamma)?;
@@ -2361,9 +2369,11 @@ impl<'a> EncodeRequest<'a> {
                     ),
                 });
             }
-            let needed = h.checked_mul(stride).ok_or_else(|| EncodeError::InvalidInput {
-                message: "height * row_stride overflows usize".into(),
-            })?;
+            let needed = h
+                .checked_mul(stride)
+                .ok_or_else(|| EncodeError::InvalidInput {
+                    message: "height * row_stride overflows usize".into(),
+                })?;
             if pixels.len() < needed {
                 return Err(EncodeError::InvalidInput {
                     message: format!(
@@ -2584,16 +2594,15 @@ impl<'a> EncodeRequest<'a> {
         // ce.color_space to Gray; we mirror that here so the
         // file_header matches.
         if let Some(ce) = self.color_encoding.clone() {
-            file_header.metadata.color_encoding = if image.is_grayscale
-                && ce.color_space != ColorSpace::Gray
-            {
-                crate::headers::color_encoding::ColorEncoding {
-                    color_space: ColorSpace::Gray,
-                    ..ce
-                }
-            } else {
-                ce
-            };
+            file_header.metadata.color_encoding =
+                if image.is_grayscale && ce.color_space != ColorSpace::Gray {
+                    crate::headers::color_encoding::ColorEncoding {
+                        color_space: ColorSpace::Gray,
+                        ..ce
+                    }
+                } else {
+                    ce
+                };
         }
         // Configurable bits_per_sample for one-shot lossless (#18
         // sub-feature). Lossless preserves pixels bit-exactly so this
@@ -3122,12 +3131,18 @@ impl<'a> EncodeRequest<'a> {
                 crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
             } else {
                 crate::vardct::resampling::box_downsample_rgb(
-                    &linear_rgb, w, h, effective_resampling,
+                    &linear_rgb,
+                    w,
+                    h,
+                    effective_resampling,
                 )
             };
             let down_alpha = alpha.as_ref().map(|a| {
                 let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                    a, w, h, effective_resampling,
+                    a,
+                    w,
+                    h,
+                    effective_resampling,
                 );
                 a_down
             });
@@ -3825,12 +3840,18 @@ impl LossyEncoder {
                     crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
                 } else {
                     crate::vardct::resampling::box_downsample_rgb(
-                        &linear_rgb, w, h, effective_resampling,
+                        &linear_rgb,
+                        w,
+                        h,
+                        effective_resampling,
                     )
                 };
                 let down_alpha = alpha.as_ref().map(|a| {
                     let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                        a, w, h, effective_resampling,
+                        a,
+                        w,
+                        h,
+                        effective_resampling,
                     );
                     a_down
                 });
@@ -4028,7 +4049,9 @@ fn validate_metadata_sizes(
 /// (LUT becomes all-zero or all-one, or contains NaN/Inf). Reject
 /// up front instead.
 fn validate_source_gamma(gamma: Option<f32>) -> core::result::Result<(), EncodeError> {
-    let Some(g) = gamma else { return Ok(()); };
+    let Some(g) = gamma else {
+        return Ok(());
+    };
     if !g.is_finite() {
         return Err(EncodeError::InvalidInput {
             message: format!("source_gamma must be finite (got {g})"),
@@ -4059,10 +4082,10 @@ fn validate_source_gamma(gamma: Option<f32>) -> core::result::Result<(), EncodeE
 /// rejected. Reused at the same up-front spots so a caller who sets
 /// intrinsic_size to nonsense gets a clean error before the encoder
 /// allocates anything.
-fn validate_intrinsic_size(
-    intrinsic: Option<(u32, u32)>,
-) -> core::result::Result<(), EncodeError> {
-    let Some((iw, ih)) = intrinsic else { return Ok(()); };
+fn validate_intrinsic_size(intrinsic: Option<(u32, u32)>) -> core::result::Result<(), EncodeError> {
+    let Some((iw, ih)) = intrinsic else {
+        return Ok(());
+    };
     if iw == 0 || ih == 0 {
         return Err(EncodeError::InvalidInput {
             message: format!("intrinsic_size must be non-zero (got {iw}x{ih})"),
@@ -4639,16 +4662,15 @@ impl LosslessEncoder {
             // streaming portion of #17. Mirrors the encode_lossless
             // (one-shot) wiring.
             if let Some(ce) = self.color_encoding.clone() {
-                file_header.metadata.color_encoding = if image.is_grayscale
-                    && ce.color_space != ColorSpace::Gray
-                {
-                    crate::headers::color_encoding::ColorEncoding {
-                        color_space: ColorSpace::Gray,
-                        ..ce
-                    }
-                } else {
-                    ce
-                };
+                file_header.metadata.color_encoding =
+                    if image.is_grayscale && ce.color_space != ColorSpace::Gray {
+                        crate::headers::color_encoding::ColorEncoding {
+                            color_space: ColorSpace::Gray,
+                            ..ce
+                        }
+                    } else {
+                        ce
+                    };
             }
             // Configurable bits_per_sample (#18 sub-feature). Lossless
             // preserves pixels bit-exactly so this only affects header
@@ -5544,7 +5566,13 @@ fn srgb_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 fn pq_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| pq_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
-        .flat_map(|px| [lut[px[0] as usize], lut[px[1] as usize], lut[px[2] as usize]])
+        .flat_map(|px| {
+            [
+                lut[px[0] as usize],
+                lut[px[1] as usize],
+                lut[px[2] as usize],
+            ]
+        })
         .collect()
 }
 
@@ -5552,7 +5580,13 @@ fn pq_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 fn hlg_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| hlg_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
-        .flat_map(|px| [lut[px[0] as usize], lut[px[1] as usize], lut[px[2] as usize]])
+        .flat_map(|px| {
+            [
+                lut[px[0] as usize],
+                lut[px[1] as usize],
+                lut[px[2] as usize],
+            ]
+        })
         .collect()
 }
 
@@ -5560,7 +5594,13 @@ fn hlg_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
 fn bt709_u8_to_linear_f32(data: &[u8], channels: usize) -> Vec<f32> {
     let lut: [f32; 256] = core::array::from_fn(|i| bt709_to_linear_f(i as f32 / 255.0));
     data.chunks(channels)
-        .flat_map(|px| [lut[px[0] as usize], lut[px[1] as usize], lut[px[2] as usize]])
+        .flat_map(|px| {
+            [
+                lut[px[0] as usize],
+                lut[px[1] as usize],
+                lut[px[2] as usize],
+            ]
+        })
         .collect()
 }
 
@@ -5792,9 +5832,7 @@ fn extract_alpha_u16(data: &[u8], stride: usize, alpha_offset: usize, u16_max: f
     let pixels: &[u16] = bytemuck::cast_slice(data);
     pixels
         .chunks(stride)
-        .map(|px| {
-            ((px[alpha_offset] as f32 / u16_max).clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-        })
+        .map(|px| ((px[alpha_offset] as f32 / u16_max).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
 }
 
@@ -6066,9 +6104,7 @@ fn extract_alpha_f16(bytes: &[u8], stride: usize, alpha_offset: usize) -> Vec<u8
     let pixels: &[u16] = bytemuck::cast_slice(bytes);
     pixels
         .chunks(stride)
-        .map(|px| {
-            (f16_bits_to_f32(px[alpha_offset]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-        })
+        .map(|px| (f16_bits_to_f32(px[alpha_offset]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
         .collect()
 }
 
@@ -6143,14 +6179,20 @@ mod tests {
         let a = bt709_to_linear_f(0.25);
         let b = bt709_to_linear_f(0.5);
         let c = bt709_to_linear_f(0.75);
-        assert!(a < b && b < c, "BT.709 should be monotone; got {a}, {b}, {c}");
+        assert!(
+            a < b && b < c,
+            "BT.709 should be monotone; got {a}, {b}, {c}"
+        );
     }
 
     #[test]
     fn test_bt709_to_linear_f_clamps_negative() {
         let v = bt709_to_linear_f(-0.1);
         assert!(v.is_finite());
-        assert!((0.0..1e-3).contains(&v), "BT.709(-0.1) should clamp to ~0; got {v}");
+        assert!(
+            (0.0..1e-3).contains(&v),
+            "BT.709(-0.1) should clamp to ~0; got {v}"
+        );
     }
 
     /// Reference points for HLG inverse OETF (BT.2100).
@@ -6181,7 +6223,10 @@ mod tests {
     fn test_hlg_to_linear_f_clamps_negative() {
         let v = hlg_to_linear_f(-0.1);
         assert!(v.is_finite());
-        assert!((0.0..1e-3).contains(&v), "HLG(-0.1) should clamp to ~0; got {v}");
+        assert!(
+            (0.0..1e-3).contains(&v),
+            "HLG(-0.1) should clamp to ~0; got {v}"
+        );
     }
 
     #[test]

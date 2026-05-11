@@ -497,7 +497,15 @@ mod tests {
     fn test_write_name_string_length_helper() {
         // Verify the helper writes the expected number of bits per range.
         // 0 → 2 bits. 1-15 → 6 bits. 16-47 → 7 bits. 48-1071 → 12 bits.
-        for &(len, expect) in &[(0u32, 2usize), (1, 6), (15, 6), (16, 7), (47, 7), (48, 12), (1071, 12)] {
+        for &(len, expect) in &[
+            (0u32, 2usize),
+            (1, 6),
+            (15, 6),
+            (16, 7),
+            (47, 7),
+            (48, 12),
+            (1071, 12),
+        ] {
             let mut w = BitWriter::new();
             write_name_string_length(&mut w, len).unwrap();
             assert_eq!(
@@ -513,7 +521,16 @@ mod tests {
     fn test_write_cfa_channel_helper() {
         // value=1 → 2 bits (selector 0). 0,2,3 → 4 bits (selector 1+Bits(2)).
         // 4-18 → 6 bits (selector 2+Bits(4)). 19-274 → 10 bits (selector 3+Bits(8)).
-        for &(v, expect) in &[(1u32, 2usize), (0, 4), (2, 4), (3, 4), (4, 6), (18, 6), (19, 10), (274, 10)] {
+        for &(v, expect) in &[
+            (1u32, 2usize),
+            (0, 4),
+            (2, 4),
+            (3, 4),
+            (4, 6),
+            (18, 6),
+            (19, 10),
+            (274, 10),
+        ] {
             let mut w = BitWriter::new();
             write_cfa_channel(&mut w, v).unwrap();
             assert_eq!(

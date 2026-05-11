@@ -6138,7 +6138,10 @@ fn test_streaming_lossy_encoder_bits_per_sample_12() {
         .read(std::io::Cursor::new(&bytes))
         .expect("jxl-oxide parse failed");
     let bd_dbg = format!("{:?}", img.image_header().metadata.bit_depth);
-    assert!(bd_dbg.contains("12"), "BitDepth should report 12; got {bd_dbg}");
+    assert!(
+        bd_dbg.contains("12"),
+        "BitDepth should report 12; got {bd_dbg}"
+    );
 }
 
 /// #18 streaming-encoder parity for bits_per_sample (LosslessEncoder).
@@ -6161,7 +6164,10 @@ fn test_streaming_lossless_encoder_bits_per_sample_10() {
         .read(std::io::Cursor::new(&bytes))
         .expect("jxl-oxide parse failed");
     let bd_dbg = format!("{:?}", img.image_header().metadata.bit_depth);
-    assert!(bd_dbg.contains("10"), "BitDepth should report 10; got {bd_dbg}");
+    assert!(
+        bd_dbg.contains("10"),
+        "BitDepth should report 10; got {bd_dbg}"
+    );
 }
 
 /// Closes PQ portion of #17: when caller signals
@@ -6176,7 +6182,9 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     let h = 16;
     // Synthetic PQ-encoded gradient. Using the full u16 range so the
     // PQ vs sRGB linearization actually produces different f32 values.
-    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16).map(|i| i.wrapping_mul(257)).collect();
+    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16)
+        .map(|i| i.wrapping_mul(257))
+        .collect();
     let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
 
     let cfg = LossyConfig::new(1.0).with_effort(3);
@@ -6201,7 +6209,10 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
         .read(std::io::Cursor::new(&bytes_pq))
         .expect("jxl-oxide parse failed");
     let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
-    assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
+    assert!(
+        ce_dbg.contains("Pq"),
+        "header should signal PQ; got {ce_dbg}"
+    );
 }
 
 /// Closes #14: `LossyConfig::with_center_first(true)` reorders AC
@@ -6216,13 +6227,13 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
 fn test_encode_request_center_first_multi_group() {
     let w = 512u32; // 2x2 = 4 AC groups
     let h = 512;
-    let pixels: Vec<u8> = (0..(w * h * 3))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
     let cfg_default = LossyConfig::new(2.0).with_effort(3);
     let cfg_center = cfg_default.clone().with_center_first(true);
 
-    let bytes_default = cfg_default.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+    let bytes_default = cfg_default
+        .encode(&pixels, w, h, PixelLayout::Rgb8)
+        .unwrap();
     let bytes_center = cfg_center.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
     assert_ne!(
         bytes_default, bytes_center,
@@ -6233,7 +6244,9 @@ fn test_encode_request_center_first_multi_group() {
     let img = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(&bytes_center))
         .expect("jxl-oxide parse failed (center)");
-    let render = img.render_frame(0).expect("center-first frame should render");
+    let render = img
+        .render_frame(0)
+        .expect("center-first frame should render");
     assert_eq!(render.image_all_channels().channels(), 3);
 }
 
@@ -6244,13 +6257,13 @@ fn test_encode_request_center_first_single_group_no_op() {
     // without center_first.
     let w = 256u32;
     let h = 256;
-    let pixels: Vec<u8> = (0..(w * h * 3))
-        .map(|i| (i % 251) as u8)
-        .collect();
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
     let cfg_default = LossyConfig::new(2.0).with_effort(3);
     let cfg_center = cfg_default.clone().with_center_first(true);
 
-    let bytes_default = cfg_default.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
+    let bytes_default = cfg_default
+        .encode(&pixels, w, h, PixelLayout::Rgb8)
+        .unwrap();
     let bytes_center = cfg_center.encode(&pixels, w, h, PixelLayout::Rgb8).unwrap();
     assert_eq!(
         bytes_default, bytes_center,
@@ -6368,7 +6381,10 @@ fn test_request_lossy_min_nits_validation() {
         .encode(&pixels);
     assert!(result.is_err());
     let msg = format!("{:?}", result.unwrap_err());
-    assert!(msg.contains("min_nits"), "expected min_nits error, got: {msg}");
+    assert!(
+        msg.contains("min_nits"),
+        "expected min_nits error, got: {msg}"
+    );
 
     // min_nits NaN.
     let result = LossyConfig::new(1.0)
@@ -6378,7 +6394,10 @@ fn test_request_lossy_min_nits_validation() {
         .encode(&pixels);
     assert!(result.is_err());
     let msg = format!("{:?}", result.unwrap_err());
-    assert!(msg.contains("min_nits"), "expected min_nits NaN error, got: {msg}");
+    assert!(
+        msg.contains("min_nits"),
+        "expected min_nits NaN error, got: {msg}"
+    );
 }
 
 #[test]
@@ -6646,7 +6665,10 @@ fn test_encode_request_row_stride_lossless_round_trip() {
         .with_row_stride(stride)
         .encode(&padded)
         .unwrap();
-    assert_eq!(bytes_packed, bytes_strided, "lossless strided should match packed");
+    assert_eq!(
+        bytes_packed, bytes_strided,
+        "lossless strided should match packed"
+    );
 }
 
 /// Lossless TF round-trip (#17 final piece). Lossless preserves
@@ -6677,7 +6699,10 @@ fn test_encode_request_lossless_pq_header() {
         .read(std::io::Cursor::new(&bytes))
         .expect("jxl-oxide parse failed");
     let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
-    assert!(ce_dbg.contains("Pq"), "lossless PQ header should contain Pq; got {ce_dbg}");
+    assert!(
+        ce_dbg.contains("Pq"),
+        "lossless PQ header should contain Pq; got {ce_dbg}"
+    );
     assert!(
         ce_dbg.contains("Bt2100"),
         "lossless PQ header should contain BT.2100; got {ce_dbg}",
@@ -6701,7 +6726,10 @@ fn test_encode_request_lossless_hlg_header() {
         .read(std::io::Cursor::new(&bytes))
         .expect("jxl-oxide parse failed");
     let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
-    assert!(ce_dbg.contains("Hlg"), "lossless HLG header should contain Hlg; got {ce_dbg}");
+    assert!(
+        ce_dbg.contains("Hlg"),
+        "lossless HLG header should contain Hlg; got {ce_dbg}"
+    );
 }
 
 #[test]
@@ -6814,7 +6842,10 @@ fn test_streaming_lossy_hlg_matches_oneshot() {
     enc.push_rows(&pixels, h).unwrap();
     let streaming = enc.finish().unwrap();
 
-    assert_eq!(oneshot, streaming, "HLG streaming should match one-shot bit-exact");
+    assert_eq!(
+        oneshot, streaming,
+        "HLG streaming should match one-shot bit-exact"
+    );
 }
 
 /// Gray + GrayAlpha sub-feature of #17: 4 grayscale layouts
@@ -6928,7 +6959,10 @@ fn test_encode_request_rgba8_pq_uses_pq_eotf() {
         .encode_request(w, h, PixelLayout::Rgba8)
         .encode(&pixels)
         .unwrap();
-    assert_ne!(bytes_pq, bytes_srgb, "Rgba8 PQ should differ from Rgba8 sRGB");
+    assert_ne!(
+        bytes_pq, bytes_srgb,
+        "Rgba8 PQ should differ from Rgba8 sRGB"
+    );
 
     // Header should report PQ.
     let img = jxl_oxide::JxlImage::builder()
@@ -6946,7 +6980,9 @@ fn test_encode_request_bt709_u16_uses_bt709_eotf() {
     use crate::headers::color_encoding::{ColorEncoding, TransferFunction};
     let w = 16u32;
     let h = 16;
-    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16).map(|i| i.wrapping_mul(257)).collect();
+    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16)
+        .map(|i| i.wrapping_mul(257))
+        .collect();
     let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
 
     let mut bt709_ce = ColorEncoding::srgb();
@@ -6969,7 +7005,10 @@ fn test_encode_request_bt709_u16_uses_bt709_eotf() {
         .read(std::io::Cursor::new(&bytes_bt709))
         .expect("jxl-oxide parse failed");
     let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
-    assert!(ce_dbg.contains("Bt709"), "header should signal BT.709; got {ce_dbg}");
+    assert!(
+        ce_dbg.contains("Bt709"),
+        "header should signal BT.709; got {ce_dbg}"
+    );
 }
 
 /// HLG sub-feature of #17: `with_color_encoding(ColorEncoding::bt2100_hlg())`
@@ -6979,7 +7018,9 @@ fn test_encode_request_hlg_u16_uses_hlg_eotf() {
     use crate::headers::color_encoding::ColorEncoding;
     let w = 16u32;
     let h = 16;
-    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16).map(|i| i.wrapping_mul(257)).collect();
+    let pixels_u16: Vec<u16> = (0..(w * h * 3) as u16)
+        .map(|i| i.wrapping_mul(257))
+        .collect();
     let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
 
     let cfg = LossyConfig::new(1.0).with_effort(3);
@@ -7007,7 +7048,10 @@ fn test_encode_request_hlg_u16_uses_hlg_eotf() {
         .read(std::io::Cursor::new(&bytes_hlg))
         .expect("jxl-oxide parse failed");
     let ce_dbg = format!("{:?}", img.image_header().metadata.colour_encoding);
-    assert!(ce_dbg.contains("Hlg"), "header should signal HLG; got {ce_dbg}");
+    assert!(
+        ce_dbg.contains("Hlg"),
+        "header should signal HLG; got {ce_dbg}"
+    );
 }
 
 /// Closes #15 API wire-up: `EncodeRequest::with_brotli_metadata`
@@ -7088,9 +7132,7 @@ fn test_encode_request_bits_per_sample_12_lossy() {
     let h = 16;
     // 12-bit data: max value 4095. Stored in low bits of u16.
     // Generate a smooth gradient that uses the full 12-bit range.
-    let pixels_u16: Vec<u16> = (0..(w * h * 3))
-        .map(|i| (i % 4096) as u16)
-        .collect();
+    let pixels_u16: Vec<u16> = (0..(w * h * 3)).map(|i| (i % 4096) as u16).collect();
     let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
 
     let cfg = LossyConfig::new(1.0).with_effort(3);
@@ -7391,7 +7433,9 @@ fn test_streaming_lossy_f16_matches_oneshot() {
     let pixels: &[u8] = bytemuck::cast_slice(&f16_pixels);
 
     let cfg = LossyConfig::new(1.0).with_effort(3);
-    let oneshot = cfg.encode(pixels, w, h, PixelLayout::RgbaLinearF16).unwrap();
+    let oneshot = cfg
+        .encode(pixels, w, h, PixelLayout::RgbaLinearF16)
+        .unwrap();
 
     let mut enc = cfg.encoder(w, h, PixelLayout::RgbaLinearF16).unwrap();
     let half = h / 2;
