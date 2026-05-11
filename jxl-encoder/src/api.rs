@@ -4934,6 +4934,7 @@ fn encode_animation_lossless(
     use crate::modular::channel::ModularImage;
     use crate::modular::frame::{FrameEncoder, FrameEncoderOptions};
 
+    cfg.validate()?;
     validate_animation_input(width, height, layout, frames)?;
 
     let w = width as usize;
@@ -5114,6 +5115,7 @@ fn encode_animation_lossy(
     use crate::headers::file_header::AnimationHeader;
     use crate::headers::frame_header::FrameOptions;
 
+    cfg.validate()?;
     validate_animation_input(width, height, layout, frames)?;
 
     let w = width as usize;
