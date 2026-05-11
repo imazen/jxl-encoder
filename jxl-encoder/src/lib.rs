@@ -25,7 +25,6 @@ pub mod debug_rect;
 pub mod effort;
 pub mod entropy_coding;
 pub mod error;
-#[allow(dead_code)] // Used by upcoming lf_frame module
 pub(crate) mod f16;
 pub mod headers;
 pub(crate) mod icc;
@@ -116,6 +115,50 @@ pub mod __internals {
     pub use crate::vardct::ac_strategy::compute_scaled_constants_free;
     pub use crate::vardct::epf::epf_step0_strip_free;
     pub use crate::vardct::quantize::adjust_quant_block_ac_free;
+}
+
+/// Pre-quantized AC entry point — accepts an already-prepared
+/// [`vardct::precomputed::EncoderPrecomputed`] (built via
+/// `EncoderPrecomputed::from_parts(...)`) plus a `quant_field`, runs
+/// the bitstream emit path. Skips the encoder's own XYB conversion,
+/// gaborish, CfL, masking, AC strategy search, and butteraugli
+/// refinement — all of which the caller is expected to have computed
+/// on their own pipeline (e.g. jxl-encoder-gpu's GPU pipeline).
+///
+/// This module is `#[doc(hidden)]` and the API is unstable; use only
+/// from downstream crates that pin a specific jxl-encoder version.
+#[cfg(feature = "__pre_quantized")]
+#[doc(hidden)]
+pub mod __pre_quantized {
+    pub use crate::vardct::ac_strategy::AcStrategyMap;
+    /// Compute the float quant field + masking from XYB planes.
+    /// Returns `(quant_field_float, masking)`. Pair with
+    /// `quantize_quant_field` to get the `u8` field for
+    /// `encode_from_precomputed`. Mirrors what
+    /// `EncoderPrecomputed::compute` does internally on the
+    /// adaptive_quant path.
+    pub use crate::vardct::adaptive_quant::compute_quant_field_float_free;
+    /// Convert a per-block float quant field (matches the GPU
+    /// pipeline's `aq_field` shape) to the per-block `u8` quant field
+    /// the bitstream encode path expects. Multiplies each entry by
+    /// `inv_scale` (from `DistanceParams::compute_for_profile`) and
+    /// clamps to `[1, 255]`.
+    pub use crate::vardct::adaptive_quant::quantize_quant_field;
+    pub use crate::vardct::chroma_from_luma::CflMap;
+    /// Compute a per-tile chroma-from-luma (`CflMap`) from XYB planes.
+    /// `stride = padded_width`, `buf_height = padded_height`. Tiles are
+    /// 64×64 pixels = 8×8 blocks. Use `use_newton=true` for effort >=7
+    /// quality (Newton-Raphson fit; matches libjxl
+    /// `enc_chroma_from_luma.cc` at `speed_tier <= kSquirrel`).
+    pub use crate::vardct::chroma_from_luma::compute_cfl_map;
+    pub use crate::vardct::encoder::VarDctEncoder;
+    /// `DistanceParams` carries the per-distance scaling constants
+    /// (notably `inv_scale`) needed to convert a float quant field to
+    /// `u8`. Construct via `DistanceParams::compute_for_profile(distance,
+    /// &EffortProfile)`.
+    pub use crate::vardct::frame::DistanceParams;
+    pub use crate::vardct::noise::NoiseParams;
+    pub use crate::vardct::precomputed::EncoderPrecomputed;
 }
 
 #[cfg(test)]
