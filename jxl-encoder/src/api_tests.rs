@@ -6230,7 +6230,7 @@ fn test_encode_request_center_first_multi_group() {
     );
 
     // Both should decode cleanly through jxl-oxide.
-    let mut img = jxl_oxide::JxlImage::builder()
+    let img = jxl_oxide::JxlImage::builder()
         .read(std::io::Cursor::new(&bytes_center))
         .expect("jxl-oxide parse failed (center)");
     let render = img.render_frame(0).expect("center-first frame should render");
@@ -7094,7 +7094,7 @@ fn test_encode_request_bits_per_sample_12_lossy() {
     // 12-bit data: max value 4095. Stored in low bits of u16.
     // Generate a smooth gradient that uses the full 12-bit range.
     let pixels_u16: Vec<u16> = (0..(w * h * 3))
-        .map(|i| ((i % 4096) as u16))
+        .map(|i| (i % 4096) as u16)
         .collect();
     let pixels: &[u8] = bytemuck::cast_slice(&pixels_u16);
 
