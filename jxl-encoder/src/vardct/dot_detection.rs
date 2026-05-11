@@ -69,6 +69,288 @@ pub(crate) const GAUSSIAN_3_TAPS: [f32; 3] = [0.222338, 0.210431, 0.1784];
 /// `kEllipseWindowSize`, `enc_detect_dots.cc:97`).
 pub(crate) const ELLIPSE_WINDOW_SIZE: usize = 5;
 
+/// Maximum area in pixels of an ellipse-candidate connected component.
+/// libjxl `kMaxCCSize`, `enc_detect_dots.cc:188`.
+pub(crate) const MAX_CC_SIZE: usize = 1000;
+
+/// Padding (in pixels) used when computing background statistics
+/// around a connected component's bounding rectangle. libjxl
+/// `kExtraRect = 4`, `enc_detect_dots.cc:299`.
+pub(crate) const CC_EXTRA_RECT: i32 = 4;
+
+/// Single-pixel coordinate for the BFS queue. Mirrors libjxl
+/// `Pixel { int x; int y; }` at `enc_detect_dots.cc:178-181`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Pixel {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// Axis-aligned bounding rectangle in pixel coordinates. Mirrors
+/// libjxl `Rect(x0, y0, xsize, ysize)` for the dot-detection use
+/// case only (no clipping helpers needed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Rect {
+    pub x0: i32,
+    pub y0: i32,
+    pub xsize: i32,
+    pub ysize: i32,
+}
+
+impl Rect {
+    /// `true` when `(p.x, p.y)` lies inside the rectangle. Mirrors
+    /// libjxl `PointInRect` (`enc_detect_dots.cc:218-223`).
+    fn contains(&self, p: Pixel) -> bool {
+        p.x >= self.x0 && p.x < self.x0 + self.xsize && p.y >= self.y0 && p.y < self.y0 + self.ysize
+    }
+}
+
+/// One connected-component candidate from the energy image. Carries
+/// the raw pixel list, its bounding rectangle, and per-CC statistics
+/// used downstream for filtering / Gaussian fitting. Mirrors libjxl
+/// `ConnectedComponent` (`enc_detect_dots.cc:224-291`).
+#[derive(Clone, Debug)]
+pub(crate) struct ConnectedComponent {
+    pub bounds: Rect,
+    pub pixels: Vec<Pixel>,
+    pub max_energy: f32,
+    pub mean_energy: f32,
+    pub var_energy: f32,
+    pub mean_bg: f32,
+    pub var_bg: f32,
+    pub score: f32,
+    pub mode: Pixel,
+}
+
+impl ConnectedComponent {
+    /// Compute mean / variance / mode statistics for the component
+    /// itself and a `extra`-pixel padded ring around it (used as
+    /// background). Mirrors libjxl `CompStats`
+    /// (`enc_detect_dots.cc:241-285`). The `image_w` × `image_h`
+    /// span is the energy image's pixel size; coordinates outside
+    /// it are skipped.
+    fn compute_stats(&mut self, energy: &[f32], image_w: i32, image_h: i32, extra: i32) {
+        let mut max_energy = 0.0_f32;
+        let mut sum_e = 0.0_f64;
+        let mut sum_e2 = 0.0_f64;
+        let mut sum_bg = 0.0_f64;
+        let mut sum_bg2 = 0.0_f64;
+        let mut n_in: usize = 0;
+        let mut n_out: usize = 0;
+        let mut mode = Pixel { x: 0, y: 0 };
+
+        let y_min = -extra;
+        let y_max = self.bounds.ysize + extra;
+        let x_min = -extra;
+        let x_max = self.bounds.xsize + extra;
+        for sy in y_min..y_max {
+            let y = sy + self.bounds.y0;
+            if y < 0 || y >= image_h {
+                continue;
+            }
+            for sx in x_min..x_max {
+                let x = sx + self.bounds.x0;
+                if x < 0 || x >= image_w {
+                    continue;
+                }
+                let v = energy[(y as usize) * (image_w as usize) + (x as usize)];
+                if v > max_energy {
+                    max_energy = v;
+                    mode = Pixel { x, y };
+                }
+                if self.bounds.contains(Pixel { x, y }) {
+                    sum_e += v as f64;
+                    sum_e2 += (v as f64) * (v as f64);
+                    n_in += 1;
+                } else {
+                    sum_bg += v as f64;
+                    sum_bg2 += (v as f64) * (v as f64);
+                    n_out += 1;
+                }
+            }
+        }
+        let mean_e = if n_in > 0 { sum_e / n_in as f64 } else { 0.0 };
+        let mean_bg = if n_out > 0 {
+            sum_bg / n_out as f64
+        } else {
+            0.0
+        };
+        let var_e = if n_in > 0 {
+            sum_e2 / n_in as f64 - mean_e * mean_e
+        } else {
+            0.0
+        };
+        let var_bg = if n_out > 0 {
+            sum_bg2 / n_out as f64 - mean_bg * mean_bg
+        } else {
+            0.0
+        };
+        let score = if var_bg > 0.0 {
+            ((mean_e - mean_bg) / var_bg.sqrt()) as f32
+        } else {
+            // libjxl divides by sqrt(varBg) unconditionally; we guard
+            // against the zero-variance case (would be Inf or NaN)
+            // and treat it as "no signal" → low score.
+            0.0
+        };
+        self.max_energy = max_energy;
+        self.mean_energy = mean_e as f32;
+        self.var_energy = var_e as f32;
+        self.mean_bg = mean_bg as f32;
+        self.var_bg = var_bg as f32;
+        self.score = score;
+        self.mode = mode;
+    }
+}
+
+/// Bounding rectangle of a non-empty pixel list. Mirrors libjxl
+/// `BoundingRectangle` (`enc_detect_dots.cc:293-306`).
+fn bounding_rectangle(pixels: &[Pixel]) -> Rect {
+    debug_assert!(!pixels.is_empty(), "bounding_rectangle on empty pixel list");
+    let mut low_x = pixels[0].x;
+    let mut high_x = pixels[0].x;
+    let mut low_y = pixels[0].y;
+    let mut high_y = pixels[0].y;
+    for p in &pixels[1..] {
+        if p.x < low_x {
+            low_x = p.x;
+        }
+        if p.x > high_x {
+            high_x = p.x;
+        }
+        if p.y < low_y {
+            low_y = p.y;
+        }
+        if p.y > high_y {
+            high_y = p.y;
+        }
+    }
+    Rect {
+        x0: low_x,
+        y0: low_y,
+        xsize: high_x - low_x + 1,
+        ysize: high_y - low_y + 1,
+    }
+}
+
+/// 8-connected neighbor offsets used by the flood-fill BFS.
+///
+/// **NOTE**: libjxl's `enc_detect_dots.cc:194-195` declares this list as
+/// `{{1,-1},{1,0},{1,1},{0,-1},{0,1},{-1,-1},{-1,1},{1,0}}` —
+/// 7 distinct offsets with `{1,0}` duplicated and **`{-1,0}` missing**.
+/// That is an upstream bug (the "left" neighbor is never visited, so
+/// connected components are biased rightward). We mirror the list
+/// verbatim for bit-parity with libjxl's dot detection so our patch
+/// output matches what `cjxl -e 7 -d 3.0+` would emit.
+const FLOOD_NEIGHBORS: [(i32, i32); 8] = [
+    (1, -1),
+    (1, 0),
+    (1, 1),
+    (0, -1),
+    (0, 1),
+    (-1, -1),
+    (-1, 1),
+    (1, 0),
+];
+
+/// BFS flood-fill from `seed`. Pops pixels off `img` (zeroes them) as
+/// it grows the component; returns `false` if the component would
+/// exceed [`MAX_CC_SIZE`]. Mirrors libjxl `ExtractComponent`
+/// (`enc_detect_dots.cc:191-216`).
+fn extract_component(
+    img: &mut [f32],
+    width: i32,
+    height: i32,
+    pixels: &mut Vec<Pixel>,
+    seed: Pixel,
+    threshold: f32,
+) -> bool {
+    let mut stack = vec![seed];
+    while let Some(current) = stack.pop() {
+        pixels.push(current);
+        if pixels.len() > MAX_CC_SIZE {
+            return false;
+        }
+        for &(dx, dy) in &FLOOD_NEIGHBORS {
+            let cx = current.x + dx;
+            let cy = current.y + dy;
+            if cx < 0 || cx >= width || cy < 0 || cy >= height {
+                continue;
+            }
+            let idx = (cy as usize) * (width as usize) + (cx as usize);
+            if img[idx] > threshold {
+                img[idx] = 0.0;
+                stack.push(Pixel { x: cx, y: cy });
+            }
+        }
+    }
+    true
+}
+
+/// Locate connected-component candidates in the energy image: any
+/// pixel above `t_high` seeds a flood-fill that grows over neighbors
+/// above `t_low`. Components larger than [`MAX_CC_SIZE`] or with a
+/// bounding box ≥ `max_window` along either axis are dropped.
+/// Per-CC stats are computed on the *original* energy image (the
+/// flood-fill destroys a working copy) and any CC whose
+/// signal-to-background `score` is below `min_score` is also dropped.
+///
+/// Mirrors libjxl `FindCC` (`enc_detect_dots.cc:297-339`).
+pub fn find_cc(
+    energy: &[f32],
+    width: usize,
+    height: usize,
+    t_low: f32,
+    t_high: f32,
+    max_window: usize,
+    min_score: f32,
+) -> Vec<ConnectedComponent> {
+    debug_assert_eq!(energy.len(), width * height);
+    let w_i = width as i32;
+    let h_i = height as i32;
+    let mut img: Vec<f32> = energy.to_vec();
+    let mut out: Vec<ConnectedComponent> = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y * width + x;
+            if img[idx] > t_high {
+                img[idx] = 0.0;
+                let mut pixels: Vec<Pixel> = Vec::new();
+                let seed = Pixel {
+                    x: x as i32,
+                    y: y as i32,
+                };
+                if !extract_component(&mut img, w_i, h_i, &mut pixels, seed, t_low) {
+                    continue;
+                }
+                if pixels.is_empty() {
+                    continue;
+                }
+                let bounds = bounding_rectangle(&pixels);
+                if (bounds.xsize as usize) < max_window && (bounds.ysize as usize) < max_window {
+                    let mut cc = ConnectedComponent {
+                        bounds,
+                        pixels,
+                        max_energy: 0.0,
+                        mean_energy: 0.0,
+                        var_energy: 0.0,
+                        mean_bg: 0.0,
+                        var_bg: 0.0,
+                        score: 0.0,
+                        mode: Pixel { x: 0, y: 0 },
+                    };
+                    cc.compute_stats(energy, w_i, h_i, CC_EXTRA_RECT);
+                    if cc.score < min_score {
+                        continue;
+                    }
+                    out.push(cc);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Single-pass 5-tap horizontal Gaussian convolution. `taps` are
 /// `[center, 1-step, 2-step]`. Edges replicate (mirror would also be
 /// reasonable; libjxl uses replicate per `WeightsSeparable5`'s
@@ -353,5 +635,162 @@ mod tests {
         for &e in &energy {
             assert!(e.abs() < 1e-3, "uniform input → ~0 energy, got {e}");
         }
+    }
+
+    #[test]
+    fn test_bounding_rectangle_single_pixel() {
+        let r = bounding_rectangle(&[Pixel { x: 5, y: 7 }]);
+        assert_eq!(
+            r,
+            Rect {
+                x0: 5,
+                y0: 7,
+                xsize: 1,
+                ysize: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_bounding_rectangle_multi_pixel() {
+        let pixels = vec![
+            Pixel { x: 1, y: 2 },
+            Pixel { x: 4, y: 7 },
+            Pixel { x: 0, y: 5 },
+            Pixel { x: 3, y: 1 },
+        ];
+        let r = bounding_rectangle(&pixels);
+        assert_eq!(
+            r,
+            Rect {
+                x0: 0,
+                y0: 1,
+                xsize: 5,
+                ysize: 7
+            }
+        );
+    }
+
+    #[test]
+    fn test_rect_contains() {
+        let r = Rect {
+            x0: 2,
+            y0: 3,
+            xsize: 4,
+            ysize: 5,
+        };
+        assert!(r.contains(Pixel { x: 2, y: 3 }));
+        assert!(r.contains(Pixel { x: 5, y: 7 }));
+        assert!(!r.contains(Pixel { x: 1, y: 3 }));
+        assert!(!r.contains(Pixel { x: 6, y: 3 })); // x0+xsize=6 is exclusive
+        assert!(!r.contains(Pixel { x: 2, y: 8 })); // y0+ysize=8 is exclusive
+    }
+
+    #[test]
+    fn test_extract_component_single_pixel() {
+        // 5×5 image: only one pixel above threshold → CC of size 1.
+        let mut img = vec![0.0_f32; 25];
+        img[12] = 1.0; // center
+        let mut pixels = Vec::new();
+        let ok = extract_component(&mut img, 5, 5, &mut pixels, Pixel { x: 2, y: 2 }, 0.5);
+        assert!(ok);
+        // The seed itself isn't checked against threshold — caller
+        // (find_cc) is expected to validate the seed and zero it
+        // before calling. Here we just verify the BFS popped the
+        // seed and added it.
+        assert_eq!(pixels.len(), 1);
+        assert_eq!(pixels[0], Pixel { x: 2, y: 2 });
+    }
+
+    #[test]
+    fn test_extract_component_grows_to_neighbors() {
+        // 5×5 image with a 3-pixel L-shape above threshold:
+        //   row 2: . . X X .
+        //   row 3: . . X . .
+        // Seed at (2, 2). Two neighbors at (3, 2) and (2, 3).
+        let mut img = vec![0.0_f32; 25];
+        img[2 * 5 + 2] = 1.0; // seed
+        img[2 * 5 + 3] = 1.0;
+        img[3 * 5 + 2] = 1.0;
+        let mut pixels = Vec::new();
+        // Caller zeros the seed before calling, mirroring find_cc.
+        img[2 * 5 + 2] = 0.0;
+        let ok = extract_component(&mut img, 5, 5, &mut pixels, Pixel { x: 2, y: 2 }, 0.5);
+        assert!(ok);
+        assert_eq!(pixels.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_component_aborts_above_max_size() {
+        // Saturate a 40×40 region with above-threshold pixels →
+        // 1600 > MAX_CC_SIZE (1000) → returns false.
+        let w = 40;
+        let h = 40;
+        let mut img = vec![1.0_f32; w * h];
+        let mut pixels = Vec::new();
+        // Zero seed before calling.
+        img[0] = 0.0;
+        let ok = extract_component(
+            &mut img,
+            w as i32,
+            h as i32,
+            &mut pixels,
+            Pixel { x: 0, y: 0 },
+            0.5,
+        );
+        assert!(!ok, "saturated 40×40 should abort at MAX_CC_SIZE");
+        assert!(pixels.len() > MAX_CC_SIZE);
+    }
+
+    #[test]
+    fn test_find_cc_no_dots_below_threshold() {
+        let w = 16;
+        let h = 16;
+        let energy = vec![0.01_f32; w * h]; // below t_high=0.04
+        let ccs = find_cc(&energy, w, h, 0.02, 0.04, 5, -1e9);
+        assert!(ccs.is_empty(), "no above-threshold pixels → 0 CCs");
+    }
+
+    #[test]
+    fn test_find_cc_isolated_dot() {
+        // 16×16 image with a single bright pixel at (8, 8).
+        let w = 16;
+        let h = 16;
+        let mut energy = vec![0.0_f32; w * h];
+        energy[8 * w + 8] = 0.5; // > t_high
+        let ccs = find_cc(&energy, w, h, 0.02, 0.04, 5, -1e9);
+        assert_eq!(ccs.len(), 1, "exactly one CC for one isolated dot");
+        let cc = &ccs[0];
+        assert_eq!(
+            cc.bounds,
+            Rect {
+                x0: 8,
+                y0: 8,
+                xsize: 1,
+                ysize: 1
+            }
+        );
+        assert_eq!(cc.pixels.len(), 1);
+        assert!((cc.max_energy - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_find_cc_drops_oversized_window() {
+        // Two pixels exactly 5 apart → bounding window 6 ≥ max_window=5 → dropped.
+        let w = 16;
+        let h = 16;
+        let mut energy = vec![0.0_f32; w * h];
+        energy[2 * w + 2] = 0.5;
+        energy[2 * w + 7] = 0.5;
+        // Connect them via above-t_low pixels in between to force one CC.
+        for x in 3..7 {
+            energy[2 * w + x] = 0.03;
+        }
+        let ccs = find_cc(&energy, w, h, 0.02, 0.04, 5, -1e9);
+        // bounding xsize would be 6 (x0=2..7 inclusive). max_window=5 strict.
+        assert!(
+            ccs.is_empty() || ccs.iter().all(|cc| (cc.bounds.xsize as usize) < 5),
+            "wide CC should be dropped",
+        );
     }
 }
