@@ -217,19 +217,35 @@ pub fn forward_xyb_scalar(
     b_out: &mut [f32],
     n: usize,
 ) {
+    use crate::scalarmath::mul_add_f32 as fma;
     for i in 0..n {
         // Matrix multiply + bias (chained FMA for single-rounding parity with SIMD path)
-        let mixed0 = OPSIN_MATRIX[0][0].mul_add(
+        let mixed0 = fma(
+            OPSIN_MATRIX[0][0],
             r[i],
-            OPSIN_MATRIX[0][1].mul_add(g[i], OPSIN_MATRIX[0][2].mul_add(b[i], OPSIN_BIAS[0])),
+            fma(
+                OPSIN_MATRIX[0][1],
+                g[i],
+                fma(OPSIN_MATRIX[0][2], b[i], OPSIN_BIAS[0]),
+            ),
         );
-        let mixed1 = OPSIN_MATRIX[1][0].mul_add(
+        let mixed1 = fma(
+            OPSIN_MATRIX[1][0],
             r[i],
-            OPSIN_MATRIX[1][1].mul_add(g[i], OPSIN_MATRIX[1][2].mul_add(b[i], OPSIN_BIAS[1])),
+            fma(
+                OPSIN_MATRIX[1][1],
+                g[i],
+                fma(OPSIN_MATRIX[1][2], b[i], OPSIN_BIAS[1]),
+            ),
         );
-        let mixed2 = OPSIN_MATRIX[2][0].mul_add(
+        let mixed2 = fma(
+            OPSIN_MATRIX[2][0],
             r[i],
-            OPSIN_MATRIX[2][1].mul_add(g[i], OPSIN_MATRIX[2][2].mul_add(b[i], OPSIN_BIAS[2])),
+            fma(
+                OPSIN_MATRIX[2][1],
+                g[i],
+                fma(OPSIN_MATRIX[2][2], b[i], OPSIN_BIAS[2]),
+            ),
         );
 
         // Clamp + cube root + bias offset
@@ -267,17 +283,21 @@ pub fn inverse_xyb_planar_scalar(
         let mixed_g = gamma_g * gamma_g * gamma_g - OPSIN_BIAS[1];
         let mixed_b = gamma_b * gamma_b * gamma_b - OPSIN_BIAS[2];
 
-        out_r[i] = INV_OPSIN[0][0].mul_add(
+        let fma = crate::scalarmath::mul_add_f32;
+        out_r[i] = fma(
+            INV_OPSIN[0][0],
             mixed_r,
-            INV_OPSIN[0][1].mul_add(mixed_g, INV_OPSIN[0][2] * mixed_b),
+            fma(INV_OPSIN[0][1], mixed_g, INV_OPSIN[0][2] * mixed_b),
         );
-        out_g[i] = INV_OPSIN[1][0].mul_add(
+        out_g[i] = fma(
+            INV_OPSIN[1][0],
             mixed_r,
-            INV_OPSIN[1][1].mul_add(mixed_g, INV_OPSIN[1][2] * mixed_b),
+            fma(INV_OPSIN[1][1], mixed_g, INV_OPSIN[1][2] * mixed_b),
         );
-        out_b[i] = INV_OPSIN[2][0].mul_add(
+        out_b[i] = fma(
+            INV_OPSIN[2][0],
             mixed_r,
-            INV_OPSIN[2][1].mul_add(mixed_g, INV_OPSIN[2][2] * mixed_b),
+            fma(INV_OPSIN[2][1], mixed_g, INV_OPSIN[2][2] * mixed_b),
         );
     }
 }
@@ -306,17 +326,21 @@ pub fn inverse_xyb_scalar(
         let mixed_b = gamma_b * gamma_b * gamma_b - OPSIN_BIAS[2];
 
         // Inverse opsin matrix → linear RGB (chained FMA for SIMD parity)
-        let r = INV_OPSIN[0][0].mul_add(
+        let fma = crate::scalarmath::mul_add_f32;
+        let r = fma(
+            INV_OPSIN[0][0],
             mixed_r,
-            INV_OPSIN[0][1].mul_add(mixed_g, INV_OPSIN[0][2] * mixed_b),
+            fma(INV_OPSIN[0][1], mixed_g, INV_OPSIN[0][2] * mixed_b),
         );
-        let g = INV_OPSIN[1][0].mul_add(
+        let g = fma(
+            INV_OPSIN[1][0],
             mixed_r,
-            INV_OPSIN[1][1].mul_add(mixed_g, INV_OPSIN[1][2] * mixed_b),
+            fma(INV_OPSIN[1][1], mixed_g, INV_OPSIN[1][2] * mixed_b),
         );
-        let b_lin = INV_OPSIN[2][0].mul_add(
+        let b_lin = fma(
+            INV_OPSIN[2][0],
             mixed_r,
-            INV_OPSIN[2][1].mul_add(mixed_g, INV_OPSIN[2][2] * mixed_b),
+            fma(INV_OPSIN[2][1], mixed_g, INV_OPSIN[2][2] * mixed_b),
         );
 
         linear_rgb[i * 3] = r;

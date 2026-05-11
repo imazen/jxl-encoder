@@ -80,7 +80,7 @@ pub fn quantize_dct8_scalar(
         output[idx] = if val.abs() < thresholds[thr_idx] {
             0
         } else {
-            val.round_ties_even() as i32
+            crate::scalarmath::round_ties_even_f32(val) as i32
         };
     }
 }
@@ -396,7 +396,7 @@ pub fn quantize_large_scalar(
         output[idx] = if val.abs() < thresholds[thr_idx] {
             0
         } else {
-            val.round_ties_even() as i32
+            crate::scalarmath::round_ties_even_f32(val) as i32
         };
     }
 }
