@@ -369,8 +369,12 @@ impl ModularImage {
     }
 
     /// Append an 8-bit extra channel (depth, spot color, etc.) at the
-    /// end of [`Self::channels`]. The channel must have the same
-    /// dimensions as the existing channels. Refs #9.
+    /// end of [`Self::channels`]. Refs #9.
+    ///
+    /// `(width, height)` are the channel's own dimensions, which may
+    /// differ from the image's color channels (e.g. `dim_shift > 0`
+    /// in the matching [`ExtraChannelInfo`] downsamples the channel
+    /// by `1 << dim_shift` per axis).
     ///
     /// The caller is responsible for adding a matching
     /// [`crate::headers::extra_channels::ExtraChannelInfo`] to the
@@ -384,12 +388,6 @@ impl ModularImage {
     ) -> Result<()> {
         if data.len() != width * height {
             return Err(Error::InvalidImageDimensions(width, height));
-        }
-        // Match dimensions with existing channels.
-        if let Some(first) = self.channels.first() {
-            if first.width() != width || first.height() != height {
-                return Err(Error::InvalidImageDimensions(width, height));
-            }
         }
         let mut channel = Channel::new(width, height)?;
         for (i, &val) in data.iter().enumerate() {
@@ -412,11 +410,6 @@ impl ModularImage {
     ) -> Result<()> {
         if data.len() != width * height {
             return Err(Error::InvalidImageDimensions(width, height));
-        }
-        if let Some(first) = self.channels.first() {
-            if first.width() != width || first.height() != height {
-                return Err(Error::InvalidImageDimensions(width, height));
-            }
         }
         let mut channel = Channel::new(width, height)?;
         for (i, &val) in data.iter().enumerate() {

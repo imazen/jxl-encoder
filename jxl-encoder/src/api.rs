@@ -2150,6 +2150,18 @@ impl<'a> ExtraChannel<'a> {
         }
     }
 
+    /// Set the dimension shift (log2 downsampling factor). When
+    /// `n > 0`, the buffer must be sized
+    /// `(width >> n) * (height >> n)` samples (or `div_ceil` of
+    /// those dims; we use a plain shift). libjxl accepts
+    /// `dim_shift ∈ {0, 3, 4} ∪ 1..=8` via the size coder. Most
+    /// usage is `dim_shift = 0` (full resolution); `dim_shift = 2`
+    /// gives a 1/4-resolution depth map. Refs #9.
+    pub fn with_dim_shift(mut self, n: u32) -> Self {
+        self.info.dim_shift = n;
+        self
+    }
+
     /// Read-only access to the metadata that will be written into
     /// the file header for this channel.
     pub fn info(&self) -> &crate::headers::extra_channels::ExtraChannelInfo {
@@ -2159,6 +2171,15 @@ impl<'a> ExtraChannel<'a> {
     /// Read-only access to the channel's pixel buffer.
     pub fn data(&self) -> ExtraChannelBuf<'_> {
         self.data
+    }
+
+    /// The dimensions an N-pixel-wide image's extra channel should
+    /// have under this channel's `dim_shift`. Mirrors libjxl's
+    /// `DivCeil(d, 1 << dim_shift)`.
+    pub(crate) fn downsampled_dims(&self, w: usize, h: usize) -> (usize, usize) {
+        let ds = self.info.dim_shift.min(31);
+        let factor = 1usize << ds;
+        (w.div_ceil(factor), h.div_ceil(factor))
     }
 }
 
@@ -2739,23 +2760,28 @@ impl<'a> EncodeRequest<'a> {
         .map_err(EncodeError::from)?;
 
         // Append extra channels (refs #9 — Depth, SpotColor, etc.).
-        // Each `ExtraChannel` carries an 8-bit or 16-bit plane of
-        // the same dimensions as the image; the channel is added to
-        // the modular image and its `ExtraChannelInfo` is written
-        // into the file header.
+        // Each `ExtraChannel` carries an 8-bit or 16-bit plane at
+        // its own dimensions, which may be smaller than the image
+        // when `dim_shift > 0` is set (e.g., a 1/4-resolution depth
+        // map). The expected sample count is the image dims shifted
+        // down by `dim_shift` (using `div_ceil`). The channel is
+        // added to the modular image and its `ExtraChannelInfo` is
+        // written into the file header.
         for (idx, ec) in self.extra_channels.iter().enumerate() {
+            let (ec_w, ec_h) = ec.downsampled_dims(w, h);
             let len = ec.data.len();
-            if len != w * h {
+            if len != ec_w * ec_h {
                 return Err(EncodeError::InvalidInput {
                     message: format!(
-                        "extra_channels[{idx}]: expected {} samples for {w}x{h}, got {len}",
-                        w * h,
+                        "extra_channels[{idx}]: expected {} samples for {ec_w}x{ec_h} (dim_shift={}), got {len}",
+                        ec_w * ec_h,
+                        ec.info.dim_shift,
                     ),
                 });
             }
             match ec.data {
-                ExtraChannelBuf::U8(d) => image.push_extra_channel_u8(d, w, h),
-                ExtraChannelBuf::U16(d) => image.push_extra_channel_u16(d, w, h),
+                ExtraChannelBuf::U8(d) => image.push_extra_channel_u8(d, ec_w, ec_h),
+                ExtraChannelBuf::U16(d) => image.push_extra_channel_u16(d, ec_w, ec_h),
             }
             .map_err(EncodeError::from)?;
         }

@@ -7897,6 +7897,62 @@ fn test_lossless_rgb_with_16bit_depth_channel() {
     let _render = image.render_frame(0).expect("render");
 }
 
+/// Refs #9: lossless RGB + Depth at `dim_shift = 1` (half-res
+/// depth). Common use case: iPhone Portrait Mode-style depth maps
+/// where the depth resolution is intentionally lower than the
+/// color resolution.
+#[test]
+fn test_lossless_rgb_with_dim_shift_depth_channel() {
+    use crate::api::ExtraChannel;
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    // depth at half resolution: 16×16 = 256 samples
+    let depth: Vec<u8> = (0..256).map(|i| (i % 251) as u8).collect();
+    let extras = [ExtraChannel::depth(&depth).with_dim_shift(1)];
+    let bytes = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossless rgb + dim_shift=1 depth");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(header.metadata.ec_info.len(), 1);
+    assert_eq!(
+        header.metadata.ec_info[0].dim_shift, 1,
+        "depth.with_dim_shift(1) should write dim_shift=1 to the header",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: passing a buffer at the wrong size for the
+/// `dim_shift` rejects up front.
+#[test]
+fn test_extra_channel_dim_shift_size_mismatch_rejected() {
+    use crate::api::ExtraChannel;
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = vec![0u8; (w * h * 3) as usize];
+    // Caller asks for dim_shift=1 (16×16 = 256 samples) but
+    // provides full-resolution data (32×32 = 1024). Reject.
+    let wrong_depth: Vec<u8> = vec![0u8; 1024];
+    let extras = [ExtraChannel::depth(&wrong_depth).with_dim_shift(1)];
+    let result = LosslessConfig::new()
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels);
+    assert!(result.is_err(), "size mismatch w/ dim_shift must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("dim_shift") && msg.contains("expected"),
+        "expected dim_shift/expected error, got: {msg}",
+    );
+}
+
 /// Refs #9: lossless RGBA + Depth + SpotColor (6 channels) —
 /// stress test that the num_extra_channels size-coder fix
 /// extends past 2 entries. With 3 extras the size coder still
