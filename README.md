@@ -26,7 +26,7 @@ let jxl = LossyConfig::new(1.0)
     .encode(&pixels)?;
 ```
 
-Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`, `GrayAlphaLinearF32`.
+Pixel layouts: `Rgb8`, `Rgba8`, `Bgr8`, `Bgra8`, `Gray8`, `GrayAlpha8`, `Rgb16`, `Rgba16`, `Gray16`, `GrayAlpha16`, `RgbLinearF32`, `RgbaLinearF32`, `GrayLinearF32`, `GrayAlphaLinearF32`, `RgbLinearF16`, `RgbaLinearF16`, `GrayLinearF16`, `GrayAlphaLinearF16`.
 
 ## CLI
 
