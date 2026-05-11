@@ -2,7 +2,7 @@
 
 A comprehensive, pure Rust JPEG XL encoder. 80k lines of library code, 29k lines of tests. Covers both lossy (VarDCT) and lossless (Modular) encoding with 30+ individually implemented features. All output verified against three independent decoders: [jxl-rs](https://github.com/libjxl/jxl-rs), [jxl-oxide](https://github.com/tirr-c/jxl-oxide), and djxl (libjxl).
 
-Default: `#![forbid(unsafe_code)]` (relaxed with `unsafe-performance` feature). 940+ tests passing.
+Default: `#![forbid(unsafe_code)]`. 850+ tests passing.
 
 ## Library usage
 
