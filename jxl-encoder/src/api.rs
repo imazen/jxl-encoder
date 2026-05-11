@@ -1006,6 +1006,8 @@ impl LosslessConfig {
             stop: None,
             source_gamma: None,
             color_encoding: None,
+            intensity_target: None,
+            min_nits: None,
         }
     }
 
@@ -1649,6 +1651,8 @@ impl LossyConfig {
             stop: None,
             source_gamma: None,
             color_encoding: None,
+            intensity_target: None,
+            min_nits: None,
         }
     }
 
@@ -1746,6 +1750,8 @@ pub struct EncodeRequest<'a> {
     stop: Option<&'a dyn Stop>,
     source_gamma: Option<f32>,
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
+    intensity_target: Option<f32>,
+    min_nits: Option<f32>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1798,6 +1804,33 @@ impl<'a> EncodeRequest<'a> {
         ce: crate::headers::color_encoding::ColorEncoding,
     ) -> Self {
         self.color_encoding = Some(ce);
+        self
+    }
+
+    /// Set the peak display luminance in nits (cd/m²) for HDR content.
+    ///
+    /// Written to the JXL codestream `ToneMapping.intensity_target` field.
+    /// Default is 255.0 (SDR). Set to e.g. 4000.0 or 10000.0 for HDR.
+    ///
+    /// Pairs with [`Self::with_color_encoding`] for HDR signaling
+    /// (e.g. [`ColorEncoding::bt2100_pq`] / [`ColorEncoding::bt2100_hlg`]).
+    /// If both this builder and an attached [`ImageMetadata`] set this
+    /// value, the request-level value wins.
+    ///
+    /// [`ColorEncoding::bt2100_pq`]: crate::ColorEncoding::bt2100_pq
+    /// [`ColorEncoding::bt2100_hlg`]: crate::ColorEncoding::bt2100_hlg
+    pub fn with_intensity_target(mut self, nits: f32) -> Self {
+        self.intensity_target = Some(nits);
+        self
+    }
+
+    /// Set the minimum display luminance in nits.
+    ///
+    /// Written to the JXL codestream `ToneMapping.min_nits` field.
+    /// Default is 0.0. If both this builder and an attached
+    /// [`ImageMetadata`] set this value, the request-level value wins.
+    pub fn with_min_nits(mut self, nits: f32) -> Self {
+        self.min_nits = Some(nits);
         self
     }
 
@@ -2190,6 +2223,16 @@ impl<'a> EncodeRequest<'a> {
                 file_header.metadata.intrinsic_height = h;
             }
         }
+        // Request-level intensity_target / min_nits override the
+        // metadata-level values. Lets callers do
+        //   `cfg.encode_request(...).with_intensity_target(10000.0)`
+        // without constructing an ImageMetadata. Closes #21.
+        if let Some(it) = self.intensity_target {
+            file_header.metadata.intensity_target = it;
+        }
+        if let Some(mn) = self.min_nits {
+            file_header.metadata.min_nits = mn;
+        }
 
         // Write codestream
         let mut writer = BitWriter::new();
@@ -2476,6 +2519,14 @@ impl<'a> EncodeRequest<'a> {
             if meta.intrinsic_size.is_some() {
                 enc.intrinsic_size = meta.intrinsic_size;
             }
+        }
+        // Request-level intensity_target / min_nits override the
+        // metadata-level values. Closes #21.
+        if let Some(it) = self.intensity_target {
+            enc.intensity_target = it;
+        }
+        if let Some(mn) = self.min_nits {
+            enc.min_nits = mn;
         }
 
         // ICC profile from metadata
