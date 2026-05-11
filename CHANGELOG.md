@@ -77,6 +77,16 @@
   are now rejected at `validate_pixels` before any allocation rather
   than later inside `unpack_strided_pixels`. The error message
   shape is preserved; only fail-fast timing changed.
+- **EXIF / XMP / ICC metadata size capped + parity across paths**
+  (7ab560d): a single `validate_metadata_sizes` helper applies a
+  ~1 GB defensive cap on each of ICC, EXIF, and XMP buffers and is
+  now wired into `EncodeRequest::encode_inner`,
+  `LossyEncoder::finish_inner`, and `LosslessEncoder::finish_inner`
+  (previously only ICC was checked, only on the one-shot path).
+  Pathological multi-GB metadata previously reached
+  `Vec::with_capacity` in the container wrapper and exhausted system
+  memory at write time. Empty ICC also remains rejected with a
+  clear error message.
 - **4 latent serialization bugs in non-alpha extra-channel paths**
   (closes #8, 4cb33e8): enum coder, F16 vs F32 alpha range, CFA
   channel distribution, name-length distribution. Alpha encodes were
