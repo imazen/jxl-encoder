@@ -230,6 +230,14 @@ pub struct VarDctEncoder {
     /// and stores unique patterns once in a reference frame. Huge wins on screenshots.
     /// On by default for lossy encoding.
     pub enable_patches: bool,
+    /// Enable libjxl-style **dot detection** (refs #19). When true and
+    /// effort >= 7 and distance >= 3.0, the encoder runs the
+    /// star-field / specular-highlight detector
+    /// ([`super::dot_detection::detect_gaussian_ellipses`]) and (in a
+    /// follow-up tick) appends the detected Gaussian ellipses to the
+    /// patch dictionary. Off by default — niche feature, only fires on
+    /// astronomy / specular-on-dark content.
+    pub enable_dot_detection: bool,
     /// Encoder mode: Reference (match libjxl) or Experimental (own improvements).
     pub encoder_mode: crate::api::EncoderMode,
     /// Manual splines to overlay on the image (opt-in, None by default).
@@ -340,6 +348,7 @@ impl Default for VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            enable_dot_detection: false, // refs #19; off by default — wire-up in progress
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
             is_grayscale: false,
@@ -391,6 +400,7 @@ impl VarDctEncoder {
             bit_depth_16: false,
             icc_profile: None,
             enable_patches: true, // Patches: huge wins on screenshots, zero cost on photos
+            enable_dot_detection: false, // refs #19; off by default — wire-up in progress
             encoder_mode: crate::api::EncoderMode::Reference,
             splines: None,
             is_grayscale: false,
@@ -614,6 +624,37 @@ impl VarDctEncoder {
             xyb_x = x;
             xyb_y = y;
             xyb_b = b;
+        }
+
+        // Dot detection (refs #19). libjxl gates at speed_tier <= kSquirrel
+        // (effort >= 7) AND distance >= 3.0, AND only when text-like
+        // patches haven't been found. We mirror the gating exactly.
+        // Feature is off by default — niche (astronomy / specular highlights);
+        // enable via `LossyConfig::with_dot_detection(true)`.
+        //
+        // For this iteration we run the full detection pipeline and
+        // count the dots; integration into PatchesData (so the dots
+        // get encoded as Gaussian-ellipse patches) is queued for a
+        // follow-up tick. The detection itself has 24 unit tests.
+        if self.enable_dot_detection
+            && self.effort >= 7
+            && self.distance >= 3.0
+            && patches_data.is_none()
+        {
+            let dots = super::dot_detection::detect_gaussian_ellipses(
+                &xyb_x,
+                &xyb_y,
+                &xyb_b,
+                padded_width,
+                padded_height,
+                &super::dot_detection::GaussianDetectParams::default(),
+            );
+            #[cfg(feature = "debug-tokens")]
+            crate::debug_log!("dot detection: found {} candidate dots", dots.len());
+            // TODO(refs #19): convert each `dots[i]` into a PatchInfo
+            // and merge into patches_data so the residuals get
+            // encoded as Gaussian-ellipse patches.
+            let _ = dots;
         }
 
         // Build and subtract splines (after patches, before gaborish).
