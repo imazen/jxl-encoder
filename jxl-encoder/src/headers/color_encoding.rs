@@ -324,6 +324,21 @@ impl ColorEncoding {
         }
     }
 
+    /// Creates a BT.2100 HLG (HDR) color encoding.
+    pub fn bt2100_hlg() -> Self {
+        Self {
+            color_space: ColorSpace::Rgb,
+            white_point: WhitePoint::D65,
+            custom_white_point: None,
+            primaries: Primaries::Bt2100,
+            custom_primaries: None,
+            transfer_function: TransferFunction::Hlg,
+            rendering_intent: RenderingIntent::Perceptual,
+            want_icc: false,
+            gamma: None,
+        }
+    }
+
     /// Creates a grayscale color encoding.
     pub fn grayscale() -> Self {
         Self {
@@ -693,6 +708,21 @@ mod tests {
         let enc = ColorEncoding::bt2100_pq();
         assert_eq!(enc.primaries, Primaries::Bt2100);
         assert_eq!(enc.transfer_function, TransferFunction::Pq);
+
+        let mut writer = BitWriter::new();
+        enc.write(&mut writer).unwrap();
+        assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn test_write_bt2100_hlg() {
+        let enc = ColorEncoding::bt2100_hlg();
+        assert_eq!(enc.color_space, ColorSpace::Rgb);
+        assert_eq!(enc.white_point, WhitePoint::D65);
+        assert_eq!(enc.primaries, Primaries::Bt2100);
+        assert_eq!(enc.transfer_function, TransferFunction::Hlg);
+        assert_eq!(enc.rendering_intent, RenderingIntent::Perceptual);
+        assert!(!enc.want_icc);
 
         let mut writer = BitWriter::new();
         enc.write(&mut writer).unwrap();
