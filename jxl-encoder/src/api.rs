@@ -1056,6 +1056,7 @@ impl LosslessConfig {
             premultiplied_alpha: false,
             bits_per_sample: None,
             brotli_metadata_quality: None,
+            row_stride: None,
         }
     }
 
@@ -1730,6 +1731,7 @@ impl LossyConfig {
             premultiplied_alpha: false,
             bits_per_sample: None,
             brotli_metadata_quality: None,
+            row_stride: None,
         }
     }
 
@@ -1842,6 +1844,14 @@ pub struct EncodeRequest<'a> {
     /// Requires the `brotli-metadata` cargo feature; ignored otherwise.
     /// libjxl default quality is 4. Closes #15.
     brotli_metadata_quality: Option<u32>,
+    /// Row stride (bytes per source row) for non-tightly-packed input.
+    /// `None` → stride defaults to `width * layout.bytes_per_pixel()`.
+    /// `Some(s)` → each source row is `s` bytes (with `s -
+    /// width * bytes_per_pixel` padding bytes after each row's pixel
+    /// data). Used by GPU textures, Windows BITMAP, Cairo surfaces,
+    /// and any source that aligns rows to a power of 2.
+    /// Closes row-stride portion of #18.
+    row_stride: Option<usize>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1968,6 +1978,32 @@ impl<'a> EncodeRequest<'a> {
     /// LosslessEncoder both expose this builder).
     pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
         self.bits_per_sample = Some(bits.clamp(1, 16));
+        self
+    }
+
+    /// Set a custom row stride (bytes per source row) for
+    /// non-tightly-packed input. Closes row-stride portion of #18.
+    ///
+    /// `stride` must be `>= width * layout.bytes_per_pixel()`. The
+    /// default (`None`) treats the input as tightly packed (no
+    /// per-row padding). When set, each row is `stride` bytes; the
+    /// first `width * bytes_per_pixel` of each row carry the actual
+    /// pixel data and the remaining `stride - width * bytes_per_pixel`
+    /// bytes are padding (their content is ignored).
+    ///
+    /// Common origins: GPU textures (OpenGL/Vulkan/Metal often align
+    /// rows to 256 / 512 / 4096 bytes), Windows BITMAP (`stride =
+    /// ((width * bpp + 31) / 32) * 4`), Cairo image surfaces,
+    /// `image::DynamicImage` after a sub-region crop.
+    ///
+    /// Implementation: when set, the encoder unpacks pixels into a
+    /// tightly-packed scratch buffer once via `memcpy`-per-row, then
+    /// runs the existing per-layout converters on that buffer. The
+    /// extra buffer costs O(width × height × bytes_per_pixel) but the
+    /// unpack is O(n) and amortizes across all downstream work
+    /// (linearization, XYB, DCT, etc.).
+    pub fn with_row_stride(mut self, stride: usize) -> Self {
+        self.row_stride = Some(stride);
         self
     }
 
@@ -2109,6 +2145,25 @@ impl<'a> EncodeRequest<'a> {
             ConfigRef::Lossy(cfg) => cfg.threads,
         };
 
+        // Repack strided input into a tightly-packed buffer once.
+        // Closes row-stride portion of #18. Downstream encode paths
+        // assume tightly-packed `width * bytes_per_pixel` per row, so
+        // the unpack is the entry-side adapter — extra image-sized
+        // buffer + O(n) memcpy. None → use caller's slice as-is.
+        let packed_storage;
+        let pixels: &[u8] = if let Some(stride) = self.row_stride {
+            packed_storage = unpack_strided_pixels(
+                pixels,
+                self.width as usize,
+                self.height as usize,
+                self.layout.bytes_per_pixel(),
+                stride,
+            )?;
+            &packed_storage
+        } else {
+            pixels
+        };
+
         let (codestream, mut stats) = run_with_threads(threads, || match self.config {
             ConfigRef::Lossless(cfg) => self.encode_lossless(cfg, pixels, &budget),
             ConfigRef::Lossy(cfg) => self.encode_lossy(cfg, pixels, &budget),
@@ -2163,6 +2218,24 @@ impl<'a> EncodeRequest<'a> {
                      (width × height × {MAX_INTERNAL_SCALE} overflows usize)"
                 ),
             });
+        }
+        // When row_stride is set, the buffer is `height * stride`
+        // bytes (stride may include per-row padding). The strided
+        // unpack downstream validates bounds; here we only check the
+        // tightly-packed case.
+        if let Some(stride) = self.row_stride {
+            let needed = h.checked_mul(stride).ok_or_else(|| EncodeError::InvalidInput {
+                message: "height * row_stride overflows usize".into(),
+            })?;
+            if pixels.len() < needed {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "pixel buffer too small for strided input: need {needed} bytes (height {h} × stride {stride}), got {}",
+                        pixels.len(),
+                    ),
+                });
+            }
+            return Ok(());
         }
         match expected {
             Some(expected) if pixels.len() == expected => Ok(()),
@@ -5465,6 +5538,52 @@ fn f16_gray_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
             [v, v, v]
         })
         .collect()
+}
+
+/// Repack a row-strided pixel buffer into a tightly-packed `Vec<u8>`.
+/// Closes row-stride portion of #18.
+///
+/// Caller must ensure `stride >= width * bytes_per_pixel`. The result
+/// has `height * width * bytes_per_pixel` bytes; padding bytes from
+/// each source row are discarded.
+///
+/// Returns `Err(EncodeError::InvalidInput)` if the source buffer is
+/// too small to hold `height * stride` bytes (would index out of
+/// bounds during the row copy).
+fn unpack_strided_pixels(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    bytes_per_pixel: usize,
+    stride: usize,
+) -> core::result::Result<Vec<u8>, EncodeError> {
+    let row_bytes = width * bytes_per_pixel;
+    if stride < row_bytes {
+        return Err(EncodeError::InvalidInput {
+            message: format!(
+                "row_stride {stride} is less than width*bytes_per_pixel = {width}*{bytes_per_pixel} = {row_bytes}",
+            ),
+        });
+    }
+    let needed = height
+        .checked_mul(stride)
+        .ok_or_else(|| EncodeError::InvalidInput {
+            message: "height * row_stride overflows usize".into(),
+        })?;
+    if src.len() < needed {
+        return Err(EncodeError::InvalidInput {
+            message: format!(
+                "pixel buffer too small for strided input: need {needed} bytes (height {height} × stride {stride}), got {}",
+                src.len(),
+            ),
+        });
+    }
+    let mut packed = Vec::with_capacity(height * row_bytes);
+    for y in 0..height {
+        let row_start = y * stride;
+        packed.extend_from_slice(&src[row_start..row_start + row_bytes]);
+    }
+    Ok(packed)
 }
 
 /// Dispatch container-wrap by Brotli setting (closes #15 wire-up).
