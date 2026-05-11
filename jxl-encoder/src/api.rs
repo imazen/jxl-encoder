@@ -1225,6 +1225,13 @@ pub struct LossyConfig {
     /// `cparams.centerfirst`. Default `false` (raster order). See
     /// [`Self::with_center_first`].
     center_first: bool,
+    /// Decoder upsampling factor (refs #12). `1` (default) = no
+    /// resampling; `2`/`4`/`8` = box-filter downsample the input by
+    /// this factor before encoding and signal the decoder to upsample
+    /// after rendering. Trades per-pixel fidelity for dramatic file-size
+    /// reduction at very high distances. libjxl auto-selects 2× at
+    /// d ≥ 10. See [`Self::with_resampling`].
+    resampling: u32,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
     lf_frame: bool,
@@ -1298,6 +1305,7 @@ impl LossyConfig {
             patches: profile.patches,
             simplify_invisible: true,
             center_first: false,
+            resampling: 1,
             splines: None,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
@@ -1529,6 +1537,39 @@ impl LossyConfig {
     pub fn with_center_first(mut self, enable: bool) -> Self {
         self.center_first = enable;
         self
+    }
+
+    /// Set the decoder upsampling factor (refs #12).
+    ///
+    /// `factor` must be one of `1`, `2`, `4`, or `8` (the JPEG XL
+    /// spec's permitted values). Any other value is silently clamped
+    /// to `1` (a future revision may surface a [`ValidationError`]).
+    /// Default `1` (no resampling).
+    ///
+    /// When `factor > 1`, the encoder box-filters the input down by
+    /// `factor` along each axis before encoding and signals the
+    /// decoder to upsample by the same factor on output. The
+    /// codestream's file header still reports the original
+    /// (pre-downsample) dimensions, so callers and downstream tooling
+    /// see the full-size image. Output dimensions use `div_ceil`, so
+    /// odd / non-multiple sizes round up — the decoder upsamples to
+    /// `(out_w * factor, out_h * factor)` which may exceed the
+    /// original by up to `factor - 1` pixels along each axis (the
+    /// decoder crops to the file-header dimensions).
+    ///
+    /// libjxl auto-selects `factor = 2` at distance ≥ 10
+    /// (`enc_frame.cc:89-121`). We don't auto-select yet; callers
+    /// opt in explicitly. The simple box filter matches libjxl's 4×
+    /// and 8× paths; libjxl's 2× path uses a sharper 12×12 kernel
+    /// (`enc_heuristics.cc:279-405`) which is TBD.
+    pub fn with_resampling(mut self, factor: u32) -> Self {
+        self.resampling = if matches!(factor, 1 | 2 | 4 | 8) { factor } else { 1 };
+        self
+    }
+
+    /// Current resampling factor (1, 2, 4, or 8). Default `1`.
+    pub fn resampling(&self) -> u32 {
+        self.resampling
     }
 
     /// Set manual splines to overlay on the image.
@@ -2960,6 +3001,13 @@ impl<'a> EncodeRequest<'a> {
         enc.bits_per_sample_override = self.bits_per_sample;
         // Center-first AC group permutation (#14).
         enc.center_first = cfg.center_first;
+        // Decoder upsampling factor (refs #12). Caller-supplied
+        // (width, height) and pixel buffers are downsampled below
+        // before reaching the encoder; the encoder operates entirely
+        // at the downsampled resolution and signals the decoder to
+        // upsample after rendering. The file-header dims still report
+        // the original (pre-downsample) size.
+        enc.upsampling = cfg.resampling;
 
         // Tone mapping and intrinsic size from metadata
         if let Some(meta) = self.metadata {
@@ -2989,8 +3037,27 @@ impl<'a> EncodeRequest<'a> {
             enc.icc_profile = Some(icc.to_vec());
         }
 
+        // Apply box-filter downsampling for resampling > 1 (refs #12).
+        // The encoder runs at the downsampled resolution; the decoder
+        // upsamples back per the frame header. The fast path
+        // (resampling == 1) leaves the buffers untouched.
+        let (encode_rgb, encode_alpha, encode_w, encode_h) = if cfg.resampling > 1 {
+            let (down_rgb, dw, dh) = crate::vardct::resampling::box_downsample_rgb(
+                &linear_rgb, w, h, cfg.resampling,
+            );
+            let down_alpha = alpha.as_ref().map(|a| {
+                let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
+                    a, w, h, cfg.resampling,
+                );
+                a_down
+            });
+            (down_rgb, down_alpha, dw as usize, dh as usize)
+        } else {
+            (linear_rgb, alpha, w, h)
+        };
+
         let output = enc
-            .encode(w, h, &linear_rgb, alpha.as_deref())
+            .encode(encode_w, encode_h, &encode_rgb, encode_alpha.as_deref())
             .map_err(EncodeError::from)?;
 
         #[cfg(feature = "butteraugli-loop")]
@@ -3639,14 +3706,32 @@ impl LossyEncoder {
             enc.alpha_associated = self.premultiplied_alpha;
             enc.bits_per_sample_override = self.bits_per_sample;
             enc.center_first = self.cfg.center_first;
+            // Decoder upsampling factor (refs #12). Mirrors the
+            // EncodeRequest::encode_lossy wire-up below.
+            enc.upsampling = self.cfg.resampling;
             enc.non_finite_action = self.cfg.non_finite_action;
             enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
                 enc.icc_profile = Some(icc.clone());
             }
 
+            let (encode_rgb, encode_alpha, encode_w, encode_h) = if self.cfg.resampling > 1 {
+                let (down_rgb, dw, dh) = crate::vardct::resampling::box_downsample_rgb(
+                    &linear_rgb, w, h, self.cfg.resampling,
+                );
+                let down_alpha = alpha.as_ref().map(|a| {
+                    let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
+                        a, w, h, self.cfg.resampling,
+                    );
+                    a_down
+                });
+                (down_rgb, down_alpha, dw as usize, dh as usize)
+            } else {
+                (linear_rgb, alpha, w, h)
+            };
+
             let output = enc
-                .encode(w, h, &linear_rgb, alpha.as_deref())
+                .encode(encode_w, encode_h, &encode_rgb, encode_alpha.as_deref())
                 .map_err(EncodeError::from)?;
 
             #[cfg(feature = "butteraugli-loop")]

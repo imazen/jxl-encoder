@@ -575,9 +575,15 @@ impl VarDctEncoder {
             Vec::new()
         };
 
+        // When upsampling > 1 (refs #12), the caller passed downsampled
+        // (width, height); the file-header advertises the original
+        // pre-downsample size that the decoder will produce after
+        // applying the frame-header `upsampling` factor.
+        let display_width = (width as u32).saturating_mul(self.upsampling);
+        let display_height = (height as u32).saturating_mul(self.upsampling);
         FileHeader {
-            width: width as u32,
-            height: height as u32,
+            width: display_width,
+            height: display_height,
             metadata: ImageMetadata {
                 bit_depth,
                 color_encoding,
@@ -2036,6 +2042,7 @@ impl VarDctEncoder {
             fh.b_qm_scale = params.b_qm_scale;
             fh.epf_iters = params.epf_iters;
             fh.gaborish = self.enable_gaborish;
+            fh.upsampling = self.upsampling;
             if noise_params.is_some() {
                 fh.flags |= crate::headers::frame_header::ENABLE_NOISE;
             }

@@ -281,6 +281,23 @@ pub struct VarDctEncoder {
     /// `coeff_order::tokenize_permutation` /
     /// `build_and_write_coeff_orders`. Closes #14.
     pub center_first: bool,
+    /// Decoder upsampling factor for the main frame. `1` (default) =
+    /// no upsampling; `2`/`4`/`8` = the decoder upsamples its decoded
+    /// pixel buffer by this factor along each axis after rendering.
+    ///
+    /// When > 1, the caller must:
+    /// - pass the **downsampled** dimensions and pixel buffers to
+    ///   [`Self::encode`] (use [`super::resampling::box_downsample_rgb`]
+    ///   etc.); the encoder operates entirely at the downsampled
+    ///   resolution.
+    /// - The codestream's file header still reports the **original**
+    ///   (pre-downsample) dimensions — the encoder multiplies
+    ///   the supplied (width, height) by `upsampling` when building
+    ///   the file header, and writes `upsampling` into the frame
+    ///   header. The decoder upsamples to that target.
+    ///
+    /// Used by [`crate::api::LossyConfig::with_resampling`] (refs #12).
+    pub upsampling: u32,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
     pub non_finite_action: crate::api::NonFiniteAction,
@@ -336,6 +353,7 @@ impl Default for VarDctEncoder {
             alpha_associated: false,
             bits_per_sample_override: None,
             center_first: false,
+            upsampling: 1,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -386,6 +404,7 @@ impl VarDctEncoder {
             alpha_associated: false,
             bits_per_sample_override: None,
             center_first: false,
+            upsampling: 1,
             non_finite_action: crate::api::NonFiniteAction::default(),
             budget: None,
         }
@@ -1214,6 +1233,7 @@ impl VarDctEncoder {
             fh.b_qm_scale = params.b_qm_scale;
             fh.epf_iters = params.epf_iters;
             fh.gaborish = self.enable_gaborish;
+            fh.upsampling = self.upsampling;
             if noise_params.is_some() {
                 fh.flags |= 0x01; // ENABLE_NOISE
             }
