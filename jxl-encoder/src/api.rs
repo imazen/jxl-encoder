@@ -1946,8 +1946,8 @@ impl<'a> EncodeRequest<'a> {
     /// - decoder sees the correct precision metadata
     ///
     /// `bits` must be in `1..=16`; out-of-range values are clamped.
-    /// Currently only the one-shot `EncodeRequest` path honors this;
-    /// streaming-encoder parity remains TBD.
+    /// Streaming-encoder parity is also wired (LossyEncoder +
+    /// LosslessEncoder both expose this builder).
     pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
         self.bits_per_sample = Some(bits.clamp(1, 16));
         self
@@ -2324,6 +2324,15 @@ impl<'a> EncodeRequest<'a> {
             file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
             for ec in &mut file_header.metadata.extra_channels {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
+            }
+        }
+        // Configurable bits_per_sample for one-shot lossless (#18
+        // sub-feature). Lossless preserves pixels bit-exactly so this
+        // only affects the codestream BitDepth header signaling.
+        if let Some(bits) = self.bits_per_sample {
+            file_header.metadata.bit_depth.bits_per_sample = bits;
+            for ec in &mut file_header.metadata.extra_channels {
+                ec.bit_depth.bits_per_sample = bits;
             }
         }
         // Premultiplied-alpha signaling (lossless portion of #13).
@@ -2807,6 +2816,11 @@ pub struct LossyEncoder {
     /// no-op until the unpremultiplication pre-pass lands (#13);
     /// `finish()` returns `EncodeError::InvalidInput` if set.
     premultiplied_alpha: bool,
+    /// Configurable bits_per_sample for u16 input (#18 sub-feature).
+    /// Mirrors `EncodeRequest::with_bits_per_sample` on the streaming
+    /// path. `None` → 65535 divisor (full 16-bit). `Some(N)` →
+    /// `(1<<N)-1` divisor + codestream BitDepth = N.
+    bits_per_sample: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
@@ -2876,6 +2890,16 @@ impl LossyEncoder {
     /// unchanged.
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
+        self
+    }
+
+    /// Override the input precision for u16 layouts. Mirrors
+    /// [`EncodeRequest::with_bits_per_sample`] on the streaming path.
+    /// `bits` is clamped to `1..=16`. See the EncodeRequest builder
+    /// for the full semantic discussion. Closes the streaming-encoder
+    /// parity follow-up to today's bits_per_sample landing (#18).
+    pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
+        self.bits_per_sample = Some(bits.clamp(1, 16));
         self
     }
 
@@ -2952,6 +2976,11 @@ impl LossyEncoder {
         }
 
         let gamma = self.source_gamma;
+        // Streaming-encoder bits_per_sample (#18 follow-up). Mirrors
+        // EncodeRequest::encode_lossy's u16_max computation.
+        let u16_max = self
+            .bits_per_sample
+            .map_or(65535.0_f32, |b| ((1u32 << b) - 1) as f32);
 
         // Convert and append linear RGB
         let new_linear: Vec<f32> = match self.layout {
@@ -3001,30 +3030,30 @@ impl LossyEncoder {
             }
             PixelLayout::Rgb16 => {
                 if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 3, g, 65535.0)
+                    gamma_u16_to_linear_f32(pixels, 3, g, u16_max)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 3, 65535.0)
+                    srgb_u16_to_linear_f32(pixels, 3, u16_max)
                 }
             }
             PixelLayout::Rgba16 => {
                 if let Some(g) = gamma {
-                    gamma_u16_to_linear_f32(pixels, 4, g, 65535.0)
+                    gamma_u16_to_linear_f32(pixels, 4, g, u16_max)
                 } else {
-                    srgb_u16_to_linear_f32(pixels, 4, 65535.0)
+                    srgb_u16_to_linear_f32(pixels, 4, u16_max)
                 }
             }
             PixelLayout::Gray16 => {
                 if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, 65535.0)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 1, g, u16_max)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 1, 65535.0)
+                    gray_u16_to_linear_f32_rgb(pixels, 1, u16_max)
                 }
             }
             PixelLayout::GrayAlpha16 => {
                 if let Some(g) = gamma {
-                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, 65535.0)
+                    gamma_gray_u16_to_linear_f32_rgb(pixels, 2, g, u16_max)
                 } else {
-                    gray_u16_to_linear_f32_rgb(pixels, 2, 65535.0)
+                    gray_u16_to_linear_f32_rgb(pixels, 2, u16_max)
                 }
             }
             PixelLayout::RgbLinearF32 => {
@@ -3069,13 +3098,13 @@ impl LossyEncoder {
                     .extend_from_slice(&new_alpha);
             }
             PixelLayout::Rgba16 => {
-                let new_alpha = extract_alpha_u16(pixels, 4, 3, 65535.0);
+                let new_alpha = extract_alpha_u16(pixels, 4, 3, u16_max);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
             }
             PixelLayout::GrayAlpha16 => {
-                let new_alpha = extract_alpha_u16(pixels, 2, 1, 65535.0);
+                let new_alpha = extract_alpha_u16(pixels, 2, 1, u16_max);
                 self.alpha
                     .get_or_insert_with(Vec::new)
                     .extend_from_slice(&new_alpha);
@@ -3273,6 +3302,7 @@ impl LossyEncoder {
             enc.min_nits = self.min_nits;
             enc.intrinsic_size = self.intrinsic_size;
             enc.alpha_associated = self.premultiplied_alpha;
+            enc.bits_per_sample_override = self.bits_per_sample;
             enc.non_finite_action = self.cfg.non_finite_action;
             enc.budget = Some(alloc::sync::Arc::clone(&budget));
             if let Some(ref icc) = self.icc_profile {
@@ -3421,6 +3451,7 @@ impl LossyConfig {
             min_nits: 0.0,
             intrinsic_size: None,
             premultiplied_alpha: false,
+            bits_per_sample: None,
             limits: None,
         })
     }
@@ -3472,6 +3503,12 @@ pub struct LosslessEncoder {
     /// Encoded pixels are unchanged (lossless preserves them bit-exactly).
     /// Default `false`. Mirrors `EncodeRequest::with_premultiplied_alpha`.
     premultiplied_alpha: bool,
+    /// Configurable BitDepth.bits_per_sample for the codestream
+    /// header (#18 sub-feature). Lossless preserves pixels bit-exactly,
+    /// so this only affects header signaling; the encoded values
+    /// remain whatever the caller pushed. Mirrors
+    /// `EncodeRequest::with_bits_per_sample`.
+    bits_per_sample: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
@@ -3541,6 +3578,16 @@ impl LosslessEncoder {
     /// unchanged.
     pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
         self.premultiplied_alpha = enable;
+        self
+    }
+
+    /// Override the input precision for u16 layouts. Mirrors
+    /// [`EncodeRequest::with_bits_per_sample`] on the streaming path.
+    /// `bits` is clamped to `1..=16`. See the EncodeRequest builder
+    /// for the full semantic discussion. Closes the streaming-encoder
+    /// parity follow-up to today's bits_per_sample landing (#18).
+    pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
+        self.bits_per_sample = Some(bits.clamp(1, 16));
         self
     }
 
@@ -3843,6 +3890,16 @@ impl LosslessEncoder {
                     ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
                 }
             }
+            // Configurable bits_per_sample (#18 sub-feature). Lossless
+            // preserves pixels bit-exactly so this only affects header
+            // signaling — the encoded values stay whatever the caller
+            // pushed via push_rows.
+            if let Some(bits) = self.bits_per_sample {
+                file_header.metadata.bit_depth.bits_per_sample = bits;
+                for ec in &mut file_header.metadata.extra_channels {
+                    ec.bit_depth.bits_per_sample = bits;
+                }
+            }
             // Premultiplied-alpha signaling — mirrors EncodeRequest's
             // wiring (#13 lossless portion). Encoded pixels are written
             // unchanged; the decoder learns from the bit how to
@@ -4021,6 +4078,7 @@ impl LosslessConfig {
             min_nits: 0.0,
             intrinsic_size: None,
             premultiplied_alpha: false,
+            bits_per_sample: None,
             limits: None,
         })
     }
