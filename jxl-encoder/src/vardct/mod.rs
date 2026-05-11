@@ -33,7 +33,6 @@ pub mod dct;
 pub(crate) mod debug_log;
 pub(crate) mod encoder;
 pub(crate) mod entropy_code;
-#[allow(dead_code)] // Used in upcoming EPF sharpness selection
 pub(crate) mod epf;
 pub(crate) mod frame;
 mod gaborish;
@@ -56,7 +55,6 @@ mod zensim_loop;
 
 pub(crate) mod quant;
 pub(crate) mod quantize;
-#[allow(dead_code)] // Functions used in upcoming phases (EPF, butteraugli)
 pub(crate) mod reconstruct;
 mod static_codes;
 mod transform;

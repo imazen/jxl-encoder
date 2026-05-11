@@ -1081,7 +1081,8 @@ pub(crate) fn gab_smooth(planes: &mut [Vec<f32>; 3], width: usize, height: usize
 ///
 /// Output: interleaved [R, G, B, R, G, B, ...] in linear light (0.0-1.0 range).
 /// Values are NOT clamped — caller should clamp if needed.
-#[cfg(feature = "butteraugli-loop")]
+#[cfg(any(test, feature = "butteraugli-loop"))]
+#[allow(dead_code)] // Used by `test_xyb_to_linear_rgb_roundtrip` in this module.
 pub(crate) fn xyb_to_linear_rgb(
     xyb_x: &[f32],
     xyb_y: &[f32],
