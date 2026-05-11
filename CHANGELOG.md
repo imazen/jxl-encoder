@@ -2,6 +2,111 @@
 
 ## [Unreleased]
 
+### Added
+
+- **2×/4×/8× input resampling for high-distance encoding** (closes #12,
+  46b4b78 + 5ecc0c1 + c3a9b5d + 4e4d186): new
+  `LossyConfig::with_resampling(factor)` accepts 1/2/4/8; the encoder
+  downsamples input via box filter (4×/8×) or libjxl's 12×12 sharper
+  kernel (2×) before encoding, signals the decoder to upsample after
+  rendering, and reports original dimensions in the file header.
+  `LossyConfig::with_auto_resampling(bool)` (default on) engages 2×
+  sharper at distance ≥ 10 with internal distance scaled to
+  `d * 0.25 + 0.25`, matching libjxl `enc_frame.cc:103-115`.
+  Effective values queryable via `effective_resampling()` /
+  `effective_distance()`.
+- **Center-first AC group permutation** (closes #14, 7f6cb30 + d864de4):
+  `LossyConfig::with_center_first(true)` reorders multi-group AC
+  sections in concentric-square order from the image center via
+  Lehmer-coded TOC permutation, so progressive renderers display image
+  centers first. No-op for single-group images. libjxl
+  `cparams.centerfirst`.
+- **Brotli-compressed metadata boxes (`brob`)** (closes #15, 7ffec89 +
+  9574429): new `with_brotli_metadata(bool)` builder on `LossyConfig`
+  / `LosslessConfig`; EXIF / XMP attachments larger than the
+  break-even threshold are wrapped in `brob` container boxes when
+  enabled. Gated behind new `brotli-metadata` cargo feature.
+- **Per-component PQ / HLG / BT.709 inverse OETF input**
+  (closes #17, 6d7ff63 + 6c7233e + 2d0dbfd + 4fd6dbf + 8f63649 +
+  457e5bb): `EncodeRequest` accepts u8, u16, and Gray / GrayAlpha
+  variants for ST 2084, BT.2100 HLG, and Rec. BT.709-6 transfer
+  functions; the encoder linearizes per-pixel before XYB conversion.
+  Streaming path matches one-shot bit-exact.
+- **`PixelLayout::*LinearF16` (FP16) inputs** (closes FP16 portion of
+  #18, cc6cf23): new layouts accept half-precision linear RGB / RGBA
+  / Gray / GrayAlpha; converted to f32 at the boundary.
+- **`EncodeRequest::with_row_stride`** (closes #18, 7d5fbff):
+  non-tightly-packed input buffers — caller specifies stride in bytes
+  per row, the encoder unpacks into a tightly-packed scratch buffer
+  before processing. Preserves the existing tightly-packed fast path.
+- **Configurable `bits_per_sample`** (closes bits_per_sample portion
+  of #18, 85a95d3 + c8b0c85): `EncodeRequest::with_bits_per_sample`
+  signals 10/12/14-bit input precision in the codestream `BitDepth`
+  header (vs. the layout-derived 8 or 16). Streaming + lossless
+  paths covered.
+- **HDR signaling on `EncodeRequest`** (closes #21, 2d71e76):
+  `with_intensity_target(nits)` and `with_min_nits(nits)` now
+  reachable from the convenience encode path; previously required
+  the metadata struct.
+- **`ColorEncoding::bt2100_hlg()` preset constructor** (closes #22,
+  1d6d749): companion to `bt2100_pq()` for HLG content.
+- **Premultiplied alpha round-trip** (closes #13, 1601177 + ed03980 +
+  76a1f05): `EncodeRequest::with_premultiplied_alpha(true)` signals
+  the codestream's `alpha_associated` bit and unpremultiplies the
+  input pre-XYB; the decoder re-premultiplies on output. Lossless +
+  lossy + streaming paths covered.
+- **`SimplifyInvisible` pre-pass for RGBA lossy encodes** (closes
+  #10, 6f7c9fa): smears color values in alpha=0 pixels to a weighted
+  average of visible neighbors before XYB conversion, reducing
+  high-frequency DCT energy from arbitrary garbage in transparent
+  regions. 5–20% smaller files on sprites / icons; near-zero cost on
+  photos with mostly-opaque alpha. Default-on; toggle via
+  `LossyConfig::with_simplify_invisible(false)`.
+- **`__internals` cargo feature for downstream parity testing**
+  (c82e05c): exposes selected internal types for jxl-encoder-gpu's
+  pre-quantized AC entry points and equivalent crates.
+
+### Fixed
+
+- **`color_encoding` wired into lossless file header** (closes #17,
+  3f8b89b): `LosslessConfig` / `LosslessEncoder`'s `color_encoding`
+  override was being silently dropped; the file header is now built
+  with the override before write.
+- **4 latent serialization bugs in non-alpha extra-channel paths**
+  (closes #8, 4cb33e8): enum coder, F16 vs F32 alpha range, CFA
+  channel distribution, name-length distribution. Alpha encodes were
+  unaffected (covered by the alpha-only fast path); other channel
+  types now serialize correctly.
+
+### Changed (security)
+
+- **Post-#30 security follow-ups + bug-masking fixes** (#33,
+  125984a): additional bounds checks at entropy-coding hot paths
+  surfaced by the #30 audit; previously-silent bug-masking removed in
+  favor of explicit error returns.
+- **Per-encode allocation budget plumbed through encoder hot paths**
+  (#32, d1c01c2): the working-set budget added in 0.3.2 now reaches
+  internal allocators, surfacing `EncodeError::AllocationLimit` when
+  individual hot-path allocations would exceed the cap rather than
+  only at the up-front estimate.
+
+### Removed
+
+- **`unsafe-performance` cargo feature** (#37, 1972037): unused
+  perf-only path that opened up SIMD `unsafe` blocks; the safe SIMD
+  path covers all production deployments. No public API change.
+
+### Documentation
+
+- **`Lz77Method::Optimal` at e9+ + the jxl-rs decoder bug**
+  (refs #29, 674b0a5): in-source comment in `effort.rs` documents
+  why we keep `Optimal` as the lossy default at e9+ despite tripping
+  a latent jxl-rs decoder bug (5× regression on synthetic gradients
+  if we switched to `RLE`; only zenjxl-decoder is affected).
+- **`LosslessConfig::with_effort` e6→e7 cliff warning**
+  (refs #23, 6b5cdf5): in-source comment surfaces the ~28× encode-time
+  jump from e6 to e7 for ~38% size win on typical photos.
+
 ## [0.3.2] - 2026-05-06
 
 ### Fixed (security)
