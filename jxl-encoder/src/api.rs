@@ -1044,6 +1044,7 @@ impl LosslessConfig {
             color_encoding: None,
             intensity_target: None,
             min_nits: None,
+            premultiplied_alpha: false,
         }
     }
 
@@ -1715,6 +1716,7 @@ impl LossyConfig {
             color_encoding: None,
             intensity_target: None,
             min_nits: None,
+            premultiplied_alpha: false,
         }
     }
 
@@ -1814,6 +1816,7 @@ pub struct EncodeRequest<'a> {
     color_encoding: Option<crate::headers::color_encoding::ColorEncoding>,
     intensity_target: Option<f32>,
     min_nits: Option<f32>,
+    premultiplied_alpha: bool,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1893,6 +1896,31 @@ impl<'a> EncodeRequest<'a> {
     /// [`ImageMetadata`] set this value, the request-level value wins.
     pub fn with_min_nits(mut self, nits: f32) -> Self {
         self.min_nits = Some(nits);
+        self
+    }
+
+    /// Signal that the input alpha channel is premultiplied (associated).
+    ///
+    /// Standard for GPU pipelines (Skia, Cairo, Metal, Vulkan,
+    /// Direct2D, Wayland, CompositorAPI). When set, the encoder
+    /// records `alpha_associated=true` in the `ExtraChannelInfo`
+    /// header so decoders know to interpret the color values as
+    /// already-multiplied-by-alpha.
+    ///
+    /// **Lossless**: works correctly — the encoder writes the pixels
+    /// as-is and the header bit tells the decoder to keep them
+    /// premultiplied.
+    ///
+    /// **Lossy**: NOT YET supported (closes lossless portion of #13;
+    /// lossy portion needs the unpremultiplication pre-pass that
+    /// libjxl does at `enc_frame.cc:1588-1597` before XYB conversion
+    /// — quantization errors multiply with alpha if you skip it).
+    /// Calling this on a lossy encode returns
+    /// [`EncodeError::InvalidInput`].
+    ///
+    /// Default is `false` (straight / unassociated alpha).
+    pub fn with_premultiplied_alpha(mut self, enable: bool) -> Self {
+        self.premultiplied_alpha = enable;
         self
     }
 
@@ -2269,6 +2297,18 @@ impl<'a> EncodeRequest<'a> {
                 ec.bit_depth = crate::headers::file_header::BitDepth::uint16();
             }
         }
+        // Premultiplied-alpha signaling (lossless portion of #13).
+        // The alpha channel header gets `alpha_associated=true` so the
+        // decoder knows the encoded color values are already
+        // multiplied by alpha. Encoded pixels are written unchanged
+        // (lossless), so the bit-flip is the entire fix.
+        if self.premultiplied_alpha {
+            for ec in &mut file_header.metadata.extra_channels {
+                if ec.ec_type == crate::headers::extra_channels::ExtraChannelType::Alpha {
+                    ec.alpha_associated = true;
+                }
+            }
+        }
         if let Some(meta) = self.metadata {
             if meta.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
@@ -2394,6 +2434,19 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        // Premultiplied alpha on the lossy path needs an
+        // unpremultiplication pre-pass (libjxl `enc_frame.cc:1588-1597`)
+        // before XYB conversion — otherwise quantization errors get
+        // multiplied with alpha and the decoder sees wrong colors.
+        // That pre-pass isn't implemented yet; reject explicitly so
+        // callers don't get silently-broken output.
+        if self.premultiplied_alpha {
+            return Err(EncodeError::InvalidInput {
+                message: "premultiplied alpha is not yet supported on lossy encode (#13); \
+                          use lossless or unpremultiply before encoding"
+                    .into(),
+            });
+        }
         let w = self.width as usize;
         let h = self.height as usize;
 
