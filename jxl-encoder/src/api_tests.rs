@@ -6162,6 +6162,72 @@ fn test_streaming_lossless_encoder_bits_per_sample_10() {
     assert!(bd_dbg.contains("10"), "BitDepth should report 10; got {bd_dbg}");
 }
 
+/// Closes #15 API wire-up: `EncodeRequest::with_brotli_metadata`
+/// routes through `wrap_in_container_with_brob`. The encoded
+/// container should contain a `brob` box (not a plain `xml ` box)
+/// for compressible XMP.
+#[cfg(feature = "brotli-metadata")]
+#[test]
+fn test_encode_request_with_brotli_metadata_xmp() {
+    let w = 32u32;
+    let h = 32;
+    let pixels: Vec<u8> = vec![128u8; (w * h * 3) as usize];
+    // 4 KB of repeated XML — Brotli should crush this.
+    let xmp = "<rdf:Description><exif:CreatorTool>Test</exif:CreatorTool></rdf:Description>"
+        .repeat(64)
+        .into_bytes();
+    let meta = crate::ImageMetadata::default().with_xmp(&xmp);
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_brob = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .with_brotli_metadata(4)
+        .encode(&pixels)
+        .unwrap();
+    let bytes_plain = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_metadata(&meta)
+        .encode(&pixels)
+        .unwrap();
+
+    // brob path: contains a `brob` box, smaller overall.
+    let mut found_brob = false;
+    for i in 0..bytes_brob.len().saturating_sub(4) {
+        if &bytes_brob[i..i + 4] == b"brob" {
+            found_brob = true;
+            break;
+        }
+    }
+    assert!(found_brob, "with_brotli_metadata should produce a brob box");
+    assert!(
+        bytes_brob.len() < bytes_plain.len(),
+        "brob path ({} bytes) should be smaller than plain ({} bytes)",
+        bytes_brob.len(),
+        bytes_plain.len(),
+    );
+}
+
+#[cfg(feature = "brotli-metadata")]
+#[test]
+fn test_streaming_lossy_with_brotli_metadata() {
+    // Same end-state via streaming LossyEncoder.
+    let w = 32u32;
+    let h = 32;
+    let pixels: Vec<u8> = vec![128u8; (w * h * 3) as usize];
+    let xmp_blob = "<x>aaaaaaaaaaaaaaaaaaaaaaaaaa</x>".repeat(128);
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let mut enc = cfg
+        .encoder(w, h, PixelLayout::Rgb8)
+        .unwrap()
+        .with_xmp(xmp_blob.as_bytes())
+        .with_brotli_metadata(4);
+    enc.push_rows(&pixels, h).unwrap();
+    let bytes = enc.finish().unwrap();
+    let found_brob = bytes.windows(4).any(|w| w == b"brob");
+    assert!(found_brob);
+}
+
 /// Closes bits_per_sample sub-feature of #18: caller can signal
 /// 10/12/14-bit input precision via `with_bits_per_sample(N)`. The
 /// encoder normalizes by `(1 << N) - 1` and writes

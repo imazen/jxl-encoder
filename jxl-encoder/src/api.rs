@@ -1046,6 +1046,7 @@ impl LosslessConfig {
             min_nits: None,
             premultiplied_alpha: false,
             bits_per_sample: None,
+            brotli_metadata_quality: None,
         }
     }
 
@@ -1719,6 +1720,7 @@ impl LossyConfig {
             min_nits: None,
             premultiplied_alpha: false,
             bits_per_sample: None,
+            brotli_metadata_quality: None,
         }
     }
 
@@ -1824,6 +1826,13 @@ pub struct EncodeRequest<'a> {
     /// `(1 << N) - 1` and codestream `BitDepth.bits_per_sample = N`.
     /// Closes the configurable bits_per_sample portion of #18.
     bits_per_sample: Option<u32>,
+    /// Brotli quality (0-11) for `brob` (Brotli-compressed) metadata
+    /// boxes. `None` → plain `Exif`/`xml ` boxes. `Some(q)` → wrap
+    /// each metadata blob in a `brob` box when it saves bytes
+    /// (sub-500-byte payloads typically fall back due to overhead).
+    /// Requires the `brotli-metadata` cargo feature; ignored otherwise.
+    /// libjxl default quality is 4. Closes #15.
+    brotli_metadata_quality: Option<u32>,
 }
 
 impl<'a> EncodeRequest<'a> {
@@ -1950,6 +1959,22 @@ impl<'a> EncodeRequest<'a> {
     /// LosslessEncoder both expose this builder).
     pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
         self.bits_per_sample = Some(bits.clamp(1, 16));
+        self
+    }
+
+    /// Brotli-compress EXIF / XMP metadata into `brob` boxes
+    /// (closes #15). `quality` is the Brotli effort (0-11; libjxl
+    /// default 4); higher = smaller output but slower encode. Each
+    /// metadata blob is independently evaluated — if the compressed
+    /// brob box would be ≥ the uncompressed Exif/xml box, the
+    /// uncompressed form is used (sub-500-byte payloads typically
+    /// fall back due to Brotli framing overhead).
+    ///
+    /// Requires the `brotli-metadata` cargo feature. When the feature
+    /// is OFF the call still compiles (the value is stored but
+    /// ignored at encode time); add the feature flag to enable.
+    pub fn with_brotli_metadata(mut self, quality: u32) -> Self {
+        self.brotli_metadata_quality = Some(quality.min(11));
         self
     }
 
@@ -2086,7 +2111,12 @@ impl<'a> EncodeRequest<'a> {
         let output = if let Some(meta) = self.metadata
             && (meta.exif.is_some() || meta.xmp.is_some())
         {
-            crate::container::wrap_in_container(&codestream, meta.exif, meta.xmp)
+            wrap_metadata_container(
+                &codestream,
+                meta.exif,
+                meta.xmp,
+                self.brotli_metadata_quality,
+            )
         } else {
             codestream
         };
@@ -2821,6 +2851,9 @@ pub struct LossyEncoder {
     /// path. `None` → 65535 divisor (full 16-bit). `Some(N)` →
     /// `(1<<N)-1` divisor + codestream BitDepth = N.
     bits_per_sample: Option<u32>,
+    /// Brotli-compressed metadata box quality (#15). Mirrors
+    /// `EncodeRequest::with_brotli_metadata`.
+    brotli_metadata_quality: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
@@ -2900,6 +2933,22 @@ impl LossyEncoder {
     /// parity follow-up to today's bits_per_sample landing (#18).
     pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
         self.bits_per_sample = Some(bits.clamp(1, 16));
+        self
+    }
+
+    /// Brotli-compress EXIF / XMP metadata into `brob` boxes
+    /// (closes #15). `quality` is the Brotli effort (0-11; libjxl
+    /// default 4); higher = smaller output but slower encode. Each
+    /// metadata blob is independently evaluated — if the compressed
+    /// brob box would be ≥ the uncompressed Exif/xml box, the
+    /// uncompressed form is used (sub-500-byte payloads typically
+    /// fall back due to Brotli framing overhead).
+    ///
+    /// Requires the `brotli-metadata` cargo feature. When the feature
+    /// is OFF the call still compiles (the value is stored but
+    /// ignored at encode time); add the feature flag to enable.
+    pub fn with_brotli_metadata(mut self, quality: u32) -> Self {
+        self.brotli_metadata_quality = Some(quality.min(11));
         self
     }
 
@@ -3333,10 +3382,11 @@ impl LossyEncoder {
         stats.codestream_size = codestream.len();
 
         let output = if self.exif.is_some() || self.xmp.is_some() {
-            crate::container::wrap_in_container(
+            wrap_metadata_container(
                 &codestream,
                 self.exif.as_deref(),
                 self.xmp.as_deref(),
+                self.brotli_metadata_quality,
             )
         } else {
             codestream
@@ -3452,6 +3502,7 @@ impl LossyConfig {
             intrinsic_size: None,
             premultiplied_alpha: false,
             bits_per_sample: None,
+            brotli_metadata_quality: None,
             limits: None,
         })
     }
@@ -3509,6 +3560,9 @@ pub struct LosslessEncoder {
     /// remain whatever the caller pushed. Mirrors
     /// `EncodeRequest::with_bits_per_sample`.
     bits_per_sample: Option<u32>,
+    /// Brotli-compressed metadata box quality (#15). Mirrors
+    /// `EncodeRequest::with_brotli_metadata`.
+    brotli_metadata_quality: Option<u32>,
     /// Optional caller-supplied resource cap. When present, dimension-
     /// driven allocations charge against the cap; when absent, the
     /// encoder applies [`Limits::DEFAULT_MAX_MEMORY_BYTES`] (~2 GB) as
@@ -3588,6 +3642,22 @@ impl LosslessEncoder {
     /// parity follow-up to today's bits_per_sample landing (#18).
     pub fn with_bits_per_sample(mut self, bits: u32) -> Self {
         self.bits_per_sample = Some(bits.clamp(1, 16));
+        self
+    }
+
+    /// Brotli-compress EXIF / XMP metadata into `brob` boxes
+    /// (closes #15). `quality` is the Brotli effort (0-11; libjxl
+    /// default 4); higher = smaller output but slower encode. Each
+    /// metadata blob is independently evaluated — if the compressed
+    /// brob box would be ≥ the uncompressed Exif/xml box, the
+    /// uncompressed form is used (sub-500-byte payloads typically
+    /// fall back due to Brotli framing overhead).
+    ///
+    /// Requires the `brotli-metadata` cargo feature. When the feature
+    /// is OFF the call still compiles (the value is stored but
+    /// ignored at encode time); add the feature flag to enable.
+    pub fn with_brotli_metadata(mut self, quality: u32) -> Self {
+        self.brotli_metadata_quality = Some(quality.min(11));
         self
     }
 
@@ -4009,10 +4079,11 @@ impl LosslessEncoder {
         stats.codestream_size = codestream.len();
 
         let output = if self.exif.is_some() || self.xmp.is_some() {
-            crate::container::wrap_in_container(
+            wrap_metadata_container(
                 &codestream,
                 self.exif.as_deref(),
                 self.xmp.as_deref(),
+                self.brotli_metadata_quality,
             )
         } else {
             codestream
@@ -4079,6 +4150,7 @@ impl LosslessConfig {
             intrinsic_size: None,
             premultiplied_alpha: false,
             bits_per_sample: None,
+            brotli_metadata_quality: None,
             limits: None,
         })
     }
@@ -4969,6 +5041,31 @@ fn f16_gray_to_linear_f32_rgb(bytes: &[u8], stride: usize) -> Vec<f32> {
             [v, v, v]
         })
         .collect()
+}
+
+/// Dispatch container-wrap by Brotli setting (closes #15 wire-up).
+///
+/// When `brotli_quality` is `Some(q)` AND the `brotli-metadata`
+/// feature is enabled, routes through `wrap_in_container_with_brob`
+/// (each metadata blob falls back to plain box if brob would be
+/// bigger). Otherwise (or when feature is off), uses the plain
+/// `wrap_in_container`. Centralizing the dispatch keeps the 3 call
+/// sites (encode_inner, LossyEncoder::finish_inner,
+/// LosslessEncoder::finish_inner) aligned.
+fn wrap_metadata_container(
+    codestream: &[u8],
+    exif: Option<&[u8]>,
+    xmp: Option<&[u8]>,
+    brotli_quality: Option<u32>,
+) -> Vec<u8> {
+    #[cfg(feature = "brotli-metadata")]
+    {
+        if let Some(q) = brotli_quality {
+            return crate::container::wrap_in_container_with_brob(codestream, exif, xmp, q);
+        }
+    }
+    let _ = brotli_quality;
+    crate::container::wrap_in_container(codestream, exif, xmp)
 }
 
 /// Divide premultiplied (associated) linear RGB values by alpha so the
