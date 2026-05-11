@@ -121,6 +121,14 @@ impl From<std::io::Error> for EncodeError {
     }
 }
 
+impl From<crate::validation::ValidationError> for EncodeError {
+    fn from(e: crate::validation::ValidationError) -> Self {
+        EncodeError::InvalidInput {
+            message: format!("{e}"),
+        }
+    }
+}
+
 impl From<enough::StopReason> for EncodeError {
     fn from(_: enough::StopReason) -> Self {
         Self::Cancelled
@@ -2190,23 +2198,13 @@ impl<'a> EncodeRequest<'a> {
     fn encode_inner(&self, pixels: &[u8]) -> core::result::Result<EncodeResult, EncodeError> {
         self.validate_pixels(pixels)?;
         self.check_limits()?;
-        // Reject distances outside the libjxl-documented `[0.0, 25.0]` band
-        // here (lossy only). The `validate()` API is opt-in and only the
-        // belt-and-suspenders harness ever calls it; the encode path used to
-        // accept e.g. distance=50 and silently clamp internally, producing a
-        // ~25 bitstream while the caller saw no error. Surface explicitly.
-        if let ConfigRef::Lossy(cfg) = self.config
-            && (!cfg.distance.is_finite()
-                || cfg.distance <= 0.0
-                || cfg.distance > crate::validation::DISTANCE_MAX)
-        {
-            return Err(EncodeError::InvalidInput {
-                message: format!(
-                    "lossy distance {} out of range (0.0, {}]",
-                    cfg.distance,
-                    crate::validation::DISTANCE_MAX
-                ),
-            });
+        // Run the full config validator (distance, effort, iter
+        // counts, mutual exclusivity, etc.). This was previously
+        // opt-in via `cfg.validate()`; auto-calling it on the encode
+        // path means callers no longer have to remember to invoke it.
+        match self.config {
+            ConfigRef::Lossy(cfg) => cfg.validate()?,
+            ConfigRef::Lossless(cfg) => cfg.validate()?,
         }
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(EncodeError::from)?;
@@ -3674,6 +3672,10 @@ impl LossyEncoder {
                 ),
             });
         }
+        // Run the full config validator (distance, effort, iter
+        // counts, mutual exclusivity). Mirrors
+        // `EncodeRequest::encode_inner`.
+        self.cfg.validate()?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(
@@ -4527,6 +4529,9 @@ impl LosslessEncoder {
                 ),
             });
         }
+        // Run the full config validator. Mirrors
+        // `EncodeRequest::encode_inner`.
+        self.cfg.validate()?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(

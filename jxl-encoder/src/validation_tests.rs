@@ -563,9 +563,12 @@ fn encode_rejects_distance_above_max() {
         .encode(&pixels, 4, 4, crate::api::PixelLayout::Rgb8)
         .unwrap_err();
     let msg = format!("{err}");
+    // The encode path now routes through the unified `cfg.validate()`
+    // helper, which uses the message format `"distance {value} out
+    // of valid range {valid:?}"`. Match on the stable parts.
     assert!(
-        msg.contains("distance") && msg.contains("out of range"),
-        "expected out-of-range error, got: {msg}"
+        msg.contains("distance") && msg.contains("range"),
+        "expected distance / range error, got: {msg}"
     );
 }
 
