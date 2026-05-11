@@ -6202,6 +6202,96 @@ fn test_encode_request_pq_u16_uses_pq_eotf() {
     assert!(ce_dbg.contains("Pq"), "header should signal PQ; got {ce_dbg}");
 }
 
+/// Closes row-stride portion of #18: caller can pass a strided
+/// pixel buffer (with per-row padding) via `with_row_stride(s)`.
+/// The encoder unpacks once, then runs the rest of the pipeline as
+/// if input had been tightly packed.
+///
+/// Verified by encoding the same logical image two ways: tightly
+/// packed AND padded to a row stride that's larger than
+/// width*bpp. Both should produce byte-identical codestreams
+/// (unpacked bytes are bit-identical).
+#[test]
+fn test_encode_request_with_row_stride_matches_packed() {
+    let w = 16u32;
+    let h = 16;
+    // Tightly packed Rgb8 input.
+    let packed: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    // Same image with 8 bytes of padding per row.
+    let row_bytes = (w as usize) * 3;
+    let stride = row_bytes + 8;
+    let mut padded = vec![0xFF_u8; (h as usize) * stride];
+    for y in 0..h as usize {
+        let dst_off = y * stride;
+        let src_off = y * row_bytes;
+        padded[dst_off..dst_off + row_bytes].copy_from_slice(&packed[src_off..src_off + row_bytes]);
+    }
+
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    let bytes_packed = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&packed)
+        .unwrap();
+    let bytes_strided = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_row_stride(stride)
+        .encode(&padded)
+        .unwrap();
+    assert_eq!(
+        bytes_packed, bytes_strided,
+        "strided input ({stride}) should produce same codestream as packed",
+    );
+}
+
+#[test]
+fn test_encode_request_row_stride_validates_too_small() {
+    let w = 16u32;
+    let h = 16;
+    let pixels = vec![0u8; (w * h * 3) as usize];
+    let cfg = LossyConfig::new(1.0).with_effort(3);
+    // stride < row_bytes should error from unpack_strided_pixels.
+    let bad_stride = (w as usize) * 3 - 1;
+    let result = cfg
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_row_stride(bad_stride)
+        .encode(&pixels);
+    assert!(result.is_err(), "stride < row_bytes should be rejected");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("row_stride") || msg.contains("less than"),
+        "expected row_stride error, got: {msg}",
+    );
+}
+
+#[test]
+fn test_encode_request_row_stride_lossless_round_trip() {
+    // Same as the lossy stride test but for the lossless pipeline,
+    // proving the unpack happens before the lossless dispatch too.
+    let w = 16u32;
+    let h = 16;
+    let packed: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let row_bytes = (w as usize) * 4;
+    let stride = row_bytes + 16;
+    let mut padded = vec![0xAB_u8; (h as usize) * stride];
+    for y in 0..h as usize {
+        let dst_off = y * stride;
+        let src_off = y * row_bytes;
+        padded[dst_off..dst_off + row_bytes].copy_from_slice(&packed[src_off..src_off + row_bytes]);
+    }
+
+    let cfg = LosslessConfig::new().with_effort(3);
+    let bytes_packed = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .encode(&packed)
+        .unwrap();
+    let bytes_strided = cfg
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_row_stride(stride)
+        .encode(&padded)
+        .unwrap();
+    assert_eq!(bytes_packed, bytes_strided, "lossless strided should match packed");
+}
+
 /// Lossless TF round-trip (#17 final piece). Lossless preserves
 /// pixels bit-exactly so the only thing the TF affects is the
 /// codestream header signal — but it MUST land correctly so the
