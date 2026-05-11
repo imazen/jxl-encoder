@@ -551,6 +551,10 @@ fn sad_3x3_plus_padded_slices(
 /// - 1: Step 2 only (lightest)
 /// - 2: Step 1 + Step 2
 /// - 3: Step 0 + Step 1 + Step 2 (heaviest)
+///
+/// Only the butteraugli loop (and tests in this module) call this;
+/// gated on the same set so non-loop builds don't trip dead-code warnings.
+#[cfg(any(test, feature = "butteraugli-loop"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_epf(
     planes: &mut [Vec<f32>; 3],
