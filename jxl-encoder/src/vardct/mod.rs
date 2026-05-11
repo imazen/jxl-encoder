@@ -32,9 +32,11 @@ mod dc_tree_learn;
 pub mod dct;
 pub(crate) mod debug_log;
 // libjxl enc_detect_dots.cc port (refs #19). Wired into encoder.rs at
-// effort >= 7, distance >= 3.0; full PatchesData integration pending,
-// so several DetectedDot fields and `ConnectedComponent::pixels` are
-// computed but not yet consumed.
+// effort >= 7, distance >= 3.0; dots get promoted to a fresh
+// PatchesData via from_dots() and travel through the regular patch
+// subtract + decode pipeline. `ConnectedComponent::pixels` is
+// retained for future tuning even though only the bounds field is
+// consumed today.
 #[allow(dead_code)]
 pub(crate) mod dot_detection;
 pub(crate) mod encoder;

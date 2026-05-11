@@ -258,6 +258,69 @@ impl PatchesData {
         effective
     }
 
+    /// Build a `PatchesData` from a list of [`super::dot_detection::DetectedDot`]
+    /// (refs #19). Used when the regular text-like patches detector found
+    /// nothing but dot detection produced candidates. Dots are stacked
+    /// horizontally in a single-row strip in `ref_image`. Returns `None`
+    /// if the input is empty.
+    ///
+    /// `ref_width` = sum of dot widths, `ref_height` = max dot height.
+    /// Each dot's residual data is copied into its slot; `ref_positions`
+    /// + `positions` are appended in order so the dot at index `i` lives
+    /// at `(prefix_x[i], 0)` in the reference frame and at
+    /// `(dot.x0, dot.y0)` in the image.
+    pub fn from_dots(dots: &[super::dot_detection::DetectedDot]) -> Option<Self> {
+        if dots.is_empty() {
+            return None;
+        }
+        let ref_height = dots.iter().map(|d| d.ysize).max()?;
+        let ref_width: usize = dots.iter().map(|d| d.xsize).sum();
+        if ref_width == 0 || ref_height == 0 {
+            return None;
+        }
+        let ref_n = ref_width * ref_height;
+        let mut ref_image = [
+            vec![0.0_f32; ref_n],
+            vec![0.0_f32; ref_n],
+            vec![0.0_f32; ref_n],
+        ];
+        let mut ref_positions = Vec::with_capacity(dots.len());
+        let mut positions = Vec::with_capacity(dots.len());
+        let mut x_cursor: usize = 0;
+        for (idx, dot) in dots.iter().enumerate() {
+            // Copy each channel's residuals into the ref_image slot.
+            for c in 0..3 {
+                for y in 0..dot.ysize {
+                    for x in 0..dot.xsize {
+                        let dst_i = y * ref_width + (x_cursor + x);
+                        let src_i = y * dot.xsize + x;
+                        ref_image[c][dst_i] = dot.residuals[c][src_i];
+                    }
+                }
+            }
+            ref_positions.push(PatchReferencePosition {
+                ref_id: PATCH_FRAME_REFERENCE_ID,
+                x0: x_cursor as u32,
+                y0: 0,
+                xsize: dot.xsize as u32,
+                ysize: dot.ysize as u32,
+            });
+            positions.push(PatchPosition {
+                x: dot.x0,
+                y: dot.y0,
+                ref_pos_idx: idx,
+            });
+            x_cursor += dot.xsize;
+        }
+        Some(PatchesData {
+            positions,
+            ref_positions,
+            ref_image,
+            ref_width,
+            ref_height,
+        })
+    }
+
     /// Roundtrip the reference image through integer quantization to match decoder.
     ///
     /// The encoder subtracts patch values before VarDCT encoding, and the decoder

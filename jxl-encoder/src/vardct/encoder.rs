@@ -631,11 +631,6 @@ impl VarDctEncoder {
         // patches haven't been found. We mirror the gating exactly.
         // Feature is off by default — niche (astronomy / specular highlights);
         // enable via `LossyConfig::with_dot_detection(true)`.
-        //
-        // For this iteration we run the full detection pipeline and
-        // count the dots; integration into PatchesData (so the dots
-        // get encoded as Gaussian-ellipse patches) is queued for a
-        // follow-up tick. The detection itself has 24 unit tests.
         if self.enable_dot_detection
             && self.effort >= 7
             && self.distance >= 3.0
@@ -651,10 +646,25 @@ impl VarDctEncoder {
             );
             #[cfg(feature = "debug-tokens")]
             crate::debug_log!("dot detection: found {} candidate dots", dots.len());
-            // TODO(refs #19): convert each `dots[i]` into a PatchInfo
-            // and merge into patches_data so the residuals get
-            // encoded as Gaussian-ellipse patches.
-            let _ = dots;
+            // Promote the detected dots into a fresh PatchesData. The
+            // subsequent quantize_ref_image + subtract_patches block
+            // below treats them identically to text-like patches.
+            if !dots.is_empty()
+                && let Some(mut pd) = super::patches::PatchesData::from_dots(&dots)
+            {
+                pd.quantize_ref_image();
+                let mut xyb = [
+                    core::mem::take(&mut xyb_x),
+                    core::mem::take(&mut xyb_y),
+                    core::mem::take(&mut xyb_b),
+                ];
+                super::patches::subtract_patches(&mut xyb, padded_width, &pd);
+                let [x, y, b] = xyb;
+                xyb_x = x;
+                xyb_y = y;
+                xyb_b = b;
+                patches_data = Some(pd);
+            }
         }
 
         // Build and subtract splines (after patches, before gaborish).
