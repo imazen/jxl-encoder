@@ -7190,3 +7190,102 @@ fn test_encode_request_with_intensity_target_hlg() {
     assert!(dbg.contains("Hlg"), "expected HLG transfer; got {dbg}");
     assert!(dbg.contains("Bt2100"), "expected BT.2100; got {dbg}");
 }
+
+/// Refs #12: `LossyConfig::with_resampling(2)` round-trip — file
+/// header reports the original 64×64 dimensions, decoder upsamples.
+#[test]
+fn test_lossy_with_resampling_2x_oneshot() {
+    let w = 64u32;
+    let h = 64u32;
+    // Smooth gradient — ideal for box-filter downsampling.
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| {
+            let x = (i / 3) % w as usize;
+            let y = (i / 3) / w as usize;
+            let c = i % 3;
+            match c {
+                0 => (x * 4) as u8,
+                1 => (y * 4) as u8,
+                _ => ((x + y) * 2) as u8,
+            }
+        })
+        .collect();
+
+    let bytes_no_resample = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("baseline encode");
+    let bytes_with_resample = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_resampling(2)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("resampled encode");
+
+    // Decoded image still has the original dimensions.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes_with_resample))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+
+    // Resampling at d=2 should not be larger than baseline. (Actual
+    // savings depend on content; the floor is "doesn't grow".)
+    assert!(
+        bytes_with_resample.len() <= bytes_no_resample.len() + 32,
+        "resampled {} should not be much larger than baseline {}",
+        bytes_with_resample.len(),
+        bytes_no_resample.len(),
+    );
+
+    // Frame must be renderable end-to-end (catches frame_header /
+    // file_header dim divergence that parse-only tests miss).
+    let render = image.render_frame(0).expect("render");
+    let fb = render.image_all_channels();
+    assert_eq!(fb.width() as u32, w);
+    assert_eq!(fb.height() as u32, h);
+}
+
+/// Refs #12: invalid resampling factor (e.g. 3) is silently coerced
+/// to 1 instead of crashing. Defensive — picks a value the spec does
+/// not allow.
+#[test]
+fn test_lossy_with_resampling_invalid_falls_back_to_1() {
+    let cfg = LossyConfig::new(1.0).with_resampling(3);
+    assert_eq!(cfg.resampling(), 1);
+    let cfg = LossyConfig::new(1.0).with_resampling(0);
+    assert_eq!(cfg.resampling(), 1);
+    let cfg = LossyConfig::new(1.0).with_resampling(7);
+    assert_eq!(cfg.resampling(), 1);
+}
+
+/// Refs #12: streaming `LossyEncoder` honors `with_resampling(2)` —
+/// file header reports original dims, decoder upsamples.
+#[test]
+fn test_lossy_with_resampling_streaming() {
+    let w = 64u32;
+    let h = 64u32;
+    let pixels: Vec<u8> = (0..(w as usize * h as usize * 3))
+        .map(|i| (i % 251) as u8)
+        .collect();
+
+    let cfg = LossyConfig::new(2.0).with_effort(5).with_resampling(2);
+    let mut enc = cfg.encoder(w, h, PixelLayout::Rgb8).expect("encoder");
+    let row_bytes = (w as usize) * 3;
+    for y in 0..(h as usize) {
+        enc.push_rows(&pixels[y * row_bytes..(y + 1) * row_bytes], 1)
+            .expect("push");
+    }
+    let result = enc.finish().expect("finish");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&result))
+        .expect("jxl-oxide parse");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let render = image.render_frame(0).expect("render");
+    let fb = render.image_all_channels();
+    assert_eq!(fb.width() as u32, w);
+    assert_eq!(fb.height() as u32, h);
+}
