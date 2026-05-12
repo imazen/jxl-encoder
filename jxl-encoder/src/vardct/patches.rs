@@ -267,8 +267,8 @@ impl PatchesData {
     /// `ref_width` = sum of dot widths, `ref_height` = max dot height.
     /// Each dot's residual data is copied into its slot; `ref_positions`
     /// + `positions` are appended in order so the dot at index `i` lives
-    /// at `(prefix_x[i], 0)` in the reference frame and at
-    /// `(dot.x0, dot.y0)` in the image.
+    ///   at `(prefix_x[i], 0)` in the reference frame and at
+    ///   `(dot.x0, dot.y0)` in the image.
     pub fn from_dots(dots: &[super::dot_detection::DetectedDot]) -> Option<Self> {
         if dots.is_empty() {
             return None;

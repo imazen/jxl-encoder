@@ -7736,9 +7736,9 @@ fn test_lossy_with_dot_detection_roundtrip() {
     let mut pixels = vec![20u8; (w * h * 3) as usize];
     // Place a handful of sparse bright dots — these are the targets
     // the dot detector should find.
-    for &(cx, cy) in &[(16u32, 16), (32, 24), (48, 40), (24, 48), (40, 16)] {
+    for &(cx, cy) in &[(16u32, 16i32), (32, 24), (48, 40), (24, 48), (40, 16)] {
         for &(dy, dx) in &[(0i32, 0i32), (0, 1), (0, -1), (1, 0), (-1, 0)] {
-            let yy = cy as i32 + dy;
+            let yy = cy + dy;
             let xx = cx as i32 + dx;
             if (0..h as i32).contains(&yy) && (0..w as i32).contains(&xx) {
                 let i = ((yy as u32 * w + xx as u32) * 3) as usize;
