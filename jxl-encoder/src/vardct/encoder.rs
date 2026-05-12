@@ -444,12 +444,106 @@ impl VarDctEncoder {
     ///
     /// If `alpha` is provided, it must be `width * height` bytes of u8 alpha values.
     /// Alpha is encoded as a modular extra channel alongside the VarDCT RGB data.
+    ///
+    /// For more than alpha — depth, spot color, selection mask, thermal,
+    /// CFA — see [`Self::encode_with_extras`].
     pub fn encode(
         &self,
         width: usize,
         height: usize,
         linear_rgb: &[f32],
         alpha: Option<&[u8]>,
+    ) -> Result<VarDctOutput> {
+        match alpha {
+            None => self.encode_with_extras(width, height, linear_rgb, &[]),
+            Some(buf) => {
+                // Build a default-alpha ExtraChannel view borrowing the caller's
+                // buffer. `with_alpha` honours the encoder's `alpha_associated`
+                // setting; the file-header builder forwards it.
+                let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+                info.alpha_associated = self.alpha_associated;
+                let ec = super::extras::VardctExtra {
+                    info: &info,
+                    data: super::extras::VardctExtraBuf::U8(buf),
+                };
+                // Inline the dimension check here so the error message
+                // points at `alpha` not at an abstract "extras[0]".
+                let expected_alpha = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+                    width,
+                    height,
+                    channels: 1,
+                })?;
+                if buf.len() != expected_alpha {
+                    return Err(Error::InvalidInput(format!(
+                        "alpha length {} != expected {}",
+                        buf.len(),
+                        expected_alpha
+                    )));
+                }
+                self.encode_inner(width, height, linear_rgb, &[ec])
+            }
+        }
+    }
+
+    /// Encode RGB plus an arbitrary list of extra channels (alpha,
+    /// depth, spot color, selection mask, thermal, CFA, …).
+    ///
+    /// Each [`crate::api::ExtraChannel`] carries its own
+    /// [`crate::headers::extra_channels::ExtraChannelInfo`] which goes
+    /// into the file-header metadata, plus the pixel buffer (u8 or u16).
+    ///
+    /// **Current scope (refs #9)**:
+    /// - `dim_shift` must be `0` on every extra (full-resolution channels).
+    /// - Single-group (≤256×256) supports any number of extras.
+    /// - Multi-group supports any number of extras at `dim_shift = 0`.
+    ///
+    /// Other combinations return `Error::Unsupported` so the wire format
+    /// stays correct as those paths are filled in.
+    pub fn encode_with_extras(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        extras: &[crate::api::ExtraChannel<'_>],
+    ) -> Result<VarDctOutput> {
+        // Materialize the internal `VardctExtra` views, validating
+        // dimensions + bit depth + dim_shift up-front before any work.
+        let mut views: Vec<super::extras::VardctExtra<'_>> = Vec::with_capacity(extras.len());
+        for (idx, ec) in extras.iter().enumerate() {
+            if ec.info().dim_shift != 0 {
+                return Err(Error::InvalidInput(format!(
+                    "extras[{idx}]: dim_shift = {} not yet supported in lossy encode (dim_shift > 0 \
+                     for VarDCT extras is a follow-up)",
+                    ec.info().dim_shift
+                )));
+            }
+            let expected = width.checked_mul(height).ok_or(Error::DimensionOverflow {
+                width,
+                height,
+                channels: 1,
+            })?;
+            let got = ec.data().len();
+            if got != expected {
+                return Err(Error::InvalidInput(format!(
+                    "extras[{idx}]: expected {expected} samples for {width}x{height}, got {got}"
+                )));
+            }
+            views.push(super::extras::VardctExtra::from_api(ec));
+        }
+
+        self.encode_inner(width, height, linear_rgb, &views)
+    }
+
+    /// Shared implementation backing both [`Self::encode`] and
+    /// [`Self::encode_with_extras`]. Takes already-validated extras as
+    /// the internal `VardctExtra` view; performs the RGB-shape check
+    /// then drives the full pipeline.
+    fn encode_inner(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        extras: &[super::extras::VardctExtra<'_>],
     ) -> Result<VarDctOutput> {
         let expected_rgb = width
             .checked_mul(height)
@@ -465,20 +559,6 @@ impl VarDctEncoder {
                 linear_rgb.len(),
                 expected_rgb
             )));
-        }
-        if let Some(a) = alpha {
-            let expected_alpha = width.checked_mul(height).ok_or(Error::DimensionOverflow {
-                width,
-                height,
-                channels: 1,
-            })?;
-            if a.len() != expected_alpha {
-                return Err(Error::InvalidInput(format!(
-                    "alpha length {} != expected {}",
-                    a.len(),
-                    expected_alpha
-                )));
-            }
         }
 
         crate::debug_rect::clear();
@@ -1238,7 +1318,7 @@ impl VarDctEncoder {
                 &ac_strategy,
                 &noise_params,
                 sharpness_map.as_deref(),
-                alpha,
+                extras,
                 patches_data.as_ref(),
                 splines_data.as_ref(),
                 if self.use_lf_frame {
@@ -1267,9 +1347,10 @@ impl VarDctEncoder {
         crate::budget::MemoryBudget::reserve_permanent_opt(self.budget.as_ref(), main_cap)?;
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
-        // Write file header (includes JXL signature, ICC, and byte padding)
-        // Streaming path does not support alpha
-        self.write_file_header_and_pad(width, height, false, &mut writer)?;
+        // Write file header (includes JXL signature, ICC, and byte padding).
+        // The streaming/one-pass static-Huffman path doesn't carry any
+        // extras — they require the two-pass dynamic-entropy plumbing.
+        self.write_file_header_and_pad(width, height, &[], &mut writer)?;
         #[cfg(feature = "debug-tokens")]
         debug_log!(
             "After file header: bit {} (byte {})",

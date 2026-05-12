@@ -2073,6 +2073,24 @@ impl<'a> ExtraChannelBuf<'a> {
 }
 
 impl<'a> ExtraChannel<'a> {
+    /// Attach an alpha channel (`ExtraChannelType::Alpha`). `data` is
+    /// `width * height` bytes of u8 alpha values; `associated`
+    /// signals whether the alpha is premultiplied
+    /// (`alpha_associated=true`).
+    ///
+    /// In practice callers rarely build this by hand — the RGBA pixel
+    /// layouts already wire alpha through automatically. Exposed for
+    /// completeness and for the lossy + extras-beyond-alpha path
+    /// (where alpha gets bundled in with the other extras).
+    pub fn from_alpha_buf(data: &'a [u8], associated: bool) -> Self {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.alpha_associated = associated;
+        Self {
+            info,
+            data: ExtraChannelBuf::U8(data),
+        }
+    }
+
     /// Attach a depth channel (`ExtraChannelType::Depth`). Use cases:
     /// 3D photos, iPhone Portrait Mode, structured-light scan output.
     /// `data` is `width * height` bytes of u8 depth values.
@@ -3388,8 +3406,66 @@ impl<'a> EncodeRequest<'a> {
             (linear_rgb, alpha, w, h)
         };
 
+        // Build the extras list passed to VarDctEncoder. Alpha (when
+        // present) comes first, then any caller-supplied non-alpha
+        // extras (depth, spot color, …) from `self.extra_channels`.
+        //
+        // Extras flow only when the resampling factor is 1 — at
+        // `resampling > 1` we already downsample RGB+alpha to the
+        // encoded dims, and downsampling arbitrary extras is a
+        // follow-up. Reject explicitly so a caller can't accidentally
+        // ship a file whose extras are sized for the original dims
+        // while the file header advertises the downsampled dims.
+        let extras_vec: Vec<crate::api::ExtraChannel<'_>> = if !self.extra_channels.is_empty() {
+            if effective_resampling > 1 {
+                return Err(EncodeError::InvalidInput {
+                    message: format!(
+                        "extra channels with resampling > 1 not yet supported (resampling = {effective_resampling})"
+                    ),
+                });
+            }
+            let mut v: Vec<crate::api::ExtraChannel<'_>> =
+                Vec::with_capacity(self.extra_channels.len() + usize::from(encode_alpha.is_some()));
+            if let Some(ref buf) = encode_alpha {
+                v.push(crate::api::ExtraChannel::from_alpha_buf(
+                    buf,
+                    self.premultiplied_alpha,
+                ));
+            }
+            for ec in self.extra_channels.iter() {
+                if matches!(
+                    ec.info().ec_type,
+                    crate::headers::extra_channels::ExtraChannelType::Alpha
+                ) {
+                    // Caller passed an Alpha-typed extra alongside an
+                    // alpha-carrying pixel layout — refuse rather than
+                    // silently producing two alpha channels.
+                    if encode_alpha.is_some() {
+                        return Err(EncodeError::InvalidInput {
+                            message: "Alpha extra channel conflicts with the pixel layout's alpha \
+                                 (use a non-Alpha layout or omit the extra)"
+                                .to_string(),
+                        });
+                    }
+                }
+                v.push(ec.clone());
+            }
+            v
+        } else {
+            // Fast path: no caller-supplied extras. Build just an alpha
+            // entry when the layout carries alpha.
+            if let Some(ref buf) = encode_alpha {
+                vec![crate::api::ExtraChannel::from_alpha_buf(
+                    buf,
+                    self.premultiplied_alpha,
+                )]
+            } else {
+                Vec::new()
+            }
+        };
+
         let output = enc
-            .encode(encode_w, encode_h, &encode_rgb, encode_alpha.as_deref())
+            .encode_with_extras(encode_w, encode_h, &encode_rgb, &extras_vec)
             .map_err(EncodeError::from)?;
 
         #[cfg(feature = "butteraugli-loop")]
@@ -5458,8 +5534,19 @@ fn encode_animation_lossy(
     enc.bit_depth_16 = bit_depth_16;
 
     // Build file header from VarDCT encoder (sets xyb_encoded, rendering_intent, etc.)
-    // then add animation metadata
-    let mut file_header = enc.build_file_header(w, h, has_alpha);
+    // then add animation metadata. Animation frames currently carry at
+    // most one extra (alpha) — passing the alpha info list mirrors what
+    // the old has_alpha bool used to derive.
+    let alpha_info_buf;
+    let extras_info: &[crate::headers::extra_channels::ExtraChannelInfo] = if has_alpha {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.alpha_associated = enc.alpha_associated;
+        alpha_info_buf = [info];
+        &alpha_info_buf
+    } else {
+        &[]
+    };
+    let mut file_header = enc.build_file_header(w, h, extras_info);
     file_header.metadata.animation = Some(AnimationHeader {
         tps_numerator: animation.tps_numerator,
         tps_denominator: animation.tps_denominator,
@@ -5593,11 +5680,30 @@ fn encode_animation_lossy(
             crop,
         };
 
+        // Animation frames currently only support alpha as an extra
+        // channel. Build the extras list (zero or one entries) and
+        // hand it to the encoder.
+        let alpha_info_buf;
+        let alpha_view_buf;
+        let frame_extras: &[crate::vardct::extras::VardctExtra<'_>] = match alpha.as_deref() {
+            None => &[],
+            Some(buf) => {
+                let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+                info.alpha_associated = enc.alpha_associated;
+                alpha_info_buf = info;
+                alpha_view_buf = [crate::vardct::extras::VardctExtra {
+                    info: &alpha_info_buf,
+                    data: crate::vardct::extras::VardctExtraBuf::U8(buf),
+                }];
+                &alpha_view_buf[..]
+            }
+        };
+
         enc.encode_frame_to_writer(
             frame_w,
             frame_h,
             &linear_rgb,
-            alpha.as_deref(),
+            frame_extras,
             &frame_options,
             &mut writer,
         )

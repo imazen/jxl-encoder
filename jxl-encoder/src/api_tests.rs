@@ -8043,6 +8043,226 @@ fn test_extra_channel_size_mismatch_rejected() {
     );
 }
 
+/// Refs #9: lossy RGB + Depth extra channel — verify the channel
+/// survives roundtrip and the file header reports the right
+/// extra-channel type. Single-group (16x16).
+#[test]
+fn test_lossy_rgb_with_depth_channel() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 13 % 256) as u8).collect();
+    let extras = [ExtraChannel::depth(&depth)];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossy rgb+depth");
+
+    // jxl-rs must parse the bitstream; file header reports 1 extra.
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse lossy rgb+depth");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "expected 1 extra channel (depth) in header",
+    );
+    let _render = image.render_frame(0).expect("render lossy rgb+depth");
+}
+
+/// Refs #9: lossy RGBA + Depth (5 channels: R, G, B, alpha, depth).
+/// Same low-end size-coder hazard as the lossless variant; verifies
+/// the extras pipeline reaches the AC group sub-bitstream.
+#[test]
+fn test_lossy_rgba_with_depth_channel() {
+    use crate::api::ExtraChannel;
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 11 % 256) as u8).collect();
+    let extras = [ExtraChannel::depth(&depth)];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossy rgba+depth");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse lossy rgba+depth");
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        2,
+        "expected 2 extras (alpha + depth)",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: lossy Gray + SpotColor — single non-alpha extra
+/// alongside grayscale VarDCT. Verifies the spot-color metadata
+/// (4× F16 color samples) writes correctly through the file
+/// header on the lossy path.
+#[test]
+fn test_lossy_gray_with_spot_color_channel() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h)).map(|i| (i % 251) as u8).collect();
+    let spot: Vec<u8> = vec![96u8; (w * h) as usize];
+    let extras = [ExtraChannel::spot_color(&spot, [1.0, 0.25, 0.0, 1.0])];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Gray8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossy gray+spot");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse lossy gray+spot");
+    let header = image.image_header();
+    assert_eq!(
+        header.metadata.ec_info.len(),
+        1,
+        "expected 1 extra channel (spot color)",
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Refs #9: lossy RGB + Depth on a multi-group canvas
+/// (>256px on one axis). Single non-alpha extra in HfGroups.
+///
+/// Verified via djxl rather than jxl-oxide because jxl-oxide 0.12 has
+/// a known limitation decoding VarDCT multi-group frames with extras
+/// (the alpha-only multigroup test `test_lossy_multi_dc_group_alpha`
+/// uses djxl for the same reason).
+#[test]
+fn test_lossy_rgb_depth_multigroup() {
+    use crate::api::ExtraChannel;
+    let w = 300u32;
+    let h = 300u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 7 % 256) as u8).collect();
+    let extras = [ExtraChannel::depth(&depth)];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossy multigroup rgb+depth");
+
+    // djxl decode
+    let djxl = crate::test_helpers::djxl_path();
+    if std::path::Path::new(&djxl).exists() {
+        let tmp = std::env::temp_dir().join("lossy_rgb_depth_multigroup.jxl");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let out = std::env::temp_dir().join("lossy_rgb_depth_multigroup.png");
+        let result = std::process::Command::new(&djxl)
+            .args([&tmp, &out])
+            .output()
+            .expect("djxl failed to run");
+        assert!(
+            result.status.success(),
+            "djxl failed for lossy rgb+depth multigroup: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+/// Refs #9: lossy RGBA + Depth + SpotColor (6 channels total) on a
+/// multi-group canvas. Exercises the per-AC-group modular sub-bitstream
+/// path with multiple non-alpha extras. Decoded via djxl (see
+/// `test_lossy_rgb_depth_multigroup` for the jxl-oxide rationale).
+#[test]
+fn test_lossy_rgba_multi_extras_multigroup() {
+    use crate::api::ExtraChannel;
+    let w = 300u32;
+    let h = 300u32;
+    let pixels: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 251) as u8).collect();
+    let depth: Vec<u8> = (0..(w * h)).map(|i| (i * 7 % 256) as u8).collect();
+    let spot: Vec<u8> = vec![64u8; (w * h) as usize];
+    let extras = [
+        ExtraChannel::depth(&depth),
+        ExtraChannel::spot_color(&spot, [0.5, 0.25, 1.0, 1.0]),
+    ];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&pixels)
+        .expect("encode lossy multigroup rgba+depth+spot");
+
+    let djxl = crate::test_helpers::djxl_path();
+    if std::path::Path::new(&djxl).exists() {
+        let tmp = std::env::temp_dir().join("lossy_rgba_multi_extras.jxl");
+        std::fs::write(&tmp, &bytes).unwrap();
+        let out = std::env::temp_dir().join("lossy_rgba_multi_extras.png");
+        let result = std::process::Command::new(&djxl)
+            .args([&tmp, &out])
+            .output()
+            .expect("djxl failed to run");
+        assert!(
+            result.status.success(),
+            "djxl failed for lossy multigroup rgba+depth+spot: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+/// Refs #9: lossy + Alpha-typed extra + Alpha layout must be
+/// rejected — we'd silently emit two alpha channels otherwise.
+#[test]
+fn test_lossy_alpha_extra_with_alpha_layout_rejected() {
+    use crate::api::ExtraChannel;
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = vec![0u8; (w * h * 4) as usize];
+    let extra_alpha: Vec<u8> = vec![255u8; (w * h) as usize];
+    let extras = [ExtraChannel::from_alpha_buf(&extra_alpha, false)];
+    let result = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&pixels);
+    assert!(result.is_err(), "double-alpha must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("Alpha"),
+        "expected Alpha-conflict error, got: {msg}",
+    );
+}
+
+/// Refs #9: lossy + extras + resampling > 1 must reject — extras
+/// at the original dims while RGB downsamples is a follow-up.
+#[test]
+fn test_lossy_extras_with_resampling_rejected() {
+    use crate::api::ExtraChannel;
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = vec![0u8; (w * h * 3) as usize];
+    let depth: Vec<u8> = vec![0u8; (w * h) as usize];
+    let extras = [ExtraChannel::depth(&depth)];
+    let result = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_resampling(2)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .with_extra_channels(&extras)
+        .encode(&pixels);
+    assert!(result.is_err(), "extras + resampling must reject");
+    let msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        msg.contains("resampling"),
+        "expected resampling-conflict error, got: {msg}",
+    );
+}
+
 /// Refs #19: dot detection off by default — same input should
 /// encode identically regardless of `with_dot_detection(false)` vs
 /// no call at all. Verifies the new builder really is gated.
