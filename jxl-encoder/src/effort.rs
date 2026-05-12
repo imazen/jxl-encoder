@@ -324,6 +324,12 @@ pub struct EffortProfile {
     /// to discover content-specific defaults.
     pub nb_rcts_to_try: u8,
 
+    /// Caller-supplied RCT colorspace override. When `Some(rct)`,
+    /// `select_best_rct(_at)` skips the search and applies the given
+    /// RCT directly. Mirrors libjxl's `cparams.colorspace`. Default
+    /// `None` (use the per-effort `nb_rcts_to_try` search).
+    pub forced_rct: Option<crate::modular::rct::RctType>,
+
     // ─── WP parameter search ───────────────────────────────────────────────
     /// Number of weighted-predictor parameter sets to try when tuning the
     /// modular WP per channel (0 = use the libjxl default parameters
@@ -511,6 +517,7 @@ impl EffortProfile {
                 8 => 9,
                 _ => 19,
             },
+            forced_rct: None,
 
             // ── WP parameter search ──
             wp_num_param_sets: match effort {
@@ -608,6 +615,7 @@ impl EffortProfile {
                 8 => 9,
                 _ => 19,
             },
+            forced_rct: None,
 
             // ── WP parameter search ──
             wp_num_param_sets: match effort {
@@ -820,6 +828,12 @@ pub struct LosslessInternalParams {
     /// 19 at e9+ (libjxl `kSquirrel`/`kKitten`/`kTortoise` schedule).
     pub nb_rcts_to_try: Option<u8>,
 
+    /// Force a specific RCT colorspace; when `Some(rct)`,
+    /// `select_best_rct(_at)` skips the search entirely.
+    /// Mirrors libjxl's `cparams.colorspace`. `None` keeps the
+    /// per-effort search behaviour.
+    pub forced_rct: Option<crate::modular::rct::RctType>,
+
     /// Number of weighted-predictor parameter sets to try per WP-eligible
     /// channel (0 = use libjxl defaults without searching).
     /// Effort interaction: 0 at e<8, 2 at e8, 5 at e9+.
@@ -920,6 +934,7 @@ impl LosslessInternalParams {
     pub(crate) fn apply_to(self, profile: &mut EffortProfile) {
         let LosslessInternalParams {
             nb_rcts_to_try,
+            forced_rct,
             wp_num_param_sets,
             tree_max_buckets,
             tree_num_properties,
@@ -929,6 +944,9 @@ impl LosslessInternalParams {
         } = self;
         if let Some(v) = nb_rcts_to_try {
             profile.nb_rcts_to_try = v;
+        }
+        if forced_rct.is_some() {
+            profile.forced_rct = forced_rct;
         }
         if let Some(v) = wp_num_param_sets {
             profile.wp_num_param_sets = v;

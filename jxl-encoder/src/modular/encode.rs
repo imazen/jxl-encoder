@@ -1122,8 +1122,21 @@ const RCT_CANDIDATES: &[u8] = &[
 ///
 /// Returns the RctType and the transformed image. At effort 7, tries 7 RCT variants
 /// matching libjxl's kSquirrel behavior.
-pub(crate) fn select_best_rct(image: &ModularImage, nb_rcts_to_try: u8) -> (RctType, ModularImage) {
+///
+/// When `forced_rct` is `Some`, skips the search entirely and applies the
+/// caller-supplied RCT directly. Mirrors libjxl's `cparams.colorspace`.
+pub(crate) fn select_best_rct(
+    image: &ModularImage,
+    nb_rcts_to_try: u8,
+    forced_rct: Option<RctType>,
+) -> (RctType, ModularImage) {
     use super::rct::{RctType, forward_rct};
+
+    if let Some(rct_type) = forced_rct {
+        let mut transformed = image.clone();
+        forward_rct(&mut transformed.channels, 0, rct_type).ok();
+        return (rct_type, transformed);
+    }
 
     let nb_rcts_to_try = nb_rcts_to_try as usize;
 
@@ -1191,8 +1204,15 @@ pub(crate) fn select_best_rct_at(
     image: &ModularImage,
     begin_c: usize,
     nb_rcts_to_try: u8,
+    forced_rct: Option<RctType>,
 ) -> (RctType, ModularImage) {
     use super::rct::{RctType, forward_rct};
+
+    if let Some(rct_type) = forced_rct {
+        let mut transformed = image.clone();
+        forward_rct(&mut transformed.channels, begin_c, rct_type).ok();
+        return (rct_type, transformed);
+    }
 
     let nb_rcts_to_try = nb_rcts_to_try as usize;
 
@@ -1474,15 +1494,20 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant(
         // Apply RCT to the non-meta channels (starting at nb_meta)
         let rct_begin_c = num_compacted;
         if rct && work.channels.len() >= rct_begin_c + 3 {
-            let (selected_rct, transformed) =
-                select_best_rct_at(&work, rct_begin_c, profile.nb_rcts_to_try);
+            let (selected_rct, transformed) = select_best_rct_at(
+                &work,
+                rct_begin_c,
+                profile.nb_rcts_to_try,
+                profile.forced_rct,
+            );
             (transformed, Some(selected_rct), None, info)
         } else {
             (work, None, None, info)
         }
     } else if !is_lossy && rct && image.channels.len() >= 3 {
         // RCT only path (no palette, no ChannelCompact)
-        let (selected_rct, transformed) = select_best_rct(image, profile.nb_rcts_to_try);
+        let (selected_rct, transformed) =
+            select_best_rct(image, profile.nb_rcts_to_try, profile.forced_rct);
         (transformed, Some(selected_rct), None, Vec::new())
     } else {
         (image.clone(), None, None, Vec::new())

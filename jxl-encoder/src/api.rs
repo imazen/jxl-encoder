@@ -910,6 +910,10 @@ pub struct LosslessConfig {
     /// `None` keeps the effort default; `Some(f)` clamps to `[0.0, 1.0]`
     /// and overrides when `tree_learning` is enabled.
     tree_sample_fraction_override: Option<f32>,
+    /// Caller-supplied RCT colorspace override (libjxl
+    /// `cparams.colorspace`). `None` keeps the per-effort search;
+    /// `Some(rct)` skips the search and applies the given RCT.
+    forced_rct: Option<crate::modular::rct::RctType>,
     /// Sweep / picker hook: when set, replaces the effort+mode-derived
     /// `EffortProfile` everywhere the encoder asks for one. See
     /// [`Self::with_effort_profile_override`].
@@ -937,13 +941,15 @@ impl LosslessConfig {
             lossy_palette: false,
             threads: 0,
             tree_sample_fraction_override: None,
+            forced_rct: None,
             profile_override: None,
         }
     }
 
     /// Resolve the effective [`EffortProfile`]: the override if set,
     /// otherwise the standard profile derived from effort + mode. Then
-    /// apply the public sample-fraction override (#23) on top.
+    /// apply the public per-knob overrides (sample fraction, forced
+    /// RCT) on top.
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
         let mut p = self
             .profile_override
@@ -951,6 +957,9 @@ impl LosslessConfig {
             .unwrap_or_else(|| crate::effort::EffortProfile::lossless(self.effort, self.mode));
         if let Some(f) = self.tree_sample_fraction_override {
             p.tree_sample_fraction = f;
+        }
+        if self.forced_rct.is_some() {
+            p.forced_rct = self.forced_rct;
         }
         p
     }
@@ -1089,6 +1098,35 @@ impl LosslessConfig {
     /// Current tree-learning sample fraction override, if set.
     pub fn tree_learning_sample_fraction(&self) -> Option<f32> {
         self.tree_sample_fraction_override
+    }
+
+    /// Force a specific Reversible Color Transform colorspace,
+    /// skipping the per-effort RCT search. Mirrors libjxl's
+    /// `cparams.colorspace`.
+    ///
+    /// Use cases:
+    /// - Known-best RCT for a specific content class (e.g.
+    ///   `RctType::YCOCG` for screenshots) — saves the search cost
+    ///   without losing quality on average.
+    /// - Reproducibility / determinism (skip search variability).
+    /// - Picker output: when an offline sweep has identified the
+    ///   best RCT for a feature signature, the runtime picker can
+    ///   dial it directly.
+    ///
+    /// `None` (default) keeps the per-effort search. `Some(rct)`
+    /// applies the given RCT directly without evaluating others.
+    /// Common values: [`crate::modular::rct::RctType::YCOCG`] (libjxl
+    /// default fallback, 6), [`crate::modular::rct::RctType::NONE`]
+    /// (no transform, 0), [`crate::modular::rct::RctType::SUBTRACT_GREEN`]
+    /// (G-R / G-B decorrelation, 3).
+    pub fn with_force_rct(mut self, rct: Option<crate::modular::rct::RctType>) -> Self {
+        self.forced_rct = rct;
+        self
+    }
+
+    /// Configured forced RCT colorspace, if any.
+    pub fn force_rct(&self) -> Option<crate::modular::rct::RctType> {
+        self.forced_rct
     }
 
     /// Enable/disable LZ77 backward references (default: false).
