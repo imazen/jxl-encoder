@@ -483,7 +483,7 @@ impl FileHeader {
         } else {
             // selector 3: Bits(12) + 1 — values 1..=4096; we never
             // emit this for <= 17 since selector 2 covers it.
-            debug_assert!(num_extra >= 1 && num_extra <= 4096);
+            debug_assert!((1..=4096).contains(&num_extra));
             writer.write(2, 3)?;
             writer.write(12, (num_extra - 1) as u64)?;
         }

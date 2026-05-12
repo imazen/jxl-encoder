@@ -906,8 +906,8 @@ pub(crate) fn gaussian_separable_5_horizontal(
         let row = &src[y * width..(y + 1) * width];
         let drow = &mut dst[y * width..(y + 1) * width];
         for x in 0..width {
-            let xm2 = if x >= 2 { x - 2 } else { 0 };
-            let xm1 = if x >= 1 { x - 1 } else { 0 };
+            let xm2 = x.saturating_sub(2);
+            let xm1 = x.saturating_sub(1);
             let xp1 = if x + 1 < width { x + 1 } else { width - 1 };
             let xp2 = if x + 2 < width { x + 2 } else { width - 1 };
             drow[x] = w0 * row[x] + w1 * (row[xm1] + row[xp1]) + w2 * (row[xm2] + row[xp2]);
@@ -928,8 +928,8 @@ pub(crate) fn gaussian_separable_5_vertical(
     debug_assert_eq!(dst.len(), width * height);
     let [w0, w1, w2] = taps;
     for y in 0..height {
-        let ym2 = if y >= 2 { y - 2 } else { 0 };
-        let ym1 = if y >= 1 { y - 1 } else { 0 };
+        let ym2 = y.saturating_sub(2);
+        let ym1 = y.saturating_sub(1);
         let yp1 = if y + 1 < height { y + 1 } else { height - 1 };
         let yp2 = if y + 2 < height { y + 2 } else { height - 1 };
         for x in 0..width {
@@ -1409,16 +1409,18 @@ mod tests {
                 img_y[y * w + x] = g as f32;
             }
         }
-        let mut params = GaussianDetectParams::default();
-        params.min_score = -1e9; // accept any score
-        params.max_l2_loss = 1.0;
-        params.max_custom_loss = 1e9;
-        params.min_intensity = 0.0;
-        params.max_dist_mean_mode = 100.0;
-        params.max_neg_pixels = 10000;
         // perc_cc=15 with a single CC rounds to 0 → drops it.
         // Test wants the single dot to make it through; use 100%.
-        params.perc_cc = 100;
+        let params = GaussianDetectParams {
+            min_score: -1e9, // accept any score
+            max_l2_loss: 1.0,
+            max_custom_loss: 1e9,
+            min_intensity: 0.0,
+            max_dist_mean_mode: 100.0,
+            max_neg_pixels: 10000,
+            perc_cc: 100,
+            ..GaussianDetectParams::default()
+        };
         let dots = detect_gaussian_ellipses(&img_x, &img_y, &img_b, w, h, &params);
         // We should detect at least one dot near (16, 16).
         assert!(!dots.is_empty(), "expected at least one detected dot");
@@ -1514,9 +1516,9 @@ mod tests {
         // uniform background.
         let w = 16;
         let h = 16;
-        let mut img_x = vec![0.5_f32; w * h];
+        let img_x = vec![0.5_f32; w * h];
         let mut img_y = vec![0.5_f32; w * h];
-        let mut img_b = vec![0.5_f32; w * h];
+        let img_b = vec![0.5_f32; w * h];
         for y in 0..h {
             for x in 0..w {
                 let dx = x as f64 - 8.0;
