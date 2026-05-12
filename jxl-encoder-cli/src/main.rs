@@ -96,6 +96,23 @@ struct Args {
     #[arg(long, value_name = "RCT")]
     force_rct: Option<u8>,
 
+    /// Disable all encoder-side perceptual heuristics (gaborish,
+    /// patches, dot detection, noise, pixel-domain loss) in one
+    /// switch. Mirrors libjxl `--disable_perceptual_optimizations`.
+    /// Useful for spec-strict mode, decoder testing, picker training
+    /// without perceptual confounds.
+    #[arg(long)]
+    no_perceptual_optimizations: bool,
+
+    /// Override the tree-learning pixel-sampling fraction for
+    /// lossless effort 7+. Lower values trade compression for speed
+    /// (refs #23 — the e6→e7 cliff). Reasonable range 0.10..=0.50;
+    /// libjxl effort defaults are 0.50 at e7, 0.55 at e8, 0.65 at e9+.
+    /// Use 0.10..=0.20 for an "e7-lite" tier between e6 (no tree)
+    /// and e7-default. Clamped to [0.0, 1.0].
+    #[arg(long, value_name = "F")]
+    tree_learning_sample_fraction: Option<f32>,
+
     /// Disable gaborish inverse pre-filter (on by default).
     /// Without gaborish, the decoder skips its 3x3 blur post-filter.
     #[arg(long)]
@@ -395,6 +412,9 @@ fn main() {
                     cfg = cfg.with_photon_noise_iso(args.photon_noise_iso);
                     cfg = cfg.with_original_distance(args.original_distance);
                     cfg = cfg.with_quant_ac_rescale(args.quant_ac_rescale);
+                    if args.no_perceptual_optimizations {
+                        cfg = cfg.with_perceptual_optimizations(false);
+                    }
                     if args.error_diffusion {
                         cfg = cfg.with_error_diffusion(true);
                     }
@@ -495,6 +515,9 @@ fn main() {
                         }
                         if let Some(rct) = args.force_rct {
                             lcfg = lcfg.with_force_rct(Some(jxl_encoder::RctType(rct)));
+                        }
+                        if let Some(f) = args.tree_learning_sample_fraction {
+                            lcfg = lcfg.with_tree_learning_sample_fraction(f);
                         }
                         if args.experimental {
                             lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
@@ -690,6 +713,9 @@ fn main() {
         cfg = cfg.with_photon_noise_iso(args.photon_noise_iso);
         cfg = cfg.with_original_distance(args.original_distance);
         cfg = cfg.with_quant_ac_rescale(args.quant_ac_rescale);
+        if args.no_perceptual_optimizations {
+            cfg = cfg.with_perceptual_optimizations(false);
+        }
         if args.error_diffusion {
             cfg = cfg.with_error_diffusion(true);
         }
@@ -915,6 +941,9 @@ fn main() {
         }
         if let Some(rct) = args.force_rct {
             cfg = cfg.with_force_rct(Some(jxl_encoder::RctType(rct)));
+        }
+        if let Some(f) = args.tree_learning_sample_fraction {
+            cfg = cfg.with_tree_learning_sample_fraction(f);
         }
         if args.experimental {
             cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
