@@ -29,16 +29,30 @@
   the zero map (libjxl behavior). Targets the 1-3% savings the
   issue described. Gated behind the `jpeg-reencoding` feature.
 - **Extra channel types beyond alpha** (closes #9, 79dd06b7 +
-  3cb79b80 + 6f5f0ff7): new public `ExtraChannel<'a>` type with
-  `depth` / `spot_color(color)` / `selection_mask` / `thermal` /
-  `cfa(idx)` constructors. `EncodeRequest::with_extra_channels`
-  builder. Lossless RGB(A) / Gray + 1-N extra channels works
-  end-to-end through the modular encode path; ec_info entries
-  written in the file header. New `ModularImage::push_extra_channel_u8`.
+  3cb79b80 + 6f5f0ff7 + this commit): new public `ExtraChannel<'a>`
+  type with `from_alpha_buf` / `depth` / `spot_color(color)` /
+  `selection_mask` / `thermal` / `cfa(idx)` constructors.
+  `EncodeRequest::with_extra_channels` builder. **Both** the lossless
+  modular path and the lossy VarDCT path now thread arbitrary extras
+  end-to-end. Lossy single-group + 1+ non-alpha extras and lossy
+  multi-group + N extras-beyond-alpha both encode and decode through
+  djxl. New `VarDctEncoder::encode_with_extras(...)` accepts an
+  arbitrary `&[ExtraChannel<'_>]`; the existing
+  `encode(... alpha: Option<&[u8]>)` becomes a thin wrapper. Internal
+  `vardct/extras.rs` module + `VardctExtra<'a>` view make the alpha
+  sub-bitstream writer generic over N channels (u8 + u16, dim_shift =
+  0). Pending run is flushed at every channel boundary so a uniform
+  end-of-channel doesn't leak into the next channel's residuals.
   `FrameEncoder::num_extra_channels` derivation widened from
   alpha-only (`if has_alpha { 1 }`) to channel-count-based
-  (`channels.len() - num_color`). Tests cover RGB+Depth, Gray+Spot,
-  RGBA+Depth, RGBA+SpotColor, RGBA+Depth+SpotColor (6 channels).
+  (`channels.len() - num_color`). Lossy + extras + `resampling > 1`
+  rejects up front (extras at the original dims while RGB downsamples
+  is a follow-up); lossy + Alpha-typed extra + Alpha pixel layout
+  rejects to avoid silent double-alpha. Tests cover RGB+Depth (lossless
+  + lossy), Gray+Spot, RGBA+Depth, RGBA+SpotColor,
+  RGBA+Depth+SpotColor (6 channels), lossy multigroup
+  RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
+  resampling rejection, double-alpha rejection.
 
 - **2×/4×/8× input resampling for high-distance encoding** (closes #12,
   46b4b78 + 5ecc0c1 + c3a9b5d + 4e4d186): new

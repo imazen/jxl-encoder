@@ -483,8 +483,9 @@ fn encode_ac_group_section(
     ac_tokens: &[Token],
     ac_built_code: &BuiltEntropyCode<'_>,
     ac_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
-    // Alpha fields for multi-group frames
-    alpha: Option<&[u8]>,
+    // Extra channels (alpha + any non-alpha extras), travel as one
+    // modular sub-bitstream per HF group in the LAST pass.
+    extras: &[super::extras::VardctExtra<'_>],
     is_last_pass: bool,
     group_idx: usize,
     xsize_groups: usize,
@@ -494,17 +495,18 @@ fn encode_ac_group_section(
     let blocks_per_ac_group = (256 / 8) * (256 / 8);
     let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
     ac_built_code.write_tokens(ac_tokens, ac_lz77_params, &mut ac_group_writer)?;
-    // Multi-group alpha: write modular HF sub-bitstream only in LAST pass
-    if is_last_pass && let Some(alpha_data) = alpha {
+    // Multi-group extras: write modular HF sub-bitstream only in LAST pass.
+    if is_last_pass && !extras.is_empty() {
         let group_x = group_idx % xsize_groups;
         let group_y = group_idx / xsize_groups;
         let x0 = group_x * GROUP_DIM;
         let y0 = group_y * GROUP_DIM;
         let gw = GROUP_DIM.min(width - x0);
         let gh = GROUP_DIM.min(height - y0);
-        VarDctEncoder::write_modular_alpha_group(
-            alpha_data,
+        VarDctEncoder::write_modular_extras_group(
+            extras,
             width,
+            height,
             x0,
             y0,
             gw,
@@ -525,7 +527,7 @@ impl VarDctEncoder {
         &self,
         width: usize,
         height: usize,
-        has_alpha: bool,
+        extras_info: &[ExtraChannelInfo],
     ) -> FileHeader {
         let mut bit_depth = if self.bit_depth_16 {
             BitDepth::uint16()
@@ -567,13 +569,18 @@ impl VarDctEncoder {
             color_encoding.want_icc = true;
         }
 
-        let extra_channels = if has_alpha {
-            let mut alpha_ec = ExtraChannelInfo::alpha();
-            alpha_ec.alpha_associated = self.alpha_associated;
-            vec![alpha_ec]
-        } else {
-            Vec::new()
-        };
+        // Build the extra-channel list for the file header. When the
+        // caller passes an alpha-typed extra we honour
+        // `self.alpha_associated`; the rest are written through
+        // exactly as the caller built them.
+        let mut extra_channels: Vec<ExtraChannelInfo> = Vec::with_capacity(extras_info.len());
+        for ec in extras_info {
+            let mut ec = ec.clone();
+            if ec.ec_type == crate::headers::extra_channels::ExtraChannelType::Alpha {
+                ec.alpha_associated = self.alpha_associated;
+            }
+            extra_channels.push(ec);
+        }
 
         // When upsampling > 1 (refs #12), the caller passed downsampled
         // (width, height); the file-header advertises the original
@@ -607,10 +614,10 @@ impl VarDctEncoder {
         &self,
         width: usize,
         height: usize,
-        has_alpha: bool,
+        extras_info: &[ExtraChannelInfo],
         writer: &mut BitWriter,
     ) -> Result<()> {
-        let file_header = self.build_file_header(width, height, has_alpha);
+        let file_header = self.build_file_header(width, height, extras_info);
         file_header.write(writer)?;
 
         // Write ICC profile data if present (after header, before zero pad)
@@ -1175,7 +1182,7 @@ impl VarDctEncoder {
         width: usize,
         height: usize,
         linear_rgb: &[f32],
-        alpha: Option<&[u8]>,
+        extras: &[super::extras::VardctExtra<'_>],
         frame_options: &FrameOptions,
         writer: &mut BitWriter,
     ) -> Result<[u32; 19]> {
@@ -1435,7 +1442,7 @@ impl VarDctEncoder {
             &ac_strategy,
             &noise_params,
             sharpness_map.as_deref(),
-            alpha,
+            extras,
             Some(frame_options),
             None, // No patches in animation frames
             None, // No splines in animation frames
@@ -1470,16 +1477,18 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         noise_params: &Option<NoiseParams>,
         sharpness_map: Option<&[u8]>,
-        alpha: Option<&[u8]>,
+        extras: &[super::extras::VardctExtra<'_>],
         patches: Option<&super::patches::PatchesData>,
         splines: Option<&super::splines::SplinesData>,
         float_dc: Option<&[Vec<f32>; 3]>,
     ) -> Result<Vec<u8>> {
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
-        // Write file header
-        let has_alpha = alpha.is_some();
-        self.write_file_header_and_pad(width, height, has_alpha, &mut writer)?;
+        // Write file header. Every extra channel passed in here goes
+        // into the file-header metadata; the writer below uses the
+        // same list to produce the per-section modular sub-bitstream.
+        let extras_info: Vec<ExtraChannelInfo> = extras.iter().map(|e| e.info.clone()).collect();
+        self.write_file_header_and_pad(width, height, &extras_info, &mut writer)?;
 
         // Write LfFrame (separate DC frame) before other frames.
         // Must come before patches ref frame and main VarDCT frame.
@@ -1562,7 +1571,7 @@ impl VarDctEncoder {
             ac_strategy,
             noise_params,
             sharpness_map,
-            alpha,
+            extras,
             None,
             patches,
             splines,
@@ -1601,7 +1610,7 @@ impl VarDctEncoder {
         ac_strategy: &AcStrategyMap,
         noise_params: &Option<NoiseParams>,
         sharpness_map: Option<&[u8]>,
-        alpha: Option<&[u8]>,
+        extras: &[super::extras::VardctExtra<'_>],
         frame_options: Option<&FrameOptions>,
         patches: Option<&super::patches::PatchesData>,
         splines: Option<&super::splines::SplinesData>,
@@ -2032,8 +2041,7 @@ impl VarDctEncoder {
 
         // ── Pass 2: Write bitstream ──
 
-        let has_alpha = alpha.is_some();
-        let num_extra_channels = if has_alpha { 1 } else { 0 };
+        let num_extra_channels = extras.len();
 
         // Write frame header
         {
@@ -2110,10 +2118,11 @@ impl VarDctEncoder {
                 &mut dc_global,
             )?;
 
-            // Single-group alpha: all alpha data goes in the modular global sub-bitstream
-            // within the DC global section, after the VarDCT DC entropy code.
-            if let Some(alpha_data) = &alpha {
-                Self::write_modular_alpha_global(alpha_data, width, height, &mut dc_global)?;
+            // Single-group extras (alpha + any others): all data goes
+            // in the modular global sub-bitstream within the DC global
+            // section, after the VarDCT DC entropy code.
+            if !extras.is_empty() {
+                Self::write_modular_extras_global(extras, width, height, &mut dc_global)?;
             }
 
             let mut dc_group = BitWriter::with_capacity(num_blocks * 10);
@@ -2175,10 +2184,12 @@ impl VarDctEncoder {
                 dc_quant_custom,
                 &mut dc_global,
             )?;
-            // Multi-group alpha: write empty modular global sub-bitstream.
-            // Alpha channels are NOT meta_or_small for >256px images, so no data here.
-            // The decoder still reads the GroupHeader + tree for the global section.
-            if alpha.is_some() {
+            // Multi-group extras: write empty modular global sub-bitstream.
+            // Extra channels are NOT meta_or_small for >256px images,
+            // so no per-channel data belongs in the global section.
+            // The decoder still reads the GroupHeader + tree for the
+            // global section.
+            if !extras.is_empty() {
                 Self::write_modular_empty_global(&mut dc_global)?;
             }
             dc_global.zero_pad_to_byte();
@@ -2225,7 +2236,7 @@ impl VarDctEncoder {
                             &ac_section_tokens_per_pass[pass][group_idx],
                             &ac_built_codes[pass],
                             ac_lz77_params_per_pass[pass].as_ref(),
-                            alpha,
+                            extras,
                             is_last_pass,
                             group_idx,
                             xsize_groups,
@@ -2318,18 +2329,21 @@ impl VarDctEncoder {
     }
 
     /// Write DC group section from pre-collected tokens (two-pass mode).
-    /// Write the modular global sub-bitstream for alpha in single-group VarDCT frames.
+    /// Write the modular global sub-bitstream for extras (alpha + others)
+    /// in single-group VarDCT frames.
     ///
-    /// For single-group images (≤256×256), the alpha channel is "meta_or_small" and
-    /// goes entirely in the LfGlobal section. The decoder reads:
-    ///   GroupHeader → (use_global_tree=0 → local tree) → entropy code → alpha pixels
-    fn write_modular_alpha_global(
-        alpha: &[u8],
+    /// For single-group images (≤256×256) every extra channel is
+    /// "meta_or_small" and travels together in the LfGlobal section,
+    /// in one sub-bitstream:
+    ///   GroupHeader → (use_global_tree=0 → local tree) →
+    ///   entropy code → channel-0 pixels → channel-1 pixels → …
+    fn write_modular_extras_global(
+        extras: &[super::extras::VardctExtra<'_>],
         width: usize,
         height: usize,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        Self::write_modular_alpha_subbitstream(alpha, width, 0, 0, width, height, writer)
+        Self::write_modular_extras_subbitstream(extras, width, height, 0, 0, width, height, writer)
     }
 
     /// Write an empty modular global sub-bitstream for multi-group VarDCT frames with alpha.
@@ -2347,16 +2361,29 @@ impl VarDctEncoder {
         Ok(())
     }
 
-    /// Write a modular sub-bitstream for alpha data in a region (used by both global and HF groups).
+    /// Write a modular sub-bitstream for N extra channels covering one
+    /// rectangular region (used by both the global and per-HF-group paths).
     ///
-    /// Format: GroupHeader → local tree → LZ77 header → entropy code → alpha residuals
+    /// Format: GroupHeader → local tree → LZ77 header → entropy code →
+    /// channel-0 residuals → channel-1 residuals → …
     ///
-    /// Uses gradient prediction (predictor 5) with LZ77 RLE for efficient encoding of
-    /// mostly-uniform alpha channels (e.g. fully opaque screenshots). Each sub-bitstream
-    /// is independent (fresh decoder state).
-    fn write_modular_alpha_subbitstream(
-        alpha: &[u8],
-        stride: usize,
+    /// Uses gradient prediction (predictor 5) with LZ77 RLE for
+    /// efficient encoding of mostly-uniform extras (e.g. fully opaque
+    /// alpha on a screenshot, or a flat-region depth map). All
+    /// channels share one entropy code; the decoder pulls each
+    /// channel's `channel_width × channel_height` tokens in the order
+    /// the channels appear here.
+    ///
+    /// Channels must currently have `dim_shift == 0` — otherwise the
+    /// per-channel region offsets and dimensions diverge from the
+    /// VarDCT group grid and this writer would need to be plumbed with
+    /// per-channel coords. `dim_shift > 0` for VarDCT extras is
+    /// guarded upstream with an `Unsupported` error until we wire it.
+    #[allow(clippy::too_many_arguments)]
+    fn write_modular_extras_subbitstream(
+        extras: &[super::extras::VardctExtra<'_>],
+        image_width: usize,
+        image_height: usize,
         x0: usize,
         y0: usize,
         region_width: usize,
@@ -2380,60 +2407,102 @@ impl VarDctEncoder {
         let (tree_depths, tree_codes) = write_tree_histogram_for_gradient(writer)?;
         write_gradient_tree_tokens(writer, &tree_depths, &tree_codes)?;
 
-        // Collect residuals with LZ77 RLE detection
+        // Collect residuals with LZ77 RLE detection.
+        //
+        // All channels share one token stream and one entropy code;
+        // the decoder pulls each channel's tokens in sequence.
         let mut tokens = Vec::new();
         let mut current_run = 0usize;
         let mut num_decoded = 0usize;
         let mut last_value = u32::MAX; // impossible initial value prevents LZ77 from first pixel
 
-        for y in 0..region_height {
-            for x in 0..region_width {
-                let pixel = alpha[(y0 + y) * stride + (x0 + x)] as i32;
+        for ec in extras {
+            // dim_shift > 0 in lossy is guarded upstream — assert here
+            // so a future caller can't silently produce a wrong bitstream.
+            debug_assert_eq!(
+                ec.info.dim_shift, 0,
+                "write_modular_extras_subbitstream: dim_shift > 0 not supported yet"
+            );
 
-                let left = if x > 0 {
-                    alpha[(y0 + y) * stride + (x0 + x - 1)] as i32
-                } else if y > 0 {
-                    alpha[(y0 + y - 1) * stride + x0] as i32
-                } else {
-                    0
-                };
-                let top = if y > 0 {
-                    alpha[(y0 + y - 1) * stride + (x0 + x)] as i32
-                } else {
-                    left
-                };
-                let topleft = if x > 0 && y > 0 {
-                    alpha[(y0 + y - 1) * stride + (x0 + x - 1)] as i32
-                } else {
-                    left
-                };
+            let ch_w = ec.channel_width(image_width);
+            let ch_x0 = x0 >> ec.info.dim_shift;
+            let ch_y0 = y0 >> ec.info.dim_shift;
+            let ch_rw = region_width >> ec.info.dim_shift;
+            let ch_rh = region_height >> ec.info.dim_shift;
+            let _ = image_height; // reserved for dim_shift > 0 plumbing
 
-                // ClampedGradient prediction
-                let grad = left + top - topleft;
-                let prediction = grad.clamp(left.min(top), left.max(top));
-                let residual = pixel - prediction;
-                let packed = pack_signed(residual);
-
-                // LZ77 RLE: copies the last residual value
-                let can_use_lz77 = num_decoded > 0 && packed == last_value;
-
-                if can_use_lz77 {
-                    current_run += 1;
+            // Flush any pending run from the *previous* channel before
+            // resetting prediction state. Without this the run gets
+            // re-attributed to the next channel as Raw(u32::MAX)
+            // tokens, which the decoder can't parse.
+            if current_run > 0 {
+                if current_run > K_LZ77_MIN_LENGTH {
+                    tokens.push(Token::Lz77Run(current_run));
+                    num_decoded += current_run;
                 } else {
-                    // Flush accumulated run
-                    if current_run > K_LZ77_MIN_LENGTH {
-                        tokens.push(Token::Lz77Run(current_run));
-                        num_decoded += current_run;
-                    } else {
-                        for _ in 0..current_run {
-                            tokens.push(Token::Raw(last_value));
-                            num_decoded += 1;
-                        }
+                    for _ in 0..current_run {
+                        tokens.push(Token::Raw(last_value));
+                        num_decoded += 1;
                     }
-                    current_run = 0;
-                    tokens.push(Token::Raw(packed));
-                    num_decoded += 1;
-                    last_value = packed;
+                }
+                current_run = 0;
+            }
+
+            // Each channel starts a fresh prediction context: gradient
+            // prediction references neighbours within the same
+            // channel, never across channels. Reset the LZ77 anchor so
+            // a uniform end-of-prev-channel doesn't run into the next.
+            last_value = u32::MAX;
+
+            for y in 0..ch_rh {
+                for x in 0..ch_rw {
+                    let pixel = ec.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x));
+
+                    let left = if x > 0 {
+                        ec.data.sample((ch_y0 + y) * ch_w + (ch_x0 + x - 1))
+                    } else if y > 0 {
+                        ec.data.sample((ch_y0 + y - 1) * ch_w + ch_x0)
+                    } else {
+                        0
+                    };
+                    let top = if y > 0 {
+                        ec.data.sample((ch_y0 + y - 1) * ch_w + (ch_x0 + x))
+                    } else {
+                        left
+                    };
+                    let topleft = if x > 0 && y > 0 {
+                        ec.data.sample((ch_y0 + y - 1) * ch_w + (ch_x0 + x - 1))
+                    } else {
+                        left
+                    };
+
+                    // ClampedGradient prediction
+                    let grad = left + top - topleft;
+                    let prediction = grad.clamp(left.min(top), left.max(top));
+                    let residual = pixel - prediction;
+                    let packed = pack_signed(residual);
+
+                    // LZ77 RLE: copies the last residual value
+                    let can_use_lz77 = num_decoded > 0 && packed == last_value;
+
+                    if can_use_lz77 {
+                        current_run += 1;
+                    } else {
+                        // Flush accumulated run
+                        if current_run > K_LZ77_MIN_LENGTH {
+                            tokens.push(Token::Lz77Run(current_run));
+                            num_decoded += current_run;
+                        } else {
+                            for _ in 0..current_run {
+                                tokens.push(Token::Raw(last_value));
+                                num_decoded += 1;
+                            }
+                        }
+                        current_run = 0;
+                        tokens.push(Token::Raw(packed));
+                        num_decoded += 1;
+                        last_value = packed;
+                    }
                 }
             }
         }
@@ -2537,22 +2606,28 @@ impl VarDctEncoder {
         Ok(())
     }
 
-    /// Write a modular HF group sub-bitstream for alpha in multi-group VarDCT frames.
+    /// Write a modular HF group sub-bitstream for the extras in
+    /// multi-group VarDCT frames.
     ///
-    /// Each HF group gets its own independent modular sub-bitstream with a fresh
-    /// GroupHeader, local tree, and entropy code.
-    fn write_modular_alpha_group(
-        alpha: &[u8],
-        stride: usize,
+    /// Each HF group gets its own independent modular sub-bitstream
+    /// with a fresh GroupHeader, local tree, and entropy code. All
+    /// extras share the one entropy code; the decoder pulls each
+    /// channel's per-group region in turn.
+    #[allow(clippy::too_many_arguments)]
+    fn write_modular_extras_group(
+        extras: &[super::extras::VardctExtra<'_>],
+        image_width: usize,
+        image_height: usize,
         x0: usize,
         y0: usize,
         region_width: usize,
         region_height: usize,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        Self::write_modular_alpha_subbitstream(
-            alpha,
-            stride,
+        Self::write_modular_extras_subbitstream(
+            extras,
+            image_width,
+            image_height,
             x0,
             y0,
             region_width,
