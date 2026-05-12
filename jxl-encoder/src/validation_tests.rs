@@ -367,6 +367,7 @@ mod expert {
     fn lossless_internal_params_set_some_validates() {
         let p = LosslessInternalParams {
             nb_rcts_to_try: Some(7),
+            forced_rct: None,
             wp_num_param_sets: Some(2),
             tree_max_buckets: Some(96),
             tree_num_properties: Some(7),
