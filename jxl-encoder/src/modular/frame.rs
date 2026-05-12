@@ -543,8 +543,12 @@ impl FrameEncoder {
 
             // Step 0b: RCT on index channels (starting at position 0 in non-meta)
             if has_rct && work.channels.len() >= 3 {
-                let (selected_rct, transformed) =
-                    select_best_rct_at(&work, 0, self.options.profile.nb_rcts_to_try);
+                let (selected_rct, transformed) = select_best_rct_at(
+                    &work,
+                    0,
+                    self.options.profile.nb_rcts_to_try,
+                    self.options.profile.forced_rct,
+                );
                 rct_type = Some(selected_rct);
                 work = transformed;
             } else {
@@ -557,8 +561,11 @@ impl FrameEncoder {
         } else {
             // No ChannelCompact — standard RCT-only path
             if has_rct {
-                let (selected_rct, rct_image) =
-                    super::encode::select_best_rct(image, self.options.profile.nb_rcts_to_try);
+                let (selected_rct, rct_image) = super::encode::select_best_rct(
+                    image,
+                    self.options.profile.nb_rcts_to_try,
+                    self.options.profile.forced_rct,
+                );
                 rct_type = Some(selected_rct);
                 source_image_owned = rct_image;
             } else {

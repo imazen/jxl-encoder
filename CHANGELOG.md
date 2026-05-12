@@ -54,6 +54,17 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LosslessConfig::with_force_rct(Some(rct))`**: forces a specific
+  Reversible Color Transform colorspace, skipping the per-effort RCT
+  search. Mirrors libjxl's `cparams.colorspace`. `None` (default)
+  keeps the per-effort search; `Some(rct)` applies the given RCT
+  directly. Useful for known-best content classes (e.g.
+  `RctType::YCOCG` for screenshots), reproducibility, and runtime
+  picker output. Threaded through both `select_best_rct` and
+  `select_best_rct_at` (handles the post-ChannelCompact case).
+  `EffortProfile.forced_rct` + `LosslessInternalParams.forced_rct`
+  also exposed for `__expert` picker plumbing.
+
 - **`LossyConfig::with_quant_ac_rescale(Some(r))`**: post-compute
   multiplier on the AC quantiser's `global_scale`. Mirrors libjxl's
   `cparams.quant_ac_rescale` (`enc_cache.cc:99` →

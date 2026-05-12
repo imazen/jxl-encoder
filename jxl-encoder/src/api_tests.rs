@@ -8705,3 +8705,63 @@ fn test_lossy_quant_ac_rescale_encode() {
         .expect("jxl-oxide parse rescaled output");
     let _render = image.render_frame(0).expect("render");
 }
+
+/// Refs forced-RCT parity: `with_force_rct` should round-trip through
+/// the getter and propagate to the modular encoder.
+#[test]
+fn test_lossless_force_rct_round_trip() {
+    use crate::modular::rct::RctType;
+    let cfg = LosslessConfig::new().with_force_rct(Some(RctType::YCOCG));
+    assert!(cfg.force_rct().is_some());
+    assert_eq!(cfg.force_rct().unwrap().0, RctType::YCOCG.0);
+
+    let off = LosslessConfig::new().with_force_rct(None);
+    assert!(off.force_rct().is_none());
+}
+
+/// `with_force_rct(None)` and the default config should produce
+/// byte-identical output (no path divergence when not used).
+#[test]
+fn test_lossless_force_rct_none_is_default() {
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 13 % 251) as u8).collect();
+    let baseline = LosslessConfig::new()
+        .with_effort(7)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("baseline");
+    let with_none = LosslessConfig::new()
+        .with_effort(7)
+        .with_force_rct(None)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("force_rct(None)");
+    assert_eq!(
+        baseline, with_none,
+        "with_force_rct(None) should match the default"
+    );
+}
+
+/// `with_force_rct(Some(YCoCg))` should produce a valid bitstream that
+/// decodes via jxl-oxide. Smoke test that the field propagates.
+#[test]
+fn test_lossless_force_rct_ycocg_encode() {
+    use crate::modular::rct::RctType;
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 17 % 251) as u8).collect();
+    let bytes = LosslessConfig::new()
+        .with_effort(7)
+        .with_force_rct(Some(RctType::YCOCG))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossless with forced YCoCg");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse forced-RCT output");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let _render = image.render_frame(0).expect("render forced-RCT output");
+}
