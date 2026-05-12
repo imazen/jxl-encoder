@@ -8765,3 +8765,75 @@ fn test_lossless_force_rct_ycocg_encode() {
     assert_eq!(image.height(), h);
     let _render = image.render_frame(0).expect("render forced-RCT output");
 }
+
+/// `with_already_downsampled` should round-trip through the getter
+/// and default to `false`.
+#[test]
+fn test_lossy_already_downsampled_round_trip() {
+    let cfg_default = LossyConfig::new(2.0);
+    assert!(!cfg_default.already_downsampled());
+
+    let cfg_on = LossyConfig::new(2.0).with_already_downsampled(true);
+    assert!(cfg_on.already_downsampled());
+
+    let cfg_off = LossyConfig::new(2.0).with_already_downsampled(false);
+    assert!(!cfg_off.already_downsampled());
+}
+
+/// With `already_downsampled = true` and `resampling = 2`, the file
+/// header should advertise `2 * input_dims` (the original size the
+/// caller intended) and the bitstream should still decode cleanly.
+#[test]
+fn test_lossy_already_downsampled_file_header_dims() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 13 % 251) as u8).collect();
+    let bytes = LossyConfig::new(5.0)
+        .with_effort(5)
+        .with_resampling(2)
+        .with_already_downsampled(true)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossy with already_downsampled + resampling=2");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse already_downsampled output");
+    // File header should advertise 2x input dims (the upsampled size).
+    assert_eq!(
+        image.width(),
+        w * 2,
+        "file header width should be 2 * input"
+    );
+    assert_eq!(
+        image.height(),
+        h * 2,
+        "file header height should be 2 * input"
+    );
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Without `already_downsampled`, `with_resampling(2)` should
+/// downsample the input and the file header reports the *input*
+/// dims (because the caller passed pre-downsample dims).
+#[test]
+fn test_lossy_already_downsampled_default_downsamples() {
+    let w = 64u32;
+    let h = 64u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 7 % 251) as u8).collect();
+    let bytes = LossyConfig::new(5.0)
+        .with_effort(5)
+        .with_resampling(2)
+        // already_downsampled = false (default) → encoder downsamples
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossy with resampling=2 (default downsample)");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse default-downsample output");
+    // Default behaviour: caller's dims ARE the original; encoder
+    // downsamples internally; file header reports caller dims.
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+}

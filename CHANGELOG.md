@@ -54,6 +54,17 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LossyConfig::with_already_downsampled(bool)`**: tells the encoder
+  the input is already at the post-resampling resolution; skips the
+  internal downsample but still writes the matching `upsampling`
+  factor in the bitstream. Mirrors libjxl's
+  `cparams.already_downsampled`. Use case: GPU pipeline produces a
+  downsampled image at the target encode resolution and wants the
+  encoder to honour it (write `upsampling=N`, decoder upsamples,
+  file header advertises original dims = `input_dims * N`). Without
+  this flag, `with_resampling(N)` would downsample the input again.
+  No-op when `effective_resampling() == 1`.
+
 - **`LosslessConfig::with_force_rct(Some(rct))`**: forces a specific
   Reversible Color Transform colorspace, skipping the per-effort RCT
   search. Mirrors libjxl's `cparams.colorspace`. `None` (default)

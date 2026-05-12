@@ -1487,6 +1487,11 @@ pub struct LossyConfig {
     /// roughly comparable. Disable via [`Self::with_auto_resampling`]
     /// if you want strict pinned behavior.
     auto_resampling: bool,
+    /// `true` when the caller has already downsampled the input to
+    /// the target resolution and just wants the encoder to write the
+    /// matching `upsampling` factor in the bitstream. Mirrors libjxl
+    /// `cparams.already_downsampled`. No-op when `resampling == 1`.
+    already_downsampled: bool,
     splines: Option<Vec<crate::vardct::splines::Spline>>,
     progressive: ProgressiveMode,
     lf_frame: bool,
@@ -1568,6 +1573,7 @@ impl LossyConfig {
             resampling: 1,
             resampling_explicit: false,
             auto_resampling: true,
+            already_downsampled: false,
             splines: None,
             progressive: ProgressiveMode::Single,
             lf_frame: false,
@@ -1994,6 +2000,32 @@ impl LossyConfig {
     /// Current auto-resample setting. Default `true`.
     pub fn auto_resampling(&self) -> bool {
         self.auto_resampling
+    }
+
+    /// Tell the encoder the input is **already** at the post-resampling
+    /// resolution; the encoder should write the matching `upsampling`
+    /// factor in the bitstream but skip the internal downsample step.
+    /// Mirrors libjxl's `cparams.already_downsampled`.
+    ///
+    /// Use case: the caller has a GPU pipeline that already produced
+    /// a downsampled image at the target encode resolution, and wants
+    /// the encoder to honour it (write `upsampling=N`, decoder
+    /// upsamples on the way out, file header advertises original dims
+    /// = `input_dims * N`). Without this flag, `with_resampling(N)`
+    /// would downsample the input *again*.
+    ///
+    /// No-op when `effective_resampling() == 1`. Pair with
+    /// [`Self::with_resampling`]; pass the **already downsampled**
+    /// dimensions to [`crate::api::EncodeRequest`] — the file header
+    /// will advertise `dims * N` as the original size.
+    pub fn with_already_downsampled(mut self, already: bool) -> Self {
+        self.already_downsampled = already;
+        self
+    }
+
+    /// Current already-downsampled flag. Default `false`.
+    pub fn already_downsampled(&self) -> bool {
+        self.already_downsampled
     }
 
     /// Effective resampling factor the encoder will actually use,
@@ -3780,31 +3812,35 @@ impl<'a> EncodeRequest<'a> {
         // Apply downsampling for resampling > 1 (refs #12). Factor 2
         // uses libjxl's sharper 12×12 kernel (`enc_heuristics.cc:279`)
         // which preserves edge detail; factors 4 and 8 use the simple
-        // box filter (libjxl behavior).
-        let (encode_rgb, encode_alpha, encode_w, encode_h) = if effective_resampling > 1 {
-            let (down_rgb, dw, dh) = if effective_resampling == 2 {
-                crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
+        // box filter (libjxl behavior). When `already_downsampled` is
+        // set, the caller has done their own downsample and wants the
+        // encoder to honour the input dims; skip the internal
+        // downsample but keep the upsampling factor in the bitstream.
+        let (encode_rgb, encode_alpha, encode_w, encode_h) =
+            if effective_resampling > 1 && !cfg.already_downsampled {
+                let (down_rgb, dw, dh) = if effective_resampling == 2 {
+                    crate::vardct::resampling::sharper_downsample_2x_rgb(&linear_rgb, w, h)
+                } else {
+                    crate::vardct::resampling::box_downsample_rgb(
+                        &linear_rgb,
+                        w,
+                        h,
+                        effective_resampling,
+                    )
+                };
+                let down_alpha = alpha.as_ref().map(|a| {
+                    let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
+                        a,
+                        w,
+                        h,
+                        effective_resampling,
+                    );
+                    a_down
+                });
+                (down_rgb, down_alpha, dw as usize, dh as usize)
             } else {
-                crate::vardct::resampling::box_downsample_rgb(
-                    &linear_rgb,
-                    w,
-                    h,
-                    effective_resampling,
-                )
+                (linear_rgb, alpha, w, h)
             };
-            let down_alpha = alpha.as_ref().map(|a| {
-                let (a_down, _, _) = crate::vardct::resampling::box_downsample_alpha_u8(
-                    a,
-                    w,
-                    h,
-                    effective_resampling,
-                );
-                a_down
-            });
-            (down_rgb, down_alpha, dw as usize, dh as usize)
-        } else {
-            (linear_rgb, alpha, w, h)
-        };
 
         // Build the extras list passed to VarDctEncoder. Alpha (when
         // present) comes first, then any caller-supplied non-alpha
