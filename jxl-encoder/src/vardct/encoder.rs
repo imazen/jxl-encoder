@@ -158,6 +158,15 @@ pub struct VarDctEncoder {
     /// values are written as 10-bit-quantised samples into the
     /// frame-header noise block.
     pub manual_noise_lut: Option<[f32; 8]>,
+    /// Caller-supplied AC quantiser rescale. When `Some(r)` and `r != 1.0`,
+    /// `global_scale` is multiplied by `r` (and `scale` / `inv_scale`
+    /// / `scale_dc` recomputed) after the standard
+    /// `DistanceParams::compute_for_profile` step. Mirrors libjxl's
+    /// `cparams.quant_ac_rescale`. `r < 1.0` → finer AC quant
+    /// (larger files, higher quality); `r > 1.0` → coarser (smaller
+    /// files, lower quality). Default behaviour (`None`) leaves
+    /// `global_scale` untouched.
+    pub quant_ac_rescale: Option<f32>,
     /// Caller-supplied source-image butteraugli distance for re-encode
     /// pipelines. When set, x_qm_scale (and other distance-based
     /// heuristics that compare against source quality, not target
@@ -354,6 +363,7 @@ impl Default for VarDctEncoder {
             enable_noise: false,
             photon_noise_iso: None,
             manual_noise_lut: None,
+            quant_ac_rescale: None,
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
@@ -409,6 +419,7 @@ impl VarDctEncoder {
             enable_noise: false,
             photon_noise_iso: None,
             manual_noise_lut: None,
+            quant_ac_rescale: None,
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
@@ -917,6 +928,9 @@ impl VarDctEncoder {
             }
             _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
         };
+        if let Some(rescale) = self.quant_ac_rescale {
+            params.apply_quant_ac_rescale(rescale);
+        }
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
@@ -1824,6 +1838,9 @@ impl VarDctEncoder {
             }
             _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
         };
+        if let Some(rescale) = self.quant_ac_rescale {
+            params.apply_quant_ac_rescale(rescale);
+        }
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         if self.profile.chromacity_adjustment {

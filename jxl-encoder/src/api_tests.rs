@@ -8630,3 +8630,78 @@ fn test_lossy_manual_noise_lut_all_zero_no_op() {
         "all-zero manual_noise should produce the same bitstream as no-noise"
     );
 }
+
+/// `with_quant_ac_rescale` should round-trip through the getter
+/// and silently filter out invalid values.
+#[test]
+fn test_lossy_quant_ac_rescale_round_trip() {
+    let cfg = LossyConfig::new(2.0).with_quant_ac_rescale(Some(0.85));
+    assert_eq!(cfg.quant_ac_rescale(), Some(0.85));
+
+    let none = LossyConfig::new(2.0).with_quant_ac_rescale(None);
+    assert!(none.quant_ac_rescale().is_none());
+
+    let zero = LossyConfig::new(2.0).with_quant_ac_rescale(Some(0.0));
+    assert!(zero.quant_ac_rescale().is_none(), "0.0 should disable");
+    let neg = LossyConfig::new(2.0).with_quant_ac_rescale(Some(-1.0));
+    assert!(neg.quant_ac_rescale().is_none(), "negative should disable");
+    let nan = LossyConfig::new(2.0).with_quant_ac_rescale(Some(f32::NAN));
+    assert!(nan.quant_ac_rescale().is_none(), "NaN should disable");
+}
+
+/// `apply_quant_ac_rescale(r)` should multiply `global_scale` by `r`
+/// and recompute derived `scale` / `inv_scale` / `scale_dc` fields.
+/// Mirrors libjxl Quantizer::ScaleGlobalScale.
+#[test]
+fn test_distance_params_apply_quant_ac_rescale() {
+    use crate::vardct::frame::DistanceParams;
+    let profile = crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference);
+    let baseline = DistanceParams::compute_for_profile(2.0, &profile);
+
+    // 0.8x rescale → smaller global_scale → finer quant.
+    let mut rescaled = baseline.clone();
+    rescaled.apply_quant_ac_rescale(0.8);
+    assert!(
+        rescaled.global_scale < baseline.global_scale,
+        "0.8x rescale should shrink global_scale ({} should be less than baseline {})",
+        rescaled.global_scale,
+        baseline.global_scale
+    );
+    // scale = global_scale / 65536, so smaller scale.
+    assert!(rescaled.scale < baseline.scale);
+    // inv_scale = 1 / scale, so larger.
+    assert!(rescaled.inv_scale > baseline.inv_scale);
+
+    // 1.0 is a no-op.
+    let mut noop = baseline.clone();
+    noop.apply_quant_ac_rescale(1.0);
+    assert_eq!(noop.global_scale, baseline.global_scale);
+
+    // Invalid values are no-ops.
+    let mut invalid = baseline.clone();
+    invalid.apply_quant_ac_rescale(f32::NAN);
+    assert_eq!(invalid.global_scale, baseline.global_scale);
+    invalid.apply_quant_ac_rescale(0.0);
+    assert_eq!(invalid.global_scale, baseline.global_scale);
+    invalid.apply_quant_ac_rescale(-0.5);
+    assert_eq!(invalid.global_scale, baseline.global_scale);
+}
+
+/// End-to-end: encode + decode with `quant_ac_rescale = 0.85` should
+/// produce a valid bitstream that decodes via jxl-oxide.
+#[test]
+fn test_lossy_quant_ac_rescale_encode() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 17 % 251) as u8).collect();
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_quant_ac_rescale(Some(0.85))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossy with quant_ac_rescale");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse rescaled output");
+    let _render = image.render_frame(0).expect("render");
+}

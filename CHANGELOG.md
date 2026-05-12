@@ -54,6 +54,19 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LossyConfig::with_quant_ac_rescale(Some(r))`**: post-compute
+  multiplier on the AC quantiser's `global_scale`. Mirrors libjxl's
+  `cparams.quant_ac_rescale` (`enc_cache.cc:99` →
+  `Quantizer::ScaleGlobalScale`). `r < 1.0` shrinks `global_scale`
+  → finer AC quant → larger files but higher quality; `r > 1.0` is
+  the inverse. Useful as a fine-grained quality nudge on top of a
+  fixed `distance` (e.g. picker output: "encode at d=1.0 but quant
+  AC 5 % finer for this content"). Doesn't change the bitstream's
+  reported butteraugli distance — encoder-side tweak only. New
+  `DistanceParams::apply_quant_ac_rescale(r)` exposes the
+  underlying mechanic. Threaded through all three `api.rs` encode
+  call sites (one-shot, streaming, animation).
+
 - **`LossyConfig::with_manual_noise_lut(Some(lut))`**: caller-supplied
   8-point noise LUT, third noise source alongside content estimation
   and photon-noise simulation. Mirrors libjxl's `cparams.manual_noise`.

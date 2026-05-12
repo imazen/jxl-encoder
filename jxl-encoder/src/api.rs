@@ -1396,6 +1396,11 @@ pub struct LossyConfig {
     /// `cparams.manual_noise`. Lower priority than `photon_noise_iso`,
     /// higher than content estimation.
     manual_noise_lut: Option<[f32; 8]>,
+    /// Multiplier applied to the AC quantiser's `global_scale` after
+    /// the standard distance-driven computation. Mirrors libjxl's
+    /// `cparams.quant_ac_rescale`. `None` (default) leaves
+    /// `global_scale` untouched.
+    quant_ac_rescale: Option<f32>,
     /// Caller-supplied source-image butteraugli distance for re-encode
     /// pipelines. Mirrors libjxl `cparams.original_butteraugli_distance`.
     /// `None` keeps libjxl's default behaviour (treat source as
@@ -1509,6 +1514,7 @@ impl LossyConfig {
             noise: false,
             photon_noise_iso: None,
             manual_noise_lut: None,
+            quant_ac_rescale: None,
             original_distance: None,
             denoise: false,
             error_diffusion: profile.error_diffusion,
@@ -1599,6 +1605,7 @@ impl LossyConfig {
         new.noise = self.noise;
         new.photon_noise_iso = self.photon_noise_iso;
         new.manual_noise_lut = self.manual_noise_lut;
+        new.quant_ac_rescale = self.quant_ac_rescale;
         new.original_distance = self.original_distance;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
@@ -1683,6 +1690,35 @@ impl LossyConfig {
     /// Configured manual noise LUT, if any.
     pub fn manual_noise_lut(&self) -> Option<[f32; 8]> {
         self.manual_noise_lut
+    }
+
+    /// Set a multiplier applied to the AC quantiser's `global_scale`
+    /// after the standard distance-driven computation. Mirrors
+    /// libjxl's `cparams.quant_ac_rescale`
+    /// (`enc_cache.cc:99` → `Quantizer::ScaleGlobalScale`,
+    /// `quantizer.h:73`).
+    ///
+    /// `r < 1.0` produces a smaller `global_scale` → finer AC quant
+    /// → larger files but higher quality. `r > 1.0` is the inverse.
+    /// `r = 1.0` (or `None`) is a no-op. Negative / NaN values are
+    /// silently ignored.
+    ///
+    /// Useful as a fine-grained AC quality nudge on top of a fixed
+    /// `distance` — e.g. picker output ("encode at d=1.0 but quant
+    /// AC 5 % finer for this content"). Doesn't change the target
+    /// butteraugli distance reported in the bitstream metadata —
+    /// this is an encoder-side tweak only.
+    ///
+    /// Reasonable range: `0.5..=2.0`. Aggressive values produce
+    /// surprising quality / size deltas.
+    pub fn with_quant_ac_rescale(mut self, rescale: Option<f32>) -> Self {
+        self.quant_ac_rescale = rescale.filter(|v| v.is_finite() && *v > 0.0);
+        self
+    }
+
+    /// Configured AC quantiser rescale multiplier, if any.
+    pub fn quant_ac_rescale(&self) -> Option<f32> {
+        self.quant_ac_rescale
     }
 
     /// Set the caller-supplied source-image butteraugli distance for
@@ -3621,6 +3657,7 @@ impl<'a> EncodeRequest<'a> {
         enc.enable_noise = cfg.noise;
         enc.photon_noise_iso = cfg.photon_noise_iso;
         enc.manual_noise_lut = cfg.manual_noise_lut;
+        enc.quant_ac_rescale = cfg.quant_ac_rescale;
         enc.original_distance = cfg.original_distance;
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
@@ -5831,6 +5868,7 @@ fn encode_animation_lossy(
     enc.enable_noise = cfg.noise;
     enc.photon_noise_iso = cfg.photon_noise_iso;
     enc.manual_noise_lut = cfg.manual_noise_lut;
+    enc.quant_ac_rescale = cfg.quant_ac_rescale;
     enc.original_distance = cfg.original_distance;
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
