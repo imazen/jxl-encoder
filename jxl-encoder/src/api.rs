@@ -1897,6 +1897,52 @@ impl LossyConfig {
         self
     }
 
+    /// Convenience switch that toggles all encoder-side perceptual
+    /// heuristics on or off in one call. Mirrors libjxl's
+    /// `cparams.disable_perceptual_optimizations` (`enc_heuristics.cc:215,
+    /// 1098`, `enc_frame.cc:282`, `enc_patch_dictionary.cc:637`).
+    ///
+    /// Calling `with_perceptual_optimizations(false)` is equivalent to
+    /// chaining the matching individual disables:
+    ///
+    /// ```ignore
+    /// cfg.with_gaborish(false)
+    ///    .with_patches(false)
+    ///    .with_dot_detection(false)
+    ///    .with_noise(false)
+    ///    .with_pixel_domain_loss(false)
+    /// ```
+    ///
+    /// Calling `with_perceptual_optimizations(true)` resets each of
+    /// those to the libjxl-faithful defaults (gaborish on, patches
+    /// on, dot detection still off — matching its niche-content
+    /// gating, noise off, pixel-domain loss on).
+    ///
+    /// Use cases:
+    /// - **Decoder testing / spec strict mode**: caller wants to
+    ///   exercise the decoder without encoder-side heuristics
+    ///   muddying the waters.
+    /// - **Reproducibility**: removes content-dependent gating that
+    ///   makes outputs hard to A/B compare across versions.
+    /// - **Picker training without confounds**: when sweeping AC
+    ///   strategy / quant constants, perceptual heuristics inflate
+    ///   the noise floor.
+    ///
+    /// Note: this is a **convenience wrapper** — caller-supplied
+    /// per-knob settings called *after* this still take precedence
+    /// (e.g. `cfg.with_perceptual_optimizations(false).with_gaborish(true)`
+    /// re-enables just gaborish).
+    pub fn with_perceptual_optimizations(mut self, enable: bool) -> Self {
+        // Set the five perceptual knobs to their on/off positions.
+        // Defaults mirror libjxl's enabled state when on.
+        self.gaborish = enable;
+        self.patches = enable;
+        self.dot_detection = false; // still off-by-default even when on
+        self.noise = false; // off by default in libjxl too
+        self.pixel_domain_loss = enable;
+        self
+    }
+
     /// Enable/disable LZ77 backward references (default: false).
     pub fn with_lz77(mut self, enable: bool) -> Self {
         self.lz77 = enable;
@@ -2248,6 +2294,17 @@ impl LossyConfig {
     /// Whether pixel-domain loss is enabled.
     pub fn pixel_domain_loss(&self) -> bool {
         self.pixel_domain_loss
+    }
+
+    /// Whether patches (dictionary-based repeated pattern detection)
+    /// are enabled.
+    pub fn patches(&self) -> bool {
+        self.patches
+    }
+
+    /// Whether dot detection (refs #19) is enabled.
+    pub fn dot_detection(&self) -> bool {
+        self.dot_detection
     }
 
     /// Whether LZ77 backward references are enabled.
