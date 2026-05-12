@@ -422,6 +422,41 @@ pub(crate) fn compute_quant_field_float_with_budget(
     Ok((quant_field_float, masking))
 }
 
+/// `pub` wrapper around [`compute_quant_field_float_with_budget`] for
+/// the `__pre_quantized` escape hatch. Matches the production-path
+/// signature minus the budget plumbing — passes `None` internally;
+/// downstream pre-quantized callers (e.g. jxl-encoder-gpu) don't go
+/// through the budget tracker.
+///
+/// Unstable; gated behind the `__pre_quantized` cargo feature.
+#[cfg(feature = "__pre_quantized")]
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn compute_quant_field_float_free(
+    xyb_x: &[f32],
+    xyb_y: &[f32],
+    xyb_b: &[f32],
+    width: usize,
+    height: usize,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    distance: f32,
+    k_ac_quant: f32,
+) -> crate::error::Result<(alloc::vec::Vec<f32>, alloc::vec::Vec<f32>)> {
+    compute_quant_field_float_with_budget(
+        xyb_x,
+        xyb_y,
+        xyb_b,
+        width,
+        height,
+        xsize_blocks,
+        ysize_blocks,
+        distance,
+        k_ac_quant,
+        None,
+    )
+}
+
 /// Convert float quant field to u8 raw_quant values.
 ///
 /// Matches libjxl's ClampVal: `static_cast<int32_t>(clamp(qf * inv_scale + 0.5, 1.0, 256.0))`
