@@ -54,6 +54,19 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LossyConfig::with_photon_noise_iso(Some(iso))`**: synthesise noise
+  parameters from a camera ISO value instead of estimating from
+  content. Faithful port of libjxl's `SimulatePhotonNoise`
+  (`enc_photon_noise.cc`); matches the `--photon_noise=ISO` CLI flag.
+  Closes the libjxl photon-noise feature-parity gap.
+  Useful for re-encoding **denoised** photographs (or CGI / HDR
+  content) where the caller wants controlled grain matching a target
+  camera ISO instead of preserving the source's natural noise.
+  Constants match libjxl: 35 mm full-frame sensor, daylight spectrum,
+  effective QE 0.2, PRNU 0.5 %, read noise 3 e⁻ RMS. Takes priority
+  over `with_noise` (both flag the noise header); negative / NaN /
+  zero ISO values are quietly ignored.
+
 - **`LosslessConfig::with_tree_learning_sample_fraction(f)`** (refs #23):
   public knob to dial back the tree-learning sample fraction at e7+
   for a smoother time/size trade between e6 (no tree) and e7

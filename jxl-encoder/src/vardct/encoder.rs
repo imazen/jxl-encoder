@@ -145,6 +145,12 @@ pub struct VarDctEncoder {
     /// in the frame header. The decoder regenerates noise during rendering.
     /// Off by default (matching libjxl's default).
     pub enable_noise: bool,
+    /// When set, synthesises noise parameters from the given ISO value
+    /// instead of estimating from the image. Matches libjxl's
+    /// `--photon_noise=ISO` flag and bypasses `enable_noise`. Useful
+    /// for re-encoding denoised content where the caller wants to
+    /// inject controlled grain matching a target camera ISO.
+    pub photon_noise_iso: Option<f32>,
     /// Enable Wiener denoising pre-filter (requires `enable_noise`).
     /// When true, applies a conservative Wiener filter to remove estimated noise
     /// before encoding. The decoder re-adds noise from the encoded parameters.
@@ -332,6 +338,7 @@ impl Default for VarDctEncoder {
             custom_orders: true,
             force_strategy: None,
             enable_noise: false,
+            photon_noise_iso: None,
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
@@ -384,6 +391,7 @@ impl VarDctEncoder {
             custom_orders: true,
             force_strategy: None,
             enable_noise: false,
+            photon_noise_iso: None,
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
@@ -637,9 +645,23 @@ impl VarDctEncoder {
         // forward_xyb is finite-output-for-finite-input.
         validate_xyb_planes(self.non_finite_action, &mut xyb_x, &mut xyb_y, &mut xyb_b)?;
 
-        // Estimate noise parameters (if enabled).
-        // The decoder adds noise during rendering; the encoder just encodes the params.
-        let noise_params = if self.enable_noise {
+        // Noise parameters. Three sources, in priority order:
+        // 1. `photon_noise_iso`: caller-supplied ISO value, bypasses
+        //    content estimation. Matches libjxl --photon_noise. Useful
+        //    for re-encoding denoised content with controlled grain.
+        // 2. `enable_noise` + content estimation: scan flat patches,
+        //    fit an 8-point LUT via SCG optimisation.
+        // 3. Neither: no noise synthesis.
+        let noise_params = if let Some(iso) = self.photon_noise_iso
+            && iso > 0.0
+        {
+            // The decoder regenerates noise during rendering from the
+            // 10-bit-per-point LUT; the encoder just emits the LUT
+            // here. No content estimation, no denoise pre-filter — we
+            // *add* synthetic grain, not preserve real noise.
+            let params = super::noise::simulate_photon_noise(width, height, iso);
+            if params.has_any() { Some(params) } else { None }
+        } else if self.enable_noise {
             let quality_coef = noise_quality_coef(self.distance);
             let params = estimate_noise_params(
                 &xyb_x,

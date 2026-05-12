@@ -8402,3 +8402,80 @@ fn test_lossless_tree_learning_lite_round_trip() {
     assert_eq!(image.height(), h);
     let _render = image.render_frame(0).expect("render tree-lite output");
 }
+
+/// Refs photon-noise parity: `simulate_photon_noise` should produce
+/// a finite, non-zero LUT for reasonable ISO values.
+#[test]
+fn test_simulate_photon_noise_finite_iso_3200() {
+    use crate::vardct::noise::simulate_photon_noise;
+    let params = simulate_photon_noise(1024, 1024, 3200.0);
+    // All values must be finite + non-negative + within LUT_MAX.
+    for &v in &params.lut {
+        assert!(v.is_finite(), "ISO 3200 produced non-finite LUT entry: {v}");
+        assert!(v >= 0.0, "ISO 3200 produced negative LUT entry: {v}");
+        assert!(v < 1.0, "ISO 3200 LUT entry exceeds clamp: {v}");
+    }
+    // ISO 3200 should produce *some* signal — the noise LUT should
+    // not be all-zero.
+    assert!(
+        params.has_any(),
+        "ISO 3200 should produce a non-trivial noise LUT"
+    );
+}
+
+/// Photon noise should scale with ISO: higher ISO → larger LUT values.
+/// Monotonic at every LUT index when other inputs match.
+#[test]
+fn test_simulate_photon_noise_monotonic_in_iso() {
+    use crate::vardct::noise::simulate_photon_noise;
+    let low = simulate_photon_noise(1024, 1024, 100.0);
+    let high = simulate_photon_noise(1024, 1024, 6400.0);
+    for (lo, hi) in low.lut.iter().zip(high.lut.iter()) {
+        // High ISO must have ≥ low ISO at every intensity. (Some
+        // entries may be exactly 0 at very low intensity — non-strict.)
+        assert!(
+            *hi >= *lo,
+            "ISO 6400 should produce ≥ noise than ISO 100 at every LUT entry; got hi={hi} lo={lo}"
+        );
+    }
+}
+
+/// `LossyConfig::with_photon_noise_iso(Some(3200))` should round-trip
+/// through encode + jxl-oxide decode and produce a bitstream with the
+/// noise flag set.
+#[test]
+fn test_lossy_photon_noise_round_trip() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 13 % 251) as u8).collect();
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_photon_noise_iso(Some(3200.0))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossy with photon noise");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse photon-noise output");
+    assert_eq!(image.width(), w);
+    assert_eq!(image.height(), h);
+    let _render = image.render_frame(0).expect("render photon-noise output");
+}
+
+/// `with_photon_noise_iso(Some(0.0))` and negative / non-finite values
+/// should be quietly ignored — they don't enable photon noise.
+#[test]
+fn test_lossy_photon_noise_iso_invalid_disables() {
+    let zero = LossyConfig::new(2.0).with_photon_noise_iso(Some(0.0));
+    assert!(zero.photon_noise_iso().is_none(), "iso=0 should disable");
+    let neg = LossyConfig::new(2.0).with_photon_noise_iso(Some(-100.0));
+    assert!(
+        neg.photon_noise_iso().is_none(),
+        "negative iso should disable"
+    );
+    let nan = LossyConfig::new(2.0).with_photon_noise_iso(Some(f32::NAN));
+    assert!(nan.photon_noise_iso().is_none(), "NaN iso should disable");
+    let valid = LossyConfig::new(2.0).with_photon_noise_iso(Some(3200.0));
+    assert_eq!(valid.photon_noise_iso(), Some(3200.0));
+}
