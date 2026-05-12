@@ -8479,3 +8479,71 @@ fn test_lossy_photon_noise_iso_invalid_disables() {
     let valid = LossyConfig::new(2.0).with_photon_noise_iso(Some(3200.0));
     assert_eq!(valid.photon_noise_iso(), Some(3200.0));
 }
+
+/// `with_original_distance` should round-trip through the getter and
+/// silently filter out invalid values.
+#[test]
+fn test_lossy_original_distance_round_trip() {
+    let cfg = LossyConfig::new(0.5).with_original_distance(Some(3.0));
+    assert_eq!(cfg.original_distance(), Some(3.0));
+
+    // None disables.
+    let none = LossyConfig::new(2.0).with_original_distance(None);
+    assert!(none.original_distance().is_none());
+
+    // Invalid values silently disable.
+    let zero = LossyConfig::new(2.0).with_original_distance(Some(0.0));
+    assert!(zero.original_distance().is_none(), "zero should disable");
+    let neg = LossyConfig::new(2.0).with_original_distance(Some(-1.0));
+    assert!(neg.original_distance().is_none(), "negative should disable");
+    let nan = LossyConfig::new(2.0).with_original_distance(Some(f32::NAN));
+    assert!(nan.original_distance().is_none(), "NaN should disable");
+}
+
+/// When `original > target`, `x_qm_scale` should ramp against the
+/// original distance (mirrors libjxl `enc_frame.cc:658` behaviour
+/// for re-encoding already-lossy sources).
+#[test]
+fn test_distance_params_x_qm_scale_uses_original_distance() {
+    use crate::vardct::frame::DistanceParams;
+    let profile = crate::effort::EffortProfile::lossy(7, crate::api::EncoderMode::Reference);
+
+    // Target d=1.0 (pristine encode) — expect x_qm_scale = 3 (no
+    // steps crossed). With original = 6.0, x_qm_scale should bump
+    // to 5 (crosses 2.5 and 5.5 steps; not 9.5).
+    let pristine = DistanceParams::compute_for_profile(1.0, &profile);
+    let reencode = DistanceParams::compute_for_profile_with_original(1.0, 6.0, &profile);
+    assert_eq!(pristine.x_qm_scale, 3, "pristine d=1.0 → x_qm_scale=3");
+    assert_eq!(
+        reencode.x_qm_scale, 5,
+        "re-encode target=1.0 source=6.0 → x_qm_scale=5"
+    );
+
+    // Target distance still drives global_scale — same target = same scale.
+    assert_eq!(
+        pristine.global_scale, reencode.global_scale,
+        "global_scale should depend on target distance, not original"
+    );
+}
+
+/// End-to-end: an encode with `with_original_distance(Some(5.0))` at
+/// target `d=1.0` should produce a valid bitstream that decodes via
+/// jxl-oxide. Smoke test that the field propagates without breaking
+/// the bitstream.
+#[test]
+fn test_lossy_with_original_distance_round_trip_encode() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 11 % 251) as u8).collect();
+    let bytes = LossyConfig::new(1.0)
+        .with_effort(5)
+        .with_original_distance(Some(5.0))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossy with original_distance");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse with original_distance");
+    let _render = image.render_frame(0).expect("render");
+}

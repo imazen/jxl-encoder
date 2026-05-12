@@ -1392,6 +1392,11 @@ pub struct LossyConfig {
     /// When `Some(iso)`, synthesise noise from the ISO value rather
     /// than estimating from content. Matches libjxl `--photon_noise=ISO`.
     photon_noise_iso: Option<f32>,
+    /// Caller-supplied source-image butteraugli distance for re-encode
+    /// pipelines. Mirrors libjxl `cparams.original_butteraugli_distance`.
+    /// `None` keeps libjxl's default behaviour (treat source as
+    /// ground-truth, original = target).
+    original_distance: Option<f32>,
     denoise: bool,
     error_diffusion: bool,
     pixel_domain_loss: bool,
@@ -1499,6 +1504,7 @@ impl LossyConfig {
             gaborish: profile.gaborish,
             noise: false,
             photon_noise_iso: None,
+            original_distance: None,
             denoise: false,
             error_diffusion: profile.error_diffusion,
             pixel_domain_loss: profile.pixel_domain_loss,
@@ -1587,6 +1593,7 @@ impl LossyConfig {
         new.mode = self.mode;
         new.noise = self.noise;
         new.photon_noise_iso = self.photon_noise_iso;
+        new.original_distance = self.original_distance;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
         new.max_strategy_size = self.max_strategy_size;
@@ -1640,6 +1647,35 @@ impl LossyConfig {
     pub fn with_noise(mut self, enable: bool) -> Self {
         self.noise = enable;
         self
+    }
+
+    /// Set the caller-supplied source-image butteraugli distance for
+    /// re-encode pipelines. Mirrors libjxl
+    /// `cparams.original_butteraugli_distance`.
+    ///
+    /// When the source isn't ground truth (e.g. re-encoding an
+    /// already-lossy JPEG or JXL), the encoder's distance-based
+    /// heuristics that compare against source quality — primarily
+    /// `x_qm_scale` (libjxl `enc_frame.cc:658`) — should ramp
+    /// against the *source's* distance, not the target. The target
+    /// distance is what we ask butteraugli to hit; the source
+    /// distance is the existing error budget the source ships with.
+    ///
+    /// `None` (default) keeps libjxl's behaviour: treat source as
+    /// ground truth, original = target. `Some(orig)` with `orig >
+    /// target_distance` enables; `Some(orig)` with `orig <=
+    /// target_distance` is silently treated as `None` (no need —
+    /// already encoding to a tighter budget than the source).
+    /// Negative / NaN / zero are quietly ignored.
+    pub fn with_original_distance(mut self, original: Option<f32>) -> Self {
+        self.original_distance = original.filter(|v| v.is_finite() && *v > 0.0);
+        self
+    }
+
+    /// Configured original (source) butteraugli distance, if any.
+    /// `Some(orig)` only when the caller explicitly opted in.
+    pub fn original_distance(&self) -> Option<f32> {
+        self.original_distance
     }
 
     /// Synthesise noise from an ISO value (matches libjxl
@@ -3548,6 +3584,7 @@ impl<'a> EncodeRequest<'a> {
         enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
         enc.enable_noise = cfg.noise;
         enc.photon_noise_iso = cfg.photon_noise_iso;
+        enc.original_distance = cfg.original_distance;
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
         enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
@@ -5756,6 +5793,7 @@ fn encode_animation_lossy(
     enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
     enc.enable_noise = cfg.noise;
     enc.photon_noise_iso = cfg.photon_noise_iso;
+    enc.original_distance = cfg.original_distance;
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
     enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;

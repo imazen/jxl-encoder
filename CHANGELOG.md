@@ -54,6 +54,20 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LossyConfig::with_original_distance(Some(orig))`**: caller-supplied
+  source-image butteraugli distance for re-encode pipelines. Mirrors
+  libjxl's `cparams.original_butteraugli_distance` (`enc_frame.cc:100`).
+  When set, distance-based heuristics that compare against source
+  quality — primarily `x_qm_scale` (`enc_frame.cc:658`, ramped vs
+  `[2.5, 5.5, 9.5]` thresholds) — use the caller-supplied source
+  distance instead of the target. Useful when re-encoding an
+  already-lossy JPEG / JXL: the encoder needs to know the source's
+  existing error budget so it doesn't aggressively chroma-quantize as
+  if the source were pristine. `None` (default) keeps the existing
+  ground-truth-source behaviour. New `DistanceParams::compute_for_profile_with_original`
+  exposes the underlying entry point. Threaded through all three
+  call sites (one-shot, streaming, animation).
+
 - **`LossyConfig::with_photon_noise_iso(Some(iso))`**: synthesise noise
   parameters from a camera ISO value instead of estimating from
   content. Faithful port of libjxl's `SimulatePhotonNoise`

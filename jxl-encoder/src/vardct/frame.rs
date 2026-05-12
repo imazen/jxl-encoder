@@ -215,7 +215,7 @@ impl DistanceParams {
     /// This is the fallback when no quant field is available.
     pub fn compute(distance: f32) -> Self {
         // Use median=AC_QUANT/distance, MAD=0 for fixed formula (matches libjxl-tiny)
-        Self::compute_internal(distance, None)
+        Self::compute_internal(distance, distance, None)
     }
 
     /// Compute distance-dependent parameters from the effort profile.
@@ -229,7 +229,31 @@ impl DistanceParams {
     /// global_scale after each iteration.
     pub fn compute_for_profile(distance: f32, profile: &crate::effort::EffortProfile) -> Self {
         let q = profile.initial_q_numerator / distance;
-        Self::compute_from_q(distance, q)
+        Self::compute_internal(distance, distance, Some(q))
+    }
+
+    /// Same as [`Self::compute_for_profile`] but with an explicit
+    /// `original_distance` for x_qm_scale (and other distance-based
+    /// heuristics that compare against the source-image quality
+    /// rather than the target encode distance).
+    ///
+    /// Mirrors libjxl's `cparams.original_butteraugli_distance`
+    /// (`enc_frame.cc:100-102`): when the source isn't ground truth
+    /// — typically a re-encode of a JPEG or already-lossy JXL — the
+    /// caller passes the source's distance and the encoder treats
+    /// the target distance as the *additional* error budget on top
+    /// of the source's existing error.
+    ///
+    /// `original_distance` MUST be ≥ `distance`; the caller is
+    /// responsible. Callers re-encoding ground-truth lossless
+    /// content should keep using [`Self::compute_for_profile`].
+    pub fn compute_for_profile_with_original(
+        distance: f32,
+        original_distance: f32,
+        profile: &crate::effort::EffortProfile,
+    ) -> Self {
+        let q = profile.initial_q_numerator / distance;
+        Self::compute_internal(distance, original_distance, Some(q))
     }
 
     /// Compute distance-dependent parameters using content-adaptive global_scale.
@@ -277,11 +301,20 @@ impl DistanceParams {
     /// This is the core formula from libjxl quantizer.cc:ComputeGlobalScaleAndQuant
     /// with quant_median_absd=0 (i.e. `q = quant_median - 0 = quant_median`).
     fn compute_from_q(distance: f32, q: f32) -> Self {
-        Self::compute_internal(distance, Some(q))
+        Self::compute_internal(distance, distance, Some(q))
     }
 
     /// Internal implementation shared by all compute methods.
-    fn compute_internal(distance: f32, q_for_global_scale: Option<f32>) -> Self {
+    /// `distance` is the target encode distance (drives global_scale,
+    /// epf_iters, B/X channel scales). `original_distance` is the
+    /// caller-supplied source-image distance — equal to `distance`
+    /// for ground-truth sources, larger for re-encode pipelines.
+    /// Used only for x_qm_scale (libjxl `enc_frame.cc:658`).
+    fn compute_internal(
+        distance: f32,
+        original_distance: f32,
+        q_for_global_scale: Option<f32>,
+    ) -> Self {
         const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
         const GLOBAL_SCALE_NUMERATOR: i32 = 4096;
         const AC_QUANT: f32 = 0.765;
@@ -325,12 +358,15 @@ impl DistanceParams {
         let quant_dc = clamp((qdc / scale + 0.5) as i32, 1, 1 << 16);
         let scale_dc = (quant_dc as f32) * scale;
 
-        // X quant matrix scale - full libjxl formula (enc_frame.cc:655-661)
-        // Starts at 3, steps at [2.5, 5.5, 9.5] (vs libjxl-tiny: starts at 2, steps [1.25, 9.0])
+        // X quant matrix scale - full libjxl formula (enc_frame.cc:655-661).
+        // Steps at [2.5, 5.5, 9.5] vs `original_butteraugli_distance`,
+        // not the target distance — when re-encoding an already-lossy
+        // source, the source's distance is what x_qm_scale should
+        // ramp against. Equal to `distance` for ground-truth sources.
         let mut x_qm_scale = 3u32;
         let x_qm_scale_steps = [2.5f32, 5.5f32, 9.5f32];
         for step in &x_qm_scale_steps {
-            if distance > *step {
+            if original_distance > *step {
                 x_qm_scale += 1;
             }
         }
