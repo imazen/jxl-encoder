@@ -54,6 +54,24 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **DCT 4×4 / 4×8 / 8×4 NEON + WASM128 dispatch — closes #2**: 12
+  new `_neon` and `_wasm128` entry points (one per direction × 3
+  shapes × 2 archs) wire the small-block transforms onto the
+  cross-platform dispatcher. The 4×4-class kernels stay on the
+  scalar body (LLVM auto-vectorises the fixed-index value-returning
+  helpers well at this granularity), but they're now reached through
+  `#[archmage::arcane]` with the right NEON / WASM128 token, so the
+  caller's target_feature context survives the call. Removes the
+  last x86_64-only branch from the SIMD module structure. **#2 is
+  now fully closed**: every DCT / IDCT shape (4×4, 4×8, 8×4, 8×8,
+  16×8, 8×16, 16×16, 32×32, 32×16, 16×32, 64×64, 64×32, 32×64) has
+  AVX2 + NEON + WASM128 + scalar paths. If profiling later
+  identifies one of the 4×4 shapes as hot enough for hand-written
+  per-arch SIMD (a pixel-art / text-on-flat workload that picks
+  DCT4×4 frequently), the entry point is ready — only the body
+  needs a rewrite. All 6 `dct4::tests::*` pass on x86_64, aarch64
+  (NEON, via `cross`), and wasm32 (WASM128, via `wasmtime`).
+
 - **DCT/IDCT 64×64, 64×32, 32×64 NEON + WASM128 SIMD** (refs #2):
   six new SIMD functions in `jxl-encoder-simd` mirror the existing
   AVX2 paths but at 4-wide (f32x4). Same butterfly, same constants,
