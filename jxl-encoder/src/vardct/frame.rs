@@ -423,6 +423,44 @@ impl DistanceParams {
         ) as u8
     }
 
+    /// Multiply `global_scale` by `rescale` and recompute the
+    /// derived `scale` / `inv_scale` / `scale_dc` fields. Mirrors
+    /// libjxl `Quantizer::ScaleGlobalScale` (`quantizer.h:73`),
+    /// invoked from `enc_cache.cc:99` when
+    /// `cparams.quant_ac_rescale != 1.0`.
+    ///
+    /// Useful as a post-DistanceParams tweak when the caller wants
+    /// to nudge AC quantisation finer (`rescale < 1.0` → smaller
+    /// global_scale → finer quant) or coarser (`rescale > 1.0`)
+    /// without changing the target butteraugli distance. The picker
+    /// can also dial this per-image; the public knob is
+    /// [`crate::api::LossyConfig::with_quant_ac_rescale`].
+    ///
+    /// `rescale = 1.0` is a no-op. Negative / non-finite values are
+    /// silently ignored. The new `global_scale` is clamped to
+    /// `[1, scaled_quant_dc]` like the initial computation, and
+    /// `quant_dc` itself stays put (libjxl behaviour: scaling the
+    /// quantiser doesn't move the DC quant).
+    pub fn apply_quant_ac_rescale(&mut self, rescale: f32) {
+        if !rescale.is_finite() || rescale <= 0.0 || (rescale - 1.0).abs() < f32::EPSILON {
+            return;
+        }
+        const GLOBAL_SCALE_DENOM: i32 = 1 << 16;
+        let new_global_scale = ((self.global_scale as f32) * rescale).round() as i32;
+        // Mirror compute_internal's clamp: at minimum 1, at maximum
+        // the same scaled_quant_dc bound (`qdc * 4096 * 1.6`). We
+        // don't have qdc here, but `quant_dc` is the post-clamp DC
+        // quant, so `scaled_quant_dc >= quant_dc`. Use that as the
+        // upper bound to match the original clamp behaviour
+        // conservatively.
+        let upper = self.global_scale.max(self.quant_dc);
+        let new_global_scale = new_global_scale.clamp(1, upper.max(1));
+        self.global_scale = new_global_scale;
+        self.scale = (new_global_scale as f32) / (GLOBAL_SCALE_DENOM as f32);
+        self.inv_scale = 1.0 / self.scale;
+        self.scale_dc = (self.quant_dc as f32) * self.scale;
+    }
+
     /// Apply pixel-level chromacity adjustments from pre-computed pixel stats.
     ///
     /// Matches libjxl's `ComputeChromacityAdjustments` (enc_frame.cc:647-674):

@@ -1288,6 +1288,9 @@ impl VarDctEncoder {
             }
             _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
         };
+        if let Some(rescale) = self.quant_ac_rescale {
+            params.apply_quant_ac_rescale(rescale);
+        }
         if self.profile.chromacity_adjustment {
             params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
         }
