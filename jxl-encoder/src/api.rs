@@ -155,6 +155,103 @@ pub const MAX_QUANT_LOOP_ITERS: u32 = Limits::DEFAULT_MAX_QUANT_LOOP_ITERS;
 /// [`Limits::DEFAULT_MAX_MEMORY_BYTES`].
 pub const DEFAULT_MAX_MEMORY_BYTES: u64 = Limits::DEFAULT_MAX_MEMORY_BYTES;
 
+/// Conservative-upper-bound peak working-set estimate for a lossy
+/// encode at the given dimensions. Backs
+/// [`LossyConfig::estimate_peak_memory_bytes`]; pulled out as a free
+/// function so the formula can be unit-tested without instantiating
+/// a config. See the doc on `LossyConfig::estimate_peak_memory_bytes`
+/// for the per-buffer breakdown.
+pub(crate) fn estimate_peak_memory_bytes_lossy(
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+) -> Option<u64> {
+    let w = width as u64;
+    let h = height as u64;
+    let pixels = w.checked_mul(h)?;
+    let padded_w = w.checked_add(7)? & !7;
+    let padded_h = h.checked_add(7)? & !7;
+    let padded_pixels = padded_w.checked_mul(padded_h)?;
+    let blocks = padded_pixels / 64;
+
+    // (1) linear_rgb: pixels × 3 channels × 4 bytes (f32). Always RGB
+    //     internally regardless of pixel layout — gray expands.
+    let linear_rgb = pixels.checked_mul(12)?;
+
+    // (2) XYB planes: 3 padded channels × 4 bytes (f32).
+    let xyb = padded_pixels.checked_mul(12)?;
+
+    // (3) quant_ac: 3 channels × blocks × 64 coeffs × 4 bytes (i32).
+    let quant_ac = blocks.checked_mul(3 * 64 * 4)?;
+
+    // (4) Alpha buffer (when present).
+    let alpha = if layout.has_alpha() { pixels } else { 0 };
+
+    let major = linear_rgb
+        .checked_add(xyb)?
+        .checked_add(quant_ac)?
+        .checked_add(alpha)?;
+
+    // 25 % overhead for entropy-coder bit buffer, histograms,
+    // scratch, transform working state.
+    major.checked_add(major / 4)
+}
+
+/// Conservative-upper-bound peak working-set estimate for a lossless
+/// encode at the given dimensions. Backs
+/// [`LosslessConfig::estimate_peak_memory_bytes`].
+pub(crate) fn estimate_peak_memory_bytes_lossless(
+    width: u32,
+    height: u32,
+    layout: PixelLayout,
+    effort: u8,
+    squeeze: bool,
+) -> Option<u64> {
+    let w = width as u64;
+    let h = height as u64;
+    let pixels = w.checked_mul(h)?;
+
+    let channels: u64 = match layout {
+        PixelLayout::Gray8 | PixelLayout::Gray16 | PixelLayout::GrayLinearF32 => 1,
+        PixelLayout::GrayAlpha8 | PixelLayout::GrayAlpha16 | PixelLayout::GrayAlphaLinearF32 => 2,
+        PixelLayout::Rgb8 | PixelLayout::Rgb16 | PixelLayout::RgbLinearF32 | PixelLayout::Bgr8 => 3,
+        PixelLayout::Rgba8
+        | PixelLayout::Rgba16
+        | PixelLayout::RgbaLinearF32
+        | PixelLayout::Bgra8 => 4,
+        PixelLayout::RgbLinearF16 | PixelLayout::RgbaLinearF16 => 4,
+        PixelLayout::GrayLinearF16 | PixelLayout::GrayAlphaLinearF16 => 2,
+    };
+
+    // (1) Channel planes: i32 per pixel per channel.
+    let channel_planes = pixels.checked_mul(channels)?.checked_mul(4)?;
+
+    // (2) Predictor scratch (gradient + weighted state): one i32 plane.
+    let predictor = pixels.checked_mul(4)?;
+
+    // (3) Tree-learning state (effort >= 7). 8 bytes/pixel for typical
+    //     histogram counts; 0 otherwise.
+    let tree_learning = if effort >= 7 {
+        pixels.checked_mul(8)?
+    } else {
+        0
+    };
+
+    // (4) Squeeze residuals: one extra channel-plane pair when on.
+    let squeeze_state = if squeeze {
+        pixels.checked_mul(channels)?.checked_mul(4)?
+    } else {
+        0
+    };
+
+    let major = channel_planes
+        .checked_add(predictor)?
+        .checked_add(tree_learning)?
+        .checked_add(squeeze_state)?;
+
+    major.checked_add(major / 4)
+}
+
 // ── EncodeResult / EncodeStats ──────────────────────────────────────────────
 
 /// Result of an encode operation. Holds encoded data and metrics.
@@ -1016,6 +1113,38 @@ impl LosslessConfig {
         self.lz77_method
     }
 
+    /// Conservative upper bound on peak working-set memory for a
+    /// lossless encode of this configuration at `(width, height)`
+    /// pixels with the given pixel layout.
+    ///
+    /// Models the dimension-driven buffers that dominate the modular
+    /// encoder's peak RSS:
+    ///
+    /// 1. Channel planes: one `i32` per pixel per channel
+    ///    (`pixels * channels * 4` bytes). 8-bit and 16-bit inputs
+    ///    both expand to i32 internally for residual encoding.
+    /// 2. Predictor scratch: one i32 plane equivalent
+    ///    (`pixels * 4` bytes) for gradient / weighted-predictor
+    ///    state.
+    /// 3. Tree-learning state (effort >= 7): `pixels * tokens` bytes
+    ///    for the sample histogram. Modelled as 8 bytes per pixel for
+    ///    a typical run.
+    /// 4. Squeeze residuals (when enabled): one extra channel-plane
+    ///    pair for the wavelet decomposition.
+    ///
+    /// Then a 25 % overhead is added for the entropy-coder bit
+    /// buffer, histograms, and unmodelled scratch.
+    ///
+    /// Returns `None` only if the dimensions overflow `u64`.
+    pub fn estimate_peak_memory_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Option<u64> {
+        estimate_peak_memory_bytes_lossless(width, height, layout, self.effort, self.squeeze)
+    }
+
     /// Whether patches (dictionary-based repeated pattern detection) are enabled.
     pub fn patches(&self) -> bool {
         self.patches
@@ -1837,6 +1966,44 @@ impl LossyConfig {
     /// Whether LfFrame (separate DC frame) is enabled.
     pub fn lf_frame(&self) -> bool {
         self.lf_frame
+    }
+
+    /// Conservative upper bound on peak working-set memory for an
+    /// encode of this configuration at `(width, height)` pixels with
+    /// the given pixel layout.
+    ///
+    /// Models the four large dimension-driven buffers that dominate
+    /// encoder peak RSS today:
+    ///
+    /// 1. `linear_rgb`: `pixels * 3 * 4` bytes (always RGB f32 — gray
+    ///    layouts are expanded before XYB conversion).
+    /// 2. XYB planes (`xyb_x` / `xyb_y` / `xyb_b`):
+    ///    `padded_pixels * 3 * 4` bytes, padded to the 8×8 block
+    ///    boundary so SIMD doesn't bounds-check.
+    /// 3. `quant_ac`: `blocks * 3 * 64 * 4` bytes (per-channel,
+    ///    per-block 64 i32 coefficients).
+    /// 4. Alpha buffer (when the layout carries alpha): `pixels` bytes.
+    ///
+    /// Then a 25 % overhead is added to absorb small unmodelled
+    /// allocations (entropy-coder bit buffer, scratch transforms,
+    /// histograms, tokens, transient gaborish padding). The result is
+    /// a *conservative upper bound* — actual usage is typically a few
+    /// tens of percent lower.
+    ///
+    /// Useful for capacity planning and for choosing between one-shot
+    /// encode and the streaming path (closes #11) once it lands —
+    /// streaming will collapse buffers (1)–(3) to roughly one DC
+    /// group's worth (~1.5 MB) regardless of full image size.
+    ///
+    /// Returns `None` only if the dimensions overflow `u64`, which is
+    /// effectively unreachable for any realistic encode.
+    pub fn estimate_peak_memory_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        layout: PixelLayout,
+    ) -> Option<u64> {
+        estimate_peak_memory_bytes_lossy(width, height, layout)
     }
 
     /// Butteraugli quantization loop iterations.
