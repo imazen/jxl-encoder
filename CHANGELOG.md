@@ -54,6 +54,23 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **DCT/IDCT 32×32, 32×16, 16×32 NEON + WASM128 SIMD** (refs #2):
+  six new SIMD functions in `jxl-encoder-simd` mirror the existing
+  AVX2 paths but at 4-wide (f32x4) rather than 8-wide. Same butterfly,
+  same constants, same `dct1d_32_batch_*` recursion into the 16-point
+  batch. Dispatcher in `dct_32x32` / `dct_32x16` / `dct_16x32` /
+  `idct_32x32` / `idct_32x16` / `idct_16x32` now selects AVX2 → NEON
+  → WASM128 → scalar. Closes the largest of the three remaining gaps
+  in #2 (DCT/IDCT 32×32). Leaves DCT/IDCT 64×64 + DCT 4×4 (17 funcs)
+  for follow-up ticks. All 16 `dct32::tests::*` + `idct32::tests::*`
+  pass on x86_64, aarch64 (NEON, via `cross`), and wasm32 (WASM128,
+  via `wasmtime`). Also lifts pre-existing `INV_WC32` x86_64-only
+  cfg gate and rewrites two `(MASKING_K_MUL * 1e8_f32).sqrt()`
+  call sites in `adaptive_quant.rs` to use the
+  `crate::scalarmath::sqrt_f32` veneer (was blocking no_std wasm
+  builds — `f32::sqrt` is std-only, the veneer dispatches between
+  std and `libm` based on cargo features).
+
 - **2×/4×/8× input resampling for high-distance encoding** (closes #12,
   46b4b78 + 5ecc0c1 + c3a9b5d + 4e4d186): new
   `LossyConfig::with_resampling(factor)` accepts 1/2/4/8; the encoder

@@ -898,7 +898,7 @@ pub fn compute_pre_erosion_neon(
     let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
     let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
     let limit_v = f32x4::splat(token, LIMIT);
-    let masking_mul_v = f32x4::splat(token, (MASKING_K_MUL * 1e8_f32).sqrt());
+    let masking_mul_v = f32x4::splat(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
     let masking_offset_v = f32x4::splat(token, MASKING_K_LOG_OFFSET);
     let masking_scale = f32x4::splat(token, 0.25);
 
@@ -1201,7 +1201,7 @@ pub fn compute_pre_erosion_wasm128(
     let k_den_mul_v = f32x4::splat(token, K_DEN_MUL);
     let k_v_offset_v = f32x4::splat(token, K_V_OFFSET);
     let limit_v = f32x4::splat(token, LIMIT);
-    let masking_mul_v = f32x4::splat(token, (MASKING_K_MUL * 1e8_f32).sqrt());
+    let masking_mul_v = f32x4::splat(token, crate::scalarmath::sqrt_f32(MASKING_K_MUL * 1e8_f32));
     let masking_offset_v = f32x4::splat(token, MASKING_K_LOG_OFFSET);
     let masking_scale = f32x4::splat(token, 0.25);
 
