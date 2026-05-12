@@ -151,6 +151,13 @@ pub struct VarDctEncoder {
     /// for re-encoding denoised content where the caller wants to
     /// inject controlled grain matching a target camera ISO.
     pub photon_noise_iso: Option<f32>,
+    /// Caller-supplied source-image butteraugli distance for re-encode
+    /// pipelines. When set, x_qm_scale (and other distance-based
+    /// heuristics that compare against source quality, not target
+    /// quality) ramp against this value instead of `distance`.
+    /// Mirrors libjxl's `cparams.original_butteraugli_distance`.
+    /// `None` = use `distance` (ground-truth source).
+    pub original_distance: Option<f32>,
     /// Enable Wiener denoising pre-filter (requires `enable_noise`).
     /// When true, applies a conservative Wiener filter to remove estimated noise
     /// before encoding. The decoder re-adds noise from the encoded parameters.
@@ -339,6 +346,7 @@ impl Default for VarDctEncoder {
             force_strategy: None,
             enable_noise: false,
             photon_noise_iso: None,
+            original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
@@ -392,6 +400,7 @@ impl VarDctEncoder {
             force_strategy: None,
             enable_noise: false,
             photon_noise_iso: None,
+            original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
             error_diffusion: false, // libjxl accepts param but never uses it in QuantizeBlockAC
@@ -876,7 +885,16 @@ impl VarDctEncoder {
         // Uses profile.initial_q_numerator for q = numerator / distance.
         // The adaptive median/MAD formula is only used inside the butteraugli
         // loop (effort >= 8).
-        let mut params = DistanceParams::compute_for_profile(self.distance, &self.profile);
+        let mut params = match self.original_distance {
+            Some(orig) if orig > self.distance => {
+                DistanceParams::compute_for_profile_with_original(
+                    self.distance,
+                    orig,
+                    &self.profile,
+                )
+            }
+            _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
+        };
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         // Gated at effort >= 7 (speed_tier <= kSquirrel) matching libjxl
@@ -1774,7 +1792,16 @@ impl VarDctEncoder {
         adjust_quant_field_with_distance(&precomputed.ac_strategy, &mut quant_field, self.distance);
 
         // Compute distance params from effort profile
-        let mut params = DistanceParams::compute_for_profile(self.distance, &self.profile);
+        let mut params = match self.original_distance {
+            Some(orig) if orig > self.distance => {
+                DistanceParams::compute_for_profile_with_original(
+                    self.distance,
+                    orig,
+                    &self.profile,
+                )
+            }
+            _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
+        };
 
         // Apply pixel-level chromacity adjustments using pre-gaborish stats
         if self.profile.chromacity_adjustment {

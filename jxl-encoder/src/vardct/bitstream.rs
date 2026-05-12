@@ -1278,7 +1278,16 @@ impl VarDctEncoder {
                 self.budget.as_ref(),
             )?;
 
-        let mut params = DistanceParams::compute_for_profile(self.distance, &self.profile);
+        let mut params = match self.original_distance {
+            Some(orig) if orig > self.distance => {
+                DistanceParams::compute_for_profile_with_original(
+                    self.distance,
+                    orig,
+                    &self.profile,
+                )
+            }
+            _ => DistanceParams::compute_for_profile(self.distance, &self.profile),
+        };
         if self.profile.chromacity_adjustment {
             params.apply_chromacity_adjustment(chromacity_x, chromacity_b);
         }
