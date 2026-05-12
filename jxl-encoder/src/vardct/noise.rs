@@ -743,6 +743,108 @@ pub fn noise_quality_coef(distance: f32) -> f32 {
     }
 }
 
+// ── Photon noise simulation (parity with libjxl --photon_noise) ─────────
+//
+// Port of `libjxl/lib/jxl/enc_photon_noise.cc::SimulatePhotonNoise`.
+// Synthesises noise parameters from an ISO value rather than estimating
+// from image content. Useful for re-encoding denoised photographs (or
+// CGI / HDR content) where the user wants to inject controlled grain
+// matching a target camera ISO instead of preserving the source's
+// natural noise.
+
+/// Photons absorbed per lx·s per μm² under a daylight-like spectrum.
+/// <https://www.strollswithmydog.com/effective-quantum-efficiency-of-sensor/>
+const PHOTONS_PER_LX_S_PER_UM2: f32 = 11260.0;
+
+/// Order-of-magnitude effective quantum efficiency for 2010-2020 cameras
+/// after Colour Filter Array (CFA) attenuation.
+const EFFECTIVE_QUANTUM_EFFICIENCY: f32 = 0.20;
+
+/// Photo response non-uniformity (PRNU) — pixel-to-pixel sensitivity
+/// variation.
+const PHOTO_RESPONSE_NON_UNIFORMITY: f32 = 0.005;
+
+/// Input-referred read noise, in electrons RMS.
+const INPUT_REFERRED_READ_NOISE: f32 = 3.0;
+
+/// Sensor area in μm² — assumes a 35 mm full-frame sensor (36 × 24 mm).
+const SENSOR_AREA_UM2: f32 = 36_000.0 * 24_000.0;
+
+/// Opsin absorbance bias for the Y channel — matches
+/// `lib/jxl/cms/opsin_params.h::kOpsinAbsorbanceBias[1]`.
+const OPSIN_ABSORBANCE_BIAS_Y: f32 = 0.0037930732552754493;
+
+#[inline]
+fn square(x: f32) -> f32 {
+    x * x
+}
+
+#[inline]
+fn cube(x: f32) -> f32 {
+    x * x * x
+}
+
+/// Simulate photon noise for a camera at the given ISO and image
+/// dimensions. Returns a [`NoiseParams`] LUT ready to write into the
+/// bitstream — bypasses [`estimate_noise_params`], which infers noise
+/// from the image content.
+///
+/// Bit-faithful port of libjxl `SimulatePhotonNoise` (BSD-3-Clause).
+/// Default sensor geometry: 35 mm full-frame, daylight spectrum,
+/// effective QE 0.2, PRNU 0.5 %, read noise 3 e⁻ RMS.
+///
+/// ISO values follow standard camera ISO sensitivity: 100 = bright
+/// outdoors, 800 = indoor, 6400+ = low-light grainy.
+pub fn simulate_photon_noise(xsize: usize, ysize: usize, iso: f32) -> NoiseParams {
+    let opsin_bias_cbrt = OPSIN_ABSORBANCE_BIAS_Y.cbrt();
+
+    // Focal-plane exposure for 18 % grey at the default intensity
+    // target. ISO = 10 lx·s / H ⇒ H_18 = 10 / iso.
+    let h_18 = 10.0 / iso;
+
+    let pixel_area_um2 = SENSOR_AREA_UM2 / (xsize as f32 * ysize as f32);
+
+    let electrons_per_pixel_18 =
+        EFFECTIVE_QUANTUM_EFFICIENCY * PHOTONS_PER_LX_S_PER_UM2 * h_18 * pixel_area_um2;
+
+    let mut params = NoiseParams::default();
+
+    for i in 0..NUM_NOISE_POINTS {
+        let scaled_index = i as f32 / (NUM_NOISE_POINTS as f32 - 2.0);
+        // scaled_index is used for XYB = (0, 2·scaled_index, 2·scaled_index).
+        let y = 2.0 * scaled_index;
+        // 1 = default intensity target.
+        let linear = (cube(y - opsin_bias_cbrt) + OPSIN_ABSORBANCE_BIAS_Y).max(0.0);
+        let electrons_per_pixel = electrons_per_pixel_18 * (linear / 0.18);
+
+        // Quadrature sum of read noise, photon shot noise (sqrt(S),
+        // so not squared inside the sqrt), and photo response
+        // non-uniformity. Units: electrons RMS.
+        // <https://doi.org/10.1117/3.725073>
+        let noise = (square(INPUT_REFERRED_READ_NOISE)
+            + electrons_per_pixel
+            + square(PHOTO_RESPONSE_NON_UNIFORMITY * electrons_per_pixel))
+        .sqrt();
+        let linear_noise = noise * (0.18 / electrons_per_pixel_18);
+
+        // Convert linear-domain noise to opsin (XYB Y) via the
+        // derivative of the cube-root opsin function:
+        //   opsin'(linear) = 1 / (3 · (linear - bias)^(2/3))
+        let opsin_derivative = (1.0 / 3.0) / square((linear - OPSIN_ABSORBANCE_BIAS_Y).cbrt());
+        let opsin_noise = linear_noise * opsin_derivative;
+
+        // Normalisation constants from the noise-synthesis pipeline
+        // (libjxl `noise.h::kNoiseLutMax` and friends).
+        //   0.22  = norm_const
+        //   sqrt(2) = red_noise + green_noise contribution
+        //   1.13  = standard deviation of a plane of generated noise
+        let v = opsin_noise / (0.22 * core::f32::consts::SQRT_2 * 1.13);
+        params.lut[i] = v.clamp(0.0, NOISE_LUT_MAX);
+    }
+
+    params
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

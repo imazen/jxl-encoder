@@ -1389,6 +1389,9 @@ pub struct LossyConfig {
     use_ans: bool,
     gaborish: bool,
     noise: bool,
+    /// When `Some(iso)`, synthesise noise from the ISO value rather
+    /// than estimating from content. Matches libjxl `--photon_noise=ISO`.
+    photon_noise_iso: Option<f32>,
     denoise: bool,
     error_diffusion: bool,
     pixel_domain_loss: bool,
@@ -1495,6 +1498,7 @@ impl LossyConfig {
             use_ans: profile.use_ans,
             gaborish: profile.gaborish,
             noise: false,
+            photon_noise_iso: None,
             denoise: false,
             error_diffusion: profile.error_diffusion,
             pixel_domain_loss: profile.pixel_domain_loss,
@@ -1582,6 +1586,7 @@ impl LossyConfig {
         // Preserve settings that are never effort-derived (always opt-in)
         new.mode = self.mode;
         new.noise = self.noise;
+        new.photon_noise_iso = self.photon_noise_iso;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
         new.max_strategy_size = self.max_strategy_size;
@@ -1634,6 +1639,30 @@ impl LossyConfig {
     /// Enable/disable noise synthesis (default: false).
     pub fn with_noise(mut self, enable: bool) -> Self {
         self.noise = enable;
+        self
+    }
+
+    /// Synthesise noise from an ISO value (matches libjxl
+    /// `--photon_noise=ISO`). Bypasses content estimation — the
+    /// encoder generates an 8-point noise LUT corresponding to a
+    /// camera at the given ISO setting (read noise, photon shot
+    /// noise, photo response non-uniformity), assuming a 35 mm
+    /// full-frame sensor and daylight spectrum.
+    ///
+    /// Useful for re-encoding **denoised** photographs (or CGI / HDR
+    /// content) where the caller wants controlled grain matching a
+    /// target camera ISO instead of preserving the source's natural
+    /// noise. Typical values: `100` for bright outdoors, `800`
+    /// indoor, `6400+` for low-light grainy.
+    ///
+    /// `Some(iso)` with `iso > 0.0` enables; `None` or `Some(0.0)`
+    /// disables. Takes priority over [`Self::with_noise`] (and
+    /// implies it from a bitstream perspective — both flag the noise
+    /// header). Negative or non-finite ISO values are ignored.
+    ///
+    /// Closes the libjxl `--photon_noise` feature parity gap.
+    pub fn with_photon_noise_iso(mut self, iso: Option<f32>) -> Self {
+        self.photon_noise_iso = iso.filter(|v| v.is_finite() && *v > 0.0);
         self
     }
 
@@ -1968,6 +1997,13 @@ impl LossyConfig {
     /// Whether noise synthesis is enabled.
     pub fn noise(&self) -> bool {
         self.noise
+    }
+
+    /// Configured photon-noise ISO, if any. `Some(iso)` means the
+    /// encoder will synthesise noise from this ISO value instead of
+    /// estimating from content. Matches libjxl `--photon_noise=ISO`.
+    pub fn photon_noise_iso(&self) -> Option<f32> {
+        self.photon_noise_iso
     }
 
     /// Whether Wiener denoising pre-filter is enabled.
@@ -3511,6 +3547,7 @@ impl<'a> EncodeRequest<'a> {
         enc.custom_orders = enc.profile.custom_orders;
         enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
         enc.enable_noise = cfg.noise;
+        enc.photon_noise_iso = cfg.photon_noise_iso;
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
         enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
@@ -4327,6 +4364,7 @@ impl LossyEncoder {
             enc.custom_orders = enc.profile.custom_orders;
             enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
             enc.enable_noise = cfg.noise;
+            enc.photon_noise_iso = cfg.photon_noise_iso;
             enc.enable_denoise = cfg.denoise;
             enc.enable_gaborish = cfg.gaborish && effective_distance > 0.5;
             enc.error_diffusion = cfg.error_diffusion;
@@ -5717,6 +5755,7 @@ fn encode_animation_lossy(
     enc.custom_orders = enc.profile.custom_orders;
     enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
     enc.enable_noise = cfg.noise;
+    enc.photon_noise_iso = cfg.photon_noise_iso;
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
     enc.enable_gaborish = cfg.gaborish && cfg.distance > 0.5;
