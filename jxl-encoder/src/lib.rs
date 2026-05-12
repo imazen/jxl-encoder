@@ -67,6 +67,7 @@ pub use headers::color_encoding::{
     CIExy, ColorEncoding, ColorSpace, CustomPrimaries, Primaries, RenderingIntent,
     TransferFunction, WhitePoint,
 };
+pub use modular::rct::RctType;
 pub use validation::ValidationError;
 pub use vardct::splines::{Spline, SplinePoint};
 

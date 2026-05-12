@@ -65,6 +65,37 @@ struct Args {
     #[arg(long)]
     denoise: bool,
 
+    /// Synthesise camera-ISO photon noise instead of estimating from
+    /// content. Mirrors libjxl `--photon_noise=ISO`. Bypasses
+    /// `--noise`. Typical: 100 (bright outdoors), 800 (indoor),
+    /// 6400+ (low-light grainy).
+    #[arg(long, value_name = "ISO")]
+    photon_noise_iso: Option<f32>,
+
+    /// Caller-supplied source-image distance for re-encode pipelines.
+    /// Mirrors libjxl `--original_butteraugli_distance`. When the
+    /// source is already lossy (re-encoding a JPEG / JXL), pass its
+    /// approximate distance; the encoder's distance-based heuristics
+    /// (x_qm_scale) ramp against this rather than the target.
+    #[arg(long, value_name = "DIST")]
+    original_distance: Option<f32>,
+
+    /// Multiplier on the AC quantiser's `global_scale` after the
+    /// standard distance-driven compute. Mirrors libjxl
+    /// `--quant_ac_rescale`. r < 1.0 → finer AC quant (larger files,
+    /// higher quality); r > 1.0 → coarser. Reasonable range
+    /// 0.5..=2.0; 1.0 is no-op.
+    #[arg(long, value_name = "R")]
+    quant_ac_rescale: Option<f32>,
+
+    /// Force a specific Reversible Color Transform colorspace for
+    /// lossless encoding (skips the per-effort RCT search). Mirrors
+    /// libjxl `--colorspace`. Common values: 0 (none), 3
+    /// (subtract-green), 6 (YCoCg, default fallback). Full RCT table
+    /// 0..=41 (permutation × transform).
+    #[arg(long, value_name = "RCT")]
+    force_rct: Option<u8>,
+
     /// Disable gaborish inverse pre-filter (on by default).
     /// Without gaborish, the decoder skips its 3x3 blur post-filter.
     #[arg(long)]
@@ -360,6 +391,10 @@ fn main() {
                     if args.denoise {
                         cfg = cfg.with_denoise(true);
                     }
+                    // libjxl-parity Option<f32> knobs — None is a no-op
+                    cfg = cfg.with_photon_noise_iso(args.photon_noise_iso);
+                    cfg = cfg.with_original_distance(args.original_distance);
+                    cfg = cfg.with_quant_ac_rescale(args.quant_ac_rescale);
                     if args.error_diffusion {
                         cfg = cfg.with_error_diffusion(true);
                     }
@@ -457,6 +492,9 @@ fn main() {
                         }
                         if args.lossy_palette {
                             lcfg = lcfg.with_lossy_palette(true);
+                        }
+                        if let Some(rct) = args.force_rct {
+                            lcfg = lcfg.with_force_rct(Some(jxl_encoder::RctType(rct)));
                         }
                         if args.experimental {
                             lcfg = lcfg.with_mode(jxl_encoder::EncoderMode::Experimental);
@@ -648,6 +686,10 @@ fn main() {
         if args.denoise {
             cfg = cfg.with_denoise(true);
         }
+        // libjxl-parity Option<f32> knobs — None is a no-op
+        cfg = cfg.with_photon_noise_iso(args.photon_noise_iso);
+        cfg = cfg.with_original_distance(args.original_distance);
+        cfg = cfg.with_quant_ac_rescale(args.quant_ac_rescale);
         if args.error_diffusion {
             cfg = cfg.with_error_diffusion(true);
         }
@@ -870,6 +912,9 @@ fn main() {
         }
         if args.lossy_palette {
             cfg = cfg.with_lossy_palette(true);
+        }
+        if let Some(rct) = args.force_rct {
+            cfg = cfg.with_force_rct(Some(jxl_encoder::RctType(rct)));
         }
         if args.experimental {
             cfg = cfg.with_mode(jxl_encoder::EncoderMode::Experimental);
