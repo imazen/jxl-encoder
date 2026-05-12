@@ -893,6 +893,28 @@ pub struct AnimationFrame<'a> {
 /// Lossless (modular) encoding configuration.
 ///
 /// Has a sensible `Default` — lossless has no quality ambiguity.
+///
+/// # libjxl-parity knobs
+///
+/// The following builders mirror libjxl `cparams` fields:
+///
+/// - [`Self::with_force_rct`] — `cparams.colorspace`, force a
+///   specific Reversible Color Transform (skip the per-effort
+///   search). Use [`crate::RctType::YCOCG`] for screenshots.
+/// - [`Self::with_tree_learning_sample_fraction`] — override the
+///   effort-derived tree-learning sample fraction. Lower the
+///   effort-7 cliff (#23) by setting `0.10..=0.20` for a
+///   "tree-learning lite" trade.
+/// - [`Self::with_squeeze`] — Haar wavelet decomposition (libjxl
+///   `cparams.responsive`).
+/// - [`Self::with_lossy_palette`] — near-lossless delta palette
+///   (libjxl `cparams.lossy_palette`).
+/// - [`EncodeRequest::with_brotli_metadata`] — Brotli-compress EXIF /
+///   XMP into `brob` boxes (request-level, applies to both modes).
+///
+/// See [`LossyConfig`] for the matching VarDCT-side knobs
+/// (`with_photon_noise_iso`, `with_original_distance`,
+/// `with_quant_ac_rescale`, etc.).
 #[derive(Clone, Debug)]
 pub struct LosslessConfig {
     effort: u8,
@@ -1419,6 +1441,35 @@ pub enum ProgressiveMode {
 /// Lossy (VarDCT) encoding configuration.
 ///
 /// No `Default` — distance/quality is a required choice.
+///
+/// # libjxl-parity knobs
+///
+/// The following builders mirror libjxl `cparams` fields and give
+/// callers fine-grained control matching what `cjxl` exposes via
+/// command-line flags:
+///
+/// - [`Self::with_photon_noise_iso`] — `--photon_noise=ISO`,
+///   synthesise camera-ISO grain instead of estimating from content.
+/// - [`Self::with_manual_noise_lut`] — caller-supplied 8-point noise
+///   LUT (`cparams.manual_noise`).
+/// - [`Self::with_original_distance`] — source distance for re-encode
+///   pipelines (`cparams.original_butteraugli_distance`); `x_qm_scale`
+///   ramps against this rather than the target.
+/// - [`Self::with_quant_ac_rescale`] — post-compute multiplier on
+///   AC `global_scale` (`cparams.quant_ac_rescale`); `r < 1.0` →
+///   finer quant.
+/// - [`Self::with_already_downsampled`] — skip the internal
+///   downsample when the caller has already downsampled the input
+///   (`cparams.already_downsampled`).
+/// - [`Self::with_resampling`] / [`Self::with_auto_resampling`] —
+///   `cparams.resampling`.
+/// - [`Self::with_center_first`] — concentric-square AC group
+///   ordering (`cparams.centerfirst`).
+/// - [`EncodeRequest::with_brotli_metadata`] — Brotli-compress EXIF /
+///   XMP into `brob` boxes (request-level, applies to both modes).
+///
+/// See [`LosslessConfig`] for the matching modular-side knobs
+/// (`with_force_rct`, `with_tree_learning_sample_fraction`).
 #[derive(Clone, Debug)]
 pub struct LossyConfig {
     distance: f32,
