@@ -151,6 +151,13 @@ pub struct VarDctEncoder {
     /// for re-encoding denoised content where the caller wants to
     /// inject controlled grain matching a target camera ISO.
     pub photon_noise_iso: Option<f32>,
+    /// Caller-supplied 8-point noise LUT. Overrides content
+    /// estimation when set. Mirrors libjxl's `cparams.manual_noise`.
+    /// Lower priority than `photon_noise_iso`, higher than
+    /// `enable_noise`. Each entry should be in `[0.0, ~1.0]` —
+    /// values are written as 10-bit-quantised samples into the
+    /// frame-header noise block.
+    pub manual_noise_lut: Option<[f32; 8]>,
     /// Caller-supplied source-image butteraugli distance for re-encode
     /// pipelines. When set, x_qm_scale (and other distance-based
     /// heuristics that compare against source quality, not target
@@ -346,6 +353,7 @@ impl Default for VarDctEncoder {
             force_strategy: None,
             enable_noise: false,
             photon_noise_iso: None,
+            manual_noise_lut: None,
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
@@ -400,6 +408,7 @@ impl VarDctEncoder {
             force_strategy: None,
             enable_noise: false,
             photon_noise_iso: None,
+            manual_noise_lut: None,
             original_distance: None,
             enable_denoise: false,
             enable_gaborish: true,
@@ -654,13 +663,16 @@ impl VarDctEncoder {
         // forward_xyb is finite-output-for-finite-input.
         validate_xyb_planes(self.non_finite_action, &mut xyb_x, &mut xyb_y, &mut xyb_b)?;
 
-        // Noise parameters. Three sources, in priority order:
+        // Noise parameters. Four sources, in priority order
+        // (matches libjxl enc_frame.cc:680-689):
         // 1. `photon_noise_iso`: caller-supplied ISO value, bypasses
         //    content estimation. Matches libjxl --photon_noise. Useful
         //    for re-encoding denoised content with controlled grain.
-        // 2. `enable_noise` + content estimation: scan flat patches,
+        // 2. `manual_noise_lut`: caller-supplied 8-point LUT. Bypasses
+        //    everything else. Matches libjxl cparams.manual_noise.
+        // 3. `enable_noise` + content estimation: scan flat patches,
         //    fit an 8-point LUT via SCG optimisation.
-        // 3. Neither: no noise synthesis.
+        // 4. None of the above: no noise synthesis.
         let noise_params = if let Some(iso) = self.photon_noise_iso
             && iso > 0.0
         {
@@ -669,6 +681,16 @@ impl VarDctEncoder {
             // here. No content estimation, no denoise pre-filter — we
             // *add* synthetic grain, not preserve real noise.
             let params = super::noise::simulate_photon_noise(width, height, iso);
+            if params.has_any() { Some(params) } else { None }
+        } else if let Some(lut) = self.manual_noise_lut {
+            // Caller-supplied LUT — clamp to the encodable range
+            // [0, NOISE_LUT_MAX ≈ 0.9995] so write_noise_params can't
+            // panic on the 10-bit-quantise debug_assert. has_any()
+            // gates trivial all-zero LUTs out.
+            let mut params = super::noise::NoiseParams::default();
+            for (dst, src) in params.lut.iter_mut().zip(lut.iter()) {
+                *dst = src.clamp(0.0, 0.9995);
+            }
             if params.has_any() { Some(params) } else { None }
         } else if self.enable_noise {
             let quality_coef = noise_quality_coef(self.distance);

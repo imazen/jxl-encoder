@@ -54,6 +54,18 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LossyConfig::with_manual_noise_lut(Some(lut))`**: caller-supplied
+  8-point noise LUT, third noise source alongside content estimation
+  and photon-noise simulation. Mirrors libjxl's `cparams.manual_noise`.
+  Priority order matches libjxl `enc_frame.cc:680-689`:
+  `with_photon_noise_iso` > `with_manual_noise_lut` > `with_noise`
+  (content estimation) > no noise. Values are clamped to
+  `[0.0, ~0.9995]` so the 10-bit writer can't trip its debug-assert;
+  all-zero LUTs are silently dropped (no noise header emitted, output
+  matches no-noise baseline byte-for-byte). Useful when the caller
+  has its own noise model (film grain emulation, calibrated sensor
+  noise from downstream metadata).
+
 - **`LossyConfig::with_original_distance(Some(orig))`**: caller-supplied
   source-image butteraugli distance for re-encode pipelines. Mirrors
   libjxl's `cparams.original_butteraugli_distance` (`enc_frame.cc:100`).
