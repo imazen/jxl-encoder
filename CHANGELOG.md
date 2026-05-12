@@ -54,6 +54,18 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LossyConfig::with_perceptual_optimizations(bool)`**: convenience
+  switch toggling all encoder-side perceptual heuristics in one
+  call. Mirrors libjxl's `cparams.disable_perceptual_optimizations`
+  (`enc_heuristics.cc:215`, `enc_frame.cc:282`,
+  `enc_patch_dictionary.cc:637`). `false` disables gaborish,
+  patches, dot detection, noise, pixel-domain loss in one go;
+  `true` resets to libjxl-faithful defaults. Per-knob settings
+  called *after* still win. Useful for decoder testing,
+  reproducibility, and picker-training without perceptual
+  confounds. New `LossyConfig::patches()` and `dot_detection()`
+  getters added (the others already existed).
+
 - **`LossyConfig::with_already_downsampled(bool)`**: tells the encoder
   the input is already at the post-resampling resolution; skips the
   internal downsample but still writes the matching `upsampling`

@@ -8837,3 +8837,61 @@ fn test_lossy_already_downsampled_default_downsamples() {
     assert_eq!(image.width(), w);
     assert_eq!(image.height(), h);
 }
+
+/// `with_perceptual_optimizations(false)` should disable gaborish,
+/// patches, and pixel_domain_loss. dot_detection and noise stay off
+/// since both default off in libjxl.
+#[test]
+fn test_lossy_perceptual_optimizations_off() {
+    let cfg = LossyConfig::new(2.0).with_perceptual_optimizations(false);
+    assert!(!cfg.gaborish());
+    assert!(!cfg.patches());
+    assert!(!cfg.pixel_domain_loss());
+    assert!(!cfg.noise());
+}
+
+/// `with_perceptual_optimizations(true)` should turn the major
+/// perceptual heuristics back on (gaborish + patches + pixel-domain
+/// loss). Useful as an "undo" for the convenience disable.
+#[test]
+fn test_lossy_perceptual_optimizations_on() {
+    let cfg = LossyConfig::new(2.0)
+        .with_perceptual_optimizations(false)
+        .with_perceptual_optimizations(true);
+    assert!(cfg.gaborish());
+    assert!(cfg.patches());
+    assert!(cfg.pixel_domain_loss());
+}
+
+/// Caller-supplied per-knob settings called *after* the convenience
+/// disable should take precedence.
+#[test]
+fn test_lossy_perceptual_optimizations_per_knob_override_wins() {
+    let cfg = LossyConfig::new(2.0)
+        .with_perceptual_optimizations(false)
+        .with_gaborish(true);
+    assert!(
+        cfg.gaborish(),
+        "explicit with_gaborish(true) should override"
+    );
+    assert!(!cfg.patches(), "patches still disabled");
+}
+
+/// Encode end-to-end with perceptual optimizations off. The output
+/// should still be a valid bitstream that decodes via jxl-oxide.
+#[test]
+fn test_lossy_perceptual_optimizations_encode_decodes() {
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 7 % 251) as u8).collect();
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_perceptual_optimizations(false)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode with perceptual optimizations off");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse strict-spec output");
+    let _render = image.render_frame(0).expect("render strict-spec output");
+}
