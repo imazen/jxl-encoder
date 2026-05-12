@@ -54,6 +54,17 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`LosslessConfig::with_tree_learning_sample_fraction(f)`** (refs #23):
+  public knob to dial back the tree-learning sample fraction at e7+
+  for a smoother time/size trade between e6 (no tree) and e7
+  (full-strength tree). The effort cliff is real — at e7 tree
+  learning first turns on and adds ~28× encode time for ~38% size
+  win on a single illustration. Lowering the sample fraction (e.g.
+  `0.15` instead of the effort-7 default `0.50`) lets callers tune
+  between those two extremes without picker / `__expert` access.
+  Clamped to `[0.0, 1.0]` so a stray caller can't trip the
+  validator. No-op when `tree_learning` is disabled.
+
 - **`estimate_peak_memory_bytes` on both Config types** (refs #11):
   conservative upper bound on the encoder's peak working-set RSS for
   a given (width, height, layout) pair. Models the major
