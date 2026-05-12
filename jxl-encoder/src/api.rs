@@ -1392,6 +1392,10 @@ pub struct LossyConfig {
     /// When `Some(iso)`, synthesise noise from the ISO value rather
     /// than estimating from content. Matches libjxl `--photon_noise=ISO`.
     photon_noise_iso: Option<f32>,
+    /// Caller-supplied 8-point noise LUT. Mirrors libjxl
+    /// `cparams.manual_noise`. Lower priority than `photon_noise_iso`,
+    /// higher than content estimation.
+    manual_noise_lut: Option<[f32; 8]>,
     /// Caller-supplied source-image butteraugli distance for re-encode
     /// pipelines. Mirrors libjxl `cparams.original_butteraugli_distance`.
     /// `None` keeps libjxl's default behaviour (treat source as
@@ -1504,6 +1508,7 @@ impl LossyConfig {
             gaborish: profile.gaborish,
             noise: false,
             photon_noise_iso: None,
+            manual_noise_lut: None,
             original_distance: None,
             denoise: false,
             error_diffusion: profile.error_diffusion,
@@ -1593,6 +1598,7 @@ impl LossyConfig {
         new.mode = self.mode;
         new.noise = self.noise;
         new.photon_noise_iso = self.photon_noise_iso;
+        new.manual_noise_lut = self.manual_noise_lut;
         new.original_distance = self.original_distance;
         new.denoise = self.denoise;
         new.force_strategy = self.force_strategy;
@@ -1647,6 +1653,36 @@ impl LossyConfig {
     pub fn with_noise(mut self, enable: bool) -> Self {
         self.noise = enable;
         self
+    }
+
+    /// Set a caller-supplied 8-point noise LUT (matches libjxl
+    /// `cparams.manual_noise`). Each entry is the per-intensity
+    /// noise level the decoder will synthesise; positions 0–7 are
+    /// the standard JXL noise points covering the intensity range.
+    /// Values are clamped to `[0.0, ~0.9995]` so the 10-bit
+    /// quantisation can't trip the writer's debug-asserts.
+    ///
+    /// Priority order (matches libjxl `enc_frame.cc:680-689`):
+    /// 1. [`Self::with_photon_noise_iso`] (highest)
+    /// 2. This (`manual_noise_lut`)
+    /// 3. [`Self::with_noise`] + content estimation
+    /// 4. No noise
+    ///
+    /// An all-zero LUT is silently dropped (no noise header is
+    /// emitted). Useful when the caller has its own noise model
+    /// (e.g. film grain emulation, calibrated sensor noise from
+    /// downstream metadata).
+    ///
+    /// `None` disables the override; the encoder falls back to the
+    /// next-priority noise source.
+    pub fn with_manual_noise_lut(mut self, lut: Option<[f32; 8]>) -> Self {
+        self.manual_noise_lut = lut;
+        self
+    }
+
+    /// Configured manual noise LUT, if any.
+    pub fn manual_noise_lut(&self) -> Option<[f32; 8]> {
+        self.manual_noise_lut
     }
 
     /// Set the caller-supplied source-image butteraugli distance for
@@ -3584,6 +3620,7 @@ impl<'a> EncodeRequest<'a> {
         enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
         enc.enable_noise = cfg.noise;
         enc.photon_noise_iso = cfg.photon_noise_iso;
+        enc.manual_noise_lut = cfg.manual_noise_lut;
         enc.original_distance = cfg.original_distance;
         enc.enable_denoise = cfg.denoise;
         // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
@@ -5793,6 +5830,7 @@ fn encode_animation_lossy(
     enc.ac_strategy_enabled = enc.profile.ac_strategy_enabled;
     enc.enable_noise = cfg.noise;
     enc.photon_noise_iso = cfg.photon_noise_iso;
+    enc.manual_noise_lut = cfg.manual_noise_lut;
     enc.original_distance = cfg.original_distance;
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)

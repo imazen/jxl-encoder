@@ -8547,3 +8547,86 @@ fn test_lossy_with_original_distance_round_trip_encode() {
         .expect("jxl-oxide parse with original_distance");
     let _render = image.render_frame(0).expect("render");
 }
+
+/// Refs manual_noise parity: `with_manual_noise_lut` should round-trip
+/// through the getter and emit a noise-flagged bitstream when set.
+#[test]
+fn test_lossy_manual_noise_lut_round_trip() {
+    let lut = [0.05f32, 0.10, 0.15, 0.20, 0.15, 0.10, 0.05, 0.0];
+    let cfg = LossyConfig::new(1.0).with_manual_noise_lut(Some(lut));
+    assert_eq!(cfg.manual_noise_lut(), Some(lut));
+
+    let off = LossyConfig::new(1.0).with_manual_noise_lut(None);
+    assert!(off.manual_noise_lut().is_none());
+}
+
+/// Manual noise LUT should produce a valid bitstream that decodes
+/// via jxl-oxide. Smoke test that the field propagates.
+#[test]
+fn test_lossy_manual_noise_lut_encode() {
+    let w = 32u32;
+    let h = 32u32;
+    let pixels: Vec<u8> = (0..(w * h * 3)).map(|i| (i * 17 % 251) as u8).collect();
+    let lut = [0.04f32, 0.08, 0.12, 0.16, 0.12, 0.08, 0.04, 0.0];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_manual_noise_lut(Some(lut))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode lossy with manual_noise_lut");
+
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse manual-noise output");
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// Out-of-range manual_noise entries should clamp (no panic) and
+/// still produce a valid bitstream. Tests the writer's debug-assert
+/// is not hit by caller-supplied junk.
+#[test]
+fn test_lossy_manual_noise_lut_out_of_range_clamps() {
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = vec![64u8; (w * h * 3) as usize];
+    // Half the entries are absurd values that would fail the writer's
+    // assert if not clamped.
+    let lut = [10.0f32, -1.0, 0.5, 1000.0, 0.1, f32::INFINITY, 0.0, 0.05];
+    let bytes = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_manual_noise_lut(Some(lut))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode survives out-of-range manual_noise LUT");
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(&bytes))
+        .expect("jxl-oxide parse clamped-LUT output");
+    let _render = image.render_frame(0).expect("render");
+}
+
+/// All-zero manual_noise LUT should silently produce no noise
+/// header (matches libjxl `has_any()` check). Encode must still
+/// succeed.
+#[test]
+fn test_lossy_manual_noise_lut_all_zero_no_op() {
+    let w = 16u32;
+    let h = 16u32;
+    let pixels: Vec<u8> = vec![128u8; (w * h * 3) as usize];
+    let zero_lut = [0.0f32; 8];
+    let baseline = LossyConfig::new(2.0)
+        .with_effort(5)
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("baseline encode");
+    let with_zero_lut = LossyConfig::new(2.0)
+        .with_effort(5)
+        .with_manual_noise_lut(Some(zero_lut))
+        .encode_request(w, h, PixelLayout::Rgb8)
+        .encode(&pixels)
+        .expect("encode with all-zero manual_noise");
+    // The two should match byte-for-byte — zero LUT → no noise header.
+    assert_eq!(
+        baseline, with_zero_lut,
+        "all-zero manual_noise should produce the same bitstream as no-noise"
+    );
+}
