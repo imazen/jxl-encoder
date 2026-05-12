@@ -74,8 +74,17 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 | Patches / dictionary (default-on for screenshots) | No | Yes | Yes |
 | Fine-grained AC strategy search | Yes | Yes | Yes (effort 9+) |
 | Splines (opt-in API) | No | Yes | Yes |
-| Dots detection | No | Yes | No |
+| Dots detection | No | Yes | Yes (opt-in via `with_dot_detection`) |
 | Progressive VarDCT (2-pass / 3-pass) | Yes | Yes | Yes |
+| Photon-noise simulation (`--photon_noise=ISO`) | Yes | Yes | Yes (`with_photon_noise_iso`) |
+| Manual noise LUT (`cparams.manual_noise`) | Yes | Yes | Yes (`with_manual_noise_lut`) |
+| Original-distance for re-encode pipelines | Yes | Yes | Yes (`with_original_distance`) |
+| AC quantiser rescale (`cparams.quant_ac_rescale`) | Yes | Yes | Yes (`with_quant_ac_rescale`) |
+| Already-downsampled flag (skip internal downsample) | Yes | Yes | Yes (`with_already_downsampled`) |
+| Forced RCT colorspace (`--colorspace`, lossless) | Yes | Yes | Yes (`with_force_rct`) |
+| Disable perceptual optimizations | Yes | Yes | Yes (`with_perceptual_optimizations`) |
+| Tree-learning sample fraction override | n/a | n/a | Yes (`with_tree_learning_sample_fraction`, refs #23) |
+| Peak-memory estimate helper | No | No | Yes (`estimate_peak_memory_bytes`) |
 
 ### Lossless (Modular) — comparison with libjxl
 
@@ -125,7 +134,9 @@ We implement all 19 AC strategies that libjxl evaluates through effort 9, all en
 
 | Feature | libjxl | Impact | Notes |
 |---------|--------|--------|-------|
-| Dots detection | e7+ | Niche | Star fields, specular highlights |
+| Streaming frame encoding | Yes | Memory | Tracking issue #11; current impl buffers full image. `LossyConfig::estimate_peak_memory_bytes` lets callers plan around this until streaming lands. |
+| `ec_distance` (per-extra-channel quality) | Yes | Niche | Lossy alpha currently encoded as lossless modular extra. |
+| `decoding_speed_tier` | Yes | Niche | Distributed encoder behaviour change; we have individual gating knobs (`with_perceptual_optimizations`, `with_max_strategy_size`, etc.) that approximate the major effects. |
 
 ## AC strategy coverage
 
