@@ -54,6 +54,20 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **DCT/IDCT 64×64, 64×32, 32×64 NEON + WASM128 SIMD** (refs #2):
+  six new SIMD functions in `jxl-encoder-simd` mirror the existing
+  AVX2 paths but at 4-wide (f32x4). Same butterfly, same constants,
+  same `dct1d_64_batch_*` / `idct1d_64_core_batch_*` recursion into
+  the 32-point batch (which itself recurses into the 16-point batch
+  — both already have NEON + WASM coverage from the prior tick).
+  Dispatcher in `dct_64x64` / `dct_64x32` / `dct_32x64` /
+  `idct_64x64` / `idct_64x32` / `idct_32x64` now selects AVX2 → NEON
+  → WASM128 → scalar. Closes the second of the three remaining gaps
+  in #2 (DCT/IDCT 64×64). Leaves DCT 4×4 (17 funcs) for follow-up.
+  All 15 `dct64::tests::*` + `idct64::tests::*` pass on x86_64,
+  aarch64 (NEON), and wasm32 (WASM128). Also lifts pre-existing
+  `INV_WC64` x86_64-only cfg gate.
+
 - **DCT/IDCT 32×32, 32×16, 16×32 NEON + WASM128 SIMD** (refs #2):
   six new SIMD functions in `jxl-encoder-simd` mirror the existing
   AVX2 paths but at 4-wide (f32x4) rather than 8-wide. Same butterfly,

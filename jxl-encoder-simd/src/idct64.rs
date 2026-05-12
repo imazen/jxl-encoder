@@ -87,7 +87,11 @@ const WC_MULTIPLIERS_64: [f32; 32] = [
 ];
 
 // Pre-computed reciprocals to replace division with multiplication.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+))]
 #[allow(clippy::excessive_precision)]
 const INV_WC64: [f32; 32] = [
     1.0 / 0.500150636020651,
@@ -640,6 +644,480 @@ pub fn idct_32x64_avx2(token: archmage::X64V3Token, input: &[f32; 2048], output:
 }
 
 // ============================================================================
+// aarch64 NEON implementation — f32x4 (4-wide). Recursively calls
+// `idct32::idct1d_32_core_batch_neon` for the two halves and
+// `idct32::idct1d_32_batch_neon` for the 64×32 / 32×64 second pass.
+// ============================================================================
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+fn gather_col_neon(
+    token: archmage::NeonToken,
+    data: &[f32],
+    base_row: usize,
+    j: usize,
+    s: usize,
+) -> magetypes::simd::f32x4 {
+    magetypes::simd::f32x4::from_array(
+        token,
+        [
+            data[base_row * s + j],
+            data[(base_row + 1) * s + j],
+            data[(base_row + 2) * s + j],
+            data[(base_row + 3) * s + j],
+        ],
+    )
+}
+
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+fn scatter_col_neon(
+    _token: archmage::NeonToken,
+    v: magetypes::simd::f32x4,
+    data: &mut [f32],
+    base_row: usize,
+    j: usize,
+    s: usize,
+) {
+    let mut lane = [0.0f32; 4];
+    v.store(&mut lane);
+    for r in 0..4 {
+        data[(base_row + r) * s + j] = lane[r];
+    }
+}
+
+/// NEON batched 64-point core inverse DCT WITHOUT scaling.
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn idct1d_64_core_batch_neon(
+    token: archmage::NeonToken,
+    v: &mut [magetypes::simd::f32x4; 64],
+) {
+    use magetypes::simd::f32x4;
+
+    let half = f32x4::splat(token, 0.5);
+    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+
+    let mut first = [f32x4::zero(token); 32];
+    let mut second = [f32x4::zero(token); 32];
+    for i in 0..32 {
+        first[i] = v[2 * i];
+        second[i] = v[2 * i + 1];
+    }
+
+    for i in (1..31).rev() {
+        second[i] -= second[i + 1];
+    }
+    second[0] = (second[0] - second[1]) * inv_sqrt2;
+
+    crate::idct32::idct1d_32_core_batch_neon(token, &mut second);
+
+    for i in 0..32 {
+        second[i] *= f32x4::splat(token, INV_WC64[i]);
+    }
+
+    crate::idct32::idct1d_32_core_batch_neon(token, &mut first);
+
+    for i in 0..32 {
+        v[i] = (first[i] + second[i]) * half;
+        v[63 - i] = (first[i] - second[i]) * half;
+    }
+}
+
+/// NEON batched 64-point inverse DCT with `*= 64` scaling.
+#[cfg(target_arch = "aarch64")]
+#[archmage::rite]
+pub(crate) fn idct1d_64_batch_neon(
+    token: archmage::NeonToken,
+    v: &mut [magetypes::simd::f32x4; 64],
+) {
+    use magetypes::simd::f32x4;
+    let scale64 = f32x4::splat(token, 64.0);
+    for vi in v.iter_mut() {
+        *vi *= scale64;
+    }
+    idct1d_64_core_batch_neon(token, v);
+}
+
+/// NEON 64×64 inverse DCT.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn idct_64x64_neon(token: archmage::NeonToken, input: &[f32; 4096], output: &mut [f32; 4096]) {
+    use magetypes::simd::f32x4;
+
+    let mut tmp = crate::scratch_buf::<4096>();
+
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_neon(token, input, base, j, 64);
+        }
+        idct1d_64_batch_neon(token, &mut v);
+        for j in 0..64 {
+            scatter_col_neon(token, v[j], &mut tmp, base, j, 64);
+        }
+    }
+
+    let mut transposed = crate::scratch_buf::<4096>();
+    for r in 0..64 {
+        for c in 0..64 {
+            transposed[c * 64 + r] = tmp[r * 64 + c];
+        }
+    }
+
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_neon(token, &transposed, base, j, 64);
+        }
+        idct1d_64_batch_neon(token, &mut v);
+        for j in 0..64 {
+            scatter_col_neon(token, v[j], output, base, j, 64);
+        }
+    }
+}
+
+/// NEON 64×32 inverse DCT.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn idct_64x32_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &mut [f32; 2048]) {
+    use magetypes::simd::f32x4;
+
+    let mut tmp = crate::scratch_buf::<2048>();
+
+    // Pass 1: IDCT-64 on 32 rows (stride 64), 8 batches of 4.
+    for batch in 0..8 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_neon(token, input, base, j, 64);
+        }
+        idct1d_64_batch_neon(token, &mut v);
+        for j in 0..64 {
+            scatter_col_neon(token, v[j], &mut tmp, base, j, 64);
+        }
+    }
+
+    let mut transposed = crate::scratch_buf::<2048>();
+    for r in 0..32 {
+        for c in 0..64 {
+            transposed[c * 32 + r] = tmp[r * 64 + c];
+        }
+    }
+
+    // Pass 2: IDCT-32 on 64 rows (stride 32), 16 batches of 4.
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 32];
+        for j in 0..32 {
+            v[j] = gather_col_neon(token, &transposed, base, j, 32);
+        }
+        crate::idct32::idct1d_32_batch_neon(token, &mut v);
+        for j in 0..32 {
+            scatter_col_neon(token, v[j], output, base, j, 32);
+        }
+    }
+}
+
+/// NEON 32×64 inverse DCT.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn idct_32x64_neon(token: archmage::NeonToken, input: &[f32; 2048], output: &mut [f32; 2048]) {
+    use magetypes::simd::f32x4;
+
+    // Un-transpose: 32×64 → 64×32.
+    let mut transposed = crate::scratch_buf::<2048>();
+    for r in 0..32 {
+        for c in 0..64 {
+            transposed[c * 32 + r] = input[r * 64 + c];
+        }
+    }
+
+    // Pass 1: IDCT-32 on 64 rows (stride 32), 16 batches of 4.
+    let mut tmp = crate::scratch_buf::<2048>();
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 32];
+        for j in 0..32 {
+            v[j] = gather_col_neon(token, &transposed, base, j, 32);
+        }
+        crate::idct32::idct1d_32_batch_neon(token, &mut v);
+        for j in 0..32 {
+            scatter_col_neon(token, v[j], &mut tmp, base, j, 32);
+        }
+    }
+
+    // Transpose 64×32 → 32×64.
+    let mut transposed2 = crate::scratch_buf::<2048>();
+    for r in 0..64 {
+        for c in 0..32 {
+            transposed2[c * 64 + r] = tmp[r * 32 + c];
+        }
+    }
+
+    // Pass 2: IDCT-64 on 32 rows (stride 64), 8 batches of 4.
+    for batch in 0..8 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_neon(token, &transposed2, base, j, 64);
+        }
+        idct1d_64_batch_neon(token, &mut v);
+        for j in 0..64 {
+            scatter_col_neon(token, v[j], output, base, j, 64);
+        }
+    }
+}
+
+// ============================================================================
+// wasm32 WASM128 implementation — mirrors NEON.
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn gather_col_wasm128(
+    token: archmage::Wasm128Token,
+    data: &[f32],
+    base_row: usize,
+    j: usize,
+    s: usize,
+) -> magetypes::simd::f32x4 {
+    magetypes::simd::f32x4::from_array(
+        token,
+        [
+            data[base_row * s + j],
+            data[(base_row + 1) * s + j],
+            data[(base_row + 2) * s + j],
+            data[(base_row + 3) * s + j],
+        ],
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+fn scatter_col_wasm128(
+    _token: archmage::Wasm128Token,
+    v: magetypes::simd::f32x4,
+    data: &mut [f32],
+    base_row: usize,
+    j: usize,
+    s: usize,
+) {
+    let mut lane = [0.0f32; 4];
+    v.store(&mut lane);
+    for r in 0..4 {
+        data[(base_row + r) * s + j] = lane[r];
+    }
+}
+
+/// WASM128 batched 64-point core inverse DCT WITHOUT scaling.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+#[allow(clippy::needless_range_loop)]
+pub(crate) fn idct1d_64_core_batch_wasm128(
+    token: archmage::Wasm128Token,
+    v: &mut [magetypes::simd::f32x4; 64],
+) {
+    use magetypes::simd::f32x4;
+
+    let half = f32x4::splat(token, 0.5);
+    let inv_sqrt2 = f32x4::splat(token, 1.0 / SQRT2);
+
+    let mut first = [f32x4::zero(token); 32];
+    let mut second = [f32x4::zero(token); 32];
+    for i in 0..32 {
+        first[i] = v[2 * i];
+        second[i] = v[2 * i + 1];
+    }
+
+    for i in (1..31).rev() {
+        second[i] -= second[i + 1];
+    }
+    second[0] = (second[0] - second[1]) * inv_sqrt2;
+
+    crate::idct32::idct1d_32_core_batch_wasm128(token, &mut second);
+
+    for i in 0..32 {
+        second[i] *= f32x4::splat(token, INV_WC64[i]);
+    }
+
+    crate::idct32::idct1d_32_core_batch_wasm128(token, &mut first);
+
+    for i in 0..32 {
+        v[i] = (first[i] + second[i]) * half;
+        v[63 - i] = (first[i] - second[i]) * half;
+    }
+}
+
+/// WASM128 batched 64-point inverse DCT with `*= 64` scaling.
+#[cfg(target_arch = "wasm32")]
+#[archmage::rite]
+pub(crate) fn idct1d_64_batch_wasm128(
+    token: archmage::Wasm128Token,
+    v: &mut [magetypes::simd::f32x4; 64],
+) {
+    use magetypes::simd::f32x4;
+    let scale64 = f32x4::splat(token, 64.0);
+    for vi in v.iter_mut() {
+        *vi *= scale64;
+    }
+    idct1d_64_core_batch_wasm128(token, v);
+}
+
+/// WASM128 64×64 inverse DCT.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn idct_64x64_wasm128(
+    token: archmage::Wasm128Token,
+    input: &[f32; 4096],
+    output: &mut [f32; 4096],
+) {
+    use magetypes::simd::f32x4;
+
+    let mut tmp = crate::scratch_buf::<4096>();
+
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_wasm128(token, input, base, j, 64);
+        }
+        idct1d_64_batch_wasm128(token, &mut v);
+        for j in 0..64 {
+            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 64);
+        }
+    }
+
+    let mut transposed = crate::scratch_buf::<4096>();
+    for r in 0..64 {
+        for c in 0..64 {
+            transposed[c * 64 + r] = tmp[r * 64 + c];
+        }
+    }
+
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_wasm128(token, &transposed, base, j, 64);
+        }
+        idct1d_64_batch_wasm128(token, &mut v);
+        for j in 0..64 {
+            scatter_col_wasm128(token, v[j], output, base, j, 64);
+        }
+    }
+}
+
+/// WASM128 64×32 inverse DCT.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn idct_64x32_wasm128(
+    token: archmage::Wasm128Token,
+    input: &[f32; 2048],
+    output: &mut [f32; 2048],
+) {
+    use magetypes::simd::f32x4;
+
+    let mut tmp = crate::scratch_buf::<2048>();
+
+    for batch in 0..8 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_wasm128(token, input, base, j, 64);
+        }
+        idct1d_64_batch_wasm128(token, &mut v);
+        for j in 0..64 {
+            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 64);
+        }
+    }
+
+    let mut transposed = crate::scratch_buf::<2048>();
+    for r in 0..32 {
+        for c in 0..64 {
+            transposed[c * 32 + r] = tmp[r * 64 + c];
+        }
+    }
+
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 32];
+        for j in 0..32 {
+            v[j] = gather_col_wasm128(token, &transposed, base, j, 32);
+        }
+        crate::idct32::idct1d_32_batch_wasm128(token, &mut v);
+        for j in 0..32 {
+            scatter_col_wasm128(token, v[j], output, base, j, 32);
+        }
+    }
+}
+
+/// WASM128 32×64 inverse DCT.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+#[archmage::arcane]
+#[allow(clippy::needless_range_loop)]
+pub fn idct_32x64_wasm128(
+    token: archmage::Wasm128Token,
+    input: &[f32; 2048],
+    output: &mut [f32; 2048],
+) {
+    use magetypes::simd::f32x4;
+
+    let mut transposed = crate::scratch_buf::<2048>();
+    for r in 0..32 {
+        for c in 0..64 {
+            transposed[c * 32 + r] = input[r * 64 + c];
+        }
+    }
+
+    let mut tmp = crate::scratch_buf::<2048>();
+    for batch in 0..16 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 32];
+        for j in 0..32 {
+            v[j] = gather_col_wasm128(token, &transposed, base, j, 32);
+        }
+        crate::idct32::idct1d_32_batch_wasm128(token, &mut v);
+        for j in 0..32 {
+            scatter_col_wasm128(token, v[j], &mut tmp, base, j, 32);
+        }
+    }
+
+    let mut transposed2 = crate::scratch_buf::<2048>();
+    for r in 0..64 {
+        for c in 0..32 {
+            transposed2[c * 64 + r] = tmp[r * 32 + c];
+        }
+    }
+
+    for batch in 0..8 {
+        let base = batch * 4;
+        let mut v = [f32x4::zero(token); 64];
+        for j in 0..64 {
+            v[j] = gather_col_wasm128(token, &transposed2, base, j, 64);
+        }
+        idct1d_64_batch_wasm128(token, &mut v);
+        for j in 0..64 {
+            scatter_col_wasm128(token, v[j], output, base, j, 64);
+        }
+    }
+}
+
+// ============================================================================
 // Dispatchers
 // ============================================================================
 
@@ -657,6 +1135,25 @@ pub fn idct_64x64(input: &[f32; 4096], output: &mut [f32; 4096]) {
             return;
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            idct_64x64_neon(token, input, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            idct_64x64_wasm128(token, input, output);
+            return;
+        }
+    }
+
     idct_64x64_scalar(input, output);
 }
 
@@ -674,6 +1171,25 @@ pub fn idct_64x32(input: &[f32; 2048], output: &mut [f32; 2048]) {
             return;
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            idct_64x32_neon(token, input, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            idct_64x32_wasm128(token, input, output);
+            return;
+        }
+    }
+
     idct_64x32_scalar(input, output);
 }
 
@@ -691,6 +1207,25 @@ pub fn idct_32x64(input: &[f32; 2048], output: &mut [f32; 2048]) {
             return;
         }
     }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::NeonToken::summon() {
+            idct_32x64_neon(token, input, output);
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        use archmage::SimdToken;
+        if let Some(token) = archmage::Wasm128Token::summon() {
+            idct_32x64_wasm128(token, input, output);
+            return;
+        }
+    }
+
     idct_32x64_scalar(input, output);
 }
 
