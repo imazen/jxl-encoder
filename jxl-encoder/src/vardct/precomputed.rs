@@ -329,6 +329,82 @@ impl EncoderPrecomputed {
             chromacity_b_pixelized,
         })
     }
+
+    /// Construct an `EncoderPrecomputed` from caller-supplied parts —
+    /// every field is the responsibility of the caller. Intended for
+    /// downstream consumers (e.g. jxl-encoder-gpu) that have already
+    /// run XYB conversion / gaborish / CfL / strat-search / masking on
+    /// their own pipeline (in our case, the GPU) and want to hand the
+    /// result to [`super::encoder::VarDctEncoder::encode_from_precomputed`]
+    /// directly, skipping the encoder's own re-computation.
+    ///
+    /// The caller is responsible for layout consistency:
+    /// - `xyb_x` / `xyb_y` / `xyb_b` MUST each have
+    ///   `padded_width * padded_height` entries, in row-major order,
+    ///   with edge-replicated padding to the block boundary.
+    /// - `linear_rgb` is interleaved RGB (`width * height * 3` entries),
+    ///   used by the rate-control loop's butteraugli measurement; pass
+    ///   an empty `Vec` if the caller will not run rate-control on top.
+    /// - `cfl_map` covers the padded image at 8×8 block resolution.
+    /// - `quant_field_float` and `masking` are per-8×8-block
+    ///   (`xsize_blocks * ysize_blocks` entries each).
+    /// - `mask1x1` is per-pixel padded
+    ///   (`Some(padded_width * padded_height)` entries) when the
+    ///   pixel-domain loss term is enabled, else `None`.
+    /// - `ac_strategy` is sized by the caller to cover the padded grid.
+    ///
+    /// **No validation is performed** — wrong sizes here will panic in
+    /// the encoder downstream (or worse, produce a garbled bitstream).
+    /// Gated behind the `__pre_quantized` cargo feature, which is
+    /// `#[doc(hidden)]` and not part of the stable API.
+    #[cfg(feature = "__pre_quantized")]
+    #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts(
+        width: usize,
+        height: usize,
+        xsize_blocks: usize,
+        ysize_blocks: usize,
+        padded_width: usize,
+        padded_height: usize,
+        xyb_x: Vec<f32>,
+        xyb_y: Vec<f32>,
+        xyb_b: Vec<f32>,
+        linear_rgb: Vec<f32>,
+        cfl_map: CflMap,
+        noise_params: Option<NoiseParams>,
+        quant_field_float: Vec<f32>,
+        masking: Vec<f32>,
+        mask1x1: Option<Vec<f32>>,
+        ac_strategy: AcStrategyMap,
+        gaborish_enabled: bool,
+        base_distance: f32,
+        chromacity_x_pixelized: u32,
+        chromacity_b_pixelized: u32,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            xsize_blocks,
+            ysize_blocks,
+            padded_width,
+            padded_height,
+            xyb_x,
+            xyb_y,
+            xyb_b,
+            linear_rgb,
+            cfl_map,
+            noise_params,
+            quant_field_float,
+            masking,
+            mask1x1,
+            ac_strategy,
+            gaborish_enabled,
+            base_distance,
+            chromacity_x_pixelized,
+            chromacity_b_pixelized,
+        }
+    }
 }
 
 /// Convert linear RGB to XYB color space with padding to block boundaries.

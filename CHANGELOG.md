@@ -201,6 +201,21 @@
 
 ### Fixed
 
+- **`--features __pre_quantized` build regression**:
+  `compute_quant_field_float_free` and `EncoderPrecomputed::from_parts`
+  were re-exported from `pub mod __pre_quantized` (commit 83253aa)
+  but the underlying functions only lived on the unmerged
+  `feat/pre-quantized` branch. `cargo build --features __pre_quantized`
+  had been failing on main since 2026-05-11. Both functions are now
+  on main with the same signatures as the side branch (gated
+  `#[cfg(feature = "__pre_quantized")]`, `#[doc(hidden)]`, unstable
+  API) so downstream consumers (notably jxl-encoder-gpu) can target
+  main rather than the side branch. Also brought
+  `--features rate-control` back to building after the lossy +
+  extras-beyond-alpha refactor changed `encode_two_pass`'s signature
+  from `Option<&[u8]>` to `&[VardctExtra<'_>]`. 905 default + 954
+  all-feature lib tests pass.
+
 - **`num_extra_channels` size coder spec** (refs #9, 6f5f0ff7):
   selector 2 was `Val(2)` instead of `Bits(4) + 2` per jxl-rs
   `#[size_coder(implicit(u2S(0, 1, Bits(4) + 2, Bits(12) + 1)))]`,
