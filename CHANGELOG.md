@@ -54,6 +54,16 @@
   RGB+Depth (300×300), lossy multigroup RGBA+Depth+Spot (300×300),
   resampling rejection, double-alpha rejection.
 
+- **`estimate_peak_memory_bytes` on both Config types** (refs #11):
+  conservative upper bound on the encoder's peak working-set RSS for
+  a given (width, height, layout) pair. Models the major
+  dimension-driven buffers — linear_rgb, XYB planes, quant_ac, alpha
+  — plus a 25 % overhead for unmodelled scratch. Lossless variant
+  also accounts for tree-learning state at effort >= 7 and squeeze
+  residuals when enabled. Useful for capacity planning and (once #11
+  lands) comparing one-shot vs streaming encode cost. Returns
+  `Option<u64>` and propagates overflow via `None`.
+
 - **DCT 4×4 / 4×8 / 8×4 NEON + WASM128 dispatch — closes #2**: 12
   new `_neon` and `_wasm128` entry points (one per direction × 3
   shapes × 2 archs) wire the small-block transforms onto the

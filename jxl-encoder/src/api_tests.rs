@@ -8287,3 +8287,76 @@ fn test_lossy_with_dot_detection_off_is_default() {
         "with_dot_detection(false) must match the default",
     );
 }
+
+/// Refs #11 (streaming): `estimate_peak_memory_bytes` should give a
+/// reasonable upper bound for typical sizes and stay finite under
+/// large-but-realistic inputs.
+#[test]
+fn test_lossy_estimate_peak_memory_bytes_4k() {
+    // 4K RGB8: dominant terms are linear_rgb (99.5 MB), XYB (100 MB),
+    // quant_ac (~13 MB). Total ~213 MB + 25 % = ~266 MB.
+    let cfg = LossyConfig::new(2.0).with_effort(5);
+    let est = cfg
+        .estimate_peak_memory_bytes(3840, 2160, PixelLayout::Rgb8)
+        .expect("4K RGB8 must not overflow");
+    // Wide range: just check it's plausibly between 200 MB and 350 MB.
+    assert!(
+        (200 * 1024 * 1024..400 * 1024 * 1024).contains(&est),
+        "4K RGB8 estimate out of expected range: {est} bytes",
+    );
+}
+
+/// `estimate_peak_memory_bytes` should add ~`pixels` bytes for the
+/// alpha buffer when the layout carries alpha.
+#[test]
+fn test_lossy_estimate_peak_memory_bytes_alpha_overhead() {
+    let cfg = LossyConfig::new(2.0).with_effort(5);
+    let rgb = cfg
+        .estimate_peak_memory_bytes(1024, 1024, PixelLayout::Rgb8)
+        .unwrap();
+    let rgba = cfg
+        .estimate_peak_memory_bytes(1024, 1024, PixelLayout::Rgba8)
+        .unwrap();
+    // RGBA should be larger than RGB; the difference is alpha + 25 %
+    // overhead = 1024*1024 * 1.25 = ~1.31 MB.
+    let diff = rgba - rgb;
+    let pixels_with_overhead = (1024u64 * 1024 * 5) / 4;
+    assert_eq!(
+        diff, pixels_with_overhead,
+        "alpha buffer should add ~pixels * 5/4 bytes",
+    );
+}
+
+/// Refs #11: lossless estimate should grow with channel count and
+/// jump up for tree-learning effort tiers (e7+).
+#[test]
+fn test_lossless_estimate_peak_memory_bytes_effort_jump() {
+    let small_e3 = LosslessConfig::new()
+        .with_effort(3)
+        .estimate_peak_memory_bytes(1024, 1024, PixelLayout::Rgb8)
+        .unwrap();
+    let small_e7 = LosslessConfig::new()
+        .with_effort(7)
+        .estimate_peak_memory_bytes(1024, 1024, PixelLayout::Rgb8)
+        .unwrap();
+    // e7 should be larger because the tree-learning state kicks in
+    // (~8 bytes per pixel of histogram).
+    assert!(
+        small_e7 > small_e3,
+        "e7 estimate ({small_e7}) should exceed e3 estimate ({small_e3}) due to tree learning"
+    );
+    // Difference should be at least pixels * 8 (ignoring the 25 %
+    // overhead increase).
+    assert!(
+        small_e7 - small_e3 >= 1024 * 1024 * 8,
+        "tree-learning bump should be at least pixels * 8 bytes"
+    );
+}
+
+/// Lossless estimate should return None on overflow rather than wrap.
+#[test]
+fn test_lossless_estimate_peak_memory_bytes_overflow_returns_none() {
+    let cfg = LosslessConfig::new();
+    let est = cfg.estimate_peak_memory_bytes(u32::MAX, u32::MAX, PixelLayout::Rgba8);
+    assert!(est.is_none(), "overflow must return None, got {est:?}");
+}
