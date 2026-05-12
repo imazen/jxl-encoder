@@ -905,6 +905,11 @@ pub struct LosslessConfig {
     patches: bool,
     lossy_palette: bool,
     threads: usize,
+    /// Override for the effort-derived tree-learning sample fraction
+    /// (refs #23 — gives a smoother time/size trade between e6 and e7).
+    /// `None` keeps the effort default; `Some(f)` clamps to `[0.0, 1.0]`
+    /// and overrides when `tree_learning` is enabled.
+    tree_sample_fraction_override: Option<f32>,
     /// Sweep / picker hook: when set, replaces the effort+mode-derived
     /// `EffortProfile` everywhere the encoder asks for one. See
     /// [`Self::with_effort_profile_override`].
@@ -931,16 +936,23 @@ impl LosslessConfig {
             patches: profile.patches,
             lossy_palette: false,
             threads: 0,
+            tree_sample_fraction_override: None,
             profile_override: None,
         }
     }
 
     /// Resolve the effective [`EffortProfile`]: the override if set,
-    /// otherwise the standard profile derived from effort + mode.
+    /// otherwise the standard profile derived from effort + mode. Then
+    /// apply the public sample-fraction override (#23) on top.
     pub(crate) fn effective_profile(&self) -> crate::effort::EffortProfile {
-        self.profile_override
+        let mut p = self
+            .profile_override
             .clone()
-            .unwrap_or_else(|| crate::effort::EffortProfile::lossless(self.effort, self.mode))
+            .unwrap_or_else(|| crate::effort::EffortProfile::lossless(self.effort, self.mode));
+        if let Some(f) = self.tree_sample_fraction_override {
+            p.tree_sample_fraction = f;
+        }
+        p
     }
 
     /// Apply picker / sweep override knobs scoped to the **lossless
@@ -1042,6 +1054,41 @@ impl LosslessConfig {
     pub fn with_tree_learning(mut self, enable: bool) -> Self {
         self.tree_learning = enable;
         self
+    }
+
+    /// Override the tree-learning pixel sampling fraction (refs #23).
+    ///
+    /// Tree learning at e7 walks a fraction of the image's pixels to
+    /// build the per-context histogram used for split selection. The
+    /// effort-derived defaults are roughly:
+    ///
+    /// | effort | sample fraction |
+    /// |-------:|----------------:|
+    /// |     ≤4 | 0.15            |
+    /// |      5 | 0.25            |
+    /// |      6 | 0.35            |
+    /// |      7 | 0.50            |
+    /// |      8 | 0.55            |
+    /// |     ≥9 | 0.65            |
+    ///
+    /// Sampling more pixels = better tree quality (smaller files) but
+    /// linearly more time. e7 is the cliff in #23 because tree
+    /// learning *first* turns on there; lowering the sample fraction
+    /// at e7 gives a smoother time/size trade between e6 (no tree)
+    /// and e7-default (tree at 0.5).
+    ///
+    /// Range `[0.0, 1.0]`; `f.clamp(0.0, 1.0)` is applied so a stray
+    /// caller can't trip the validator. No-op when `tree_learning` is
+    /// disabled. Use `f = 0.10..=0.20` for a "tree-learning lite"
+    /// effort-7 setting.
+    pub fn with_tree_learning_sample_fraction(mut self, f: f32) -> Self {
+        self.tree_sample_fraction_override = Some(f.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Current tree-learning sample fraction override, if set.
+    pub fn tree_learning_sample_fraction(&self) -> Option<f32> {
+        self.tree_sample_fraction_override
     }
 
     /// Enable/disable LZ77 backward references (default: false).
