@@ -154,6 +154,31 @@ pub mod __pre_quantized {
     pub use crate::vardct::chroma_from_luma::compute_cfl_map;
     pub use crate::vardct::common::DCT_BLOCK_SIZE;
     pub use crate::vardct::encoder::VarDctEncoder;
+    /// libjxl `INV_DC_QUANT[c]` — per-channel DC scale factor.
+    /// Used by GPU producers building `quantize_dc_dct8` `inv_factor`:
+    ///   `inv_factor_c = INV_DC_QUANT[c] * params.scale_dc`
+    pub use crate::vardct::quant::INV_DC_QUANT;
+    /// Pull the per-coefficient DCT8 quant weights for a channel
+    /// (X = 0, Y = 1, B = 2). Caller passes the returned slice as
+    /// the broadcast weights template for the GPU DCT8 quantize
+    /// kernels.
+    pub fn quant_weights_dct8(channel: usize) -> &'static [f32] {
+        crate::vardct::quant::quant_weights(0, channel)
+    }
+    /// Default dead-zone thresholds for DCT8 (covered_x=covered_y=1)
+    /// per channel. Mirrors `VarDctEncoder::default_thresholds`.
+    pub fn default_thresholds_dct8(channel: usize) -> [f32; 4] {
+        let mut t = if channel == 1 {
+            [0.56_f32, 0.62, 0.62, 0.62]
+        } else {
+            [0.58_f32, 0.62, 0.62, 0.62]
+        };
+        // For DCT8, covered_x*covered_y == 1 < 4, so the X/B
+        // multi-block reduction at enc_group.cc:66-72 doesn't fire.
+        // Match VarDctEncoder::default_thresholds exactly.
+        let _ = &mut t;
+        t
+    }
     /// `DistanceParams` carries the per-distance scaling constants
     /// (notably `inv_scale`) needed to convert a float quant field to
     /// `u8`. Construct via `DistanceParams::compute_for_profile(distance,
