@@ -53,3 +53,26 @@ where
 {
     (0..n).map(f).collect()
 }
+
+/// Run two closures in parallel, returning both results. Falls through to
+/// sequential execution when the `parallel` feature is disabled.
+#[cfg(feature = "parallel")]
+pub fn parallel_join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA + Send,
+    B: FnOnce() -> RB + Send,
+    RA: Send,
+    RB: Send,
+{
+    rayon::join(a, b)
+}
+
+/// Sequential fallback for [`parallel_join`].
+#[cfg(not(feature = "parallel"))]
+pub fn parallel_join<A, B, RA, RB>(a: A, b: B) -> (RA, RB)
+where
+    A: FnOnce() -> RA,
+    B: FnOnce() -> RB,
+{
+    (a(), b())
+}

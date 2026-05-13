@@ -1629,6 +1629,8 @@ impl VarDctEncoder {
         dc_quant_custom: Option<[f32; 3]>,
         writer: &mut BitWriter,
     ) -> Result<()> {
+        let _phase_dbg = std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some();
+        let _t0 = std::time::Instant::now();
         // ── Pass 1: Collect tokens per section ──
 
         // Build context tree and collect tokens.
@@ -1714,6 +1716,8 @@ impl VarDctEncoder {
             }
         }
 
+        let _t_tok_dc = _t0.elapsed().as_secs_f64() * 1000.0;
+        let _t_co = std::time::Instant::now();
         // Compute custom coefficient orders if enabled and image is large enough
         let (custom_order_map, used_orders) =
             if self.custom_orders && (xsize_blocks >= 5 || ysize_blocks >= 5) {
@@ -1733,6 +1737,8 @@ impl VarDctEncoder {
                 (None, 0u32)
             };
 
+        let _ms_co = _t_co.elapsed().as_secs_f64() * 1000.0;
+        let _t_bcm = std::time::Instant::now();
         // Compute content-adaptive block context map
         let block_ctx_map = super::ac_context::compute_block_ctx_map(
             quant_field,
@@ -1742,6 +1748,8 @@ impl VarDctEncoder {
             ysize_blocks,
         );
 
+        let _ms_bcm = _t_bcm.elapsed().as_secs_f64() * 1000.0;
+        let _t_ac_tok = std::time::Instant::now();
         // ── Progressive pass configuration ──
         let pass_config = ProgressivePassConfig::from_mode(self.progressive);
         let num_passes = pass_config.num_passes as usize;
@@ -1784,6 +1792,8 @@ impl VarDctEncoder {
             }
         }
 
+        let _ms_ac_tok = _t_ac_tok.elapsed().as_secs_f64() * 1000.0;
+        let _t_lz77 = std::time::Instant::now();
         // ── Apply LZ77 if enabled (ANS only, before building codes) ──
 
         let use_lz77 = self.enable_lz77 && self.use_ans;
@@ -1966,6 +1976,8 @@ impl VarDctEncoder {
             }
         }
 
+        let _ms_lz77 = _t_lz77.elapsed().as_secs_f64() * 1000.0;
+        let _t_codes = std::time::Instant::now();
         // ── Build optimal codes ──
 
         // Merge all DC section tokens (DC + AC metadata) for frequency counting
@@ -1981,63 +1993,71 @@ impl VarDctEncoder {
         };
         // Build entropy codes by iterating per-group tokens without merging.
         // This avoids allocating a merged Vec (which can be hundreds of MB).
-        let dc_groups: Vec<&[Token]> = dc_tokens_per_group
-            .iter()
-            .chain(ac_metadata_tokens_per_group.iter())
-            .map(|v| v.as_slice())
-            .collect();
-        let dc_built_code = if self.use_ans {
-            BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
-                &dc_groups,
-                dc_num_contexts,
-                self.profile.enhanced_clustering_vardct,
-                self.profile.optimize_uint_configs_vardct,
-                dc_lz77_params.as_ref(),
-                None,
-            ))
-        } else {
-            BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
-                &dc_groups,
-                dc_num_contexts,
-                self.profile.enhanced_clustering_vardct,
-                dc_lz77_params.as_ref(),
-            ))
-        };
-
-        // Build per-pass AC entropy codes by iterating per-group tokens without merging.
+        //
+        // The DC code build and the per-pass AC code builds are independent
+        // (they read disjoint token streams and write distinct outputs). Run
+        // them in parallel via rayon::join: at 12 MP this drops ~40 ms off
+        // the sequential build_codes phase.
         let base_ac_num_contexts = block_ctx_map.num_ac_contexts();
-        let mut ac_built_codes: Vec<BuiltEntropyCode> = Vec::with_capacity(num_passes);
-        for pass in 0..num_passes {
-            let ac_num_contexts = if ac_lz77_params_per_pass[pass].is_some() {
-                base_ac_num_contexts + 1 // +1 for LZ77 distance context
-            } else {
-                base_ac_num_contexts
-            };
-            let ac_groups: Vec<&[Token]> = ac_section_tokens_per_pass[pass]
+        let build_dc = || -> BuiltEntropyCode {
+            let dc_groups: Vec<&[Token]> = dc_tokens_per_group
                 .iter()
+                .chain(ac_metadata_tokens_per_group.iter())
                 .map(|v| v.as_slice())
                 .collect();
-
-            let ac_built_code = if self.use_ans {
+            if self.use_ans {
                 BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
-                    &ac_groups,
-                    ac_num_contexts,
+                    &dc_groups,
+                    dc_num_contexts,
                     self.profile.enhanced_clustering_vardct,
                     self.profile.optimize_uint_configs_vardct,
-                    ac_lz77_params_per_pass[pass].as_ref(),
+                    dc_lz77_params.as_ref(),
                     None,
                 ))
             } else {
                 BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
-                    &ac_groups,
-                    ac_num_contexts,
+                    &dc_groups,
+                    dc_num_contexts,
                     self.profile.enhanced_clustering_vardct,
-                    ac_lz77_params_per_pass[pass].as_ref(),
+                    dc_lz77_params.as_ref(),
                 ))
-            };
-            ac_built_codes.push(ac_built_code);
-        }
+            }
+        };
+        let build_ac_codes = || -> Vec<BuiltEntropyCode> {
+            crate::parallel::parallel_map(num_passes, |pass| {
+                let ac_num_contexts = if ac_lz77_params_per_pass[pass].is_some() {
+                    base_ac_num_contexts + 1
+                } else {
+                    base_ac_num_contexts
+                };
+                let ac_groups: Vec<&[Token]> = ac_section_tokens_per_pass[pass]
+                    .iter()
+                    .map(|v| v.as_slice())
+                    .collect();
+                if self.use_ans {
+                    BuiltEntropyCode::Ans(build_entropy_code_ans_from_token_groups(
+                        &ac_groups,
+                        ac_num_contexts,
+                        self.profile.enhanced_clustering_vardct,
+                        self.profile.optimize_uint_configs_vardct,
+                        ac_lz77_params_per_pass[pass].as_ref(),
+                        None,
+                    ))
+                } else {
+                    BuiltEntropyCode::Huffman(build_entropy_code_from_token_groups(
+                        &ac_groups,
+                        ac_num_contexts,
+                        self.profile.enhanced_clustering_vardct,
+                        ac_lz77_params_per_pass[pass].as_ref(),
+                    ))
+                }
+            })
+        };
+        let (dc_built_code, ac_built_codes) =
+            crate::parallel::parallel_join(build_dc, build_ac_codes);
 
+        let _ms_codes = _t_codes.elapsed().as_secs_f64() * 1000.0;
+        let _t_pass2 = std::time::Instant::now();
         // ── Tokenize coefficient orders (if custom) ──
         let coeff_order_tokens = if used_orders != 0 {
             let tokens = super::coeff_order::tokenize_coeff_orders(
@@ -2337,6 +2357,12 @@ impl VarDctEncoder {
             }
         }
 
+        let _ms_pass2 = _t_pass2.elapsed().as_secs_f64() * 1000.0;
+        if _phase_dbg {
+            eprintln!(
+                "encode_two_pass: tok_dc={_t_tok_dc:.1} co={_ms_co:.1} bcm={_ms_bcm:.1} ac_tok={_ms_ac_tok:.1} lz77={_ms_lz77:.1} build_codes={_ms_codes:.1} pass2_write={_ms_pass2:.1}",
+            );
+        }
         Ok(())
     }
 

@@ -1851,6 +1851,7 @@ impl VarDctEncoder {
         }
 
         // Perform DCT and quantization using precomputed XYB data
+        let _t_xform = std::time::Instant::now();
         let transform_out = self.transform_and_quantize(
             &precomputed.xyb_x,
             &precomputed.xyb_y,
@@ -1863,13 +1864,15 @@ impl VarDctEncoder {
             &precomputed.cfl_map,
             &precomputed.ac_strategy,
         )?;
+        let _ms_xform = _t_xform.elapsed().as_secs_f64() * 1000.0;
         let quant_dc = &transform_out.quant_dc;
         let quant_ac = &transform_out.quant_ac;
         let nzeros = &transform_out.nzeros;
         let raw_nzeros = &transform_out.raw_nzeros;
 
         // Use two-pass mode for rate control (required for ANS)
-        self.encode_two_pass(
+        let _t_two = std::time::Instant::now();
+        let res = self.encode_two_pass(
             width,
             height,
             &params,
@@ -1895,7 +1898,14 @@ impl VarDctEncoder {
             None, // patches
             None, // splines
             None, // float_dc
-        )
+        );
+        let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
+        if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
+            eprintln!(
+                "encode_from_precomputed: transform_and_quantize={_ms_xform:.1} ms, encode_two_pass={_ms_two:.1} ms",
+            );
+        }
+        res
     }
 }
 
